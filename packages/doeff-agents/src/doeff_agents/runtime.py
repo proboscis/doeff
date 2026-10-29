@@ -1,31 +1,21 @@
-"""Runtime policy for agent launch effects."""
+# moved-submodule-shim: doeff_agents.runtime -> doeff_agents._runtime
+"""Moved: ``doeff_agents.runtime`` is now ``doeff_agents._runtime`` (ADR-DOE-API-001 R5).
 
-from dataclasses import dataclass, field
-from pathlib import Path
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_agents.runtime…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-@dataclass(frozen=True, kw_only=True)
-class ClaudeRuntimePolicy:
-    """Runtime-owned Claude selection and environment policy."""
+if TYPE_CHECKING:
+    from doeff_agents._runtime import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-    model: str | None = None
-    agent_home: Path | None = None
-    trusted_workspaces: tuple[Path, ...] = ()
-    bootstrap_exports: dict[str, str] = field(default_factory=dict)
+if __name__ == "__main__":
+    import runpy
 
-
-@dataclass(frozen=True, kw_only=True)
-class CodexRuntimePolicy:
-    """Runtime-owned codex auth/profile policy (ADR-DOE-AGENTS-004 R9).
-
-    Auth material belongs to the handler BINDER, not to the effect user:
-    the launch surface is auth-blind and session_env is a non-auth overlay
-    (binding-owned keys are rejected).  For in-process (local) bindings
-    this dataclass is the constructor-injection home for CODEX_HOME —
-    the local mirror of the wire's typed ``binding`` field.  When unset,
-    handlers fall back to the binder process environment (the daemon's
-    own env is binder configuration too), never to the effect.
-    """
-
-    codex_home: Path | None = None
-
+    runpy.run_module("doeff_agents._runtime", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_agents._runtime")

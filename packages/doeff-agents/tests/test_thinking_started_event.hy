@@ -3,8 +3,8 @@
 (require doeff-hy.macros [deftest val])
 (import datetime [datetime timezone])
 (import doeff_claude_code.lines [PartialMessage DeltaKind])
-(import doeff_agents.effects [AgentThinkingStartedEvent AgentThinkingDeltaEvent])
-(import doeff_agents.handlers.headless [event-builders-of])
+(import doeff_agents [AgentThinkingStartedEvent AgentThinkingDeltaEvent])
+(import doeff_agents._handlers.headless [event-builders-of])
 
 (val AT (datetime 2026 10 9 1 0 0 :tzinfo timezone.utc))
 

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Self
 
-from doeff_agents.result_validation import validate_result_payload
+from doeff_agents._result_validation import validate_result_payload
 
 from doeff_conductor.effects.agent import (
     AgentAttemptExhaustedError,

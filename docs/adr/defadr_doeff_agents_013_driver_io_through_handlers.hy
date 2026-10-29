@@ -1,5 +1,5 @@
 ;;; Executable ADR: doeff-agents の driver 層は、file・子 process・unix socket・
-;;; 環境変数に自分で触らない。要求は `doeff_agents.io_effects` の語彙で出し、
+;;; 環境変数に自分で触らない。要求は `doeff_agents._io_effects` の語彙で出し、
 ;;; 果たすのは handler(本番 `io_handlers` / 検 `io_fake`)ちょうど 1 つで、
 ;;; どちらを当てるかは composition root(``io_root``)が選ぶ。
 ;;;
@@ -21,8 +21,8 @@
 (import re)
 (import pathlib [Path])
 
-(import doeff_agents.io_effects [read-text write-text which-executable run-process])
-(import doeff_agents.io_fake [FakeIoWorld with-fake-io])
+(import doeff_agents._io_effects [read-text write-text which-executable run-process])
+(import doeff_agents._io_fake [FakeIoWorld with-fake-io])
 
 
 ;; ---------------------------------------------------------------------------
@@ -141,8 +141,8 @@
      (interpretation
        "composition root は『どの家を当てるか』を 1 つの値(``io_root``)で持つ側。backend・handler・client を組む場所がその値を受け取れば、検は同じ program を記憶の中の世界で回せる — monkeypatch と違い、家が動いても検は素通しにならない。")]
   :decision
-    [(rule R1 "driver 層(packages/doeff-agents/src/doeff_agents から sessionhost / handlers を除いた木)の file は、file・子 process・unix socket・環境変数・PATH に直接触らない。要求は `doeff_agents.io_effects` の語彙で出す。")
-     (rule R2 "driver 層の I/O を実世界で果たすのは `doeff_agents.io_handlers` ちょうど 1 つ。検の家は `doeff_agents.io_fake` で、同じ語彙を記憶の中の file 系と台本にした子 process で果たす。")
+    [(rule R1 "driver 層(packages/doeff-agents/src/doeff_agents から sessionhost / handlers を除いた木)の file は、file・子 process・unix socket・環境変数・PATH に直接触らない。要求は `doeff_agents._io_effects` の語彙で出す。")
+     (rule R2 "driver 層の I/O を実世界で果たすのは `doeff_agents._io_handlers` ちょうど 1 つ。検の家は `doeff_agents._io_fake` で、同じ語彙を記憶の中の file 系と台本にした子 process で果たす。")
      (rule R3 "どちらの家を当てるかは composition root が ``io_root`` で選ぶ。既定は本番の家で、検は fake を渡す。新しい I/O の要求を足す時は、2 つの家の両方に同じ便で足す。")
      (rule R4 "判断(argv の組み立て・出力の読み・protocol の組み立てと解釈・何を書くかの決定)は driver の file に純粋な関数として残す。handler に判断を移さない(handler は答えを素通しする)。")
      (rule R5 "検は I/O を monkeypatch で差し替えない。差し替えるのは家(``io_root``)で、実 socket・実 file が要る検は層を重ねた handler(`recorded-spawn-handler`)で必要な 1 点だけを控える。")]
@@ -153,7 +153,7 @@
          [(counterexample "tmux.py が subprocess.run を直に呼ぶ — 検は module の綴り(doeff_agents.tmux.subprocess.run)を monkeypatch するしかなく、I/O の家が動くと検が黙って素通しになる(2026-09-12 変更前の実測 7 箇所)")
           (counterexample "agentd_client.py が socket.socket を直に開く — 判断(JSON の組み立てと解釈)と 1 往復の物理が同じ関数に同居し、protocol の検が実 socket を要求する")])
      (law driver-io-has-one-production-home
-       :statement "exists_unique module m in driver_layer: m holds the raw syscalls, and m = doeff_agents.io_handlers"
+       :statement "exists_unique module m in driver_layer: m holds the raw syscalls, and m = doeff_agents._io_handlers"
        :counterexamples
          [(counterexample "2 つ目の家(別 module の生の subprocess.run)が増える — 同じ要求が場所によって違う物理で果たされ、composition root の選択が効かなくなる")
           (counterexample "法だけ在って家が空 — 走査の除外 file が実際には syscall を 1 つも持たないなら、法は何も守っていない(空の法の検知が要る)")])
@@ -168,7 +168,7 @@
        (setv counts (run (scan-driver-io package-root)))
        (assert (= counts {})
                (+ "driver 層に直接 I/O が残っている(ADR-DOE-AGENTS-013 R1 — "
-                  "要求は doeff_agents.io_effects の語彙で出し、果たすのは "
+                  "要求は doeff_agents._io_effects の語彙で出し、果たすのは "
                   "io_handlers / io_fake): " (str (sorted (.items counts))))))
      (deftest test-adr-doe-agents-013-roster-files-are-in-the-driver-layer
        ;; 名簿の 8 file が実在し、走査の母集団に入っていること(名簿の腐り検知)。

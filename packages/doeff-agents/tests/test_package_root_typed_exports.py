@@ -31,7 +31,7 @@ def _defined_in_untyped_hy(name: str) -> bool:
 
 
 def _absolute(module: str) -> str:
-    """表の相対の定義元(``.handlers``)と節の絶対の定義元(``doeff_agents.handlers`` — 相対の import は doeff-linter の DOEFF016)を
+    """表の相対の定義元(``.handlers``)と節の絶対の定義元(``doeff_agents._handlers`` — 相対の import は doeff-linter の DOEFF016)を
     同じ綴りで比べるため、根の package の下の絶対の名にする。"""
     return "doeff_agents" + module if module.startswith(".") else module
 

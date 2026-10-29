@@ -944,7 +944,7 @@ class Scenario:
 
         lifecycle defaults to RUN_TO_COMPLETION; S26 passes INTERACTIVE to
         put the koine reap exemption (safety clause 1) under test."""
-        from doeff_agents.adapters.base import AgentSessionLifecycle
+        from doeff_agents import AgentSessionLifecycle
 
         if lifecycle is None:
             lifecycle = AgentSessionLifecycle.RUN_TO_COMPLETION
@@ -1006,7 +1006,7 @@ class Scenario:
         exactly one thing (re-prepend the shim dir) makes resolution
         deterministic and keeps operator rc files out of the suite.
         """
-        from doeff_agents.adapters.base import AgentSessionLifecycle
+        from doeff_agents import AgentSessionLifecycle
 
         shim_dir = self.harness.runtime_dir / f"shim-{self.session_id}"
         shim_dir.mkdir(parents=True, exist_ok=True)

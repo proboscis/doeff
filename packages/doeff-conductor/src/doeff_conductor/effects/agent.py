@@ -8,21 +8,15 @@ session controls live below this boundary and are not conductor workflow effects
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from doeff_agents.effects import (  # re-exported for conductor callers
+from doeff_agents import (  # re-exported for conductor callers
     AgentAttemptExhaustedError as AgentAttemptExhaustedError,
 )
-from doeff_agents.effects import (
-    AgentDeadlineExceededError as AgentDeadlineExceededError,
-)
-from doeff_agents.effects import (
-    AgentValidationErrorKind as AgentValidationErrorKind,
-)
-from doeff_agents.effects import (
-    AgentValidationFailure as AgentValidationFailure,
-)
+from doeff_agents import AgentDeadlineExceededError as AgentDeadlineExceededError
+from doeff_agents import AgentValidationErrorKind as AgentValidationErrorKind
+from doeff_agents import AgentValidationFailure as AgentValidationFailure
 # The replay-stable session id rule doeff-agents' AgentSpec.session_id uses — conductor's effects name their
 # sessions by the same rule (doeff-agents keeps it in an inner module; it is not part of its public effects).
-from doeff_agents.effects._ids import deterministic_session_id
+from doeff_agents._effects._ids import deterministic_session_id
 
 from doeff_conductor.effects.base import ConductorEffectBase
 from doeff_conductor.replay_keying import ResolvedIdentity, resolved_identity_fingerprint

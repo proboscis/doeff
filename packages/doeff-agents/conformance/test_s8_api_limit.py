@@ -41,7 +41,7 @@ import time
 
 import pytest
 from conformance_env import agentd_bin_setting
-from doeff_agents.effects import AwaitStatus
+from doeff_agents import AwaitStatus
 from harness import RESULT_SCHEMA, AgentdHarness
 
 # Transfer-gate seam (harness.resolve_agentd_command): the durable api-limit latch is

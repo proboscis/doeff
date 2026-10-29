@@ -10,12 +10,8 @@ The full flow through the composed handler stack:
 import json
 from dataclasses import dataclass
 
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects.agent import (
-    LaunchEffect,
-    SessionHandle,
-    StopEffect,
-)
+from doeff_agents import AgentType
+from doeff_agents import LaunchEffect, SessionHandle, StopEffect
 from doeff_agents.session_backend import SessionBackend
 from doeff_core_effects.handlers import lazy_ask, state
 
@@ -80,7 +76,7 @@ def _run_full_stack(program, backend):
     claude_handler catches LaunchEffect(CLAUDE) directly — no resolver indirection.
     GetHandlers(k) captures greet_handler so MCP tool calls can use GreetEffect.
     """
-    from doeff_agents.handlers import claude_agent_handler
+    from doeff_agents import claude_agent_handler
     from doeff_core_effects.scheduler import scheduled
 
     ch = claude_agent_handler(backend=backend)
@@ -116,7 +112,7 @@ class TestFullIntegration:
 
     def test_claude_agent_handler_asks_for_backend(self, tmp_path):
         """claude_agent_handler() resolves tmux backend through Ask."""
-        from doeff_agents.handlers import claude_agent_handler
+        from doeff_agents import claude_agent_handler
         from doeff_core_effects.scheduler import scheduled
 
         backend = FakeTmuxBackend()

@@ -13,16 +13,9 @@
 (import datetime [datetime timedelta timezone])
 (import pathlib [Path])
 
-(import doeff_agents.adapters.base [AgentSessionLifecycle AgentType])
-(import doeff_agents.effects.agent [SessionStatus])
-(import doeff_agents.effects [
-  AgentSessionQuery
-  AgentSessionSnapshot
-  GetAgentSession
-  ListAgentSessionsEffect
-  PutAgentSession
-  TranscriptRef
-  TurnRef])
+(import doeff_agents [AgentSessionLifecycle AgentType])
+(import doeff_agents [SessionStatus])
+(import doeff_agents [AgentSessionQuery AgentSessionSnapshot GetAgentSession ListAgentSessionsEffect PutAgentSession TranscriptRef TurnRef])
 
 
 ;; 時差のある時刻(置き場所が UTC に揃えても同じ瞬間として読めること)。

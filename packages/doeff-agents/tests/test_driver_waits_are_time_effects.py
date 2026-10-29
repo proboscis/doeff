@@ -21,9 +21,9 @@ from doeff_agents._agentd_client import (
     AgentdClient,
     _wait_for_agentd_ready,
 )
-from doeff_agents.io_fake import with_fake_io
-from doeff_agents.io_handlers import run_driver_io
-from doeff_agents.io_root import IoRoot
+from doeff_agents._io_fake import with_fake_io
+from doeff_agents._io_handlers import run_driver_io
+from doeff_agents._io_root import IoRoot
 from doeff_agents.tmux import (
     CONFIRM_INITIAL_SECONDS,
     CONFIRM_RETRY_WAITS,

@@ -40,16 +40,17 @@ from doeff_agents._agentd_client import (
     default_agentd_paths,
     ensure_agentd,
 )
-from doeff_agents.handlers.daemon import DaemonAgentHandler
-from doeff_agents.io_fake import SpawnLedger, recorded_spawn_handler
-from doeff_agents.io_handlers import driver_io_handler
+from doeff_agents import DaemonAgentHandler
+from doeff_agents import recorded_spawn_handler
+from doeff_agents._io_fake import SpawnLedger
+from doeff_agents import driver_io_handler
 from fake_io_support import FakeIoWorld, fake_io_root
 
 from doeff import Program, Pure, run
-from doeff_agents.io_root import IoRoot
+from doeff_agents._io_root import IoRoot
 
 
-from doeff_agents.runtime import CodexRuntimePolicy
+from doeff_agents import CodexRuntimePolicy
 
 
 def recording_io_root(starts: list) -> IoRoot:
@@ -1279,7 +1280,7 @@ def test_daemon_handler_observe_is_read_only() -> None:
 
 def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_path: Path) -> None:
     adapter = FakeAdapter()
-    monkeypatch.setattr("doeff_agents.handlers.daemon.get_adapter", lambda _agent_type: adapter)
+    monkeypatch.setattr("doeff_agents._handlers.daemon.get_adapter", lambda _agent_type: adapter)
     fake_client = FakeAgentdClient()
     handler = DaemonAgentHandler(client=fake_client)
 
@@ -1311,7 +1312,7 @@ def test_daemon_agent_handler_sends_codex_binding_from_policy(
     # ADR-DOE-AGENTS-004 R9: codex auth rides the typed wire binding derived
     # from the handler binder (constructor policy) — never session_env.
     monkeypatch.setattr(
-        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+        "doeff_agents._handlers.daemon.get_adapter", lambda _t: FakeAdapter()
     )
     fake_client = FakeAgentdClient()
     handler = DaemonAgentHandler(
@@ -1342,7 +1343,7 @@ def test_daemon_agent_handler_codex_binding_falls_back_to_binder_env(
     # The binder process env is binder configuration too (whoever started
     # the daemon configured it); it backs the policy, never the effect.
     monkeypatch.setattr(
-        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+        "doeff_agents._handlers.daemon.get_adapter", lambda _t: FakeAdapter()
     )
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
     fake_client = FakeAgentdClient()
@@ -1369,7 +1370,7 @@ def test_daemon_agent_handler_rejects_codex_home_in_session_env(
     # R9: session_env is a non-auth overlay — the local guard rejects
     # binding-owned keys before anything reaches the wire.
     monkeypatch.setattr(
-        "doeff_agents.handlers.daemon.get_adapter", lambda _t: FakeAdapter()
+        "doeff_agents._handlers.daemon.get_adapter", lambda _t: FakeAdapter()
     )
     fake_client = FakeAgentdClient()
     handler = DaemonAgentHandler(client=fake_client)

@@ -2,7 +2,7 @@
 ;;;
 ;;; 既知の形: repository の中の「何を書くか」と「実行」を分ける。この module は
 ;;; 表の定義(DDL)・書きと読みの文・行と `AgentSessionSnapshot` の相互の写しだけを持ち、
-;;; 接続には触らない。文を流すのは `doeff_agents.handlers.session_store` の
+;;; 接続には触らない。文を流すのは `doeff_agents._handlers.session_store` の
 ;;; `SqlAgentSessionRepository` ちょうど 1 つ(ADR-DOE-AGENTS-013 R4: 判断は driver の
 ;;; file に純粋な関数として残し、I/O は handlers の側)。
 ;;;
@@ -22,9 +22,9 @@
 (import pathlib [Path])
 (import typing [NamedTuple Callable])
 
-(import doeff_agents.adapters.base [AgentSessionLifecycle AgentType])
-(import doeff_agents.effects.agent [SessionStatus])
-(import doeff_agents.effects [AgentSessionQuery AgentSessionSnapshot TranscriptRef TurnRef])
+(import doeff_agents._adapters.base [AgentSessionLifecycle AgentType])
+(import doeff_agents._effects.agent [SessionStatus])
+(import doeff_agents._effects [AgentSessionQuery AgentSessionSnapshot TranscriptRef TurnRef])
 
 
 ;; ---------------------------------------------------------------------------

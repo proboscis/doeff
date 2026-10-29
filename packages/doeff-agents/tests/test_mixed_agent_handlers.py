@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from doeff_agents.adapters.base import AgentType
-from doeff_agents.effects.agent import LaunchEffect, StopEffect
+from doeff_agents import AgentType
+from doeff_agents import LaunchEffect, StopEffect
 from doeff_core_effects.handlers import state
 
 from doeff import Perform, do, run
@@ -51,8 +51,8 @@ class FakeTmuxBackend:
 
 
 def test_codex_stop_reaches_codex_handler_when_claude_handler_is_inner(tmp_path: Path) -> None:
-    from doeff_agents.handlers.claude import claude_handler
-    from doeff_agents.handlers.codex import codex_handler
+    from doeff_agents import claude_handler
+    from doeff_agents import codex_handler
     from doeff_core_effects.scheduler import scheduled
 
     claude_backend = FakeTmuxBackend()

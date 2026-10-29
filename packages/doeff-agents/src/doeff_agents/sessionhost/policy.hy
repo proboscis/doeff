@@ -16,7 +16,7 @@
 (import json)
 ;; agent の境界の env の語彙の家(#708)。名はここで再輸出する — substrate・launch・検が
 ;; `policy.<名>` で読む形は変えない。
-(import doeff_agents.agent_env [BINDING-OWNED-ENV-KEYS
+(import doeff_agents._agent_env [BINDING-OWNED-ENV-KEYS
                                 PROVIDER-AUTH-ENV-KEYS
                                 PROVIDER-ROUTING-ENV-KEYS
                                 TURN-AUTH-ENV-KEYS
@@ -548,7 +548,7 @@
          "resumable" (get BINDING-KIND-RESUMABLE kind)
          "forkable" (get BINDING-KIND-FORKABLE kind)}))
 
-;; 手番ごとの資格の env の名(TURN-AUTH-ENV-KEYS)は doeff_agents/agent_env.hy の 1 点(#708)。
+;; 手番ごとの資格の env の名(TURN-AUTH-ENV-KEYS)は doeff_agents/_agent_env.hy の 1 点(#708)。
 ;; **行には残さない** — 行に残った誕生の env で再開すると、更新で回った(revoke 済みの)札で起こす。
 ;; 再開の process は「その手番の送りが運ぶ env」で起きる(host の session.send の session_env)。
 (defk overlay-without-turn-auth [env]
@@ -620,7 +620,7 @@
 
 
 ;; agent の境界で運ばせない env の語彙(PROVIDER-AUTH / PROVIDER-ROUTING / TURN-AUTH / BINDING-OWNED と
-;; 正規化・突合)は doeff_agents/agent_env.hy の 1 点(agora-redesign #708 — session host を import しない家)。
+;; 正規化・突合)は doeff_agents/_agent_env.hy の 1 点(agora-redesign #708 — session host を import しない家)。
 ;; ここは上の import で名を受けて再輸出するだけ(層の表もそちらの頭の註)。
 
 ;; ⚠ この線は上の 3 層の名簿の族**ではない**(rebase の拍の判断・2026-09-19):族は「正規化した名が集合に在るか」

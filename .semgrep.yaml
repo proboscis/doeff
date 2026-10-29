@@ -64,7 +64,7 @@ rules:
       refreshed token can replace it while the CLI runs
       (ClaudeReplaceSessionCredential / ReplaceSessionCredentialEffect — card
       acp:kanban-issue:ki-4ffdafa021e5). Do not put the turn credential into
-      the child env (the CLAUDE_CODE_OAUTH_TOKEN name or doeff_agents.agent_env
+      the child env (the CLAUDE_CODE_OAUTH_TOKEN name or doeff_agents._agent_env
       CLAUDE-TURN-CREDENTIAL-ENV) in the CLI launch layers.
     pattern-either:
       - pattern-regex: '"CLAUDE_CODE_OAUTH_TOKEN"'
@@ -72,8 +72,8 @@ rules:
     paths:
       include:
         - /packages/doeff-claude-code/src/**
-        - /packages/doeff-agents/src/doeff_agents/handlers/headless.hy
-        - /packages/doeff-agents/src/doeff_agents/handlers/headless_compose.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/headless.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/headless_compose.hy
 
   - id: doeff-claude-judge-starts-no-process
     languages:
@@ -114,9 +114,9 @@ rules:
       - pattern: $PARAMS.prompt
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/gemini.py
 
   - id: doeff-agents-built-in-adapters-must-use-terminal-transport
     languages:
@@ -130,9 +130,9 @@ rules:
       - pattern: return InjectionMethod.STDIN
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/gemini.py
 
   - id: doeff-agents-built-in-adapters-must-declare-ready-pattern
     languages:
@@ -152,10 +152,10 @@ rules:
       - pattern: return None
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/adapters/claude.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/codex.py
-        - /packages/doeff-agents/src/doeff_agents/adapters/gemini.py
-        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/adapters/**
+        - /packages/doeff-agents/src/doeff_agents/_adapters/claude.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/codex.py
+        - /packages/doeff-agents/src/doeff_agents/_adapters/gemini.py
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_adapters/**
 
   - id: doeff-agents-ready-pattern-literal-outside-physics-home
     languages:
@@ -176,9 +176,9 @@ rules:
           regex: .*READY_PATTERN$
     paths:
       include:
-        - "**/doeff_agents/adapters/claude.py"
-        - "**/doeff_agents/adapters/codex.py"
-        - "**/adapters/ready_pattern_literal_forbidden.py"
+        - "**/doeff_agents/_adapters/claude.py"
+        - "**/doeff_agents/_adapters/codex.py"
+        - "**/_adapters/ready_pattern_literal_forbidden.py"
 
   - id: doeff-agents-repl-idle-budget-literal-single-home
     languages:
@@ -540,9 +540,9 @@ rules:
     pattern-regex: '\(\.send-keys\s+\S+\s+[^\s\)]+\s+(full-)?prompt\)'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/claude.hy
-        - /packages/doeff-agents/src/doeff_agents/handlers/codex.hy
-        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
+        - /packages/doeff-agents/src/doeff_agents/_handlers/claude.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/codex.hy
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_handlers/**
 
   - id: doeff-agents-paste-buffer-must-be-bracketed
     languages:
@@ -585,8 +585,8 @@ rules:
       $SELF._record_snapshot("session_started", ...)
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/**
-        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/handlers/**
+        - /packages/doeff-agents/src/doeff_agents/_handlers/**
+        - /tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_handlers/**
 
   - id: doeff-agents-require-real-claude-result-retry-e2e
     languages:
@@ -658,7 +658,7 @@ rules:
     pattern-regex: 'if state is None:\n\s+raise SessionNotFoundError\(f"Session \{effect\.handle\.session_id\} is not registered"\)\n\n\s+if not self\._backend\.has_session\(effect\.handle\.session_id\):'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/production.py
+        - /packages/doeff-agents/src/doeff_agents/_handlers/production.py
 
   - id: doeff-agents-substrate-clean-impls
     languages:
@@ -855,13 +855,13 @@ rules:
       - pattern: |
           from doeff_agents import SleepEffect
       - pattern: |
-          from doeff_agents.effects import Sleep
+          from doeff_agents._effects import Sleep
       - pattern: |
-          from doeff_agents.effects import SleepEffect
+          from doeff_agents._effects import SleepEffect
       - pattern: |
-          from doeff_agents.effects.agent import Sleep
+          from doeff_agents._effects.agent import Sleep
       - pattern: |
-          from doeff_agents.effects.agent import SleepEffect
+          from doeff_agents._effects.agent import SleepEffect
     paths:
       include:
         - /packages/doeff-agents/**
@@ -1023,7 +1023,7 @@ rules:
     pattern-regex: 'except\s+Exception:\s*\n\s+log\.exception\("Failed to complete ready_promise"\)\s*\n\s*self\.serve_forever\(\)'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/mcp_server.py
+        - /packages/doeff-agents/src/doeff_agents/_mcp_server.py
 
   - id: doeff-agents-mcp-loop-catches-only-queue-empty
     languages: [generic]
@@ -1035,7 +1035,7 @@ rules:
     pattern-regex: '\(except\s+\[[^\]]*\bException\b[^\]]*\]\s*\(setv\s+req\s+None\)\)'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/mcp_server_loop.hy
 
   - id: doeff-agents-mcp-stack-normalizes-raw-handlers
     languages: [generic]
@@ -1048,8 +1048,8 @@ rules:
     pattern-regex: '\(setv\s+program\s+\([A-Za-z_][A-Za-z0-9_-]*\s+program\)\)'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/mcp_server_loop.hy
-        - /packages/doeff-agents/src/doeff_agents/handlers/effectful.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/mcp_server_loop.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/effectful.hy
 
   - id: doeff-agents-l2-launch-preserves-mcp-tools
     languages: [generic]
@@ -1062,7 +1062,7 @@ rules:
     pattern-regex: 'lifecycle=spec\.lifecycle,\s*session_env=spec\.session_env,'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/production.py
+        - /packages/doeff-agents/src/doeff_agents/_handlers/production.py
 
   - id: doeff-agents-l2-launchsession-captures-mcp-handler-stack
     languages: [generic]
@@ -1075,7 +1075,7 @@ rules:
     pattern-regex: '\(resume\s+\(\.handle-launch-session\s+agent-handler\s+effect\)\)'
     paths:
       include:
-        - /packages/doeff-agents/src/doeff_agents/handlers/effectful.hy
+        - /packages/doeff-agents/src/doeff_agents/_handlers/effectful.hy
 
   - id: adr0001-d1-agentd-only-worker-route
     languages: [python]
@@ -5181,7 +5181,7 @@ rules:
     paths:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/handlers/**
-        - /packages/doeff-agents/src/doeff_agents/handlers/**
+        - /packages/doeff-agents/src/doeff_agents/_handlers/**
 
   - id: k4-deadline-not-transport-timeout
     languages: [python]

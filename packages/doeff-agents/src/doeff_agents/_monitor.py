@@ -1,6 +1,6 @@
 """Status monitoring and detection logic for agent sessions (internal to doeff-agents).
 
-``SessionStatus`` is defined with the effects (``doeff_agents.effects``) — the
+``SessionStatus`` is defined with the effects (``doeff_agents._effects``) — the
 public value an ``Observation`` carries; this module only detects it.
 """
 
@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from doeff_agents.effects.agent import SessionStatus as SessionStatus
+from doeff_agents._effects.agent import SessionStatus as SessionStatus
 
 
 @dataclass

@@ -13,7 +13,7 @@ from pathlib import Path
 import hy  # noqa: F401 -- installs the .hy import hook (ready_physics.hy)
 
 from doeff_agents import tmux
-from doeff_agents.adapters.base import (
+from doeff_agents._adapters.base import (
     AgentAdapter,
     AgentType,
     InjectionMethod,
@@ -21,10 +21,10 @@ from doeff_agents.adapters.base import (
     LaunchParams,
     PreLaunchAdapter,
 )
-from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.adapters.gemini import GeminiAdapter
-from doeff_agents.io_root import IoRoot
+from doeff_agents._adapters.claude import ClaudeAdapter
+from doeff_agents._adapters.codex import CodexAdapter
+from doeff_agents._adapters.gemini import GeminiAdapter
+from doeff_agents._io_root import IoRoot
 from doeff_agents._monitor import (
     MonitorState,
     OnStatusChange,
@@ -557,6 +557,6 @@ async def async_session_scope(
 
 
 def _default_io_root() -> IoRoot:
-    from doeff_agents.io_handlers import run_driver_io
+    from doeff_agents._io_handlers import run_driver_io
 
     return run_driver_io

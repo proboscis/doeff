@@ -38,8 +38,8 @@ import threading
 from dataclasses import dataclass
 
 import pytest
-from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
-from doeff_agents.mcp_server import McpToolRequest, McpToolServer
+from doeff_agents._handlers.mcp_server_loop import mcp_server_loop
+from doeff_agents._mcp_server import McpToolRequest, McpToolServer
 from doeff_core_effects.scheduler import (
     PRIORITY_IDLE,
     CompletePromise,

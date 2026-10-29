@@ -30,7 +30,7 @@ from doeff_agents import (
     AgentTask as AgentsAgentTask,
 )
 from doeff_agents import AgentType
-from doeff_agents.handlers.testing import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioAgentHandler, ScenarioStep
 from doeff_conductor._api import ConductorAPI
 from doeff_conductor.effects import AgentEffect, AgentTask
 from doeff_conductor.handlers._workspace_path import WorkspacePath

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from doeff_agents.result_validation import validate_result_payload
+from doeff_agents._result_validation import validate_result_payload
 from doeff_conductor.effects import (
     BLOCKER_FINDING,
     CALIBRATION_SAMPLE_BUDGET_KEY,
