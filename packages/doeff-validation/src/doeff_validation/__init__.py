@@ -9,7 +9,7 @@ Python:
         Check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
     )   # 失敗が 1 つでもあれば ValidationException(全部の失敗を持つ)
 
-    run(sequential()(program))   # 逐次。並行は parallel(n)、fail-fast は parallel_fail_fast(n)
+    run(sequential(program))   # 逐次。並行は parallel(n)、fail-fast は parallel_fail_fast(n)
 
 Hy: ``(require doeff-hy.macros [defk validate check])`` → ``(! (validate (check = (! (Eff)) b :reason R) …))``。
 設計の記録: ``docs/design/doeff-validation/design.md``。

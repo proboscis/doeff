@@ -73,11 +73,11 @@
 
 ;; Base handler stack: sequential + fail_handler + try_handler
 (setv base-stack
-  [try_handler fail_handler (sequential)])
+  [try_handler fail_handler sequential])
 
 ;; Replace failures with 0.0 instead of marking as failed
 (setv replace-zero-stack
-  [try_handler replace-with-zero fail_handler (sequential)])
+  [try_handler replace-with-zero fail_handler sequential])
 
 (defn with-stack [stack program]
   "Wrap program with a list of handlers (innermost first). Returns a program."

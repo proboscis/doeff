@@ -40,12 +40,12 @@ List traversal is the most common instance of this pattern.
 (setv program (pipeline items))
 
 ;; Strategy is handler — swap freely
-(run (with-stack [backend fail_handler (sequential)] program))
+(run (with-stack [backend fail_handler sequential] program))
 (run (with-stack [backend fail_handler (parallel 10)] program))
 ```
 
 Same program, different strategies. Handler decides:
-- **Execution order**: `(sequential)` or `(parallel N)`
+- **Execution order**: `sequential` or `(parallel N)`
 - **Failure strategy**: fail-fast or per-item isolation
 - **Compute backend**: async, sync, mock, batch API
 
@@ -123,9 +123,9 @@ doeff-traverse makes results opaque. User code accesses them only via `for/do`, 
 
 `for/do` leaves the order and the failure policy to a handler, and its answer is a `Collection`. A protocol function that just reads a list of rows one after another does not want that choice, and it must not lose a failed row. `sequence` is the named special case with the policy fixed:
 
-| | `for/do` under `sequential()` | `sequence` |
+| | `for/do` under `sequential` | `sequence` |
 |---|---|---|
-| handler | needed (`sequential()`, usually with `fail_handler`) | none — the caller's handlers answer the programs' effects |
+| handler | needed (`sequential`, usually with `fail_handler`) | none — the caller's handlers answer the programs' effects |
 | a program fails | the item is recorded as failed and the next items still run; `valid_values` silently lacks it | the exception goes up as it is; the programs after it are never made or run |
 | answer | `Collection` (opened with `valid_values` / `failed_items` / `Inspect`) | a `tuple` of the answers, in order, duplicates and `None` kept |
 | input | an iterable of items and a function making a program per item | an iterable of programs, read lazily (each program is made just before it runs) |

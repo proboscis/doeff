@@ -69,7 +69,7 @@ def _eval_module(code: str, header: str = _HEADER) -> types.ModuleType:
 
 def _run(program: Program) -> object:
     """handle を含む Program を、traverse / for/do の handler の下で走らせる。"""
-    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+    return run(scheduled(try_handler(fail_handler(sequential(program)))))
 
 
 _CASES = {

@@ -6,7 +6,7 @@ py.typed の package の注記の無い関数は、pyright が答えの型を推
 
 from typing import Protocol, TypeAlias
 
-from doeff.program import ProgramHandler
+from doeff.program import FormerFactoryHandler, ProgramHandler
 from doeff_traverse._effects import Inspect, ItemOutcome, Reduce, Skip, SortBy, Take, Traverse, Zip
 
 CollectionEffect: TypeAlias = (
@@ -20,7 +20,7 @@ CollectionEffect: TypeAlias = (
     | ItemOutcome
 )
 
-def sequential() -> ProgramHandler: ...
+sequential: FormerFactoryHandler
 def parallel(concurrency: int = 10) -> ProgramHandler: ...
 def parallel_fail_fast(concurrency: int = 10) -> ProgramHandler: ...
 

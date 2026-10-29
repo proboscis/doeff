@@ -136,7 +136,7 @@
 ;; try_handler: handles Try effect (used internally by sequential handler)
 ;; fail_handler: converts Fail effect to exception (fail-fast at yield site)
 ;; sequential: executes Traverse items one by one, isolates per-item failures
-(setv base-stack [try_handler fail_handler (sequential)])
+(setv base-stack [try_handler fail_handler sequential])
 
 ;; replace-with-zero: custom Fail handler — injects 0.0 at the yield site
 ;; When try_call performs Fail, this handler resumes with 0.0 → item continues with 0.0
@@ -148,7 +148,7 @@
 
 ;; replace-zero-stack: same as base but with replace-with-zero inside fail_handler
 ;; replace-with-zero catches Fail BEFORE fail_handler does
-(setv replace-zero-stack [try_handler replace-with-zero fail_handler (sequential)])
+(setv replace-zero-stack [try_handler replace-with-zero fail_handler sequential])
 
 
 ;; ===========================================================================

@@ -64,7 +64,7 @@ def test_errors_are_the_exceptions_of_failed_items_without_the_skipped_originals
         read = yield Traverse(step, [1, 2, 3])
         return read
 
-    read = run(with_handlers([sequential(), fail_handler], body()))
+    read = run(with_handlers([sequential, fail_handler], body()))
     assert [item.value for item in read.failed_items] == [two, 3]
     assert read.errors == [two]
     assert read.valid_values == [1]

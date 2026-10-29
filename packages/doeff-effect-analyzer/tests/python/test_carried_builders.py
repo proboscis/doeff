@@ -183,7 +183,7 @@ def test_doeff_traverse_sequential_is_followed() -> None:
     from doeff_traverse import Traverse, sequential
 
     clauses = [
-        c for c in analyze_handler(sequential(), name="sequential").clauses if c.handles is Traverse
+        c for c in analyze_handler(sequential, name="sequential").clauses if c.handles is Traverse
     ]
     assert clauses
     assert all(c.emits.unresolved == () for c in clauses), [c.emits.unresolved for c in clauses]
@@ -199,6 +199,8 @@ def test_doeff_traverse_item_outcomes_stay_inside_the_handler(name: str) -> None
     from doeff_traverse import ItemOutcome
     from doeff_traverse import _handlers as handlers
 
-    read = analyze_handler(getattr(handlers, name)(), name=name)
+    # sequential is a handler value; parallel and parallel_fail_fast are factories (their concurrency).
+    handler = handlers.sequential if name == "sequential" else getattr(handlers, name)()
+    read = analyze_handler(handler, name=name)
     assert ItemOutcome in read.handled
     assert [c.handles.__name__ for c in read.clauses if ItemOutcome in c.emits.effect_types] == []

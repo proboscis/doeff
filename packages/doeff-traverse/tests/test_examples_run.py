@@ -963,7 +963,7 @@ _BUILT_VALUE_PREAMBLE = f"""
 (import doeff_traverse._handlers [sequential fail-handler :as fail_handler])
 
 (defn answer [built]
-  (setv outcome (run (scheduled ((sequential) (fail_handler (try_handler built))))))
+  (setv outcome (run (scheduled (sequential (fail_handler (try_handler built))))))
   (if (hasattr outcome "valid_values") outcome.valid_values outcome))
 """
 

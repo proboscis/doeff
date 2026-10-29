@@ -206,7 +206,7 @@
    mock-llm-backend
    fail_handler
    (lazy_ask :env env)
-   (sequential)]
+   sequential]
   program)))
 (print "Speakers:" (get out "speakers"))
 (print "Opinions valid:" (len (. (get out "opinions") valid_values)))

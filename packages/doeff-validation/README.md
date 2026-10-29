@@ -139,7 +139,7 @@ from doeff import run
 from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 
-run(sequential()(program))                    # 逐次に全部走らせて集める
+run(sequential(program))                    # 逐次に全部走らせて集める
 run(scheduled(parallel(8)(program)))          # 並行に全部走らせて集める
 run(scheduled(parallel_fail_fast(1)(program)))  # 最初の失敗で止める(失敗は 1 件)
 ```

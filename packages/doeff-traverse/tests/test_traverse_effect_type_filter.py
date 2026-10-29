@@ -47,7 +47,7 @@ def _entries(code: CodeType, run_it: Callable[[], object]) -> tuple[int, object]
 @pytest.mark.parametrize(
     ("installed", "types"),
     [
-        (sequential(), COLLECTION),
+        (sequential, COLLECTION),
         (parallel(concurrency=2), COLLECTION),
         (parallel_fail_fast(concurrency=2), COLLECTION),
         (fail_handler, (Fail,)),
@@ -73,7 +73,7 @@ def _asks_then_traverse():
 
 def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
     # traverse の handler は一番内側: Ask は飛ばして外の reader に届く
-    handler = sequential()
+    handler = sequential
     body = _raw(handler).__wrapped__.__code__  # type: ignore[attr-defined] — @do の functools.wraps が置く欄
     entered, result = _entries(
         body, lambda: run(scheduled(with_handlers([reader({"a": 1, "b": 2}), handler], _asks_then_traverse())))

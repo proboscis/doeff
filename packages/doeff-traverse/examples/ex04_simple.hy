@@ -30,7 +30,7 @@
 (setv program (pipeline [1 2 3]))
 (setv body (try_handler program))
 (setv body (fail_handler body))
-(setv body ((sequential) body))
+(setv body (sequential body))
 (setv body (scheduled body))
 
 (setv result (run body))

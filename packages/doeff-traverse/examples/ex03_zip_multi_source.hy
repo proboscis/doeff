@@ -84,7 +84,7 @@
 
 (defn run-it [program]
   (run (scheduled
-    ((sequential) (fail_handler (try_handler program))))))
+    (sequential (fail_handler (try_handler program))))))
 
 (setv items ["hello world"
              "error_embed here"

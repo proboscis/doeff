@@ -38,7 +38,7 @@ def run_with(program, handlers=None):
         for h in handlers:
             body = _program_handler(h)(body)
     body = fail_handler(body)
-    body = sequential()(body)
+    body = sequential(body)
     body = scheduled(body)
     return run(body)
 
@@ -307,7 +307,7 @@ class TestZip:
 
 # Every shipped handler answers Zip with its own branch, so each one is checked.
 _ZIP_HANDLERS = {
-    "sequential": sequential,
+    "sequential": lambda: sequential,
     "parallel": lambda: parallel(3),
     "parallel_fail_fast": lambda: parallel_fail_fast(3),
 }
