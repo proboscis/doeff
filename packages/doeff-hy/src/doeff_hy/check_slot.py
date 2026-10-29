@@ -23,7 +23,7 @@ machine_check_slots.json の 1 つが持つ)。この module は値を持たず�
     (/proc の祖先の列・/proc の無い機体では正本の HOLDER_ENV の印)。
   - 待ちは正本が黙らずに名乗る(`check-slot: … 待つ — 待ち N 秒 / 上限 … 保持 pid …`)。上限を越えたら SlotExpired — main は展開も
     pyright も起こさずに「走れなかった」(exit 2)で終わる(合格にも赤にもしない)。
-  - 正本へ渡す env は、名指しで 1 つずつ読む写し(doeff_hy.env_places.EnvironmentByName)— 正本の take がどの名を読むか
+  - 正本へ渡す env は、名指しで 1 つずつ読む写し(doeff_hy._env_places.EnvironmentByName)— 正本の take がどの名を読むか
     (今は保持者の印・明日は会話の id かもしれない)を doeff は知らない。名を 1 つに絞って写すと、正本が新しい名を読んだ時に
     doeff だけが黙って従わない(盲検 A の反例)。
   - 持つ間、子孫への印(正本の HOLDER_ENV)は env に置かない。子孫(展開の子・pyright・pyright が起こす python)は枠を取らず、置くには
@@ -40,7 +40,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TextIO
 
-from doeff_hy.env_places import EnvironmentByName
+from doeff_hy._env_places import EnvironmentByName
 
 #: 正本の置き場(宿の home からの相対 — doeff-linter の check_slot.rs・code-quality の quality/machine_slot.py と同じ)。
 CANON_UNDER_HOME = Path("dotfiles", "agent", "tests", "machine_check_slots.py")

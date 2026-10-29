@@ -26,7 +26,7 @@ PRELUDE = """
 (import doeff [run EffectBase Some])
 (import doeff_core_effects [Get Put state])
 (import doeff_core_effects.scheduler [scheduled])
-(import doeff_hy.session [session-key])
+(import doeff_hy._session [session-key])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] Probe [EffectBase] #^ str tag)

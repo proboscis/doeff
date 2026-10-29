@@ -9,7 +9,7 @@
 ;;   3. drain の模擬(test_drain の Coord): 置き先が「前の担い手の停止を待つ」間は Updating。
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
 (require doeff-hy.macros [deftest defk val <-])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob RolloutTarget VersionState NotReadyKind UnplacedKind])
 (import doeff_cluster.shared.protocol.inbox [http-request])

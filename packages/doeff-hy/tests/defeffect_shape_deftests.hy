@@ -142,7 +142,7 @@
   ;; 守りの 2 段目(defrecord の ec08cd77 と同じ): effect 型を仕上げる seal_effect は、型が __post_init__ を持つのに展開の __init__ が
   ;; 呼ばない時に読み込みで断る。
   (<- _ (Pure None))
-  (import doeff_hy.record_runtime [seal-effect])
+  (import doeff_hy._record_runtime [seal-effect])
   (defclass [(dataclass :init False :repr False :eq False)] Missed [EffectBase]
     #^ int n
     (defn __init__ [self n] (object.__setattr__ self "n" n) (.__post-init__ self))

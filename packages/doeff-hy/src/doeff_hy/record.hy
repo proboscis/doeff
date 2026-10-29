@@ -282,7 +282,7 @@
       ;; __setattr__ と default-factory・init を切った欄の __init__ が NameError で落ちた(tests/test_nested_definition_scope.py の
       ;; test_class_body_type_methods_read_their_own_class)。
       (setv self-sym (hy.gensym "self")
-            missing 'doeff_hy.record_runtime.FACTORY-DEFAULT
+            missing 'doeff_hy._record_runtime.FACTORY-DEFAULT
             factory (fn [py] `((. (get (. __class__ __dataclass_fields__) ~py) default-factory)))
             ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
             ;; 引数に型の注記は書かない(下の class の form の注 — card ki-ff2c33449b3f)。
@@ -318,12 +318,12 @@
       ;; 読み込みの時に署名を計算しない)。
       `(do
        (defclass [(dataclass :init False :repr False :eq False :kw-only True)] ~name []
-         (setv __doc__ doeff_hy.record_runtime.RECORD-DOC
+         (setv __doc__ doeff_hy._record_runtime.RECORD-DOC
                __doeff-fields__ ~(names-of (lfor s specs (get s "py")))
                __doeff-repr-fields__ ~(names-of shown)
-               __repr__ doeff_hy.record_runtime.record-repr
-               __setattr__ doeff_hy.record_runtime.record-setattr
-               __delattr__ doeff_hy.record_runtime.record-delattr)
+               __repr__ doeff_hy._record_runtime.record-repr
+               __setattr__ doeff_hy._record_runtime.record-setattr
+               __delattr__ doeff_hy._record_runtime.record-delattr)
          ~@(or class-vars [])
          ~@fields
          ~@post-init
@@ -339,13 +339,13 @@
              True NotImplemented))
          (defn __hash__ [~self-sym]
            (hash #(~@(lfor n hashed `(. ~self-sym ~(Symbol n)))))))
-       (doeff_hy.record_runtime.seal-record ~name ~plain ~(bool post-init)))))
+       (doeff_hy._record_runtime.seal-record ~name ~plain ~(bool post-init)))))
   (when (not (and rest (isinstance (get rest 0) Dict)))
     (setv written (when (not static-view) (class-form docstring None rest [])))
     (return (_scoped-definition _hy-compiler name
               [(if (is written None)
                    `(defclass [(dataclass :frozen True :kw-only True)] ~name [] ~@forms)
-                   `(do (import doeff_hy.record_runtime) ~written))]
+                   `(do (import doeff_hy._record_runtime) ~written))]
               :nested-reads True)))
   (setv header (get rest 0)
         fields (cut rest 1 None)
@@ -426,7 +426,7 @@
   (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
   (_scoped-definition _hy-compiler name
     [`(do
-        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy.record_runtime]))
+        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]))
         ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
               [`(defclass [(dataclass :frozen True :kw-only True)] ~name []

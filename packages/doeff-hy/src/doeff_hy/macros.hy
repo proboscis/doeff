@@ -944,7 +944,7 @@ defk {name}: :post type annotation cannot be an empty string.
 (import doeff-hy.match-fields [mangle-match-fields])
 (import doeff-hy.static-view [report-findings])
 ;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
-(import doeff-hy.pytest-items [record-function :as _record-test-function
+(import doeff-hy._pytest-items [record-function :as _record-test-function
                                record-module-binding :as _record-module-binding])
 (import hy.scoping [ScopeGlobal])
 
@@ -2210,7 +2210,7 @@ the effect in the enclosing do-context.
       #(name fn-params run-form)))
 
   ;; The pytest decorators, in source order, as #(kind first second) — the one list that both the
-  ;; decorator forms below and the item record (doeff-hy.pytest-items, agora-redesign #1211) are made from.
+  ;; decorator forms below and the item record (doeff-hy._pytest-items, agora-redesign #1211) are made from.
   (setv item-decorators [])
 
   ;; :interpreters → @pytest.mark.parametrize("doeff_interpreter_name", [...])

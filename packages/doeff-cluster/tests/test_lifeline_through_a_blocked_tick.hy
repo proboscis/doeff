@@ -24,7 +24,7 @@
 (import threading)
 (import httpx)
 (import doeff [with-handlers])
-(import doeff_hy.table [Table table-of])
+(import doeff_hy._table [Table table-of])
 (import doeff_core_effects.effects [SlogEffect])
 (import doeff_core_effects.handlers [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])

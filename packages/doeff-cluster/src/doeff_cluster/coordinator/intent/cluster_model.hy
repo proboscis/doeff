@@ -21,7 +21,7 @@
 (import typing [NamedTuple])
 (import doeff [EffectBase])
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_hy.table [Table table-of])
+(import doeff_hy._table [Table table-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow DurationRow])

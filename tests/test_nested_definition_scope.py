@@ -36,7 +36,7 @@ import hy
 import pytest
 from doeff_core_effects import try_handler
 from doeff_core_effects.scheduler import scheduled
-from doeff_hy.pytest_items import module_record_texts
+from doeff_hy._pytest_items import module_record_texts
 from doeff_hy.static_check import Projection, project
 from doeff_hy_bytecode_guard.records import MACRO_TABLE
 from doeff_traverse import fail_handler, sequential
@@ -648,7 +648,7 @@ _CLASS_BODY_TYPE_CASES = {
         ),
         ("Outer.Span(start=2)", True),
     ),
-    # 展開が書く __repr__ の decorator(doeff_hy.record_runtime)を入れ子の型の本体が読む
+    # 展開が書く __repr__ の decorator(doeff_hy._record_runtime)を入れ子の型の本体が読む
     "defrecord-plain": (
         "(defclass Outer [] (defrecord Span #^ int start))",
         lambda mod: repr(mod.Outer.Span(start=3)),

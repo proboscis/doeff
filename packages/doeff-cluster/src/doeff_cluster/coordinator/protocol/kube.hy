@@ -22,7 +22,7 @@
 (import doeff_hy.wire [parse Malformed])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.frozen [freeze-json-text thaw-json])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])

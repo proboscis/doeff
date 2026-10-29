@@ -39,7 +39,7 @@
                                                group-limit-from-json needs-override-from-json])
 (import doeff_cluster.coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster.shared.core.detached_rules [group-limit-spec])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 
 (setv BOARD "board/")
 (setv PLACEMENT "placement/")

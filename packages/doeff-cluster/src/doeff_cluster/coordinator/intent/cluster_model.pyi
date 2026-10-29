@@ -8,8 +8,8 @@ from functools import partial as partial
 from typing import NamedTuple as NamedTuple
 from doeff import EffectBase as EffectBase
 from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_hy.table import Table as Table
-from doeff_hy.table import table_of as table_of
+from doeff_hy._table import Table as Table
+from doeff_hy._table import table_of as table_of
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request

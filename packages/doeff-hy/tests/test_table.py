@@ -1,4 +1,4 @@
-"""書き換えない表 Table(doeff_hy.table)の検 — 古い表は書きの後も古い行を読み、基の作り直しの後も変わらない(agora-redesign #2253)。
+"""書き換えない表 Table(doeff_hy._table)の検 — 古い表は書きの後も古い行を読み、基の作り直しの後も変わらない(agora-redesign #2253)。
 
 失敗ケース: 基をその場で書き換える表(下の _InPlaceTable)だと、古い表を持つ読み手が新しい行を読む — 同じ検が赤になる。
 """
@@ -9,7 +9,7 @@ from typing import NamedTuple
 import hy  # noqa: F401  # .hy の module の import hook
 import pytest
 
-from doeff_hy.table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
+from doeff_hy._table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
 
 
 def _table(n: int) -> Table[int]:
@@ -121,7 +121,7 @@ def test_the_counterexample_a_table_without_bool_reads_true_when_empty() -> None
 
 
 def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     table = _table(5)
     draft = draft_of(table)
@@ -138,14 +138,14 @@ def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
 
 
 def test_a_draft_without_writes_freezes_to_the_same_table() -> None:
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     table = _table(3)
     assert draft_of(table).freeze() is table
 
 
 def test_a_draft_takes_many_writes_in_one_freeze() -> None:
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     # 一覧の拍の形: 空の表へ数万件を書き、書いた行を同じ拍の中で読み直す。
     draft = draft_of(table_of(()))
@@ -157,7 +157,7 @@ def test_a_draft_takes_many_writes_in_one_freeze() -> None:
 
 
 def test_removing_then_putting_back_in_a_draft_restores_the_row() -> None:
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     draft = draft_of(_table(2))
     draft.remove("k0")
@@ -190,7 +190,7 @@ def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None
 
 
 def test_rows_follow_the_keys_after_writes_and_removals() -> None:
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     table = _table(5).with_writes((TableWrite(key="k1", value=100), TableWrite(key="k2", value=None), TableWrite(key="x", value=7)))
     assert sorted(table.rows()) == sorted([0, 100, 3, 4, 7])
@@ -254,7 +254,7 @@ def _random_writes(seed: int, keys: int, count: int) -> list[tuple[str, int | No
 def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
     # agora-redesign #2412: with-writes と下書きの freeze は書きを 1 度に当てる。基の大きさ・書きの数を変え(作り直しの前と後の両方)、
     # どの表も、列の順に 1 件ずつ当てた dict と同じ行を持つ。
-    from doeff_hy.table import draft_of
+    from doeff_hy._table import draft_of
 
     for seed in range(20):
         for base_rows, count in ((0, 10), (40, 30), (1000, 50), (200, 400)):

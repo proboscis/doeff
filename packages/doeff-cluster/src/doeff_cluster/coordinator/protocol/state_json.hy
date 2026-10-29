@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of board-tally-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 (import doeff_cluster.shared.intent.detached_model [GroupLimit])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 

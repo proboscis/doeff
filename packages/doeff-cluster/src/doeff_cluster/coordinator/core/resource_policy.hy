@@ -28,7 +28,7 @@
 (import dataclasses [replace])
 (import json)
 (import typing [NoReturn])
-(import doeff_hy.table [Table TableWrite draft-of])
+(import doeff_hy._table [Table TableWrite draft-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState NeedsOverride ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])

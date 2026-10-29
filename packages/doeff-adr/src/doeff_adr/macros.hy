@@ -3,8 +3,8 @@
 (require doeff-hy.macros [deftest])
 
 (import hy)
-;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は doeff_hy/pytest_items.py)
-(import doeff-hy.pytest-items [record-function :as _record-test-function])
+;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は doeff_hy/_pytest_items.py)
+(import doeff-hy._pytest-items [record-function :as _record-test-function])
 
 (defn _kw-text [x]
   (setv text (str x))

@@ -142,7 +142,7 @@ TRAVERSE_STATIC_NAMES: tuple[str, ...] = ("traverse_item",)
 #: 読む時だけ置く。名に `_doeff_` を付けるのは、書き手の書いた Put / Some の import と 1 つの名を分け合わないため — 実行時の
 #: 展開も同じ別名を引く(expansion_names.py が別名の綴りと import の唯一の定義元)。
 SESSION_STATIC_IMPORTS: str = (
-    import_source(("Some", "Put")) + "from doeff_hy.session import session_key as _doeff_session_key\n"
+    import_source(("Some", "Put")) + "from doeff_hy._session import session_key as _doeff_session_key\n"
 )
 
 #: defmcp-tool の型検査のための展開が参照する名 — 展開の中では `_doeff_<名>` で引く(macros.hy の defmcp-tool)。

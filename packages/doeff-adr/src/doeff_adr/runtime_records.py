@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from _pytest.mark.structures import Mark as PytestMark
 from _pytest.mark.structures import ParameterSet, get_unpacked_marks
-from doeff_hy.pytest_items import (
+from doeff_hy._pytest_items import (
     Decorator,
     FunctionItem,
     LiteralValue,

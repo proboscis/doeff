@@ -16,7 +16,7 @@ from _pytest.fixtures import FixtureDef, FixtureManager, FuncFixtureInfo
 from _pytest.mark.structures import get_unpacked_marks
 from _pytest.nodes import Node
 from _pytest.python import Function, FunctionDefinition, Metafunc
-from doeff_hy.pytest_items import FunctionItem, Parametrize
+from doeff_hy._pytest_items import FunctionItem, Parametrize
 
 from doeff_adr.item_cache import FixtureRecord
 

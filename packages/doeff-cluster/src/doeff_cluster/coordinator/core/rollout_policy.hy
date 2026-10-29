@@ -37,7 +37,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
-(import doeff_hy.table [Table])
+(import doeff_hy._table [Table])
 (import math)
 (import doeff_cluster.coordinator.intent.cluster_model [RolloutDrift RolloutHistory RolloutRow RolloutSpec RolloutStatus RolloutStuck RolloutTarget TargetView
                                                        DeploymentSeen DeploymentUnreadable])

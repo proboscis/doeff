@@ -389,7 +389,7 @@ def row_is_current(row: BundleRow, module: str, stat: FileStat | None) -> bool:
 def default_cache_dir() -> Path:
     """既定の置き場 — $DOEFF_HY_CHECK_CACHE が名指す dir(走りをまたいで残る dir へ向ける呼び手のため — agora-redesign
     #3863)、無ければ XDG の cache の下(消費 repo の木を汚さない)。"""
-    from doeff_hy import env_places
+    from doeff_hy import _env_places as env_places
 
     configured = env_places.check_cache_setting()
     return Path(configured) if configured else env_places.cache_home() / "doeff-hy-check"

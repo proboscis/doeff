@@ -74,7 +74,7 @@ from hy.models import Object
 
 from doeff_hy.binding_forms import Finding, ModuleScope
 from doeff_hy.check_slot import SlotExpired, slot_label, take_slot
-from doeff_hy.env_places import (
+from doeff_hy._env_places import (
     PYRIGHT_THREADS_ENV,
     conversation_setting,
     pyright_threads_setting,
@@ -267,16 +267,16 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
 
 #: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
 #: import を外す(pyright strict で doeff_hy.quoted_forms の stub 無し・doeff_hy.declarations の重複の import に
-#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。doeff_hy.pytest_items は pytest の
+#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。doeff_hy._pytest_items は pytest の
 #: item の記録(deftest・defadr・defsemgrep・pytestmark が足す — 収集のための記帳)だけが使う(stub 無しの赤 — #2214)。
 BOOKKEEPING_MODULES: frozenset[str] = frozenset(
-    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record", "doeff_hy.pytest_items"}
+    {"doeff_hy.declarations", "doeff_hy.quoted_forms", "doeff_hy.record", "doeff_hy._pytest_items"}
 )
 
 
 def _bookkeeping_statement(statement: ast.stmt) -> bool:
     """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)`、pytest の item の記録
-    `doeff_hy.pytest_items.record_at_import(globals(), …)`(doeff_hy/pytest_items.py の `_record_form` が足す — 収集の
+    `doeff_hy._pytest_items.record_at_import(globals(), …)`(doeff_hy/_pytest_items.py の `_record_form` が足す — 収集の
     ための記帳・agora-redesign #2214)と、Hy が `(require …)` を compile した残り `hy.macros.require(…)`
     (macro の取り込みは展開の時に済んでいる)。"""
     match statement:
@@ -287,7 +287,7 @@ def _bookkeeping_statement(statement: ast.stmt) -> bool:
         case ast.Expr(
             value=ast.Call(
                 func=ast.Attribute(
-                    value=ast.Attribute(value=ast.Name(id="doeff_hy"), attr="pytest_items"),
+                    value=ast.Attribute(value=ast.Name(id="doeff_hy"), attr="_pytest_items"),
                     attr="record_at_import",
                 )
             )

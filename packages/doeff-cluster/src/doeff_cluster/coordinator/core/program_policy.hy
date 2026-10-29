@@ -10,7 +10,7 @@
 ;;; PROGRAM-GRACE-MS を過ぎたら掃除する(送り手は Program を先に置いてから行を書くので、その間に消さない)。
 (require doeff-hy.macros [deff])
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import re)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow ProgramStored ErrorReply])
 (import doeff_cluster.shared.core.remote_rules [program-sha])

@@ -56,7 +56,7 @@
         "packages/doeff-hy/src/doeff_hy/binding_forms.py",
         "packages/doeff-hy/src/doeff_hy/match_fields.py",
         "packages/doeff-hy/src/doeff_hy/static_check.py",
-        "packages/doeff-hy/src/doeff_hy/pytest_items.py",
+        "packages/doeff-hy/src/doeff_hy/_pytest_items.py",
         "packages/doeff-hy/src/doeff_hy/quoted_forms.py",
         "packages/doeff-hy/src/doeff_hy/static_stub.py",
         "packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py",

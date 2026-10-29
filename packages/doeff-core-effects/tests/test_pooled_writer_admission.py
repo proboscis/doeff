@@ -427,7 +427,7 @@ class AcquireObserver:
 @do
 def admission_handle(key):
     from doeff_core_effects.effects import Get
-    from doeff_hy.session import session_key
+    from doeff_hy._session import session_key
 
     stored = yield Get(
         session_key(
@@ -468,7 +468,7 @@ def test_cancel_is_confirmed_while_waiting_for_admission(batched, gate):
 @do
 def confirmed_pool_cancel(batched, gate, observer):
     from doeff_core_effects.effects import Get
-    from doeff_hy.session import session_key
+    from doeff_hy._session import session_key
 
     first = yield Spawn(transaction(None, gate.program(), batched))
     yield until(gate.waiting)

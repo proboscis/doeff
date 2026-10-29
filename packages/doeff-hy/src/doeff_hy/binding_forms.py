@@ -565,7 +565,7 @@ class _Walker:
                     Expression(
                         [
                             Symbol("import"),
-                            Expression([Symbol("."), Symbol("doeff_hy"), Symbol("lazy")]),
+                            Expression([Symbol("."), Symbol("doeff_hy"), Symbol("_lazy")]),
                             List([Symbol("LazyCell"), Keyword("as"), Symbol("_doeff_LazyCell")]),
                         ]
                     ),
@@ -1244,7 +1244,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
             Expression(
                 [
                     Symbol("import"),
-                    Expression([Symbol("."), Symbol("doeff_hy"), Symbol("lazy")]),
+                    Expression([Symbol("."), Symbol("doeff_hy"), Symbol("_lazy")]),
                     List(
                         [
                             Symbol("with_module_lazy"),
@@ -1294,7 +1294,7 @@ def module_declaration(bindings: ModuleBindings, form: Expression, static: bool)
 
 def module_lazy_reference(symbol: Symbol) -> Object:
     """本体の中の module の lazy val の参照を、値の取り出しの式にする(効果を使わないのでどこでも書ける)。"""
-    # ((. (get (get (globals) "__doeff_module_lazies__") "NAME") get)) — doeff_hy.lazy.ModuleLazy.get
+    # ((. (get (get (globals) "__doeff_module_lazies__") "NAME") get)) — doeff_hy._lazy.ModuleLazy.get
     table = Expression([Symbol("get"), Expression([Symbol("globals")]), hy.models.String("__doeff_module_lazies__")])
     entry = Expression([Symbol("get"), table, hy.models.String(hy.mangle(str(symbol)))])
     built = Expression([Expression([Symbol("."), entry, Symbol("get")])])

@@ -1,11 +1,11 @@
 """収集記録のJSON境界が実値の型を確かめる反例(#1468)。"""
 
 import pytest
-from doeff_hy.pytest_items import (
+from doeff_hy import MalformedRecord
+from doeff_hy._pytest_items import (
     Dynamic,
     FunctionItem,
     LiteralValue,
-    MalformedRecord,
     Mark,
     ModuleMarks,
     OpaqueValue,

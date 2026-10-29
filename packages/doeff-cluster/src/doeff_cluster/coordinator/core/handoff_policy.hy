@@ -20,7 +20,7 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import hashlib)
 (import json)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

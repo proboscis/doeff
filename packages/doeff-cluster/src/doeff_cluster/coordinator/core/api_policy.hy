@@ -55,7 +55,7 @@
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster.coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
-(import doeff_hy.table [TableWrite draft-of])
+(import doeff_hy._table [TableWrite draft-of])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached outbox-read outbox-ack])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])

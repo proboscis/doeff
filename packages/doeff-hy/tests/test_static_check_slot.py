@@ -28,7 +28,7 @@ from types import ModuleType
 
 import pytest
 from doeff_hy.check_slot import CANON_UNDER_HOME, MARK, MODULE_KEY_PREFIX, SlotHeld, canon_module, take_slot
-from doeff_hy.env_places import cache_home
+from doeff_hy._env_places import cache_home
 
 #: 機体の正本(検の process の home の下 — 検体の home へ写す元)。
 CANON = Path.home() / CANON_UNDER_HOME
