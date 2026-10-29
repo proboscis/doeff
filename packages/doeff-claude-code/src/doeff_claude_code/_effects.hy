@@ -15,9 +15,9 @@
 (import json)
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenJson freeze-json])
-(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
+(import doeff_claude_code._values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
                                   FreshSession ResumeSession ForkSession LentCredential PrintContent])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
+(import doeff_claude_code._lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
 
 
 ;; --- 成功の戻り値 ---------------------------------------------------------------------------------

@@ -25,12 +25,12 @@
 (import threading)
 (import time)
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
-(import doeff_claude_code.effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
-(import doeff_claude_code.lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
+(import doeff_claude_code._effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
+(import doeff_claude_code._lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
 (import doeff_hy.json_lines [jsonl-lines])
-(import doeff_claude_code.dialogue [limit-hit-after print-once-stdin])
-(import doeff_claude_code.argv [print-once-argv print-once-env])
-(import doeff_claude_code.credential_home [open-credential-home close-credential-home])
+(import doeff_claude_code._dialogue [limit-hit-after print-once-stdin])
+(import doeff_claude_code._argv [print-once-argv print-once-env])
+(import doeff_claude_code._credential_home [open-credential-home close-credential-home])
 
 ;; 1 回きりの print の process を待つ thread(呼び 1 つに 1 本 — 同時の数は呼び手の判定の数が決める)。
 (val PRINT-THREADS (ThreadPerCall))

@@ -792,7 +792,7 @@ _UNKNOWN = re.compile(r"is unknown|could not be resolved|unknown import symbol")
 
 @dataclass(frozen=True)
 class UsedModule:
-    """使い手が import する 1 つの module(package の下の名)と、その名の並び(Hy の綴り)— 使い手の名の probe を組む材料。"""
+    """使い手が import する 1 つの module(package の下の名・空なら package の入口)と、その名の並び(Hy の綴り)— 使い手の名の probe を組む材料。"""
 
     module: str
     names: tuple[str, ...]
@@ -800,7 +800,7 @@ class UsedModule:
 
 def users_probe(package: str, used: tuple[UsedModule, ...]) -> str:
     """使い手の名を 1 つずつ別の名に束ねる検の module(束ねた名の型が Unknown なら、その行に strict の赤が出るように)。"""
-    imports = [f"(import {package}.{u.module} [{' '.join(u.names)}])" for u in used]
+    imports = [f"(import {'.'.join(filter(None, (package, u.module)))} [{' '.join(u.names)}])" for u in used]
     names = [name for u in used for name in u.names]
     bindings = [f"(setv used-{index} {name})" for index, name in enumerate(names)]
     return "\n".join([*imports, "", *bindings, ""])

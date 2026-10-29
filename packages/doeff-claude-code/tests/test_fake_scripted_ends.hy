@@ -7,19 +7,17 @@
 (import doeff_core_effects.handlers [reader])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_core_effects.scheduler [Spawn])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
-(import doeff_claude_code.lines [FRESH-MARK AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
-                                 InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT ModelUsageGap])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
+(import doeff_claude_code [AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init InputFate Usage RateLimit AccountLimitHit ModelUsageGap]
+        doeff_claude_code._lines [FRESH-MARK RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT])
 (import dataclasses [replace])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound
-                                   SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning
-                                   ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
-(import doeff_claude_code.faults [ClaudeForgetSession])
+(import doeff_claude_code [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
+(import doeff_claude_code [ClaudeForgetSession])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
 (import tests.scenario_steps [TurnRecord read-until read-to-end read-to-tool-start new-id typed kinds-of])
-(import doeff_claude_code [lines])
-(import doeff_claude_code.dialogue :as dialogue)
-(import doeff_claude_code.dialogue [DialogueState])
+(import doeff_claude_code [_lines :as lines])
+(import doeff_claude_code._dialogue :as dialogue)
+(import doeff_claude_code._dialogue [DialogueState])
 
 (val SPEC (ClaudeSessionSpec :home (ClaudeHome "fake-home") :cwd "/work"))
 (val USAGE (Usage :input-tokens 11 :output-tokens 22 :cache-creation-input-tokens 3 :cache-read-input-tokens 4))

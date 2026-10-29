@@ -2,17 +2,14 @@
 (require doeff-hy.macros [deftest val <-])
 (import json)
 (import pytest)
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
-                                  AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput
-                                  LentCredential])
-(import doeff_claude_code.argv [launch-argv launch-key cold-resume-argv transcript-path process-env])
-(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision])
-(import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
-(import doeff_claude_code.lines [classify-record parse-record Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent
-                                 RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback CompactBoundary CompactTrigger
-                                 recorded-cost CostMark ModelUsage])
-(import doeff_claude_code.values [Allow])
-(import doeff_claude_code [lines])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec ClaudeTurn BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession TurnInput LentCredential])
+(import doeff_claude_code._argv [launch-argv launch-key cold-resume-argv transcript-path process-env])
+(import doeff_claude_code._decision [SessionView Refuse Reuse Launch start-decision])
+(import doeff_claude_code [SessionIdInUse SessionNotFound TurnInFlight])
+(import doeff_claude_code [Init AssistantMessage ToolCall ToolResult InputFate PermissionRequested TaskEvent RateLimit TurnResult PartialMessage Other ControlResponse Usage StopHookFeedback CompactBoundary CompactTrigger ModelUsage]
+        doeff_claude_code._lines [classify-record parse-record recorded-cost CostMark])
+(import doeff_claude_code [Allow])
+(import doeff_claude_code [_lines :as lines])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv HOME (ClaudeHome "/h/.claude" {"PATH" "/bin"}))
@@ -530,7 +527,7 @@
   ;; card ki-aeae6f9e643d: CLI は自動の圧縮を始めると、compact_boundary(終わり)の前に system/status の行(status = compacting)を
   ;; 1 つ出す(CLI 2.1.294 の stream-json の書き手 — 替え玉の CLI tests/stub_cli/claude.hy が #4189 で写した形)。名前だけの Other に
   ;; 捨てると、上の層は圧縮の始まりを知れず、会話の画面は圧縮の 2 分間 何も出さない。ほかの状態(requesting など)は今までどおり Other。
-  (import doeff_claude_code.lines [CompactStarted])
+  (import doeff_claude_code [CompactStarted])
   (assert (= (classify-record {"type" "system" "subtype" "status" "status" "compacting" "session_id" "s"})
              (CompactStarted)))
   (assert (= (classify-record {"type" "system" "subtype" "status" "status" "requesting" "session_id" "s"})
@@ -540,7 +537,8 @@
   ;; card ki-8239be27d5f6: CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず system/status の行(status = JSON の null)を出し、圧縮を
   ;; 試みた時は compact_result(success / failed)と失敗の文 compact_error を添える(stream-json の書き手 = sdk_status の metadata の
   ;; compactResult・compactError)。名前だけの Other に捨てると、上の層は失敗・中断した圧縮を記録できない(成功だけが compact_boundary を持つ)。
-  (import doeff_claude_code.lines [CompactEnded CompactOutcome COMPACT-ABORTED-ERROR])
+  (import doeff_claude_code [CompactEnded CompactOutcome]
+          doeff_claude_code._lines [COMPACT-ABORTED-ERROR])
   (defn status-null [#** extra] (| {"type" "system" "subtype" "status" "status" None "session_id" "s"} extra))
   (assert (= (classify-record (parse-record (json.dumps (status-null :compact_result "success"))))
              (CompactEnded :outcome CompactOutcome.SUCCEEDED)))

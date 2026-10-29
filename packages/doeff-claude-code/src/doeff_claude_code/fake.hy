@@ -19,9 +19,9 @@
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
-(import doeff_claude_code.values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
+(import doeff_claude_code._values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
                                   IMAGE-MIMES LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested tap-lines
+(import doeff_claude_code._lines [ClaudeStreamLine Init AssistantMessage PartialMessage ToolCall ToolAnswer ToolResult InputFate PermissionRequested tap-lines
                                  TaskEvent TurnResult Completed Failed Interrupted BackendLost ClaudeLineKind ClaudeTurnEnd Usage
                                  ModelWindow ModelUsage model-cost-gap merged-windows DeltaKind RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT StopHookFeedback AccountRefusalHit CompactStarted CompactEnded CompactOutcome CompactBoundary
@@ -29,8 +29,8 @@
                                  ModelRefusalHit STOP-REASON-REFUSAL stderr-tail-within CallClosed])
 (import doeff_hy.json_lines [jsonl-lines])
 (import doeff [run])
-(import doeff_claude_code.dialogue [limit-hit-after refusal-hit-after model-refusal-after])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
+(import doeff_claude_code._dialogue [limit-hit-after refusal-hit-after model-refusal-after])
+(import doeff_claude_code._effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
@@ -38,9 +38,9 @@
                                    UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeLiveLimitExceeded
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
                                    HomeCredentialSession ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
+(import doeff_claude_code._faults [ClaudeDropProcess ClaudeForgetSession ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess
                                   NoLiveProcess StopReason])
-(import doeff_claude_code.argv [launch-key])
+(import doeff_claude_code._argv [launch-key])
 
 (setv QUICK-TURN-SECONDS 0.1)
 ;; 仮想の時計は datetime(マイクロ秒の刻み)なので、秒の小数の足し算の端数で「期限の直前」に留まらないように

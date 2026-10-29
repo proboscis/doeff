@@ -2,7 +2,7 @@
 ;; 層 2 の行の型 → 層 3 の出来事を作る 1 か所(handlers/headless.hy の event-builders-of)を直に読む — CLI も session host も使わない。
 (require doeff-hy.macros [deftest val])
 (import datetime [datetime timezone])
-(import doeff_claude_code.lines [PartialMessage DeltaKind])
+(import doeff_claude_code [PartialMessage DeltaKind])
 (import doeff_agents.effects [AgentThinkingStartedEvent AgentThinkingDeltaEvent])
 (import doeff_agents.handlers.headless [event-builders-of])
 

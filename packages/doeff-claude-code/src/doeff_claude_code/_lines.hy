@@ -17,7 +17,7 @@
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap FrozenJson freeze-json frozen-json-object])
 (import doeff_hy.json_lines [jsonl-lines whole-lines-end])
-(import doeff_claude_code.values [ClaudeTurn])
+(import doeff_claude_code._values [ClaudeTurn])
 
 
 ;; --- 消費の token ------------------------------------------------------------------------------

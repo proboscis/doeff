@@ -17,14 +17,14 @@ from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 # 使い手の repo の main が import する名(module ごと・2026-10-09 の数え — 使い手が型の宣言の写しを消すと、これらの名をこの package の
-# .pyi から読む・#4257)。
+# .pyi から読む・#4257)。module "" は入口 doeff_claude_code(`_` で隠した module の名を出し直す — 行末の注は元の module)。
 USED = (
     UsedModule(
-        "values",
+        "",  # values
         ("FreshSession", "ResumeSession", "ForkSession", "ClaudeHome", "ClaudeSessionSpec", "TurnInput", "LentCredential"),
     ),
     UsedModule(
-        "effects",
+        "",  # effects
         (
             "ClaudeStartTurn",
             "ClaudeInjectInput",
@@ -49,11 +49,11 @@ USED = (
     ),
     UsedModule("fake", ("FakeReply", "FakeClaudeWorld", "StopHookRejection")),
     UsedModule(
-        "faults",
+        "",  # faults
         ("ClaudeDropProcess", "ClaudeForgetSession", "ClaudeLiveProcess", "LiveProcess", "NoLiveProcess", "StopReason"),
     ),
     UsedModule(
-        "lines",
+        "",  # lines
         ("Usage", "ModelWindow", "ModelUsage", "ModelUsageGap", "AccountRefusalHit", "AccountLimitHit", "CompactBoundary", "CompactTrigger"),
     ),
 )

@@ -23,15 +23,15 @@
 (import doeff_core_effects.scheduler [scheduled Spawn Wait])
 ;; 故障の注入だけは層 2 のテスト用の effect を使う(公開 effect ではない — process を消す手段が公開面に無いため)。事前起動した runtime
 ;; を最初のターンが使い回したか(層 2 の起動回数)を読む effect も同じ(公開面は process を見せない)。
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess])
+(import doeff_claude_code [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess])
 ;; fake の組に渡した env と settings が層 2 へ届く起動の宣言に載るかを見る口も、層 2 の effect を写す(#3327 — 公開面に宣言が出ないため)。
-(import doeff_claude_code.effects [ClaudeStartTurn])
+(import doeff_claude_code [ClaudeStartTurn])
 ;; 待たせた入力の手番を起こせない形(層 2 の LaunchFailed)を層 2 の代わりに答える口も、層 2 の答えの型を写す(#4207)。
-(import doeff_claude_code.effects [LaunchFailed])
+(import doeff_claude_code [LaunchFailed])
 ;; 入力を名指した止めを、層 2 が判断した事(adapter が層 2 へ ClaudeInterruptTurn を出し、層 2 が InputAlreadyRead で答えた)を見る口も、
 ;; 層 2 の effect と答えの型を写す(公開面は止めたか読まれていたかを区別しない — 設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 B)。
-(import doeff_claude_code.effects [ClaudeInterruptTurn InputAlreadyRead])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec TurnInput])
+(import doeff_claude_code [ClaudeInterruptTurn InputAlreadyRead])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec TurnInput])
 (import doeff_agents.handlers.headless [HeadlessSession start-waiting])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
@@ -1746,7 +1746,7 @@
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
   (import doeff_claude_code.fake [FakeClaudeWorld])
-  (import doeff_claude_code.values [ClaudeHome])
+  (import doeff_claude_code [ClaudeHome])
   (setv token "sk-ant-oat01-never-printed" work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (assert (in TURN-CREDENTIAL-ENV TURN-AUTH-ENV-KEYS))
@@ -1799,8 +1799,8 @@
   (import doeff_agents.effects [LaunchEffect])
   (import doeff_agents.effects._handler-effects [refuse-turn-capabilities])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
-  (import doeff_claude_code.argv [launch-argv])
-  (import doeff_claude_code.values [AutocompactAuto AutocompactTokens FreshSession])
+  (import doeff_claude_code._argv [launch-argv])
+  (import doeff_claude_code [AutocompactAuto AutocompactTokens FreshSession])
   (val config (HeadlessClaudeConfig (ClaudeHome (str (/ tmp-path "home")) {"PATH" "/usr/bin"})))
   (for [#(stated flag) [#((AutocompactTokens 600000) ["--autocompact" "600000"]) #((AutocompactAuto) ["--autocompact" "auto"]) #(None [])]]
     (let [spec (spec-of config (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path :autocompact stated))
@@ -1824,7 +1824,7 @@
   (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_claude_code.fake [FakeClaudeWorld])
-  (import doeff_claude_code.values [ClaudeHome])
+  (import doeff_claude_code [ClaudeHome])
   (val oauth "sk-ant-oat01-never-printed-3753")
   (val github "ghs-never-printed-3753")
   (val work (/ tmp-path "work"))
@@ -1858,7 +1858,7 @@
   (import doeff_agents.effects [LaunchEffect TurnCredential HomeTurnCredential])
   (import doeff_agents.handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_claude_code.fake [FakeClaudeWorld])
-  (import doeff_claude_code.values [ClaudeHome])
+  (import doeff_claude_code [ClaudeHome])
   (val oauth "sk-ant-oat01-never-printed-policy")
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
@@ -2143,7 +2143,7 @@
   ;; 層 2 へ渡る起動の宣言(ClaudeSessionSpec)の permission がその値になる — 許可を設定 dir の settings.json に任せる形(HomeSettings)を
   ;; 本番の adapter と模擬の fake に同じく渡すため。渡さなければ BypassAll(今のまま)。
   (import doeff_agents [claude-agent-adapter-handler fake-claude-process-layer-handler fake-claude-agent-runtime-handlers])
-  (import doeff_claude_code.values [BypassAll HomeSettings])
+  (import doeff_claude_code [BypassAll HomeSettings])
   (val home (str (/ tmp-path "home")))
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
@@ -2180,7 +2180,7 @@
   ;; agora-redesign #3983: 層 2(doeff-claude-code)の手番の終わりが運ぶ「口座の限度に当たった」事実(AccountLimitHit)を、層 3 の
   ;; AgentTurnCompleted・AgentTurnFailed の欄 account_limit(AgentAccountLimit — 限度の種類・戻る刻・限度の文)へ写す。当たっていない
   ;; 終わりは None。失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(配る担当)が「口座が尽きた」と知れない。
-  (import doeff_claude_code.lines [AccountLimitHit Completed Failed])
+  (import doeff_claude_code [AccountLimitHit Completed Failed])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [AgentAccountLimit AgentTurnCompleted AgentTurnFailed])
   (val hit (AccountLimitHit :window "five_hour" :resets-at 1791342000 :text "You've hit your session limit · resets 7am (UTC)"))
@@ -2200,7 +2200,7 @@
   ;; AgentTurnCompleted・AgentTurnFailed の欄 account_refusal(AgentAccountRefusal)へ写す。断られていない終わりは None。
   ;; 失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(turn-host)が「この口座は使えない」と知れずに cli-failed で落とし、口座を
   ;; 替えなかった(本番 2026-10-08 22:32 の口座 cryptic-2)。
-  (import doeff_claude_code.lines [AccountRefusalHit Completed Failed])
+  (import doeff_claude_code [AccountRefusalHit Completed Failed])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [AgentAccountRefusal AgentTurnCompleted AgentTurnFailed])
   (val hit (AccountRefusalHit :error "oauth_org_not_allowed" :text REFUSAL-TEXT))
@@ -2230,7 +2230,7 @@
   ;; AgentTurnCompleted・AgentTurnFailed の欄 model_refusal(AgentModelRefusal)へ写す。断られていない終わりは None。口座の断りの欄とは別。
   ;; 失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(turn-host)が「この transcript はこの model で続けられない」と知れずに cli-failed で
   ;; 落とし、次のターンも同じ transcript を続けて同じ断りを繰り返した(本番 2026-10-20 の Fable 5.1 の reasoning_extraction)。
-  (import doeff_claude_code.lines [ModelRefusalHit Completed Failed])
+  (import doeff_claude_code [ModelRefusalHit Completed Failed])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [AgentModelRefusal AgentTurnCompleted AgentTurnFailed])
   (val hit (ModelRefusalHit :category "reasoning_extraction" :model "claude-fable-5-1" :text "flagged"))
@@ -2250,7 +2250,7 @@
   ;; AgentTurnFailed.provider_capacity(AgentProviderCapacity — 会話の宣言の model・CLI の文)へ写す。ほかの status の失敗・status の無い
   ;; 失敗・口座の限度の失敗(429)は混雑と言わない。失敗ケース(前の形): 欄は codex の終わりだけが持ち、claude の 529 は上の層(turn-host)が
   ;; 一時の混雑と知れずに cli-failed で落とした(本番 2026-10-24 09:26〜09:30 JST に 8 本)。
-  (import doeff_claude_code.lines [AccountLimitHit Failed])
+  (import doeff_claude_code [AccountLimitHit Failed])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [AgentProviderCapacity AgentTurnFailed])
   (val busy (end-of (Failed :detail OVERLOADED-TEXT :api-error-status 529) "ctx-1" "claude-opus-5-5"))
@@ -2282,7 +2282,7 @@
 (deftest test-the-exit-code-and-the-stderr-tail-of-a-turn-end-reach-the-agent-turn-end
   ;; 層 2 の Failed・BackendLost の欄 exit-code・stderr-tail を、層 3 の AgentTurnFailed・AgentTurnLost の欄 exit_code・stderr_tail へ
   ;; そのまま写す。欄の無い終わり(既定)は None のまま。
-  (import doeff_claude_code.lines [BackendLost Failed])
+  (import doeff_claude_code [BackendLost Failed])
   (import doeff_agents.handlers.headless [end-of])
   (val failed (end-of (Failed :detail "capped" :exit-code 1 :stderr-tail "boom") "ctx-1"))
   (assert (isinstance failed AgentTurnFailed) failed)
@@ -2304,7 +2304,7 @@
 (deftest test-the-usage-of-a-stopped-turn-reaches-the-agent-turn-interrupted
   ;; 層 2 の Interrupted の usage・額・model ごとの使用量と照合の訳を、層 3 の AgentTurnInterrupted の欄 usage・model_usage・
   ;; model_usage_gap へ写す。持たない止め(既定)は None・None・NOT_NAMED のまま。
-  (import doeff_claude_code.lines [Interrupted Usage ModelUsage])
+  (import doeff_claude_code [Interrupted Usage ModelUsage])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [ModelUsageGap])
   (val used (ModelUsage "claude-opus-5-5" :input-tokens 2 :output-tokens 30 :cost-usd 0.25))
@@ -2325,7 +2325,7 @@
 (deftest test-the-cache-write-lifetimes-of-a-turn-end-reach-the-agent-turn-usage
   ;; 層 2 の手番の終わりの usage(手番の和)と最後の呼びの usage の寿命の内訳を、層 3 の AgentTurnUsage の欄 cache_write_5m_tokens・
   ;; cache_write_1h_tokens へそのまま写す。内訳を名乗らない usage は両欄 None のまま(どちらの寿命も発明しない)。
-  (import doeff_claude_code.lines [Completed Usage])
+  (import doeff_claude_code [Completed Usage])
   (import doeff_agents.handlers.headless [end-of])
   (val split (Usage :input-tokens 6 :output-tokens 30 :cache-creation-input-tokens 700 :cache-read-input-tokens 9000
                     :cache-creation-5m-input-tokens 200 :cache-creation-1h-input-tokens 500))
@@ -2359,9 +2359,9 @@
 
 (deftest test-a-waiting-input-that-cannot-start-carries-the-exit-code-and-the-stderr-tail
   ;; 待たせた入力の手番を起こせなかった(層 2 の LaunchFailed — init の行の前に process が降りた)時の失敗の終わり AgentTurnFailed にも、
-  ;; 終了 code と stderr の末尾が欄で載る。stderr の末尾は層 2 の終わりと同じ上限(doeff_claude_code.lines.STDERR-TAIL-CHARS 字)の内 —
+  ;; 終了 code と stderr の末尾が欄で載る。stderr の末尾は層 2 の終わりと同じ上限(doeff_claude_code._lines.STDERR-TAIL-CHARS 字)の内 —
   ;; 越えた分は頭を捨てて末尾を残す。文 detail は今のまま。
-  (import doeff_claude_code [lines :as claude-lines])
+  (import doeff_claude_code [_lines :as claude-lines])
   (val limit claude-lines.STDERR-TAIL-CHARS)
   (val tail (* "t" limit))
   (for [#(exit-code stderr expected) [#(1 "boom" "boom") #(137 (+ (* "h" 500) tail) tail) #(None "" "")]]
@@ -2476,7 +2476,7 @@
   (import datetime [datetime timezone])
   (import doeff_agents [AgentSubagentCallUsageEvent])
   (import doeff_agents.handlers.headless [subagent-call-usage-builders-of])
-  (import doeff_claude_code.lines [SubagentCall SubagentTranscript Usage])
+  (import doeff_claude_code [SubagentCall SubagentTranscript Usage])
   (val at (datetime 2026 10 24 9 0 :tzinfo timezone.utc))
   (val usage (Usage :input-tokens 1 :output-tokens 6 :cache-creation-input-tokens 2310 :cache-read-input-tokens 48211))
   (val transcript (SubagentTranscript :agent-id "a1" :parent-tool-use-id "toolu_parent"
@@ -2495,7 +2495,7 @@
   ;; card ki-1d986d4f0007: 層 2(doeff-claude-code)の手番の終わりが運ぶ model ごとの使用量(手番の分の ModelUsage)と照合の訳
   ;; (ModelUsageGap)を、層 3 の AgentTurnCompleted・AgentTurnFailed の欄 model_usage・model_usage_gap へそのまま写す。失敗ケース(前の
   ;; 形): 層 3 の終わりに欄が無く、上の層(agora の手番の記録)が model ごとの額も照合の結末も記録できない。
-  (import doeff_claude_code.lines [Completed Failed ModelUsage ModelUsageGap])
+  (import doeff_claude_code [Completed Failed ModelUsage ModelUsageGap])
   (import doeff_agents.handlers.headless [end-of])
   (import doeff_agents.effects.agent [AgentTurnCompleted AgentTurnFailed])
   (val used #((ModelUsage "claude-opus-5-5" :input-tokens 5 :output-tokens 60 :cache-read-input-tokens 1500
@@ -2515,7 +2515,7 @@
   ;; agora card ki-7498a039250d: 層 2 が止めた呼び(stopped 偽 — CLI が止めた呼びに自分で作った、止まった訳を名乗らない終わり)として
   ;; 閉じた呼びは final 偽で運び、API の終わりで閉じた呼びは final 真で運ぶ。失敗ケース = 閉じた呼びを全部 final 真で運ぶ層 3(本番
   ;; aj-P8G6EKP31ZKWS761MSKBCXK5PD — 今すぐ送るで止めた呼びが最終の値として記録され、CLI の額に無い呼びが 1 本増えた)。
-  (import doeff_claude_code.lines [CallClosed Usage])
+  (import doeff_claude_code [CallClosed Usage])
   (import doeff_agents.handlers.headless [event-builders-of])
   (val usage (Usage :input-tokens 2 :output-tokens 1 :cache-creation-input-tokens 2373 :cache-read-input-tokens 347445))
   (val at (datetime.datetime 2026 10 23 10 10 8 :tzinfo datetime.timezone.utc))

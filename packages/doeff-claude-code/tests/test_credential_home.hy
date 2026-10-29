@@ -7,8 +7,8 @@
 (import stat)
 (import pathlib [Path])
 (import pytest)
-(import doeff_claude_code.values [LentCredential])
-(import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home CREDENTIAL-HOMES-DIR
+(import doeff_claude_code [LentCredential])
+(import doeff_claude_code._credential_home [open-credential-home replace-credential close-credential-home CREDENTIAL-HOMES-DIR
                                            KEPT-DIRS])
 
 

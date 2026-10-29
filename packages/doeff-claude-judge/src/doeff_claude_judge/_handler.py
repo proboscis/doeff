@@ -19,15 +19,15 @@ from collections.abc import Callable
 from typing import Any
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect は Hy の module doeff_claude_code に住む
-from doeff_claude_code.effects import (
+from doeff_claude_code import (
     ClaudePrintOnce,
     PrintAnswered,
     PrintFailed,
     PrintLimited,
     PrintTimedOut,
 )
-from doeff_claude_code.lines import Usage
-from doeff_claude_code.values import ClaudeHome, ImageAttachment, LentCredential, PrintContent
+from doeff_claude_code import Usage
+from doeff_claude_code import ClaudeHome, ImageAttachment, LentCredential, PrintContent
 from doeff_core_effects import slog
 from doeff_hy.frozen import FrozenMap
 from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, Verdict

@@ -13,10 +13,10 @@
 (import doeff [with_handlers])
 (import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
-(import doeff_claude_code.lines [AssistantMessage CallClosed CallOpened CallStep Completed Interrupted PartialMessage TurnResult Usage
-                                 call-step classify-record closed-usage])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInterruptTurn])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
+(import doeff_claude_code [AssistantMessage CallClosed CallOpened Completed Interrupted PartialMessage TurnResult Usage]
+        doeff_claude_code._lines [CallStep call-step classify-record closed-usage])
+(import doeff_claude_code [ClaudeStartTurn ClaudeInterruptTurn])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.clock [clock-of])

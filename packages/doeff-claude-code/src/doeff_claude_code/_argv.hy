@@ -11,9 +11,9 @@
 (import os)
 (import re)
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_claude_code.values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
+(import doeff_claude_code._values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   PrintContent AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
-(import doeff_claude_code.effects [ClaudePrintOnce])
+(import doeff_claude_code._effects [ClaudePrintOnce])
 
 ;; --include-hook-events = 全 hook の開始と応答の行(system/hook_started・hook_response — 応答は出力・exit code・終わり方つき)を出させる。
 ;; CLI 2.1.292 は旗が無いと SessionStart・Setup の hook の行だけを出す(CLI の中の判定の実測)。上の層が会話の画面に hook の結果

@@ -8,8 +8,8 @@
   層 2 の effect の答えの型が型引数の無い EffectBase(pyright にはどれも Any か object に見え、取り違えが赤にならない)。
 - package の入口の宣言(__init__.pyi)が無く、package そのものを import する使い手の行が strict で「型の宣言が無い」の赤になる。
 
-→ .hy の注記に型を書いて .pyi を道具で作り直し、入口の宣言を置く。ここでは:
-- 使い手が読む名ごとに、生成の .pyi が期待の型を持つ事を .pyi の構文の木で照らす(pyright を要しない)。期待の型は写しの宣言の型。
+→ .hy の注記に型を書いて .pyi を道具で作り直し、入口(__init__.py — 名を `_` の module から型つきで出し直す)を置く。ここでは:
+- 使い手が読む名ごとに、生成の .pyi(`_` の module の物)が期待の型を持つ事を .pyi の構文の木で照らす(pyright を要しない)。期待の型は写しの宣言の型。
   写しより実装の方が細かい所は実装の型(答えの型 object → 答えの和など)、写しが実装と食い違う所も実装の型(StopReason に
   LIVE_LIMIT は無い — 生かす本数の上限では降ろさない・#4072 の E1b)。照らすのは期待に書いた欄だけ(実装が欄を足しても赤にしない)。
 - package そのものを import して package の dir の一覧(__path__)を読む使い手の形に、strict の赤が出ない。
@@ -42,7 +42,7 @@ class Declared:
 
 
 EXPECTED: dict[str, dict[str, Declared]] = {
-    "values": {
+    "_values": {
         "ClaudeHome": Declared(fields={"config_dir": "str", "env": "FrozenMap[str]"}),
         "ClaudeSessionSpec": Declared(
             fields={
@@ -66,7 +66,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
         "ResumeSession": Declared(fields={"session_id": "str", "carry": "LinkFromHome | Rebuilt | None"}),
         "ForkSession": Declared(fields={"parent_session_id": "str", "carry": "LinkFromHome | Rebuilt | None"}),
     },
-    "lines": {
+    "_lines": {
         "ToolCall": Declared(fields={"id": "str", "name": "str", "input": "FrozenMap[FrozenJson]"}),
         "ToolAnswer": Declared(fields={"id": "str", "text": "str", "is_error": "bool", "non_text_kinds": "tuple[str, ...]"}),
         "ModelWindow": Declared(fields={"model": "str", "context_window": "int | None", "max_output_tokens": "int | None"}),
@@ -100,7 +100,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
         ),
         "CompactEnded": Declared(fields={"outcome": "CompactOutcome", "error": "str | None"}),
     },
-    "faults": {
+    "_faults": {
         "ClaudeDropProcess": Declared(bases=("EffectBase[bool]",), fields={"session_id": "str"}),
         "ClaudeForgetSession": Declared(bases=("EffectBase[bool]",), fields={"session_id": "str"}),
         # 写しに無い検の口 — 同じ file の層 2 の effect なので答えの型を同じ形で持つ。
@@ -119,7 +119,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
         "LiveProcess": Declared(fields={"launches": "int"}),
         "NoLiveProcess": Declared(fields={"launches": "int", "stopped_because": "StopReason | None"}),
     },
-    "effects": {
+    "_effects": {
         "ClaudeStartTurn": Declared(
             bases=("EffectBase[StartTurnOutcome]",),
             fields={"origin": "FreshSession | ResumeSession | ForkSession", "spec": "ClaudeSessionSpec", "input": "TurnInput"},
@@ -211,7 +211,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
 
 #: 型の別名(使い手が答えの和として名指す物)。
 EXPECTED_ALIASES: dict[str, dict[str, str]] = {
-    "effects": {
+    "_effects": {
         "StartTurnOutcome": (
             "TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused"
         ),
