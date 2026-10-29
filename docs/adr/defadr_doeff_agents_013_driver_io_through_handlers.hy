@@ -35,10 +35,10 @@
 ;; ---------------------------------------------------------------------------
 
 (setv DRIVER-IO-ROSTER
-  #{"adapters/claude.py"
-    "adapters/codex.py"
-    "adapters/gemini.py"
-    "agentd_client.py"
+  #{"_adapters/claude.py"
+    "_adapters/codex.py"
+    "_adapters/gemini.py"
+    "_agentd_client.py"
     "claude_home.py"
     "session_backend.py"
     "session_store.py"
@@ -68,8 +68,8 @@
 ;; 走査から除く: agentd(sessionhost — ADR-DOE-AGENTS-004 の凍結契約で
 ;; 自前の substrate 語彙を持つ)と handlers(I/O を果たす側)と、
 ;; driver 層の I/O を果たす 2 つの家。
-(setv SCAN-SKIP-DIRS #{"sessionhost" "handlers" "__pycache__"})
-(setv IO-HOME-FILES #{"io_handlers.hy" "io_fake.hy"})
+(setv SCAN-SKIP-DIRS #{"sessionhost" "_handlers" "__pycache__"})
+(setv IO-HOME-FILES #{"_io_handlers.hy" "_io_fake.hy"})
 
 
 (defk driver-source-root [package-root]
@@ -107,7 +107,7 @@
    :post [(: % bool)]}
   "本番の家が実際に生の syscall を持っているか(空の法にしない反証)。"
   (setv pattern (re.compile (.join "|" IO-CALL-PATTERNS)))
-  (setv home (/ (run (driver-source-root package-root)) "io_handlers.hy"))
+  (setv home (/ (run (driver-source-root package-root)) "_io_handlers.hy"))
   (> (len (lfor line (.splitlines (.read-text home :encoding "utf-8" :errors "replace"))
                 :if (.search pattern line)
                 line))
@@ -169,7 +169,7 @@
        (assert (= counts {})
                (+ "driver 層に直接 I/O が残っている(ADR-DOE-AGENTS-013 R1 — "
                   "要求は doeff_agents._io_effects の語彙で出し、果たすのは "
-                  "io_handlers / io_fake): " (str (sorted (.items counts))))))
+                  "_io_handlers / _io_fake): " (str (sorted (.items counts))))))
      (deftest test-adr-doe-agents-013-roster-files-are-in-the-driver-layer
        ;; 名簿の 8 file が実在し、走査の母集団に入っていること(名簿の腐り検知)。
        (setv package-root (. (Path __file__) parent parent parent))

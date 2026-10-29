@@ -47,7 +47,7 @@
 (setv REAL-CONFIG-ENV "DOEFF_CLAUDE_CODE_REAL_CONFIG_DIR")
 (setv REPO-PACKAGES (. (Path __file__) (resolve) parent parent parent))
 (setv STUB-PATH (str (/ REPO-PACKAGES "doeff-claude-code" "tests" "stub_cli" "claude.hy")))
-(setv ADAPTER-PATH (/ REPO-PACKAGES "doeff-agents" "src" "doeff_agents" "handlers" "headless.hy"))
+(setv ADAPTER-PATH (/ REPO-PACKAGES "doeff-agents" "src" "doeff_agents" "_handlers" "headless.hy"))
 ;; 子の claude に親の会話の印・hook の socket を継がせない(doeff-claude-code の検と同じ)。
 (setv INHERITED-PREFIXES #("CLAUDECODE" "CLAUDE_CODE_" "CLAUDE_CONFIG_DIR" "AI_AGENT" "CLAUDE_PID"
                            "CLAUDE_EFFORT" "DOEFF_CLAUDE_CODE_"))
