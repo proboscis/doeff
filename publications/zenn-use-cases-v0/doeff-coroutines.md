@@ -356,7 +356,7 @@ print(repr(text), len(waits))  # 本文と、見えた待ちの数。
 - **asyncioのアプリの中で`run()`を呼ぶと、ループが止まります。** `run()`は、終わるまで戻らないからです。worker threadで呼びます。`await asyncio.to_thread(run, program)`です。
 - **`Await`の橋には、それ自身の約束があります。** プロセスのすべての`Await`は、1つの裏のループで走ります。asyncのコードの中の同期の呼び出しでそのループを止めると、プロセスのすべての`Await`が止まります。待っているdoeffのタスクを取り消すと、coroutineに`CancelledError`が届きます。ただし、頼むだけです。取り消しは、coroutineの`finally`が走り終わるのを待たずに返ります。
 - **ハンドラは、その操作の約束を引き受けます。** 取り消しの時や例外の時に何が起き、どの順で起きるかは、ハンドラの仕事になります。ほかのコードと同じく、テストします。
-- **タスクの費用は高めです。** doeffのRustのスケジューラは、起こしたタスク1つに約17 µsのCPUを使います。asyncioは約11 µsです([測り方](https://github.com/proboscis/doeff#performance))。
+- **タスクの費用は高めです。** doeffのRustのスケジューラは、起こしたタスク1つに約17 µsのCPUを使います。asyncioは約11 µsです。測り方は、[READMEのPerformance](https://github.com/proboscis/doeff#performance)にあります。
 
 ## まとめ
 
