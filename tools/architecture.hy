@@ -5,7 +5,7 @@
 ;;; 変わらない。ここで外すのは下の名指しの module だけで、tools のほかの file の母集団は変わらない。
 ;;;
 ;;; build = Rust の package の PEP 517 の build の入口 doeff_cargo_backend。本物は tools/doeff_cargo_backend.py の 1 つで、
-;;;   doeff-agentic-cli・doeff-effect-analyzer・doeff-indexer・doeff-linter・doeff-vm の根の doeff_cargo_backend.py はそこへの symlink
+;;;   doeff-effect-analyzer・doeff-indexer・doeff-linter・doeff-vm の根の doeff_cargo_backend.py はそこへの symlink
 ;;;   (だから宣言は packages ではなくここに置く — packages に置くと、symlink を解いた本物の場所の上に宣言が無く、外れない)。
 ;;;   uv・pip が wheel を組む時に呼び、doeff の Program の外で走る。cargo と maturin への設定(CARGO_TARGET_DIR ほか)は
 ;;;   環境変数そのものが口で、依存の注入(doeff の Ask)で受ける入口が無い。

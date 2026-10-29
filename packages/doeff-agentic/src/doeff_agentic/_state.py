@@ -2,7 +2,7 @@
 State file management for doeff-agentic.
 
 This module manages the state files that serve as the contract between
-Python (workflow execution) and Rust (fast CLI for plugins).
+workflow execution and the ``doeff-agentic`` CLI the IDE plugins call.
 
 State directory structure:
     ~/.local/state/doeff-agentic/
@@ -102,7 +102,7 @@ class StateManager:
     """Manages workflow and agent state files.
 
     This class handles reading and writing state files that serve as the
-    contract between Python (workflow execution) and Rust CLI (fast queries).
+    contract between workflow execution and the ``doeff-agentic`` CLI the IDE plugins call.
 
     Attributes:
         state_dir: Root directory for state files

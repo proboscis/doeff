@@ -12,9 +12,8 @@ Commands:
     env         Environment management (list, cleanup)
     tui         Launch interactive Textual TUI
 
-ps, show, watch, attach, send and stop take the arguments of the Rust CLI
-(packages/doeff-agentic-cli) and write the same JSON, as the IDE plugins read it: the
-JSON of a workflow is ``WorkflowInfo.to_dict()``, ``ps --json`` writes the array of them.
+ps, show, watch, attach, send and stop take the arguments the IDE plugins pass and write
+the JSON they read — those of the Rust CLI this command replaced: the JSON of a workflow is ``WorkflowInfo.to_dict()``, ``ps --json`` writes the array of them.
 A failure writes ``Error: <message>`` to the standard error and exits with 1.
 
 Each command runs a doeff program: the program reads and acts on the recorded workflows

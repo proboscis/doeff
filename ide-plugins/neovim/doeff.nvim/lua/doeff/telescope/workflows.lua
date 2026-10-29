@@ -211,7 +211,7 @@ function M.picker(opts)
 
   -- Check if CLI is available
   if not workflows.is_available() then
-    vim.notify('doeff: doeff-agentic CLI not found. Install it or check your PATH.', vim.log.levels.ERROR)
+    vim.notify('doeff: doeff-agentic CLI not found. Install with: ' .. workflows.install_hint .. ' (or check your PATH)', vim.log.levels.ERROR)
     return
   end
 

@@ -1,5 +1,7 @@
-;;; Executable ADR: Rust の部品(doeff-vm・doeff-vm-core・doeff-linter・doeff-effect-analyzer・doeff-indexer・doeff-agentic-cli)を組む・
+;;; Executable ADR: Rust の部品(doeff-vm・doeff-vm-core・doeff-linter・doeff-effect-analyzer・doeff-indexer)を組む・
 ;;; 引く入口は 1 つ — build の口 tools/doeff_cargo_backend.py が、組む前に必ず「source の中身の hash を鍵にした wheel の保存先」を引く。
+;;; workflow の一覧を答える Rust の CLI の部品は 2026-10-30 に消し、同じ動詞を Python の CLI doeff-agentic が答える
+;;; (ADR-DOE-API-001 R28・card ki-7b2e293a2db7)。
 ;;;
 ;;; 出自 = 利用者の 2026-10-07 の指摘 2 つ(agora-redesign #3860 の本文・dotfiles ADR-DOTFILES-027 の条 R-cf708d56 と追補 1)と、Mac の
 ;;; 調整役の決定(#3860 の 1・2026-10-07 — 入口は 1 つ・古い道は替える変更と同じ変更で消す)。

@@ -148,7 +148,6 @@ require('doeff').setup({
 :DoeffRunCursor        " Run entrypoint under cursor
 :DoeffRunLast          " Re-run last entrypoint
 :DoeffClearCache       " Clear indexer cache
-:DoeffCloseTerminals   " Close all doeff terminals
 
 " Workflow commands
 :DoeffWorkflows        " Open workflows picker
@@ -267,22 +266,22 @@ The workflow picker (`<leader>dw` or `:DoeffWorkflows`) displays:
 
 ### Requirements
 
-The workflow features require `doeff-agentic` CLI to be installed:
+The workflow features require the `doeff-agentic` CLI (the Python package's console script):
 
 ```bash
-# From the doeff repository
-cd packages/doeff-agentic-cli
-cargo build --release
-# Add to PATH or configure in setup
+pip install doeff-agentic
+# Add to PATH or set workflows.binary in setup
 ```
+
+Inside a uv project (a `pyproject.toml` above the current directory) the plugin calls
+`uv run doeff-agentic` instead, so the CLI only has to be a dependency of that project.
 
 ## Related
 
 - [doeff](https://github.com/proboscis/doeff) - The doeff framework
 - [doeff-runner (VSCode)](../vscode/doeff-runner) - VSCode extension
 - [doeff-indexer](../../packages/doeff-indexer) - CLI indexer for doeff
-- [doeff-agentic](../../packages/doeff-agentic) - Agent workflow orchestration
-- [doeff-agentic-cli](../../packages/doeff-agentic-cli) - Fast Rust CLI for workflows
+- [doeff-agentic](../../packages/doeff-agentic) - Agent workflow orchestration and the `doeff-agentic` CLI
 
 ## License
 

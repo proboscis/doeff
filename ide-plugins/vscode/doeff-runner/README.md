@@ -282,10 +282,11 @@ DOEFF WORKFLOWS
 
 ### Requirements
 
-Workflow features require the `doeff-agentic` CLI. Install with:
+Workflow features require the `doeff-agentic` CLI (the Python package's console script; the
+workflow list reads its `doeff-agentic ps --json`). Install with:
 
 ```bash
-cargo install doeff-agentic
+pip install doeff-agentic
 ```
 
 ## Commands

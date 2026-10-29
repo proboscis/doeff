@@ -29,6 +29,13 @@ import { registerDefkView } from './defk/view';
 import { registerCallSyntaxView } from './defk/callView';
 import { PixelIcons, type IconSource } from './pixel/icons';
 import { pixelOwnsGutter, registerPixelEditor, treeIconsEnabled } from './pixel/editor';
+import {
+  AGENTIC_CLI,
+  AGENTIC_INSTALL_HINT,
+  listWorkflows,
+  type AgentState,
+  type WorkflowInfo
+} from './workflows/agenticCli';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -574,27 +581,6 @@ interface KeyResolution {
 // Workflow Types and Provider (doeff-agentic integration)
 // =============================================================================
 
-interface AgentState {
-  name: string;
-  status: string;
-  session_name: string;
-  pane_id?: string;
-  started_at: string;
-  last_output_hash?: string;
-}
-
-interface WorkflowInfo {
-  id: string;
-  name: string;
-  status: string;
-  started_at: string;
-  updated_at: string;
-  current_agent?: string;
-  agents: AgentState[];
-  last_slog?: unknown;
-  error?: string;
-}
-
 type WorkflowTreeNode = WorkflowNode | AgentNode;
 
 interface WorkflowNode {
@@ -774,21 +760,12 @@ class DoeffWorkflowsProvider implements vscode.TreeDataProvider<WorkflowTreeNode
     }
     this.fetching = true;
     try {
-      const { stdout } = await execFileAsync('doeff-agentic', ['ps', '--json'], {
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 5000
-      });
-      const parsed = JSON.parse(stdout);
-      // Validate that parsed is an array
-      if (!Array.isArray(parsed)) {
-        throw new Error('Expected workflows array from doeff-agentic ps');
-      }
-      this.workflows = parsed as WorkflowInfo[];
+      this.workflows = await listWorkflows();
       this.cliAvailable = true;
     } catch (error) {
       if (this.cliAvailable !== false) {
         // Only log on first failure
-        output.appendLine(`[warn] doeff-agentic CLI not available or failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        output.appendLine(`[warn] ${AGENTIC_CLI} CLI not available or failed (install with: ${AGENTIC_INSTALL_HINT}): ${error instanceof Error ? error.message : 'unknown error'}`);
       }
       this.cliAvailable = false;
       this.workflows = [];
@@ -5196,7 +5173,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (workflows.length === 0) {
           if (!workflowsProvider.isCliAvailable()) {
             vscode.window.showWarningMessage(
-              'doeff-agentic CLI not available. Install with: cargo install doeff-agentic'
+              `${AGENTIC_CLI} CLI not available. Install with: ${AGENTIC_INSTALL_HINT}`
             );
           } else {
             vscode.window.showInformationMessage('No active workflows');
@@ -5300,8 +5277,8 @@ export function activate(context: vscode.ExtensionContext) {
           : `Doeff: ${workflow.name} (${shortId})`;
         const terminal = vscode.window.createTerminal(terminalName);
         const cmd = agentName
-          ? `doeff-agentic attach ${workflow.id} --agent ${agentName}`
-          : `doeff-agentic attach ${workflow.id}`;
+          ? `${AGENTIC_CLI} attach ${workflow.id} --agent ${agentName}`
+          : `${AGENTIC_CLI} attach ${workflow.id}`;
         terminal.sendText(cmd);
         terminal.show();
       }
@@ -5335,7 +5312,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         const shortId = workflow.id.substring(0, 7);
         const terminal = vscode.window.createTerminal(`Watch: ${workflow.name} (${shortId})`);
-        terminal.sendText(`doeff-agentic watch ${workflow.id}`);
+        terminal.sendText(`${AGENTIC_CLI} watch ${workflow.id}`);
         terminal.show();
       }
     ),
@@ -5377,7 +5354,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (confirm !== 'Stop') return;
 
         try {
-          await execFileAsync('doeff-agentic', ['stop', workflow.id, '--json'], {
+          await execFileAsync(AGENTIC_CLI, ['stop', workflow.id, '--json'], {
             timeout: 10000
           });
           vscode.window.showInformationMessage(`Stopped workflow: ${workflow.name}`);

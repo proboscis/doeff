@@ -36,7 +36,8 @@ describe('doeff', function()
       assert.is_function(doeff.find_root)
       assert.is_function(doeff.get_entries)
       assert.is_function(doeff.clear_cache)
-      assert.is_function(doeff.close_terminals)
+      -- runs go to tmux or an external terminal, so there are no doeff terminal windows to close
+      assert.is_nil(doeff.close_terminals)
     end)
 
     it('should export submodules', function()
