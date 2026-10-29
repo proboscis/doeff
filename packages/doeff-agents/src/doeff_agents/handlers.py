@@ -37,7 +37,7 @@
 #   DEFAULT_AWAIT_BUDGET_SECONDS FollowUpEffect GetAgentSessionEffect LaunchEffect
 #   LaunchSessionEffect ListAgentSessionsEffect McpToolServer MonitorEffect
 #   ObserveAgentSessionEffect ReleaseSessionEffect SendEffect SessionBackend StopEffect
-#   StopSessionEffect TmuxAgentHandler WarmSessionEffect agent_handler_defhandler
+#   StopSessionEffect WarmSessionEffect
 #   make_report_result_tool mcp_server_loop spec_uses_report_result_transport tmux_agent_defhandler
 # moved-submodule-shim-names doeff_agents.handlers.headless:
 #   API_STATUS_OVERLOADED AgentAccountLimit AgentAccountRefusal AgentCallUsageEvent
@@ -95,7 +95,7 @@
 # moved-submodule-shim-names doeff_agents.handlers.mcp_server_loop:
 #   McpToolRequest McpToolServer TOOL_VM_TIMEOUT mcp_server_loop run_tool_with_stack
 # moved-submodule-shim-names doeff_agents.handlers.production:
-#   AgentAdapter AgentAttemptExhaustedError AgentDeadlineExceededError AgentEffect AgentHandler
+#   AgentAdapter AgentAttemptExhaustedError AgentDeadlineExceededError AgentEffect
 #   AgentLaunchError AgentNotAvailableError AgentReadyTimeoutError AgentSessionLifecycle
 #   AgentSessionRepository AgentSessionSnapshot AgentSpec AgentTask AgentType
 #   AgentValidationErrorKind AgentValidationFailure AttachAgentSessionEffect AwaitOutcome
@@ -106,7 +106,7 @@
 #   LaunchSessionEffect ListAgentSessionsEffect MonitorEffect MonitorState Observation
 #   ObserveAgentSessionEffect REPORT_RESULT_TOOL_NAME ReleaseSessionEffect SendEffect
 #   SessionAlreadyExistsError SessionBackend SessionHandle SessionNotFoundError SessionState
-#   SessionStatus StopEffect StopSessionEffect TmuxAgentHandler assert_no_forbidden_agent_env
+#   SessionStatus StopEffect StopSessionEffect assert_no_forbidden_agent_env
 #   assert_session_env_is_non_auth_overlay deliver_prompt_when_ready detect_status evolve_status
 #   get_adapter hash_content is_waiting_for_input make_report_result_tool prepare_claude_home
 #   refuse_turn_capabilities register_adapter spec_uses_report_result_transport

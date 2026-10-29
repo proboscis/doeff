@@ -1229,9 +1229,6 @@
       "LaunchParams",
       "refuse_turn_capabilities"
      ],
-     "doeff_agents.handlers.effectful": [
-      "TmuxAgentHandler"
-     ],
      "doeff_agents.handlers.headless": [
       "AgentSessionLifecycle"
      ],
@@ -1246,7 +1243,6 @@
       "InjectionMethod",
       "LaunchParams",
       "MonitorState",
-      "TmuxAgentHandler",
       "refuse_turn_capabilities"
      ],
      "doeff_agents.handlers.testing": [
@@ -1939,17 +1935,6 @@
     "境界 — CLI": {
      "(console script)": [
       "doeff-agents"
-     ]
-    },
-    "境界 — class の形の handler": {
-     "doeff_agents.handlers.daemon": [
-      "AgentHandler"
-     ],
-     "doeff_agents.handlers.production": [
-      "AgentHandler"
-     ],
-     "doeff_agents.handlers.testing": [
-      "AgentHandler"
      ]
     },
     "境界 — effect の値の型": {

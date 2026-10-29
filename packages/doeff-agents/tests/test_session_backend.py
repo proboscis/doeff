@@ -31,12 +31,13 @@ from doeff_agents import (
     agent_effectful_handler,
 )
 from doeff_agents import _session_backend as session_backend_module
-# The session procedures, the terminal backend and the tmux handler object are internal to doeff-agents;
+# The session procedures, the terminal backend and the tmux handler's per-effect functions are internal to
+# doeff-agents;
 # these tests exercise them directly.
 from doeff_agents._session import capture_output, launch_session, monitor_session, send_message, stop_session
 from doeff_agents import LaunchConfig
 from doeff_agents._adapters.base import InjectionMethod, LaunchParams
-from doeff_agents._handlers.production import TmuxAgentHandler
+from doeff_agents._handlers import production
 from doeff_agents._adapters.codex import CodexAdapter
 from doeff_agents import AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents._result_validation import validate_result_payload
@@ -251,7 +252,7 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
         "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     launch = LaunchEffect(
         session_name="worker",
         agent_type=AgentType.CLAUDE,
@@ -260,7 +261,7 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
         session_env={"PATH": "/agent/bin"},
         ready_timeout=0.1,
     )
-    handle = handler.handle_launch(launch)
+    handle = production._launch(tmux, launch)
 
     assert backend.created[0].session_name == "worker"
     assert backend.created[0].env is not None
@@ -275,16 +276,16 @@ def test_tmux_agent_handler_uses_injected_backend(monkeypatch) -> None:
     assert "export HOME=" in sent_command
     assert "export CLAUDE_HOME=" in sent_command
 
-    observation = handler.handle_monitor(MonitorEffect(handle=handle))
+    observation = production._monitor(tmux, MonitorEffect(handle=handle))
     assert observation.status == SessionStatus.EXITED
 
-    captured = handler.handle_capture(CaptureEffect(handle=handle, lines=25))
+    captured = production._capture(tmux, CaptureEffect(handle=handle, lines=25))
     assert captured == "$ "
 
-    handler.handle_send(SendEffect(handle=handle, message="continue", enter=True))
+    production._send(tmux, SendEffect(handle=handle, message="continue", enter=True))
     assert backend.sent[-1][1] == "continue"
 
-    handler.handle_stop(StopEffect(handle=handle))
+    production._stop(tmux, StopEffect(handle=handle))
     assert backend.killed == ["worker"]
 
 
@@ -294,8 +295,8 @@ def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) 
         "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch(
+    tmux = production._tmux_agent_state(backend=backend)
+    handle = production._launch(tmux,
         LaunchEffect(
             session_name="worker",
             agent_type=AgentType.CLAUDE,
@@ -311,8 +312,8 @@ def test_tmux_agent_handler_dismisses_claude_mcp_permission_prompt(monkeypatch) 
         "Esc to cancel · Tab to amend\n"
     )
 
-    handler.handle_monitor(MonitorEffect(handle=handle))
-    handler.handle_monitor(MonitorEffect(handle=handle))
+    production._monitor(tmux, MonitorEffect(handle=handle))
+    production._monitor(tmux, MonitorEffect(handle=handle))
 
     proceed_sends = [sent for sent in backend.sent if sent == ("%worker", "", True, True)]
     assert proceed_sends == [("%worker", "", True, True)]
@@ -324,8 +325,8 @@ def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) 
         "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = TmuxAgentHandler(backend=backend)
-    handle = handler.handle_launch(
+    tmux = production._tmux_agent_state(backend=backend)
+    handle = production._launch(tmux,
         LaunchEffect(
             session_name="worker",
             agent_type=AgentType.CLAUDE,
@@ -344,8 +345,8 @@ def test_tmux_agent_handler_dismisses_claude_new_mcp_server_prompt(monkeypatch) 
         "Enter to confirm · Esc to cancel\n"
     )
 
-    handler.handle_monitor(MonitorEffect(handle=handle))
-    handler.handle_monitor(MonitorEffect(handle=handle))
+    production._monitor(tmux, MonitorEffect(handle=handle))
+    production._monitor(tmux, MonitorEffect(handle=handle))
 
     proceed_sends = [sent for sent in backend.sent if sent == ("%worker", "", True, True)]
     assert proceed_sends == [("%worker", "", True, True)]
@@ -358,7 +359,7 @@ def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -
     )
     forbidden_key = "ANTHROPIC" + "_API_KEY"
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     launch = LaunchEffect(
         session_name="worker",
         agent_type=AgentType.CLAUDE,
@@ -369,7 +370,7 @@ def test_tmux_agent_handler_rejects_anthropic_api_key_session_env(monkeypatch) -
     )
 
     with pytest.raises(ValueError, match="provider API keys"):
-        handler.handle_launch(launch)
+        production._launch(tmux, launch)
 
     assert backend.created == []
 
@@ -381,7 +382,7 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
         "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = TmuxAgentHandler(backend=backend, session_repository=repository)
+    tmux = production._tmux_agent_state(backend=backend, session_repository=repository)
     launch = LaunchEffect(
         session_name="persistent-worker",
         agent_type=AgentType.CLAUDE,
@@ -390,24 +391,24 @@ def test_tmux_agent_handler_persists_session_state(monkeypatch) -> None:
         ready_timeout=0.1,
     )
 
-    handle = handler.handle_launch(launch)
-    snapshot = handler.handle_get_session(GetAgentSession("persistent-worker"))
+    handle = production._launch(tmux, launch)
+    snapshot = production._get_session(tmux, GetAgentSession("persistent-worker"))
 
     assert snapshot is not None
     assert snapshot.session_id == "persistent-worker"
     assert not hasattr(handle, "pane_id")
     assert snapshot.status == SessionStatus.BOOTING
 
-    observed = handler.handle_observe_session(ObserveAgentSession("persistent-worker"))
+    observed = production._observe_session(tmux, ObserveAgentSession("persistent-worker"))
 
     assert observed.status == SessionStatus.EXITED
     assert observed.finished_at is not None
     assert observed.output_snippet == "$ "
     assert [
-        session.session_id for session in handler.handle_list_sessions(ListAgentSessions())
+        session.session_id for session in production._list_sessions(tmux, ListAgentSessions())
     ] == ["persistent-worker"]
 
-    cleaned = handler.handle_cleanup_session(CleanupAgentSession("persistent-worker"))
+    cleaned = production._cleanup_session(tmux, CleanupAgentSession("persistent-worker"))
 
     assert cleaned.status == SessionStatus.STOPPED
     assert cleaned.cleaned_at is not None
@@ -419,7 +420,7 @@ def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path
     adapter = RecordingAdapter()
     monkeypatch.setattr("doeff_agents._handlers.production.get_adapter", lambda _agent_type: adapter)
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     spec = AgentSpec(
         run_id="run-structured",
         node_id="node",
@@ -434,8 +435,8 @@ def test_tmux_l2_launch_injects_structured_result_contract(monkeypatch, tmp_path
         },
     )
 
-    handler.create_result_sink(spec.session_id)
-    handler.handle_launch_session(LaunchSessionEffect(spec=spec))
+    production._create_result_sink(tmux, spec.session_id)
+    production._launch_session(tmux, LaunchSessionEffect(spec=spec))
 
     assert adapter.params
     prompt = adapter.params[0].prompt or ""
@@ -456,9 +457,9 @@ def test_tmux_agent_handler_sends_initial_prompt_via_terminal_transport(
     adapter = RecordingAdapter()
     monkeypatch.setattr("doeff_agents._handlers.production.get_adapter", lambda _agent_type: adapter)
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     prompt = "line one\nline two"
-    handler.handle_launch(
+    production._launch(tmux,
         LaunchEffect(
             session_name="worker:stdin",
             agent_type=AgentType.CLAUDE,
@@ -486,7 +487,7 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
 
     # ADR-DOE-AGENTS-004 R9: CODEX_HOME is binder configuration — injected
     # at handler construction (CodexRuntimePolicy), never via session_env.
-    handler = TmuxAgentHandler(
+    tmux = production._tmux_agent_state(
         backend=backend,
         codex_runtime_policy=CodexRuntimePolicy(codex_home=codex_home),
     )
@@ -497,7 +498,7 @@ def test_tmux_agent_handler_trusts_codex_workspace(monkeypatch, tmp_path: Path) 
         prompt="hello",
     )
 
-    handler.handle_launch(launch)
+    production._launch(tmux, launch)
 
     assert (codex_home / "config.toml").read_text(encoding="utf-8") == (
         f'[projects."{work_dir}"]\ntrust_level = "trusted"\n'
@@ -518,7 +519,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
     )
     codex_home = tmp_path / "codex-home"
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     launch = LaunchEffect(
         session_name="codex-worker",
         agent_type=AgentType.CODEX,
@@ -528,7 +529,7 @@ def test_tmux_agent_handler_rejects_codex_home_in_session_env(
     )
 
     with pytest.raises(ValueError, match="non-auth overlay"):
-        handler.handle_launch(launch)
+        production._launch(tmux, launch)
     assert backend.sent == []
     assert not (codex_home / "config.toml").exists()
 
@@ -540,7 +541,7 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
         lambda _agent_type: FakeCodexAdapter(),
     )
 
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     launch = LaunchEffect(
         session_name="codex-mcp-worker",
         agent_type=AgentType.CODEX,
@@ -550,7 +551,7 @@ def test_tmux_agent_handler_injects_codex_mcp_config(monkeypatch, tmp_path: Path
         mcp_server_name="hypha",
     )
 
-    handler.handle_launch(
+    production._launch(tmux,
         launch,
         mcp_servers={"hypha": "http://127.0.0.1:51978/sse"},
     )
@@ -584,9 +585,9 @@ def test_l2_launch_session_injects_mcp_config(monkeypatch, tmp_path: Path) -> No
         mcp_server_name="sbi",
     )
 
-    handler = TmuxAgentHandler(backend=backend)
-    handler.create_result_sink(spec.session_id)
-    handle = handler.handle_launch_session(
+    tmux = production._tmux_agent_state(backend=backend)
+    production._create_result_sink(tmux, spec.session_id)
+    handle = production._launch_session(tmux,
         LaunchSession(spec),
         mcp_servers={"sbi": "http://127.0.0.1:51979/sse"},
     )
@@ -615,9 +616,9 @@ def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
         prompt="write account state",
         result_schema={"type": "object", "required": ["status"]},
     )
-    handler = TmuxAgentHandler(backend=backend)
-    handler.create_result_sink(spec.session_id)
-    handle = handler.handle_launch_session(LaunchSession(spec))
+    tmux = production._tmux_agent_state(backend=backend)
+    production._create_result_sink(tmux, spec.session_id)
+    handle = production._launch_session(tmux, LaunchSession(spec))
     backend.captures[f"%{handle.session_id}"] = (
         "⏺ Bash(uv run pytest packages/doeff-agents/tests -q)\n"
         "  ⎿  Running…\n\n"
@@ -627,7 +628,7 @@ def test_l2_await_result_does_not_treat_claude_status_footer_as_input(
         "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
     )
 
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+    outcome = production._await_result(tmux, AwaitResultEffect(handle=handle, timeout_seconds=0.01))
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None
@@ -652,9 +653,9 @@ def test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prom
         prompt="write account state",
         result_schema={"type": "object", "required": ["status"]},
     )
-    handler = TmuxAgentHandler(backend=backend)
-    handler.create_result_sink(spec.session_id)
-    handle = handler.handle_launch_session(LaunchSession(spec))
+    tmux = production._tmux_agent_state(backend=backend)
+    production._create_result_sink(tmux, spec.session_id)
+    handle = production._launch_session(tmux, LaunchSession(spec))
     pane = f"%{handle.session_id}"
     backend.captures[pane] = (
         "export HOME=/tmp/agent; claude --strict-mcp-config\n"
@@ -666,7 +667,7 @@ def test_l2_await_result_does_not_finalize_absent_result_on_live_tmux_shell_prom
         "────────────────────────────────────────────────────────────────────────────────\n"
     )
 
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+    outcome = production._await_result(tmux, AwaitResultEffect(handle=handle, timeout_seconds=0.01))
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None
@@ -691,9 +692,9 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
         prompt="write account state",
         result_schema={"type": "object", "required": ["status"]},
     )
-    handler = TmuxAgentHandler(backend=backend)
-    handler.create_result_sink(spec.session_id)
-    handle = handler.handle_launch_session(LaunchSession(spec))
+    tmux = production._tmux_agent_state(backend=backend)
+    production._create_result_sink(tmux, spec.session_id)
+    handle = production._launch_session(tmux, LaunchSession(spec))
     pane = f"%{handle.session_id}"
 
     backend.captures[pane] = (
@@ -703,8 +704,8 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
         "────────────────────────────────────────────────────────────────────────────────\n"
         "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
     )
-    handler.handle_monitor(MonitorEffect(handle=handle))
-    assert handler.handle_monitor(MonitorEffect(handle=handle)).status == SessionStatus.BLOCKED
+    production._monitor(tmux, MonitorEffect(handle=handle))
+    assert production._monitor(tmux, MonitorEffect(handle=handle)).status == SessionStatus.BLOCKED
 
     backend.captures[pane] = (
         "⏺ Called sbi\n"
@@ -715,7 +716,7 @@ def test_l2_await_result_clears_stale_blocked_state_when_current_footer_is_not_i
         "────────────────────────────────────────────────────────────────────────────────\n"
         "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
     )
-    outcome = handler.handle_await_result(AwaitResultEffect(handle=handle, timeout_seconds=0.01))
+    outcome = production._await_result(tmux, AwaitResultEffect(handle=handle, timeout_seconds=0.01))
 
     assert outcome.status == AwaitStatus.TIMED_OUT
     assert outcome.result is None
@@ -827,11 +828,11 @@ def test_tmux_handler_accepts_claude_runtime_policy(
         "doeff_agents._handlers.production.get_adapter", lambda _agent_type: FakeAdapter()
     )
 
-    handler = TmuxAgentHandler(
+    tmux = production._tmux_agent_state(
         backend=backend,
         claude_runtime_policy=ClaudeRuntimePolicy(agent_home=tmp_path),
     )
-    handle = handler.handle_launch(
+    handle = production._launch(tmux,
         LaunchEffect(
             session_name="worker",
             agent_type=AgentType.CLAUDE,
@@ -840,7 +841,7 @@ def test_tmux_handler_accepts_claude_runtime_policy(
             ready_timeout=0.1,
         ),
     )
-    handler.handle_stop(StopEffect(handle=handle))
+    production._stop(tmux, StopEffect(handle=handle))
 
     command = backend.sent[0][1]
     assert f"export HOME={tmp_path};" in command

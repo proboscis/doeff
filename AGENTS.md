@@ -63,8 +63,9 @@ returning the final `AwaitOutcome`. If callers need diagnostic or evidence data,
 it must be part of `AgentSpec.result_schema` and returned in
 `AwaitOutcome.result`, not carried through a side-channel file.
 
-Application packages must not import `doeff_agents._tmux`, instantiate
-`TmuxSessionBackend` / `TmuxAgentHandler`, or shell out to `tmux` directly. The
+Application packages must not import `doeff_agents._tmux` or
+`doeff_agents._handlers.production`, instantiate `TmuxSessionBackend`, or shell
+out to `tmux` directly. The
 public API of doeff-agents is its effects and its handlers: callers emit the
 effects (`Launch` / `LaunchSession`, `AwaitResult`, `Events`, `Send` /
 `FollowUp`, `Stop` / `StopSession`, …) and install a handler factory, all read

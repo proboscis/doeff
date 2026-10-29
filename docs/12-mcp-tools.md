@@ -434,11 +434,12 @@ class McpToolServer:
 
 ## Migration Notes
 
-The old OOP handler API (`_make_protocol_handler`, `TmuxAgentHandler`, `LaunchConfig`
-wrapper inside `LaunchEffect`) is **deprecated**. New code should:
+The old OOP handler API (`_make_protocol_handler`, the `TmuxAgentHandler` class, `LaunchConfig`
+wrapper inside `LaunchEffect`) is **removed**. New code should:
 
 - Use `LaunchEffect` / `Launch(...)` with flat fields (no `config=` wrapper)
-- Use `claude_agent_handler()` instead of `_make_protocol_handler(TmuxAgentHandler())`
+- Use `claude_agent_handler()` (or `agent_effectful_handler()` for the tmux transport) instead of
+  `_make_protocol_handler(TmuxAgentHandler())`
 - Place the handler outermost relative to domain handlers, as on this page (it captures the
   handlers on both sides, so the other order also works)
 
