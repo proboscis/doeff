@@ -1,20 +1,20 @@
 """設計の記録(ADR)を id で引く操作は effect GetAdr で、handler を返す工場 adr_registry が答える(card ki-24a2bca4339f)。
 
 決め: 依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする)。
-関数 get_adr は公開の名から消え、登録簿の内側の _get_adr になった。
+関数 get_adr は、外の repo の呼び手を書き換えるまで(card ki-f2d54a67497b)移し替えの層として残り、その後に消す。
 
-adr_registry() は process の登録簿から、adr_registry([spec, …]) はその列だけから答える(列に無い id は登録簿へ落ちずに
-KeyError)。
+adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) はその列だけから答える(列に無い id は登録簿へ
+落ちずに KeyError)。
 内側に据えた handler が先に答えるので、deftest の doeff_interpreter が外に adr_registry() を据えていても、test の中で
 別の表を据えればその表が答える。
 """
 
 import doeff_adr
-import doeff_adr.registry
 import pytest
-from doeff import do, run
 from doeff_adr import AdrSpec, GetAdr, adr_registry
 from doeff_adr.registry import isolated_registry, register_adr
+
+from doeff import do, run
 
 pytest_plugins = ["pytester"]
 
@@ -44,8 +44,8 @@ def test_a_given_table_replaces_the_process_registry() -> None:
     ]
     with isolated_registry():
         register_adr("ADR-PROBE-001", title="registered", status="proposed")
-        assert run(adr_registry(table)(GetAdr("ADR-PROBE-001"))).title == "from the table"
-        assert run(adr_registry(table)(GetAdr("ADR-TABLE-ONLY"))).title == "only in the table"
+        assert run(adr_registry(specs=table)(GetAdr("ADR-PROBE-001"))).title == "from the table"
+        assert run(adr_registry(specs=table)(GetAdr("ADR-TABLE-ONLY"))).title == "only in the table"
 
 
 def test_an_inner_table_answers_before_the_outer_registry() -> None:
@@ -55,7 +55,7 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
     @do
     def body():
         outer = yield GetAdr("ADR-PROBE-001")
-        inner = yield adr_registry(table)(GetAdr("ADR-PROBE-001"))
+        inner = yield adr_registry(specs=table)(GetAdr("ADR-PROBE-001"))
         return outer.title, inner.title
 
     with isolated_registry():
@@ -76,7 +76,7 @@ def test_an_id_outside_the_table_is_a_key_error_not_the_outer_answer() -> None:
 
     with isolated_registry():
         register_adr("ADR-PROBE-001", title="registered", status="proposed")
-        assert run(adr_registry()(adr_registry([])(body()))) == ("ADR-PROBE-001",)
+        assert run(adr_registry()(adr_registry(specs=[])(body()))) == ("ADR-PROBE-001",)
 
 
 def test_an_unregistered_id_is_a_key_error() -> None:
@@ -85,23 +85,25 @@ def test_an_unregistered_id_is_a_key_error() -> None:
 
 
 def test_the_factory_refuses_a_program_in_place_of_the_table() -> None:
-    """adr_registry(p) と書き違えたら、ADR の列でないと言って断る(adr_registry()(p) が正しい形)。"""
-    with pytest.raises(TypeError, match=r"adr_registry\(\)\(program\)"):
-        adr_registry(GetAdr("ADR-PROBE-001"))  # type: ignore[arg-type] — 書き違いを断る事を見るため、列でない値を渡す
+    """adr_registry(p) と書き違えたら断る: specs は keyword だけで受け、列でない値も断る(adr_registry()(p) が正しい形)。"""
+    with pytest.raises(TypeError, match="positional"):
+        adr_registry(GetAdr("ADR-PROBE-001"))  # type: ignore[misc] — 書き違いを断る事を見るため、位置の引数で渡す
+    with pytest.raises(TypeError, match="takes a list of AdrSpec"):
+        adr_registry(specs=GetAdr("ADR-PROBE-001"))  # type: ignore[arg-type] — 書き違いを断る事を見るため、列でない値を渡す
 
 
 def test_the_table_refuses_a_repeated_id() -> None:
     """同じ id の ADR が 2 つ在る表は、どちらが答えるかが決まらないので作る時に断る。"""
     with pytest.raises(ValueError, match="duplicate ADR id in the table: ADR-PROBE-001"):
-        adr_registry([_spec("ADR-PROBE-001", "a"), _spec("ADR-PROBE-001", "b")])
+        adr_registry(specs=[_spec("ADR-PROBE-001", "a"), _spec("ADR-PROBE-001", "b")])
 
 
-def test_get_adr_is_not_a_public_name() -> None:
-    """関数 get_adr は公開の名に無く、effect GetAdr と handler の工場 adr_registry が入口に在る。"""
-    assert "get_adr" not in doeff_adr.__all__
-    assert not hasattr(doeff_adr, "get_adr")
-    assert not hasattr(doeff_adr.registry, "get_adr")
+def test_get_adr_and_its_answerer_are_public() -> None:
+    """effect GetAdr と handler の工場 adr_registry は入口に在る。get_adr は移し替えの層で、GetAdr と同じ登録簿を読む。"""
     assert {"GetAdr", "adr_registry"} <= set(doeff_adr.__all__)
+    with isolated_registry():
+        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        assert doeff_adr.get_adr("ADR-PROBE-001") is run(adr_registry()(GetAdr("ADR-PROBE-001")))
 
 
 def test_a_deftest_reads_the_adr_through_the_handler_its_fixture_installs(pytester) -> None:
@@ -149,7 +151,7 @@ def test_a_deftest_reads_the_adr_through_the_handler_its_fixture_installs(pytest
                        (assert (= spec.title "GetAdr sample"))
                        (assert (= (get (. spec laws) 0 "id") "read-by-effect")))
                      (deftest test-get-adr-reads-a-swapped-table
-                       (<- spec ((adr-registry [(AdrSpec :id "ADR-SAMPLE-098" :title "swapped" :status "proposed")])
+                       (<- spec ((adr-registry :specs [(AdrSpec :id "ADR-SAMPLE-098" :title "swapped" :status "proposed")])
                                  (GetAdr "ADR-SAMPLE-098")))
                        (assert (= spec.title "swapped")))])
                 """,

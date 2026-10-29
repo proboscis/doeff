@@ -38,6 +38,9 @@ from doeff_adr.registry import (
     enforcement_ids as enforcement_ids,
 )
 from doeff_adr.registry import (
+    get_adr as get_adr,
+)
+from doeff_adr.registry import (
     get_enforcement as get_enforcement,
 )
 from doeff_adr.registry import (
