@@ -1250,6 +1250,8 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
         # The terminal-entry sweep walks every task row once per
         # HANDLE_SWEEP_INTERVAL ids (amortized, #502) — kept out of the count.
         monkeypatch.setattr(scheduler_module, "HANDLE_SWEEP_INTERVAL", 1 << 30)
+        # The same sweep at an idle block (amortized by IDLE_SWEEP_ROWS_PER_ID) — kept out too.
+        monkeypatch.setattr(scheduler_module, "IDLE_SWEEP_ROWS_PER_ID", 0)
         # The self-check recomputes the index on every step — its own lines would be counted.
         monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", False)
         few, few_by_function = _scheduler_lines_per_timed_wait(

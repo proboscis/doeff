@@ -98,6 +98,17 @@ STALL_LOG_WAITERS_SHOWN = 20
 # handlers), never from a GC callback, so it can safely mutate the state dicts.
 HANDLE_SWEEP_INTERVAL = 1024
 
+# The same sweep also runs when the scheduler is about to block on external
+# completions (idle), once the ids allocated since the last sweep times this
+# ratio cover the rows a sweep walks (tasks + promises + waiter keys). A job
+# with no work allocates a few ids per clock tick, so the interval above took
+# hours to arrive and the terminal rows of every tick — awaited-value boxes,
+# clock wakes, cancelled timers, failed tasks' tracebacks — piled up until
+# then (agora card ki-f9aa5fce26e3). The ratio keeps the idle sweep's walk at
+# most this many rows per allocated id, so a busy run with many parked rows
+# does not walk them all at every block.
+IDLE_SWEEP_ROWS_PER_ID = 64
+
 # Minimum handle_refs list length before dead weakrefs are pruned at
 # registration time (#502): a long-lived PENDING promise whose owner mints
 # `.future` repeatedly must not accumulate dead refs until terminality.
@@ -1282,7 +1293,8 @@ def _rust_spec() -> dict[str, object]:
     """The classes and fixed settings the Rust scheduler reads (built once).
 
     Module settings a test may monkeypatch are not cached here:
-    HANDLE_SWEEP_INTERVAL / HANDLE_REFS_PRUNE_MIN / UNRETRIEVED_EXCEPTIONS_NAMED
+    HANDLE_SWEEP_INTERVAL / IDLE_SWEEP_ROWS_PER_ID / HANDLE_REFS_PRUNE_MIN /
+    UNRETRIEVED_EXCEPTIONS_NAMED
     are read when a run starts and EXTERNAL_STALL_LOG_INTERVAL_SECONDS whenever
     the scheduler blocks.
     """
@@ -1358,6 +1370,7 @@ def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
         {
             **_rust_spec(),
             "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
+            "IDLE_SWEEP_ROWS_PER_ID": IDLE_SWEEP_ROWS_PER_ID,
             "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
             "UNRETRIEVED_EXCEPTIONS_NAMED": UNRETRIEVED_EXCEPTIONS_NAMED,
             "INDEX_SELF_CHECK": _INDEX_SELF_CHECK,
@@ -1585,6 +1598,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
 
     # --- State ---
     next_id = [0]
+    swept_at_id = [0]  # next_id when the last terminal-entry sweep ran (the idle sweep's ratio)
     insertion_seq = [0]  # tie-breaker for priority queue (FIFO within same priority)
     tasks = {}           # tid → {status, result, program, priority}
     promises = {}        # pid → {status, result}
@@ -1676,6 +1690,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         long-poll waits grew ~15 MB a minute). Semaphores are never swept:
         "no permits outstanding" is not trackable from handle liveness.
         """
+        swept_at_id[0] = next_id[0]
         protected = set()
         for entries in waiters.values():
             for entry in entries:
@@ -1720,6 +1735,19 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 del store[wid]
                 del handle_refs[(kind, wid)]
                 handle_prune_at.pop((kind, wid), None)
+
+    def sweep_when_idle() -> None:
+        """Run the terminal-entry sweep at an idle block (IDLE_SWEEP_ROWS_PER_ID).
+
+        Called when nothing is runnable and the scheduler is about to wait
+        for an external completion. It sweeps once the ids allocated since the last
+        sweep, times the ratio, cover the rows a sweep walks — in a job with no
+        work that is every tick, so a tick's terminal rows do not outlive it
+        (agora card ki-f9aa5fce26e3).
+        """
+        allocated = next_id[0] - swept_at_id[0]
+        if allocated and len(tasks) + len(promises) + len(waiters) <= allocated * IDLE_SWEEP_ROWS_PER_ID:
+            sweep_terminal_unobserved_entries()
 
     def keep_swept_unretrieved(row: dict[str, object]) -> None:
         """Keep the never-retrieved exception of a task row the sweep deletes:
@@ -2103,8 +2131,10 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         semantics are unchanged. A block is a stall only as invariant S1
         says (``_external_wait_is_stall``): a pending clock wait not overdue
         (#765) or a watched wait whose source is live (card ki-6222e22d4179)
-        keeps the warning silent.
+        keeps the warning silent. Nothing is runnable here, so the
+        terminal-entry sweep may run first (``sweep_when_idle``).
         """
+        sweep_when_idle()
         waited = 0.0
         while True:
             interval = EXTERNAL_STALL_LOG_INTERVAL_SECONDS
