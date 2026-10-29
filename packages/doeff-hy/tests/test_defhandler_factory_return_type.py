@@ -68,7 +68,7 @@ def test_a_handler_without_parameters_stays_a_marked_handler_value() -> None:
 
 
 def test_the_static_expansion_does_not_annotate_the_factory() -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(PROBE)
     with static_view():

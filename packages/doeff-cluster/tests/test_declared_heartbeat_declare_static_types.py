@@ -3,7 +3,7 @@
 
 3 つの module は Hy の module で型の宣言が無かったので、defk にした declared-job-specs・status-rows-json・apply-declaration を `<-` で
 受ける使い手の strict に、書き手に直せない赤(Type of "declared_job_specs" is unknown・Type of "status_rows_json" is unknown・受けた値の
-Argument type is unknown)が出ていた。→ 3 つの .pyi を道具 doeff_hy.static_stub が .hy の契約(:pre / :post と deff の `#^`)から作る。
+Argument type is unknown)が出ていた。→ 3 つの .pyi を道具 doeff_hy._static_stub が .hy の契約(:pre / :post と deff の `#^`)から作る。
 .pyi を外すとこの検が赤になる。.pyi が .hy から離れると tests/test_generated_stubs.py(作り直した物 == commit された物)が赤になる。
 
 ここが見るのは、答えの型が使い手の受け方に届く細かさか — 契約を素の `tuple`・`list`・`dict` に戻すと、道具はそのまま写し、使い手には
@@ -60,9 +60,9 @@ class Checked:
 
 
 def _checked(root: Path) -> Checked:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ(検の module が道具の中身を import しない)。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ(検の module が道具の中身を import しない)。
     done = subprocess.run(
-        [sys.executable, "-m", "doeff_hy.static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
+        [sys.executable, "-m", "doeff_hy._static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
         capture_output=True,
         text=True,
         timeout=240,

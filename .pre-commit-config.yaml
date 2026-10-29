@@ -87,7 +87,7 @@ repos:
         files: '^packages/doeff-cluster/(architecture\.hy|pyproject\.toml|(src|tests)/.*\.(hy|py))$'
         pass_filenames: true
 
-      # .hy を変える commit は、その隣の .pyi(doeff_hy.static_stub が .hy から作る生成物)を同じ commit で作り直す。各 package の
+      # .hy を変える commit は、その隣の .pyi(doeff_hy._static_stub が .hy から作る生成物)を同じ commit で作り直す。各 package の
       # test_generated_stubs が日次に同じ照らしを撃つが、commit の時に止めないと、作り直し忘れが main に入ってから failing になる
       # (afaf956cd が kube.hy に import を足して kube.pyi を直し忘れた — card ki-5755818ef0d8)。素の commit の hook も別名 hy-stubs で撃つ。
       - id: hy-stub-fresh

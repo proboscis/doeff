@@ -59,7 +59,7 @@ PROBE = """\
 
 
 def _check(root: Path, text: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe.hy").write_text(text, encoding="utf-8")
     out = io.StringIO()
@@ -156,7 +156,7 @@ def _expand(source: str) -> str:
 
 
 def test_only_the_static_expansion_reads_the_item_through_the_helper() -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(PROBE)
     with static_view():

@@ -69,7 +69,7 @@ DESCRIBED = """\
 
 
 def _check(root: Path, text: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe.hy").write_text(text, encoding="utf-8")
     out = io.StringIO()
@@ -125,7 +125,7 @@ YIELDING = """\
 
 
 def test_only_the_static_expansion_of_a_yield_free_defk_annotates_the_return() -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     source = PROBE
     runtime = _expand(source)

@@ -43,12 +43,12 @@ DECLARED = {"RUNTIME_ENV_KEY_VAR", "process_versions", "this_process_versions", 
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ(検の module が道具の中身を import しない)。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ(検の module が道具の中身を import しない)。
     done = subprocess.run(
         [
             sys.executable,
             "-m",
-            "doeff_hy.static_check",
+            "doeff_hy._static_check",
             "--root",
             str(root),
             "--json",

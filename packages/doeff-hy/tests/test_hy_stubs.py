@@ -63,7 +63,7 @@ class Run:
 
 
 def _check(root: Path) -> Run:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

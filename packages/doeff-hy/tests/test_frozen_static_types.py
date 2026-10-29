@@ -112,7 +112,7 @@ def _check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_stub: bool) 
     """frozen.hy(with_stub なら frozen.pyi も)の写しの package frozen_copy を import の根に置き、検体を doeff-hy-check --strict に
     かける。写しの dir は sys.path にも置く — doeff-hy-check が import 先を「.hy なので型が見えない」module と見分けるのは
     sys.path の .hy なので、agora が doeff の .hy の module を読む時と同じ扱いになる。"""
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     copy = tmp_path / ("stubbed" if with_stub else "bare") / "frozen_copy"
     copy.mkdir(parents=True)

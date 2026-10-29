@@ -109,7 +109,7 @@ from typing import Any, assert_type
 from doeff import Ask, Program, do, handler, run, stacked_handlers, with_handlers
 from doeff.program import ProgramHandler
 from doeff_core_effects._handlers import reader, state, writer
-from doeff_hy.static_types import Handler
+from doeff_hy._static_types import Handler
 
 
 @do

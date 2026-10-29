@@ -31,7 +31,7 @@
 (val UPKEEP "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy")
 
 ;; 保存先の entry を綴る形の目印(種類の末尾 .code・.imports の文字列 — 入口の外にこの綴りが在れば 2 つ目の保存先)。doeff-hy-check の
-;; 展開の cache(doeff_hy/static_cache — 型検査の展開・.json と .txt)は bytecode の保存先ではないので当たらない。
+;; 展開の cache(doeff_hy/_static_cache — 型検査の展開・.json と .txt)は bytecode の保存先ではないので当たらない。
 (val ENTRY-SUFFIX (re.compile r"[\"']\.(?:code|imports)[\"']"))
 ;; 前の版の木から .pyc を引き継ぐ形(古い保存の形 — 道具の引数 --from / --changed)の目印。
 (val CARRY-ARGUMENT (re.compile r"\"--(?:from|changed)\""))

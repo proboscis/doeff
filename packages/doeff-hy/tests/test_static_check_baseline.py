@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_hy.static_baseline import Baseline, Identity, read_baseline, split
+from doeff_hy._static_baseline import Baseline, Identity, read_baseline, split
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -58,7 +58,7 @@ class Run:
 
 
 def _check(root: Path, *extra: str) -> Run:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -108,7 +108,7 @@ def test_only_reds_missing_from_the_baseline_fail(probe: Path) -> None:
 
 @needs_pyright
 def test_strict_shows_no_reds_from_the_doeff_hy_expansion(probe: Path) -> None:
-    from doeff_hy.static_check import import_roots, project, pyright_settings
+    from doeff_hy._static_check import import_roots, project, pyright_settings
 
     projection = project(probe, import_roots(probe, pyright_settings(probe)), probe / "probe.hy")
     text = getattr(projection, "text")
@@ -182,7 +182,7 @@ def test_split_follows_a_moved_file_one_to_one() -> None:
 
 
 def test_a_baseline_of_another_version_is_unreadable(tmp_path: Path) -> None:
-    from doeff_hy.static_baseline import BaselineUnreadable
+    from doeff_hy import BaselineUnreadable
 
     path = tmp_path / "b.json"
     path.write_text(json.dumps({"version": 9, "errors": []}), encoding="utf-8")

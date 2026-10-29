@@ -61,7 +61,7 @@ RECORD_TAG = "doeff-hy/macro-dependencies/7"
 
 #: Hy が module の名前空間に置く辞書の名(普通の macro の表・reader macro の表・Hy の export が書く公開の macro の名の表)と、
 #: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer.result_cache・
-#: doeff_hy.static_baseline・doeff_hy.static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
+#: doeff_hy._static_baseline・doeff_hy._static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
 #: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く(card ki-ffe72a1fb7d7)— Hy が名を替えた時に直す所を 1 つにし、
 #: 名の字を他の file へ写す変更は packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py の走査が赤にする。
 #: 名と、Hy の展開が表を ``名 in 表`` と ``表[名]`` で引く事(macro_use.RecordingTable が引いた名と表に無かった名を覚える前提)は
@@ -116,7 +116,7 @@ class UsedMacro:
 
 @dataclass(frozen=True)
 class ValueReference:
-    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— 型検査の展開の後処理(doeff_hy.static_check の
+    """macro の外で展開の結果を変える値の在処(module の名と属性の名)— 型検査の展開の後処理(doeff_hy._static_check の
     ``POST_PROCESSING``)。module の属性で引くので、検が module の別の関数を差し替えても、この値の digest は変わらない。"""
 
     module: str
@@ -392,7 +392,7 @@ def canonical_gensyms(code: CodeType) -> CodeType:
 
 def gensym_renames(texts: Iterable[str]) -> dict[str, str]:
     """名と文字列の並びに現れる gensym の名から、数えの小さい順に ``_hy_gensym_<base>_1`` から振り直した名への対応を作る —
-    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy.static_check — agora-redesign #3869)が同じ 1 つの
+    code の木(:func:`canonical_gensyms`)と、型検査の展開の木(doeff_hy._static_check — agora-redesign #3869)が同じ 1 つの
     振り直しを使うため。対応は gensym の名そのもの(Hy が改めた束縛の名に埋まった物も含む)を鍵にし、替えるのは
     :func:`renamed` が行う。"""
     found: dict[str, re.Match[str]] = {}
@@ -459,7 +459,7 @@ def renamed(text: str, names: Mapping[str, str]) -> str:
 
 def fold_anon_var_numbers(text: str, mark: str) -> str:
     """text の中の Hy が振った一時の名(:data:`ANON_VAR_NAME`)の番号を mark に替える(``_hy_anon_44`` → ``_hy_anon_#``)— 番号は
-    compile の順で決まるので、同じ名の文言を番号の違いで別の物と数えないため(doeff_hy.static_baseline)。"""
+    compile の順で決まるので、同じ名の文言を番号の違いで別の物と数えないため(doeff_hy._static_baseline)。"""
     return ANON_VAR_NAME.sub(lambda found: f"{found.group(1)}_{mark}", text)
 
 

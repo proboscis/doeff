@@ -22,7 +22,7 @@ from pathlib import Path
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import hy
 import pytest
-from doeff_hy.static_stub import hidden_name
+from doeff_hy._static_stub import hidden_name
 
 # stub(.pyi)は型の引数の構文(PEP 695 — `class SqlTransaction[T]`)で書き、3.11 の ast はそれを読めない。stub と module の
 # 突き合わせは Python の版に依らないので、3.12 から見る。
@@ -149,7 +149,7 @@ def _declared_name(node: ast.stmt) -> str | None:
 
 def _stub_declared_names(tree: ast.Module) -> tuple[str, ...]:
     """宣言の module の直下で宣言した公開の名(_ で始まる宣言の中だけの型は除く)。module の印(MODULE_TAGS)など型の面に出さない名は、
-    生成の道具 doeff_hy.static_stub と同じ判定 hidden_name で両側から外す(#2909)。"""
+    生成の道具 doeff_hy._static_stub と同じ判定 hidden_name で両側から外す(#2909)。"""
     names = (_declared_name(node) for node in tree.body)
     return tuple(n for n in names if n is not None and not n.startswith("_") and not hidden_name(n))
 

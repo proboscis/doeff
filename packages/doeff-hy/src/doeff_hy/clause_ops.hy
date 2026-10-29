@@ -10,7 +10,7 @@
 ;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
 ;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名(別名 `_doeff_<名>` で束ねる — 書き手の同じ名の effect を
 ;;;                 隠さない・doeff_hy/expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
-;;;   static-nodes  型検査のための展開(doeff_hy/static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
+;;;   static-nodes  型検査のための展開(doeff_hy/_static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
 ;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
 ;;;
 ;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
@@ -42,7 +42,7 @@
 (import json)
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
-(import doeff-hy.static-view [static-view-enabled])
+(import doeff-hy._static-view [static-view-enabled])
 (import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol])
 
 

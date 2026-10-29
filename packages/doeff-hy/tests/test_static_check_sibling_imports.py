@@ -1,4 +1,4 @@
-"""doeff-hy-check(doeff_hy/static_check.py)が、1 file だけを検める時も、import する file の dir の隣の .hy を展開して
+"""doeff-hy-check(doeff_hy/_static_check.py)が、1 file だけを検める時も、import する file の dir の隣の .hy を展開して
 pyright に解かせること(agora-redesign #2898)。
 
 script を `hy scripts/x.hy` で撃つと scripts/ が探し道の先頭に入るので、script は隣の module を top-level の名で読む
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_check import main
+from doeff_hy._static_check import main
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -87,7 +87,7 @@ def _repo(root: Path, files: dict[str, str]) -> Path:
 
 
 def test_search_dirs_put_the_import_roots_first_then_the_file_dir_up_to_the_root(tmp_path: Path) -> None:
-    from doeff_hy.static_check import search_dirs
+    from doeff_hy._static_check import search_dirs
 
     root = tmp_path / "repo"
     extra = root / "clients" / "hy"

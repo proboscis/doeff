@@ -19,7 +19,7 @@ import pytest
 
 from doeff_core_effects.http_effects import HttpRequest
 from doeff_core_effects.sql_effects import is_driver_value, is_plain_rows
-from doeff_hy.static_stub import strict_errors
+from doeff_hy._static_stub import strict_errors
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 

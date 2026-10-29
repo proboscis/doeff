@@ -132,7 +132,7 @@ UNTYPED_POST = """\
 
 
 def _check(root: Path, text: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe.hy").write_text(text, encoding="utf-8")
     out = io.StringIO()
@@ -193,7 +193,7 @@ def _expand(source: str) -> str:
 
 
 def _both_expansions(source: str) -> dict[str, str]:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(source)
     with static_view():

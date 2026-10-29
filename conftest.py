@@ -735,7 +735,7 @@ def pytest_terminal_summary(terminalreporter):
 # brain to ask, so the hook lets the run through without a word: gating it
 # there would mean no test could ever run, and a line about a toolchain the
 # machine does not have would open every run of an outside contributor (the
-# machine check slot of doeff_hy.check_slot is silent there too).  Where the
+# machine check slot of doeff_hy._check_slot is silent there too).  Where the
 # toolchain *is* present the hook is fail-closed (an unreadable policy or an
 # unobtainable grant stops the session before a single test body runs).
 _ADMISSION_CANON = Path.home() / "dotfiles" / "agent" / "tests" / "broad_run_admission.py"

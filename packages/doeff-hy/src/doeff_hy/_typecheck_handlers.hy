@@ -1,7 +1,7 @@
 ;;; TypeCheck を果たす 2 つの家(柵 3)。既定は off・検で on。
 ;;;
 ;;; 出自 = agora-redesign 段 7 lane 7c(決定 1.4 の柵「TypeCheck の effect」)。
-;;; 要求の語彙と赤の文言は `doeff_hy.typecheck` の 1 点が持ち、ここは
+;;; 要求の語彙と赤の文言は `doeff_hy._typecheck` の 1 点が持ち、ここは
 ;;; 「果たすか果たさないか」だけを持つ(handler に判断を置かない)。
 ;;;
 ;;; ⚠ この module は共通の品質検査の静的投影に届かない(`defhandler` の投影が
@@ -13,7 +13,7 @@
 (setv MODULE-TAGS {:context "typecheck" :role "foundation"})
 
 (import doeff [run])
-(import doeff_hy.typecheck [TypeCheck TypeCheckError type-check-verdict])
+(import doeff_hy._typecheck [TypeCheck TypeCheckError type-check-verdict])
 
 
 (defhandler type-checks-off

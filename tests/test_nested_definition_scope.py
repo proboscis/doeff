@@ -36,7 +36,7 @@ import hy
 import pytest
 from doeff_core_effects import scheduled, try_handler
 from doeff_hy.pytest_items import module_record_texts
-from doeff_hy.static_check import Projection, project
+from doeff_hy._static_check import Projection, project
 from doeff_hy_bytecode_guard._records import MACRO_TABLE
 from doeff_traverse import fail_handler, sequential
 

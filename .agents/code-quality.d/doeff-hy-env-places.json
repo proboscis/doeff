@@ -1,7 +1,7 @@
 {
   "include": [
     "packages/doeff-hy/src/doeff_hy/env_places.py",
-    "packages/doeff-hy/src/doeff_hy/static_cache.py"
+    "packages/doeff-hy/src/doeff_hy/_static_cache.py"
   ],
   "module_extensions": {
     "doeff-hy-static-check": {

@@ -18,7 +18,7 @@ gensym と let が改めた束縛の名の形(compile の口の正準化が読�
 記録し損ねて古い展開を黙って使うか、code が compile の順で揺れる。
 
 Hy の内部の名の定義元は ``records`` の 1 か所(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
-``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy.static_baseline の基点の鍵・
+``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy._static_baseline の基点の鍵・
 macro_use の全部の require の判定 — card ki-ffe72a1fb7d7)もそこから引く。この file の末尾の 2 本が、records の読みを実物の Hy の
 module に当てる: 表と export の名の読みは Hy 自身の ``(require 提供元 *)`` の振る舞いと一致し、Hy が一時の名に振る形は
 ``fold_anon_var_numbers`` が畳める形のまま。Hy が名を替えるとここが赤になる。字が records の外へ写される事は
@@ -753,14 +753,14 @@ def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
 def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_normal_import(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """型検査のための展開(doeff_hy.static_view)の最中に require で初めて読み込まれた macro の提供元は、:pre の isinstance と
+    """型検査のための展開(doeff_hy._static_view)の最中に require で初めて読み込まれた macro の提供元は、:pre の isinstance と
     実行の時の import の無い、実行できない code になる。それに macro の依存の記録を付けると、.pyc と共有の置き場に普通の展開と
     同じ鍵で残り、後の普通の import がそれを読んで ``NameError: name '_doeff_do' is not defined`` で落ちた(milestone I の I-3 の
     再現 2026-10-03 — doeff-hy-check の後の普通の実行)。型検査の展開の code は置き場に入らず、後の普通の import は :pre の付いた
     展開を読む。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff import run
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
     from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
@@ -1113,9 +1113,9 @@ def test_the_temporaries_hy_names_have_the_shape_records_folds() -> None:
     """Hy が一時の名(match を値に使った ``_hy_anon_<数え>``・let の ``_hy_let_<元の名>_<数え>``・except の
     ``_hy_exc_<元の名>_<数え>``)に振る形は、定義元 ``records.ANON_VAR_NAME`` が読む形のまま — 数えを畳んだ名は、定義を足して番号が
     ずれても同じ(doeff-hy-check の基点が、同じ赤を番号の違いで新しい赤と数えない)。Hy が名の形を替えると、畳めない名が出て
-    ここが赤になる(card ki-ffe72a1fb7d7 — 形は records の 1 か所。doeff_hy.static_baseline・static_stub は字を持たない)。"""
-    from doeff_hy.static_baseline import comparable_message
-    from doeff_hy.static_stub import hidden_name
+    ここが赤になる(card ki-ffe72a1fb7d7 — 形は records の 1 か所。doeff_hy._static_baseline・static_stub は字を持たない)。"""
+    from doeff_hy._static_baseline import comparable_message
+    from doeff_hy._static_stub import hidden_name
 
     plain = _hy_temporaries(_TEMPORARIES_SOURCE)
     shifted = _hy_temporaries(_TEMPORARIES_SHIFTED)

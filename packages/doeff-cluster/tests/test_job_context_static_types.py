@@ -5,7 +5,7 @@ module で型の宣言が無かったので、宿の run-context(RunContext)を�
 (Type of "RunContext" is unknown・Argument type is unknown ほか)が出ていた。
 
 旧い入口は 2026-10-03 に消した(利用者の決め・#2167)。型と読みの置き場は shared/intent/run_context と
-shared/core/run_context_rules で、どちらの .pyi も doeff_hy.static_stub が作り、作り直しとの食い違いは test_generated_stubs.py が
+shared/core/run_context_rules で、どちらの .pyi も doeff_hy._static_stub が作り、作り直しとの食い違いは test_generated_stubs.py が
 赤にする。ここに残すのは、使い手が新しい置き場から読んだ時に Unknown の赤が出ないことの 1 本(宣言を外すと赤になる)。
 """
 
@@ -38,9 +38,9 @@ MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ(検の module が道具の中身を import しない)。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ(検の module が道具の中身を import しない)。
     done = subprocess.run(
-        [sys.executable, "-m", "doeff_hy.static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
+        [sys.executable, "-m", "doeff_hy._static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
         capture_output=True,
         text=True,
         timeout=240,

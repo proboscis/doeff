@@ -1,4 +1,4 @@
-"""doeff_hy.check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検(設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
+"""doeff_hy._check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検(設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
 
 守る知識: 正本の方策の中身(欄の名・値)・入れ子の時の幅の規則・env の名は正本の持ち物で、M-slot は知らない。M-slot が正本から
 受ける物は、方策(read_policy の答え)と持ち物(take の答え)という **開かない物** と、並走の数(process_width の答え)という整数だけ。
@@ -30,7 +30,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from doeff_hy import check_slot
+from doeff_hy import _check_slot as check_slot
 
 #: 正本の宣言した口(開かない物を渡してよい呼び)・開かない物を返す口・捕まえてよい例外。固定 — 変えるのは契約の変更。
 MOUTHS = frozenset({"read_policy", "take", "process_width"})
@@ -459,7 +459,7 @@ def test_the_name_guard_lets_prose_talk_about_the_canon() -> None:
             "def project_each(root, roots, sources, limit: int = EXPANDER_LIMIT):\n    return _Expanders(limit)\n",
             "project_each",
         ),
-        ("from doeff_hy.static_check import EXPANDER_LIMIT\n", "<module>"),
+        ("from doeff_hy._static_check import EXPANDER_LIMIT\n", "<module>"),
         ("def stale(root):\n    return _Expanders(static_check.EXPANDER_LIMIT)\n", "stale"),
         ("def stale(root):\n    return _Expanders(EXPANDER_LIMIT)\n", "stale"),
     ],

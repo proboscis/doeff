@@ -42,7 +42,7 @@
 ;; 展開が import する module(系の型 System・CallShape・GroupLimit の置き場と、構成子 job・system-of の置き場)と、展開がそれを束ねる名。
 ;; 名は展開の名の頭 `_doeff_`(doeff_hy.expansion_names.PREFIX)で付ける — 書き手の名と分け合わず、doeff-hy-check の型検査のための
 ;; 展開の掃除が「展開の合成した import」と読んで、1 つの module に系を 2 つ書いた時の重ねを 1 つに畳み、関数・class の本体の中の物を
-;; module の段へ移す(doeff_hy.static_check._synthesized_import — 素の `import <module>` だと畳む綴りを doeff-hy が持つことになる)。
+;; module の段へ移す(doeff_hy._static_check._synthesized_import — 素の `import <module>` だと畳む綴りを doeff-hy が持つことになる)。
 (setv DEFSYSTEM-MODEL #("doeff_cluster.shared.intent.service_model" "_doeff_cluster_service_model"))
 (setv DEFSYSTEM-BUILD #("doeff_cluster.shared.entry.service_build" "_doeff_cluster_service_build"))
 (setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))

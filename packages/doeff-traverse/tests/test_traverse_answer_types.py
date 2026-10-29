@@ -23,7 +23,7 @@ from doeff import Pure, do, effect_result_type, run, with_handlers
 from doeff_traverse import Collection, Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip, fail_handler, sequential
 from doeff_traverse import ItemResult
 # pyright が検索 path を問うために起こす python を -B で起こす包み(素の sys.executable は checkout へ .pyc を書く・card ki-04d762c59dac)。
-from doeff_hy.static_check import python_without_bytecode
+from doeff_hy._static_check import python_without_bytecode
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -184,7 +184,7 @@ FOR_DO_MODULE = """\
 
 
 def _hy_errors(tmp_path: Path, name: str, source: str) -> list[tuple[str, int]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     root = tmp_path / name
     root.mkdir()

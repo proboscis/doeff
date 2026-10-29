@@ -122,7 +122,7 @@ def loaded_record(path: str) -> "MacroRecord | None":
 def macro_recording(module: ModuleType) -> "MacroRecording":
     """Hy の module の展開(compile)を囲む口 — ``with macro_recording(module) as recording:`` の中の展開が使った macro を拾い、
     ``recording.record(source)`` が記録を作る。compile の口が code に足す記録(.pyc)と、展開した木の cache(doeff-effect-analyzer
-    — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache — agora-redesign #3862)が同じ 1 つの拾い方と作り方を
+    — agora-redesign #3598)と、型検査の展開の保存(doeff_hy._static_cache — agora-redesign #3862)が同じ 1 つの拾い方と作り方を
     使うための公開の口。``record`` の ``also`` は macro の外で展開の結果を変える値の在処(型検査の展開の後処理)。"""
     from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
 
@@ -131,7 +131,7 @@ def macro_recording(module: ModuleType) -> "MacroRecording":
 
 def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
     """名の並びに現れる Hy の gensym の名を、数えの小さい順に 1 から振り直す関数(他の名はそのまま返す)— code の木の正準化
-    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy.static_check — agora-redesign #3869)にも当てる
+    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy._static_check — agora-redesign #3869)にも当てる
     公開の口。展開の文が、同じ process で先に何を展開したか・どの process で展開したかに依らなくなる。"""
     from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
 
@@ -144,7 +144,7 @@ def record_is_current_here(record: "MacroRecord") -> bool:
     import する — 引けなければ古い)、その code の閉包の digest を比べる。記録か今の歩みが import の途中の module に当たった行は、
     digest でなく閉包が依った module の file の sha256 を import せずに比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
     準備が前の root から hardlink で引き継ぐ物 — agora-redesign #2598)や保存先の code も今の木の macro で照らす。.pyc の記録と、
-    展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy.static_cache)が同じ 1 つの
+    展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの
     照らし方を使うための公開の口。"""
     from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
 
@@ -160,7 +160,7 @@ def value_reference(module: str, name: str) -> "ValueReference":
 
 
 def record_fingerprint(record: "MacroRecord") -> str:
-    """記録の中身の指紋 — 展開した木の cache(doeff-effect-analyzer)と型検査の展開の保存(doeff_hy.static_cache)の entry の名が
+    """記録の中身の指紋 — 展開した木の cache(doeff-effect-analyzer)と型検査の展開の保存(doeff_hy._static_cache)の entry の名が
     同じ 1 つの作り方を使うための公開の口。"""
     from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
 
@@ -168,7 +168,7 @@ def record_fingerprint(record: "MacroRecord") -> str:
 
 
 def record_to_json(record: "MacroRecord") -> list[object]:
-    """記録を JSON に書ける値にする — 記録を file に書いて読み戻す保存(型検査の展開の保存 doeff_hy.static_cache)が、記録の形の
+    """記録を JSON に書ける値にする — 記録を file に書いて読み戻す保存(型検査の展開の保存 doeff_hy._static_cache)が、記録の形の
     持ち主(records)を直に import しないための公開の口。"""
     from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
 
@@ -297,7 +297,7 @@ def _recording_source_to_code(previous: SourceToCode):
             # ``hy -m``)は読みの口が module を置いて囲むので、ここへ来ない(_expansion_recording)。
             return code
         if TYPE_CHECK_EXPANSION.get():
-            # 型検査のための展開(doeff_hy.static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
+            # 型検査のための展開(doeff_hy._static_view)の code は実行できない(:pre の isinstance と実行の時の import が無い)—
             # 記録を付けない。記録の無い code は保存先に入らず(_to_shared_store)、.pyc に書かれても次の普通の import が
             # compile し直す(_record_is_current_here)。付けると普通の展開と同じ鍵で残り、普通の import が読んで落ちた(I-3)。
             return code

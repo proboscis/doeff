@@ -1,4 +1,4 @@
-"""doeff-hy-check の運び(`--carry` — doeff_hy/static_carry.py・agora-redesign card ki-cbd1c93cfe7c)の失敗ケース。
+"""doeff-hy-check の運び(`--carry` — doeff_hy/_static_carry.py・agora-redesign card ki-cbd1c93cfe7c)の失敗ケース。
 
 agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy 約 3,000 本を毎回全部 pyright に当て、上限 7,200 秒で 2 回続けて切れた
 (card ki-c16990fab50b)。運びは、前の回から入力の変わらない .hy を pyright に当てず、前の回の診断を運ぶ。運んだ答えが全部当てた答えと
@@ -25,13 +25,13 @@ from pathlib import Path
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
-from doeff_hy import static_carry, static_check
-from doeff_hy.check_slot import SlotHeld
-from doeff_hy.static_carry import (
+from doeff_hy import _static_carry as static_carry, _static_check as static_check
+from doeff_hy._check_slot import SlotHeld
+from doeff_hy import CarryUnreadableError
+from doeff_hy._static_carry import (
     CarriedFile,
     CarriedRow,
     CarryRecord,
-    CarryUnreadableError,
     Environment,
     FileInputs,
     FileRows,

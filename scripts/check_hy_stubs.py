@@ -1,6 +1,6 @@
 """commit する .hy の隣の .pyi が、今の .hy から作り直した物と同じかを照らす(commit の hook — card ki-5755818ef0d8)。
 
-.pyi は doeff_hy.static_stub が .hy から作る生成物で、各 package の test_generated_stubs が「作り直した物 == commit された物」を
+.pyi は doeff_hy._static_stub が .hy から作る生成物で、各 package の test_generated_stubs が「作り直した物 == commit された物」を
 日次に照らす。.hy だけを変えて .pyi を作り直さない commit は、その test が後から failing にするので(afaf956cd — kube.hy)、
 commit の時に同じ照らしを撃って止める。
 
@@ -40,14 +40,14 @@ def main(argv: list[str]) -> int:
     failed = False
     for root, paths in by_root.items():
         done = subprocess.run(
-            ["uv", "run", "python", "-m", "doeff_hy.static_stub", "--check", "--root", str(root), *map(str, paths)], cwd=ROOT, check=False
+            ["uv", "run", "python", "-m", "doeff_hy._static_stub", "--check", "--root", str(root), *map(str, paths)], cwd=ROOT, check=False
         )
         failed = failed or done.returncode != 0
         if done.returncode != 0:
             fix = " ".join(str(p.relative_to(ROOT)) for p in paths)
             print(
                 f"doeff の commit の hook: .hy の隣の .pyi が古い。作り直して stage する: "
-                f"(cd {root.relative_to(ROOT)} && uv run python -m doeff_hy.static_stub --write --root . <上に出た .hy>) — 対象の候補: {fix}",
+                f"(cd {root.relative_to(ROOT)} && uv run python -m doeff_hy._static_stub --write --root . <上に出た .hy>) — 対象の候補: {fix}",
                 file=sys.stderr,
             )
     return 1 if failed else 0

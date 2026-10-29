@@ -191,14 +191,14 @@
     },
     {
       "count": 2,
-      "path": "packages/doeff-hy/src/doeff_hy/static_carry.py",
+      "path": "packages/doeff-hy/src/doeff_hy/_static_carry.py",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "python:full-scan-lookup"
     },
     {
       "count": 1,
-      "path": "packages/doeff-hy/src/doeff_hy/static_stub.py",
+      "path": "packages/doeff-hy/src/doeff_hy/_static_stub.py",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "python:full-scan-lookup"

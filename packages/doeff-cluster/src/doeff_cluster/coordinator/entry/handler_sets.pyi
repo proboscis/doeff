@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = handler_sets.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = handler_sets.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff_cluster.coordinator.protocol.request_bodies import request_bodies as request_bodies

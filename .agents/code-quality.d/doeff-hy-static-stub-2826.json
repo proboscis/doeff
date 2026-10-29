@@ -1,7 +1,7 @@
 {
   "include": [
-    "packages/doeff-hy/src/doeff_hy/static_stub.py",
-    "packages/doeff-hy/src/doeff_hy/static_types.pyi",
+    "packages/doeff-hy/src/doeff_hy/_static_stub.py",
+    "packages/doeff-hy/src/doeff_hy/_static_types.pyi",
     "packages/doeff-hy/tests/test_static_stub.py"
   ],
   "module_extensions": {
@@ -34,13 +34,13 @@
       "layer": "io",
       "name": "doeff-hy-static-check",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/static_check.py",
-        "packages/doeff-hy/src/doeff_hy/static_view.py",
-        "packages/doeff-hy/src/doeff_hy/static_cache.py",
-        "packages/doeff-hy/src/doeff_hy/static_baseline.py"
+        "packages/doeff-hy/src/doeff_hy/_static_check.py",
+        "packages/doeff-hy/src/doeff_hy/_static_view.py",
+        "packages/doeff-hy/src/doeff_hy/_static_cache.py",
+        "packages/doeff-hy/src/doeff_hy/_static_baseline.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/static_check.py"
+        "packages/doeff-hy/src/doeff_hy/_static_check.py"
       ],
       "responsibility": "Hy の source を型検査のための展開で Python にし、pyright に読ませて赤を Hy の行へ戻す道具(doeff-hy-check)。展開の木を返す project を、型の宣言の道具(doeff-hy-static-stub)も使う(agora-redesign #2826 で契約を置いた — 検める範囲には入れていない)。",
       "typed": true
@@ -52,10 +52,10 @@
       "layer": "io",
       "name": "doeff-hy-static-stub",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/static_stub.py"
+        "packages/doeff-hy/src/doeff_hy/_static_stub.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/static_stub.py"
+        "packages/doeff-hy/src/doeff_hy/_static_stub.py"
       ],
       "responsibility": "Hy の module の型の宣言(.pyi)を型検査のための展開から作り、commit された .pyi が作り直した物と同じかを照らす道具(.hy を読み .pyi を書く CLI と、各 package の検が呼ぶ一致の検 stale_in)。手で書いた .pyi が実装と食い違い、使い手の strict の型の門が Unknown で止まったため(agora-redesign #2826)。",
       "typed": true
@@ -65,12 +65,12 @@
       "layer": "pure",
       "name": "doeff-hy-static-types",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/static_types.py",
-        "packages/doeff-hy/src/doeff_hy/static_types.pyi"
+        "packages/doeff-hy/src/doeff_hy/_static_types.py",
+        "packages/doeff-hy/src/doeff_hy/_static_types.pyi"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/static_types.py",
-        "packages/doeff-hy/src/doeff_hy/static_types.pyi"
+        "packages/doeff-hy/src/doeff_hy/_static_types.py",
+        "packages/doeff-hy/src/doeff_hy/_static_types.pyi"
       ],
       "responsibility": "型検査のための展開と、道具(doeff-hy-static-stub)が作る .pyi が参照する型の宣言(Handler・do・_doeff_perform ほか)。実行時の展開は import しない。道具の .pyi の答え手の型(_Handler)がここを指すので、依存の先として契約を置いた(agora-redesign #2842 — 検める範囲には入れていない)。",
       "typed": true

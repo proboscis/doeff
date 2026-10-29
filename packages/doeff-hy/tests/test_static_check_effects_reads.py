@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from doeff_hy.static_check import without_bookkeeping
+from doeff_hy._static_check import without_bookkeeping
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -60,7 +60,7 @@ PROBE = """\
 
 
 def _check(root: Path) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
     (root / "probe_helpers.hy").write_text(HELPERS, encoding="utf-8")

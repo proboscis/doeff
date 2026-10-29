@@ -31,7 +31,7 @@ repo 全体を毎回検める使い手(agora-controllers の日次の型の段 h
 (検 = `tests/test_static_check_carry.py` — 本物の pyright で、本体だけの変更・使う名の署名の変更・推移の型の変更・解けなかった
 import が解ける変更の各回を、全部当てた答えと比べる)。
 
-入力(`doeff_hy/static_carry.py` の `InputGraph.inputs_of`)は 4 つ:
+入力(`doeff_hy/_static_carry.py` の `InputGraph.inputs_of`)は 4 つ:
 
 1. その file 自身 — `.hy` の source・展開した Python・位置の対応表。
 2. その file が使う名の宣言の表面と、表面が使う名の宣言(推移で全部)。表面 = pyright が使い手の側でその名の型を決めるのに読む
@@ -60,7 +60,7 @@ pin の checkout を根の隣に置く(回ごとに path が違う)ので、同�
 ## 仕組み
 
 1. 各 `.hy` を Hy の compiler で展開する。doeff-hy の macro はこの時だけ「型検査のための展開」を出す
-   (切替 = `doeff_hy/static_view.py`)。source の import は実行しない(macro の `require` だけは
+   (切替 = `doeff_hy/_static_view.py`)。source の import は実行しない(macro の `require` だけは
    Hy の compile の常として macro の module を import する)。
 2. 根の中身を symlink で映した一時の木に、展開した Python を `<名>.py` として置き、pyright を撃つ。
    利用者の repo の file は変えない。
@@ -74,14 +74,14 @@ macro の展開が型のために持つ形:
 | `defk` / `deff` の引数 | `def f(x: 'int')`(`:pre` の型を文字列の注記に写す) | 同じ |
 | `deff` の戻り値 | `-> 'T'` | 同じ |
 | `defk` の戻り値 | 注記なし(生成器) | `-> 'T'`(`:post` の `(: % T)` を写す — この展開の defk は yield の無い普通の関数。自分を呼び直す defk でも pyright が答えの型を推論に頼らず読める。本体に yield を直に書いた defk・型が説明の文字列だけの `:post` には付けない・agora-redesign #2308) |
-| `defk` / `deff` の契約の `:tp [T]`(型の引数) | 型の引数を出さない(PEP 695 の綴りを実行時の code に出さない)。契約の isinstance では T を `object` に消す — `(of Program T object)` は `Program`・素の `(: % T)` は常に真(外側の型だけを確かめる決め #1790 と同じ向き・失敗の文は書いた型のまま) | `def f[T](body: 'Program[T, object]') -> 'T'`(答えが引数の型で決まる関数 — 本体の答えを返す包みなど — の総称。道具 `doeff_hy.static_stub` の .pyi にも載り、答えが Incomplete にならない・agora-redesign #2893)。`defp` は `:tp` を断る |
-| `defeffect` の `:tp [T]`(型の引数) | 型の引数を出さない(class の `__type_params__` は空 — T は module の `(val T (TypeVar "T"))` で読む) | `class E[T](_doeff_effect_base):`(PEP 695 — 欄 `(: program (get Program #(T object)))` と `:answer (\| T …)` が T を読む。道具 `doeff_hy.static_stub` の .pyi は `class E[T](_doeff_effect_base[T \| …])` で、使い手の `<-` の答えに program の答えの T が通る。`:tp` が無いと定義する module の検が欄の T を「この文脈で意味を持たない」の赤にする・agora-redesign #2939) |
+| `defk` / `deff` の契約の `:tp [T]`(型の引数) | 型の引数を出さない(PEP 695 の綴りを実行時の code に出さない)。契約の isinstance では T を `object` に消す — `(of Program T object)` は `Program`・素の `(: % T)` は常に真(外側の型だけを確かめる決め #1790 と同じ向き・失敗の文は書いた型のまま) | `def f[T](body: 'Program[T, object]') -> 'T'`(答えが引数の型で決まる関数 — 本体の答えを返す包みなど — の総称。道具 `doeff_hy._static_stub` の .pyi にも載り、答えが Incomplete にならない・agora-redesign #2893)。`defp` は `:tp` を断る |
+| `defeffect` の `:tp [T]`(型の引数) | 型の引数を出さない(class の `__type_params__` は空 — T は module の `(val T (TypeVar "T"))` で読む) | `class E[T](_doeff_effect_base):`(PEP 695 — 欄 `(: program (get Program #(T object)))` と `:answer (\| T …)` が T を読む。道具 `doeff_hy._static_stub` の .pyi は `class E[T](_doeff_effect_base[T \| …])` で、使い手の `<-` の答えに program の答えの T が通る。`:tp` が無いと定義する module の検が欄の T を「この文脈で意味を持たない」の赤にする・agora-redesign #2939) |
 | module の `(val #^ 型 名前 式)` / `(var #^ 型 名前 式)`(型の注記) | `名前: 型 = 式`(型が式から決まらない値 — 空の dict・`re.compile` の結果 — に書く。注記は module の段で評価される) | 同じ。.pyi には `名前: 型` が載り、定数が Incomplete にならない。`lazy`・`session` は注記を受けない(agora-redesign #2939) |
 | 本体の結果(`defk` / `deff`) | 関数の頭(`:pre` の確かめの直後)で `_contract_result: 'T'` を値なしで宣言し、出口(途中の `(return x)` と最後の式)では `(_contract_result,) = (値,)` と注記なしの要素 1 つのタプルで代入する(局所変数の注記は実行時に評価されない。どの出口の値も宣言の T と突き合わされ、本体の最後が `while True` で最後の代入に届かない形でも途中の出口が T で読まれる。タプルで代入するのは、Hy が match・if の値の一時の名を代入先へ移し替え、match が case の前に置く `= None` が T と突き合わされるのを避けるため — CPython はこの代入を素の代入と同じ bytecode にする・agora-redesign #4254) | 同じ |
 | 本体の結果(`do!` / `defp`) | `_contract_result: 'T' = 最後の式`(出口は最後の式 1 つ) | 同じ |
 | `(<- x T e)` | `x = yield e` + isinstance の検査 | `x: 'T' = _doeff_perform(e)`(Python の `@effectful` の `x = perform(e)` と同じ形・yield を出さない — docs/24-effectful-perform.md) |
 | `(! e)` | `yield e`(open-bind を通す) | `_doeff_perform(e)`(`<-` と同じ — 注記の無い generator の yield の値は Unknown・agora-redesign #2279) |
-| defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/static_types.pyi` の `do` |
+| defk を呼んだ結果 | `doeff.do.do` | 同じ型(core の `Expand[T, E]`)に、yield の無い関数の overload を足した `doeff_hy/_static_types.pyi` の `do` |
 | `defhandler` の `(resume v)` / `(transfer v)` | `_doeff_Resume(k, v)` / `_doeff_Transfer(k, v)` | core の `_doeff_typed_resume(effect, k, v)` / `_doeff_typed_transfer`(v を effect の答えの型と突き合わせる)。どちらも書き手の同じ名の effect を隠さない `_doeff_` の別名(`doeff_hy/expansion_names.py` が綴りと import の唯一の定義元・card ki-16180480129e) |
 | `defhandler` / `handle` の節を回す関数 | `(effect: '節の型の和', k)`(VM の絞り込みのための注記) | `(effect: object, k: _doeff_Continuation) -> _doeff_ClauseRun`(節の `isinstance` が型を絞る)。import は `_doeff_Pass` と `_doeff_WithHandlerType` だけ(agora-redesign #2279) |
 | `defhandler` の本文を受ける関数 | `def __doeff_handler_fn__(__doeff_body__):` | `(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer]) -> _doeff_HandledScope[_doeff_HandledAnswer]`(本文の答えの型をそのまま運ぶ・型 = `static_types.pyi`・名の表 = `static_view.py` の `HANDLER_STATIC_NAMES`) |
@@ -176,7 +176,7 @@ agora-controllers の `controllers/worker` の 49 file(33 + 検体・テスト)�
 
 ## 束縛の所見(ADR-DOE-HY-006)
 
-型の診断とは別に、macro が展開の時に出す所見を同じ出力に並べる(`doeff_hy/static_view.py` の `collect_findings` で集め、
+型の診断とは別に、macro が展開の時に出す所見を同じ出力に並べる(`doeff_hy/_static_view.py` の `collect_findings` で集め、
 module の直下は source の一番外の並びを `binding_forms.module_findings` で読む)。
 
 | 規則 | 重さ | 何か |

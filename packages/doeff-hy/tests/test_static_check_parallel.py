@@ -4,7 +4,7 @@
 - 1 つの file の展開に失敗しても、同じ段の他の file の結果は揃う。
 - 子の process が答えを返さずに落ちたら、答えの無い file を名指して道具の失敗にする(黙って抜かない)。
 - 全部保存から引ける実行では pool を起こさない(保存が効く時の秒を増やさない)。
-- `python -m doeff_hy.static_check` で撃った入口(この file は親で __main__・展開の子で __mp_main__ の名で読まれる)も、展開の子が
+- `python -m doeff_hy._static_check` で撃った入口(この file は親で __main__・展開の子で __mp_main__ の名で読まれる)も、展開の子が
   書いた保存を次の実行の親が引く。
 """
 
@@ -15,13 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_hy import static_check
-from doeff_hy.check_slot import SlotHeld
-from doeff_hy.static_check import (
-    Closure,
-    ExpansionWorkerLostError,
-    project_closure,
-)
+from doeff_hy import _static_check as static_check
+from doeff_hy._check_slot import SlotHeld
+from doeff_hy import ExpansionWorkerLostError
+from doeff_hy._static_check import Closure, project_closure
 
 #: 根の file が import する 3 つの module。どれも file の中の macro が gensym を使い、一番外の setv の所見を持つ。
 LEAF = """\
@@ -114,11 +111,11 @@ def test_a_run_that_reads_everything_from_the_store_starts_no_pool(
     assert _shape(second) == _shape(first)
 
 
-#: 日次の命令と同じく doeff_hy.static_check を __main__ の名で撃つ子の process(`python -m` と同じ — 展開の子は __mp_main__ の名で
+#: 日次の命令と同じく doeff_hy._static_check を __main__ の名で撃つ子の process(`python -m` と同じ — 展開の子は __mp_main__ の名で
 #: 読む)。保存を引けた数(hit)と外れた数(miss)を最後の行に JSON で出す。pyright は診断の無い答えを返す偽物(引数で名指す)。
 MAIN_CHILD = """\
 import json, runpy, sys
-import doeff_hy.static_cache as cache
+import doeff_hy._static_cache as cache
 seen = {"hit": 0, "miss": 0}
 real = cache.load
 def load(cache_dir, name):
@@ -145,7 +142,7 @@ guard.record_is_current_here = record_is_current_here
 root, cache_dir, pyright = sys.argv[1:4]
 sys.argv = ["doeff-hy-check", "--root", root, "--cache-dir", cache_dir, "--pyright", pyright, root]
 try:
-    runpy.run_module("doeff_hy.static_check", run_name="__main__", alter_sys=True)
+    runpy.run_module("doeff_hy._static_check", run_name="__main__", alter_sys=True)
 except SystemExit:
     pass
 print(json.dumps(seen))
