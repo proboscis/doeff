@@ -19,7 +19,19 @@ if TYPE_CHECKING:
         AssertAllAdrContracts as AssertAllAdrContracts,
     )
     from doeff_adr._effects import (
+        ClearRegistry as ClearRegistry,
+    )
+    from doeff_adr._effects import (
+        EnforcementIds as EnforcementIds,
+    )
+    from doeff_adr._effects import (
         GetAdr as GetAdr,
+    )
+    from doeff_adr._effects import (
+        GetEnforcement as GetEnforcement,
+    )
+    from doeff_adr._effects import (
+        RegisterAdr as RegisterAdr,
     )
     from doeff_adr._effects import (
         RegisterDeftest as RegisterDeftest,
@@ -45,18 +57,6 @@ if TYPE_CHECKING:
     from doeff_adr.registry import (
         SemgrepSpec as SemgrepSpec,
     )
-    from doeff_adr.registry import (
-        clear_registry as clear_registry,
-    )
-    from doeff_adr.registry import (
-        enforcement_ids as enforcement_ids,
-    )
-    from doeff_adr.registry import (
-        get_enforcement as get_enforcement,
-    )
-    from doeff_adr.registry import (
-        register_adr as register_adr,
-    )
 
 
 _PUBLIC_API_NAMES = (
@@ -65,26 +65,31 @@ _PUBLIC_API_NAMES = (
     "AssertAdrContract",
     "AssertAllAdrContracts",
     "AssertSemgrep",
+    "ClearRegistry",
+    "EnforcementIds",
     "EnforcementRef",
     "GetAdr",
+    "GetEnforcement",
+    "RegisterAdr",
     "RegisterDeftest",
     "RegisterSemgrep",
     "SemgrepSpec",
     "adr_registry",
-    "clear_registry",
     "doeff_hy",
-    "enforcement_ids",
-    "get_enforcement",
-    "register_adr",
     "semgrep_enforcements",
 )
-#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40・ki-54e559d3c0e7)。
+#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40・ki-54e559d3c0e7・
+#: ki-dab8943cf664)。
 _EFFECT_NAMES = frozenset(
     {
         "AdrIds",
         "AssertAdrContract",
         "AssertAllAdrContracts",
+        "ClearRegistry",
+        "EnforcementIds",
         "GetAdr",
+        "GetEnforcement",
+        "RegisterAdr",
         "RegisterDeftest",
         "adr_registry",
     }

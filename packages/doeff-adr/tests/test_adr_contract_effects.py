@@ -22,6 +22,8 @@ from doeff_adr import (
     AssertAdrContract,
     AssertAllAdrContracts,
     EnforcementRef,
+    GetEnforcement,
+    RegisterAdr,
     RegisterDeftest,
     adr_registry,
 )
@@ -29,9 +31,7 @@ from doeff_adr.registry import (
     AdrStatus,
     EnforcementMode,
     SemgrepSpec,
-    get_enforcement,
     isolated_registry,
-    register_adr,
 )
 
 from doeff import do, run
@@ -73,15 +73,19 @@ def test_a_registered_adr_with_its_registered_check_passes() -> None:
         return ref, (yield AssertAdrContract("ADR-PROBE-001"))
 
     with isolated_registry():
-        register_adr(
-            "ADR-PROBE-001",
-            title="probe",
-            status="accepted",
-            enforcement=[_deftest("test_probe_contract")],
+        run(
+            adr_registry()(
+                RegisterAdr(
+                    "ADR-PROBE-001",
+                    title="probe",
+                    status="accepted",
+                    enforcement=[_deftest("test_probe_contract")],
+                )
+            )
         )
         ref, answer = run(adr_registry()(body()))
         assert ref == _deftest("test_probe_contract")
-        assert get_enforcement("test_probe_contract") is ref
+        assert run(adr_registry()(GetEnforcement("test_probe_contract"))) is ref
         assert answer is None
 
 
@@ -130,7 +134,7 @@ def test_an_expected_red_check_tied_to_a_plan_and_a_proposed_adr_without_checks_
 def test_an_adr_that_is_not_on_the_table_is_a_key_error() -> None:
     """渡した列に無い id は、登録簿に在っても KeyError(登録簿へ落ちない)。"""
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry(specs=[])(_failure_of(AssertAdrContract("ADR-PROBE-001")))) == (
             "KeyError: 'ADR-PROBE-001'"
         )
@@ -207,7 +211,13 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
 
     with isolated_registry():
         run(adr_registry()(RegisterDeftest("test_gone")))
-        register_adr("ADR-PROBE-001", title="probe", status="accepted", enforcement=["test_gone"])
+        run(
+            adr_registry()(
+                RegisterAdr(
+                    "ADR-PROBE-001", title="probe", status="accepted", enforcement=["test_gone"]
+                )
+            )
+        )
         assert run(adr_registry()(body())) == (
             "passed",
             "AssertionError: ADR-PROBE-001: enforcement 'test_gone' is not registered",
@@ -259,12 +269,12 @@ def test_the_adr_contract_test_needs_no_interpreter_fixture(pytester) -> None:
     pytester.makefile(
         ".hy",
         **{
-            "docs/adr/defadr_0098_contract_effects": textwrap.dedent(
+            "docs/adr/defadr_0095_contract_effects": textwrap.dedent(
                 """\
                 (require doeff-adr.macros [defadr])
                 (require doeff-hy.macros [deftest])
 
-                (defadr ADR-SAMPLE-098
+                (defadr ADR-SAMPLE-095
                   :title "contract effects sample"
                   :status "accepted"
                   :enforcement [(deftest test-sample-098-check (assert True))])
@@ -277,7 +287,7 @@ def test_the_adr_contract_test_needs_no_interpreter_fixture(pytester) -> None:
     )
 
     result = pytester.runpytest(
-        "docs/adr/defadr_0098_contract_effects.hy", "-q", "-k", "adr_contract"
+        "docs/adr/defadr_0095_contract_effects.hy", "-q", "-k", "adr_contract"
     )
 
     result.assert_outcomes(passed=1, deselected=1)

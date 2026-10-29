@@ -21,7 +21,13 @@ from unittest import mock
 
 import doeff_adr.registry as registry_module
 import pytest
-from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
+from doeff_adr import (
+    AssertSemgrep,
+    ClearRegistry,
+    RegisterSemgrep,
+    adr_registry,
+    semgrep_enforcements,
+)
 from doeff_adr.registry import isolated_registry
 
 from doeff import run as run_doeff
@@ -84,7 +90,7 @@ class Run:
         """新しい回 home_name: 空の登録簿と process の答え・新しい HOME の木・その HOME の semgrep(version = dist-info に書く版・
         既定は本物の版)。
         答え = 木の根。"""
-        registry_module.clear_registry()
+        run_doeff(adr_registry()(ClearRegistry()))
         home = self.base / home_name
         tree = home / "repos" / "tree"
         tree.mkdir(parents=True)

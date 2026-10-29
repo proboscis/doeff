@@ -164,23 +164,26 @@
   (setv item-record (_record-test-function test-name [] []))
   ;; deftest の検の載せと ADR の形の確かめは、effect RegisterDeftest・AssertAdrContract として handler adr_registry の下で
   ;; 走らせる(card ki-54e559d3c0e7)— defsemgrep と同じく project の doeff_interpreter fixture に頼らず、名は使い手の module の
-  ;; 名と重ならない _doeff-adr-run と _doeff-adr. で読む。
+  ;; 名と重ならない _doeff-adr-run と _doeff-adr. で読む。ADR の載せも import の時に effect RegisterAdr として同じ handler の
+  ;; 下で走らせる(card ki-dab8943cf664)。
   `(do
-     (import doeff_adr.registry [register-adr enforcement-ref])
+     (import doeff_adr.registry [enforcement-ref])
      (import doeff [run :as _doeff-adr-run])
      (import doeff-adr :as _doeff-adr)
      ~@emitted-enforcements
-     (register-adr
-       ~adr-id
-       :title ~title
-       :status ~status
-       :scope ~scope
-       :problem ~problem
-       :context ~context
-       :decision ~decision
-       :laws ~laws
-       :enforcement [~@enforcement-refs]
-       :plans ~plans)
+     (_doeff-adr-run
+       ((_doeff-adr.adr-registry)
+         (_doeff-adr.RegisterAdr
+           ~adr-id
+           :title ~title
+           :status ~status
+           :scope ~scope
+           :problem ~problem
+           :context ~context
+           :decision ~decision
+           :laws ~laws
+           :enforcement [~@enforcement-refs]
+           :plans ~plans)))
      (defn ~test-name []
        (_doeff-adr-run ((_doeff-adr.adr-registry) (_doeff-adr.AssertAdrContract ~adr-id))))
      ~item-record))
