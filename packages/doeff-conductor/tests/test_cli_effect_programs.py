@@ -30,6 +30,7 @@ from doeff_conductor import (
     CreateIssue,
     DescribeEnvironment,
     GetIssue,
+    GetTemplate,
     GetTemplateSource,
     GetWorkflow,
     ListGates,
@@ -237,6 +238,31 @@ def test_state_handler_answers_run_effects_from_the_state_dir(tmp_path: Path) ->
     assert stopped == ["agent-1"]
     assert status_after is WorkflowStatus.ABORTED
     assert state_dir == tmp_path
+
+
+def test_state_handler_answers_template_effects(tmp_path: Path) -> None:
+    from doeff_conductor._templates import basic_pr
+
+    @do
+    def read_templates():
+        names = yield ListTemplates()
+        template = yield GetTemplate(name="basic_pr")
+        return names, template
+
+    names, template = run(conductor_state_handler(tmp_path)(read_templates()))
+
+    assert set(names) == {"basic_pr", "enforced_pr", "reviewed_pr", "multi_agent"}
+    assert template is basic_pr
+    assert not (tmp_path / "workflows").exists()
+
+
+def test_state_handler_refuses_an_unknown_template_name(tmp_path: Path) -> None:
+    @do
+    def read_unknown():
+        return (yield GetTemplate(name="nonexistent"))
+
+    with pytest.raises(KeyError, match="nonexistent"):
+        run(conductor_state_handler(tmp_path)(read_unknown()))
 
 
 def test_package_root_shows_no_conductor_api() -> None:

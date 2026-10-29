@@ -587,28 +587,33 @@ from doeff_conductor import (
 | `reviewed_pr` | issue -> agent -> review -> PR |
 | `multi_agent` | issue -> parallel agents -> merge -> PR |
 
-### Template Utilities
+### Template Effects
+
+The templates are read through effects, answered by `conductor_state_handler`
+(an unknown name raises `KeyError`):
 
 ```python
+from doeff import do, run
 from doeff_conductor import (
-    is_template,
-    get_template,
-    get_available_templates,
-    get_template_source,
+    GetTemplate,
+    GetTemplateSource,
+    ListTemplates,
+    conductor_state_handler,
 )
 
-# Check if name is a template
-is_template("basic_pr")  # True
 
-# Get template function
-func = get_template("basic_pr")
+@do
+def read_templates():
+    # List all templates: {"basic_pr": "Basic PR workflow...", ...}
+    templates = yield ListTemplates()
+    # Get the template function, to call with the template's arguments
+    func = yield GetTemplate(name="basic_pr")
+    # Get source code
+    source = yield GetTemplateSource(name="basic_pr")
+    return templates, func, source
 
-# List all templates
-templates = get_available_templates()
-# {"basic_pr": "Basic PR workflow...", ...}
 
-# Get source code
-source = get_template_source("basic_pr")
+templates, func, source = run(conductor_state_handler()(read_templates()))
 ```
 
 ---

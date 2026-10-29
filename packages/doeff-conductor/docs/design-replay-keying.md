@@ -40,6 +40,9 @@ my-flow/1/Fix/0/loop/1/agent @ iteration 0
 my-flow/1/Fix/0/loop/1/agent @ iteration 1
 ```
 
+The helpers of this note live in the internal module
+`doeff_conductor._replay_keying`; the package root does not export them.
+
 The pure helper `node_identity_fingerprint(...)` hashes the workflow name,
 static node path, and the tuple of loop indices. Non-loop nodes use an empty
 loop-index tuple.

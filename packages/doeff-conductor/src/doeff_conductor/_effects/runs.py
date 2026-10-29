@@ -9,7 +9,7 @@ Effects for reading and changing the conductor's runs, answered by
 - Planning: PlanWorkflow, ValidateWorkflow
 - Workspaces: ListWorkspaces, CleanupWorkspaces
 - Monitor: RenderMonitor, OpenMonitor
-- Environment and templates: DescribeEnvironment, ListTemplates, GetTemplateSource
+- Environment and templates: DescribeEnvironment, ListTemplates, GetTemplate, GetTemplateSource
 - ConductorStateDir: the state directory the handler reads (for messages)
 
 The ``conductor`` CLI commands are programs of these effects.
@@ -226,6 +226,17 @@ class ListTemplates(ConductorEffectBase):
 
     Yields: dict[str, str]
     """
+
+
+@dataclass(frozen=True, kw_only=True)
+class GetTemplate(ConductorEffectBase):
+    """Get a workflow template's function, to call with the template's arguments.
+
+    Yields: Callable[..., Program] (the template's ``@do`` function)
+    Raises: KeyError when no template has the name
+    """
+
+    name: str
 
 
 @dataclass(frozen=True, kw_only=True)
