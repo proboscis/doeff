@@ -412,6 +412,69 @@ def test_a_name_a_child_imports_from_another_child_goes_to_the_entry_once(tmp_pa
     }
 
 
+def test_a_name_added_to_an_entry_with_all_is_listed_in_all_too(tmp_path: Path) -> None:
+    """``__all__`` の在る入口へ名を足すと、``__all__`` にも ruff の RUF022 の並びで足す。1 行に 1 つの名でない
+    ``__all__`` には足さず、子を移す前に止める。
+
+    失敗ケース: 目録と ``import *`` は、``__all__`` の在る module では ``__all__`` の名だけを読む。doeff-events の入口は
+    ``__all__`` を持ち、遅延の表だけに足した 11 名は入口の名と数えられなかった(card ki-a883efd67a46・``__all__`` の在る
+    入口は 16 個)。
+    """
+    root_dir = tmp_path / ROOT_NAME
+    root_dir.mkdir()
+    entry = root_dir / "__init__.py"
+    entry.write_text(
+        textwrap.dedent('''
+            """The fixture package."""
+
+            from .effects import PingEffect as PingEffect
+
+            __all__ = [
+                "GAP",
+                "PingEffect",
+                "ping",
+            ]
+        ''').lstrip("\n"),
+        encoding="utf-8",
+    )
+    shape = tool.EntryShape.read(entry)
+    assert shape.problem() is None
+    fates = [
+        tool.NameFate(
+            name,
+            (f"{ROOT_NAME}.handlers",),
+            "other",
+            None,
+            "entry",
+            source=f"{ROOT_NAME}._handlers",
+        )
+        for name in ("ping_handler", "PingConfig", "MAX_PINGS", "T")
+    ]
+
+    added, _skipped = tool.update_entry(shape, ROOT_NAME, fates, [], root_dir)
+
+    assert sorted(added) == ["MAX_PINGS", "PingConfig", "T", "ping_handler"]
+    listed = next(
+        node.value
+        for node in ast.parse(entry.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+    )
+    assert ast.literal_eval(listed) == [
+        "GAP",
+        "MAX_PINGS",
+        "PingConfig",
+        "PingEffect",
+        "T",
+        "ping",
+        "ping_handler",
+    ]
+    inline = tmp_path / "inline" / "__init__.py"
+    inline.parent.mkdir()
+    inline.write_text('__all__ = ["PingEffect"]\n', encoding="utf-8")
+    assert "__all__" in (tool.EntryShape.read(inline).problem() or "")
+
+
 @pytest.mark.timeout(600)
 def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: Path) -> None:
     """hide・rewrite・finish のどの後でも、doeff の木と外の repo の呼び手の test が緑のまま。"""

@@ -38,7 +38,8 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
 ``X as X``(``.py`` か ``.pyi`` の在る module の名だけ。``__all__`` は使わない — DOEFF021)。入口に ``_LAZY_EXPORTS`` と
-``__getattr__`` が在れば表に行を足し、無ければ形を末尾に足す。入口の無い名前空間 package には入口を作る。
+``__getattr__`` が在れば表に行を足し、無ければ形を末尾に足す。入口の無い名前空間 package には入口を作る。入口に
+``__all__`` が既に在れば、足した名を ``__all__`` にも足す(目録と ``import *`` は ``__all__`` の名だけを読む)。
 
 移し替えの module(``<根>/<子>.py`` の 1 file・1 行目に ``# moved-submodule-shim: <古い path> -> <新しい path>``)は、
 import すると ``_<子>`` の module そのものを返し(``sys.modules`` を差し替える)、子が package なら下の module も meta path の
@@ -1534,6 +1535,7 @@ class EntryShape:
     has_dir: bool
     type_checking: ast.If | None
     bound: frozenset[str]
+    listed: ast.List | ast.Tuple | None = None  # ``__all__`` の値(在れば)
 
     @classmethod
     def read(cls, path: Path) -> EntryShape:
@@ -1543,6 +1545,7 @@ class EntryShape:
         lazy: ast.Dict | None = None
         lazy_statement: ast.stmt | None = None
         type_checking: ast.If | None = None
+        listed: ast.List | ast.Tuple | None = None
         bound: set[str] = set()
         functions: set[str] = set()
         for node in tree.body:
@@ -1552,6 +1555,10 @@ class EntryShape:
                     isinstance(t, ast.Name) and t.id == "_LAZY_EXPORTS" for t in targets
                 ) and isinstance(node.value, ast.Dict):
                     lazy, lazy_statement = node.value, node
+                if any(
+                    isinstance(t, ast.Name) and t.id == "__all__" for t in targets
+                ) and isinstance(node.value, (ast.List, ast.Tuple)):
+                    listed = node.value
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 functions.add(node.name)
             elif (
@@ -1571,6 +1578,7 @@ class EntryShape:
             "__dir__" in functions,
             type_checking,
             frozenset(bound),
+            listed,
         )
 
     def problem(self) -> str | None:
@@ -1578,7 +1586,54 @@ class EntryShape:
             return f"{self.path.with_suffix('.hy')}: Hy の入口には名を足せない(手で足す)"
         if self.tree is not None and self.has_getattr != (self.lazy is not None):
             return f"{self.path}: __getattr__ と _LAZY_EXPORTS の dict の片方だけが在る — 道具は表に行を足せない(手で足す)"
+        if self.listed is not None and not _one_name_per_line(self.listed):
+            return (
+                f"{self.path}: __all__ が 1 行に 1 つの名の形でない — 道具は名を足せない(手で足す)"
+            )
         return None
+
+
+def _one_name_per_line(listed: ast.List | ast.Tuple) -> bool:
+    """``__all__`` が、名の文字列を 1 行に 1 つ並べ、閉じ括弧を行の頭に置く形か(道具が行を足せる形)。"""
+    rows = [
+        e.lineno for e in listed.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    ]
+    return (
+        len(rows) == len(listed.elts)
+        and len(set(rows)) == len(rows)
+        and listed.lineno not in rows
+        and cast(int, listed.end_lineno) > listed.lineno
+        and listed.end_col_offset == 1
+    )
+
+
+def _all_order(name: str) -> tuple[int, str]:
+    """ruff の RUF022 の並び(定数・class・その他の順で、大文字小文字を分ける)— 名を足した ``__all__`` が lint に
+    掛からない為。1 字の大文字(``T``)は class と読む(ruff と同じ)。"""
+    if len(name) > 1 and name.isupper():
+        return (0, name)
+    return (1, name) if name[:1].isupper() else (2, name)
+
+
+def _listed_rows(shape: EntryShape, additions: Sequence[NameFate]) -> tuple[tuple[int, str], ...]:
+    """入口の ``__all__`` に足す名の行: ``__all__`` の在る入口では、目録と ``import *`` が ``__all__`` の名だけを読む為。
+
+    名は RUF022 の並びの位置へ足す(並んでいない ``__all__`` では、後ろに来る名の最初の行の前)。
+    """
+    listed = shape.listed
+    if listed is None or not additions:
+        return ()
+    # 名の文字列だけが並ぶ事は problem() が _one_name_per_line で確かめた。
+    elements = cast(list[ast.Constant], listed.elts)
+    indent = " " * (elements[0].col_offset if elements else 4)
+
+    def place(name: str) -> int:
+        # 足した後も __all__ が並んだままである為の、名を差し込む行(0 から数える)。
+        later = [e.lineno - 1 for e in elements if _all_order(e.value) > _all_order(name)]
+        return later[0] if later else cast(int, listed.end_lineno) - 1
+
+    ordered = sorted(additions, key=lambda f: _all_order(f.name))
+    return tuple((place(f.name), f'{indent}"{f.name}",\n') for f in ordered)
 
 
 def _block(
@@ -1716,7 +1771,11 @@ def update_entry(
         edit = _merged_edit(shape, lines, additions, typed, value)
     else:
         edit = _appended_edit(shape, root, additions, typed, value)
-    inserts = (*edit.inserts, *(((_import_line(shape), edit.imports),) if edit.imports else ()))
+    inserts = (
+        *edit.inserts,
+        *_listed_rows(shape, additions),
+        *(((_import_line(shape), edit.imports),) if edit.imports else ()),
+    )
     at = {line: "".join(t for where, t in inserts if where == line) for line, _ in inserts}
     text = "".join(at.get(index, "") + line for index, line in enumerate(lines))
     text += at.get(len(lines), "")
