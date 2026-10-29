@@ -45,12 +45,14 @@
       "adr_ids",
       "assert_adr_contract",
       "assert_all_adr_contracts",
+      "assert_semgrep_enforcement",
       "clear_registry",
       "enforcement_ids",
       "get_adr",
       "get_enforcement",
       "register_adr",
-      "register_deftest_enforcement"
+      "register_deftest_enforcement",
+      "register_semgrep_enforcement"
      ],
      "doeff_adr.cli": [
       "main"
@@ -216,6 +218,7 @@
       "adr_ids",
       "assert_adr_contract",
       "assert_all_adr_contracts",
+      "assert_semgrep_enforcement",
       "clear_registry",
       "enforcement_ids",
       "enforcement_ref",
@@ -231,6 +234,7 @@
       "read_verdict",
       "register_adr",
       "register_deftest_enforcement",
+      "register_semgrep_enforcement",
       "resolved_config_path",
       "semgrep_identity",
       "verdict_store",

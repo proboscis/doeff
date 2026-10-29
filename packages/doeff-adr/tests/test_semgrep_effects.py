@@ -3,7 +3,8 @@ handler を返す工場 semgrep_enforcements が答える(card ki-2a549274055c)�
 
 決め: 依頼書 lt-WVC8PTVD0E022XXMKP1J98ACDP の答え lt-KY48MR4KP2N0GS9MQCCJTJMH55(register-semgrep)と、依頼書
 lt-5CQZ1TMGZSCQ01PXH8JY2JK3DN の答え lt-19276K37Z3TCCRTBMXWBMMXVMN(assert-semgrep)— どちらも effect にする。前の関数
-register_semgrep_enforcement と assert_semgrep_enforcement は公開の名から消えた。
+register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えるまで(card ki-ac39cb3c0bcd)の
+移し替えの層で、その後に消す。
 
 semgrep_enforcements() は process の登録簿に載せて読み、semgrep_enforcements(table={…}) はその辞書に載せて読む(辞書に無い id は
 登録簿へ落ちずに KeyError)。semgrep_enforcements(semgrep=…) は渡した実行 file で semgrep を起こす。内側に据えた handler が先に
@@ -125,14 +126,30 @@ def test_a_given_table_replaces_the_process_registry() -> None:
 
 
 def test_the_semgrep_run_can_be_replaced(tmp_path: Path) -> None:
-    """semgrep=… の実行 file が当たり外れを答える: 当たる見本にだけ当たれば緑、何にも当たらなければ赤。"""
+    """semgrep=… の実行 file(str か Path)が当たり外れを答える: 当たる見本にだけ当たれば緑、何にも当たらなければ赤。"""
     hits_only_bad = _fake_semgrep(tmp_path, _HITS_ONLY_BAD, "hits-only-bad")
     hits_nothing = _fake_semgrep(tmp_path, _HITS_NOTHING, "hits-nothing")
     with isolated_registry():
         run(semgrep_enforcements()(_inline("probe_fake")))
         assert run(semgrep_enforcements(semgrep=hits_only_bad)(AssertSemgrep("probe_fake"))) is None
+        assert (
+            run(semgrep_enforcements(semgrep=Path(hits_only_bad))(AssertSemgrep("probe_fake")))
+            is None
+        )
         with pytest.raises(AssertionError, match="did not match any bad fixture"):
             run(semgrep_enforcements(semgrep=hits_nothing)(AssertSemgrep("probe_fake")))
+
+
+def test_a_named_semgrep_that_is_not_a_file_is_refused_like_a_missing_one(tmp_path: Path) -> None:
+    """名指した実行 file が無ければ、subprocess の FileNotFoundError でなく PATH に無い時と同じ文の AssertionError。"""
+    with isolated_registry():
+        run(semgrep_enforcements()(_inline("probe_no_file")))
+        with pytest.raises(AssertionError, match="semgrep executable is required"):
+            run(
+                semgrep_enforcements(semgrep=tmp_path / "no-such-semgrep")(
+                    AssertSemgrep("probe_no_file")
+                )
+            )
 
 
 def test_an_inner_handler_answers_before_the_outer_one(tmp_path: Path) -> None:
@@ -175,13 +192,20 @@ def test_the_factory_refuses_a_program_in_place_of_its_settings() -> None:
         semgrep_enforcements(table=[])  # type: ignore[arg-type] — 書き違いを断る事を見るため、辞書でない値を渡す
 
 
-def test_the_two_functions_are_not_public() -> None:
-    """effect と工場は入口に在り、前の関数 register_semgrep_enforcement・assert_semgrep_enforcement は公開の名に無い。"""
+def test_the_effects_are_public_and_the_old_functions_answer_the_same() -> None:
+    """effect と工場は入口に在る。前の関数は外の repo の呼び手を書き換えるまで(card ki-ac39cb3c0bcd)の移し替えの層で、
+    effect と同じ登録簿に載せて読む。"""
     assert {"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"} <= set(doeff_adr.__all__)
-    for name in ("register_semgrep_enforcement", "assert_semgrep_enforcement"):
-        assert name not in doeff_adr.__all__
-        assert not hasattr(doeff_adr, name)
-        assert not hasattr(registry_module, name)
+    with isolated_registry():
+        spec = doeff_adr.register_semgrep_enforcement(
+            "probe_old_function",
+            pattern="forbidden-token",
+            bad=["forbidden-token"],
+            good=["allowed-token"],
+        )
+        assert get_enforcement("probe_old_function") is spec
+        doeff_adr.assert_semgrep_enforcement("probe_old_function")
+        assert run(semgrep_enforcements()(AssertSemgrep("probe_old_function"))) is None
 
 
 def test_defsemgrep_expands_to_the_effects_under_their_handler() -> None:
@@ -202,7 +226,8 @@ def test_defsemgrep_expands_to_the_effects_under_their_handler() -> None:
 
 
 def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Path) -> None:
-    """展開は doeff の run を使い手の module の run と重ならない名で読む — module が run を定義しても、生まれる test は動く。"""
+    """展開は doeff の run と effect を使い手の module の名と重ならない名(_doeff-adr-run・_doeff-adr.)で読む — module が
+    run や AssertSemgrep を定義しても、生まれる test は動く。"""
     (tmp_path / "probe_own_run.hy").write_text(
         textwrap.dedent(
             """\
@@ -214,6 +239,7 @@ def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Pa
               :good ["allowed-token"])
 
             (defn run [] "the module's own run")
+            (defn AssertSemgrep [] "the module's own AssertSemgrep")
             """
         ),
         encoding="utf-8",
@@ -225,6 +251,7 @@ def test_a_defsemgrep_module_with_its_own_run_still_checks_its_rule(tmp_path: Pa
 
             probe_own_run.test_probe_own_run_defsemgrep()
             assert probe_own_run.run() == "the module's own run"
+            assert probe_own_run.AssertSemgrep() == "the module's own AssertSemgrep"
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("probe_own_run", None)

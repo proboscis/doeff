@@ -228,15 +228,18 @@ callers outside doeff read `GetAdr`; new code reads `GetAdr`.
 The expansion of `defsemgrep` runs the registration at import time and the
 check inside the generated test, each under `semgrep_enforcements()` itself,
 so a repository needs no `doeff_interpreter` fixture for its `defsemgrep`
-checks.
+checks. A `deftest` that performs these effects itself installs the handler
+around its program, as below: `doeff-adr` does not add it to the project's
+fixture.
 
 `semgrep_enforcements()` writes to and reads the process registry, and starts
 the `semgrep` found on `PATH` when it answers `AssertSemgrep`.
 `semgrep_enforcements(table={})` writes to and reads the given dict instead
 (an id missing from it does not fall through to the registry), and
-`semgrep_enforcements(semgrep="/path/to/semgrep")` starts that executable. The
-inner handler answers first, so a test can run part of a program against
-another table or another semgrep:
+`semgrep_enforcements(semgrep=path)` starts that executable (a `str` or a
+`Path`; a path that is not a file is the same `AssertionError` as a missing
+semgrep). The inner handler answers first, so a test can run part of a program
+against another table or another semgrep:
 
 ```hy
 (require doeff-hy.macros [deftest do! <-])
@@ -249,3 +252,7 @@ another table or another semgrep:
                                :bad ["eval('1')"] :good ["print('1')"]))
           (<- (AssertSemgrep "no-eval"))))))
 ```
+
+The functions `register_semgrep_enforcement` and `assert_semgrep_enforcement`
+remain only as a transition layer until the callers outside doeff perform
+`RegisterSemgrep` and `AssertSemgrep`; new code performs the effects.

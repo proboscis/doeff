@@ -3,8 +3,9 @@
 
 決め: 依頼書 lt-WVC8PTVD0E022XXMKP1J98ACDP の問い register-semgrep の答え lt-KY48MR4KP2N0GS9MQCCJTJMH55 と、依頼書
 lt-5CQZ1TMGZSCQ01PXH8JY2JK3DN の問い assert-semgrep の答え lt-19276K37Z3TCCRTBMXWBMMXVMN(どちらも effect にする・card
-ki-2a549274055c・ADR-DOE-API-001 R21)。前の関数 register_semgrep_enforcement と assert_semgrep_enforcement は内側の
-registry._register_semgrep_enforcement・registry._assert_semgrep_enforcement に移した。
+ki-2a549274055c・ADR-DOE-API-001 R21)。本体は内側の registry._register_semgrep_enforcement・registry._assert_semgrep_enforcement に
+移した。前の関数 register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えるまで(card
+ki-ac39cb3c0bcd)移し替えの層として残り、その後に消す。
 
 handler は GetAdr の adr_registry と分ける: AssertSemgrep は外の process(semgrep)を起こすので、ADR を読むだけの program の
 handler の組に semgrep の実行を混ぜない。macro defsemgrep の展開は、自分の載せと検をこの handler の下で走らせる(project の
@@ -13,8 +14,9 @@ semgrep を使う時は、program の一部に semgrep_enforcements(table=…, s
 """
 
 from dataclasses import KW_ONLY, dataclass
+from os import PathLike, fspath
 
-from doeff import EffectBase, K, Transfer, handler
+from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
 from doeff_adr.registry import (
     EnforcementMode,
@@ -63,13 +65,13 @@ class AssertSemgrep(EffectBase[None]):
 def semgrep_enforcements(
     *,
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
-    semgrep: str | None = None,
+    semgrep: str | PathLike[str] | None = None,
 ) -> ProgramHandler:
     """RegisterSemgrep と AssertSemgrep に答える handler。semgrep の process はこの handler が AssertSemgrep に答える時に起こす。
 
     table が無ければ process の登録簿(defadr・defsemgrep が載せる所)に載せて読み、table を渡せばその辞書に載せて読む
     (渡した辞書に無い id は外の登録簿へ落ちずに KeyError)。semgrep が無ければ答える時に PATH の semgrep を探し、渡せば
-    その実行 file を起こす。
+    その実行 file を起こす(無い path は AssertionError)。
 
     使い方: semgrep_enforcements()(program)・semgrep_enforcements(table={}, semgrep="/path/to/semgrep")(program)。
     """
@@ -77,30 +79,36 @@ def semgrep_enforcements(
         raise TypeError(
             f"semgrep_enforcements(table=…) takes a dict from id to enforcement, got {type(table).__name__}"
         )
+    executable = None if semgrep is None else fspath(semgrep)
 
-    # 載せと検の失敗(AssertionError・KeyError・ValueError ほか)は body から投げる — effect を出した所で受けられる。
     @handler
     def answer_semgrep(effect: RegisterSemgrep | AssertSemgrep, k: K):
-        if isinstance(effect, RegisterSemgrep):
-            spec = _register_semgrep_enforcement(
-                effect.enforcement_id,
-                table=table,
-                pattern=effect.pattern,
-                rule_id=effect.rule_id,
-                config=effect.config,
-                declared_in=effect.declared_in,
-                expand_hy=effect.expand_hy,
-                languages=effect.languages,
-                message=effect.message,
-                severity=effect.severity,
-                bad=effect.bad,
-                good=effect.good,
-                hit_fixtures=effect.hit_fixtures,
-                clean_fixtures=effect.clean_fixtures,
-                mode=effect.mode,
-            )
-            return (yield Transfer(k, spec))
-        _assert_semgrep_enforcement(effect.enforcement_id, table=table, semgrep=semgrep)
-        return (yield Transfer(k, None))
+        # 載せと検の決まった失敗は、effect を出した所へ投げ返す(先例 _effects の GetAdr と同じ形・構成のレビューの所見 5)。
+        try:
+            if isinstance(effect, RegisterSemgrep):
+                answer: SemgrepSpec | None = _register_semgrep_enforcement(
+                    effect.enforcement_id,
+                    table=table,
+                    pattern=effect.pattern,
+                    rule_id=effect.rule_id,
+                    config=effect.config,
+                    declared_in=effect.declared_in,
+                    expand_hy=effect.expand_hy,
+                    languages=effect.languages,
+                    message=effect.message,
+                    severity=effect.severity,
+                    bad=effect.bad,
+                    good=effect.good,
+                    hit_fixtures=effect.hit_fixtures,
+                    clean_fixtures=effect.clean_fixtures,
+                    mode=effect.mode,
+                )
+            else:
+                answer = _assert_semgrep_enforcement(
+                    effect.enforcement_id, table=table, semgrep=executable
+                )
+        except (AssertionError, KeyError, ValueError) as failed:
+            return (yield TransferThrow(k, failed))
+        return (yield Transfer(k, answer))
 
     return answer_semgrep

@@ -38,6 +38,9 @@ from doeff_adr.registry import (
     assert_all_adr_contracts as assert_all_adr_contracts,
 )
 from doeff_adr.registry import (
+    assert_semgrep_enforcement as assert_semgrep_enforcement,
+)
+from doeff_adr.registry import (
     clear_registry as clear_registry,
 )
 from doeff_adr.registry import (
@@ -54,4 +57,7 @@ from doeff_adr.registry import (
 )
 from doeff_adr.registry import (
     register_deftest_enforcement as register_deftest_enforcement,
+)
+from doeff_adr.registry import (
+    register_semgrep_enforcement as register_semgrep_enforcement,
 )
