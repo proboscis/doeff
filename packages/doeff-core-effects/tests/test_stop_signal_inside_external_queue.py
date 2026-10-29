@@ -177,7 +177,7 @@ def _run_once(target: int) -> Delivery:
     sys.settrace(OperationTracer(delivery).on_call)
     try:
         reason = run(
-            scheduled(with_handlers([state(), os_signal_stop_handler], _park_then_wait()), implementation="python")
+            scheduled(implementation="python")(with_handlers([state(), os_signal_stop_handler], _park_then_wait()))
         )
     finally:
         sys.settrace(None)

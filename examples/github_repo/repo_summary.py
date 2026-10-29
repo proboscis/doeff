@@ -81,7 +81,7 @@ def live(program):
     The HTTP handler awaits httpx's async client, so ``await_handler`` and the scheduler sit
     outside it.
     """
-    return scheduled(await_handler(http_production_handler()(program)))
+    return scheduled()(await_handler(http_production_handler()(program)))
 
 
 def main() -> None:

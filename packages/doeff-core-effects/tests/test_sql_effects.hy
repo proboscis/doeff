@@ -1416,7 +1416,7 @@
   (defn #^ str ask []  ; defk にできない: 別の thread で走らせ切る run の本体
     (with [_ (warnings.catch-warnings)]
       (warnings.simplefilter "ignore")
-      (run (scheduled (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
+      (run ((scheduled) (with_handlers (answerer-of connections) (abandon-mid-transaction))))))
   (with [runner (ThreadPoolExecutor :max-workers 1)]
     (setv answer (.result (.submit runner ask) :timeout 20)))
   #(answer connections))
@@ -1456,8 +1456,8 @@
         connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
         answers [])
   (defn #^ None ask []  ; defk にできない: thread の target
-    (.append answers (run (scheduled (with_handlers (answerer-of connections)
-                                                    (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
+    (.append answers (run ((scheduled) (with_handlers (answerer-of connections)
+                                                      (SqlQuery DB (.format "SELECT pg_sleep(30) /* {} */" marker) #()))))))
   (setv worker (threading.Thread :target ask))
   (.start worker)
   (with [admin (psycopg.connect (or POSTGRES-DSN "") :autocommit True)]

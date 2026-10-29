@@ -52,8 +52,8 @@
 
 (defn #^ object handled [#^ object program #^ (| str None) [implementation None]]
   "本物の答え手の組(外側が先)の上で program を回すため。implementation = scheduler の実装(None = 既定)。"
-  (run (scheduled (with-handlers [await-handler subprocess-handler os-warm-process-handler process-exit-handler] program)
-                  :implementation implementation)))
+  (run ((scheduled :implementation implementation)
+        (with-handlers [await-handler subprocess-handler os-warm-process-handler process-exit-handler] program))))
 
 
 (defk started-then-awaited [argv]
