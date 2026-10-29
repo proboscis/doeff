@@ -114,7 +114,7 @@ PROGRAM_HELPER = "program の helper"
 HELPER_INSTALLS = "handler を被せる program を返す関数"
 HELPER_ANSWERS = "effect に答える program を返す関数"
 # What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
-_INSTALL_NAMES = ("WithHandler", "WithHandlerType")
+_INSTALL_NAMES = ("WithHandler", "WithHandlerType", "with_handlers")
 _ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
 # What a factory call may write under: pointed at a scratch dir while a factory is called.
 _HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")

@@ -63,13 +63,23 @@ Key = tuple[str, str]
 
 
 class AddedName(TypedDict):
-    """「足した名」の 1 行: 表を足した後に足すしか無かった外れ(訳と決めの id つき)。"""
+    """「足した名」の 1 行: 表を足した後に足すしか無かった外れ(訳と決めの id つき)。
+
+    表を足した後に許した物(新しく見せる program の helper)は、欄「組」に許した物の組の名を書き、その組と同じ確かめを受ける
+    (「名」の組は減るだけなので、許した物を後から足す道はここだけ)。
+    """
 
     package: str
     module: str
     name: str
     訳: str
     決め: str
+    組: NotRequired[str]
+
+
+#: 「足した名」の 1 行に要る欄と、書いてよい欄(組は許した物の時だけ)。
+ADDED_FIELDS = frozenset({"package", "module", "name", "訳", "決め"})
+ADDED_OPTIONAL_FIELDS = frozenset({"組"})
 
 
 class PackageEntry(TypedDict):
@@ -140,9 +150,14 @@ def known_names(table: KnownTable, package_dir: str) -> set[Key]:
 
 
 def helper_names(table: KnownTable, package_dir: str) -> set[Key]:
-    """1 package の、組「許した物 — program の helper」に置いた (module, 名)。"""
+    """1 package の、組「許した物 — program の helper」に置いた (module, 名) と、組をそれと書いた「足した名」の名。"""
     modules = table["packages"][package_dir]["名"].get(HELPER_GROUP, {})
-    return {(module, name) for module, names in modules.items() for name in names}
+    added = {
+        (row["module"], row["name"])
+        for row in table["足した名"]
+        if row["package"] == package_dir and row.get("組") == HELPER_GROUP
+    }
+    return {(module, name) for module, names in modules.items() for name in names} | added
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
@@ -203,7 +218,7 @@ def _stale_text(directory: str, stale: list[Key]) -> str:
 
 def _not_helper_text(directory: str, rows: list[Mapping[str, Any]]) -> str:
     return (
-        f"{directory}: 組「{HELPER_GROUP}」に、目録の形が {tool.PROGRAM_HELPER} でない名が {len(rows)} 個 — "
+        f"{directory}: 組「{HELPER_GROUP}」(と、組をそれと書いた「足した名」)に、目録の形が {tool.PROGRAM_HELPER} でない名が {len(rows)} 個 — "
         "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)。"
         "直すか、組から外して外れか境界の組へ戻す:\n"
         + "\n".join(
@@ -246,11 +261,15 @@ def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
 def _added_row_problems(
     row: AddedName, table: KnownTable, listed: set[tuple[str, str, str]]
 ) -> list[str]:
-    """「足した名」の 1 行の誤り: 欄・package・訳・決め・「名」の組との重なり。"""
+    """「足した名」の 1 行の誤り: 欄・package・訳・決め・組・「名」の組との重なり。"""
     where = f"足した名 {row.get('package')} {row.get('module')}.{row.get('name')}"
-    if set(row) != set(AddedName.__annotations__):
-        return [f"{where}: 欄は package・module・name・訳・決め"]
+    if not ADDED_FIELDS <= set(row) <= ADDED_FIELDS | ADDED_OPTIONAL_FIELDS:
+        return [f"{where}: 欄は package・module・name・訳・決め(と、許した物なら組)"]
     checks = (
+        (
+            "組" in row and row["組"] not in ALLOWED_GROUPS,
+            f"組 {row.get('組')!r} は {ALLOWED_GROUPS} のどれでもない",
+        ),
         (row["package"] not in table["packages"], "package が表に無い"),
         (not row["訳"].strip(), "訳が空"),
         (
@@ -653,6 +672,40 @@ def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
     ]
     table["packages"][FIXTURE_DIR]["名"] = {HELPER_GROUP: {FIXTURE_ROOT: ["helper"]}}
     assert shape_problems(table, [FIXTURE_DIR]) == []
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_helper_added_after_the_table_is_checked_as_one(tmp_path: Path) -> None:
+    """表を足した後に見せる helper は「足した名」に欄「組」つきで書き、組の名と同じ確かめを受ける(ADR-DOE-API-001 R18)。
+
+    helper の形の名は緑・handler を被せる関数を組つきで書くと赤(名と形を名指す)。組を許した物の組の外の名にすると表の形の検が赤。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + PROGRAM_FUNCTIONS)
+    package = _read_fixture(repo)
+    rest = ["answering", "pinging_with_handler", "pinging_wrapped"]
+
+    def table(added: str, other: str) -> KnownTable:
+        row: AddedName = {
+            "package": FIXTURE_DIR,
+            "module": FIXTURE_ROOT,
+            "name": added,
+            "訳": "表を足した後に見せる helper(例)",
+            "決め": "ki-f20b18c2aad9",
+            "組": HELPER_GROUP,
+        }
+        return _fixture_table({FIXTURE_ROOT: sorted([*rest, other])}, [row])
+
+    check_package(package, table("pinging", "pinging_handled"))
+    assert shape_problems(table("pinging", "pinging_handled"), [FIXTURE_DIR]) == []
+    with pytest.raises(AssertionError, match=re.escape(HELPER_GROUP)) as failure:
+        check_package(package, table("pinging_handled", "pinging"))
+    assert f"{FIXTURE_ROOT}.pinging_handled({tool.HELPER_INSTALLS}・" in str(failure.value)
+
+    unchecked = table("pinging", "pinging_handled")
+    unchecked["足した名"][0]["組"] = "許した物 — 便利な関数"
+    assert shape_problems(unchecked, [FIXTURE_DIR]) == [
+        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: 組 '許した物 — 便利な関数' は {ALLOWED_GROUPS} のどれでもない"
+    ]
 
 
 def test_a_name_put_into_the_listed_groups_turns_red() -> None:

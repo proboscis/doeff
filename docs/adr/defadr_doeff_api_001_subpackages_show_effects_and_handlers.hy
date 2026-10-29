@@ -115,7 +115,7 @@
      (rule R15 "doeff-cluster は範囲「決まりの範囲」に入れる(2026-10-29・書 lt-3GGRA8T615V785SZ65CZ6JGZ1D の問い cluster-scope の答え lt-G256RJK3A95G4N7R5XC5FEJBVP — hide・card ki-2526a4b4f561・ki-362df4037544)。名は R1・R2・R5 のとおり: 外の repo が使う名(書の数え — 公開の名 3,443 個のうち 423 個)だけを入口から見せ、そのうち effect にする名と handler の中へ入れる名は後の card で直す。外が使わない名は内側の module へ移す。入口は R5 のとおり import の根 doeff_cluster に置く — 今の doeff_cluster は根の __init__ を持たない Hy の namespace package なので、card ki-299be2ea4a13 の道具が根に遅延の import の入口を作り、根のすぐ下の区画(coordinator・foundation・record_store・shared・sim・worker)を _<区画> へ移して、下の submodule(2026-10-29 の目録で 217 個)をまとめて隠す。書の「選んだ後の code」は区画の path(doeff_cluster.sim)から読む形を見せたが、R5 と目録の道具と表の test は import の根から出す名で数えるので、使い手の import は (import doeff_cluster [sim-cluster StartWorker]) になる。macro defsystem(R10)は根のすぐ下の公開の module doeff_cluster.macros から見せ、R5 の外の境界に置く — Hy の require が module の path で macro を読むので(R14 と同じ訳)。今の doeff_cluster.shared.entry.macros から移すのは shared の区画の段 1。隠した後は、submodule に足した名が既定で公開にならない。直しの分けは card ki-2526a4b4f561 の子(区画ごとの段 1・使い手の repo の段 2・移し替えの module と表の行を消す段 3)。")
      (rule R16 "handler を program に当てる公式の形は h1(h2(p)) — handler の値を呼んで包む(2026-10-28 の決定 ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA)。中核の WithHandler(handler, program)は VM へ渡す生の形で、利用者向けの docs と例には出さない。今の docs の WithHandler の書き替えは持ち主が card を切る。")
      (rule R17 "その場で一度だけ当てる handler は Hy の handle の macro(match のように effect ごとの節を並べてその場で当てる — doeff_hy.handle・card ki-fb1c0fb41ff5)で書き、使い回す handler は defhandler か handler を返す工場に名を付けて出す(2026-10-28 の決定 ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA)。subpackage が見せるのは名を付けた方(R1)。")
-     (rule R18 "effect を出すだけの program を返す関数(program の helper)は見せてよい(2026-10-29 17:16 JST・依頼書 lt-BPA7EJHY29RNHXHVEF7SPKPY81 の問い sequence の答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X)。helper と数えるのは次の 3 つを満たす関数: (1) program を返す — @do・defk の関数か、戻りの型が program(Program・DoExpr ほか)の関数。(2) 自分で effect を受けて答えない — 中で handler の制御(Resume・ResumeThrow・Transfer・TransferThrow・Pass)を読まない。(effect, k) を受ける関数は R3 の handler で、helper でない。(3) handler を被せない — 中で WithHandler も、handler の値・作り手(handler・stacked_handlers)・handler を返す工場も読まない。中は、その関数と、中で読む同じ package の関数を辿った全部で見る(呼ぶ program の中で例外を受けて投げ直すのは、effect に答える事でないので helper のまま)。中を読めない関数(Python の関数でない物)は helper と数えない。helper は既知の表の組「許した物 — program の helper」に名ごとに置き、目録の道具がその組の名の形を確かめて、helper の形でなければ赤にする(R12)。形が helper でも、組に置いていない program 関数は外れのまま(R13 (d))。今許す名: doeff-traverse の sequence・try_call(答えのとおり)と、同じ形の doeff-core-effects の closing_links・doeff-validation の validate(card ki-f20b18c2aad9 が同じ条で扱った)。check と perform は program を返さないので helper でなく、R13 の未決に残す。")]
+     (rule R18 "effect を出すだけの program を返す関数(program の helper)は見せてよい(2026-10-29 17:16 JST・依頼書 lt-BPA7EJHY29RNHXHVEF7SPKPY81 の問い sequence の答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X)。helper と数えるのは次の 3 つを満たす関数: (1) program を返す — @do・defk の関数か、戻りの型が program(Program・DoExpr ほか)の関数。(2) 自分で effect を受けて答えない — 中で handler の制御(Resume・ResumeThrow・Transfer・TransferThrow・Pass)を読まない。(effect, k) を受ける関数は R3 の handler で、helper でない。(3) handler を被せない — 中で WithHandler・with_handlers も、handler の値・作り手(handler・stacked_handlers)・handler を返す工場も読まない。中は、その関数と、中で読む同じ package の関数を辿った全部で見る(呼ぶ program の中で例外を受けて投げ直すのは、effect に答える事でないので helper のまま)。中を読めない関数(Python の関数でない物)は helper と数えない。目録の読みは中の名を global の値か属性の名で見て、同じ package の関数だけを辿るので、引数で受けた handler を当てる形・module の容器や class と instance の属性から読んだ handler を当てる形・別の package の関数が被せる形は見えず、helper と読む。だから helper は名ごとに許し、許す名の中は人が読む。helper は既知の表の組「許した物 — program の helper」に名ごとに置き(表を足した後に見せる helper は「足した名」に欄「組」をその組の名にして書く)、目録の道具がその名の形を確かめて、helper の形でなければ赤にする(R12)。形が helper でも、組に置いていない program 関数は外れのまま(R13 (d))。今許す名: doeff-traverse の sequence・try_call(答えのとおり)と、同じ形の doeff-core-effects の closing_links・doeff-validation の validate(card ki-f20b18c2aad9 が同じ条で扱った)。check と perform は program を返さないので helper でなく、R13 の未決に残す。")]
   :laws
     [(law subpackage-shows-only-effects-and-handlers
        :statement "for_all package p under packages/ with scope(p) = 決まりの範囲: outside(p) = {n in public_names(p) | kind(n) not in {effect, handler}} = known(p), and listed_names(table) only shrinks from its first version"
@@ -168,14 +168,17 @@
           (counterexample "helper の組に置いた関数の中で、同じ package の別の関数が WithHandler で handler を被せるのに、組の名の中だけを読んで通す")
           (counterexample "中で Resume を出して effect に答える関数を helper と数える")
           (counterexample "program を返さない関数(check のように指定の値を返す物)を helper の組に置いて通す")
-          (counterexample "形を確かめない許した物の組(例 許した物 — 便利な関数)を表に作り、外れの名をそこへ移して通す")]
+          (counterexample "形を確かめない許した物の組(例 許した物 — 便利な関数)を表に作り、外れの名をそこへ移して通す")
+          (counterexample "表を足した後に見せる関数を「足した名」に helper として書き、組の確かめを受けずに handler を被せる関数を通す")]
        :enforced-by ["tests/test_public_api_known_violations.py::test_only_a_program_helper_can_be_put_into_the_helper_group"
                      "tests/test_public_api_known_violations.py::test_an_allowed_group_without_a_check_is_not_well_formed"
+                     "tests/test_public_api_known_violations.py::test_a_helper_added_after_the_table_is_checked_as_one"
+                     "tests/test_public_api_inventory.py::test_what_the_helper_reading_does_not_see"
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
                      "tests/test_public_api_inventory.py::test_names_are_typed_by_marker_return_type_and_return_shape"
                      "tests/test_public_api_inventory.py::test_a_program_function_says_whether_it_is_a_helper"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-program-helper-can-be-allowed-as-one"]
-       :wiring "配線済み(2026-10-29・card ki-f20b18c2aad9)— 目録は program を返す関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、handler の制御か handler を被せる物を読めば形「handler を被せる program を返す関数」か「effect に答える program を返す関数」、読まなければ形「program の helper」と数える(種類はどれも それ以外)。表の test は組「許した物 — program の helper」の名の形が helper でなければ赤にし、許した物の組は形を確かめる組だけを置ける。この file の deftest はその関数を呼ぶだけ")]
+       :wiring "配線済み(2026-10-29・card ki-f20b18c2aad9)— 目録は program を返す関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、handler の制御か handler を被せる物を読めば形「handler を被せる program を返す関数」か「effect に答える program を返す関数」、読まなければ形「program の helper」と数える(種類はどれも それ以外)。表の test は組「許した物 — program の helper」の名と、組をそれと書いた「足した名」の名の形が helper でなければ赤にし、許した物の組は形を確かめる組だけを置ける。読みが見ない形(引数で受けた handler・別の package の関数が被せる)は、今の限りとして目録の test に固定した(構成のレビュー 2026-10-29 の所見)。この file の deftest はその関数を呼ぶだけ")]
   :enforcement
     [(deftest test-adr-doe-api-001-an-added-outlier-turns-the-guard-red
        ;; R12: 強制は card ki-aaaa56621c5a の test が持ち、ここではその関数を呼ぶだけ — 使い捨ての package に effect と handler の外の
@@ -212,7 +215,8 @@
        ;; 形の検が赤。
        (<- guard ModuleType (guard-module))
        (with [scratch (tempfile.TemporaryDirectory)]
-         (guard.test-only-a-program-helper-can-be-put-into-the-helper-group (/ (Path scratch) "helper")))
+         (guard.test-only-a-program-helper-can-be-put-into-the-helper-group (/ (Path scratch) "helper"))
+         (guard.test-a-helper-added-after-the-table-is-checked-as-one (/ (Path scratch) "added-helper")))
        (guard.test-an-allowed-group-without-a-check-is-not-well-formed))]
   :plans ["tests/test_public_api_known_violations.py・tests/data/public_api_known_violations.json (card ki-aaaa56621c5a)"
           "tools/public_api_inventory.py (card ki-633e6b8564b4)"
