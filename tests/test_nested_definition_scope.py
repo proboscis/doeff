@@ -79,7 +79,7 @@ _HEADER = """
 (require doeff-hy.macros [defk defp defpp deftest defmcp-tool defeffect deff defhandler defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
+(require doeff-conductor._macros [defworkflow defphase agent!])
 (require doeff-cluster.shared.entry.macros [defsystem])
 (import dataclasses [dataclass])
 (import enum [StrEnum])
@@ -445,7 +445,7 @@ _NOT_DEFINITION_MACROS = frozenset({"defphase"})
 
 
 #: 定義の macro を持ち主の package に置く Hy の module(doeff-hy の外 — 利用者の答え lt-GXXY5TVWBHJW4ZCBDTCRN68XZS・card ki-f2107259b141)。
-_OWNER_MACRO_MODULES = ("doeff-conductor.macros", "doeff-cluster.shared.entry.macros")
+_OWNER_MACRO_MODULES = ("doeff-conductor._macros", "doeff-cluster.shared.entry.macros")
 
 
 def _owner_macro_names() -> set[str]:
@@ -769,7 +769,7 @@ _PROJECTION_HEADER = """
 (require doeff-hy.macros [defk deff defp defpp deftest defmcp-tool defeffect defhandler defpipeline
                           <- traverse for/do])
 (require doeff-hy.record [defrecord defwire defenum])
-(require doeff-conductor.macros [defworkflow defphase agent!])
+(require doeff-conductor._macros [defworkflow defphase agent!])
 (require doeff-cluster.shared.entry.macros [defsystem])
 (import dataclasses [dataclass])
 (import enum [StrEnum])

@@ -6,7 +6,7 @@ from doeff_conductor._api import ConductorAPI
 from doeff_conductor import WorkflowStatus
 
 RANDOM_WORKFLOW_SOURCE = """
-(require doeff-conductor.macros [defworkflow random! <-])
+(require doeff-conductor._macros [defworkflow random! <-])
 (import doeff_conductor._dsl [artifact ref])
 
 (defworkflow random-workflow
