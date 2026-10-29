@@ -467,6 +467,9 @@ def test_hide_points_callers_at_an_entry_that_reads_its_children_by_the_old_path
         and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
     )
     assert ast.literal_eval(listed) == ["PingConfig", "PingEffect", "Shout", "ping_handler"]
+    shim = _text(repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py")
+    assert "import *" not in shim  # semgrep の doeff-no-star-imports
+    assert f"    from {ROOT_NAME}._effects import PingEffect as PingEffect\n" in shim
     [package_row] = tool._inventory_tool().inventory(repo, [PACKAGE], 1, 100)
     assert {"PingConfig", "ping_handler"} <= {
         row["name"] for row in package_row["exports"] if row["module"] == ROOT_NAME

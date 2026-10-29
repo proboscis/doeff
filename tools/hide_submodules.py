@@ -1610,11 +1610,21 @@ def _one_name_per_line(listed: ast.List | ast.Tuple) -> bool:
     )
 
 
+def _member_type(name: str) -> int:
+    """ruff の名の種類(定数・class・その他)— 1 字の大文字(``T``)は class と読む(ruff の isort と RUF022)。"""
+    if len(name) > 1 and name.isupper():
+        return 0
+    return 1 if name[:1].isupper() else 2
+
+
 def _all_order(name: str) -> tuple[int, str]:
-    """ruff の RUF022 の並び(SCREAMING_SNAKE_CASE・CamelCase・その他の順)— 名を足した ``__all__`` が lint に掛からない為。"""
-    if all(c.isupper() or c.isdigit() or c == "_" for c in name):
-        return (0, name)
-    return (1, name) if name[:1].isupper() else (2, name)
+    """ruff の RUF022 の並び(種類の順・大文字小文字を分ける)— 名を足した ``__all__`` が lint に掛からない為。"""
+    return (_member_type(name), name)
+
+
+def _import_order(name: str) -> tuple[int, str, str]:
+    """ruff の isort の名の並び(種類の順・大文字小文字を分けない)— 道具の書く import が I001 に掛からない為。"""
+    return (_member_type(name), name.lower(), name)
 
 
 def _listed_rows(shape: EntryShape, additions: Sequence[NameFate]) -> tuple[tuple[int, str], ...]:
@@ -1742,7 +1752,11 @@ def update_entry(
     existing = {key.value for key in keys if isinstance(key, ast.Constant)}
     skipped = [f.name for f in wanted if f.name in existing or f.name in shape.bound]
     additions = [f for f in wanted if f.name not in skipped]
-    typed = [f for f in additions if _typed(root_dir, root, cast(str, f.source))]
+    # TYPE_CHECKING の import は ruff の isort の並び(module・名)で書く(I001 に掛からない為)。
+    typed = sorted(
+        (f for f in additions if _typed(root_dir, root, cast(str, f.source))),
+        key=lambda f: (cast(str, f.source), *_import_order(f.name)),
+    )
     if shape.tree is None:
         if additions:
             docstring = f'"""{root}: the effects and handlers of the package (and their types), read on first use."""\n'
@@ -1774,7 +1788,12 @@ def update_entry(
     inserts = (
         *edit.inserts,
         *_listed_rows(shape, additions),
-        *(((_import_line(shape), edit.imports),) if edit.imports else ()),
+        # docstring の後の import は空の行を挟む(ruff format の形)。
+        *(
+            ((_import_line(shape), ("\n" if _import_line(shape) else "") + edit.imports),)
+            if edit.imports
+            else ()
+        ),
     )
     at = {line: "".join(t for where, t in inserts if where == line) for line, _ in inserts}
     text = "".join(at.get(index, "") + line for index, line in enumerate(lines))
@@ -1819,7 +1838,10 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(
         self, fullname: str, path: Sequence[str] | None = None, target: ModuleType | None = None
     ) -> ModuleSpec | None:
-        if not fullname.startswith(_OLD + ".") or importlib.util.find_spec(self._target(fullname)) is None:
+        if (
+            not fullname.startswith(_OLD + ".")
+            or importlib.util.find_spec(self._target(fullname)) is None
+        ):
             return None
         return importlib.util.spec_from_loader(fullname, self)
 
@@ -1832,7 +1854,9 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def get_code(self, fullname: str) -> CodeType:
         # python -m <old>.<sub>: run the moved module as __main__.
         target = self._target(fullname)
-        source = f"import runpy\\nrunpy.run_module({{target!r}}, run_name='__main__', alter_sys=True)\\n"
+        source = (
+            f"import runpy\\nrunpy.run_module({{target!r}}, run_name='__main__', alter_sys=True)\\n"
+        )
         return compile(source, f"<moved {{fullname}}>", "exec")
 
     @staticmethod
@@ -1845,8 +1869,12 @@ if not any(isinstance(finder, _MovedSubmodules) for finder in sys.meta_path):
 '''
 
 
-def shim_text(child: Child, typed: bool) -> str:
-    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。"""
+def shim_text(child: Child, typed: Sequence[str]) -> str:
+    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。
+
+    ``typed`` は型の検に古い path で見せる名(移した module が出す名)。``X as X`` で 1 つずつ書く(star import は
+    semgrep の doeff-no-star-imports が止める)。
+    """
     package = child.is_package()
     imports = (
         (
@@ -1862,7 +1890,13 @@ def shim_text(child: Child, typed: bool) -> str:
         else ("import sys", "from importlib import import_module")
     ) + (("from typing import TYPE_CHECKING",) if typed else ())
     checking = (
-        f"\nif TYPE_CHECKING:\n    from {child.new} import *  # noqa: F403\n" if typed else ""
+        "\nif TYPE_CHECKING:\n"
+        + "".join(
+            _type_checking_line(child.new, name, "    ")
+            for name in sorted(typed, key=_import_order)
+        )
+        if typed
+        else ""
     )
     finder = _SHIM_FINDER.format(old=child.old, new=child.new) if package else ""
     return (
@@ -2136,15 +2170,16 @@ def hide(
         raise SystemExit(f"目録が {package_dir.name} を読めなかった: {package['error']}")
     table = _load_table(table_path or tree / DEFAULT_TABLE)
     groups, added = _table_groups(table, package_dir.name)
-    fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added)
+    rows = cast(list[ExportRow], package["exports"])  # 目録の JSON の行(型は目録の道具の ExportRow)
+    fates = decide_names(rows, children, groups, added)
     counted = tuple(
         {"old": c.old, "new": c.new, "modules": _module_count(c, c.name)} for c in children
     )
     moved = tuple(note for child in children for note in _move(tree, child))
     for child in children:
-        child.shim.write_text(
-            shim_text(child, _typed(child.root_dir, child.root, child.new)), encoding="utf-8"
-        )
+        shown = sorted({r["name"] for r in rows if r["module"] == child.old})
+        typed = shown if _typed(child.root_dir, child.root, child.new) else []
+        child.shim.write_text(shim_text(child, typed), encoding="utf-8")
         _git(tree, "add", str(child.shim))
     entries = {
         root: update_entry(
