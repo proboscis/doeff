@@ -7,8 +7,8 @@ import httpx
 from doeff import EffectBase, Pass, Resume, do, handler, run
 from doeff_core_effects.cache_effects import CacheGet, CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 @dataclass(frozen=True)
 class GetJson(EffectBase):  # an effect: "GET this path and give me the JSON body"

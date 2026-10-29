@@ -2,7 +2,7 @@
 # line, so when the innermost one raises, the doeff traceback lists the chain of @do calls and the line each one
 # is at. Prints the doeff traceback of the error.
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import do, run
 from doeff.traceback import format_default

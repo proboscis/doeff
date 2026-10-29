@@ -2,7 +2,7 @@
 # "Composition via Nested @do"). The page's fetch_user_posts example, with fetch_user asking for the name prefix:
 # the Ask yielded two @do calls deep travels out to the reader installed around the whole run. Prints, in order,
 # where each body starts and returns, and the effects that got past reader (none: reader answered the Ask).
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import Ask, Pass, WithObserve, do, handler, run
 

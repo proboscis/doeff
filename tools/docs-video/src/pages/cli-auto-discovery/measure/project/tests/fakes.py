@@ -1,6 +1,5 @@
 # What a test run passes by hand: its own interpreter and its own env.
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled, state, writer
 
 from doeff import Program, Pure, run
 

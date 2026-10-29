@@ -150,8 +150,8 @@ Example:
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def compute():
@@ -169,8 +169,8 @@ import asyncio
 from dataclasses import dataclass
 
 from doeff import Await, EffectBase, Resume, do, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 @dataclass(frozen=True)
 class Fetch(EffectBase):

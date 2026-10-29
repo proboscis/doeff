@@ -2,8 +2,7 @@
 
 import doeff_core_effects
 import pytest
-from doeff_core_effects import handlers as core_handlers
-from doeff_core_effects.effects import (
+from doeff_core_effects import (
     Ask,
     Get,
     Listen,
@@ -12,8 +11,6 @@ from doeff_core_effects.effects import (
     Slog,
     Tell,
     Try,
-)
-from doeff_core_effects.handlers import (
     listen_handler,
     reader,
     slog_handler,
@@ -21,6 +18,7 @@ from doeff_core_effects.handlers import (
     try_handler,
     writer,
 )
+from doeff_core_effects import _handlers as core_handlers
 
 from doeff import Pure, UnhandledEffect, do
 from doeff import run as doeff_run
@@ -237,8 +235,7 @@ class TestAwait:
         """Await bridges async coroutines into doeff."""
         import asyncio
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import Await, await_handler, scheduled
 
         async def async_add(a, b):
             # 主張は「Await が coroutine の結果を持ち帰る」— loop に 1 度譲れば足り、時間は待たない(#2888)
@@ -257,8 +254,7 @@ class TestAwait:
         """Multiple Awaits in sequence."""
         import asyncio
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import Await, await_handler, scheduled
 
         async def fetch(x):
             await asyncio.sleep(0)  # loop に 1 度譲るだけ(#2888)
@@ -279,8 +275,7 @@ class TestAwait:
         import asyncio
         import time
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+        from doeff_core_effects import Await, Gather, Spawn, await_handler, scheduled
 
         async def fetch(x):
             await asyncio.sleep(0.1)
@@ -312,8 +307,7 @@ class TestAwait:
         import asyncio
         import threading
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import Await, await_handler, scheduled
 
         async def evil():
             raise asyncio.CancelledError
@@ -349,8 +343,7 @@ class TestAwait:
         import asyncio
         import threading
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import Await, await_handler, scheduled
 
         @do
         def body():
@@ -376,8 +369,7 @@ class TestAwait:
         import asyncio
         import threading
 
-        from doeff_core_effects import Await, await_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import Await, await_handler, scheduled
 
         b_in_flight = threading.Event()
         # B を bridge の loop の上で飛行中に保つ門。前は 0.5 秒の窓だった — 検が A の SystemExit を確かめてから

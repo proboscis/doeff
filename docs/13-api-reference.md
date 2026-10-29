@@ -12,7 +12,7 @@ and [run](#rundoexpr).
 
 Every name `from doeff import ...` gives, in one line each, with a link to where it is explained
 with an example. The handlers (`state`, `reader`, `writer`, `scheduled`, ...) are imported from
-`doeff_core_effects.handlers` and `doeff_core_effects.scheduler` — see [Handlers](#handlers). The
+`doeff_core_effects._handlers` and `doeff_core_effects._scheduler` — see [Handlers](#handlers). The
 names that are kept only to say what replaced them are in [Removed APIs](#removed-apis).
 
 **Programs and effects**
@@ -325,7 +325,7 @@ Converts a generator function into a callable that produces `Expand` objects (pr
 
 ```python
 from doeff import Get, do, run
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def my_program(x: int):
@@ -603,7 +603,7 @@ from dataclasses import dataclass
 
 from doeff import EffectBase, Pass, Resume, do, handler, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @dataclass(frozen=True)
@@ -733,7 +733,7 @@ Run a scoped sub-program under a custom handler by calling a `Program -> Program
 handler installer.
 
 ```python excerpt
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 scoped = reader(env={"name": "override"})(worker())
 ```
@@ -1097,8 +1097,8 @@ Execute a DoExpr program to completion and return the raw result value.
 
 ```python
 from doeff import Ask, Put, Tell, do, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def my_program():
@@ -1138,7 +1138,7 @@ Wrap a program with the cooperative scheduler. Returns a new DoExpr that, when p
 semaphores).
 
 ```python
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 result = run(scheduled(prog))
 ```
@@ -1179,8 +1179,8 @@ Handlers are `Program -> Program` functions. Compose them by calling them in seq
 
 ```python excerpt
 from doeff import do, run
-from doeff_core_effects.handlers import reader, state, writer, try_handler, slog_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer, try_handler, slog_handler
+from doeff_core_effects import scheduled
 
 prog = my_program()
 prog = slog_handler(prog)        # innermost
@@ -1195,7 +1195,7 @@ result = run(scheduled(prog))    # scheduler wraps everything
 Handles `Ask(key)` by looking up `key` in `env`. Raises `MissingEnvKeyError` (a `KeyError`) on miss.
 
 ```python
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 prog = reader(env={"db_url": "postgres://..."})(my_program())
 ```
@@ -1208,7 +1208,7 @@ Handles `Ask` and `Local` with lazy evaluation and caching. If an env value is a
 `Program`, evaluates it lazily once per key with concurrent coordination via semaphores.
 
 ```python excerpt
-from doeff_core_effects.handlers import lazy_ask
+from doeff_core_effects import lazy_ask
 
 prog = lazy_ask(env={"config": load_config_program()})(my_program())
 ```
@@ -1225,7 +1225,7 @@ Requires `scheduled()` to be installed (for semaphore support).
 Handles `Get(key)` and `Put(key, value)` with a mutable dict.
 
 ```python
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 prog = state(initial={"counter": 0})(my_program())
 ```
@@ -1243,7 +1243,7 @@ Read the log from inside a `@do` program via `yield ReadWriterLog()`.
 
 ```python excerpt
 from doeff_core_effects import ReadWriterLog
-from doeff_core_effects.handlers import writer
+from doeff_core_effects import writer
 
 prog = writer(my_program())
 prog = state()(prog)
@@ -1272,7 +1272,7 @@ needed outside it. (`slog_log()` was retired.)
 
 ```python
 from doeff import Listen, SlogEffect, do, run, slog
-from doeff_core_effects.handlers import listen_handler, slog_handler
+from doeff_core_effects import listen_handler, slog_handler
 
 @do
 def my_program():
@@ -1299,7 +1299,7 @@ Handles `Try(program)` -- wraps inner program execution and catches errors as
 `Ok(value)` or `Err(error)`. Pre-installed (not a factory -- use directly).
 
 ```python
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 prog = try_handler(my_program())
 ```
@@ -1312,7 +1312,7 @@ Handles `Local(env, program)` -- scoped environment overrides. Pre-installed
 (not a factory -- use directly).
 
 ```python
-from doeff_core_effects.handlers import local_handler
+from doeff_core_effects import local_handler
 
 prog = local_handler(my_program())
 ```
@@ -1325,7 +1325,7 @@ Handles `Listen(program, types=...)` -- collects effects during sub-program exec
 Pre-installed (not a factory -- use directly).
 
 ```python
-from doeff_core_effects.handlers import listen_handler
+from doeff_core_effects import listen_handler
 
 prog = listen_handler(my_program())
 ```
@@ -1338,7 +1338,7 @@ Handles `Await(coroutine)` by bridging async into the scheduler via `ExternalPro
 Requires `scheduled()` to be installed.
 
 ```python
-from doeff_core_effects.handlers import await_handler
+from doeff_core_effects import await_handler
 
 prog = await_handler()(my_program())
 ```
@@ -1351,7 +1351,7 @@ Handles `Ask(key)` by looking up `os.environ[prefix + key]`. Supports `{module.p
 syntax for importing symbols. Unresolved keys are forwarded to outer handlers.
 
 ```python
-from doeff_core_effects.handlers import env_var_ask
+from doeff_core_effects import env_var_ask
 
 prog = env_var_ask()(my_program())
 ```
@@ -1496,7 +1496,7 @@ from doeff import Program, DoExpr, do
 
 # Execution
 from doeff import run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 # Reader / State / Writer
 from doeff import Ask, Local, Get, Put, Tell, Listen, slog, WriterTellEffect
@@ -1522,9 +1522,16 @@ from doeff import Try, Ok, Err
 from doeff import Some, Nothing
 
 # Handlers
-from doeff_core_effects.handlers import (
-    reader, lazy_ask, state, writer, try_handler,
-    slog_handler, local_handler, listen_handler, await_handler,
+from doeff_core_effects import (
+    reader,
+    lazy_ask,
+    state,
+    writer,
+    try_handler,
+    slog_handler,
+    local_handler,
+    listen_handler,
+    await_handler,
 )
 
 # Cache effects (separate package)
@@ -1539,8 +1546,8 @@ from doeff_core_effects.memo_effects import MemoGet, MemoPut
 
 ```python
 from doeff import Ask, Put, Tell, do, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def my_program():

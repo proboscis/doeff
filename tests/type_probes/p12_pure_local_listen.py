@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Any, assert_type
 
 from doeff import Listen, Local, Pure, Tell, do
-from doeff_core_effects.effects import WriterTellEffect
+from doeff_core_effects import WriterTellEffect
 
 
 @do

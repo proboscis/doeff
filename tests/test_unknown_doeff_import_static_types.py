@@ -7,7 +7,7 @@ doeff_core_effects の下にある)も綴りの誤り ``from doeff import reeder
 
 ``__getattr__`` を ``if not TYPE_CHECKING:`` の下へ置いて型の道具から隠すと、doeff が静的に持たない名の import は
 ``"state" is unknown import symbol`` になる。実行時の案内(``ImportError: ... it is in
-doeff_core_effects.handlers: ...``)は ``tests/test_import_handler_from_doeff.py`` が見ていて、変わらない。
+doeff_core_effects._handlers: ...``)は ``tests/test_import_handler_from_doeff.py`` が見ていて、変わらない。
 
 ``DoeffRunContext`` は同じ ``__getattr__`` で遅く読むが、型の側は ``if TYPE_CHECKING:`` の import で見えるので、
 隠しても型は失わない — ここで ``reveal_type`` で確かめる。

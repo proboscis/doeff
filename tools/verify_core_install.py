@@ -204,7 +204,7 @@ def _python_use(name: str, statement: str, extra: str) -> ExtraUse:
     return ExtraUse(name, "python", ("-I", "-c", statement), extra)
 
 
-# 文と extra の表は doeff_core_effects/extra_hints.py。開発の環境で同じ場面を読む検は tests/test_missing_extra_hints.py と
+# 文と extra の表は doeff_core_effects/_extra_hints.py。開発の環境で同じ場面を読む検は tests/test_missing_extra_hints.py と
 # tests/cli/test_cli_without_hy.py(Hy は在り httpx だけが無い場面は、核の 4 個だけの venv には無い)。
 EXTRA_USES = (
     _python_use("Hy で書いた module", "import doeff_core_effects.os_process", "hy"),

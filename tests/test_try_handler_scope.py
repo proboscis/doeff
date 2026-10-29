@@ -7,8 +7,7 @@ to try_handler's position.
 Bug reproduction: if a custom effect handler is installed INNER to try_handler,
 effects performed inside Try(program) cannot reach that inner handler.
 """
-from doeff_core_effects import Ask, Try, slog
-from doeff_core_effects.handlers import reader, slog_handler, try_handler
+from doeff_core_effects import Ask, Try, reader, slog, slog_handler, try_handler
 from doeff_vm import EffectBase
 
 from doeff import Pass, Resume, do, run

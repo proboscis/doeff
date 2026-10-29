@@ -6,8 +6,7 @@ resumed continuation performs another effect of the same type.
 This is the standard "deep handler" semantics from algebraic effects
 literature (OCaml 5, Koka, Effekt all use deep handlers by default).
 """
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import Ask, reader
 from doeff_vm import EffectBase
 
 from doeff import Pass, Resume, Transfer, do, run

@@ -12,7 +12,7 @@ Execute multiple spawned tasks in parallel and collect results.
 
 ```python
 from doeff import do
-from doeff_core_effects.scheduler import Spawn, Gather, Wait, scheduled
+from doeff_core_effects import Spawn, Gather, Wait, scheduled
 
 @do
 def parallel_programs():
@@ -61,8 +61,8 @@ so they overlap:
 from dataclasses import dataclass
 
 from doeff import Await, EffectBase, Resume, do, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import Gather, Spawn, scheduled
 
 @dataclass(frozen=True)
 class HttpGet(EffectBase):  # an effect: "get the body at url"
@@ -118,7 +118,7 @@ Use `Get` followed by `Put` when you need to update state:
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def increment_counter():
@@ -143,7 +143,7 @@ print(run(state(initial={"counter": 41})(writer(increment_counter()))))  # 42
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def accumulate_result(value):

@@ -13,8 +13,7 @@ from dataclasses import dataclass
 from types import CodeType, FrameType
 
 import pytest
-from doeff_core_effects import cache_handlers
-from doeff_core_effects.effects import (
+from doeff_core_effects import (
     Ask,
     Await,
     Get,
@@ -25,9 +24,8 @@ from doeff_core_effects.effects import (
     Slog,
     Try,
     WriterTellEffect,
-)
-from doeff_core_effects.handlers import (
     await_handler,
+    cache_handlers,
     env_var_ask,
     lazy_ask,
     listen_handler,

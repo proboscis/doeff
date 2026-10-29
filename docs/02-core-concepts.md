@@ -102,7 +102,7 @@ Effect values are lifted into control IR with `Perform(effect)`.
 ```python
 from doeff import Perform, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 expr = Perform(Ask("key"))
 print(type(expr).__name__)  # Perform
@@ -169,7 +169,7 @@ Example:
 ```python
 from doeff import Expand, do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 @do
 def fetch_user(user_id: int):
@@ -237,7 +237,7 @@ For async/concurrent programs, wrap with `scheduled()`:
 
 ```python
 from doeff import Spawn, Wait, do, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 @do
 def child():
@@ -449,7 +449,7 @@ from dataclasses import dataclass
 
 from doeff import EffectBase, Pass, Resume, do, handler, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @dataclass(frozen=True)
@@ -537,7 +537,7 @@ and can inspect or log them.
 ```python
 from doeff import WithObserve, do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 def my_observer(effect):
     print(f"observed: {effect}")  # observed: Tell('hello')
@@ -563,7 +563,7 @@ Effect payloads compose after lifting:
 ```python
 from doeff import Pure, Perform, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 print(run(Pure(1)))  # 1
 
@@ -576,7 +576,7 @@ Handlers compose by nesting: each one is applied to the program the next one ret
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def body():
@@ -594,7 +594,7 @@ print(run(prog))  # 1
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 @do
 def update_counter():

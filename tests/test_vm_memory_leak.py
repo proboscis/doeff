@@ -21,7 +21,7 @@ import resource
 from dataclasses import dataclass
 
 import doeff_vm
-from doeff_core_effects.effects import EffectBase
+from doeff_core_effects._effects import EffectBase
 from doeff_vm import WithHandler
 
 from doeff import do

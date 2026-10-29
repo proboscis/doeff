@@ -10,9 +10,7 @@ Run with: uv run python examples/marker_demo.py
 import asyncio
 from typing import Any
 
-from doeff_core_effects import ReadWriterLog
-from doeff_core_effects.handlers import reader, slog_handler, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import ReadWriterLog, reader, scheduled, slog_handler, state, writer
 
 from doeff import Ask, Program, Pure, Tell, do, run, slog
 

@@ -335,14 +335,8 @@ from itertools import count
 
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
-from doeff_core_effects.scheduler import (
-    PRIORITY_IDLE,
-    CompletePromise,
-    CreatePromise,
-    Wait,
-    scheduled,
-)
+from doeff_core_effects import state, writer
+from doeff_core_effects import PRIORITY_IDLE, CompletePromise, CreatePromise, Wait, scheduled
 
 
 @dataclass(frozen=True)
@@ -611,8 +605,8 @@ import asyncio
 from dataclasses import dataclass
 
 from doeff import Await, EffectBase, Gather, Resume, Spawn, do, handler, run
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 
 @dataclass(frozen=True)

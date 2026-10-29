@@ -7,8 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled
 
 from doeff import Await, EffectBase, Resume, do, handler, run
 

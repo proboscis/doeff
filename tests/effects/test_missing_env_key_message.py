@@ -14,9 +14,7 @@ from __future__ import annotations
 import pickle
 
 import pytest
-from doeff_core_effects.effects import Ask, Local, Try
-from doeff_core_effects.handlers import lazy_ask, reader, try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Ask, Local, Try, lazy_ask, reader, scheduled, try_handler
 
 from doeff import MissingEnvKeyError, do, run
 

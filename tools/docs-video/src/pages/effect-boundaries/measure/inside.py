@@ -6,8 +6,7 @@ import asyncio
 import threading
 from collections import Counter
 
-from doeff_core_effects.handlers import reader, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled, state, try_handler, writer
 
 from doeff import Ask, Gather, Get, Pass, Put, Spawn, Tell, Try, Wait, do, handler, run
 

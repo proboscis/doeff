@@ -89,19 +89,19 @@ class TestG9HandlersModule:
 
     def test_import_state(self) -> None:
         """from doeff.handlers import state must succeed."""
-        from doeff_core_effects.handlers import state
+        from doeff_core_effects import state
 
         assert state is not None
 
     def test_import_reader(self) -> None:
         """from doeff.handlers import reader must succeed."""
-        from doeff_core_effects.handlers import reader
+        from doeff_core_effects import reader
 
         assert reader is not None
 
     def test_import_writer(self) -> None:
         """from doeff.handlers import writer must succeed."""
-        from doeff_core_effects.handlers import writer
+        from doeff_core_effects import writer
 
         assert writer is not None
 

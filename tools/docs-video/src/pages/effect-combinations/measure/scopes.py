@@ -2,7 +2,7 @@
 # (Put) and then raises. After the scope, the environment is back to what it was, and the store keeps the write
 # (docs/18-effect-combinations.md, Laws 1, 2, 4 and 5). Prints the value of "key" (environment) and "counter"
 # (store) before, inside and after each scope.
-from doeff_core_effects.handlers import local_handler, reader, state, try_handler
+from doeff_core_effects import local_handler, reader, state, try_handler
 
 from doeff import Ask, Get, Local, Put, Try, do, run
 

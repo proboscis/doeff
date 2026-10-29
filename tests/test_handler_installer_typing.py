@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import pytest
-from doeff_core_effects.handlers import await_handler, slog_discard_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled, slog_discard_handler
 from doeff_vm import K
 
 from doeff import EffectBase, Pass, Program, Pure, do, handler, run
@@ -82,7 +81,7 @@ def test_installer_type_contract_accepts_composition_and_rejects_wrong_arity(
 ) -> None:
     errors = _pyright_errors(tmp_path, """from typing import Any, assert_type
 from doeff import Program, Pure, handler
-from doeff_core_effects.handlers import await_handler, slog_discard_handler
+from doeff_core_effects._handlers import await_handler, slog_discard_handler
 
 assert_type(slog_discard_handler(Pure(42)), Program[int, Any])
 assert_type(await_handler()(Pure(42)), Program[int, Any])
@@ -109,7 +108,7 @@ from typing import Any, assert_type
 
 from doeff import Ask, Program, do, handler, run, stacked_handlers, with_handlers
 from doeff.program import ProgramHandler
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects._handlers import reader, state, writer
 from doeff_hy.static_types import Handler
 
 
@@ -210,7 +209,7 @@ from functools import partial
 from typing import Any
 
 from doeff import EffectBase, Pass, Resume, do, handler
-from doeff_core_effects.handlers import writer
+from doeff_core_effects._handlers import writer
 from doeff_vm import K
 
 

@@ -11,9 +11,12 @@ import asyncio
 import time
 
 import pytest
-from doeff_core_effects import ReadWriterLog, SlogEffect, WriterTellEffect, slog
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
+    ReadWriterLog,
+    SlogEffect,
+    WriterTellEffect,
     listen_handler,
+    slog,
     slog_discard_handler,
     state,
     try_handler,

@@ -4,7 +4,7 @@
 # between the runs makes the expensive call before the branch point happen once.
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import Ask, EffectBase, Resume, do, handler, run
 

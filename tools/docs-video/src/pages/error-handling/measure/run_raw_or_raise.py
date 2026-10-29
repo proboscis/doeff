@@ -1,7 +1,7 @@
 # run() hands back the program's value as it is, or re-raises the program's exception: no wrapper either way.
 # Backs the opening scene of the error-handling video: the same program, run with a name and with an empty one.
 from doeff import Ask, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @do

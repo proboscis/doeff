@@ -3,8 +3,7 @@
 # events, to back the Cancel scene of the Async Effects video (the example of docs/04-async-effects.md).
 from datetime import datetime, timezone
 
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, try_handler
 from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import Cancel, CreatePromise, Err, Spawn, Try, Wait, do, run

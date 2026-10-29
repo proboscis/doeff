@@ -1,7 +1,6 @@
 # The root of the page's example project (docs/14-cli-auto-discovery.md, "Environment Accumulation"): a default
 # interpreter and the base env.
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled, state, writer
 
 from doeff import Program, Pure, run
 

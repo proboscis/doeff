@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Gather, Spawn, Wait, scheduled
+from doeff_core_effects import CompletePromise, CreatePromise, Gather, Spawn, Wait, scheduled
 from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import EffectBase, Resume, do, handler, run

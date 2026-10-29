@@ -14,7 +14,7 @@ import types
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import EffectBase, Pass, Resume, Spawn, Wait, do, handler, run, with_handlers
 

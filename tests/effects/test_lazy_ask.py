@@ -1,8 +1,16 @@
 """Tests for lazy_ask handler — SPEC-EFF-001 lazy program evaluation."""
 
-from doeff_core_effects.effects import Ask, Local, Try
-from doeff_core_effects.handlers import lazy_ask, try_handler
-from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
+from doeff_core_effects import (
+    Ask,
+    Gather,
+    Local,
+    Spawn,
+    Try,
+    Wait,
+    lazy_ask,
+    scheduled,
+    try_handler,
+)
 
 from doeff import do, run
 

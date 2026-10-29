@@ -9,7 +9,7 @@ Expected: interpreter receives env as Program[dict], runs it, gets a plain dict.
 Actual: run(env) fails with "unhandled effect: Local".
 """
 
-from doeff_core_effects.handlers import local_handler
+from doeff_core_effects import local_handler
 
 from doeff import Pure, run
 from doeff.cli.discovery import StandardEnvMerger

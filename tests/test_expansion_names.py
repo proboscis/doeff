@@ -10,7 +10,7 @@ import sys
 import types
 from pathlib import Path
 
-import doeff_core_effects.effects
+import doeff_core_effects._effects
 import doeff_hy
 import hy
 import pytest
@@ -92,7 +92,7 @@ def test_import_source_aliases_the_names_grouped_by_home() -> None:
         ast.parse(
             "from doeff import Pass as _doeff_Pass, WithHandlerType as _doeff_WithHandlerType,"
             " Some as _doeff_Some\n"
-            "from doeff_core_effects.effects import Put as _doeff_Put\n"
+            "from doeff_core_effects._effects import Put as _doeff_Put\n"
         )
     )
 
@@ -105,7 +105,7 @@ def test_import_form_aliases_the_names_grouped_by_home() -> None:
     aliased = {name: value for name, value in vars(mod).items() if name.startswith("_doeff_")}
     assert aliased == {
         "_doeff_Pass": doeff.Pass,
-        "_doeff_Put": doeff_core_effects.effects.Put,
+        "_doeff_Put": doeff_core_effects._effects.Put,
         "_doeff_WithHandlerType": doeff.WithHandlerType,
     }
 

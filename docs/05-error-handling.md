@@ -24,7 +24,7 @@ For custom handler composition, call a Program -> Program handler installer dire
 
 ```python
 from doeff import Ask, Tell, do, run
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 @do
 def program():
@@ -90,7 +90,7 @@ elif isinstance(result, Err):
 
 ```python
 from doeff import Err, Ok, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def might_fail(x: int):
@@ -117,13 +117,13 @@ match result:
 
 `Try(sub_program)` catches exceptions from `sub_program` and returns `Ok`/`Err` so you can keep control flow explicit.
 
-`Try` is handled by `try_handler` (from `doeff_core_effects.handlers`): install it around the
+`Try` is handled by `try_handler` (from `doeff_core_effects._handlers`): install it around the
 program that yields `Try`, like any other handler. Without it, `run()` raises
 `UnhandledEffect`.
 
 ```python
 from doeff import Err, Ok, Try, Tell, do, run
-from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects import state, try_handler, writer
 
 @do
 def parse_count(raw: str):
@@ -158,7 +158,7 @@ State updates and `Tell(...)` log entries persist.
 
 ```python
 from doeff import Err, Ok, Get, Put, Try, do, run
-from doeff_core_effects.handlers import state, try_handler
+from doeff_core_effects import state, try_handler
 
 @do
 def mutate_then_fail():
@@ -189,7 +189,7 @@ other keys on to the outer `reader`.
 
 ```python
 from doeff import Ask, Local, Try, do, run
-from doeff_core_effects.handlers import local_handler, reader, try_handler
+from doeff_core_effects import local_handler, reader, try_handler
 
 @do
 def failing_inner():
@@ -215,7 +215,7 @@ print(run(prog))  # ('outer', 'outer')
 
 ```python
 from doeff import Ask, Err, Local, Try, do, run
-from doeff_core_effects.handlers import local_handler, reader, try_handler
+from doeff_core_effects import local_handler, reader, try_handler
 
 @do
 def failing_inner():
@@ -251,7 +251,7 @@ A nested Try does not collapse wrappers. `Try(Try(x))` returns nested results.
 
 ```python
 from doeff import Ok, Err, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def succeeds():
@@ -280,7 +280,7 @@ Python exception.
 import traceback
 
 from doeff import Ok, Err, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def boom():
@@ -305,7 +305,7 @@ if isinstance(safe_result, Err):
 
 ```python
 from doeff import Ok, Err, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def fetch_primary():
@@ -327,7 +327,7 @@ print(run(try_handler(fetch_with_fallback())))  # fallback
 
 ```python
 from doeff import Ok, Err, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def validate(v: int):

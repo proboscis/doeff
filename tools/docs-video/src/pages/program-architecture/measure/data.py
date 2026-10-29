@@ -2,8 +2,7 @@
 # Prints the effect and the program as values, that the body has not run yet, and that `yield Ask(...)` and
 # `yield Perform(Ask(...))` get the same answer from the same handler: dispatch happens only at Perform, and the
 # VM wraps a bare effect in it. run returns the raw value.
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import Ask, reader
 
 from doeff import DoExpr, Perform, do, run
 

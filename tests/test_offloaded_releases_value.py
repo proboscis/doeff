@@ -20,8 +20,8 @@ import gc
 import weakref
 
 import pytest
+from doeff_core_effects import scheduled
 from doeff_core_effects.offloaded_call import ThreadPerCall, offloaded
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import do, run
 

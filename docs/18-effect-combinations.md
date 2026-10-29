@@ -126,7 +126,7 @@ an effect. To change how an effect is handled, install a handler instead.
 ```python
 from doeff import Ask, AskEffect, Gather, Spawn, WithObserve, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @do
@@ -164,7 +164,7 @@ siblings see.
 ```python
 from doeff import Ask, Gather, Local, Spawn, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import local_handler, reader
+from doeff_core_effects import local_handler, reader
 
 
 @do
@@ -212,7 +212,7 @@ spawn order, and each one sees the previous child's write.
 ```python
 from doeff import Gather, Get, Put, Spawn, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 
 @do
@@ -251,7 +251,7 @@ each child its own key.
 ```python
 from doeff import Gather, Get, Put, Spawn, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 from doeff_time import Delay, sim_time_handler
 
 
@@ -289,7 +289,7 @@ one child has failed. Cancel them explicitly with `Cancel(task)` if they must st
 ```python
 from doeff import Gather, Get, Put, Spawn, Try, do, run
 from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import state, try_handler
+from doeff_core_effects import state, try_handler
 
 
 @do
@@ -362,4 +362,4 @@ example a semaphore).
 - `tests/effects/test_effect_combinations.py`
 - `tests/core/test_sa008_runtime_contracts.py`
 - `tests/core/test_runtime_regressions_manual.py`
-- `packages/doeff-core-effects/doeff_core_effects/scheduler.py`
+- `packages/doeff-core-effects/doeff_core_effects/_scheduler.py`

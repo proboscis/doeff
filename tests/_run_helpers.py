@@ -13,18 +13,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
     await_handler,
     lazy_ask,
     listen_handler,
     local_handler,
     reader,
+    scheduled,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import Err, Ok
 from doeff import handler as _program_handler

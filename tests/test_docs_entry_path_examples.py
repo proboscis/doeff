@@ -137,8 +137,8 @@ STALE_EXAMPLES = {
         "python",
         """from doeff import do, run
 from doeff_core_effects import Ask, Tell
-from doeff_core_effects.handlers import reader, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects._handlers import reader, writer
+from doeff_core_effects._scheduler import scheduled
 
 @do
 def connect_to_database():
@@ -167,7 +167,7 @@ main()
         "Try Effect",
         "python",
         """from doeff import Err, Ok, Try, Tell, do, run
-from doeff_core_effects.handlers import writer
+from doeff_core_effects._handlers import writer
 
 @do
 def parse_count(raw: str):

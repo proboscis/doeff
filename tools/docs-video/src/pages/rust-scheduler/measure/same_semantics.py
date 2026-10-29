@@ -1,5 +1,5 @@
 # The same program under both implementations: the order its tasks run in, what Cancel does, and the trace events.
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_HIGH,
     Cancel,
     CompletePromise,
@@ -9,8 +9,8 @@ from doeff_core_effects.scheduler import (
     TaskCancelledError,
     Wait,
     scheduled,
-    set_scheduler_trace,
 )
+from doeff_core_effects._scheduler import set_scheduler_trace
 
 from doeff import do, run
 

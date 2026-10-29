@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from doeff_core_effects.handlers import vm_probe_handler
+from doeff_core_effects import vm_probe_handler
 
 from doeff import ReadInvariantChecks, run
 

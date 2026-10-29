@@ -1,8 +1,8 @@
 # How scheduled() chooses its implementation: the argument, then $DOEFF_SCHEDULER, then DEFAULT_IMPLEMENTATION.
 import os
 
-from doeff_core_effects import scheduler
-from doeff_core_effects.scheduler import resolve_implementation
+from doeff_core_effects import _scheduler as scheduler
+from doeff_core_effects._scheduler import resolve_implementation
 
 os.environ.pop("DOEFF_SCHEDULER", None)
 print("DEFAULT_IMPLEMENTATION =", repr(scheduler.DEFAULT_IMPLEMENTATION))

@@ -360,7 +360,7 @@ Use cases:
 
 ```python
 from doeff import run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 # Synchronous
 result = run(handler_stack(workflow))

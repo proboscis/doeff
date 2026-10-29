@@ -42,7 +42,7 @@ Let's write a simple program that uses state management and logging:
 ```python
 from doeff import do, run, Pure
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def counter_program():
@@ -169,7 +169,7 @@ Programs don't execute until you call `run()`:
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def my_program():
@@ -192,7 +192,7 @@ Unlike Python generators, `@do` functions can be called multiple times:
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def format_label(label: str):
@@ -217,7 +217,7 @@ the whole:
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def setup():
@@ -249,7 +249,7 @@ You can provide initial environment and state via handler arguments:
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Get
-from doeff_core_effects.handlers import reader, state
+from doeff_core_effects import reader, state
 
 @do
 def my_program():
@@ -274,7 +274,7 @@ answers `Try`; install it around the program like any other handler:
 
 ```python
 from doeff import Err, Ok, Try, do, run
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 @do
 def parse_port(raw: str):
@@ -303,7 +303,7 @@ patterns.
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 @do
 def complex_workflow():
@@ -332,7 +332,7 @@ print(result)  # Connected to postgresql://localhost/mydb
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def conditional_program():
@@ -365,7 +365,7 @@ from typing import Any
 
 from doeff import do, run
 from doeff_core_effects import Ask, Get, Put
-from doeff_core_effects.handlers import reader, state
+from doeff_core_effects import reader, state
 
 @do
 def visit(page: str) -> Generator[Get | Put, Any, int]:
@@ -423,7 +423,7 @@ from `doeff-hy.macros`, `defhandler` from `doeff-hy.handle`. Save this as `greet
 ```hy
 (require doeff-hy.macros [do! <-])
 (import doeff [Ask run])
-(import doeff-core-effects.handlers [reader])
+(import doeff-core-effects [reader])
 
 (setv greet
   (do!
@@ -451,7 +451,7 @@ module (Python files that never import `hy` cannot see `.hy` files at all):
 ```python
 import hy  # first: registers Hy's import hook, so Python can find greet.hy
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 from greet import greet
 
 print(run(reader(env={"greeting": "hello"})(greet)))  # hello
@@ -572,7 +572,7 @@ initial values, if any), then apply the handler it returns to the program:
 
 ```python excerpt
 from doeff import run
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 # Wrong - gives the program to the factory
 run(state(my_program()))  # Error!
@@ -589,7 +589,7 @@ already. Apply them to the program without calling them first:
 
 ```python excerpt
 from doeff import run
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 # Wrong - calls writer as if it were a factory
 run(state()(writer()(my_program())))  # Error!
@@ -666,7 +666,7 @@ the task `Spawn` returns:
 
 ```python excerpt
 from doeff import do
-from doeff_core_effects.scheduler import Gather, Spawn
+from doeff_core_effects import Gather, Spawn
 
 @do
 def worker(label):
@@ -692,7 +692,7 @@ the program. Spawn the program first, keep its task, and cancel that:
 
 ```python excerpt
 from doeff import do
-from doeff_core_effects.scheduler import Cancel, Spawn
+from doeff_core_effects import Cancel, Spawn
 
 @do
 def worker():
@@ -718,7 +718,7 @@ program waits. Here nothing completes the promise:
 
 ```python excerpt
 from doeff import do
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait
+from doeff_core_effects import CompletePromise, CreatePromise, Spawn, Wait
 
 # Wrong - nothing ever completes the promise
 @do
@@ -749,7 +749,7 @@ Wrap the program again for each run:
 ```python
 from doeff import do, run
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def my_program():
@@ -801,17 +801,19 @@ from doeff_core_effects import (
 )
 
 # Handlers
-from doeff_core_effects.handlers import (
-    reader,                # Reader handler (resolves Ask)
-    state,                 # State handler (resolves Get/Put)
-    writer,                # Writer handler (resolves Tell, ReadWriterLog; install state() outside it)
+from doeff_core_effects import (
+    reader,  # Reader handler (resolves Ask)
+    state,  # State handler (resolves Get/Put)
+    writer,  # Writer handler (resolves Tell, ReadWriterLog; install state() outside it)
 )
 
 # Scheduler (for concurrency)
-from doeff_core_effects.scheduler import (
-    scheduled,             # Wrap program for concurrent execution
-    Spawn, Wait,           # Spawn a task and wait for it
-    Gather, Race,          # Gather/race multiple tasks
+from doeff_core_effects import (
+    scheduled,  # Wrap program for concurrent execution
+    Spawn,
+    Wait,  # Spawn a task and wait for it
+    Gather,
+    Race,  # Gather/race multiple tasks
 )
 ```
 
@@ -820,7 +822,7 @@ from doeff_core_effects.scheduler import (
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def my_program():

@@ -97,7 +97,7 @@ To use the result of an effect or a program, `yield` it:
 
 ```python
 from doeff import Ask, Pure, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @do
@@ -129,7 +129,7 @@ print(run(with_env(call_expr)))  # 5:10
 
 ```python
 from doeff import Ask, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @do

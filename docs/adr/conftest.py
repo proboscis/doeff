@@ -17,7 +17,7 @@ def doeff_interpreter():
         from doeff import run
 
         if env:
-            from doeff_core_effects.handlers import reader
+            from doeff_core_effects import reader
 
             program = reader(dict(env))(program)
         return run(program)

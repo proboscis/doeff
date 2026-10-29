@@ -7,8 +7,7 @@ Keep this file next to llm_agent.py and run:
 """
 
 import pytest
-from doeff_core_effects import Listen
-from doeff_core_effects.handlers import listen_handler
+from doeff_core_effects import Listen, listen_handler
 from llm_agent import (
     QUESTION,
     Complete,

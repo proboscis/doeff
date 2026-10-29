@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from doeff_core_effects.effects import EffectBase
+from doeff_core_effects._effects import EffectBase
 
 from doeff import (
     AcquireSemaphore,

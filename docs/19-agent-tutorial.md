@@ -253,13 +253,7 @@ an `Err` value, so one failure does not stop the others. Save it as `review_all.
 ```python file=review_all.py
 from doeff import do
 from doeff_core_effects import Try
-from doeff_core_effects.scheduler import (
-    AcquireSemaphore,
-    CreateSemaphore,
-    Gather,
-    ReleaseSemaphore,
-    Spawn,
-)
+from doeff_core_effects import AcquireSemaphore, CreateSemaphore, Gather, ReleaseSemaphore, Spawn
 
 from review import review_file
 
@@ -288,8 +282,8 @@ def review_all(paths, at_most):
 ```python
 from doeff import run
 from doeff_agents import AwaitOutcome, AwaitStatus
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 
 from review_all import review_all
 from scripted import scripted_agent
@@ -369,8 +363,8 @@ import sys
 
 from doeff import run
 from doeff_agents import daemon_agent_handlers
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import try_handler
+from doeff_core_effects import scheduled
 
 from review_all import review_all
 

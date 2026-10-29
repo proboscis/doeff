@@ -6,9 +6,7 @@
 # Put, and the count is 300 again. Backs the shared-state scene of the Advanced Effects video.
 from datetime import datetime, timezone
 
-from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Get, Put, scheduled, state
 from doeff_time import Delay, sim_time_handler
 
 from doeff import AcquireSemaphore, CreateSemaphore, Gather, ReleaseSemaphore, Spawn, do, run

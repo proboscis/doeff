@@ -2,8 +2,7 @@
 # Patterns"). The order's state lives in the store the state handler keeps, not in the program; each run of
 # order_state_machine moves it one step. Then a failing operation under Try, without and with the snapshot:
 # Try does not roll the store back, the snapshot pattern does.
-from doeff_core_effects import ReadWriterLog
-from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects import ReadWriterLog, state, try_handler, writer
 
 from doeff import Get, Put, Tell, Try, do, run
 

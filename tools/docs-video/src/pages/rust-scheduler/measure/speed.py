@@ -11,7 +11,7 @@ sys.path.insert(0, "benchmarks")
 from scheduler_bench import FLOWS, outside_handler  # noqa: E402
 
 from doeff import run, with_handlers  # noqa: E402
-from doeff_core_effects.scheduler import scheduled  # noqa: E402
+from doeff_core_effects import scheduled  # noqa: E402
 
 N = 5_000
 RUNS = 3

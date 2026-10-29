@@ -31,7 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     Cancel,
     CompletePromise,
     CreatePromise,
@@ -107,7 +107,7 @@ def test_gather_of_programs_ends_with_spawn_first_at_the_users_yield(
         tmp_path,
         """\
         from doeff import do, run
-        from doeff_core_effects.scheduler import scheduled, Gather
+        from doeff_core_effects._scheduler import scheduled, Gather
 
         @do
         def worker(label):
@@ -138,7 +138,7 @@ def test_cancel_of_a_program_ends_with_spawn_first_at_the_users_yield(
         tmp_path,
         """\
         from doeff import do, run
-        from doeff_core_effects.scheduler import scheduled, Cancel
+        from doeff_core_effects._scheduler import scheduled, Cancel
 
         @do
         def worker():
@@ -170,7 +170,7 @@ def test_a_wait_nothing_completes_points_at_the_users_wait(
         tmp_path,
         """\
         from doeff import do, run
-        from doeff_core_effects.scheduler import scheduled, CreatePromise, Wait
+        from doeff_core_effects._scheduler import scheduled, CreatePromise, Wait
 
         @do
         def main():
@@ -182,7 +182,7 @@ def test_a_wait_nothing_completes_points_at_the_users_wait(
         implementation,
     )
     assert _last_line(stderr) == (
-        "doeff_core_effects.scheduler.SchedulerDeadlockError: scheduler deadlock: parked waiters "
+        "doeff_core_effects._scheduler.SchedulerDeadlockError: scheduler deadlock: parked waiters "
         "that no external completion can wake: root (wait) on promise 0"
     )
     assert "Exception ignored" not in stderr
@@ -215,7 +215,7 @@ def test_the_root_given_a_deadlock_is_not_reported_as_abandoned_work(
         tmp_path,
         """\
         from doeff import do, run
-        from doeff_core_effects.scheduler import scheduled, CreatePromise, Wait
+        from doeff_core_effects._scheduler import scheduled, CreatePromise, Wait
 
         @do
         def main():

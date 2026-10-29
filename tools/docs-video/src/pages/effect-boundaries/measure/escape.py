@@ -6,8 +6,8 @@ import asyncio
 import threading
 import time
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import scheduled
 
 from dataclasses import dataclass
 

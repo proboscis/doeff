@@ -14,7 +14,7 @@
        :evidence "issues/scheduler-spawn-drops-observer-boundary.md 再現 @ cacc4b85; tests/test_spawn_observer_inheritance.py は修正前 HEAD で 5 件 fail")
      (fact
        "機構: Spawn は get_inner_handlers(= GetHandlers(k))で prompt boundary のみを捕捉して子タスクに再インストールする。intercept(observer)boundary は捕捉対象外。observer 呼び出しは fiber 親チェーン走査であり、Spawn 子 fiber は scheduler の評価文脈を親に持つため、spawn-site〜scheduler 間の observer boundary はチェーン上に存在しない。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/scheduler.py Spawn 分岐; doeff/handler_utils.py; packages/doeff-vm-core/src/vm/step.rs call_all_observers")
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_scheduler.py Spawn 分岐; doeff/handler_utils.py; packages/doeff-vm-core/src/vm/step.rs call_all_observers")
      (fact
        "実務影響: doeff-traverse parallel worker 内の slog が observer ベース出力に出ない(proboscis-ema, 2026-04)。OpenTelemetry の effect→span 自動計装をサブツリー限定で書くと、Spawn を含む区間で計装が『付いているのに見えない』。"
        :evidence "issue 動機セクション")]
@@ -41,12 +41,12 @@
   :enforcement
     [(defsemgrep scheduler-spawn-boundary-capture
        "doeff-scheduler-spawn-must-capture-boundaries"
-       [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/scheduler.py"
+       [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/_scheduler.py"
          "source" "inner_handlers = yield get_inner_handlers(k)\n"}]
-       [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/handlers.py"
+       [{"relative-path" "packages/doeff-core-effects/doeff_core_effects/_handlers.py"
          "source" "inner_hs = yield get_inner_handlers(k)\n"}])]
   :plans ["docs/adr/defadr_doeff_core_001_spawn_boundary_inheritance.hy"
           "tests/test_spawn_observer_inheritance.py"
           "packages/doeff-vm-core/src/continuation.rs (boundary_callables)"
           "packages/doeff-vm/src/do_expr.rs (GetBoundaries pyclass)"
-          "packages/doeff-core-effects/doeff_core_effects/scheduler.py (Spawn boundary capture)"])
+          "packages/doeff-core-effects/doeff_core_effects/_scheduler.py (Spawn boundary capture)"])

@@ -3,7 +3,7 @@
 from collections.abc import Callable, Generator
 
 import pytest
-from doeff_core_effects import scheduler
+from doeff_core_effects import _scheduler as scheduler
 from doeff_vm import K
 
 from doeff import EffectBase, Pass, Pure, Resume, Spawn, Wait, do, handler, run

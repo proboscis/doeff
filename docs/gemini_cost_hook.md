@@ -36,7 +36,7 @@ Compose handlers around the program directly:
 
 ```python
 from doeff import do, run
-from doeff_core_effects.handlers import writer, state
+from doeff_core_effects import writer, state
 
 prog = default_gemini_cost_handler(   # built-in known-model pricing
     custom_cost_handler(              # optional overrides / unknown models

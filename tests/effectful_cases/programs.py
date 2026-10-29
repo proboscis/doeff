@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Never
 
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     Cancel,
     CreatePromise,
     Gather,

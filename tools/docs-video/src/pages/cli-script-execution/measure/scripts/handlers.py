@@ -1,5 +1,4 @@
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import Ask, reader
 
 from doeff import Pass, Resume, handler, run
 

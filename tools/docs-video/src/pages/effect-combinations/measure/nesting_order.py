@@ -1,7 +1,7 @@
 # The nesting scene: the same two effects, Try and Listen, nested both ways around a program that tells and then
 # raises. The outer one decides what the caller gets (docs/18-effect-combinations.md, Law 3 and the matrix's
 # Listen / Try cells). Prints what each nesting returns, and Listen's capture when the program succeeds.
-from doeff_core_effects.handlers import listen_handler, state, try_handler, writer
+from doeff_core_effects import listen_handler, state, try_handler, writer
 
 from doeff import Listen, Tell, Try, do, run
 

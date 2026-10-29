@@ -1,7 +1,6 @@
 # Reader: Ask reads the env the reader handler holds; a missing key raises MissingEnvKeyError; Local runs a
 # sub-program over an overridden env and then the env is back. Backs the Reader and Local scenes of the video.
-from doeff_core_effects import Ask, Local, ReadWriterLog, Tell
-from doeff_core_effects.handlers import local_handler, reader, state, writer
+from doeff_core_effects import Ask, Local, ReadWriterLog, Tell, local_handler, reader, state, writer
 
 from doeff import do, run
 

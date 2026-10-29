@@ -24,8 +24,8 @@ Provide `gemini_api_key`. Optional extras:
 Minimal example:
 ```python
 from doeff import do, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 prog = my_program()
 prog = writer(prog)

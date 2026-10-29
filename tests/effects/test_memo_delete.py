@@ -15,7 +15,7 @@ Delete は Get が到達しうる全層(同じ cost ガードを通過する全�
 from doeff_core_effects.memo_effects import MemoDelete, MemoGet, MemoPut
 from doeff_core_effects.memo_handlers import make_memo_rewriter, memo_handler
 from doeff_core_effects.memo_policy import MemoPolicy, RecomputeCost
-from doeff_core_effects.storage import InMemoryStorage
+from doeff_core_effects import InMemoryStorage
 
 from doeff import EffectBase, do
 from doeff import handler as program_handler

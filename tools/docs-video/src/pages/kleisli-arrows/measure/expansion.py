@@ -1,7 +1,7 @@
 # The expansion scene: calling a @do function is pure expansion at Python call time, and no handler is consulted
 # (docs/11-kleisli-arrows.md, "Call-Time Macro Expansion" and "Why Expand Is a Macro"). greeting() yields Ask, yet
 # calling it with no handler anywhere succeeds; only running it needs a handler for Ask.
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 from doeff import Ask, do, run
 

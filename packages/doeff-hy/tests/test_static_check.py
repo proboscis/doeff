@@ -173,7 +173,7 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
         )
     )
     assert re.search(
-        r"\((?P<m>_hy_gensym_outcomes_\d+) := __import__\('doeff_core_effects\.outcomes', "
+        r"\((?P<m>_hy_gensym_outcomes_\d+) := __import__\('doeff_core_effects\._outcomes', "
         r"fromlist=\('open_bind',\)\)\)\.open_bind\(g\(x\)\)\)\.__class__ is (?P=m)\.Pure",
         outside,
     ), outside

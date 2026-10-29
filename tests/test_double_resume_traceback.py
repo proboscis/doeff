@@ -12,8 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.handlers import state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, state, try_handler, writer
 
 from doeff import (
     EffectBase,

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Generic, TypeVar, Union
 
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_vm._effect_types import handler_effect_types
 
 from doeff import Effect, EffectBase, Pass, Resume, Spawn, Wait, do, handler, run, with_handlers

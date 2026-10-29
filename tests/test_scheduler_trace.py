@@ -32,9 +32,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, Generic, TypeVar
 
 import pytest
-from doeff_core_effects.effects import Get, Put
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     AcquireSemaphore,
     Cancel,
@@ -43,14 +41,17 @@ from doeff_core_effects.scheduler import (
     CreatePromise,
     CreateSemaphore,
     Gather,
+    Get,
+    Put,
     Race,
     ReleaseSemaphore,
     Spawn,
     TaskCancelledError,
     Wait,
     scheduled,
-    set_scheduler_trace,
+    state,
 )
+from doeff_core_effects._scheduler import set_scheduler_trace
 
 from doeff import do, run, with_handlers
 

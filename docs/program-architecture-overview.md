@@ -143,7 +143,7 @@ result = run(WithObserve(my_observer, program))
 ## Async Boundary
 
 For async programs, use `run(scheduled(program))` where `scheduled` comes from
-`doeff_core_effects.scheduler`. The `scheduled` handler enables cooperative scheduling
+`doeff_core_effects._scheduler`. The `scheduled` handler enables cooperative scheduling
 of async tasks within the VM's synchronous step loop.
 
 ## Summary

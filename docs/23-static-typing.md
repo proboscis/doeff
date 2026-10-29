@@ -147,7 +147,7 @@ this below the examples above:
 
 ```python continues
 from doeff import K, handler, run, typed_resume
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 def now_ms() -> int:

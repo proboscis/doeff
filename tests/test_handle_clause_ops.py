@@ -37,7 +37,7 @@ _HEADER = """
 (require doeff-hy.macros [defk <- handle])
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_core_effects.effects [Raise Absent])
+(import doeff_core_effects._effects [Raise Absent])
 (defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
 (defk guarded [n] {:pre [(: n int)] :post [(: % int)]}
   (try (do (<- y (Bump n)) y) (except [e ValueError] -1)))
@@ -168,7 +168,7 @@ def test_added_resuming_operation_is_refused_for_an_aliased_raise_when_handle_is
     with pytest.raises(clause_endings.ClauseEndingError, match=r"Resumption\.NEVER.*throw"):
         _eval_module(
             """
-            (import doeff_core_effects.effects [Raise :as Failed])
+            (import doeff_core_effects._effects [Raise :as Failed])
             (setv h (handle (raises) (Failed [reason] (throw (ValueError "into-k")))))
             """
         )

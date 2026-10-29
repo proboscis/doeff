@@ -46,7 +46,7 @@ doeff continuations are one-shot: each `k` resumes exactly once. A retry handler
 ```python
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import try_handler
+from doeff_core_effects import try_handler
 
 from doeff import EffectBase, Resume, Try, do, handler, run
 

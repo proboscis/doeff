@@ -42,7 +42,7 @@ class TestExternalPromiseBasics:
 
     def test_create_external_promise(self) -> None:
         """CreateExternalPromise returns an ExternalPromise."""
-        from doeff_core_effects.scheduler import ExternalPromise
+        from doeff_core_effects import ExternalPromise
 
         @do
         def program():
@@ -56,7 +56,7 @@ class TestExternalPromiseBasics:
 
     def test_external_promise_has_future(self) -> None:
         """ExternalPromise.future returns a waitable Future."""
-        from doeff_core_effects.scheduler import Future
+        from doeff_core_effects import Future
 
         @do
         def program():

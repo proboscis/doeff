@@ -8,7 +8,7 @@ surface an effect the user never wrote: ``writer`` without ``state()`` fails on
 ``scheduled()`` fails on the ``CreateExternalPromise`` it performs.
 
 The message now ends with one ``hint:`` line, looked up from the effect's type
-in the table of ``doeff_core_effects.unhandled_hints``. The hint names the
+in the table of ``doeff_core_effects._unhandled_hints``. The hint names the
 handler and the composition to write, never the internal key.
 
 Each hint is also run: installing the handler the way the hint says makes the
@@ -20,25 +20,23 @@ from __future__ import annotations
 from contextlib import closing
 
 import pytest
-from doeff_core_effects.effects import ReadWriterLog
-from doeff_core_effects.handlers import (
-    await_handler,
-    lazy_ask,
-    listen_handler,
-    reader,
-    slog_handler,
-    state,
-    try_handler,
-    writer,
-)
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     CompletePromise,
     CreatePromise,
     CreateSemaphore,
     Gather,
+    ReadWriterLog,
     Spawn,
     Wait,
+    await_handler,
+    lazy_ask,
+    listen_handler,
+    reader,
     scheduled,
+    slog_handler,
+    state,
+    try_handler,
+    writer,
 )
 from doeff_vm import EffectBase, PyVM
 from doeff_vm._unhandled_hint import register_unhandled_effect_hint

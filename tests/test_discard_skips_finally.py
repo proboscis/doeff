@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from doeff_core_effects import ReadWriterLog, Tell, state, writer
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     Cancel,
     CompletePromise,

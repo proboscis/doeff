@@ -364,7 +364,7 @@ Handlers are installed by direct call. Stack multiple handlers by wrapping the p
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 @do
 def prog():
@@ -415,7 +415,7 @@ Hy module:
 ```python
 import hy  # first: registers Hy's import hook, so Python can find greet.hy
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 from greet import greet
 
 print(run(reader(env={"greeting": "hello"})(greet)))  # hello
@@ -439,7 +439,7 @@ Effects of the reference implementation `doeff_core_effects`:
 - **Error**: `Try(program)` — returns `Ok(value)` or `Err(error)`
 - **Observe**: `Listen(program, types=...)` — collect effects during execution
 
-Scheduler effects (from `doeff_core_effects.scheduler`):
+Scheduler effects (from `doeff_core_effects._scheduler`):
 
 - **Concurrency**: `Spawn(program)`, `Wait(task)`, `Gather(*tasks)`, `Race(*tasks)`
 - **Promises**: `CreatePromise()`, `CompletePromise(p, v)`, `FailPromise(p, e)`
@@ -448,7 +448,7 @@ Scheduler effects (from `doeff_core_effects.scheduler`):
 
 ## Handlers
 
-Reference handlers (from `doeff_core_effects.handlers`), written like any other handler:
+Reference handlers (from `doeff_core_effects._handlers`), written like any other handler:
 
 | Handler | Installer | Effects handled |
 | --- | --- | --- |
@@ -461,7 +461,7 @@ Reference handlers (from `doeff_core_effects.handlers`), written like any other 
 | Local | `local_handler` | `Local` |
 | Listen | `listen_handler` | `Listen` |
 | Await | `await_handler()` | `Await` |
-| Scheduler | `scheduled(prog)` (from `doeff_core_effects.scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
+| Scheduler | `scheduled(prog)` (from `doeff_core_effects._scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
 `writer` keeps its log in state: install `state()` outside it, and read the log by yielding the
 effect `ReadWriterLog()`, which `writer` answers: `log = yield ReadWriterLog()`.
@@ -471,8 +471,8 @@ effect `ReadWriterLog()`, which `writer` answers: `log = yield ReadWriterLog()`.
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
-from doeff_core_effects.scheduler import scheduled, Spawn, Gather
+from doeff_core_effects import state, writer
+from doeff_core_effects import scheduled, Spawn, Gather
 
 @do
 def worker(label):

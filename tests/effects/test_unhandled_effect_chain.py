@@ -10,14 +10,14 @@ now format the chain names directly into the ``str(exception)`` surface.
 
 Handler names follow the same convention the traceback renderer uses:
 strip ``.<locals>.`` closure suffixes and drop the module prefix, so
-``doeff_core_effects.handlers.lazy_ask.<locals>.handler`` becomes
+``doeff_core_effects._handlers.lazy_ask.<locals>.handler`` becomes
 ``lazy_ask``.
 """
 
 from __future__ import annotations
 
 import pytest
-from doeff_core_effects.handlers import lazy_ask, slog_handler
+from doeff_core_effects import lazy_ask, slog_handler
 
 from doeff import Ask, Pass, UnhandledEffect, do, run
 from doeff import handler as _install_raw_handler

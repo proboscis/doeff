@@ -2,7 +2,7 @@
 # Runs the page's parse_count example on a good and a bad input, printing the Try result, the log and the return.
 from doeff import Err, Ok, Tell, Try, do, run
 from doeff_core_effects import ReadWriterLog
-from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects import state, try_handler, writer
 
 
 @do

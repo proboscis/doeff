@@ -21,8 +21,7 @@ import gc
 import weakref
 
 import pytest
-from doeff_core_effects import Await, await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Await, await_handler, scheduled
 
 from doeff import do, run, with_handlers
 

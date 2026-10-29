@@ -31,7 +31,7 @@ def test_no_heading_when_no_frame_is_left_to_show() -> None:
     # 2026-10-17, row 14).
     error = RuntimeError("raised inside the scheduler")
     error.__doeff_traceback__ = [
-        ["frame", "handle_scheduler_effect", "/site-packages/doeff_core_effects/scheduler.py", 1],
+        ["frame", "handle_scheduler_effect", "/site-packages/doeff_core_effects/_scheduler.py", 1],
     ]
     assert format_default(error) is None
 

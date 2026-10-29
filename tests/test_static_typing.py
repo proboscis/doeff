@@ -22,8 +22,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
-from doeff_core_effects.effects import Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import Put, state
 
 from doeff import (
     EffectBase,
@@ -121,14 +120,7 @@ def test_core_effects_declare_their_answer_types() -> None:
 
 
 def test_scheduler_effects_run_with_yield_from() -> None:
-    from doeff_core_effects.scheduler import (
-        CompletePromise,
-        CreatePromise,
-        Gather,
-        Spawn,
-        Wait,
-        scheduled,
-    )
+    from doeff_core_effects import CompletePromise, CreatePromise, Gather, Spawn, Wait, scheduled
 
     @do
     def parent():
@@ -186,9 +178,9 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, assert_type
 
 from doeff import EffectBase, Expand, Program, K, Pure, do, typed_resume
-from doeff_core_effects.effects import Ask, Get, Put, Try
+from doeff_core_effects._effects import Ask, Get, Put, Try
 from doeff_vm import Ok, Err
-from doeff_core_effects.scheduler import CreatePromise, Gather, Promise, Spawn, Task, Wait
+from doeff_core_effects._scheduler import CreatePromise, Gather, Promise, Spawn, Task, Wait
 
 T = TypeVar("T")
 
@@ -391,8 +383,8 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from doeff import EffectBase, K, do, typed_resume
-from doeff_core_effects.effects import Ask
-from doeff_core_effects.scheduler import Gather, Spawn, Task, Wait
+from doeff_core_effects._effects import Ask
+from doeff_core_effects._scheduler import Gather, Spawn, Task, Wait
 
 T = TypeVar("T")
 Row = dict[str, Any]

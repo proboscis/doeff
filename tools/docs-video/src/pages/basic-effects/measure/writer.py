@@ -1,7 +1,6 @@
 # Writer: Tell appends to the log, ReadWriterLog() reads it. The writer handler keeps its log in state: to handle a
 # Tell it performs Get (and, the first time, Put) itself, which travel out to state. Backs the Writer scene.
-from doeff_core_effects import Get, Put, ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import Get, Put, ReadWriterLog, Tell, state, writer
 
 from doeff import Pass, do, handler, run
 

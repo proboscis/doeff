@@ -27,14 +27,7 @@ import time
 import warnings
 from typing import Any
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import (
-    Cancel,
-    CreateExternalPromise,
-    Spawn,
-    Wait,
-    scheduled,
-)
+from doeff_core_effects import Cancel, CreateExternalPromise, Spawn, Wait, await_handler, scheduled
 from doeff_time import WaitWithin, async_time_handler
 
 from doeff import EffectBase, Resume, do, handler, run, with_handlers

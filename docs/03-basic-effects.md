@@ -24,8 +24,8 @@ Reader effects provide read-only access to an environment/configuration that flo
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def connect_to_database():
@@ -66,7 +66,7 @@ If a key is not in the environment, `Ask` raises `MissingEnvKeyError` — a `Key
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 @do
 def requires_config():
@@ -104,8 +104,8 @@ evaluated lazily on first access. The result is cached for subsequent `Ask` call
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, ReadWriterLog, Tell
-from doeff_core_effects.handlers import lazy_ask, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import lazy_ask, state, writer
+from doeff_core_effects import scheduled
 
 @do
 def expensive_computation():
@@ -149,7 +149,7 @@ handled by `local_handler`, installed inside `reader` (`lazy_ask` handles `Local
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Local, Tell
-from doeff_core_effects.handlers import local_handler, reader, state, writer
+from doeff_core_effects import local_handler, reader, state, writer
 
 @do
 def with_custom_config():
@@ -199,8 +199,8 @@ print(run(prog))  # data from https://staging.example.com
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader
+from doeff_core_effects import scheduled
 
 @do
 def application():
@@ -242,7 +242,7 @@ State effects manage mutable state that persists across operations.
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def read_counter():
@@ -259,7 +259,7 @@ default (initialize a key before reading it when `None` is also a stored value):
 ```python
 from doeff import do, run
 from doeff_core_effects import Get
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def safe_read():
@@ -279,7 +279,7 @@ print(run(state(initial={"maybe_missing": "stored"})(safe_read())))  # stored
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def initialize_state():
@@ -304,7 +304,7 @@ Since `Modify` has been removed, use `Get` followed by `Put` to transform state:
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def increment_counter():
@@ -326,7 +326,7 @@ when it does:
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def safe_increment():
@@ -353,7 +353,7 @@ print(run(state()(safe_increment())))  # 1
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def counter_operations():
@@ -376,7 +376,7 @@ print(run(state()(counter_operations())))  # 3
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def collect_items():
@@ -400,7 +400,7 @@ print(run(state()(collect_items())))  # [1, 2, 3]
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def process_work():
@@ -440,8 +440,8 @@ Writer effects accumulate `Tell` messages in a log throughout execution. Structu
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import state, writer
+from doeff_core_effects import scheduled
 
 @do
 def with_logging():
@@ -497,7 +497,7 @@ returns an empty `collected`. `listen_handler` installs itself again around the 
 ```python
 from doeff import do, run
 from doeff_core_effects import Listen, Tell
-from doeff_core_effects.handlers import listen_handler, state, writer
+from doeff_core_effects import listen_handler, state, writer
 
 @do
 def inner_operation():
@@ -535,7 +535,7 @@ print(run(state()(writer(listen_handler(outer_operation())))))  # (42, [Tell('in
 ```python
 from doeff import do, run
 from doeff_core_effects import Listen, Tell
-from doeff_core_effects.handlers import listen_handler, state, writer
+from doeff_core_effects import listen_handler, state, writer
 
 @do
 def inner_step():
@@ -563,7 +563,7 @@ print(run(state()(writer(listen_handler(outer_step())))))  # ('inner done', [Tel
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def process_transaction(transaction_id):
@@ -587,7 +587,7 @@ print(run(state()(writer(process_transaction("tx-1")))))  # 900
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 @do
 def debug_computation():
@@ -642,7 +642,7 @@ the entries without printing them (for example in tests).
 ```python
 from doeff import do, run
 from doeff_core_effects import slog
-from doeff_core_effects.handlers import slog_handler
+from doeff_core_effects import slog_handler
 
 @do
 def structured_logging():
@@ -676,7 +676,7 @@ not collected, because `types` names only `SlogEffect`:
 ```python
 from doeff import do, run
 from doeff_core_effects import Listen, SlogEffect, Tell, slog
-from doeff_core_effects.handlers import listen_handler, slog_handler, state, writer
+from doeff_core_effects import listen_handler, slog_handler, state, writer
 
 @do
 def import_rows(row_ids):
@@ -706,7 +706,7 @@ The real power comes from combining these effects:
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 @do
 def try_operation():
@@ -753,7 +753,7 @@ print(run(prog))  # success
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Local, Put, Tell
-from doeff_core_effects.handlers import local_handler, reader, state, writer
+from doeff_core_effects import local_handler, reader, state, writer
 
 @do
 def with_feature_flag():
@@ -793,7 +793,7 @@ print(run(prog))  # processed with advanced
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Listen, Put, Tell
-from doeff_core_effects.handlers import listen_handler, state, writer
+from doeff_core_effects import listen_handler, state, writer
 
 @do
 def isolated_operation():
@@ -835,7 +835,7 @@ print(run(state()(writer(listen_handler(isolated_operation())))))  # ('sub-done'
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 @do
 def get_database_config():
@@ -861,7 +861,7 @@ print(run(reader(env=env)(get_database_config())))  # {'url': 'postgresql://loca
 ```python
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @do
 def safe_increment():

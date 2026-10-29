@@ -139,7 +139,7 @@
        ;; 有効であること(= 配線が効いていること)と、make sync が build を feature で分けないことを見る。
        (import pathlib [Path])
        (import doeff [ReadInvariantChecks run])
-       (import doeff_core_effects.handlers [vm-probe-handler])
+       (import doeff_core_effects [vm-probe-handler])
        (setv root (get (. (Path __file__) parents) 2))
        (setv conftest (.read-text (/ root "conftest.py")))
        (setv makefile (.read-text (/ root "Makefile")))

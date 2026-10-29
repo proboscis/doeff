@@ -23,8 +23,7 @@ pytestmark = pytest.mark.cli
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 READER_MISS = (
-    "(import doeff-core-effects [Ask]) "
-    "(import doeff-core-effects.handlers [reader]) "
+    "(import doeff-core-effects [Ask reader]) "
     '((reader :env {"greeting" "hello"}) (Ask "greting"))'
 )
 

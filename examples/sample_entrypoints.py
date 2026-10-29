@@ -19,8 +19,7 @@ Run every entrypoint at once with: uv run python examples/sample_entrypoints.py
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from doeff_core_effects.handlers import reader, slog_handler, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, scheduled, slog_handler, state, try_handler, writer
 
 from doeff import Ask, EffectGenerator, Gather, Program, Spawn, do, run, slog
 
