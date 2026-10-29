@@ -24,8 +24,10 @@
 (import doeff_records [PutRow PutRows RowWrite])
 (import doeff_records.maintenance [ReadChangeLog])
 (import doeff_records._laws [MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
-(import doeff_records.pg_sql [ROWS-UNIT table-unit unit-lock-key writer-lock-key])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
+(import doeff_records [writer-lock-key]
+        doeff_records._pg_sql [ROWS-UNIT table-unit unit-lock-key])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))

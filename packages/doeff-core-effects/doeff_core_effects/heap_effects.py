@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.heap_effects -> doeff_core_effects._heap_effects
+# moved-submodule-shim-names doeff_core_effects.heap_effects:
+#   CollectAndFreeze
 """Moved: ``doeff_core_effects.heap_effects`` is now ``doeff_core_effects._heap_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -15,7 +15,7 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [PutRow ReadRow])
 (import doeff_records [ExpectAny])
-(import doeff_records.wire [CLIENT-ANSWER-METRICS])
+(import doeff_records._wire [CLIENT-ANSWER-METRICS])
 (import doeff_records.http_client [RecordsEndpoint WireError http-records-handler zero-client-metrics])
 (import doeff_records.http_client [records-unwaited])
 

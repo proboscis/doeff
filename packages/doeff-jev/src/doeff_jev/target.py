@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_jev.target -> doeff_jev._target
+# moved-submodule-shim-names doeff_jev.target:
+#   CONFIG_FILE DIRECT_KEY_FILE DIRECT_MODEL DIRECT_URL GATEWAY_HOST GATEWAY_KEY_FILE GATEWAY_MODEL
+#   GATEWAY_URL JevTarget ReadText TYPESAFE_HOST Wire key_required read_text_from_disk
+#   resolve_target target_from_process_environment
 """Moved: ``doeff_jev.target`` is now ``doeff_jev._target`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

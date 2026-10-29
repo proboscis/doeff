@@ -72,7 +72,8 @@ from doeff_records.event_source import (
     source_patience_handler,
 )
 from doeff_records import AdvanceStoreEpoch, SetStoreOutage
-from doeff_records.memory import MemoryStore, memory_records_handler
+from doeff_records import memory_records_handler
+from doeff_records._memory import MemoryStore
 from doeff_records import (
     Appended,
     ExpectAny,

@@ -23,7 +23,7 @@
 (import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_records._values [Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events WrittenRows RowsConflict
                               RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents])
-(import doeff_records.wire [WireAnswer])
+(import doeff_records._wire [WireAnswer])
 
 ;; 束の読みの答え(頭の註の「持たない」)と、ほかの wire の答え(頭の註の「持つ」)。2 つで wire の答えの型(wire.hy の WireAnswer)を
 ;; ちょうど 1 度ずつ覆う — 答えの型を足す変更は、どちらかに入れないと ADR-DOE-RECORDS-002 の検が赤になる。

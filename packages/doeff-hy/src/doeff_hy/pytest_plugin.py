@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.pytest_plugin -> doeff_hy._pytest_plugin
+# moved-submodule-shim-names doeff_hy.pytest_plugin:
+#   install
 """Moved: ``doeff_hy.pytest_plugin`` is now ``doeff_hy._pytest_plugin`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

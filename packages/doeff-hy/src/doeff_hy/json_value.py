@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.json_value -> doeff_hy._json_value
+# moved-submodule-shim-names doeff_hy.json_value:
+#   JsonValue OpaqueJson
 """Moved: ``doeff_hy.json_value`` is now ``doeff_hy._json_value`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.cache_handlers -> doeff_core_effects._cache_handlers
+# moved-submodule-shim-names doeff_core_effects.cache_handlers:
+#   cache_handler content_address in_memory_cache_handler make_memo_rewriter memo_rewriters
+#   sqlite_cache_handler
 """Moved: ``doeff_core_effects.cache_handlers`` is now ``doeff_core_effects._cache_handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

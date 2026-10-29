@@ -17,12 +17,12 @@
 (import doeff_core_effects.process_effects [ReadEnvironment EnvEntry])
 (import doeff_core_effects [ReadText])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_time [async-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-store-choice])
-(import doeff_records.pg_sql [DEFAULT-PREFIX])
-(import doeff_records.http_server [MaintenancePlan RecordsServing REQUEST-MAX-BYTES])
+(import doeff_records._memory [MemoryStore memory-store-choice])
+(import doeff_records._pg_sql [DEFAULT-PREFIX])
+(import doeff_records._http_server [MaintenancePlan RecordsServing REQUEST-MAX-BYTES])
 (import doeff_records._main [RecordsSettings records-settings pg-url-file-dsn records-serving records-connected records-process PG-STORE store-reachable
                             ENV-PG-URL-FILE ENV-HOSTNAME ENV-HOST ENV-PORT ENV-POOL-SIZE DEFAULT-PORT
                             DEFAULT-POOL-SIZE DEFAULT-MAINTENANCE-SECONDS DEFAULT-KEEP-CHANGES-SECONDS])

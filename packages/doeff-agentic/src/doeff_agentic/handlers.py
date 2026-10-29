@@ -1,4 +1,17 @@
 # moved-submodule-shim: doeff_agentic.handlers -> doeff_agentic._handlers
+# moved-submodule-shim-names doeff_agentic.handlers:
+#   agentic_effectful_handlers mock_handlers opencode_handler production_handlers
+#   recorded_workflows_handler tmux_handler with_agentic_effectful_handlers
+# moved-submodule-shim-names doeff_agentic.handlers.opencode:
+#   opencode_handler
+# moved-submodule-shim-names doeff_agentic.handlers.production:
+#   agentic_effectful_handlers with_agentic_effectful_handlers
+# moved-submodule-shim-names doeff_agentic.handlers.recorded:
+#   recorded_workflows_handler
+# moved-submodule-shim-names doeff_agentic.handlers.testing:
+#   mock_handlers
+# moved-submodule-shim-names doeff_agentic.handlers.tmux:
+#   tmux_handler
 """Moved: ``doeff_agentic.handlers`` is now ``doeff_agentic._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

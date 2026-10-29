@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agents.io_root -> doeff_agents._io_root
+# moved-submodule-shim-names doeff_agents.io_root:
+#   IoGenerator IoRoot as_bool as_float as_int as_optional_str as_process_outcome as_str
+#   as_str_tuple
 """Moved: ``doeff_agents.io_root`` is now ``doeff_agents._io_root`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

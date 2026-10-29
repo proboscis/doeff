@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_conductor.env_places -> doeff_conductor._env_places
+# moved-submodule-shim-names doeff_conductor.env_places:
+#   default_profile_name profile_config_path profiles_json xdg_state_home
 """Moved: ``doeff_conductor.env_places`` is now ``doeff_conductor._env_places`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

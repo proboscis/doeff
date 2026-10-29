@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.world_phases -> doeff_core_effects._world_phases
+# moved-submodule-shim-names doeff_core_effects.world_phases:
+#   PhaseMark WorldPhase close_phase_log mark_world_phase open_phase_log
 """Moved: ``doeff_core_effects.world_phases`` is now ``doeff_core_effects._world_phases`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

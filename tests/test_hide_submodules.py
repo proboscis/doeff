@@ -608,6 +608,10 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _assert_moved_and_entry(repo, report)
     _assert_rewritten(repo, report, record_before)
     _check_table(repo)  # 移し替えの module が古い名で出す間は、表を書き換えずに緑
+    # 移し替えの module は印の下に、古い path が出す名の固定の列を持つ(card ki-4fbed45b5863)。
+    assert f"{tool.SHIM_NAMES_MARK} {ROOT_NAME}.effects:" in _text(
+        repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py"
+    )
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)  # 外の repo は古い path のまま移し替えの module を通る
 
@@ -750,7 +754,7 @@ def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path
         'VALUE = 1\n\n\ndef tool() -> str:\n    return "entry"\n', encoding="utf-8"
     )
     child = tool.Child("kept_pkg", "tool", root_dir)
-    child.shim.write_text(tool.shim_text(child, False), encoding="utf-8")
+    child.shim.write_text(tool.shim_text(child, False, {}), encoding="utf-8")
     probe = textwrap.dedent(
         """
         import sys

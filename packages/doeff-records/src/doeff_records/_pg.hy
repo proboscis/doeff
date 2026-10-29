@@ -133,7 +133,7 @@
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
 (import doeff_records._watching [wait-for-signal moved-of])
-(import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
+(import doeff_records._pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
                               concurrent-index-statement drop-index-statement analyze-statement retired-index? table-shaped-index?

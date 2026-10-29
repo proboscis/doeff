@@ -23,18 +23,21 @@
 (import doeff_core_effects [Spawn scheduled])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
-(import doeff_core_effects.scripted_http_server [scripted-http-server])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
+(import doeff_core_effects [scripted-http-server])
+(import doeff_core_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
 (import doeff_core_effects.postgres_sql [PostgresConnections postgres-sql-handler])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [drop-records-tables])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
+(import doeff_records._pg [drop-records-tables])
 (import doeff_records [Changes EventsQuiet ExpectAbsent WatchCursor Written])
 (import doeff_records [ListRows PutRow WatchChanges WatchEvents])
-(import doeff_records.wire [PATH-PREFIX WATCH-MAX-SECONDS decode-answer encode-request])
-(import doeff_records.http_server [CloseWaits RecordsListening RecordsPrepared RecordsServing closing-cuts-waits serve-records waits-closing])
+(import doeff_records [decode-answer encode-request]
+        doeff_records._wire [PATH-PREFIX WATCH-MAX-SECONDS])
+(import doeff_records [CloseWaits RecordsListening RecordsPrepared closing-cuts-waits waits-closing]
+        doeff_records._http_server [RecordsServing serve-records])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason postgres-connections fresh-prefix run-sql prepared-store
                             records-handler-for])
 

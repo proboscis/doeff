@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.bound_source -> doeff_hy_bytecode_guard._bound_source
+# moved-submodule-shim-names doeff_hy_bytecode_guard.bound_source:
+#   BINDING_TAG Binding BindingParts HY_SOURCE_SUFFIXES HyImportedName HyModule HyModuleName
+#   ImportedName OwnCode PythonModule ReprRow SourceFile Statement StatementFacts binding_of
+#   source_names
 """Moved: ``doeff_hy_bytecode_guard.bound_source`` is now ``doeff_hy_bytecode_guard._bound_source`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

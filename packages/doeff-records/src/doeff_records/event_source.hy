@@ -479,7 +479,7 @@
 (defrecord SignalSourceFactory
   "源の工場を土台が渡す値(Ask の鍵 — 鍵はこの型そのもの・答えはこの型の値・#3127): make = 結び(SignalTables の tuple)と
    購読者の名前から、本体を包む関数を作る工場。本番の土台は RECORDS-SIGNAL-SOURCE(記録の置き場の変化の待ちの long-poll —
-   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records.memory の memory-signal-source)を同じ鍵で渡す —
+   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records._memory の memory-signal-source)を同じ鍵で渡す —
    組み立ての entry は鍵を問うて (make 結び 購読者) を with-handlers の列に置くだけで、本番と模擬の違いは土台の答えだけになる。"
   {:tags {:context "records" :role "type"}
    :check [(callable make)]}

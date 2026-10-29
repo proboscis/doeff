@@ -5,13 +5,13 @@ from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_core_effects import SecondsObservation as SecondsObservation
-from doeff_records.wire import OPERATIONS as OPERATIONS
-from doeff_records.wire import SERVER_TIMING_NAMES as SERVER_TIMING_NAMES
-from doeff_records.wire import ServerSpan as ServerSpan
-from doeff_records.wire import server_timing_spelled as server_timing_spelled
-from doeff_records.pg_sql import ROWS_UNIT as ROWS_UNIT
-from doeff_records.pg_sql import stream_unit as stream_unit
-from doeff_records.pg_sql import table_unit as table_unit
+from doeff_records._wire import OPERATIONS as OPERATIONS
+from doeff_records._wire import SERVER_TIMING_NAMES as SERVER_TIMING_NAMES
+from doeff_records._wire import ServerSpan as ServerSpan
+from doeff_records._wire import server_timing_spelled as server_timing_spelled
+from doeff_records._pg_sql import ROWS_UNIT as ROWS_UNIT
+from doeff_records._pg_sql import stream_unit as stream_unit
+from doeff_records._pg_sql import table_unit as table_unit
 
 class RequestMark(StrEnum):
     STARTED = 'started'

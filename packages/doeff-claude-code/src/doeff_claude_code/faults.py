@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_claude_code.faults -> doeff_claude_code._faults
+# moved-submodule-shim-names doeff_claude_code.faults:
+#   ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeForgetSession ClaudeLiveProcess LiveProcess
+#   NoLiveProcess StopReason
 """Moved: ``doeff_claude_code.faults`` is now ``doeff_claude_code._faults`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

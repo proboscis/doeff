@@ -55,12 +55,8 @@ from doeff_records.event_source import (
     records_signal_handler,
 )
 from doeff_records.http_client import RecordsEndpoint, http_records_handler
-from doeff_records.memory import (
-    MemoryStore,
-    memory_records_handler,
-    memory_signal_handler,
-    memory_signal_source,
-)
+from doeff_records import memory_records_handler, memory_signal_handler
+from doeff_records._memory import MemoryStore, memory_signal_source
 from doeff_time import Delay, DelayEffect, GetTime
 
 # 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。

@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_core_effects.unhandled_hints -> doeff_core_effects._unhandled_hints
+# moved-submodule-shim-names doeff_core_effects.unhandled_hints:
+#   AcquireSemaphore Ask Await Cancel CompletePromise CreateExternalPromise CreatePromise
+#   CreateSemaphore Discard FailPromise Gather Get Listen Local Put Race ReadWriterLog
+#   ReleaseSemaphore SlogEffect Spawn Try UNHANDLED_EFFECT_HINTS UnhandledEffectHint Wait
+#   WriterTellEffect hint_for
 """Moved: ``doeff_core_effects.unhandled_hints`` is now ``doeff_core_effects._unhandled_hints`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

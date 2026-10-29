@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_traverse.handlers -> doeff_traverse._handlers
+# moved-submodule-shim-names doeff_traverse.handlers:
+#   BarFactory Collection CollectionEffect Fail HistoryEntry Inspect ItemOutcome
+#   ItemOutcomeNotPassedError ItemResult ProgressBar Reduce Skip SortBy Take Traverse Zip
+#   fail_handler normalize_to_none parallel parallel_fail_fast progress_bars sequential
 """Moved: ``doeff_traverse.handlers`` is now ``doeff_traverse._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

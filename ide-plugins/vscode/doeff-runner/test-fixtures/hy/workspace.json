@@ -619,7 +619,7 @@
      "is_require": false
     },
     {
-     "module": "doeff_records.memory",
+     "module": "doeff_records._memory",
      "name": "MemoryStore",
      "alias": null,
      "range": {
@@ -635,7 +635,7 @@
      "is_require": false
     },
     {
-     "module": "doeff_records.memory",
+     "module": "doeff_records._memory",
      "name": null,
      "alias": "mem",
      "range": {

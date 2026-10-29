@@ -1,4 +1,16 @@
 # moved-submodule-shim: doeff_conductor.templates -> doeff_conductor._templates
+# moved-submodule-shim-names doeff_conductor.templates:
+#   TEMPLATES basic_pr enforced_pr get_available_templates get_template get_template_source
+#   is_template multi_agent reviewed_pr
+# moved-submodule-shim-names doeff_conductor.templates.basic_pr:
+#   IMPLEMENT_SCHEMA Issue PRHandle basic_pr
+# moved-submodule-shim-names doeff_conductor.templates.enforced_pr:
+#   IMPLEMENT_SCHEMA Issue PRHandle TEST_SCHEMA enforced_pr
+# moved-submodule-shim-names doeff_conductor.templates.multi_agent:
+#   ARTIFACT_SCHEMA Issue PRHandle Workspace multi_agent
+# moved-submodule-shim-names doeff_conductor.templates.reviewed_pr:
+#   Agent AgentTask Commit CreatePR CreateWorkspace IMPLEMENT_SCHEMA Issue PRHandle Push
+#   REVIEW_SCHEMA REVIEW_VERDICT_RESULT_SCHEMA ResolveIssue reviewed_pr
 """Moved: ``doeff_conductor.templates`` is now ``doeff_conductor._templates`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_traverse.collection -> doeff_traverse._collection
+# moved-submodule-shim-names doeff_traverse.collection:
+#   Collection HistoryEntry ItemResult
 """Moved: ``doeff_traverse.collection`` is now ``doeff_traverse._collection`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

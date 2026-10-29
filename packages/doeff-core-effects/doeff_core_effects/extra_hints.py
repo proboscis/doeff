@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.extra_hints -> doeff_core_effects._extra_hints
+# moved-submodule-shim-names doeff_core_effects.extra_hints:
+#   Extra MissingExtraError extra_needed
 """Moved: ``doeff_core_effects.extra_hints`` is now ``doeff_core_effects._extra_hints`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

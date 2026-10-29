@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.dataclass_code -> doeff_hy_bytecode_guard._dataclass_code
+# moved-submodule-shim-names doeff_hy_bytecode_guard.dataclass_code:
+#   DATACLASS_TAG install remembering_exec
 """Moved: ``doeff_hy_bytecode_guard.dataclass_code`` is now ``doeff_hy_bytecode_guard._dataclass_code`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

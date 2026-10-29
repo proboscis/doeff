@@ -29,7 +29,8 @@
 (import doeff_records [ListRows PutRow AppendEvent])
 (import doeff_records.admission [key-text])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [IndexBook PreparedStore pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [IndexBook PreparedStore drop-records-tables])
 (import doeff_records._service [HttpAnswer HttpRequest RecordsService respond])
 (import tests.interpreters [pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.expansion -> doeff_hy_bytecode_guard._expansion
+# moved-submodule-shim-names doeff_hy_bytecode_guard.expansion:
+#   TYPE_CHECK_EXPANSION
 """Moved: ``doeff_hy_bytecode_guard.expansion`` is now ``doeff_hy_bytecode_guard._expansion`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
