@@ -20,7 +20,7 @@
 ;;; (agora card ki-6a5549018e73)。基を分け合う 2 つの表の比べは差分の層の全部を読むので、差分が基の 1/COMPACT-RATIO まで育つ間、
 ;;; 拍ごとの比べの費用が表の行の数に比例して伸びた(agora の画面の会話 5,554 の表で 1 回 0.1〜0.8 ms・基の作り直しの拍は全部の行 11 ms)。
 ;;; with-writes(と下書きの freeze)で作った子の表は、親がまだ子を持たなければ親と同じ系譜に載り、系譜の記録へ書いた鍵の列を 1 つ足す。
-;;; 同じ系譜の 2 つの表は一方が他方の子孫なので、違い得る鍵は 2 つの位置の間に記録した鍵だけ。2 人目の子・記録が LINE-LIMIT を越えた子・
+;;; 同じ系譜の 2 つの表は一方が他方の子孫なので、違い得る鍵は 2 つの位置の間に記録した鍵だけ。2 人目の子・記録が子の行の数(と MIN-DELTA の大きい方)を越えた子・
 ;;; table-of と写しで作った表は新しい系譜を始める(比べは前の道 — 基を分け合えば差分、ほかは全部の鍵)。記録は鍵だけを持つ(行を持たない)。
 (import dataclasses [dataclass])
 (import collections.abc [Mapping])
@@ -33,8 +33,6 @@
 (setv COMPACT-RATIO 8)
 ;; 基が小さい間は差分の上限を下げすぎない(小さい表で毎回作り直さない)。
 (setv MIN-DELTA 64)
-;; 1 本の系譜に記録する鍵の数の上限(子の表の行の数と MIN-DELTA の大きい方)— 系譜の記録は表 1 つ分を越えて育たない。
-(setv LINE-LIMIT MIN-DELTA)
 ;; 真偽と長さの読みを断る時の文(Table と TableDraft で同じ文 — 直し方を名指す)。
 (setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む(agora-redesign #2755)")
 (setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む(agora-redesign #2755)")
@@ -225,13 +223,13 @@
 
 (defn #^ (get Table V) _on-line [#^ (get Table V) parent #^ (get Table V) child #^ (get tuple #(str ...)) keys]
   "書いて作ったばかりの子の表 child を、親 parent の系譜へ載せるため(頭の註)— 親がまだ子を持たず(親の位置が記録の末尾)、記録が
-   LINE-LIMIT と子の行の数の大きい方を越えない時だけ、書いた鍵 keys を記録へ足して載せる。載せない子は作った時の新しい系譜のまま。
+   子の行の数と MIN-DELTA の大きい方を越えない時だけ(系譜の記録は表 1 つ分を越えて育たない)、書いた鍵 keys を記録へ足して載せる。載せない子は作った時の新しい系譜のまま。
    child はこの module の中で作ったばかりの表だけを受ける(まだ誰にも渡していない)。答えは child。"
   (setv line parent._line)
   (with [line.lock]
     (setv at (len line.log))
     (when (and (= parent._at at)
-               (<= (+ line.keys (len keys)) (max LINE-LIMIT child._size)))
+               (<= (+ line.keys (len keys)) (max MIN-DELTA child._size)))
       (setv (get line.log at) keys)
       (setv line.keys (+ line.keys (len keys)))
       (object.__setattr__ child "_line" line)

@@ -10,7 +10,7 @@ from typing import NamedTuple
 import hy  # noqa: F401  # .hy の module の import hook
 import pytest
 
-from doeff_hy._table import COMPACT_RATIO, LINE_LIMIT, MIN_DELTA, Table, TableWrite, draft_of, table_of
+from doeff_hy._table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
 
 
 def _table(n: int) -> Table[int]:
@@ -675,4 +675,4 @@ def test_chains_siblings_drafts_and_line_breaks_compare_like_their_rows() -> Non
 
 def test_a_line_keeps_no_more_keys_than_its_table_holds() -> None:
     table = _grown_chain(MIN_DELTA * 2, MIN_DELTA * 10)
-    assert table._line.keys <= max(LINE_LIMIT, table.size())
+    assert table._line.keys <= max(MIN_DELTA, table.size())
