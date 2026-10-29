@@ -9,6 +9,6 @@ manager = collector.session._fixturemanager
 # ok: doeff-adr-pytest-collection-internals-single-owner
 import pytest
 # ok: doeff-adr-pytest-collection-internals-single-owner
-from doeff_adr.indexed_pytest import IndexedFunctions
+from doeff_adr._indexed_pytest import IndexedFunctions
 # ok: doeff-adr-pytest-collection-internals-single-owner
 functions = IndexedFunctions(collector, records, fixtures)

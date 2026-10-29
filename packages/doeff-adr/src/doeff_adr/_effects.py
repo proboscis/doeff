@@ -24,7 +24,7 @@ from dataclasses import KW_ONLY, dataclass
 
 from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
-from doeff_adr.registry import (
+from doeff_adr._registry import (
     AdrSpec,
     EnforcementMode,
     EnforcementRef,

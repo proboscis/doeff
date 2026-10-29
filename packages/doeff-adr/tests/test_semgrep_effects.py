@@ -18,8 +18,8 @@ import textwrap
 from pathlib import Path
 
 import doeff_adr
+import doeff_adr._registry as registry_module
 import doeff_adr.macros as macros_module
-import doeff_adr.registry as registry_module
 import hy
 import pytest
 from doeff_adr import (
@@ -27,9 +27,10 @@ from doeff_adr import (
     EnforcementRef,
     RegisterSemgrep,
     SemgrepSpec,
+    get_enforcement,
     semgrep_enforcements,
 )
-from doeff_adr.registry import get_enforcement, isolated_registry
+from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
 

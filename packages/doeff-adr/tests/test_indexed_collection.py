@@ -67,16 +67,16 @@ def nodeids(result: pytest.RunResult) -> list[str]:
 def test_plugin_import_defers_runtime_api_and_preserves_exports(child_deadline: float) -> None:
     script = """
 import sys
-import doeff_adr.pytest_plugin
+import doeff_adr._pytest_plugin
 assert 'doeff_hy' in sys.modules
-assert 'doeff_adr.registry' not in sys.modules
+assert 'doeff_adr._registry' not in sys.modules
 assert 'yaml' not in sys.modules
 import doeff_adr
 namespace = {}
 exec('from doeff_adr import *', namespace)
 assert {'AdrSpec', 'register_adr', 'doeff_hy'} <= namespace.keys()
 from doeff_adr import AdrIds, AdrSpec, adr_registry, register_adr, clear_registry
-from doeff_adr.registry import AdrSpec as ActualSpec
+from doeff_adr._registry import AdrSpec as ActualSpec
 from doeff import run
 assert AdrSpec is ActualSpec
 clear_registry()
@@ -397,7 +397,7 @@ def test_path_patterns_keep_symlink_external_globs_and_collected_files(
 def pytest_collection_finish(session):
     if session.testsfailed:
         return
-    from doeff_adr.pytest_plugin import session_wiring, WiringVerified
+    from doeff_adr._pytest_plugin import session_wiring, WiringVerified
     verdict = session_wiring(session)
     assert isinstance(verdict, WiringVerified)
     assert len(verdict.executable_adrs) == 1
@@ -510,7 +510,7 @@ class BrokenYaml(importlib.abc.MetaPathFinder):
         if fullname == 'yaml':
             raise ImportError('YAML unavailable')
 sys.meta_path.insert(0, BrokenYaml())
-import doeff_adr.pytest_plugin
+import doeff_adr._pytest_plugin
 try:
     from doeff_adr import AdrSpec
 except ImportError as exc:

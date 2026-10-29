@@ -45,7 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "scripts" / "run_changed_tests.py"
 STUB_TEST = "packages/doeff-core-effects/tests/test_hy_module_stubs.py"
 CORE_EFFECTS = "packages/doeff-core-effects/doeff_core_effects"
-ADR_PLUGIN = "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+ADR_PLUGIN = "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
 #: 模型の repo の git の作者(子の環境へ足す分 — 今の環境の受け継ぎは子 process の答え手が行う)。
 GIT_ENV = (
     EnvEntry(name="GIT_AUTHOR_NAME", value="model"),

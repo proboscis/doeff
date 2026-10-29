@@ -75,7 +75,7 @@ CHILD_DROPPED_ENV = frozenset({"VIRTUAL_ENV"})
 #: pytest の既定の python_files(root の ini が書けば、そちらを読む)。
 PYTEST_DEFAULT_PYTHON_FILES = ("test_*.py", "*_test.py")
 #: doeff-adr の executable ADR の既定の pattern の定義元(ここを ast で読む — 2 つ目の一覧を書かない)。
-ADR_PLUGIN_SOURCE = "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+ADR_PLUGIN_SOURCE = "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
 ADR_PATTERNS_NAME = "DEFAULT_FILE_PATTERNS"
 #: uv の project の環境の既定の置き場(UV_PROJECT_ENVIRONMENT が無い時)。無ければ何も測れない — 未測と名指す
 #: (`uv run --no-sync` は環境が無いと空の環境を作ってしまうので、走らせる前に確かめる)。

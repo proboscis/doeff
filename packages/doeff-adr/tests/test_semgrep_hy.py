@@ -1,4 +1,4 @@
-"""Semgrep over Hy through macro expansion (doeff_adr.hy_expand / doeff_adr.semgrep_hy).
+"""Semgrep over Hy through macro expansion (doeff_adr._hy_expand / doeff_adr._semgrep_hy).
 
 A regular expression over Hy text sees neither what a macro writes nor a name
 brought in under an alias.  Expanding with Hy's own compiler and scanning the
@@ -13,9 +13,10 @@ from pathlib import Path
 
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
-from doeff_adr.hy_expand import expand_hy_source
-from doeff_adr.registry import isolated_registry
-from doeff_adr.semgrep_hy import HyScanExpansionError, scan_with_hy_expansion
+from doeff_adr import HyScanExpansionError
+from doeff_adr._hy_expand import expand_hy_source
+from doeff_adr._registry import isolated_registry
+from doeff_adr._semgrep_hy import scan_with_hy_expansion
 
 pytestmark = pytest.mark.skipif(
     __import__("shutil").which("semgrep") is None, reason="semgrep is required"

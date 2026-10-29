@@ -13,7 +13,7 @@
   :title "deftest expressiveness contract: doeff-hy の deftest は :interpreters / :env / :marks を fixture へ忠実に受け渡し、その語彙だけで『部分スタック合成 + 単一 handler 差し替え + env 注入』が表現できることを契約とする。消費リポジトリが deftest を回避して自前 run_test シムを再発明する状態は本契約の違反シグナルである"
   :status "proposed"
   :scope ["packages/doeff-hy/src/doeff_hy"
-          "packages/doeff-adr/src/doeff_adr/pytest_plugin.py"
+          "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py"
           "docs/adr/conftest.py"
           "docs/adr/defadr_doeff_hy_002_deftest_expressiveness.hy"
           "packages/doeff-agents/tests"]

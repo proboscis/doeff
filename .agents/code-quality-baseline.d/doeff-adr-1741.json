@@ -2,14 +2,14 @@
   "entries": [
     {
       "count": 1,
-      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_registry.py",
       "reason": "registered-with-legacy",
       "rule": "dependency-cycle",
       "subject": "in-cycle"
     },
     {
       "count": 1,
-      "path": "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_semgrep_hy.py",
       "reason": "registered-with-legacy",
       "rule": "dependency-cycle",
       "subject": "in-cycle"
@@ -44,42 +44,42 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-adr/src/doeff_adr/semgrep_hy.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_semgrep_hy.py",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+      "subject": "packages/doeff-adr/src/doeff_adr/_registry.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-adr/tests/test_registry_isolation.py",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+      "subject": "packages/doeff-adr/src/doeff_adr/_registry.py"
     },
     {
       "count": 2,
       "path": "packages/doeff-adr/tests/test_semgrep_runner_tree_only.py",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-adr/src/doeff_adr/registry.py"
+      "subject": "packages/doeff-adr/src/doeff_adr/_registry.py"
     },
     {
       "count": 1,
-      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_registry.py",
       "reason": "registered-with-legacy",
       "rule": "type-suppression",
       "subject": "# type: ignore[arg-type]"
     },
     {
       "count": 2,
-      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_registry.py",
       "reason": "registered-with-legacy",
       "rule": "type-suppression",
       "subject": "# type: ignore[return-value]"
     },
     {
       "count": 41,
-      "path": "packages/doeff-adr/src/doeff_adr/registry.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_registry.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"

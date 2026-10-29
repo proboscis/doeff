@@ -20,7 +20,7 @@
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1
     },
     "DOEFF006": {
-      "packages/doeff-adr/src/doeff_adr/pytest_plugin.py": 1,
+      "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/_cli.py": 1,
       "packages/doeff-agentic/src/doeff_agentic/_visual_interceptor.py": 2,
       "packages/doeff-core-effects/doeff_core_effects/_cache.py": 1,

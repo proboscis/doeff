@@ -17,13 +17,79 @@
   "doeff-adr": {
    "範囲": "範囲の答え待ち",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — CLI": {
      "(console script)": [
       "doeff-adr"
+     ]
+    },
+    "境界 — Hy の macro": {
+     "(submodule)": [
+      "doeff_adr.macros"
      ],
+     "doeff_adr.macros": [
+      "counterexample",
+      "defadr",
+      "defsemgrep",
+      "fact",
+      "interpretation",
+      "law",
+      "rule"
+     ]
+    },
+    "境界 — effect の値の型": {
+     "doeff_adr.registry": [
+      "EnforcementMode",
+      "FixtureSpec"
+     ]
+    },
+    "境界 — effect の結果の型": {
+     "doeff_adr": [
+      "AdrSpec",
+      "SemgrepSpec"
+     ],
+     "doeff_adr.registry": [
+      "AdrSpec",
+      "AdrStatus",
+      "SemgrepSpec"
+     ]
+    },
+    "境界 — handler の設定の型": {
+     "doeff_adr": [
+      "EnforcementRef"
+     ],
+     "doeff_adr.registry": [
+      "EnforcementRef"
+     ]
+    },
+    "境界 — pytest の plugin の登録": {
      "(entry point)": [
       "pytest11:doeff_adr"
      ],
+     "doeff_adr.pytest_plugin": [
+      "DEFAULT_FILE_PATTERNS",
+      "DoeffAdrHyFile"
+     ]
+    },
+    "境界 — 例外の型": {
+     "doeff_adr.semgrep_hy": [
+      "HyScanExpansionError"
+     ]
+    },
+    "外れ — effect にする": {
+     "doeff_adr": [
+      "clear_registry",
+      "enforcement_ids",
+      "get_enforcement",
+      "register_adr"
+     ],
+     "doeff_adr.registry": [
+      "clear_registry",
+      "enforcement_ids",
+      "get_enforcement",
+      "register_adr"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
      "(submodule)": [
       "doeff_adr.cli",
       "doeff_adr.env_places",
@@ -31,23 +97,15 @@
       "doeff_adr.indexed_pytest",
       "doeff_adr.item_cache",
       "doeff_adr.lazy_collection",
-      "doeff_adr.macros",
       "doeff_adr.pytest_plugin",
       "doeff_adr.registry",
       "doeff_adr.runtime_records",
       "doeff_adr.semgrep_hy",
       "doeff_adr.semgrep_verdicts",
       "doeff_adr.source_dependencies"
-     ],
-     "doeff_adr": [
-      "AdrSpec",
-      "EnforcementRef",
-      "SemgrepSpec",
-      "clear_registry",
-      "enforcement_ids",
-      "get_enforcement",
-      "register_adr"
-     ],
+     ]
+    },
+    "外れ — 内側の module へ移す": {
      "doeff_adr.cli": [
       "main"
      ],
@@ -132,21 +190,10 @@
       "swap_in_real_module_marks",
       "verify_records"
      ],
-     "doeff_adr.macros": [
-      "counterexample",
-      "defadr",
-      "defsemgrep",
-      "fact",
-      "interpretation",
-      "law",
-      "rule"
-     ],
      "doeff_adr.pytest_plugin": [
-      "DEFAULT_FILE_PATTERNS",
       "DEFAULT_WIRING_MAX_DIRS",
       "DependencyChecks",
       "DoeffAdrHookspecs",
-      "DoeffAdrHyFile",
       "ExpansionUnknown",
       "HyFileMatcher",
       "HyScriptItem",
@@ -201,19 +248,10 @@
      ],
      "doeff_adr.registry": [
       "ADR_STATUSES",
-      "AdrSpec",
-      "AdrStatus",
       "ENFORCEMENT_MODES",
-      "EnforcementMode",
-      "EnforcementRef",
-      "FixtureSpec",
       "SemgrepResult",
-      "SemgrepSpec",
-      "clear_registry",
-      "enforcement_ids",
       "enforcement_ref",
       "fixture_set_key",
-      "get_enforcement",
       "isolated_registry",
       "make_counterexample",
       "make_fact",
@@ -221,7 +259,6 @@
       "make_law",
       "make_rule",
       "read_verdict",
-      "register_adr",
       "resolved_config_path",
       "semgrep_identity",
       "verdict_store",
@@ -237,7 +274,6 @@
      "doeff_adr.semgrep_hy": [
       "ExpandedHy",
       "HyExpansionError",
-      "HyScanExpansionError",
       "SemgrepFinding",
       "expand_hy_file",
       "module_name_for",

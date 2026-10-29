@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
-from doeff_adr.registry import (
+from doeff_adr._registry import (
     _resolve_config_path,
     _run_semgrep,
     isolated_registry,
@@ -197,7 +197,7 @@ def test_crashing_scanner_is_not_reported_as_rule_not_firing(tmp_path, monkeypat
             good=["allowed-token"],
         )
     )
-    import doeff_adr.registry as registry_module
+    import doeff_adr._registry as registry_module
 
     monkeypatch.setattr(registry_module.shutil, "which", lambda _name: str(fake))
 

@@ -37,8 +37,8 @@ from typing import Any
 
 import pytest
 import tomllib
-from doeff_adr.pytest_plugin import DEFAULT_FILE_PATTERNS as ADR_FILE_PATTERNS
-from doeff_adr.pytest_plugin import parse_hy_test_skips
+from doeff_adr import DEFAULT_FILE_PATTERNS as ADR_FILE_PATTERNS
+from doeff_adr._pytest_plugin import parse_hy_test_skips
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
 

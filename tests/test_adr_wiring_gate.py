@@ -14,7 +14,7 @@ pytest-timeout's thread method took the whole run down without a summary line.
 from pathlib import Path
 
 import pytest
-from doeff_adr.pytest_plugin import (
+from doeff_adr._pytest_plugin import (
     NotDefaultScope,
     WiringVerified,
     default_scope_wiring,
