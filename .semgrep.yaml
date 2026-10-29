@@ -1105,9 +1105,9 @@ rules:
       - pattern: which("gemini")
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/**
       exclude:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/exec_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/exec_handler.py
 
   - id: doeff-agents-cli-monitoring-uses-agentd
     languages: [python]
@@ -1181,8 +1181,8 @@ rules:
     pattern-regex: '\.agent-home/?'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/git_handler.py
-        - /packages/doeff-conductor/src/doeff_conductor/effects/git.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/git_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_effects/git.py
 
   - id: conductor-workspace-runtime-exclude-not-gitignore
     languages: [generic]
@@ -1194,7 +1194,7 @@ rules:
     pattern-regex: '\.gitignore'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
 
   - id: http-request-handlers-use-defhandler
     languages: [python]
@@ -2570,7 +2570,7 @@ rules:
     pattern-regex: 'except yaml\.YAMLError:\s*\n\s*frontmatter = \{\}'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2583,18 +2583,18 @@ rules:
       conductor effects run under conductor_state_handler (card ki-1ef3718c89b3 — the
       subpackage shows its users effects and handlers only). Do not build ConductorAPI or
       an issue handler, or call the state store's functions, from the CLI; yield the run
-      effect (doeff_conductor.effects.runs) and let the handler answer it.
+      effect (doeff_conductor._effects.runs) and let the handler answer it.
     pattern-either:
       - pattern: ConductorAPI(...)
       - pattern: issue_handler(...)
       - pattern: import doeff_conductor._api
       - pattern: from doeff_conductor._api import $X
-      - pattern: from doeff_conductor.overseer import $X
-      - pattern: from doeff_conductor.verbs import $X
-      - pattern: from doeff_conductor.templates import $X
-      - pattern: from doeff_conductor.monitor import $X
-      - pattern: from doeff_conductor.monitor_app import $X
-      - pattern: from doeff_conductor.workflow_loader import $X
+      - pattern: from doeff_conductor._overseer import $X
+      - pattern: from doeff_conductor._verbs import $X
+      - pattern: from doeff_conductor._templates import $X
+      - pattern: from doeff_conductor._monitor import $X
+      - pattern: from doeff_conductor._monitor_app import $X
+      - pattern: from doeff_conductor._workflow_loader import $X
     paths:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/_cli.py
@@ -2646,7 +2646,7 @@ rules:
     pattern-regex: 'except \(OSError, KeyError, TypeError, ValueError\):\s*\n\s*# Skip malformed files\s*\n\s*continue'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2660,7 +2660,7 @@ rules:
     pattern-regex: 'with contextlib\.suppress\(ValueError, TypeError\):'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2674,7 +2674,7 @@ rules:
     pattern-regex: 'shutil\.rmtree\(materialization\.path,\s*ignore_errors=True\)'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2688,7 +2688,7 @@ rules:
     pattern-regex: 'run_git\(\s*\n\s*\["git", "worktree", "prune"\],[\s\S]*?check=False'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -5163,7 +5163,7 @@ rules:
       (AgentEffect, make_blocking_scheduled_handler($HANDLER))
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/**
 
   - id: k4-no-sync-await-result-in-scheduled-handler
     languages: [python]
@@ -5180,7 +5180,7 @@ rules:
       - pattern: $OBJ.await_result(...)
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/handlers/**
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/**
         - /packages/doeff-agents/src/doeff_agents/handlers/**
 
   - id: k4-deadline-not-transport-timeout

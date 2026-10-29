@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from doeff_conductor.effects.exec import Exec
-from doeff_conductor.handlers.exec_handler import exec_handler
-from doeff_conductor.types import Workspace
+from doeff_conductor import Exec
+from doeff_conductor import exec_handler
+from doeff_conductor import Workspace
 
 from doeff import stacked_handlers
 from tests.effect_runner import answering, workspace_paths

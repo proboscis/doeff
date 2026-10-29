@@ -1,7 +1,7 @@
 ;;; Clean deterministic workflow glue: loads without diagnostics.
 
-(require doeff-conductor.macros [defworkflow])
-(import doeff_conductor.dsl [artifact])
+(require doeff-conductor._macros [defworkflow])
+(import doeff_conductor [artifact])
 
 
 (defn build-prompt [facts params]

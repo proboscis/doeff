@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-import doeff_conductor.exceptions as conductor_exceptions
+import doeff_conductor._exceptions as conductor_exceptions
 import pytest
-from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-from doeff_conductor.exceptions import IssueNotFoundError
-from doeff_conductor.handlers.issue_handler import issue_handler
-from doeff_conductor.types import IssueStatus
+from doeff_conductor import CreateIssue, GetIssue, ListIssues, ResolveIssue
+from doeff_conductor import IssueNotFoundError
+from doeff_conductor import issue_handler
+from doeff_conductor import IssueStatus
 
 from tests.effect_runner import Answer, answering
 

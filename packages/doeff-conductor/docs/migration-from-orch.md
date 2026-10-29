@@ -196,7 +196,7 @@ pr, running = run(conductor_state_handler()(run_and_query(issue)))
 
 ```python
 from dataclasses import dataclass
-from doeff_conductor.effects.base import ConductorEffectBase
+from doeff_conductor import ConductorEffectBase
 
 @dataclass(frozen=True, kw_only=True)
 class MyCustomEffect(ConductorEffectBase):

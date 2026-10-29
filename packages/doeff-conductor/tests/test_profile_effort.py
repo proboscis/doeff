@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.effects import AgentEffect, AgentTask
-from doeff_conductor.environment import DEFAULT_PROFILE_DATA, ProfileBinding
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.types import WorkflowStatus
+from doeff_conductor import AgentEffect, AgentTask
+from doeff_conductor._environment import DEFAULT_PROFILE_DATA, ProfileBinding
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor import WorkflowStatus
 
 BASE_PROFILE = {
     "adapter": "codex",
@@ -66,7 +66,7 @@ def test_workflow_runtime_passes_profile_effort_into_agent_task(
     workflow_path.write_text(
         """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -98,7 +98,7 @@ def test_workflow_runtime_passes_profile_effort_into_agent_task(
         captured_tasks.append(effect.task)
         return runtime.handle_agent(effect)
 
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**_: object):
         return mock_handlers(runtime=runtime, overrides={AgentEffect: capture_agent})
@@ -125,8 +125,8 @@ def test_session_id_carries_resolved_identity_fingerprint() -> None:
     name, the re-dispatched agent re-adopted the stale DONE session and
     returned its old payload (observed live), defeating D7 end to end.
     """
-    from doeff_conductor.effects import AgentTask
-    from doeff_conductor.replay_keying import ResolvedIdentity
+    from doeff_conductor import AgentTask
+    from doeff_conductor import ResolvedIdentity
 
     def task(effort: str) -> AgentTask:
         return AgentTask(

@@ -1,7 +1,7 @@
 ;;; C6 k2-k3-shaped workflow fixture for plan/validate CLI tests.
 
-(require doeff-conductor.macros [defworkflow defphase agent! gate! workspace! merge! parallel loop <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(require doeff-conductor._macros [defworkflow defphase agent! gate! workspace! merge! parallel loop <-])
+(import doeff_conductor [artifact prompt ref])
 
 
 (setv RESULT-SCHEMA {"type" "object"

@@ -15,7 +15,7 @@ Commands:
     workspace   Workspace management (list, cleanup)
     template    Template management (list, show, new)
 
-Each command is a program of conductor effects (``doeff_conductor.effects``) run under
+Each command is a program of conductor effects (``doeff_conductor._effects``) run under
 ``conductor_state_handler``; the command itself only parses arguments and prints.
 """
 
@@ -37,8 +37,8 @@ from rich.text import Text
 
 from doeff import Err, Program, Try, do
 from doeff import run as _doeff_run  # the `run` command below takes the bare name
-from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-from doeff_conductor.effects.runs import (
+from doeff_conductor._effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
+from doeff_conductor._effects.runs import (
     AnswerGate,
     CleanupWorkspaces,
     ConductorStateDir,
@@ -59,9 +59,9 @@ from doeff_conductor.effects.runs import (
     StopWorkflow,
     ValidateWorkflow,
 )
-from doeff_conductor.exceptions import ConductorError
-from doeff_conductor.handlers.state_handler import conductor_state_handler
-from doeff_conductor.types import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
+from doeff_conductor._exceptions import ConductorError
+from doeff_conductor._handlers.state_handler import conductor_state_handler
+from doeff_conductor._types import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
 
 _T = TypeVar("_T")
 
@@ -392,7 +392,7 @@ def run(
         if issue:
             issue_path = Path(issue)
             if issue_path.exists():
-                from doeff_conductor.handlers.issue_handler import _parse_frontmatter
+                from doeff_conductor._handlers.issue_handler import _parse_frontmatter
 
                 frontmatter, _body = _parse_frontmatter(issue_path.read_text())
                 issue_id = frontmatter.get("id") or None

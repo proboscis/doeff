@@ -1,7 +1,7 @@
 """The conductor CLI commands are programs of conductor effects (card ki-1ef3718c89b3).
 
 The subpackage shows its users effects and handlers only, so every ``conductor``
-subcommand yields run effects (``doeff_conductor.effects.runs``) and issue effects that
+subcommand yields run effects (``doeff_conductor._effects.runs``) and issue effects that
 ``conductor_state_handler`` answers, instead of building ``ConductorAPI`` itself:
 
 1. Each subcommand, run with the state handler swapped for one that records the effects
@@ -50,8 +50,8 @@ from doeff_conductor import (
     conductor_state_handler,
 )
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.types import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
-from doeff_conductor.verbs import BindingPlan, ValidationSuiteReport
+from doeff_conductor import Issue, IssueStatus, WorkflowHandle, WorkflowStatus
+from doeff_conductor._verbs import BindingPlan, ValidationSuiteReport
 
 from doeff import Effect, K, Pass, Resume, do, handler, run
 

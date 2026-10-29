@@ -22,9 +22,9 @@ from doeff_conductor import (
     Push,
     ResolveIssue,
 )
-from doeff_conductor.handlers import mock_handlers as build_mock_handlers
-from doeff_conductor.handlers import run_sync
-from doeff_conductor.types import (
+from doeff_conductor import mock_handlers as build_mock_handlers
+from doeff_conductor._handlers import run_sync
+from doeff_conductor import (
     Issue,
     IssueStatus,
     MergeStatus,
@@ -41,7 +41,7 @@ def _run_with_effect_handlers(program: Any, handlers: HandlerMap):
 
 
 def _templates_module() -> Any:
-    import doeff_conductor.templates as conductor_templates
+    import doeff_conductor._templates as conductor_templates
 
     return conductor_templates
 
@@ -754,7 +754,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
         mock_issue: Issue,
     ):
         """Test that basic_pr propagates workspace creation errors."""
-        from doeff_conductor.exceptions import WorkspaceError
+        from doeff_conductor import WorkspaceError
 
         def handle_create_workspace(e):
             raise WorkspaceError(operation="create", message="Failed to create workspace")
@@ -772,7 +772,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
         mock_workspace: Workspace,
     ):
         """Test that basic_pr propagates agent errors."""
-        from doeff_conductor.exceptions import AgentError
+        from doeff_conductor import AgentError
 
         def handle_create_workspace(e):
             return mock_workspace
@@ -794,7 +794,7 @@ class TestTemplateErrorHandling(MockHandlerFixtures):
         mock_workspace: Workspace,
     ):
         """Test that basic_pr propagates PR creation errors."""
-        from doeff_conductor.exceptions import PRError
+        from doeff_conductor import PRError
 
         def handle_create_workspace(e):
             return mock_workspace

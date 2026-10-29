@@ -2,7 +2,8 @@
 """Example 03: basic PR workflow with mock handlers."""
 
 from doeff_conductor import Issue, IssueStatus, basic_pr
-from doeff_conductor.handlers import mock_handlers, run_sync
+from doeff_conductor import mock_handlers
+from doeff_conductor._handlers import run_sync
 
 
 def main() -> None:

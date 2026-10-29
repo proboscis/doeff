@@ -7,13 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from doeff_conductor.effects.git import Commit
-from doeff_conductor.effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
-from doeff_conductor.git_workspace import GitCommandError, GitCommandResult
-from doeff_conductor.handlers._workspace_path import WorkspacePath
-from doeff_conductor.handlers.git_handler import git_handler
-from doeff_conductor.handlers.workspace_handler import WorkspaceStateError, workspace_handler
-from doeff_conductor.types import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
+from doeff_conductor import Commit
+from doeff_conductor import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
+from doeff_conductor._git_workspace import GitCommandError, GitCommandResult
+from doeff_conductor._handlers._workspace_path import WorkspacePath
+from doeff_conductor import git_handler
+from doeff_conductor import WorkspaceStateError, workspace_handler
+from doeff_conductor import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
 from doeff_git.handlers import production_handlers as git_production_handlers
 
 from doeff import stacked_handlers
@@ -257,8 +257,8 @@ class TestWorkspaceHandler:
             return GitCommandResult(returncode=0, stdout="", stderr="")
 
         with (
-            patch("doeff_conductor.handlers.workspace_handler.run_git", side_effect=fake_run_git),
-            patch("doeff_conductor.handlers.workspace_handler.shutil.rmtree", return_value=None),
+            patch("doeff_conductor._handlers.workspace_handler.run_git", side_effect=fake_run_git),
+            patch("doeff_conductor._handlers.workspace_handler.shutil.rmtree", return_value=None),
             pytest.raises(WorkspaceStateError, match="still exists"),
         ):
             handler(DeleteWorkspace(workspace=workspace, force=True))
@@ -301,7 +301,7 @@ class TestWorkspaceHandler:
             return GitCommandResult(returncode=0, stdout="", stderr="")
 
         with (
-            patch("doeff_conductor.handlers.workspace_handler.run_git", side_effect=fake_run_git),
+            patch("doeff_conductor._handlers.workspace_handler.run_git", side_effect=fake_run_git),
             pytest.raises(GitCommandError, match="git command failed"),
         ):
             handler(DeleteWorkspace(workspace=workspace, force=True))
