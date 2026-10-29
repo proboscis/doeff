@@ -21,7 +21,7 @@ import weakref
 
 import pytest
 from doeff_core_effects import scheduled
-from doeff_core_effects.offloaded_call import ThreadPerCall, offloaded
+from doeff_core_effects._offloaded_call import ThreadPerCall, offloaded
 
 from doeff import do, run
 
