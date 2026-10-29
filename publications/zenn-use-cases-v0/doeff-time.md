@@ -294,7 +294,7 @@ def wall_clock(program):  # 実時間の時計。asyncioで待つ。
 print(run(wall_clock(two_naps())))  # 同じtwo_napsを、実時間の時計で走らせる(20秒かかる)。
 ```
 
-この実行は20秒かかり、`[20.05, 10.05]`ほどを印字します。実時間の時計のタイマーは、少し遅れて起きるからです。`async_time_handler`は、`Delay`には`asyncio.sleep`をawaitして答え、`GetTime`にはシステムの時計で答えます。`await_handler`は、そのawaitを、スケジューラの下の`asyncio`のイベントループで走らせます。同じように、`run(wall_clock(daily_report([3, 12, 5])))`は次の平日の9時まで待ち、`within`のタイムアウトは、実時間の10分で作成を取り消します。
+この実行は20秒かかり、`[20.05, 10.05]`ほどを印字します。実時間の時計のタイマーは、少し遅れて起きるからです。`async_time_handler`は、`Delay`に`asyncio.sleep`のawaitで答えます。`GetTime`には、システムの時計で答えます。`await_handler`は、そのawaitを、スケジューラの下の`asyncio`のイベントループで走らせます。`run(wall_clock(daily_report([3, 12, 5])))`も、次の平日の9時まで待ちます。`within`のタイムアウトは、実時間の10分で作成を取り消します。
 
 `nap`も`daily_report`も、`async def`ではありません。`asyncio`を選ぶのはプログラムでなく、ハンドラです。待つ間スレッドを止めるコードには、`time.sleep`で待つ`sync_time_handler`があります。
 
@@ -307,23 +307,27 @@ print(run(wall_clock(two_naps())))  # 同じtwo_napsを、実時間の時計で�
 
 ## ほかの方法との比べ
 
-Pythonには、テストで待ちを速くする方法がもうあります。20秒と10秒待つ2つのタスクで、それぞれを走らせました。CPython 3.12で、trio 0.34.0・looptime 0.9・freezegun 1.5.5・time-machine 3.6.0を使いました。
+Pythonには、テストで待ちを速くする方法がもうあります。20秒と10秒待つ2つのタスクで、それぞれを走らせました。使った版は次のとおりです。
+
+- CPython 3.12
+- trio 0.34.0・looptime 0.9
+- freezegun 1.5.5・time-machine 3.6.0
 
 | | テストの中の待ち | 2つの待ちが時刻の順に終わるか | 日付と時刻が待ちとともに進むか | あなたのコード |
 |---|---|---|---|---|
-| `asyncio.sleep`を、すぐ返すように書き換える | すぐ返る | いいえ。どちらも0秒と報告し、始めた順に終わる | いいえ | 変えない |
-| freezegunの`freeze_time()` | 返らない。ループの時計も止まる(`real_asyncio=True`なら、実時間で待つ) | — | いいえ。`datetime.now()`は止めた時刻のまま | 変えない |
-| time-machineの`travel(..., tick=False)` | 実時間で待つ | はい。ただし実時間で | いいえ | 変えない |
-| trioのテスト用の時計(`autojump_threshold=0`)、`asyncio`ならlooptime | すぐ返る | はい | 一部。`trio.current_time()`や`loop.time()`は進み、`datetime.now()`は進まない | 変えない。trioの時計には、trioで書いたコードが要る |
-| doeff-timeの`sim_time_handler` | すぐ返る | はい | はい。`GetTime`と待ちに、1つのハンドラが答える | `yield`とdoeff-timeのエフェクトで書く |
+| `asyncio.sleep`を、すぐ返すように書き換える | すぐ返る | いいえ(どちらも0秒と報告し、始めた順に終わる) | いいえ | 変えない |
+| freezegunの`freeze_time()` | 返らない(ループの時計も止まり、`real_asyncio=True`なら実時間で待つ) | — | いいえ(`datetime.now()`は止めた時刻のまま) | 変えない |
+| time-machineの`travel(..., tick=False)` | 実時間で待つ | はい(ただし実時間で) | いいえ | 変えない |
+| trioのテスト用の時計(`autojump_threshold=0`)、`asyncio`ならlooptime | すぐ返る | はい | 一部(`trio.current_time()`や`loop.time()`は進み、`datetime.now()`は進まない) | 変えない(trioの時計には、trioで書いたコードが要る) |
+| doeff-timeの`sim_time_handler` | すぐ返る | はい | はい(`GetTime`と待ちに、1つのハンドラが答える) | `yield`とdoeff-timeのエフェクトで書く |
 
-コードがもう`async`で、待ちを速くするだけでよいなら、trioの自動で進む時計とlooptimeは、コードに触れずにそれを行います。その場合は、そちらのほうが簡単です。doeffが加えるのは、時計がイベントループの一部でなく、あなたのハンドラの重なりの中の1つのハンドラだという点です。日付は待ちと同じ時計から来るので、「次の平日の9時」のような予定も仮想の時間で走ります。上の`ticking`のように時計を自分で書くことも、`timeline`のような層を周りに付けることもできます。代わりに払うのは、入門と同じく、コードの中の`yield`と`@do`です。
+コードがもう`async`で、待ちを速くするだけでよい場合があります。それなら、trioの自動で進む時計とlooptimeが、コードに触れずに待ちを速くします。その場合は、そちらのほうが簡単です。doeffが加えるのは、時計がイベントループの一部でなく、あなたのハンドラの重なりの中の1つのハンドラだという点です。日付は待ちと同じ時計から来るので、「次の平日の9時」のような予定も仮想の時間で走ります。上の`ticking`のように時計を自分で書くことも、`timeline`のような層を周りに付けることもできます。代わりに払うのは、入門と同じく、コードの中の`yield`と`@do`です。
 
 ## 限界
 
 - 仮想の時間が進むのは、全部のタスクがエフェクトで待っている時だけです。ループで計算を続けるタスクは、`yield`するまで時計を止めたままにします。`time.sleep`やソケットの読み込みのように止まる呼び出しは、どの時計の上でも、全部のタスクを止めます。
-- 仮想になるのは、エフェクトで頼んだ時間だけです。`datetime.now()`と`time.time()`は、あなたのコードの中でも、そのコードが呼ぶライブラリの中でも、システムの時計を読みます。`next_weekday_at`のように時刻を引数で渡すか、`GetTime`で問います。
-- `sim_time_handler`は、`scheduled(...)`の内側で、それを待つタスクを始める全部の`Spawn`の外側に付けます。そうすると、タスクが1つの時計を共有します。
+- 仮想になるのは、エフェクトで頼んだ時間だけです。`datetime.now()`と`time.time()`は、システムの時計を読みます。あなたのコードの中でも、そのコードが呼ぶライブラリの中でも同じです。`next_weekday_at`のように時刻を引数で渡すか、`GetTime`で問います。
+- `sim_time_handler`は、`scheduled(...)`の内側に付けます。そして、それを待つタスクを始める全部の`Spawn`の外側に付けます。そうすると、タスクが1つの時計を共有します。
 - doeff-timeの`ScheduleAt`に渡したプログラムは、時間のハンドラの外側のハンドラの下で走ります。だから、そのプログラムは自分では時間を頼めません。
 - 実時間の時計のタイマーは、上の実行のとおり、少し遅れて起きます。時刻をぴったりの値で確かめるテストは、仮想の時計の上で走らせます。
 - doeffは0.x、doeff-timeは0.1なので、版が変わると名前が変わることがあります。
@@ -338,13 +342,13 @@ pip install doeff doeff-time pytest   # CPython 3.11から3.14で入る。
 
 今のテストで、時間が遅さや不安定さの元になっているのはどこですか。backoffを挟むリトライでしょうか、cronのような予定でしょうか、タイムアウトでしょうか。issueは https://github.com/proboscis/doeff/issues で受け付けています。
 
-`yield`と`await`の違いは、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で比べます。ハンドラが返す答えを別のハンドラが記録し、その記録から同じプログラムをもう一度走らせる話は、6本目の[外部APIのテストで通信するのをやめる](doeff-replay.md)にあります。
+`yield`と`await`は、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で比べます。ハンドラが返す答えは、別のハンドラが記録することもできます。記録から同じプログラムを走らせ直す話は、6本目の[外部APIのテストで通信するのをやめる](doeff-replay.md)にあります。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
 ## 参考
 
-この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0とdoeff-time 0.1.0で確かめました。Pythonは3.11・3.12・3.14で試しました。
+この記事のコードは、2026年10月29日に確かめました。PyPIのdoeff 0.8.0とdoeff-time 0.1.0を使いました。Pythonは3.11・3.12・3.14で試しました。
 
 - [この記事の完全な例(clock.py・report.py・test_report.py)](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)
 - [doeff-timeのREADME(時間のエフェクトと、時計ごとの約束)](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)

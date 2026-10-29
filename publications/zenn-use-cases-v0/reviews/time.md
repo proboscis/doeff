@@ -96,3 +96,21 @@ uv run python publications/zenn-use-cases-v0/examples/scheduling.py  # 完全な
 - 5枠とも成功した。実時間の枠は`[20.091931, 10.058906]`を表示し、約20.09秒かかった。
 - pytestの関数の実行時間：0.18秒・0.01秒・0.00秒・0.00秒（最初の関数は初回の読み込みを含む）。
 - 予定の本文で`GetTime`を使うと`UnhandledEffect`になることを確かめ、本文の「時間ハンドラの外側で動く」を保った。
+
+## 2026-10-29 英語の3本目「Time as an effect」の版への書き直し
+
+`doeff-time.md`を、英語の3本目「Time as an effect」(`docs/articles/time-as-an-effect.md`)の版に書き直した。上の節までの指摘は、前の本文(`job`・`skip_delay`・`worker`・`ScheduleAt`の例)への物である。
+
+- 軸と例: 軸は英語の版と同じ代数的エフェクト(時間をエフェクトで頼み、`k`を受け取るハンドラが、続きをいつ動かすかを決める)。Python・bashの枠20個は、コメントを除くと英語の版の枠と1つずつ同じ。textの枠も英語の版と同じ。コメントは各行の日本語にした(この連載の決まり)。
+- 英語の版との違い: 題・slug・入門への案内・前後の回のリンクは、Zennの連載の物を残した。英語の版の「前の回・次の回」(yieldとasync・記録と再生)は、Zennの9本目(`doeff-coroutines.md`)と6本目(`doeff-replay.md`)へのリンクにした。mermaidの図は、日本語のSVGの処理図(`time-flow`)にした。概念図(`time-concept`)は、同じ`two_naps`を`ticking`と`sim_time_handler`で走らせた時の待ちの並びにした。1文60字までの決まりに合わせ、長い文は2つに分けた。
+- 前の本文から外した物: `SetTime`・優先度・`ScheduleAt`の予約の例。どれも完全な例`examples/scheduling.py`に残り、`verify_examples.py`が走らせる。`ScheduleAt`の本体のハンドラの範囲は、本文の限界の節に書いた。
+- 確かめ(`time-check.py`を書き直した): 枠が英語の版と同じ事、clock.pyとreport.pyの抜粋を掲載の順に走らせた実行の行の印字が、直後のtextの枠と同じ事(仮想の時間の行は3回とも同じ)、test_report.pyがreport.pyの抜粋に対して通る事、実時間の行(既定は0.2秒と0.1秒の待ちに替える・`--real-time`で20秒の本物)、ハンドラ無しの`nap`が`Delay`で`UnhandledEffect`になる事、`within`が実時間の時計でも期限で打ち切る事、本文にAIが書いたと名乗る文とIOの差し替えの語が無い事。本文の印字・コード・テスト・語をわざと壊した6か所は、どれも赤になった。
+
+```sh
+uv run --no-sync python publications/zenn-use-cases-v0/reviews/time-check.py  # 手元の環境で、実時間の行は短い待ちで走らせる。
+uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff 0.8.0 --python 3.12 time  # PyPIのdoeffだけの環境で、20秒の行も走らせる。
+```
+
+- `verify_pypi.py`: PyPIのdoeff 0.8.0とdoeff-time 0.1.0で、Python 3.11・3.12・3.14ともOK。実時間の行は`[20.059413, 10.056975]`(3.12)。
+- `render_release.py doeff-time.md`: 60字を越える文0個・です・ます以外で終わる文0個。`export_zenn.py`と`zenn-check/check.mjs`: この回の崩れ0個。本の第3章も崩れ0個。
+- `verify_examples.py`の全体は、この変更の前からの失敗(2つ目の例`operations.py`の`log_handler()`の引数)で止まる。時間の回に当たる所(`scheduling.py`・`time-check.py`・本文の構文とリンクと画像・注釈の検)は通した。
