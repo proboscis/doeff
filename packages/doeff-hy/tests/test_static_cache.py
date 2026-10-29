@@ -139,8 +139,10 @@ def test_an_entry_of_the_current_store_version_is_read_back(
 #: 書いた保存の形の版(CACHE_VERSION)。規則は doeff_hy_bytecode_guard(閉包の歩みが名だけ入れる package)に在り、記録の digest が
 #: 覆わない(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A — 規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
 #: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
+#: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(card ki-9d2ff8ae7009 — 規則は同じなので版は
+#: 上げず、前の hash 5b4612a4… を置き換えた)。
 GENSYM_RULE_VERSIONS = {
-    "5b4612a4186ae2b6d222d3393e2a566c9de66e0df007391fb7f1f9a4e2dccebc": 3,
+    "75e5ff36f3eb6481e3c6b03baa0a56172324c1a00aa783b7317c715746d301b4": 3,
 }
 
 
