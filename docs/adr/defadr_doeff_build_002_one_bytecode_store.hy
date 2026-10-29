@@ -233,7 +233,7 @@
        ;; 反例(R3b・盲検 B): 木を置く翻訳が .pyc の置き場を綴る行は赤。註の行と、文の中の __pycache__ の語(引用符の無い物)は数えない。
        (assert (run (spells-bytecode-placement "(val PYCACHE-DIR \"__pycache__\")\n")))
        (assert (run (spells-bytecode-placement "(when (.endswith e.name \".pyc\") (<- (LinkFile a b)))\n")))
-       (assert (run (spells-bytecode-placement "(import doeff_core_effects.python_bytecode [pyc-path])\n")))
+       (assert (run (spells-bytecode-placement "(import doeff_core_effects._python_bytecode [pyc-path])\n")))
        (assert (run (spells-bytecode-placement "cache = importlib.util.cache_from_source(path)\n")))
        (assert (not (run (spells-bytecode-placement ";; 追跡しない物(.venv・__pycache__)は写さない\n"))))
        (assert (not (run (spells-bytecode-placement "\"追跡しない物(.venv・__pycache__・焼いた印)は写さない\"\n"))))
