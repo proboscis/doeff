@@ -34,7 +34,7 @@
 (import typing [Callable])
 (import httpx)
 (import doeff_hy.json_value [OpaqueJson])
-(import doeff_core_effects.offloaded_call [run-detached])
+(import doeff_core_effects._offloaded_call [run-detached])
 
 
 (setv SA-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
