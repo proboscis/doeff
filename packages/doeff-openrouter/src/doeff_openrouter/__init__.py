@@ -4,7 +4,6 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 from ._chat import OpenRouterResponseError
-from ._client import OpenRouterClient
 from ._effects import RouterChat, RouterStreamingChat, RouterStructuredOutput
 from ._handlers import (
     mock_handlers,
@@ -18,7 +17,6 @@ __all__ = [
     "APICallMetadata",
     "CostInfo",
     "MockOpenRouterRuntime",
-    "OpenRouterClient",
     "OpenRouterResponseError",
     "RouterChat",
     "RouterStreamingChat",

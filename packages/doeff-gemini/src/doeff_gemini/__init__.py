@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING
 
 from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
-from ._client import GeminiClient
-from ._costs import calculate_cost
 from ._effects import (
     GeminiCalculateCost,
     GeminiChat,
@@ -48,7 +46,6 @@ __all__ = [
     "GeminiCalculateCost",
     "GeminiCallResult",
     "GeminiChat",
-    "GeminiClient",
     "GeminiContentPart",
     "GeminiCostEstimate",
     "GeminiEmbedding",
@@ -64,7 +61,6 @@ __all__ = [
     "TextContentPart",
     "TokenUsage",
     "UriContentPart",
-    "calculate_cost",
     "default_gemini_cost_handler",
     "edit_image__gemini",
     "gemini_image_handler",

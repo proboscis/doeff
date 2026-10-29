@@ -7,15 +7,11 @@ from doeff_system_one import (
     answer_choice,
     answer_noul,
     answer_score,
-    answered,
-    calibration_ok,
     choice,
-    chosen,
-    clip,
-    crosses,
     noul,
     score,
 )
+from doeff_system_one._judgment import answered, calibration_ok, chosen, clip, crosses
 
 
 def test_question_constructors_and_payload() -> None:
