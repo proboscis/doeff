@@ -14824,7 +14824,6 @@
       "track_api_call"
      ],
      "doeff_openai.handlers.production": [
-      "ProtocolHandler",
       "calculate_cost"
      ],
      "doeff_openai.handlers.testing": [

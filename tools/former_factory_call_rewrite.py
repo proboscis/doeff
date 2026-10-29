@@ -75,6 +75,30 @@ FORMER_FACTORIES: Mapping[str, frozenset[str]] = {
     "await_handler": frozenset(
         {"doeff_core_effects", "doeff_core_effects.handlers", "doeff_core_effects._handlers"}
     ),
+    # doeff-gemini・doeff-seedream などの production_handlers は設定を取る factory のまま — 3 つの package の import だけを読む。
+    "production_handlers": frozenset(
+        {
+            f"{package}{module}"
+            for package in ("doeff_git", "doeff_openai", "doeff_openrouter")
+            for module in ("", ".handlers", ".handlers.production", "._handlers", "._handlers.production")
+        }
+    ),
+    "agent_handler": frozenset(
+        {
+            "doeff_conductor",
+            "doeff_conductor.handlers",
+            "doeff_conductor._handlers",
+            "doeff_conductor._handlers.agent_handler",
+        }
+    ),
+    "git_handler": frozenset(
+        {
+            "doeff_conductor",
+            "doeff_conductor.handlers",
+            "doeff_conductor._handlers",
+            "doeff_conductor._handlers.git_handler",
+        }
+    ),
 }
 
 #: 旧い形をわざと書いた file の印(この道具の test が持つ)。

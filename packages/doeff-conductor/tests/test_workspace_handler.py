@@ -163,9 +163,9 @@ class TestWorkspaceHandler:
     ) -> None:
         answer: Answer = answering(
             stacked_handlers(
-                git_production_handlers(),
+                git_production_handlers,
                 workspace_handler(repo_path=git_repo, workspace_base=workspace_base),
-                git_handler(),
+                git_handler,
             )
         )
         workspace: Workspace = answer(CreateWorkspace(workspace_id="ws-autocommit"))

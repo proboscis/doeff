@@ -248,7 +248,7 @@ def test_agent_handler_delegates_schema_agent_to_agentd_client(
     # The handler connects to the daemon itself; the test swaps the daemon's client for a fake.
     monkeypatch.setattr("doeff_agents._agentd_client.LazyAgentdClient", lambda: fake_client)
     answer = answering(
-        stacked_handlers(workspace_paths({workspace.id: tmp_path}), agent_handler()),
+        stacked_handlers(workspace_paths({workspace.id: tmp_path}), agent_handler),
         under_scheduler=True,
     )
     task = AgentTask(

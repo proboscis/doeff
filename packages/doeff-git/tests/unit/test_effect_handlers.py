@@ -67,7 +67,7 @@ def test_handlers_are_doeff_handlers_not_classes() -> None:
     for name in ("GitLocalHandler", "GitHubHandler"):
         assert not hasattr(doeff_git, name)
         assert not hasattr(importlib.import_module("doeff_git._handlers"), name)
-    for installer in (git_local_handler, github_handler, production_handlers()):
+    for installer in (git_local_handler, github_handler, production_handlers):
         assert installer._doeff_is_handler_fn is True
 
 
@@ -240,7 +240,7 @@ def test_a_handler_installed_inside_production_handlers_answers_first(
         pr = yield CreatePR(work_dir=Path("/tmp/repo"), title="Title", head="stub-branch")
         return sha, pr
 
-    sha, pr = run(production_handlers()(_commit_stub(flow())))
+    sha, pr = run(production_handlers(_commit_stub(flow())))
 
     assert sha == "sha:feat"
     assert pr.number == 1

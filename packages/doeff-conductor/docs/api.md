@@ -524,11 +524,11 @@ from doeff_conductor import (
 from doeff_git import production_handlers as git_production_handlers
 
 handlers = stacked_handlers(          # outermost first
-    git_production_handlers(),        # runs the git / gh commands git_handler performs
+    git_production_handlers,          # runs the git / gh commands git_handler performs
     workspace_handler(repo_path=Path("/path/to/repo")),
     issue_handler(issues_dir=Path("/path/to/issues")),
-    agent_handler(),                  # waits off the scheduler thread: run under `scheduled`
-    git_handler(),
+    agent_handler,                    # waits off the scheduler thread: run under `scheduled`
+    git_handler,
     exec_handler(log_dir=Path("/path/to/logs")),
     journaled_workflow_effect_handler(state_dir=state_dir, run_id=run_id),
     journaled_agent_handler(state_dir=state_dir, run_id=run_id),

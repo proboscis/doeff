@@ -8,6 +8,7 @@ from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuer
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import FormerFactoryHandler, _former_factory_handler
 from doeff_openrouter._chat import chat_completion
 from doeff_openrouter._effects import (
     RouterChat,
@@ -95,6 +96,11 @@ Compose by calling it on the program: ``openrouter_production_handler(program)``
 """
 
 
-def production_handlers() -> ProtocolHandler:
-    """Program -> Program handler backed by the real OpenRouter client helpers."""
-    return openrouter_production_handler
+production_handlers: FormerFactoryHandler = _former_factory_handler(
+    _openrouter_production_dispatch, "production_handlers"
+)
+"""The same handler as :data:`openrouter_production_handler`, under the name the handler packages share. A
+handler value — ``production_handlers(program)`` or ``[production_handlers, ...]``
+(ADR-DOE-API-002); the former ``production_handlers()`` answers it with a DeprecationWarning for
+one release.
+"""

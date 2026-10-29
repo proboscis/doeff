@@ -51,7 +51,7 @@ async def test_chat_completion_effect_with_production_handler() -> None:
         )
         return response.choices[0].message.content
 
-    result = await _async_run_with_handler(flow(), production_handlers())
+    result = await _async_run_with_handler(flow(), production_handlers)
 
     assert result.is_ok()
     assert isinstance(result.value, str)
@@ -78,7 +78,7 @@ async def test_structured_output_effect_with_production_handler() -> None:
             )
         )
 
-    result = await _async_run_with_handler(flow(), production_handlers())
+    result = await _async_run_with_handler(flow(), production_handlers)
 
     assert result.is_ok()
     assert isinstance(result.value, ArithmeticResult)

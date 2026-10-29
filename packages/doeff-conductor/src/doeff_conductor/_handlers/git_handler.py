@@ -2,7 +2,7 @@
 
 ``git_handler`` answers the conductor git effects by performing the doeff-git effects
 (``GitCommit``, ``GitPush``, ``CreatePR``, ``MergePR``) for the workspace's worktree, so a
-doeff-git handler installed outside it (``doeff_git.production_handlers()``) runs
+doeff-git handler installed outside it (``doeff_git.production_handlers``) runs
 git and gh. The worktree path comes from the workspace handler (``WorkspacePath``).
 """
 
@@ -16,8 +16,8 @@ from doeff_git import GitCommit, GitPush
 from doeff_git import MergePR as GitMergePR
 from doeff_git import PRHandle as GitPRHandle
 
-from doeff import EffectBase, K, Resume, do, handler
-from doeff.program import ProgramHandler
+from doeff import EffectBase, K, Resume, do
+from doeff.program import FormerFactoryHandler, _former_factory_handler
 from doeff_conductor._effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor._exceptions import GitCommandError
 from doeff_conductor._git_workspace import get_current_commit, run_git
@@ -141,26 +141,27 @@ def _merge_pr(effect: MergePR) -> Generator[EffectBase, Any, None]:
     )
 
 
-def git_handler() -> ProgramHandler:
-    """Build the handler for conductor git effects.
+def _answer_git(effect: Commit | Push | CreatePR | MergePR, k: K):
+    """Answer one conductor git effect through doeff-git."""
+    match effect:
+        case Commit():
+            answer: object = yield _commit(effect)
+        case Push():
+            answer = yield _push(effect)
+        case CreatePR():
+            answer = yield _create_pr(effect)
+        case MergePR():
+            answer = yield _merge_pr(effect)
+    return (yield Resume(k, answer))
 
-    It answers ``Commit``, ``Push``, ``CreatePR`` and ``MergePR`` by performing the doeff-git
-    effects, so it is installed inside a doeff-git handler and inside the workspace handler.
-    A failed git or gh command raises the conductor's ``GitCommandError``.
-    """
 
-    @handler
-    def answer_git(effect: Commit | Push | CreatePR | MergePR, k: K):
-        """Answer one conductor git effect through doeff-git."""
-        match effect:
-            case Commit():
-                answer: object = yield _commit(effect)
-            case Push():
-                answer = yield _push(effect)
-            case CreatePR():
-                answer = yield _create_pr(effect)
-            case MergePR():
-                answer = yield _merge_pr(effect)
-        return (yield Resume(k, answer))
+git_handler: FormerFactoryHandler = _former_factory_handler(_answer_git, "git_handler")
+"""The handler for conductor git effects.
 
-    return answer_git
+A handler value — ``git_handler(program)`` or ``[..., git_handler]`` (ADR-DOE-API-002); the former
+``git_handler()`` answers it with a DeprecationWarning for one release.
+
+It answers ``Commit``, ``Push``, ``CreatePR`` and ``MergePR`` by performing the doeff-git effects,
+so it is installed inside a doeff-git handler and inside the workspace handler. A failed git or gh
+command raises the conductor's ``GitCommandError``.
+"""

@@ -175,7 +175,7 @@ def test_handler_swapping_between_mock_and_production(monkeypatch) -> None:
         workflow(),
         mock_handlers(runtime=MockOpenRouterRuntime(chat_response={"id": "mock-only"})),
     )
-    production_result = _run_with_handler(workflow(), production_handlers())
+    production_result = _run_with_handler(workflow(), production_handlers)
 
     assert mock_result.is_ok()
     assert production_result.is_ok()

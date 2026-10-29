@@ -77,9 +77,9 @@ class TestGitHandler:
     def handler(self, git_repo: Path, workspace: Workspace) -> Answer:
         return answering(
             stacked_handlers(
-                git_production_handlers(),
+                git_production_handlers,
                 workspace_paths({workspace.id: git_repo}),
-                git_handler(),
+                git_handler,
             )
         )
 
@@ -100,7 +100,7 @@ class TestGitHandler:
             stacked_handlers(
                 answer_git_commit,
                 workspace_paths({workspace.id: git_repo}),
-                git_handler(),
+                git_handler,
             )
         )
         (git_repo / "new_file.txt").write_text("new content")
