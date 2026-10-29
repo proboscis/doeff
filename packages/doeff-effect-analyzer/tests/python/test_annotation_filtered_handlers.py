@@ -10,7 +10,7 @@ check of a production foundation showed ``unknown=('broker_stall_patience',)``.
 """
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_handler
+from doeff_effect_analyzer._handler_effects import analyze_handler
 
 pytest.importorskip("doeff_vm")
 

@@ -9,7 +9,7 @@ not a call", so the closure check saw none of the effects inside the ports.
 """
 
 import pytest
-from doeff_effect_analyzer.program_effects import Residual, analyze_program
+from doeff_effect_analyzer._program_effects import Residual, analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

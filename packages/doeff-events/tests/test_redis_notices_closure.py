@@ -20,6 +20,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from doeff_core_effects import Await
 from doeff_events import (
@@ -44,7 +45,7 @@ from doeff_events._handlers.redis_notices import (
     _run,
 )
 
-from doeff import EffectGenerator, do, handler_effect_types, with_handlers
+from doeff import EffectBase, EffectGenerator, do, handler_effect_types, run, with_handlers
 
 # The Python front end of doeff-effect-analyzer is a development tool, not a runtime dependency of doeff-events
 # (same treatment as test_notice_events_closure.py).
@@ -53,15 +54,23 @@ if importlib.util.find_spec("doeff_effect_analyzer") is None:
         0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python")
     )
 
-from doeff_effect_analyzer.handler_effects import (
+from doeff_effect_analyzer import (
+    AnalyzeHandler,
+    AnalyzeProgram,
     Basis,
-    analyze_handler,
-    check_coverage,
+    CheckCoverage,
+    FoldCarried,
+    effect_analysis,
 )
-from doeff_effect_analyzer.program_effects import (
-    analyze_program,
-    runs_where_performed,
-)
+
+#: Carried Programs counted where they are performed when their carrier declares it (Try, Spawn …).
+FOLD = FoldCarried(declared=True)
+_Answer = TypeVar("_Answer")
+
+
+def _answered(effect: EffectBase[_Answer]) -> _Answer:
+    """Read one analysis effect under the analyzer's handler (the analyzer reads the sources; nothing is run)."""
+    return run(effect_analysis()(effect))
 
 NOTICES_MODULE = "doeff_events._effects.notices"
 
@@ -141,13 +150,13 @@ def _real_broker_handler() -> object:
 
 def _emitted(handler: object) -> frozenset[type]:
     """Every effect the clauses of ``handler`` perform, as the analyzer reads them."""
-    read = analyze_handler(handler)
+    read = _answered(AnalyzeHandler(handler))
     assert read.basis is Basis.CLAUSES, read.unresolved
     return frozenset(effect for clause in read.clauses for effect in clause.emits.effect_types)
 
 
 def test_the_analyzer_reads_the_redis_handler_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_events._handlers.redis_notices:redis_notice_handler")
+    handler = _answered(AnalyzeHandler("doeff_events._handlers.redis_notices:redis_notice_handler"))
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset(REDIS_NOTICE_ANSWERS)
     for clause in handler.clauses:
@@ -158,19 +167,19 @@ def test_the_redis_handler_answers_what_it_declares() -> None:
     # The clauses read from source and the annotation the VM skips the handler by: an effect answered by one and not
     # declared (or declared and answered by neither) fails here, in the commit that adds it.
     real = _real_broker_handler()
-    assert analyze_handler(real).handled == frozenset(REDIS_NOTICE_ANSWERS)
+    assert _answered(AnalyzeHandler(real)).handled == frozenset(REDIS_NOTICE_ANSWERS)
     assert handler_effect_types(_raw(real)) == REDIS_NOTICE_ANSWERS
 
 
 def test_the_redis_handler_performs_what_it_declares() -> None:
     real = _real_broker_handler()
-    around = analyze_program(_wrapped).residual_with(runs_where_performed).effect_types
-    body = analyze_program(_announces).residual_with(runs_where_performed).effect_types
+    around = _answered(AnalyzeProgram(_wrapped)).residual_with(FOLD).effect_types
+    body = _answered(AnalyzeProgram(_announces)).residual_with(FOLD).effect_types
     assert _emitted(real) | (around - body) == frozenset(REDIS_NOTICE_EFFECTS)
 
 
 def test_the_analyzer_reads_the_retry_handler_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_events._handlers.redis_notices:broker_back_by_retry")
+    handler = _answered(AnalyzeHandler("doeff_events._handlers.redis_notices:broker_back_by_retry"))
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset(BROKER_BACK_ANSWERS) == frozenset({AwaitBrokerBack})
     for clause in handler.clauses:
@@ -182,15 +191,15 @@ def test_the_retry_handler_answers_and_performs_what_it_declares() -> None:
     # what it performs is read from its body.
     real = _raw(broker_back_by_retry(1.0))
     assert handler_effect_types(real) == BROKER_BACK_ANSWERS
-    assert analyze_program(real).effect_types == frozenset(BROKER_BACK_EFFECTS)
+    assert _answered(AnalyzeProgram(real)).effect_types == frozenset(BROKER_BACK_EFFECTS)
     assert ProbeBroker in BROKER_BACK_EFFECTS
 
 
 def test_a_job_placing_the_notice_factories_leaves_no_unreadable_handler_and_no_notice_gap() -> (
     None
 ):
-    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
-    coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
+    scheduler = _answered(AnalyzeHandler("doeff_core_effects._scheduler:scheduled", name="scheduled"))
+    coverage = _answered(CheckCoverage(_job, env=(scheduler,), fold=FOLD))
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     unanswered = tuple(gap for gap in coverage.gaps if gap.effect.__module__ == NOTICES_MODULE)
     assert unanswered == (), unanswered

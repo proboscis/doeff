@@ -21,8 +21,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from doeff_effect_analyzer import handler_effects
-from doeff_effect_analyzer import program_effects as pe
+from doeff_effect_analyzer import _handler_effects as handler_effects
+from doeff_effect_analyzer import _program_effects as pe
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 

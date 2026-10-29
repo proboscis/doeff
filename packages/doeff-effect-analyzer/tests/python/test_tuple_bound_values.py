@@ -13,7 +13,7 @@ do, so the reader reads it element by element.
 """
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_env
+from doeff_effect_analyzer._handler_effects import analyze_env
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

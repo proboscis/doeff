@@ -15,7 +15,7 @@ authors = [
 ]
 
 [project.scripts]
-doeff-effects = "doeff_effect_analyzer.cli:main"
+doeff-effects = "doeff_effect_analyzer._cli:main"
 
 [tool.maturin]
 features = ["python"]

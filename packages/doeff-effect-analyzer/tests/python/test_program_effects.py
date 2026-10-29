@@ -14,8 +14,8 @@ import uuid
 from pathlib import Path
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_env, analyze_handler, check_coverage
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._handler_effects import analyze_env, analyze_handler, check_coverage
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
@@ -490,7 +490,7 @@ def test_env_handlers_imported_inside_the_builder(pkg: str) -> None:
 
 
 def test_cli_coverage_exit_code_names_the_gap(pkg: str, capsys: pytest.CaptureFixture[str]) -> None:
-    from doeff_effect_analyzer.cli import main
+    from doeff_effect_analyzer._cli import main
 
     outer = ["--outer", "doeff_core_effects._scheduler:scheduled"]
     target = f"{pkg}.services:runner_program"

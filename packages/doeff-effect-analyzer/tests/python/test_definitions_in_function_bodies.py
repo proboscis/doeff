@@ -19,7 +19,7 @@ dispatcher inside ``declare_passes``; both are read by their clauses, as at the 
 import importlib
 
 import pytest
-from doeff_effect_analyzer.program_effects import Basis, analyze_program
+from doeff_effect_analyzer._program_effects import Basis, analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

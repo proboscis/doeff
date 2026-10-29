@@ -1400,11 +1400,17 @@ def _put_roots_on_path(layout: PackageLayout) -> None:
 
     A built copy installed in the venv (a non-editable install, as in CI's fresh venv) would put the
     venv's copy in the rows' ``defined_at`` and list the installed version instead of the checkout.
-    A maturin package needs its built native module, so its source dir is never put first.
+    A maturin package needs its built native module, so its source dir is never put first: it goes
+    last, where an installed build wins and a pure-Python front end that loads its native module
+    only on use (doeff-effect-analyzer — not installed in the dev env) is read from the checkout
+    instead of its text (card ki-593f9f44c501 — read as text, its effects and handler were
+    unclassified).
     """
+    places = [str(root.path.parent) for root in layout.roots]
     if layout.maturin:
+        sys.path.extend(place for place in places if place not in sys.path)
         return
-    sys.path[:0] = [str(root.path.parent) for root in layout.roots]
+    sys.path[:0] = places
 
 
 @dataclass(frozen=True)
