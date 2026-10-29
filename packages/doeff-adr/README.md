@@ -202,9 +202,18 @@ registry `defadr` fills, at the time the effect is answered):
   (assert (all (gfor law spec.laws (.get law "enforced_by")))))
 ```
 
+The same handler answers the effect `AdrIds`, the sorted list of the ids in the
+registry:
+
+```hy
+(<- ids (AdrIds))
+(assert (in ADR-ID ids))
+```
+
 A test that wants another table installs `adr_registry(specs=[spec ...])`
 around the part of the program that should read it: the inner handler answers
-first, and an id missing from that list is a `KeyError` (it does not fall
-through to the process registry). `specs=[]` is an empty table, not the
-registry. The function `get_adr` remains only as a transition layer until the
-callers outside doeff read `GetAdr`; new code reads `GetAdr`.
+first, an id missing from that list is a `KeyError` (it does not fall through
+to the process registry), and `AdrIds` answers the ids of that list only.
+`specs=[]` is an empty table, not the registry. The functions `get_adr` and
+`adr_ids` remain only as transition layers until the callers outside doeff read
+`GetAdr` and `AdrIds`; new code reads the effects.
