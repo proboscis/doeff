@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_claude_code.values -> doeff_claude_code._values
+# moved-submodule-shim-names doeff_claude_code.values:
+#   ASK_HOST_MODES AUTOCOMPACT_MAX_TOKENS AUTOCOMPACT_MIN_TOKENS Allow AskHost AutocompactAuto
+#   AutocompactTokens AutocompactWindow BypassAll CREDENTIAL_FORBIDDEN_CHARS ClaudeHome
+#   ClaudeSessionSpec ClaudeTurn Deny DenyUnlisted ForkSession FreshSession HomeSettings IMAGE_MIMES
+#   ImageAttachment LentCredential LinkFromHome McpServer McpSse McpStdio PermissionAnswer
+#   PermissionPolicy PrintContent Rebuilt ResumeSession SessionOrigin TranscriptCarry TurnInput
+#   checked_env checked_session_id
 """Moved: ``doeff_claude_code.values`` is now ``doeff_claude_code._values`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

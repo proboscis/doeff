@@ -42,14 +42,9 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [rooted-file-handler])
-(import doeff_core_effects.http-server-effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody
-                                                HttpRespond HttpForward
-                                                HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach
-                                                WsForward WsClose
-                                                TakeWsSendReport
-                                                AppendHttpScript ReadHttpServed])
-(import doeff_core_effects.aiohttp-http-server [aiohttp-http-server])
-(import doeff_core_effects.scripted-http-server [scripted-http-server])
+(import doeff_core_effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach WsForward WsClose TakeWsSendReport AppendHttpScript ReadHttpServed])
+(import doeff_core_effects [aiohttp-http-server])
+(import doeff_core_effects [scripted-http-server])
 (import doeff_core_effects.ws-client-effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent])
 ;; 公開の installer(aiohttp-ws-client・scripted-ws-client)は program を後始末で包む素の関数で構造情報を持たないため、
 ;; 導出には __doeff_body__ を持つ defhandler 製の実物を挙げる(_http-production-handler と同じ)。

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.wire_malformed -> doeff_hy._wire_malformed
+# moved-submodule-shim-names doeff_hy.wire_malformed:
+#   Malformed MalformedField
 """Moved: ``doeff_hy.wire_malformed`` is now ``doeff_hy._wire_malformed`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

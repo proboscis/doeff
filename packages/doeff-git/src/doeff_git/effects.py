@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_git.effects -> doeff_git._effects
+# moved-submodule-shim-names doeff_git.effects:
+#   CreatePR GitCommit GitDiff GitPull GitPush MergePR
+# moved-submodule-shim-names doeff_git.effects.hosting:
+#   CreatePR MergePR
+# moved-submodule-shim-names doeff_git.effects.local:
+#   GitCommit GitDiff
+# moved-submodule-shim-names doeff_git.effects.remote:
+#   GitPull GitPush
 """Moved: ``doeff_git.effects`` is now ``doeff_git._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

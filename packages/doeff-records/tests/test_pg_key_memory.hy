@@ -16,7 +16,8 @@
 (import doeff_records [ReadEventByKey])
 (import doeff_records.maintenance [SweepExpired Swept])
 (import doeff_records._laws [LAW-SCHEMA MAKER BEAT-MEMORY-SECONDS])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables prepare-records-store])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 

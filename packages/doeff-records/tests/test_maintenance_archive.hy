@@ -10,7 +10,7 @@
                                    EventsArchiveReport])
 (import functools [partial])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.http_server [MaintenancePlan unsent-streams])
+(import doeff_records._http_server [MaintenancePlan unsent-streams])
 (import doeff_records._laws [LAW-SCHEMA])
 
 

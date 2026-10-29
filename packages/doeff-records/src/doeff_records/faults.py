@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_records.faults -> doeff_records._faults
+# moved-submodule-shim-names doeff_records.faults:
+#   AddStoreFault AdvanceStoreEpoch ClearStoreFaults Refused SetStoreOutage StoreFault
+#   StoreOperation Unreachable
 """Moved: ``doeff_records.faults`` is now ``doeff_records._faults`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_records.watching -> doeff_records._watching
+# moved-submodule-shim-names doeff_records.watching:
+#   Changes Events EventsMoved EventsQuiet MODULE_TAGS Reset Unreachable WaitsClosed epoch_ms
+#   hyx_closing_wakeXquestion_markX hyx_waitingXquestion_markX moved_of wait_for_signal
 """Moved: ``doeff_records.watching`` is now ``doeff_records._watching`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

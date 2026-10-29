@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_conductor.workflow_loader -> doeff_conductor._workflow_loader
+# moved-submodule-shim-names doeff_conductor.workflow_loader:
+#   WORKFLOW_SNAPSHOT_FILENAME WorkflowNondeterminismDiagnostic WorkflowNondeterminismError
+#   WorkflowSpec check_workflow_source_determinism load_workflow_spec
+#   prepare_workflow_source_for_run reset_workspace_occurrences snapshot_workflow_source
+#   workflow_snapshot_path
 """Moved: ``doeff_conductor.workflow_loader`` is now ``doeff_conductor._workflow_loader`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -2,7 +2,7 @@
 ;; 呼び手の job の名は X-Records-Caller で送る(一覧の読みの数)。行の書きの冪等キーは X-Records-Idempotency-Key で送る。
 (require doeff-hy.macros [deftest val])
 (import doeff_records.http_client [RecordsEndpoint request-headers])
-(import doeff_records.wire [CALLER-HEADER WRITER-HEADER IDEMPOTENCY-HEADER])
+(import doeff_records._wire [CALLER-HEADER WRITER-HEADER IDEMPOTENCY-HEADER])
 
 
 (deftest test-a-writer-is-sent-as-a-plain-header-without-a-token

@@ -267,7 +267,7 @@ value / external-world / stateful / other で問います。詳しくは [docs/S
 ### JsonValue の使い場所(DOEFF120)
 
 `JsonValue`・`JSONValue`・`JsonObject`・`JSONObject`(素の dict を名で包んだだけの型)を使ってよいのは、汎用の解き手(`doeff_hy._wire`・
-`doeff_records.wire`)と、architecture.hy の `:wire-modules`(module の綴りの pattern)に挙げ、かつ foundation の層に在る送受信の module だけです。
+`doeff_records._wire`)と、architecture.hy の `:wire-modules`(module の綴りの pattern)に挙げ、かつ foundation の層に在る送受信の module だけです。
 ほかの module は解き手が形を確かめた型のある値だけを見ます。module ごとに 1 件(鍵 `<path>::DOEFF120`)。`:wire-modules` に挙げても
 foundation の外なら許さず、説明に訳を書きます。許す場所の決め方は `json_value_allowance` の 1 か所で、差し替えられます。
 詳しくは [docs/rules/DOEFF120.md](docs/rules/DOEFF120.md) と [docs/SPECIFICATION.md](docs/SPECIFICATION.md) の 13 節。

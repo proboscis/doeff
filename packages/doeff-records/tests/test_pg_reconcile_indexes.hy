@@ -37,7 +37,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts postgres-sql-handler])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlFailed SqlNotify])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
@@ -45,11 +45,13 @@
 (import doeff_records [RecordsSchema Row Page NotIndexed ExpectAbsent Written Unreachable])
 (import doeff_records [ReadRow ListRows PutRow])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
-(import doeff_records.pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key
-                              migrate-lock-key schema-statements])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
+(import doeff_records [migrate-lock-key schema-statements]
+        doeff_records._pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key])
 (import doeff_records._main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
-(import doeff_records.http_server [MaintenancePlan RecordsListening])
+(import doeff_records [RecordsListening]
+        doeff_records._http_server [MaintenancePlan])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres fresh-prefix])
 

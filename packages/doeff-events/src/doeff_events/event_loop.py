@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_events.event_loop -> doeff_events._event_loop
+# moved-submodule-shim-names doeff_events.event_loop:
+#   LoopStop Publish StopArrived T WaitForEvent Watch begin_watch end_watch next_event stopped_value
 """Moved: ``doeff_events.event_loop`` is now ``doeff_events._event_loop`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.record_runtime -> doeff_hy._record_runtime
+# moved-submodule-shim-names doeff_hy.record_runtime:
+#   EFFECT_PARAMS FACTORY_DEFAULT RECORD_DOC RECORD_PARAMS record_delattr record_repr record_setattr
+#   seal_effect seal_record
 """Moved: ``doeff_hy.record_runtime`` is now ``doeff_hy._record_runtime`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

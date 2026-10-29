@@ -1,4 +1,50 @@
 # moved-submodule-shim: doeff_conductor.effects -> doeff_conductor._effects
+# moved-submodule-shim-names doeff_conductor.effects:
+#   Agent AgentCall AgentEffect AgentTask AnswerGate BLOCKER_FINDING BudgetConsumption
+#   BudgetCounterEntry BudgetCounterKey CALIBRATION_SAMPLE_BUDGET_KEY CalibrationEscapeRecord
+#   CalibrationLaneRate CalibrationLedger CalibrationPolicy CleanupWorkspaces ClosureTerminal Commit
+#   ConductorEffectBase ConductorStateDir CreateIssue CreatePR CreateWorkspace
+#   DEFAULT_REVIEW_ROUTE_TABLE DefaultReviewRouter DeleteWorkspace DescribeEnvironment
+#   DurableReviewBudget Exec GateCall GateOption GetIssue GetTemplateSource GetWorkflow ListGates
+#   ListIssues ListOpenGates ListTemplates ListWorkflows ListWorkspaces MergeCall MergePR
+#   MergeWorkspaces OpenGate OpenGateReason OpenMonitor PlanWorkflow Push
+#   REVIEW_VERDICT_RESULT_SCHEMA RandomCall ReadProgress RemainingReviewBudget RenderMonitor
+#   ResolveIssue ResumeWorkflow ReviewBudgetStatus ReviewEscalationReason ReviewEscalationTerminal
+#   ReviewFinding ReviewItem ReviewRouteRule ReviewRouter ReviewRoutingResult ReviewSeverity
+#   ReviewStakes ReviewStakesLevel ReviewTier ReviewVerdict ReviewVerdictArtifact
+#   ReviewVerdictTerminal ReviewerAgentLost RunWorkflow StopWorkflow TIER1_REVIEW_BUDGET_KEY
+#   TIER2_ESCALATION_BUDGET_KEY Tier1ReviewResult Tier2Callback Tier2ReviewRequest TimeCall
+#   ValidateWorkflow WorkspaceCall is_closure_terminal route_review_item run_review_routing_demo
+# moved-submodule-shim-names doeff_conductor.effects.agent:
+#   Agent AgentEffect AgentTask ConductorEffectBase ResolvedIdentity resolved_identity_fingerprint
+# moved-submodule-shim-names doeff_conductor.effects.base:
+#   ConductorEffectBase E
+# moved-submodule-shim-names doeff_conductor.effects.dsl:
+#   AgentCall ConductorEffectBase GateCall MergeCall RandomCall TimeCall WorkspaceCall
+# moved-submodule-shim-names doeff_conductor.effects.exec:
+#   ConductorEffectBase Exec
+# moved-submodule-shim-names doeff_conductor.effects.git:
+#   Commit ConductorEffectBase CreatePR MergePR Push
+# moved-submodule-shim-names doeff_conductor.effects.issue:
+#   ConductorEffectBase CreateIssue GetIssue ListIssues ResolveIssue
+# moved-submodule-shim-names doeff_conductor.effects.review:
+#   BLOCKER_FINDING BudgetConsumption BudgetCounterEntry BudgetCounterKey
+#   CALIBRATION_SAMPLE_BUDGET_KEY CalibrationEscapeRecord CalibrationLaneRate CalibrationLedger
+#   CalibrationPolicy ClosureTerminal DEFAULT_REVIEW_ROUTE_TABLE DefaultReviewRouter
+#   DurableReviewBudget GateOption OpenGate OpenGateReason REVIEW_VERDICT_RESULT_SCHEMA
+#   RemainingReviewBudget ReviewBudgetStatus ReviewEscalationReason ReviewEscalationTerminal
+#   ReviewFinding ReviewItem ReviewRouteRule ReviewRouter ReviewRoutingResult ReviewSeverity
+#   ReviewStakes ReviewStakesLevel ReviewTier ReviewVerdict ReviewVerdictArtifact
+#   ReviewVerdictTerminal ReviewerAgentLost TIER1_REVIEW_BUDGET_KEY TIER2_ESCALATION_BUDGET_KEY
+#   Tier1ReviewResult Tier2Callback Tier2ReviewRequest is_closure_terminal route_review_item
+#   run_review_routing_demo
+# moved-submodule-shim-names doeff_conductor.effects.runs:
+#   AnswerGate CleanupWorkspaces ConductorEffectBase ConductorStateDir DescribeEnvironment
+#   GetTemplateSource GetWorkflow ListGates ListOpenGates ListTemplates ListWorkflows ListWorkspaces
+#   OpenMonitor PlanWorkflow ReadProgress RenderMonitor ResumeWorkflow RunWorkflow StopWorkflow
+#   ValidateWorkflow
+# moved-submodule-shim-names doeff_conductor.effects.workspace:
+#   ConductorEffectBase CreateWorkspace DeleteWorkspace MergeWorkspaces
 """Moved: ``doeff_conductor.effects`` is now ``doeff_conductor._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

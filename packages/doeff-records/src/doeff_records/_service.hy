@@ -21,7 +21,7 @@
 (import doeff_records._values [RecordsSchema Unreachable])
 (import doeff_records._principals [Principal writer-of])
 (import doeff_records.loop_work [off-loop off-loop-answer?])
-(import doeff_records.wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
+(import doeff_records._wire [PATH-PREFIX OPERATIONS PublicEffect WireAnswer WireRequest WireRefusal WireMalformed STATUS-OF-ERROR
                             ERROR-MALFORMED ERROR-NOT-FOUND ERROR-STORE-UNAVAILABLE
                             decode-request answer-text refusal-json undeclared-reason keyed-request])
 

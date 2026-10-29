@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agents.result_validation -> doeff_agents._result_validation
+# moved-submodule-shim-names doeff_agents.result_validation:
+#   validate_result_payload
 """Moved: ``doeff_agents.result_validation`` is now ``doeff_agents._result_validation`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

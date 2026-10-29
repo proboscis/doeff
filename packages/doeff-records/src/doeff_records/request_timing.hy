@@ -41,8 +41,8 @@
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [SecondsObservation])
-(import doeff_records.wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
-(import doeff_records.pg_sql [ROWS-UNIT stream-unit table-unit])
+(import doeff_records._wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
+(import doeff_records._pg_sql [ROWS-UNIT stream-unit table-unit])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})
 

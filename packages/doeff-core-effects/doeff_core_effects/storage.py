@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_core_effects.storage -> doeff_core_effects._storage
+# moved-submodule-shim-names doeff_core_effects.storage:
+#   DurableStorage InMemoryStorage SQLiteStorage is_program
+# moved-submodule-shim-names doeff_core_effects.storage.memory:
+#   Await InMemoryStorage
+# moved-submodule-shim-names doeff_core_effects.storage.sqlite:
+#   Await SQLiteStorage
 """Moved: ``doeff_core_effects.storage`` is now ``doeff_core_effects._storage`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

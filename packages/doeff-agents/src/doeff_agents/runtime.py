@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agents.runtime -> doeff_agents._runtime
+# moved-submodule-shim-names doeff_agents.runtime:
+#   ClaudeRuntimePolicy CodexRuntimePolicy
 """Moved: ``doeff_agents.runtime`` is now ``doeff_agents._runtime`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

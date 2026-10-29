@@ -26,10 +26,8 @@
 (import doeff_core_effects [state await-handler])
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpRequestArrived HttpRespond HttpScript HttpServed
-                                                ReadHttpServed ScriptedBody ScriptedUpstream WsBinaryArrived WsCloseSent WsClosed
-                                                WsTextArrived WsTextSent])
-(import doeff_core_effects.scripted_http_server [scripted-http-server])
+(import doeff_core_effects [AppendHttpScript HttpAddress HttpHeader HttpRequestArrived HttpRespond HttpScript HttpServed ReadHttpServed ScriptedBody ScriptedUpstream WsBinaryArrived WsCloseSent WsClosed WsTextArrived WsTextSent])
+(import doeff_core_effects [scripted-http-server])
 
 (val AIOHTTP "aiohttp-http-server")
 (val SCRIPTED "scripted-http-server")
@@ -286,7 +284,7 @@
   {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "http-server-test" :role "foundation"}}
   "本物の aiohttp-http-server の下で program を走らせる。site は一時 dir の実の file、upstream は走る間だけ聞く wsgiref の聞き手。"
-  (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+  (import doeff_core_effects [aiohttp-http-server])
   (var answer None)
   (with [directory (tempfile.TemporaryDirectory)]
     (val site (os.path.join (os.path.realpath directory) "app.js"))

@@ -15,7 +15,8 @@
 (import doeff_records [ExpectAbsent ExpectAny RowChanged RowRemoved StreamDecl KeepFor TableDecl FieldDecl Written Conflict Refused Unreachable])
 (import doeff_records [PutRow PutRows RowWrite AppendEvent AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges])
-(import doeff_records.memory [MemoryStore WriteNote memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore WriteNote])
 (import doeff_records._laws [LAW-SCHEMA MAKER PAINTER CLOSER])
 
 ;; 期限つきの列 pulses(60 秒)と、終端の状態を持ち保持の期限で刈られる表 leases(60 秒)を足した宣言。
