@@ -18,7 +18,7 @@ gensym と let が改めた束縛の名の形(compile の口の正準化が読�
 記録し損ねて古い展開を黙って使うか、code が compile の順で揺れる。
 
 Hy の内部の名の定義元は ``records`` の 1 か所(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
-``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy.static_baseline の基点の鍵・
+``ANON_VAR_NAME``)で、包みの外の使い手(doeff_effect_analyzer._result_cache の解析の鍵・doeff_hy.static_baseline の基点の鍵・
 macro_use の全部の require の判定 — card ki-ffe72a1fb7d7)もそこから引く。この file の末尾の 2 本が、records の読みを実物の Hy の
 module に当てる: 表と export の名の読みは Hy 自身の ``(require 提供元 *)`` の振る舞いと一致し、Hy が一時の名に振る形は
 ``fold_anon_var_numbers`` が畳める形のまま。Hy が名を替えるとここが赤になる。字が records の外へ写される事は

@@ -60,7 +60,7 @@ from typing import TypeVar
 RECORD_TAG = "doeff-hy/macro-dependencies/7"
 
 #: Hy が module の名前空間に置く辞書の名(普通の macro の表・reader macro の表・Hy の export が書く公開の macro の名の表)と、
-#: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer.result_cache・
+#: Hy が振る名の先頭。Hy の内部の名の定義元はこの module の 1 か所で、使い手(macro_use・doeff_effect_analyzer._result_cache・
 #: doeff_hy.static_baseline・doeff_hy.static_stub)は名の字を持たず、この下の定数と関数(:func:`macro_tables`・
 #: :func:`exported_macro_names`・:func:`fold_anon_var_numbers`)で引く(card ki-ffe72a1fb7d7)— Hy が名を替えた時に直す所を 1 つにし、
 #: 名の字を他の file へ写す変更は packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py の走査が赤にする。

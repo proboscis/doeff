@@ -1086,9 +1086,12 @@ class CompileCounter:
 def observe_analyzer_expansions(
     converting: Callable[[], contextlib.AbstractContextManager[None]],
 ) -> Callable[[], None] | None:
-    """doeff-effect-analyzer の Hy の展開も数えに乗せるため(解析器が入っていない環境では何もしない — None)。"""
+    """doeff-effect-analyzer の Hy の展開も数えに乗せるため(解析器が入っていない環境では何もしない — None)。
+
+    observe_expansions は解析器の内側の名(ADR-DOE-API-001 R24): process に 1 つの口で、program の中で頼む物でないので effect に
+    せず、入口にも出さない。読むのは doeff の中のこの plugin だけ。"""
     try:
-        from doeff_effect_analyzer.program_effects import observe_expansions
+        from doeff_effect_analyzer._program_effects import observe_expansions
     except ImportError:
         return None
     return observe_expansions(converting)

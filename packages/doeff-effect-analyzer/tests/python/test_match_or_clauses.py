@@ -7,7 +7,7 @@ doeff 88834a040(L1806)で、doeff-events の ``subscribed_event_handler`` は ``
 2026-10-07)。Python の正しい書き方を読めない解析器の欠けなので、解析器の側で or の形を読む。
 """
 
-from doeff_effect_analyzer.handler_effects import analyze_handler
+from doeff_effect_analyzer._handler_effects import analyze_handler
 from doeff_events import (
     EventBus,
     PublishEffect,
