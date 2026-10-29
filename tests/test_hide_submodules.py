@@ -366,6 +366,52 @@ def _assert_rewritten(repo: Path, report: Report, record_before: str) -> None:
     assert report.rewrite.rewritten[tool.STRING] == 2
 
 
+def _row(module: str, name: str, kind: str, defined_at: str) -> dict[str, str]:
+    """目録の行 1 つ(decide_names に渡す形)。"""
+    return {
+        "module": f"{ROOT_NAME}.{module}",
+        "name": name,
+        "kind": kind,
+        "form": "class",
+        "defined_at": f"packages/{PACKAGE}/src/{ROOT_NAME}/{defined_at}",
+        "reason": "",
+    }
+
+
+def test_a_name_a_child_imports_from_another_child_goes_to_the_entry_once(tmp_path: Path) -> None:
+    """子が別の子の名を出し直す時は定義の在る子から 1 度だけ入口へ、定義が違う同じ名はぶつかりに残す。
+
+    失敗ケース: doeff-codex の effects・fake・handler は values の CodexInput を import して出し直す。子ごとに同じ名を
+    入口へ出すと読んで全部をぶつかりにすると、effect の値の型も effect も入口に出ない(hide の 1 回目で 100 個)。
+    """
+    children = [tool.Child(ROOT_NAME, name, tmp_path) for name in ("effects", "lines", "values")]
+    boundary = "境界 — effect の値の型"
+    groups = {
+        (f"{ROOT_NAME}.{module}", name): boundary
+        for module, name in (
+            ("effects", "Spec"),
+            ("values", "Spec"),
+            ("effects", "Started"),
+            ("lines", "Started"),
+        )
+    }
+    rows = [
+        _row("effects", "Ping", "effect", "effects.py:9"),
+        _row("effects", "Spec", "other", "values.py:3"),
+        _row("values", "Spec", "other", "values.py:3"),
+        _row("effects", "Started", "other", "effects.py:5"),
+        _row("lines", "Started", "other", "lines.hy:7"),
+    ]
+    fates = {(f.modules[0], f.name): f for f in tool.decide_names(rows, children, groups, set())}
+    spec = fates[(f"{ROOT_NAME}.values", "Spec")]
+    assert (spec.fate, spec.source) == ("entry", f"{ROOT_NAME}._values")
+    assert fates[(f"{ROOT_NAME}.effects", "Spec")].fate == "already"
+    assert fates[(f"{ROOT_NAME}.effects", "Ping")].fate == "entry"
+    assert {fates[(f"{ROOT_NAME}.{m}", "Started")].fate for m in ("effects", "lines")} == {
+        "conflict"
+    }
+
+
 @pytest.mark.timeout(600)
 def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: Path) -> None:
     """hide・rewrite・finish のどの後でも、doeff の木と外の repo の呼び手の test が緑のまま。"""
