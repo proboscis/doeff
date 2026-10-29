@@ -6,6 +6,7 @@ from typing import Any
 from doeff_git import production_handlers as _git_production_handlers
 
 from doeff import Effect, Resume, do, stacked_handlers
+from doeff import handler as _as_handler
 from doeff.program import ProgramHandler
 from doeff_conductor._handlers._offload import offloaded_call as _offloaded_call
 from doeff_conductor._handlers.agent_handler import agent_handler as _agent_handler
@@ -24,7 +25,8 @@ def _scheduled_body(handler: SimpleHandler) -> Callable[..., Any]:
     """The ``(effect, k)`` body that resumes ``k`` with ``handler(effect)``.
 
     Not a handler (it has no handler marker and answers whatever effect it is given): a handler
-    that picks the body by effect type calls it with ``(effect, k)``, as ``mock_handlers`` does.
+    that picks the body by effect type calls it with ``(effect, k)``, as ``mock_handlers`` does, and
+    ``make_blocking_scheduled_handler`` marks it as a handler that answers every effect.
     """
 
     @do
@@ -34,9 +36,16 @@ def _scheduled_body(handler: SimpleHandler) -> Callable[..., Any]:
     return scheduled_body
 
 
-def make_blocking_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
-    """Alias for sync blocking handlers."""
-    return _scheduled_body(handler)
+def make_blocking_scheduled_handler(handler: SimpleHandler) -> ProgramHandler:
+    """The handler that answers every effect with ``handler(effect)``, blocking while it runs.
+
+    A handler factory (ADR-DOE-API-001 R3), applied like every handler:
+    ``make_blocking_scheduled_handler(fn)(program)``. The handler answers every effect the program
+    performs and passes none outward, so ``fn`` must answer each one. ``fn`` holds the scheduler's
+    thread while it runs: a blocking call such as an agent's await goes through
+    ``_offloaded_scheduled_body`` instead (L-K4-1).
+    """
+    return _as_handler(_scheduled_body(handler))
 
 
 def _offloaded_scheduled_body(handler: SimpleHandler) -> Callable[..., Any]:
@@ -69,8 +78,12 @@ def make_blocking_scheduled_handler_with_store(_handler: Callable[..., Any]) -> 
 
 def make_async_scheduled_handler(
     handler: Callable[[Any], Any],
-) -> Callable[..., Any]:
-    """Create a sync handler-protocol callable from an async-oriented handler."""
+) -> ProgramHandler:
+    """Deprecated: ``make_blocking_scheduled_handler(handler)``, with a DeprecationWarning.
+
+    A handler factory (ADR-DOE-API-001 R3): ``make_async_scheduled_handler(fn)(program)``. Await
+    effects in the program replace it.
+    """
     import warnings
 
     warnings.warn(
@@ -78,7 +91,7 @@ def make_async_scheduled_handler(
         DeprecationWarning,
         stacklevel=2,
     )
-    return _scheduled_body(handler)
+    return _as_handler(_scheduled_body(handler))
 
 
 def default_scheduled_handlers(

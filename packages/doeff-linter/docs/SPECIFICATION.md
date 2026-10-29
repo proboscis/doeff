@@ -961,7 +961,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   名指す欄(`(#^ (| Program EffectBase) prepare)`・`#^ Program later`・`doeff.Program` — 註の語の最後の段で比べる)は Program を運ぶ宣言
   なので、型を作る呼びの `:欄 値` の値は答えとして使う所ではない。拾うまま: 型の註の無い欄・`object` / `Any` の欄・別名で隠れた欄
   (別名は Program と綴られない)・位置で渡した値・repo の外(Python の dataclass など)で定義した型。事実: doeff-records の
-  `start-records-server` が `(RecordsServing … :prepare (ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
+  `start-records-server` が `(RecordsServing … :prepare (_ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
 - **拾わない所**: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数へ渡す形も — Program を受けて走らせる
   関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
   (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に
