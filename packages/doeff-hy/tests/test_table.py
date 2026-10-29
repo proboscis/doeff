@@ -3,13 +3,14 @@
 失敗ケース: 基をその場で書き換える表(下の _InPlaceTable)だと、古い表を持つ読み手が新しい行を読む — 同じ検が赤になる。
 """
 
+from collections.abc import Callable
 from itertools import accumulate
 from typing import NamedTuple
 
 import hy  # noqa: F401  # .hy の module の import hook
 import pytest
 
-from doeff_hy._table import COMPACT_RATIO, MIN_DELTA, Table, TableWrite, draft_of, table_of
+from doeff_hy._table import COMPACT_RATIO, LINE_LIMIT, MIN_DELTA, Table, TableWrite, draft_of, table_of
 
 
 def _table(n: int) -> Table[int]:
@@ -581,3 +582,97 @@ def test_copy_and_pickle_keep_the_rows_and_drop_the_flat_copy() -> None:
     for back in (copy.copy(table), copy.deepcopy(table), pickle.loads(pickle.dumps(table))):
         assert back == table and back.keys() == table.keys() and back.items() == table.items()
         assert back._flat is None or back._flat is not table._flat
+
+
+# ------------------------------------------------------------------ 系譜(agora card ki-6a5549018e73 — 子孫との比べは書きの数に比例する)
+
+
+def _rows_looked_up(monkeypatch: pytest.MonkeyPatch, compare: Callable[[], object]) -> int:
+    """比べ compare が表の行を何回引いたかを数えるため(引いた行の数 = 比べの仕事量)。"""
+    looked = [0]
+    row = Table.row
+
+    def counted(self: Table[object], key: str) -> object:
+        looked[0] += 1
+        return row(self, key)
+
+    monkeypatch.setattr(Table, "row", counted)
+    compare()
+    monkeypatch.setattr(Table, "row", row)
+    return looked[0]
+
+
+def _grown_chain(rows: int, writes: int) -> Table[int]:
+    """1 鍵ずつの書きを writes 回続けて差分の層を育てた表を作るため(本番の拍ごとの畳みの形)。"""
+    table = _table(rows)
+    for step in range(writes):
+        table = table.with_writes((TableWrite(key=f"k{(step * 37) % rows}", value=-step - 1),))
+    return table
+
+
+def test_comparing_a_descendant_reads_only_the_rows_written_between(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = MIN_DELTA * 20
+    grown = _grown_chain(rows, rows // COMPACT_RATIO - 2)
+    assert len(grown._delta) > 100  # 前提: 差分の層が育っている
+    moved = grown.with_writes((TableWrite(key="k5", value=-5000),))
+    assert moved._base is grown._base
+    # 差分の層の 150 行を読まず、2 つの間に書いた 1 鍵だけを引く(前後の 2 つの表で 1 回ずつ)。
+    assert _rows_looked_up(monkeypatch, lambda: moved.changed_keys(grown)) <= 2
+    assert _rows_looked_up(monkeypatch, lambda: moved == grown) <= 2
+    assert moved.changed_keys(grown) == ("k5",) and grown.changed_keys(moved) == ("k5",)
+    assert (moved == grown) is False
+    # 祖先との比べも、間に書いた鍵だけ。
+    older = _grown_chain(rows, 3)
+    assert set(moved.changed_keys(older)) <= {f"k{(step * 37) % rows}" for step in range(rows)} | {"k5"}
+
+
+def test_the_counterexample_a_sibling_compares_the_whole_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 同じ親から作った 2 人目の子は系譜に載らない — 子孫でない表どうしの比べは前の道(差分の層の全部)で、答えは正しい。
+    rows = MIN_DELTA * 20
+    grown = _grown_chain(rows, rows // COMPACT_RATIO - 2)
+    first = grown.with_writes((TableWrite(key="k5", value=-5000),))
+    second = grown.with_writes((TableWrite(key="k6", value=-6000),))
+    assert first._line is grown._line and second._line is not grown._line
+    assert first.changed_keys(second) == ("k5", "k6")
+    assert _rows_looked_up(monkeypatch, lambda: first.changed_keys(second)) > 100
+
+
+def test_comparing_across_the_rebuild_of_the_base_reads_only_the_written_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = MIN_DELTA * 20
+    grown = _grown_chain(rows, rows // COMPACT_RATIO)
+    rebuilt = grown.with_writes((TableWrite(key="k7", value=-7000), TableWrite(key="k8", value=-8000)))
+    assert rebuilt._base is not grown._base  # 前提: この書きで基を作り直した
+    assert _rows_looked_up(monkeypatch, lambda: rebuilt.changed_keys(grown)) <= 4
+    assert rebuilt.changed_keys(grown) == ("k7", "k8")
+
+
+def test_chains_siblings_drafts_and_line_breaks_compare_like_their_rows() -> None:
+    import random
+
+    for seed in range(20):
+        rng = random.Random(seed)
+        model = {f"k{i}": i for i in range(rng.choice((5, 80, 300)))}
+        start = table_of(tuple(TableWrite(key=k, value=v) for k, v in model.items()))
+        kept: list[tuple[Table[int], dict[str, int]]] = [(start, model)]
+        for step in range(120):
+            # 多くは最後の表の子(系譜に載る)・時々は古い表の子(2 人目の子 — 新しい系譜)。
+            table, rows = kept[-1] if rng.random() < 0.8 else rng.choice(kept)
+            writes = _random_writes(rng.randrange(10**6), len(rows) + 20, rng.choice((1, 2, 5, 40)))
+            if rng.random() < 0.5:
+                child = table.with_writes(tuple(TableWrite(key=k, value=v) for k, v in writes))
+            else:
+                draft = draft_of(table)
+                for k, v in writes:
+                    draft.remove(k) if v is None else draft.put(k, v)
+                child = draft.freeze()
+            kept = [*kept, (child, _reference(rows, writes))]
+        for _ in range(200):
+            (left, left_rows), (right, right_rows) = rng.choice(kept), rng.choice(kept)
+            expected = _changed_reference(left_rows, right_rows)
+            assert left.changed_keys(right) == expected, seed
+            assert (left == right) is (left_rows == right_rows), seed
+
+
+def test_a_line_keeps_no_more_keys_than_its_table_holds() -> None:
+    table = _grown_chain(MIN_DELTA * 2, MIN_DELTA * 10)
+    assert table._line.keys <= max(LINE_LIMIT, table.size())

@@ -15,8 +15,16 @@
 ;;;
 ;;; FrozenMap(frozen.hy)との違い: FrozenMap は「鍵の集合が開いた値」を凍らせる写像で、書くたびに丸ごと写す。Table は拍ごとに
 ;;; 少しずつ変わる大きな表のための物で、写像ではない。
+;;;
+;;; 系譜(_Line)— 前に読み手へ渡した表と今の表の違う鍵(changed-keys)と等しさ(__eq__)を、2 つの表の間の書きの数に比例して答えるため
+;;; (agora card ki-6a5549018e73)。基を分け合う 2 つの表の比べは差分の層の全部を読むので、差分が基の 1/COMPACT-RATIO まで育つ間、
+;;; 拍ごとの比べの費用が表の行の数に比例して伸びた(agora の画面の会話 5,554 の表で 1 回 0.1〜0.8 ms・基の作り直しの拍は全部の行 11 ms)。
+;;; with-writes(と下書きの freeze)で作った子の表は、親がまだ子を持たなければ親と同じ系譜に載り、系譜の記録へ書いた鍵の列を 1 つ足す。
+;;; 同じ系譜の 2 つの表は一方が他方の子孫なので、違い得る鍵は 2 つの位置の間に記録した鍵だけ。2 人目の子・記録が LINE-LIMIT を越えた子・
+;;; table-of と写しで作った表は新しい系譜を始める(比べは前の道 — 基を分け合えば差分、ほかは全部の鍵)。記録は鍵だけを持つ(行を持たない)。
 (import dataclasses [dataclass])
 (import collections.abc [Mapping])
+(import threading [Lock])
 (import typing [Generic TypeVar])
 
 (setv V (TypeVar "V"))
@@ -25,6 +33,8 @@
 (setv COMPACT-RATIO 8)
 ;; 基が小さい間は差分の上限を下げすぎない(小さい表で毎回作り直さない)。
 (setv MIN-DELTA 64)
+;; 1 本の系譜に記録する鍵の数の上限(子の表の行の数と MIN-DELTA の大きい方)— 系譜の記録は表 1 つ分を越えて育たない。
+(setv LINE-LIMIT MIN-DELTA)
 ;; 真偽と長さの読みを断る時の文(Table と TableDraft で同じ文 — 直し方を名指す)。
 (setv TABLE-TRUTH-REFUSAL "Table / TableDraft は真偽で読まない — 空かどうかは (= (.size t) 0) か (> (.size t) 0) で読む(agora-redesign #2755)")
 (setv TABLE-LEN-REFUSAL "Table / TableDraft は len で数えない — 行の数は (.size t) で読む(agora-redesign #2755)")
@@ -38,21 +48,37 @@
   (#^ (| V None) value))
 
 
+(defclass _Line []
+  "1 本の系譜(頭の註): log = 位置 → 書きの鍵の列(位置 i の項は、位置 i の表から位置 i + 1 の子を作った書きの鍵 — 項は足すだけ)・keys = 記録した
+   鍵の数・lock = 子を載せる判断と記録の足しを 1 つにする錠(free-threaded の Python で 2 つの thread が同じ親から子を作っても、載るのは 1 人)。"
+  (setv __slots__ #("log" "keys" "lock"))
+
+  (defn #^ None __init__ [self]
+    (setv self.log {}
+          self.keys 0
+          self.lock (Lock))))
+
+
 (defclass Table [(get Generic V)]
   "書き換えない表(頭の註)。作るのは table-of。引くのは row・keys・rows・items・size、書きは with-writes(新しい Table を返す)。"
-  (setv __slots__ #("_base" "_delta" "_removed" "_size" "_flat"))
+  (setv __slots__ #("_base" "_delta" "_removed" "_size" "_flat" "_line" "_at"))
   (#^ (get dict #(str V)) _base)
   (#^ (get dict #(str V)) _delta)
   (#^ (get frozenset str) _removed)
   (#^ int _size)
   ;; 全行の写し(基と差分を合わせた dict)— 初めて全行を読む時に 1 度だけ作る(下の _flat-rows)。基だけの表は基そのもの。
   (#^ (| (get dict #(str V)) None) _flat)
+  ;; 系譜と、その記録の中の位置(頭の註)— 作った表は新しい系譜の位置 0。子を親の系譜へ載せるのは _on-line。
+  (#^ _Line _line)
+  (#^ int _at)
 
   (defn #^ None __init__ [self #^ (get dict #(str V)) base #^ (get dict #(str V)) delta #^ (get frozenset str) removed]
     (object.__setattr__ self "_base" base)
     (object.__setattr__ self "_delta" delta)
     (object.__setattr__ self "_removed" removed)
     (object.__setattr__ self "_flat" None)
+    (object.__setattr__ self "_line" (_Line))
+    (object.__setattr__ self "_at" 0)
     ;; 行の数 = 基の行 − 消した基の行 + 基に無い差分の行。差分と消した鍵の数に比例して数える(基の全鍵を回らない — `&` は小さい方を回る。
     ;; 基の全鍵を回る `(- (.keys delta) (.keys base))` は 1 行の書きの費用の 65〜96% だった・card E0)。
     (object.__setattr__ self "_size" (+ (- (len base) (len (& removed (.keys base))))
@@ -106,7 +132,7 @@
         (if (is write.value None)
             (.pop written write.key None)
             (setv (get written write.key) write.value)))
-      (return (_base-only-table written)))
+      (return (_on-line self (_base-only-table written) (tuple (gfor write writes write.key)))))
     (_with-pending self (dfor write writes write.key write.value)))
 
   (defn #^ str __repr__ [self]
@@ -138,6 +164,14 @@
     ;; 比例する — 1 拍に数件書く表の拍ごとの比べ。card ki-46d8cc853aca: agora の画面の盤の写しの比べが card 2,088 枚の全行を読んでいた)。
     ;; 行は同一性を先に見て、違う object だけ値で比べる(changed-keys と同じ — 片方の差分を写して書き足した表は、写した行が同じ object)。
     ;; 値だけで比べると、鍵の集合を回る順(文字列の hash の乱数で process ごとに変わる)で読む行の数が変わった。
+    ;; 同じ系譜の表(一方が他方の子孫 — 頭の註)は、2 つの間に書いた鍵だけを比べて足りる(書きの数に比例する)。
+    (setv span (_line-span self other))
+    (when (is-not span None)
+      (return (and (= self._size other._size)
+                   (all (gfor key span
+                              :setv mine (.row self key)
+                              :setv theirs (.row other key)
+                              (or (is mine theirs) (= mine theirs)))))))
     (when (is self._base other._base)
       (return (all (gfor key (| (.keys self._delta) self._removed (.keys other._delta) other._removed)
                          :setv mine (.row self key)
@@ -153,9 +187,12 @@
      だけ値で比べる(値の同じ行を書き直した鍵は名乗らない — __eq__ が等しいと読む表どうしは空)。"
     (when (is self other)
       (return #()))
-    (setv candidates (if (is self._base other._base)
-                         (| (set (.keys self._delta)) self._removed (set (.keys other._delta)) other._removed)
-                         (| (set (.keys self)) (set (.keys other)))))
+    ;; 同じ系譜の表は 2 つの間に書いた鍵だけ(頭の註 — 差分の層の全部を読まない)。
+    (setv span (_line-span self other))
+    (setv candidates (cond (is-not span None) span
+                           (is self._base other._base)
+                           (| (set (.keys self._delta)) self._removed (set (.keys other._delta)) other._removed)
+                           True (| (set (.keys self)) (set (.keys other)))))
     (tuple (sorted (gfor key candidates
                          :setv mine (.row self key)
                          :setv theirs (.row other key)
@@ -181,7 +218,36 @@
   (object.__setattr__ table "_removed" (frozenset))
   (object.__setattr__ table "_size" (len base))
   (object.__setattr__ table "_flat" None)
+  (object.__setattr__ table "_line" (_Line))
+  (object.__setattr__ table "_at" 0)
   table)
+
+
+(defn #^ (get Table V) _on-line [#^ (get Table V) parent #^ (get Table V) child #^ (get tuple #(str ...)) keys]
+  "書いて作ったばかりの子の表 child を、親 parent の系譜へ載せるため(頭の註)— 親がまだ子を持たず(親の位置が記録の末尾)、記録が
+   LINE-LIMIT と子の行の数の大きい方を越えない時だけ、書いた鍵 keys を記録へ足して載せる。載せない子は作った時の新しい系譜のまま。
+   child はこの module の中で作ったばかりの表だけを受ける(まだ誰にも渡していない)。答えは child。"
+  (setv line parent._line)
+  (with [line.lock]
+    (setv at (len line.log))
+    (when (and (= parent._at at)
+               (<= (+ line.keys (len keys)) (max LINE-LIMIT child._size)))
+      (setv (get line.log at) keys)
+      (setv line.keys (+ line.keys (len keys)))
+      (object.__setattr__ child "_line" line)
+      (object.__setattr__ child "_at" (+ at 1))))
+  child)
+
+
+(defn #^ (| (get frozenset str) None) _line-span [#^ (get Table V) left #^ (get Table V) right]
+  "同じ系譜の 2 つの表の間で書いた鍵の集合(違い得る鍵の全部 — 頭の註)を答えるため。系譜が違えば None(呼び手は前の道で比べる)。
+   記録は足すだけなので、2 つの位置の間の項は 2 つの表を作った時から変わらない。"
+  (when (is-not left._line right._line)
+    (return None))
+  (setv low (min left._at right._at)
+        high (max left._at right._at))
+  (setv log left._line.log)
+  (frozenset (gfor at (range low high) key (get log at) key)))
 
 
 (defn #^ (get Table V) _with-pending [#^ (get Table V) table #^ (get dict #(str (| V None))) pending]
@@ -200,14 +266,17 @@
       (if (is value None)
           (.pop written key None)
           (setv (get written key) value)))
-    (return (_base-only-table written)))
+    (return (_on-line table (_base-only-table written) (tuple pending))))
   (setv puts (dfor #(key value) (.items pending) :if (is-not value None) key value)
         drops (frozenset (gfor #(key value) (.items pending) :if (is value None) key))
         delta (| (dfor #(key value) (.items table._delta) :if (not-in key drops) key value) puts)
         removed (| (- table._removed (.keys puts)) (& drops (.keys table._base))))
-  (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len table._base) COMPACT-RATIO)))
-      (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) {} (frozenset))
-      (Table table._base delta (frozenset removed))))
+  ;; 子は親の系譜へ載る(基を作り直した子も — 系譜は基を問わず、2 つの表の間の書きの鍵だけを持つ)。
+  (_on-line table
+            (if (> (+ (len delta) (len removed)) (max MIN-DELTA (// (len table._base) COMPACT-RATIO)))
+                (Table (| (dfor #(key value) (.items table._base) :if (not-in key removed) key value) delta) {} (frozenset))
+                (Table table._base delta (frozenset removed)))
+            (tuple pending)))
 
 
 (defn #^ (get Table V) table-of [#^ (get tuple #((get TableWrite V) ...)) rows]
