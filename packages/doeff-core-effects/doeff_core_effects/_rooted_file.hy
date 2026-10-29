@@ -15,7 +15,7 @@
 (import posixpath)
 (import dataclasses [replace])
 (import doeff [EffectBase])
-(import doeff_core_effects.file_effects [FileFailed PathStat LockHeld Appended StatPath ReadText ReadBytes WriteText WriteBytes AppendText
+(import doeff_core_effects._file_effects [FileFailed PathStat LockHeld Appended StatPath ReadText ReadBytes WriteText WriteBytes AppendText
                                          AppendBytes TruncateFile SyncDirectory
                                          MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock
                                          ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage MeasureTree LinkFile
@@ -78,6 +78,7 @@
 
 
 (defhandler rooted-file-handler [#^ str root]
+  "file system の effect の path を ROOT の下へ移して外側の答え手へ出し直す(ROOT の dir を / に見せる)。"
   ;; 引数に残す理由: root は筋書きの世界の形(どの dir を / に見せるか)で、同じ組の中で pod ごとに違う値。
   ;; 節の順: 型で当てる節を先に、:when つきの EffectBase の節を最後に置く(:when が偽の EffectBase の節は、後ろの節を試さずに外側へ通す)。
   (CopyFile [source target]

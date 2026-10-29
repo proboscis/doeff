@@ -51,7 +51,7 @@
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
                                                 probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader
                                                 WsShortcut WsShortcutAnswered ws-shortcut-for ws-shortcut-outcome])
-(import doeff_core_effects.file_effects [ReadBytes FileFailed])
+(import doeff_core_effects._file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
 (val EMPTY-REPORT (WsSendReport :queued-frames 0 :queued-bytes 0 :flushed-bytes 0 :flush-seconds #() :dropped-bytes 0 :cuts 0))

@@ -1,6 +1,6 @@
 (require doeff-hy.macros [defk <- val])
 
-;;; rooted-file-handler(doeff_core_effects.rooted_file — agora-redesign #823 項目 1):
+;;; rooted-file-handler(doeff_core_effects._rooted_file — agora-redesign #823 項目 1):
 ;;;   * 1 つの memory の置き場を root ごとに分けて見せる: 同じ内側の path が root ごとに別の file を指し、書きは root の下に着く
 ;;;   * 答えの path(PathStat の real-path・FileFailed の path と文・LockHeld の path)は内側の path で返る(root を見せない)
 ;;;   * 反例: `..` で root の外(隣の root)を読もうとしても内側の / で止まる・相対 path は呼び手の誤りとして断る
@@ -8,10 +8,9 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.file_effects [FileFailed PathKind PathStat LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText
-                                         WriteText MakeDirectory RenamePath AcquireLock ReleaseLock MakeSymlink])
-(import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.rooted_file [rooted-file-handler])
+(import doeff_core_effects [FileFailed PathKind PathStat LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText MakeDirectory RenamePath AcquireLock ReleaseLock MakeSymlink])
+(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [rooted-file-handler])
 
 ;; 2 つの node の置き場(同じ内側の path /etc/x が node ごとに違う中身)。
 (val INITIAL (MemoryFiles :files #((MemoryFile :path "/nodes/a/etc/x" :content b"a")

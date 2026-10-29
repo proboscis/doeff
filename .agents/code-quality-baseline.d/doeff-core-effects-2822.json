@@ -16,7 +16,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memory_file.hy",
       "reason": "registered-with-legacy",
       "rule": "hy-rebind",
       "subject": "hy:rebind"
@@ -72,14 +72,14 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_policy.py",
       "reason": "registered-with-legacy",
       "rule": "type-suppression",
       "subject": "# type: ignore[misc]"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_policy.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_policy.py",
       "reason": "registered-with-legacy",
       "rule": "type-suppression",
       "subject": "# type: ignore[misc]"
@@ -100,21 +100,21 @@
     },
     {
       "count": 3,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 7,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_policy.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -128,7 +128,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_file_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -163,28 +163,28 @@
     },
     {
       "count": 8,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_effects.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 2,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_policy.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_policy.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 21,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memory_file.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -205,7 +205,7 @@
     },
     {
       "count": 15,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_file.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -338,56 +338,56 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "cached_fn"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "cache_handler"
     },
     {
       "count": 2,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "in_memory_cache_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "make_memo_rewriter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "sqlite_cache_handler"
@@ -457,56 +457,56 @@
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "in_memory_memo_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "make_memo_rewriter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "memo_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "sqlite_memo_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_memory_file.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "hyx_underXquestion_markX"

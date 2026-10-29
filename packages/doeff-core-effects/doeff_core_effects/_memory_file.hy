@@ -16,7 +16,7 @@
 (import collections.abc [Callable])
 (import dataclasses [replace :as with-fields])
 (import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
+(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
                                          StatPath MakeSymlink Appended AppendBytes TruncateFile SyncDirectory
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
@@ -375,6 +375,7 @@
 
 
 (defhandler memory-file-handler [#^ MemoryFiles initial]
+  "file system の effect に、memory の置き場(初めの中身 INITIAL)で答える模擬の答え手。今の中身は ReadMemoryFiles で読める。"
   ;; 引数に残す理由: 初めの中身は筋書きごとに違う値(設定ではなく模擬の世界そのもの)。
   (session var store initial)
   ;; 錠を待つ手(#(path Promise) の列・待った順)。置き場の中身ではないので MemoryFiles には入れない。

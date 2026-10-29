@@ -1,0 +1,120 @@
+"""Cache effects for memoization."""
+
+from collections.abc import Mapping
+from typing import Any
+
+from doeff import EffectBase
+from doeff_core_effects._cache_policy import (
+    CacheLifecycle,
+    CachePolicy,
+    CacheStorage,
+    ensure_cache_policy,
+)
+
+
+class CacheGetEffect(EffectBase):
+    """Requests the cached value for the key."""
+    def __init__(self, key: object) -> None:
+        super().__init__()
+        self.key = key
+
+    def __repr__(self) -> str:
+        return f"CacheGet({self.key!r})"
+
+
+class CachePutEffect(EffectBase):
+    """Persists the value under the key."""
+    def __init__(self, key: object, value: object, policy: CachePolicy) -> None:
+        super().__init__()
+        if not isinstance(policy, CachePolicy):
+            raise TypeError(f"policy must be CachePolicy, got {type(policy).__name__}")
+        self.key = key
+        self.value = value
+        self.policy = policy
+
+    def __repr__(self) -> str:
+        return f"CachePut({self.key!r}, ...)"
+
+
+class CacheDeleteEffect(EffectBase):
+    """Deletes the value under the key."""
+    def __init__(self, key: object) -> None:
+        super().__init__()
+        self.key = key
+
+    def __repr__(self) -> str:
+        return f"CacheDelete({self.key!r})"
+
+
+class CacheExistsEffect(EffectBase):
+    """Checks if a key exists in the cache."""
+    def __init__(self, key: object) -> None:
+        super().__init__()
+        self.key = key
+
+    def __repr__(self) -> str:
+        return f"CacheExists({self.key!r})"
+
+
+# Convenience constructors (lowercase)
+
+def cache_get(key: Any) -> CacheGetEffect:
+    """Build a CacheGetEffect that asks for the cached value under the key."""
+    return CacheGetEffect(key=key)
+
+
+def cache_put(
+    key: Any,
+    value: Any,
+    ttl: float | None = None,
+    *,
+    lifecycle: CacheLifecycle | str | None = None,
+    storage: CacheStorage | str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    policy: CachePolicy | Mapping[str, Any] | None = None,
+) -> CachePutEffect:
+    """Build a CachePutEffect that stores the value under the key with a CachePolicy built from the arguments."""
+    cache_policy = ensure_cache_policy(
+        ttl=ttl,
+        lifecycle=lifecycle,
+        storage=storage,
+        metadata=metadata,
+        policy=policy,
+    )
+    return CachePutEffect(key=key, value=value, policy=cache_policy)
+
+
+def cache_delete(key: Any) -> CacheDeleteEffect:
+    """Build a CacheDeleteEffect that deletes the cached value under the key."""
+    return CacheDeleteEffect(key=key)
+
+
+def cache_exists(key: Any) -> CacheExistsEffect:
+    """Build a CacheExistsEffect that asks whether cache storage holds the key."""
+    return CacheExistsEffect(key=key)
+
+
+# Capitalized aliases
+CacheGet = cache_get
+CachePut = cache_put
+CacheDelete = cache_delete
+CacheExists = cache_exists
+
+
+__all__ = [
+    "CacheDelete",
+    "CacheDeleteEffect",
+    "CacheExists",
+    "CacheExistsEffect",
+    "CacheGet",
+    "CacheGetEffect",
+    "CacheLifecycle",
+    "CachePolicy",
+    "CachePut",
+    "CachePutEffect",
+    "CacheStorage",
+    "cache_delete",
+    "cache_exists",
+    "cache_get",
+    "cache_put",
+]

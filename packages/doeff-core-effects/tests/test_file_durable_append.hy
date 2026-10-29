@@ -9,10 +9,10 @@
 (import unittest.mock [Mock])
 (import doeff [with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.file_effects [FileFailed Appended MemoryFiles ReadMemoryFiles MakeDirectory ReadBytes AppendBytes TruncateFile SyncDirectory])
-(import doeff_core_effects.os_file [os-file-handler offloaded-file-handler])
-(import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.rooted_file [rooted-file-handler])
+(import doeff_core_effects [FileFailed Appended MemoryFiles ReadMemoryFiles MakeDirectory ReadBytes AppendBytes TruncateFile SyncDirectory])
+(import doeff_core_effects [os-file-handler offloaded-file-handler])
+(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [rooted-file-handler])
 (import doeff_core_effects [scheduled])
 
 

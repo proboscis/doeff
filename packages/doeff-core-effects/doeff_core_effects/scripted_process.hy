@@ -52,7 +52,7 @@
                                             WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             not-started-outcome start-refusal executable-file-answer environment-answer])
-(import doeff_core_effects.file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
+(import doeff_core_effects._file_effects [PathKind PathStat StatPath MakeDirectory AppendText FileFailed])
 
 
 (defrecord ScriptedCommand

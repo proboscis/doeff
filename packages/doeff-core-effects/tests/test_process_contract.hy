@@ -27,7 +27,7 @@
 (import os)
 (import signal)
 (import sys)
-(import doeff_core_effects.file_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
+(import doeff_core_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
                                             WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled

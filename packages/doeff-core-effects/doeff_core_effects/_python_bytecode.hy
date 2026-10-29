@@ -19,7 +19,7 @@
 (import concurrent.futures [ProcessPoolExecutor])
 (import doeff [run])
 (import doeff_hy_bytecode_guard [bytecode-is-current source-to-code-as-import])
-(import doeff_core_effects.file_effects [SourceNotCompiled])
+(import doeff_core_effects._file_effects [SourceNotCompiled])
 
 
 ;; PEP 552 の hash 方式の .pyc の頭の flags: bit 0 = hash 方式・bit 1 = import の時に source の hash を検める(checked)。

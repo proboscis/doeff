@@ -34,7 +34,7 @@
 (import tempfile)
 (import time)
 (import pathlib [Path])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage Appended StatPath ReadText ReadBytes
+(import doeff_core_effects._file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld DiskUsage Appended StatPath ReadText ReadBytes
                                          WriteText WriteBytes AppendText AppendBytes TruncateFile SyncDirectory MakeDirectory ListDirectory
                                          WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
@@ -374,6 +374,7 @@
 
 
 (defhandler os-file-handler
+  "file system の effect に、本物の file system(os・shutil・tempfile・fcntl)をその場で呼んで答える。"
   ;; 本物の file system(頭の註)。
   (StatPath [path follow-symlinks]
     (<- answer (stat-path path follow-symlinks))
@@ -460,6 +461,7 @@
 
 
 (defhandler offloaded-lock-handler
+  "AcquireLock に、錠の取りを別の thread で待って答える(他の file の effect は外側の答え手へ通す)。"
   ;; 錠の取りだけを thread で待つ答え手(頭の註)。他の file の effect は外側の os-file-handler が答える。
   (AcquireLock [path]
     (<- answer (| LockHeld FileFailed) (offloaded LOCK-THREADS (fn [] (run-detached (acquire-lock path))) release-abandoned))
@@ -467,6 +469,7 @@
 
 
 (defhandler offloaded-tree-handler
+  "MeasureTree・RemoveTree・StatTree に、木の数え・消し・様子つきの歩きを別の thread で待って答える(他の file の effect は外側の答え手へ通す)。"
   ;; 木の数え(MeasureTree)と消し(RemoveTree)と様子つきの歩き(StatTree)だけを thread で待つ答え手(頭の註)。他の file の effect は外側の
   ;; os-file-handler が答える。待つ task が取り消された後の答えは何も持たない(数えは数・消しは終わった印・歩きは様子の列)— 後始末は要らない。
   (MeasureTree [path]
@@ -481,6 +484,7 @@
 
 
 (defhandler offloaded-file-handler
+  "同期の file の effect(読み・書き・追記・写し・改名・張り・dir 作りなど)に、別の thread で待って答える(錠と木の effect は外側の答え手へ通す)。"
   ;; 同期の file の効果(頭の註の一覧 — 錠と木の数え・消し・様子つきの歩きと bytecode の作りの外の全部)を thread で待つ答え手。他の file の
   ;; effect は外側の答え手(offloaded-lock-handler・offloaded-tree-handler・os-file-handler)が答える。待つ task が取り消された後の答えは
   ;; 何も持たない(書き・追記・写し・改名・張り・dir 作りは終わった印、読みは値)— 後始末は要らない。走り出した書きと写しは走り切る。

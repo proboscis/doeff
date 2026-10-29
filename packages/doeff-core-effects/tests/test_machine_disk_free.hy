@@ -7,8 +7,9 @@
 (import platform)
 (import shutil)
 (import doeff [with_handlers])
-(import doeff_core_effects.file_effects [ReadDiskFree ReadDiskUsage DiskUsage])
-(import doeff_core_effects.os_file [os-file-handler free-reader-for reread-free])
+(import doeff_core_effects [ReadDiskFree ReadDiskUsage DiskUsage])
+(import doeff_core_effects [os-file-handler]
+        doeff_core_effects._os_file [free-reader-for reread-free])
 (import doeff_core_effects.darwin_volume [darwin-volume-free])
 
 
