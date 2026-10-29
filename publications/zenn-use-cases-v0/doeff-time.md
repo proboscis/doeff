@@ -127,7 +127,7 @@ print(run(scheduled(sim_time_handler(start_time=START)(two_naps()))))  # doeff-t
 ![sim_time_handlerが、待つkを持って時計を進める](/images/zenn-use-cases-v0/generated/time-flow.png)
 *2つのnapが待ちで止まると、時計はそれぞれのkを持ちます。どのタスクも動けない時にだけ、時刻を次の起床まで進めて、そのkを再開します。*
 
-`sim_time_handler`は、待っている`k`を、それぞれの起床の時刻まで持ちます。時計を進めるのは、優先度がいちばん低い(idleの)タスクです。スケジューラはこのタスクを、ほかの全部のタスクが待っている時にだけ走らせます。だから時刻は、どのタスクも動けない時にだけ進みます。このハンドラは、どのプログラムでも`yield`できるエフェクトだけを通して、スケジューラとやりとりします。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)では、これに似た時計を約30行で作っています。
+`sim_time_handler`は、待っている`k`を、それぞれの起床の時刻まで持ちます。図は、再開を`Resume`と書いています。コードの`sim_time_handler`は、入門で見た`Transfer(k, value)`で再開します。タスクは続きを進め、ハンドラに制御は戻りません。時計を進めるのは、優先度がいちばん低い(idleの)タスクです。スケジューラはこのタスクを、ほかの全部のタスクが待っている時にだけ走らせます。だから時刻は、どのタスクも動けない時にだけ進みます。このハンドラは、どのプログラムでも`yield`できるエフェクトだけを通して、スケジューラとやりとりします。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)では、これに似た時計を約30行で作っています。
 
 これが、時間を、呼び出す関数でなくエフェクトにする訳です。ハンドラは、`yield`が何を返すかを決めます。そして`k`を持つので、プログラムの残りをいつ走らせるかも決めます。
 
@@ -338,7 +338,7 @@ Pythonには、テストで待ちを速くする方法がもうあります。20
 pip install doeff doeff-time pytest   # CPython 3.11から3.14で入る。
 ```
 
-この記事の例はどれも、doeff 0.8.0とdoeff-time 0.1.0で、載せたとおりに走ります。完全なファイルは[examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)にあります。[doeff-timeのREADME](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)は、時間のエフェクトの全部と、時計ごとに守る約束を挙げています。
+この記事の例はどれも、doeff 0.8.0とdoeff-time 0.1.0で、載せたとおりに走ります。完全なファイルは[examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)にあります。[doeff-timeのREADME](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)は、時計ごとに守る約束を挙げています。
 
 今のテストで、時間が遅さや不安定さの元になっているのはどこですか。backoffを挟むリトライでしょうか、cronのような予定でしょうか、タイムアウトでしょうか。issueは https://github.com/proboscis/doeff/issues で受け付けています。
 
@@ -348,10 +348,10 @@ pip install doeff doeff-time pytest   # CPython 3.11から3.14で入る。
 
 ## 参考
 
-この記事のコードは、2026年10月29日に確かめました。PyPIのdoeff 0.8.0とdoeff-time 0.1.0を使いました。Pythonは3.11・3.12・3.14で試しました。
+この記事のコードは、2026年10月29日に確かめました。PyPIのdoeff 0.8.0とdoeff-time 0.1.0を使いました。Pythonは3.11・3.12・3.13・3.14で試しました。
 
 - [この記事の完全な例(clock.py・report.py・test_report.py)](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)
-- [doeff-timeのREADME(時間のエフェクトと、時計ごとの約束)](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)
+- [doeff-timeのREADME(時計ごとの約束)](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)
 - [Why Effects?の節「Virtual time: hours of waiting in an instant」](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)
 - [trioのテスト用の時計](https://trio.readthedocs.io/en/stable/reference-testing.html)
 - [looptime](https://github.com/nolar/looptime)
