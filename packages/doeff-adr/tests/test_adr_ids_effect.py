@@ -1,7 +1,7 @@
 """載っている ADR の id の一覧を読む操作は effect AdrIds で、GetAdr と同じ handler の工場 adr_registry が答える(card ki-2d28425e0d40)。
 
 決め: 依頼書 lt-SNXDP773DP61WQ8S3D5HSHW2B1 の答え lt-NJMPGF51C0FBF49SC430JWEQ82(effect にする・ADR-DOE-API-001 R21)。
-関数 adr_ids は、外の repo の呼び手を書き換えるまで移し替えの層として残り、その後に消す。
+関数 adr_ids は、外の repo の呼び手(agora L6159・custody L74)を AdrIds へ書き換えた後に消した。
 
 adr_registry() は process の登録簿の id を、adr_registry(specs=[spec, …]) はその列の id だけを並べて返す。
 内側に据えた handler が先に答えるので、deftest の doeff_interpreter が外に adr_registry() を据えていても、test の中で
@@ -90,12 +90,12 @@ def test_the_answer_is_a_new_list_each_time() -> None:
     assert run(adr_registry(specs=table)(body())) == ["ADR-TABLE-A"]
 
 
-def test_adr_ids_and_its_answerer_are_public() -> None:
-    """effect AdrIds は入口に在る。adr_ids は移し替えの層で、AdrIds と同じ登録簿を読む。"""
+def test_adr_ids_is_read_only_through_the_effect() -> None:
+    """effect AdrIds と工場 adr_registry は入口に在り、関数 adr_ids は入口にも registry にも無い(内側の _adr_ids だけ)。"""
     assert {"AdrIds", "adr_registry"} <= set(doeff_adr.__all__)
-    with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
-        assert doeff_adr.adr_ids() == run(adr_registry()(AdrIds())) == ["ADR-PROBE-001"]
+    assert "adr_ids" not in doeff_adr.__all__
+    assert not hasattr(doeff_adr, "adr_ids")
+    assert not hasattr(doeff_adr.registry, "adr_ids")
 
 
 def test_a_deftest_reads_the_ids_through_the_handler_its_fixture_installs(pytester) -> None:

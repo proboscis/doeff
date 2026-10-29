@@ -2,8 +2,8 @@
 
 決め: GetAdr は依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする・card
 ki-24a2bca4339f・ADR-DOE-API-001 R20)。AdrIds は依頼書 lt-SNXDP773DP61WQ8S3D5HSHW2B1 の答え lt-NJMPGF51C0FBF49SC430JWEQ82
-(effect にする・card ki-2d28425e0d40・ADR-DOE-API-001 R21)。前の関数 get_adr・adr_ids は、外の repo の呼び手を書き換えるまで
-移し替えの層として残る。
+(effect にする・card ki-2d28425e0d40・ADR-DOE-API-001 R21)。前の関数 get_adr は、外の repo の呼び手を書き換えるまで
+移し替えの層として残る。前の関数 adr_ids は外の repo の呼び手を書き換えた後に消した(本体は内側の registry._adr_ids)。
 
 deftest で使うには、project の doeff_interpreter fixture が adr_registry() を据える(doeff-adr は handler の組を選ばない —
 README の「doeff_interpreter」の節)。test の中で別の表を使う時は、program の一部に adr_registry(specs=[spec, …]) を据える:
