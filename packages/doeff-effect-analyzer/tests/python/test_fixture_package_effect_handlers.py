@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 
 from doeff_test_target.effects import (
     ReadFixtureValue,
@@ -11,7 +11,7 @@ from doeff_test_target.effects import (
 )
 from doeff_test_target.handlers import mock_handlers, production_handlers
 from doeff_test_target.scenarios.target_effects import fixture_effect_roundtrip
-from test_target_run_support import run_with_core_handlers
+from fixture_package_run_support import run_with_core_handlers
 
 
 def _run_with_handler(program, handler, *, env=None):

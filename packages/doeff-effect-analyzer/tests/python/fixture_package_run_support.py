@@ -1,10 +1,11 @@
-"""Shared run helper for the doeff-test-target test suite.
+"""Shared run helper for the tests of the fixture package ``doeff_test_target`` (``tests/fixtures``).
 
 The removed ``run(program, handlers=default_handlers(), env=...)`` surface is
 replaced by composing handlers explicitly: every handler is a Program ->
 Program function, so the stack is built by calling each one around the
 program. Uniquely named (not ``conftest``) so it does not collide with the
-other suites' helper modules when collected together.
+other suites' helper modules when collected together, and not ``test_*`` so
+pytest does not collect it as a test file.
 """
 
 from collections.abc import Mapping
