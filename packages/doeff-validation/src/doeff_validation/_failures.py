@@ -1,6 +1,7 @@
-"""doeff-validation の値の型 — 検査の指定(``CheckSpec``)と失敗の記録と ``ValidationException``。
+"""doeff-validation の値の型 — 検査の指定(``Check``)と実行の印(``Perform``)と失敗の記録と
+``ValidationException``。
 
-``CheckSpec`` は ``validate`` に渡す値を作るだけで、単独では Program にならない(``yield`` できない)。
+``Check`` は ``validate`` に渡す値で、単独では Program にならない(``yield`` できない)。
 これが「check は validate の直下にだけ書ける」を Python の型で表したもの。
 
 設計の記録: ``docs/design/doeff-validation/design.md``。
@@ -8,13 +9,21 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import BuiltinFunctionType, FunctionType, MethodType
+
+from doeff import DoExpr, EffectBase
+
+
+def _is_program(value: object) -> bool:
+    """値が Program か効果か(Perform の引数・validate の項目の確かめと、判定の値の取り違えの検出に使う)。"""
+    return isinstance(value, (DoExpr, EffectBase))
 
 
 @dataclass(frozen=True)
 class CheckArgument:
     """検査に渡す引数 1 つ — 書いた字面と、項目の中で評価する thunk と、効果の印。
 
-    ``perform`` が真(Hy の ``(! …)`` / Python の ``perform(…)``)なら thunk の値は Program か効果で、
+    ``perform`` が真(Hy の ``(! …)`` / Python の ``Perform(…)``)なら thunk の値は Program か効果で、
     項目の中で実行した結果の値を比べる。偽なら thunk の値をそのまま比べる(Program の値でも実行しない)。
     """
 
@@ -24,23 +33,79 @@ class CheckArgument:
 
 
 @dataclass(frozen=True)
-class Performed:
-    """Python の check で、引数を効果として項目の中で実行する印(Hy の ``(! …)`` に当たる)。"""
+class Perform:
+    """Python の Check で、引数を効果として項目の中で実行する印(Hy の ``(! …)`` に当たる)。
+
+    ``Check(operator.eq, Perform(CountSeats(node)), 0)`` — 印の無い引数は、Program の値でも実行せず
+    そのまま比べる。
+    """
 
     program: object
 
+    def __post_init__(self) -> None:
+        if not _is_program(self.program):
+            raise TypeError(
+                f"Perform: Program か効果を渡してください — {type(self.program).__name__}"
+            )
 
-@dataclass(frozen=True)
-class CheckSpec:
-    """検査 1 件の指定。``validate`` の直下の項目としてだけ意味を持つ。
 
-    ``predicate`` に評価した後の引数を渡し、その値の真偽で判定する。
+def _callable_name(fn: Callable[..., object]) -> str:
+    """Check の式の字面に使う、述語の名前。"""
+    if isinstance(fn, (FunctionType, BuiltinFunctionType, MethodType)):
+        return fn.__name__
+    return repr(fn)
+
+
+def _check_argument(value: object) -> CheckArgument:
+    """Check の引数を CheckArgument にする(``Perform`` の印があれば効果として実行する)。
+
+    CheckArgument はそのまま使う — Hy の check の展開は、評価を項目の中へ遅らせる thunk と書いたままの
+    字面を CheckArgument で渡す。
+    """
+    match value:
+        case CheckArgument():
+            return value
+        case Perform(program=program):
+            return CheckArgument(f"Perform({program!r})", lambda: program, True)
+        case _:
+            return CheckArgument(repr(value), lambda: value, False)
+
+
+@dataclass(frozen=True, init=False)
+class Check:
+    """検査 1 件の指定。``validate`` の直下の項目としてだけ意味を持つ(単独では Program にならない)。
+
+    ``Check(operator.eq, job.phase, Phase.PENDING, reason=R)`` — 各引数は普通の値か、
+    ``Perform(program)`` の印を付けた効果。印の付いた引数は項目の中で実行し、結果の値を
+    ``predicate`` に渡して、その値の真偽で判定する。``expression`` を渡さなければ、述語の名前と各引数の
+    字面から式の字面を作る。
     """
 
     expression: str
     predicate: Callable[..., object]
     arguments: tuple[CheckArgument, ...]
     reason: object | None
+
+    def __init__(
+        self,
+        predicate: Callable[..., object],
+        *args: object,
+        reason: object | None = None,
+        expression: str | None = None,
+    ) -> None:
+        if not callable(predicate):
+            raise TypeError(
+                "Check: 第 1 引数には述語(callable)を渡してください — Check(operator.eq, a, b)"
+            )
+        arguments = tuple(_check_argument(a) for a in args)
+        object.__setattr__(
+            self,
+            "expression",
+            expression or f"{_callable_name(predicate)}({', '.join(a.source for a in arguments)})",
+        )
+        object.__setattr__(self, "predicate", predicate)
+        object.__setattr__(self, "arguments", arguments)
+        object.__setattr__(self, "reason", reason)
 
 
 @dataclass(frozen=True)

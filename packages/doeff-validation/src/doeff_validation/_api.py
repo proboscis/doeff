@@ -1,85 +1,28 @@
-"""doeff-validation の利用者向けの関数 — ``validate`` と ``check``。
+"""doeff-validation の利用者向けの関数 — ``validate``。
 
-``validate`` は doeff-traverse の上の薄い層: 項目の列を ``Traverse`` で走らせ(逐次か並行か
-fail-fast かは組み立ての根に置いた traverse の handler が決める)、要素ごとの分離で項目ごとの失敗を
-集める。Hy では ``(require doeff-hy.macros [defk validate check])`` で同じ意味のマクロを使う。
+``validate`` は doeff-traverse の上の薄い層: 項目(検査の指定 ``Check`` か Program)の列を ``Traverse`` で
+走らせ(逐次か並行か fail-fast かは組み立ての根に置いた traverse の handler が決める)、要素ごとの分離で
+項目ごとの失敗を集める。Hy では ``(require doeff-hy.macros [defk validate check])`` で同じ意味のマクロを使う。
 """
 
-from collections.abc import Callable
-from types import BuiltinFunctionType, FunctionType, MethodType
 from typing import TYPE_CHECKING
 
 from doeff_traverse import Inspect, Traverse
 
-from doeff import DoExpr, EffectBase, EffectGenerator, do
+from doeff import EffectGenerator, do
 from doeff_validation._failures import (
+    Check,
     CheckArgument,
     CheckError,
     CheckFailure,
-    CheckSpec,
     EvaluatedArgument,
     ItemFailedError,
-    Performed,
     ValidationException,
+    _is_program,
 )
 
 if TYPE_CHECKING:
     from doeff import Program
-
-
-def _is_program(value: object) -> bool:
-    """値が Program か効果か(validate の項目の確かめと、判定の値の取り違えの検出に使う)。"""
-    return isinstance(value, (DoExpr, EffectBase))
-
-
-def perform(program: "Program[object] | EffectBase") -> Performed:
-    """check の引数を、効果として項目の中で実行する印を付ける(Hy の ``(! …)`` に当たる)。
-
-    ``check(operator.eq, perform(CountSeats(node)), 0)`` — 印の無い引数は、Program の値でも実行せず
-    そのまま比べる。
-    """
-    if not _is_program(program):
-        raise TypeError(f"perform: Program か効果を渡してください — {type(program).__name__}")
-    return Performed(program)
-
-
-def _callable_name(fn: Callable[..., object]) -> str:
-    """Python の check の式の字面に使う、述語の名前。"""
-    if isinstance(fn, (FunctionType, BuiltinFunctionType, MethodType)):
-        return fn.__name__
-    return repr(fn)
-
-
-def _python_argument(value: object) -> CheckArgument:
-    """Python の check の引数を CheckArgument にする(``perform`` の印があれば効果として実行する)。"""
-    match value:
-        case Performed(program=program):
-            return CheckArgument(f"perform({program!r})", lambda: program, True)
-        case _:
-            return CheckArgument(repr(value), lambda: value, False)
-
-
-def check(
-    predicate: Callable[..., object],
-    *args: object,
-    reason: object | None = None,
-    expression: str | None = None,
-) -> CheckSpec:
-    """検査 1 件の指定を作る。``validate`` の引数としてだけ意味を持つ(単独では Program にならない)。
-
-    ``check(operator.eq, job.phase, Phase.PENDING, reason=R)`` — 各引数は普通の値か、
-    ``perform(program)`` の印を付けた効果。印の付いた引数は項目の中で実行し、結果の値を
-    ``predicate`` に渡す。
-    """
-    if not callable(predicate):
-        raise TypeError("check: 第 1 引数には述語(callable)を渡してください — check(operator.eq, a, b)")
-    return CheckSpec(
-        expression=expression
-        or f"{_callable_name(predicate)}({', '.join(repr(a) for a in args)})",
-        predicate=predicate,
-        arguments=tuple(_python_argument(a) for a in args),
-        reason=reason,
-    )
 
 
 @do
@@ -99,14 +42,14 @@ def judge(verdict: object) -> bool:
     """
     if _is_program(verdict):
         raise TypeError(
-            f"check: 判定の値が Program です({verdict!r})— 効果の判定なら (! …) / perform(…) の"
+            f"check: 判定の値が Program です({verdict!r})— 効果の判定なら (! …) / Perform(…) の"
             " 印を付けた引数にしてください"
         )
     return bool(verdict)
 
 
 @do
-def _run_check(spec: CheckSpec) -> EffectGenerator[None]:
+def _run_check(spec: Check) -> EffectGenerator[None]:
     """check の項目 1 つを走らせる: 引数を左から評価し(Program は実行)、判定し、落ちたら項目を止める。"""
     evaluated: list[EvaluatedArgument] = []
     try:
@@ -127,7 +70,7 @@ def _run_check(spec: CheckSpec) -> EffectGenerator[None]:
 def _as_program(item: object) -> object:
     """Traverse の f — 項目を 1 要素の処理にする(check は検査の Program に、Program はそのまま)。"""
     match item:
-        case CheckSpec():
+        case Check():
             return _run_check(item)
         case _:
             return item
@@ -165,10 +108,10 @@ def _validate(items: tuple[object, ...]) -> EffectGenerator[None]:
         raise ValidationException(tuple(failures))
 
 
-def validate(*items: "CheckSpec | Program[object]") -> "Program[None]":
+def validate(*items: "Check | Program[object]") -> "Program[None]":
     """独立した項目を全部走らせ、落ちた項目の失敗を全部集める。
 
-    - 項目は ``check`` の指定か任意の Program。互いの結果に依らない(並行に走らせてよい)。
+    - 項目は検査の指定 ``Check`` か任意の Program。互いの結果に依らない(並行に走らせてよい)。
     - check の項目: 引数を左から評価して(効果の印の付いた引数は実行して)判定し、偽なら
       ``CheckFailure``、評価が例外なら ``CheckError``。
     - Program の項目: 中で投げられた ``ValidationException`` を 1 件の失敗として受ける
@@ -179,7 +122,7 @@ def validate(*items: "CheckSpec | Program[object]") -> "Program[None]":
       (``sequential()`` / ``parallel(n)`` / ``parallel_fail_fast(n)``)。
     """
     for item in items:
-        if not isinstance(item, CheckSpec) and not _is_program(item):
+        if not isinstance(item, Check) and not _is_program(item):
             raise TypeError(
                 f"validate: 項目は check か Program です — {type(item).__name__} が渡されました"
             )

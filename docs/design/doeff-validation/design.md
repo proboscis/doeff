@@ -60,7 +60,7 @@ agora 系の Hy のある関数は、観測した job と配置要求の一致�
 
 | 何 | どこ |
 | --- | --- |
-| 実行時: `validate`・`check`・`perform`・`judge`・失敗の型 | `packages/doeff-validation/src/doeff_validation/`(依存は doeff・doeff-traverse・doeff-core-effects) |
+| 実行時: `validate`・`judge`・検査の指定の型 `Check`・実行の印の型 `Perform`・失敗の型 | `packages/doeff-validation/src/doeff_validation/`(依存は doeff・doeff-traverse・doeff-core-effects) |
 | Hy のマクロ: `validate`・`check`・契約の `check` の展開 | `packages/doeff-hy/src/doeff_hy/macros.hy` の末尾の節(ADR-DOE-HY-005 R5 — macro は doeff-hy にだけ置く。新しい file を足すと名簿の増額が要るので、名簿にある `macros.hy` に置いた) |
 | 契約の組み立ての分岐 | 同 `macros.hy` の `_contract-code`(defk / do! の `:pre` / `:post`) |
 | `!` の書き換えを validate の中へ持ち込まない | 同 `macros.hy` の `_BANG-OPAQUE-HEADS` に `validate` を足した(ADR-DOE-HY-003 R4「自分の do の文脈を持つ形は外側が中に入らない」の一員) |
@@ -96,8 +96,11 @@ pyright が型を追えるようにするため)。別名は `_doeff_validation*
   `fn`・内包表記・トップレベル)は `check` マクロそのものが展開の時点で誤りにする。理由: 検査がすべて
   `validate` か契約の所に並んで見える(helper の中に隠れない)・外で書いた check を静的に見つけられる・
   項目の独立が字面で保証される。
-- Python の `check(...)` は `CheckSpec` を作るだけで、単独では Program にならない(`yield` できない)。
-  これが Python で同じ制約を表す形。`perform(program)` が `(! …)` に当たる。
+- Python では型 `Check(...)` を直に書き、単独では Program にならない(`yield` できない)。これが Python で
+  同じ制約を表す形。`Perform(program)` が `(! …)` に当たる。述語が callable か・`Perform` の値が Program か
+  効果かの確かめと、式の字面の作りは型の作り方が持つ(関数 `check`・`perform` は消した — 利用者の答え
+  lt-MHFWEYBQYCC2PQYR84VKXBAET8・ADR-DOE-API-001 R19)。Hy の check の展開も `Check` を作り、各引数を
+  遅らせる thunk つきの `CheckArgument` で渡す(`Check` は `CheckArgument` をそのまま使う)。
 
 ### 4.4 契約(`:pre` / `:post`)の `check`
 

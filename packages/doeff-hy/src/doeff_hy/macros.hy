@@ -2625,7 +2625,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 ;; validate / check — 独立した検査を全部走らせて失敗を集める(doeff-validation の Hy の面)
 ;; ---------------------------------------------------------------------------
 ;;
-;; 実行時の部分(CheckSpec・validate・ValidationException)は doeff-validation が持ち、ここは
+;; 実行時の部分(Check・validate・ValidationException)は doeff-validation が持ち、ここは
 ;; 展開だけを持つ(ADR-DOE-HY-005 R5 — macro は doeff-hy にだけ置く)。展開した code は
 ;; doeff_validation を import するので、使う側は doeff-validation を入れる。
 ;;
@@ -2746,7 +2746,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 ;; ---------------------------------------------------------------------------
-;; validate の直下の check — 項目(CheckSpec)にする
+;; validate の直下の check — 項目(型 Check の値)にする
 ;; ---------------------------------------------------------------------------
 
 (defn _validation-argument [form]
@@ -2763,14 +2763,14 @@ defmcp-tool {name}: third argument must be a parameter list [...].
 
 
 (defn _validation-check-spec [args]
-  "validate の直下の check を CheckSpec の構築の式にする。"
+  "validate の直下の check を型 Check の構築の式にする(各引数は CheckArgument で渡し、Check はそのまま使う)。"
   (setv #(expression op operands reason) (_validation-parse-check args))
   (setv params (lfor _ operands (hy.gensym "arg")))
-  `(_doeff_validation.CheckSpec
-     ~expression
+  `(_doeff_validation.Check
      ~(_validation-predicate op params)
-     #(~@(lfor o operands (_validation-argument o)))
-     ~reason))
+     ~@(lfor o operands (_validation-argument o))
+     :reason ~reason
+     :expression ~expression))
 
 
 (defn _validation-item [form]

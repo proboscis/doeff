@@ -5,18 +5,18 @@ from __future__ import annotations
 import operator
 from enum import Enum
 
+import doeff_validation
 import pytest
 from doeff_core_effects import Ask
 from doeff_core_effects import reader
 from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 from doeff_validation import (
+    Check,
     CheckError,
     CheckFailure,
-    CheckSpec,
+    Perform,
     ValidationException,
-    check,
-    perform,
     validate,
 )
 
@@ -47,15 +47,15 @@ def _failures(program: Program, traverse_handler: ProgramHandler | None = None) 
 
 
 def test_all_checks_pass_returns_none() -> None:
-    assert _run(validate(check(operator.eq, 1, 1), check(operator.lt, 1, 2))) is None
+    assert _run(validate(Check(operator.eq, 1, 1), Check(operator.lt, 1, 2))) is None
 
 
 def test_collects_every_failure_in_item_order() -> None:
     error = _failures(
         validate(
-            check(operator.eq, "k-1", "k-2", reason=Reason.KEY),
-            check(operator.eq, 1, 1),
-            check(operator.eq, "running", "pending", reason=Reason.PHASE),
+            Check(operator.eq, "k-1", "k-2", reason=Reason.KEY),
+            Check(operator.eq, 1, 1),
+            Check(operator.eq, "running", "pending", reason=Reason.PHASE),
         )
     )
     assert error.reasons == [Reason.KEY, Reason.PHASE]
@@ -69,8 +69,8 @@ def test_collects_every_failure_in_item_order() -> None:
 def test_sequential_and_parallel_collect_the_same_failures(handler_factory) -> None:
     error = _failures(
         validate(
-            check(operator.eq, perform(Ask("seats")), 0, reason=Reason.SEATS),
-            check(operator.eq, perform(Ask("phase")), "running", reason=Reason.PHASE),
+            Check(operator.eq, Perform(Ask("seats")), 0, reason=Reason.SEATS),
+            Check(operator.eq, Perform(Ask("phase")), "running", reason=Reason.PHASE),
         ),
         handler_factory(),
     )
@@ -80,8 +80,8 @@ def test_sequential_and_parallel_collect_the_same_failures(handler_factory) -> N
 def test_fail_fast_handler_stops_at_first_failure() -> None:
     error = _failures(
         validate(
-            check(operator.eq, 1, 2, reason=Reason.KEY),
-            check(operator.eq, 3, 4, reason=Reason.PHASE),
+            Check(operator.eq, 1, 2, reason=Reason.KEY),
+            Check(operator.eq, 3, 4, reason=Reason.PHASE),
         ),
         parallel_fail_fast(1),
     )
@@ -89,7 +89,7 @@ def test_fail_fast_handler_stops_at_first_failure() -> None:
 
 
 def test_performed_argument_is_run_inside_the_item_and_its_result_recorded() -> None:
-    error = _failures(validate(check(operator.eq, perform(Ask("seats")), 0, reason=Reason.SEATS)))
+    error = _failures(validate(Check(operator.eq, Perform(Ask("seats")), 0, reason=Reason.SEATS)))
     failure = error.failures[0]
     assert isinstance(failure, CheckFailure)
     assert failure.arguments[0].value == 3
@@ -98,16 +98,16 @@ def test_performed_argument_is_run_inside_the_item_and_its_result_recorded() -> 
 def test_unmarked_program_argument_is_compared_as_a_value() -> None:
     effect = Ask("seats")
     # 印の無い引数は実行しない: effect の値そのものを比べる。
-    assert _run(validate(check(operator.is_, effect, effect))) is None
-    error = _failures(validate(check(operator.eq, effect, 3)))
+    assert _run(validate(Check(operator.is_, effect, effect))) is None
+    error = _failures(validate(Check(operator.eq, effect, 3)))
     assert error.failures[0].arguments[0].value is effect
 
 
 def test_failing_evaluation_is_collected_as_check_error_with_other_items_still_run() -> None:
     error = _failures(
         validate(
-            check(operator.eq, perform(Ask("missing")), 0, reason=Reason.SEATS),
-            check(operator.eq, 1, 2, reason=Reason.KEY),
+            Check(operator.eq, Perform(Ask("missing")), 0, reason=Reason.SEATS),
+            Check(operator.eq, 1, 2, reason=Reason.KEY),
         )
     )
     first, second = error.failures
@@ -120,11 +120,11 @@ def test_nested_validate_counts_as_one_failure_holding_its_own_failures() -> Non
     @do
     def phase_checks() -> EffectGenerator[None]:
         yield validate(
-            check(operator.eq, perform(Ask("phase")), "running", reason=Reason.PHASE),
-            check(operator.eq, 1, 2, reason=Reason.KEY),
+            Check(operator.eq, Perform(Ask("phase")), "running", reason=Reason.PHASE),
+            Check(operator.eq, 1, 2, reason=Reason.KEY),
         )
 
-    error = _failures(validate(phase_checks(), check(operator.eq, 5, 6, reason=Reason.SEATS)))
+    error = _failures(validate(phase_checks(), Check(operator.eq, 5, 6, reason=Reason.SEATS)))
     nested, own = error.failures
     assert isinstance(nested, ValidationException)
     assert nested.reasons == [Reason.PHASE, Reason.KEY]
@@ -132,8 +132,8 @@ def test_nested_validate_counts_as_one_failure_holding_its_own_failures() -> Non
 
 
 def test_check_alone_is_not_a_program() -> None:
-    spec = check(operator.eq, 1, 2)
-    assert isinstance(spec, CheckSpec)
+    spec = Check(operator.eq, 1, 2)
+    assert isinstance(spec, Check)
 
     @do
     def misuse() -> EffectGenerator[None]:
@@ -143,13 +143,41 @@ def test_check_alone_is_not_a_program() -> None:
         _run(misuse())
 
 
+def test_check_rejects_a_predicate_that_is_not_callable() -> None:
+    with pytest.raises(TypeError, match="述語"):
+        Check(1, 1)
+
+
+def test_perform_rejects_a_value_that_is_neither_a_program_nor_an_effect() -> None:
+    with pytest.raises(TypeError, match="Program か効果"):
+        Perform(3)
+
+
+def test_check_writes_the_expression_from_the_predicate_and_the_arguments() -> None:
+    effect = Ask("seats")
+    spec = Check(operator.eq, Perform(effect), 0)
+    assert spec.expression == f"eq(Perform({effect!r}), 0)"
+    assert [(a.source, a.perform) for a in spec.arguments] == [
+        (f"Perform({effect!r})", True),
+        ("0", False),
+    ]
+    assert Check(operator.eq, 1, 2, expression="seats == 0").expression == "seats == 0"
+
+
+def test_the_types_are_the_only_way_to_write_a_check() -> None:
+    # 利用者の答え lt-MHFWEYBQYCC2PQYR84VKXBAET8: 型 Check と Perform を直に書き、関数 check と perform は見せない。
+    public = {name for name in dir(doeff_validation) if not name.startswith("_")}
+    assert {"Check", "Perform"} <= public
+    assert public.isdisjoint({"check", "perform", "CheckSpec", "Performed"})
+
+
 def test_validate_rejects_items_that_are_neither_check_nor_program() -> None:
     with pytest.raises(TypeError, match="項目は check か Program"):
         validate(True)
 
 
 def test_predicate_returning_a_program_is_reported_not_silently_passed() -> None:
-    error = _failures(validate(check(lambda _x: Ask("seats"), 1)))
+    error = _failures(validate(Check(lambda _x: Ask("seats"), 1)))
     failure = error.failures[0]
     assert isinstance(failure, CheckError)
     assert isinstance(failure.error, TypeError)
@@ -162,4 +190,4 @@ def test_unexpected_exception_in_program_item_is_raised_not_collected() -> None:
         yield  # pragma: no cover - makes this a generator
 
     with pytest.raises(RuntimeError, match="bug"):
-        _run(validate(broken(), check(operator.eq, 1, 2)))
+        _run(validate(broken(), Check(operator.eq, 1, 2)))

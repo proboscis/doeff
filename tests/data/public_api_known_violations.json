@@ -17453,16 +17453,6 @@
       "doeff_validation.failures"
      ]
     },
-    "境界 — combinator(program を包む関数)": {
-     "doeff_validation": [
-      "check",
-      "perform"
-     ],
-     "doeff_validation.api": [
-      "check",
-      "perform"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_validation": [
       "CheckArgument",
@@ -17481,28 +17471,6 @@
       "CheckError",
       "CheckFailure",
       "EvaluatedArgument"
-     ]
-    },
-    "境界 — effect の結果の型": {
-     "doeff_validation": [
-      "Performed"
-     ],
-     "doeff_validation.api": [
-      "Performed"
-     ],
-     "doeff_validation.failures": [
-      "Performed"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_validation": [
-      "CheckSpec"
-     ],
-     "doeff_validation.api": [
-      "CheckSpec"
-     ],
-     "doeff_validation.failures": [
-      "CheckSpec"
      ]
     },
     "境界 — 例外の型": {
@@ -18147,6 +18115,41 @@
    "name": "ReadBatchAnswer",
    "訳": "ReadBatch(card ki-177a4f287c42)の答えの型(R2 の effect の結果の型 — BatchRead は束の答え・ReadBatchAnswer は答えの和)。名を足した commit が表を直さずに入った(card ki-40f991cef6c6)ので、ReadBatch を入口へ出す card ki-551676d22ba5 が入口へ出す時に足した",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation",
+   "name": "Check",
+   "訳": "validate の項目の値の型(R2 の effect の値の型 — ADR-DOE-API-001 R19)。関数 check を消し、型 CheckSpec を Check の名にして、述語の確かめと式の字面の作りを型の作り方へ移した(card ki-2750cc5e5209)",
+   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation.api",
+   "name": "Check",
+   "訳": "validate の項目の値の型(R2 — ADR-DOE-API-001 R19)を、移し替えの module doeff_validation.api(_api)が import して出す。submodule を _ で隠し終えて移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
+   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation.failures",
+   "name": "Check",
+   "訳": "validate の項目の値の型(R2 — ADR-DOE-API-001 R19)の定義の場所 _failures を、移し替えの module doeff_validation.failures が出す。移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
+   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation",
+   "name": "Perform",
+   "訳": "Check の引数を効果として項目の中で実行する印の値の型(R2 の effect の値の型 — ADR-DOE-API-001 R19)。関数 perform を消し、型 Performed を Perform の名にして、program か効果かの確かめを型の作り方へ移した(card ki-2750cc5e5209)",
+   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation.failures",
+   "name": "Perform",
+   "訳": "Check の引数の実行の印の値の型(R2 — ADR-DOE-API-001 R19)の定義の場所 _failures を、移し替えの module doeff_validation.failures が出す。移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
+   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
   },
   {
    "package": "doeff-cluster",
