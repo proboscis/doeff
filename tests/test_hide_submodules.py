@@ -415,3 +415,114 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _check_table(repo)
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)
+
+
+CYCLE_PACKAGE = "doeff-fixture-cycle"
+CYCLE_ROOT = "doeff_fixture_cycle"
+
+#: 入口が子を即座に読み(``__all__`` で名を出す)、子の中の module が同じ子の兄弟を古い絶対の path で読む package。
+CYCLE_FILES = {
+    f"packages/{CYCLE_PACKAGE}/pyproject.toml": f"""
+        [project]
+        name = "{CYCLE_PACKAGE}"
+        version = "0"
+
+        [build-system]
+        requires = ["hatchling"]
+        build-backend = "hatchling.build"
+
+        [tool.hatch.build.targets.wheel]
+        packages = ["src/{CYCLE_ROOT}"]
+    """,
+    f"packages/{CYCLE_PACKAGE}/src/{CYCLE_ROOT}/__init__.py": '''
+        """The fixture package: the entry reads its child at once and names the names in __all__."""
+
+        from .handlers import PingEffect, mock_ping_handler, ping_handler
+
+        __all__ = ["PingEffect", "mock_ping_handler", "ping_handler"]
+    ''',
+    f"packages/{CYCLE_PACKAGE}/src/{CYCLE_ROOT}/handlers/__init__.py": """
+        from .production import PingEffect, ping_handler
+        from .testing import mock_ping_handler
+    """,
+    f"packages/{CYCLE_PACKAGE}/src/{CYCLE_ROOT}/handlers/production.py": '''
+        from doeff import EffectBase, Pass, handler
+
+
+        class PingEffect(EffectBase):
+            """The one effect."""
+
+
+        @handler
+        def ping_handler(effect: PingEffect, k):
+            yield Pass()
+    ''',
+    f"packages/{CYCLE_PACKAGE}/src/{CYCLE_ROOT}/handlers/testing.py": f"""
+        from doeff import Pass, handler
+
+        from {CYCLE_ROOT}.handlers.production import PingEffect
+
+
+        @handler
+        def mock_ping_handler(effect: PingEffect, k):
+            yield Pass()
+    """,
+    "tests/data/public_api_known_violations.json": json.dumps(
+        {
+            "packages": {
+                CYCLE_PACKAGE: {
+                    "範囲": "決まりの範囲",
+                    "名": {
+                        "外れ — submodule を _ で隠す": {
+                            "(submodule)": [
+                                f"{CYCLE_ROOT}.handlers",
+                                f"{CYCLE_ROOT}.handlers.production",
+                                f"{CYCLE_ROOT}.handlers.testing",
+                            ]
+                        },
+                    },
+                }
+            },
+            "足した名": [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ),
+    "callers/pytest.ini": "[pytest]\n",
+    "callers/test_callers.py": f"""
+        from {CYCLE_ROOT}.handlers import mock_ping_handler, ping_handler
+        from {CYCLE_ROOT}.handlers.production import PingEffect
+
+
+        def test_names_read_through_the_imports():
+            assert isinstance(PingEffect, type)
+            assert ping_handler is not mock_ping_handler
+    """,
+}
+
+
+@pytest.mark.timeout(600)
+def test_hide_points_callers_at_the_entry_when_a_child_reads_its_sibling_by_the_old_path(
+    tmp_path: Path,
+) -> None:
+    """子の中の module が兄弟を古い path で読み、入口が子を即座に読む package でも、呼び手を入口へ向ける。
+
+    入口と同じ物かを確かめる子の process は、import の根の中の file を書き換えた後に走る(前は、根の中が古い path を
+    読んだままの木で入口を読み、移し替えの module がまだ package でない所で落ちて、名を全部 _ の path へ向けていた —
+    card ki-32a05dc657b8 の doeff_gemini.handlers.testing)。入口の ``__all__`` に在る名は、入口が出す名と読む
+    (``@handler`` や ``@do`` で包んだ物は、定義の module が包みの側の module になる)。
+    """
+    repo = _write_repo(tmp_path / "repo", CYCLE_FILES)
+    src = repo / "packages" / CYCLE_PACKAGE / "src"
+    _run_callers(repo / "callers", src)
+
+    report = tool.hide(repo / "packages" / CYCLE_PACKAGE, ["handlers"], None, None, [])
+
+    testing = _text(repo, f"packages/{CYCLE_PACKAGE}/src/{CYCLE_ROOT}/_handlers/testing.py")
+    assert f"from {CYCLE_ROOT}._handlers.production import PingEffect\n" in testing
+    callers = _text(repo, "callers/test_callers.py")
+    assert f"from {CYCLE_ROOT} import mock_ping_handler, ping_handler\n" in callers
+    assert f"from {CYCLE_ROOT} import PingEffect\n" in callers
+    assert report.rewrite.names_to_entry == 3
+    assert report.rewrite.names_to_underscore == 0
+    _run_callers(repo / "callers", src)

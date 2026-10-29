@@ -1124,25 +1124,24 @@ def rewrite_tree(
     *,
     write: bool,
 ) -> TreeResult:
-    """木の候補の file を 2 回読む: 1 回目で入口と比べる名を集め、子の process で確かめてから 2 回目で書く。"""
+    """木の候補の file を書き換える: ``_`` の path だけを読む file を先に書き、残りの呼び手は 2 回読む(1 回目で入口と
+    比べる名を集め、子の process で確かめてから 2 回目で書く)。
+
+    子の process は入口を import するので、import の根の中の file を先に書く: 根の中が古い path を読んだままだと、入口が
+    子を即座に読む package では、子の中の module が兄弟を古い path で読む所で移し替えの module(まだ package でない)に
+    当たって落ち、どの名も入口へ向けられない(card ki-32a05dc657b8 の ``doeff_gemini.handlers.testing``)。
+    """
     files = tree.candidates(patterns)
     texts = {relative: (tree.path / relative).read_text(encoding="utf-8") for relative, _ in files}
-    asked: set[tuple[str, str]] = set()
+    inner = [(r, k) for r, k in files if tree.context(r).underscore_only]
+    callers = [(r, k) for r, k in files if not tree.context(r).underscore_only]
 
-    def collect(module: str, name: str) -> bool:
-        # 1 回目: 呼び手が _ の path から読む名を集めるだけ(どれも _ の path のまま)。
-        asked.add((module, name))
-        return False
-
-    for relative, kind in files:
-        rewrite_text(kind, texts[relative], patterns, tree.context(relative), collect)
-    entry = same_as_entry(asked)
-
-    def one(relative: str, kind: FileKind) -> FileResult:
+    def one(
+        relative: str, kind: FileKind, to_entry: Callable[[str, str], bool]
+    ) -> FileResult:
+        # file 1 つの書き換えの案と、前と後の古い path の数(数の報告と「残った古い path」の為)。
         original = texts[relative]
-        text, counts = rewrite_text(
-            kind, original, patterns, tree.context(relative), lambda m, n: (m, n) in entry
-        )
+        text, counts = rewrite_text(kind, original, patterns, tree.context(relative), to_entry)
         flexible = kind in ("hy", "markdown")
         return FileResult(
             relative,
@@ -1153,12 +1152,31 @@ def rewrite_tree(
             old_references(text, patterns, flexible),
         )
 
-    results = [one(relative, kind) for relative, kind in files]
+    def save(results: Iterable[FileResult]) -> None:
+        # 書く時だけ、変わった file を木へ置く(--dry-run の rewrite は数だけ出す)。
+        if write:
+            for result in results:
+                if result.text != result.original:
+                    (tree.path / result.relative).write_text(result.text, encoding="utf-8")
+
+    inner_results = [one(relative, kind, lambda m, n: False) for relative, kind in inner]
+    save(inner_results)
+    asked: set[tuple[str, str]] = set()
+
+    def collect(module: str, name: str) -> bool:
+        # 1 回目: 呼び手が _ の path から読む名を集めるだけ(どれも _ の path のまま)。
+        asked.add((module, name))
+        return False
+
+    for relative, kind in callers:
+        rewrite_text(kind, texts[relative], patterns, tree.context(relative), collect)
+    entry = same_as_entry(asked)
+    caller_results = [
+        one(relative, kind, lambda m, n: (m, n) in entry) for relative, kind in callers
+    ]
+    save(caller_results)
+    results = sorted([*inner_results, *caller_results], key=lambda r: r.relative)
     changed = tuple(r.relative for r in results if r.text != r.original)
-    if write:
-        for result in results:
-            if result.text != result.original:
-                (tree.path / result.relative).write_text(result.text, encoding="utf-8")
     total = Counts()
     for result in results:
         total.merge(result.counts)
@@ -1254,11 +1272,18 @@ def _root_reexports(root: types.ModuleType) -> set[str]:
 
 
 def _shown_by_root(root: types.ModuleType, name: str, value: object) -> bool:
-    """根が名を公開の名として出すか(遅延の表・``X as X``・package の中で定義した物)。"""
+    """根が名を公開の名として出すか(遅延の表・``X as X``・``__all__``・package の中で定義した物)。
+
+    ``__all__`` は入口が名を出す宣言なので、``@handler``・``@do`` で包んで定義の module が包みの側になった物も入口の名と
+    読む(card ki-32a05dc657b8 — ``doeff_gemini.default_gemini_cost_handler`` の module は ``doeff.program``)。
+    """
     lazy = root.__dict__.get("_LAZY_EXPORTS")
     if isinstance(lazy, dict) and name in lazy:
         return True
     if name in _root_reexports(root):
+        return True
+    shown = root.__dict__.get("__all__")
+    if isinstance(shown, (list, tuple)) and name in shown:
         return True
     owner = inspect.getmodule(value)
     return (
