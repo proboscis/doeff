@@ -114,3 +114,17 @@ uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff
 - `verify_pypi.py`: PyPIのdoeff 0.8.0とdoeff-time 0.1.0で、Python 3.11・3.12・3.14ともOK。実時間の行は`[20.059413, 10.056975]`(3.12)。
 - `render_release.py doeff-time.md`: 60字を越える文0個・です・ます以外で終わる文0個。`export_zenn.py`と`zenn-check/check.mjs`: この回の崩れ0個。本の第3章も崩れ0個。
 - `verify_examples.py`の全体は、この変更の前からの失敗(2つ目の例`operations.py`の`log_handler()`の引数)で止まる。時間の回に当たる所(`scheduling.py`・`time-check.py`・本文の構文とリンクと画像・注釈の検)は通した。
+
+## 2026-10-29 事実とコードの確かめ(英語の版と組で)
+
+英語の版(`docs/articles/time-as-an-effect.md`)と、この記事の主張を1つずつ出典と照らした。
+
+- 直した所(英語の版と両方): doeff-timeのREADMEは時計ごとの約束を挙げるが、`WaitWithin`・`WaitTicks`・`RaceWithin`を挙げていない。「時間のエフェクトの全部を挙げる」を外した。図の`Resume`は、`sim_time_handler`のコードでは`Transfer(k, value)`なので、本文にそう書いた。
+- 直した所(この記事だけ): 試したPythonに3.13を足した(PyPIのdoeff 0.8.0とdoeff-time 0.1.0で、3.11・3.12・3.13・3.14とも本文の印字と同じ)。
+- 比べの表(trio 0.34.0・looptime 0.9・freezegun 1.5.5・time-machine 3.6.0、CPython 3.12)は、20秒と10秒の2つの待ちで走らせ直し、5行とも本文のとおりだった。
+- 英語の版との違いは、題・連載の前後の回・図(mermaidの代わりに処理図、加えて概念図)だけで、軸・事実・例は同じ。
+
+```sh
+uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff 0.8.0 --python 3.12 time  # OK(実時間の行は[20.062792, 10.059815])。
+uv run --no-project python publications/zenn-use-cases-v0/render_release.py doeff-time.md  # 60字を越える文0個・です・ます以外で終わる文0個。
+```
