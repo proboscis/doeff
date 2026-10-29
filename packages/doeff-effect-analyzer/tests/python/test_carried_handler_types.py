@@ -11,8 +11,8 @@ the reader reads the list as the handlers ``f`` makes — what they answer, and 
 import importlib
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverage
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._handler_effects import analyze_handler, check_coverage
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

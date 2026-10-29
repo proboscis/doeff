@@ -10,8 +10,8 @@ import ast
 from pathlib import Path
 
 import doeff_effect_analyzer
-from doeff_effect_analyzer import handler_effects as he
-from doeff_effect_analyzer.program_effects import _body_nodes
+from doeff_effect_analyzer import _handler_effects as he
+from doeff_effect_analyzer._program_effects import _body_nodes
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 

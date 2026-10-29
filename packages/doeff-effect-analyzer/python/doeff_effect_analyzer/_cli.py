@@ -13,26 +13,37 @@ the env, or installed inside the Program) could not be read, or a place in the
 Program could not be followed (either could hide a gap); 0 when every effect is
 covered.  Targets are imported (``--path`` entries and the working directory are
 importable); no Program is run.
+
+Each command performs the analysis effects (``AnalyzeProgram`` / ``AnalyzeHandler`` /
+``AnalyzeEnv`` / ``CheckCoverage``) in a Program run under ``effect_analysis()`` — the command
+reaches the analyzer the way any Program does (ADR-DOE-API-001 R7・R24).
 """
 
 import argparse
 import json
 import os
 import sys
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, TypeVar
 
-from doeff_effect_analyzer.handler_effects import (
-    analyze_env,
-    analyze_handler,
-    check_coverage,
+from doeff import EffectGenerator, Program, do, run
+from doeff_effect_analyzer._effects import (
+    AnalyzeEnv,
+    AnalyzeHandler,
+    AnalyzeProgram,
+    CheckCoverage,
+    FoldCarried,
+    effect_analysis,
 )
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer._handler_effects import Coverage
+from doeff_effect_analyzer._program_effects import (
+    HandlerEffects,
     ProgramEffects,
-    analyze_program,
     qualified_name,
     resolve_target,
 )
+
+_T = TypeVar("_T")
 
 _DESCRIPTION = "Effect sets of doeff Programs and env coverage, read without running."
 
@@ -122,8 +133,13 @@ def _print_program(report: ProgramEffects, indent: str) -> None:
         print(f"{indent}unresolved at {item.location}: {item.reason}: {item.text}")
 
 
+def _answered(program: Program[_T]) -> _T:
+    """Run one command's Program under the analysis handler (the command's one way to the analyzer)."""
+    return run(effect_analysis()(program))
+
+
 def _program(arguments: argparse.Namespace) -> int:
-    report = analyze_program(arguments.target, bindings=_bindings(arguments.bind))
+    report = _answered(AnalyzeProgram(arguments.target, bindings=_bindings(arguments.bind)))
     if arguments.json:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         return 0
@@ -133,7 +149,7 @@ def _program(arguments: argparse.Namespace) -> int:
 
 
 def _handler(arguments: argparse.Namespace) -> int:
-    handler = analyze_handler(arguments.target)
+    handler = _answered(AnalyzeHandler(arguments.target))
     if arguments.json:
         print(json.dumps(handler.to_dict(), ensure_ascii=False, indent=2))
         return 0
@@ -147,16 +163,32 @@ def _handler(arguments: argparse.Namespace) -> int:
     return 0
 
 
+@do
+def _covered(
+    target: str, bindings: Mapping[str, object], env: str, outer: Sequence[str], fold: Sequence[str]
+) -> EffectGenerator[tuple[ProgramEffects, Coverage]]:
+    """The Program and whether the env (under the outer handlers) answers it — the coverage command."""
+    report = yield AnalyzeProgram(target, bindings=bindings)
+    outside: tuple[HandlerEffects, ...] = ()
+    for spec in outer:
+        outside = (*outside, (yield AnalyzeHandler(spec)))
+    inside = yield AnalyzeEnv(env)
+    coverage = yield CheckCoverage(
+        report, env=(*outside, *inside), fold=FoldCarried(names=tuple(fold))
+    )
+    return report, coverage
+
+
 def _coverage(arguments: argparse.Namespace) -> int:
-    report = analyze_program(arguments.target, bindings=_bindings(arguments.bind))
-    folded = set(arguments.fold_carried)
-
-    def include(carrier: Any) -> bool:
-        """Fold carried Programs whose carrier is named in --fold-carried."""
-        return getattr(carrier, "__name__", None) in folded or qualified_name(carrier) in folded
-
-    env = [*(analyze_handler(spec) for spec in arguments.outer), *analyze_env(arguments.env)]
-    result = check_coverage(report, env, include=include)
+    report, result = _answered(
+        _covered(
+            arguments.target,
+            _bindings(arguments.bind),
+            arguments.env,
+            arguments.outer,
+            arguments.fold_carried,
+        )
+    )
     if arguments.json:
         print(
             json.dumps(

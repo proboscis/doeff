@@ -20,8 +20,8 @@ whether it sends an effect on and what it performs — never the source (design 
 """
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverage
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer._handler_effects import analyze_handler, check_coverage
+from doeff_effect_analyzer._program_effects import (
     AllTest,
     AnyTest,
     Basis,

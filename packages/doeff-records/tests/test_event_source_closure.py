@@ -16,10 +16,10 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 import hy  # noqa: F401  Hy の module を読むため
-from doeff_events import EventBus, subscribed_event_handler
-from doeff_events import WaitForEvent
+from doeff_events import EventBus, WaitForEvent, subscribed_event_handler
 from doeff_records import (
     AwaitRecordsBack,
     ListRows,
@@ -41,15 +41,30 @@ from doeff_records.event_source import (
 from doeff_records.memory import MEMORY_SOURCE_EFFECTS
 from doeff_time import GetTimeEffect, WaitWithinEffect
 
-from doeff import EffectGenerator, do, with_handlers
+from doeff import EffectBase, EffectGenerator, do, run, with_handlers
 
 # doeff-effect-analyzer の Python の front end(開発の道具 — doeff-records の実行時の依存ではない。doeff-cluster の tests の
 # conftest と同じ扱い)。
 if importlib.util.find_spec("doeff_effect_analyzer") is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python"))
 
-from doeff_effect_analyzer.handler_effects import Basis, analyze_handler, check_coverage  # noqa: E402 - sys.path の後
-from doeff_effect_analyzer.program_effects import analyze_program, runs_where_performed  # noqa: E402 - sys.path の後
+from doeff_effect_analyzer import (
+    AnalyzeHandler,
+    AnalyzeProgram,
+    Basis,
+    CheckCoverage,
+    FoldCarried,
+    effect_analysis,
+)
+
+#: Carried Programs counted where they are performed when their carrier declares it (Try, Spawn …).
+FOLD = FoldCarried(declared=True)
+_Answer = TypeVar("_Answer")
+
+
+def _answered(effect: EffectBase[_Answer]) -> _Answer:
+    """Read one analysis effect under the analyzer's handler (the analyzer reads the sources; nothing is run)."""
+    return run(effect_analysis()(effect))
 
 
 @dataclass(frozen=True)
@@ -87,7 +102,7 @@ def _job() -> EffectGenerator[Moved]:
 
 
 def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_records.event_source:records_signal_handler")
+    handler = _answered(AnalyzeHandler("doeff_records.event_source:records_signal_handler"))
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset()
     assert handler.performs is not None
@@ -95,16 +110,16 @@ def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
 
 
 def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() -> None:
-    declared = analyze_handler("doeff_records.event_source:records_signal_handler").performs
+    declared = _answered(AnalyzeHandler("doeff_records.event_source:records_signal_handler")).performs
     assert declared is not None
-    around = analyze_program(_wrapped).residual_with(runs_where_performed).effect_types
-    body = analyze_program(_waits).residual_with(runs_where_performed).effect_types
+    around = _answered(AnalyzeProgram(_wrapped)).residual_with(FOLD).effect_types
+    body = _answered(AnalyzeProgram(_waits)).residual_with(FOLD).effect_types
     assert declared.effect_types == around - body
 
 
 def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
-    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
-    coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
+    scheduler = _answered(AnalyzeHandler("doeff_core_effects._scheduler:scheduled", name="scheduled"))
+    coverage = _answered(CheckCoverage(_job, env=(scheduler,), fold=FOLD))
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     assert {gap.effect for gap in coverage.gaps} == {
         ListRows,
@@ -132,7 +147,7 @@ def _read_job() -> EffectGenerator[Moved]:
 
 def test_the_analyzer_reads_read_signal_handler_from_its_declaration() -> None:
     """解析器は read_signal_handler を宣言から読む(何にも答えず、本体の周りで READ_SIGNAL_EFFECTS を出す包み)。"""
-    handler = analyze_handler("doeff_records.event_source:read_signal_handler")
+    handler = _answered(AnalyzeHandler("doeff_records.event_source:read_signal_handler"))
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset()
     assert handler.performs is not None
@@ -148,7 +163,7 @@ def test_read_signal_effects_cover_both_sources_and_the_question() -> None:
 def test_a_job_placing_read_signal_handler_leaves_no_unreadable_handler() -> None:
     """使い手の形の job を読むと、読めない handler が残らない。残るのは源の工場の問い(ReadSignalSource — 本番の土台の記録の handler が
     答える)と、記録と時計の effect だけ。"""
-    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
-    coverage = check_coverage(analyze_program(_read_job), [scheduler], include=runs_where_performed)
+    scheduler = _answered(AnalyzeHandler("doeff_core_effects._scheduler:scheduled", name="scheduled"))
+    coverage = _answered(CheckCoverage(_read_job, env=(scheduler,), fold=FOLD))
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     assert ReadSignalSource in {gap.effect for gap in coverage.gaps}, coverage.gaps

@@ -9,8 +9,8 @@ handler writes as lambdas where it calls it.
 """
 
 import pytest
-from doeff_effect_analyzer.handler_effects import analyze_handler
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._handler_effects import analyze_handler
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

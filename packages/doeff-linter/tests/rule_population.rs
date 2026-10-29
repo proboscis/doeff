@@ -253,8 +253,8 @@ const ENVIRONMENT_PACKAGES: [(&str, &str, &str, &str); 1] = [
     (
         "packages/doeff-effect-analyzer/architecture.hy",
         include_str!("../../doeff-effect-analyzer/architecture.hy"),
-        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/env_places.py",
-        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py",
+        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/_env_places.py",
+        "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/_program_effects.py",
     ),
 ];
 

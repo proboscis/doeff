@@ -9,7 +9,7 @@ performs nothing (the call raises where it runs), a function runs. A data defaul
 """
 
 import pytest
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

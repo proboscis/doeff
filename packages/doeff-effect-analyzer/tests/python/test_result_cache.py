@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from doeff_effect_analyzer import program_effects as pe
-from doeff_effect_analyzer import result_cache as rc
+from doeff_effect_analyzer import _program_effects as pe
+from doeff_effect_analyzer import _result_cache as rc
 
 
 @pytest.fixture

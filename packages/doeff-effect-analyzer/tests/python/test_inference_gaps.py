@@ -20,8 +20,8 @@ foundation" check (#833, foundation_check.hy), whose fixture had to fall back to
 import importlib
 
 import pytest
-from doeff_effect_analyzer.cli import main
-from doeff_effect_analyzer.handler_effects import (
+from doeff_effect_analyzer._cli import main
+from doeff_effect_analyzer._handler_effects import (
     Basis,
     HandlerEffects,
     analyze_env,
@@ -29,7 +29,7 @@ from doeff_effect_analyzer.handler_effects import (
     check_coverage,
     residual,
 )
-from doeff_effect_analyzer.program_effects import SuppliedDeclaration, analyze_program
+from doeff_effect_analyzer._program_effects import SuppliedDeclaration, analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

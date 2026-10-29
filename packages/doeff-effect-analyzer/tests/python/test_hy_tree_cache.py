@@ -31,8 +31,8 @@ import pytest
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
 
-from doeff_effect_analyzer import handler_effects, hy_expansion  # noqa: E402
-from doeff_effect_analyzer import program_effects as pe  # noqa: E402
+from doeff_effect_analyzer import _handler_effects as handler_effects, _hy_expansion as hy_expansion  # noqa: E402
+from doeff_effect_analyzer import _program_effects as pe  # noqa: E402
 
 SOURCE = """
 (require doeff-hy.macros [defk <-])
@@ -819,7 +819,7 @@ def test_a_changed_module_of_the_reader_builds_what_is_derived_again(
     derived again — and still expands nothing."""
     seen = expansions(monkeypatch)
     pe._compile_hy(SOURCE, "/src/m.hy", "m")
-    changed_file(pe, "handler_effects.py")
+    changed_file(pe, "_handler_effects.py")
     a_new_process()
     pe._compile_hy(SOURCE, "/src/m.hy", "m")
     assert seen == ["m"]
@@ -968,10 +968,10 @@ def test_only_the_expansion_module_reads_or_writes_its_store() -> None:
     reader that reshaped a tree (renumbered its gensyms) could store it under a key without the
     reader, and every later reader — a reverted one too — read that shape. A caller asks for a tree
     (``_expansion``); no module but ``hy_expansion`` names the store."""
-    used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "hy_expansion.py"}
+    used = {name: names_used(text) & EXPANSION_STORE for name, text in analyzer_sources().items() if name != "_hy_expansion.py"}
     assert {name: names for name, names in used.items() if names} == {}
     assert names_used(
-        "from doeff_effect_analyzer.hy_expansion import _store_expansion\n"
+        "from doeff_effect_analyzer._hy_expansion import _store_expansion\n"
         "def _expanded(place, expanded):\n    _store_expansion(place, _canonical_gensyms(expanded))\n"
     ) & EXPANSION_STORE == {"_store_expansion"}  # the negative case: blind B's reader is named
 
@@ -991,10 +991,10 @@ def analyzer_imports(source: str) -> frozenset[str]:
 def test_the_expansion_module_imports_no_other_module_of_the_analyzer() -> None:
     """The tree is keyed on ``hy_expansion``'s own file: code it took from the reader would decide
     trees without being in their key."""
-    assert analyzer_imports(analyzer_sources()["hy_expansion.py"]) == frozenset()
+    assert analyzer_imports(analyzer_sources()["_hy_expansion.py"]) == frozenset()
     assert analyzer_imports(
-        "def _expand_hy(source):\n    from doeff_effect_analyzer.program_effects import _canonical_gensyms\n"
-    ) == {"doeff_effect_analyzer.program_effects"}  # the negative case
+        "def _expand_hy(source):\n    from doeff_effect_analyzer._program_effects import _canonical_gensyms\n"
+    ) == {"doeff_effect_analyzer._program_effects"}  # the negative case
 
 
 def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
