@@ -38,6 +38,11 @@ from doeff import EffectBase
 # into a turn within 5 s of being placed (card ki-86d11cadf3be): 2 s leaves room for the reader's own work.
 KEPT_REDELIVERY_SECONDS: Final = 2.0
 
+# The wire name of the fixed notice that tells a channel's gap (its body is the sender's source name). Callers make
+# and recognise it through the types — ``Announce.gap(channel, source)``, ``Announce.is_gap`` and
+# ``Announcement.is_gap`` — so the name itself stays inside (ADR-DOE-API-001 R1·R2, card ki-a2ac882abeb7).
+_GAP_NOTICE: Final = "doeff-events:gap"
+
 
 def _named(value: str, what: str) -> None:
     """Refuse an empty or non-text name where the effect is made, not where the broker fails on it."""
@@ -63,6 +68,12 @@ class Announcement:
     name: str
     body: str
     receipt: str = ""
+
+    @property
+    def is_gap(self) -> bool:
+        """Whether this is the fixed notice that tells the channel's gap (``body`` = the sender's source name), so a
+        reader of raw notices can tell it apart without the wire name."""
+        return self.name == _GAP_NOTICE
 
 
 @final
@@ -100,6 +111,18 @@ class Announce(EffectBase["int | BrokerUnreachable"]):
     def __post_init__(self) -> None:
         _named(self.channel, "Announce.channel")
         _named(self.name, "Announce.name")
+
+    @classmethod
+    def gap(cls, channel: str, source: str, *, kept: bool = False) -> "Announce":
+        """The notice that tells ``channel``'s gap, sent by ``source`` — what ``notice_events_handler`` announces for
+        a marked channel, and what a test or an emulated world sends to make the receivers catch up."""
+        return cls(channel, _GAP_NOTICE, source, kept=kept)
+
+    @property
+    def is_gap(self) -> bool:
+        """Whether this sends the fixed notice that tells the channel's gap (made by ``Announce.gap``), so a fake
+        broker can tell it apart without the wire name."""
+        return self.name == _GAP_NOTICE
 
 
 @dataclass(frozen=True)

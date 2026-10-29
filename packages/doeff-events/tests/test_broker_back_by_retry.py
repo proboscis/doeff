@@ -34,7 +34,6 @@ from doeff_events import (
     restore_broker,
     subscribed_event_handler,
 )
-from doeff_events._handlers.notice_events import GAP_NOTICE
 from doeff_events._notice_laws import LawNote, law_routes
 from doeff_time import Delay, GetTime
 from events_test_support import patient_notice_events
@@ -73,7 +72,7 @@ def _recording(seen: _Seen) -> "ProgramHandler":
         at = (now - T0).total_seconds()
         if isinstance(effect, ProbeBroker):
             seen.tries = (*seen.tries, at)
-        elif effect.name == GAP_NOTICE:
+        elif effect.is_gap:
             seen.gaps = (*seen.gaps, at)
         yield Pass(effect, k)
         return None

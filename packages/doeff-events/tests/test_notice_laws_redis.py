@@ -72,7 +72,6 @@ from doeff_events import (
     SubscribeChannels,
 )
 from doeff_events import NoticeGapMarked, NoticeRoute, NoticeSent, notice_events_handler
-from doeff_events._handlers.notice_events import GAP_NOTICE
 from doeff_events import BrokerConnectionsExhausted, broker_back_by_retry, redis_notice_handler
 from doeff_events._handlers.redis_notices import SUBSCRIPTION_SILENCE_SECONDS
 from doeff_events._notice_laws import (
@@ -636,7 +635,7 @@ def _counting(tries: _Tries) -> "ProgramHandler":
         """Count a try or a gap notice; pass the effect on."""
         if isinstance(effect, ProbeBroker):
             tries._mut_probes += 1
-        elif effect.name == GAP_NOTICE:
+        elif effect.is_gap:
             tries._mut_gaps += 1
         yield Pass(effect, k)
         return None

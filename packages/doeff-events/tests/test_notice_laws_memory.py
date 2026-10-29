@@ -35,7 +35,6 @@ from doeff_events import (
     UnroutedNotice,
     notice_events_handler,
 )
-from doeff_events._handlers.notice_events import GAP_NOTICE
 from doeff_events._notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
@@ -527,7 +526,7 @@ def _fails_the_first_gap_notice(raised: SimpleNamespace) -> "ProgramHandler":
     @do
     def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
         """Raise once on a gap notice; pass everything else on."""
-        if effect.name == GAP_NOTICE and not raised.done:
+        if effect.is_gap and not raised.done:
             raised.done = True
             raise RuntimeError("the client failed while telling the gap")
         yield Pass(effect, k)
@@ -569,7 +568,7 @@ def _holds_gap_notices(gate: SimpleNamespace) -> "ProgramHandler":
     @do
     def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
         """Hold a gap notice on the gate; pass everything else on."""
-        if effect.name == GAP_NOTICE and gate.promise is not None:
+        if effect.is_gap and gate.promise is not None:
             gate.held = True
             yield Wait(gate.promise.future)
         yield Pass(effect, k)
