@@ -23,7 +23,7 @@ from doeff_core_effects import (  # noqa: E402
 )
 from doeff_core_effects.os_process import subprocess_handler  # noqa: E402
 from doeff_core_effects.process_effects import ReadEnvironment  # noqa: E402
-from doeff_google_secret_manager import access_secret  # noqa: E402
+from doeff_google_secret_manager._secrets import access_secret  # noqa: E402
 
 from doeff import do, run, with_handlers  # noqa: E402
 

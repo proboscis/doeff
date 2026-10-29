@@ -33,19 +33,21 @@ google_genai = pytest.importorskip("google.genai")
 from doeff_gemini import (
     APICallMetadata,
     GeminiImageEditResult,
-    build_contents,
-    build_generation_config,
     calculate_cost,
     default_gemini_cost_handler,
     edit_image__gemini,
+    structured_llm__gemini,
+)
+from doeff_gemini._client import track_api_call
+from doeff_gemini._structured_llm import (
+    GeminiStructuredOutputError,
+    build_contents,
+    build_generation_config,
     image_edit__gemini,
     process_image_edit_response,
     process_structured_response,
     process_unstructured_response,
-    structured_llm__gemini,
-    track_api_call,
 )
-from doeff_gemini._structured_llm import GeminiStructuredOutputError
 
 genai_types = google_genai.types
 from _runner import async_run_program

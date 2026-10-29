@@ -30,9 +30,6 @@ from doeff_system_one._judgment import (
     crosses as crosses,
 )
 from doeff_system_one._programs import (
-    judge as judge,
-)
-from doeff_system_one._programs import (
     judge_many as judge_many,
 )
 from doeff_system_one._types import (

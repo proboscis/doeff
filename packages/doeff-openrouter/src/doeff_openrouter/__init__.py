@@ -3,14 +3,8 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from ._chat import OpenRouterResponseError, chat_completion
-from ._client import (
-    OpenRouterClient,
-    get_model_cost,
-    get_openrouter_client,
-    get_total_cost,
-    reset_cost_tracking,
-)
+from ._chat import OpenRouterResponseError
+from ._client import OpenRouterClient
 from ._effects import RouterChat, RouterStreamingChat, RouterStructuredOutput
 from ._handlers import (
     mock_handlers,
@@ -30,15 +24,10 @@ __all__ = [
     "RouterStreamingChat",
     "RouterStructuredOutput",
     "TokenUsage",
-    "chat_completion",
-    "get_model_cost",
-    "get_openrouter_client",
-    "get_total_cost",
     "mock_handlers",
     "openrouter_mock_handler",
     "openrouter_production_handler",
     "production_handlers",
-    "reset_cost_tracking",
     "structured_llm",
 ]
 

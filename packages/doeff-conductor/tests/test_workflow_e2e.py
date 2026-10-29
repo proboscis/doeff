@@ -223,7 +223,7 @@ class TestTemplateE2E:
         assert callable(func)
 
     def test_basic_pr_template_structure(self):
-        from doeff_conductor import basic_pr
+        from doeff_conductor._templates import basic_pr
         from doeff_conductor import Issue
 
         from doeff import ProgramBase

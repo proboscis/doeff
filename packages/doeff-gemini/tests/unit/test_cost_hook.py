@@ -70,8 +70,8 @@ from doeff_gemini import (
     GeminiCalculateCost,
     GeminiCostEstimate,
     default_gemini_cost_handler,
-    track_api_call,
 )
+from doeff_gemini._client import track_api_call
 
 from doeff import Effect, Pass, Resume, do, handler
 

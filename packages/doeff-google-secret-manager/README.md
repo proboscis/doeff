@@ -26,7 +26,7 @@ gcloud auth application-default login
 from doeff import do, run, with_handlers
 from doeff_core_effects import await_handler, lazy_ask, state, try_handler, writer
 from doeff_core_effects import scheduled
-from doeff_google_secret_manager import access_secret
+from doeff_google_secret_manager._secrets import access_secret
 
 
 @do

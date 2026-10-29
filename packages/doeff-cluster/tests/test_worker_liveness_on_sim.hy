@@ -11,8 +11,9 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [Delay])
-(import doeff_events [BrokerPatience broker-patience-handler EventBus MemoryBroker hold-broker release-broker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
+(import doeff_events [BrokerPatience broker-patience-handler EventBus MemoryBroker SourceMissed SourceResumed SourceStarted WaitForEvent memory-notice-handler notice-events-handler
                       subscribed-event-handler cut-broker restore-broker])
+(import doeff_events._handlers [hold-broker release-broker])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])

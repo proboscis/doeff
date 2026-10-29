@@ -16,12 +16,9 @@ from _runner import (
     openai_api_key_from_doeff_py_handler,
     run_program,
 )
-from doeff_openai import (
-    get_api_calls,
-    gpt4o_structured,
-    gpt5_nano_structured,
-    structured_llm__openai,
-)
+from doeff_openai import structured_llm__openai
+from doeff_openai._client import get_api_calls
+from doeff_openai._structured_llm import gpt4o_structured, gpt5_nano_structured
 from PIL import Image
 from pydantic import BaseModel, Field
 

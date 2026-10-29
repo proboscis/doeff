@@ -10002,16 +10002,12 @@
       "TIER1_REVIEW_BUDGET_KEY",
       "TIER2_ESCALATION_BUDGET_KEY",
       "agent_cache_key",
-      "basic_pr",
-      "enforced_pr",
       "is_template",
       "longest_valid_prefix",
       "make_blocking_scheduled_handler_with_store",
       "make_scheduled_handler_with_store",
-      "multi_agent",
       "node_identity_fingerprint",
       "resolved_identity_fingerprint",
-      "reviewed_pr",
       "route_review_item",
       "run_review_routing_demo",
       "workflow_effect_cache_key"
@@ -12747,9 +12743,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — effect にする": {
-     "doeff_events": [
-      "release_broker"
-     ],
      "doeff_events.effects": [
       "publish_effect_type"
      ],
@@ -12806,7 +12799,6 @@
      "doeff_events": [
       "GAP_NOTICE",
       "cut_broker",
-      "hold_broker",
       "restore_broker"
      ],
      "doeff_events.effects.notices": [
@@ -13182,9 +13174,7 @@
    "名": {
     "外れ — effect にする": {
      "doeff_gemini": [
-      "build_contents",
       "edit_image__gemini",
-      "get_gemini_client",
       "structured_llm__gemini"
      ],
      "doeff_gemini.client": [
@@ -13203,8 +13193,7 @@
     },
     "外れ — handler の中へ入れる": {
      "doeff_gemini": [
-      "GeminiClient",
-      "build_generation_config"
+      "GeminiClient"
      ],
      "doeff_gemini.client": [
       "GeminiClient"
@@ -13224,13 +13213,7 @@
     },
     "外れ — 内側の module へ移す": {
      "doeff_gemini": [
-      "calculate_cost",
-      "gemini_cost_calculator__default",
-      "image_edit__gemini",
-      "process_image_edit_response",
-      "process_structured_response",
-      "process_unstructured_response",
-      "track_api_call"
+      "calculate_cost"
      ],
      "doeff_gemini.client": [
       "track_api_call"
@@ -14695,20 +14678,8 @@
    "名": {
     "外れ — effect にする": {
      "doeff_openai": [
-      "chat_completion",
-      "chat_completion_async",
-      "create_embedding",
-      "create_embedding_async",
-      "get_api_calls",
       "get_encoding",
-      "get_model_cost",
       "get_model_pricing",
-      "get_openai_client",
-      "get_single_embedding",
-      "get_total_cost",
-      "stream_to_chunks",
-      "stream_with_accumulator",
-      "stream_with_metadata",
       "structured_llm__openai"
      ],
      "doeff_openai.chat": [
@@ -14767,10 +14738,7 @@
      "doeff_openai": [
       "MODEL_PRICING",
       "ModelPricing",
-      "batch_embeddings",
-      "buffered_stream",
       "calculate_cost",
-      "cosine_similarity",
       "count_embedding_tokens",
       "count_message_tokens",
       "count_tokens",
@@ -14778,17 +14746,8 @@
       "estimate_max_cost",
       "extract_request_id",
       "extract_token_usage",
-      "gpt4o_structured",
-      "gpt5_nano_structured",
-      "gpt5_structured",
       "is_gpt5_model",
-      "process_stream",
-      "process_stream_chunks",
-      "requires_max_completion_tokens",
-      "reset_cost_tracking",
-      "semantic_search",
-      "simple_chat",
-      "track_api_call"
+      "requires_max_completion_tokens"
      ],
      "doeff_openai.chat": [
       "calculate_cost",
@@ -14941,10 +14900,6 @@
    "名": {
     "外れ — effect にする": {
      "doeff_openrouter": [
-      "chat_completion",
-      "get_model_cost",
-      "get_openrouter_client",
-      "get_total_cost",
       "structured_llm"
      ],
      "doeff_openrouter.chat": [
@@ -14979,9 +14934,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_openrouter": [
-      "reset_cost_tracking"
-     ],
      "doeff_openrouter.client": [
       "extract_cost_info",
       "extract_token_usage",
@@ -16789,10 +16741,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — effect にする": {
-     "doeff_seedream": [
-      "edit_image__seedream4",
-      "get_seedream_client"
-     ],
      "doeff_seedream.client": [
       "get_seedream_client"
      ],
@@ -16819,8 +16767,7 @@
       "DEFAULT_RESPONSE_FORMAT",
       "DEFAULT_SIZE_PRICING",
       "DEFAULT_TIMEOUT",
-      "calculate_cost",
-      "track_api_call"
+      "calculate_cost"
      ],
      "doeff_seedream.client": [
       "DEFAULT_BASE_URL",
@@ -16908,7 +16855,6 @@
       "chosen",
       "clip",
       "crosses",
-      "judge",
       "judge_many"
      ],
      "doeff_system_one.judgment": [
