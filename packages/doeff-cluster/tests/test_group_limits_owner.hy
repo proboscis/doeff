@@ -207,7 +207,7 @@
   (for [#(f params) [#(cluster_policy.hold-limits ["held" "limits" "worker" "groups"])
                      #(cluster_policy.limits-misfit ["limits" "worker" "held" "groups"])
                      #(cluster_policy.limit-holdings ["claims" "groups"])
-                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups"])
+                     #(cluster_policy.task-misfit ["limits" "priority" "worker" "room" "held" "groups" "bg_held" "bg_wanted"])
                      #(cluster_policy.placed-claims ["tasks"])]]
     (assert (= (list (. (inspect.signature f) parameters)) params) #(f.__name__ (inspect.signature f)))))
 

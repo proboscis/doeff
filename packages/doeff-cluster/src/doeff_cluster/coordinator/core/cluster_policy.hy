@@ -993,7 +993,9 @@
     TaskUnplacedKind.TASK-LIMITED
       "task の名乗った組(limits)の同時数が系の宣言の上限に達している — 同じ組の task が終わるまで待つ"
     TaskUnplacedKind.TASK-RESERVED
-      "負の優先の task(背景の仕事)は worker の task-reserve を使わない — 予約を越える空きができるまで待つ"
+      "負の優先の task(背景の仕事)は worker の task-reserve のうち優先 0 以上の task に残す半分を使わない — 予約を越える空きができるまで待つ"
+    TaskUnplacedKind.TASK-BACKGROUND-RESERVED
+      "優先 0 以上の task は、背景の仕事が待っている間は worker の task-reserve のうち背景の仕事に残す半分を使わない — 空きができるまで待つ"
     TaskUnplacedKind.TASK-UNDECLARED
       "task の名乗った組(limits)が系の宣言(資源 GroupLimit)に無い — 組の上限が宣言されるまで待つ"))
 
@@ -1050,23 +1052,41 @@
   (- worker.task-reserve (// worker.task-reserve 2)))
 
 
-(defk task-misfit [limits priority worker room held groups]
-  {:pre [(: limits tuple) (: priority int) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table)]
+(defk background-reserve-of [worker]
+  {:pre [(: worker WorkerInfo)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
+  "worker の task-reserve のうち、待っている負の優先の task(背景の仕事)が在る間は優先 0 以上の task に使わせず背景の仕事に残す数を知るため:
+   予約の残りの半分(切り捨て — foreground-reserve-of と足して予約の全部)。以前は優先 0 以上の側の半分だけを守り、背景の仕事の側の半分は
+   守らなかった — 本番の zeus(capacity 40・task-reserve 6・常駐の job 33 → task の空き 7)で優先 0 の組 4 つ(日次の検・着地の後の検 2 組・
+   着地の宣言し直し)が 4 本を持つと、残る空き 3 は予約の半分 3 を越えず、会話の long-command は 1 本も置かれなかった(2026-10-29 17:09〜
+   21:11 JST に最大 27 本・3〜4 時間 queued — card ki-66ebb596d7d6・調べ ki-c0d591a62dc4)。背景の仕事は置いている数がこの数に満たない間は
+   予約の残りを使ってよく、優先 0 以上の task は、その worker に置けうる待っている背景の仕事が在る間は、この数に満たない分を残す。"
+  (// worker.task-reserve 2))
+
+
+(defk task-misfit [limits priority worker room held groups bg-held bg-wanted]
+  {:pre [(: limits tuple) (: priority int) (: worker WorkerInfo) (: room int) (: held dict) (: groups Table) (: bg-held int)
+         (: bg-wanted int)]
    :post [(: % (| TaskUnplacedKind None))]
    :tags {:context "coordinator" :role "judgment"}}
   "能力と版の合う worker 1 台に、待っている task(名乗った組 limits・優先 priority — task の行は受けない)を今置けない理由を知るため
    (None = 置ける)。room = その worker の task の空き(task-room-of)・held = 置いている task の組の升ごとの数(limit-holdings)・
-   groups = 系が宣言した GroupLimit の表。名乗った組の
+   groups = 系が宣言した GroupLimit の表・bg-held = その worker に置いている負の優先の task の数・bg-wanted = その worker に今置けうる
+   待っている負の優先の task の数。名乗った組の
    どれかが宣言に無い → TASK-UNDECLARED・空きが無い → TASK-NO-ROOM・名乗った組のどれかの升が宣言の値に達している → TASK-LIMITED・
-   負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下 → TASK-RESERVED(2026-10-11・残す数は
-   2026-10-14 に予約の全部から半分へ)。比べる値は宣言の値で、task の名乗りに値は無い(card ki-b0e8028c8c8d)。"
+   負の優先の task で、空きが予約のうち優先 0 以上の task に残す数(foreground-reserve-of)以下で、置いている背景の仕事が背景の仕事に残す数
+   (background-reserve-of)に達している → TASK-RESERVED(2026-10-11・残す数は 2026-10-14 に予約の全部から半分へ・背景の仕事の側の半分は
+   2026-10-29)・優先 0 以上の task で、空きが背景の仕事に残す数のうち置いている数に満たない分(待っている背景の仕事の数まで)以下 →
+   TASK-BACKGROUND-RESERVED。比べる値は宣言の値で、task の名乗りに値は無い(card ki-b0e8028c8c8d)。"
   (<- by-limits (| TaskUnplacedKind None) (limits-misfit limits worker.name held groups))
   (<- kept int (foreground-reserve-of worker))
+  (<- bg-floor int (background-reserve-of worker))
+  (val bg-kept (max 0 (min (- bg-floor bg-held) bg-wanted)))
   (cond
     (= by-limits TaskUnplacedKind.TASK-UNDECLARED) by-limits
     (<= room 0) TaskUnplacedKind.TASK-NO-ROOM
     by-limits by-limits
-    (and (< priority 0) (<= room kept)) TaskUnplacedKind.TASK-RESERVED
+    (and (< priority 0) (<= room kept) (>= bg-held bg-floor)) TaskUnplacedKind.TASK-RESERVED
+    (and (>= priority 0) (<= room bg-kept)) TaskUnplacedKind.TASK-BACKGROUND-RESERVED
     True None))
 
 
@@ -1098,6 +1118,7 @@
     (in TaskUnplacedKind.TASK-UNDECLARED kinds) TaskUnplacedKind.TASK-UNDECLARED
     (in TaskUnplacedKind.TASK-LIMITED kinds) TaskUnplacedKind.TASK-LIMITED
     (in TaskUnplacedKind.TASK-RESERVED kinds) TaskUnplacedKind.TASK-RESERVED
+    (in TaskUnplacedKind.TASK-BACKGROUND-RESERVED kinds) TaskUnplacedKind.TASK-BACKGROUND-RESERVED
     True TaskUnplacedKind.TASK-NO-ROOM))
 
 
@@ -1283,6 +1304,19 @@
         draining (draining-workers state now))
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
   (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
+  ;; 背景の仕事の側の予約(background-reserve-of)の守りに要る worker ごとの数: bg-held = 置いている負の優先の task(置くたびに足す)・
+  ;; bg-wanted = 今その worker に置けうる(生きて drain 中でなく disk が在り、名乗った組の上限に達していない)待っている負の優先の task。
+  ;; bg-wanted は拍の初めに 1 度数える — 置く順で優先 0 以上の task が先なので、背景の仕事を置き始める前に読む数は変わらない。
+  (setv bg-held (dfor name (.keys state.workers) name 0)
+        bg-wanted (dfor name (.keys state.workers) name 0))
+  (for [t (scan-rows placed.tasks) :if (and (< t.priority 0) (in t.phase PLACED-PHASES) (in t.worker bg-held))]
+    (+= (get bg-held t.worker) 1))
+  (for [task (.values queue) :if (and (= task.phase "queued") (< task.priority 0))]
+    (for [w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w) (not-in w.name draining)
+                                           (env-room-on task w))]
+      (<- bg-limited (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
+      (when (is bg-limited None)
+        (+= (get bg-wanted w.name) 1))))
   ;; 置く順 = 優先の大きい順、同じ優先の中は id の順(2026-10-11 — 以前は id の順だけで、先に積んだ背景の仕事が空いた枠を先に取った)。
   (for [id (sorted queue :key (fn [i] #((- (. (get queue i) priority)) i)))]
     (setv task (get queue id))
@@ -1297,7 +1331,8 @@
       (var misfits [])
       (for [w able-now]
         (<- room int (task-room-of w load))
-        (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits))
+        (<- misfit (| TaskUnplacedKind None) (task-misfit task.limits task.priority w room held state.group-limits
+                                                          (get bg-held w.name) (get bg-wanted w.name)))
         (if (is misfit None)
             (:= roomy #(#* roomy w))
             (:= misfits [#* misfits misfit])))
@@ -1312,6 +1347,8 @@
                                  "preparing" "assigned")
                        used (get load chosen.name)
                        (get load chosen.name) (replace used :tasks (+ used.tasks 1)))
+                 (when (< task.priority 0)
+                   (+= (get bg-held chosen.name) 1))
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。

@@ -645,12 +645,13 @@
 ;; 材料の判定(running-process・入れ替えの見張り・停止の述語)の答えは、理由の文ではなく下の閉じた型で運ぶ — version-state は種類を
 ;; 網羅の match で状態へ写し、文を読んで分けない。
 
-(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-UNDECLARED)
+(defenum TaskUnplacedKind TASK-NO-ROOM TASK-LIMITED TASK-RESERVED TASK-BACKGROUND-RESERVED TASK-UNDECLARED)
 
 
 ;; 待っている task を置けない理由(cluster_policy.task-unplaced-text)。TASK-NO-ROOM = 置ける worker のどれにも task の空きが無い・
 ;; TASK-LIMITED = 空きは在るが、task の名乗った組の同時数の上限(系の宣言の GroupLimit の値)に達している・TASK-RESERVED = 空きは在るが、
-;; 残りが worker の task-reserve のうち優先 0 以上の task に残す半分(切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-UNDECLARED = task の名乗った
+;; 残りが worker の task-reserve のうち優先 0 以上の task に残す半分(切り上げ)だけで、負の優先の task(背景の仕事)はそこを使わない(2026-10-11・半分は 2026-10-14)・TASK-BACKGROUND-RESERVED = 空きは在るが、
+;; 残りが task-reserve のうち背景の仕事に残す半分(切り捨て)だけで、背景の仕事が待っている間は優先 0 以上の task はそこを使わない(2026-10-29)・TASK-UNDECLARED = task の名乗った
 ;; 組が系の宣言に無い(受けた後に資源 GroupLimit が消された・宣言の前の保存から読み直した — 宣言されるまで待つ・2026-10-12)。
 
 
