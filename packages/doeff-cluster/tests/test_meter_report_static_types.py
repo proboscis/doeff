@@ -28,8 +28,8 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 MODULE = """\
 (require doeff-hy.macros [defk defhandler <-])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_core_effects.meter_effects [MeterSettings])
-(import doeff_core_effects.memory_meter [memory-meter-handler])
+(import doeff_core_effects._meter_effects [MeterSettings])
+(import doeff_core_effects._memory_meter [memory-meter-handler])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.shared.protocol.meter_report [with-meter-report])

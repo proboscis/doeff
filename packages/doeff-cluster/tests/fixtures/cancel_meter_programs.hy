@@ -16,7 +16,7 @@
 (import collections.abc [Callable])
 (import doeff [with-handlers])
 (import doeff_time [Delay])
-(import doeff_core_effects.meter_effects [MeterSettings])
+(import doeff_core_effects [MeterSettings])
 (import doeff_core_effects.process_meter [process-meter-handler])
 (import doeff_core_effects.os_process [metered-offloaded-subprocess-handler])
 (import doeff_core_effects.process_effects [RunProcess])

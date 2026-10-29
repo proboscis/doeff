@@ -10,7 +10,7 @@ meter_report.hy は Hy の module なので、pyright は中を読めず、servi
 
 from typing import TypeVar
 
-from doeff_core_effects.meter_effects import MeterSnapshot
+from doeff_core_effects import MeterSnapshot
 
 from doeff import EffectBase, Program
 
