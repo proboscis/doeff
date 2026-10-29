@@ -13,9 +13,9 @@ from typing import runtime_checkable as runtime_checkable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
-from doeff_hy.wire import Malformed as Malformed
-from doeff_hy.wire import dump_json as dump_json
-from doeff_hy.wire import parse_json as parse_json
+from doeff_hy._wire import Malformed as Malformed
+from doeff_hy._wire import dump_json as dump_json
+from doeff_hy._wire import parse_json as parse_json
 from doeff_core_effects._offloaded_call import ReusedThreads as _ReusedThreads
 from doeff_core_effects._offloaded_call import offloaded as offloaded
 from doeff_core_effects._offloaded_call import run_detached as run_detached

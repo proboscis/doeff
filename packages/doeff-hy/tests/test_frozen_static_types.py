@@ -1,4 +1,4 @@
-"""doeff_hy.frozen の型(frozen.pyi)の検(agora-redesign #2311・#2245)。
+"""doeff_hy._frozen の型(frozen.pyi)の検(agora-redesign #2311・#2245)。
 
 frozen.hy は Hy の module で、型の宣言(frozen.pyi)が無いと pyright は `FrozenMap` と凍らせる関数を Unknown として読み、
 FrozenMap を返す定義の答え・FrozenMap の値の読みに、書き手に直せない reportUnknown* が連なる(agora の基点に同じ種類が
@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff_hy import frozen
+from doeff_hy import _frozen as frozen
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 

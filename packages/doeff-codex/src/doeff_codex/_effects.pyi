@@ -4,7 +4,7 @@ from typing import TypeAlias
 from doeff import EffectBase as _doeff_effect_base
 from dataclasses import dataclass as _doeff_dataclass
 from dataclasses import dataclass as dataclass
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
 from doeff_codex._values import CodexSessionSpec as CodexSessionSpec
 from doeff_codex._values import CodexTurn as CodexTurn
 from doeff_codex._values import CodexEvent as CodexEvent

@@ -10,7 +10,7 @@
 (import json)
 (import os)
 (import re)
-(import doeff_hy.frozen [FrozenMap thaw-json])
+(import doeff_hy._frozen [FrozenMap thaw-json])
 (import doeff_claude_code._values [ClaudeSessionSpec ClaudeHome LentCredential BypassAll AskHost DenyUnlisted HomeSettings McpSse McpStdio
                                   PrintContent AutocompactAuto AutocompactTokens FreshSession ResumeSession ForkSession])
 (import doeff_claude_code._effects [ClaudePrintOnce])

@@ -9,7 +9,7 @@
                                                        NeedsOverride])
 (import doeff_cluster.coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
-(import doeff_hy.wire [parse Malformed])
+(import doeff_hy._wire [parse Malformed])
 (import doeff_traverse [sequence])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])

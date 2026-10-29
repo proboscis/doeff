@@ -1,7 +1,7 @@
 """契約 `(: x FrozenJson)` と型付き束縛 `(<- x FrozenJson e)` が実行時に通ること(card acp:kanban-issue:ki-e540d658e378)。
 
 契約と束縛は書いた型を `doeff_hy.type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写すのは字面の総称型
-(`(get …)`・`(| …)`)だけで、名(型の別名)はそのまま isinstance に渡る。doeff_hy.frozen の実行時の名 FrozenJson が
+(`(get …)`・`(| …)`)だけで、名(型の別名)はそのまま isinstance に渡る。doeff_hy._frozen の実行時の名 FrozenJson が
 `FrozenMap[object] | tuple[object, ...] | …`(総称型を含む和)だと、どの値でも
 `TypeError: isinstance() argument 2 cannot be a parameterized generic` になった(2026-10-11 agora の受付が 500 を返した —
 使い手は字面に展開して避けていた)。実行時の名は外側の型の和にする(実行時に確かめるのは外側の型だけ — #1790 の決め)。
@@ -18,7 +18,7 @@ import pytest
 
 SOURCE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_hy.frozen [FrozenJson FrozenMap])
+(import doeff_hy._frozen [FrozenJson FrozenMap])
 
 (defk accepted [value]
   {:pre [(: value FrozenJson)] :post [(: % bool)]}
@@ -63,14 +63,14 @@ def _run(program: object) -> object:
 
 
 def test_a_contract_naming_frozen_json_accepts_every_json_value(mod: ModuleType) -> None:
-    from doeff_hy.frozen import freeze_json_text
+    from doeff_hy._frozen import freeze_json_text
 
     for value in (freeze_json_text('{"a": [1, "x", null]}'), freeze_json_text("[1, 2]"), "x", 1, 1.5, True, None):
         assert _run(mod.accepted(value)) is True, value
 
 
 def test_a_typed_bind_and_a_mapping_contract_of_frozen_json_pass(mod: ModuleType) -> None:
-    from doeff_hy.frozen import freeze_json_text
+    from doeff_hy._frozen import freeze_json_text
 
     event = freeze_json_text('{"start_ms": 3, "items": [1]}')
     assert _run(mod.bound_field(event, "start_ms")) == 3
@@ -87,6 +87,6 @@ def test_a_contract_naming_frozen_json_still_refuses_values_outside_frozen_json(
 
 def test_the_runtime_name_still_parameterizes_a_frozen_map_field() -> None:
     # 実行時の名は欄の注記 `(get FrozenMap FrozenJson)` のための名(#4257)— 外側の型の和でも型引数に置ける。
-    from doeff_hy.frozen import FrozenJson, FrozenMap
+    from doeff_hy._frozen import FrozenJson, FrozenMap
 
     assert FrozenMap[FrozenJson].__origin__ is FrozenMap

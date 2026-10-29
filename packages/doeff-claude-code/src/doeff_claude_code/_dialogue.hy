@@ -43,7 +43,7 @@
 (import json)
 (import doeff [run])
 (import typing [NamedTuple])
-(import doeff_hy.frozen [thaw-json])
+(import doeff_hy._frozen [thaw-json])
 (import doeff_claude_code._values [TurnInput ImageAttachment PrintContent Allow Deny])
 (import doeff_claude_code._lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES

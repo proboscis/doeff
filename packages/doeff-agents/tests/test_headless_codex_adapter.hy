@@ -23,7 +23,7 @@
 (import doeff_agents [AgentType AgentSessionLifecycle])
 (import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])
 (import doeff_agents._effects.agent [AutocompactTokens])
-(import doeff_hy.frozen [freeze-json])
+(import doeff_hy._frozen [freeze-json])
 (import doeff_agents [SessionStatus])
 ;; 層 2 との組は doeff-agents の組み立ての部品で作る(この検も doeff_codex を import しない)。
 (import doeff_agents._handlers.headless_compose [FakeCodexWorld FakeCodexReply CodexTurnInput CodexApprovalPolicy CodexSandboxMode

@@ -3,9 +3,9 @@
 from typing import TypeAlias
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import frozen_json_object as frozen_json_object
-from doeff_hy.frozen import frozen_map_of as frozen_map_of
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import frozen_json_object as frozen_json_object
+from doeff_hy._frozen import frozen_map_of as frozen_map_of
 
 def checked_env(value: object, what: str) -> FrozenMap[str]:
     ...

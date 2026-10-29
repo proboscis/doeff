@@ -31,7 +31,7 @@
 (import functools [reduce])
 (import itertools [groupby])
 (import operator [add itemgetter])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 
 
 (defrecord SecondsTotal

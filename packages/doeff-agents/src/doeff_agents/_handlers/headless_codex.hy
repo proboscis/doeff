@@ -90,7 +90,7 @@
   SessionAlreadyExistsError SessionNotFoundError TurnInFlightError])
 ;; 手番の終わり → AwaitOutcome の写し(L2 の見え方)は claude の adapter と同じ 1 つの関数を使う。
 (import doeff_agents._handlers.headless [outcome-of])
-(import doeff_hy.frozen [frozen-json-object])
+(import doeff_hy._frozen [frozen-json-object])
 (import doeff_codex [CodexHome CodexSessionSpec CodexTurn CodexInput CodexImage FreshThread ResumeThread
                      ApprovalPolicy SandboxMode
                      CodexLine TextDelta AgentMessageDone ReasoningDelta ItemStarted ItemDone TokenUsage TokenCount TurnEnded

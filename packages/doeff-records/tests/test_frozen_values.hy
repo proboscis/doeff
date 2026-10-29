@@ -4,7 +4,7 @@
 (import copy)
 (import dataclasses)
 (import pickle)
-(import doeff_hy.frozen [FrozenMap thaw-json])
+(import doeff_hy._frozen [FrozenMap thaw-json])
 (import doeff_records [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField FieldDecl TableDecl DescendingWithin])
 (import doeff_records [PutRow ListRows AppendEvent ReadRow RowWrite])
 (import doeff_records.admission [canonical-json])

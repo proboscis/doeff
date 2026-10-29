@@ -114,7 +114,7 @@
 (defwire LeaseAnswer
   "LeaseOp の答え(coordinator の POST /leases/<名> の返事の本文と同じ形 — 欄の綴りは camel): ok = 操作が通ったか・reason = 通らなかった
    理由(空きが無い・lost — 通れば None)・ttl-ms = 与えた期限(ms — 返す・外すは 0)・dropped = drop で外した担い手の数(ほかの操作は 0)。
-   どの欄も既定値を持たない — 書き出し(doeff_hy.wire の dump)は既定値と同じ欄を省くので、旧い版の読み手(返事の dict の欄を引く)が
+   どの欄も既定値を持たない — 書き出し(doeff_hy._wire の dump)は既定値と同じ欄を省くので、旧い版の読み手(返事の dict の欄を引く)が
    欄を失わないよう、いつも 4 つとも書く(#2523)。"
   {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
   (#^ bool ok)

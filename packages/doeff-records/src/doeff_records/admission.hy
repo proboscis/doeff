@@ -11,7 +11,7 @@
 (import hashlib)
 (import json)
 (import collections.abc [Mapping])
-(import doeff_hy.frozen [FrozenMap frozen-json-object thaw-json])
+(import doeff_hy._frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
                               RememberedWrite])

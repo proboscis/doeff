@@ -2,6 +2,6 @@
 (import pydantic.fields [Field])  ; fires
 (import pydantic-core [core-schema])  ; fires
 (import json pydantic_core)  ; fires
-(import doeff_hy.wire [parse-as])
+(import doeff_hy._wire [parse-as])
 (import pydantic_settings [BaseSettings])
-(import doeff_hy.wire_malformed [Malformed])
+(import doeff_hy._wire_malformed [Malformed])

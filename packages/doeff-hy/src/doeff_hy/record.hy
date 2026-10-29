@@ -113,11 +113,11 @@
 ;;;
 ;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
 ;;; 欄の名の綴り違いも型の違いも使う所まで見えない。defwire は JSON の形を型として宣言し、解き手
-;;; (doeff_hy.wire の parse / dump — doeff_hy/wire_codec.py の自前の型の木・card ki-b7701d5fc0dd)で境目の 1 か所で一度に解いて確かめる。
+;;; (doeff_hy._wire の parse / dump — doeff_hy/_wire_codec.py の自前の型の木・card ki-b7701d5fc0dd)で境目の 1 か所で一度に解いて確かめる。
 ;;;
 ;;;   (require doeff-hy.record [defwire])
 ;;;   (import dataclasses [dataclass])
-;;;   (import doeff_hy.wire [parse dump Malformed])
+;;;   (import doeff_hy._wire [parse dump Malformed])
 ;;;
 ;;;   (defwire LandingRow
 ;;;     "取り込みの台帳の 1 行(記録の service が返す JSON)"
@@ -141,10 +141,10 @@
 ;;;
 ;;; 展開(上の LandingRow):
 ;;;   (do (import typing [ClassVar :as _doeff-ClassVar])
-;;;       (import doeff_hy.wire)
+;;;       (import doeff_hy._wire)
 ;;;       (hy.R.doeff_hy/record.defrecord LandingRow "…" {:tags {…} :check […] :class-vars […]} 欄 …)
-;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy.wire.wire-config {"lane_id" "laneId" …} "reject"))
-;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy.wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
+;;;       (setattr LandingRow "__pydantic_config__" (doeff_hy._wire.wire-config {"lane_id" "laneId" …} "reject"))
+;;;       (setattr LandingRow "__doeff_wire__" (doeff_hy._wire.wire-shape LandingRow {"lane_id" "laneId" …} "reject")))
 ;;;
 ;;; 投影の規則: defrecord と同じ形の class に写す(:names と :unknown は型の形を変えない)— 共通の品質検査の
 ;;; `quality.hy_record` の同じ便で持つ。hy-index は kind defrecord として読む(doeff-indexer の record_def)。
@@ -531,7 +531,7 @@
                                           [(Keyword (cut key 1 None)) (declared-value header key)])
                                     [])
                                [(Keyword "class-vars")
-                                `[#^ (get _doeff-ClassVar doeff_hy.wire.WireShape) __doeff-wire__]])))
+                                `[#^ (get _doeff-ClassVar doeff_hy._wire.WireShape) __doeff-wire__]])))
   ;; 書いた所に合わせて組む(defrecord と同じ — card ki-8a17293bc3e5): 関数の本体の中では下の import(`_doeff-ClassVar`・
   ;; doeff_hy)と型と記帳をすぐ呼ぶ関数に入れ、型の名だけを束ねる。中の defrecord は、その関数の中でもう 1 度自分を包む
   ;; (型の __qualname__ に包んだ関数の名が 2 つ入る)— 包まない型の組み立てを別の macro に切り出すと、その macro の読み方の
@@ -543,10 +543,10 @@
      ;; 別名は `__` で始めない(class の本体で名が private の形に書き換わり実行時に読めない)。綴りと置き場は展開の名の表から引く
      ;; (class の本体に書いた型の投影で、後処理が表の綴りの import を module の段へ移す — static_check._synthesized_import)。
      (import-form ["ClassVar"])
-     '(import doeff_hy.wire)
+     '(import doeff_hy._wire)
      `(hy.R.doeff_hy/record.defrecord ~name ~@(if (is docstring None) [] [docstring]) ~record-header ~@fields)
-     `(setattr ~name "__pydantic_config__" (doeff_hy.wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
-     `(setattr ~name "__doeff_wire__" (doeff_hy.wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]
+     `(setattr ~name "__pydantic_config__" (doeff_hy._wire.wire-config ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))
+     `(setattr ~name "__doeff_wire__" (doeff_hy._wire.wire-shape ~name ~(Dict (sum (lfor #(k v) (.items wire-names) [(String k) (String v)]) [])) ~unknown))]
     :nested-reads True))
 
 

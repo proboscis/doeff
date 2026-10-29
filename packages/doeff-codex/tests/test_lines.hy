@@ -9,7 +9,7 @@
 (require doeff-hy.macros [deftest defk <- var])
 (import json)
 (import pathlib [Path])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_codex [TextDelta AgentMessageDone ReasoningDelta TurnEnded TurnStatus TokenUsage ServerRequest ItemStarted ItemDone ServerOverloadedHit]
         doeff_codex._lines [classify-line TurnStarted TurnError ThreadStarted Response ErrorResponse Other Unparsed UnknownValue RateLimits RateLimitWindow])
 

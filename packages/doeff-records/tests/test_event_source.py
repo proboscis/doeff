@@ -59,7 +59,7 @@ from doeff_events import (
     timer_handler,
 )
 from doeff_events import PublishEffect, WaitForEvent
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 from doeff_records.admission import key_from_text, key_text
 from doeff_records import AppendEvent, PutRow, ReadRow
 from doeff_records.event_source import (

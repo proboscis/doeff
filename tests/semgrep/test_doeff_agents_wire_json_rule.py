@@ -2,7 +2,7 @@
 
 層の決まり: codex の行の形を知るのは層 2(doeff-codex の lines)だけで、doeff-agents(層 3 の adapter)は層 2 の型つきの記録だけを
 読む。盲検 B は、層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・
-pre-commit・型検査を全部通ることを実測した。規則 doeff-agents-decodes-no-wire-json は、その形(defwire・doeff_hy.wire・
+pre-commit・型検査を全部通ることを実測した。規則 doeff-agents-decodes-no-wire-json は、その形(defwire・doeff_hy._wire・
 OpaqueJson・parse-json)を doeff-agents の src で断る。
 
 - 1 本目: fixture の失敗の形(wire の型の import・OpaqueJson・defwire・parse-json)が、行ごとに断られる。通る形(層 2 の記録の
@@ -31,7 +31,7 @@ def _hits(findings: list[dict], rule: str) -> list[int]:
 def test_wire_json_decoding_in_doeff_agents_is_rejected() -> None:
     root = Path(__file__).resolve().parents[2]
     findings = _semgrep_results(root / ".semgrep.yaml", FIXTURE, cwd=root / "tests/semgrep/fixtures/python")
-    # 2 行目 = doeff_hy.wire の import / 3 行目 = OpaqueJson / 4 行目 = defwire / 7 行目 = parse-json。
+    # 2 行目 = doeff_hy._wire の import / 3 行目 = OpaqueJson / 4 行目 = defwire / 7 行目 = parse-json。
     # 9 行目(層 2 の記録の import)は通る。
     assert _hits(findings, RULE) == [2, 3, 4, 7]
 

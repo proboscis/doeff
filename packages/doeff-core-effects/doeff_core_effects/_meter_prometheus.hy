@@ -12,7 +12,7 @@
 ;;;     画面の描き手と 1 byte も違わない
 ;;; 値は Python の数の綴りのまま(counter と gauge は float — 1 は 1.0)。
 (require doeff-hy.macros [defk val])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects._meter_effects [MeterSnapshot])
 
 ;; GET /metrics の答えの Content-Type(Prometheus の text の版 0.0.4)。

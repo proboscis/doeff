@@ -110,7 +110,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff [Program])
-(import doeff_hy.frozen [FrozenMap frozen-json-object])
+(import doeff_hy._frozen [FrozenMap frozen-json-object])
 (import doeff_time [Delay GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects [ExternalPromise TaskCancelledError CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_core_effects [ObserveSecondsBatch])

@@ -8,7 +8,7 @@ defk(warm-runtime-env・warm-key・warm-state->json・warm-wait-answer)は呼ぶ
 from typing import Any
 
 from doeff import Program
-from doeff_hy.json_value import JsonValue
+from doeff_hy._json_value import JsonValue
 
 from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv
 from doeff_cluster.shared.intent.warm_model import WarmAnswer, WarmFailed, WarmReady, WarmState, WarmWaitExpired

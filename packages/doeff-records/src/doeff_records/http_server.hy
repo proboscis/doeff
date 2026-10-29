@@ -99,7 +99,7 @@
                                                 HttpShutdown])
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time [WaitWithinEffect])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records._values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
 (import doeff_records._schema_digest [schema-digests])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd

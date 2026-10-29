@@ -9,7 +9,7 @@ from functools import reduce as reduce
 from itertools import groupby as groupby
 from operator import add as add
 from operator import itemgetter as itemgetter
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 
 @dataclass(frozen=True, kw_only=True)
 class SecondsTotal:

@@ -39,7 +39,7 @@
 (require doeff-hy.record [defenum defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [SecondsObservation])
 (import doeff_records.wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
 (import doeff_records.pg_sql [ROWS-UNIT stream-unit table-unit])

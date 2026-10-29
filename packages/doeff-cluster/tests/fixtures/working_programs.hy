@@ -11,7 +11,7 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [Spawn Task])
 (import doeff_time [Delay])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 (import doeff_cluster.shared.intent.run_context [RunContext])

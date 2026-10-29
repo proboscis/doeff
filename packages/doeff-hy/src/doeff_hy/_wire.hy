@@ -3,9 +3,9 @@
 ;;; 出自 = operator の決定 2026-09-28: JsonValue を直に使わせず、pydantic のように解いて確かめる。そのための def* の macro を置く
 ;;; 案 A(別の macro defwire)を採る。
 ;;;
-;;; 何をするか: JSON は、型を宣言した値に doeff の自前の解き手(doeff_hy/wire_codec.py の型の木)で一度に解いて確かめる。この module は
+;;; 何をするか: JSON は、型を宣言した値に doeff の自前の解き手(doeff_hy/_wire_codec.py の型の木)で一度に解いて確かめる。この module は
 ;;; pydantic を import しない(決定 2026-10-27・card ki-b7701d5fc0dd で pydantic の TypeAdapter から替えた。pydantic は照らしの相手として
-;;; だけ残し、照らしは doeff_hy/wire_parity.py と packages/doeff-hy/tests/test_wire_parity.py が持つ)。JSON の値(JsonValue)に
+;;; だけ残し、照らしは doeff_hy/_wire_parity.py と packages/doeff-hy/tests/test_wire_parity.py が持つ)。JSON の値(JsonValue)に
 ;;; 触ってよいのは、この module の parse / dump と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120)。
 ;;; protocol・intent・core は型のある値だけを見る。JsonValue を手で分解して読む関数は書かない。
 ;;;
@@ -16,7 +16,7 @@
 ;;;   (<- raw (dump row))                   ; JSON の値へ(送り出す foundation だけ)
 ;;;   (<- schema (json-schema LandingRow))  ; JSON Schema(契約の file と照らす時)
 ;;;
-;;; 形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)は、JsonValue ではなく OpaqueJson(doeff_hy.json_value)
+;;; 形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)は、JsonValue ではなく OpaqueJson(doeff_hy._json_value)
 ;;; で運ぶ — 中を分解する口を持たない名のある型。defwire の欄に書けば解き手が包み・戻す。形を知る読み手は (parse T opaque) で読む。
 ;;;
 ;;; 解き方(defwire の展開がこの module の wire-shape を呼んで型に wire の形を置き、型の木は最初の使いで 1 度だけ組む — 設計の記録
@@ -39,7 +39,7 @@
 ;;; ので、実装の誤りの例外ではなく業務の失敗として扱う)。Absent / Raise の段階 2 が本線に入るまでは parse は Malformed を値で
 ;;; 返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる(ADR-DOE-HY-007 R8・ADR-DOE-CORE-EFFECTS-003 R17)。
 ;;;
-;;; 型の解き手は WireShape の codec(doeff_hy.wire_codec の Codec)。前の pydantic の TypeAdapter(WireShape の adapter)は消した — 直に
+;;; 型の解き手は WireShape の codec(doeff_hy._wire_codec の Codec)。前の pydantic の TypeAdapter(WireShape の adapter)は消した — 直に
 ;;; 読んでいた所は codec か上の 5 つの API へ移す。defwire の型は今までどおり __pydantic_config__(wire-config — pydantic を読まずに作る
 ;;; 設定の辞書)を持つ: 消すと、pydantic の TypeAdapter で defwire の型を直に解く読み手(agora-controllers の約 20 file)が黙って Python の
 ;;; 欄の名と緩い検めで読むようになるため。その読み手を wire の API へ移す card ki-7c4609cd96c9 が、展開の setattr と一緒に消す。
@@ -48,11 +48,11 @@
 (import dataclasses [dataclass])
 (import types)
 (import typing [ClassVar Protocol runtime-checkable])
-(import doeff_hy.frozen [FrozenMap])
-(import doeff_hy.json_value [JsonValue OpaqueJson])
-(import doeff_hy.wire_codec [codec-of])
+(import doeff_hy._frozen [FrozenMap])
+(import doeff_hy._json_value [JsonValue OpaqueJson])
+(import doeff_hy._wire_codec [codec-of])
 ;; Malformed と MalformedField は pydantic を読まない置き場に在る(自前の解き手 wire_codec.py も同じ型を返す — card ki-923c16d33551)。
-(import doeff_hy.wire_malformed [Malformed MalformedField])
+(import doeff_hy._wire_malformed [Malformed MalformedField])
 
 ;; 知らない欄の扱いの綴り(defwire の :unknown の値)→ pydantic の extra(__pydantic_config__ だけが読む)。
 (setv UNKNOWN-FIELDS {"reject" "forbid" "ignore" "ignore"})
@@ -72,7 +72,7 @@
   (#^ type wire-type)
 
   (defn [property] codec [self]
-    "その型の解き手(doeff_hy.wire_codec の Codec — 最初の使いで型の木を 1 度組み、2 回目からは組まない)。"
+    "その型の解き手(doeff_hy._wire_codec の Codec — 最初の使いで型の木を 1 度組み、2 回目からは組まない)。"
     (codec-of self.wire-type)))
 
 

@@ -16,7 +16,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])

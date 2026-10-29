@@ -4,7 +4,7 @@
 (import dataclasses)
 (import doeff [with_handlers])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows ListCursor WatchCursor])
 (import doeff_records [PutRow PutRows RowWrite ReadRow ListRows]
         doeff_records._effects [WHERE-ANY-LIMIT])

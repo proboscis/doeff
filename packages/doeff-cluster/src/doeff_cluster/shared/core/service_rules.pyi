@@ -16,7 +16,7 @@ from doeff_cluster.shared.intent.service_model import (
     System,
     _Identity,
 )
-from doeff_hy.json_value import JsonValue
+from doeff_hy._json_value import JsonValue
 
 def function_reference(function: Callable[..., object], where: str) -> str: ...
 def canonical_record(value: RecordArgument, where: str) -> dict[str, JsonValue]: ...

@@ -20,7 +20,7 @@
 (import collections [Counter])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
-(import doeff_hy.frozen [FrozenMap freeze-json])
+(import doeff_hy._frozen [FrozenMap freeze-json])
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset

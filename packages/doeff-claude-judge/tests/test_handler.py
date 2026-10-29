@@ -31,14 +31,14 @@ from doeff_claude_judge import (
     scripted_printer,
 )
 from doeff_claude_judge._wire import NOUL_HEAD
-from doeff_hy.frozen import freeze_json
+from doeff_hy._frozen import freeze_json
 from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
 
 from doeff import Err, Pass, Resume, ResumeThrow, Try, do
 from doeff import handler as _program_handler
 
 if TYPE_CHECKING:
-    from doeff_hy.frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
+    from doeff_hy._frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
 
 QUESTIONS = {
     "plain": noul("Can a first-time reader decide from the document?"),

@@ -7,7 +7,7 @@
 (import dataclasses [dataclass replace])  ; defrecord と defwire の展開が名指す
 (import json)
 (import pathlib [Path])
-(import doeff_hy.wire [Malformed parse])
+(import doeff_hy._wire [Malformed parse])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
 (import doeff_cluster.shared.core.native_wheel [current-platform])

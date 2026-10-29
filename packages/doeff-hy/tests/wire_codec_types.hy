@@ -1,5 +1,5 @@
-;;; 自前の解き手(doeff_hy/wire_codec.py)の検に使う defwire の型(card ki-923c16d33551)。
-;;; 検は test_wire_codec.py — 同じ型を今の pydantic の解き手(doeff_hy.wire の parse-json)にも通して答えを比べる。
+;;; 自前の解き手(doeff_hy/_wire_codec.py)の検に使う defwire の型(card ki-923c16d33551)。
+;;; 検は test_wire_codec.py — 同じ型を今の pydantic の解き手(doeff_hy._wire の parse-json)にも通して答えを比べる。
 
 (require doeff-hy.record [defwire defrecord defenum])
 (require doeff-hy.macros [val])
@@ -7,7 +7,7 @@
 (import datetime [datetime])
 (import enum [StrEnum])
 (import typing [Annotated Literal Optional])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 
 
 (defenum Color (RED "red") (BLUE "blue"))

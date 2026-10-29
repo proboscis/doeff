@@ -11,12 +11,12 @@ from dataclasses import replace as replace
 from datetime import datetime as datetime
 from enum import StrEnum as StrEnum
 from doeff import run as run
-from doeff_hy.frozen import FrozenMap as FrozenMap
-from doeff_hy.frozen import FrozenJson as FrozenJson
-from doeff_hy.frozen import freeze_json as freeze_json
-from doeff_hy.frozen import frozen_json_object as frozen_json_object
-from doeff_hy.json_lines import jsonl_lines as jsonl_lines
-from doeff_hy.json_lines import whole_lines_end as whole_lines_end
+from doeff_hy._frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenJson as FrozenJson
+from doeff_hy._frozen import freeze_json as freeze_json
+from doeff_hy._frozen import frozen_json_object as frozen_json_object
+from doeff_hy._json_lines import jsonl_lines as jsonl_lines
+from doeff_hy._json_lines import whole_lines_end as whole_lines_end
 from doeff_claude_code._values import ClaudeTurn as ClaudeTurn
 
 @dataclass(frozen=True)

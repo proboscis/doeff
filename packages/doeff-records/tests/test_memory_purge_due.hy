@@ -8,7 +8,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler Delay])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [StreamDecl KeepFor ExpectAbsent ExpectVersion Row Missing RowRemoved])
 (import doeff_records [AppendEvent ReadEvents PutRow ReadRow ListRows])
 (import doeff_records.maintenance [SweepExpired])

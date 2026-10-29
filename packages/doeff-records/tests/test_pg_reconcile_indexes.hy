@@ -33,7 +33,7 @@
 (import doeff [run with_handlers])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects [inline-compute-handler])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.http_handlers [http-production-handler])

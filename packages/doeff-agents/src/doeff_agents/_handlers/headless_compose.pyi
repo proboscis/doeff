@@ -5,7 +5,7 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from collections.abc import Mapping as Mapping
 from doeff.program import ProgramHandler as ProgramHandler
-from doeff_hy.frozen import FrozenMap as FrozenMap
+from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_time import sync_time_handler as sync_time_handler
 from doeff_claude_code import ClaudeHome as ClaudeHome
 from doeff_claude_code import BypassAll as BypassAll

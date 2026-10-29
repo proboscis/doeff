@@ -18,7 +18,7 @@
 (import urllib.parse [parse-qs urlsplit])
 (import certifi)
 (import httpx)
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.foundation.kube_client [KubeClient keepalive-options kube-client])
 (import doeff [with-handlers])
 (import pytest)

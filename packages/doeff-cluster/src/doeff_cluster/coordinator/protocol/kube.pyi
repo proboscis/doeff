@@ -10,11 +10,11 @@ from dataclasses import field as field
 import queue as queue
 from typing import Protocol as Protocol
 from doeff import Pure as Pure
-from doeff_hy.wire import parse as parse
-from doeff_hy.wire import Malformed as Malformed
-from doeff_hy.json_value import OpaqueJson as OpaqueJson
-from doeff_hy.frozen import freeze_json_text as freeze_json_text
-from doeff_hy.frozen import thaw_json as thaw_json
+from doeff_hy._wire import parse as parse
+from doeff_hy._wire import Malformed as Malformed
+from doeff_hy._json_value import OpaqueJson as OpaqueJson
+from doeff_hy._frozen import freeze_json_text as freeze_json_text
+from doeff_hy._frozen import thaw_json as thaw_json
 from doeff_hy.table import Table as Table
 from doeff_hy.table import TableWrite as TableWrite
 from doeff_hy.table import table_of as table_of

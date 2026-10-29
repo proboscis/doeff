@@ -1,7 +1,7 @@
 ;;; 形の違う JSON の答え Malformed の置き場(card ki-923c16d33551)。
 ;;;
 ;;; wire.hy(pydantic の解き手)と wire_codec.py(自前の解き手・pydantic を読まない)の両方が同じ型を返すので、pydantic を読まない
-;;; この module に置く。wire.hy は ここから import して今までどおり名を出す(`(import doeff_hy.wire [Malformed])` の読み手は変わらない)。
+;;; この module に置く。wire.hy は ここから import して今までどおり名を出す(`(import doeff_hy._wire [Malformed])` の読み手は変わらない)。
 ;;; 設計の記録 = docs/design/defwire-decoder/design.md(節 3「Malformed の欄の場所」と「reason の綴り」)。
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])

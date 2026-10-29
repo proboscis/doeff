@@ -5,7 +5,7 @@
 (require doeff-hy.macros [val])
 (import dataclasses [dataclass field])
 (import uuid)
-(import doeff_hy.frozen [FrozenMap frozen-json-object frozen-map-of])
+(import doeff_hy._frozen [FrozenMap frozen-json-object frozen-map-of])
 
 
 (defn #^ (get FrozenMap str) checked-env [#^ object value #^ str what]

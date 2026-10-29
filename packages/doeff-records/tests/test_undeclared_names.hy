@@ -6,7 +6,7 @@
 ;;   (c) 文だけで作った旧い形は欄が空(使い手は欄が空なら畳まない)。写し(pickle)を通しても欄が残る。
 (require doeff-hy.macros [deftest <- var])
 (import pickle)
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_records [FieldDecl TableDecl StreamDecl RecordsSchema UndeclaredTable])
 (import doeff_records [ReadRow PutRows RowWrite AppendEvent WatchChanges])
 (import doeff_records [ExpectAny WatchCursor])

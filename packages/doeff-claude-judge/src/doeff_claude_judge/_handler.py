@@ -29,7 +29,7 @@ from doeff_claude_code import (
 from doeff_claude_code import Usage
 from doeff_claude_code import ClaudeHome, ImageAttachment, LentCredential, PrintContent
 from doeff_core_effects import slog
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 from doeff_system_one import Judge, JudgeError, JudgeUsageLimited, Verdict
 
 from doeff import Err, Ok, Pass, Transfer, TransferThrow, Try, do

@@ -100,7 +100,7 @@
 (import datetime [datetime])
 (import uuid)
 (import doeff [run])
-(import doeff_hy.frozen [FrozenMap frozen-json-object])
+(import doeff_hy._frozen [FrozenMap frozen-json-object])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_agents._adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents._effects.agent [SessionStatus])

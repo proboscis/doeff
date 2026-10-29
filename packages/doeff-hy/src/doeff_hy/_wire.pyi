@@ -1,6 +1,6 @@
 """wire.hy の公開面の型(型検査のための宣言 — 実行時は wire.hy を読む・agora-redesign #2282・#2279 の子)。
 
-wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_hy.wire import parse` の名が全部 Unknown になる
+wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_hy._wire import parse` の名が全部 Unknown になる
 (agora の protocol の file で strict の赤が書き手に直せない形で出る — #2220 で 317 → 416 の出どころの 1 つ)。
 ここで型を宣言する。
 
@@ -15,10 +15,10 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, Protocol, TypeVar, overload, runtime_checkable
 
 from doeff import Program
-from doeff_hy.json_value import JsonValue, OpaqueJson
-from doeff_hy.wire_codec import Codec
-from doeff_hy.wire_malformed import Malformed as Malformed
-from doeff_hy.wire_malformed import MalformedField as MalformedField
+from doeff_hy._json_value import JsonValue, OpaqueJson
+from doeff_hy._wire_codec import Codec
+from doeff_hy._wire_malformed import Malformed as Malformed
+from doeff_hy._wire_malformed import MalformedField as MalformedField
 
 _W = TypeVar("_W")
 

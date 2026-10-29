@@ -18,7 +18,7 @@
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-state->json])
-(import doeff_hy.wire [dump])
+(import doeff_hy._wire [dump])
 (import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster.coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster.coordinator.protocol.state_json [audit-event-to-json])

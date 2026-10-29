@@ -15,7 +15,7 @@
 (import json)
 (import collections.abc [Callable])
 (import doeff [with_handlers])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])

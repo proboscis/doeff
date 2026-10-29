@@ -12,7 +12,7 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay async-time-handler])
-(import doeff_hy.json_value [OpaqueJson])
+(import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.foundation.host_contract [os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])

@@ -7,7 +7,7 @@
 ;;;   * 空の断面は改行 1 つ
 ;;;   * 積んだ順に依らず、同じ断面は同じ文字列
 (require doeff-hy.macros [deftest <-])
-(import doeff_hy.frozen [FrozenMap])
+(import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [MeterSettings MeterSnapshot]
         doeff_core_effects._meter_effects [EMPTY-METER counted gauged observed])
 (import doeff_core_effects._meter_prometheus [render-prometheus])

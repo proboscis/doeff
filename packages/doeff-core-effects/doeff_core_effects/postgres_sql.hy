@@ -69,7 +69,7 @@
 (import typing [Protocol runtime-checkable])
 (import dataclasses [dataclass field])
 (import doeff [Program])
-(import doeff_hy.wire [Malformed dump-json parse-json])
+(import doeff_hy._wire [Malformed dump-json parse-json])
 (import doeff_core_effects._offloaded_call [ReusedThreads :as _ReusedThreads offloaded run-detached keep-nothing])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
