@@ -1,7 +1,7 @@
 """設計の記録(ADR)を id で引く操作は effect GetAdr で、handler を返す工場 adr_registry が答える(card ki-24a2bca4339f)。
 
 決め: 依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする)。
-関数 get_adr は、外の repo の呼び手を書き換えるまで(card ki-f2d54a67497b)移し替えの層として残り、その後に消す。
+移し替えの層だった関数 get_adr は、外の repo の呼び手を書き換えた後(card ki-f2d54a67497b)に消した(card ki-c46e83ebd6ac)。
 
 adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) はその列だけから答える(列に無い id は登録簿へ
 落ちずに KeyError)。
@@ -98,12 +98,13 @@ def test_the_table_refuses_a_repeated_id() -> None:
         adr_registry(specs=[_spec("ADR-PROBE-001", "a"), _spec("ADR-PROBE-001", "b")])
 
 
-def test_get_adr_and_its_answerer_are_public() -> None:
-    """effect GetAdr と handler の工場 adr_registry は入口に在る。get_adr は移し替えの層で、GetAdr と同じ登録簿を読む。"""
+def test_the_effect_is_public_and_get_adr_is_gone() -> None:
+    """effect GetAdr と handler の工場 adr_registry は入口に在り、移し替えの層だった関数 get_adr は入口にも registry にも無い。"""
     assert {"GetAdr", "adr_registry"} <= set(doeff_adr.__all__)
-    with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
-        assert doeff_adr.get_adr("ADR-PROBE-001") is run(adr_registry()(GetAdr("ADR-PROBE-001")))
+    assert "get_adr" not in doeff_adr.__all__
+    with pytest.raises(AttributeError, match="get_adr"):
+        getattr(doeff_adr, "get_adr")  # noqa: B009 — 消えた名を型の検を通さずに引く
+    assert not hasattr(doeff_adr.registry, "get_adr")
 
 
 def test_a_deftest_reads_the_adr_through_the_handler_its_fixture_installs(pytester) -> None:
