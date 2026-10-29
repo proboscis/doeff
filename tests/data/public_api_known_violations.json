@@ -7,7 +7,8 @@
   "表は減るだけ: 「名」の組の名は、この file を足した commit の版に在る名に限る(検が git の履歴の最初の版と比べる)。submodule の行は、submodule の行を足した commit の版に在る物に限る。直した名は表から消す(表に在るのに目録に無い名は赤)。",
   "新しく足すしか無い名は「足した名」に、package・module・名・訳・決め(card ki-… か依頼 lt-… か利用者の発言 ci-…)を 1 行ずつ書く。",
   "組の名(分け — 直しの向き・境界の種類)は card ki-1c2bd5bea63f の資料(doeff 5b1accad6 の目録の分け — 機械の案)から写した。範囲と境界の扱いは依頼書 lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM の答え待ち。",
-  "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。"
+  "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。",
+  "組「外れ — handler を返す工場の形に直す」= 2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で中核の state() と同じ handler を返す工場として扱うと決めた名のうち、今の形(program を受けて program を返す)が工場の構造(引数なしか最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler が返る)に合わない物。形を工場に直したら表から消す(card ki-25eecd63bc57)。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -11733,16 +11734,13 @@
       "doeff_core_effects.ws_client_effects"
      ]
     },
-    "境界 — combinator(program を包む関数)": {
+    "外れ — handler を返す工場の形に直す": {
      "doeff_core_effects": [
       "absent_as",
       "maybe",
       "on_raise",
       "result",
       "scheduled"
-     ],
-     "doeff_core_effects.aiohttp_ws_client": [
-      "closing_links"
      ],
      "doeff_core_effects.outcomes": [
       "absent_as",
@@ -11752,6 +11750,11 @@
      ],
      "doeff_core_effects.scheduler": [
       "scheduled"
+     ]
+    },
+    "境界 — combinator(program を包む関数)": {
+     "doeff_core_effects.aiohttp_ws_client": [
+      "closing_links"
      ],
      "doeff_core_effects.scripted_ws_client": [
       "closing_links"
@@ -18018,6 +18021,48 @@
    "name": "ReadBatchAnswer",
    "訳": "ReadBatch(card ki-177a4f287c42)の答えの型(R2 の effect の結果の型 — BatchRead は束の答え・ReadBatchAnswer は答えの和)。名を足した commit が表を直さずに入った(card ki-40f991cef6c6)ので、ReadBatch を入口へ出す card ki-551676d22ba5 が入口へ出す時に足した",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "make_offloaded_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "make_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.handlers",
+   "name": "make_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.handlers.testing",
+   "name": "make_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.handlers.utils",
+   "name": "make_offloaded_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.handlers.utils",
+   "name": "make_scheduled_handler",
+   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
+   "決め": "ki-25eecd63bc57"
   }
  ]
 }

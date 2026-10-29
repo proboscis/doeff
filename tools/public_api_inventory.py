@@ -27,11 +27,15 @@ Kinds:
 - ``effect``: a subclass of ``EffectBase``, an ``EffectBase`` value, or a function that makes an
   effect (its return type is an ``EffectBase`` subclass, or every ``return`` calls one);
 - ``handler``: a value or class with the handler marker (``_doeff_is_handler_fn``), a function
-  that returns a handler (its return type is ``ProgramHandler``, a ``Program -> Program``
+  that returns a handler (a factory: its return type is ``ProgramHandler``, a ``Program -> Program``
   callable or a list of handlers, or every ``return`` builds a handler), or a raw handler
-  function taking ``(effect, k)``;
-- ``other``: decided to be neither — a program function (``@do``, ``defk``), any other function,
-  class, exception, type, constant, macro, console script or entry point;
+  function taking ``(effect, k)``. A factory is called with the least arguments it takes — none,
+  or a placeholder for each parameter without a default — with HOME, the XDG dirs and the cwd
+  pointed at a scratch dir, and must return a value with the marker, or a list or tuple of them
+  (ADR-DOE-API-001 R3); a factory whose call raises keeps the verdict its return type gives;
+- ``other``: decided to be neither — a program function (``@do``, ``defk``), a function read as a
+  factory whose call returns a value without the marker, any other function, class, exception,
+  type, constant, macro, console script or entry point;
 - ``unclassified``: what the machine cannot decide — a function with no return type, or one that
   says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
   statements do not decide it either; a class named like an effect or a handler without being
@@ -57,6 +61,7 @@ import importlib.util
 import inspect
 import itertools
 import json
+import os
 import re
 import subprocess
 import sys
@@ -94,6 +99,12 @@ _INIT_NAMES = ("__init__.py", "__init__.hy", "__init__.pyi")
 _PROGRAM_TYPE_NAMES = frozenset({"Program", "Expand", "DoExpr", "DoCtrl", "ProgramBase"})
 _PROGRAM_VALUE_TYPE_NAMES = _PROGRAM_TYPE_NAMES | {"Call", "Pure", "Perform"}
 _HANDLER_TYPE_NAMES = frozenset({"ProgramHandler", "_InstalledHandler", "Handler"})
+#: The forms of a function read as a handler factory (ADR-DOE-API-001 R3): called to check what it returns.
+FACTORY_FORMS = frozenset({"handler を返す関数", "handler の組を返す関数"})
+#: The form of a function read as a factory whose call returns a value without the handler marker.
+NOT_A_FACTORY = "handler を返さない関数"
+# What a factory call may write under: pointed at a scratch dir while a factory is called.
+_HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 # The generic collections a function may return a handler stack in.
 _COLLECTION_ORIGINS = (list, tuple, frozenset, collections.abc.Sequence, collections.abc.Iterable)
 _CONSTANT_TYPES: tuple[type, ...] = (
@@ -534,6 +545,8 @@ class _Classifier:
             ),
             *_doeff_hy_handler_types(),
         )
+        # The calls made so far, by the factory's id (a definition shown by several modules is called once).
+        self._factory_calls: dict[int, _FactoryCall] = {}
 
     def is_effect_class(self, obj: object) -> bool:
         """Whether a value is an effect type (a subclass of ``EffectBase``)."""
@@ -613,6 +626,11 @@ class _Classifier:
         a list of them) leaves the verdict to the ``return`` statements, and to unclassified when
         they do not decide it either.
         """
+        verdict = self._read_function(obj)
+        return self._called_factory(obj, verdict) if verdict.form in FACTORY_FORMS else verdict
+
+    def _read_function(self, obj: object) -> Verdict:
+        """The verdict read from a function's parameters, marks, return type and ``return`` statements."""
         function = _definition(obj)
         if _takes_effect_and_k(function):
             return Verdict(
@@ -632,6 +650,39 @@ class _Classifier:
             )
             return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
         return Verdict("other", "関数", f"戻りの型 {_annotation_text(annotation)}")
+
+    def _called_factory(self, obj: object, read: Verdict) -> Verdict:
+        """The verdict on a function read as a factory, checked by calling it (ADR-DOE-API-001 R3).
+
+        Called with the least arguments it takes: none when every parameter has a default, else a
+        placeholder for each parameter without one (a factory that only keeps its arguments for the
+        handler builds the handler; one that reads them when called fails). A call that fails keeps the
+        verdict the return type or the returns gave (the failure may come from the placeholder or the
+        machine — a missing executable — not from the factory's shape). One definition shown by
+        several modules is called once.
+        """
+        needed = _required_parameters(obj)
+        if needed is None or not callable(obj):
+            return Verdict(read.kind, read.form, f"{read.reason}・引数を読めず、呼んでいない")
+        how = (
+            f"要る引数 {'・'.join(parameter.name for parameter in needed)} に置き物を渡して"
+            if needed
+            else "引数なしで"
+        )
+        key = id(obj)
+        if key not in self._factory_calls:
+            self._factory_calls[key] = _FactoryCall(obj, _call_factory(obj, needed))
+        outcome = self._factory_calls[key].outcome
+        if isinstance(outcome, _CallFailure):
+            return Verdict(read.kind, read.form, f"{read.reason}・{how}呼ぶと {outcome.error}")
+        if _returns_handlers(outcome, many=read.form == "handler の組を返す関数"):
+            return Verdict(read.kind, read.form, f"{read.reason}・{how}呼ぶと handler を返す")
+        return Verdict(
+            "other",
+            NOT_A_FACTORY,
+            f"{read.reason} だが、{how}呼ぶと {type(outcome).__name__} を返す"
+            "(handler の印 _doeff_is_handler_fn が無い)",
+        )
 
     def _is_vague(self, annotation: object) -> bool:
         """Whether a return type says nothing about effect or handler (``Any``, a ``Callable``, a list of them)."""
@@ -855,6 +906,97 @@ def _takes_effect_and_k(function: object) -> bool:
         and parameter.default is parameter.empty
     ]
     return len(required) == 2 and required[1].name == "k"
+
+
+@dataclass(frozen=True)
+class _CallFailure:
+    """A factory call that raised: the error, for the row's reason."""
+
+    error: str
+
+
+@dataclass(frozen=True)
+class _FactoryCall:
+    """One factory call: the factory (held so its id is not reused) and what the call gave."""
+
+    factory: object
+    outcome: object
+
+
+class _Placeholder:
+    """What a factory call passes for a parameter without a default: no value, only a stand-in."""
+
+    def __repr__(self) -> str:
+        return "<public_api_inventory の置き物の引数>"
+
+
+def _required_parameters(function: object) -> list[inspect.Parameter] | None:
+    """The parameters a call must pass (no default, not ``*args`` / ``**kwargs``); ``None`` when unreadable."""
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError, NameError):
+        return None
+    variadic = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    return [
+        parameter
+        for parameter in parameters
+        if parameter.default is parameter.empty and parameter.kind not in variadic
+    ]
+
+
+@contextlib.contextmanager
+def _scratch_home() -> Iterator[None]:
+    """HOME, the XDG dirs and the cwd pointed at a scratch dir, for one factory call.
+
+    A factory may make its state dir when called (doeff-agentic's index, doeff-conductor's
+    workspaces); it makes it in the scratch dir, not in the home of whoever lists the API. A path
+    a module computed when imported is not moved — the call keeps writing there.
+    """
+    saved = {name: os.environ.get(name) for name in _HOME_VARIABLES}
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory(
+        prefix="public-api-call-", ignore_cleanup_errors=True
+    ) as scratch:
+        os.environ["HOME"] = scratch
+        for name in _HOME_VARIABLES[1:]:
+            os.environ.pop(name, None)
+        os.chdir(scratch)
+        try:
+            yield
+        finally:
+            os.chdir(cwd)
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+def _call_factory(factory: Callable[..., object], needed: list[inspect.Parameter]) -> object:
+    """What calling a factory with a placeholder for each needed parameter gives (``_CallFailure`` when it raises)."""
+    positional = [
+        _Placeholder() for parameter in needed if parameter.kind is parameter.POSITIONAL_ONLY
+    ]
+    keywords = {
+        parameter.name: _Placeholder()
+        for parameter in needed
+        if parameter.kind is not parameter.POSITIONAL_ONLY
+    }
+    try:
+        with _scratch_home(), contextlib.redirect_stdout(sys.stderr):
+            return factory(*positional, **keywords)
+    except (Exception, SystemExit) as error:  # the failure is written into the row, not dropped
+        return _CallFailure(f"{type(error).__name__}: {error}".splitlines()[0][:300])
+
+
+def _returns_handlers(value: object, *, many: bool) -> bool:
+    """Whether a factory's value is a handler (``many``: a list or tuple of handlers, empty or not)."""
+    if not many:
+        return _is_handler_marked(value)
+    if not isinstance(value, (list, tuple)):
+        return False
+    members: Sequence[object] = value
+    return all(_is_handler_marked(member) for member in members)
 
 
 def _def_takes_effect_and_k(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:

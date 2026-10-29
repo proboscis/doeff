@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import os
 import sys
 import textwrap
 from collections.abc import Iterator
@@ -38,6 +39,7 @@ tool = _load()
 
 SAMPLE = '''
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from doeff import EffectBase, Pass, do, handler
@@ -115,6 +117,34 @@ def make_session() -> SessionHandler:
     return SessionHandler()
 
 
+def not_a_ping_handler_factory() -> ProgramHandler:
+    return lambda program: program
+
+
+def not_a_ping_handler_stack() -> list[ProgramHandler]:
+    return [ping_handler, helper]
+
+
+def ping_handler_for(name: str) -> ProgramHandler:
+    return ping_handler
+
+
+def ping_handler_reading(name: str) -> ProgramHandler:
+    if not isinstance(name, str):
+        raise TypeError("name is a str")
+    return ping_handler
+
+
+def not_a_ping_handler_for(name: str) -> ProgramHandler:
+    return raw_ping
+
+
+def ping_handler_with_state_dir() -> ProgramHandler:
+    (Path.home() / "ping-state").mkdir()
+    (Path.cwd() / "ping-scratch").mkdir()
+    return ping_handler
+
+
 LIMIT = 3
 '''
 
@@ -169,6 +199,11 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("helper_vague", "unclassified", "関数"),
         ("ping_handler_stack", "handler", "handler の組を返す関数"),
         ("make_session", "unclassified", "関数"),
+        ("not_a_ping_handler_factory", "other", "handler を返さない関数"),
+        ("not_a_ping_handler_stack", "other", "handler を返さない関数"),
+        ("ping_handler_for", "handler", "handler を返す関数"),
+        ("ping_handler_reading", "handler", "handler を返す関数"),
+        ("not_a_ping_handler_for", "other", "handler を返さない関数"),
     ],
 )
 def test_names_are_typed_by_marker_return_type_and_return_shape(
@@ -177,9 +212,55 @@ def test_names_are_typed_by_marker_return_type_and_return_shape(
     """印・戻りの型・return の形で effect と handler を決め、決まらない物を未分類にする。
 
     中身を言わない戻りの型(Any・Callable[..., Any])は return の形に任せ、それでも決まらなければ未分類にする。
+    handler を返す関数(工場)と読めた物は、最小の引数(無いか、既定値の無い引数ごとに置き物)で呼び、印の無い値を返せば
+    「handler を返さない関数」にする(ADR-DOE-API-001 R3 — 戻りの型を ProgramHandler と書いても、呼ぶと program を素通しする
+    関数や印の無い (effect, k) の関数を返す名は工場でない)。呼ぶと例外の出る工場は戻りの型の読みのまま。
     """
     verdict = tool._Classifier().classify(sample.__dict__[name], name)
     assert (verdict.kind, verdict.form) == (kind, form)
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        ("ping_handler_factory", "引数なしで呼ぶと handler を返す"),
+        ("ping_handler_stack", "引数なしで呼ぶと handler を返す"),
+        ("ping_handler_untyped", "引数なしで呼ぶと handler を返す"),
+        ("ping_handler_for", "要る引数 name に置き物を渡して呼ぶと handler を返す"),
+        ("ping_handler_reading", "要る引数 name に置き物を渡して呼ぶと TypeError: name is a str"),
+        ("not_a_ping_handler_factory", "引数なしで呼ぶと function を返す"),
+        ("not_a_ping_handler_stack", "引数なしで呼ぶと list を返す"),
+        ("not_a_ping_handler_for", "要る引数 name に置き物を渡して呼ぶと function を返す"),
+    ],
+)
+def test_a_factory_says_whether_its_call_was_checked(
+    sample: ModuleType, name: str, said: str
+) -> None:
+    """工場の行の理由が、どう呼んだか(引数なし・置き物)と、印を確かめたか・呼ぶと例外が出たかを言う。"""
+    verdict = tool._Classifier().classify(sample.__dict__[name], name)
+    assert said in verdict.reason
+
+
+def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
+    sample: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """呼ぶと状態の dir を作る工場も、目録を作る人の HOME と cwd には作らない(呼ぶ間だけ一時の dir へ向ける)。"""
+    home = tmp_path / "home"
+    work = tmp_path / "work"
+    home.mkdir()
+    work.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / "state"))
+    monkeypatch.chdir(work)
+    verdict = tool._Classifier().classify(
+        sample.ping_handler_with_state_dir, "ping_handler_with_state_dir"
+    )
+    assert (verdict.kind, verdict.form) == ("handler", "handler を返す関数")
+    assert "引数なしで呼ぶと handler を返す" in verdict.reason
+    assert list(home.iterdir()) == []
+    assert list(work.iterdir()) == []
+    assert Path.cwd() == work
+    assert (os.environ["HOME"], os.environ["XDG_STATE_HOME"]) == (str(home), str(home / "state"))
 
 
 def test_names_made_on_demand_are_exported(sample: ModuleType) -> None:
