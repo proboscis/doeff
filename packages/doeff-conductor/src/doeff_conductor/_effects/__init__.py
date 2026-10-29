@@ -11,7 +11,7 @@ All effects for conductor orchestration:
 - Runs: ListWorkflows, GetWorkflow, RunWorkflow, ResumeWorkflow, StopWorkflow,
   AnswerGate, ListOpenGates, ListGates, ReadProgress, PlanWorkflow, ValidateWorkflow,
   ListWorkspaces, CleanupWorkspaces, RenderMonitor, OpenMonitor, DescribeEnvironment,
-  ListTemplates, GetTemplateSource, ConductorStateDir
+  ListTemplates, GetTemplate, GetTemplateSource, ConductorStateDir
 """
 
 from doeff_conductor._effects.agent import (
@@ -234,6 +234,9 @@ from doeff_conductor._effects.runs import (
 )
 from doeff_conductor._effects.runs import (
     DescribeEnvironment as DescribeEnvironment,
+)
+from doeff_conductor._effects.runs import (
+    GetTemplate as GetTemplate,
 )
 from doeff_conductor._effects.runs import (
     GetTemplateSource as GetTemplateSource,

@@ -9782,11 +9782,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — effect にする": {
-     "doeff_conductor": [
-      "get_available_templates",
-      "get_template",
-      "get_template_source"
-     ],
      "doeff_conductor.templates": [
       "get_available_templates",
       "get_template",
@@ -9819,25 +9814,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_conductor": [
-      "BLOCKER_FINDING",
-      "CALIBRATION_SAMPLE_BUDGET_KEY",
-      "DEFAULT_REVIEW_ROUTE_TABLE",
-      "REVIEW_VERDICT_RESULT_SCHEMA",
-      "ResolvedIdentity",
-      "TIER1_REVIEW_BUDGET_KEY",
-      "TIER2_ESCALATION_BUDGET_KEY",
-      "agent_cache_key",
-      "is_template",
-      "longest_valid_prefix",
-      "make_blocking_scheduled_handler_with_store",
-      "make_scheduled_handler_with_store",
-      "node_identity_fingerprint",
-      "resolved_identity_fingerprint",
-      "route_review_item",
-      "run_review_routing_demo",
-      "workflow_effect_cache_key"
-     ],
      "doeff_conductor.dsl": [
       "BindingInfo",
       "ExpandedNode",

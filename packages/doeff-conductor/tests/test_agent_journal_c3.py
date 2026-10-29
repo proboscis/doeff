@@ -20,7 +20,7 @@ from doeff_conductor._handlers import run_sync
 from doeff_conductor import journaled_agent_handler
 from doeff_conductor import MockConductorRuntime, mock_handlers
 from doeff_conductor._journal import AgentJournal
-from doeff_conductor import ResolvedIdentity
+from doeff_conductor._replay_keying import ResolvedIdentity
 from doeff_core_effects import scheduled
 
 from doeff.do import do
