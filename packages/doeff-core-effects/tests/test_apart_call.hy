@@ -172,3 +172,22 @@
   (<- cancelled bool (with_handlers [(await-handler) (async-time-handler)] (cancelled-while-waiting closed)))
   (assert cancelled "撃った task が取り消しで終わらない")
   (assert (.wait closed CLOSE-SECONDS) "通い路が閉じたのに program へ ApartClosed が届かない"))
+
+
+(deftest test-the-apart-thread-ends-without-raising
+  ;; 答え・例外のどちらでも、別の thread が事後条件の違反などの例外で終わらない。
+  (val raised [])
+  (val previous threading.excepthook)
+  (setv threading.excepthook (fn [args] (.append raised args.exc-value)))
+  (try
+    (<- (run-apart (next-count 1)))
+    (try
+      (<- (run-apart (broken)))
+      (except [error KeyError]
+        None))
+    (for [thread (threading.enumerate)]
+      (when (= thread.name "doeff-apart")
+        (.join thread CLOSE-SECONDS)))
+    (finally
+      (setv threading.excepthook previous)))
+  (assert (= raised []) raised))

@@ -136,9 +136,11 @@
   (try
     (setv value (.run (PyVM) (with-handlers [(forwarding-handler lane) try-handler] program)))
     (except [error BaseException]
-      (.deliver lane (ApartFailed :error error)))
+      (.deliver lane (ApartFailed :error error))
+      None)
     (else
-      (.deliver lane (ApartDone :value value)))))
+      (.deliver lane (ApartDone :value value))
+      None)))
 
 
 (defk answered-here [asked]
