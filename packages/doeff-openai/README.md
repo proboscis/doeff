@@ -313,7 +313,7 @@ def price_call():
     cost_info = yield CalculateCost(model="gpt-4", token_usage=usage)
     return cost_info.total_cost
 
-@do
+@handler
 def in_house_prices(effect, k):
     if isinstance(effect, CalculateCost) and effect.model == "my-finetune":
         usage = effect.token_usage
@@ -328,7 +328,7 @@ def in_house_prices(effect, k):
         return (yield Resume(k, cost_info))
     return (yield Pass(effect, k))
 
-program = handler(in_house_prices)(calculate_cost_handler(price_call()))
+program = in_house_prices(calculate_cost_handler(price_call()))
 ```
 
 ## Complete Example
