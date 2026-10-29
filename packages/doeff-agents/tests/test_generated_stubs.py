@@ -16,8 +16,10 @@ from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
-# 使い手の repo の main が import する名(2026-10-02 の数え)。
-USED = (UsedModule("handlers.headless_compose", ("FakeReply",)),)
+# 使い手の repo の main が import する名(2026-10-02 の数え)。handlers は _handlers へ移った
+# (ADR-DOE-API-001 R5)。古い path は移し替えの module で、型の検査から下の module が見えない。
+# 使い手は入口 doeff_agents の FakeReply へ移る。
+USED = (UsedModule("_handlers.headless_compose", ("FakeReply",)),)
 
 
 @pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")

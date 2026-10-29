@@ -10,6 +10,8 @@ import sys
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+import hy  # noqa: F401  # the moved module is Hy: load Hy's import hook first
+
 if TYPE_CHECKING:
     from doeff_agents._agent_env import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 

@@ -256,7 +256,7 @@
   ;; 受入「ACP に kind を足さない」の構造の側: 保存の effect・判断・handler の module は
   ;; ACP の client も sessionhost の ACP の腕も import しない(行の置き場は ACP の外)。
   (setv package (. (Path (. (__import__ "doeff_agents") __file__)) parent))
-  (for [relative ["session_store_sql.hy" "handlers/session_store.hy" "session_store.py"]]
+  (for [relative ["session_store_sql.hy" "_handlers/session_store.hy" "session_store.py"]]
     (setv imports (lfor line (.splitlines (.read-text (/ package relative) :encoding "utf-8"))
                         :if (in "import" line)
                         line))
