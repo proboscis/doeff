@@ -6,7 +6,7 @@
 
 展開が依った物(agora-redesign #3862 — テストの実行の側の bytecode の記録と同じ 1 つの作り方):
 - 展開する source の中身・その module 名・根からの相対 path(診断の path と import の解決に効く)。
-- 展開が使った macro の記録(``doeff_hy_bytecode_guard.macro_recording``)— Hy の版、展開が実際に使った macro(提供元の
+- 展開が使った macro の記録(``doeff_hy_bytecode_guard._loader_hooks.macro_recording``)— Hy の版、展開が実際に使った macro(提供元の
   module 名・macro 名・macro の関数の code の閉包の digest — macro が呼ぶ補助・読む定数・本体の中の import を含む)、表を
   引いて無かった名と表に macro を入れた提供元、file 単位で覆う module(macro の本体の中の import の先など)の file の sha256。
   macro から辿れない型検査の展開の後処理は、doeff_hy._static_check の ``POST_PROCESSING``(``project``)の閉包の digest で入れる
@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from doeff_hy_bytecode_guard import (
+from doeff_hy_bytecode_guard._loader_hooks import (
     record_fingerprint,
     record_from_json,
     record_is_current_here,

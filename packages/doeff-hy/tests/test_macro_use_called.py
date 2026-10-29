@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from doeff_hy_bytecode_guard import _records as records
-from doeff_hy_bytecode_guard import (
+from doeff_hy_bytecode_guard._loader_hooks import (
     loaded_record,
     record_is_current_here,
     source_to_code_as_import,

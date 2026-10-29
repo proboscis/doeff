@@ -18,7 +18,7 @@
 (import types)
 (import concurrent.futures [ProcessPoolExecutor])
 (import doeff [run])
-(import doeff_hy_bytecode_guard [bytecode-is-current source-to-code-as-import])
+(import doeff_hy_bytecode_guard._loader_hooks [bytecode-is-current source-to-code-as-import])
 (import doeff_core_effects._file_effects [SourceNotCompiled])
 
 

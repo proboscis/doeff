@@ -46,6 +46,13 @@
   `DeprecationWarning`. `on_raise` and `absent_as` take settings and stay handler factories.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
+- **Breaking (doeff-hy):** the import root `doeff_hy_bytecode_guard` exports only `install` (what the
+  `doeff_hy_bytecode_guard.pth` startup line calls) and the types `MacroRecord` and `HyMacroUseWarning`
+  (ADR-DOE-API-001 R1, R14). The 15 other names — `bytecode_is_current`, `source_to_code_as_import`,
+  `record_is_current_here`, `macro_recording`, `loaded_record`, `record_fingerprint`, `record_to_json`,
+  `record_from_json`, `value_reference`, `gensym_renaming`, `file_sha256`, `installed`, `SharedScope`,
+  `TYPE_CHECK_EXPANSION` and `TYPE_CHECKING` — are internal to doeff: its packages read them from
+  `doeff_hy_bytecode_guard._loader_hooks`, `._import_scope` and `._expansion`. No other repository read them.
 - **Breaking (doeff-openai, doeff-gemini, doeff-openrouter, doeff-conductor, doeff-events, doeff-seedream,
   doeff-google-secret-manager, doeff-system-one):** the import roots no longer export 50 program helpers that no
   other repository reads, since a subpackage's public API is its effects and handlers (ADR-DOE-API-001). doeff-openai
