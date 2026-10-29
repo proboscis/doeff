@@ -236,7 +236,7 @@ spec:
             # GET /outbox は kinds を名乗った読み手にだけ待ちの行を返す(前の版の読み手には終わりの行だけ)。task の行に欄 queued_noticed_ms
             # が足る(積んだ行だけ — 前の版へ戻すと、その行だけが旧い形として failed になる)。間の差はこの 1 commit だけ。前の版 a227592e6 は
             # eafa71f80 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: eafa71f80269ebb45d65d15bc127a99c3bf6fc43 }
+            - { name: WORKER_DOEFF_COMMIT, value: 4579b86aa180d522128d292889ae3a889845138c }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
