@@ -343,7 +343,7 @@ print(repr(text), len(waits))
 'Hello, world' 1
 ~~~
 
-`Listen` is an effect too. `listen_handler` answers it by installing a handler around `program` that writes down each `Await` and passes it on to `await_handler`. With one `Await` per chunk, it sees five waits: four chunks and the end. With the loop inside one coroutine, it sees one: the waits inside `collect_async` go to asyncio's loop, where no handler can reach them. So keep the steps in `@do` code and put `Await` at the one operation the library provides. Then whatever you stack around the program sees each step: a log, a clock, a budget, or a recording of the answers that a test replays without any real I/O.
+`Listen` is an effect too. `listen_handler` answers it by installing a handler around `program` that writes down each `Await` and passes it on to `await_handler`. With one `Await` per chunk, it sees five waits: four chunks and the end. With the loop inside one coroutine, it sees one: the waits inside `collect_async` go to asyncio's loop, where no handler can reach them. So keep the steps in `@do` code and put `Await` at the one operation the library provides. Then whatever you stack around the program sees each step: a log, a clock, a budget, or a recording of the answers that a test replays without calling the outside service again.
 
 `collect` checks `chunk is None`, not `not chunk`: the empty string is a chunk, and `anext(chunks, None)` gives `None` only at the end.
 
