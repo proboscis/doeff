@@ -7,6 +7,11 @@
 - doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
   installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.
+- **doeff-events:** the gap notice is made and told apart through the types: `Announce.gap(channel, source)` sends
+  it, and `Announce.is_gap` / `Announcement.is_gap` tell it from a routed notice (in Hy, `(Announce.gap channel
+  source)` and `(Announcement :is-gap True)` in a `match`). Write these where you compared a name with
+  `GAP_NOTICE` or passed it to `Announce`: the constant stays on the import root only until the repositories that
+  read it have moved, then it goes inside (ADR-DOE-API-001 R1).
 
 ### Changed
 

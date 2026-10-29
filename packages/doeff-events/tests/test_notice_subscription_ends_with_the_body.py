@@ -41,7 +41,6 @@ from doeff_events import (
     subscribed_event_handler,
 )
 from doeff_events._handlers import hold_broker, release_broker
-from doeff_events._handlers.notice_events import GAP_NOTICE
 from doeff_events._notice_laws import LawNote, law_routes
 from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, memory_harness, run_on_virtual_clock
@@ -153,7 +152,7 @@ def _sees_the_start_gap(seen: Promise[None]) -> "ProgramHandler":
     @do
     def handler(effect: Announce, k: K) -> "EffectGenerator[object]":
         """Complete ``seen`` at the gap notice; every Announce goes on to the broker."""
-        if effect.name == GAP_NOTICE:
+        if effect.is_gap:
             yield CompletePromise(seen, None)
         yield Pass(effect, k)
         return None
