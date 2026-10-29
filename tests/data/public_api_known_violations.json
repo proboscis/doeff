@@ -334,7 +334,6 @@
       "doeff_agentic.handlers.testing",
       "doeff_agentic.handlers.tmux",
       "doeff_agentic.opencode_handler",
-      "doeff_agentic.runtime",
       "doeff_agentic.state",
       "doeff_agentic.tmux_handler",
       "doeff_agentic.types",
@@ -399,20 +398,6 @@
       "AgenticWorkflowStatus",
       "WorkflowInfo",
       "WorkflowStatus"
-     ]
-    },
-    "境界 — handler と読める名(道具が読めない)": {
-     "doeff_agentic.handler": [
-      "with_agentic_effectful_handlers"
-     ],
-     "doeff_agentic.handlers": [
-      "with_agentic_effectful_handlers"
-     ],
-     "doeff_agentic.handlers.production": [
-      "with_agentic_effectful_handlers"
-     ],
-     "doeff_agentic.runtime": [
-      "with_handlers"
      ]
     },
     "境界 — handler の設定の型": {
@@ -10282,20 +10267,6 @@
       "MergeWorkspacesResult"
      ]
     },
-    "境界 — handler と読める名(道具が読めない)": {
-     "doeff_conductor": [
-      "make_async_scheduled_handler",
-      "make_blocking_scheduled_handler"
-     ],
-     "doeff_conductor.handlers": [
-      "make_async_scheduled_handler",
-      "make_blocking_scheduled_handler"
-     ],
-     "doeff_conductor.handlers.utils": [
-      "make_async_scheduled_handler",
-      "make_blocking_scheduled_handler"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_conductor": [
       "DefaultReviewRouter",
@@ -11534,11 +11505,6 @@
      ],
      "doeff_core_effects.scheduler": [
       "scheduled"
-     ]
-    },
-    "境界 — combinator(program を包む関数)": {
-     "doeff_core_effects.apart_call": [
-      "run_apart"
      ]
     },
     "境界 — effect の値の型": {
@@ -14128,18 +14094,6 @@
      "doeff_notify.types": [
       "NotificationResult"
      ]
-    },
-    "境界 — handler と読める名(道具が読めない)": {
-     "doeff_notify": [
-      "testing_handler"
-     ],
-     "doeff_notify.handlers": [
-      "testing_handler"
-     ],
-     "doeff_notify.handlers.testing": [
-      "build_testing_handler",
-      "testing_handler"
-     ]
     }
    }
   },
@@ -16047,11 +16001,6 @@
       "Refused",
       "Row",
       "RowsRefused"
-     ]
-    },
-    "境界 — handler と読める名(道具が読めない)": {
-     "doeff_records.http_server": [
-      "ready_handlers"
      ]
     },
     "境界 — 例外の型": {

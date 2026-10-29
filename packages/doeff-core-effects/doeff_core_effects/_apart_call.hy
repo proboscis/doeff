@@ -9,7 +9,8 @@
 ;;; 回せず(handler を 1 つも付けない VM)、送りの関数のように effect(SQL・計器・時計)を出しながら計算する program は外へ出せなかった。
 ;;;
 ;;; 形:
-;;;   - run-apart = 撃った task の中で、daemon の thread 1 本に新しい VM(PyVM)を起こし、program を送り返しの handler(forwarding-handler)
+;;;   - run-apart = program に当てる handler の値(ADR-DOE-API-001 R3・R16 — (run-apart program) で当て、with-handlers の列にも置ける)。
+;;;     当てた program の task の中で、daemon の thread 1 本に新しい VM(PyVM)を起こし、program を送り返しの handler(forwarding-handler)
 ;;;     だけの下で回す。program が出す effect は全部この handler に届き、handler は effect を通い路(ApartLane)へ置いて答えを待つ(別の
 ;;;     thread なので待つのはその thread だけ)。撃った task は通い路に外から完了させる promise を掛けて待ち(Wait — scheduler の他の task は
 ;;;     回り続ける)、届いた effect を自分で撃って(撃った所の handler の全部が答える — 置き場・SQL・計器・時計・scheduler の effect も)、
@@ -35,6 +36,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import threading)
+(import functools [partial])
 (import concurrent.futures [Future])
 (import doeff [Program Transfer TransferThrow with-handlers])
 (import doeff.program [handler :as raw-handler])
@@ -167,7 +169,7 @@
   message)
 
 
-(defk run-apart [program]
+(defk _apart [program]
   {:tp [T] :pre [(: program (get Program #(T object)))] :post [(: % T)] :tags {:context "scheduler" :role "foundation"}}
   "program を別の thread の新しい VM で回し、program が出す effect をこの task の handler で答えて、program の答えを返すため(頭の註)。
    program の例外はそのまま上げる。この task が取り消されたら通い路を閉じる(program へは ApartClosed — 頭の註の取り消し)。
@@ -183,3 +185,21 @@
         (ApartAsked) (<- (answered-here message))))
     (finally
       (.close lane))))
+
+
+(defclass _ApartHandler [partial]
+  "run-apart の型: 包む program を _apart に渡す partial に、handler の印 _doeff_is_handler_fn を持たせるため(印が無いと with-handlers が
+   effect の答え手として包み直す・doeff_records の BodyWrapper と同じ付け方)。"
+  (setv _doeff_is_handler_fn True))
+
+
+;; program を撃った task の scheduler の thread の外で回す handler(頭の註): (run-apart program) は、program を別の thread の新しい VM で
+;; 回し、program が出す effect を当てた所の handler で答えて、program の答えを返す program。program の例外はそのまま上げる。外側に
+;; scheduled が要る(CreateExternalPromise と Wait)。設定も呼びごとの状態も持たないので、工場でなく印の付いた handler の値
+;; (ADR-DOE-API-001 R3・R16・ADR-DOE-API-002 R1 — maybe・result と同じ)。
+(setv run-apart (_ApartHandler _apart))
+
+;; 何にも答えず(__doeff_handles__ = ())、program の effect を当てた所で出し直し、その周りで通い路の待ち(CreateExternalPromise・Wait)を
+;; 出す、という宣言(doeff-effect-analyzer の body wrapper の読み — doeff_records の records-signal-handler と同じ)。
+(setv run-apart.__doeff_handles__ #()
+      run-apart.__doeff_effects__ #(CreateExternalPromise Wait))

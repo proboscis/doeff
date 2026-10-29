@@ -9,13 +9,9 @@ from .testing import mock_handlers
 from .tmux import tmux_handler
 
 try:
-    from .production import (
-        agentic_effectful_handlers,
-        with_agentic_effectful_handlers,
-    )
+    from .production import agentic_effectful_handlers
 except ImportError:
     agentic_effectful_handlers = None  # type: ignore[assignment]
-    with_agentic_effectful_handlers = None  # type: ignore[assignment]
 
 
 def production_handlers(
@@ -48,5 +44,4 @@ __all__ = [
     "production_handlers",
     "recorded_workflows_handler",
     "tmux_handler",
-    "with_agentic_effectful_handlers",
 ]
