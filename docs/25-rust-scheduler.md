@@ -67,7 +67,11 @@ Moved to Rust: every per-effect decision — the state of tasks, promises and se
 queue of ready tasks (a port of the same algorithm as CPython's `heapq`, so the queue order matches the
 Python implementation); Cancel; receiving external completions; deadlock detection; and the sweep of
 #502 (including #3504, which sweeps cancelled tasks whose cleanup has finished;
-`tests/test_scheduler.py::TestTerminalEntrySweep` checks it under both implementations).
+`tests/test_scheduler.py::TestTerminalEntrySweep` checks it under both implementations). The sweep
+runs every `HANDLE_SWEEP_INTERVAL` ids and also when nothing is runnable and the scheduler waits for
+an external completion, once the ids allocated since the last sweep times `IDLE_SWEEP_ROWS_PER_ID`
+cover the rows it walks — so a job with no work does not keep each clock tick's rows
+(`tests/test_idle_job_sweeps_terminal_rows.py`).
 
 Kept in Python, so that nothing visible to users changes:
 

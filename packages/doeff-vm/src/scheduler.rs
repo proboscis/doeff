@@ -230,6 +230,9 @@ struct Spec {
     priority_external_wait: i64,
     priority_normal: i64,
     handle_sweep_interval: u64,
+    /// The terminal-entry sweep also runs at an idle block once the ids
+    /// allocated since the last sweep times this cover the rows it walks.
+    idle_sweep_rows_per_id: u64,
     handle_refs_prune_min: usize,
     unretrieved_exceptions_named: usize,
     /// Claimed external-wait placeholders are taken out of the ready heap
@@ -284,6 +287,7 @@ impl Spec {
             priority_external_wait: get("PRIORITY_EXTERNAL_WAIT")?.extract()?,
             priority_normal: get("PRIORITY_NORMAL")?.extract()?,
             handle_sweep_interval: get("HANDLE_SWEEP_INTERVAL")?.extract()?,
+            idle_sweep_rows_per_id: get("IDLE_SWEEP_ROWS_PER_ID")?.extract()?,
             handle_refs_prune_min: get("HANDLE_REFS_PRUNE_MIN")?.extract()?,
             unretrieved_exceptions_named: get("UNRETRIEVED_EXCEPTIONS_NAMED")?.extract()?,
             claimed_marks_compact_min: get("CLAIMED_MARKS_COMPACT_MIN")?.extract()?,
@@ -676,6 +680,9 @@ impl<V> OrderedMap<V> {
 
 struct State {
     next_id: u64,
+    /// `next_id` when the last terminal-entry sweep ran (the idle sweep's
+    /// ratio, `IDLE_SWEEP_ROWS_PER_ID`).
+    swept_at_id: u64,
     insertion_seq: u64,
     next_k: u64,
     tasks: HashMap<Tid, TaskEntry>,
@@ -742,6 +749,7 @@ impl State {
     fn new() -> Self {
         Self {
             next_id: 0,
+            swept_at_id: 0,
             insertion_seq: 0,
             next_k: 0,
             tasks: HashMap::default(),
@@ -1346,6 +1354,7 @@ impl Locked<'_> {
     /// without that every Cancel of a started task left its entry for the life
     /// of the run.
     fn sweep_terminal_unobserved_entries(&mut self, py: Python<'_>) {
+        self.swept_at_id = self.next_id;
         let mut protected: HashSet<WKey> = HashSet::default();
         for (_, entries) in self.waiters.iter() {
             for entry in entries {
@@ -1461,6 +1470,20 @@ impl Locked<'_> {
             self.sweep_terminal_unobserved_entries(py);
         }
         id
+    }
+
+    /// The terminal-entry sweep at an idle block (the Python version's
+    /// `sweep_when_idle`): called when nothing is runnable and the scheduler
+    /// is about to wait for an external completion, it sweeps once the ids allocated since
+    /// the last sweep times `IDLE_SWEEP_ROWS_PER_ID` cover the rows a sweep
+    /// walks — in a job with no work that is every tick, so a tick's terminal
+    /// entries do not outlive it (agora card ki-f9aa5fce26e3).
+    fn sweep_when_idle(&mut self, py: Python<'_>) {
+        let allocated = self.next_id - self.swept_at_id;
+        let rows = (self.tasks.len() + self.promises.len() + self.waiters.len()) as u64;
+        if allocated != 0 && rows <= allocated.saturating_mul(self.spec().idle_sweep_rows_per_id) {
+            self.sweep_terminal_unobserved_entries(py);
+        }
     }
 
     /// The key of `obj`, a waitable of `effect` (Wait / Gather / Race). Otherwise the TypeError
@@ -2184,6 +2207,7 @@ impl Locked<'_> {
     }
 
     fn drain_one_external(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.sweep_when_idle(py);
         let mut waited = 0.0_f64;
         loop {
             let interval: f64 = self
