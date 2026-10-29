@@ -34,6 +34,7 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 - ``_`` の中に残す: 表の組「外れ — …」の名(R1 の「内側の module へ移す」)と、表に無いそれ以外の名(注に出す)。
 - Hy の macro は入口の遅延の名にできないので ``_`` に残し、``require`` は ``_`` の path を読む(注に出す)。
 - 同じ名で定義の違う物が 2 つ在る(子どうし・入口に在る名と)時は足さずに「ぶつかり」に出す。入口に同じ定義が在れば足さない。
+  子が別の子の名を import して出し直す(定義が 1 つ)時は、定義の在る子から 1 度だけ足す。
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
 ``X as X``(``.py`` か ``.pyi`` の在る module の名だけ。``__all__`` は使わない — DOEFF021)。入口に ``_LAZY_EXPORTS`` と
@@ -1318,6 +1319,7 @@ class NameFate:
     fate: Fate
     source: str | None = None  # 入口が読む module(新しい path)
     note: str = ""
+    definition: str = ""  # 入口へ出す名の定義の場所(目録の defined_at)
 
 
 def _table_groups(
@@ -1420,20 +1422,49 @@ def _name_fate(
         note = f"入口の {name} は別の定義({', '.join(sorted(existing))})"
         return NameFate(name, modules, kind, group, "conflict", note=note)
     source = _renamed(_preferred_module(entry_rows), child)
-    return NameFate(name, modules, kind, group, "entry", source=source)
+    [definition] = definitions
+    return NameFate(name, modules, kind, group, "entry", source=source, definition=definition)
+
+
+def _defines(fate: NameFate) -> bool:
+    """名の定義が、その子の module(子が package なら下の module)の中に在るか。"""
+    defined = fate.definition.split(":")[0]
+    suffix = Path(defined).suffix
+    return any(
+        defined.endswith(
+            (module.replace(".", "/") + suffix, module.replace(".", "/") + "/__init__" + suffix)
+        )
+        for module in fate.modules
+    )
 
 
 def _dedupe_across_children(fates: list[NameFate]) -> list[NameFate]:
-    """2 つの子が同じ名を入口へ出す時は、どちらも足さずにぶつかりにする。"""
-    counted = collections.Counter(f.name for f in fates if f.fate == "entry")
-    return [
-        NameFate(
-            f.name, f.modules, f.kind, f.group, "conflict", note="2 つ以上の子が同じ名を入口へ出す"
-        )
-        if f.fate == "entry" and counted[f.name] > 1
-        else f
-        for f in fates
-    ]
+    """2 つ以上の子が同じ名を入口へ出す時の行き先。
+
+    定義が 1 つなら(子が別の子の名を import して出し直す)、定義の在る子から 1 度だけ足し、ほかの子の行は「入口に既に
+    在る」にする。定義が違えば、どれも足さずにぶつかりにする。
+    """
+    entries = [f for f in fates if f.fate == "entry"]
+    same_name = {name: [f for f in entries if f.name == name] for name in {f.name for f in entries}}
+    kept = {
+        name: min(group, key=lambda f: (not _defines(f), cast(str, f.source)))
+        for name, group in same_name.items()
+        if len({f.definition for f in group}) == 1
+    }
+
+    def settle(fate: NameFate) -> NameFate:
+        """入口に同じ名を 2 度足さず、出し直しの名を落とさない為: 名を出す子の 1 つだけを入口へ向ける。"""
+        if fate.fate != "entry" or len(same_name[fate.name]) == 1 or kept.get(fate.name) is fate:
+            return fate
+        keeper = kept.get(fate.name)
+        if keeper is None:
+            definitions = sorted({f.definition for f in same_name[fate.name]})
+            note = f"2 つ以上の子が違う定義の同じ名を入口へ出す: {', '.join(definitions)}"
+            return dataclasses.replace(fate, fate="conflict", source=None, note=note)
+        note = f"同じ定義を {keeper.source} から入口へ出す"
+        return dataclasses.replace(fate, fate="already", source=None, note=note)
+
+    return [settle(fate) for fate in fates]
 
 
 # --- 入口と移し替えの module ---
@@ -1763,7 +1794,10 @@ def shim_text(child: Child, typed: bool) -> str:
         else ("import sys", "from importlib import import_module")
     ) + (("from typing import TYPE_CHECKING",) if typed else ())
     checking = (
-        f"\nif TYPE_CHECKING:\n    from {child.new} import *  # noqa: F403\n" if typed else ""
+        # 型の検だけが古い path で移した module の名を読む為の * (finish が shim ごと消す — 規則の抑えはこの 1 行に閉じる)。
+        f"\nif TYPE_CHECKING:\n    from {child.new} import *  # noqa: F403  # nosemgrep: doeff-no-star-imports\n"
+        if typed
+        else ""
     )
     finder = _SHIM_FINDER.format(old=child.old, new=child.new) if package else ""
     return (
