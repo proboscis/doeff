@@ -27,7 +27,7 @@ from doeff_conductor._effects.workspace import CreateWorkspace, DeleteWorkspace,
 from doeff_conductor._exceptions import IssueNotFoundError
 from doeff_conductor._handlers import _workspace_path
 from doeff_conductor._handlers.exec_handler import exec_handler
-from doeff_conductor._handlers.utils import make_scheduled_handler
+from doeff_conductor._handlers.utils import _scheduled_body
 from doeff_conductor._types import (
     Issue,
     IssueStatus,
@@ -381,22 +381,22 @@ def mock_handlers(
     active_runtime = runtime or MockConductorRuntime(root=root, workflow_id=workflow_id)
 
     handlers: list[tuple[type[Any], ScheduledHandler]] = [
-        (CreateWorkspace, make_scheduled_handler(active_runtime.handle_create_workspace)),
-        (MergeWorkspaces, make_scheduled_handler(active_runtime.handle_merge_workspaces)),
-        (DeleteWorkspace, make_scheduled_handler(active_runtime.handle_delete_workspace)),
+        (CreateWorkspace, _scheduled_body(active_runtime.handle_create_workspace)),
+        (MergeWorkspaces, _scheduled_body(active_runtime.handle_merge_workspaces)),
+        (DeleteWorkspace, _scheduled_body(active_runtime.handle_delete_workspace)),
         (
             _workspace_path.WorkspacePath,
-            make_scheduled_handler(lambda effect: active_runtime.resolve_path(effect.workspace)),
+            _scheduled_body(lambda effect: active_runtime.resolve_path(effect.workspace)),
         ),
-        (CreateIssue, make_scheduled_handler(active_runtime.handle_create_issue)),
-        (ListIssues, make_scheduled_handler(active_runtime.handle_list_issues)),
-        (GetIssue, make_scheduled_handler(active_runtime.handle_get_issue)),
-        (ResolveIssue, make_scheduled_handler(active_runtime.handle_resolve_issue)),
-        (AgentEffect, make_scheduled_handler(active_runtime.handle_agent)),
-        (Commit, make_scheduled_handler(active_runtime.handle_commit)),
-        (Push, make_scheduled_handler(active_runtime.handle_push)),
-        (CreatePR, make_scheduled_handler(active_runtime.handle_create_pr)),
-        (MergePR, make_scheduled_handler(active_runtime.handle_merge_pr)),
+        (CreateIssue, _scheduled_body(active_runtime.handle_create_issue)),
+        (ListIssues, _scheduled_body(active_runtime.handle_list_issues)),
+        (GetIssue, _scheduled_body(active_runtime.handle_get_issue)),
+        (ResolveIssue, _scheduled_body(active_runtime.handle_resolve_issue)),
+        (AgentEffect, _scheduled_body(active_runtime.handle_agent)),
+        (Commit, _scheduled_body(active_runtime.handle_commit)),
+        (Push, _scheduled_body(active_runtime.handle_push)),
+        (CreatePR, _scheduled_body(active_runtime.handle_create_pr)),
+        (MergePR, _scheduled_body(active_runtime.handle_merge_pr)),
     ]
 
     override_handlers: list[tuple[type[Any], ScheduledHandler]] = [
@@ -404,7 +404,7 @@ def mock_handlers(
             effect_type,
             override_handler
             if _supports_continuation(override_handler)
-            else make_scheduled_handler(override_handler),  # type: ignore[arg-type]
+            else _scheduled_body(override_handler),  # type: ignore[arg-type]
         )
         for effect_type, override_handler in (overrides or {}).items()
     ]

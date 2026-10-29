@@ -543,7 +543,7 @@ to the resource spec and are observed):**
    revisit only with a law if attention cost proves painful in practice.
 4. **L2 demotion.** `DEFAULT_AWAIT_BUDGET_SECONDS` becomes a pure
    transport keep-alive heartbeat. The attempt loop behind the offloaded
-   bridge (`make_offloaded_scheduled_handler`) re-awaits until a terminal
+   bridge (`offloaded_call`) re-awaits until a terminal
    result or the L3 deadline; heartbeat expiry is NEVER surfaced as a
    node failure, never burns a retry attempt, and carries no semantic
    decision. The `timeout_seconds` task field is deleted (no-backcompat
