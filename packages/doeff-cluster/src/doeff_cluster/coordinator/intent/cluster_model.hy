@@ -1094,7 +1094,12 @@
   ;; --- 終わりの知らせ先(2026-10-21・card ki-e7945a2b2d00)---
   ;; notify = 送り手の名乗った知らせ先(空 = 知らせない)。終わりへ移った歩で出口(ClusterState.outbox)に 1 度だけ積む(detached_policy.outbox-noted)。
   ;; この欄の無い旧い行は空で読む。
-  (setv #^ str notify ""))
+  (setv #^ str notify "")
+  ;; --- queued の期限超えの知らせ(2026-10-29・card ki-4b6613f39c80)---
+  ;; queued-noticed-ms = 知らせ先を名乗った task が queued のまま期限(ClusterTiming.queued-notice-ms)を越え、出口へ待ちの行を積んだ刻
+  ;; (None = まだ積んでいない)。積んだ印で、待ち続けても・読み手が受領して行を外しても 2 度目を積まない(detached_policy.queued-noticed)。
+  ;; この欄の無い旧い行は None で読む。
+  (setv #^ (| int None) queued-noticed-ms None))
 
 
 ;; 担い手の worker に置いた task の phase(担い手の数・送る task・報告の吸い上げ・lease の延長で同じに扱う)。

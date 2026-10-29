@@ -4,7 +4,7 @@
 (import dataclasses [asdict fields])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase HandoffWatch ClusterNaming TaskRecord ENDED-PHASES])
-(import doeff_cluster.shared.intent.detached_model [DetachedEnded])
+(import doeff_cluster.shared.intent.detached_model [DetachedEnded OUTBOX-ENDED])
 (import doeff_cluster.shared.core.capabilities [POOL-PREFIX capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
 
@@ -60,7 +60,10 @@
    旧い形と読んで failed にしない)。"
   (setv row (| (asdict task) {"versions" (dict task.versions) "needs" (list task.needs) "environ" (dict task.environ)
                               "limits" (task-limits-json task.limits)}))
-  (if task.notify row (dfor #(k v) (.items row) :if (!= k "notify") k v)))
+  ;; 待ちの知らせの印(card ki-4b6613f39c80)も、積んでいない行は欄を置かない(欄を知らない前の版へ戻しても、待っている行を旧い形と
+  ;; 読んで failed にしない — 印を積んだ行だけが戻した版で failed になる)。
+  (setv unset (| (if task.notify #{} #{"notify"}) (if (is task.queued-noticed-ms None) #{"queued_noticed_ms"} #{})))
+  (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 
 (defk task-record-from-json [data]
@@ -112,21 +115,25 @@
               :priority (stored-int data "priority" 0)
               :limits (if old-limits #() (stored-limits data))
               ;; 終わりの知らせ先(card ki-e7945a2b2d00)の欄の無い行は知らせない(足した欄)。
-              :notify (stored-str data "notify" "")))
+              :notify (stored-str data "notify" "")
+              ;; 待ちの知らせの印(card ki-4b6613f39c80)の欄の無い行は、まだ積んでいない(足した欄)。
+              :queued-noticed-ms (stored-optional-int data "queued_noticed_ms")))
 
 
 (deff ended-to-json [#^ DetachedEnded ended]  ; defk にできない: 保存の綴り(durable_kv — Program の外)と返事の綴り(replies)が呼ぶ純粋な綴り
   {:pre [(: ended DetachedEnded)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "終わりの出口の行 → 保存と GET /outbox の返事の JSON の形(欄の名は camel — 読み手の DetachedEndedWire と同じ)。"
   {"id" ended.id "key" ended.key "notify" ended.notify "phase" ended.phase "detail" ended.detail "failureKind" ended.failure-kind
-   "finishedMs" ended.finished-ms})
+   "finishedMs" ended.finished-ms "kind" ended.kind})
 
 
 (defk ended-from-json [data]
   {:pre [(: data (get dict #(str object)))] :post [(: % DetachedEnded)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "保存の JSON の形 → 終わりの出口の行(ended-to-json の逆)。型の違う欄は名乗る ValueError(保存の行の壊れ)。"
   (DetachedEnded :id (stored-str data "id") :key (stored-str data "key") :notify (stored-str data "notify") :phase (stored-str data "phase")
-                 :detail (stored-str data "detail" "") :failure-kind (stored-str data "failureKind" "") :finished-ms (stored-int data "finishedMs")))
+                 :detail (stored-str data "detail" "") :failure-kind (stored-str data "failureKind" "") :finished-ms (stored-int data "finishedMs")
+                 ;; 種類の欄の無い保存の行(種類の前の版が積んだ)は終わりの行。
+                 :kind (stored-str data "kind" OUTBOX-ENDED)))
 
 
 ;; 保存の行の欄の読み(task-record-from-json)。型の違う値は、どの欄がどう違うかを名乗る ValueError にする(保存の行の壊れ — 送り手の誤りの

@@ -7,12 +7,13 @@
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
 ;;;   POST   /detached/<key>/cancel   取り消す → {"key" "cancelled" "phase"}(終わっていれば cancelled = false・結果は保持)
 ;;;   DELETE /detached/<key>          終わった task の保持を解く → {"key" "released"}。まだ終わっていなければ 409
-;;;   GET    /outbox?prefix=<頭>       終わりの出口の行を読む(知らせ先の頭で選ぶ・外さない)→ {"entries" [{id key notify phase detail failureKind finishedMs}]}
+;;;   GET    /outbox?prefix=<頭>[&kinds=<種類,…>]  出口の行を読む(知らせ先の頭と行の種類で選ぶ — 種類の既定は ended だけ・外さない)
+;;;                                   → {"entries" [{id key notify phase detail failureKind finishedMs kind}]}
 ;;;   DELETE /outbox/<id>             出口の行を受領して外す → {"id" "acked"}(知らない id は acked = false)
 ;;;
 ;;; 寿命の規則(置く・lease を worker が延ばす・worker の死 = lost・保持の期限)は cluster_policy の task の節(settle-detached・
 ;;; renew-detached・absorb-detached-report)。ここは要求 1 件 → Reply(次の状態・status・本文)だけ。
-(require doeff-hy.macros [val])
+(require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import typing [NamedTuple])
@@ -27,7 +28,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
                                                      limits-undeclared-refusal scan-rows])
 (import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
-                                                    DetachedEnded DetachedOutbox DetachedOutboxAcked])
+                                                    DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)
 (setv DETACHED-MAX-RETAIN-SECONDS (* 30 24 3600))
@@ -186,20 +187,65 @@
 (defn #^ ClusterState outbox-noted [#^ ClusterState before #^ ClusterState after #^ int now]
   "1 歩の前後の状態 before・after から、この歩で終わりへ移った知らせ先つきの task を出口へ 1 行ずつ積み、出口の保持の期限
    (OUTBOX-RETAIN-MS)を過ぎた行を外すため(節の頭の註 — 終わりへの移りが通る 1 点)。同じ結末の id の行が出口に在れば積み直さない。
+   終わった task の待ちの行(queued-overdue)がまだ受領されずに在れば外す(待ちの知らせは古い — 終わりの行が代わりに知らせる)。
    変わらなければ after をそのまま返す。"
-  (setv noted (tuple (gfor key (.changed-keys before.tasks after.tasks)
-                           :setv ended (ended-of (.row before.tasks key) (.row after.tasks key) now)
-                           :if (and (is-not ended None) (is (.row after.outbox ended.id) None))
-                           (TableWrite ended.id ended)))
+  (setv endings (tuple (gfor key (.changed-keys before.tasks after.tasks)
+                             :setv ended (ended-of (.row before.tasks key) (.row after.tasks key) now)
+                             :if (is-not ended None)
+                             ended))
+        noted (tuple (gfor ended endings :if (is (.row after.outbox ended.id) None) (TableWrite ended.id ended)))
+        stale (tuple (gfor ended endings :setv overdue (+ ended.id QUEUED-OVERDUE-SUFFIX)
+                           :if (is-not (.row after.outbox overdue) None)
+                           (TableWrite overdue None)))
         expired (tuple (gfor e (.rows after.outbox) :if (< (+ e.finished-ms OUTBOX-RETAIN-MS) now) (TableWrite e.id None))))
-  (if (or noted expired)
-      (replace after :outbox (.with-writes after.outbox (+ noted expired)))
+  (if (or noted stale expired)
+      (replace after :outbox (.with-writes after.outbox (+ noted stale expired)))
       after))
 
 
-(defn #^ Reply outbox-read [#^ ClusterState state #^ str prefix]
-  "GET /outbox?prefix=<頭>: 知らせ先が prefix で始まる出口の行(終わった刻・結末の id の順)。行を外さない(外すのは受領だけ)。"
-  (Reply state 200 (DetachedOutbox :entries (tuple (sorted (gfor e (.rows state.outbox) :if (.startswith e.notify prefix) e)
+;; --- queued の期限超えの知らせ(2026-10-29・card ki-4b6613f39c80)------------------------------------------------------------
+;; 知らせ先を名乗った切り離した task が queued のまま ClusterTiming.queued-notice-ms を越えたら、出口へ待ちの行(kind queued-overdue)を
+;; task ごとに 1 度だけ積む(型の註は detached_model の行の種類)。積む歩で task の行に印 queued-noticed-ms を置くので、待ち続けても・読み手が
+;; 受領して行を外しても積み直さない。終わりの行と同じく保存の直前の 1 点(program.coordinator-step)で、時刻だけを見て決める(待ちは
+;; 前後の差に現れない — 期限を越えた歩の now で見る)。
+
+;; 待ちの行の id の後ろ(id = <task の id><この後ろ> — 終わりの行の id = task の id と重ならない)。
+(val QUEUED-OVERDUE-SUFFIX "/queued-overdue")
+
+
+(defk overdue-of [task now timing]
+  {:pre [(: task TaskRecord) (: now int) (: timing ClusterTiming)] :post [(: % (| DetachedEnded None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "task の行 1 つが、この歩で待ちの行を積む物かを知るため(None = 積まない)。積むのは、知らせ先を名乗った切り離した task が queued のまま
+   置いた刻から timing.queued-notice-ms 以上待ち、まだ積んでいない(印 queued-noticed-ms が無い)時だけ。detail は coordinator が task に
+   書いた置かれない理由の文。"
+  (if (and task.detached task.notify (= task.phase "queued") (is task.queued-noticed-ms None)
+           (>= (- now task.submitted-ms) timing.queued-notice-ms))
+      (DetachedEnded :id (+ task.id QUEUED-OVERDUE-SUFFIX) :key (or task.key "") :notify task.notify :phase task.phase :detail task.detail
+                     :failure-kind "" :finished-ms now :kind OUTBOX-QUEUED-OVERDUE)
+      None))
+
+
+(defk queued-noticed [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "状態 state の queued の task のうち、この歩で期限を越えた物ごとに出口へ待ちの行を 1 つ積み、task の行に印 queued-noticed-ms = now を
+   置くため(節の頭の註)。変わらなければ state をそのまま返す。"
+  (var marks #())
+  (var rows #())
+  (for [task (.rows state.tasks)]
+    (<- row (| DetachedEnded None) (overdue-of task now timing))
+    (when (is-not row None)
+      (:= marks (+ marks #((TableWrite task.id (replace task :queued-noticed-ms now)))))
+      (:= rows (+ rows #((TableWrite row.id row))))))
+  (if rows
+      (replace state :tasks (.with-writes state.tasks marks) :outbox (.with-writes state.outbox rows))
+      state))
+
+
+(defn #^ Reply outbox-read [#^ ClusterState state #^ str prefix #^ (get frozenset str) [kinds (frozenset #(OUTBOX-ENDED))]]
+  "GET /outbox?prefix=<頭>&kinds=<種類,…>: 知らせ先が prefix で始まり、種類が kinds に在る出口の行(刻・id の順)。kinds を名乗らない
+   読み手には終わりの行だけを返す(detached_model の行の種類)。行を外さない(外すのは受領だけ)。"
+  (Reply state 200 (DetachedOutbox :entries (tuple (sorted (gfor e (.rows state.outbox) :if (and (.startswith e.notify prefix) (in e.kind kinds)) e)
                                                            :key (fn [e] #(e.finished-ms e.id)))))))
 
 

@@ -489,12 +489,27 @@
 ;; 用意できない — どの道で終わっても)、coordinator はその移りを状態に書く歩の中で出口に行を 1 つ積む(task の id ごとに 1 度だけ —
 ;; coordinator/core/detached_policy.hy の outbox-noted)。読み手は出口だけを読んで知らせ、知らせ終えた行を受領(AckDetachedOutbox)して外す。
 ;; 出口の行は task の行の解放・保持の期限と別に残る(受領か出口の保持の期限 — detached_policy の OUTBOX-RETAIN-MS — まで)。
+;;
+;; 行の種類(kind — 2026-10-29・card ki-4b6613f39c80):
+;;   ended           終わりの行(上の通り)。
+;;   queued-overdue  知らせ先を名乗った task が queued のまま期限(ClusterTiming の queued-notice-ms)を越えた歩で、task ごとに 1 度だけ積む
+;;                   行(detached_policy の queued-noticed — 積んだ印は task の行の queued-noticed-ms に残り、受領して外しても積み直さない)。
+;;                   phase は queued のまま・detail は置かれない理由(coordinator が task に書いた文)・finished-ms は期限超えを見た刻。
+;;                   受領の前に task が終われば、終わりの行を積む歩で外す(待ちの知らせは古い)。
+;; 読み手は読む種類を名乗る(AwaitDetachedOutbox の kinds — 既定は ended だけ)。種類を名乗らない読み手(この欄の前の版)には ended の行しか
+;; 出ないので、待ちの行を終わりと読み違えない。
+
+;; 出口の行の種類の名。
+(val OUTBOX-ENDED "ended")
+(val OUTBOX-QUEUED-OVERDUE "queued-overdue")
+(val OUTBOX-KINDS (frozenset #(OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE)))
 
 (defrecord DetachedEnded
   "出口の行 1 つ: id = 結末の id(task の id — coordinator の中で一意。読み手が重なりを除く鍵)・key = task の key・notify = 名乗った知らせ先・
    phase = 終わりの phase(finished | code-failed | failed | version-mismatch | lost | cancelled | env-failed)・detail = coordinator の理由の文・
-   failure-kind = 実行環境の失敗の種類(env-failed の時だけ)・finished-ms = 終わった刻(epoch ミリ秒)。結果の値は運ばない(値の復元には task の
-   module が要る — 値を読む呼び手は key で AwaitDetached する)。"
+   failure-kind = 実行環境の失敗の種類(env-failed の時だけ)・finished-ms = 終わった刻(epoch ミリ秒)・kind = 行の種類(頭の註の行の種類 —
+   queued-overdue の行は id = <task の id>/queued-overdue・phase = queued・finished-ms = 期限超えを見た刻)。結果の値は運ばない(値の復元には
+   task の module が要る — 値を読む呼び手は key で AwaitDetached する)。"
   {:tags {:context "doeff-cluster" :role "intent"}}
   (#^ str id)
   (#^ str key)
@@ -502,7 +517,8 @@
   (#^ str phase)
   (#^ str detail)
   (#^ str failure-kind)
-  (#^ int finished-ms))
+  (#^ int finished-ms)
+  (setv #^ str kind OUTBOX-ENDED))
 
 
 (defrecord DetachedOutbox
@@ -520,7 +536,9 @@
   (#^ str phase)
   (#^ str detail)
   (#^ str failure-kind)
-  (#^ int finished-ms))
+  (#^ int finished-ms)
+  ;; 欄の無い返事(種類の前の版の coordinator)は終わりの行。
+  (setv #^ str kind OUTBOX-ENDED))
 
 
 (defwire DetachedOutboxWire
@@ -532,10 +550,10 @@
 (val DetachedOutboxAnswer (| DetachedOutbox DetachedUnreachable))
 
 (defeffect AwaitDetachedOutbox
-  "出口の行のうち、知らせ先 notify が prefix で始まる物を読む(頭の註の出口)。在れば待たずに答え、無ければ在るまで timeout-seconds 待つ
-   (上限で空の DetachedOutbox)。答え = DetachedOutbox・DetachedUnreachable(coordinator に届かない・形の違う返事 — 出口の行は消えない。
-   呼び手は待ち直す)。読みは行を外さない — 外すのは受領 AckDetachedOutbox だけ。"
-  {:fields [(: prefix str) (: timeout-seconds float)]
+  "出口の行のうち、知らせ先 notify が prefix で始まり、種類が kinds に在る物を読む(頭の註の出口と行の種類 — 既定は終わりの行だけ)。在れば
+   待たずに答え、無ければ在るまで timeout-seconds 待つ(上限で空の DetachedOutbox)。答え = DetachedOutbox・DetachedUnreachable(coordinator に
+   届かない・形の違う返事 — 出口の行は消えない。呼び手は待ち直す)。読みは行を外さない — 外すのは受領 AckDetachedOutbox だけ。"
+  {:fields [(: prefix str) (: timeout-seconds float) (: kinds (get tuple #(str ...)) #(OUTBOX-ENDED))]
    :answer DetachedOutboxAnswer
    :tags {:context "doeff-cluster" :role "intent"}})
 

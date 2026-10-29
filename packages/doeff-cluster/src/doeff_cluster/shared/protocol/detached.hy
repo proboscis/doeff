@@ -637,7 +637,7 @@
                                             (.join "・" (gfor f wire.fields (+ f.field " " f.reason)))))
       (DetachedOutbox :entries (tuple (gfor e wire.entries
                                             (DetachedEnded :id e.id :key e.key :notify e.notify :phase e.phase :detail e.detail
-                                                           :failure-kind e.failure-kind :finished-ms e.finished-ms))))))
+                                                           :failure-kind e.failure-kind :finished-ms e.finished-ms :kind e.kind))))))
 
 
 (deff outbox-ack-answer [#^ str id #^ (| dict str) read]  ; defk にできない: 本番の client と sim の宿が同じ判断で受領の返事を答えにする
@@ -667,15 +667,22 @@
     _ "答えが無い"))
 
 
-(defk outbox-awaited [cell options sender prefix timeout-seconds poll-seconds]
-  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: prefix str) (: timeout-seconds float) (: poll-seconds float)]
+(deff outbox-query [#^ str prefix #^ tuple kinds]  ; defk にできない: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: prefix str) (: kinds tuple)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "GET /outbox の問いの欄(知らせ先の頭と、読む行の種類の , 区切り — detached_model の行の種類)を作るため。"
+  {"prefix" prefix "kinds" (.join "," kinds)})
+
+
+(defk outbox-awaited [cell options sender prefix kinds timeout-seconds poll-seconds]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: prefix str) (: kinds tuple) (: timeout-seconds float)
+         (: poll-seconds float)]
    :post [(: % DetachedOutboxAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "知らせ先の頭 prefix の出口の行を、在るまで timeout-seconds 待って読むため(AwaitDetachedOutbox の本番の答え)。poll-seconds ごとに
+  "知らせ先の頭 prefix・種類 kinds の出口の行を、在るまで timeout-seconds 待って読むため(AwaitDetachedOutbox の本番の答え)。poll-seconds ごとに
    GET /outbox を読み直し(眠りは Delay — 同じ VM の他の task を塞がない)、行が在れば待たずに答える。上限まで無ければ最後の読み
    (空の DetachedOutbox か、届かなかった DetachedUnreachable)。"
   (var waited 0.0)
   (while True
-    (<- read (resent-answer cell options "GET" "/outbox" {"prefix" prefix} None sender.deadline-seconds))
+    (<- read (resent-answer cell options "GET" "/outbox" (outbox-query prefix kinds) None sender.deadline-seconds))
     (<- view (| dict str) (outbox-response read))
     (<- answer DetachedOutboxAnswer (outbox-answer view))
     (when (or (and (isinstance answer DetachedOutbox) answer.entries) (>= waited timeout-seconds))
@@ -705,8 +712,8 @@
     (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body
                                       (| (task-placing-json priority limits) (task-notify-json notify))))
     (resume submitted))
-  (AwaitDetachedOutbox [prefix timeout-seconds]
-    (<- outbox DetachedOutboxAnswer (outbox-awaited cell options sender prefix (float timeout-seconds) OUTBOX-POLL-SECONDS))
+  (AwaitDetachedOutbox [prefix timeout-seconds kinds]
+    (<- outbox DetachedOutboxAnswer (outbox-awaited cell options sender prefix (tuple kinds) (float timeout-seconds) OUTBOX-POLL-SECONDS))
     (resume outbox))
   (AckDetachedOutbox [id]
     (<- acked DetachedAckAnswer (outbox-acked cell options sender id))

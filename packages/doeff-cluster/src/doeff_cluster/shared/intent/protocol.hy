@@ -51,6 +51,9 @@
   (setv #^ int client-reply-ms 15000)
   ;; 受付の箱(foundation/coordinator_inbox)の HTTP の thread が、調停ループの返事を待つ打ち切り(前は名の無い 30 秒)。
   (setv #^ int inbox-reply-ms 30000)
+  ;; 知らせ先を名乗った切り離した task が queued のまま待つと、出口へ待ちの行(queued-overdue)を 1 度だけ積むまで(置いた刻から数える —
+  ;; detached_policy.queued-noticed・card ki-4b6613f39c80)。背景の仕事の予約の待ちで 2 時間 queued のまま気づかれなかった(2026-10-29)。
+  (setv #^ int queued-notice-ms (* 15 60 1000))
 
   (defn #^ None __post-init__ [self]
     ;; 時間の窓の順の関係を 1 か所で検め、崩れた組は作る時に断る(本番の設定の誤りと、模擬の世界が比を保たずに延ばした組を名指す —
