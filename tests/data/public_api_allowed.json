@@ -1,0 +1,1972 @@
+{
+ "説明": [
+  "subpackage の公開 API は effect と handler だけ、の決まりが名ごとに許した、effect と handler の外の名の表(tests/test_public_api_known_violations.py が読む)。外れと境界は既知の違反の表 tests/data/public_api_known_violations.json に在り、許した名はこの表だけに置く(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。",
+  "1 行 = 許した名 1 つ: package(packages/ の下の dir)・module(名を出す module)・name・組・決め。鍵 (package, module, name) は目録の行と同じで、行は鍵の順に並べ、重ねない。違反の表と同じ鍵を置かない。",
+  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)だけで、test は目録の形が program の helper でない名を赤にする。形を確かめない組は置けない。",
+  "決め = 許した決めの id(card ki-… か依頼 lt-… か利用者の発言 ci-…)。この表は決めの id つきで足せる(違反の表と違い減るだけでない)。決めの id の無い行は test が赤にする。",
+  "名を submodule から入口へ移した行は、違反の表と同じく表の module を書き換えずに同じ行と読む。表に在るのに目録に無い名は赤 — 直した名と隠した submodule の名は表から消す(tools/hide_submodules.py finish が隠した子の行を消す)。",
+  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)。"
+ ],
+ "許した物": [
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.claude",
+   "name": "mcp_server_loop",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.effectful",
+   "name": "mcp_server_loop",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "account_limit_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.mcp_server_loop",
+   "name": "mcp_server_loop",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.policy",
+   "name": "seat_env_credential_shaped_offenders",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.credential_home",
+   "name": "credential_document",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "stderr_tail_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "stderr_tail_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.lines",
+   "name": "stderr_tail_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.print_once",
+   "name": "print_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.print_once",
+   "name": "stderr_tail_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.api_policy",
+   "name": "tick",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "job_room_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.program",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.program",
+   "name": "run_coordinator",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.program",
+   "name": "tick",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.warm_policy",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.warm_policy",
+   "name": "warm_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.entry.main",
+   "name": "load_state",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.entry.main",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.entry.main",
+   "name": "run_coordinator",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.protocol.kube",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.protocol.request_queue",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.protocol.request_queue",
+   "name": "promise_or_timeout",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.protocol.wal_files",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.foundation.foundation_check",
+   "name": "foundation_closure",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.foundation.kube_client",
+   "name": "kube_headers",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.foundation.process_versions",
+   "name": "process_versions",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.record_store.core.program",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.clock",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.declaring",
+   "name": "declaring_refusal",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.declaring",
+   "name": "foundation_needs_refusal",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.detached_rules",
+   "name": "submit_detached_task",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.promise_wait",
+   "name": "promise_or_timeout",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.run_context_rules",
+   "name": "runtime_env_of_context",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.run_context_rules",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_env",
+   "name": "runtime_env_of_checkouts",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_env_rules",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_env_rules",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_identity",
+   "name": "check_runtime_identity",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_identity",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_identity",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.semaphore_handlers",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_back",
+   "name": "promise_or_timeout",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_back",
+   "name": "service_back",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_back",
+   "name": "service_back_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_back",
+   "name": "stopped",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_rules",
+   "name": "foundation_needs_refusal",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.warm_rules",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.warm_rules",
+   "name": "warm_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.warm_rules",
+   "name": "warm_runtime_env",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.client_foundation",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.client_foundation",
+   "name": "process_versions",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.cluster_foundation",
+   "name": "lease_holder_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.cluster_foundation",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.cluster_foundation",
+   "name": "runtime_env_of_context",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.deployed_cluster",
+   "name": "readiness_awaited",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.checkout_reads",
+   "name": "checkout_root",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.checkout_reads",
+   "name": "checkout_state_at",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.checkout_reads",
+   "name": "file_sha256",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.coordinator_reads",
+   "name": "readiness_awaited",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.coordinator_route",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.detached",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.detached",
+   "name": "service_facts_of_view",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.detached",
+   "name": "warm_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.inbox",
+   "name": "http_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.job_call_handlers",
+   "name": "job_answer_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.job_call_handlers",
+   "name": "job_target",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.job_reach_handlers",
+   "name": "job_target",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.meter_report",
+   "name": "with_meter_report",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.program_codec",
+   "name": "decode_program",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "kube_headers",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "service_account_text",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_directory",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_object_ref_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_ref_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_ref_text",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_setting",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "supplied_value",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "worker_fact",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.task_result",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_supplied",
+   "name": "answer_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_supplied",
+   "name": "held_value_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_supplied",
+   "name": "held_whole_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_supplied",
+   "name": "read_grant_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "declared_job_specs",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "declared_reply_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "heartbeat",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "http_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "load_state",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "process_versions",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "promise_or_timeout",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "run_coordinator",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "runtime_env_of_context",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.machine",
+   "name": "readiness_awaited",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.machine",
+   "name": "stopped",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.worktree_git_script",
+   "name": "sha_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.worktree_git_script",
+   "name": "worktree_git_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.drain_client",
+   "name": "await_drained",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.env_rules",
+   "name": "lowered_priority_argv",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.heartbeat_rules",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.heartbeat_rules",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.launch",
+   "name": "child_environment",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "plan",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "records_after",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "statuses",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.probe_rules",
+   "name": "child_environment",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.program",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.program",
+   "name": "plan",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.program",
+   "name": "records_after",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.program",
+   "name": "statuses",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.shim_timing",
+   "name": "shim_spans",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.warm_rules",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.drain_main",
+   "name": "await_drained",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.drain_main",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.job_entry",
+   "name": "decode_program",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.job_entry",
+   "name": "runtime_env_of_context",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.main",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.main",
+   "name": "shim_spans",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.code_store",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.coordinator_link",
+   "name": "declared_job_specs",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.coordinator_link",
+   "name": "declared_reply_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.coordinator_link",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.declared",
+   "name": "declared_job_specs",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.declared",
+   "name": "declared_reply_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.declared",
+   "name": "env_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.declared",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.env_store",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.env_translation",
+   "name": "file_sha256",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.env_translation",
+   "name": "runtime_env_of_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.heartbeat",
+   "name": "status_rows_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.memory_watch",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.probes",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.process_clock",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.process_host",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.status_file",
+   "name": "status_rows_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.tick_pauses",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.warm_host",
+   "name": "now_epoch_ms",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_ws_client",
+   "name": "closing_links",
+   "組": "許した物 — program の helper",
+   "決め": "ki-f20b18c2aad9"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "clickhouse_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "clickhouse_query_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "clickhouse_schema_statements",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "offloaded",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.faulthandler_stack_dump",
+   "name": "stack_dumps_at",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "file_done",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.inline_compute",
+   "name": "computed",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "compiled_pyc",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_stack_dump",
+   "name": "stack_dumps_at",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.meter_prometheus",
+   "name": "render_prometheus",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.offloaded_call",
+   "name": "offloaded",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_file",
+   "name": "offloaded",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "environment_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "executable_file_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "not_started_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "offloaded",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "os_executable_at",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "os_process_alive",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "timed_out_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "own_thread_count",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "proc_stat_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "warm_answer_line",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "warm_request_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "offloaded",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "environment_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "environment_mapping",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "executable_file_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "not_started_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "start_refusal",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "timed_out_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_exit",
+   "name": "proc_stat_of",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.python_bytecode",
+   "name": "checked_hash_pyc",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.python_bytecode",
+   "name": "compiled_pyc",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "environment_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "executable_file_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "not_started_outcome",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "run_scripted",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "start_refusal",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_ws_client",
+   "name": "closing_links",
+   "組": "許した物 — program の helper",
+   "決め": "ki-f20b18c2aad9"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.seeded_random",
+   "name": "seeded_bytes",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_file_sql",
+   "name": "close_sqlite_files",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_file_sql",
+   "name": "open_sqlite_files",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_file_sql",
+   "name": "sqlite_connection",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "sqlite_connection",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "sqlite_insert",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "sqlite_query",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.stack_dump_effects",
+   "name": "stack_dumps_at",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.thread_pool_compute",
+   "name": "computed",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.ws_client_effects",
+   "name": "closing_links",
+   "組": "許した物 — program の helper",
+   "決め": "ki-f20b18c2aad9"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "cut_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "restore_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.event_loop",
+   "name": "begin_watch",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.event_loop",
+   "name": "end_watch",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.event_loop",
+   "name": "next_event",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "announce_file_change",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "cut_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "restore_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_files",
+   "name": "announce_file_change",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_notices",
+   "name": "cut_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_notices",
+   "name": "restore_broker",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini",
+   "name": "edit_image__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini",
+   "name": "structured_llm__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini.handlers.production",
+   "name": "edit_image__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini.handlers.production",
+   "name": "structured_llm__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini.structured_llm",
+   "name": "edit_image__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini.structured_llm",
+   "name": "structured_llm__gemini",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.http",
+   "name": "http_get",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.json_lines",
+   "name": "jsonl_lines",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.json_lines",
+   "name": "whole_lines_end",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "dump",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "dump_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "json_schema",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "parse",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "parse_json",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai",
+   "name": "structured_llm__openai",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai.structured_llm",
+   "name": "structured_llm__openai",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-openrouter",
+   "module": "doeff_openrouter",
+   "name": "structured_llm",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-openrouter",
+   "module": "doeff_openrouter.structured_llm",
+   "name": "structured_llm",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
+   "name": "came_back_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
+   "name": "first_seen",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
+   "name": "ride_out_stall",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "came_back_within",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "decode_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "encode_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "first_seen",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "refusal_from",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "request_bytes",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "stall_names",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "list_rows_metrics",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "records_server_config",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "records_service",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "schema_digests",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "store_reach",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "law_committed_changes_appear_once_in_order",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "law_put_rows_is_all_or_nothing",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "law_stale_put_conflicts",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "law_undeclared_writes_are_refused",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.main",
+   "name": "records_serving",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.main",
+   "name": "records_settings",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "answered",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "at_now",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "drop_bell",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "first_seen",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "hang_bell",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "memory_await_back",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "memory_watch",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "read_at_now",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "ride_out_stall",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "migrate_lock_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "purge_expired",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "writer_lock_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg_sql",
+   "name": "migrate_lock_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg_sql",
+   "name": "schema_statements",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg_sql",
+   "name": "writer_lock_key",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.request_timing",
+   "name": "metric_word",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.schema_digest",
+   "name": "schema_digests",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.service",
+   "name": "decode_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.service",
+   "name": "records_service",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
+   "name": "list_typed",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
+   "name": "put_typed",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
+   "name": "read_typed",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "answer_from",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "decode_answer",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "decode_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "encode_request",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "list_rows_metrics",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "metric_word",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "named_stores",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "refusal_from",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "request_kind",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
+   "name": "judge_many",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one.programs",
+   "name": "judge_many",
+   "組": "許した物 — program の helper",
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse",
+   "name": "sequence",
+   "組": "許した物 — program の helper",
+   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse",
+   "name": "try_call",
+   "組": "許した物 — program の helper",
+   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse.helpers",
+   "name": "sequence",
+   "組": "許した物 — program の helper",
+   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse.helpers",
+   "name": "try_call",
+   "組": "許した物 — program の helper",
+   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation",
+   "name": "validate",
+   "組": "許した物 — program の helper",
+   "決め": "ki-f20b18c2aad9"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation.api",
+   "name": "validate",
+   "組": "許した物 — program の helper",
+   "決め": "ki-f20b18c2aad9"
+  }
+ ]
+}

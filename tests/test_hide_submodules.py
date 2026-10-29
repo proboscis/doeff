@@ -412,6 +412,58 @@ def test_a_name_a_child_imports_from_another_child_goes_to_the_entry_once(tmp_pa
     }
 
 
+def test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row(
+    tmp_path: Path,
+) -> None:
+    """許した物の表の名(R18 の program の helper)は、既知の表の境界の名と同じく入口へ出す(外れの名は _ に残す)。stage 3
+    で目録から消えた許した物の行は、許した物の表から組ごとに数えて消す。
+
+    失敗ケース: 許した物を既知の表から許した物の表へ分けた時(card ki-5b3b2320de40)、道具が既知の表だけを読むと helper を
+    「表に無い名」と読んで _ に残し、外の repo が入口から読めなくなる。
+    """
+    helper_group = "許した物 — program の helper"
+    children = [tool.Child(ROOT_NAME, "effects", tmp_path)]
+    table = {
+        "packages": {
+            PACKAGE: {
+                "範囲": "決まりの範囲",
+                "名": {"外れ — 内側の module へ移す": {f"{ROOT_NAME}.effects": ["helper"]}},
+            }
+        },
+        "足した名": [],
+    }
+    allowed: dict[str, object] = {
+        "許した物": [
+            {
+                "package": PACKAGE,
+                "module": f"{ROOT_NAME}.effects",
+                "name": "pinging",
+                "組": helper_group,
+                "決め": "ki-5b3b2320de40",
+            }
+        ]
+    }
+    groups, added = tool._table_groups(table, allowed, PACKAGE)
+    rows = [
+        _row("effects", "pinging", "other", "effects.py:3"),
+        _row("effects", "helper", "other", "effects.py:9"),
+    ]
+    fates = {f.name: (f.fate, f.group) for f in tool.decide_names(rows, children, groups, added)}
+    assert fates == {
+        "pinging": ("entry", helper_group),
+        "helper": ("underscore", "外れ — 内側の module へ移す"),
+    }
+
+    path = tmp_path / "public_api_allowed.json"
+    path.write_text(json.dumps(allowed, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    assert (
+        tool.drop_allowed_rows(path, allowed, PACKAGE, {(f"{ROOT_NAME}.effects", "helper")}) == {}
+    )
+    pinging = {(f"{ROOT_NAME}.effects", "pinging")}
+    assert tool.drop_allowed_rows(path, allowed, PACKAGE, pinging) == {helper_group: 1}
+    assert json.loads(path.read_text(encoding="utf-8"))["許した物"] == []
+
+
 def test_a_name_added_to_an_entry_with_all_is_listed_in_all_too(tmp_path: Path) -> None:
     """``__all__`` の在る入口へ名を足すと、``__all__`` にも ruff の RUF022 の並びで足す。1 行に 1 つの名でない
     ``__all__`` には足さず、子を移す前に止める。
@@ -578,7 +630,7 @@ def test_hide_points_callers_at_the_entry_for_wrapped_names_in_the_entry_all(
     src = repo / "packages" / WRAPPED_PACKAGE / "src"
     _run_callers(repo / "callers", src)
 
-    report = tool.hide(repo / "packages" / WRAPPED_PACKAGE, ["handlers"], None, None, [])
+    report = tool.hide(repo / "packages" / WRAPPED_PACKAGE, ["handlers"], None, None, None, [])
 
     callers = _text(repo, "callers/test_callers.py")
     assert f"from {WRAPPED_ROOT} import mock_ping_handler, ping_handler\n" in callers
@@ -604,7 +656,7 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _run_callers(outside / "ext", src)
 
     # stage 1
-    report = tool.hide(package, ["effects", "tools"], None, None, [])
+    report = tool.hide(package, ["effects", "tools"], None, None, None, [])
     _assert_moved_and_entry(repo, report)
     _assert_rewritten(repo, report, record_before)
     _check_table(repo)  # 移し替えの module が古い名で出す間は、表を書き換えずに緑
@@ -612,14 +664,14 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _run_callers(outside / "ext", src)  # 外の repo は古い path のまま移し替えの module を通る
 
     # stage 2
-    tool.rewrite(package, ["effects", "tools"], outside, None, [], False)
+    tool.rewrite(package, ["effects", "tools"], outside, None, None, [], False)
     assert f"from {ROOT_NAME} import PingConfig, PingEffect\n" in _text(
         outside, "ext/test_callers.py"
     )
     _run_callers(outside / "ext", src)
 
     # stage 3
-    finished = tool.finish(package, ["effects", "tools"], None, None)
+    finished = tool.finish(package, ["effects", "tools"], None, None, None)
     assert not (package_root / "effects.py").exists()
     assert not (package_root / "tools.py").exists()
     assert sorted(finished.removed) == [
@@ -687,7 +739,7 @@ def test_hide_points_a_caller_at_the_entry_when_the_child_reads_itself_by_the_ol
     import が package でない移し替えの module に当たって落ち、呼び手が ``_`` の path へ向いた(card ki-99e6a0ab379b)。
     """
     repo = _write_repo(tmp_path / "repo", CHAIN_FILES)
-    report = tool.hide(repo / "packages" / CHAIN_PACKAGE, ["clock"], None, None, [])
+    report = tool.hide(repo / "packages" / CHAIN_PACKAGE, ["clock"], None, None, None, [])
     assert _text(repo, "callers/caller.py") == f"from {CHAIN_ROOT} import Tick\n"
     assert (report.rewrite.names_to_entry, report.rewrite.names_to_underscore) == (1, 0)
     assert f"from {CHAIN_ROOT}._clock.ticks import Tick as Tick" in _text(

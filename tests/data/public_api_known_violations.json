@@ -9,7 +9,7 @@
   "組の名(分け — 直しの向き・境界の種類)は card ki-1c2bd5bea63f の資料(doeff 5b1accad6 の目録の分け — 機械の案)から写した。範囲と境界の扱いは依頼書 lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM の答え待ち。",
   "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。",
   "組「外れ — handler を返す工場の形に直す」= 2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で中核の state() と同じ handler を返す工場として扱うと決めた名のうち、今の形(program を受けて program を返す)が工場の構造(引数なしか最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler が返る)に合わない物。形を工場に直したら表から消す(card ki-25eecd63bc57)。scheduled は工場の形を持ったが、旧い形(program を渡す)を同じ答えの移し替えの層として残す間は戻りの型が handler か program の 2 通りで、目録が工場と判じないので残す — 旧い形を消したら表から消す(card ki-f2c2f789f5bb)。maybe・result・on_raise・absent_as は旧い形を消して表から消した(card ki-53be25c354e4)。",
-  "組「許した物 — program の helper」= 決まりが名ごとに見せてよいと許した program の helper(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)。test は、この組の名の目録の形が program の helper でなければ赤にする(card ki-f20b18c2aad9)。2026-10-29 の答え lt-7EK027YNFXTP27QE60J7Q686CZ(ADR-DOE-API-001 R25)で、外の repo か doeff の別 package が使う helper の 155 名(271 行)を外れの組からこの組へ移した(card ki-9261e8b524d8)。"
+  "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -2544,23 +2544,6 @@
       "HerdrApiError",
       "HerdrContractError"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_agents.handlers.claude": [
-      "mcp_server_loop"
-     ],
-     "doeff_agents.handlers.effectful": [
-      "mcp_server_loop"
-     ],
-     "doeff_agents.handlers.headless_codex": [
-      "account_limit_of"
-     ],
-     "doeff_agents.handlers.mcp_server_loop": [
-      "mcp_server_loop"
-     ],
-     "doeff_agents.sessionhost.policy": [
-      "seat_env_credential_shaped_offenders"
-     ]
     }
    }
   },
@@ -3449,24 +3432,6 @@
      ],
      "doeff_claude_code.values": [
       "PermissionPolicy"
-     ]
-    },
-    "許した物 — program の helper": {
-     "doeff_claude_code.credential_home": [
-      "credential_document"
-     ],
-     "doeff_claude_code.dialogue": [
-      "stderr_tail_within"
-     ],
-     "doeff_claude_code.fake": [
-      "stderr_tail_within"
-     ],
-     "doeff_claude_code.lines": [
-      "stderr_tail_within"
-     ],
-     "doeff_claude_code.print_once": [
-      "print_outcome",
-      "stderr_tail_within"
      ]
     }
    }
@@ -9373,272 +9338,6 @@
      "doeff_cluster.worker.protocol.declared": [
       "DeclaredReplyMalformed"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_cluster.coordinator.core.api_policy": [
-      "tick"
-     ],
-     "doeff_cluster.coordinator.core.cluster_policy": [
-      "env_key",
-      "job_room_of",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.coordinator.core.program": [
-      "now_epoch_ms",
-      "run_coordinator",
-      "tick"
-     ],
-     "doeff_cluster.coordinator.core.warm_policy": [
-      "runtime_env_of_json",
-      "warm_key"
-     ],
-     "doeff_cluster.coordinator.entry.main": [
-      "load_state",
-      "now_epoch_ms",
-      "run_coordinator"
-     ],
-     "doeff_cluster.coordinator.protocol.kube": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.coordinator.protocol.request_queue": [
-      "now_epoch_ms",
-      "promise_or_timeout"
-     ],
-     "doeff_cluster.coordinator.protocol.wal_files": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.foundation.foundation_check": [
-      "foundation_closure"
-     ],
-     "doeff_cluster.foundation.kube_client": [
-      "kube_headers"
-     ],
-     "doeff_cluster.foundation.process_versions": [
-      "process_versions"
-     ],
-     "doeff_cluster.record_store.core.program": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.shared.core.clock": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.shared.core.declaring": [
-      "declaring_refusal",
-      "foundation_needs_refusal"
-     ],
-     "doeff_cluster.shared.core.detached_rules": [
-      "submit_detached_task"
-     ],
-     "doeff_cluster.shared.core.promise_wait": [
-      "promise_or_timeout"
-     ],
-     "doeff_cluster.shared.core.run_context_rules": [
-      "runtime_env_of_context",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.shared.core.runtime_env": [
-      "runtime_env_of_checkouts"
-     ],
-     "doeff_cluster.shared.core.runtime_env_rules": [
-      "env_key",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.shared.core.runtime_identity": [
-      "check_runtime_identity",
-      "env_key",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.shared.core.semaphore_handlers": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.shared.core.service_back": [
-      "promise_or_timeout",
-      "service_back",
-      "service_back_within",
-      "stopped"
-     ],
-     "doeff_cluster.shared.core.service_rules": [
-      "foundation_needs_refusal"
-     ],
-     "doeff_cluster.shared.core.warm_rules": [
-      "env_key",
-      "warm_key",
-      "warm_runtime_env"
-     ],
-     "doeff_cluster.shared.entry.client_foundation": [
-      "now_epoch_ms",
-      "process_versions"
-     ],
-     "doeff_cluster.shared.entry.cluster_foundation": [
-      "lease_holder_of",
-      "now_epoch_ms",
-      "runtime_env_of_context"
-     ],
-     "doeff_cluster.shared.entry.deployed_cluster": [
-      "readiness_awaited"
-     ],
-     "doeff_cluster.shared.protocol.checkout_reads": [
-      "checkout_root",
-      "checkout_state_at",
-      "file_sha256"
-     ],
-     "doeff_cluster.shared.protocol.coordinator_reads": [
-      "readiness_awaited"
-     ],
-     "doeff_cluster.shared.protocol.coordinator_route": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.shared.protocol.detached": [
-      "now_epoch_ms",
-      "service_facts_of_view",
-      "warm_answer"
-     ],
-     "doeff_cluster.shared.protocol.inbox": [
-      "http_request"
-     ],
-     "doeff_cluster.shared.protocol.job_call_handlers": [
-      "job_answer_of",
-      "job_target"
-     ],
-     "doeff_cluster.shared.protocol.job_reach_handlers": [
-      "job_target"
-     ],
-     "doeff_cluster.shared.protocol.meter_report": [
-      "with_meter_report"
-     ],
-     "doeff_cluster.shared.protocol.program_codec": [
-      "decode_program"
-     ],
-     "doeff_cluster.shared.protocol.supplied_values": [
-      "kube_headers",
-      "service_account_text",
-      "supplied_directory",
-      "supplied_object_ref_of",
-      "supplied_ref_of",
-      "supplied_ref_text",
-      "supplied_setting",
-      "supplied_value",
-      "worker_fact"
-     ],
-     "doeff_cluster.shared.protocol.task_result": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.sim.k8s_supplied": [
-      "answer_of",
-      "held_value_of",
-      "held_whole_of",
-      "read_grant_of"
-     ],
-     "doeff_cluster.sim.local": [
-      "declared_job_specs",
-      "declared_reply_of_json",
-      "heartbeat",
-      "http_request",
-      "load_state",
-      "now_epoch_ms",
-      "process_versions",
-      "promise_or_timeout",
-      "run_coordinator",
-      "runtime_env_of_context"
-     ],
-     "doeff_cluster.sim.machine": [
-      "readiness_awaited",
-      "stopped"
-     ],
-     "doeff_cluster.sim.worktree_git_script": [
-      "sha_of",
-      "worktree_git_answer"
-     ],
-     "doeff_cluster.worker.core.drain_client": [
-      "await_drained"
-     ],
-     "doeff_cluster.worker.core.env_rules": [
-      "lowered_priority_argv"
-     ],
-     "doeff_cluster.worker.core.heartbeat_rules": [
-      "env_key",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.worker.core.launch": [
-      "child_environment"
-     ],
-     "doeff_cluster.worker.core.policy": [
-      "plan",
-      "records_after",
-      "statuses"
-     ],
-     "doeff_cluster.worker.core.probe_rules": [
-      "child_environment"
-     ],
-     "doeff_cluster.worker.core.program": [
-      "now_epoch_ms",
-      "plan",
-      "records_after",
-      "statuses"
-     ],
-     "doeff_cluster.worker.core.shim_timing": [
-      "shim_spans"
-     ],
-     "doeff_cluster.worker.core.warm_rules": [
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.worker.entry.drain_main": [
-      "await_drained",
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.entry.job_entry": [
-      "decode_program",
-      "runtime_env_of_context"
-     ],
-     "doeff_cluster.worker.entry.main": [
-      "now_epoch_ms",
-      "shim_spans"
-     ],
-     "doeff_cluster.worker.protocol.code_store": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.coordinator_link": [
-      "declared_job_specs",
-      "declared_reply_of_json",
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.declared": [
-      "declared_job_specs",
-      "declared_reply_of_json",
-      "env_key",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.worker.protocol.env_store": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.env_translation": [
-      "file_sha256",
-      "runtime_env_of_json"
-     ],
-     "doeff_cluster.worker.protocol.heartbeat": [
-      "status_rows_json"
-     ],
-     "doeff_cluster.worker.protocol.memory_watch": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.probes": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.process_clock": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.process_host": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.status_file": [
-      "status_rows_json"
-     ],
-     "doeff_cluster.worker.protocol.tick_pauses": [
-      "now_epoch_ms"
-     ],
-     "doeff_cluster.worker.protocol.warm_host": [
-      "now_epoch_ms"
-     ]
     }
    }
   },
@@ -12534,106 +12233,6 @@
      "doeff_core_effects.sql_transaction": [
       "SqlTransactionMisuse"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_core_effects.aiohttp_ws_client": [
-      "closing_links"
-     ],
-     "doeff_core_effects.clickhouse_http_sql": [
-      "clickhouse_answer",
-      "clickhouse_query_request",
-      "clickhouse_schema_statements",
-      "offloaded"
-     ],
-     "doeff_core_effects.faulthandler_stack_dump": [
-      "stack_dumps_at"
-     ],
-     "doeff_core_effects.file_effects": [
-      "file_done"
-     ],
-     "doeff_core_effects.inline_compute": [
-      "computed"
-     ],
-     "doeff_core_effects.memory_file": [
-      "compiled_pyc"
-     ],
-     "doeff_core_effects.memory_stack_dump": [
-      "stack_dumps_at"
-     ],
-     "doeff_core_effects.meter_prometheus": [
-      "render_prometheus"
-     ],
-     "doeff_core_effects.offloaded_call": [
-      "offloaded"
-     ],
-     "doeff_core_effects.os_file": [
-      "offloaded"
-     ],
-     "doeff_core_effects.os_process": [
-      "environment_answer",
-      "executable_file_answer",
-      "not_started_outcome",
-      "offloaded",
-      "os_executable_at",
-      "os_process_alive",
-      "timed_out_outcome"
-     ],
-     "doeff_core_effects.os_warm_process": [
-      "own_thread_count",
-      "proc_stat_of",
-      "warm_answer_line",
-      "warm_request_of"
-     ],
-     "doeff_core_effects.postgres_sql": [
-      "offloaded"
-     ],
-     "doeff_core_effects.process_effects": [
-      "environment_answer",
-      "environment_mapping",
-      "executable_file_answer",
-      "not_started_outcome",
-      "start_refusal",
-      "timed_out_outcome"
-     ],
-     "doeff_core_effects.process_exit": [
-      "proc_stat_of"
-     ],
-     "doeff_core_effects.python_bytecode": [
-      "checked_hash_pyc",
-      "compiled_pyc"
-     ],
-     "doeff_core_effects.scripted_process": [
-      "environment_answer",
-      "executable_file_answer",
-      "not_started_outcome",
-      "run_scripted",
-      "start_refusal"
-     ],
-     "doeff_core_effects.scripted_ws_client": [
-      "closing_links"
-     ],
-     "doeff_core_effects.seeded_random": [
-      "seeded_bytes"
-     ],
-     "doeff_core_effects.sqlite_file_sql": [
-      "close_sqlite_files",
-      "open_sqlite_files",
-      "sqlite_connection"
-     ],
-     "doeff_core_effects.sqlite_sql": [
-      "sqlite_connection",
-      "sqlite_insert",
-      "sqlite_query"
-     ],
-     "doeff_core_effects.stack_dump_effects": [
-      "stack_dumps_at"
-     ],
-     "doeff_core_effects.thread_pool_compute": [
-      "computed"
-     ],
-     "doeff_core_effects.ws_client_effects": [
-      "closing_links"
-     ]
     }
    }
   },
@@ -13170,29 +12769,6 @@
       "BrokerAnswerMalformed",
       "BrokerConnectionsExhausted"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_events": [
-      "cut_broker",
-      "restore_broker"
-     ],
-     "doeff_events.event_loop": [
-      "begin_watch",
-      "end_watch",
-      "next_event"
-     ],
-     "doeff_events.handlers": [
-      "announce_file_change",
-      "cut_broker",
-      "restore_broker"
-     ],
-     "doeff_events.handlers.memory_files": [
-      "announce_file_change"
-     ],
-     "doeff_events.handlers.memory_notices": [
-      "cut_broker",
-      "restore_broker"
-     ]
     }
    }
   },
@@ -13389,20 +12965,6 @@
       "GeminiCallResult",
       "GeminiImageEditResult",
       "TokenUsage"
-     ]
-    },
-    "許した物 — program の helper": {
-     "doeff_gemini": [
-      "edit_image__gemini",
-      "structured_llm__gemini"
-     ],
-     "doeff_gemini.handlers.production": [
-      "edit_image__gemini",
-      "structured_llm__gemini"
-     ],
-     "doeff_gemini.structured_llm": [
-      "edit_image__gemini",
-      "structured_llm__gemini"
      ]
     }
    }
@@ -14418,22 +13980,6 @@
      "doeff_hy_bytecode_guard.macro_hints": [
       "HyMacroUseWarning"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_hy.http": [
-      "http_get"
-     ],
-     "doeff_hy.json_lines": [
-      "jsonl_lines",
-      "whole_lines_end"
-     ],
-     "doeff_hy.wire": [
-      "dump",
-      "dump_json",
-      "json_schema",
-      "parse",
-      "parse_json"
-     ]
     }
    }
   },
@@ -14997,14 +14543,6 @@
       "MissingCachedPricingError",
       "UnknownModelPricingError"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_openai": [
-      "structured_llm__openai"
-     ],
-     "doeff_openai.structured_llm": [
-      "structured_llm__openai"
-     ]
     }
    }
   },
@@ -15101,14 +14639,6 @@
      ],
      "doeff_openrouter.chat": [
       "OpenRouterResponseError"
-     ]
-    },
-    "許した物 — program の helper": {
-     "doeff_openrouter": [
-      "structured_llm"
-     ],
-     "doeff_openrouter.structured_llm": [
-      "structured_llm"
      ]
     }
    }
@@ -16764,86 +16294,6 @@
       "RememberNoKeys",
       "TableDecl"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_records.event_source": [
-      "came_back_within",
-      "first_seen",
-      "ride_out_stall"
-     ],
-     "doeff_records.http_client": [
-      "came_back_within",
-      "decode_answer",
-      "encode_request",
-      "first_seen",
-      "refusal_from",
-      "request_bytes",
-      "stall_names"
-     ],
-     "doeff_records.http_server": [
-      "list_rows_metrics",
-      "records_server_config",
-      "records_service",
-      "schema_digests",
-      "store_reach"
-     ],
-     "doeff_records.laws": [
-      "law_committed_changes_appear_once_in_order",
-      "law_put_rows_is_all_or_nothing",
-      "law_stale_put_conflicts",
-      "law_undeclared_writes_are_refused"
-     ],
-     "doeff_records.main": [
-      "records_serving",
-      "records_settings"
-     ],
-     "doeff_records.memory": [
-      "answered",
-      "at_now",
-      "drop_bell",
-      "first_seen",
-      "hang_bell",
-      "memory_await_back",
-      "memory_watch",
-      "read_at_now",
-      "ride_out_stall"
-     ],
-     "doeff_records.pg": [
-      "migrate_lock_key",
-      "purge_expired",
-      "writer_lock_key"
-     ],
-     "doeff_records.pg_sql": [
-      "migrate_lock_key",
-      "schema_statements",
-      "writer_lock_key"
-     ],
-     "doeff_records.request_timing": [
-      "metric_word"
-     ],
-     "doeff_records.schema_digest": [
-      "schema_digests"
-     ],
-     "doeff_records.service": [
-      "decode_request",
-      "records_service"
-     ],
-     "doeff_records.typed": [
-      "list_typed",
-      "put_typed",
-      "read_typed"
-     ],
-     "doeff_records.wire": [
-      "answer_from",
-      "decode_answer",
-      "decode_request",
-      "encode_request",
-      "list_rows_metrics",
-      "metric_word",
-      "named_stores",
-      "refusal_from",
-      "request_kind"
-     ]
     }
    }
   },
@@ -17088,14 +16538,6 @@
       "JudgeError",
       "JudgeUsageLimited"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_system_one": [
-      "judge_many"
-     ],
-     "doeff_system_one.programs": [
-      "judge_many"
-     ]
     }
    }
   },
@@ -17260,16 +16702,6 @@
      "doeff_traverse.handlers": [
       "ItemOutcomeNotPassedError"
      ]
-    },
-    "許した物 — program の helper": {
-     "doeff_traverse": [
-      "sequence",
-      "try_call"
-     ],
-     "doeff_traverse.helpers": [
-      "sequence",
-      "try_call"
-     ]
     }
    }
   },
@@ -17320,14 +16752,6 @@
      ],
      "doeff_validation.failures": [
       "ValidationException"
-     ]
-    },
-    "許した物 — program の helper": {
-     "doeff_validation": [
-      "validate"
-     ],
-     "doeff_validation.api": [
-      "validate"
      ]
     }
    }
