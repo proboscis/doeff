@@ -62,7 +62,7 @@
 (import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
                                     first-seen ride-out-stall stop-source waits-beside-sources])
 (import doeff_time [GetTime WaitWithin])
-(import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
+(import doeff_time [GetTimeEffect WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused

@@ -72,8 +72,8 @@
   (setv #(lines program store) (! (record-system)))
   (<- recorded list program)
   (setv names (json.dumps lines :ensure-ascii False))
-  (assert (in "doeff_time.effects.time:GetTimeEffect" names) names)
-  (assert (in "doeff_time.effects.time:DelayEffect" names))
+  (assert (in "doeff_time._effects.time:GetTimeEffect" names) names)
+  (assert (in "doeff_time._effects.time:DelayEffect" names))
   ;; 記録の時刻(1000000 ms から 0.3 秒ごと)が再生でそのまま返る。
   (assert (in "a0@1000300" recorded) recorded)
   (setv state (ReplayState (! (read-recording lines))))

@@ -31,8 +31,8 @@ from doeff_events.effects import WaitForEventEffect as WaitForEventEffect
 from doeff_events.effects import WaitForEventsEffect as WaitForEventsEffect
 from doeff_time import GetTime as GetTime
 from doeff_time import WaitWithin as WaitWithin
-from doeff_time.effects.time import GetTimeEffect as GetTimeEffect
-from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
+from doeff_time import GetTimeEffect as GetTimeEffect
+from doeff_time import WaitWithinEffect as WaitWithinEffect
 from doeff_records.admission import key_text as key_text
 from doeff_records.effects import AwaitRecordsBack as AwaitRecordsBack
 from doeff_records.effects import ListRows as ListRows

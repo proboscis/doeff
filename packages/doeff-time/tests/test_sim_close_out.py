@@ -11,8 +11,7 @@ import warnings
 from datetime import datetime, timezone
 
 from doeff_core_effects.scheduler import scheduled
-from doeff_time.effects import Delay, GetTime
-from doeff_time.handlers.sim_time import sim_time_handler
+from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import do, run
 from doeff import handler as program_handler
@@ -55,7 +54,7 @@ def test_a_positive_delay_below_one_tick_still_moves_the_clock() -> None:
 
 def test_a_wait_loop_on_the_rest_of_its_timeout_terminates() -> None:
     """Sleeping the float remainder of a timeout reaches the timeout (terminates)."""
-    from doeff_time.effects import GetMonotonic
+    from doeff_time import GetMonotonic
 
     @do
     def body():

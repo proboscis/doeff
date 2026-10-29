@@ -99,7 +99,7 @@
                                                 HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
                                                 HttpShutdown])
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
-(import doeff_time.effects.time [WaitWithinEffect])
+(import doeff_time [WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
 (import doeff_records.schema_digest [schema-digests])

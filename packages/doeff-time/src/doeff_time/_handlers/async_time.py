@@ -13,8 +13,7 @@ from doeff_core_effects.scheduler import PRIORITY_IDLE, Cancel, Race, Spawn
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
-from doeff_time._internals.deadline import DEADLINE_PASSED
-from doeff_time.effects import (
+from doeff_time._effects import (
     DelayEffect,
     GetMonotonicEffect,
     GetTimeEffect,
@@ -24,11 +23,12 @@ from doeff_time.effects import (
     WaitUntilEffect,
     WaitWithinEffect,
 )
-from doeff_time.handlers._wall_ticks import (
+from doeff_time._handlers._wall_ticks import (
     timed_wait_answer,
     timed_wait_futures,
     timed_wait_seconds,
 )
+from doeff_time._internals.deadline import DEADLINE_PASSED
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

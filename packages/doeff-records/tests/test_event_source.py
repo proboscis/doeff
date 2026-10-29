@@ -75,7 +75,7 @@ from doeff_records.faults import AdvanceStoreEpoch, SetStoreOutage
 from doeff_records.memory import MemoryStore, memory_records_handler
 from doeff_records.values import Appended, ExpectAny, FieldDecl, RecordsSchema, StreamDecl, TableDecl, Written
 from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
-from doeff_time.effects.time import WaitWithinEffect
+from doeff_time import WaitWithinEffect
 
 from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, handler, run, with_handlers
 from doeff.program import ProgramHandler

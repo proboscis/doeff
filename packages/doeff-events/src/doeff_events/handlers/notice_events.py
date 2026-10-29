@@ -98,8 +98,7 @@ from doeff_core_effects.scheduler import (
     TaskCancelledError,
     Wait,
 )
-from doeff_time import GetTime, WaitWithin
-from doeff_time.effects.time import GetTimeEffect, WaitWithinEffect
+from doeff_time import GetTime, GetTimeEffect, WaitWithin, WaitWithinEffect
 
 from doeff import K, Pass, Program, Resume, ResumeThrow, do
 from doeff import handler as _program_handler

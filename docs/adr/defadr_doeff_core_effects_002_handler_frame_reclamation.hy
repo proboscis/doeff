@@ -11,7 +11,7 @@
   :title "handler frame reclamation: ハンドラ節の最終制御命令(Transfer/TransferThrow/Resume/Pass/Delegate)は必ずハンドラ本体の最上位フレームから yield する — `yield sub-@do(effect, k)` 委譲の深部で最終命令を実行する形は、委譲中の全祖先フレームを回収不能のまま放置し、Task ハンドル weakref 経由で scheduler の terminal-entry sweep を永久に阻止する。末尾 resume は Transfer/TransferThrow を用いる(Resume 停止フレームはサイクル GC 待ちでしか回収されない)"
   :status "accepted"
   :scope ["packages/doeff-core-effects/doeff_core_effects/handlers.py"
-          "packages/doeff-time/src/doeff_time/handlers"
+          "packages/doeff-time/src/doeff_time/_handlers"
           "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/handlers/production.py"
           "packages/doeff-secret/src/doeff_secret/handlers.py"
           "tests/test_handler_tail_transfer_reclamation.py"

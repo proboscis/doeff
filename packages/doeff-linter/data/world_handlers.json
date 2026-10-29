@@ -182,7 +182,7 @@
    "why": "sqlite3.connect の file"
   },
   {
-   "handler": "doeff_time.handlers.async_time:async_time_handler",
+   "handler": "doeff_time._handlers.async_time:async_time_handler",
    "touches": [
     "clock"
    ],
@@ -196,7 +196,7 @@
    "why": "上の再輸出の綴り"
   },
   {
-   "handler": "doeff_time.handlers.sync_time:sync_time_handler",
+   "handler": "doeff_time._handlers.sync_time:sync_time_handler",
    "touches": [
     "clock",
     "thread"

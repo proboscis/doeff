@@ -29,7 +29,7 @@ from doeff_core_effects.handlers import (
     writer,
 )
 from doeff_core_effects.scheduler import scheduled
-from doeff_time.handlers import sim_time_handler
+from doeff_time import sim_time_handler
 from doeff_traverse.effects import Inspect, Traverse
 from doeff_traverse.handlers import fail_handler, parallel
 
