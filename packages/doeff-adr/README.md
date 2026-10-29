@@ -220,6 +220,60 @@ to the process registry), and `AdrIds` answers the ids of that list only.
 `AdrIds` (there is no public `adr_ids` function), and an ADR only through
 `GetAdr` (there is no public `get_adr` function).
 
+## ADR contract checks as effects
+
+The same handler `adr_registry` answers three more effects:
+
+- `AssertAdrContract(id)` checks the shape of one ADR and answers `None`: an
+  accepted ADR names at least one check, every check it names is on the
+  enforcement table, and an `expected-red` check is tied to a plan. A failed
+  check is an `AssertionError`, raised where the effect was performed; an id
+  that is not on the table is a `KeyError`.
+- `AssertAllAdrContracts()` checks every ADR on the table in id order and
+  raises the first failure the same way.
+- `RegisterDeftest(id, mode="green")` puts a `deftest` check on the
+  enforcement table and answers its `EnforcementRef`. A repeated id, or a mode
+  other than `green` and `expected-red`, is a `ValueError`.
+
+The expansion of `defadr` runs `RegisterDeftest` for each inline `deftest` at
+import time and `AssertAdrContract` inside the generated
+`test_<ID>_adr_contract`, each under `adr_registry()` itself, so these checks
+need no `doeff_interpreter` fixture either. There are no public
+`assert_adr_contract`, `assert_all_adr_contracts` or
+`register_deftest_enforcement` functions.
+
+`adr_registry(specs=[spec ...], enforcements={...})` reads the ADRs from that
+list and the checks from that dict, and `RegisterDeftest` writes to the dict.
+Passing only one of them makes the other empty (an `enforcements` dict made
+when the factory is called), so a test can check an ADR whose checks are
+missing without touching the process registry:
+
+```python
+from doeff import do, run
+from doeff_adr import AdrSpec, AssertAdrContract, EnforcementRef, adr_registry
+
+spec = AdrSpec(
+    id="ADR-X",
+    title="x",
+    status="accepted",
+    enforcement=(EnforcementRef(id="test_gone", kind="deftest"),),
+)
+
+
+@do
+def check():
+    try:
+        yield AssertAdrContract("ADR-X")
+    except AssertionError as failed:
+        return str(failed)
+    return "passed"
+
+
+assert run(adr_registry(specs=[spec])(check())) == (
+    "ADR-X: enforcement 'test_gone' is not registered"
+)
+```
+
 ## Semgrep checks as effects
 
 `defsemgrep` performs two effects, answered by the handler factory
