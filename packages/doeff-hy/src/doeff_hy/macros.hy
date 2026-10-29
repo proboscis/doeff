@@ -1421,9 +1421,13 @@ defk {name}: {{:post [...]}} is required.
      (<- … :absent F)    → open-bind の受け手が、その束ねの中で出た Absent を Raise(F) に変える
    open-bind(doeff_core_effects.outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
    スコープで出し、Result / Maybe の値を開く。宣言の無い effect と Program は受け取った物をそのまま返す
-   (ADR-DOE-CORE-EFFECTS-003 R5・R6)。"
+   (ADR-DOE-CORE-EFFECTS-003 R5・R6)。
+   束ねた後は b を del する(`(del b)` を setv の次に置く・名の無い (<- expr) は答えを一時の名 a で受けて a も外す):
+   b は yield した Program(Call — 関数と引数)を持つので、残すと同じ行が次に走るまで引数を生かす(長い loop の
+   generator で前の周の表を持ち続けた — agora card ki-d5fb19be03db)。del は文なので、式の中の `!` はこの外。"
   (import doeff-hy.outcome-forms [open-form])
-  (setv performed (open-form expr absent helpers))
+  (setv bound (hy.gensym "bound"))
+  (setv performed (open-form expr absent helpers bound))
   (cond
     ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の答えの型。
     ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
@@ -1443,10 +1447,14 @@ defk {name}: {{:post [...]}} is required.
           (or (is source None) (not (isinstance name hy.models.Symbol)))
             `(setv ~name ~bound)
           True `(setv (annotate ~name ~(hy.models.String source)) ~bound)))
-    (is name None) performed
-    (is tp None) `(setv ~name ~performed)
+    (is name None) (let [answer (hy.gensym "answer")]
+                     `(do (setv ~answer ~performed)
+                          (del ~bound)
+                          (get #(~answer (setx ~answer None)) 0)))
+    (is tp None) `(do (setv ~name ~performed) (del ~bound))
     True `(do
             (setv ~name ~performed)
+            (del ~bound)
             ~(_runtime-type-check name (runtime-type-form tp)
                                   `(+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 

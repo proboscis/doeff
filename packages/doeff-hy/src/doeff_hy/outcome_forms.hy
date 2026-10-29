@@ -117,8 +117,9 @@
     (SplitBind :core core :absent (when suffix? (get form -1)))))
 
 
-(deff open-form [expr absent [helpers None]]  ; defk にできない: macro の展開の時に呼ぶ関数
-  {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| str None))] :post [(: % Expression)]
+(deff open-form [expr absent [helpers None] [bound None]]  ; defk にできない: macro の展開の時に呼ぶ関数
+  {:pre [(: expr Object) (: absent (| Object None)) (: helpers (| str None)) (: bound (| Symbol None))]
+   :post [(: % Expression)]
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
    open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
@@ -134,12 +135,15 @@
    helpers は名の文字列で受け、差し込む所ごとに新しい Symbol を作る — 展開のあいだで 1 つの model を使い回すと、
    locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる(agora-redesign #1004)。
    値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る
-   (card ki-de00c871fa53)。"
+   (card ki-de00c871fa53)。
+   bound = 答え(Pure か yield する Program)を持つ局所の名。呼び手が渡せば、束ねた後にその名を del して frame から外せる
+   (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた: agora card ki-d5fb19be03db)。
+   渡さなければ gensym を作る(`!` の式の中 — 文を置けない)。"
   (let [refused (plain-value-refusal expr)]
     (when (is-not refused None)
       (raise (SyntaxError refused))))
   (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
-        bound (hy.gensym "bound")
+        bound (if (is bound None) (hy.gensym "bound") bound)
         imported (if (is helpers None)
                      `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
                      (Symbol helpers))
