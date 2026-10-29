@@ -24,6 +24,8 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
 6. 組「許した物 — program の helper」(ADR-DOE-API-001 R18 — 決まりが名ごとに許した、effect を出すだけの program を返す関数)
    に置けるのは、目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。
    許した物の組は、目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。
+7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
+   出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 """
 
 from __future__ import annotations
@@ -228,11 +230,36 @@ def _not_helper_text(directory: str, rows: list[Mapping[str, Any]]) -> str:
     )
 
 
-def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
+def unread_native_modules(
+    package: Mapping[str, Any], entry: PackageEntry, repo: Path
+) -> list[Mapping[str, Any]]:
+    """決まりの範囲の、Rust の拡張を持つ package の module のうち、目録が import できずに字面で読んだ物。
+
+    字面の読みは source に定義の在る名しか数えないので、入口が拡張から出す名(前の doeff-indexer の Indexer・SymbolInfo)を
+    数えない(card ki-1e51e218527e)。決まりの範囲の名は全部を数えるので、そういう package は環境に入れて import で読む。
+    """
+    if (
+        entry["範囲"] != "決まりの範囲"
+        or not tool.read_layout(repo / "packages" / package["dir"]).maturin
+    ):
+        return []
+    return [module for module in package["modules"] if module["read"] == "text"]
+
+
+def _unread_native_text(directory: str, modules: list[Mapping[str, Any]]) -> str:
+    return (
+        f"{directory}: Rust の拡張を持つ package の module を目録が import で読めず、字面で読んだ — 字面では入口が拡張から"
+        "出す名を数えられない。root の pyproject の dev の組に package を入れ、make sync の環境で読む:\n"
+        + "\n".join(f"  {module['name']}: {module['error']}" for module in modules)
+    )
+
+
+def check_package(package: Mapping[str, Any], table: KnownTable, repo: Path = ROOT) -> None:
     """目録の 1 package を既知の表と突き合わせる。表に無い外れと、表に在るのに目録に無い名を名指して止める。
 
     名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。組「許した物 — program の
     helper」の名は、目録の形が program の helper でなければ名指して止める(入口へ移した行は入口の行の形で見る)。
+    決まりの範囲の Rust の拡張を持つ package は、目録が import で読めなければ止める(unread_native_modules)。
     """
     directory = package["dir"]
     assert package["error"] is None, f"{directory} を読めなかった: {package['error']}"
@@ -250,7 +277,9 @@ def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
     helpers = helper_names(table, directory)
     shown_helpers = sorted((helpers & set(found)) | {root for root, old in moved if old in helpers})
     not_helpers = [found[key] for key in shown_helpers if found[key]["form"] != tool.PROGRAM_HELPER]
+    unread = unread_native_modules(package, entry, repo)
     problems = [
+        *([_unread_native_text(directory, unread)] if unread else []),
         *([_new_text(directory, new, found)] if new else []),
         *([_stale_text(directory, stale)] if stale else []),
         *([_not_helper_text(directory, not_helpers)] if not_helpers else []),
@@ -535,6 +564,48 @@ def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 訳が空",
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 決め '決めた' が card(ki-)・依頼(lt-)・発言(ci-)の id でない",
     ]
+
+
+#: Rust の拡張を持つ package(maturin の mixed の形 — 入口は python/ の下・拡張は内側の _native)。組まないので環境に無い。
+NATIVE_PYPROJECT = f"""
+[project]
+name = "{FIXTURE_DIR}"
+version = "0"
+
+[build-system]
+requires = ["maturin>=1.13,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "python"
+module-name = "{FIXTURE_ROOT}._native"
+"""
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_native_package_in_scope_that_the_inventory_cannot_import_turns_red(
+    tmp_path: Path,
+) -> None:
+    """Rust の拡張を持つ package を目録が import で読めない(環境に無い)と、字面の読みは入口が拡張から出す名を数えない —
+    決まりの範囲なら赤(card ki-1e51e218527e — 前の doeff-indexer の Indexer・SymbolInfo を目録が数えなかった)。名を決めて
+    いない範囲の答え待ちの package は、同じ読みで緑。"""
+    package = tmp_path / "packages" / FIXTURE_DIR
+    (package / "python" / FIXTURE_ROOT).mkdir(parents=True)
+    (package / "pyproject.toml").write_text(textwrap.dedent(NATIVE_PYPROJECT), encoding="utf-8")
+    (package / "python" / FIXTURE_ROOT / "__init__.py").write_text(
+        f"from {FIXTURE_ROOT}._native import Indexer, SymbolInfo\n", encoding="utf-8"
+    )
+    found = _read_fixture(tmp_path)
+    assert not found["exports"], "字面の読みは拡張から出す名を数えない(この検の前提)"
+    with pytest.raises(
+        AssertionError,
+        match=rf"{FIXTURE_DIR}: Rust の拡張を持つ package の module を目録が import で読めず",
+    ):
+        check_package(found, _fixture_table({}), repo=tmp_path)
+
+    waiting = _fixture_table({})
+    waiting["packages"][FIXTURE_DIR]["範囲"] = "範囲の答え待ち"
+    check_package(found, waiting, repo=tmp_path)
 
 
 FACTORY = '''

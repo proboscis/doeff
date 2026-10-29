@@ -641,6 +641,7 @@ dev = [
     { name = "doeff-domain", extra = ["dogfood"] },
     { name = "doeff-gemini" },
     { name = "doeff-hy", extra = ["parity"] },
+    { name = "doeff-indexer" },
     { name = "doeff-jev" },
     { name = "doeff-linter" },
     { name = "doeff-llm" },
@@ -699,6 +700,7 @@ dev = [
     { name = "doeff-gemini", editable = "packages/doeff-gemini" },
     { name = "doeff-hy", editable = "packages/doeff-hy" },
     { name = "doeff-hy", extras = ["parity"], editable = "packages/doeff-hy" },
+    { name = "doeff-indexer", editable = "packages/doeff-indexer" },
     { name = "doeff-jev", editable = "packages/doeff-jev" },
     { name = "doeff-linter", editable = "packages/doeff-linter" },
     { name = "doeff-llm", editable = "packages/doeff-llm" },
@@ -1276,8 +1278,14 @@ dev = []
 
 [[package]]
 name = "doeff-indexer"
-version = "0.1.4"
+version = "0.2.0"
 source = { editable = "packages/doeff-indexer" }
+dependencies = [
+    { name = "doeff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "doeff", editable = "." }]
 
 [[package]]
 name = "doeff-jev"

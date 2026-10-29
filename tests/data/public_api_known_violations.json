@@ -14504,9 +14504,9 @@
    }
   },
   "doeff-indexer": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — CLI": {
      "(console script)": [
       "doeff-indexer"
      ]
@@ -19641,6 +19641,13 @@
    "name": "doeff-agentic",
    "訳": "Rust の CLI doeff-agentic-cli の実行 file doeff-agentic を Python の console script へ寄せた(利用者の答え lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1「消して寄せる」)。IDE の plugin が呼ぶ 6 動詞を同じ引数と JSON で答える。doeff-agentic-cli を消す card ki-7b2e293a2db7 で、その package の (実行 file) の行が消える",
    "決め": "ki-626bf91b0560"
+  },
+  {
+   "package": "doeff-indexer",
+   "module": "doeff_indexer",
+   "name": "SymbolInfo",
+   "訳": "effect FindSymbols の答えの 1 行の型(R2 の effect の結果の型)。前は Rust の拡張の class で、目録は doeff-indexer を環境に持たず字面で読んだので数えていなかった。索引を引く口を effect FindSymbols と handler rust_indexer にし(class Indexer は内側の拡張 doeff_indexer._native へ)、doeff-indexer を make sync の環境に入れて目録が import で読むようにした時に、Python の frozen dataclass として入口から見せた。R2 の型を目録の道具が許す物と数えるまで、R12 のとおりここに置く",
+   "決め": "lt-ZDN45RSNPV16BKSM997GGZ9CVB"
   }
  ]
 }
