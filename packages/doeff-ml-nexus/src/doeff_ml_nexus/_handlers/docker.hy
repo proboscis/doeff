@@ -12,8 +12,8 @@
 
 (import uuid)
 
-(import doeff_docker.effects [DockerRun ShellRun])
-(import doeff_docker.handlers.docker [_build-shell-args])
+(import doeff_docker [DockerRun ShellRun])
+(import doeff_docker._handlers.docker [_build-shell-args])
 
 
 (defn _shell-run-checked [full-args * [stdin-data None]]

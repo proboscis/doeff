@@ -1,78 +1,21 @@
-"""Secret access helpers."""
+# moved-submodule-shim: doeff_google_secret_manager.secrets -> doeff_google_secret_manager._secrets
+"""Moved: ``doeff_google_secret_manager.secrets`` is now ``doeff_google_secret_manager._secrets`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_google_secret_manager.secrets…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from doeff import Await, EffectGenerator, Tell, do
+if TYPE_CHECKING:
+    from doeff_google_secret_manager._secrets import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-from .client import SecretManagerClient, get_secret_manager_client
+if __name__ == "__main__":
+    import runpy
 
-
-def _ensure_bytes(data: Any) -> bytes:
-    if isinstance(data, bytes):
-        return data
-    if isinstance(data, bytearray):
-        return bytes(data)
-    raise TypeError("Secret payload is not bytes")
-
-
-@do
-def access_secret(
-    secret_id: str,
-    *,
-    version: str = "latest",
-    project: str | None = None,
-    decode: bool = True,
-    encoding: str = "utf-8",
-) -> EffectGenerator[str | bytes]:
-    """Fetch a secret value from Google Secret Manager.
-
-    Parameters
-    ----------
-    secret_id:
-        Identifier of the secret inside the project.
-    version:
-        Version identifier (``"latest"`` by default).
-    project:
-        Optional project override. When omitted the helper uses the project
-        associated with the cached client.
-    decode:
-        When ``True`` (default) the secret payload is decoded with ``encoding``.
-        Set to ``False`` to receive raw bytes.
-    encoding:
-        Text encoding to use when ``decode`` is ``True``.
-    """
-
-    client: SecretManagerClient = yield get_secret_manager_client()
-    resolved_project = project or client.project
-    if not resolved_project:
-        yield Tell(
-            "Secret Manager project missing. Provide 'secret_manager_project' or pass project=..."
-        )
-        raise ValueError("Secret Manager project is required to access secrets")
-
-    secret_name = f"projects/{resolved_project}/secrets/{secret_id}/versions/{version}"
-    yield Tell(
-        f"Accessing Secret Manager secret secret_id={secret_id}, version={version}, project={resolved_project}"
-    )
-
-    response = yield Await(
-        client.async_client.access_secret_version(request={"name": secret_name})
-    )
-    payload = getattr(response, "payload", None)
-    if payload is None or getattr(payload, "data", None) is None:
-        raise ValueError("Secret Manager response is missing payload data")
-
-    raw_data = _ensure_bytes(payload.data)
-    if decode:
-        try:
-            secret_value: str | bytes = raw_data.decode(encoding)
-        except Exception as exc:
-            raise exc
-    else:
-        secret_value = raw_data
-
-    return secret_value
-
-
-__all__ = ["access_secret"]
+    runpy.run_module("doeff_google_secret_manager._secrets", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_google_secret_manager._secrets")

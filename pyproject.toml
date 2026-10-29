@@ -98,6 +98,7 @@ doeff-time = { workspace = true }
 doeff-events = { workspace = true }
 doeff-traverse = { workspace = true }
 doeff-docker = { workspace = true }
+doeff-secret = { workspace = true }
 doeff-ml-nexus = { workspace = true }
 doeff-hy = { workspace = true }
 doeff-hy-pytest = { workspace = true }
@@ -939,6 +940,7 @@ dev = [
     "doeff-codex",
     "doeff-records",
     "doeff-docker",
+    "doeff-secret",
     "doeff-ml-nexus",
     "cloudpickle>=3.0",
     "semgrep>=1.161.0,<2",

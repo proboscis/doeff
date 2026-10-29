@@ -2,7 +2,7 @@
 
 ``git_handler`` answers the conductor git effects by performing the doeff-git effects
 (``GitCommit``, ``GitPush``, ``CreatePR``, ``MergePR``) for the workspace's worktree, so a
-doeff-git handler installed outside it (``doeff_git.handlers.production_handlers()``) runs
+doeff-git handler installed outside it (``doeff_git.production_handlers()``) runs
 git and gh. The worktree path comes from the workspace handler (``WorkspacePath``).
 """
 
@@ -10,18 +10,11 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
-from doeff_git.effects import (
-    CreatePR as GitCreatePR,
-)
-from doeff_git.effects import (
-    GitCommit,
-    GitPush,
-)
-from doeff_git.effects import (
-    MergePR as GitMergePR,
-)
-from doeff_git.exceptions import GitCommandError as DomainGitCommandError
-from doeff_git.types import PRHandle as GitPRHandle
+from doeff_git import CreatePR as GitCreatePR
+from doeff_git import GitCommandError as DomainGitCommandError
+from doeff_git import GitCommit, GitPush
+from doeff_git import MergePR as GitMergePR
+from doeff_git import PRHandle as GitPRHandle
 
 from doeff import EffectBase, K, Resume, do, handler
 from doeff.program import ProgramHandler

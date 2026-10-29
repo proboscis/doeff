@@ -152,10 +152,10 @@
      (deftest test-adr-doe-docs-001-reading-scope-covers-the-published-files
        ;; 読みの範囲が、入口の file・site の page・package の README・code を持ち、試験と開発の記録を持たない(R3)。
        (val tracked ["README.md" "CONTRIBUTING.md" "docs/index.md" "docs/history/specs/x.md" "docs/design/y.md"
-                     "packages/doeff-notify/README.md" "packages/doeff-notify/src/doeff_notify/handlers/__init__.py"
+                     "packages/doeff-notify/README.md" "packages/doeff-notify/src/doeff_notify/_handlers/__init__.py"
                      "packages/doeff-notify/tests/test_handlers.py" "doeff/program.py" "doeff/cli/run_services.py"
                      "packages/doeff-vm/src/pyvm.rs" "examples/a.py" "packages/doeff-x/examples/b.py"])
        (val scope (run (reading-scope tracked "exclude_docs: |\n  *\n  !/index.md\n  !/missing.md\nnav:\n")))
        (assert (= scope ["README.md" "CONTRIBUTING.md" "docs/index.md" "packages/doeff-notify/README.md"
-                         "packages/doeff-notify/src/doeff_notify/handlers/__init__.py" "doeff/program.py"
+                         "packages/doeff-notify/src/doeff_notify/_handlers/__init__.py" "doeff/program.py"
                          "doeff/cli/run_services.py" "packages/doeff-vm/src/pyvm.rs"])))])

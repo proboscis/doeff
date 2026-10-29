@@ -71,7 +71,7 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/entry/macros.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
-    "packages/doeff-docker/src/doeff_docker/compose.hy"
+    "packages/doeff-docker/src/doeff_docker/_compose.hy"
     ;; R5 の operator 裁定による増額(2026-10-04・agora-redesign #1201): 出来事を待つ
     ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。
     ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。

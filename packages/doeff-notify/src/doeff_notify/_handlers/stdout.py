@@ -5,8 +5,8 @@ from itertools import count
 from typing import Any
 
 from doeff import Effect, Pass, Resume, handler
-from doeff_notify.effects import Acknowledge, Notify, NotifyThread
-from doeff_notify.types import Channel, NotificationResult, Urgency
+from doeff_notify._effects import Acknowledge, Notify, NotifyThread
+from doeff_notify._types import Channel, NotificationResult, Urgency
 
 _URGENCY_PREFIX = {
     Urgency.LOW: "INFO",

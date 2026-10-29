@@ -1,48 +1,21 @@
-"""Shared notification types."""
+# moved-submodule-shim: doeff_notify.types -> doeff_notify._types
+"""Moved: ``doeff_notify.types`` is now ``doeff_notify._types`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_notify.types…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_notify._types import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-class Urgency:
-    """Notification urgency levels."""
+if __name__ == "__main__":
+    import runpy
 
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-    ALL = (LOW, MEDIUM, HIGH, CRITICAL)
-
-    @classmethod
-    def is_valid(cls, value: str) -> bool:
-        return value in cls.ALL
-
-
-class Channel:
-    """Common channel identifiers used by handlers."""
-
-    CONSOLE = "console"
-    LOG = "log"
-    TESTING = "testing"
-    SLACK = "slack"
-    EMAIL = "email"
-    DISCORD = "discord"
-    PAGERDUTY = "pagerduty"
-
-
-@dataclass(frozen=True, kw_only=True)
-class NotificationResult:
-    """Result payload returned by notification handlers."""
-
-    notification_id: str
-    channel: str
-    thread_id: str | None = None
-    acknowledged: bool = False
-
-
-__all__ = [
-    "Channel",
-    "NotificationResult",
-    "Urgency",
-]
+    runpy.run_module("doeff_notify._types", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_notify._types")

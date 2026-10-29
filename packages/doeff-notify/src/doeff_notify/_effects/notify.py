@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import EffectBase
-from doeff_notify.types import Urgency
+from doeff_notify._types import Urgency
 
 
 @dataclass(frozen=True, kw_only=True)

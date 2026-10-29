@@ -12,8 +12,8 @@
   :status "accepted"
   :scope ["packages/doeff-core-effects/doeff_core_effects/handlers.py"
           "packages/doeff-time/src/doeff_time/handlers"
-          "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/handlers/production.py"
-          "packages/doeff-secret/src/doeff_secret/handlers.py"
+          "packages/doeff-google-secret-manager/src/doeff_google_secret_manager/_handlers/production.py"
+          "packages/doeff-secret/src/doeff_secret/_handlers.py"
           "tests/test_handler_tail_transfer_reclamation.py"
           "docs/adr/defadr_doeff_core_effects_002_handler_frame_reclamation.hy"]
   :problem
