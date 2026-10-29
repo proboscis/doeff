@@ -26,7 +26,7 @@ What the wrapper does:
   ADR-DOE-EVENTS-002 R5). ``Publish`` never raises for it; it answers one of a closed set: ``NoticeSent``, or,
   by the route's ``when_unsent``, ``NoticeGapMarked`` (``MarkGap`` — the channel is marked as having a gap) or
   ``NoticeDropped`` (``Drop`` — nothing is kept, for what is stale at once). What is kept is only the mark of a
-  channel, never the event: a gap is told as one fixed notice on that channel (``GAP_NOTICE``), which a reading
+  channel, never the event: a gap is told as one fixed notice on that channel (``Announce.gap``), which a reading
   wrapper turns into ``SourceMissed`` so its program catches up once from its records. A gap is told when the
   broker is back (one task waits for ``AwaitBrokerBack``), before the next ``Publish`` that gets through, and on
   the channels of ``MarkGap.start_channels`` when the sender starts (its previous process may have ended with a
@@ -116,6 +116,7 @@ from doeff_events._effects.events import (
     publish_effect_type,
 )
 from doeff_events._effects.notices import (
+    _GAP_NOTICE,
     AckAnnouncement,
     Announce,
     Announcement,
@@ -156,8 +157,10 @@ class Drop:
 WhenUnsent = MarkGap | Drop
 """What a route does with an event the broker could not take (a closed choice, written on every route)."""
 
-GAP_NOTICE: Final = "doeff-events:gap"
-"""The wire name of the fixed notice that tells a channel's gap (its body is the sender's source name)."""
+GAP_NOTICE: Final = _GAP_NOTICE
+"""The wire name of the fixed notice that tells a channel's gap, still shown from the import root while the
+callers that read it move to ``Announce.gap`` and ``is_gap`` — removed once they have (ADR-DOE-API-001 R20 order,
+card ki-a2ac882abeb7)."""
 
 
 @dataclass(frozen=True)
@@ -311,7 +314,7 @@ class _Plan:
     def decoded(self, notice: Announcement) -> object:
         """The event of a received notice, by the route that reads its channel under its wire name; a gap notice
         on a channel this source reads is ``SourceMissed``."""
-        if notice.name == GAP_NOTICE and notice.channel in self.channels:
+        if notice.is_gap and notice.channel in self.channels:
             return SourceMissed(source=self.source, channel=notice.channel)
         route = next(
             (known for known in self.routes if known.wire_name == notice.name and notice.channel in known.reads),
@@ -614,7 +617,7 @@ def _gaps_told(plan: _Plan, gaps: _Gaps) -> "EffectGenerator[BrokerUnreachable |
     when all were told, or the broker's refusal (the rest stay marked)."""
     while gaps._mut_channels:
         channel = gaps._mut_channels[0]
-        receivers = yield Announce(channel, GAP_NOTICE, plan.source, kept=channel in gaps._mut_kept)
+        receivers = yield Announce.gap(channel, plan.source, kept=channel in gaps._mut_kept)
         if isinstance(receivers, BrokerUnreachable):
             return receivers
         gaps._mut_channels = gaps._mut_channels[1:]

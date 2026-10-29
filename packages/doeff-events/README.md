@@ -100,8 +100,9 @@ program = subscribed_event_handler(EventBus(), "screen", (OrderState, SourceStar
 - 出し損ね(扱いはここ 1 か所 — ADR-DOE-EVENTS-002 R5): broker に届かなくても `Publish` は例外を上げず、閉じた型の 3 つのどれかで答えます —
   `NoticeSent`・`NoticeGapMarked`(道の `when_unsent` が `MarkGap` — その channel に欠けの印を付けた)・`NoticeDropped`(`Drop` — 持たない。
   すぐ古く成る物のため)。持つのは channel の印だけで、出来事そのものは持ちません(持つ量は channel の数で止まる)。欠けは定まった知らせ 1 通
-  (`GAP_NOTICE`)で、broker が戻った時(`AwaitBrokerBack` の答え)・次に通る `Publish` の前・出し手の起動の時(`MarkGap.start_channels`)に
-  出します。受ける包みはそれを `SourceMissed(source, channel)` にし、Program は `SourceStarted` / `SourceResumed` と同じく記録から 1 度
+  (`Announce.gap(channel, source)` が作る知らせ)で、broker が戻った時(`AwaitBrokerBack` の答え)・次に通る `Publish` の前・出し手の起動の時
+  (`MarkGap.start_channels`)に出します。broker の effect を直に読む test と fake の broker は、知らせの名を比べずに `Announcement.is_gap`・
+  `Announce.is_gap` で欠けの知らせを見分けます(名の文字列は内側に置く — ADR-DOE-API-001 R1)。受ける包みはそれを `SourceMissed(source, channel)` にし、Program は `SourceStarted` / `SourceResumed` と同じく記録から 1 度
   追いつきます(何度来てもよい)。別の task が欠けを出している間の `Publish` は、それが終わるのを待ってから出ます(順が入れ替わらない)。
   次の `Publish` が欠けを全部出したら、戻りを待つ task は止まります。`AwaitBrokerBack` に誰も答えられない時、その task は止まり、印は
   次の `Publish` まで残り、その失敗は本体が終わる時に上がります。本体が終われば印は消えます(次の起動の欠けの知らせで埋める)。
