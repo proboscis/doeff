@@ -6,12 +6,12 @@ from doeff_system_one import (
     ScriptedJudgeState,
     answer_choice,
     answer_noul,
-    answered,
     choice,
     judge_many,
     noul,
     scripted_judge_handler,
 )
+from doeff_system_one._judgment import answered
 from doeff_system_one._programs import judge
 
 from doeff import Err, Ok, Try, do, run, with_handlers

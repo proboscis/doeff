@@ -12781,9 +12781,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_gemini": [
-      "GeminiClient"
-     ],
      "doeff_gemini.client": [
       "GeminiClient"
      ],
@@ -12801,9 +12798,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_gemini": [
-      "calculate_cost"
-     ],
      "doeff_gemini.client": [
       "track_api_call"
      ],
@@ -14456,9 +14450,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_openrouter": [
-      "OpenRouterClient"
-     ],
      "doeff_openrouter.client": [
       "OpenRouterClient"
      ],
@@ -16233,9 +16224,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_seedream": [
-      "SeedreamClient"
-     ],
      "doeff_seedream.client": [
       "SeedreamClient"
      ],
@@ -16244,15 +16232,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_seedream": [
-      "DEFAULT_BASE_URL",
-      "DEFAULT_COST_PER_IMAGE",
-      "DEFAULT_MODEL",
-      "DEFAULT_RESPONSE_FORMAT",
-      "DEFAULT_SIZE_PRICING",
-      "DEFAULT_TIMEOUT",
-      "calculate_cost"
-     ],
      "doeff_seedream.client": [
       "DEFAULT_BASE_URL",
       "DEFAULT_TIMEOUT",
@@ -16324,14 +16303,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — 内側の module へ移す": {
-     "doeff_system_one": [
-      "STATE_CHARS_ADVISED",
-      "answered",
-      "calibration_ok",
-      "chosen",
-      "clip",
-      "crosses"
-     ],
      "doeff_system_one.judgment": [
       "STATE_CHARS_ADVISED",
       "answered",
