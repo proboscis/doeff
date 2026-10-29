@@ -133,7 +133,7 @@ sequenceDiagram
     clock->>slow: Resume(k1, None)
 ```
 
-`sim_time_handler` keeps each waiting `k` until its wake-up time. It moves the clock from a task of idle priority, which the scheduler runs only when every other task is waiting, so the time moves only when no task can run. It reaches the scheduler only through effects that any program can yield, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) builds a clock like it in about 30 lines.
+`sim_time_handler` keeps each waiting `k` until its wake-up time. The diagram writes each resume as `Resume`; in its code, `sim_time_handler` resumes with `Transfer(k, value)`, which part 1 introduced: the task goes on, and the handler does not get control back. It moves the clock from a task of idle priority, which the scheduler runs only when every other task is waiting, so the time moves only when no task can run. It reaches the scheduler only through effects that any program can yield, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) builds a clock like it in about 30 lines.
 
 That is what makes time an effect rather than a function you call. A handler decides what a `yield` returns, and because it holds `k`, it also decides when the rest of the program runs.
 
@@ -337,7 +337,7 @@ If your code is already `async` and you only need its waits to be fast, trio's a
 pip install doeff doeff-time pytest   # CPython 3.11 to 3.14
 ~~~
 
-Every example in this post runs as shown with doeff 0.8.0 and doeff-time 0.1.0. The complete files are in [examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect), and the [doeff-time README](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md) lists every time effect and the contract each clock keeps.
+Every example in this post runs as shown with doeff 0.8.0 and doeff-time 0.1.0. The complete files are in [examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect), and the [doeff-time README](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md) gives the contract each clock keeps.
 
 Where does time make your tests slow or flaky today: a retry with backoff, a cron-like schedule, a timeout? Issues are open at https://github.com/proboscis/doeff/issues.
 
