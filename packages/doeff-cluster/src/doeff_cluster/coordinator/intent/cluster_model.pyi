@@ -412,6 +412,7 @@ class TaskUnplacedKind(StrEnum):
     TASK_NO_ROOM = 'task-no-room'
     TASK_LIMITED = 'task-limited'
     TASK_RESERVED = 'task-reserved'
+    TASK_BACKGROUND_RESERVED = 'task-background-reserved'
     TASK_UNDECLARED = 'task-undeclared'
 
 class NotReadyKind(StrEnum):
