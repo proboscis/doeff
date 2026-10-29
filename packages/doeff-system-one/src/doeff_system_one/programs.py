@@ -1,37 +1,21 @@
-"""判定を呼ぶ小さな program。"""
+# moved-submodule-shim: doeff_system_one.programs -> doeff_system_one._programs
+"""Moved: ``doeff_system_one.programs`` is now ``doeff_system_one._programs`` (ADR-DOE-API-001 R5).
 
-from collections.abc import Iterable, Mapping
-from typing import Any
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_system_one.programs…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from doeff_core_effects import Gather, Spawn
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from doeff import do
-from doeff_system_one.effects import Judge
-from doeff_system_one.types import Question
+if TYPE_CHECKING:
+    from doeff_system_one._programs import *  # noqa: F403
 
+if __name__ == "__main__":
+    import runpy
 
-@do
-def judge(state: Any, questions: Mapping[str, Question], *,
-          timeout_seconds: float = 4.0, cacheable: bool = True) -> Any:
-    """1 つの state に問いの束を出して Verdict を返す。"""
-    verdict = yield Judge(state=state, questions=questions,
-                          timeout_seconds=timeout_seconds, cacheable=cacheable)
-    return verdict
-
-
-@do
-def judge_many(states: Iterable[Any], questions: Mapping[str, Question], *,
-               timeout_seconds: float = 4.0, cacheable: bool = True) -> Any:
-    """同じ問いを多数の state に**同時に**出す(順に 1 件ずつは出さない)。順序は入力どおり。
-
-    scheduler(`scheduled`)が積まれた組み立てで走らせる。
-    """
-    tasks = []
-    for state in states:
-        task = yield Spawn(judge(state, questions, timeout_seconds=timeout_seconds,
-                                 cacheable=cacheable))
-        tasks.append(task)
-    if not tasks:
-        return []
-    verdicts = yield Gather(*tasks)
-    return list(verdicts)
+    runpy.run_module("doeff_system_one._programs", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_system_one._programs")

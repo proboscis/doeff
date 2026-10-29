@@ -13,8 +13,8 @@
 
 (import pathlib [Path])
 
-(import doeff_ml_nexus.effects [RsyncTo WriteFile])
-(import doeff_ml_nexus.uv-deps [
+(import doeff_ml_nexus._effects [RsyncTo WriteFile])
+(import doeff_ml_nexus._uv-deps [
   find-local-deps _find-top-level-deps _is-subpath
   rewrite-pyproject-for-container rewrite-uv-lock-for-container])
 

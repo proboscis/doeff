@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from doeff_claude_judge import ClaudeQuery, MalformedAnswer, QueryImage, parse, prepare, state_text
-from doeff_claude_judge.wire import NOUL_HEAD
+from doeff_claude_judge._wire import NOUL_HEAD
 from doeff_system_one import Answer, Image, Judge, JudgeError, Verdict, choice, noul, score
 
 QUESTIONS = {
@@ -199,7 +199,7 @@ def test_a_judge_without_pictures_keeps_one_text() -> None:
 
 
 def test_the_translation_module_imports_no_transport() -> None:
-    source = Path(__file__).parents[1] / "src" / "doeff_claude_judge" / "wire.py"
+    source = Path(__file__).parents[1] / "src" / "doeff_claude_judge" / "_wire.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imported |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}

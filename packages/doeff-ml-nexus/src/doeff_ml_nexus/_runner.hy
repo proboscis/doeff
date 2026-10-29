@@ -2,8 +2,8 @@
 ;;;
 ;;; File-based (launcher env vars translated into Program env):
 ;;;   DOEFF_INPUT=/exchange/program.pkl DOEFF_OUTPUT=/exchange/result.pkl \
-;;;     uv run doeff run --program doeff_ml_nexus.runner.p_run \
-;;;       --interpreter doeff_ml_nexus.runner.runner_interpreter
+;;;     uv run doeff run --program doeff_ml_nexus._runner.p_run \
+;;;       --interpreter doeff_ml_nexus._runner.runner_interpreter
 
 (require doeff_hy.macros [defk defp <-])
 (require doeff_docker.compose [with-handlers])
@@ -13,8 +13,8 @@
 
 (import pathlib [Path])
 
-(import doeff_ml_nexus.serializer [default-serializer])
-(import doeff_ml_nexus.runner_env [RUNNER-INPUT-PATH-KEY RUNNER-OUTPUT-PATH-KEY
+(import doeff_ml_nexus._serializer [default-serializer])
+(import doeff_ml_nexus._runner_env [RUNNER-INPUT-PATH-KEY RUNNER-OUTPUT-PATH-KEY
                                    resolve-runner-env])
 
 

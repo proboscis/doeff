@@ -30,7 +30,7 @@ from doeff_claude_judge import (
     run_judgment,
     scripted_printer,
 )
-from doeff_claude_judge.wire import NOUL_HEAD
+from doeff_claude_judge._wire import NOUL_HEAD
 from doeff_hy.frozen import freeze_json
 from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
 

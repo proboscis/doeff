@@ -3,7 +3,7 @@
 import json
 
 from doeff_jev import JevTarget, key_required, resolve_target
-from doeff_jev.target import (
+from doeff_jev._target import (
     CONFIG_FILE,
     DIRECT_KEY_FILE,
     DIRECT_URL,

@@ -6,8 +6,8 @@ from typing import Any
 
 from doeff import Pass, Transfer, TransferThrow, do
 from doeff import handler as _program_handler
-from doeff_system_one.effects import Judge
-from doeff_system_one.types import Answer, JudgeError, Verdict
+from doeff_system_one._effects import Judge
+from doeff_system_one._types import Answer, JudgeError, Verdict
 
 Script = Callable[[Judge], Verdict | JudgeError] | Mapping[str, Answer] | Verdict
 

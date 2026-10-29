@@ -9,7 +9,7 @@ Fixed: `prepare-build-context` (context.hy) overwrites pyproject.toml/uv.lock in
 doeff's own `Listen` handler uses the same mutable list + observer pattern internally. WithObserve + mutable closure is idiomatic doeff for effect collection.
 
 ### ~~3. Hardcoded _REMOTE_RUNNER string (docker.hy)~~ DONE
-Fixed: Created `doeff_ml_nexus.runner` module. Docker handler now uses `uv run python -m doeff_ml_nexus.runner`.
+Fixed: Created `doeff_ml_nexus._runner` module. Docker handler now uses `uv run python -m doeff_ml_nexus._runner`.
 
 ### ~~4. String replacement for pyproject.toml/uv.lock (uv_deps.py)~~ ACCEPTABLE
 String replacement targets specific unique patterns (`path = "..."` and `editable = "..."`). TOML re-serialization risks format changes that break uv.lock compatibility. Current approach is safe enough.

@@ -758,7 +758,7 @@ intent の層は Tach の interfaces に当たる — 別の service が読ん�
   `input_tokens`・`output_tokens`(usage に在る時だけ)を持つ。以前の欄 `cost_usd`(載らない時も 0 と書いていた)は読まない — 前の答えの費用は不明と
   して読む(agora-redesign #1892)。
 - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定にも error の欄は無い)。外れは誤判定の一覧に載せる(下の「誤判定の一覧と正例の一覧」)。
-- 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
+- 宛先・model・キーは doeff の `packages/doeff-jev/src/doeff_jev/_target.py` と同じ決め方(Rust に写した — 決め方は 1 つ):
   環境変数 `JEV_BASE_URL` / `JEV_MODEL` / `JEV_WIRE` / `JEV_API_KEY` / `JEV_API_KEY_FILE` → 設定 file `~/.config/jev/client.json` → 既定 = TypeSafe 直
   (`https://api.typesafe.ai/v1/systemone`・model `jev-latest`・キーは `TYPESAFE_API_KEY` → `~/.config/jev/api_key`)。gateway は名指した時だけ。
   通信の形(direct と gateway の要求と答え)は同じ package の `wire.py` の写し。キーの値は設定・出力・log・cache の鍵に書かない。
