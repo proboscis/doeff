@@ -171,7 +171,8 @@ AI_AUTHORSHIP = re.compile(
     re.IGNORECASE,
 )
 # 記事の軸は代数的エフェクトで、時刻はハンドラが決める物として書く。IOの差し替えの話に読める語を置かない。
-IO_REPLACEMENT = re.compile(r"\b(swap|fake|mock)\w*|\breal\s+I/O\b|モック|フェイク|差し替え", re.IGNORECASE)
+# 日本語の字も語の字なので、英語の語の境は\bでなく、前後が英字でない事で見る。
+IO_REPLACEMENT = re.compile(r"(?<![a-z])(swap|fake|mock)|(?<![a-z])real\s+I/O|モック|フェイク|差し替え", re.IGNORECASE)
 
 
 def check_words() -> None:
@@ -183,7 +184,7 @@ def check_words() -> None:
     assert not replaced, "記事にIOの差し替えの語が在る:\n" + "\n".join(replaced)
     for line in ("*AIエージェントが、メンテナのもとで書きました。*", "An AI agent wrote this post."):  # 探す形の見本。
         assert AI_AUTHORSHIP.search(line), line  # 探す形が、名乗る文を見つける。
-    for line in ("a fake clock", "trio's MockClock", "sleepをモックで消す", "時計を差し替える"):  # 探す語の見本。
+    for line in ("a fake clock", "trioのMockClock", "sleepをモックで消す", "時計を差し替える", "時計をswapする"):  # 探す語の見本。
         assert IO_REPLACEMENT.search(line), line  # 探す語が、差し替えの話を見つける。
     print("OK: AIが書いたと名乗る文 0行・IOの差し替えの語 0行")
 
