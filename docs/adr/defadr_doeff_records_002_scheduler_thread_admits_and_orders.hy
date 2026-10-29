@@ -3,41 +3,41 @@
 ;;; 1 要求の計算の上限は、答えの型(束の読みの答えか否か)と読みの形(束の読みか 1 行の読みか)で決める。
 ;;;
 ;;; 出自 = card ki-67a745ab6c1c(切り分けの card ki-974e5ae37eca の提案 1 — 混んだ時にも読みの p95 を保つ区切りの card)。
-;;; 仕組みの在りか = packages/doeff-records/src/doeff_records/loop_work.hy(分けの 1 点)・pg.hy の decoded-batch(行の読み解き)・
-;;; service.hy の answer-reply(答えの綴り)・main.hy の records-connected と http_server.hy の start-records-server(Compute の答え手)。
+;;; 仕組みの在りか = packages/doeff-records/src/doeff_records/_loop_work.hy(分けの 1 点)・_pg.hy の decoded-batch(行の読み解き)・
+;;; service.hy の answer-reply(答えの綴り)・main.hy の records-connected と _http_server.hy の start-records-server(Compute の答え手)。
 ;;;
-;;; 戻し方: この file と loop_work.hy を消し、pg.hy の decoded-batch の呼びを読み解きの program の直の bind に、service.hy の answer-reply を
+;;; 戻し方: この file と _loop_work.hy を消し、_pg.hy の decoded-batch の呼びを読み解きの program の直の bind に、service.hy の answer-reply を
 ;;; reply-of に戻す(Compute の答え手は置いたままでも害は無い — 出す effect が無くなるだけ)。
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest val])
 (import typing [get-args])
-(import doeff_records.wire [WireAnswer])
+(import doeff_records._wire [WireAnswer])
 (import doeff_records._effects [DEFAULT-LIST-LIMIT LIST-LIMIT-MAX])
-(import doeff_records.loop_work [BATCH-READ-ANSWERS ON-LOOP-ANSWERS])
+(import doeff_records._loop_work [BATCH-READ-ANSWERS ON-LOOP-ANSWERS])
 
 
 (defadr ADR-DOE-RECORDS-002
   :title "記録の service の scheduler の thread は要求の受けと順の制御だけを持ち、置き場に在る行の数で大きさが決まる計算(束の読みの行の読み解きと答えの綴り)は Compute で thread の外で回す"
   :status "accepted"
-  :scope ["packages/doeff-records/src/doeff_records/loop_work.hy"
-          "packages/doeff-records/src/doeff_records/pg.hy"
+  :scope ["packages/doeff-records/src/doeff_records/_loop_work.hy"
+          "packages/doeff-records/src/doeff_records/_pg.hy"
           "packages/doeff-records/src/doeff_records/_service.hy"
-          "packages/doeff-records/src/doeff_records/http_server.hy"
+          "packages/doeff-records/src/doeff_records/_http_server.hy"
           "packages/doeff-records/src/doeff_records/_main.hy"
           "packages/doeff-records/src/doeff_records/_effects.hy"
-          "packages/doeff-records/src/doeff_records/wire.hy"
+          "packages/doeff-records/src/doeff_records/_wire.hy"
           "docs/adr/defadr_doeff_records_002_scheduler_thread_admits_and_orders.hy"]
   :problem
     [(fact
        "記録の service の process は 1 つの run・1 つの scheduler で動き、受けの loop・要求の task・書きの門・変化の待ちの全部が 1 本の scheduler の thread の上で回る。その thread が 1 要求の計算で塞がる間、後から届いた要求は、待ち受けが受けた後、要求の task が始まるまで受けの列で待つ。"
-       :evidence "packages/doeff-records/src/doeff_records/http_server.hy の頭の註(入口の形)")
+       :evidence "packages/doeff-records/src/doeff_records/_http_server.hy の頭の註(入口の形)")
      (fact
        "2026-10-22 の本番の 100 分の測り(process ごとに 200 ms ごとの probe の受けの列・1 秒ごとの計器・50 ms ごとの scheduler の thread の走りの秒): 受けの列が 60 ms 以上 跳ねた probe は、書きの詰まりの窓を除くと 97〜100% が、一覧の読みが 300 行以上を返した 1 秒と重なった。跳ねる前の 50 ms の scheduler の thread の走りは 88〜98%(全体の平均 35〜53%)で、run queue の待ちは 0.6〜2.0% — thread は CPU を貰えていて、自分の仕事で塞がっていた。"
        :evidence "card ki-974e5ae37eca の発言 ob-844fea23612759cf(表)・ob-cd4ccf8d5e81153d(訳と削る手)")
      (fact
-       "1 回に 300〜500 行を返す一覧の読みの、頁の行の読み解き(PostgreSQL の payload の json.loads と深く凍らせる frozen-json-object — pg.hy の listed-rows-of)と答えの綴り(thaw-json と json.dumps — wire.hy の encode-answer・service.hy の json-answer)が scheduler の thread で同期に走り、1 頁で 40〜125 ms その thread を塞いでいた。手元の測り(1 行 2.6 KB の 500 行の頁・3.14t): 読み解き 55 ms・綴り 37 ms・UTF-8 の byte 列 1.8 ms。"
+       "1 回に 300〜500 行を返す一覧の読みの、頁の行の読み解き(PostgreSQL の payload の json.loads と深く凍らせる frozen-json-object — _pg.hy の listed-rows-of)と答えの綴り(thaw-json と json.dumps — _wire.hy の encode-answer・service.hy の json-answer)が scheduler の thread で同期に走り、1 頁で 40〜125 ms その thread を塞いでいた。手元の測り(1 行 2.6 KB の 500 行の頁・3.14t): 読み解き 55 ms・綴り 37 ms・UTF-8 の byte 列 1.8 ms。"
        :evidence "card ki-974e5ae37eca の発言 ob-cd4ccf8d5e81153d・card ki-67a745ab6c1c の作業の測り")
      (fact
        "doeff は純粋な program を回して答えを値で受ける汎用の effect Compute と、その答え手 thread-pool-compute-handler(呼び手の pool で回し、待つのは撃った task だけ — scheduler の他の task は回り続ける)・inline-compute-handler(その場で回す — 仮想の時計の模擬で決定的)を持つ。本番の Python は free-threaded の 3.14t で、pool の thread は scheduler の thread と並んで走る。thread の受け渡し 1 回の上乗せは手元で 約 0.5 ms(その間 scheduler の thread は空く)。"
@@ -47,7 +47,7 @@
        :evidence "card ki-42c40cb6014d の作業の測り・packages/doeff-records/src/doeff_records/_effects.hy の LIST-LIMIT-MAX")
      (fact
        "計算の pool の詰まり(大きな束の読みが pool の全部の thread を塞ぎ、後の束の読みの計算が pool の列で待つ)は、要求ごとの区間の秒(handler と encode)に混ざって数えられ、別の計器を持たなかった — 遅れが pool の列の待ちか置き場の読みかを、/metrics の数で見分けられなかった。"
-       :evidence "packages/doeff-records/src/doeff_records/request_timing.hy の区間の名(queue・body・decode・handler・wait・encode・send)")]
+       :evidence "packages/doeff-records/src/doeff_records/_request_timing.hy の区間の名(queue・body・decode・handler・wait・encode・send)")]
   :context
     [(interpretation
        "受けの列の待ちを決めるのは、scheduler の thread が 1 要求のために続けて回す計算の長さ。束の読みは、長さが上限 limit までの、置き場に在る行の数で決まり、小さな要求(limit だけを書いた一覧の読み)が大きな計算を起こす — 本番で他の要求を待たせていたのはこれ。要求の本文の読み解きや 1 行の綴りも、塞ぐ間は他の要求を待たせる事に変わりは無いが、大きさは要求そのもの(本文の上限 REQUEST-MAX-BYTES = 16 MiB)か 1 行(表の size-budget — 宣言した表だけ)で決まり、置き場の行の数では増えない。本番の切り分けでは原因でなかった(書きの本文の読み解きと答えの綴りは 1 秒に 0.5〜26 ms・一覧の綴りの 2 割以下)ので、今は thread の上に残し、上限を R6 に書く。")
@@ -57,11 +57,11 @@
        "答え手は組み立ての側(composition root)の持ち物: thread の pool は資源で、開くのも閉じるのも組み立てが持つ(SQL の答え手の pool と同じ)。入口の Program は Compute に答えない — 仮想の時計の模擬はその場で回す答え手を置き、決定的に回る。")]
   :decision
     [(rule R1 "記録の service の scheduler の thread が持つのは、要求の受け(待ち受けの出来事・本文の読みの命令)・順の制御(task の立てと待ち・書きの門・錠・変化の待ち・取り消し)・計器・答えの送りの命令と、大きさが要求そのものか 1 行で決まる計算(要求の本文の読み解き・1 行と 1 出来事の読み解きと綴り・書きの答えの綴り)だけ。")
-     (rule R2 "置き場の束の読み(錠の外で流す、長さが上限 limit までの行を返す読み — 一覧の頁・変更の列・出来事の列と、手入れの送りの読み)の行の読み解きは、純粋な program(pg.hy の listed-rows-of・changes-of・events-of)を Compute で出して scheduler の thread の外で回す(decoded-batch)。行が無ければ回す物が無いので出さない。")
-     (rule R3 "束の読みの答え(loop_work.hy の BATCH-READ-ANSWERS = Page・Changes・Events)で行・変更・出来事を 1 つ以上運ぶ答えは、綴り(wire の object → JSON の文字列 → UTF-8 の byte 列 — service.hy の sendable-reply-of)を Compute で scheduler の thread の外で回す(answer-reply)。送りは綴り直さない(HttpAnswer の data)。ほかの wire の答え(ON-LOOP-ANSWERS)はその場で綴る。")
-     (rule R4 "wire の答えの型(wire.hy の WireAnswer)は、BATCH-READ-ANSWERS と ON-LOOP-ANSWERS のちょうど 1 つに属する。答えの型を足す変更は、同じ変更でどちらかに入れる。")
-     (rule R5 "記録の service を起こす組み立ては Compute の答え手を置く: 本番の土台の口(main.hy の records-connected)は COMPUTE-WORKERS 本の thread の pool を開いて閉じ、検の殻(http_server.hy の start-records-server)も thread の pool を置く。台本の検と模擬(仮想の時計)は inline-compute-handler を置く。入口の Program(serve-records)と記録の口の流れ(service.hy の respond)は答え手を置かない。答え手は Compute と負荷の読み ReadComputeLoad の両方に答える(GET /metrics が読む — R6。その場で回す答え手は列を持たないので全部 0)。")
-     (rule R6 "今は scheduler の thread に残す物と、その上限(どれも本番の切り分けで受けの列の跳ねの原因でなかった — 跳ねが出たらこの上限から外へ出す): (a) 要求の本文の読み解き(JSON の読みと凍らせ・書きの判じ)と書きの答えの綴り — 本文の上限 REQUEST-MAX-BYTES(16 MiB)まで。(b) 1 行と 1 出来事の読み解きと綴り(ReadRow・ReadEventByKey・上から読む頁の位置の行)— 上限は表の size-budget で、size-budget を宣言しない表の 1 行には上限が無い(使い手が size-budget を宣言して縛る)。(c) 書きの錠の transaction の中の読み解き(回収の期限を過ぎた行・捨てる出来事の鍵の覚えと指紋・追記の前の使い)— transaction の program は SQL の effect と純粋な計算だけを出す(pg.hy の頭の註)。回収は 1 つの transaction で EXPIRE-BATCH(500)件まで、手入れの拍ごとに回る。(d) GET /metrics の描き — 系列の数(宣言の表 × 呼び手)に比例し、読まれる間隔(計器の読みの拍)ごと。(e) memory の置き場(模擬と検の置き場)の一覧の絞りと並べ — 置き場の答えそのもの。scheduler の thread の外(計算の pool)で回す束の読みの 1 要求の量の上限と計器: (f) 一覧の読み(ListRows)1 回の limit は effects.hy の LIST-LIMIT-MAX = 5,000 行まで — ListRows の型が作る時に断る(ValueError)ので、memory の置き場の模擬と検・PostgreSQL の置き場・client が同じ所で断り、HTTP の口は越えた本文を 400 malformed で断る(decode-request の型の断りの写し)。1 要求の量は行の数 5,000 × 行の大きさ(size-budget)で閉じる。値は使い手の一番大きな頁に合わせた(全行の一覧の 1 頁 — 1 頁 約 0.9 秒 pool の thread を 1 本塞ぐ)。上限は 1 要求の最悪を縛るだけで、大きな読みどうしの隔離ではない(本番の pool 4 本は 5,000 行の頁 4 つの重なりで約 0.9 秒塞がる — 値を 2,000 に下げても 4 本 × 0.4 秒になるだけで形は同じ)。(g) の計器が跳ねを pool の待ちと名指したら、次の手は値の引き下げでなく隔離 — 大きな頁(例 1,000 行を越える)の同時の数を pool の thread の数 − 1 に限る受け(loop_work.hy の off-loop の前)か、大きな束の読みを別の pool に回す。変更の列(watch-changes)と出来事の列(read-events)の limit はまだ上限を持たない(この変更の範囲の外 — 使い手の最大は変更の読みの 5,000。跳ねが出たら同じ形で縛る)。(g) 計算の pool の詰まりは GET /metrics の系列で読む: records_compute_queued(pool の thread を待って列に並んでいる計算の数 — 今の値)・records_compute_running(回っている数 — 今の値)・records_compute_workers(組み立てが開いた pool の thread の数 — RecordsServing の compute-workers)・records_compute_wait_seconds_sum と _count(回り始めた計算が出されてから回り始めるまで待った秒の合計と回数 — 起動からの累計)・records_compute_run_seconds_sum と _count(回り終えた計算が回った秒の合計と回数 — 起動からの累計)。値は Compute の答え手が ReadComputeLoad で答え(thread-pool-compute-handler が pool ごとに数える)、GET /metrics の描きの時に断面へ足す(計器へは積まない — http_server.hy の with-compute-load)。読み手は拍ごとの 2 つの断面の差で、その拍の待ちの平均(待ちの合計の差 ÷ 回数の差)・列に並んでいた数の時間の平均(待ちの合計の差 ÷ 拍の秒)・pool の利用率(回りの合計の差 ÷ 拍の秒 ÷ thread の数)を出し、要求の遅れの p95 が跳ねた刻と同じ拍で並べて読む。pool の待ちが跳ねの原因と名指す閾: 待ちの平均が 50 ms を 2 拍続けて越え、その間 queued が 0 より大きいまま。")
+     (rule R2 "置き場の束の読み(錠の外で流す、長さが上限 limit までの行を返す読み — 一覧の頁・変更の列・出来事の列と、手入れの送りの読み)の行の読み解きは、純粋な program(_pg.hy の listed-rows-of・changes-of・events-of)を Compute で出して scheduler の thread の外で回す(decoded-batch)。行が無ければ回す物が無いので出さない。")
+     (rule R3 "束の読みの答え(_loop_work.hy の BATCH-READ-ANSWERS = Page・Changes・Events)で行・変更・出来事を 1 つ以上運ぶ答えは、綴り(wire の object → JSON の文字列 → UTF-8 の byte 列 — service.hy の sendable-reply-of)を Compute で scheduler の thread の外で回す(answer-reply)。送りは綴り直さない(HttpAnswer の data)。ほかの wire の答え(ON-LOOP-ANSWERS)はその場で綴る。")
+     (rule R4 "wire の答えの型(_wire.hy の WireAnswer)は、BATCH-READ-ANSWERS と ON-LOOP-ANSWERS のちょうど 1 つに属する。答えの型を足す変更は、同じ変更でどちらかに入れる。")
+     (rule R5 "記録の service を起こす組み立ては Compute の答え手を置く: 本番の土台の口(main.hy の records-connected)は COMPUTE-WORKERS 本の thread の pool を開いて閉じ、検の殻(_http_server.hy の start-records-server)も thread の pool を置く。台本の検と模擬(仮想の時計)は inline-compute-handler を置く。入口の Program(serve-records)と記録の口の流れ(service.hy の respond)は答え手を置かない。答え手は Compute と負荷の読み ReadComputeLoad の両方に答える(GET /metrics が読む — R6。その場で回す答え手は列を持たないので全部 0)。")
+     (rule R6 "今は scheduler の thread に残す物と、その上限(どれも本番の切り分けで受けの列の跳ねの原因でなかった — 跳ねが出たらこの上限から外へ出す): (a) 要求の本文の読み解き(JSON の読みと凍らせ・書きの判じ)と書きの答えの綴り — 本文の上限 REQUEST-MAX-BYTES(16 MiB)まで。(b) 1 行と 1 出来事の読み解きと綴り(ReadRow・ReadEventByKey・上から読む頁の位置の行)— 上限は表の size-budget で、size-budget を宣言しない表の 1 行には上限が無い(使い手が size-budget を宣言して縛る)。(c) 書きの錠の transaction の中の読み解き(回収の期限を過ぎた行・捨てる出来事の鍵の覚えと指紋・追記の前の使い)— transaction の program は SQL の effect と純粋な計算だけを出す(_pg.hy の頭の註)。回収は 1 つの transaction で EXPIRE-BATCH(500)件まで、手入れの拍ごとに回る。(d) GET /metrics の描き — 系列の数(宣言の表 × 呼び手)に比例し、読まれる間隔(計器の読みの拍)ごと。(e) memory の置き場(模擬と検の置き場)の一覧の絞りと並べ — 置き場の答えそのもの。scheduler の thread の外(計算の pool)で回す束の読みの 1 要求の量の上限と計器: (f) 一覧の読み(ListRows)1 回の limit は effects.hy の LIST-LIMIT-MAX = 5,000 行まで — ListRows の型が作る時に断る(ValueError)ので、memory の置き場の模擬と検・PostgreSQL の置き場・client が同じ所で断り、HTTP の口は越えた本文を 400 malformed で断る(decode-request の型の断りの写し)。1 要求の量は行の数 5,000 × 行の大きさ(size-budget)で閉じる。値は使い手の一番大きな頁に合わせた(全行の一覧の 1 頁 — 1 頁 約 0.9 秒 pool の thread を 1 本塞ぐ)。上限は 1 要求の最悪を縛るだけで、大きな読みどうしの隔離ではない(本番の pool 4 本は 5,000 行の頁 4 つの重なりで約 0.9 秒塞がる — 値を 2,000 に下げても 4 本 × 0.4 秒になるだけで形は同じ)。(g) の計器が跳ねを pool の待ちと名指したら、次の手は値の引き下げでなく隔離 — 大きな頁(例 1,000 行を越える)の同時の数を pool の thread の数 − 1 に限る受け(_loop_work.hy の off-loop の前)か、大きな束の読みを別の pool に回す。変更の列(watch-changes)と出来事の列(read-events)の limit はまだ上限を持たない(この変更の範囲の外 — 使い手の最大は変更の読みの 5,000。跳ねが出たら同じ形で縛る)。(g) 計算の pool の詰まりは GET /metrics の系列で読む: records_compute_queued(pool の thread を待って列に並んでいる計算の数 — 今の値)・records_compute_running(回っている数 — 今の値)・records_compute_workers(組み立てが開いた pool の thread の数 — RecordsServing の compute-workers)・records_compute_wait_seconds_sum と _count(回り始めた計算が出されてから回り始めるまで待った秒の合計と回数 — 起動からの累計)・records_compute_run_seconds_sum と _count(回り終えた計算が回った秒の合計と回数 — 起動からの累計)。値は Compute の答え手が ReadComputeLoad で答え(thread-pool-compute-handler が pool ごとに数える)、GET /metrics の描きの時に断面へ足す(計器へは積まない — _http_server.hy の with-compute-load)。読み手は拍ごとの 2 つの断面の差で、その拍の待ちの平均(待ちの合計の差 ÷ 回数の差)・列に並んでいた数の時間の平均(待ちの合計の差 ÷ 拍の秒)・pool の利用率(回りの合計の差 ÷ 拍の秒 ÷ thread の数)を出し、要求の遅れの p95 が跳ねた刻と同じ拍で並べて読む。pool の待ちが跳ねの原因と名指す閾: 待ちの平均が 50 ms を 2 拍続けて越え、その間 queued が 0 より大きいまま。")
      (rule R7 "手入れの係(serve-records が用意の後に立てる maintain — 回収・刈り・使い手が渡す送りの関数 archive と archive-events)は、要求の task と同じ scheduler の thread で回さない: 入口は手入れの Program を doeff-core-effects の run-apart で別の thread の新しい VM で回し、手入れが出す effect(置き場・SQL・計器・時計・scheduler)だけを手入れの task(要求と同じ run)の handler が答える。送りの関数の中身は使い手の composition が決め(送り先から読み戻した行の照らしのように、大きさが行の数で決まる計算を effect を出さずに続けうる)、R1〜R6 の形(Compute へ出す)では入口が縛れないので、計算の置き場ごと要求の thread から外す。手入れが effect の答えを待つ間は別の thread だけが待つ。Try は別の thread の VM の中で答える(run-apart がその VM に try-handler を置く)。program を値に持つ他の effect(Spawn・Gather・Race・SqlTransaction の program)は手入れの task の run が回し、中の program は手入れの thread の外で、手入れの Program の内側の handler(書き手の記録の handler など)も持たずに回るので、手入れはそこに重い計算と内側の handler の要る effect を置かない(今の手入れの道は SqlTransaction の program だけ — 回収の 1 transaction は EXPIRE-BATCH 件まで・R6 (c)・transaction の program は SQL の effect と純粋な計算だけを出す)。入口は受けが終わったら手入れの task を取り消して終わりを待つ(daemon の task は run の終わりに取り消されず、取り消さないと通い路が閉じない)。選び方: 大きさを入口が縛れず、使い手の composition が決める effect つきの長い program だけを run-apart で回し、入口が見える 1 つの計算は R1〜R6 の Compute へ出す。")]
   :laws
     [(law the-scheduler-thread-does-no-work-sized-by-stored-rows
@@ -81,9 +81,9 @@
        :enforced-by ["packages/doeff-records/tests/test_maintenance_runs_apart.hy::test-reads-are-answered-while-the-maintenance-computes"
                      "packages/doeff-core-effects/tests/test_apart_call.hy::test-the-program-computes-apart-and-its-effects-are-answered-here"
                      "packages/doeff-core-effects/tests/test_apart_call.hy::test-computing-in-place-holds-the-thread"]
-       :wiring "配線済み(2026-10-27)— http_server.hy の serving-body が手入れを (run-apart (maintain …)) で立てる。検の殻に effect を出さずに 3 秒計算する送りの手入れを渡し、計算の間に並べて撃った読み 8 本が 1 秒の内に、計算の終わりより前に答えられる(直す前の形は一番遅い読み 2.6 秒・計算の後)")
+       :wiring "配線済み(2026-10-27)— _http_server.hy の serving-body が手入れを (run-apart (maintain …)) で立てる。検の殻に effect を出さずに 3 秒計算する送りの手入れを渡し、計算の間に並べて撃った読み 8 本が 1 秒の内に、計算の終わりより前に答えられる(直す前の形は一番遅い読み 2.6 秒・計算の後)")
      (law every-wire-answer-has-one-spelling-place
-       :statement "wire.hy の WireAnswer の型の集合 = BATCH-READ-ANSWERS ⊎ ON-LOOP-ANSWERS(重ならない)"
+       :statement "_wire.hy の WireAnswer の型の集合 = BATCH-READ-ANSWERS ⊎ ON-LOOP-ANSWERS(重ならない)"
        :counterexamples
          [(counterexample "行の列を運ぶ答えの型を wire に足し、どちらの組にも入れない — 新しい束の答えが scheduler の thread で黙って綴られる")]
        :enforced-by ["docs/adr/defadr_doeff_records_002_scheduler_thread_admits_and_orders.hy::test-adr-doe-records-002-every-wire-answer-has-one-spelling-place"]
@@ -124,7 +124,7 @@
        (val on-loop (frozenset ON-LOOP-ANSWERS))
        (assert (not (& batch on-loop)) (+ "両方に入っている答えの型: " (str (sorted (gfor t (& batch on-loop) t.__name__)))))
        (assert (= (| batch on-loop) wire)
-               (+ "綴る所の決まっていない答えの型(ADR-DOE-RECORDS-002 R4 — loop_work.hy の BATCH-READ-ANSWERS か ON-LOOP-ANSWERS に入れる): "
+               (+ "綴る所の決まっていない答えの型(ADR-DOE-RECORDS-002 R4 — _loop_work.hy の BATCH-READ-ANSWERS か ON-LOOP-ANSWERS に入れる): "
                   (str (sorted (gfor t (^ (| batch on-loop) wire) t.__name__))))))
      (deftest test-adr-doe-records-002-the-default-list-fits-the-wire-cap
        ;; limit を書かない一覧の読み(ListRows の既定 DEFAULT-LIST-LIMIT)は wire の上限の内(R6 (f) — 既定の読みが wire で断られない)。

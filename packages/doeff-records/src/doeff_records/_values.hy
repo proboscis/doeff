@@ -290,7 +290,7 @@
   "追記の列の宣言。writers = 積んでよい書き手の名 / retention = KeepForever | KeepFor(積んでから秒)/
    size-budget = 本文の JSON の byte の上限(None = 無し)/ retention-group = 保持を数える単位(EachEvent | ByKeySuffix — ByKeySuffix は
    KeepFor の列だけ)/ key-lookup = 冪等キーの頭で引く読みの区切り(ByKeyHead | None — None の列は頭で引けない)/
-   archive-before-retire = 保持の期限を過ぎた出来事を、手入れの送りの関数(maintenance.hy の頭の註の「出来事を送ってから外す」)が
+   archive-before-retire = 保持の期限を過ぎた出来事を、手入れの送りの関数(_maintenance.hy の頭の註の「出来事を送ってから外す」)が
    送り先に在ると確かめた後にだけ置き場から外すか(True は KeepFor の列だけ。False = 期限を過ぎた出来事を回収と書きがそのまま外す —
    前からの形)。True の列でも読みは期限の刻から出来事を出さず、冪等キーの答えも False の列と同じ。
    key-memory = 置き場を去った出来事の冪等キーの覚え方(RememberKeysForever | RememberKeysFor | RememberNoKeys — 既定は外さない・

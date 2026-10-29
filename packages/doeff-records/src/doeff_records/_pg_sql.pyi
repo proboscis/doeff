@@ -1,10 +1,10 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = pg_sql.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _pg_sql.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.sql_effects import SqlParam as SqlParam
-from doeff_records.admission import key_text as key_text
+from doeff_records._admission import key_text as key_text
 from doeff_records._values import RecordsSchema as RecordsSchema
 from doeff_records._values import RetiredKey as RetiredKey
 from doeff_records._values import KeepFor as KeepFor

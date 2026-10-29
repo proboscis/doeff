@@ -48,7 +48,7 @@
 (import doeff_events [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time [GetTimeEffect WaitWithinEffect])
-(import doeff_records.admission [key-text])
+(import doeff_records._admission [key-text])
 (import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
 (import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
                               checked-table-name])
@@ -60,7 +60,7 @@
 (defrecord SignalSourcePatience
   "合図の源が置き場の止まりに耐える時間(ReadSourcePatience の答え — #3469): seconds = 止まりの最初の拍から数えて、戻りを待つ秒。これを
    過ぎても戻らなければ源は SignalSourceUnreachable で process を落とす。0 = 耐えない(最初の止まりで落ちる)。値は組み立てが 1 か所で選ぶ
-   (この module は既定を持たない)。HTTP の client の要求を待つ時間は別の値 RequestPatience(doeff_records.http_client・#3557)。"
+   (この module は既定を持たない)。HTTP の client の要求を待つ時間は別の値 RequestPatience(doeff_records._http_client・#3557)。"
   {:tags {:context "records" :role "type"}
    :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
   (#^ float seconds))
@@ -479,7 +479,7 @@
 (defrecord SignalSourceFactory
   "源の工場を土台が渡す値(Ask の鍵 — 鍵はこの型そのもの・答えはこの型の値・#3127): make = 結び(SignalTables の tuple)と
    購読者の名前から、本体を包む関数を作る工場。本番の土台は RECORDS-SIGNAL-SOURCE(記録の置き場の変化の待ちの long-poll —
-   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records.memory の memory-signal-source)を同じ鍵で渡す —
+   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records._memory の memory-signal-source)を同じ鍵で渡す —
    組み立ての entry は鍵を問うて (make 結び 購読者) を with-handlers の列に置くだけで、本番と模擬の違いは土台の答えだけになる。"
   {:tags {:context "records" :role "type"}
    :check [(callable make)]}

@@ -1,16 +1,15 @@
-;; 手入れの「消す前に送る」(maintenance.hy の頭の註 — card ki-c32e43651f2e・2026-10-11 11:21 に使い手の記録の Postgres の
+;; 手入れの「消す前に送る」(_maintenance.hy の頭の註 — card ki-c32e43651f2e・2026-10-11 11:21 に使い手の記録の Postgres の
 ;; disk が 100% になった事故の根の直し): 送りの関数を持つ計画の手入れ 1 回は、送りの答えの番号を刈りの上限に渡し、送り先に届かなかった
 ;; 回は刈らない。送りを持たない計画は上限なしで刈る(今までと同じ)。置き場の handler は撃たれた PruneChanges を控えるだけの顔。
 (require doeff-hy.macros [deftest defhandler defk <- val var])
 (import collections.abc [Callable])
 (import doeff [with_handlers])
 (import doeff_records [Event Unreachable])
-(import doeff_records.maintenance [ArchivedThrough MaintenanceReport PruneChanges Pruned SweepExpired Swept maintenance-tick
-                                   ReadExpiredEvents ExpiredEvents ExpiredCursor RetireArchivedEvents RetiredEvents EventsArchived
-                                   EventsArchiveReport])
+(import doeff_records [PruneChanges Pruned SweepExpired Swept ReadExpiredEvents ExpiredEvents ExpiredCursor RetireArchivedEvents RetiredEvents]
+        doeff_records._maintenance [ArchivedThrough MaintenanceReport maintenance-tick EventsArchived EventsArchiveReport])
 (import functools [partial])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.http_server [MaintenancePlan unsent-streams])
+(import doeff_records._http_server [MaintenancePlan unsent-streams])
 (import doeff_records._laws [LAW-SCHEMA])
 
 
@@ -74,7 +73,7 @@
   (assert (is report.archived None) report))
 
 
-;; 出来事を送ってから外す(maintenance.hy の頭の註 — card ki-707aad0f88e8): 手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を
+;; 出来事を送ってから外す(_maintenance.hy の頭の註 — card ki-707aad0f88e8): 手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を
 ;; 頁で読んで送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す。置き場は頁を答えて撃たれた外しを控えるだけの顔。
 
 (defclass ExpiredShelf []

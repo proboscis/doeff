@@ -1,4 +1,4 @@
-;; 記録の service の一覧の読みの数(GET /metrics の records_list_rows_* — http_server.hy の頭の註の一覧の読みの数)を、本物の待ち受け
+;; 記録の service の一覧の読みの数(GET /metrics の records_list_rows_* — _http_server.hy の頭の註の一覧の読みの数)を、本物の待ち受け
 ;; (127.0.0.1 の空き port)に doeff の HTTP の effect で要求を送って確かめる。置き場は共有の memory。
 ;;   - 宣言の表ごとの系列(呼びの数と返した行の数)は起動の時から 0 で在る
 ;;   - 宣言された呼び手が名乗った一覧の読み 1 回で、表ごとと呼び手 × 表ごとの呼びの数が 1・行の数が返した行の数だけ増える
@@ -15,9 +15,11 @@
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.wire [CALLER-HEADER WRITER-HEADER list-rows-metrics])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records [list-rows-metrics]
+        doeff_records._wire [CALLER-HEADER WRITER-HEADER])
+(import doeff_records [records-server-config]
+        doeff_records._http_server [start-records-server])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 宣言する呼び手の名(語に畳むと reader_job)と、宣言に無い名乗り。

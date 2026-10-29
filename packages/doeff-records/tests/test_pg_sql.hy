@@ -11,7 +11,7 @@
 ;;     宣言した索引の欄の索引だけは旧い版と形が違う(全部の行に張る (ledger, 欄の式) を、card ki-954c58540d0f で表ごとの部分索引
 ;;     (欄の式) WHERE ledger = '<表>' にし、card ki-2176012d1804 で全部の行の表の欄の式の索引 (表の欄の式) にした・
 ;;     TABLE-INDEXES)。旧い形の索引(旧い名)と前の部分索引が在る置き場では、表の欄の式の索引を作り終えるまでそれが前の文の形の
-;;     読みに答え、作り終えて見積もれるようになった後に索引の用意が外す(pg_sql.hy の頭の註 — test_pg_reconcile_indexes.hy が実
+;;     読みに答え、作り終えて見積もれるようになった後に索引の用意が外す(_pg_sql.hy の頭の註 — test_pg_reconcile_indexes.hy が実
 ;;     PostgreSQL で確かめる)。外す名の形は旧い 2 つの形だけに当たり、宣言の索引の名には当たらない(retired-index?)。
 ;;   - 書きの錠と移行の錠の鍵は旧い版の錠の文の引数と同じ字面(接頭辞 + "records-writer" / "records-migrate" — 区切りなし)で、
 ;;     PostgreSQL の hashtext が同じ整数を返す(= 同じ advisory lock の番号)。
@@ -33,10 +33,10 @@
 (import doeff_records [ExpectAbsent Written])
 (import doeff_records [PutRow])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
-(import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry
-                              declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name
-                              ordered-index-name ordered-within-index-name former-field-index-name])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
+(import doeff_records [schema-statements writer-lock-key migrate-lock-key]
+        doeff_records._pg_sql [in-list changes-statement terminal-rows-statement RowExpiry declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name ordered-index-name ordered-within-index-name former-field-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
 (import doeff_records._main [store-pressure-pg])
 (import doeff_records._store_choice [StorePressure])
@@ -63,9 +63,9 @@
                      TABLE-INDEXES))
 ;; 旧い版より後に足した表と索引の文("records_" の答え・旧い版の文の後ろに足した順)。索引は #3614: 列の期限の境 (ledger, at)・
 ;; 組で数える列 pairs の区切り「:」の組の名の式・頭で引ける列 trails の区切り「#」の頭の式・変更の列の刻・保持の期限の在る表 tickets の状態の欄 state(表 tickets の索引の欄に無い —
-;; 表の欄の式の索引)・表 parts の上から読む欄 note の並べる式の索引(pg_sql.hy の頭の註の上から読む欄の索引)・表 parts の等号の欄 color ×
-;; 上から読む欄 note の組の索引(pg_sql.hy の頭の註の等号の欄 × 上から読む欄の組の索引)・鍵の綴りの順の索引
-;; (照合順 "C" の (ledger, key) — 頁読みの順。pg_sql.hy の頭の註)。
+;; 表の欄の式の索引)・表 parts の上から読む欄 note の並べる式の索引(_pg_sql.hy の頭の註の上から読む欄の索引)・表 parts の等号の欄 color ×
+;; 上から読む欄 note の組の索引(_pg_sql.hy の頭の註の等号の欄 × 上から読む欄の組の索引)・鍵の綴りの順の索引
+;; (照合順 "C" の (ledger, key) — 頁読みの順。_pg_sql.hy の頭の註)。
 (val ADDED-AFTER-880
   ["CREATE TABLE IF NOT EXISTS records_retired_keys (
            ledger text NOT NULL, idempotency_key text NOT NULL, seq bigint NOT NULL, body_digest text NOT NULL,
@@ -87,7 +87,7 @@
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
    "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"
    "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"])
-;; 旧い版の錠の文と鍵の字面(pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
+;; 旧い版の錠の文と鍵の字面(_pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))
 (val BEFORE-880-MIGRATE-KEY (fn [prefix] (+ prefix "records-migrate")))
@@ -105,7 +105,7 @@
 
 
 (deftest test-only-the-two-former-index-forms-are-retired-and-no-declared-index-is
-  ;; 旧い形の索引を外す(pg_sql.hy の頭の註): 外す名は旧い版の 2 つの形(index-name の全部の行の (ledger, 欄の式)・table-index-name の
+  ;; 旧い形の索引を外す(_pg_sql.hy の頭の註): 外す名は旧い版の 2 つの形(index-name の全部の行の (ledger, 欄の式)・table-index-name の
   ;; 前の部分索引)だけ。宣言の索引(表の欄の式・上から読む欄・置き場の形の索引 — LAW-SCHEMA はどれも持つ)の名に当たると、索引の
   ;; 用意が宣言の索引を外して次の回が作り直す輪になるので、1 つも当たらない。
   (<- legacy (index-name "records_" "role"))
@@ -128,7 +128,7 @@
 
 
 (deftest test-the-table-shaped-index-names-are-the-three-forms-the-declaration-makes
-  ;; 宣言から外した表ごとの索引を外す(pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 ft_・上から読む欄 op_・等号の欄 ×
+  ;; 宣言から外した表ごとの索引を外す(_pg_sql.hy の頭の註): 当たる名は宣言が作る 3 つの形(表の欄の式 ft_・上から読む欄 op_・等号の欄 ×
   ;; 上から読む欄の組 wp_)と、表の欄の式の索引の前の形(fx_)と上から読む索引の前の形(ox_・ow_)だけ。索引の用意はこの形で今の宣言に無い物を外すので、宣言の置き場の形の索引(append_rows_・row_changes_・
   ;; state_rows_key_c など)と手の索引と旧い形の名に当たると、宣言の外の索引を外してしまう。
   (<- field (table-field-index-name "records_" "parts" "role"))
@@ -198,7 +198,7 @@
           scoped.text)
   (assert (in (SqlParam :name "before_at" :value 5) scoped.params) scoped.params)
   (assert (not (in ":ledger" scoped.text)) scoped.text)
-  ;; 空の組は `IN ()`(構文の誤り)にしない — 組み立てが断り、呼び手の枝(pg.hy)が文を流さない。
+  ;; 空の組は `IN ()`(構文の誤り)にしない — 組み立てが断り、呼び手の枝(_pg.hy)が文を流さない。
   (var refused False)
   (try
     (<- (in-list "t" #()))
