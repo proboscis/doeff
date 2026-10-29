@@ -11,5 +11,5 @@ spec:
       containers:
         - name: worker
           env:
-            - { name: WORKER_ENV_MIN_FREE_GIB, value: "25" }
-            - { name: WORKER_ENV_ROOTS_GIB, value: "20" }
+            - { name: WORKER_ENV_MIN_FREE_GIB, value: "20" }
+            - { name: WORKER_ENV_ROOTS_GIB, value: "16" }

@@ -89,20 +89,24 @@ nodes:
     <<: *k3s-vps
     # merge-queue-land 7.57・merge-queue-ledger 0.59・旧い worker の state 2.64 GB
     otherResidentsBytes: 10_900_000_000
-  # atlas の根の disk(nvme0n1p2・ext4)。worker の空きの最低と roots の上限は boot.sh の既定のまま(25 GiB・20 GiB)。値の出所は
-  # 2026-10-30 06:10 JST の du(card ki-81403f265589 の調べ)と 06:49 JST の df(worker の Pod の /work):
-  #   systemBytes          OS 13.8・k3s(containerd の snapshot と content — image 127 個)53.7・/var/log 3.0 GB の上に余り
-  #   otherResidentsBytes  /var/lib/agent-worker-coord 9.7・/home 7.3・旧い作業の dir(retired-1010・agent-worker-exp ほか)8.8 GB
-  #   worker.stateBytes    /var/lib/agent-worker 51.5 GB から roots 21.4 GB を引いた物(effect の解析の cache 10.1・Hy の検の cache 2.4・log 1.5 ほか)
+  # atlas の根の disk(nvme0n1p2・ext4)。値の出所は 2026-10-30 07:1x JST の atlas の du と 06:49 JST の df(worker の Pod の /work):
+  #   systemBytes          /var/lib/rancher(k3s・containerd の snapshot と content)54.9・/usr 3.5・/var/log 3.0・/var/lib/docker 1.5・
+  #                        ほかの /var/lib 0.5 GB の上に余り(image GC は使われていない image をこの内へ戻す)
+  #   otherResidentsBytes  /var/lib/agent-worker-coord 9.9・/home 8.1・旧い作業の dir(doeff-worker-lab 2.5・retired-1010 1.8・
+  #                        agent-worker-coord-rehearsal-834 1.7・agent-worker-exp 1.6・doeff-worker-lab-coord 0.5)8.1 GB の上に余り
+  #   worker.stateBytes    /var/lib/agent-worker 49.8 GB から roots 5.0 GB を引いた物(effect の解析の cache・Hy の検の cache・log ほか)
+  #   worker.minFreeGiB    boot.sh の既定 25 GiB では分け前が disk を 14 GB 越える — 20 GiB に下げる(kubelet が Pod を追い出す線
+  #                        nodefs.available<15Gi の上)
+  #   worker.rootsGiB      boot.sh の既定 20 GiB を 16 GiB に下げる(2026-10-30 の roots は 5.0〜21.4 GB)
   atlas:
     diskBytes: 210_241_560_576
     filesystemReservedBytes: 10_754_195_456
-    systemBytes: 72_000_000_000
-    otherResidentsBytes: 26_000_000_000
+    systemBytes: 66_000_000_000
+    otherResidentsBytes: 26_500_000_000
     worker:
-      minFreeGiB: 25
-      rootsGiB: 20
-      stateBytes: 31_000_000_000
+      minFreeGiB: 20
+      rootsGiB: 16
+      stateBytes: 45_000_000_000
   # eos の根の disk(nvme0n1p2・ext4)。worker の空きの最低と roots の上限は boot.sh の既定のまま(25 GiB・20 GiB)。値の出所は
   # 2026-10-30 06:49 JST の df と du(worker の Pod の /work — 使用 286.4 GB のうち worker は 14.3 GB・roots 3.7 GB):
   #   systemBytes          worker の外の使用 272.1 GB(内訳は worker の Pod から読めない — control plane・container の image ほか)の上に余り

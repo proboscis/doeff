@@ -380,7 +380,7 @@ def test_atlas_hand_placed_image_gc_leaves_the_worker_near(
     declaration: object, margins: object, doeff_interpreter: Callable[[object], object]
 ) -> None:
     """atlas に手で置かれていた high 85・low 80 は、消し始める空き 31.5 GB で worker が既に near を名乗り、消し終えた空き 42 GB でも near の
-    まま(ok へ戻る線 48.8 GB の下)— 書いてある線の検(test_written_image_gc_starts_before_near_and_ends_above_ok)はこの線を赤にする。"""
+    まま(ok へ戻る線 43.5 GB の下)— 書いてある線の検(test_written_image_gc_starts_before_near_and_ends_above_ok)はこの線を赤にする。"""
     (atlas,) = [share for share in declaration.nodes if share.node == "atlas"]
     hand = derive.ImageGc(high_percent=85, low_percent=80)
     assert _worker_after_gc(atlas, hand, doeff_interpreter) == ("near", "near")
