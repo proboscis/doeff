@@ -6,6 +6,10 @@
 ;;;     仕事は外し、取り消しの前後に出来た答えは abandon(Executor で回す後始末 — 借りた接続を返す等)へ 1 度だけ回す。もう走っていて答えの
 ;;;     まだ無い仕事には interrupt(Executor で回す止め方 — 走っている子 process を止める等・agora-redesign #2847)を 1 度だけ回す。止め方を
 ;;;     持たない仕事(既定の keep-going)は走り切り、答えは abandon へ回る。
+;;;   - 答えは 1 枠の箱 Delivered に入れて promise を完了させ、待ち手へ渡す時に箱を空ける。scheduler は完了した promise の答えを、handle が
+;;;     全部消えたと掃除(HANDLE_SWEEP_INTERVAL の id ごと — doeff #502)が見るまで表に持つ。答えそのもので完了させると、待ち手が手放した
+;;;     答え(ClickHouse の読みの行・file の中身)が掃除まで残り、Rust の版の表は gc からも見えない(agora card ki-8d1e57d431c1 — 読みの口
+;;;     の job が 3.5 時間で RssAnon 440→2464 MB になり、残る型は SqlRows だった)。await_handler の _AwaitedValue と同じ作法。
 ;;;   - ThreadPerCall = 呼び 1 つに thread 1 本を起こす Executor(持ち主も後始末も要らない既定)。thread の数に上限を置かないのは、呼びが
 ;;;     thread の中で別の資源(接続の許可)を待っても、その資源を持つ側の次の呼びが thread の空きを待って詰まらないため。同時の数の上限は
 ;;;     呼びが待つ資源の側(PostgresConnections の許可)が持つ。thread は daemon — 止まらない呼び(長い文)が process の終わりを止めない。
@@ -19,6 +23,24 @@
 
 ;; まだ答えを渡していない印(答えが None の仕事と見分ける)。
 (val NOT-DELIVERED (object))
+
+
+(defclass Delivered []
+  "仕事の答え 1 つを promise の表から待ち手(または後始末)へ 1 度だけ渡す 1 枠の箱(頭の註)。表に残るのは空の箱で、答えは受け手が
+   持つ間だけ生きる。資源の係なので値の型ではない。"
+  (setv __slots__ #("_mut_value"))
+
+  (deff __init__ [self value]  ; defk にできない: 資源の class の初期化
+    {:pre [(: self Delivered) (: value "仕事の答え")] :post [(: % "None")]}
+    "答えを持って始めるため。"
+    (setv self._mut-value value))
+
+  (deff take [self]  ; defk にできない: scheduler の thread と取り消しの callback が触る箱の口(VM の外の資源)
+    {:pre [(: self Delivered)] :post [(: % "仕事の答え")]}
+    "答えを 1 度渡し、箱の参照を外すため(2 度目は None)。"
+    (setv value self._mut-value)
+    (setv self._mut-value None)
+    value))
 
 
 (deff run-detached [program]  ; defk にできない: Executor の thread で回す入口(VM の外から新しい VM を起こす)
@@ -92,7 +114,7 @@
         (.cancelled future) None
         (is-not (.exception future) None) (when (not self.abandoned) (.fail promise (.exception future)))
         self.abandoned (.submit self.pool self.abandon (.result future))
-        True (do (setv self.delivered (.result future))
+        True (do (setv self.delivered (Delivered (.result future)))
                  (.complete promise self.delivered)))))
 
   (deff give-up [self job]  ; defk にできない: scheduler の取り消しの callback(on_cancel — VM の外)と、待ちが取り消しで抜けた時の後始末
@@ -106,7 +128,7 @@
         (setv removed (.cancel job))
         (cond
           removed None
-          (is-not self.delivered NOT-DELIVERED) (.submit self.pool self.abandon self.delivered)
+          (is-not self.delivered NOT-DELIVERED) (.submit self.pool self.abandon (.take self.delivered))
           True (.submit self.pool self.interrupt))))))
 
 
@@ -117,15 +139,16 @@
    :tags {:context "sql" :role "foundation"}}
   "call を pool の thread で回し、この task だけが外から完了させる promise で待つため(scheduler の他の task は回り続ける)。待ちが取り消され
    たら、始まっていない仕事は外し、届かなかった答えは abandon で後始末する(完了の値が届く前の取り消しも、届いた後で再開の前の取り消しも)。
-   走っている仕事は interrupt で止める(既定 keep-going = 止めずに走り切らせる — 頭の註)。"
+   走っている仕事は interrupt で止める(既定 keep-going = 止めずに走り切らせる — 頭の註)。答えは箱 Delivered から取り出して返し、
+   scheduler の promise の表には空の箱だけを残す(頭の註)。"
   (<- promise (CreateExternalPromise))
   (val handoff (Handoff pool abandon interrupt))
   (val job (.submit pool call))
   (.on-cancel promise (fn [] (.give-up handoff job)))
   (.add-done-callback job (fn [done] (.deliver handoff promise done)))
   (try
-    (<- outcome (Wait promise.future))
+    (<- delivered (Wait promise.future))
     (except [TaskCancelledError]
       (.give-up handoff job)
       (raise)))
-  outcome)
+  (.take delivered))
