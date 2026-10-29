@@ -149,7 +149,7 @@
   ;; (require-check の :pre の isinstance 5 つと値の辞書・DoExpr の metaclass を通る isinstance)を払わない。
   ;; 直しを外すと(検めごとに require-check を呼ぶ形)、通る Span 1 つで 2 回・通る ChatId で 1 回と数えて赤。
   ;; 断る物は変わらない: 偽の検めは require-check が ValueError にし、True でない真の答え(Match)は通る。
-  (import doeff_hy.record :as record-module)
+  (import doeff_hy._record_check :as record-module)   ; 展開が引く require-check の置き場(card ki-a28c20b93638)
   (val original record-module.require-check)
   (val calls [0])
   (setattr record-module "require_check"
