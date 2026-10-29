@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agentic.event_log -> doeff_agentic._event_log
+# moved-submodule-shim-names doeff_agentic.event_log:
+#   EventLogEntry EventLogReader EventLogWriter WorkflowIndex get_default_state_dir
 """Moved: ``doeff_agentic.event_log`` is now ``doeff_agentic._event_log`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

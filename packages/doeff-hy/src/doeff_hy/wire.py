@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy.wire -> doeff_hy._wire
+# moved-submodule-shim-names doeff_hy.wire:
+#   FrozenMap JsonValue Malformed MalformedField OpaqueJson SHAPE_FORMS UNKNOWN_FIELDS WireShape
+#   WireValue codec_of dump dump_json json_schema parse parse_as parse_json parse_json_as
+#   wire_config wire_shape
 """Moved: ``doeff_hy.wire`` is now ``doeff_hy._wire`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

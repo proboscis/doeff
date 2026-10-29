@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.import_gc -> doeff_hy_bytecode_guard._import_gc
+# moved-submodule-shim-names doeff_hy_bytecode_guard.import_gc:
+#   IMPORT_GC_THRESHOLD hold release
 """Moved: ``doeff_hy_bytecode_guard.import_gc`` is now ``doeff_hy_bytecode_guard._import_gc`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_flow.effects -> doeff_flow._effects
+# moved-submodule-shim-names doeff_flow.effects:
+#   ReadTraces TraceAnnotate TraceCapture TraceEffectBase TracePush TraceSnapshot
+# moved-submodule-shim-names doeff_flow.effects.trace:
+#   ReadTraces TraceAnnotate TraceCapture TraceEffectBase TracePush TraceSnapshot
 """Moved: ``doeff_flow.effects`` is now ``doeff_flow._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

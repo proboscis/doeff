@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_records.maintenance -> doeff_records._maintenance
+# moved-submodule-shim-names doeff_records.maintenance:
+#   ARCHIVE_PAGE ArchivedThrough ChangeLog Event EventsArchiveReport EventsArchived ExpiredCursor
+#   ExpiredEvents MODULE_TAGS MaintenanceReport PruneChanges Pruned ReadChangeLog ReadExpiredEvents
+#   RetireArchivedEvents RetiredEvents RowChanged RowRemoved SweepExpired Swept Unreachable
+#   archive_expired_events archived_page maintenance_loop maintenance_tick prune_after_archive
 """Moved: ``doeff_records.maintenance`` is now ``doeff_records._maintenance`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

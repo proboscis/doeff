@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_seedream.client -> doeff_seedream._client
+# moved-submodule-shim-names doeff_seedream.client:
+#   DEFAULT_BASE_URL DEFAULT_TIMEOUT SeedreamClient get_seedream_client track_api_call
 """Moved: ``doeff_seedream.client`` is now ``doeff_seedream._client`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

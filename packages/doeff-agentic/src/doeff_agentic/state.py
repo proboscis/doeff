@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agentic.state -> doeff_agentic._state
+# moved-submodule-shim-names doeff_agentic.state:
+#   AgentInfo AgentStatus StateManager WorkflowInfo WorkflowStatus generate_workflow_id
+#   get_default_state_dir
 """Moved: ``doeff_agentic.state`` is now ``doeff_agentic._state`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

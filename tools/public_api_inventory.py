@@ -18,6 +18,13 @@ What is counted, per package dir:
 doeff's own parts under ``packages/`` (``DOEFF_PARTS`` — the VM ``doeff-vm``, imported only by doeff) are not
 package dirs of the inventory, as the repo root package ``doeff`` is not one (ADR-DOE-API-001 R11).
 
+The names a moved-submodule shim's old path shows (the shim's own name, and the old names of the
+modules below the package it moved to) are the names its pins list: the comment lines
+``# moved-submodule-shim-names <old module>: <name> ...`` below the mark, written when the submodule
+was hidden. Importing the old path gives the moved module itself, so without the pins a helper added
+inside the ``_`` module would also count as a public name of the old path. A shim without pins for a
+module shows every name, as below.
+
 The names a module exports: its ``__all__`` when it has one, otherwise every name not starting
 with ``_`` that the package itself defines (names imported from another package or the standard
 library, and module objects, are not counted). A module that makes names on demand (a module-level
@@ -96,11 +103,15 @@ KIND_LABELS: dict[Kind, str] = {
     "other": "それ以外",
     "unclassified": "未分類",
 }
-ModuleReadWay = Literal["__all__", "own", "text"]
+ModuleReadWay = Literal["__all__", "own", "pinned", "text"]
 #: What shows a public submodule's row (as ``(console script)`` shows a console script's).
 SUBMODULE = "(submodule)"
 #: The first line of a module left at a submodule's old path when the submodule moved to ``_<name>``.
 SHIM_MARK = re.compile(r"#\s*moved-submodule-shim:\s*([\w.]+)\s*->\s*([\w.]+)")
+#: A comment line below a shim's mark that pins the names one old path shows; the lines that follow
+#: it starting ``#`` and two or more spaces go on with the same module's names.
+SHIM_NAMES_MARK = re.compile(r"#\s*moved-submodule-shim-names\s+([\w.]+):(.*)")
+SHIM_PIN_LINE = re.compile(r"#\s*moved-submodule-shim-names\s+[\w.]+:.*|#\s{2,}\S.*")
 
 _MODULE_SUFFIXES = (".py", ".hy", ".pyi")
 _EXTENSION_SUFFIXES = (".so", ".pyd")
@@ -487,6 +498,61 @@ def _shim_source(name: str, path: Path) -> Path:
     if moved_to is None:
         return path
     return (_init_of(moved_to) or path) if moved_to.is_dir() else moved_to
+
+
+def shim_pins(name: str, path: Path) -> dict[str, tuple[str, ...]]:
+    """The names a moved-submodule shim pins, per old module (empty for any other module).
+
+    The pins are the comment lines right below the mark (``SHIM_NAMES_MARK``); a line naming a
+    module the shim does not stand for (neither its own name nor one below it) is not read.
+    """
+    if _shim_target(name, path) is None:
+        return {}
+    with path.open(encoding="utf-8", errors="replace") as source:
+        below_mark = source.read().split("\n")[1:]
+    block = list(
+        itertools.takewhile(lambda line: SHIM_PIN_LINE.fullmatch(line) is not None, below_mark)
+    )
+    heads = [index for index, line in enumerate(block) if SHIM_NAMES_MARK.fullmatch(line)]
+    return {
+        found.group(1): tuple(
+            word
+            for text in (found.group(2), *(line[1:] for line in block[head + 1 : end]))
+            for word in text.split()
+        )
+        for head, end in itertools.pairwise([*heads, len(block)])
+        if (found := SHIM_NAMES_MARK.fullmatch(block[head])) is not None
+        and (found.group(1) == name or found.group(1).startswith(f"{name}."))
+    }
+
+
+def pinned_names(layout: PackageLayout) -> dict[str, tuple[str, ...]]:
+    """The names every shim of the package pins, per old module (``shim_pins`` of each public module)."""
+    return {
+        module: names
+        for name, path in public_modules(layout)
+        for module, names in shim_pins(name, path).items()
+    }
+
+
+def shim_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
+    """The package's moved-submodule shims: the old name and the shim's file."""
+    return [
+        (name, path)
+        for name, path in public_modules(layout)
+        if _shim_target(name, path) is not None
+    ]
+
+
+def unpinned_shim_modules(layout: PackageLayout) -> list[str]:
+    """The old modules a shim stands for that its pins do not list (each shows every name it has)."""
+    shims = [name for name, _path in shim_modules(layout)]
+    pinned = pinned_names(layout)
+    return [
+        name
+        for name, _path in public_modules(layout)
+        if name not in pinned and any(name == shim or name.startswith(f"{shim}.") for shim in shims)
+    ]
 
 
 def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
@@ -1607,7 +1673,9 @@ def _name_row(
     """
     value = _module_value(module, name)
     if value is _MISSING:
-        verdict = Verdict("unclassified", "名だけ", "__all__ に在るが module に無い")
+        verdict = Verdict(
+            "unclassified", "名だけ", "__all__ か移し替えの module の列に在るが module に無い"
+        )
         defined_at = module.__name__
     elif isinstance(value, _LazyFailure):
         verdict = Verdict("unclassified", "名だけ", f"__getattr__ が名を作れない: {value.error}")
@@ -1654,12 +1722,17 @@ class _ModuleResult:
 
 
 def _read_module(
-    module_name: str, path: Path, classifier: _Classifier, sources: _Sources
+    module_name: str,
+    path: Path,
+    classifier: _Classifier,
+    sources: _Sources,
+    pinned: tuple[str, ...] | None = None,
 ) -> _ModuleResult:
     """Import one public module and type its names; a module that cannot be imported is read as text.
 
     A moved-submodule shim that cannot be imported (the module it moved to fails) is read from the
-    moved module's text: the shim's own text defines nothing.
+    moved module's text: the shim's own text defines nothing. ``pinned`` is the names a shim pins for
+    the module (``shim_pins``): the module shows those names only, like an ``__all__``.
     """
     try:
         with contextlib.redirect_stdout(sys.stderr):
@@ -1682,18 +1755,21 @@ def _read_module(
                     defined_at=location,
                     reason=message,
                 )
-                for name in _fallback_names(path)
+                for name in (_fallback_names(path) if pinned is None else pinned)
             ),
         )
     names, read = _exported_names(module, sources)
+    macros = _macro_exports(module, sources)
+    if pinned is not None:
+        shown = set(pinned)
+        macros = [(name, macro) for name, macro in macros if _display_name(name) in shown]
+        names = [name for name in pinned if name not in {_display_name(n) for n, _m in macros}]
+        read = "pinned"
     return _ModuleResult(
         ModuleRead(name=module_name, read=read, error=None),
         (
             *(_name_row(module, module_name, name, classifier, sources) for name in names),
-            *(
-                _macro_row(module, module_name, name, macro)
-                for name, macro in _macro_exports(module, sources)
-            ),
+            *(_macro_row(module, module_name, name, macro) for name, macro in macros),
         ),
     )
 
@@ -1766,8 +1842,10 @@ def probe_package(package_dir: Path) -> PackageInventory:
     _install_hy()
     classifier = _Classifier()
     sources = _Sources(tuple(root.name for root in layout.roots))
+    pins = pinned_names(layout)
     results = [
-        _read_module(name, path, classifier, sources) for name, path in public_modules(layout)
+        _read_module(name, path, classifier, sources, pins.get(name))
+        for name, path in public_modules(layout)
     ]
     return PackageInventory(
         dir=package_dir.name,
@@ -1965,7 +2043,9 @@ _METHOD_NOTES = (
     "path のどの部分も `_` で始まらない submodule そのものも、1 行(出す所 `(submodule)`・名は module の import の名・"
     "形「公開の submodule」・それ以外)と数える — 公開の名は import の根からだけ出す(ADR-DOE-API-001 R5)。"
     "1 行目が `# moved-submodule-shim: <古い名> -> <新しい名>` の移し替えの module は、移した先の package の下の module も"
-    "古い名で数える(移し替えの module を消すまで古い path で import できる)。",
+    "古い名で数える(移し替えの module を消すまで古い path で import できる)。古い path が出す名は、印の下の"
+    "`# moved-submodule-shim-names <古い名>: <名> …` の行(隠した時に書いた名の固定の列)の名だけを数える — 古い path は"
+    "移した先の `_` の module そのものを返すので、列が無いと `_` の module に足した helper も古い path の公開名に加わる。",
     "effect: EffectBase の子の class・EffectBase の値・effect を作る関数(戻りの型が EffectBase の子か、return が"
     "effect の class を呼ぶ)。",
     "handler: handler の印(`_doeff_is_handler_fn`)を持つ値と class・handler を返す関数(戻りの型が ProgramHandler・"

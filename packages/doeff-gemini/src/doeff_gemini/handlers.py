@@ -1,4 +1,15 @@
 # moved-submodule-shim: doeff_gemini.handlers -> doeff_gemini._handlers
+# moved-submodule-shim-names doeff_gemini.handlers:
+#   default_gemini_cost_handler gemini_image_handler gemini_mock_handler gemini_production_handler
+#   mock_handlers production_handlers
+# moved-submodule-shim-names doeff_gemini.handlers.production:
+#   GEMINI_IMAGE_MODEL_PREFIXES GEMINI_MODEL_EXACT GEMINI_MODEL_PREFIXES GeminiCalculateCost
+#   GeminiChat GeminiContentPart GeminiEmbedding GeminiImageEdit GeminiStreamingChat
+#   GeminiStructuredOutput ProtocolHandler calculate_known_model_cost default_gemini_cost_handler
+#   edit_image__gemini gemini_image_handler gemini_production_handler get_gemini_client
+#   production_handlers structured_llm__gemini track_api_call
+# moved-submodule-shim-names doeff_gemini.handlers.testing:
+#   ProtocolHandler gemini_mock_handler mock_handlers
 """Moved: ``doeff_gemini.handlers`` is now ``doeff_gemini._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

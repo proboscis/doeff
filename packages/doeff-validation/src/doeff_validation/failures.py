@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_validation.failures -> doeff_validation._failures
+# moved-submodule-shim-names doeff_validation.failures:
+#   Check CheckArgument CheckError CheckFailure EvaluatedArgument ItemFailedError Perform
+#   ValidationException
 """Moved: ``doeff_validation.failures`` is now ``doeff_validation._failures`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

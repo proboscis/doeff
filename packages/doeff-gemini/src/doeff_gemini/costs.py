@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_gemini.costs -> doeff_gemini._costs
+# moved-submodule-shim-names doeff_gemini.costs:
+#   ModelPricing UnknownModelPricingError calculate_cost calculate_known_model_cost
+#   gemini_cost_calculator__default get_model_pricing
 """Moved: ``doeff_gemini.costs`` is now ``doeff_gemini._costs`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy.sexpr -> doeff_hy._sexpr
+# moved-submodule-shim-names doeff_hy.sexpr:
+#   QuotedForms args_of assert_handlers body_of classify_call collect_effects effect_tree
+#   list_all_stages list_stages name_of print_all_stages print_effect_tree show_program_analysis
+#   stage_of
 """Moved: ``doeff_hy.sexpr`` is now ``doeff_hy._sexpr`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

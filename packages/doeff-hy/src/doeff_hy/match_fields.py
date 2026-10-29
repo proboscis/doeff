@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.match_fields -> doeff_hy._match_fields
+# moved-submodule-shim-names doeff_hy.match_fields:
+#   mangle_match_fields
 """Moved: ``doeff_hy.match_fields`` is now ``doeff_hy._match_fields`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

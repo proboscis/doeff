@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_image.effects -> doeff_image._effects
+# moved-submodule-shim-names doeff_image.effects:
+#   ImageEdit ImageGenerate
+# moved-submodule-shim-names doeff_image.effects.edit:
+#   ImageEdit
+# moved-submodule-shim-names doeff_image.effects.generate:
+#   ImageGenerate
 """Moved: ``doeff_image.effects`` is now ``doeff_image._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

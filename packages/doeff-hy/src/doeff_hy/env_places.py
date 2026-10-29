@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.env_places -> doeff_hy._env_places
+# moved-submodule-shim-names doeff_hy.env_places:
+#   CONVERSATION_ENV EnvironmentByName PYRIGHT_THREADS_ENV cache_home check_cache_setting
+#   conversation_setting pyright_threads_setting
 """Moved: ``doeff_hy.env_places`` is now ``doeff_hy._env_places`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

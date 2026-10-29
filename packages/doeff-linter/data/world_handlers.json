@@ -76,7 +76,7 @@
    "why": "subprocess.run・os.environ・socket.gethostname(os_process.hy:73)"
   },
   {
-   "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
+   "handler": "doeff_core_effects._aiohttp_http_server:aiohttp-http-server",
    "touches": [
     "network"
    ],

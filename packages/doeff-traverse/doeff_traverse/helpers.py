@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_traverse.helpers -> doeff_traverse._helpers
+# moved-submodule-shim-names doeff_traverse.helpers:
+#   Fail sequence try_call
 """Moved: ``doeff_traverse.helpers`` is now ``doeff_traverse._helpers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

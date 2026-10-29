@@ -17,7 +17,7 @@
 (import doeff_core_effects.process_effects [ReadEnvironment EnvEntry])
 (import doeff_core_effects [ReadText])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_time [async-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
 (import doeff_records [MemoryStore]

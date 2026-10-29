@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.macro_hints -> doeff_hy_bytecode_guard._macro_hints
+# moved-submodule-shim-names doeff_hy_bytecode_guard.macro_hints:
+#   Hint HyMacroUseWarning MACRO_HOMES MacroName MacroRecord MacroTable macro_table
+#   warn_about_macro_use
 """Moved: ``doeff_hy_bytecode_guard.macro_hints`` is now ``doeff_hy_bytecode_guard._macro_hints`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

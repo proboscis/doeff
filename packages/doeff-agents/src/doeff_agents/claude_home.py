@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agents.claude_home -> doeff_agents._claude_home
+# moved-submodule-shim-names doeff_agents.claude_home:
+#   IoGenerator as_bool as_optional_str as_str copy_file home_path make_dirs onboarded_config_json
+#   path_exists prepare_claude_home read_text trusted_projects_json write_text
 """Moved: ``doeff_agents.claude_home`` is now ``doeff_agents._claude_home`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

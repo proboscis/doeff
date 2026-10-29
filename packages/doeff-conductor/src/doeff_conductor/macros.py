@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_conductor.macros -> doeff_conductor._macros
+# moved-submodule-shim-names doeff_conductor.macros:
+#   <- agent! defphase defworkflow gate! loop merge! parallel parallel_for pipeline random! time!
+#   workspace!
 """Moved: ``doeff_conductor.macros`` is now ``doeff_conductor._macros`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
