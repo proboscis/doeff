@@ -9,12 +9,14 @@
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.
 - **doeff-events:** the gap notice is made and told apart through the types: `Announce.gap(channel, source)` sends
   it, and `Announce.is_gap` / `Announcement.is_gap` tell it from a routed notice (in Hy, `(Announce.gap channel
-  source)` and `(Announcement :is-gap True)` in a `match`). Write these where you compared a name with
-  `GAP_NOTICE` or passed it to `Announce`: the constant stays on the import root only until the repositories that
-  read it have moved, then it goes inside (ADR-DOE-API-001 R1).
+  source)` and `(Announcement :is-gap True)` in a `match`).
 
 ### Changed
 
+- **Breaking (doeff-events):** the import root no longer exports `GAP_NOTICE`, the wire name of the gap notice
+  (ADR-DOE-API-001 R1 — a constant is not an effect or a handler). Write `Announce.gap(channel, source)` where you
+  passed it to `Announce`, and `notice.is_gap` (or `effect.is_gap` on an `Announce`) where you compared a name with
+  it.
 - **doeff-indexer 0.2.0:** the Python API reads the index with the effect `FindSymbols`, answered by the handler
   `rust_indexer` (the Rust indexer): write `run(rust_indexer(FindSymbols(module, ("interpreter", "default"),
   "function")))` — or yield `FindSymbols` in a program — where you wrote

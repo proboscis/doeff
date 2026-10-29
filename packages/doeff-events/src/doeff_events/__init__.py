@@ -44,7 +44,6 @@ from ._effects import (
     wait_for_events,
 )
 from ._handlers import (
-    GAP_NOTICE,
     BrokerConnectionsExhausted,
     Drop,
     EventBus,
@@ -73,7 +72,6 @@ from ._handlers import (
 )
 
 __all__ = [
-    "GAP_NOTICE",
     "AckAnnouncement",
     "Announce",
     "Announcement",

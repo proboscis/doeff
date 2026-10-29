@@ -86,7 +86,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Final, Generic, TypeVar, Union, final
+from typing import TYPE_CHECKING, Generic, TypeVar, Union, final
 
 from doeff_core_effects import (
     Cancel,
@@ -156,11 +156,6 @@ class Drop:
 
 WhenUnsent = MarkGap | Drop
 """What a route does with an event the broker could not take (a closed choice, written on every route)."""
-
-GAP_NOTICE: Final = _GAP_NOTICE
-"""The wire name of the fixed notice that tells a channel's gap, still shown from the import root while the
-callers that read it move to ``Announce.gap`` and ``is_gap`` — removed once they have (ADR-DOE-API-001 R20 order,
-card ki-a2ac882abeb7)."""
 
 
 @dataclass(frozen=True)
@@ -339,8 +334,8 @@ def _checked_plan(source: str, routes: tuple[NoticeRoute[object], ...]) -> _Plan
                 f"notice_events_handler: the route {route.wire_name!r} must say what is done with an event the broker "
                 f"could not take (when_unsent = MarkGap(...) or Drop()), got {route.when_unsent!r}"
             )
-        if route.wire_name == GAP_NOTICE:
-            raise ValueError(f"notice_events_handler: the wire name {GAP_NOTICE!r} is the gap notice's own")
+        if route.wire_name == _GAP_NOTICE:
+            raise ValueError(f"notice_events_handler: the wire name {_GAP_NOTICE!r} is the gap notice's own")
     types = tuple(route.event_type for route in routes)
     names = tuple(route.wire_name for route in routes)
     if len(set(types)) != len(types) or len(set(names)) != len(names):
