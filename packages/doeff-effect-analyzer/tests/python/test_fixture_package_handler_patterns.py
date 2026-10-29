@@ -7,12 +7,12 @@ import pytest
 from doeff import Ask, AskEffect, Effect, Pass, Resume, do
 from doeff import handler as _install_raw_handler
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 
 from doeff_test_target.core.alpha import helper_alpha
 from doeff_test_target.core.beta import helper_beta
 from doeff_test_target.core.gamma import helper_gamma
-from test_target_run_support import run_with_core_handlers
+from fixture_package_run_support import run_with_core_handlers
 
 
 @do

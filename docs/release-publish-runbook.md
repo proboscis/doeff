@@ -90,7 +90,6 @@ root の tag でも単独でも出さない。どれかを公開すると決め�
 | `doeff-ml-nexus` | 試しの実行の adapter | 公開の入れ方がまだ無い |
 | `doeff-effect-analyzer` | native の解析の道具 | 開発の道具で、PyPI の利用者の面ではない |
 | `doeff-linter` | native の解析の道具 | Cargo の道具で入れる。PyPI では出さない |
-| `doeff-test-target` | test の fixture の部品 | fixture だけ |
 | `doeff-vm-core` | 内部の native の crate | `doeff-vm` の実装の中身 |
 
 ## 版と tag

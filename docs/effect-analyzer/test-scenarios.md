@@ -34,6 +34,6 @@ Status legend:
 27. ❌ Usage of custom effect types registered via config (TOML-driven detection).
 28. ❌ Integration with `Program.first_success` combined with `Program.dict` outputs.
 29. ✅ `Program` values stored in dataclasses or containers before being yielded later (`tests/effect_tracking.rs::scenario_pattern_try_dataclass`).
-30. ✅ Large orchestrator function combining 10+ helper programs across map/flat_map/dict/sequence (fixture `doeff-test-target`).
+30. ✅ Large orchestrator function combining 10+ helper programs across map/flat_map/dict/sequence (fixture `tests/fixtures/doeff_test_target`, `tests/effect_tracking.rs::complex_program_structure`).
 
 Keep this list updated as new fixtures/tests land, and link to paths for traceability.

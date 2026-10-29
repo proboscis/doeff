@@ -21,7 +21,7 @@ fn effect_keys(report: &doeff_effect_analyzer::Report) -> Vec<String> {
 
 fn copy_fixture_package(root: &Path) {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../doeff-test-target/src/doeff_test_target");
+        .join("tests/fixtures/doeff_test_target");
     copy_dir_recursive(&src, &root.join("doeff_test_target")).expect("copy fixture package");
 }
 
