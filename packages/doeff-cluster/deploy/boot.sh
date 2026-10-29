@@ -93,10 +93,14 @@
 #   1 本の task の memory を kernel が抑え、常駐の job と worker の本体の memory を kernel が守るため、worker の cgroup の中に子の cgroup を
 #   作り、子ごとに memory の守り(memory.min・memory.low)か上限(memory.max・memory.high)を掛ける。worker はその子へ job を置き分ける
 #   (DOEFF_WORKER_JOB_CGROUP・DOEFF_WORKER_SERVICE_CGROUP — worker/core/job_cgroup)。
+#   CPU の重み(card ki-b40c5c399455): 子ごとに cpu.weight(1〜10000)と cpu.idle(0 か 1)も掛けられる。CPU が埋まった時に、遅れに
+#   敏感な層(worker の本体・常駐の job)の thread を、一括の仕事の層(task・CLI・命令)より先に CPU へ載せるため — 子に cpu を掛けない
+#   と、層の中の nice や SCHED_IDLE は層どうしの取り分を変えず、起きた常駐の thread が一括の仕事の後ろで実行待ちの列に並ぶ。
 #   WORKER_CGROUP_LAYOUT = 空白で並べた「<名>:<file>=<値>,…」(名は英小文字・数字・-。file は memory.min・memory.low・memory.high・
-#   memory.max のどれか。値は kernel の書式のまま)。最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)
-#   — cgroup v2 は process の居る cgroup の子に memory を掛けられないため。例:
-#     worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G
+#   memory.max・cpu.weight・cpu.idle のどれか。memory の値は kernel の書式のまま・cpu.weight は 1〜10000 の整数・cpu.idle は 0 か 1)。
+#   最初の層に、今 worker の cgroup に居る process を全部移す(tini・この script・準備の残り)— cgroup v2 は process の居る cgroup の子に
+#   controller を掛けられないため。子には memory をいつも、cpu は cpu の file を書く層が在る時だけ掛ける。例:
+#     worker:memory.min=2G,cpu.weight=1000 services:memory.min=24G,cpu.weight=1000 jobs:memory.max=36G,cpu.weight=100
 #   書ける見え: k8s の Pod の /sys/fs/cgroup は自分の container の cgroup を根とする読み取りだけの見えなので、機体の配備は host の cgroupfs を
 #   別の所に書ける形で置き、その場所を WORKER_CGROUP_HOST で渡す。script はその中から、名前空間の根(WORKER_CGROUP_NS_ROOT・既定
 #   /sys/fs/cgroup)と同じ inode の dir(= 自分の container の cgroup)を引く。WORKER_CGROUP_HOST が無ければ名前空間の根そのものに書く。
@@ -389,12 +393,13 @@ cgroup_refused() {
   exit 2
 }
 
-# 頭の註の「cgroup の層」を作るため: 宣言を全部検めてから、書ける dir を引き、委ねを待ち、層を作り、process を最初の層へ移して子に memory を
-# 掛け、層ごとの値を書く。書ける dir を cgroup_dir に置き、DOEFF_WORKER_CGROUP_DIR で export する。
+# 頭の註の「cgroup の層」を作るため: 宣言を全部検めてから、書ける dir を引き、委ねを待ち、層を作り、process を最初の層へ移して子に memory
+# (と、cpu の file を書く層が在れば cpu)を掛け、層ごとの値を書く。書ける dir を cgroup_dir に置き、DOEFF_WORKER_CGROUP_DIR で export する。
 cgroup_layout() {
   set -f
   problems=""
   first=""
+  controllers=+memory
   for entry in $WORKER_CGROUP_LAYOUT; do
     name=${entry%%:*}
     case "$name" in
@@ -407,13 +412,30 @@ cgroup_layout() {
     for setting in $settings; do
       key=${setting%%=*}
       value=${setting#*=}
+      if [ "$value" = "$setting" ]; then
+        problems="$problems 層 $name の $key に値が無い。"
+        continue
+      fi
       case "$key" in
-        memory.min|memory.low|memory.high|memory.max) ;;
-        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max のどれかで書く。" ;;
-      esac
-      case "$value" in
-        max|[0-9]*) [ "$value" != "$setting" ] || problems="$problems 層 $name の $key に値が無い。" ;;
-        *) problems="$problems 層 $name の $key の値 '$value' は数(K・M・G を付けてよい)か max で書く。" ;;
+        memory.min|memory.low|memory.high|memory.max)
+          case "$value" in
+            max|[0-9]*) ;;
+            *) problems="$problems 層 $name の $key の値 '$value' は数(K・M・G を付けてよい)か max で書く。" ;;
+          esac ;;
+        cpu.weight)
+          controllers="+memory +cpu"
+          case "$value" in
+            ''|*[!0-9]*|0*) problems="$problems 層 $name の cpu.weight の値 '$value' は 1〜10000 の整数で書く。" ;;
+            *) [ "${#value}" -le 5 ] && [ "$value" -le 10000 ] ||
+                 problems="$problems 層 $name の cpu.weight の値 '$value' は 1〜10000 の整数で書く。" ;;
+          esac ;;
+        cpu.idle)
+          controllers="+memory +cpu"
+          case "$value" in
+            0|1) ;;
+            *) problems="$problems 層 $name の cpu.idle の値 '$value' は 0 か 1 で書く。" ;;
+          esac ;;
+        *) problems="$problems 層 $name の $key は memory.min・memory.low・memory.high・memory.max・cpu.weight・cpu.idle のどれかで書く。" ;;
       esac
     done
     IFS=$old_ifs
@@ -451,12 +473,12 @@ cgroup_layout() {
       echo "$pid" >"$cgroup_dir/$first/cgroup.procs" 2>/dev/null || [ ! -d "/proc/$pid" ] ||
         cgroup_refused "process $pid を層 $first へ移せない"
     done
-    if echo +memory >"$cgroup_dir/cgroup.subtree_control" 2>/dev/null; then
+    if echo "$controllers" >"$cgroup_dir/cgroup.subtree_control" 2>/dev/null; then
       break
     fi
-    # 移した後に根へ入った process(readinessProbe の exec など)が居ると、子に memory を掛けられない — 移し直す。
+    # 移した後に根へ入った process(readinessProbe の exec など)が居ると、子に controller を掛けられない — 移し直す。
     tries=$((tries + 1))
-    [ "$tries" -lt 5 ] || cgroup_refused "$cgroup_dir の子に memory を掛けられない(根に process が残る)"
+    [ "$tries" -lt 5 ] || cgroup_refused "$cgroup_dir の子に $controllers を掛けられない(根に process が残るか、親が cpu を子へ渡さない)"
     sleep 1
   done
   set -f

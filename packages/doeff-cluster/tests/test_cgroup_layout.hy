@@ -59,6 +59,34 @@
   (assert (= written {"worker/memory.min" "2G" "services/memory.min" "24G" "jobs/memory.max" "36G" "commands/memory.max" "28G"}) written))
 
 
+(deftest test-a-layout-with-cpu-files-gives-the-children-cpu-and-writes-each-weight [#^ Path tmp-path]
+  ;; CPU の重み(card ki-b40c5c399455): cpu の file を書く層が在れば、子に memory と cpu を掛けてから重みを書く。失敗ケース: 子に cpu を
+  ;; 掛けないまま cpu.weight を書くと、kernel は file を作らず(書けない)、常駐の層の thread が一括の層と同じ重みで実行待ちに並ぶ。
+  (<- scope Path (fake-container tmp-path))
+  (<- done subprocess.CompletedProcess
+      (run-layout tmp-path scope "worker:memory.min=2G,cpu.weight=1000 services:cpu.weight=10000 jobs:memory.max=36G,cpu.weight=1 commands:cpu.idle=1"))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (= (.strip (.read-text (/ scope "cgroup.subtree_control"))) "+memory +cpu"))
+  (val written (dfor #(layer file) #(#("worker" "memory.min") #("worker" "cpu.weight") #("services" "cpu.weight") #("jobs" "cpu.weight")
+                                     #("commands" "cpu.idle"))
+                     (+ layer "/" file) (.strip (.read-text (/ scope layer file)))))
+  (assert (= written {"worker/memory.min" "2G" "worker/cpu.weight" "1000" "services/cpu.weight" "10000" "jobs/cpu.weight" "1"
+                      "commands/cpu.idle" "1"})
+          written))
+
+
+(deftest test-a-bad-cpu-value-is-refused-before-any-layer-is-made [#^ Path tmp-path]
+  ;; 失敗ケース: kernel の範囲の外の重み(0・10001・数でない)や 0・1 の外の cpu.idle を、層を作った後の書きで初めて知ると、起動が層を半端に
+  ;; 作ったまま止まる。宣言を読む段で全部を名指して断る。
+  (<- scope Path (fake-container tmp-path))
+  (<- done subprocess.CompletedProcess
+      (run-layout tmp-path scope "worker:cpu.weight=0 services:cpu.weight=10001 jobs:cpu.weight=high commands:cpu.idle=2 x:cpu.weight="))
+  (assert (= done.returncode 2) done)
+  (for [part #("'0'" "'10001'" "'high'" "cpu.idle の値 '2'" "層 x の cpu.weight の値 ''")]
+    (assert (in part done.stderr) done.stderr))
+  (assert (= (sorted (gfor p (.iterdir scope) p.name)) ["cgroup.procs" "cgroup.subtree_control"]) "層を作らない"))
+
+
 (deftest test-a-bad-layout-is-refused-with-every-problem-and-touches-nothing [#^ Path tmp-path]
   ;; 失敗ケース: 宣言の誤りを 1 つずつ直して起こし直すと、その度に Pod が起動で止まる。全部の誤りを 1 度に名指し、層は作らない。
   (<- scope Path (fake-container tmp-path))
