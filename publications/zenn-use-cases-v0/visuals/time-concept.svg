@@ -1,58 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1080" viewBox="0 0 1200 1080" font-family="IPAPGothic, IPAGothic, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440" viewBox="0 0 1080 1440">
+  <!-- 同じtwo_napsを、自作の時計tickingとdoeff-timeのsim_time_handlerで走らせた時の、2つのnapの待ちの並び(英語の3本目の記事の[20.0, 30.0]と[20.0, 10.0])。帯の長さは秒数に比例する(1秒 = 28px)。 -->
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
-    </marker>
+    <style>
+      .ja { font-family: "IPAGothic", sans-serif; fill: #1f2d4d; }
+      .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
+      .bar { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #ffffff; }
+    </style>
   </defs>
-  <rect width="1200" height="1080" fill="#ffffff"/>
-  <text x="600" y="72" text-anchor="middle" font-size="44" font-weight="bold" fill="#111827">同じjobに、時計を選んで付ける</text>
+  <rect width="1080" height="1440" fill="#ffffff"/>
 
-  <!-- 処理本体 -->
-  <rect x="230" y="112" width="740" height="236" rx="18" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
-  <text x="258" y="152" font-size="26" fill="#4b5563">処理本体（1つだけ書く）</text>
-  <g font-family="DejaVu Sans Mono, monospace" font-size="32" fill="#111827">
-    <text x="290" y="200">@do</text>
-    <text x="290" y="242">def job(seconds):</text>
-    <text x="290" y="284"><tspan xml:space="preserve">    yield </tspan><tspan fill="#0f766e" font-weight="bold">Delay(seconds)</tspan></text>
-    <text x="290" y="326"><tspan xml:space="preserve">    return </tspan>"完了"</text>
-  </g>
+  <text class="ja" x="540" y="72" font-size="42" font-weight="bold" text-anchor="middle">同じtwo_napsでも、kをいつ動かすかで答えが変わる</text>
 
-  <line x1="600" y1="350" x2="600" y2="428" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
-  <text x="624" y="398" font-size="28" fill="#111827">Delay(20) を依頼する</text>
+  <rect x="60" y="110" width="960" height="190" rx="24" fill="#f3f5f9" stroke="#c4cbd9" stroke-width="3"/>
+  <text class="ja" x="95" y="164" font-size="36" font-weight="bold">two_naps(抜粋)</text>
+  <text class="code" x="95" y="220" font-size="40" xml:space="preserve">slow_task = yield Spawn(nap(20))</text>
+  <text class="code" x="95" y="274" font-size="40" xml:space="preserve">fast_task = yield Spawn(nap(10))</text>
 
-  <text x="600" y="470" text-anchor="middle" font-size="28" fill="#4b5563">外側のハンドラを1つ選ぶ</text>
+  <rect x="60" y="330" width="960" height="430" rx="24" fill="#fdecea" stroke="#e8a59c" stroke-width="3"/>
+  <text class="ja" x="95" y="390" font-size="40" font-weight="bold">ticking(自作の時計)</text>
+  <text class="ja" x="95" y="446" font-size="36">Delayのたびに、すぐkを再開する</text>
+  <rect x="120" y="476" width="560" height="54" rx="10" fill="#c0504d"/>
+  <text class="bar" x="140" y="516" font-size="36">nap(20)</text>
+  <rect x="680" y="546" width="280" height="54" rx="10" fill="#c0504d"/>
+  <text class="bar" x="700" y="586" font-size="36">nap(10)</text>
+  <line x1="120" y1="620" x2="960" y2="620" stroke="#1f2d4d" stroke-width="3"/>
+  <text class="ja" x="120" y="662" font-size="36" text-anchor="middle">0</text>
+  <text class="ja" x="400" y="662" font-size="36" text-anchor="middle">10</text>
+  <text class="ja" x="680" y="662" font-size="36" text-anchor="middle">20</text>
+  <text class="ja" x="960" y="662" font-size="36" text-anchor="middle">30秒</text>
+  <text class="code" x="95" y="730" font-size="44" xml:space="preserve">[20.0, 30.0]</text>
+  <text class="ja" x="450" y="728" font-size="36">待ちが足し算になる</text>
 
-  <!-- 仮想時計 -->
-  <rect x="40" y="492" width="550" height="210" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
-  <text x="68" y="540" font-size="30" font-weight="bold" fill="#0f766e">テストで：仮想時計</text>
-  <text x="68" y="588" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">sim_time_handler()</text>
-  <text x="68" y="634" font-size="28" fill="#111827">仮想時計を20秒進める</text>
-  <text x="68" y="682" font-size="28" font-weight="bold" fill="#0f766e">実時間：ほぼ0秒</text>
+  <rect x="60" y="790" width="960" height="430" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="850" font-size="40" font-weight="bold">sim_time_handler(doeff-time)</text>
+  <text class="ja" x="95" y="906" font-size="36">どのタスクも動けなくなるまでkを持つ</text>
+  <rect x="120" y="936" width="560" height="54" rx="10" fill="#0f8b8d"/>
+  <text class="bar" x="140" y="976" font-size="36">nap(20)</text>
+  <rect x="120" y="1006" width="280" height="54" rx="10" fill="#0f8b8d"/>
+  <text class="bar" x="140" y="1046" font-size="36">nap(10)</text>
+  <line x1="120" y1="1080" x2="960" y2="1080" stroke="#1f2d4d" stroke-width="3"/>
+  <text class="ja" x="120" y="1122" font-size="36" text-anchor="middle">0</text>
+  <text class="ja" x="400" y="1122" font-size="36" text-anchor="middle">10</text>
+  <text class="ja" x="680" y="1122" font-size="36" text-anchor="middle">20</text>
+  <text class="ja" x="960" y="1122" font-size="36" text-anchor="middle">30秒</text>
+  <text class="code" x="95" y="1190" font-size="44" xml:space="preserve">[20.0, 10.0]</text>
+  <text class="ja" x="450" y="1188" font-size="36">待ちが重なる</text>
 
-  <!-- 自作 -->
-  <rect x="610" y="492" width="550" height="210" rx="16" fill="#ecfdf5" stroke="#0f766e" stroke-width="3"/>
-  <text x="638" y="540" font-size="30" font-weight="bold" fill="#0f766e">テストで：自作のハンドラ</text>
-  <text x="638" y="588" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">skip_delay</text>
-  <text x="638" y="634" font-size="28" fill="#111827">時計なしで、すぐ再開する</text>
-  <text x="638" y="682" font-size="28" font-weight="bold" fill="#0f766e">実時間：ほぼ0秒</text>
-
-  <!-- asyncio -->
-  <rect x="40" y="722" width="550" height="210" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
-  <text x="68" y="770" font-size="30" font-weight="bold" fill="#c2410c">本番で：asyncio</text>
-  <text x="68" y="818" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">async_time_handler()</text>
-  <text x="68" y="864" font-size="28" fill="#111827">asyncioで実際に20秒待つ</text>
-  <text x="68" y="912" font-size="28" font-weight="bold" fill="#c2410c">実時間：約20秒</text>
-
-  <!-- 同期 -->
-  <rect x="610" y="722" width="550" height="210" rx="16" fill="#fff7ed" stroke="#c2410c" stroke-width="3"/>
-  <text x="638" y="770" font-size="30" font-weight="bold" fill="#c2410c">スクリプトで：同期</text>
-  <text x="638" y="818" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">sync_time_handler()</text>
-  <text x="638" y="864" font-size="28" fill="#111827">スレッドを止めて20秒待つ</text>
-  <text x="638" y="912" font-size="28" font-weight="bold" fill="#c2410c">実時間：約20秒</text>
-
-  <line x1="600" y1="938" x2="600" y2="986" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
-  <text x="624" y="972" font-size="28" fill="#111827">続きを再開する</text>
-
-  <rect x="330" y="992" width="540" height="68" rx="16" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
-  <text x="600" y="1037" text-anchor="middle" font-size="30" fill="#111827">どれでも戻り値は <tspan font-family="DejaVu Sans Mono, monospace">"完了"</tspan></text>
+  <rect x="60" y="1250" width="960" height="150" rx="24" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
+  <text class="ja" x="95" y="1312" font-size="36">napとtwo_napsは、どちらも同じコード。</text>
+  <text class="ja" x="95" y="1370" font-size="36">違うのは、kを受け取るハンドラだけ。</text>
 </svg>

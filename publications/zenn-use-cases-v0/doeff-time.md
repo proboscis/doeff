@@ -2,226 +2,356 @@
 title: "テストで20秒待つのをやめる"
 emoji: "⏱️"
 type: "tech"
-topics: ["python", "doeff", "テスト", "asyncio"]
+topics: ["python", "doeff", "algebraiceffects", "テスト", "asyncio"]
 published: false
 ---
 
-20秒待ってから次へ進む処理は、テストでも20秒止まります。この記事では、本番と同じ処理のまま、仮想の時計でテストを20秒待たずに終わらせます。待ちを含む処理のテストには、よく次の悩みがあります。
+*待つコードは、ハンドラに時間を頼みます。ハンドラはコードの残りを持ち、それをいつ動かすかを決めます。だからテストでは何日分もの予定を数ミリ秒で走らせ、本番では同じコードを実時間で動かせます。*
 
-- `time.sleep(20)`を含む処理は、テストも20秒かかります。
-- `sleep`をモックで消すと速くなりますが、2つの待ちのどちらが先に終わるかは試せません。
-- 今の時刻を読む処理は、テストを走らせた時刻で結果が変わります。
+Pythonの代数的エフェクト(algebraic effects)を、[doeff](https://github.com/proboscis/doeff)で紹介します。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。入門では、エフェクトとハンドラの仕組みを説明しました。この記事では、時間をエフェクトにします。
 
-Pythonのライブラリdoeffを使い、この3つをまとめて解きます。doeffは、処理の中の「待つ」「読む」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
+`await asyncio.sleep(1800)`は、本番でもテストでも30分待ちます。待つコードは確かめにくく、その訳は次の3つです。3つは、たいてい一緒に来ます。
 
-## まず短いコード
+- 待ちは、テストでも本番と同じだけ時間がかかります。
+- 同時に走る2つの待ちは、正しい順に終わらなければなりません。だから、待ちのたびにすぐ返すだけでは足りません。
+- 「次の平日の9時」のように時計を読むコードは、テストを走らせた時刻によって答えが変わります。
 
-「待つ」を処理の外側への依頼にして、テストでは仮想の時計に答えさせます。
+`asyncio`では、イベントループが時計を持っています。`asyncio.sleep`はループにタイマーを置き、coroutineをいつ続けるかはループが決めます。この記事では、その決めごとをハンドラへ移します。コードはエフェクトで時間を頼み、それに答えるハンドラは、コードの残りを受け取ります。だから、どの時計を使うかはハンドラが選びます。先へ飛ぶ仮想の時計でも、`asyncio`を通した実時間の時計でもよく、その間のコードは変わりません。
 
-```python
-from doeff import do, run  # 処理の定義と、その実行を使う。
-from doeff_core_effects.scheduler import scheduled  # タスクの再開と時計の進行を管理する。
-from doeff_time import Delay, sim_time_handler  # 待ちの依頼と、仮想時計のハンドラを使う。
+入門を読んでいなくても、この記事に要る語は次の3つです。
 
+- **エフェクト**は、`@do`の関数が何かを頼むために`yield`する、ただの値です。関数は、その`yield`で止まります。
+- **ハンドラ**は、`@handler`を付けた`(effect, k)`の関数です。`k`は止まった関数の残り(継続)で、ハンドラはそれをどう進めるかを決めます。`yield Resume(k, value)`は、`value`を`yield`の結果にして、残りを走らせます。
+- ハンドラは**呼ぶ側**が付けます。`handler(program)`は、`program`の周りに`handler`を付けた物です。
 
-@do  # 呼んだだけでは動かない処理（Program）にする。
-def job(seconds: float):  # 待つ秒数だけを受け取る。
-    yield Delay(seconds)  # 「seconds秒待ちたい」と外側へ依頼する。
-    return "完了"  # 待ちが終わると、この文字列を返す。
+## 時間を頼む
 
-
-def test_job_finishes_without_waiting():  # pytestが集めるテスト関数。
-    program = sim_time_handler()(job(20))  # 仮想時計のハンドラを外側に付ける。
-    assert run(scheduled(program)) == "完了"  # 20秒待たずに、すぐ終わる。
-```
-
-`job(20)`は「20秒待ちたい」と頼むだけで、自分では待ちません。テストでは仮想時計が答えるので、時計を20秒進めてすぐ続きを動かします。
-
-![同じjobに、時計を選んで付ける](/images/zenn-use-cases-v0/generated/time-concept.png)
-*処理本体は`Delay(20)`を頼むだけです。外側のハンドラが、仮想時計を進めるか、実際に待つかを決めます。*
-
-## 「待つ」を外側への依頼にする
-
-コードに出てきた語を、先に整理します。
-
-- `@do`を付けた関数は、呼んでもすぐには動きません。実行する手順を表す`Program`を返します。
-- `yield Delay(20)`は、「20秒待ちたい」という依頼を外側へ渡します。
-- このような依頼をエフェクト（effect）と呼びます。
-- 依頼を受け、続きをいつ・どう動かすかを決める部品を、ハンドラ（handler）と呼びます。
-- `run`は、ハンドラを付けた`Program`を最後まで動かします。
-- `scheduled`は、待っているタスクの再開と、仮想時計の進行を受け持ちます。
-
-`job`自身は、`time.sleep`も`asyncio.sleep`も呼びません。そのため、どの時計で待つかを外側で選べます。
-
-| 処理の内側が書くこと | 外側のハンドラが決めること |
-| --- | --- |
-| 20秒待ちたい | 実際に待つか、仮想時計を進めるか |
-| 今の時刻を知りたい | OSの時計を読むか、仮想時計を読むか |
-| 別の処理を始め、結果を待ちたい | どのタスクを、いつ再開するか |
-
-処理の手順と、その動かし方を分けるわけです。
-
-### ハンドラの中身：待ちを飛ばすだけのハンドラ
-
-ハンドラは自分でも書けます。次のハンドラは待ちの依頼を受けると、待たずにすぐ続きを動かします。ここからのコードは前のコードの続きで、`job`もそのまま使います。
+[doeff-time](https://github.com/proboscis/doeff/tree/main/packages/doeff-time)は、doeffの時間のエフェクトと、それに答えるハンドラのパッケージです。次の`nap`は時間を2回頼み、どの時計で待つかは一度も言いません。
 
 ```python
-from doeff import Pass, Resume, handler, with_handlers  # 依頼の委譲・再開・取り付けを使う。
-from doeff_time import DelayEffect  # Delay(...)が作る依頼の型。
+# clock.py(抜粋)
+from datetime import datetime, timedelta, timezone  # 時刻・時刻の差・UTCを使う。
+
+from doeff import Gather, Resume, Spawn, do, handler, run  # 集める・再開・始める・定義・ハンドラ・実行を使う。
+from doeff_core_effects.handlers import await_handler  # asyncioの待ちを、スケジューラの下で走らせるハンドラ。
+from doeff_core_effects.scheduler import scheduled  # SpawnとGatherに答える、doeffの参考のハンドラ。
+from doeff_time import (  # doeff-timeの、時間のエフェクトと時計のハンドラ。
+    Delay,  # 待ちを頼むエフェクトを作る。
+    DelayEffect,  # Delay(...)が作るエフェクトのクラス。
+    GetTime,  # 今の時刻を問うエフェクトを作る。
+    GetTimeEffect,  # GetTime()が作るエフェクトのクラス。
+    async_time_handler,  # asyncioで実際に待つ時計のハンドラ。
+    sim_time_handler,  # doeff-timeの仮想の時計のハンドラ。
+)
+
+START = datetime(2026, 11, 30, 9, 0, tzinfo=timezone.utc)  # 時計の始まり。2026年11月30日(月)9:00 UTC。
 
 
-@handler  # この関数を、Programに取り付けられるハンドラにする。
-def skip_delay(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
-    if isinstance(effect, DelayEffect):  # 待ちの依頼だけを受け持つ。
-        return (yield Resume(k, None))  # 待たずに、すぐ続きを再開する。
-    return (yield Pass(effect, k))  # 担当外の依頼は、外側のハンドラへ渡す。
-
-
-def test_job_with_own_handler():  # 自作のハンドラでも、同じjobが終わる。
-    assert run(with_handlers([skip_delay], job(20))) == "完了"  # 時計なしで、すぐ終わる。
+@do  # napを、yieldのたびに止まるプログラムにする。
+def nap(seconds: float):  # 時間を2回頼み、どの時計かは一度も言わない。
+    yield Delay(seconds)  # seconds秒待ちたいと頼む。
+    return (yield GetTime())  # 起きた時の時刻を問い、それを返す。
 ```
 
-- `isinstance`で、届いた依頼が待ちかどうかを見分けます。
-- 待ちの依頼は、頼まれた秒数を`effect.seconds`に持っています。
-- `Resume(k, None)`は、止まっていた`job`へ`None`を渡して再開します。
-- 待ち以外の依頼は、`Pass`で外側のハンドラへ渡します。
-- `with_handlers`は、ハンドラを`Program`の外側に取り付けます。
+- `yield Delay(seconds)`は、`seconds`秒待ちたいと頼みます。
+- `yield GetTime()`は、今の時刻を問います。答えは、タイムゾーン付きの`datetime`です。
+- `Delay(...)`は`DelayEffect`を、`GetTime()`は`GetTimeEffect`を作ります。ハンドラは、受け取るエフェクトのクラスを引数の型の注釈に書き、どのエフェクトを受け取るかを示します。
 
-ただし、このハンドラは時計を持ちません。待ちが2つあると、どちらが先に終わるかを試せません。ここからは、doeff-timeの仮想時計を使います。
+`nap(20)`をハンドラ無しで走らせると、`Delay`の所で`UnhandledEffect`になって止まります。エフェクトは、ハンドラが意味を与えるまで、何の意味も持ちません。
 
-## 見せ場：20秒と10秒の待ちを、仮想時間で並べて動かす
+## 時計は、`k`をいつ動かすかを決めるハンドラ
 
-20秒待つ処理と10秒待つ処理を同時に始めます。それぞれが、開始から何秒後に再開したかを調べます。
+時計を自分で書いてみます。この時計は、時刻を変数に持ちます。`Delay`が来たら時刻を進め、すぐに`k`を再開します。`GetTime`が来たら、持っている時刻で`k`を再開します。
 
 ```python
-from datetime import datetime, timezone  # 仮想時計の開始日時をUTCで固定する。
+# clock.py(抜粋)
+def ticking(start: datetime):  # 自作の時計。すぐにkを再開し、針を進める。
+    now = start  # この時計が持つ今の時刻。
 
-from doeff_core_effects.scheduler import Gather, Spawn  # タスクを始め、結果を集める。
-from doeff_time import GetTime  # 選んだ時計の、今の日時を読む。
+    @handler  # clockを、プログラムに付けられるハンドラにする。
+    def clock(effect: DelayEffect | GetTimeEffect, k):  # DelayとGetTimeだけを受け取る。
+        nonlocal now  # 外の関数のnowを書き換える。
+        if isinstance(effect, DelayEffect):  # 待ちの依頼なら、
+            now += timedelta(seconds=effect.seconds)  # 頼まれた秒数だけ針を進め、
+            return (yield Resume(k, None))  # 待たずに、すぐ続きを再開する。
+        return (yield Resume(k, now))  # 時刻の問いには、持っている時刻で答える。
 
-
-@do  # 待ってから、再開した日時を返す。
-def worker(seconds: float):  # 20または10を受け取る。
-    yield Delay(seconds)  # 仮想時間なら、時計が指定秒数進むまで止まる。
-    return (yield GetTime())  # 再開した時点の日時を返す。
-
-
-@do  # 2つの待ちを、通常のyieldで組み立てる。
-def workflow():  # 実時間でも仮想時間でも、同じ処理を使う。
-    start = yield GetTime()  # 経過秒数の基準になる開始日時を読む。
-    slow = yield Spawn(worker(20))  # 20秒待つ処理を始め、Taskを受け取る。
-    fast = yield Spawn(worker(10))  # 10秒待つ処理も始める。
-    finished = yield Gather(slow, fast)  # slow、fastの順で日時を受け取る。
-    return [(t - start).total_seconds() for t in finished]  # 開始からの秒数へ直す。
-
-
-def test_workflow_in_virtual_time():  # 20秒の流れを、待たずに確かめる。
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)  # 時計の開始を00:00:00に固定する。
-    program = sim_time_handler(start_time=start)(workflow())  # 仮想時計を取り付ける。
-    assert run(scheduled(program)) == [20.0, 10.0]  # 20秒後と10秒後に再開した。
+    return clock  # startから始まる時計のハンドラを返す。
 ```
-
-- `Spawn`は、処理を別のタスクとして始め、その`Task`を返します。
-- `Gather`は、渡した順に結果を返します。終わった順ではありません。
-- 開始日時を固定するので、`GetTime`の値は走らせる時刻によりません。
-
-![仮想時計は、次の予定の時刻へ飛ぶ](/images/zenn-use-cases-v0/generated/time-flow.png)
-*2つのタスクが0秒で待ち始めます。時計は10秒、20秒の順に飛び、Gatherは`[20.0, 10.0]`を返します。*
-
-仮想時計は、動けるタスクが無くなった時だけ、次の予定の時刻まで進みます。時計を進める係は、低い優先度のタスクとして動きます。動ける処理が残っている間に、時計だけが先へ進むことはありません。
-
-**「何を返すか」に加えて、「いつ続きを動かすか」もハンドラが決めます。** 先ほどの自作のハンドラとの違いは、ここにあります。
-
-2026年10月16日に、この記事のテスト関数4つをpytestで走らせました。4つとも通りました。pytestが測った関数の実行時間は、4つ合わせて約0.2秒でした。ライブラリを読み込む時間は、この数に含みません。
-
-## 実時間で動かす時は、外側だけを替える
-
-本番で実際に待つ時も、`worker`と`workflow`はそのまま使います。
 
 ```python
-from doeff_core_effects.handlers import await_handler  # 非同期の待ちを、スケジューラへ繋ぐ。
-from doeff_time import async_time_handler  # asyncioで実際に待つハンドラ。
-
-program = async_time_handler()(workflow())  # 同じworkflowに、実時間の時計を付ける。
-result = run(scheduled(await_handler()(program)))  # 今度は実際に約20秒待つ。
-print(result)  # おおむね[20.0, 10.0]。起床の遅れで、わずかにずれる。
+print(run(ticking(START)(nap(20))))  # 自作の時計で、20秒のnapを1つ走らせる。
 ```
 
-- `async_time_handler`は、内部で`asyncio`を使って実際に待ちます。
-- `await_handler`は、その非同期の待ちをdoeffのスケジューラへ繋ぎます。
+```text
+2026-11-30 09:00:20+00:00
+```
 
-2026年10月16日に走らせると、表示は`[20.091931, 10.058906]`でした。全体で約20秒かかりました。
-
-処理本体には、`async def`も`asyncio.sleep`もありません。`asyncio`をやめる話ではありません。**`asyncio`への依存を、ハンドラの側に寄せる**という話です。スレッドを止めて待つ`sync_time_handler`もあり、3つの時計から選べます。
-
-## 指定時刻の処理と、優先度も同じ書き方で
-
-指定した日時に処理を始めることもできます。次の例は8秒後の予定を登録し、先に3秒後まで待ちます。
+この時計の上では20秒が過ぎ、あなたの時計では1秒も過ぎていません。タスクが1つなら、仮想の時計の仕事はこれだけです。次は、2つのタスクが同時に待ちます。1つは20秒、もう1つは10秒です。
 
 ```python
-from datetime import timedelta  # 開始日時からの秒数の差を作る。
-
-from doeff_core_effects.scheduler import Wait  # 予定したタスクの終わりを待つ。
-from doeff_time import ScheduleAt, WaitUntil  # 日時を指定して、始めたり待ったりする。
-
-
-@do  # 時計を使わない、予定の本文。
-def alarm_body():  # 予定の本文は、時間ハンドラの外側で動く。
-    return "予定"  # Waitで受け取る値。
-
-
-@do  # 絶対日時で予定を組み立てる。
-def timeline():  # 3秒の時点と、8秒の予定を並べる。
-    start = yield GetTime()  # 開始日時を読む。
-    alarm = yield ScheduleAt(start + timedelta(seconds=8), alarm_body())  # 8秒後の予定を登録する。
-    yield WaitUntil(start + timedelta(seconds=3))  # 3秒後まで待つ。
-    middle = yield GetTime()  # 3秒の時点の日時を読む。
-    label = yield Wait(alarm)  # 予定が終わるまで待ち、その値を受け取る。
-    end = yield GetTime()  # 予定が終わった日時を読む。
-    return [label, (middle - start).total_seconds(), (end - start).total_seconds()]  # 秒数へ直す。
-
-
-def test_schedule_at_8_seconds():  # 3秒と8秒の流れを、待たずに確かめる。
-    program = sim_time_handler()(timeline())  # 仮想時計を取り付ける。
-    assert run(scheduled(program)) == ["予定", 3.0, 8.0]  # 3秒で一度戻り、8秒で予定が終わる。
+# clock.py(抜粋)
+@do  # two_napsを、yieldのたびに止まるプログラムにする。
+def two_naps(slow: float = 20, fast: float = 10):  # 2つのタスクが同時に待つ。
+    start = yield GetTime()  # 始めの時刻を問う。
+    slow_task = yield Spawn(nap(slow))  # 20秒のnapを、タスクとして始める。
+    fast_task = yield Spawn(nap(fast))  # 10秒のnapも始める。
+    woke = yield Gather(slow_task, fast_task)  # 2つのタスクが起きた時刻を、引数の順に受け取る。
+    return [(at - start).total_seconds() for at in woke]  # 始めから何秒後に起きたかに直す。
 ```
 
-- `ScheduleAt`は、指定した日時に処理を始める予定を登録し、`Task`を返します。
-- `WaitUntil`は、指定した日時になるまで待ちます。
-- `Wait`は、予定の処理が終わるのを待ち、その戻り値を受け取ります。
+`Spawn`は、プログラムをタスクとして始めます。`Gather`はタスクを待ち、引数の順に結果を返します。どちらもエフェクトで、`scheduled`はそれに答えるdoeffの参考のハンドラです。結果の数は、それぞれのタスクが始めから何秒後に起きたかです。
 
-予定の本文は、今の実装では時間ハンドラの外側で動きます。本文の中で`GetTime`を使うと、受け手のいない依頼になります。本文で時計が要る時は、ハンドラを付ける範囲を明示します。
+```python
+print(run(scheduled(ticking(START)(two_naps()))))  # 自作の時計で、2つのタスクを走らせる。
+```
 
-仮想時計の日時は、`start_time`の引数か`SetTime`で決めます。`SetTime`を扱うのは仮想時計だけです。実時間のハンドラで、OSの時計を変えることはできません。
+```text
+[20.0, 30.0]
+```
 
-優先度も、タスクを始める時の引数で書きます。`Spawn(処理, priority=PRIORITY_HIGH)`のように渡すと、動ける時に先に選ばれます。動いているCPU処理を、途中で止める仕組みではありません。優先度の例は、[完全な例](examples/scheduling.py)に入れています。
+10秒の`nap`が、始めから30秒後に起きました。`ticking`は遅いタスクの`k`をすぐに再開したので、速いタスクが待ち始める前に、遅いタスクの20秒が時計に載りました。そこへ、速いタスクが10秒を足しました。いくつものタスクを受け持つ時計は、待ちが来るたびにその場で答えることはできません。待っている全部のタスクの`k`を、どのタスクも動けなくなるまで持ちます。そして時刻をいちばん早い起床まで進め、そのタスクから再開します。
 
-## まとめ
+doeff-timeの`sim_time_handler`は、これを行う時計です。
 
-- 「待つ」を`yield Delay(...)`の依頼にすると、どの時計で待つかを外側で選べます。
-- テストでは仮想時計のハンドラを付け、20秒の流れを一瞬で確かめます。
-- 開始日時を固定するので、時刻を読む処理も毎回同じ結果になります。
-- 本番では実時間のハンドラに替えるだけで、処理本体は変えません。
-- 指定時刻の処理と優先度も、同じ`yield`の書き方で書けます。
+```python
+print(run(scheduled(sim_time_handler(start_time=START)(two_naps()))))  # doeff-timeの仮想の時計で、同じ2つのタスクを走らせる。
+```
 
-時間以外の依頼との組み合わせは、[ハンドラの合成](doeff-handlers.md)で扱います。`await`との違いは[coroutineとの違い](doeff-coroutines.md)、ゲームの進行と組み合わせる例は[カードゲームの記事](doeff-games.md)にあります。
+```text
+[20.0, 10.0]
+```
+
+遅いタスクは始めから20秒後に、速いタスクは10秒後に起き、実行に時間はかかりませんでした。この実行を、やりとり1つずつで並べると次のとおりです。
+
+![sim_time_handlerが、待つkを持って時計を進める](/images/zenn-use-cases-v0/generated/time-flow.png)
+*2つのnapが待ちで止まると、時計はそれぞれのkを持ちます。どのタスクも動けない時にだけ、時刻を次の起床まで進めて、そのkを再開します。*
+
+`sim_time_handler`は、待っている`k`を、それぞれの起床の時刻まで持ちます。時計を進めるのは、優先度がいちばん低い(idleの)タスクです。スケジューラはこのタスクを、ほかの全部のタスクが待っている時にだけ走らせます。だから時刻は、どのタスクも動けない時にだけ進みます。このハンドラは、どのプログラムでも`yield`できるエフェクトだけを通して、スケジューラとやりとりします。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)では、これに似た時計を約30行で作っています。
+
+これが、時間を、呼び出す関数でなくエフェクトにする訳です。ハンドラは、`yield`が何を返すかを決めます。そして`k`を持つので、プログラムの残りをいつ走らせるかも決めます。
+
+![同じtwo_napsでも、kをいつ動かすかで答えが変わる](/images/zenn-use-cases-v0/generated/time-concept.png)
+*tickingは待ちのたびにすぐkを再開するので、2つの待ちが足し算になります。sim_time_handlerは、どのタスクも動けなくなるまでkを持つので、2つの待ちが重なります。*
+
+## 何日分もの予定を、数ミリ秒で
+
+次は、もっと長い時間を含むプログラムです。平日の毎朝9時にレポートを作り、1回の作成には10分の期限を付けます。
+
+```python
+# report.py(抜粋)
+from doeff import Cancel, Pass, Spawn, TaskCancelledError, Wait, do, handler, run  # 取り消し・委譲・始める・待つ・定義・実行を使う。
+from doeff_core_effects.scheduler import scheduled  # タスクのエフェクトに答える、doeffの参考のハンドラ。
+from doeff_time import (  # doeff-timeの、時間のエフェクトと仮想の時計。
+    Delay,  # 待ちを頼むエフェクトを作る。
+    DelayEffect,  # Delay(...)が作るエフェクトのクラス。
+    GetTime,  # 今の時刻を問うエフェクトを作る。
+    RaceWithin,  # タスクを、期限までだけ待つエフェクトを作る。
+    WaitUntil,  # 決めた時刻まで待つエフェクトを作る。
+    WaitUntilEffect,  # WaitUntil(...)が作るエフェクトのクラス。
+    sim_time_handler,  # doeff-timeの仮想の時計のハンドラ。
+)
+
+
+# プログラム:平日の毎朝9時にレポートを作る。1回の作成には10分を与える。
+def next_weekday_at(now: datetime, hour: int) -> datetime:  # nowより後で、いちばん近い平日のhour時を返す。
+    at = now.replace(hour=hour, minute=0, second=0, microsecond=0)  # 同じ日のhour時ちょうど。
+    if at <= now:  # その時刻をもう過ぎていれば、
+        at += timedelta(days=1)  # 次の日にする。
+    while at.weekday() >= 5:  # 土曜と日曜なら、
+        at += timedelta(days=1)  # 平日になるまで1日ずつ送る。
+    return at  # 次の平日のhour時。
+
+
+@do  # buildを、yieldのたびに止まるプログラムにする。
+def build(minutes: int):  # 言われたとおりの時間がかかる一歩。
+    yield Delay(minutes * 60)  # minutes分待つ。
+    return f"built in {minutes} min"  # 何分で作れたかを返す。
+
+
+@do  # withinを、yieldのたびに止まるプログラムにする。
+def within(seconds: float, program):  # programの値か、"timed out"を返す。
+    task = yield Spawn(program)  # programを、タスクとして始める。
+    outcome = yield RaceWithin((task,), seconds)  # タスクを、seconds秒までだけ待つ。
+    if not outcome.timed_out:  # 期限の前に終われば、
+        return outcome.value  # その値を返す。
+    yield Cancel(task)  # 期限が先に来たら、タスクを取り消す。
+    try:  # 取り消したタスクの後始末が終わるのを待つ。
+        return (yield Wait(task))  # 後始末が終わると、このyieldでTaskCancelledErrorが起きる。
+    except TaskCancelledError:  # 取り消しが届いたら、
+        return "timed out"  # 期限切れと返す。
+
+
+@do  # report_dayを、yieldのたびに止まるプログラムにする。
+def report_day(minutes: int):  # 次の平日の9時まで待ち、レポートを作る。
+    now = yield GetTime()  # 今の時刻を問う。
+    yield WaitUntil(next_weekday_at(now, 9))  # 次の平日の9時まで待つ。
+    started = yield GetTime()  # 作り始めた時刻を問う。
+    result = yield within(10 * 60, build(minutes))  # 10分の期限を付けて作る。
+    finished = yield GetTime()  # 終わった時刻を問う。
+    return f"{started:%a %d %H:%M}-{finished:%H:%M} {result}"  # 曜日・日・始めと終わりの時刻・結果を1行にする。
+
+
+@do  # daily_reportを、yieldのたびに止まるプログラムにする。
+def daily_report(build_minutes: list[int]):  # 1日に1行を返す。
+    lines: tuple[str, ...] = ()  # 作った行をためる。
+    for minutes in build_minutes:  # 1日分ずつ、
+        lines = (*lines, (yield report_day(minutes)))  # その日のレポートを作り、行を足す。
+    return lines  # 全部の日の行を返す。
+```
+
+- `next_weekday_at`は、ふつうのPythonの関数です。`now`を引数で受け取るので、時計を読みません。
+- `build`は、言われたとおりの時間がかかります。だから、1回の作成だけを遅くできます。
+- `within`はタイムアウトです。`program`をタスクとして始め、`RaceWithin((task,), seconds)`を`yield`します。これは「タスクを、長くても`seconds`秒まで待つ」という依頼です。期限が先に来たら、タスクを取り消して、その後始末が終わるのを待ちます。後始末が終わると、`Wait`の`yield`で`TaskCancelledError`が起きます。
+- `report_day`は、時刻を`GetTime`で問い、`WaitUntil`で待ちます。自分では時計を読まないので、何をするかは、どの時計が答えるかで決まります。いつ走らせたかでは決まりません。
+- `daily_report`は、作成1回ごとに`report_day`を1回走らせます。`@do`の関数からプログラムを`yield`すると、それを走らせて、その結果を受け取れます。
+
+仮想の時計を、金曜の夕方から始めます。
+
+```python
+# report.py(抜粋)
+FRIDAY_EVENING = datetime(2026, 11, 27, 17, 0, tzinfo=timezone.utc)  # 金曜の夕方。2026年11月27日17:00 UTC。
+
+
+def simulated(program):  # 金曜17:00から始まる、仮想の時間で走らせる。
+    return scheduled(sim_time_handler(start_time=FRIDAY_EVENING)(program))  # 仮想の時計を、scheduledの内側に付ける。
+```
+
+```python
+for line in run(simulated(daily_report([3, 12, 5]))):  # 3分・12分・5分かかる作成の3日分を、仮想の時間で走らせる。
+    print(line)  # 1日に1行を印字する。
+```
+
+```text
+Mon 30 09:00-09:03 built in 3 min
+Tue 01 09:00-09:10 timed out
+Wed 02 09:00-09:05 built in 5 min
+```
+
+週末が過ぎ、12分かかる作成は10分の期限に当たりました。`within`があきらめた時、時計は09:10を指していました。この実行は、仮想の時間で金曜の夕方から水曜の朝までを進み、数ミリ秒で終わります。どの日に走らせても、毎回同じ行を印字します。
+
+### 後から時計を読むテスト
+
+```python
+# test_report.py
+from datetime import datetime, timezone  # 時計が止まった時刻を、UTCの日時と比べる。
+
+from doeff import run  # プログラムを最後まで走らせる。
+from doeff_core_effects.scheduler import scheduled  # タスクのエフェクトに答える、doeffの参考のハンドラ。
+from doeff_time import SimClock, sim_time_handler  # 仮想の時計そのものと、それで答えるハンドラ。
+
+from report import FRIDAY_EVENING, daily_report  # 確かめるプログラムと、その始まりの時刻。
+
+
+def test_a_slow_build_times_out_and_the_next_day_still_runs():  # 遅い作成は期限で切られ、次の日もまた走る。
+    clock = SimClock(FRIDAY_EVENING)  # 金曜の夕方から始まる仮想の時計。
+    lines = run(scheduled(sim_time_handler(clock=clock)(daily_report([3, 12, 5]))))  # その時計をハンドラに渡して走らせる。
+    assert lines[1] == "Tue 01 09:00-09:10 timed out"  # 火曜の12分の作成は、10分で切られる。
+    assert lines[2] == "Wed 02 09:00-09:05 built in 5 min"  # 水曜も、また9時に作る。
+    assert clock.current_time == datetime(2026, 12, 2, 9, 5, tzinfo=timezone.utc)  # 時計は、最後の作成が終わった水曜9:05で止まった。
+```
+
+`SimClock`は、仮想の時計そのものです。`sim_time_handler`に渡すと、テストは時刻がどこで止まったかを読めます。ここでは、最後の作成が終わった水曜の09:05です。テストは時刻をぴったりの値で確かめます。実行の中に、機械の速さで変わる物が何も無いからです。
+
+### どの時計の周りにも、自分の層を
+
+ハンドラは、プログラムと時計の間に入ることもできます。次の`timeline`は、待ちが始まるたびに、その待ちを印字します。
+
+```python
+# report.py(抜粋)
+@handler  # timelineを、プログラムに付けられるハンドラにする。
+def timeline(effect: DelayEffect | WaitUntilEffect, k):  # 待ちが始まるたびに、その待ちを印字する。
+    now = yield GetTime()  # このハンドラも、外の時計に今の時刻を問う。
+    if isinstance(effect, DelayEffect):  # 秒数で待つ依頼なら、
+        print(f"{now:%a %H:%M} wait {effect.seconds:g} s")  # 今の時刻と、待つ秒数を印字する。
+    else:  # 時刻まで待つ依頼なら、
+        print(f"{now:%a %H:%M} wait until {effect.target:%a %H:%M}")  # 今の時刻と、待つ先の時刻を印字する。
+    return (yield Pass(effect, k))  # 待ちとkを、外の時計へ渡す。
+```
+
+```python
+run(simulated(timeline(daily_report([3, 12]))))  # timelineを、プログラムと仮想の時計の間に付けて走らせる。
+```
+
+```text
+Fri 17:00 wait until Mon 09:00
+Mon 09:00 wait 180 s
+Mon 09:03 wait until Tue 09:00
+Tue 09:00 wait 720 s
+```
+
+`timeline`は、自分でもエフェクトを`yield`します。その`GetTime`は、ほかの`GetTime`と同じく外の時計まで届きます。続く`Pass(effect, k)`は、待ちと`k`を外の時計へ渡し、`k`をいつ動かすかは時計が決めます。`timeline`が受け取るのは`Delay`と`WaitUntil`だけです。だから、プログラムの`GetTime`と`RaceWithin`の期限は、`timeline`を通り過ぎて時計へ届きます。この層を付けると、実行の結果だけでなく、その実行が組んだ予定の全体が見えます。そのために、プログラムにログの処理を書く必要はありません。次の節の実時間の時計の周りに付ければ、同じ層が、待ちを起きたとおりに印字します。
+
+## 同じコードを実時間で
+
+```python
+# clock.py(抜粋)
+def wall_clock(program):  # 実時間の時計。asyncioで待つ。
+    return scheduled(await_handler()(async_time_handler()(program)))  # 時計がasyncioの待ちを頼み、await_handlerがそれをイベントループで走らせる。
+```
+
+```python
+print(run(wall_clock(two_naps())))  # 同じtwo_napsを、実時間の時計で走らせる(20秒かかる)。
+```
+
+この実行は20秒かかり、`[20.05, 10.05]`ほどを印字します。実時間の時計のタイマーは、少し遅れて起きるからです。`async_time_handler`は、`Delay`には`asyncio.sleep`をawaitして答え、`GetTime`にはシステムの時計で答えます。`await_handler`は、そのawaitを、スケジューラの下の`asyncio`のイベントループで走らせます。同じように、`run(wall_clock(daily_report([3, 12, 5])))`は次の平日の9時まで待ち、`within`のタイムアウトは、実時間の10分で作成を取り消します。
+
+`nap`も`daily_report`も、`async def`ではありません。`asyncio`を選ぶのはプログラムでなく、ハンドラです。待つ間スレッドを止めるコードには、`time.sleep`で待つ`sync_time_handler`があります。
+
+| 実行 | 時計 | 同じ`daily_report`がすること |
+|---|---|---|
+| テスト | `sim_time_handler(start_time=FRIDAY_EVENING)` | 金曜の夕方から水曜の朝までを数ミリ秒で進み、毎回同じ行を印字する |
+| 時計を読むテスト | `sim_time_handler(clock=SimClock(FRIDAY_EVENING))` | 同じ動きに加え、テストが時刻の止まった所を読む |
+| 予定のテスト | `simulated`の内側の`timeline` | 待ちの1つ1つを、仮想の時刻とともに印字する |
+| 本番 | `await_handler()`の内側の`async_time_handler()` | `asyncio`で待ち、タイムアウトは実時間の10分で取り消す |
+
+## ほかの方法との比べ
+
+Pythonには、テストで待ちを速くする方法がもうあります。20秒と10秒待つ2つのタスクで、それぞれを走らせました。CPython 3.12で、trio 0.34.0・looptime 0.9・freezegun 1.5.5・time-machine 3.6.0を使いました。
+
+| | テストの中の待ち | 2つの待ちが時刻の順に終わるか | 日付と時刻が待ちとともに進むか | あなたのコード |
+|---|---|---|---|---|
+| `asyncio.sleep`を、すぐ返すように書き換える | すぐ返る | いいえ。どちらも0秒と報告し、始めた順に終わる | いいえ | 変えない |
+| freezegunの`freeze_time()` | 返らない。ループの時計も止まる(`real_asyncio=True`なら、実時間で待つ) | — | いいえ。`datetime.now()`は止めた時刻のまま | 変えない |
+| time-machineの`travel(..., tick=False)` | 実時間で待つ | はい。ただし実時間で | いいえ | 変えない |
+| trioのテスト用の時計(`autojump_threshold=0`)、`asyncio`ならlooptime | すぐ返る | はい | 一部。`trio.current_time()`や`loop.time()`は進み、`datetime.now()`は進まない | 変えない。trioの時計には、trioで書いたコードが要る |
+| doeff-timeの`sim_time_handler` | すぐ返る | はい | はい。`GetTime`と待ちに、1つのハンドラが答える | `yield`とdoeff-timeのエフェクトで書く |
+
+コードがもう`async`で、待ちを速くするだけでよいなら、trioの自動で進む時計とlooptimeは、コードに触れずにそれを行います。その場合は、そちらのほうが簡単です。doeffが加えるのは、時計がイベントループの一部でなく、あなたのハンドラの重なりの中の1つのハンドラだという点です。日付は待ちと同じ時計から来るので、「次の平日の9時」のような予定も仮想の時間で走ります。上の`ticking`のように時計を自分で書くことも、`timeline`のような層を周りに付けることもできます。代わりに払うのは、入門と同じく、コードの中の`yield`と`@do`です。
+
+## 限界
+
+- 仮想の時間が進むのは、全部のタスクがエフェクトで待っている時だけです。ループで計算を続けるタスクは、`yield`するまで時計を止めたままにします。`time.sleep`やソケットの読み込みのように止まる呼び出しは、どの時計の上でも、全部のタスクを止めます。
+- 仮想になるのは、エフェクトで頼んだ時間だけです。`datetime.now()`と`time.time()`は、あなたのコードの中でも、そのコードが呼ぶライブラリの中でも、システムの時計を読みます。`next_weekday_at`のように時刻を引数で渡すか、`GetTime`で問います。
+- `sim_time_handler`は、`scheduled(...)`の内側で、それを待つタスクを始める全部の`Spawn`の外側に付けます。そうすると、タスクが1つの時計を共有します。
+- doeff-timeの`ScheduleAt`に渡したプログラムは、時間のハンドラの外側のハンドラの下で走ります。だから、そのプログラムは自分では時間を頼めません。
+- 実時間の時計のタイマーは、上の実行のとおり、少し遅れて起きます。時刻をぴったりの値で確かめるテストは、仮想の時計の上で走らせます。
+- doeffは0.x、doeff-timeは0.1なので、版が変わると名前が変わることがあります。
+
+## 試す
+
+```bash
+pip install doeff doeff-time pytest   # CPython 3.11から3.14で入る。
+```
+
+この記事の例はどれも、doeff 0.8.0とdoeff-time 0.1.0で、載せたとおりに走ります。完全なファイルは[examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)にあります。[doeff-timeのREADME](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)は、時間のエフェクトの全部と、時計ごとに守る約束を挙げています。
+
+今のテストで、時間が遅さや不安定さの元になっているのはどこですか。backoffを挟むリトライでしょうか、cronのような予定でしょうか、タイムアウトでしょうか。issueは https://github.com/proboscis/doeff/issues で受け付けています。
+
+`yield`と`await`の違いは、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で比べます。ハンドラが返す答えを別のハンドラが記録し、その記録から同じプログラムをもう一度走らせる話は、6本目の[外部APIのテストで通信するのをやめる](doeff-replay.md)にあります。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
 ## 参考
 
-この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain（commit `9adc4f8`）でも、同じく動きました。`doeff`・`doeff-core-effects`・`doeff-time`の3つのパッケージが要ります。
+この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0とdoeff-time 0.1.0で確かめました。Pythonは3.11・3.12・3.14で試しました。
 
-doeff-timeはPyPIに無いので、GitHubから入れます。`--no-sources`を付けないと、doeff本体もGitHubから入り、Rustのビルドが要ります。完全な例を`scheduling.py`として保存し、次のコマンドで実行します。
-
-```bash
-uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ git+https://github.com/proboscis/doeff@9adc4f8#subdirectory=packages/doeff-time" python scheduling.py  # doeff本体はPyPI、doeff-timeだけGitHubから入れて、完全な例を実行する。
-```
-
-- [この記事のコードをまとめた完全な例](examples/scheduling.py)
-- [doeff本体（この記事で確かめた版）](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
-- [実時間・仮想時間のハンドラ](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-time)
-- [タスクと優先度を扱うスケジューラ](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/scheduler.py)
-- [ハンドラの能力と関数の色の整理](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/docs/22-capability-classes.md)
+- [この記事の完全な例(clock.py・report.py・test_report.py)](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect)
+- [doeff-timeのREADME(時間のエフェクトと、時計ごとの約束)](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md)
+- [Why Effects?の節「Virtual time: hours of waiting in an instant」](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)
+- [trioのテスト用の時計](https://trio.readthedocs.io/en/stable/reference-testing.html)
+- [looptime](https://github.com/nolar/looptime)
+- [freezegun](https://github.com/spulec/freezegun)
+- [time-machine](https://github.com/adamchainz/time-machine)
 - 前の回:[Claude Codeを起動してテストするのをやめる](doeff-agents.md)
 - 次の回:[依存を引数で引き回すのをやめる](doeff-di.md)

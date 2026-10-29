@@ -27,12 +27,6 @@
       "to": "| 章・記事 |"
     }
   ],
-  "doeff-time.md": [
-    {
-      "from": "`await`との違いは[coroutineとの違い](doeff-coroutines.md)、",
-      "to": "`await`との違いは[章](doeff-coroutines.md)、"
-    }
-  ],
   "doeff-replay.md": [
     {
       "from": "次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。",

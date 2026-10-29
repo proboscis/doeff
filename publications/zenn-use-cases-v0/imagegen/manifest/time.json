@@ -5,11 +5,11 @@
     "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "ecfe4562d8db1d556f887532c8006a1c8fb8b731c70000f854bbceb2ab924daf",
-    "width": 1200,
-    "height": 1080,
-    "bytes": 132595,
-    "review": "2026-10-16：週3の改稿のコード（job・skip_delay・3つの時計）と名前・値・矢印を目視確認。白背景の平面図として採用。"
+    "sha256": "3b657be2e1283c31cf713f925e20e96c5515906b41ff71f142ce50c6339ccb1a",
+    "width": 1080,
+    "height": 1440,
+    "bytes": 163369,
+    "review": "2026-10-29：英語の3本目「Time as an effect」の版への書き直しで描き直した。two_napsの2行、tickingの[20.0, 30.0](待ちが足し算)とsim_time_handlerの[20.0, 10.0](待ちが重なる)の帯(1秒 = 28px)、目盛り0・10・20・30秒を目視確認。白背景の平面図として採用。"
   },
   {
     "id": "time-flow",
@@ -17,10 +17,10 @@
     "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "c85f062233e9ea38d7c0564505f5fe6f68fe14adbdb726f163b7bfcffea34f1b",
-    "width": 1200,
-    "height": 1040,
-    "bytes": 118276,
-    "review": "2026-10-16：worker(20)・worker(10)の再開時刻、時計の跳び、Gatherの[20.0, 10.0]、2026-10-16に測った実時間（0.01秒未満・20.09秒）を目視確認。白背景の平面図として採用。"
+    "sha256": "5ad88118124f67377b1b2f0ca72f3746cddee78655e08499728aaa13d5911c08",
+    "width": 1080,
+    "height": 1760,
+    "bytes": 238104,
+    "review": "2026-10-29：英語の3本目のsequenceDiagram(nap(20)・nap(10)・sim_time_handler)を、①〜⑥のやりとりの図にした。k1・k2の預け、09:00:10と09:00:20への進み、Resumeの値、結果[20.0, 10.0]を目視確認。白背景の平面図として採用。"
   }
 ]

@@ -1,68 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1040" viewBox="0 0 1200 1040" font-family="IPAPGothic, IPAGothic, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1760" viewBox="0 0 1080 1760">
+  <!-- scheduled(sim_time_handler(start_time=START)(two_naps()))の実行を、やりとり1つずつ示す(英語の3本目の記事のsequenceDiagramの訳)。 -->
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
     </marker>
-    <marker id="jump" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/>
-    </marker>
+    <style>
+      .ja { font-family: "IPAGothic", sans-serif; fill: #1f2d4d; }
+      .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
+    </style>
   </defs>
-  <rect width="1200" height="1040" fill="#ffffff"/>
-  <text x="600" y="72" text-anchor="middle" font-size="44" font-weight="bold" fill="#111827">仮想時計は、次の予定の時刻へ飛ぶ</text>
+  <rect width="1080" height="1760" fill="#ffffff"/>
 
-  <!-- 目盛り -->
-  <text x="40" y="140" font-size="28" fill="#4b5563">仮想時刻</text>
-  <g font-size="30" font-weight="bold" fill="#111827" text-anchor="middle">
-    <text x="320" y="140">0秒</text>
-    <text x="710" y="140">10秒</text>
-    <text x="1100" y="140">20秒</text>
-  </g>
-  <g stroke="#d1d5db" stroke-width="2" stroke-dasharray="8 8">
-    <line x1="320" y1="158" x2="320" y2="560"/>
-    <line x1="710" y1="158" x2="710" y2="560"/>
-    <line x1="1100" y1="158" x2="1100" y2="560"/>
-  </g>
+  <text class="ja" x="540" y="76" font-size="42" font-weight="bold" text-anchor="middle">sim_time_handlerが、待つkを持って時計を進める</text>
 
-  <!-- worker(20) -->
-  <text x="40" y="226" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">worker(20)</text>
-  <rect x="320" y="190" width="780" height="50" rx="10" fill="#d1fae5"/>
-  <text x="340" y="226" font-size="26" fill="#065f46">Delay(20) で待つ</text>
-  <circle cx="1100" cy="215" r="14" fill="#0f766e"/>
-  <text x="1080" y="282" text-anchor="end" font-size="26" fill="#111827">20秒で再開</text>
+  <rect x="60" y="120" width="960" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="176" font-size="40" font-weight="bold">① nap(20)</text>
+  <text class="code" x="95" y="244" font-size="44" xml:space="preserve">yield Delay(20)</text>
+  <text class="ja" x="95" y="292" font-size="36">止まり、続きをk1として時計に預ける</text>
 
-  <!-- worker(10) -->
-  <text x="40" y="346" font-size="28" font-family="DejaVu Sans Mono, monospace" fill="#111827">worker(10)</text>
-  <rect x="320" y="310" width="390" height="50" rx="10" fill="#d1fae5"/>
-  <text x="340" y="346" font-size="26" fill="#065f46">Delay(10) で待つ</text>
-  <circle cx="710" cy="335" r="14" fill="#0f766e"/>
-  <text x="730" y="346" font-size="26" fill="#111827">10秒で再開</text>
+  <line x1="200" y1="318" x2="200" y2="392" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="368" font-size="38">時計は、k1を再開しない</text>
 
-  <!-- 時計 -->
-  <text x="40" y="486" font-size="28" fill="#111827">時計</text>
-  <circle cx="320" cy="476" r="12" fill="#0f766e"/>
-  <circle cx="710" cy="476" r="12" fill="#0f766e"/>
-  <circle cx="1100" cy="476" r="12" fill="#0f766e"/>
-  <path d="M 330 466 Q 515 386 700 466" fill="none" stroke="#0f766e" stroke-width="4" marker-end="url(#jump)"/>
-  <path d="M 720 466 Q 905 386 1090 466" fill="none" stroke="#0f766e" stroke-width="4" marker-end="url(#jump)"/>
-  <text x="515" y="530" text-anchor="middle" font-size="24" fill="#065f46">動けるタスクが無い</text>
-  <text x="515" y="562" text-anchor="middle" font-size="24" fill="#065f46">→ 10秒へ飛ぶ</text>
-  <text x="905" y="530" text-anchor="middle" font-size="24" fill="#065f46">動けるタスクが無い</text>
-  <text x="905" y="562" text-anchor="middle" font-size="24" fill="#065f46">→ 20秒へ飛ぶ</text>
+  <rect x="60" y="400" width="960" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="456" font-size="40" font-weight="bold">② nap(10)</text>
+  <text class="code" x="95" y="524" font-size="44" xml:space="preserve">yield Delay(10)</text>
+  <text class="ja" x="95" y="572" font-size="36">止まり、続きをk2として時計に預ける</text>
 
-  <!-- Gather -->
-  <rect x="40" y="606" width="1120" height="120" rx="16" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
-  <text x="70" y="656" font-size="30" font-family="DejaVu Sans Mono, monospace" fill="#111827">Gather(slow, fast)</text>
-  <line x1="420" y1="646" x2="520" y2="646" stroke="#374151" stroke-width="4" marker-end="url(#arrow)"/>
-  <text x="540" y="658" font-size="34" font-weight="bold" font-family="DejaVu Sans Mono, monospace" fill="#111827">[20.0, 10.0]</text>
-  <text x="70" y="704" font-size="26" fill="#4b5563">渡した順に返す（終わった順ではない）</text>
+  <line x1="200" y1="598" x2="200" y2="672" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="648" font-size="38">どのタスクも動けない</text>
 
-  <!-- 実時間 -->
-  <text x="40" y="792" font-size="30" font-weight="bold" fill="#111827">かかった実時間（2026-10-16に測定）</text>
-  <text x="40" y="860" font-size="28" fill="#0f766e" font-weight="bold">仮想時計</text>
-  <rect x="320" y="830" width="6" height="44" fill="#0f766e"/>
-  <text x="344" y="862" font-size="28" fill="#111827">0.01秒未満</text>
-  <text x="40" y="950" font-size="28" fill="#c2410c" font-weight="bold">実時間の時計</text>
-  <rect x="320" y="920" width="780" height="44" rx="6" fill="#fdba74"/>
-  <text x="1090" y="952" text-anchor="end" font-size="28" fill="#111827">20.09秒</text>
-  <text x="40" y="1012" font-size="22" fill="#6b7280">同じworkflowを1回走らせた時間。横棒の長さは秒数に比例する。</text>
+  <rect x="60" y="680" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="ja" x="95" y="736" font-size="40" font-weight="bold">③ sim_time_handler</text>
+  <text class="ja" x="95" y="792" font-size="36">時刻をいちばん早い起床の09:00:10へ進める</text>
+  <text class="code" x="95" y="852" font-size="44" xml:space="preserve">Resume(k2, None)</text>
+
+  <line x1="200" y1="878" x2="200" y2="952" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="928" font-size="38">nap(10)が続きから進む</text>
+
+  <rect x="60" y="960" width="960" height="250" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="95" y="1016" font-size="40" font-weight="bold">④ nap(10)と時計</text>
+  <text class="code" x="95" y="1078" font-size="44" xml:space="preserve">yield GetTime()</text>
+  <text class="code" x="95" y="1138" font-size="44" xml:space="preserve">Resume(k2, 09:00:10)</text>
+  <text class="ja" x="95" y="1190" font-size="36">nap(10)は09:00:10を返して終わる</text>
+
+  <line x1="200" y1="1218" x2="200" y2="1292" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="1268" font-size="38">また、どのタスクも動けない</text>
+
+  <rect x="60" y="1300" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="ja" x="95" y="1356" font-size="40" font-weight="bold">⑤ sim_time_handler</text>
+  <text class="ja" x="95" y="1412" font-size="36">時刻を次の起床の09:00:20へ進める</text>
+  <text class="code" x="95" y="1472" font-size="44" xml:space="preserve">Resume(k1, None)</text>
+
+  <line x1="200" y1="1498" x2="200" y2="1572" stroke="#0f8b8d" stroke-width="8" marker-end="url(#arrow)"/>
+  <text class="ja" x="230" y="1548" font-size="38">nap(20)も時刻を問い、09:00:20で終わる</text>
+
+  <rect x="60" y="1580" width="960" height="150" rx="24" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
+  <text class="ja" x="95" y="1636" font-size="40" font-weight="bold">⑥ two_napsの結果</text>
+  <text class="code" x="95" y="1704" font-size="44" xml:space="preserve">[20.0, 10.0]</text>
+  <text class="ja" x="450" y="1702" font-size="36">実時間はほぼ0秒</text>
 </svg>

@@ -1,14 +1,14 @@
 {
   "concept": {
-    "title": "同じjobに、時計を選んで付ける",
-    "code": "@do\ndef job(seconds):\n    yield Delay(seconds)\n    return \"完了\"",
-    "flow": "白背景、平面的な角丸枠。上に処理本体jobの4行コード（Delayを青緑で強調）。下向きの矢印「Delay(20) を依頼する」。見出し「外側のハンドラを1つ選ぶ」の下に2×2の4枠。青緑の2枠「テストで：仮想時計 sim_time_handler() 仮想時計を20秒進める 実時間：ほぼ0秒」「テストで：自作のハンドラ skip_delay 時計なしで、すぐ再開する 実時間：ほぼ0秒」。橙の2枠「本番で：asyncio async_time_handler() asyncioで実際に20秒待つ 実時間：約20秒」「スクリプトで：同期 sync_time_handler() スレッドを止めて20秒待つ 実時間：約20秒」。4枠を順に通す矢印にしない。下向きの矢印「続きを再開する」から「どれでも戻り値は \"完了\"」の枠へ。正本はvisuals/time-concept.svg。",
-    "caption": "処理本体は`Delay(20)`を頼むだけです。外側のハンドラが、仮想時計を進めるか、実際に待つかを決めます。"
+    "title": "同じtwo_napsでも、kをいつ動かすかで答えが変わる",
+    "code": "slow_task = yield Spawn(nap(20))\nfast_task = yield Spawn(nap(10))",
+    "flow": "白背景、平面的な角丸枠を縦に3つと結びの枠。上の灰の枠に「two_naps(抜粋)」とSpawnの2行。赤の枠「ticking(自作の時計)」「Delayのたびに、すぐkを再開する」の下に、横軸0・10・20・30秒の帯2本:nap(20)は0〜20秒、nap(10)は20〜30秒。下に「[20.0, 30.0] 待ちが足し算になる」。青緑の枠「sim_time_handler(doeff-time)」「どのタスクも動けなくなるまでkを持つ」の下に、同じ横軸の帯2本:nap(20)は0〜20秒、nap(10)は0〜10秒。下に「[20.0, 10.0] 待ちが重なる」。帯の長さは秒数に比例(1秒 = 28px)。黄の結びの枠「napとtwo_napsは、どちらも同じコード。違うのは、kを受け取るハンドラだけ。」。正本はvisuals/time-concept.svg。",
+    "caption": "tickingは待ちのたびにすぐkを再開するので、2つの待ちが足し算になります。sim_time_handlerは、どのタスクも動けなくなるまでkを持つので、2つの待ちが重なります。"
   },
   "flow": {
-    "title": "仮想時計は、次の予定の時刻へ飛ぶ",
-    "code": "slow = yield Spawn(worker(20))\nfast = yield Spawn(worker(10))\nfinished = yield Gather(slow, fast)",
-    "flow": "白背景の平面的なタイムライン。横軸は「仮想時刻 0秒・10秒・20秒」。行worker(20)は0秒から20秒までの帯「Delay(20) で待つ」と20秒の点「20秒で再開」。行worker(10)は0秒から10秒までの帯と10秒の点「10秒で再開」。行「時計」は0秒→10秒→20秒の2本の跳ぶ矢印と「動けるタスクが無い → 10秒へ飛ぶ」「→ 20秒へ飛ぶ」。下の枠「Gather(slow, fast) → [20.0, 10.0]」「渡した順に返す（終わった順ではない）」。最下部に「かかった実時間（2026-10-16に測定）」の横棒2本：仮想時計0.01秒未満、実時間の時計20.09秒。横棒の長さは秒数に比例。正本はvisuals/time-flow.svg。",
-    "caption": "2つのタスクが0秒で待ち始めます。時計は10秒、20秒の順に飛び、Gatherは`[20.0, 10.0]`を返します。"
+    "title": "sim_time_handlerが、待つkを持って時計を進める",
+    "code": "yield Delay(20)\nyield Delay(10)\nResume(k2, None)\nyield GetTime()\nResume(k2, 09:00:10)\nResume(k1, None)",
+    "flow": "英語の3本目の記事のsequenceDiagramを、縦の6つの枠と矢印にした図。白背景。青緑の枠はタスク、紫の枠は時計、黄の枠は結果。①nap(20)「yield Delay(20)」「止まり、続きをk1として時計に預ける」→「時計は、k1を再開しない」→②nap(10)「yield Delay(10)」「止まり、続きをk2として時計に預ける」→「どのタスクも動けない」→③sim_time_handler「時刻をいちばん早い起床の09:00:10へ進める」「Resume(k2, None)」→「nap(10)が続きから進む」→④nap(10)と時計「yield GetTime()」「Resume(k2, 09:00:10)」「nap(10)は09:00:10を返して終わる」→「また、どのタスクも動けない」→⑤sim_time_handler「時刻を次の起床の09:00:20へ進める」「Resume(k1, None)」→「nap(20)も時刻を問い、09:00:20で終わる」→⑥two_napsの結果「[20.0, 10.0] 実時間はほぼ0秒」。矢印は、やりとりの順だけを表す。正本はvisuals/time-flow.svg。",
+    "caption": "2つのnapが待ちで止まると、時計はそれぞれのkを持ちます。どのタスクも動けない時にだけ、時刻を次の起床まで進めて、そのkを再開します。"
   }
 }

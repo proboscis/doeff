@@ -20,7 +20,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | [処理を書き換えずに、テストと本番で動かし方を替えるdoeffとは](doeff-main.md) | `doeff-introduction` | エフェクトと最小ハンドラを実行し、用途の全体像を見る | 公開予定 |
 | 2 | [Claude Codeを起動してテストするのをやめる](doeff-agents.md) | `doeff-ai-agents` | AIエージェントの仕事を、起動・待機・結果の契約で組み合わせる | 公開予定 |
-| 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
+| 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 英語の3本目「Time as an effect」の版。時刻をエフェクトで頼み、ハンドラが時計を選ぶ。何日分もの待ちをテストでは数ミリ秒で走らせ、同じコードを実時間で動かす | 公開予定 |
 | 4 | [依存を引数で引き回すのをやめる](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
 | 5 | [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md) | `doeff-claude-code-commits` | AIと書くライブラリの約束を、4つの網で毎日確かめる | 公開予定 |
 | 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 |
