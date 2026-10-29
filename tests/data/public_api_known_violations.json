@@ -75,20 +75,6 @@
       "HyScanExpansionError"
      ]
     },
-    "外れ — effect にする": {
-     "doeff_adr": [
-      "clear_registry",
-      "enforcement_ids",
-      "get_enforcement",
-      "register_adr"
-     ],
-     "doeff_adr.registry": [
-      "clear_registry",
-      "enforcement_ids",
-      "get_enforcement",
-      "register_adr"
-     ]
-    },
     "外れ — submodule を _ で隠す": {
      "(submodule)": [
       "doeff_adr.cli",

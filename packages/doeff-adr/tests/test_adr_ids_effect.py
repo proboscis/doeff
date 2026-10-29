@@ -9,7 +9,7 @@ adr_registry() は process の登録簿の id を、adr_registry(specs=[spec, �
 """
 
 import doeff_adr
-from doeff_adr import AdrIds, AdrSpec, GetAdr, adr_registry, register_adr
+from doeff_adr import AdrIds, AdrSpec, GetAdr, RegisterAdr, adr_registry
 from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
@@ -23,8 +23,8 @@ def _spec(adr_id: str) -> AdrSpec:
 
 def test_adr_ids_answers_the_process_registry_in_order() -> None:
     with isolated_registry():
-        register_adr("ADR-PROBE-002", title="second", status="proposed")
-        register_adr("ADR-PROBE-001", title="first", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-002", title="second", status="proposed")))
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="first", status="proposed")))
         assert run(adr_registry()(AdrIds())) == ["ADR-PROBE-001", "ADR-PROBE-002"]
 
 
@@ -37,7 +37,11 @@ def test_the_process_registry_is_read_when_the_effect_is_answered() -> None:
     """handler を作った後に載った ADR の id も返る(fixture が handler を作るのは ADR の module の import の前でもよい)。"""
     answer = adr_registry()
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered later", status="proposed")
+        run(
+            adr_registry()(
+                RegisterAdr("ADR-PROBE-001", title="registered later", status="proposed")
+            )
+        )
         assert run(answer(AdrIds())) == ["ADR-PROBE-001"]
 
 
@@ -45,7 +49,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
     """表を据えると、登録簿の id ではなく表の id だけが返る(specs=[] は空の表)。"""
     table = [_spec("ADR-TABLE-B"), _spec("ADR-TABLE-A")]
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry(specs=table)(AdrIds())) == ["ADR-TABLE-A", "ADR-TABLE-B"]
         assert run(adr_registry(specs=[])(AdrIds())) == []
 
@@ -67,7 +71,7 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
         return outer, swapped
 
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry()(body())) == (
             ["ADR-PROBE-001"],
             (["ADR-TABLE-ONLY"], "ADR-TABLE-ONLY"),
@@ -85,7 +89,7 @@ def test_the_answer_is_a_new_list_each_time() -> None:
         return (yield AdrIds())
 
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry()(body())) == ["ADR-PROBE-001"]
     assert run(adr_registry(specs=table)(body())) == ["ADR-TABLE-A"]
 

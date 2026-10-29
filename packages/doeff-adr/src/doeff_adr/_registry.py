@@ -4,8 +4,9 @@ Hy macros expand into calls in this module, except where they perform effects:
 ``defsemgrep`` performs RegisterSemgrep and AssertSemgrep
 (``doeff_adr._semgrep_effects``), whose handler answers them with
 ``_register_semgrep_enforcement`` and ``_assert_semgrep_enforcement`` here, and
-``defadr`` performs RegisterDeftest and AssertAdrContract (``doeff_adr._effects``),
-whose handler answers them with ``_register_deftest_enforcement`` and
+``defadr`` performs RegisterDeftest, RegisterAdr and AssertAdrContract
+(``doeff_adr._effects``), whose handler answers them with
+``_register_deftest_enforcement``, ``_register_adr`` and
 ``_assert_adr_contract`` here.  The registry is intentionally small: it
 records ADR specs and executable enforcement specs, then exposes assertions
 that pytest-generated functions can call.
@@ -100,9 +101,15 @@ _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
 _INSTALLED_VERDICTS: dict[str, frozenset[str]] = {}
 
 
-def clear_registry() -> None:
-    _ADRS.clear()
-    _ENFORCEMENTS.clear()
+def _clear_registry(
+    *,
+    adrs: dict[str, AdrSpec] | None = None,
+    table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
+) -> None:
+    """ADR の表と検の表(None = process の登録簿)を空にする。外からは effect ClearRegistry で空にする(handler adr_registry が
+    答える・card ki-dab8943cf664)。"""
+    (_ADRS if adrs is None else adrs).clear()
+    (_ENFORCEMENTS if table is None else table).clear()
 
 
 @contextmanager
@@ -111,14 +118,18 @@ def isolated_registry() -> Generator[None]:
 
     収集で import された ADR は収集の時点で登録簿に載る — 空にしたまま返す test があると、後で走るその ADR の条文の
     test が KeyError で落ちる(agora-redesign #1211)。test が登録簿を空にしたい時はこれを使う。
+
+    effect だけで読み書きする test は、これでなく別の登録簿を据えた handler adr_registry(specs=[], enforcements={}) で足りる。
+    これが要るのは、macro defadr・defsemgrep の展開が import の時に process の登録簿へ載せる所を試す test だけ(展開は
+    handler を自分で据えるので、外から差し替えられない・card ki-dab8943cf664)。
     """
     saved_adrs = dict(_ADRS)
     saved_enforcements = dict(_ENFORCEMENTS)
-    clear_registry()
+    _clear_registry()
     try:
         yield
     finally:
-        clear_registry()
+        _clear_registry()
         _ADRS.update(saved_adrs)
         _ENFORCEMENTS.update(saved_enforcements)
 
@@ -251,7 +262,7 @@ def _register_semgrep_enforcement(
     return spec
 
 
-def register_adr(
+def _register_adr(
     adr_id: str,
     *,
     title: str,
@@ -263,12 +274,18 @@ def register_adr(
     laws: list[Any] | tuple[Any, ...] | None = None,
     enforcement: list[Any] | tuple[Any, ...] | None = None,
     plans: list[Any] | tuple[Any, ...] | None = None,
-    **metadata: Any,
+    metadata: dict[str, Any] | None = None,
+    adrs: dict[str, AdrSpec] | None = None,
+    table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> AdrSpec:
-    if adr_id in _ADRS:
+    """ADR を表(adrs・table が None = process の登録簿)に載せる。enforcement の検の id は検の表 table から種類を読む。
+    外からは effect RegisterAdr で載せる(handler adr_registry が答える・macro defadr の展開も同じ・card ki-dab8943cf664)。"""
+    by_id = _ADRS if adrs is None else adrs
+    if adr_id in by_id:
         raise ValueError(f"duplicate ADR id: {adr_id}")
     normalized_status = _normalize_adr_status(status)
-    refs = tuple(_coerce_enforcement_ref(item) for item in _tuple_of_any(enforcement))
+    enforcements = _ENFORCEMENTS if table is None else table
+    refs = tuple(_coerce_enforcement_ref(item, enforcements) for item in _tuple_of_any(enforcement))
     spec = AdrSpec(
         id=adr_id,
         title=title,
@@ -280,19 +297,22 @@ def register_adr(
         laws=_tuple_of_any(laws),
         enforcement=refs,
         plans=_tuple_of_text(plans),
-        metadata=metadata,
+        metadata={} if metadata is None else dict(metadata),
     )
-    _ADRS[adr_id] = spec
+    by_id[adr_id] = spec
     return spec
 
 
-def _coerce_enforcement_ref(item: Any) -> EnforcementRef:
+def _coerce_enforcement_ref(
+    item: Any, enforcements: dict[str, EnforcementRef | SemgrepSpec]
+) -> EnforcementRef:
+    """defadr の :enforcement の項 1 つを、ADR に書く検の参照にする(id は enforcements の表から種類を読む)。"""
     if isinstance(item, EnforcementRef):
         return item
     if isinstance(item, SemgrepSpec):
         return EnforcementRef(id=item.id, kind="defsemgrep", mode=item.mode)
     if isinstance(item, str):
-        known = _ENFORCEMENTS.get(item)
+        known = enforcements.get(item)
         if isinstance(known, SemgrepSpec):
             return EnforcementRef(id=item, kind="defsemgrep", mode=known.mode)
         if isinstance(known, EnforcementRef):
@@ -306,8 +326,10 @@ def _adr_ids() -> list[str]:
     return sorted(_ADRS)
 
 
-def enforcement_ids() -> list[str]:
-    return sorted(_ENFORCEMENTS)
+def _enforcement_ids(table: dict[str, EnforcementRef | SemgrepSpec] | None = None) -> list[str]:
+    """検の表(None = process の登録簿)の id を並べる。外からは effect EnforcementIds で読む(handler adr_registry が答える・
+    card ki-dab8943cf664)。"""
+    return sorted(_ENFORCEMENTS if table is None else table)
 
 
 def _get_adr(adr_id: str) -> AdrSpec:
@@ -315,8 +337,12 @@ def _get_adr(adr_id: str) -> AdrSpec:
     return _ADRS[adr_id]
 
 
-def get_enforcement(enforcement_id: str) -> EnforcementRef | SemgrepSpec:
-    return _ENFORCEMENTS[enforcement_id]
+def _get_enforcement(
+    enforcement_id: str, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
+) -> EnforcementRef | SemgrepSpec:
+    """検の表(None = process の登録簿)の検を id で引く。外からは effect GetEnforcement で引く(handler adr_registry が答える・
+    card ki-dab8943cf664)。"""
+    return (_ENFORCEMENTS if table is None else table)[enforcement_id]
 
 
 def _assert_adr_contract(

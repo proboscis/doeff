@@ -11,7 +11,7 @@ adr_registry() は process の登録簿から、adr_registry(specs=[spec, …]) 
 
 import doeff_adr
 import pytest
-from doeff_adr import AdrSpec, GetAdr, adr_registry, register_adr
+from doeff_adr import AdrSpec, GetAdr, RegisterAdr, adr_registry
 from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
@@ -25,7 +25,7 @@ def _spec(adr_id: str, title: str) -> AdrSpec:
 
 def test_get_adr_answers_from_the_process_registry() -> None:
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry()(GetAdr("ADR-PROBE-001"))).title == "registered"
 
 
@@ -33,7 +33,11 @@ def test_the_process_registry_is_read_when_the_effect_is_answered() -> None:
     """handler を作った後に載った ADR も答える(fixture が handler を作るのは ADR の module の import の前でもよい)。"""
     answer = adr_registry()
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered later", status="proposed")
+        run(
+            adr_registry()(
+                RegisterAdr("ADR-PROBE-001", title="registered later", status="proposed")
+            )
+        )
         assert run(answer(GetAdr("ADR-PROBE-001"))).title == "registered later"
 
 
@@ -43,7 +47,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
         _spec("ADR-TABLE-ONLY", "only in the table"),
     ]
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry(specs=table)(GetAdr("ADR-PROBE-001"))).title == "from the table"
         assert run(adr_registry(specs=table)(GetAdr("ADR-TABLE-ONLY"))).title == "only in the table"
 
@@ -59,7 +63,7 @@ def test_an_inner_table_answers_before_the_outer_registry() -> None:
         return outer.title, inner.title
 
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry()(body())) == ("registered", "from the table")
 
 
@@ -75,7 +79,7 @@ def test_an_id_outside_the_table_is_a_key_error_not_the_outer_answer() -> None:
         return "answered"
 
     with isolated_registry():
-        register_adr("ADR-PROBE-001", title="registered", status="proposed")
+        run(adr_registry()(RegisterAdr("ADR-PROBE-001", title="registered", status="proposed")))
         assert run(adr_registry()(adr_registry(specs=[])(body()))) == ("ADR-PROBE-001",)
 
 

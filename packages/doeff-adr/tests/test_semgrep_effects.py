@@ -24,10 +24,12 @@ import hy
 import pytest
 from doeff_adr import (
     AssertSemgrep,
+    EnforcementIds,
     EnforcementRef,
+    GetEnforcement,
     RegisterSemgrep,
     SemgrepSpec,
-    get_enforcement,
+    adr_registry,
     semgrep_enforcements,
 )
 from doeff_adr._registry import isolated_registry
@@ -69,7 +71,7 @@ def test_register_semgrep_puts_the_rule_on_the_process_registry() -> None:
     with isolated_registry():
         spec = run(semgrep_enforcements()(_inline("probe_inline")))
         assert isinstance(spec, SemgrepSpec)
-        assert get_enforcement("probe_inline") is spec
+        assert run(adr_registry()(GetEnforcement("probe_inline"))) is spec
         assert spec.bad == ("forbidden-token",)
 
 
@@ -123,7 +125,7 @@ def test_a_given_table_replaces_the_process_registry() -> None:
         run(semgrep_enforcements()(_inline("probe_registry_only")))
         assert run(semgrep_enforcements(table=table)(body())) == ("probe_registry_only",)
         assert list(table) == ["probe_table_only"]
-        assert "probe_table_only" not in registry_module.enforcement_ids()
+        assert "probe_table_only" not in run(adr_registry()(EnforcementIds()))
 
 
 def test_the_semgrep_run_can_be_replaced(tmp_path: Path) -> None:

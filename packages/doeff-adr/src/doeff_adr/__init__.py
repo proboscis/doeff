@@ -20,7 +20,19 @@ if TYPE_CHECKING:
         AssertAllAdrContracts as AssertAllAdrContracts,
     )
     from doeff_adr._effects import (
+        ClearRegistry as ClearRegistry,
+    )
+    from doeff_adr._effects import (
+        EnforcementIds as EnforcementIds,
+    )
+    from doeff_adr._effects import (
         GetAdr as GetAdr,
+    )
+    from doeff_adr._effects import (
+        GetEnforcement as GetEnforcement,
+    )
+    from doeff_adr._effects import (
+        RegisterAdr as RegisterAdr,
     )
     from doeff_adr._effects import (
         RegisterDeftest as RegisterDeftest,
@@ -42,18 +54,6 @@ if TYPE_CHECKING:
     from doeff_adr._registry import (
         SemgrepSpec as SemgrepSpec,
     )
-    from doeff_adr._registry import (
-        clear_registry as clear_registry,
-    )
-    from doeff_adr._registry import (
-        enforcement_ids as enforcement_ids,
-    )
-    from doeff_adr._registry import (
-        get_enforcement as get_enforcement,
-    )
-    from doeff_adr._registry import (
-        register_adr as register_adr,
-    )
     from doeff_adr._semgrep_effects import (
         AssertSemgrep as AssertSemgrep,
     )
@@ -67,23 +67,23 @@ if TYPE_CHECKING:
 
 
 #: 公開の名から、名を定義する module へ — 最初の利用の時にその module だけを読む(effect と handler は内側の module
-#: _effects・_semgrep_effects — card ki-24a2bca4339f・ki-2a549274055c・ki-54e559d3c0e7)。
+#: _effects・_semgrep_effects — card ki-24a2bca4339f・ki-2a549274055c・ki-54e559d3c0e7・ki-dab8943cf664)。
 _LAZY_EXPORTS: dict[str, str] = {
     "AdrIds": "doeff_adr._effects",
     "AdrSpec": "doeff_adr._registry",
     "AssertAdrContract": "doeff_adr._effects",
     "AssertAllAdrContracts": "doeff_adr._effects",
     "AssertSemgrep": "doeff_adr._semgrep_effects",
+    "ClearRegistry": "doeff_adr._effects",
+    "EnforcementIds": "doeff_adr._effects",
     "EnforcementRef": "doeff_adr._registry",
     "GetAdr": "doeff_adr._effects",
+    "GetEnforcement": "doeff_adr._effects",
+    "RegisterAdr": "doeff_adr._effects",
     "RegisterDeftest": "doeff_adr._effects",
     "RegisterSemgrep": "doeff_adr._semgrep_effects",
     "SemgrepSpec": "doeff_adr._registry",
     "adr_registry": "doeff_adr._effects",
-    "clear_registry": "doeff_adr._registry",
-    "enforcement_ids": "doeff_adr._registry",
-    "get_enforcement": "doeff_adr._registry",
-    "register_adr": "doeff_adr._registry",
     "semgrep_enforcements": "doeff_adr._semgrep_effects",
     "AdrStatus": "doeff_adr._registry",
     "EnforcementMode": "doeff_adr._registry",
