@@ -229,17 +229,17 @@
     (on-raise-fn conflict-case (succeeds))))
 
 
-(deftest test-the-old-forms-answer-as-the-factories
-  ;; 旧い形(program を工場に渡す)は新しい形と同じ答え — doeff の main を読む repo の呼び手を書き換え終えるまでの
-  ;; 移し替えの層(agora card ki-d27fd0acfe07)。absent_as は前の macro の展開の形(印を 3 つ目に置く)も受ける。
+(deftest test-the-old-forms-are-refused
+  ;; program を工場に渡す旧い形は、呼んだ所で TypeError で断る — 移し替えの層は agora card ki-53be25c354e4 で消した。
+  ;; absent_as は前の macro の展開の形(印を 3 つ目に置く)も断る。
   (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
-  (<- some (maybe (succeeds)))
-  (<- nothing (maybe (absent-then-note [])))
-  (<- ok (result (succeeds)))
-  (<- err (result (raise-then-note (Conflict "負けた") [])))
-  (<- mapped (on-raise-fn (raise-then-note (Conflict "版") []) conflict-case))
-  (<- defaulted (absent-as-fn 0 (absent-then-note [])))
-  (<- marked (absent-as-fn 0 (absent-then-note []) None))
-  (assert (= (repr #(some nothing ok err mapped defaulted marked))
-             "(Some(7), Nothing, Ok(7), Err(Conflict(detail='負けた')), 'conflict: 版', 0, 0)")
-          #(some nothing ok err mapped defaulted marked)))
+  (with [(pytest.raises TypeError :match "positional argument")]
+    (maybe (succeeds)))
+  (with [(pytest.raises TypeError :match "positional argument")]
+    (result (succeeds)))
+  (with [(pytest.raises TypeError :match "handler を返す工場")]
+    (on-raise-fn (raise-then-note (Conflict "版") []) conflict-case))
+  (with [(pytest.raises TypeError :match "positional argument")]
+    (absent-as-fn 0 (absent-then-note [])))
+  (with [(pytest.raises TypeError :match "positional argument")]
+    (absent-as-fn 0 (absent-then-note []) None)))
