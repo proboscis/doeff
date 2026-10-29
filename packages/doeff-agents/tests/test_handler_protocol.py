@@ -83,7 +83,7 @@ def test_agent_handlers_are_defhandler_program_wrappers() -> None:
 
 
 def test_scenario_handler_wrap_uses_defhandler_boundary() -> None:
-    handlers_dir = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "handlers"
+    handlers_dir = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "_handlers"
     source = (handlers_dir / "testing.hy").read_text()
 
     assert not (handlers_dir / "testing.py").exists()

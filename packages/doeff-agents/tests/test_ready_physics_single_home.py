@@ -66,9 +66,9 @@ def test_codex_ready_pattern_is_the_physics_home_constant() -> None:
 
 @pytest.mark.parametrize("module", ["claude.py", "codex.py"])
 def test_adapters_do_not_define_ready_pattern_literals(module: str) -> None:
-    source = (PKG_ROOT / "adapters" / module).read_text(encoding="utf-8")
+    source = (PKG_ROOT / "_adapters" / module).read_text(encoding="utf-8")
     assert not re.search(r"READY_PATTERN\s*=\s*r?[\"']", source), (
-        f"adapters/{module} defines a ready-pattern literal — the physics home "
+        f"_adapters/{module} defines a ready-pattern literal — the physics home "
         "is doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008 R1)"
     )
 
@@ -120,7 +120,7 @@ def test_screen_reader_trust_prompt_predicate_matches_reprompt_frame() -> None:
 
 
 def test_session_py_does_not_redefine_trust_prompt_physics() -> None:
-    source = (PKG_ROOT / "session.py").read_text(encoding="utf-8")
+    source = (PKG_ROOT / "_session.py").read_text(encoding="utf-8")
     assert "def _screen_reader_trust_prompt_visible" not in source, (
         "session.py re-defines the screen-reader trust prompt physics — the "
         "home is doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008 R1)"

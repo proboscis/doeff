@@ -5,7 +5,7 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff-agents [AgentType])
 (import doeff-agents [AgentSpec AwaitOutcome AwaitResult AwaitStatus LaunchSession])
-(import doeff-agents._effects.agent [deterministic-session-id])
+(import doeff-agents._effects._ids [deterministic-session-id])
 (import doeff-agents [ScenarioAgentHandler ScenarioStep])
 
 
