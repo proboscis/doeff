@@ -27,7 +27,7 @@
 (import tempfile)
 (import pathlib [Path])
 (import doeff [EffectBase Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_cluster)
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key])

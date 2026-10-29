@@ -7,7 +7,7 @@ from urllib.parse import quote as url_quote
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import parse_json as parse_json
-from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects import Ask as Ask
 from doeff_core_effects.file_effects import AcquireLock as AcquireLock
 from doeff_core_effects.file_effects import DirEntry as DirEntry
 from doeff_core_effects.file_effects import FileFailed as FileFailed

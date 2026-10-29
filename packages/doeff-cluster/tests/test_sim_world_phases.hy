@@ -2,7 +2,7 @@
 ;;;
 ;;; 歩数の上限の plugin は、模擬の世界を回した検を、世界が立ち上がってから止め始めるまでの走りの歩数だけで判じる。sim-main は始まり・
 ;;; 立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの印を、その時の doeff-vm の積み上げの歩数と
-;;; 残す(doeff_core_effects.world_phases)。ここでは本物の世界を回して確かめる: 起動の時だけ仕事をする部品を足しても走りの歩数は
+;;; 残す(doeff_core_effects._world_phases)。ここでは本物の世界を回して確かめる: 起動の時だけ仕事をする部品を足しても走りの歩数は
 ;;; 変わらず(足した部品の起動の仕事は起動の歩数に入る)、空回り(周ごとに起きる仕事)を 2 倍にすると走りの歩数が宣言の値(土台の
 ;;; 走りの 1.02 倍)を越える。宣言との比べと文は plugin の側の検が確かめる。
 (require doeff-hy.macros [deftest defk <- val])
@@ -12,7 +12,7 @@
 (import math)
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_core_effects.world_phases [open-phase-log close-phase-log])
+(import doeff_core_effects._world_phases [open-phase-log close-phase-log])
 (import doeff_cluster.sim.local [sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.phase_programs [phase-world phase-world-plus-part phase-world-double-idle])

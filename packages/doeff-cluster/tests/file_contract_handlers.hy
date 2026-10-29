@@ -13,7 +13,7 @@
 (import os)
 (import tempfile)
 (import doeff [EffectBase Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [MemoryFiles])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])

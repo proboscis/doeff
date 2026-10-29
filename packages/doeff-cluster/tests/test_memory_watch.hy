@@ -25,8 +25,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.proc_table_effects [ProcRow ReadProcTable])

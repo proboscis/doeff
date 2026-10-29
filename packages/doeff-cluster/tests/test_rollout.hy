@@ -8,7 +8,7 @@
 ;; 配備の流れが Deployment の台数を戻したら Rollout の状態に出る・dry-run は k8s に保存しない。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])

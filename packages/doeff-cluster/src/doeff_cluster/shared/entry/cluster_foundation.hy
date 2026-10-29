@@ -15,7 +15,7 @@
 (require doeff-hy.macros [defk <- val])
 (import dataclasses [replace])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [runtime-env-of-context])

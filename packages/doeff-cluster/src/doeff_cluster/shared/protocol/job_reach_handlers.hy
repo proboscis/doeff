@@ -16,7 +16,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.job_call_model [JobAnswer JobRequest JobUnreachable])
 (import doeff_cluster.shared.intent.job_reach_model [JobNoWay JobNotReached JobReached JobWay ReachFailure ReachJob])

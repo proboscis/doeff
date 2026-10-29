@@ -5,7 +5,7 @@
 (import doeff_time [Delay])
 (import doeff [EffectBase])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_core_effects.scheduler [Spawn Task])
+(import doeff_core_effects [Spawn Task])
 (import doeff_cluster.sim.local [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker Crash KeepChild])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.outside_programs [shared-store last-words slow-last-words spawning-last-words memory-store signed-puts

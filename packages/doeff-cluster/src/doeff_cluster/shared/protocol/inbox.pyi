@@ -5,11 +5,11 @@ from doeff_hy.static_types import Handler as _Handler
 from typing import Protocol as Protocol
 from typing import runtime_checkable as runtime_checkable
 from urllib.parse import unquote as url_unquote
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
-from doeff_core_effects.scheduler import Promise as Promise
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects import ExternalPromise as ExternalPromise
+from doeff_core_effects import PRIORITY_IDLE as PRIORITY_IDLE
+from doeff_core_effects import Promise as Promise
+from doeff_core_effects import Wait as Wait
 from doeff_time import WaitWithin as WaitWithin
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import Reply as Reply

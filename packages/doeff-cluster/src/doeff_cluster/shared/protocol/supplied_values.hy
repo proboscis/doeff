@@ -47,7 +47,7 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_hy.wire [Malformed parse-json])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.file_effects [AcquireLock DirEntry FileFailed ListDirectory LockHeld MakeDirectory ReadText ReleaseLock RemoveTree
                                          WriteBytes])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])

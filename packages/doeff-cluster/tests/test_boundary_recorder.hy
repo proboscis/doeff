@@ -28,7 +28,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff [UnhandledEffect])
-(import doeff_core_effects.handlers [reader await-handler])
+(import doeff_core_effects [reader await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
@@ -270,9 +270,9 @@
   (assert (= (get header "versions") (! (process-versions os.environ))) header)
   ;; 記録係は翻訳の後の汎用の effect だけを見る: 業務の effect(CountVisit・DrawTicket)も、記録係を選ぶ前の mode の Ask も載らない。
   (val types (sfor line cycle.lines :if (in "ty" line) (get line "ty")))
-  (assert (= types #{"doeff_core_effects.effects:Ask" "doeff_cluster.shared.intent.shared_model:ReadShared" "doeff_cluster.shared.intent.shared_model:WriteShared"})
+  (assert (= types #{"doeff_core_effects._effects:Ask" "doeff_cluster.shared.intent.shared_model:ReadShared" "doeff_cluster.shared.intent.shared_model:WriteShared"})
           types)
-  (val asked (lfor line cycle.lines :if (= (.get line "ty") "doeff_core_effects.effects:Ask") (get line "a" "key")))
+  (val asked (lfor line cycle.lines :if (= (.get line "ty") "doeff_core_effects._effects:Ask") (get line "a" "key")))
   (assert (= asked ["LEDGER_ROUNDS"]) asked)
   ;; 再生: 同じ Program の file を再生の道具が解き、境目の記録係が記録から答える。再生の子には LEDGER_ROUNDS も記録の mode も無い
   ;; (記録係が答えなければ業務の Ask は答えが無く落ちる)。分岐なしで出来事を使い切る。

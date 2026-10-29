@@ -17,11 +17,11 @@ from doeff_core_effects.file_effects import RenamePath as RenamePath
 from doeff_core_effects.file_effects import StatPath as StatPath
 from doeff_core_effects.file_effects import WriteText as WriteText
 from doeff_core_effects.file_effects import file_done as file_done
-from doeff_core_effects.scheduler import Spawn as Spawn
-from doeff_core_effects.scheduler import CreatePromise as CreatePromise
-from doeff_core_effects.scheduler import CompletePromise as CompletePromise
-from doeff_core_effects.scheduler import FailPromise as FailPromise
-from doeff_core_effects.scheduler import Promise as Promise
+from doeff_core_effects import Spawn as Spawn
+from doeff_core_effects import CreatePromise as CreatePromise
+from doeff_core_effects import CompletePromise as CompletePromise
+from doeff_core_effects import FailPromise as FailPromise
+from doeff_core_effects import Promise as Promise
 from doeff_time import WaitWithin as WaitWithin
 from doeff_core_effects.process_effects import EnvEntry as EnvEntry
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment

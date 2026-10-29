@@ -12,7 +12,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [slog-handler])
+(import doeff_core_effects [slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.store [durable-load])

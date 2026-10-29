@@ -173,7 +173,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
 (import doeff_cluster.coordinator.core.program [rollout-tick])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 
 (val DEPLOYMENT-TO-DEPLOYMENT {"from" {"kind" "Deployment" "namespace" "prod" "name" "old"}
                                 "to" {"kind" "Deployment" "namespace" "prod" "name" "new" "replicas" 1}})

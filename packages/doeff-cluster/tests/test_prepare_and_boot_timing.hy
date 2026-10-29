@@ -19,7 +19,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff [Program with-handlers])
-(import doeff_core_effects.handlers [state reader])
+(import doeff_core_effects [state reader])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])

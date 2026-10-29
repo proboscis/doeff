@@ -7,9 +7,9 @@ from dataclasses import dataclass as dataclass
 from doeff import with_handlers as with_handlers
 from doeff import Program as Program
 from doeff import EffectBase as EffectBase
-from doeff_core_effects.handlers import await_handler as await_handler
-from doeff_core_effects.handlers import slog_handler as slog_handler
-from doeff_core_effects.scheduler import scheduled as scheduled
+from doeff_core_effects import await_handler as await_handler
+from doeff_core_effects import slog_handler as slog_handler
+from doeff_core_effects import scheduled as scheduled
 from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_cluster.foundation.process_versions import this_process_versions as this_process_versions

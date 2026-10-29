@@ -15,7 +15,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff [Program EffectBase with-handlers])
-(import doeff_core_effects.scheduler [Spawn Cancel Task])
+(import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.shared.entry.client_foundation [with-detached-client])

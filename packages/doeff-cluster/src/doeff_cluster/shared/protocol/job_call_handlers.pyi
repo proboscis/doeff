@@ -6,7 +6,7 @@ from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from urllib.parse import quote as url_quote
 from urllib.parse import urlencode as urlencode
-from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects import Ask as Ask
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse

@@ -7,7 +7,7 @@
 ;; - after の無い問いは 400。heartbeat の返事は、次の待ちの after に使う版を運ぶ。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
-(import doeff_core_effects.scheduler [Spawn Task Wait])
+(import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

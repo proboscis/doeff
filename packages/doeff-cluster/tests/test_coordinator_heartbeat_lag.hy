@@ -14,9 +14,9 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [run with-handlers])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [state])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [scheduled])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_events [MemoryBroker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])

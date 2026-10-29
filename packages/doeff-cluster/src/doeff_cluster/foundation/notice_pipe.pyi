@@ -3,9 +3,9 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 import threading as threading
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects import ExternalPromise as ExternalPromise
+from doeff_core_effects import Wait as Wait
 
 @dataclass(frozen=True, kw_only=True)
 class NoticeWaiter:

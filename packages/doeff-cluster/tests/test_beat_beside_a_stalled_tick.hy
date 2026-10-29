@@ -17,8 +17,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)
 (import doeff [with-handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.process_effects [ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])

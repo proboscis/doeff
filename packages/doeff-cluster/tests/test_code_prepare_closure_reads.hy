@@ -13,7 +13,7 @@
 (import os)
 (import pathlib [Path])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.worker.protocol.tree_files [tree-files])

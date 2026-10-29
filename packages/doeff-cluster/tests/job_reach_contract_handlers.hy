@@ -10,7 +10,7 @@
 (require doeff-hy.macros [defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [Program with_handlers])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_cluster.shared.intent.job_reach_model [JobNoWay ReachJob])
 (import doeff_cluster.shared.protocol.job_call_handlers [Counterpart])
 (import doeff_cluster.shared.protocol.job_reach_handlers [ReachDestination job-reach-handover job-reach-sender])

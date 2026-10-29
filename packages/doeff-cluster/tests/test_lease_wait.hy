@@ -7,7 +7,7 @@
 ;;   3 SemaphoreSession は問い直しの間(poll-seconds)を受けない・持たない。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_events [MemoryBroker])
-(import doeff_core_effects.scheduler [Spawn Wait Task])
+(import doeff_core_effects [Spawn Wait Task])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession acquire-lease])

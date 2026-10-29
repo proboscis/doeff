@@ -3,7 +3,7 @@
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
-from doeff_core_effects.effects import Ask as Ask
+from doeff_core_effects import Ask as Ask
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest

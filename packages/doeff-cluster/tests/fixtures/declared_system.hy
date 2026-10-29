@@ -7,9 +7,9 @@
 (require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [with-handlers EffectBase Program])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [reader])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [reader])
+(import doeff_core_effects [scheduled])
 
 
 (defk net-foundation [body]

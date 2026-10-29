@@ -16,9 +16,9 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import datetime [datetime])
 (import doeff [Program run with-handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled])
 (import doeff_time [Delay GetMonotonicEffect GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld

@@ -17,7 +17,7 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import urllib.parse [quote :as url-quote urlencode])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
 

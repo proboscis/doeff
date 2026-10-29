@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with_handlers Program run])
-(import doeff_core_effects.scheduler [Spawn Gather Wait Cancel TaskCancelledError AcquireSemaphore ReleaseSemaphore Semaphore Task])
+(import doeff_core_effects [Spawn Gather Wait Cancel TaskCancelledError AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])

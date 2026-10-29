@@ -12,7 +12,7 @@
   "e": 0,
   "t": "root",
   "at": 1000000,
-  "ty": "doeff_core_effects.scheduler:Spawn",
+  "ty": "doeff_core_effects._scheduler:Spawn",
   "m": "live",
   "a": {
    "priority": 10,
@@ -26,7 +26,7 @@
   "e": 1,
   "t": "root.0",
   "at": 1000000,
-  "ty": "doeff_core_effects.effects:Ask",
+  "ty": "doeff_core_effects._effects:Ask",
   "m": "read",
   "a": {
    "key": "box"
@@ -64,7 +64,7 @@
   "e": 5,
   "t": "root",
   "at": 1000000,
-  "ty": "doeff_core_effects.scheduler:Spawn",
+  "ty": "doeff_core_effects._scheduler:Spawn",
   "m": "live",
   "a": {
    "priority": 10,
@@ -78,7 +78,7 @@
   "e": 6,
   "t": "root.1",
   "at": 1000000,
-  "ty": "doeff_core_effects.effects:Ask",
+  "ty": "doeff_core_effects._effects:Ask",
   "m": "read",
   "a": {
    "key": "box"
@@ -118,7 +118,7 @@
   "e": 10,
   "t": "root",
   "at": 1000000,
-  "ty": "doeff_core_effects.scheduler:Spawn",
+  "ty": "doeff_core_effects._scheduler:Spawn",
   "m": "live",
   "a": {
    "priority": 10,
@@ -132,7 +132,7 @@
   "e": 11,
   "t": "root.2",
   "at": 1000000,
-  "ty": "doeff_core_effects.effects:Ask",
+  "ty": "doeff_core_effects._effects:Ask",
   "m": "read",
   "a": {
    "key": "box"
@@ -172,7 +172,7 @@
   "e": 15,
   "t": "root",
   "at": 1000000,
-  "ty": "doeff_core_effects.scheduler:Gather",
+  "ty": "doeff_core_effects._scheduler:Gather",
   "m": "live",
   "a": {
    "on": [
@@ -714,7 +714,7 @@
   "e": 68,
   "t": "root",
   "at": 1001500,
-  "ty": "doeff_core_effects.effects:Ask",
+  "ty": "doeff_core_effects._effects:Ask",
   "m": "read",
   "a": {
    "key": "box"

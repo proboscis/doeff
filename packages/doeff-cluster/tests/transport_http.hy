@@ -61,7 +61,7 @@
   "終わった process の lease の返し(worker/protocol/lease_release の lease-release — #2427)を、transport の後ろの coordinator への検の
    HTTP の答え手と模擬の時計の下で走らせるため(行き先の 1 行は捨てる)。"
   (import doeff [with-handlers])
-  (import doeff_core_effects.handlers [slog-discard-handler])
+  (import doeff_core_effects [slog-discard-handler])
   (import doeff_time [SimClock sim-time-handler])
   (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
   (import doeff_cluster.worker.protocol.lease_release [lease-release])

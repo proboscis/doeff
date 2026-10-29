@@ -4,7 +4,7 @@
 ;;; foundation/record_handlers のまま。置き場と並べ方は record_handlers の「境目の記録係」の節。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.foundation.host_contract [HostContract])
 (import doeff_cluster.foundation.record_handlers [RecordingInstaller ReplayState recording-handler effect-replayer

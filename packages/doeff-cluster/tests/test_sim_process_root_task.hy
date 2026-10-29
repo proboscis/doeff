@@ -10,7 +10,7 @@
 (import time)
 (import doeff [with-handlers])
 (import doeff_events [MemoryBroker])
-(import doeff_core_effects.scheduler_step_tally [step-tally-handler])
+(import doeff_core_effects [step-tally-handler])
 (import doeff_core_effects.step_tally_effects [OpenTaskTally CloseTaskTally TaskTally])
 (import doeff_time [Delay])
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SimProcess AwaitProcessStarted])

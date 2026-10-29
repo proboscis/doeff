@@ -14,7 +14,7 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import posixpath)
-(import doeff_core_effects.effects [slog])
+(import doeff_core_effects [slog])
 (import doeff_core_effects.file_effects [Appended AppendBytes MakeDirectory PathKind PathStat ReadBytes ReadText StatPath SyncDirectory TruncateFile
                                          WriteBytes file-done])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

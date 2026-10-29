@@ -17,8 +17,8 @@
 (import time)
 (import typing [Callable])
 (import doeff [run with-handlers])
-(import doeff_core_effects.handlers [await-handler state])
-(import doeff_core_effects.scheduler [ExternalPromise scheduled])
+(import doeff_core_effects [await-handler state])
+(import doeff_core_effects [ExternalPromise scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
@@ -129,8 +129,8 @@
 (val CHILD-INBOX
   "import sys, time, hy
 from doeff import run, with_handlers
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects._handlers import await_handler
+from doeff_core_effects._scheduler import scheduled
 from doeff_time import async_time_handler
 from doeff_cluster.foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
 from doeff_cluster.foundation.record_inbox import RecordInbox
@@ -149,8 +149,8 @@ print(f'{stop.requested} {time.monotonic() - started:.3f}', flush=True)
 (val CHILD-WORKER
   "import time, hy
 from doeff import do, run, with_handlers
-from doeff_core_effects.handlers import await_handler, state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects._handlers import await_handler, state
+from doeff_core_effects._scheduler import scheduled
 from doeff_core_effects.stop_signal_effects import StopRequested
 from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler

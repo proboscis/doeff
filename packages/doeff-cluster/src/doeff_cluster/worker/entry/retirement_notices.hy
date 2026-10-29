@@ -7,7 +7,7 @@
 ;;; 語を知らせの型に読むのは process_host の retirement-of-word(綴りは止めの訳の語 stop-reason-word の 1 か所)。知らない語は名指しの
 ;;; ValueError が待ち手に上がる。worker の子でない process(環境変数 HOST-CONTRACT.notice-env が無い)では答えない(退く事が起きない)。
 ;;;
-;;; 並び: session val を使うので外側に状態の handler(doeff_core_effects.handlers の state)、待ちは外部の Promise なので外側に scheduler が
+;;; 並び: session val を使うので外側に状態の handler(doeff_core_effects._handlers の state)、待ちは外部の Promise なので外側に scheduler が
 ;;; 要る。sim の偽の宿は同じ効果に世界の受け手で答える(sim/local.hy の process-notices)。
 (require doeff-hy.macros [defhandler <- val var])
 (val MODULE-TAGS {:context "worker" :role "main"})

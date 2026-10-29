@@ -4,14 +4,14 @@
 ;;; worker が子へ渡した環境変数を読み、Ask HOST-CONTRACT.run-context-key に RunContext(shared/entry/run_context_env の
 ;;; context-from-env)・program-key に Program の path・versions-key にこの process の版(foundation/process_versions)で答える。
 ;;; 宣言の :environ(子の環境変数を名で読む Ask)に答えるのは foundation/host_contract の os-environ-reader(本番の土台は両方を並べる)。
-;;; host-reader は session val を使うので、その外側に状態の handler(doeff_core_effects.handlers の state)が要る — 土台の組の中で
+;;; host-reader は session val を使うので、その外側に状態の handler(doeff_core_effects._handlers の state)が要る — 土台の組の中で
 ;;; host-reader より外に置く。sim の偽の宿は同じ鍵に同じ型で答える(sim/local.hy)。
 ;;;
 ;;; foundation/host_contract には同じ名の答え手 host-reader を旧い入口として 1 版残す(使い手の付け替えの後に消す — #2981 の 2 段目)。
 ;;; あちらからここを名で指せない: foundation の層は入口を読めず、ここは宿の契約の鍵を読むためにあちらを import する(指すと輪になる)。
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT this-program-path])
 (import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.entry.run_context_env [context-from-env])

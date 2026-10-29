@@ -18,7 +18,7 @@
 (import subprocess)
 (import pathlib [Path])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [reader state])
+(import doeff_core_effects [reader state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])

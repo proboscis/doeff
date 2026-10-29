@@ -16,7 +16,7 @@
 (import os)
 (import stat)
 (import threading)
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise Wait])
 
 
 (defrecord NoticeWaiter

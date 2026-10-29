@@ -7,8 +7,8 @@
 ;;; で載り、handler の値は詰めない。
 (require doeff-hy.macros [defk <-])
 (import doeff [with-handlers DoExpr EffectBase Program])
-(import doeff_core_effects.handlers [reader state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [reader state])
+(import doeff_core_effects [scheduled])
 
 
 (defk plain-foundation [body]

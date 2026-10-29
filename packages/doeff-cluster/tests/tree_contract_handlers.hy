@@ -11,7 +11,7 @@
 (import os)
 (import tempfile)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.handlers [state slog-discard-handler])
+(import doeff_core_effects [state slog-discard-handler])
 (import doeff_core_effects.file_effects [MemoryFiles])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])

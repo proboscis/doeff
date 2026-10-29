@@ -11,7 +11,7 @@
 (import pytest)
 (import doeff_cluster.sim.local :as local)
 (import doeff_cluster.sim.local [sim-cluster ProcessesOf SimProcess SimWorker AwaitProcessStarted StartWorker])
-(import doeff_core_effects.scheduler [Spawn Task Wait])
+(import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])

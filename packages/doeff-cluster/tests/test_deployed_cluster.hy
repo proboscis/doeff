@@ -15,8 +15,8 @@
 (import httpx)
 (import pytest)
 (import doeff [run with-handlers EffectBase Program])
-(import doeff_core_effects.handlers [slog-discard-handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [slog-discard-handler])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness AwaitJobProcess
                                                      JobProcessWaitExpired Redeclare Crash KillWorker StopWorker StopCoordinator
