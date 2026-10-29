@@ -200,7 +200,7 @@ def test_the_wall_clock_answers_the_same_meaning() -> None:
         return ran_out, at_once
 
     def _worker() -> None:
-        result["value"] = doeff_run(scheduled(sync_time_handler()(_program())))
+        result["value"] = doeff_run(scheduled()(sync_time_handler()(_program())))
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()

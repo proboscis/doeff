@@ -255,7 +255,7 @@ ENVS_HY = """\
 ;; given under its own handlers and the scheduler.
 (defk scheduled-foundation [program]
   {:pre [(: program DoExpr)] :post [(: % int)] :tags {:context "analyzer-test" :role "foundation"}}
-  (<- r (scheduled (with-handlers [(state) (sync-time-handler) (fixed-settings "1") raw-world] program)))
+  (<- r ((scheduled) (with-handlers [(state) (sync-time-handler) (fixed-settings "1") raw-world] program)))
   r)
 """
 
@@ -738,13 +738,14 @@ def test_a_foundation_that_runs_the_program_under_its_handlers_and_the_scheduler
         f"{pkg}.programs:wrapped_job", bindings={"foundation": envs.scheduled_foundation}
     )
 
-    # scheduled(...) is read as the scheduler's handler around the with-handlers scope;
-    # nothing is left for an outer env, and the body is not carried.
+    # scheduled()(...) — the handler the factory returns, applied to the body — is read as the
+    # scheduler's handler around the with-handlers scope, named as written like any factory
+    # (state()); nothing is left for an outer env, and the body is not carried.
     coverage = check_coverage(report, [], include=_spawn)
     assert coverage.complete, (coverage.gaps, coverage.unknown_handlers, coverage.unresolved)
     assert report.carried == ()
     [outer] = report.handled
-    assert [h.name for h in outer.handlers] == ["scheduled"]
+    assert [h.name for h in outer.handlers] == ["scheduled()"]
 
 
 def test_cli_binds_a_foundation(pkg: str, capsys: pytest.CaptureFixture[str]) -> None:
