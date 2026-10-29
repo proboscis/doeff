@@ -9,10 +9,10 @@ import pytest
 from doeff_adr import (
     AssertSemgrep,
     GetAdr,
+    GetEnforcement,
     RegisterSemgrep,
     SemgrepSpec,
     adr_registry,
-    get_enforcement,
     semgrep_enforcements,
 )
 from doeff_adr._registry import isolated_registry
@@ -104,7 +104,7 @@ def test_defadr_accepts_inline_deftest_and_defsemgrep(tmp_hy_dir):
     mod.test_ADR_SAMPLE_001_adr_contract()
     mod.test_no_string_options_defsemgrep()
     mod.test_no_python_print_defsemgrep()
-    semgrep_spec = get_enforcement("no_string_options")
+    semgrep_spec = run(adr_registry()(GetEnforcement("no_string_options")))
     assert isinstance(semgrep_spec, SemgrepSpec)
     assert semgrep_spec.pattern == '"options": ["$X"'
 
@@ -186,7 +186,7 @@ def test_installed_defsemgrep_reads_config_next_to_the_declaring_file(tmp_hy_dir
         """,
     )
 
-    spec = get_enforcement("near_rule")
+    spec = run(adr_registry()(GetEnforcement("near_rule")))
     assert isinstance(spec, SemgrepSpec)
     assert doeff_adr._registry.resolved_config_path(spec) == (
         tmp_hy_dir / "rules" / "near.semgrep.yaml"
@@ -253,7 +253,7 @@ def test_installed_defsemgrep_without_config_keeps_the_cwd_ancestor_walk(tmp_hy_
         """,
     )
 
-    spec = get_enforcement("cwd_rule")
+    spec = run(adr_registry()(GetEnforcement("cwd_rule")))
     assert isinstance(spec, SemgrepSpec)
     assert doeff_adr._registry.resolved_config_path(spec) == (tree / ".semgrep.yaml").resolve()
     mod.test_cwd_rule_defsemgrep()
