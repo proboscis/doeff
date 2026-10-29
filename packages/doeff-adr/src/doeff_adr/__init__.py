@@ -15,6 +15,15 @@ if TYPE_CHECKING:
     from doeff_adr._effects import (
         adr_registry as adr_registry,
     )
+    from doeff_adr._semgrep_effects import (
+        AssertSemgrep as AssertSemgrep,
+    )
+    from doeff_adr._semgrep_effects import (
+        RegisterSemgrep as RegisterSemgrep,
+    )
+    from doeff_adr._semgrep_effects import (
+        semgrep_enforcements as semgrep_enforcements,
+    )
     from doeff_adr.registry import (
         AdrSpec as AdrSpec,
     )
@@ -34,9 +43,6 @@ if TYPE_CHECKING:
         assert_all_adr_contracts as assert_all_adr_contracts,
     )
     from doeff_adr.registry import (
-        assert_semgrep_enforcement as assert_semgrep_enforcement,
-    )
-    from doeff_adr.registry import (
         clear_registry as clear_registry,
     )
     from doeff_adr.registry import (
@@ -54,21 +60,19 @@ if TYPE_CHECKING:
     from doeff_adr.registry import (
         register_deftest_enforcement as register_deftest_enforcement,
     )
-    from doeff_adr.registry import (
-        register_semgrep_enforcement as register_semgrep_enforcement,
-    )
 
 
 _PUBLIC_API_NAMES = (
     "AdrSpec",
+    "AssertSemgrep",
     "EnforcementRef",
     "GetAdr",
+    "RegisterSemgrep",
     "SemgrepSpec",
     "adr_ids",
     "adr_registry",
     "assert_adr_contract",
     "assert_all_adr_contracts",
-    "assert_semgrep_enforcement",
     "clear_registry",
     "doeff_hy",
     "enforcement_ids",
@@ -76,10 +80,12 @@ _PUBLIC_API_NAMES = (
     "get_enforcement",
     "register_adr",
     "register_deftest_enforcement",
-    "register_semgrep_enforcement",
+    "semgrep_enforcements",
 )
 #: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f)。
 _EFFECT_NAMES = frozenset({"GetAdr", "adr_registry"})
+#: 内側の module _semgrep_effects で定義する公開の名 — Semgrep の検の effect と handler(card ki-2a549274055c)。
+_SEMGREP_EFFECT_NAMES = frozenset({"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"})
 
 
 def __getattr__(name: str) -> object:
@@ -89,12 +95,18 @@ def __getattr__(name: str) -> object:
         return _PUBLIC_API_NAMES
     if name not in _PUBLIC_API_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from doeff_adr import _effects, registry
+    from doeff_adr import _effects, _semgrep_effects, registry
+
+    def defining_module(key: str) -> object:
+        """公開の名を定義する module(名はその module の値をそのまま出す)。"""
+        if key in _EFFECT_NAMES:
+            return _effects
+        if key in _SEMGREP_EFFECT_NAMES:
+            return _semgrep_effects
+        return registry
 
     exports: dict[str, object] = {
-        key: vars(_effects if key in _EFFECT_NAMES else registry)[key]
-        for key in _PUBLIC_API_NAMES
-        if key != "doeff_hy"
+        key: vars(defining_module(key))[key] for key in _PUBLIC_API_NAMES if key != "doeff_hy"
     }
     globals().update(exports)
     return exports[name]

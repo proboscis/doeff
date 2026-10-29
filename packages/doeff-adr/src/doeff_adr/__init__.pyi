@@ -10,6 +10,15 @@ from doeff_adr._effects import (
 from doeff_adr._effects import (
     adr_registry as adr_registry,
 )
+from doeff_adr._semgrep_effects import (
+    AssertSemgrep as AssertSemgrep,
+)
+from doeff_adr._semgrep_effects import (
+    RegisterSemgrep as RegisterSemgrep,
+)
+from doeff_adr._semgrep_effects import (
+    semgrep_enforcements as semgrep_enforcements,
+)
 from doeff_adr.registry import (
     AdrSpec as AdrSpec,
 )
@@ -29,9 +38,6 @@ from doeff_adr.registry import (
     assert_all_adr_contracts as assert_all_adr_contracts,
 )
 from doeff_adr.registry import (
-    assert_semgrep_enforcement as assert_semgrep_enforcement,
-)
-from doeff_adr.registry import (
     clear_registry as clear_registry,
 )
 from doeff_adr.registry import (
@@ -48,7 +54,4 @@ from doeff_adr.registry import (
 )
 from doeff_adr.registry import (
     register_deftest_enforcement as register_deftest_enforcement,
-)
-from doeff_adr.registry import (
-    register_semgrep_enforcement as register_semgrep_enforcement,
 )

@@ -6,7 +6,9 @@ The package provides Hy macros for:
 
 - `defadr`: register an ADR as structured data and emit a pytest contract check.
 - `defsemgrep`: register an installed Semgrep rule with hit/clean fixtures, or
-  an inline Semgrep rule body, and emit a pytest check.
+  an inline Semgrep rule body, and emit a pytest check (both through the
+  effects `RegisterSemgrep` and `AssertSemgrep` — see "Semgrep checks as
+  effects" below).
 - `deftest`: re-exported from `doeff-hy` for ADR-local executable examples.
 - pytest plugin: collect `defadr_*.hy` / `test_defadr_*.hy` executable ADR
   files and run generated `test_*` functions.
@@ -208,3 +210,42 @@ first, and an id missing from that list is a `KeyError` (it does not fall
 through to the process registry). `specs=[]` is an empty table, not the
 registry. The function `get_adr` remains only as a transition layer until the
 callers outside doeff read `GetAdr`; new code reads `GetAdr`.
+
+## Semgrep checks as effects
+
+`defsemgrep` performs two effects, answered by the handler factory
+`semgrep_enforcements`:
+
+- `RegisterSemgrep(id, rule_id=…, hit_fixtures=[…], clean_fixtures=[…])` (or
+  `pattern=…, bad=[…], good=[…]` for an inline rule) puts the check on the
+  table and answers its `SemgrepSpec`. A repeated id, or neither `pattern` nor
+  `rule_id`, is a `ValueError`.
+- `AssertSemgrep(id)` runs semgrep and answers `None` when the rule fires on a
+  hit fixture and stays silent on every clean fixture. A miss, a missing
+  semgrep, or a scan that did not run is an `AssertionError`, raised where the
+  effect was performed; an id that is not on the table is a `KeyError`.
+
+The expansion of `defsemgrep` runs the registration at import time and the
+check inside the generated test, each under `semgrep_enforcements()` itself,
+so a repository needs no `doeff_interpreter` fixture for its `defsemgrep`
+checks.
+
+`semgrep_enforcements()` writes to and reads the process registry, and starts
+the `semgrep` found on `PATH` when it answers `AssertSemgrep`.
+`semgrep_enforcements(table={})` writes to and reads the given dict instead
+(an id missing from it does not fall through to the registry), and
+`semgrep_enforcements(semgrep="/path/to/semgrep")` starts that executable. The
+inner handler answers first, so a test can run part of a program against
+another table or another semgrep:
+
+```hy
+(require doeff-hy.macros [deftest do! <-])
+(import doeff-adr [RegisterSemgrep AssertSemgrep semgrep-enforcements])
+
+(deftest test-the-rule-stops-its-bad-fixture
+  (<- ((semgrep-enforcements :table {})
+        (do!
+          (<- (RegisterSemgrep "no-eval" :pattern "eval(...)" :languages ["python"]
+                               :bad ["eval('1')"] :good ["print('1')"]))
+          (<- (AssertSemgrep "no-eval"))))))
+```

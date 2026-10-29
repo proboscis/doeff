@@ -6,9 +6,10 @@ import textwrap
 import doeff_adr.registry
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
-from doeff import run
-from doeff_adr import GetAdr, adr_registry
+from doeff_adr import AssertSemgrep, GetAdr, RegisterSemgrep, adr_registry, semgrep_enforcements
 from doeff_adr.registry import SemgrepSpec, get_enforcement, isolated_registry
+
+from doeff import run
 
 pytest_plugins = ["pytester"]
 
@@ -179,9 +180,10 @@ def test_installed_defsemgrep_reads_config_next_to_the_declaring_file(tmp_hy_dir
 
     spec = get_enforcement("near_rule")
     assert isinstance(spec, SemgrepSpec)
-    assert doeff_adr.registry.resolved_config_path(spec) == (
-        tmp_hy_dir / "rules" / "near.semgrep.yaml"
-    ).resolve()
+    assert (
+        doeff_adr.registry.resolved_config_path(spec)
+        == (tmp_hy_dir / "rules" / "near.semgrep.yaml").resolve()
+    )
     mod.test_near_rule_defsemgrep()
 
 
@@ -346,16 +348,20 @@ def test_defsemgrep_fails_when_semgrep_executable_is_missing(
         return None
 
     with isolated_registry():
-        doeff_adr.registry.register_semgrep_enforcement(
-            "missing_semgrep",
-            pattern="forbidden-token",
-            bad=["forbidden-token"],
-            good=["allowed-token"],
+        run(
+            semgrep_enforcements()(
+                RegisterSemgrep(
+                    "missing_semgrep",
+                    pattern="forbidden-token",
+                    bad=["forbidden-token"],
+                    good=["allowed-token"],
+                )
+            )
         )
         monkeypatch.setattr(doeff_adr.registry.shutil, "which", missing_executable)
 
         with pytest.raises(AssertionError, match="semgrep executable is required"):
-            doeff_adr.registry.assert_semgrep_enforcement("missing_semgrep")
+            run(semgrep_enforcements()(AssertSemgrep("missing_semgrep")))
 
 
 def test_pytest_plugin_collects_defadr_hy_files(pytester):
