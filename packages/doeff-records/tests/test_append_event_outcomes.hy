@@ -56,7 +56,7 @@
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (append-once "k1" {"n" 1}))
   ;; 同じ冪等キーの別の本文は断られる。束ねずに逃がす: result で畳むと Err(Refused) — 値として束ねた名には Refused が来ない。
-  (val settled (in-store store ((result) (append-once "k1" {"n" 9}))))
+  (val settled (in-store store (result (append-once "k1" {"n" 9}))))
   ;; Ok / Err は値で比べられない(Rust の型)ので、直の撃ちの答え(値)と repr で比べる。
   (val refused (in-store store (AppendEvent "journal" "k1" {"n" 9})))
   (assert (isinstance refused Refused) refused)
@@ -71,7 +71,7 @@
 (deftest test-an-unreachable-append-escapes-as-a-raise
   (val store (MemoryStore LAW-SCHEMA))
   (in-store store (SetStoreOutage DETAIL))
-  (val settled (in-store store ((result) (append-once "k1" {"n" 1}))))
+  (val settled (in-store store (result (append-once "k1" {"n" 1}))))
   (assert (isinstance settled Err) settled)
   (assert (= (repr settled) (.format "Err({!r})" (Unreachable DETAIL))) settled)
   (with [(pytest.raises UnhandledEffect)]

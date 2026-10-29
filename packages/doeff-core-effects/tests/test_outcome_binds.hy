@@ -115,23 +115,23 @@
 
 
 (deftest test-declared-bind-opens-the-answer
-  (<- found (table-rows ((maybe) (read-value "a"))))
-  (<- absent (table-rows ((maybe) (read-value "zz"))))
-  (<- failed (table-rows ((result) (read-value "down"))))
+  (<- found (table-rows (maybe (read-value "a"))))
+  (<- absent (table-rows (maybe (read-value "zz"))))
+  (<- failed (table-rows (result (read-value "down"))))
   (<- stale (table-rows (read-value "old")))
   (assert (= found (Some "A")) found)
   (assert (is absent Nothing) absent)
   (assert (= (repr failed) "Err(Unreachable(detail='網が落ちた'))") failed)
   (assert (= stale (Stale 3)) "値と宣言した答えは束ねる(失敗にしない)")
-  (<- banged (table-rows ((maybe) (read-value-bang "a"))))
-  (<- banged-absent (table-rows ((maybe) (read-value-bang "zz"))))
+  (<- banged (table-rows (maybe (read-value-bang "a"))))
+  (<- banged-absent (table-rows (maybe (read-value-bang "zz"))))
   (assert (= #(banged banged-absent) #((Some "got A") Nothing)) #(banged banged-absent)))
 
 
 (deftest test-a-bind-has-one-meaning-under-any-caller
   ;; 同じ read-value の行は、呼び手の maybe / result / on-raise のどれの下でも x = 成功の型(R3・law a-bind-has-one-meaning)
-  (<- under-maybe (table-rows ((maybe) (read-value "a"))))
-  (<- under-result (table-rows ((result) (read-value "a"))))
+  (<- under-maybe (table-rows (maybe (read-value "a"))))
+  (<- under-result (table-rows (result (read-value "a"))))
   (<- under-on-raise (table-rows (on-raise (read-value "a") (Unreachable d) d)))
   (assert (= #(under-maybe (repr under-result) under-on-raise) #((Some "A") "Ok('A')" "A"))
           #(under-maybe under-result under-on-raise)))
@@ -329,14 +329,14 @@
 
 (deftest test-absent-option-maps-this-bind-to-a-failure
   (.clear FAILURES-BUILT)
-  (<- found (table-rows ((result) (read-or-conflict "a"))))
+  (<- found (table-rows (result (read-or-conflict "a"))))
   (assert (= (repr found) "Ok('A')") found)
   (assert (= FAILURES-BUILT []) "成功の時は失敗の値を作らない")
-  (<- mapped (table-rows ((result) (read-or-conflict "zz"))))
+  (<- mapped (table-rows (result (read-or-conflict "zz"))))
   (assert (= (repr mapped) "Err(Conflict(detail='zz の行が無い'))") mapped)
-  (<- down (table-rows ((result) (read-or-conflict "down"))))
+  (<- down (table-rows (result (read-or-conflict "down"))))
   (assert (= (repr down) "Err(Unreachable(detail='網が落ちた'))") "失敗はそのまま(:absent は不在だけを写す)")
-  (<- from-nothing ((result) (nothing-or-conflict)))
+  (<- from-nothing (result (nothing-or-conflict)))
   (assert (= (repr from-nothing) "Err(Conflict(detail='nothing の行が無い'))") from-nothing)
   (assert (in "値の式" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absent (! (g)))"))))
   (assert (in "知らない鍵" (! (expansion-refusal "(require doeff-hy.macros [<-]) (<- x (f) :absnt 1)")))))
@@ -377,15 +377,15 @@
 
 
 (deftest test-bind-opens-result-and-option-values
-  (<- from-ok ((result) (open-value (Ok 1))))
-  (<- from-err ((result) (open-value (Err "理由"))))
-  (<- from-some ((maybe) (open-value (Some 2))))
-  (<- from-nothing ((maybe) (open-value Nothing)))
+  (<- from-ok (result (open-value (Ok 1))))
+  (<- from-err (result (open-value (Err "理由"))))
+  (<- from-some (maybe (open-value (Some 2))))
+  (<- from-nothing (maybe (open-value Nothing)))
   (assert (= (repr #(from-ok from-err from-some from-nothing)) "(Ok(2), Err('理由'), Some(3), Nothing)")
           #(from-ok from-err from-some from-nothing))
   ;; Err の中の Python の例外(Try が畳んだ実装の誤り)は Raise にせず例外のまま上げる(R11)
   (with [(pytest.raises ValueError :match "実装")]
-    (run ((result) (open-value (Err (ValueError "実装の誤り")))))))
+    (run (result (open-value (Err (ValueError "実装の誤り")))))))
 
 
 (defk direct-default [key]

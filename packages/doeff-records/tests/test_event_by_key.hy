@@ -122,7 +122,7 @@
   {:pre [(: stream str) (: key str)] :post [(: % (| Ok Err))]
    :tags {:context "records" :role "foundation"}}
   "鍵の読みを宣言どおりに開き、不在は Nothing・失敗は Err に畳んで返すため(maybe を内側・result を外側 — R2 の入れ子の順)。"
-  (<- opened ((result) ((maybe) (ReadEventByKey stream key))))
+  (<- opened (result (maybe (ReadEventByKey stream key))))
   opened)
 
 

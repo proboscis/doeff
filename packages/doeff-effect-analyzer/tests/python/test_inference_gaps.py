@@ -405,7 +405,7 @@ OUTCOMES_HY = """\
 
 (defk looked-up []
   {:pre [] :post [(: % (| Ok Err))] :tags {:context "analyzer-test" :role "program"}}
-  (<- r ((result) (looking)))
+  (<- r (result (looking)))
   r)
 
 (defk missing []
