@@ -13,30 +13,15 @@
 (import json)
 (import doeff [Program run with_handlers])
 (import doeff_core_effects [state])
-(import doeff_agents.sessionhost.store_memory [MemorySessionRows memory-session-store])
+(import doeff_agents [MemorySessionRows memory-session-store])
 (import memory_store_world [StoreWorld kept-in seeded reported])
 (import os)
 (import shutil)
 (import tempfile)
 
-(import doeff_agents.sessionhost.effects [
-  SessionRow
-  TerminalCause
-  PaneObservation
-  ProcResult
-  MonitorKnobs
-  ClassifyPane
-  DeliverMessage
-  DiscoverConversation
-  TmuxHasSession
-  TmuxPaneCurrentCommand
-  TmuxSessionPaneIds
-  TmuxCapture
-  TmuxSendKeys
-  TmuxKillSession
-  ClockNow
-  ProcRun])
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents [SessionRow PaneObservation ProcResult ClassifyPane DeliverMessage DiscoverConversation TmuxHasSession TmuxPaneCurrentCommand TmuxSessionPaneIds TmuxCapture TmuxSendKeys TmuxKillSession ClockNow ProcRun]
+        doeff_agents._sessionhost.effects [TerminalCause MonitorKnobs])
+(import doeff_agents._sessionhost.policy [
   ACTIVE-STATUSES
   RESULT-SOLICITATION-MESSAGE
   tail-chars
@@ -514,7 +499,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn with-tmp-conn [thunk]
-  (import doeff_agents.sessionhost.store [open-conn db-migrate])
+  (import doeff_agents._sessionhost.store [open-conn db-migrate])
   (setv d (tempfile.mkdtemp))
   (try
     (setv conn (open-conn (os.path.join d "agentd.sqlite")))
@@ -559,7 +544,7 @@
 
 
 (deftest test-store-roundtrip-new-columns
-  (import doeff_agents.sessionhost.store [db-upsert-snapshot db-session-get
+  (import doeff_agents._sessionhost.store [db-upsert-snapshot db-session-get
                                           snapshot-to-policy-row])
   (defn check [conn]
     (db-upsert-snapshot conn (make-snap "b1"
@@ -576,7 +561,7 @@
 
 (deftest test-store-list-cleanup-pending-filter
   ;; 対象集合 = 終端 ∧ cleaned_at IS NULL ∧ RTC ∧ 非 adopted のみ。
-  (import doeff_agents.sessionhost.store [db-upsert-snapshot
+  (import doeff_agents._sessionhost.store [db-upsert-snapshot
                                           db-session-list-cleanup-pending])
   (defn check [conn]
     (db-upsert-snapshot conn (make-snap "in-scope" :status "failed"))
@@ -595,7 +580,7 @@
 (deftest test-store-clear-awaiting-latch-clears-since
   ;; 起動時 latch clear は awaiting_response_since も同時に消す(期限の基点が
   ;; 死んだ process の配送に束縛されているのは latch と同じ)。
-  (import doeff_agents.sessionhost.store [db-upsert-snapshot db-session-get
+  (import doeff_agents._sessionhost.store [db-upsert-snapshot db-session-get
                                           db-clear-awaiting-latches])
   (defn check [conn]
     (db-upsert-snapshot conn (make-snap "a1" :awaiting_response True

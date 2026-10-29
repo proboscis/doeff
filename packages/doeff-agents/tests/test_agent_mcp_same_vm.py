@@ -21,8 +21,8 @@ from doeff_agents import (
     StopSession,
 )
 from doeff_agents import agent_effectful_handler
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.tmux import SessionInfo
+from doeff_agents import SessionBackend
+from doeff_agents import SessionInfo
 from doeff_core_effects import lazy_ask, state
 from doeff_core_effects import (
     AcquireSemaphore,

@@ -98,11 +98,8 @@
     [(deftest test-adr-doe-agents-002-conversation-evidence-vocabulary
        ;; R-conversation-evidence-65b8 の機械面: 証拠面の effect 語彙と knob が
        ;; 凍結既定値で実在する(性質 pin — 述語の綴りには依存しない)。
-       (import doeff_agents.sessionhost.effects [MonitorKnobs
-                                                 ProbeConversationActivity
-                                                 FsFileMtime
-                                                 probe-conversation-activity
-                                                 fs-file-mtime])
+       (import doeff_agents [ProbeConversationActivity FsFileMtime probe-conversation-activity fs-file-mtime]
+               doeff_agents._sessionhost.effects [MonitorKnobs])
        (setv knobs (MonitorKnobs))
        (assert (= knobs.conversation-quiescence-seconds 120))
        (assert (= knobs.conversation-progress-margin-seconds 10))
@@ -116,7 +113,7 @@
        ;; path は module __file__ 起点(ADR-010 cleanup-single-home と同じ
        ;; editable-install 前提 — cwd に依存しない)。
        (import pathlib [Path])
-       (import doeff_agents.sessionhost.policy :as policy-mod)
+       (import doeff_agents._sessionhost.policy :as policy-mod)
        (setv pkg-root (. (Path (. policy-mod __file__)) parent parent parent parent))
        (setv suite (.read-text (/ pkg-root "tests" "sessionhost_policy_deftests.hy")
                                :encoding "UTF-8"))

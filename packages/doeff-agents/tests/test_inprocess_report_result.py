@@ -45,8 +45,8 @@ from doeff_agents._handlers.production import (
     spec_uses_report_result_transport,
 )
 from doeff_agents._mcp_server import McpToolServer
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.tmux import SessionInfo
+from doeff_agents import SessionBackend
+from doeff_agents import SessionInfo
 from doeff_core_effects import lazy_ask, state
 from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 

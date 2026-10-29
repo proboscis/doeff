@@ -24,8 +24,8 @@
 (import json)
 (import sqlite3)
 
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES])
-(import doeff_agents.sessionhost.store [now-iso])
+(import doeff_agents._sessionhost.policy [ACTIVE-STATUSES])
+(import doeff_agents._sessionhost.store [now-iso])
 
 
 (setv TURN-HOLDER-AGENT "agent")

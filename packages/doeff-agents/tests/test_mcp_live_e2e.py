@@ -17,7 +17,7 @@ from doeff_agents import AgentType
 from doeff_agents import Capture, LaunchEffect, Monitor, Stop
 from doeff_agents import agent_handler_defhandler
 from doeff_agents._handlers.production import TmuxAgentHandler
-from doeff_agents.tmux import TmuxSessionBackend
+from doeff_agents._tmux import TmuxSessionBackend
 from doeff_core_effects import state
 from doeff_core_effects import scheduled
 from doeff_time import Delay, sync_time_handler

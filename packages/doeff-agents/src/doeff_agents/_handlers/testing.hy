@@ -47,7 +47,7 @@ from a ScenarioWorld, stacked outside a mock handler over the world's terminal s
 (import doeff_agents._effects.agent [SessionStatus])
 (import doeff_agents._handlers.effectful [_await-result-by-polling _serve-mcp-tools _stop-mcp-server])
 (import doeff_agents._handlers.production [_run-agent-task])
-(import doeff_agents.session-store [
+(import doeff_agents._session-store [
   AgentSessionRepository
   InMemoryAgentSessionRepository])
 

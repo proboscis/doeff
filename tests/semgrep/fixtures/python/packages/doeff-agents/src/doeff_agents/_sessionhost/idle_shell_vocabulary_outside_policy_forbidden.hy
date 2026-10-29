@@ -6,7 +6,7 @@
 ;;; that judgement out of policy (design check 2026-09-26, blind B). The two
 ;;; lines that name the vocabulary below are the banned shape.
 
-(import doeff_agents.sessionhost.policy [IDLE-SHELL-COMMANDS])
+(import doeff_agents._sessionhost.policy [IDLE-SHELL-COMMANDS])
 
 (defk herdr-foreground-command [result]
   (setv commands (herdr-process-commands result))

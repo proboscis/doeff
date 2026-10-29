@@ -10,7 +10,7 @@ unless something converges the observed end state. S28d is that something:
 a declarative reconciler in the harness fixture setup (AgentdHarness
 `__enter__`) that
 
-  (1) enumerates session host processes (`python -m doeff_agents.sessionhost.host`) whose --db lives under
+  (1) enumerates session host processes (`python -m doeff_agents._sessionhost.host`) whose --db lives under
       /tmp/agentd-conf-* AND whose ppid==1 (the supervisor's death is proven
       by the reparent to init),
   (2) reaps their launched non-adopted active sessions with the daemon's own
@@ -335,7 +335,7 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
     conformance path."""
     from harness import classify_conformance_daemon, select_reapable_orphans
 
-    bin_path = "/usr/local/bin/python3 -m doeff_agents.sessionhost.host"
+    bin_path = "/usr/local/bin/python3 -m doeff_agents._sessionhost.host"
     production_db = Path.home() / ".local" / "state" / "doeff" / "agentd.sqlite"
     production_cmd = (
         f"{bin_path} --db {production_db}"
@@ -360,7 +360,7 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
     # --prompt-judge-cmd argument
     shebang_cmd = (
         "/Users/u/repos/doeff/.venv/bin/python3"
-        " -m doeff_agents.sessionhost.host"
+        " -m doeff_agents._sessionhost.host"
         " --db /tmp/agentd-conf-xyaqu22z/agentd.sqlite"
         " --socket /tmp/agentd-conf-xyaqu22z/agentd.sock"
         " --monitor-interval-ms 100 --max-running 4 --prompt-judge-cmd "
@@ -372,7 +372,7 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
     # ...but a production host in the same shape stays excluded
     assert classify_conformance_daemon(
         "/Users/u/repos/doeff/.venv/bin/python3"
-        " -m doeff_agents.sessionhost.host"
+        " -m doeff_agents._sessionhost.host"
         f" --db {production_db} --socket /tmp/doeff-agentd.sock"
     ) is None
 
@@ -386,5 +386,5 @@ def test_s28d_counterexample_production_db_path_is_excluded_by_path() -> None:
 
     # a non-sessionhost process mentioning the dir (grep, editor) is no target
     assert classify_conformance_daemon(
-        "grep --db /tmp/agentd-conf-abc123/agentd.sqlite doeff_agents.sessionhost.host"
+        "grep --db /tmp/agentd-conf-abc123/agentd.sqlite doeff_agents._sessionhost.host"
     ) is None

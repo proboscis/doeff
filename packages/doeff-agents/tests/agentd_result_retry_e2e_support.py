@@ -209,7 +209,7 @@ def report_invalid() -> str:
     # server (missing the required "ok" field). agentd must reject it
     # deterministically and MUST NOT re-prompt.
     proc = subprocess.Popen(
-        [sys.executable, "-m", "doeff_agents.sessionhost.result_mcp",
+        [sys.executable, "-m", "doeff_agents._sessionhost.result_mcp",
      "--session", SESSION_ID, "--socket", SOCKET],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

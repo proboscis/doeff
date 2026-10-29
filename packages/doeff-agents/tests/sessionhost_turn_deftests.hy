@@ -20,13 +20,13 @@
 (import shutil)
 (import tempfile)
 
-(import doeff_agents.sessionhost.policy [turn-stalled])
-(import doeff_agents.sessionhost.store [
+(import doeff_agents._sessionhost.policy [turn-stalled])
+(import doeff_agents._sessionhost.store [
   open-conn
   db-migrate
   db-upsert-snapshot
   db-session-get])
-(import doeff_agents.sessionhost.turn [
+(import doeff_agents._sessionhost.turn [
   TURN-HOLDER-AGENT
   db-resolve-turn-target
   db-turn-stamp

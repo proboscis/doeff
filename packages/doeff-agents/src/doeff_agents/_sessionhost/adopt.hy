@@ -25,14 +25,14 @@
 (import dataclasses [replace])
 (import uuid)
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   SessionRow
   clock-now
   session-store-list-active
   session-store-record-event
   session-store-upsert
   tmux-has-session])
-(import doeff_agents.sessionhost.policy [iso-format])
+(import doeff_agents._sessionhost.policy [iso-format])
 
 
 (defclass AdoptTargetNotFound [Exception]

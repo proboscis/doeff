@@ -13,7 +13,7 @@ from doeff_agents._effects._session_host_effects import SessionHostKindsEffect a
 from doeff_agents._effects._session_host_effects import SessionHostStatusEffect as SessionHostStatusEffect
 from doeff_agents._handlers import daemon_agent_handler as daemon_agent_handler
 from doeff_agents._handlers.effectful import tmux_agent_defhandler as tmux_agent_defhandler
-from doeff_agents.tmux import get_default_backend as get_default_backend
+from doeff_agents._tmux import get_default_backend as get_default_backend
 
 def session_host_defhandler(client: LazyAgentdClient) -> _Handler:
     ...

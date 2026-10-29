@@ -27,7 +27,7 @@
   SessionHostStatusEffect])
 (import doeff_agents._handlers [daemon-agent-handler])
 (import doeff_agents._handlers.effectful [tmux-agent-defhandler])
-(import doeff_agents.tmux [get-default-backend])
+(import doeff_agents._tmux [get-default-backend])
 
 
 ;; 引数に残す理由: CLIENT は daemon-agent-handler と同じ 1 本の接続でなければならない

@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import hy  # noqa: F401  (enables the .hy import hook)
 
-from doeff_agents.sessionhost.impls.markers import provider_failure_class
+from doeff_agents._sessionhost.impls.markers import provider_failure_class
 
 SCREENS = Path(__file__).parent / "data" / "provider_failure_screens"
 READY_SCREENS = Path(__file__).parent / "data" / "ready_screens"

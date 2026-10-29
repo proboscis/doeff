@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from doeff_agents.shell import assert_no_forbidden_agent_env, forbidden_agent_env_keys
+from doeff_agents._shell import assert_no_forbidden_agent_env, forbidden_agent_env_keys
 
 
 def test_forbidden_agent_env_rejects_provider_and_oauth_auth() -> None:

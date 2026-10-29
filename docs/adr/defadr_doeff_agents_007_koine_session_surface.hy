@@ -28,7 +28,7 @@
        :evidence "packages/doeff-agents/conformance/test_s26_interactive_not_reaped.py(TDD red 2026-07-21: 4 経路が interactive 行を terminal 化することを実測)")
      (fact
        "launch timeout 経路は adopt と致命的に干渉する: adopt は観測のみで startup marker を見ないため、adopt 行は「status=running・observed_active_at=None」そのもの — 登記の 60 秒後(既定 knob)に必ず failed 化し、store の terminal guard が再活性を禁止するため、行が死んで pane だけ生き残る孤児化になる。adopt だけを足すと『登記が席を殺す』。"
-       :evidence "~/repos/koine/docs/turn-stamp-path.md 突合結果(重大発見の登記 2026-07-21); packages/doeff-agents/src/doeff_agents/sessionhost/store.hy db-upsert-snapshot terminal guard")
+       :evidence "~/repos/koine/docs/turn-stamp-path.md 突合結果(重大発見の登記 2026-07-21); packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy db-upsert-snapshot terminal guard")
      (fact
        "ownership marker 列が存在しなかった(agent_sessions に owner/creator/adopted 列なし・owner_pid は daemon lease 用)ため、条文の opt-in marker + fail-closed 自体が表現できなかった。"
        :evidence "packages/doeff-agents/tests/sessionhost_store_deftests.hy EXPECTED-COLUMNS(TDD red 2026-07-21)")
@@ -96,8 +96,8 @@
        ;; 免除述語の機械面: adopted と非 run_to_completion(interactive・未知
        ;; lifecycle = fail-closed)が免除され、素の run_to_completion のみが
        ;; reap の opt-in に残る。
-       (import doeff_agents.sessionhost.effects [SessionRow])
-       (import doeff_agents.sessionhost.policy [reap-exempt])
+       (import doeff_agents [SessionRow])
+       (import doeff_agents._sessionhost.policy [reap-exempt])
        (defn mk [lifecycle adopted]
          (SessionRow :session-id "adr7" :session-name "adr7" :pane-id "%0"
                      :agent-type "claude" :lifecycle lifecycle :status "running"
@@ -109,21 +109,21 @@
        (assert (is (reap-exempt (mk "run_to_completion" False)) False)))
      (defsemgrep adopt-observation-only
        "doeff-agents-adopt-must-not-mutate-substrate"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy"
          "source" "(defk adopt-program [params]\n  (<- _ (tmux-send-keys pane-id \"Enter\" False False))\n  row)\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy"
          "source" "(defk adopt-program [params]\n  (<- alive (tmux-has-session session-name))\n  (<- _ (session-store-upsert row))\n  row)\n"}])
      (defsemgrep interactive-never-terminalized
        "doeff-agents-interactive-must-not-be-terminalized"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(defk monitor-session-once [row knobs]\n  (when (= row.status \"booting\")\n    (setv row (replace row :status \"failed\"))\n    (return row))\n  row)\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(defk monitor-session-once [row knobs]\n  (when (reap-exempt row)\n    (return row))\n  (when stale\n    (setv row (replace row :status \"failed\")))\n  row)\n"}])
      (defsemgrep turn-rpc-store-only
        "doeff-agents-turn-rpc-must-not-touch-substrate"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-turn-stamp [conn pane-id]\n  (<- alive (tmux-has-session session-name))\n  None)\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-turn-stamp [conn pane-id]\n  (.execute conn \"UPDATE agent_sessions SET turn_holder = ? WHERE session_id = ?\")\n  None)\n"}])
      (deftest test-adr-doe-agents-007-stamp-never-crosses-identities
        ;; 法 stamp-never-crosses-identities の機械面(波 1-S1 改訂・実 SQLite):
@@ -131,8 +131,8 @@
        ;; pane 鍵は別会話を名乗る行に落ちない・素の名前 descriptor だけが
        ;; 名前鍵を使える。吸い込み実弾(2026-08-17)の regression pin。
        (import sqlite3)
-       (import doeff_agents.sessionhost.store [db-migrate])
-       (import doeff_agents.sessionhost.turn [db-resolve-turn-target])
+       (import doeff_agents._sessionhost.store [db-migrate])
+       (import doeff_agents._sessionhost.turn [db-resolve-turn-target])
        (setv conn (sqlite3.connect ":memory:"))
        (db-migrate conn)
        (defn seed [sid name pane conv]
@@ -161,14 +161,14 @@
        (.close conn))
      (defsemgrep turn-name-key-requires-bare-descriptor
        "doeff-agents-turn-name-key-requires-bare-descriptor"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-resolve-turn-target [conn pane-id agent-name conversation-id]\n  (when (is-not agent-name None)\n    (setv row (.fetchone (.execute conn base-name-sql)))\n    (when (is-not row None) (return (get row 0))))\n  None)\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy"
          "source" "(deff db-resolve-turn-target [conn pane-id agent-name conversation-id]\n  (when (and (is pane-id None) (is conversation-id None) (is-not agent-name None))\n    (setv row (.fetchone (.execute conn base-name-sql)))\n    (when (is-not row None) (return (get row 0))))\n  None)\n"}])]
   :plans ["docs/adr/defadr_doeff_agents_007_koine_session_surface.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy(additive 4 列 + adopted filter + 会話 index + db-session-by-conversation〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy(reap-exempt 免除 arm + turn-stalled 導出)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy(adopt program — observation-only + 会話受理と冪等 3 分岐〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy(descriptor 解決 = pane/conversation/素の名前 + 3 列 UPDATE〔波 1-S1〕)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy(RPC dispatch + counters + wire 導出 + session.by_conversation〔波 1-S1〕)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy(additive 4 列 + adopted filter + 会話 index + db-session-by-conversation〔波 1-S1〕)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy(reap-exempt 免除 arm + turn-stalled 導出)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy(adopt program — observation-only + 会話受理と冪等 3 分岐〔波 1-S1〕)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy(descriptor 解決 = pane/conversation/素の名前 + 3 列 UPDATE〔波 1-S1〕)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy(RPC dispatch + counters + wire 導出 + session.by_conversation〔波 1-S1〕)"
           "packages/doeff-agents/conformance/test_s23..s27(black-box 検定 — 将来 koine 側へ移設可能。S23/S25 は波 1-S1 改訂を pin)"])

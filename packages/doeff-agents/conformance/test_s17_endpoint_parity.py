@@ -251,8 +251,8 @@ def test_s17_inproc_and_host_result_endpoints_agree(tmp_path) -> None:  # noqa: 
     # daemon/socket/tmux), same session ids, same payloads, same order
     # ------------------------------------------------------------------
     import hy  # noqa: F401  # registers the .hy importer
-    from doeff_agents.sessionhost import host as hyhost
-    from doeff_agents.sessionhost import store as hystore
+    from doeff_agents._sessionhost import host as hyhost
+    from doeff_agents._sessionhost import store as hystore
 
     db_path = str(tmp_path / "s17-inproc.sqlite")
     config = hyhost.parse_args(
