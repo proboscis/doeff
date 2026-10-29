@@ -21,19 +21,30 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
 from doeff_adr.registry import (
     _resolve_config_path,
     _run_semgrep,
-    assert_semgrep_enforcement,
     isolated_registry,
-    register_semgrep_enforcement,
 )
+
+from doeff import run
 
 
 @pytest.fixture
 def registry():
     with isolated_registry():
         yield
+
+
+def _register(effect: RegisterSemgrep) -> None:
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    run(semgrep_enforcements()(effect))
+
+
+def _check(enforcement_id: str) -> None:
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
 def _make_tree_without_git(tmp_path: Path) -> Path:
@@ -80,24 +91,26 @@ def test_installed_rule_enforcement_runs_on_tree_without_git(tmp_path, monkeypat
     """installed-rule 形の全経路(config 解決 → fixture 走査)が .git なしで成立する。"""
     root = _make_tree_without_git(tmp_path)
     monkeypatch.chdir(root)
-    register_semgrep_enforcement(
-        "tree_only_installed_probe",
-        rule_id="no-future-annotations-tree-only-probe",
-        hit_fixtures=[
-            {
-                "relative-path": "packages/sample/bad.py",
-                "source": "from __future__ import annotations\n",
-            }
-        ],
-        clean_fixtures=[
-            {
-                "relative-path": "packages/sample/clean.py",
-                "source": "import json\n",
-            }
-        ],
+    _register(
+        RegisterSemgrep(
+            "tree_only_installed_probe",
+            rule_id="no-future-annotations-tree-only-probe",
+            hit_fixtures=[
+                {
+                    "relative-path": "packages/sample/bad.py",
+                    "source": "from __future__ import annotations\n",
+                }
+            ],
+            clean_fixtures=[
+                {
+                    "relative-path": "packages/sample/clean.py",
+                    "source": "import json\n",
+                }
+            ],
+        )
     )
 
-    assert_semgrep_enforcement("tree_only_installed_probe")
+    _check("tree_only_installed_probe")
 
 
 def _fake_semgrep(tmp_path: Path, script_body: str) -> Path:
@@ -176,18 +189,20 @@ def test_crashing_scanner_is_not_reported_as_rule_not_firing(tmp_path, monkeypat
         tmp_path,
         'echo "Traceback (most recent call last): scanner is broken" >&2\nexit 1\n',
     )
-    register_semgrep_enforcement(
-        "crash_is_not_a_clean_scan",
-        pattern="forbidden-token",
-        bad=["forbidden-token"],
-        good=["allowed-token"],
+    _register(
+        RegisterSemgrep(
+            "crash_is_not_a_clean_scan",
+            pattern="forbidden-token",
+            bad=["forbidden-token"],
+            good=["allowed-token"],
+        )
     )
     import doeff_adr.registry as registry_module
 
     monkeypatch.setattr(registry_module.shutil, "which", lambda _name: str(fake))
 
     with pytest.raises(AssertionError) as excinfo:
-        assert_semgrep_enforcement("crash_is_not_a_clean_scan")
+        _check("crash_is_not_a_clean_scan")
 
     assert "did not match any bad fixture" not in str(excinfo.value)
     assert "scanner is broken" in str(excinfo.value)

@@ -8,13 +8,15 @@ from pathlib import Path
 
 import doeff_adr
 import doeff_adr._effects
+import doeff_adr._semgrep_effects
 import doeff_adr.registry
 
 INIT = Path(doeff_adr.__file__)
-#: 公開の名を定義する module(registry と、effect と handler の内側の module — card ki-24a2bca4339f)。
+#: 公開の名を定義する module(registry と、effect と handler の内側の module — card ki-24a2bca4339f・ki-2a549274055c)。
 DEFINING_MODULES = {
     "doeff_adr.registry": doeff_adr.registry,
     "doeff_adr._effects": doeff_adr._effects,
+    "doeff_adr._semgrep_effects": doeff_adr._semgrep_effects,
 }
 
 
@@ -56,7 +58,7 @@ def test_the_type_checked_names_are_the_runtime_names() -> None:
 
 
 def test_every_public_name_is_the_defining_module_value() -> None:
-    """公開の名の値は定義の module(registry か _effects)の物そのもの(写しや包みではない)。"""
+    """公開の名の値は定義の module(registry か _effects か _semgrep_effects)の物そのもの(写しや包みではない)。"""
     for name, module in _type_checking_import_modules().items():
         defined = vars(DEFINING_MODULES[module])[name]
         assert getattr(doeff_adr, name) is defined

@@ -1,8 +1,11 @@
 """Runtime registry for executable ADR contracts.
 
-Hy macros expand into calls in this module.  The registry is intentionally
-small: it records ADR specs and executable enforcement specs, then exposes
-assertions that pytest-generated functions can call.
+Hy macros expand into calls in this module, except ``defsemgrep``: it performs
+the effects RegisterSemgrep and AssertSemgrep (``doeff_adr._semgrep_effects``),
+whose handler answers them with ``_register_semgrep_enforcement`` and
+``_assert_semgrep_enforcement`` here.  The registry is intentionally small: it
+records ADR specs and executable enforcement specs, then exposes assertions
+that pytest-generated functions can call.
 """
 
 import hashlib
@@ -138,8 +141,10 @@ def _normalize_enforcement_mode(value: Any) -> EnforcementMode:
     return mode  # type: ignore[return-value]
 
 
-def _ensure_new_enforcement_id(enforcement_id: str) -> None:
-    if enforcement_id in _ENFORCEMENTS:
+def _ensure_new_enforcement_id(
+    enforcement_id: str, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
+) -> None:
+    if enforcement_id in (_ENFORCEMENTS if table is None else table):
         raise ValueError(f"duplicate ADR enforcement id: {enforcement_id}")
 
 
@@ -196,9 +201,10 @@ def register_deftest_enforcement(
     return ref
 
 
-def register_semgrep_enforcement(
+def _register_semgrep_enforcement(
     enforcement_id: str,
     *,
+    table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
     pattern: str | None = None,
     rule_id: str | None = None,
     config: str = ".semgrep.yaml",
@@ -213,7 +219,9 @@ def register_semgrep_enforcement(
     clean_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
     mode: EnforcementMode = "green",
 ) -> SemgrepSpec:
-    _ensure_new_enforcement_id(enforcement_id)
+    """Semgrep の検を表(None = process の登録簿)に載せる。外からは effect RegisterSemgrep で載せる(handler
+    semgrep_enforcements が答える・card ki-2a549274055c)。"""
+    _ensure_new_enforcement_id(enforcement_id, table)
     if pattern is None and rule_id is None:
         raise ValueError("defsemgrep requires either pattern= or rule_id=")
     normalized_mode = _normalize_enforcement_mode(mode)
@@ -233,8 +241,44 @@ def register_semgrep_enforcement(
         clean_fixtures=tuple(clean_fixtures or ()),
         mode=normalized_mode,
     )
-    _ENFORCEMENTS[enforcement_id] = spec
+    (_ENFORCEMENTS if table is None else table)[enforcement_id] = spec
     return spec
+
+
+def register_semgrep_enforcement(
+    enforcement_id: str,
+    *,
+    pattern: str | None = None,
+    rule_id: str | None = None,
+    config: str = ".semgrep.yaml",
+    declared_in: str | None = None,
+    expand_hy: bool = False,
+    languages: list[str] | tuple[str, ...] | None = None,
+    message: str = "ADR Semgrep enforcement failed",
+    severity: str = "ERROR",
+    bad: list[FixtureSpec] | tuple[FixtureSpec, ...] | None = None,
+    good: list[FixtureSpec] | tuple[FixtureSpec, ...] | None = None,
+    hit_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
+    clean_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
+    mode: EnforcementMode = "green",
+) -> SemgrepSpec:
+    """移し替えの層: 外の repo の呼び手を effect RegisterSemgrep へ書き換えたら(card ki-ac39cb3c0bcd)消す(ADR-DOE-API-001 R22)。"""
+    return _register_semgrep_enforcement(
+        enforcement_id,
+        pattern=pattern,
+        rule_id=rule_id,
+        config=config,
+        declared_in=declared_in,
+        expand_hy=expand_hy,
+        languages=languages,
+        message=message,
+        severity=severity,
+        bad=bad,
+        good=good,
+        hit_fixtures=hit_fixtures,
+        clean_fixtures=clean_fixtures,
+        mode=mode,
+    )
 
 
 def register_adr(
@@ -328,17 +372,35 @@ def assert_all_adr_contracts() -> None:
         assert_adr_contract(adr_id)
 
 
-def assert_semgrep_enforcement(enforcement_id: str) -> None:
-    spec = get_enforcement(enforcement_id)
+def _assert_semgrep_enforcement(
+    enforcement_id: str,
+    *,
+    table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
+    semgrep: str | None = None,
+) -> None:
+    """表(None = process の登録簿)の Semgrep の検を走らせ、規則が当たる見本に当たり、当たらない見本に当たらない事を
+    確かめる(semgrep = 走らせる実行 file・None は PATH の semgrep)。外からは effect AssertSemgrep で確かめる(card ki-2a549274055c)。"""
+    enforcements = _ENFORCEMENTS if table is None else table
+    spec = enforcements[enforcement_id]
     if not isinstance(spec, SemgrepSpec):
         raise AssertionError(f"{enforcement_id}: registered enforcement is not a Semgrep rule")
-    semgrep = shutil.which("semgrep")
-    if semgrep is None:
+    executable = shutil.which("semgrep") if semgrep is None else semgrep
+    if executable is None:
         raise AssertionError("semgrep executable is required for defsemgrep enforcement")
+    # 名指した実行 file が無い時も、subprocess の FileNotFoundError でなく同じ文で断る(構成のレビューの所見 4)。
+    if not Path(executable).is_file():
+        raise AssertionError(
+            f"semgrep executable is required for defsemgrep enforcement: {executable} is not a file"
+        )
     if spec.installed_rule_id is not None:
-        _assert_installed_semgrep_enforcement(semgrep, spec)
+        _assert_installed_semgrep_enforcement(executable, spec, enforcements)
         return
-    _assert_inline_semgrep_enforcement(semgrep, spec)
+    _assert_inline_semgrep_enforcement(executable, spec)
+
+
+def assert_semgrep_enforcement(enforcement_id: str) -> None:
+    """移し替えの層: 外の repo の呼び手を effect AssertSemgrep へ書き換えたら(card ki-ac39cb3c0bcd)消す(ADR-DOE-API-001 R22)。"""
+    _assert_semgrep_enforcement(enforcement_id)
 
 
 def _assert_inline_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> None:
@@ -366,7 +428,9 @@ def _assert_inline_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> None:
         raise AssertionError(f"{spec.id}: defsemgrep matched good fixtures: {good_result!r}")
 
 
-def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> None:
+def _assert_installed_semgrep_enforcement(
+    semgrep: str, spec: SemgrepSpec, table: dict[str, EnforcementRef | SemgrepSpec]
+) -> None:
     if not spec.hit_fixtures:
         raise AssertionError(f"{spec.id}: installed defsemgrep requires hit fixtures")
     if not spec.clean_fixtures:
@@ -377,8 +441,10 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
     if not config_path.is_file():
         raise AssertionError(f"{spec.id}: semgrep config does not exist: {config_path}")
     _ensure_installed_rule_exists(config_path, spec.installed_rule_id)
-    hit_rule_ids = _installed_fixture_rule_ids(semgrep, config_path, spec, polarity="hit")
-    clean_rule_ids = _installed_fixture_rule_ids(semgrep, config_path, spec, polarity="clean")
+    hit_rule_ids = _installed_fixture_rule_ids(semgrep, config_path, spec, table, polarity="hit")
+    clean_rule_ids = _installed_fixture_rule_ids(
+        semgrep, config_path, spec, table, polarity="clean"
+    )
     if not _has_rule(hit_rule_ids, spec.installed_rule_id):
         raise AssertionError(
             f"{spec.id}: installed semgrep rule did not fire on hit fixtures: "
@@ -391,11 +457,16 @@ def _assert_installed_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> No
 
 
 def _installed_fixture_rule_ids(
-    semgrep: str, config_path: Path, spec: SemgrepSpec, *, polarity: str
+    semgrep: str,
+    config_path: Path,
+    spec: SemgrepSpec,
+    table: dict[str, EnforcementRef | SemgrepSpec],
+    *,
+    polarity: str,
 ) -> set[str]:
     fixtures = spec.hit_fixtures if polarity == "hit" else spec.clean_fixtures
     if not spec.expand_hy:
-        return set(_installed_verdict(semgrep, config_path, spec, fixtures))
+        return set(_installed_verdict(semgrep, config_path, spec, fixtures, table))
     from doeff_adr.semgrep_hy import scan_with_hy_expansion
 
     with tempfile.TemporaryDirectory(prefix=f"doeff-adr-hy-fixtures-{polarity}-") as tmp:
@@ -413,12 +484,13 @@ def _installed_verdict(
     config_path: Path,
     spec: SemgrepSpec,
     fixtures: tuple[dict[str, str], ...],
+    table: dict[str, EnforcementRef | SemgrepSpec],
 ) -> frozenset[str]:
     """例の組 1 つに当たった規則の id — 同じ設定を読む規則の例をまとめて 1 回の semgrep で確かめた答えから読む。
 
     規則の検 1 本ごとに semgrep を起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ重なる
     (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒 — agora-redesign #2976 I-3)。最初の検の時に、
-    同じ設定を読む登録済みの規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。呼び手が置き場を名指して
+    同じ設定を読む表(table — 確かめる検の載る表)の規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。呼び手が置き場を名指して
     いれば(semgrep_verdicts.verdict_store)、先に置き場から読み、回した答えを置き場に残す — 設定も例も変わらない次の process は
     semgrep を起こさない(card ki-f81dde817291 — 日次は session と設定ごとに 1 回の起動 約 8 秒を毎回払っていた)。
     """
@@ -434,7 +506,7 @@ def _installed_verdict(
         return stored
     siblings = {
         fixture_set_key(identity, config_digest, sibling_fixtures): sibling_fixtures
-        for sibling in _ENFORCEMENTS.values()
+        for sibling in table.values()
         if isinstance(sibling, SemgrepSpec)
         and sibling.installed_rule_id is not None
         and not sibling.expand_hy

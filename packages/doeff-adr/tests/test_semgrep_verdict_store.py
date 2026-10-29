@@ -21,14 +21,23 @@ from unittest import mock
 
 import doeff_adr.registry as registry_module
 import pytest
-from doeff_adr.registry import (
-    assert_semgrep_enforcement,
-    isolated_registry,
-    register_semgrep_enforcement,
-)
+from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
+from doeff_adr.registry import isolated_registry
+
+from doeff import run as run_doeff
 
 STORE_ENV = "DOEFF_ADR_SEMGREP_VERDICTS"
 WORDS = ("eval", "exec")
+
+
+def _put_on_registry(effect: RegisterSemgrep) -> None:
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    run_doeff(semgrep_enforcements()(effect))
+
+
+def _check(enforcement_id: str) -> None:
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    run_doeff(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
 def _rules(words: tuple[str, ...]) -> str:
@@ -48,11 +57,15 @@ def _rules(words: tuple[str, ...]) -> str:
 
 def _register(hit_source: str = "{word}('1')\n") -> None:
     for word in WORDS:
-        register_semgrep_enforcement(
-            f"store_probe_{word}",
-            rule_id=f"store-probe-no-{word}",
-            hit_fixtures=[{"relative-path": "pkg/mod.py", "source": hit_source.format(word=word)}],
-            clean_fixtures=[{"relative-path": "pkg/mod.py", "source": "print('1')\n"}],
+        _put_on_registry(
+            RegisterSemgrep(
+                f"store_probe_{word}",
+                rule_id=f"store-probe-no-{word}",
+                hit_fixtures=[
+                    {"relative-path": "pkg/mod.py", "source": hit_source.format(word=word)}
+                ],
+                clean_fixtures=[{"relative-path": "pkg/mod.py", "source": "print('1')\n"}],
+            )
         )
 
 
@@ -129,13 +142,13 @@ def test_a_second_run_with_the_same_rules_and_fixtures_does_not_start_semgrep(
     run.start("first", _rules(WORDS))
     _register()
     for word in WORDS:
-        assert_semgrep_enforcement(f"store_probe_{word}")
+        _check(f"store_probe_{word}")
     assert _semgrep_runs(spy) == 1
 
     run.start("second", _rules(WORDS))
     _register()
     for word in WORDS:
-        assert_semgrep_enforcement(f"store_probe_{word}")
+        _check(f"store_probe_{word}")
 
     assert _semgrep_runs(spy) == 1, (
         "設定も例も変わらない 2 回目の回で semgrep を起こし直した(答えは置き場から読む)"
@@ -147,36 +160,36 @@ def test_a_changed_rule_runs_semgrep_again_and_its_hit_fixture_is_red(
 ) -> None:
     run.start("first", _rules(WORDS))
     _register()
-    assert_semgrep_enforcement("store_probe_eval")
+    _check("store_probe_eval")
 
     # 規則を 1 つ変えた回: store-probe-no-eval の pattern が当たる例に当たらない形になる。
     run.start("second", _rules(WORDS).replace("pattern: eval(...)", "pattern: evaluate(...)"))
     _register()
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
-        assert_semgrep_enforcement("store_probe_eval")
+        _check("store_probe_eval")
     assert _semgrep_runs(spy) == 2
 
 
 def test_a_changed_fixture_runs_semgrep_again_and_is_red(run: Run, spy: mock.Mock) -> None:
     run.start("first", _rules(WORDS))
     _register()
-    assert_semgrep_enforcement("store_probe_eval")
+    _check("store_probe_eval")
 
     # 例を 1 つ変えた回: 当たる例が規則の当たらない形になる。
     run.start("second", _rules(WORDS))
     _register(hit_source="print('{word}')\n")
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
-        assert_semgrep_enforcement("store_probe_eval")
+        _check("store_probe_eval")
     assert _semgrep_runs(spy) == 2
 
 
 def test_another_semgrep_version_runs_semgrep_again(run: Run, spy: mock.Mock) -> None:
     run.start("first", _rules(WORDS))
     _register()
-    assert_semgrep_enforcement("store_probe_eval")
+    _check("store_probe_eval")
 
     # semgrep の版を上げた回: 設定も例も同じでも、前の版の答えは読まない。
     run.start("second", _rules(WORDS), version="99.0.0")
     _register()
-    assert_semgrep_enforcement("store_probe_eval")
+    _check("store_probe_eval")
     assert _semgrep_runs(spy) == 2
