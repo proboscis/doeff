@@ -7,7 +7,9 @@ from doeff_core_effects import FileFailed as FileFailed
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_cluster.shared.intent.kube_service_model import EnsureKubeIngress as EnsureKubeIngress
 from doeff_cluster.shared.intent.kube_service_model import EnsureKubeService as EnsureKubeService
+from doeff_cluster.shared.intent.kube_service_model import KubeIngress as KubeIngress
 from doeff_cluster.shared.intent.kube_service_model import KubeService as KubeService
 from doeff_cluster.shared.intent.kube_service_model import KubeServiceOutcome as KubeServiceOutcome
 from doeff_cluster.shared.intent.kube_service_model import KubeServiceRefused as KubeServiceRefused
@@ -26,15 +28,24 @@ APPLY_CONTENT_TYPE: str
 def service_path(service: KubeService) -> _Program[str, object]:
     ...
 
+def metadata_of(declaration: KubeService | KubeIngress) -> _Program[dict, object]:
+    ...
+
 def service_apply_text(service: KubeService) -> _Program[str, object]:
     ...
 
-def refused(service: KubeService, reason: str) -> _Program[KubeServiceRefused, object]:
+def ingress_path(ingress: KubeIngress) -> _Program[str, object]:
     ...
 
-def outcome_of_answer(service: KubeService, answer: HttpResponse | HttpFailed) -> _Program[KubeServiceOutcome, object]:
+def ingress_apply_text(ingress: KubeIngress) -> _Program[str, object]:
     ...
 
-def applied_service(service: KubeService) -> _Program[KubeServiceOutcome, object]:
+def refused(place: str, reason: str) -> _Program[KubeServiceRefused, object]:
+    ...
+
+def outcome_of_answer(place: str, answer: HttpResponse | HttpFailed) -> _Program[KubeServiceOutcome, object]:
+    ...
+
+def applied_object(place: str, path: str, body: str) -> _Program[KubeServiceOutcome, object]:
     ...
 kube_services_api: _Handler
