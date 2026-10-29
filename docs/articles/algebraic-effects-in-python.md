@@ -670,3 +670,5 @@ python -m doeff demo
 ~~~
 
 Every example in this post runs as shown with doeff 0.8.0 and nothing else, plus pytest for the tests. The battle is [examples/effects_tour/spire.py](https://github.com/proboscis/doeff/blob/main/examples/effects_tour/spire.py), and `python spire.py play` lets you play a fight at the terminal. Where does this break down for you? Issues are open at https://github.com/proboscis/doeff/issues.
+
+The next post, [Yield and async](yield-and-async.md), compares `@do` and `yield` with `async def` and `await`: where a request goes when the code pauses, and who resumes the paused code.
