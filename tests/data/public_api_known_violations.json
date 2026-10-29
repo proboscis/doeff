@@ -14361,12 +14361,6 @@
   "doeff-hy-pytest": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_hy_pytest.budget",
-      "doeff_hy_pytest.python_calls"
-     ]
-    },
     "境界 — pytest の plugin の登録": {
      "(entry point)": [
       "pytest11:doeff_hy"
