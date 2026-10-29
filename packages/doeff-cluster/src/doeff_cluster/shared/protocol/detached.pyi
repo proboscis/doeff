@@ -246,7 +246,10 @@ def outbox_path(id: str) -> str:
 def outbox_response(answer: HttpResponse | HttpFailed | None) -> _Program[dict | str, object]:
     ...
 
-def outbox_awaited(cell: RouteCell, options: RouteOptions, sender: DetachedSender, prefix: str, timeout_seconds: float, poll_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
+def outbox_query(prefix: str, kinds: tuple) -> dict:
+    ...
+
+def outbox_awaited(cell: RouteCell, options: RouteOptions, sender: DetachedSender, prefix: str, kinds: tuple, timeout_seconds: float, poll_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
     ...
 
 def outbox_acked(cell: RouteCell, options: RouteOptions, sender: DetachedSender, id: str) -> _Program[DetachedAckAnswer, object]:

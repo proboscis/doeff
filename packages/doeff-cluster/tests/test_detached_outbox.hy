@@ -7,10 +7,10 @@
 (import doeff [run])
 (import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [DetachedEnded DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster.shared.intent.detached_model [DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
 (import doeff_cluster.shared.core.detached_rules [task-notify-refusal])
-(import doeff_cluster.coordinator.core.detached_policy [ended-of outbox-noted outbox-read outbox-ack OUTBOX-RETAIN-MS])
+(import doeff_cluster.coordinator.core.detached_policy [ended-of outbox-noted outbox-read outbox-ack queued-noticed OUTBOX-RETAIN-MS])
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
@@ -100,7 +100,7 @@
   (val body (get read 2))
   (assert (= status 200) body)
   (assert (= body {"entries" [{"id" "t1" "key" "k-t1" "notify" "n:c-a" "phase" "env-failed" "detail" "d" "failureKind" "lock-mismatch"
-                               "finishedMs" 7}]}) body)
+                               "finishedMs" 7 "kind" "ended"}]}) body)
   (val acked (responded state (run (http-request "DELETE" "/outbox/t1" {} None)) 10 timing))
   (val after (get acked 0))
   (val code (get acked 1))
@@ -136,3 +136,81 @@
   (assert (= (. (.row back.tasks "t1") notify) "n:c-a"))
   (val restored (run (state-from-json (run (state-to-json state)) 0)))
   (assert (= (.row restored.outbox "t9") row)))
+
+
+;; --- queued の期限超えの知らせ(card ki-4b6613f39c80 — detached_policy の queued-noticed)---------------------------------------
+
+(val NOTICE-MS (. (ClusterTiming) queued-notice-ms))
+
+
+(deftest test-queued-noticed-adds-one-overdue-row-past-the-deadline []
+  (val timing (ClusterTiming))
+  (val waiting (replace (! (task-row "t1" "queued")) :detail "負の優先の task は予約を越える空きができるまで待つ"))
+  (val state (! (state-of #(waiting (! (task-row "t2" "queued" :notify "")) (! (task-row "t3" "queued" :detached False))
+                           (! (task-row "t4" "assigned"))))))
+  ;; 期限の前の歩は何も積まない(同じ状態を返す — 保存の差分を作らない)。
+  (assert (is (! (queued-noticed state (- NOTICE-MS 1) timing)) state))
+  ;; 期限を越えた歩: 知らせ先つきの切り離した queued の task だけに、置かれない理由を持つ待ちの行を 1 つ積み、task に印を置く。
+  (val noted (! (queued-noticed state NOTICE-MS timing)))
+  (assert (= (.keys noted.outbox) #("t1/queued-overdue")) (.keys noted.outbox))
+  (assert (= (.row noted.outbox "t1/queued-overdue")
+             (DetachedEnded :id "t1/queued-overdue" :key "k-t1" :notify "n:c-a" :phase "queued"
+                            :detail "負の優先の task は予約を越える空きができるまで待つ" :failure-kind "" :finished-ms NOTICE-MS
+                            :kind OUTBOX-QUEUED-OVERDUE)))
+  (assert (= (. (.row noted.tasks "t1") queued-noticed-ms) NOTICE-MS))
+  (assert (is (. (.row noted.tasks "t2") queued-noticed-ms) None)))
+
+
+(deftest test-queued-noticed-never-adds-a-second-row []
+  (val timing (ClusterTiming))
+  (val state (! (state-of #((! (task-row "t1" "queued"))))))
+  (val noted (! (queued-noticed state NOTICE-MS timing)))
+  ;; 待ち続けても 2 行目を積まない(印が残る)。
+  (val later (! (queued-noticed noted (* 8 NOTICE-MS) timing)))
+  (assert (is later noted))
+  ;; 読み手が受領して行を外しても積み直さない。
+  (val acked (. (outbox-ack noted "t1/queued-overdue") state))
+  (assert (= (.keys acked.outbox) #()))
+  (assert (is (! (queued-noticed acked (* 8 NOTICE-MS) timing)) acked))
+  ;; 印は保存の往復で残る(起き直した coordinator も 2 度目を積まない)。
+  (val back (run (state-from-kv (run (durable-kv acked)) 0)))
+  (assert (= (. (.row back.tasks "t1") queued-noticed-ms) NOTICE-MS))
+  (assert (is (! (queued-noticed back (* 8 NOTICE-MS) timing)) back)))
+
+
+(deftest test-ending-task-drops-its-unacked-overdue-row []
+  (val timing (ClusterTiming))
+  (val noted (! (queued-noticed (! (state-of #((! (task-row "t1" "queued"))))) NOTICE-MS timing)))
+  ;; 受領の前に task が終わった: 終わりの行を積み、古い待ちの行を外す。
+  (val ended (replace noted :tasks (.with-writes noted.tasks #((TableWrite "t1" (! (task-row "t1" "cancelled")))))))
+  (val after (outbox-noted noted ended (+ NOTICE-MS 10)))
+  (assert (= (.keys after.outbox) #("t1")) (.keys after.outbox)))
+
+
+(deftest test-outbox-read-shows-overdue-rows-only-to-readers-naming-the-kind []
+  (val ended (DetachedEnded :id "t1" :key "k-t1" :notify "n:c-a" :phase "finished" :detail "" :failure-kind "" :finished-ms 10))
+  (val overdue (DetachedEnded :id "t2/queued-overdue" :key "k-t2" :notify "n:c-a" :phase "queued" :detail "待つ" :failure-kind ""
+                              :finished-ms 5 :kind OUTBOX-QUEUED-OVERDUE))
+  (val state (! (state-of #() :outbox #(ended overdue))))
+  ;; 種類を名乗らない読み手(この欄の前の版)には終わりの行だけ — 待ちを終わりと読み違えない。
+  (assert (= (lfor e (. (outbox-read state "n:") body entries) e.id) ["t1"]))
+  (assert (= (lfor e (. (outbox-read state "n:" (frozenset #(OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE))) body entries) e.id)
+             ["t2/queued-overdue" "t1"]))
+  (val timing (ClusterTiming))
+  (val plain (get (responded state (run (http-request "GET" "/outbox" {"prefix" "n:"} None)) 20 timing) 2))
+  (assert (= (lfor e (get plain "entries") (get e "id")) ["t1"]) plain)
+  (val both (get (responded state (run (http-request "GET" "/outbox" {"prefix" "n:" "kinds" "ended,queued-overdue"} None)) 20 timing) 2))
+  (assert (= (lfor e (get both "entries") #((get e "id") (get e "kind"))) [#("t2/queued-overdue" "queued-overdue") #("t1" "ended")]) both)
+  ;; 保存の往復で種類が残る。
+  (val back (run (state-from-kv (run (durable-kv state)) 0)))
+  (assert (= (.row back.outbox "t2/queued-overdue") overdue)))
+
+
+(deftest test-queued-notice-mark-is-stored-only-when-set []
+  ;; 印の無い行は欄を置かない(欄を知らない前の版へ戻しても、待っている行を旧い形と読んで failed にしない)。
+  (val plain (task-record-to-json (! (task-row "t1" "queued"))))
+  (assert (not-in "queued_noticed_ms" plain) plain)
+  (val marked (task-record-to-json (replace (! (task-row "t1" "queued")) :queued-noticed-ms 42)))
+  (assert (= (get marked "queued_noticed_ms") 42) marked)
+  (assert (= (. (run (task-record-from-json marked)) queued-noticed-ms) 42))
+  (assert (is (. (run (task-record-from-json plain)) queued-noticed-ms) None)))

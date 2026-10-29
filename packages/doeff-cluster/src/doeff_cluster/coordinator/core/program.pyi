@@ -72,6 +72,7 @@ from doeff_cluster.coordinator.core.wake_policy import wait_seconds as wait_seco
 from doeff_cluster.coordinator.core.wake_policy import planned_wake_ms as planned_wake_ms
 from doeff_cluster.coordinator.core.wake_policy import count_unsettled as count_unsettled
 from doeff_cluster.coordinator.core.detached_policy import outbox_noted as outbox_noted
+from doeff_cluster.coordinator.core.detached_policy import queued_noticed as queued_noticed
 HEARTBEAT_LAG_LOG: str
 HEARTBEAT_LAG_MS: int
 

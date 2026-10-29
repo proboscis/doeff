@@ -188,7 +188,7 @@
 (import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path])
+                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
 (import doeff_cluster.shared.core.capabilities [env-mapping])
 (import doeff_cluster.shared.core.detached_rules [task-placing-json task-notify-json])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
@@ -1512,8 +1512,8 @@
         True (.format "status {}: {!r}" status body)))
 
 
-(defk await-detached-outbox [link prefix timeout-seconds]
-  {:pre [(: link SimLink) (: prefix str) (: timeout-seconds float)] :post [(: % DetachedOutboxAnswer)]
+(defk await-detached-outbox [link prefix kinds timeout-seconds]
+  {:pre [(: link SimLink) (: prefix str) (: kinds tuple) (: timeout-seconds float)] :post [(: % DetachedOutboxAnswer)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "AwaitDetachedOutbox を本番の outbox-awaited と同じ読み(GET /outbox・outbox-answer)で待つため: 行が在れば待たずに答え、無ければ読む前に
    掛けた出口の呼び鈴 OUTBOX-BELL(模擬の coordinator が出口の行を書いた時に鳴らす)か期限で起きて読み直す。届かない間だけ
@@ -1525,7 +1525,7 @@
     (<- bell Promise (CreatePromise))
     ;; 読む前に掛ける(読みの返事と出口の書きの間に鳴らしを取りこぼさない)。
     (setv (get bells OUTBOX-BELL) (+ (.get bells OUTBOX-BELL #()) #(bell)))
-    (<- read tuple (send-resent link "GET" "/outbox" {"prefix" prefix} None))
+    (<- read tuple (send-resent link "GET" "/outbox" (outbox-query prefix kinds) None))
     (<- now int (now-epoch-ms))
     (val waited (/ (- now started) 1000.0))
     (<- got DetachedOutboxAnswer (outbox-answer (outbox-read-of read)))
@@ -1838,8 +1838,8 @@
     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
                                    (| (task-placing-json priority limits) (task-notify-json notify))))
     (resume submitted))
-  (AwaitDetachedOutbox [prefix timeout-seconds]
-    (<- outbox DetachedOutboxAnswer (await-detached-outbox link prefix (float timeout-seconds)))
+  (AwaitDetachedOutbox [prefix timeout-seconds kinds]
+    (<- outbox DetachedOutboxAnswer (await-detached-outbox link prefix (tuple kinds) (float timeout-seconds)))
     (resume outbox))
   (AckDetachedOutbox [id]
     ;; 本番の outbox-acked と同じ要求(DELETE /outbox/<id>)を同じ送り直しで送り、同じ読み(outbox-ack-answer)で答える。

@@ -57,6 +57,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_hy.table [TableWrite draft-of])
 (import doeff_cluster.coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached outbox-read outbox-ack])
+(import doeff_cluster.shared.intent.detached_model [OUTBOX-ENDED])
 (import doeff_cluster.coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import doeff_cluster.coordinator.core.warm_policy [warm-write warm-read])
 (import doeff_cluster.coordinator.core.program_policy [program-write program-read sweep-programs])
@@ -639,7 +640,10 @@
       (! (detached-reply state (release-detached state (get parts 1)) request now timing))
     ;; --- 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00 — detached_policy の出口の節)---
     (and (= method "GET") (= parts ["outbox"]))
-      (! (detached-reply state (outbox-read state (str (.get request.query "prefix" ""))) request now timing))
+      ;; kinds = 読む行の種類(名乗らない読み手は終わりの行だけ — detached_model の行の種類・card ki-4b6613f39c80)。
+      (! (detached-reply state (outbox-read state (str (.get request.query "prefix" ""))
+                                            (frozenset (gfor k (.split (str (.get request.query "kinds" OUTBOX-ENDED)) ",") :if k k)))
+                         request now timing))
     (and (= method "DELETE") (= head "outbox") (= (len parts) 2))
       (! (detached-reply state (outbox-ack state (get parts 1)) request now timing))
     True (unknown-request state request)))
