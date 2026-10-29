@@ -970,7 +970,7 @@
     (resume (stopping))))
 
 
-(defk ready-handlers [handler-for]
+(defk _ready-handlers [handler-for]
   {:pre [(: handler-for Callable)] :post [(: % Callable)] :tags {:context "records" :role "entry"}}
   "検の殻の用意: 呼び手が用意し終えた置き場の 書き手の名 → handler をそのまま返すため(用意の I/O は無い)。"
   handler-for)
@@ -996,7 +996,7 @@
         ;; 束の読みの読み解きと綴り(Compute)を回す pool — 殻が開いて、殻の止めで閉じる(頭の註の scheduler の thread の仕事の分け)。
         compute-pool (ThreadPoolExecutor :max-workers SHELL-COMPUTE-WORKERS :thread-name-prefix "doeff-records-compute"))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
-                                :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
+                                :prepare (_ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance config.maintenance :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)
                                 :compute-workers SHELL-COMPUTE-WORKERS))
