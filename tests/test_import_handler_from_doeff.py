@@ -1,4 +1,7 @@
-"""``from doeff import <handler>`` names the module the handler is in.
+"""``from doeff import <handler>`` names the package the handler is in.
+
+The package is ``doeff_core_effects``: it shows its names from its entry, and the modules
+that define them start with ``_`` (ADR-DOE-API-001 R5).
 
 Before: ``from doeff import state`` failed with ``ImportError: cannot import name 'state'
 from 'doeff' (.../doeff/__init__.py)`` — the message names neither the module that has
@@ -20,18 +23,18 @@ import pytest
 import doeff
 
 HANDLER_HOMES = [
-    ("state", "doeff_core_effects._handlers"),
-    ("reader", "doeff_core_effects._handlers"),
-    ("writer", "doeff_core_effects._handlers"),
-    ("lazy_ask", "doeff_core_effects._handlers"),
-    ("env_var_ask", "doeff_core_effects._handlers"),
-    ("try_handler", "doeff_core_effects._handlers"),
-    ("await_handler", "doeff_core_effects._handlers"),
-    ("listen_handler", "doeff_core_effects._handlers"),
-    ("local_handler", "doeff_core_effects._handlers"),
-    ("slog_handler", "doeff_core_effects._handlers"),
-    ("slog_discard_handler", "doeff_core_effects._handlers"),
-    ("scheduled", "doeff_core_effects._scheduler"),
+    ("state", "doeff_core_effects"),
+    ("reader", "doeff_core_effects"),
+    ("writer", "doeff_core_effects"),
+    ("lazy_ask", "doeff_core_effects"),
+    ("env_var_ask", "doeff_core_effects"),
+    ("try_handler", "doeff_core_effects"),
+    ("await_handler", "doeff_core_effects"),
+    ("listen_handler", "doeff_core_effects"),
+    ("local_handler", "doeff_core_effects"),
+    ("slog_handler", "doeff_core_effects"),
+    ("slog_discard_handler", "doeff_core_effects"),
+    ("scheduled", "doeff_core_effects"),
 ]
 
 
@@ -63,17 +66,17 @@ def test_an_import_statement_in_a_function_body_gets_the_hint() -> None:
 
         return state
 
-    with pytest.raises(ImportError, match=r"from doeff_core_effects\.handlers import state"):
+    with pytest.raises(ImportError, match=r"from doeff_core_effects import state"):
         body()
 
 
 def test_an_import_of_several_names_gets_the_hint_for_the_missing_one() -> None:
-    with pytest.raises(ImportError, match=r"from doeff_core_effects\.handlers import reader"):
+    with pytest.raises(ImportError, match=r"from doeff_core_effects import reader"):
         exec("from doeff import do, run, reader", {})
 
 
 def test_the_hy_import_form_gets_the_hint() -> None:
-    with pytest.raises(ImportError, match=r"from doeff_core_effects\.handlers import state"):
+    with pytest.raises(ImportError, match=r"from doeff_core_effects import state"):
         hy.eval(hy.read("(import doeff [do run state])"))
 
 
@@ -90,7 +93,7 @@ def test_hasattr_still_sees_a_handler_name_as_absent() -> None:
 
 
 def test_attribute_access_names_the_module_in_an_attribute_error() -> None:
-    with pytest.raises(AttributeError, match=r"from doeff_core_effects\.handlers import state"):
+    with pytest.raises(AttributeError, match=r"from doeff_core_effects import state"):
         _ = doeff.state
 
 

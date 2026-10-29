@@ -271,29 +271,28 @@ if not TYPE_CHECKING:
 __version__ = "0.8.0"
 
 
-# Handlers are imported from these modules, not from doeff. The names they hold are the
-# ones the package doeff_core_effects exports from them, so no list of names is kept here.
+# Handlers are imported from the package doeff_core_effects, not from doeff: the package shows its
+# names from its entry, and the modules that define them start with ``_`` (ADR-DOE-API-001 R5).
+# The handlers are the names it exports from these modules, so no list of names is kept here.
+_HANDLER_HOME = "doeff_core_effects"
 _HANDLER_MODULES = ("doeff_core_effects._handlers", "doeff_core_effects._scheduler")
 
 
 def _handler_module(name: str) -> str | None:
-    """The module of ``_HANDLER_MODULES`` that ``doeff_core_effects`` exports the name from.
+    """``doeff_core_effects`` when it exports the name from a module of ``_HANDLER_MODULES``.
 
     Reads only loaded modules (``import doeff`` loads them), so a lookup while doeff is
     still initializing imports nothing.
     """
-    package = _sys.modules.get("doeff_core_effects")
+    package = _sys.modules.get(_HANDLER_HOME)
     if package is None or name.startswith("_") or name not in vars(package):
         return None
     exported = vars(package)[name]
-    return next(
-        (
-            module
-            for module in _HANDLER_MODULES
-            if module in _sys.modules and vars(_sys.modules[module]).get(name) is exported
-        ),
-        None,
+    defined_in_a_handler_module = any(
+        module in _sys.modules and vars(_sys.modules[module]).get(name) is exported
+        for module in _HANDLER_MODULES
     )
+    return _HANDLER_HOME if defined_in_a_handler_module else None
 
 
 def _looked_up_by_from_import() -> bool:

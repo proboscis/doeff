@@ -30,7 +30,7 @@
 
 
 (defhandler scheduler-channel-handler
-  ;; 列の 3 つの effect に scheduler の promise で答える(頭の註)。
+  "CreateChannel・PutChannel・TakeChannel に、同じ run の scheduler の promise で答える(I/O を持たない — 頭の註)。"
   (CreateChannel []
     (resume (Channel)))
   (PutChannel [channel item]

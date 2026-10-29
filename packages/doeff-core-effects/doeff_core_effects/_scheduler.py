@@ -404,6 +404,8 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
 
 
 class TaskCompleted(EffectBase):
+    """A spawned task ran to its end: the result (``Ok`` or ``Err``) of the task ``task_id``."""
+
     def __init__(self, task_id: int, result: "Ok[object] | Err") -> None:
         super().__init__()
         self.task_id = task_id
