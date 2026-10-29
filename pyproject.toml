@@ -879,12 +879,6 @@ tests = [
 ]
 
 [[tool.doeff.contract-tests]]
-prefix = "packages/doeff-test-target/"
-tests = [
-    "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-test-target]",  # 0.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
-]
-
-[[tool.doeff.contract-tests]]
 prefix = "packages/doeff-time/"
 tests = [
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-time]",  # 0.9 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ

@@ -44,7 +44,6 @@ members = [
     "doeff-secret",
     "doeff-seedream",
     "doeff-system-one",
-    "doeff-test-target",
     "doeff-time",
     "doeff-traverse",
     "doeff-validation",
@@ -1591,17 +1590,6 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
 ]
 provides-extras = ["dev"]
-
-[[package]]
-name = "doeff-test-target"
-version = "0.1.0"
-source = { editable = "packages/doeff-test-target" }
-dependencies = [
-    { name = "doeff" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "doeff", editable = "." }]
 
 [[package]]
 name = "doeff-time"

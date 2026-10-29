@@ -53,7 +53,7 @@
       "packages/doeff-vm/tests/test_handler_spec_shared_by_code.py": 2
     },
     "DOEFF010": {
-      "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": 1
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/effects/test_effects.py": 1
     },
     "DOEFF016": {
       "packages/doeff-agentic/src/doeff_agentic/__init__.py": 11,
@@ -112,14 +112,14 @@
       "packages/doeff-seedream/src/doeff_seedream/_effects/__init__.py": 2,
       "packages/doeff-seedream/src/doeff_seedream/_handlers/__init__.py": 2,
       "packages/doeff-seedream/src/doeff_seedream/_structured_llm.py": 3,
-      "packages/doeff-test-target/src/doeff_test_target/__init__.py": 2,
-      "packages/doeff-test-target/src/doeff_test_target/combinators/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/core/__init__.py": 6,
-      "packages/doeff-test-target/src/doeff_test_target/effects/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/handlers/__init__.py": 2,
-      "packages/doeff-test-target/src/doeff_test_target/helpers/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/orchestrate.py": 7,
-      "packages/doeff-test-target/src/doeff_test_target/scenarios/__init__.py": 11,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/__init__.py": 2,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/combinators/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/core/__init__.py": 6,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/effects/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/handlers/__init__.py": 2,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/helpers/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/orchestrate.py": 7,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/scenarios/__init__.py": 11,
       "packages/doeff-time/src/doeff_time/_internals/__init__.py": 2,
       "packages/doeff-time/src/doeff_time/_internals/sim_clock.py": 1,
       "packages/doeff-time/src/doeff_time/_handlers/__init__.py": 3
@@ -237,16 +237,16 @@
       "packages/doeff-seedream/src/doeff_seedream/_handlers/__init__.py": 1,
       "packages/doeff-seedream/src/doeff_seedream/_structured_llm.py": 1,
       "packages/doeff-seedream/src/doeff_seedream/_types.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/combinators/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/core/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/effects/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/handlers/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/handlers/production.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/handlers/testing.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/helpers/__init__.py": 1,
-      "packages/doeff-test-target/src/doeff_test_target/scenarios/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/combinators/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/core/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/effects/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/effects/test_effects.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/handlers/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/handlers/production.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/handlers/testing.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/helpers/__init__.py": 1,
+      "packages/doeff-effect-analyzer/tests/fixtures/doeff_test_target/scenarios/__init__.py": 1,
       "packages/doeff-time/src/doeff_time/_internals/__init__.py": 1,
       "packages/doeff-time/src/doeff_time/_handlers/__init__.py": 1
     }

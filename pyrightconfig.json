@@ -33,7 +33,6 @@
         "packages/doeff-secret/src",
         "packages/doeff-seedream/src",
         "packages/doeff-system-one/src",
-        "packages/doeff-test-target/src",
         "packages/doeff-time/src",
         "packages/doeff-validation/src",
         "packages/doeff-vm-core/src",
@@ -67,7 +66,6 @@
         "packages/doeff-openai/src",
         "packages/doeff-openrouter/src",
         "packages/doeff-records/src",
-        "packages/doeff-test-target/src",
         "packages/doeff-validation/src"
     ],
     "extraPaths": [

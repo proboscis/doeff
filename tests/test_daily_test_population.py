@@ -147,9 +147,6 @@ EXCLUDED: dict[str, str] = {
         "無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の github_repo と同じく、根の下に"
         "置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
     ),
-    "packages/doeff-test-target/src/doeff_test_target/effects/test_effects.py": (
-        "fixture の module 名(テストではない)"
-    ),
     "tools/test_python_versions.py": "Python の版を回す道具の script",
 }
 
