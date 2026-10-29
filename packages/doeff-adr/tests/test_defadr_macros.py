@@ -6,7 +6,9 @@ import textwrap
 import doeff_adr.registry
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
-from doeff_adr.registry import SemgrepSpec, get_adr, get_enforcement, isolated_registry
+from doeff import run
+from doeff_adr import GetAdr, adr_registry
+from doeff_adr.registry import SemgrepSpec, get_enforcement, isolated_registry
 
 pytest_plugins = ["pytester"]
 
@@ -78,7 +80,7 @@ def test_defadr_accepts_inline_deftest_and_defsemgrep(tmp_hy_dir):
         """,
     )
 
-    adr = get_adr("ADR-SAMPLE-001")
+    adr = run(adr_registry()(GetAdr("ADR-SAMPLE-001")))
     assert adr.status == "accepted"
     assert [ref.id for ref in adr.enforcement] == [
         "test_inline_contract",
