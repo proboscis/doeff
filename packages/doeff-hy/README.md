@@ -323,7 +323,7 @@ print(run(scheduled(state()(price_table(price_of("ACME"))))))  # 12.5
   perform effects); take it out first with `(val v x)`.
 - Session values are read and written through the state effects (`Get` / `Put`), so
   **install `state()` outside the handler**. The key is
-  `doeff_hy.session.session_key(module, handler, name)` =
+  `doeff_hy._session.session_key(module, handler, name)` =
   `"<module __name__>/<handler name>/<variable name>"`. An outer handler that answers
   `Get` for this key replaces the value without running the initial expression, and
   one that receives `Put` observes the writes.

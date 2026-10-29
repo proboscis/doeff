@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.core [cluster_policy :as cluster-policy])
 (import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-due])
 (import doeff_cluster.shared.intent.due_model [DueAt])
-(import doeff_hy.table [table-of])
+(import doeff_hy._table [table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
 

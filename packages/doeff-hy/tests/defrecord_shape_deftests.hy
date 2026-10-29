@@ -208,7 +208,7 @@
   ;; 入力の検査は黙って効かなくなる(424a87f58 の後退は日次の検 8 本の赤で見つかるまで本番の coordinator に載った)。展開が書いた
   ;; record を仕上げる seal_record は、型が __post_init__ を持つのに展開の __init__ が呼ばない時に読み込みで断る。
   (<- _ (Pure None))
-  (import doeff_hy.record_runtime [seal-record])
+  (import doeff_hy._record_runtime [seal-record])
   (defclass [(dataclass :frozen True :kw-only True)] Missed []
     #^ int n
     (defn __post-init__ [self] None))

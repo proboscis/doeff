@@ -37,7 +37,7 @@
 (defclass [(dataclass :frozen True)] FollowDeployments [EffectBase]
   "Rollout の相手の Deployment(「ns/名」の tuple)を見張り(list の後の watch — 時間で読みに行かない・#3868)、前の答えの後に見張りが
    伝えた変化を待たずに受け取る。keys に無くなった Deployment の見張りは止める。見張りは変化を伝える時に調停ループの受付を起こす
-   (要求の無い間に眠る待ちを、変化の刻に抜けさせる)。結果は「ns/名」→ DeploymentSeen / DeploymentUnreadable の書き(doeff_hy.table の
+   (要求の無い間に眠る待ちを、変化の刻に抜けさせる)。結果は「ns/名」→ DeploymentSeen / DeploymentUnreadable の書き(doeff_hy._table の
    TableWrite の tuple — 変わった Deployment だけ)。観測の時刻 at は受け取った時刻 now-ms。見張りが届かない・断られた間は読めなかった
    観測(Rollout は Unknown)。Deployment の観測は cluster_model.DeploymentReading(宣言の台数・status の台数・generation・
    observedGeneration・annotations — k8s の JSON を型へ解くのは答え手 coordinator/protocol/kube の 1 点・#2728)。"
@@ -48,7 +48,7 @@
 (defclass [(dataclass :frozen True)] FollowNodes [EffectBase]
   "worker の置かれた node(名の tuple)を見張り(list の後の watch — 時間で読みに行かない・#4070)、前の答えの後に見張りが伝えた label の
    変化を待たずに受け取る。names に無くなった node の見張りは止める。見張りは変化を伝える時に調停ループの受付を起こす(FollowDeployments
-   と同じ)。結果は node の名 → NodeLabelsSeen / NodeLabelsUnreadable の書き(doeff_hy.table の TableWrite の tuple — 変わった node だけ)。
+   と同じ)。結果は node の名 → NodeLabelsSeen / NodeLabelsUnreadable の書き(doeff_hy._table の TableWrite の tuple — 変わった node だけ)。
    観測の時刻 at は受け取った時刻 now-ms。見張りが届かない・断られた・node が消された間は読めなかった観測(その node の worker は前に
    導いた能力を保つ)。node の label は worker の置かれた node から能力を導くため(ADR-DOE-CLUSTER-001 R4b・改訂 1 の I)。k8s の
    Node の object から label の表へ解くのは答え手 coordinator/protocol/kube の 1 点(#2728)。"

@@ -8,7 +8,7 @@
 ;; - Rollout の進行中に Kubernetes を読む: 名のある読みの周期の後の刻。
 ;; どれも、返す刻の 1 ms 前では判断が状態を変えず、その刻で変える。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])

@@ -9,7 +9,7 @@
 (import json)
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain HandoffWatch Placement ProgramRow ResourceMeta TaskRecord WarmEntry WorkerInfo])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 
 (val TABLE-FIELDS ["workers" "placements" "tasks" "meta" "rollouts" "refused" "programs" "drains" "surges" "warms" "handoffs" "group_limits"])

@@ -29,7 +29,7 @@
 ;;;     来るまで保つ(2026-10-09: 1 つの drain の間に Pod が 2 度入れ替わり、1 度目で解けた後に置かれた仕事が 2 度目で止められた)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])

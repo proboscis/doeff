@@ -14,7 +14,7 @@
 (import abc [ABC])
 (import types [NotImplementedType])
 (import doeff [EffectBase])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import doeff_cluster.coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
 (import doeff_cluster.coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log writes-of])

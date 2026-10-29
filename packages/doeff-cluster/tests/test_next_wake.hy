@@ -8,7 +8,7 @@
 ;; - 落ち着かない時の止め(count-unsettled): 今すぐが UNSETTLED-STEP-LIMIT 歩を越えて続いたら、変わり続けた欄を名指して落ちる
 ;;   (黙って回り続けない)。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

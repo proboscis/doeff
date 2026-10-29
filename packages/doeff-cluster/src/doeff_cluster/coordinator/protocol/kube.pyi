@@ -15,9 +15,9 @@ from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._json_value import OpaqueJson as OpaqueJson
 from doeff_hy._frozen import freeze_json_text as freeze_json_text
 from doeff_hy._frozen import thaw_json as thaw_json
-from doeff_hy.table import Table as Table
-from doeff_hy.table import TableWrite as TableWrite
-from doeff_hy.table import table_of as table_of
+from doeff_hy._table import Table as Table
+from doeff_hy._table import TableWrite as TableWrite
+from doeff_hy._table import table_of as table_of
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster.coordinator.intent.cluster_model import DeploymentReading as DeploymentReading

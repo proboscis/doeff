@@ -17,7 +17,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ResourceMeta BoardRow])
 (import doeff_cluster.coordinator.core.cluster_policy [board-changes])
 (import doeff_cluster.coordinator.protocol.durable_kv :as dk)
-(import doeff_hy.table [Table TableWrite])
+(import doeff_hy._table [Table TableWrite])
 (import tests.state_rows [table-from-rows])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 

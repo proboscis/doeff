@@ -4,7 +4,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_hy.table [Table table-of])
+(import doeff_hy._table [Table table-of])
 (import tests.state_rows [table-from-rows])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion TaskRecord WorkerInfo])
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])

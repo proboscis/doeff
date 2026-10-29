@@ -8,7 +8,7 @@
 (import json)
 (import pytest)
 (import pathlib [Path])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import doeff_cluster.foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])

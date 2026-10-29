@@ -9,7 +9,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo NodeLabelsSeen ClusterObservations])
 (import doeff_cluster.coordinator.core.api_policy [stamp-alive])
 (import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers with-derived-capabilities])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 (val NOW 1000000000)

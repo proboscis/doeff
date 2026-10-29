@@ -1,21 +1,21 @@
-"""defhandler の session val / session var の保存先のキー(ADR-DOE-HY-006)。
+# moved-submodule-shim: doeff_hy.session -> doeff_hy._session
+"""Moved: ``doeff_hy.session`` is now ``doeff_hy._session`` (ADR-DOE-API-001 R5).
 
-session val / session var の値は Python の隠れた場所(module の変数・handler の object・閉包)には
-持たず、doeff の状態の効果(Get / Put — state monad)を通して読み書きする。キーはこの関数 1 つで決まる。
-外側の handler と検査は同じ関数でキーを引き、そのキーの Get に値を答えれば(初期化の式を走らせずに)
-値を差し替えられ、Put を受ければ書き込みを観測できる。
-
-キーの形は旧い lazy / lazy-val / lazy-var と同じ `<module の __name__>/<handler の名>/<変数の名>`
-(名は Hy の綴りのまま・mangle しない)。旧い形から session val / session var へ書き換えても、
-同じセッションに入っている値はそのまま引き継がれる。
-
-⚠ 引数を取る handler(`(defhandler h [cfg] …)`)でもキーに引数は入らない: 同じ handler を違う引数で
-2 つ入れると、同じセッションの中で値を共有する(旧い lazy-val からの性質)。
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_hy.session…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
 """
 
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_hy._session import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
+if __name__ == "__main__":
+    import runpy
 
-def session_key(module: str, handler: str, name: str) -> str:
-    """session val / session var の値を Get / Put するキー。外の handler と検査もこれでキーを引く。"""
-    return f"{module}/{handler}/{name}"
+    runpy.run_module("doeff_hy._session", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_hy._session")

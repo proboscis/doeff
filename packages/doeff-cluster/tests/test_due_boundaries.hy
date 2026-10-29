@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import tests.state_rows [table-from-rows])
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterObservations KeepMark WorkerInfo RolloutRow RolloutSpec
                                                        RolloutStatus RolloutTarget DeploymentUnreadable NodeLabelsSeen])

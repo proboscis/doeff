@@ -9,7 +9,7 @@
 (import doeff_cluster.coordinator.core.drain_policy [cancel-drain drains-view])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv DRAIN])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
-(import doeff_hy.table [Table])
+(import doeff_hy._table [Table])
 (import tests.state_rows [table-from-rows])
 
 

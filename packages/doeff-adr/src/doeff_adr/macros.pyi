@@ -1,7 +1,7 @@
 # doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = macros.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
-from doeff_hy.pytest_items import record_function as _record_test_function
+from doeff_hy._pytest_items import record_function as _record_test_function
 
 def _kw_text(x: Incomplete) -> Incomplete:
     ...

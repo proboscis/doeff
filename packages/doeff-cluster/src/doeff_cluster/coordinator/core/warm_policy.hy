@@ -7,7 +7,7 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WarmEntry ErrorReply])

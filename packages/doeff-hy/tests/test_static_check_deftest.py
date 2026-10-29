@@ -3,7 +3,7 @@
 前は deftest の展開が作る関数の引数(fixture の doeff_interpreter・tmp_path・monkeypatch …)に型が無く、strict の
 doeff-hy-check で deftest 1 本につき書き手に直せない赤が約 5 件出た(reportUnknownParameterType・
 reportMissingParameterType・返り値の Unknown・fixture の値の Unknown)。pytest の item の記録の import も
-`doeff_hy.pytest_items` の stub 無し(reportMissingTypeStubs)の赤になっていた。
+`doeff_hy._pytest_items` の stub 無し(reportMissingTypeStubs)の赤になっていた。
 
 - strict で、doeff_interpreter と組み込みの fixture(tmp_path・monkeypatch)を使う deftest と :env の deftest の
   行に赤が 0 件。

@@ -1,6 +1,6 @@
 ;;; 盤の掃除と容量(2026-09-25): 期限つきの行(ttlSeconds)・上限を越える書きの断り・task の上限・沈黙した worker を忘れる。
 (require doeff-hy.macros [defk deftest <- val var])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

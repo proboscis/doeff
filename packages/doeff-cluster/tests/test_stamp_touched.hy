@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_events [MemoryBroker])
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])

@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
 (import doeff [run])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.detached_model [DetachedEnded DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])

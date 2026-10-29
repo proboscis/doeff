@@ -3,7 +3,7 @@
 実行時の展開は名を `(yield (Get key))` の答え(Some の中身)か初期化の値に束ねる。型検査のための展開がこれをそのまま写すと、
 Get の答えに型が無いので名とそれを使う式が全部 Unknown になり、strict で書き手に直せない赤が 1 handler に十数件出た
 (vg-w39 が #2251 で実測 — daily_verify の cache を session val へ移す直しが型検査の hook で止まった)。加えて
-`doeff_hy.session` に stub が無く、import に「stub が無い」の赤が出た。展開が名を初期化の値に束ね、stub を置けば:
+`doeff_hy._session` に stub が無く、import に「stub が無い」の赤が出た。展開が名を初期化の値に束ね、stub を置けば:
 
 - strict で、session val(型のある dict)と session var(:= で書き換える数)を持つ handler と、:= の無い handler に赤が 0 件。
 - 名の型は逃げていない: 文字の session val に数を足せば型の取り違えで赤。

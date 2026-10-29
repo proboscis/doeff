@@ -9,7 +9,7 @@
 (import doeff [run EffectBase Some])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
-(import doeff_hy.session [session-key])
+(import doeff_hy._session [session-key])
 (import dataclasses [dataclass])
 (import types)
 (import hy)
@@ -71,8 +71,8 @@
   :title "defk・deftest・defhandler の本体と module の直下で、名前の束縛を val(一度だけ)・var(:= で書き換える)・lazy val / lazy var(その呼び出しの中で初めて使った時に評価)で書く。セッションで共有する値は defhandler の session val / session var に置き、状態の効果(Get / Put)を通す。旧い lazy-val / lazy-var / set! は defhandler では動きを変えず移行を警告し、defk では誤り"
   :status "accepted"
   :scope ["packages/doeff-hy/src/doeff_hy/binding_forms.py"
-          "packages/doeff-hy/src/doeff_hy/lazy.py"
-          "packages/doeff-hy/src/doeff_hy/session.py"
+          "packages/doeff-hy/src/doeff_hy/_lazy.py"
+          "packages/doeff-hy/src/doeff_hy/_session.py"
           "packages/doeff-hy/src/doeff_hy/macros.hy"
           "packages/doeff-hy/src/doeff_hy/handle.hy"
           "packages/doeff-hy/src/doeff_hy/static_check.py"
@@ -103,7 +103,7 @@
      (rule R5 "宣言と := の値の部分の `! 式`(reader が !(f) を 2 つの要素に読んだ形)は (! 式) と同じに受ける。")
      (rule R6 "旧い書き方どうしの束縛し直し(setv・<-・拡張代入で同じ名前を 2 回 — for の変数と互いに排他な枝どうしは数えない)は doeff-hy-check の赤(doeff-hy-rebind)。展開の誤りへの切り替えは、対象の各 repo の本線で doeff-hy-rebind が 0 件になってから(手順 = 設計の記録 §8.3)。")
      (rule R7 "defk・deftest・defhandler の節の本体の setv と、module の直下の setv(名前を束縛する物)は doeff-hy-check の警告(doeff-hy-setv)で val か var を勧める。展開は止めない。")
-     (rule R8 "(session val x 式) / (session var x 式) は defhandler の直下にだけ書ける。値は状態の効果 Get / Put を通して読み書きし、キーは doeff_hy.session.session_key(module, handler, name) = \"<module>/<handler>/<name>\"(旧い lazy-val / lazy-var と同じ文字列)。session var の := は保存先へ書き戻す(Put)。defk・deftest の session は展開の誤り。")
+     (rule R8 "(session val x 式) / (session var x 式) は defhandler の直下にだけ書ける。値は状態の効果 Get / Put を通して読み書きし、キーは doeff_hy._session.session_key(module, handler, name) = \"<module>/<handler>/<name>\"(旧い lazy-val / lazy-var と同じ文字列)。session var の := は保存先へ書き戻す(Put)。defk・deftest の session は展開の誤り。")
      (rule R9 "defhandler の旧い lazy / lazy-val / lazy-var / set! は動きを一切変えず、展開の時の DeprecationWarning と doeff-hy-check の警告(doeff-hy-legacy-lazy)で session val / session var / := への移行を案内する。defk・deftest の旧い lazy / lazy-val / lazy-var / set! は展開の誤り。")
      (rule R10 "module の直下では (val x 式)・(var x 式)・(lazy val x 式) を書ける(require doeff-hy.macros [val var lazy])。lazy val は効果を使わない式だけ(効果を使う式は誤りで、defhandler の session val を案内する)。module の直下の lazy var・session・効果を使う val / var の式・同じ名前の 2 回目は展開の誤り。module の var は module の直下の setv で書き換える(Hy では module の直下の := が macro を通らない)。")]
   :laws

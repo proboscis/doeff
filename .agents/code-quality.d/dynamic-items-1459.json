@@ -7,7 +7,7 @@
     }
   ],
   "include": [
-    "packages/doeff-hy/src/doeff_hy/pytest_items.py",
+    "packages/doeff-hy/src/doeff_hy/_pytest_items.py",
     "packages/doeff-adr/src/doeff_adr/runtime_records.py",
     "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
     "packages/doeff-adr/src/doeff_adr/item_cache.py",
@@ -31,10 +31,10 @@
       "layer": "pure",
       "name": "pytest-item-records",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/pytest_items.py"
+        "packages/doeff-hy/src/doeff_hy/_pytest_items.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/pytest_items.py"
+        "packages/doeff-hy/src/doeff_hy/_pytest_items.py"
       ],
       "responsibility": "macroと収集が共有するitem記録の型、JSONとの変換、macro展開時の記録の作成。",
       "typed": true

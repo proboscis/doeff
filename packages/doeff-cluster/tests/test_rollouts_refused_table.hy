@@ -12,7 +12,7 @@
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json read-service-rows])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming))

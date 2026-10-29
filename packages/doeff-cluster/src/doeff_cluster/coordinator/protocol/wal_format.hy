@@ -16,7 +16,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import json)
 (import zlib)
-(import doeff_hy.table [TableWrite])
+(import doeff_hy._table [TableWrite])
 
 
 (defclass WalCorrupted [RuntimeError]
