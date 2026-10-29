@@ -7,25 +7,29 @@ from typing import TYPE_CHECKING
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
 if TYPE_CHECKING:
-    from doeff_cluster.shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
+    from doeff_cluster._sim.checkout_git_script import GitCheckout as GitCheckout
+    from doeff_cluster._sim.checkout_git_script import GitRemote as GitRemote
+    from doeff_cluster._sim.checkout_git_script import GitRev as GitRev
+    from doeff_cluster._sim.checkout_git_script import git_command as git_command
+    from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
+    from doeff_cluster._sim.k8s_supplied import OBJECT_PATH as OBJECT_PATH
+    from doeff_cluster._sim.k8s_supplied import HeldEntry as HeldEntry
+    from doeff_cluster._sim.k8s_supplied import HeldObject as HeldObject
+    from doeff_cluster._sim.k8s_supplied import ReadGrant as ReadGrant
+    from doeff_cluster._sim.k8s_supplied import SuppliedCluster as SuppliedCluster
+    from doeff_cluster._sim.k8s_supplied import answer_of as answer_of
+    from doeff_cluster._sim.k8s_supplied import held_value_of as held_value_of
+    from doeff_cluster._sim.k8s_supplied import held_whole_of as held_whole_of
+    from doeff_cluster._sim.k8s_supplied import k8s_supplied_peer as k8s_supplied_peer
+    from doeff_cluster._sim.k8s_supplied import read_grant_of as read_grant_of
+    from doeff_cluster._sim.k8s_supplied import (
+        service_account_token_file as service_account_token_file,
+    )
+    from doeff_cluster._sim.local import SIM_START_MS as SIM_START_MS
+    from doeff_cluster._sim.local import SIM_URL as SIM_URL
     from doeff_cluster._sim.local import AdmitBatch as AdmitBatch
     from doeff_cluster._sim.local import ArmWaitChange as ArmWaitChange
-    from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
-    from doeff_cluster.shared.intent.detached_model import (
-        AwaitDetachedOutbox as AwaitDetachedOutbox,
-    )
-    from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
-    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
-    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
-    from doeff_cluster.worker.intent.worker_model import AwaitNextTick as AwaitNextTick
-    from doeff_cluster.shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
     from doeff_cluster._sim.local import AwaitProcessStarted as AwaitProcessStarted
-    from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
-    from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
-    from doeff_cluster.shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
-    from doeff_cluster.shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
-    from doeff_cluster.shared.intent.warm_model import AwaitWarm as AwaitWarm
-    from doeff_cluster.shared.intent.detached_model import CancelDetached as CancelDetached
     from doeff_cluster._sim.local import ChangeHostTruth as ChangeHostTruth
     from doeff_cluster._sim.local import ClientLink as ClientLink
     from doeff_cluster._sim.local import CoordinatorEnded as CoordinatorEnded
@@ -33,42 +37,20 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import CoordinatorRuns as CoordinatorRuns
     from doeff_cluster._sim.local import CoordinatorStarted as CoordinatorStarted
     from doeff_cluster._sim.local import CoordinatorSteps as CoordinatorSteps
-    from doeff_cluster.shared.intent.protocol import (
-        CoordinatorStopRequested as CoordinatorStopRequested,
-    )
-    from doeff_cluster.shared.intent.cluster_control import Crash as Crash
-    from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
     from doeff_cluster._sim.local import CutWorker as CutWorker
     from doeff_cluster._sim.local import DeclareRollout as DeclareRollout
     from doeff_cluster._sim.local import DowntimeOf as DowntimeOf
     from doeff_cluster._sim.local import DrainGeneration as DrainGeneration
     from doeff_cluster._sim.local import DrainWorker as DrainWorker
     from doeff_cluster._sim.local import EndProcess as EndProcess
-    from doeff_cluster.shared.intent.kube_service_model import (
-        EnsureKubeService as EnsureKubeService,
-    )
-    from doeff_cluster.worker.intent.worker_model import EnvReport as EnvReport
     from doeff_cluster._sim.local import FailRoute as FailRoute
-    from doeff_cluster.worker.intent.worker_model import ForgetProbes as ForgetProbes
-    from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
-    from doeff_cluster._sim.checkout_git_script import GitCheckout as GitCheckout
-    from doeff_cluster._sim.checkout_git_script import GitRemote as GitRemote
-    from doeff_cluster._sim.checkout_git_script import GitRev as GitRev
-    from doeff_cluster._sim.machine import GitSource as GitSource
     from doeff_cluster._sim.local import HandleOf as HandleOf
-    from doeff_cluster._sim.k8s_supplied import HeldEntry as HeldEntry
-    from doeff_cluster._sim.k8s_supplied import HeldObject as HeldObject
     from doeff_cluster._sim.local import HostTruthOf as HostTruthOf
     from doeff_cluster._sim.local import KeepChild as KeepChild
     from doeff_cluster._sim.local import KeepHandle as KeepHandle
-    from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
     from doeff_cluster._sim.local import KubeCalls as KubeCalls
     from doeff_cluster._sim.local import KubeReads as KubeReads
-    from doeff_cluster.shared.intent.semaphore_model import LeaseOp as LeaseOp
-    from doeff_cluster._sim.machine import LocalMachine as LocalMachine
-    from doeff_cluster._sim.machine import MachineCannotAnswer as MachineCannotAnswer
     from doeff_cluster._sim.local import NextPid as NextPid
-    from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
     from doeff_cluster._sim.local import NextWorldDue as NextWorldDue
     from doeff_cluster._sim.local import NodeReads as NodeReads
     from doeff_cluster._sim.local import NoteCoordinatorWrite as NoteCoordinatorWrite
@@ -77,63 +59,31 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import NoteProcess as NoteProcess
     from doeff_cluster._sim.local import NoteScenarioWait as NoteScenarioWait
     from doeff_cluster._sim.local import NoteWatchFailure as NoteWatchFailure
-    from doeff_cluster.worker.intent.worker_model import NoticeJob as NoticeJob
-    from doeff_cluster._sim.k8s_supplied import OBJECT_PATH as OBJECT_PATH
-    from doeff_cluster.worker.intent.worker_model import ObserveWorld as ObserveWorld
-    from doeff_cluster._sim.worktree_git_script import OriginBranch as OriginBranch
     from doeff_cluster._sim.local import PartsOf as PartsOf
     from doeff_cluster._sim.local import PauseDue as PauseDue
-    from doeff_cluster.coordinator.protocol.store import Persist as Persist
     from doeff_cluster._sim.local import PersistCrashDue as PersistCrashDue
     from doeff_cluster._sim.local import PlanOf as PlanOf
     from doeff_cluster._sim.local import PreparationsOf as PreparationsOf
-    from doeff_cluster.worker.intent.worker_model import PrepareCode as PrepareCode
-    from doeff_cluster.worker.intent.worker_model import PrepareEnv as PrepareEnv
-    from doeff_cluster.worker.intent.worker_model import ProbeEntry as ProbeEntry
+    from doeff_cluster._sim.local import ProcessesOf as ProcessesOf
     from doeff_cluster._sim.local import ProcessNoticeRaised as ProcessNoticeRaised
     from doeff_cluster._sim.local import ProcessNoticeWait as ProcessNoticeWait
     from doeff_cluster._sim.local import ProcessOutside as ProcessOutside
     from doeff_cluster._sim.local import ProcessStopAsked as ProcessStopAsked
     from doeff_cluster._sim.local import ProcessStopRaised as ProcessStopRaised
     from doeff_cluster._sim.local import ProcessStopWait as ProcessStopWait
-    from doeff_cluster._sim.local import ProcessesOf as ProcessesOf
-    from doeff_cluster.worker.intent.worker_model import PublishStatus as PublishStatus
     from doeff_cluster._sim.local import PutHostTruth as PutHostTruth
     from doeff_cluster._sim.local import ReadCoordinator as ReadCoordinator
-    from doeff_cluster.worker.intent.worker_model import ReadDesired as ReadDesired
-    from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
-    from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
-    from doeff_cluster._sim.k8s_supplied import ReadGrant as ReadGrant
-    from doeff_cluster.shared.intent.detached_model import ReadRunners as ReadRunners
-    from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServices
-    from doeff_cluster.shared.intent.shared_model import ReadShared as ReadShared
-    from doeff_cluster.shared.intent.warm_model import ReadWarmState as ReadWarmState
-    from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
-    from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
-    from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
     from doeff_cluster._sim.local import RelabelNode as RelabelNode
-    from doeff_cluster.shared.intent.detached_model import ReleaseDetached as ReleaseDetached
-    from doeff_cluster.worker.intent.worker_model import ReleaseLeases as ReleaseLeases
     from doeff_cluster._sim.local import ReleaseRequest as ReleaseRequest
-    from doeff_cluster.shared.intent.remote_model import RemoteJob as RemoteJob
-    from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
     from doeff_cluster._sim.local import ReplaceCoordinatorEnviron as ReplaceCoordinatorEnviron
     from doeff_cluster._sim.local import ReplaceWorker as ReplaceWorker
-    from doeff_cluster.shared.intent.protocol import Reply as Reply
-    from doeff_cluster.shared.intent.metrics_model import ReportMetrics as ReportMetrics
-    from doeff_cluster.shared.intent.readiness_model import ReportReady as ReportReady
     from doeff_cluster._sim.local import ReportsOf as ReportsOf
-    from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
-    from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
     from doeff_cluster._sim.local import RevivalOf as RevivalOf
     from doeff_cluster._sim.local import RollBellOf as RollBellOf
     from doeff_cluster._sim.local import RollWorker as RollWorker
     from doeff_cluster._sim.local import RoomFileText as RoomFileText
-    from doeff_cluster._sim.local import SIM_START_MS as SIM_START_MS
-    from doeff_cluster._sim.local import SIM_URL as SIM_URL
     from doeff_cluster._sim.local import SettleDeployment as SettleDeployment
     from doeff_cluster._sim.local import SharedRows as SharedRows
-    from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
     from doeff_cluster._sim.local import SimDeadlockError as SimDeadlockError
     from doeff_cluster._sim.local import SimLivenessError as SimLivenessError
     from doeff_cluster._sim.local import SimOutside as SimOutside
@@ -143,63 +93,113 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.local import SimWorker as SimWorker
     from doeff_cluster._sim.local import StallCoordinator as StallCoordinator
     from doeff_cluster._sim.local import StallWorker as StallWorker
-    from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
-    from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
     from doeff_cluster._sim.local import StartWorker as StartWorker
     from doeff_cluster._sim.local import StepEnded as StepEnded
     from doeff_cluster._sim.local import StepWorkerWall as StepWorkerWall
-    from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
     from doeff_cluster._sim.local import StopElder as StopElder
     from doeff_cluster._sim.local import StopRequestOf as StopRequestOf
-    from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
-    from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
     from doeff_cluster._sim.local import StopWorkers as StopWorkers
-    from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
-    from doeff_cluster._sim.k8s_supplied import SuppliedCluster as SuppliedCluster
-    from doeff_cluster.worker.intent.worker_model import SweepEnvs as SweepEnvs
     from doeff_cluster._sim.local import TakeHeldRequests as TakeHeldRequests
     from doeff_cluster._sim.local import TrackedSpawn as TrackedSpawn
     from doeff_cluster._sim.local import WaitsOf as WaitsOf
     from doeff_cluster._sim.local import WallBackOf as WallBackOf
-    from doeff_cluster.shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
     from doeff_cluster._sim.local import WatchFailuresOf as WatchFailuresOf
     from doeff_cluster._sim.local import WorkerDied as WorkerDied
     from doeff_cluster._sim.local import WorkerEnded as WorkerEnded
     from doeff_cluster._sim.local import WorkerOf as WorkerOf
-    from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
     from doeff_cluster._sim.local import WorkersStopping as WorkersStopping
     from doeff_cluster._sim.local import WriteRoomFile as WriteRoomFile
-    from doeff_cluster.shared.intent.shared_model import WriteShared as WriteShared
-    from doeff_cluster._sim.k8s_supplied import answer_of as answer_of
     from doeff_cluster._sim.local import business_wait_tap as business_wait_tap
     from doeff_cluster._sim.local import coordinator_answers as coordinator_answers
-    from doeff_cluster.foundation.host_contract import environ_table_reader as environ_table_reader
     from doeff_cluster._sim.local import fence as fence
-    from doeff_cluster._sim.checkout_git_script import git_command as git_command
-    from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
-    from doeff_cluster._sim.k8s_supplied import held_value_of as held_value_of
-    from doeff_cluster._sim.k8s_supplied import held_whole_of as held_whole_of
     from doeff_cluster._sim.local import host_answers as host_answers
-    from doeff_cluster._sim.k8s_supplied import k8s_supplied_peer as k8s_supplied_peer
-    from doeff_cluster._sim.machine import local_machine_cluster as local_machine_cluster
-    from doeff_cluster._sim.machine import machine_answers as machine_answers
     from doeff_cluster._sim.local import no_business_timers as no_business_timers
     from doeff_cluster._sim.local import observe_requests as observe_requests
     from doeff_cluster._sim.local import process_notices as process_notices
     from doeff_cluster._sim.local import process_signals as process_signals
-    from doeff_cluster._sim.k8s_supplied import read_grant_of as read_grant_of
     from doeff_cluster._sim.local import scenario_wait_tap as scenario_wait_tap
-    from doeff_cluster._sim.k8s_supplied import (
-        service_account_token_file as service_account_token_file,
-    )
-    from doeff_cluster._sim.worktree_git_script import sha_of as sha_of
     from doeff_cluster._sim.local import sim_cluster as sim_cluster
     from doeff_cluster._sim.local import sim_host as sim_host
     from doeff_cluster._sim.local import sim_world as sim_world
     from doeff_cluster._sim.local import wall_sim_cluster as wall_sim_cluster
     from doeff_cluster._sim.local import worker_wall as worker_wall
+    from doeff_cluster._sim.machine import GitSource as GitSource
+    from doeff_cluster._sim.machine import LocalMachine as LocalMachine
+    from doeff_cluster._sim.machine import MachineCannotAnswer as MachineCannotAnswer
+    from doeff_cluster._sim.machine import local_machine_cluster as local_machine_cluster
+    from doeff_cluster._sim.machine import machine_answers as machine_answers
+    from doeff_cluster._sim.worktree_git_script import OriginBranch as OriginBranch
+    from doeff_cluster._sim.worktree_git_script import sha_of as sha_of
     from doeff_cluster._sim.worktree_git_script import worktree_git_answer as worktree_git_answer
     from doeff_cluster._sim.worktree_git_script import worktree_git_command as worktree_git_command
+    from doeff_cluster.coordinator.protocol.store import Persist as Persist
+    from doeff_cluster.foundation.host_contract import environ_table_reader as environ_table_reader
+    from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
+    from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
+    from doeff_cluster.shared.intent.cluster_control import Crash as Crash
+    from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
+    from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
+    from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
+    from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
+    from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
+    from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
+    from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
+    from doeff_cluster.shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
+    from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
+    from doeff_cluster.shared.intent.detached_model import (
+        AwaitDetachedOutbox as AwaitDetachedOutbox,
+    )
+    from doeff_cluster.shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
+    from doeff_cluster.shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
+    from doeff_cluster.shared.intent.detached_model import CancelDetached as CancelDetached
+    from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
+    from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
+    from doeff_cluster.shared.intent.detached_model import ReadRunners as ReadRunners
+    from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServices
+    from doeff_cluster.shared.intent.detached_model import ReleaseDetached as ReleaseDetached
+    from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
+    from doeff_cluster.shared.intent.kube_service_model import (
+        EnsureKubeService as EnsureKubeService,
+    )
+    from doeff_cluster.shared.intent.metrics_model import ReportMetrics as ReportMetrics
+    from doeff_cluster.shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
+    from doeff_cluster.shared.intent.protocol import (
+        CoordinatorStopRequested as CoordinatorStopRequested,
+    )
+    from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
+    from doeff_cluster.shared.intent.protocol import Reply as Reply
+    from doeff_cluster.shared.intent.readiness_model import ReportReady as ReportReady
+    from doeff_cluster.shared.intent.remote_model import RemoteJob as RemoteJob
+    from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
+    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
+    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
+    from doeff_cluster.shared.intent.semaphore_model import LeaseOp as LeaseOp
+    from doeff_cluster.shared.intent.shared_model import ReadShared as ReadShared
+    from doeff_cluster.shared.intent.shared_model import WriteShared as WriteShared
+    from doeff_cluster.shared.intent.warm_model import AwaitWarm as AwaitWarm
+    from doeff_cluster.shared.intent.warm_model import ReadWarmState as ReadWarmState
+    from doeff_cluster.shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
+    from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
+    from doeff_cluster.worker.intent.worker_model import AwaitNextTick as AwaitNextTick
+    from doeff_cluster.worker.intent.worker_model import EnvReport as EnvReport
+    from doeff_cluster.worker.intent.worker_model import ForgetProbes as ForgetProbes
+    from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
+    from doeff_cluster.worker.intent.worker_model import NoticeJob as NoticeJob
+    from doeff_cluster.worker.intent.worker_model import ObserveWorld as ObserveWorld
+    from doeff_cluster.worker.intent.worker_model import PrepareCode as PrepareCode
+    from doeff_cluster.worker.intent.worker_model import PrepareEnv as PrepareEnv
+    from doeff_cluster.worker.intent.worker_model import ProbeEntry as ProbeEntry
+    from doeff_cluster.worker.intent.worker_model import PublishStatus as PublishStatus
+    from doeff_cluster.worker.intent.worker_model import ReadDesired as ReadDesired
+    from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
+    from doeff_cluster.worker.intent.worker_model import ReleaseLeases as ReleaseLeases
+    from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
+    from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
+    from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
+    from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
+    from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
+    from doeff_cluster.worker.intent.worker_model import SweepEnvs as SweepEnvs
+    from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",

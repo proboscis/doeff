@@ -737,6 +737,31 @@ def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_name
     assert f"{below}.sub_helper" in str(failure.value)
 
 
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_marked_shim_of_a_namespace_dir_keeps_the_modules_below_at_their_old_names(
+    tmp_path: Path,
+) -> None:
+    """__init__ の無い子の dir を _ へ移し、印のある移し替えの module を残す間も、下の module を古い名で数えて緑。
+
+    移す前の namespace の dir は module でなく(submodule の行が無い)、目録は dir を通り抜けて下の module を数える。
+    移し替えの module はその dir の代わりなので、自分は submodule と数えずに、移した先の dir を同じに通り抜ける
+    (doeff-cluster の区画 sim を _sim へ移した時、移した先を辿らずに下の 603 行が消え、移し替えの module が表に無い
+    submodule になった — card ki-9b8308f2c7c3)。
+    """
+    below = f"{FIXTURE_ROOT}.types.sub"
+    table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
+    before = _fixture_tree(
+        tmp_path / "before", {"__init__.py": EFFECTS_AND_HANDLERS, "types/sub.py": BELOW}
+    )
+    check_package(_read_fixture(before), table)
+
+    stage_1 = _fixture_tree(
+        tmp_path / "stage-1",
+        {"__init__.py": EFFECTS_AND_HANDLERS, "_types/sub.py": BELOW, "types.py": MARKED_SHIM},
+    )
+    check_package(_read_fixture(stage_1), table)
+
+
 #: import すると落ちる子の module(目録は名を text から読む — doeff-ml-nexus の import できない Hy の module の様に)。
 UNIMPORTABLE = '''
 raise RuntimeError("this module cannot be imported")

@@ -24,7 +24,10 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(
         self, fullname: str, path: Sequence[str] | None = None, target: ModuleType | None = None
     ) -> ModuleSpec | None:
-        if not fullname.startswith(_OLD + ".") or importlib.util.find_spec(self._target(fullname)) is None:
+        if (
+            not fullname.startswith(_OLD + ".")
+            or importlib.util.find_spec(self._target(fullname)) is None
+        ):
             return None
         return importlib.util.spec_from_loader(fullname, self)
 
@@ -37,7 +40,9 @@ class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def get_code(self, fullname: str) -> CodeType:
         # python -m <old>.<sub>: run the moved module as __main__.
         target = self._target(fullname)
-        source = f"import runpy\nrunpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
+        source = (
+            f"import runpy\nrunpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
+        )
         return compile(source, f"<moved {fullname}>", "exec")
 
     @staticmethod
