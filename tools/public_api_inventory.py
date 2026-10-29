@@ -40,7 +40,8 @@ Kinds:
   nothing its body reads — and the bodies of its own package's functions it reads, followed
   through — installs a handler (``WithHandler``, a handler value, a handler builder or factory) or
   answers an effect (``Resume``, ``Pass``, ``Transfer`` ...) (ADR-DOE-API-001 R18): a helper stays
-  ``other``, and the known table allows it by name in the group ``許した物 — program の helper``;
+  ``other``, and the allowed table (``tests/data/public_api_allowed.json``) allows it by name in
+  the group ``許した物 — program の helper``;
 - ``unclassified``: what the machine cannot decide — a function with no return type, or one that
   says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
   statements do not decide it either; a class named like an effect or a handler without being
@@ -1946,7 +1947,7 @@ _METHOD_NOTES = (
     "それ以外: program 関数(@do・defk)と戻りの型が program の関数・ほかの関数・class・例外・型・定数・macro・"
     "console script・entry point。program を返す関数は、中(と、中で読む同じ package の関数の中)で handler を被せず"
     "(WithHandler・handler の値・作り手・工場を読まない)effect に答えない(Resume・Pass・Transfer などを読まない)時に"
-    "形「program の helper」— 既知の表は名ごとに組「許した物 — program の helper」で許す(ADR-DOE-API-001 R18)。",
+    "形「program の helper」— 許した物の表は名ごとに組「許した物 — program の helper」で許す(ADR-DOE-API-001 R18)。",
     "未分類: 戻りの型が無いか中身を言わない型(Any・object・Callable・その list)で、return の形からも決まらない関数・"
     "名が Effect か Handler で終わるのに印の無い class(とそれを返す関数)・import できない module の名。",
     "同じ名を根と submodule の両方が出す時は 1 行にまとめ、列「出す所」に出す module を import の根からの相対で"
