@@ -13,7 +13,16 @@ if TYPE_CHECKING:
         AdrIds as AdrIds,
     )
     from doeff_adr._effects import (
+        AssertAdrContract as AssertAdrContract,
+    )
+    from doeff_adr._effects import (
+        AssertAllAdrContracts as AssertAllAdrContracts,
+    )
+    from doeff_adr._effects import (
         GetAdr as GetAdr,
+    )
+    from doeff_adr._effects import (
+        RegisterDeftest as RegisterDeftest,
     )
     from doeff_adr._effects import (
         adr_registry as adr_registry,
@@ -37,12 +46,6 @@ if TYPE_CHECKING:
         SemgrepSpec as SemgrepSpec,
     )
     from doeff_adr.registry import (
-        assert_adr_contract as assert_adr_contract,
-    )
-    from doeff_adr.registry import (
-        assert_all_adr_contracts as assert_all_adr_contracts,
-    )
-    from doeff_adr.registry import (
         clear_registry as clear_registry,
     )
     from doeff_adr.registry import (
@@ -54,32 +57,38 @@ if TYPE_CHECKING:
     from doeff_adr.registry import (
         register_adr as register_adr,
     )
-    from doeff_adr.registry import (
-        register_deftest_enforcement as register_deftest_enforcement,
-    )
 
 
 _PUBLIC_API_NAMES = (
     "AdrIds",
     "AdrSpec",
+    "AssertAdrContract",
+    "AssertAllAdrContracts",
     "AssertSemgrep",
     "EnforcementRef",
     "GetAdr",
+    "RegisterDeftest",
     "RegisterSemgrep",
     "SemgrepSpec",
     "adr_registry",
-    "assert_adr_contract",
-    "assert_all_adr_contracts",
     "clear_registry",
     "doeff_hy",
     "enforcement_ids",
     "get_enforcement",
     "register_adr",
-    "register_deftest_enforcement",
     "semgrep_enforcements",
 )
-#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40)。
-_EFFECT_NAMES = frozenset({"AdrIds", "GetAdr", "adr_registry"})
+#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40・ki-54e559d3c0e7)。
+_EFFECT_NAMES = frozenset(
+    {
+        "AdrIds",
+        "AssertAdrContract",
+        "AssertAllAdrContracts",
+        "GetAdr",
+        "RegisterDeftest",
+        "adr_registry",
+    }
+)
 #: 内側の module _semgrep_effects で定義する公開の名 — Semgrep の検の effect と handler(card ki-2a549274055c)。
 _SEMGREP_EFFECT_NAMES = frozenset({"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"})
 

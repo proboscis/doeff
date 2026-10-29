@@ -8,7 +8,16 @@ from doeff_adr._effects import (
     AdrIds as AdrIds,
 )
 from doeff_adr._effects import (
+    AssertAdrContract as AssertAdrContract,
+)
+from doeff_adr._effects import (
+    AssertAllAdrContracts as AssertAllAdrContracts,
+)
+from doeff_adr._effects import (
     GetAdr as GetAdr,
+)
+from doeff_adr._effects import (
+    RegisterDeftest as RegisterDeftest,
 )
 from doeff_adr._effects import (
     adr_registry as adr_registry,
@@ -32,12 +41,6 @@ from doeff_adr.registry import (
     SemgrepSpec as SemgrepSpec,
 )
 from doeff_adr.registry import (
-    assert_adr_contract as assert_adr_contract,
-)
-from doeff_adr.registry import (
-    assert_all_adr_contracts as assert_all_adr_contracts,
-)
-from doeff_adr.registry import (
     clear_registry as clear_registry,
 )
 from doeff_adr.registry import (
@@ -48,7 +51,4 @@ from doeff_adr.registry import (
 )
 from doeff_adr.registry import (
     register_adr as register_adr,
-)
-from doeff_adr.registry import (
-    register_deftest_enforcement as register_deftest_enforcement,
 )

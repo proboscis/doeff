@@ -1,9 +1,12 @@
 """Runtime registry for executable ADR contracts.
 
-Hy macros expand into calls in this module, except ``defsemgrep``: it performs
-the effects RegisterSemgrep and AssertSemgrep (``doeff_adr._semgrep_effects``),
-whose handler answers them with ``_register_semgrep_enforcement`` and
-``_assert_semgrep_enforcement`` here.  The registry is intentionally small: it
+Hy macros expand into calls in this module, except where they perform effects:
+``defsemgrep`` performs RegisterSemgrep and AssertSemgrep
+(``doeff_adr._semgrep_effects``), whose handler answers them with
+``_register_semgrep_enforcement`` and ``_assert_semgrep_enforcement`` here, and
+``defadr`` performs RegisterDeftest and AssertAdrContract (``doeff_adr._effects``),
+whose handler answers them with ``_register_deftest_enforcement`` and
+``_assert_adr_contract`` here.  The registry is intentionally small: it
 records ADR specs and executable enforcement specs, then exposes assertions
 that pytest-generated functions can call.
 """
@@ -189,15 +192,18 @@ def enforcement_ref(
     return EnforcementRef(id=enforcement_id, kind=kind, mode=mode)
 
 
-def register_deftest_enforcement(
+def _register_deftest_enforcement(
     enforcement_id: str,
     *,
+    table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
     mode: EnforcementMode = "green",
 ) -> EnforcementRef:
-    _ensure_new_enforcement_id(enforcement_id)
+    """deftest の検を表(None = process の登録簿)に載せる。外からは effect RegisterDeftest で載せる(handler
+    adr_registry が答える・card ki-54e559d3c0e7)。"""
+    _ensure_new_enforcement_id(enforcement_id, table)
     normalized_mode = _normalize_enforcement_mode(mode)
     ref = EnforcementRef(id=enforcement_id, kind="deftest", mode=normalized_mode)
-    _ENFORCEMENTS[enforcement_id] = ref
+    (_ENFORCEMENTS if table is None else table)[enforcement_id] = ref
     return ref
 
 
@@ -313,22 +319,21 @@ def get_enforcement(enforcement_id: str) -> EnforcementRef | SemgrepSpec:
     return _ENFORCEMENTS[enforcement_id]
 
 
-def assert_adr_contract(adr_id: str) -> None:
-    spec = _get_adr(adr_id)
+def _assert_adr_contract(
+    spec: AdrSpec, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
+) -> None:
+    """ADR の形を確かめる: 採用済みなら検が 1 つ以上在り、挙げた検が表(None = process の登録簿)に載り、expected-red の検は
+    計画に結ばれている。外からは effect AssertAdrContract・AssertAllAdrContracts で確かめる(card ki-54e559d3c0e7)。"""
+    enforcements = _ENFORCEMENTS if table is None else table
     if spec.status == "accepted" and not spec.enforcement:
-        raise AssertionError(f"{adr_id}: accepted ADR must have executable enforcement")
+        raise AssertionError(f"{spec.id}: accepted ADR must have executable enforcement")
     for ref in spec.enforcement:
-        if ref.id not in _ENFORCEMENTS:
-            raise AssertionError(f"{adr_id}: enforcement {ref.id!r} is not registered")
+        if ref.id not in enforcements:
+            raise AssertionError(f"{spec.id}: enforcement {ref.id!r} is not registered")
         if ref.mode == "expected-red" and not spec.plans:
             raise AssertionError(
-                f"{adr_id}: expected-red enforcement {ref.id!r} must be tied to a plan"
+                f"{spec.id}: expected-red enforcement {ref.id!r} must be tied to a plan"
             )
-
-
-def assert_all_adr_contracts() -> None:
-    for adr_id in _adr_ids():
-        assert_adr_contract(adr_id)
 
 
 def _assert_semgrep_enforcement(

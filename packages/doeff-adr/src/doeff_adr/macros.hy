@@ -44,9 +44,11 @@
       (do
         (.append emitted item)
         (setv test-name (_inline-enforcement-name item))
+        ;; deftest の検は import の時に effect RegisterDeftest として adr_registry の下で載せる(card ki-54e559d3c0e7)。
         (.append emitted
-          `(register-deftest-enforcement
-             ~(hy.models.String (_symbol-text test-name))))
+          `(_doeff-adr-run
+             ((_doeff-adr.adr-registry)
+               (_doeff-adr.RegisterDeftest ~(hy.models.String (_symbol-text test-name))))))
         (.append refs
           `(enforcement-ref
              ~(hy.models.String (_symbol-text test-name))
@@ -160,10 +162,13 @@
   (setv plans (.get data "plans" `[]))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
   (setv item-record (_record-test-function test-name [] []))
+  ;; deftest の検の載せと ADR の形の確かめは、effect RegisterDeftest・AssertAdrContract として handler adr_registry の下で
+  ;; 走らせる(card ki-54e559d3c0e7)— defsemgrep と同じく project の doeff_interpreter fixture に頼らず、名は使い手の module の
+  ;; 名と重ならない _doeff-adr-run と _doeff-adr. で読む。
   `(do
-     (import doeff_adr.registry
-       [register-adr assert-adr-contract enforcement-ref
-        register-deftest-enforcement])
+     (import doeff_adr.registry [register-adr enforcement-ref])
+     (import doeff [run :as _doeff-adr-run])
+     (import doeff-adr :as _doeff-adr)
      ~@emitted-enforcements
      (register-adr
        ~adr-id
@@ -177,7 +182,7 @@
        :enforcement [~@enforcement-refs]
        :plans ~plans)
      (defn ~test-name []
-       (assert-adr-contract ~adr-id))
+       (_doeff-adr-run ((_doeff-adr.adr-registry) (_doeff-adr.AssertAdrContract ~adr-id))))
      ~item-record))
 
 (defn #^ (get dict #(str object)) fact [#^ str text #^ object #** extra]
