@@ -16,9 +16,12 @@ if str(SECRET_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
 import pytest  # noqa: E402
-from doeff_google_secret_manager.client import SecretManagerClient  # noqa: E402
-from doeff_google_secret_manager.handlers import mock_handlers, production_handlers  # noqa: E402
-from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
+from doeff_google_secret_manager import (  # noqa: E402
+    SecretManagerClient,
+    mock_handlers,
+    production_handlers,
+)
+from doeff_secret import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
 from doeff import do, run  # noqa: E402
 
@@ -83,20 +86,21 @@ def _run_with_handler(program, handler):
 
 
 def test_effect_exports() -> None:
-    sys.modules.pop("doeff_google_secret_manager.effects", None)
-    sys.modules.pop("doeff_google_secret_manager.effects.secrets", None)
+    sys.modules.pop("doeff_google_secret_manager._effects", None)
+    sys.modules.pop("doeff_google_secret_manager._effects.secrets", None)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)
-        exported_effects = importlib.import_module("doeff_google_secret_manager.effects")
+        exported_effects = importlib.import_module("doeff_google_secret_manager._effects")
     assert exported_effects.GetSecret is GetSecret
     assert exported_effects.SetSecret is SetSecret
     assert any(
-        "doeff_google_secret_manager.effects is deprecated" in str(item.message) for item in caught
+        "The effects submodule of doeff_google_secret_manager is deprecated" in str(item.message)
+        for item in caught
     )
 
 
 def test_handler_exports() -> None:
-    exported_handlers = importlib.import_module("doeff_google_secret_manager.handlers")
+    exported_handlers = importlib.import_module("doeff_google_secret_manager._handlers")
     assert exported_handlers.production_handlers is production_handlers
     assert exported_handlers.mock_handlers is mock_handlers
 
@@ -125,7 +129,7 @@ def test_mock_handlers_use_in_memory_store() -> None:
     assert all_secrets == ["api-key", "db-password", "seed-secret"]
     assert remaining == ["db-password", "seed-secret"]
     assert any(
-        "doeff_google_secret_manager.handlers.mock_handlers is deprecated" in str(item.message)
+        "doeff_google_secret_manager.mock_handlers is deprecated" in str(item.message)
         for item in caught
     )
 
@@ -183,7 +187,7 @@ def test_handler_swapping_changes_behavior() -> None:
         )
     assert mock_result == b"from-mock"
     assert any(
-        "doeff_google_secret_manager.handlers.mock_handlers is deprecated" in str(item.message)
+        "doeff_google_secret_manager.mock_handlers is deprecated" in str(item.message)
         for item in caught
     )
 

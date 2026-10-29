@@ -7,8 +7,8 @@ from itertools import count
 from typing import Any, overload
 
 from doeff import Effect, Pass, Resume, do
-from doeff_notify.effects import Acknowledge, Notify, NotifyThread
-from doeff_notify.types import Channel, NotificationResult
+from doeff_notify._effects import Acknowledge, Notify, NotifyThread
+from doeff_notify._types import Channel, NotificationResult
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

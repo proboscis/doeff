@@ -10,9 +10,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
-from doeff_git.exceptions import GitCommandError
-from doeff_git.types import MergeStrategy, PRHandle
+from doeff_git._effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
+from doeff_git._exceptions import GitCommandError
+from doeff_git._types import MergeStrategy, PRHandle
 
 
 def _run_command(

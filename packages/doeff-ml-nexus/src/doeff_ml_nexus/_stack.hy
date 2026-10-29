@@ -2,7 +2,7 @@
 ;;; Provides a reference handler chain for doeff-ml-nexus programs.
 
 (require doeff_hy.macros [defk <-])
-(require doeff_docker.compose [with-handlers])
+(require doeff_docker._compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff_core_effects [reader state writer slog-handler scheduled])
@@ -12,8 +12,8 @@
 (import doeff_ml_nexus._handlers.docker [docker-run-handler])
 (import doeff_ml_nexus._handlers.rsync [rsync-handler])
 (import doeff_ml_nexus._handlers.file [write-file-handler])
-(import doeff_docker.handlers.docker [docker-build-handler image-push-handler])
-(import doeff_docker.handlers.shell [shell-run-handler])
+(import doeff_docker [docker-build-handler image-push-handler])
+(import doeff_docker [shell-run-handler])
 
 
 (defn ml-nexus-interpreter [program * [env None]]  ; doeff: interpreter

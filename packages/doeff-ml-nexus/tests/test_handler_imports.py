@@ -11,8 +11,8 @@ import pytest
 @pytest.mark.parametrize(
     "module_name",
     [
-        "doeff_docker.handlers.dockerfile",
-        "doeff_docker.handlers.docker",
+        "doeff_docker._handlers.dockerfile",
+        "doeff_docker._handlers.docker",
         "doeff_ml_nexus._handlers.file",
         "doeff_ml_nexus._handlers.docker",
         "doeff_ml_nexus._handlers.rsync",
