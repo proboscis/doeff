@@ -21,6 +21,9 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
    戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
    直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
+6. 組「許した物 — program の helper」(ADR-DOE-API-001 R18 — 決まりが名ごとに許した、effect を出すだけの program を返す関数)
+   に置けるのは、目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。
+   許した物の組は、目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。
 """
 
 from __future__ import annotations
@@ -45,8 +48,12 @@ TABLE = ROOT / "tests" / "data" / "public_api_known_violations.json"
 OUTSIDE_KINDS = frozenset({"other", "unclassified"})
 #: package の範囲。範囲の外の package は名を突き合わせない(決めの id が要る)。
 SCOPES = ("決まりの範囲", "範囲の答え待ち", "範囲の外")
-#: 名の組の名の頭(分け — 直しの向きか境界の種類)。
-GROUP_HEADS = ("外れ — ", "境界 — ", "未分け — ")
+#: 名の組の名の頭(分け — 直しの向きか境界の種類か、決まりが許した物)。
+GROUP_HEADS = ("外れ — ", "境界 — ", "未分け — ", "許した物 — ")
+#: 決まりが名ごとに許した program の helper の組(ADR-DOE-API-001 R18)— 目録の形が program の helper の名だけを置ける。
+HELPER_GROUP = "許した物 — program の helper"
+#: 許した物の組の全部(組ごとに、目録で形を確かめる — 確かめの無い組は置けない)。
+ALLOWED_GROUPS = (HELPER_GROUP,)
 #: 決めの id: card(ki-)・依頼(lt-)・利用者の発言(ci-)。
 DECISION = re.compile(r"(ki-[0-9a-f]{12}|lt-[0-9A-Z]{26}|ci-[0-9A-Z]{26})")
 #: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒・混みの倍率は根の conftest が掛ける)。
@@ -132,6 +139,12 @@ def known_names(table: KnownTable, package_dir: str) -> set[Key]:
     return listed | added
 
 
+def helper_names(table: KnownTable, package_dir: str) -> set[Key]:
+    """1 package の、組「許した物 — program の helper」に置いた (module, 名)。"""
+    modules = table["packages"][package_dir]["名"].get(HELPER_GROUP, {})
+    return {(module, name) for module, names in modules.items() for name in names}
+
+
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
     """目録の 1 package の行のうち、effect と handler の外の物((module, 名) から行へ)。"""
     return {
@@ -188,10 +201,23 @@ def _stale_text(directory: str, stale: list[Key]) -> str:
     )
 
 
+def _not_helper_text(directory: str, rows: list[Mapping[str, Any]]) -> str:
+    return (
+        f"{directory}: 組「{HELPER_GROUP}」に、目録の形が {tool.PROGRAM_HELPER} でない名が {len(rows)} 個 — "
+        "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)。"
+        "直すか、組から外して外れか境界の組へ戻す:\n"
+        + "\n".join(
+            f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['reason']})"
+            for row in rows
+        )
+    )
+
+
 def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
     """目録の 1 package を既知の表と突き合わせる。表に無い外れと、表に在るのに目録に無い名を名指して止める。
 
-    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。
+    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。組「許した物 — program の
+    helper」の名は、目録の形が program の helper でなければ名指して止める(入口へ移した行は入口の行の形で見る)。
     """
     directory = package["dir"]
     assert package["error"] is None, f"{directory} を読めなかった: {package['error']}"
@@ -206,9 +232,13 @@ def check_package(package: Mapping[str, Any], table: KnownTable) -> None:
     moved = moved_to_root(package["import_roots"], found, known)
     new = sorted(set(found) - known - {root for root, _old in moved})
     stale = sorted(known - set(found) - {old for _root, old in moved})
+    helpers = helper_names(table, directory)
+    shown_helpers = sorted((helpers & set(found)) | {root for root, old in moved if old in helpers})
+    not_helpers = [found[key] for key in shown_helpers if found[key]["form"] != tool.PROGRAM_HELPER]
     problems = [
         *([_new_text(directory, new, found)] if new else []),
         *([_stale_text(directory, stale)] if stale else []),
+        *([_not_helper_text(directory, not_helpers)] if not_helpers else []),
     ]
     assert not problems, "\n".join(problems)
 
@@ -266,6 +296,12 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
             for package_dir, entry in entries
             for group in entry["名"]
             if not group.startswith(GROUP_HEADS)
+        ),
+        *(
+            f"{package_dir}: 許した物の組 {group!r} は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)"
+            for package_dir, entry in entries
+            for group in entry["名"]
+            if group.startswith("許した物 — ") and group not in ALLOWED_GROUPS
         ),
         *(
             f"{package_dir} {group} {module}: 名は空でなく、並べて重ねない"
@@ -522,6 +558,101 @@ def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None
     [row] = [row for row in package["exports"] if row["name"] == "ping_handlers"]
     assert (row["kind"], row["form"]) == ("handler", "handler を返す関数")
     assert row["reason"].endswith("引数なしで呼ぶと handler を返す")
+
+
+#: program を返す関数の 4 つの形: effect を出すだけの helper と、helper の形を越える 3 つ(handler の値を当てる・
+#: WithHandler で被せる・中の同じ package の関数が handler を当てる)と、effect に答える物。
+PROGRAM_FUNCTIONS = '''
+
+from doeff import DoExpr, Resume, WithHandlerType, do
+
+
+@do
+def pinging():
+    """A program helper: its program only emits the effect."""
+    return (yield PingEffect())
+
+
+@do
+def pinging_handled():
+    """Past a helper: applies a handler to the program it builds."""
+    return (yield ping_handler(pinging()))
+
+
+@do
+def pinging_with_handler():
+    """Past a helper: installs a handler with WithHandler."""
+    return (yield WithHandlerType(ping_handler, pinging()))
+
+
+def _install(program):
+    return ping_handler(program)
+
+
+def pinging_wrapped() -> DoExpr:
+    """Past a helper: the function of its package it calls installs the handler."""
+    return _install(pinging())
+
+
+@do
+def answering(effect, cont):
+    """Past a helper: answers an effect (Resume is handler control)."""
+    return (yield Resume(cont, 1))
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) -> None:
+    """組「許した物 — program の helper」に置けるのは、目録の形が program の helper の名だけ(ADR-DOE-API-001 R18)。
+
+    effect を出すだけの program の関数は、組に置けば緑・表に無ければ外れのまま赤。handler を被せる関数(handler の値を当てる・
+    WithHandler・中の同じ package の関数が当てる)・effect に答える関数・program を返さない関数を組に置くと赤(名と形を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + PROGRAM_FUNCTIONS + OUTLIER)
+    package = _read_fixture(repo)
+    forms = {row["name"]: row["form"] for row in package["exports"]}
+    assert forms["pinging"] == tool.PROGRAM_HELPER
+    rest = ["answering", "helper", "pinging_handled", "pinging_with_handler", "pinging_wrapped"]
+
+    def table(helpers: list[str]) -> KnownTable:
+        listed = sorted(set(rest) - set(helpers))
+        groups = {
+            **({HELPER_GROUP: {FIXTURE_ROOT: sorted(helpers)}} if helpers else {}),
+            **({"外れ — 内側の module へ移す": {FIXTURE_ROOT: listed}} if listed else {}),
+        }
+        return {"packages": {FIXTURE_DIR: {"範囲": "決まりの範囲", "名": groups}}, "足した名": []}
+
+    check_package(package, table(["pinging"]))
+    with pytest.raises(AssertionError, match=r"既知の表に無い[\s\S]*doeff_fixture_api\.pinging"):
+        check_package(package, table([]))
+
+    past_a_helper = [
+        ("pinging_handled", tool.HELPER_INSTALLS, "pinging_handled が ping_handler を読む"),
+        (
+            "pinging_with_handler",
+            tool.HELPER_INSTALLS,
+            "pinging_with_handler が WithHandlerType を読む",
+        ),
+        ("pinging_wrapped", tool.HELPER_INSTALLS, "_install が ping_handler を読む"),
+        ("answering", tool.HELPER_ANSWERS, "answering が Resume を読む"),
+        ("helper", "関数", "戻りの型 int"),
+    ]
+    for name, form, said in past_a_helper:
+        with pytest.raises(AssertionError, match=re.escape(HELPER_GROUP)) as failure:
+            check_package(package, table(["pinging", name]))
+        assert f"{FIXTURE_ROOT}.{name}({form}・" in str(failure.value)
+        assert said in str(failure.value)
+
+
+def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
+    """許した物の組は、目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける — 確かめの無い組で名を許すと表の形の検が赤。"""
+    table = _fixture_table({})
+    table["packages"][FIXTURE_DIR]["名"] = {"許した物 — 便利な関数": {FIXTURE_ROOT: ["helper"]}}
+    assert shape_problems(table, [FIXTURE_DIR]) == [
+        f"{FIXTURE_DIR}: 許した物の組 '許した物 — 便利な関数' は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)"
+    ]
+    table["packages"][FIXTURE_DIR]["名"] = {HELPER_GROUP: {FIXTURE_ROOT: ["helper"]}}
+    assert shape_problems(table, [FIXTURE_DIR]) == []
 
 
 def test_a_name_put_into_the_listed_groups_turns_red() -> None:
