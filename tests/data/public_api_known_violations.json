@@ -16833,6 +16833,20 @@
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "Count",
+   "訳": "CountRows(card ki-955d26c8eba9)の答えの型(R2 の effect の結果の型 — Count は件数の答え・CountRowsAnswer は答えの和)。名を足した commit 97b4a3e83 が表を直さずに入ったので、表の test を緑にする card ki-d80c9c978b35 が足した",
+   "決め": "ki-955d26c8eba9"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "CountRowsAnswer",
+   "訳": "CountRows(card ki-955d26c8eba9)の答えの型(R2 の effect の結果の型 — Count は件数の答え・CountRowsAnswer は答えの和)。名を足した commit 97b4a3e83 が表を直さずに入ったので、表の test を緑にする card ki-d80c9c978b35 が足した",
+   "決め": "ki-955d26c8eba9"
+  },
+  {
    "package": "doeff-validation",
    "module": "doeff_validation",
    "name": "Check",
