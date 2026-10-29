@@ -42,7 +42,7 @@ def main() -> int:
     database = ClickHouseDatabase(name="cold", url=url, database="default", user="default", password="", deadline=60.0)
     handlers = [state(), os_signal_stop_handler, clickhouse_http_sql_handler((database,))]
     program = serve_until_stop() if shape == "stop" else ask()
-    run(scheduled(with_handlers(handlers, program)))
+    run(scheduled()(with_handlers(handlers, program)))
     return 0
 
 

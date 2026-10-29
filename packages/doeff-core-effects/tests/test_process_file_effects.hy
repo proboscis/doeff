@@ -36,7 +36,7 @@
 
 (defn #^ T on [#^ list handlers #^ (get Program T) program]
   "handler の列の下で program を 1 回回すため。"
-  (run (scheduled (with_handlers handlers program))))
+  (run ((scheduled) (with_handlers handlers program))))
 
 
 ;; --- 子 process: 本物だけ・fake だけの性質(両方が同じ答えになる性質は test_process_contract.hy の契約テスト) --------------------

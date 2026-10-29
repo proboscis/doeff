@@ -103,7 +103,7 @@ def measure(op: str, layers: int, parked: int, ops: int, repeat: int, impl: str)
         return per_op
 
     stack = [await_handler, async_time_handler(), *[unrelated_handler] * layers]
-    return run(scheduled(with_handlers(stack, body()), implementation=impl))
+    return run(scheduled(implementation=impl)(with_handlers(stack, body())))
 
 
 def main(argv: list[str]) -> None:

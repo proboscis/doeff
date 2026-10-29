@@ -90,7 +90,7 @@ def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest
 
 
 def _tallied(body, implementation=None):
-    return run(scheduled(with_handlers([step_tally_handler], body), implementation=implementation))
+    return run(scheduled(implementation=implementation)(with_handlers([step_tally_handler], body)))
 
 
 def _tree_rows(table: tuple[TaskTally, ...], root: int) -> list[TaskTally]:

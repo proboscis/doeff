@@ -15,7 +15,7 @@
 
 (defn on [handlers program]
   "handler の列の下で program を scheduler つきで 1 回回すため。"
-  (run (scheduled (with_handlers handlers program))))
+  (run ((scheduled) (with_handlers handlers program))))
 
 
 (defk puts [channel items]

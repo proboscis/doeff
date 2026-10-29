@@ -102,17 +102,17 @@ UNHANDLED_EFFECT_HINTS: tuple[UnhandledEffectHint, ...] = (
     UnhandledEffectHint(
         (Await,),
         "Await is handled by await_handler, which needs scheduled outside it: "
-        "run(scheduled(await_handler(prog)))",
+        "run(scheduled()(await_handler(prog)))",
     ),
     UnhandledEffectHint(
         (CreateExternalPromise,),
         "CreateExternalPromise is handled by scheduled; await_handler performs it, "
-        "so install scheduled outside it: run(scheduled(await_handler(prog)))",
+        "so install scheduled outside it: run(scheduled()(await_handler(prog)))",
     ),
     *(
         UnhandledEffectHint(
             (effect_type,),
-            f"{effect_type.__name__} is handled by scheduled: run(scheduled(prog))",
+            f"{effect_type.__name__} is handled by scheduled: run(scheduled()(prog))",
         )
         for effect_type in _SCHEDULER_EFFECTS
     ),

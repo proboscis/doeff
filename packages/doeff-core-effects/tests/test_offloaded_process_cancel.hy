@@ -297,7 +297,7 @@
    :tags {:context "process-test" :role "program"}}
   "筋書きを、検の thread とは別の daemon の thread の新しい VM で handler(既定 offloaded-subprocess-handler)と scheduled の下に 1 回回し、
    SCENARIO-LIMIT 秒まで答えを待つため。過ぎたら what を名指して落とす(固まった thread は daemon のまま置く — 頭の註)。"
-  (val running (.submit (ThreadPerCall) run-detached (scheduled (with_handlers [handler] scenario))))
+  (val running (.submit (ThreadPerCall) run-detached ((scheduled) (with_handlers [handler] scenario))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]

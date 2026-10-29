@@ -205,11 +205,11 @@ def _run_reader_ask_loop(iterations: int) -> Any:
 
 
 def _run_spawn_gather(task_count: int) -> Any:
-    return run(scheduled(_spawn_gather_program(task_count)))
+    return run(scheduled()(_spawn_gather_program(task_count)))
 
 
 def _run_await_round_trip(iterations: int, handler: Callable[..., Any]) -> Any:
-    return run(scheduled(handler(_await_loop(iterations))))
+    return run(scheduled()(handler(_await_loop(iterations))))
 
 
 def _run_python_callable_boundary(iterations: int, callback: VmCallable) -> Any:

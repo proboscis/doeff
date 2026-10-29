@@ -18,7 +18,7 @@ means:
 | answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
 | throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
 | passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
-| holds it while other tasks run | a scheduler handler, such as the reference `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
+| holds it while other tasks run | a scheduler handler, such as the reference `scheduled()` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
 | drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
 
 State, early exit, retries, concurrency and I/O are all handlers built from these, and a function
@@ -297,12 +297,12 @@ wake at once (µs of CPU per task):
 | Plain Python: `asyncio` | 11.4 | 13.7 | 15.5 | 18.6 |
 | effect 1.1.0: `parallel()` (runs the effects one by one) | 13.9 | 16.1 | – | – |
 | doeff: `scheduled()` (the Rust scheduler, the default) | 16.6 | 20.7 | 25.5 | 44.7 |
-| doeff: `scheduled(..., implementation="python")` | 151 | 167 | 205 | 223 |
+| doeff: `scheduled(implementation="python")` | 151 | 167 | 205 | 223 |
 
 A dash marks a case the implementation has no promise for. effectful has no scheduler, so it is
 not in this table. `pip install doeff` installs 0.8.0, whose `scheduled()` runs the Rust scheduler
 by default (the default since 0.7.0; it ran the Python one up to 0.6.0). Select the Python one
-(the last row) with `DOEFF_SCHEDULER=python` or `scheduled(program, implementation="python")`.
+(the last row) with `DOEFF_SCHEDULER=python` or `scheduled(implementation="python")(program)`.
 
 How the numbers were measured:
 
@@ -355,7 +355,7 @@ uv run --with effect==1.1.0 --with effectful==0.4.0 python benchmarks/compare_li
 
 `run()` takes a single DoExpr (program node) and returns the result value directly.
 Handlers are composed explicitly by calling a Program -> Program handler installer.
-Use `scheduled(prog)` to wrap with the scheduler for concurrency effects.
+Use `scheduled()(prog)` to wrap with the scheduler for concurrency effects.
 
 ## Handler Composition
 
@@ -461,7 +461,7 @@ Reference handlers (from `doeff_core_effects._handlers`), written like any other
 | Local | `local_handler` | `Local` |
 | Listen | `listen_handler` | `Listen` |
 | Await | `await_handler` | `Await` |
-| Scheduler | `scheduled(prog)` (from `doeff_core_effects._scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
+| Scheduler | `scheduled()(prog)` (from `doeff_core_effects._scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
 `writer` keeps its log in state: install `state()` outside it, and read the log by yielding the
 effect `ReadWriterLog()`, which `writer` answers: `log = yield ReadWriterLog()`.
@@ -487,7 +487,7 @@ def main():
     return results
 
 # writer keeps its log in state, so install state() outside writer.
-result = run(scheduled(state()(writer(main()))))
+result = run(scheduled()(state()(writer(main()))))
 print(result)  # ['a', 'b']
 ```
 

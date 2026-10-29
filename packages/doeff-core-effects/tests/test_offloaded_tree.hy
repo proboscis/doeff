@@ -81,7 +81,7 @@
   "program を scheduled と os-file-handler・offloaded-tree-handler(内側)の下で、検の thread とは別の daemon の thread の新しい VM で 1 回
    回し、SCENARIO-LIMIT 秒まで答えを待つため(過ぎたら scheduler の thread が塞がったと名指して落とす — test_offloaded_lock.hy と同じ作法)。"
   (val running (.submit (ThreadPerCall) run-detached
-                        (scheduled (with_handlers [os-file-handler offloaded-tree-handler] program))))
+                        ((scheduled) (with_handlers [os-file-handler offloaded-tree-handler] program))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]

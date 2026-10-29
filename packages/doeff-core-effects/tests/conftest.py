@@ -92,6 +92,6 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object
     compose = compositions[doeff_interpreter_name]
 
     def interpret(program: Program) -> object:
-        return run(scheduled(compose(program)))
+        return run(scheduled()(compose(program)))
 
     return interpret

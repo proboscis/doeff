@@ -346,7 +346,7 @@ def start_guard(server: DisposablePostgres) -> None:
 
 def read_given_dsns(variables: tuple[str, ...]) -> dict[str, str]:
     """外から渡された DSN の env を、process の環境変数の効果 ReadEnvironment と本物の答え手 subprocess-handler で 1 度読む(#3012)。"""
-    entries = run(scheduled(with_handlers([subprocess_handler], ReadEnvironment(names=variables))))
+    entries = run(scheduled()(with_handlers([subprocess_handler], ReadEnvironment(names=variables))))
     return {entry.name: entry.value for entry in entries if entry.value}
 
 
