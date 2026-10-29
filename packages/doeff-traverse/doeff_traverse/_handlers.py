@@ -1,7 +1,7 @@
 """
 Handlers for doeff-traverse effects.
 
-sequential(): reference handler — runs Traverse sequentially, Reduce/Zip/Inspect directly.
+sequential: reference handler — runs Traverse sequentially, Reduce/Zip/Inspect directly.
 normalize_to_none(): Fail handler — resumes with None at fail site.
 progress_bars(): ItemOutcome handler — one progress bar per Traverse.
 """
@@ -12,14 +12,15 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from doeff import WithBoundaries, do, handler_effect_types
-from doeff.handler_utils import reinstaller
+from doeff.handler_utils import get_inner_handlers, inner_of, reinstaller
 from doeff.program import (
+    FormerFactoryHandler,
     GetHandlers,
     Pass,
-    ProgramHandler,
     Resume,
     ResumeThrow,
     WithHandlerType,
+    _former_factory_handler,
     _named_handler,
 )
 from doeff.program import handler as _program_handler
@@ -210,7 +211,8 @@ def _report_boundaries(
     return None
 
 
-def sequential() -> ProgramHandler:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+@do
+def _sequential_handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
     """Sequential handler for Traverse/Reduce/Zip/Inspect.
 
     Traverse: runs f(item) sequentially for each item.
@@ -234,188 +236,191 @@ def sequential() -> ProgramHandler:  # noqa: PLR0915 - baseline cleanup keeps ex
     TaskCancelledError out of an item is no item's failure: the Traverse's task was cancelled
     (or the item let one out), so the Traverse stops there — it reports that item and the
     ones it has not reached as cancelled and throws it on.
+
+    It has no settings, so it is a handler, not a factory (ADR-DOE-API-002):
+    write ``sequential(prog)`` or ``[sequential, ...]``. The former call
+    ``sequential()`` answers the same handler with a DeprecationWarning for
+    one release.
     """
-    from doeff_core_effects import try_handler
-    from doeff_core_effects import TaskCancelledError
+    if isinstance(effect, Skip):
+        return _SKIPPED
 
-    from doeff.handler_utils import get_inner_handlers, inner_of
-    @do
-    def handler(effect: CollectionEffect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
-        if isinstance(effect, Skip):
-            return _SKIPPED
+    if isinstance(effect, ItemOutcome):
+        # Every consumer between the Traverse and this one passed the report on (_report).
+        return (yield Resume(k, _PASSED_ON))
 
-        if isinstance(effect, ItemOutcome):
-            # Every consumer between the Traverse and this one passed the report on (_report).
-            return (yield Resume(k, _PASSED_ON))
+    if isinstance(effect, Traverse):
+        # Read at the Traverse (sys.modules after the first), not when doeff_traverse is
+        # imported, as when sequential() built the handler.
+        from doeff_core_effects import TaskCancelledError, try_handler
 
-        if isinstance(effect, Traverse):
-            # One installer per inner handler for the whole Traverse, not one per item —
-            # read when the first item runs (a Traverse with no item to run reads none),
-            # from GetHandlers itself rather than through get_inner_handlers' @do call
-            # (agora-redesign #2958). The same read decides whether outcomes are reported,
-            # so a Traverse with no item to run reports none either.
-            inner_installs = None
-            # Set only when outcomes are reported (a Traverse nobody counts computes none).
-            report_under, this_run, total = None, None, 0
-            results = []
+        # One installer per inner handler for the whole Traverse, not one per item —
+        # read when the first item runs (a Traverse with no item to run reads none),
+        # from GetHandlers itself rather than through get_inner_handlers' @do call
+        # (agora-redesign #2958). The same read decides whether outcomes are reported,
+        # so a Traverse with no item to run reports none either.
+        inner_installs = None
+        # Set only when outcomes are reported (a Traverse nobody counts computes none).
+        report_under, this_run, total = None, None, 0
+        results = []
 
-            # Iterate: Collection (from previous traverse) or raw iterable/generator
-            if isinstance(effect.items, Collection):
-                items_iter = iter(effect.items.all_items)
+        # Iterate: Collection (from previous traverse) or raw iterable/generator
+        if isinstance(effect.items, Collection):
+            items_iter = iter(effect.items.all_items)
+        else:
+            items_iter = (
+                ItemResult(index=i, value=v)
+                for i, v in enumerate(effect.items)
+            )
+
+        while (item := next(items_iter, None)) is not None:
+            if item.failed:
+                # Carry forward already-failed items without re-processing
+                result, outcome = item, "carried"
             else:
-                items_iter = (
-                    ItemResult(index=i, value=v)
-                    for i, v in enumerate(effect.items)
-                )
+                if inner_installs is None:
+                    inner_handlers = inner_of((yield GetHandlers(k)))
+                    inner_installs = [reinstaller(h) for h in inner_handlers]
+                    report_under = _report_boundaries(inner_handlers)
+                    if report_under is not None:
+                        # A report carries this run's identity and its item count; an
+                        # iterable without a length is read to its end now to count it.
+                        this_run = object()
+                        match effect.items:
+                            case Collection():
+                                total = len(effect.items.all_items)
+                            case Sized():
+                                total = len(effect.items)
+                            case _:
+                                rest = list(items_iter)
+                                total = len(results) + 1 + len(rest)
+                                items_iter = iter(rest)
+                        # The items carried before this one, reported now that it is known.
+                        for carried in results:
+                            yield _report(_sequential_handler, report_under, ItemOutcome(this_run, effect.label, total, "carried", carried))
+                # Build fresh program for this item
+                prog = effect.f(item.value)
+                # Reinstall inner handlers + this handler for nested Traverse,
+                # and try_handler outermost (where the per-item Try used to put it)
+                for install in inner_installs:
+                    prog = install(prog)
+                prog = try_handler(sequential(prog))
 
-            while (item := next(items_iter, None)) is not None:
-                if item.failed:
-                    # Carry forward already-failed items without re-processing
-                    result, outcome = item, "carried"
+                # Catch unhandled failures per item — but not a consumer breaking the
+                # ItemOutcome contract in a nested Traverse, nor a cancel: no item's failure.
+                try:
+                    value = yield prog
+                except ItemOutcomeNotPassedError:
+                    raise
+                except TaskCancelledError:
+                    if report_under is not None:
+                        yield _report_cancelled(_sequential_handler, report_under, this_run, effect.label, total, [item, *items_iter])
+                    raise
+                except Exception as error:
+                    result, outcome = ItemResult(
+                        index=item.index,
+                        value=error,
+                        failed=True,
+                        history=item.history + [HistoryEntry(
+                            stage=effect.label,
+                            event="failed",
+                            detail=str(error),
+                        )],
+                    ), "failed"
                 else:
-                    if inner_installs is None:
-                        inner_handlers = inner_of((yield GetHandlers(k)))
-                        inner_installs = [reinstaller(h) for h in inner_handlers]
-                        report_under = _report_boundaries(inner_handlers)
-                        if report_under is not None:
-                            # A report carries this run's identity and its item count; an
-                            # iterable without a length is read to its end now to count it.
-                            this_run = object()
-                            match effect.items:
-                                case Collection():
-                                    total = len(effect.items.all_items)
-                                case Sized():
-                                    total = len(effect.items)
-                                case _:
-                                    rest = list(items_iter)
-                                    total = len(results) + 1 + len(rest)
-                                    items_iter = iter(rest)
-                            # The items carried before this one, reported now that it is known.
-                            for carried in results:
-                                yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, "carried", carried))
-                    # Build fresh program for this item
-                    prog = effect.f(item.value)
-                    # Reinstall inner handlers + this handler for nested Traverse,
-                    # and try_handler outermost (where the per-item Try used to put it)
-                    for install in inner_installs:
-                        prog = install(prog)
-                    prog = try_handler(install_self(prog))
-
-                    # Catch unhandled failures per item — but not a consumer breaking the
-                    # ItemOutcome contract in a nested Traverse, nor a cancel: no item's failure.
-                    try:
-                        value = yield prog
-                    except ItemOutcomeNotPassedError:
-                        raise
-                    except TaskCancelledError:
-                        if report_under is not None:
-                            yield _report_cancelled(handler, report_under, this_run, effect.label, total, [item, *items_iter])
-                        raise
-                    except Exception as error:
+                    if value is _SKIPPED:
                         result, outcome = ItemResult(
                             index=item.index,
-                            value=error,
+                            value=item.value,
                             failed=True,
-                            history=item.history + [HistoryEntry(
-                                stage=effect.label,
-                                event="failed",
-                                detail=str(error),
-                            )],
-                        ), "failed"
+                            history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
+                        ), "skipped"
                     else:
-                        if value is _SKIPPED:
-                            result, outcome = ItemResult(
-                                index=item.index,
-                                value=item.value,
-                                failed=True,
-                                history=item.history + [HistoryEntry(stage=effect.label, event="skipped")],
-                            ), "skipped"
-                        else:
-                            result, outcome = ItemResult(
-                                index=item.index,
-                                value=value,
-                                history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
-                            ), "ok"
-                results.append(result)
-                if report_under is not None:
-                    # Under the inner handlers (where a progress handler sits), then under
-                    # this handler, which answers None when none of them takes it.
-                    yield _report(handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, result))
+                        result, outcome = ItemResult(
+                            index=item.index,
+                            value=value,
+                            history=item.history + [HistoryEntry(stage=effect.label, event="ok")],
+                        ), "ok"
+            results.append(result)
+            if report_under is not None:
+                # Under the inner handlers (where a progress handler sits), then under
+                # this handler, which answers None when none of them takes it.
+                yield _report(_sequential_handler, report_under, ItemOutcome(this_run, effect.label, total, outcome, result))
 
-            return (yield Resume(k, Collection(results)))
+        return (yield Resume(k, Collection(results)))
 
-        if isinstance(effect, Reduce):
-            inner_hs = yield get_inner_handlers(k)
-            # Fold over valid items (skip failed)
-            if isinstance(effect.collection, Collection):
-                values_iter = (item.value for item in effect.collection.valid_items)
-            else:
-                values_iter = effect.collection
-            acc = effect.init
-            for value in values_iter:
-                prog = effect.f(acc, value)
-                for h in inner_hs:
-                    prog = reinstaller(h)(prog)
-                prog = _program_handler(handler)(prog)
-                acc = yield prog
-            return (yield Resume(k, acc))
+    if isinstance(effect, Reduce):
+        inner_hs = yield get_inner_handlers(k)
+        # Fold over valid items (skip failed)
+        if isinstance(effect.collection, Collection):
+            values_iter = (item.value for item in effect.collection.valid_items)
+        else:
+            values_iter = effect.collection
+        acc = effect.init
+        for value in values_iter:
+            prog = effect.f(acc, value)
+            for h in inner_hs:
+                prog = reinstaller(h)(prog)
+            prog = sequential(prog)
+            acc = yield prog
+        return (yield Resume(k, acc))
 
-        if isinstance(effect, Zip):
-            a = Collection.from_iterable(effect.a)
-            b = Collection.from_iterable(effect.b)
-            results = []
-            for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
-                failed = item_a.failed or item_b.failed
-                value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
-                history = _joined_history(item_a.history, item_b.history)
-                if failed:
-                    history.append(HistoryEntry(event="zip_failed"))
-                results.append(ItemResult(
-                    index=item_a.index,
-                    value=value,
-                    failed=failed,
-                    history=history,
-                ))
-            return (yield Resume(k, Collection(results)))
+    if isinstance(effect, Zip):
+        a = Collection.from_iterable(effect.a)
+        b = Collection.from_iterable(effect.b)
+        results = []
+        for item_a, item_b in zip(a.all_items, b.all_items, strict=False):
+            failed = item_a.failed or item_b.failed
+            value = (item_a.value if item_a.failed else item_b.value) if failed else (item_a.value, item_b.value)
+            history = _joined_history(item_a.history, item_b.history)
+            if failed:
+                history.append(HistoryEntry(event="zip_failed"))
+            results.append(ItemResult(
+                index=item_a.index,
+                value=value,
+                failed=failed,
+                history=history,
+            ))
+        return (yield Resume(k, Collection(results)))
 
-        if isinstance(effect, Inspect):
-            col = Collection.from_iterable(effect.collection)
-            return (yield Resume(k, col.all_items))
+    if isinstance(effect, Inspect):
+        col = Collection.from_iterable(effect.collection)
+        return (yield Resume(k, col.all_items))
 
-        if isinstance(effect, SortBy):
-            col = Collection.from_iterable(effect.collection)
-            valid = list(col.valid_items)
-            failed = list(col.failed_items)
-            valid.sort(key=lambda item: effect.key(item.value), reverse=effect.reverse)
-            # Build new items with fresh indices (don't mutate originals)
-            results = [
-                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
-                for i, item in enumerate(valid + failed)
-            ]
-            return (yield Resume(k, Collection(results)))
+    if isinstance(effect, SortBy):
+        col = Collection.from_iterable(effect.collection)
+        valid = list(col.valid_items)
+        failed = list(col.failed_items)
+        valid.sort(key=lambda item: effect.key(item.value), reverse=effect.reverse)
+        # Build new items with fresh indices (don't mutate originals)
+        results = [
+            ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+            for i, item in enumerate(valid + failed)
+        ]
+        return (yield Resume(k, Collection(results)))
 
-        if isinstance(effect, Take):
-            col = Collection.from_iterable(effect.collection)
-            taken = []
-            count = 0
-            for item in col.all_items:
-                if item.failed:
-                    taken.append(item)
-                elif count < effect.n:
-                    taken.append(item)
-                    count += 1
-            # Build new items with fresh indices
-            results = [
-                ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
-                for i, item in enumerate(taken)
-            ]
-            return (yield Resume(k, Collection(results)))
+    if isinstance(effect, Take):
+        col = Collection.from_iterable(effect.collection)
+        taken = []
+        count = 0
+        for item in col.all_items:
+            if item.failed:
+                taken.append(item)
+            elif count < effect.n:
+                taken.append(item)
+                count += 1
+        # Build new items with fresh indices
+        results = [
+            ItemResult(index=i, value=item.value, failed=item.failed, history=list(item.history))
+            for i, item in enumerate(taken)
+        ]
+        return (yield Resume(k, Collection(results)))
 
-        yield Pass(effect, k)
+    yield Pass(effect, k)
 
-    # Built once: the Traverse branch reinstalls this handler around every item.
-    install_self = _program_handler(handler)
-    return install_self
+
+# The Traverse branch reinstalls this same installer around every item.
+sequential: FormerFactoryHandler = _former_factory_handler(_sequential_handler, "sequential")
 
 
 def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged

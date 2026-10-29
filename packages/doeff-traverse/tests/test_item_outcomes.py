@@ -38,7 +38,7 @@ from doeff.program import ProgramHandler
 _T = TypeVar("_T")
 
 _STRATEGIES: dict[str, Callable[[], ProgramHandler]] = {
-    "sequential": sequential,
+    "sequential": lambda: sequential,
     "parallel": lambda: parallel(concurrency=2),
 }
 
@@ -306,13 +306,13 @@ class _Pulls:
 def test_an_iterable_without_length_is_read_to_its_end_only_when_reported() -> None:
     """sequential は長さの無い iterable を件ごとに引く。知らせる時だけ、total のために最初の件で残りを読み切る。"""
     quiet = _Pulls()
-    _run_under(sequential(), [], _traversed(quiet.step, quiet.items([1, 2, 3])))
+    _run_under(sequential, [], _traversed(quiet.step, quiet.items([1, 2, 3])))
     assert quiet.events == ("pull 1", "run 1", "pull 2", "run 2", "pull 3", "run 3")
 
     watched = _Pulls()
     reports = _Reports()
     _run_under(
-        sequential(), [reports.handler()], _traversed(watched.step, watched.items([1, 2, 3]))
+        sequential, [reports.handler()], _traversed(watched.step, watched.items([1, 2, 3]))
     )
     assert watched.events == ("pull 1", "pull 2", "pull 3", "run 1", "run 2", "run 3")
     assert [(r.item.value, r.total) for r in reports.seen] == [(1, 3), (2, 3), (3, 3)]

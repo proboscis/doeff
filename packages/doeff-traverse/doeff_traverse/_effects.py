@@ -217,7 +217,7 @@ class ItemOutcome(EffectBase[None]):
     Where it goes: the handler performs it under the handlers between the Traverse and the
     Traverse handler (the ones it puts back around every item program), then under itself —
     so a handler that counts outcomes is installed inside the Traverse handler, like a body
-    handler: ``[... (progress-bars tqdm) (sequential)]``.
+    handler: ``[... (progress-bars tqdm) sequential]``.
 
     What a consumer does with it: it looks at the report and passes it on (``Pass(effect,
     k)`` — ``(reperform effect)`` in a ``defhandler`` clause), so every consumer sees every

@@ -58,7 +58,7 @@ _T = TypeVar("_T")
 _IMPLEMENTATIONS: list[SchedulerImplementation] = ["python", "rust"]
 
 _STRATEGIES: dict[str, Callable[[], ProgramHandler]] = {
-    "sequential": sequential,
+    "sequential": lambda: sequential,
     "parallel": lambda: parallel(concurrency=2),
     "parallel_fail_fast": lambda: parallel_fail_fast(concurrency=2),
 }
@@ -438,7 +438,7 @@ def test_a_progress_bars_used_again_after_a_stopped_traverse_keeps_no_bar_open(
     _run_under(
         parallel_fail_fast(concurrency=4), [count], _fails_fast(_Items(failing=2)), implementation
     )
-    _run_under(sequential(), [count], _ends(_Items()), implementation)
+    _run_under(sequential, [count], _ends(_Items()), implementation)
     assert bars.states() == [("first", 1, 8, True), ("first", 8, 8, True)]
     stopped_run, next_run = bars.lines()
     assert next_run == stopped_run

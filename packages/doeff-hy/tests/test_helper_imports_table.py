@@ -139,7 +139,7 @@ def test_runtime_expansion_takes_do_from_the_table(
 
 def _run(program: object) -> object:
     """validate と handle の Program を、traverse の handler の下で走らせる。"""
-    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+    return run(scheduled(try_handler(fail_handler(sequential(program)))))
 
 
 # 定義した値を返す置き場(関数の本体の中の定義は外の関数の答えで受け取る)

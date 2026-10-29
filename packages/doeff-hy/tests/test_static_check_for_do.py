@@ -146,7 +146,7 @@ def test_two_froms_run_to_one_value_per_pair(tmp_path: Path, monkeypatch: pytest
     (tmp_path / "for_do_nested_probe_ki7e6a.hy").write_text(NESTED_PROBE, encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
     probe = importlib.import_module("for_do_nested_probe_ki7e6a")
-    assert run(with_handlers([sequential()], probe.sums((1, 2), (10, 20)))) == (11, 21, 12, 22)
+    assert run(with_handlers([sequential], probe.sums((1, 2), (10, 20)))) == (11, 21, 12, 22)
 
 
 def _expand(source: str) -> str:
@@ -178,5 +178,5 @@ def test_for_do_runs_as_before(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     probe = importlib.import_module("for_do_probe_2321")
     widths = probe.widths
     total_width = probe.total_width
-    assert run(with_handlers([sequential(), fail_handler], widths(("ab", "", "cde")))) == (2, 3)
-    assert run(with_handlers([sequential(), fail_handler], total_width(("ab", "", "cde")))) == 6
+    assert run(with_handlers([sequential, fail_handler], widths(("ab", "", "cde")))) == (2, 3)
+    assert run(with_handlers([sequential, fail_handler], total_width(("ab", "", "cde")))) == 6
