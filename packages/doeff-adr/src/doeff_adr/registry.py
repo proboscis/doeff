@@ -287,8 +287,14 @@ def _coerce_enforcement_ref(item: Any) -> EnforcementRef:
     raise TypeError(f"unsupported ADR enforcement reference: {item!r}")
 
 
-def adr_ids() -> list[str]:
+def _adr_ids() -> list[str]:
+    """登録簿の ADR の id を並べる。外からは effect AdrIds で読む(handler adr_registry が答える・card ki-2d28425e0d40)。"""
     return sorted(_ADRS)
+
+
+def adr_ids() -> list[str]:
+    """移し替えの層: 外の repo の呼び手を effect AdrIds へ書き換えたら消す(ADR-DOE-API-001 R21)。"""
+    return _adr_ids()
 
 
 def enforcement_ids() -> list[str]:
@@ -323,7 +329,7 @@ def assert_adr_contract(adr_id: str) -> None:
 
 
 def assert_all_adr_contracts() -> None:
-    for adr_id in adr_ids():
+    for adr_id in _adr_ids():
         assert_adr_contract(adr_id)
 
 

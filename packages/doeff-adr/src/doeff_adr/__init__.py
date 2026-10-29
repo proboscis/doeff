@@ -10,6 +10,9 @@ import doeff_hy as doeff_hy
 
 if TYPE_CHECKING:
     from doeff_adr._effects import (
+        AdrIds as AdrIds,
+    )
+    from doeff_adr._effects import (
         GetAdr as GetAdr,
     )
     from doeff_adr._effects import (
@@ -60,6 +63,7 @@ if TYPE_CHECKING:
 
 
 _PUBLIC_API_NAMES = (
+    "AdrIds",
     "AdrSpec",
     "EnforcementRef",
     "GetAdr",
@@ -78,8 +82,8 @@ _PUBLIC_API_NAMES = (
     "register_deftest_enforcement",
     "register_semgrep_enforcement",
 )
-#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f)。
-_EFFECT_NAMES = frozenset({"GetAdr", "adr_registry"})
+#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f・ki-2d28425e0d40)。
+_EFFECT_NAMES = frozenset({"AdrIds", "GetAdr", "adr_registry"})
 
 
 def __getattr__(name: str) -> object:

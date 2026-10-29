@@ -5,17 +5,17 @@
 """
 
 from doeff import run
-from doeff_adr import GetAdr, adr_registry
-from doeff_adr.registry import AdrSpec, _ADRS, adr_ids, isolated_registry
+from doeff_adr import AdrIds, GetAdr, adr_registry
+from doeff_adr.registry import AdrSpec, _ADRS, isolated_registry
 
 
 def test_isolated_registry_restores_adrs_registered_before_it() -> None:
     _ADRS["ADR-ISOLATION-PROBE"] = AdrSpec(id="ADR-ISOLATION-PROBE", title="probe", status="accepted")
     try:
         with isolated_registry():
-            assert adr_ids() == []
+            assert run(adr_registry()(AdrIds())) == []
             _ADRS["ADR-INSIDE-ONLY"] = AdrSpec(id="ADR-INSIDE-ONLY", title="inside", status="accepted")
         assert run(adr_registry()(GetAdr("ADR-ISOLATION-PROBE"))).title == "probe"
-        assert "ADR-INSIDE-ONLY" not in adr_ids()
+        assert "ADR-INSIDE-ONLY" not in run(adr_registry()(AdrIds()))
     finally:
         _ADRS.pop("ADR-ISOLATION-PROBE", None)

@@ -1,11 +1,13 @@
-"""設計の記録(ADR)を id で引く effect GetAdr と、登録簿から答える handler を返す工場 adr_registry。
+"""設計の記録(ADR)を読む effect GetAdr・AdrIds と、登録簿から答える handler を返す工場 adr_registry。
 
-決め: 依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする・card
-ki-24a2bca4339f・ADR-DOE-API-001 R20)。前の関数 get_adr は、外の repo の呼び手を書き換えるまで移し替えの層として残る。
+決め: GetAdr は依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする・card
+ki-24a2bca4339f・ADR-DOE-API-001 R20)。AdrIds は依頼書 lt-SNXDP773DP61WQ8S3D5HSHW2B1 の答え lt-NJMPGF51C0FBF49SC430JWEQ82
+(effect にする・card ki-2d28425e0d40・ADR-DOE-API-001 R21)。前の関数 get_adr・adr_ids は、外の repo の呼び手を書き換えるまで
+移し替えの層として残る。
 
 deftest で使うには、project の doeff_interpreter fixture が adr_registry() を据える(doeff-adr は handler の組を選ばない —
 README の「doeff_interpreter」の節)。test の中で別の表を使う時は、program の一部に adr_registry(specs=[spec, …]) を据える:
-内側の handler が先に答え、渡した列に無い id は外の登録簿へ落ちずに KeyError になる。
+内側の handler が先に答え、GetAdr は渡した列に無い id を外の登録簿へ落とさずに KeyError にし、AdrIds は渡した列の id だけを返す。
 """
 
 from collections.abc import Callable
@@ -13,7 +15,7 @@ from dataclasses import dataclass
 
 from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
-from doeff_adr.registry import AdrSpec, _get_adr
+from doeff_adr.registry import AdrSpec, _adr_ids, _get_adr
 
 
 @dataclass(frozen=True)
@@ -23,8 +25,13 @@ class GetAdr(EffectBase[AdrSpec]):
     adr_id: str
 
 
-def _table_lookup(specs: list[AdrSpec] | tuple[AdrSpec, ...]) -> Callable[[str], AdrSpec]:
-    """渡した ADR の列を id で引く関数にする(id の重なりと ADR でない値は作る時に断る)。"""
+@dataclass(frozen=True)
+class AdrIds(EffectBase[list[str]]):
+    """載っている ADR の id の一覧: yield AdrIds() → 並べた list[str](載っていなければ [])。"""
+
+
+def _table(specs: list[AdrSpec] | tuple[AdrSpec, ...]) -> dict[str, AdrSpec]:
+    """渡した ADR の列を id で引く表にする(id の重なりと ADR でない値は作る時に断る)。"""
     if not isinstance(specs, list | tuple):
         raise TypeError(f"adr_registry(specs=…) takes a list of AdrSpec, got {type(specs).__name__}")
     by_id: dict[str, AdrSpec] = {}
@@ -34,23 +41,31 @@ def _table_lookup(specs: list[AdrSpec] | tuple[AdrSpec, ...]) -> Callable[[str],
         if spec.id in by_id:
             raise ValueError(f"duplicate ADR id in the table: {spec.id}")
         by_id[spec.id] = spec
-    return by_id.__getitem__
+    return by_id
 
 
 def adr_registry(*, specs: list[AdrSpec] | tuple[AdrSpec, ...] | None = None) -> ProgramHandler:
-    """GetAdr に答える handler。specs が無ければ process の登録簿(defadr が載せる所)を答える時に読み、specs を渡せば
-    その ADR の列だけから答える(specs=[] は空の表で、登録簿ではない)。
+    """GetAdr と AdrIds に答える handler。specs が無ければ process の登録簿(defadr が載せる所)を答える時に読み、specs を
+    渡せばその ADR の列だけから答える(specs=[] は空の表で、登録簿ではない)。
 
     使い方: adr_registry()(program)・adr_registry(specs=[spec])(program)。
     """
-    lookup = _get_adr if specs is None else _table_lookup(specs)
+    lookup: Callable[[str], AdrSpec]
+    ids: Callable[[], list[str]]
+    if specs is None:
+        lookup, ids = _get_adr, _adr_ids
+    else:
+        by_id = _table(specs)
+        lookup, ids = by_id.__getitem__, lambda: sorted(by_id)
 
     @handler
-    def answer_get_adr(effect: GetAdr, k: K):
+    def answer_adr_registry(effect: GetAdr | AdrIds, k: K):
+        if isinstance(effect, AdrIds):
+            return (yield Transfer(k, ids()))
         try:
             spec = lookup(effect.adr_id)
         except KeyError as missing:
             return (yield TransferThrow(k, missing))
         return (yield Transfer(k, spec))
 
-    return answer_get_adr
+    return answer_adr_registry
