@@ -10,10 +10,15 @@ backend-path = ["."]
 name = "doeff-indexer"
 version = "0.1.4"
 description = "Static indexer for doeff programs and Kleisli programs"
-requires-python = ">=3.10"
+# Python の口は effect FindSymbols と handler rust_indexer(python/doeff_indexer/_effects.py)なので doeff を読み、
+# doeff と同じ版の Python から(ADR-DOE-API-001・agora card ki-1e51e218527e)。
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"}
+]
+dependencies = [
+    "doeff>=0.8.0,<0.9",
 ]
 
 [project.scripts]
@@ -21,8 +26,24 @@ doeff-indexer = "doeff_indexer._cli:main"
 
 [tool.maturin]
 features = ["python"]
-module-name = "doeff_indexer"
+# Rust の索引器の Python の口は内側の拡張 doeff_indexer._native。利用者は入口の effect と handler で引く(ADR-DOE-API-001)。
+module-name = "doeff_indexer._native"
 python-source = "python"
 include = [
     { path = "python/doeff_indexer/bin/*", format = "wheel" }
+]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+
+# uv が「作り直すか」を決める入力(doeff-linter の pyproject の同じ節と同じ訳)。root の dev の組が make sync でこの package を
+# editable で入れ(目録と discovery の検が Rust の拡張を import する・card ki-1e51e218527e)、uv は既定では pyproject.toml が変わった
+# 時にしか作り直さないので、拡張と同梱の binary の入力を全部並べる。python/ の .py は作業木から読むので鍵にしない。
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+    { file = "data/**/*.json" },
 ]

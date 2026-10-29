@@ -2,6 +2,9 @@
 //!
 //! This module provides Python bindings for the indexer, allowing Python code
 //! to query for symbols (functions and variables) with specific tags/markers.
+//! The bindings are the internal extension `doeff_indexer._native`: Python users
+//! read the index through the effect `FindSymbols` and the handler `rust_indexer()`
+//! (python/doeff_indexer/_effects.py), which answers it with `Indexer` below.
 
 use pyo3::prelude::*;
 use std::path::PathBuf;
@@ -9,7 +12,7 @@ use std::path::PathBuf;
 use crate::indexer::{build_index, Index, IndexEntry, ItemKind};
 
 /// Information about a discovered symbol (function or variable)
-#[pyclass]
+#[pyclass(module = "doeff_indexer._native", frozen)]
 #[derive(Clone)]
 pub struct SymbolInfo {
     /// Symbol name (e.g., "my_interpreter")
@@ -72,7 +75,7 @@ impl SymbolInfo {
 }
 
 /// Indexer for discovering symbols in a Python project
-#[pyclass]
+#[pyclass(module = "doeff_indexer._native")]
 pub struct Indexer {
     index: Index,
 }
@@ -257,9 +260,9 @@ fn resolve_module_to_path(module_path: &str) -> PyResult<PathBuf> {
     Ok(path)
 }
 
-/// Python module definition
+/// Python module definition (the internal `doeff_indexer._native` — pyproject's maturin module-name)
 #[pymodule]
-fn doeff_indexer(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Indexer>()?;
     m.add_class::<SymbolInfo>()?;
     Ok(())

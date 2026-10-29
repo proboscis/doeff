@@ -805,12 +805,14 @@ tests = [
 
 # wheel の中の binary の位置(命令の入口が探す所)と、CI の maturin の固定と、今の source を組んだ wheel を入れた命令の動き
 # (PyPI の 0.1.3 は全部の機体の wheel が binary を python/ の下に持ち、入れた命令が動かなかった・card ki-d20475e94d87)。
-# Python の公開面は Indexer・SymbolInfo の再輸出 2 名だけなので stub・公開の名の検は無く、Rust の検は cargo の範囲(make test-rust)。
+# Python の公開面は effect FindSymbols・handler rust_indexer・答えの型 SymbolInfo で(拡張は内側の _native)、doeff run の discovery が
+# それで引く(card ki-1e51e218527e)。Rust の検は cargo の範囲(make test-rust)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-indexer/"
 tests = [
     "tests/test_indexer_wheel_layout.py",
     "tests/test_indexer_cli_finds_binary_on_package_path.py",
+    "tests/test_discovery_reads_the_index_through_find_symbols.py",  # 4 本で 1 秒 — doeff run の discovery が FindSymbols で引く
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-indexer]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
@@ -950,6 +952,9 @@ dev = [
     # 書いた後の linter(hook doeff-lint-after-write)は書いた file の repo の .venv/bin/doeff-linter を引く。agora の Pod の会話には
     # 開発版の置き場も PATH の binary も無いので、dev の依存に置いて make sync で入れる — 無いと doeff の Hy の file が検査されない。
     "doeff-linter",
+    # 公開の API の目録(tools/public_api_inventory.py)は doeff-indexer の入口を import で読み(Rust の拡張を持つ package は字面では
+    # 拡張の名を数えられない)、doeff run の discovery の検は effect FindSymbols に Rust の索引器で答える(card ki-1e51e218527e)。
+    "doeff-indexer",
     # 公開の API の型が pyright だけでなく mypy でも効く事を確かめる検(tests/test_handler_installer_typing.py — 使う人は
     # どちらの道具でも check する・card ki-68c54e9064e5)。
     "mypy>=2.4.0",

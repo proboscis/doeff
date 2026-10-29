@@ -3,13 +3,14 @@
 import difflib
 import importlib
 import importlib.util
+import logging
 import pkgutil
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doeff_core_effects._extra_hints import MissingExtraError
 from doeff_vm._not_a_program import uncalled_do_function_call
@@ -17,7 +18,11 @@ from doeff_vm._not_a_program import uncalled_do_function_call
 from doeff.cli.profiling import profile
 from doeff.program import with_handlers
 
+if TYPE_CHECKING:
+    from doeff.cli.discovery import Discovered
+
 _CLOSE_NAMES_SHOWN = 3
+_logger: logging.Logger = logging.getLogger(__name__)
 
 
 class _HyModuleWithoutHyFinder:
@@ -260,18 +265,14 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
     env_paths = list(ctx.env_paths)
 
     if interpreter_path is None and ctx.program_path:
-        # Auto-discover interpreter
+        # Auto-discover the interpreter (and the envs, when no --env names them): the discovery
+        # program reads doeff-indexer's index through its effect, answered by the Rust indexer.
         with profile("Discover interpreter"):
-            try:
-                from doeff.cli.discovery import IndexerBasedDiscovery
-                discovery = IndexerBasedDiscovery()
-                interpreter_path = discovery.find_default_interpreter(ctx.program_path)
-
-                # Also discover default envs if none specified
-                if not env_paths:
-                    env_paths = discovery.discover_default_envs(ctx.program_path)
-            except ImportError:
-                pass
+            discovered = _discover(ctx.program_path, envs=not env_paths)
+        if discovered is not None:
+            interpreter_path = discovered.interpreter
+            if not env_paths:
+                env_paths = list(discovered.envs)
 
     if interpreter_path is None:
         interpreter_path = "doeff.cli.run_services:default_interpreter"
@@ -286,6 +287,23 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
         transformer_paths=ctx.transformer_paths,
         output_format=ctx.output_format,
     )
+
+
+def _discover(program_path: str, *, envs: bool) -> "Discovered | None":
+    """Run the discovery program under doeff-indexer's handler (None when doeff-indexer is not
+    installed, or its index cannot be built — logged)."""
+    try:
+        from doeff_indexer import rust_indexer
+    except ImportError:
+        return None
+    from doeff.cli.discovery import discover
+    from doeff.run import run
+
+    try:
+        return run(rust_indexer(discover(program_path, envs=envs)))
+    except RuntimeError as failed:
+        _logger.warning("Failed to index %s for discovery: %s", program_path, failed)
+        return None
 
 
 def default_interpreter(program: object) -> object:

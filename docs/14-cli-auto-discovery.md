@@ -561,24 +561,33 @@ graph TB
 
 **Discovery service** (`doeff/cli/discovery.py`):
 
+The discovery is a program: it reads the index with doeff-indexer's effect `FindSymbols`, and
+`doeff run` runs it under the handler `rust_indexer` (the Rust indexer).
+
 ```python
-from doeff_indexer import Indexer
+from doeff import do
+from doeff.cli.discovery import module_hierarchy
+from doeff_indexer import FindSymbols
 
-# 1. Create indexer for module
-indexer = Indexer.for_module("myapp.features.auth")
 
-# 2. Find default interpreters
-symbols = indexer.find_symbols(
-    tags=["interpreter", "default"],
-    symbol_type="function"
-)
+@do
+def find_default_interpreter(program_path: str):
+    module_path = program_path.rpartition(".")[0]  # "myapp.features.auth.login"
 
-# 3. Filter to hierarchy
-hierarchy = ["myapp", "myapp.features", "myapp.features.auth"]
-candidates = [s for s in symbols if s.module_path in hierarchy]
+    # 1. Find default interpreters
+    symbols = yield FindSymbols(module_path, ("interpreter", "default"), "function")
 
-# 4. Select closest
-closest = max(candidates, key=lambda s: hierarchy.index(s.module_path))
+    # 2. Filter to hierarchy
+    hierarchy = module_hierarchy(module_path)  # ["myapp", "myapp.features", ...]
+    candidates = [s for s in symbols if s.module_path in hierarchy]
+
+    # 3. Select closest
+    if not candidates:
+        return None
+    return max(candidates, key=lambda s: hierarchy.index(s.module_path)).full_path
+
+
+# doeff run: run(rust_indexer(discover(program_path)))
 ```
 
 **Env merging** (using `@do` composition):
@@ -987,23 +996,16 @@ doeff run --program myapp.program --profile
 **Manual verification** (needs `doeff-indexer`; run from the project root):
 
 ```python
-# Test indexer directly
-from doeff_indexer import Indexer
-
-indexer = Indexer.for_module("myapp")
+# Read the index directly: the effect FindSymbols, answered by the Rust indexer
+from doeff import run
+from doeff_indexer import FindSymbols, rust_indexer
 
 # Find interpreters
-interps = indexer.find_symbols(
-    tags=["interpreter", "default"],
-    symbol_type="function"
-)
+interps = run(rust_indexer(FindSymbols("myapp", ("interpreter", "default"), "function")))
 print(f"Found interpreters: {[i.full_path for i in interps]}")
 
 # Find envs
-envs = indexer.find_symbols(
-    tags=["default"],
-    symbol_type="variable"
-)
+envs = run(rust_indexer(FindSymbols("myapp", ("default",), "variable")))
 print(f"Found envs: {[e.full_path for e in envs]}")
 ```
 
@@ -1156,14 +1158,15 @@ doeff run --program myapp.test_program \
 Extend discovery with custom strategies:
 
 ```python
-from doeff.cli.discovery import InterpreterDiscovery
+from doeff import do
+from doeff_indexer import FindSymbols
 
-class ProductionOnlyDiscovery(InterpreterDiscovery):
+
+@do
+def find_production_interpreter(program_path: str):
     """Only discover interpreters marked 'production'."""
-
-    def find_default_interpreter(self, program_path: str):
-        # Custom logic: filter by 'production' tag
-        ...
+    symbols = yield FindSymbols(program_path.rpartition(".")[0], ("interpreter", "production"), "function")
+    ...
 ```
 
 ### Performance Optimization
@@ -1196,16 +1199,14 @@ class ProductionOnlyDiscovery(InterpreterDiscovery):
 **Use discovery in your code:**
 
 ```python
-from doeff.cli.discovery import IndexerBasedDiscovery
+from doeff import run
+from doeff.cli.discovery import discover
+from doeff_indexer import rust_indexer
 
-discovery = IndexerBasedDiscovery()
+# Find interpreter (and envs) for a program
+found = run(rust_indexer(discover("myapp.features.auth.login.login_program")))
 
-# Find interpreter for a program
-interpreter_path = discovery.find_default_interpreter(
-    "myapp.features.auth.login.login_program"
-)
-
-print(f"Would use: {interpreter_path}")
+print(f"Would use: {found.interpreter}")
 # Output: myapp.features.auth.auth_interpreter
 ```
 
