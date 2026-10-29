@@ -56,7 +56,7 @@ from doeff_cluster.worker.entry.line_stamp import (
     job_log_plan,
     stamped_lines,
 )
-from doeff_lifeline import Group, Single, Target, watched_until_eof
+from doeff_lifeline._watch import Group, Single, Target, watched_until_eof
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
 # 版をまたいで名前で読む)。
@@ -310,7 +310,7 @@ def worker_gone(leads_group: bool) -> tuple[Target, ...]:
 
 def watch_parent(leads_group: bool, relay: NoticeRelay | None) -> None:
     """worker の標準入力を行ごとに読み、退きの知らせの行を job の知らせの pipe へ中継し(#3672)、worker の消失(stdin の EOF — kill -9 を
-    含む)で止めの合図を自分へ送る。読みと EOF の合図は、StartProcess の見張りと同じ本体(doeff-core-effects の doeff_lifeline の
+    含む)で止めの合図を自分へ送る。読みと EOF の合図は、StartProcess の見張りと同じ本体(doeff-core-effects の doeff_lifeline._watch の
     watched_until_eof — #3866)。期限と片づけは main thread が受け持つ(この thread は回収しない)。"""
     watched_until_eof(
         sys.stdin.buffer, lambda line: relayed(relay, line), lambda: worker_gone(leads_group)

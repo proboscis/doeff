@@ -47,7 +47,7 @@
 (import doeff_core_effects._meter_effects [CountMetric])
 (import doeff_core_effects._os_file [stat-path])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
-(import doeff_lifeline [Lifeline])
+(import doeff_lifeline._watch [Lifeline])
 (import doeff_core_effects.process_effects [ChildLifetime EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
                                             ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
@@ -120,7 +120,7 @@
       found)))
 
 
-;; 起こした process が終わったら子も終わる約束の、起こす側の口(process に 1 つ — doeff_lifeline の Lifeline・#3866)。lifetime が WITH-STARTER の
+;; 起こした process が終わったら子も終わる約束の、起こす側の口(process に 1 つ — doeff_lifeline._watch の Lifeline・#3866)。lifetime が WITH-STARTER の
 ;; 子を立てるたびに見張りへ知らせ、表から外した子は見張りからも外す。
 (val LIFELINE (Lifeline))
 

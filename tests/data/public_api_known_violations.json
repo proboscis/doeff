@@ -11499,11 +11499,6 @@
       "run_computed",
       "settle",
       "shift_load"
-     ],
-     "doeff_lifeline": [
-      "Lifeline",
-      "Registry",
-      "watched_until_eof"
      ]
     },
     "外れ — 内側の module へ移す": {
@@ -11808,18 +11803,6 @@
       "WS_LINK_CLOSE_GOING_AWAY",
       "WS_LINK_CLOSE_NORMAL",
       "link_name"
-     ],
-     "doeff_lifeline": [
-      "GRACE_SECONDS",
-      "Group",
-      "MODULE_TAGS",
-      "Single",
-      "Target",
-      "ended_within",
-      "guard",
-      "leader_of",
-      "pidfd_of",
-      "signalled"
      ]
     },
     "外れ — submodule を _ で隠す": {
