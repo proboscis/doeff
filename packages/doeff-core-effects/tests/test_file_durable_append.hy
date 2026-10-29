@@ -66,7 +66,7 @@
   (val root (os.path.realpath tmp-path))
   (<- real tuple (with_handlers [os-file-handler] (append-journey root)))
   (.mkdir (/ tmp-path "second"))
-  (<- offloaded tuple ((scheduled) (with_handlers [os-file-handler offloaded-file-handler] (append-journey (str (/ tmp-path "second"))))))
+  (<- offloaded tuple (scheduled (with_handlers [os-file-handler offloaded-file-handler] (append-journey (str (/ tmp-path "second"))))))
   (assert (= real offloaded) #(real offloaded)))
 
 

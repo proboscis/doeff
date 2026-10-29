@@ -263,7 +263,7 @@ async def _asyncio_spawn_gather_main(n: int) -> list[None]:
 
 
 def _asyncio_spawn_gather(n: int) -> list[None]:
-    """One asyncio.run, as doeff's case is one run(scheduled()(...))."""
+    """One asyncio.run, as doeff's case is one run(scheduled(...))."""
     return asyncio.run(_asyncio_spawn_gather_main(n))
 
 
@@ -460,7 +460,7 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
             h_effects,
         ),
     ]
-    # None = what a plain `scheduled()(body)` runs: neither the argument nor
+    # None = what a plain `scheduled(body)` runs: neither the argument nor
     # $DOEFF_SCHEDULER chooses, so DEFAULT_IMPLEMENTATION decides. The label names
     # the implementation it resolved to, so a run before and after a change of the
     # default compares the same call.
@@ -480,7 +480,7 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
                 "task",
                 tasks,
                 lambda implementation=implementation: run(
-                    scheduled(implementation=implementation)(_doeff_spawn_gather(tasks))
+                    scheduled(_doeff_spawn_gather(tasks), implementation=implementation)
                 ),
                 [None] * tasks,
             ),
@@ -491,7 +491,7 @@ def _doeff_cases(config: CompareConfig) -> list[Case]:
                 "task",
                 tasks,
                 lambda implementation=implementation: run(
-                    scheduled(implementation=implementation)(_doeff_fan_out(tasks))
+                    scheduled(_doeff_fan_out(tasks), implementation=implementation)
                 ),
                 tasks,
             ),

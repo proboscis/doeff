@@ -63,7 +63,7 @@
 (defk in-thread [program handlers]
   {:pre [(: program Program) (: handlers list)] :post [(: % "program の答え")] :tags {:context "file-test" :role "program"}}
   "program を scheduled と handlers の下で、検の thread とは別の thread の新しい VM で 1 回回し、SCENARIO-LIMIT 秒まで答えを待つため。"
-  (val running (.submit (ThreadPerCall) run-detached ((scheduled) (with_handlers handlers program))))
+  (val running (.submit (ThreadPerCall) run-detached (scheduled (with_handlers handlers program))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]

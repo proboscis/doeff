@@ -96,7 +96,7 @@
   "筋書きを、検の thread とは別の daemon の thread の新しい VM で os-file-handler と offloaded-lock-handler(内側)と scheduled の下に
    1 回回し、SCENARIO-LIMIT 秒まで答えを待つため。過ぎたら what を名指して落とす(頭の註)。"
   (val running (.submit (ThreadPerCall) run-detached
-                        ((scheduled) (with_handlers [os-file-handler offloaded-lock-handler] scenario))))
+                        (scheduled (with_handlers [os-file-handler offloaded-lock-handler] scenario))))
   (try
     (.result running :timeout SCENARIO-LIMIT)
     (except [TimeoutError]

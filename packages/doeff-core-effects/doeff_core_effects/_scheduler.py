@@ -1295,7 +1295,7 @@ IMPLEMENTATION_ENV_VAR = "DOEFF_SCHEDULER"
 def resolve_implementation(
     implementation: "SchedulerImplementation | None" = None,
 ) -> SchedulerImplementation:
-    """The implementation ``scheduled(implementation=...)`` will use.
+    """The implementation ``scheduled(..., implementation=...)`` will use.
 
     Order: the explicit argument, then ``$DOEFF_SCHEDULER``, then
     ``DEFAULT_IMPLEMENTATION``. Read on every call, so a test can switch it

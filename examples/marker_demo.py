@@ -34,7 +34,7 @@ def scheduled_interpreter(  # doeff: interpreter
     An interpreter with the marker on the function definition line.
     Supports multi-line function signatures.
     """
-    return run(scheduled()(slog_handler(reader(env=env or {})(program))))
+    return run(scheduled(slog_handler(reader(env=env or {})(program))))
 
 
 def debug_interpreter(

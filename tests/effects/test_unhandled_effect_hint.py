@@ -127,7 +127,7 @@ class TestTheFourFirstLookMistakes:
     def test_spawn_without_scheduled_names_scheduled(self):
         hint = _hint_line(_message(spawn_program()))
         assert "Spawn" in hint
-        assert "run(scheduled()(prog))" in hint
+        assert "run(scheduled(prog))" in hint
 
     def test_await_handler_without_scheduled_names_scheduled(self):
         """await_handler performs CreateExternalPromise; without scheduled()
@@ -136,13 +136,13 @@ class TestTheFourFirstLookMistakes:
         assert "CreateExternalPromise" in message
         hint = _hint_line(message)
         assert "await_handler" in hint
-        assert "run(scheduled()(await_handler(prog)))" in hint
-        assert run(scheduled()(await_handler(await_program(_answer())))) == 42
+        assert "run(scheduled(await_handler(prog)))" in hint
+        assert run(scheduled(await_handler(await_program(_answer())))) == 42
 
     def test_await_without_any_handler_names_await_handler_and_scheduled(self):
         hint = _hint_line(_unhandled_await_message(lambda program: program))
-        assert "run(scheduled()(await_handler(prog)))" in hint
-        assert run(scheduled()(await_handler(await_program(_answer())))) == 42
+        assert "run(scheduled(await_handler(prog)))" in hint
+        assert run(scheduled(await_handler(await_program(_answer())))) == 42
 
     def test_ask_without_handler_names_reader(self):
         hint = _hint_line(_message(ask_program()))
@@ -299,19 +299,17 @@ FOLLOW_THE_HINT = [
     pytest.param(
         _slog_program, "slog_handler(prog)", lambda: slog_handler(_slog_program()), id="slog"
     ),
+    pytest.param(spawn_program, "scheduled(prog)", lambda: scheduled(spawn_program()), id="spawn"),
     pytest.param(
-        spawn_program, "scheduled()(prog)", lambda: scheduled()(spawn_program()), id="spawn"
+        _gather_program, "scheduled(prog)", lambda: scheduled(_gather_program()), id="gather"
     ),
     pytest.param(
-        _gather_program, "scheduled()(prog)", lambda: scheduled()(_gather_program()), id="gather"
-    ),
-    pytest.param(
-        _promise_program, "scheduled()(prog)", lambda: scheduled()(_promise_program()), id="promise"
+        _promise_program, "scheduled(prog)", lambda: scheduled(_promise_program()), id="promise"
     ),
     pytest.param(
         _semaphore_program,
-        "scheduled()(prog)",
-        lambda: scheduled()(_semaphore_program()),
+        "scheduled(prog)",
+        lambda: scheduled(_semaphore_program()),
         id="semaphore",
     ),
 ]

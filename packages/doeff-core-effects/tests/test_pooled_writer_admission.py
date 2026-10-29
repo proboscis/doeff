@@ -140,7 +140,7 @@ def execute(program, size=2, declared=DECLARED, observer=None, dsn=DSN):
         handlers.append(
             pooled_postgres_sql_handler(connections, pool, serialized_lock_keys=declared)
         )
-        answer = run(scheduled()(with_handlers(handlers, program)))
+        answer = run(scheduled(with_handlers(handlers, program)))
         # Acquire EVERY declared slot simultaneously, bounded even if one leaked.
         permits = connections.permits["probe"]
         acquired = 0

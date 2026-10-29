@@ -180,7 +180,7 @@ def run_flow(
     outside: bool,
     implementation: SchedulerImplementation | None = None,
 ) -> float:
-    program = scheduled(implementation=implementation)(make(n))
+    program = scheduled(make(n), implementation=implementation)
     if outside:
         program = with_handlers([outside_handler], program)
     started = time.perf_counter()
