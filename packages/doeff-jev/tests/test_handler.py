@@ -3,8 +3,8 @@
 import json
 import pickle
 
-from doeff_core_effects import HttpRequest, HttpResponse, in_memory_cache_handler
-from doeff_jev import JevTarget, jev_handler, judge_stack, run_judgment
+from doeff_core_effects import HttpRequest, HttpResponse, in_memory_cache_handler, scheduled
+from doeff_jev import JevTarget, jev_handler, judge_stack
 from doeff_system_one import JudgeError, Verdict, choice, noul
 from doeff_system_one._programs import judge
 
@@ -41,10 +41,15 @@ class HttpScript:
         return _program_handler(raw)
 
 
+def _judged(program, layers):
+    """使い手の組み立てと同じ形: 積みを被せ、scheduler の下で doeff の run で回す。"""
+    return run(scheduled()(with_handlers(layers, program)))
+
+
 def _run(program, target, script, journal=None, caller=""):
     layers = judge_stack(target, http=script.handler(), cache=in_memory_cache_handler(), journal=journal,
                          caller=caller)
-    return run_judgment(program, target=target, layers=layers)
+    return _judged(program, layers)
 
 
 def test_judge_becomes_one_post_and_a_verdict() -> None:
@@ -204,7 +209,7 @@ def test_without_a_journal_the_row_reaches_the_outer_slog_sink_with_caller_and_k
 
     layers = judge_stack(DIRECT, http=script.handler(), cache=in_memory_cache_handler(), journal=None,
                          caller="land-notice/notice_lead", log_stderr=True)
-    verdict = run_judgment(flow(), target=DIRECT, layers=layers)
+    verdict = _judged(flow(), layers)
     assert verdict.proxy == "hit"
     (line,) = [line for line in capsys.readouterr().err.splitlines() if "jev_judge" in line]
     assert "caller=land-notice/notice_lead" in line
@@ -218,3 +223,24 @@ def test_answers_cached_before_the_marks_existed_still_read() -> None:
     old.__dict__.update({"answers": {}, "model": "jev-1.13.0", "input_tokens": 3, "elapsed_ms": 4})
     restored = pickle.loads(pickle.dumps(old))
     assert (restored.model, restored.proxy, restored.cached) == ("jev-1.13.0", None, False)
+
+
+def test_without_a_target_the_stack_resolves_it_from_the_process_environment(monkeypatch, tmp_path) -> None:
+    """宛先を渡さない judge_stack は、この process の環境から宛先を解く(前の run_judgment の target 省略と同じ解き方)。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for name in ("JEV_WIRE", "JEV_API_KEY", "JEV_API_KEY_FILE", "TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("JEV_BASE_URL", SEIMF.base_url)
+    monkeypatch.setenv("JEV_MODEL", SEIMF.model)
+    script = HttpScript()
+
+    @do
+    def flow():
+        return (yield judge("s", {"n": noul("is")}, cacheable=False))
+
+    verdict = _judged(flow(), judge_stack(http=script.handler(), journal=None))
+    assert verdict.answers["n"].value == 0.8
+    (request,) = script.requests
+    assert request.url == SEIMF.base_url
+    assert request.body["model"] == SEIMF.model
+    assert "authorization" not in {name.lower() for name in request.headers}

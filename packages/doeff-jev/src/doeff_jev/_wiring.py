@@ -4,10 +4,13 @@
 → HTTP の実体 → cache の実体 → jev(Judge → HttpRequest)→ memo(cache の照合)→ program。
 効果は内側の handler から外へ流れる: program の Judge は memo が受け、外れなら jev が受けて
 HttpRequest を出し、それを HTTP の実体が捌く。
+
+走らせるのは使い手: program を `run(scheduled()(with_handlers(judge_stack(…), program)))` で回す
+(ADR-DOE-API-001 R1 — この package は判定の effect Judge に答える handler と、その積みの工場だけを見せる)。
 """
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any
 
 from doeff_core_effects import (
@@ -18,9 +21,7 @@ from doeff_core_effects import (
     try_handler,
 )
 from doeff_core_effects import in_memory_cache_handler, sqlite_cache_handler
-from doeff_core_effects import scheduled
 
-from doeff import run, with_handlers
 from doeff.program import ProgramHandler
 from doeff_jev._handlers.journal import journal_handler
 from doeff_jev._handlers.production import jev_handler, jev_memo_handler
@@ -31,7 +32,7 @@ DEFAULT_JOURNAL = "~/.local/state/doeff-jev/journal.log"
 
 
 def judge_stack(
-    target: JevTarget, *,
+    target: JevTarget | None = None, *,
     http: Callable[[Any], Any] | None = None,
     cache: Callable[[Any], Any] | None = None,
     journal: str | None = DEFAULT_JOURNAL,
@@ -40,10 +41,13 @@ def judge_stack(
 ) -> list[ProgramHandler]:
     """本番の handler の列(外側が先)。`http` / `cache` を差し替えるとテストや別の実体になる。
 
-    journal=None で記録なし。cache=None で in-memory(process 内だけ)。
+    target=None でこの process の環境と home の file から宛先を解く(解き方は _target.py の頭の註 — 組み立て点の CLI・hook の
+    入口が呼ぶ形)。journal=None で記録なし。cache=None で in-memory(process 内だけ)。
     caller = 呼び手の名(`<部品>/<出来事か規則>` の形 — 例 `rulebook-advisor/Stop`)。見出し x-jev-caller で宛先へ送り、
     jev_judge の行に載せる。
     """
+    if target is None:
+        target = target_from_process_environment()
     sink = slog_handler if log_stderr else slog_discard_handler
     # 効果は内側から外へ流れる: jev の slog("jev_judge") は journal(内)が消費し、
     # それ以外の slog は sink(外)へ抜ける。journal を sink の外に置くと sink が先に飲む。
@@ -62,14 +66,3 @@ def durable_cache(path: str = DEFAULT_CACHE_DB) -> Callable[[Any], Any]:
     expanded = os.path.expanduser(path)
     os.makedirs(os.path.dirname(expanded), exist_ok=True)
     return sqlite_cache_handler(expanded)
-
-
-def run_judgment(program: Any, *, target: JevTarget | None = None,
-                 layers: Sequence[Callable[[Any], Any]] | None = None, **stack_kwargs: Any) -> Any:
-    """program を本番の積みで走らせて結果を返す(CLI・hook の入口)。
-
-    `target` を省くと process の環境から解く。`layers` を渡すとその積みをそのまま使う。
-    """
-    resolved = target if target is not None else target_from_process_environment()
-    stack = list(layers) if layers is not None else judge_stack(resolved, **stack_kwargs)
-    return run(scheduled(with_handlers(stack, program)))

@@ -17,10 +17,9 @@ from doeff_claude_code import fake_claude_print_handler
 from doeff_claude_code import AccountLimitHit, Usage
 from doeff_claude_code import claude_print_handler
 from doeff_core_effects import slog_discard_handler, slog_handler, try_handler
-from doeff_core_effects import scheduled
 from doeff_hy._frozen import freeze_json
 
-from doeff import Pass, Resume, do, run, with_handlers
+from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
 from doeff_claude_judge._handler import claude_judge_handler, query_user
@@ -83,10 +82,3 @@ def claude_judge_stack(
     sink = slog_handler if log_stderr else slog_discard_handler
     return [try_handler, sink, printer if printer is not None else production_printer(command),
             *([] if lender is None else [lender]), claude_judge_handler(target)]
-
-
-def run_judgment(program: Any, *, target: ClaudeJudgeTarget, layers: Sequence[Callable[[Any], Any]] | None = None,
-                 **stack_kwargs: Any) -> Any:
-    """program を本番の積みで走らせて結果を返す(手元の入口・本物に出す検)。`layers` を渡すとその積みをそのまま使う。"""
-    stack = list(layers) if layers is not None else claude_judge_stack(target, **stack_kwargs)
-    return run(scheduled(with_handlers(stack, program)))
