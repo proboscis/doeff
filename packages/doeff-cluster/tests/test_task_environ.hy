@@ -42,7 +42,7 @@
 (import doeff_cluster.shared.entry.service_build [job system-of])
 (import doeff_cluster.shared.intent.service_model [CallShape])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.sim.local [sim-cluster SimWorker])
+(import doeff_cluster [sim-cluster SimWorker])
 (import doeff_cluster.shared.core.remote_rules [remote-job])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])

@@ -1,4 +1,4 @@
-"""手元の runner sim-cluster の型の宣言(doeff_cluster/sim/local.pyi)の失敗ケース(#2374)。
+"""手元の runner sim-cluster の型の宣言(doeff_cluster/_sim/local.pyi)の失敗ケース(#2374)。
 
 local.hy は Hy の module で型の宣言が無かったので、担い手 SimWorker・process ごとの外の世界 ProcessOutside・入口 sim-cluster を
 名指す使い手の strict に、書き手に直せない Unknown の赤(Type of "SimWorker" is unknown・Return type is unknown ほか)が出ていた。
@@ -27,7 +27,7 @@ from pathlib import Path
 # local は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
 import hy  # noqa: F401
 import pytest
-from doeff_cluster.sim import local
+from doeff_cluster._sim import local
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -35,7 +35,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
 (import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker
+(import doeff_cluster._sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker
                                  SimReport ReportsOf SimPreparation PreparationsOf])
 (import doeff_events [MemoryBroker])
 

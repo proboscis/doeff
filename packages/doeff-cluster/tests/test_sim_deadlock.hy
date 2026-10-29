@@ -12,8 +12,8 @@
 (import doeff_events [ArmedTimer ArmTimerEffect DisarmTimerEffect Publish WaitForEventEffect PublishEffect event-handler timer-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
-(import doeff_cluster.sim.local [sim-cluster SimOutside SimDeadlockError SimDeadlock WaitSnapshot LiveProcess BusinessWait deadlock-of
-                                 AwaitProcessStarted CutWorker SimProcess SIM-START-MS earliest-due])
+(import doeff_cluster [sim-cluster SimOutside SimDeadlockError AwaitProcessStarted CutWorker SimProcess SIM-START-MS]
+        doeff_cluster._sim.local [SimDeadlock WaitSnapshot LiveProcess BusinessWait deadlock-of earliest-due])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.event_programs [ping-waiters Ping deadline-waiters])
 

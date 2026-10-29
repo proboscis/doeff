@@ -771,7 +771,7 @@ def runner() -> Iterator[ModuleType]:
         yield module
 
 
-SIM = "packages/doeff-cluster/src/doeff_cluster/sim"
+SIM = "packages/doeff-cluster/src/doeff_cluster/_sim"
 
 
 def test_each_test_goes_to_the_session_the_daily_run_uses(runner: ModuleType) -> None:

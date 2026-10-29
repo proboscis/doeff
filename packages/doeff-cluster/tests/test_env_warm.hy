@@ -30,8 +30,8 @@
 (import doeff_cluster.shared.protocol.detached [warm-cluster])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.transport_http [transport-http route-cell TEST-ROUTE])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf
-                             FailRoute])
+(import doeff_cluster [sim-cluster SimWorker ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf FailRoute]
+        doeff_cluster._sim.local [SimLink])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState WarmUnreachable WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-key warm-state-of-json warm-runtime-env])
