@@ -23,7 +23,7 @@
 | 3 | [テストで20秒待つのをやめる](doeff-time.md) | `doeff-virtual-time` | 20秒待つ処理を、20秒待たずにテストする | 公開予定 |
 | 4 | [依存を引数で引き回すのをやめる](doeff-di.md) | `doeff-dependency-injection` | 必要な依存をその場で依頼し、外側から供給する | 公開予定 |
 | 5 | [ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md) | `doeff-claude-code-commits` | AIと書くライブラリの約束を、4つの網で毎日確かめる | 公開予定 |
-| 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 |
+| 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 英語の4本目「Record and replay」の版。HTTP APIへの依頼と答えをハンドラで取っておき、同じプログラムを通信せずに走らせ直す | 公開予定 |
 | 7 | [バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 |
 | 8 | [公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md) | `doeff-public-api-types` | 型の分からない公開の名を表にし、増えても減ってもテストを赤にする | 公開予定 |
 | 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 |

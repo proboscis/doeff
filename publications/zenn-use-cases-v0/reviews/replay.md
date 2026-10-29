@@ -100,3 +100,45 @@ uv run --no-sync ruff check publications/zenn-use-cases-v0/examples/http_replay.
 ### 実行していない範囲
 
 外のサービスへの通信はしていない。本番の取得担当は、同じ機械の中のHTTPサーバー（127.0.0.1）でだけ確かめた。doeffの版を上げた後も既定の鍵が同じになるかは確かめていない。PyPIの公開版で動くかは確かめていない。
+
+## 2026-10-29 英語の4本目「Record and replay」の版への書き直し
+
+`doeff-replay.md`を、英語の4本目「Record and replay: run a Python program again on the answers it already got」(`docs/articles/record-and-replay.md`)の版に書き直した。上の節までの指摘は、前の本文(`fetch_text`・`fake_http`・`run_recorded`)への物である。
+
+| 見る所 | 英語の版との関係 |
+| --- | --- |
+| 軸 | 英語の版と同じ代数的エフェクト。ハンドラはエフェクトが出ていく所と答えが戻る所を見るので、答えを取っておける。取っておいた物から答えるハンドラの下で、同じプログラムを通信せずに走らせ直す |
+| 例 | Python・text・bashの枠22個は、コメントを除くと英語の版の枠と1つずつ同じ。コメントは各行の日本語にした(この連載の決まり)。例の完全なファイルは英語の版と同じ`examples/record_and_replay/`(releases.py・on_disk.py・live.py)で、`examples/http_replay.py`は外した |
+| 図 | 1枚目は、英語の版のsequenceDiagram(recordが出し直して取っておく)を日本語のSVGで描いた。2枚目は、英語の版の表の1行目(`make_memo_rewriter`が保存へ出すエフェクトの順)を、1回目と2回目のsequenceDiagramにした |
+| 英語の版に無い物 | 冒頭の1本目と3本目とGitHubへの案内、`試す`の節の後の`doeffとは？`への戻り、参考の節(doeff 0.8.0の実装・VCR.py・前後の回) |
+| 前の本文から外した主張 | `http_fixture_handler`との比べ、400や500の応答も記録される事、pytestで測った時間、別のファイルの`run_recorded`の組み方(英語の版に無いため、確かめからも外した) |
+| 題 | 前の題「外部APIのテストで通信するのをやめる」を残した。題を否定の形にする決め(2026-10-20)と、1本目の目次・本の章の題がこの題を持つため。本文の入口は英語の版の冒頭(答えを取っておき、通信せずに走らせ直す)にした |
+| topics | `pytest`を外し、`algebraiceffects`を足した。本文がpytestを使わなくなったため |
+
+### 確かめ(`reviews/replay-check.py`を書き直した)
+
+- 枠が英語の版と同じ事: 数・言葉・コメントを除いた中身。
+- 抜粋の枠が、コメントを除くと例のファイルの中に塊ごとにその順で在る事。実行の行の枠が、ちょうど1つの例のファイルの`__main__`の行である事。
+- 試し方の3つのファイルを同じPythonで`-W error`(ResourceWarningは除く)で走らせ、印字の区切り9個と本文のtextの枠9個が1つずつ対応する事。
+- 本文の主張12行を、例のファイルの部品で印字して照らす事(英語の版のテストと同じ組)。再生の外に`HttpRequest`のハンドラが無いと`UnhandledEffect`・欄が同じ`HttpRequest`は等しくない・1回目は`MemoExists`・`HttpRequest`・`MemoPut`、2回目は`MemoExists`・`MemoGet`・保存をメモリに置いても同じ答えで依頼2回・保存のハンドラが無いと2回で依頼4回・POSTも記録して再生で送らない・どちらの鍵でもファイルにトークンが無い。別のプロセスが、同じファイルから同じ答えを再生する事。
+- 本文の決まり: `published: false`、AIが書いたと名乗る文が無い(ほかの回へのリンクの文字は、その回の題なので外して照らす)、IOの差し替えだけに読める語(swap・fake・mock・real I/O・差し替え・モック・偽・本物のI/O)が見出しにI/Oを含む節の外に無い、1本目・3本目・9本目へのリンク、60字を越える文0・です・ます以外で終わる文0、図2〜4枚、社外に出せない名前が無い。
+- わざと壊した5か所(textの枠の印字・抜粋のコード・I/Oの節の外のmock・AIが書いたと名乗る行・60字を越える文)は、どれも赤になった。
+
+### 実行した確かめ(2026-10-29)
+
+```bash
+uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff 0.8.0 --python 3.12 replay  # PyPIのdoeffだけの新しい環境で確かめる。3.11と3.14でも走らせた。
+uv run --no-sync python publications/zenn-use-cases-v0/reviews/replay-check.py  # リポジトリのdoeffで確かめる。
+uv run --no-sync python publications/zenn-use-cases-v0/export_zenn.py <出力先>  # 記事をZennの形へ書き出す。
+uv run --no-sync python publications/zenn-use-cases-v0/export_zenn_book.py <出力先>  # 本を書き出す(第4章・60字を越える文0個)。
+node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  # zenn-cliのプレビューで崩れを数える。
+```
+
+- `verify_pypi.py`: PyPIのdoeff 0.8.0・doeff-vm 0.8.0・doeff-core-effects 0.8.0で、Python 3.11・3.12・3.14とも OK。本文5,489字・図2・60字を越える文0・です・ます以外0。
+- `check.mjs`: 記事16本・本1冊(章10)で、崩れは`examples/record_and_replay`へのGitHubのリンク1個(記事と本の章で2個)だけ。英語の版を置いたbranchがmainに入るまで、mainのその場所は404になる。英語の版も同じリンクを持つ。
+- `doeff-replay.md`のPythonの実質77行には、どれも日本語コメントがある。図2枚の参照・題・説明・PNGの形と、前後の回のリンクは`verify_publication`の関数で通った。`verify_publication`の全体は、mainで先に切れた`package-coverage.md`の`packages/`の中へのリンクで止まる。`verify_comments`の全体は`doeff-durable.md`で止まる(どちらもこの変更の前から)。
+
+### 未実行と制限
+
+外のサービスへは通信していない。本番の`http_production_handler()`は、同じ機械の中のHTTPサーバー(127.0.0.1)でだけ確かめた。Zennの`zenn-content`へは書き出していない(公開の許可の後の仕事)。
+1本目への案内の文(時間・並行・リトライ・予算・I/Oのハンドラを1つのプログラムの周りに重ねる)は、1本目の英語の訳(branch `wt/zenn-article-1-ja-on-en`)の本文を指す。このbranchの`doeff-main.md`は、まだ前の本文である。9本目への案内(どこにも`async`が無い訳)も、2本目の英語の訳(branch `wt/zenn-article-2-ja-on-en`)の本文を指す。

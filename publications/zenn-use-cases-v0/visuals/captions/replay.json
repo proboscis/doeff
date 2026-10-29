@@ -1,6 +1,6 @@
 {
-  "concept_title": "通信の答え方を、外側のハンドラで選ぶ",
-  "concept_caption": "処理本体は`HttpRequest`を頼むだけです。固定の応答・記録からの再生・本物の通信のどれで答えるかを、外側のハンドラが決めます。",
-  "flow_title": "記録にあれば、取得担当まで進まない",
-  "flow_caption": "記録の層は、まずSQLiteに記録があるかを尋ねます。記録があれば取得担当を通らず、無い時だけ取得担当が受けます。"
+  "concept_title": "recordは、出ていく依頼と戻る答えを両方見る",
+  "concept_caption": "recordは依頼を外のgithubへ出し直し、答えをtapeに書いてから、同じ答えでkを再開します。",
+  "flow_title": "保存に在れば、通信の位置まで届かない",
+  "flow_caption": "make_memo_rewriterは、まず保存に在るかを尋ねます。在れば保存から答え、無い時だけ依頼を外へ出して答えを残します。"
 }

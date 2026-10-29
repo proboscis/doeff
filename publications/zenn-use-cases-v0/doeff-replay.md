@@ -2,243 +2,290 @@
 title: "外部APIのテストで通信するのをやめる"
 emoji: "🔁"
 type: "tech"
-topics: ["python", "doeff", "テスト", "pytest"]
+topics: ["python", "doeff", "algebraiceffects", "テスト"]
 published: false
 ---
 
-外部のAPIを呼ぶ処理は、テストでも通信します。この記事では、本物の応答を一度だけ記録し、テストは通信せずに記録から答えます。通信するテストには、よく次の悩みがあります。
+ハンドラには、エフェクトが出ていく所と、その答えが戻る所が見えます。だから、その2つを取っておけます。取っておいた物から答えるハンドラの下で、同じプログラムをもう一度走らせます。するとHTTP APIの答えが、依頼を1つも送らずに返ります。
 
-- 呼ぶたびに通信を待つので、テストが遅くなります。
-- 相手の障害や回数の制限で、コードに誤りが無くても落ちます。
-- APIキーが要るので、CIに本物の鍵を置くことになります。
+doeffで、Pythonの代数的エフェクト(algebraic effects)を紹介します。[1本目の入門](doeff-main.md)では、仕組みを見ました。関数はエフェクト、つまり操作に名前を付けた値を`yield`します。ハンドラはそれを、関数の残りである`k`と一緒に受け取ります。そして、関数をどう進めるかを決めます。3本目の[テストで20秒待つのをやめる](doeff-time.md)では、時計をハンドラにしました。この記事では、答えを取っておきます。コードは[GitHub](https://github.com/proboscis/doeff)から読めます。
 
-Pythonのライブラリdoeffで、この3つを解きます。記録に無い依頼は、通信せずに失敗させます。
+プログラムが外の世界に触れる道は、`yield`するエフェクトだけだとします。エフェクトは1つずつハンドラへ出ていき、答えが戻ります。依頼と答えをすべて書き留めれば、やり取りの全部が手に入ります。書き留めた物から同じ依頼に答えれば、プログラムは同じように走ります。向こう側に誰もいなくてもです。Temporalのような持続するワークフローの基盤は、出来事の履歴を再生します。そうして、落ちたワークフローを立て直します。ここでは同じ考えが、数行のハンドラに収まります。
 
-doeffは、処理の中の「通信する」「待つ」といった操作を、外側の部品で差し替えられるライブラリです。連載が初めての方は[1本目の入門](doeff-main.md)から、コードは[GitHub](https://github.com/proboscis/doeff)から読めます。まずは、通信の代わりに固定の応答を返すテストから始めます。
+asyncioでコードを書く人なら、coroutineの奥の`await client.get(url)`と比べてください。そのcoroutineは、依頼を自分で送ります。だから記録するには、クライアントの中へ手を入れることになります。エフェクトでは、依頼はプログラムから出ていく値です。記録の係は、その出口に置くハンドラの1つにすぎません。
 
-```python
-from doeff import Pass, Resume, do, handler, run, with_handlers  # 処理の定義・ハンドラ・実行を使う。
-from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの依頼と応答の型。
+## プログラムが頼み、ハンドラが答える
 
-
-@do  # 呼んだだけでは動かない処理(Program)にする。
-def fetch_text(url: str):  # URLの本文を返す。どう通信するかは知らない。
-    response = yield HttpRequest("GET", url)  # 「GETしたい」と外側へ依頼する。
-    response.raise_for_status()  # 400以上の応答なら、例外にする。
-    return response.text  # 本文の文字列を返す。
-
-
-@handler  # この関数を、Programに取り付けられるハンドラにする。
-def fake_http(effect, k):  # effectは届いた依頼、kは止まった処理の続き。
-    if not isinstance(effect, HttpRequest):  # HTTP以外の依頼は受け持たない。
-        return (yield Pass(effect, k))  # 外側のハンドラへ、そのまま渡す。
-    body = "記録した本文"  # 通信の代わりに返す本文。
-    # 状態200・ヘッダなし・本体・本文・URL・かかった秒数の順に渡す。
-    response = HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)
-    return (yield Resume(k, response))  # 応答を渡して、止まった処理を再開する。
-
-
-def test_fetch_text_without_network():  # pytestが集めるテスト関数。
-    program = with_handlers([fake_http], fetch_text("https://example.invalid/a"))  # 外側に付ける。
-    assert run(program) == "記録した本文"  # 通信せずに、すぐ終わる。
-```
-
-`fetch_text`は「GETしたい」と頼むだけで、自分では通信しません。テストでは`fake_http`が依頼を受け、固定の応答を返します。
-
-![通信の答え方を、外側のハンドラで選ぶ](/images/zenn-use-cases-v0/generated/replay-concept.png)
-*処理本体は`HttpRequest`を頼むだけです。固定の応答・記録からの再生・本物の通信のどれで答えるかを、外側のハンドラが決めます。*
-
-## 通信を、外側への依頼にする
-
-コードに出てきた語を、先に整理します。
-
-- `@do`を付けた関数は、呼んでもすぐには動きません。手順を表すProgramを返します。
-- `yield HttpRequest("GET", url)`は、「このURLをGETしたい」という依頼を外側へ渡します。
-- このような依頼を、エフェクト(effect)と呼びます。
-- 依頼を受けて、どう答えるかを決める部品を、ハンドラ(handler)と呼びます。
-- `with_handlers`は、ハンドラをProgramの外側に取り付けます。
-- `run`は、ハンドラを付けたProgramを最後まで動かします。
-
-`fake_http`がしていることは、次の3つだけです。
-
-- `isinstance`で、届いた依頼がHTTPかどうかを見分けます。
-- HTTPなら、`Resume(k, response)`で応答を渡し、止まっていた処理を再開します。
-- HTTP以外の依頼は、`Pass`で外側のハンドラへ渡します。
-
-`HttpResponse`は、本番で通信するハンドラが返すのと同じ型です。そのため`fetch_text`は、テストと本番の違いを知りません。
-
-よくある手と比べると、差し替える場所が違います。
-
-| 手 | 差し替える場所 |
-| --- | --- |
-| `unittest.mock.patch` | 処理が呼ぶ関数を、モジュールの中の名前で差し替えます |
-| VCR.pyなどの記録ライブラリ | HTTPライブラリの内部で、やり取りを記録・再生します |
-| doeffのハンドラ | 処理が出した依頼を、外側のハンドラが受け取ります |
-
-doeffの処理は、どのHTTPライブラリで通信するかを知りません。差し替えのために、ライブラリの内部へ手を入れることもありません。
-
-## 本物の応答を一度だけ記録し、次から再生する
-
-固定の応答は手で書くので、本物のAPIの応答とずれていきます。そこで本物の応答を一度だけ記録し、次からは記録から答えます。記録には、doeffのメモ化の部品を使います。この記事では、記録を読み書きするハンドラの組を「記録の層」と呼びます。記録に無い時に応答を取ってくるハンドラは、「取得担当」と呼びます。
+`latest_releases`は、GitHubのAPIに、リポジトリごとの最新のリリースを尋ねます。
 
 ```python
-import pytest  # 失敗を期待するテストに使う。
-from doeff_core_effects.handlers import await_handler, slog_discard_handler  # 補助の依頼の受け手。
-from doeff_core_effects.memo_handlers import (  # 記録の層を組み立てる部品。
-    content_address,  # 既定の記録の鍵。依頼の全部の欄から作る。
-    make_memo_rewriter,  # 記録にあれば記録から答え、無ければ外側へ依頼を出し直す。
-    sqlite_memo_handler,  # 記録をSQLiteのファイルへ読み書きする。
-)
-from doeff_core_effects.scheduler import scheduled  # 保存の読み書きの待ちを進める。
+# releases.py(抜粋)
+import json  # APIの答えの本文を、JSONとして読む。
+from collections import Counter  # 送った依頼を、URLごとに数える。
+
+from doeff import Resume, ResumeThrow, do, handler, run  # 再開・例外での再開・定義・ハンドラ・実行を使う。
+from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの依頼のエフェクトと、その答えの型。
+
+GITHUB = "https://api.github.com"  # GitHubのAPIの根のURL。
 
 
-@handler  # 記録に無い依頼だけが、ここまで届く。
-def reject_http(effect, k):  # 再生だけのテストで、取得担当の位置に置く。
-    if isinstance(effect, HttpRequest):  # 記録に無いHTTPの依頼が届いた。
-        raise LookupError(f"記録に無い依頼: {effect.method} {effect.url}")  # 通信せずに失敗させる。
-    return (yield Pass(effect, k))  # HTTP以外の依頼は、外側へ渡す。
-
-
-def run_recorded(program, database, fetcher, key_fn=content_address):  # 記録の層を付けて動かす。
-    program = make_memo_rewriter(HttpRequest, key_fn=key_fn)(program)  # 記録にあれば、記録から答える。
-    program = sqlite_memo_handler(database)(program)  # 記録をSQLiteのファイルへ読み書きする。
-    program = fetcher(program)  # 記録に無い依頼だけを、取得担当が受ける。
-    program = await_handler()(slog_discard_handler(program))  # 保存の待ちと、記録のログを受ける。
-    return run(scheduled(program))  # 待ちを進めながら、最後まで動かす。
+@do  # yieldのたびに止まるプログラムにする。
+def latest_releases(repos: list[str], token: str, api: str = GITHUB):  # 尋ねるだけで、自分では送らない。
+    tags = {}  # リポジトリごとの最新のタグを集める。
+    for repo in repos:  # リポジトリを1つずつ尋ねる。
+        response = yield HttpRequest(  # 依頼を出して止まる。答え方はハンドラが決める。
+            "GET",  # メソッド。
+            f"{api}/repos/{repo}/releases/latest",  # 最新のリリースのURL。
+            headers={"Authorization": f"Bearer {token}"},  # トークンをヘッダに載せる。
+        )
+        response.raise_for_status()  # 400以上の答えなら、例外にする。
+        tags[repo] = json.loads(response.text)["tag_name"]  # 本文のJSONから、タグの名を取る。
+    return tags  # リポジトリからタグへの辞書を返す。
 ```
 
-`run_recorded`は、内側から順に3つのハンドラを付けます。3つ目の`fetcher`が、取得担当です。
-
-| 順 | ハンドラ | 受け持つこと |
-| --- | --- | --- |
-| 1 | `make_memo_rewriter(HttpRequest)` | 記録にあれば、記録から答えます。無ければ依頼を外側へ出し直し、得た応答を記録します |
-| 2 | `sqlite_memo_handler(database)` | 記録の読み書きを、SQLiteのファイルで行います |
-| 3 | `fetcher` | 記録に無い依頼だけを受けます。固定の応答・失敗・本物の通信から選びます |
-
-最後の2行は、補助の依頼を受ける部品です。SQLiteの読み書きは非同期で行うので、`await_handler`がその待ちを受けます。`slog_discard_handler`は、記録の層が出すログを捨てます。`scheduled`は、待っている処理の再開を受け持ちます。処理本体を`async def`にする必要はありません。
-
-**この順番が要です。** 取得担当を記録の層より内側に置くと、記録を見る前に通信してしまいます。
-
-`reject_http`は、再生だけのテストで使う取得担当です。HTTPの依頼が届いたら、通信せずに`LookupError`にします。記録の層が答えた依頼は、ここまで届きません。
-
-テストは次のとおりです。
+`HttpRequest`は、doeffのパッケージのエフェクトです。`HttpResponse`は、そのハンドラが返す答えです。`latest_releases`は、何も送りません。依頼を`yield`し、何が起きるかは`HttpRequest`のハンドラが決めます。本番では、httpxで送る`http_production_handler()`がそのハンドラです。最後の節で、手元のサーバーに向けて走らせます。それまでは`github`が、APIと同じ形で辞書から答えます。そして、届いた依頼を1つずつ数えます。
 
 ```python
-def test_record_then_replay(tmp_path):  # tmp_pathは、pytestが用意する一時のディレクトリ。
-    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
-    url = "https://example.invalid/article"  # 実在しない、例のためのURL。
-    assert run_recorded(fetch_text(url), database, fake_http) == "記録した本文"  # 1回目は取得し、記録する。
-    assert run_recorded(fetch_text(url), database, reject_http) == "記録した本文"  # 2回目は記録から答える。
-    with pytest.raises(LookupError):  # 記録に無いURLは、通信せずに失敗する。
-        run_recorded(fetch_text(url + "/new"), database, reject_http)  # 取得担当まで届いて止まる。
+# releases.py(抜粋)
+# GitHubのAPIと同じ形で、辞書から答える。だからこのファイルは通信せずに走る。
+# live.pyは、同じ依頼をHTTPで送る。
+TAGS = {"acme/server": "v2.4.1", "acme/client": "v1.9.0"}  # リポジトリごとの最新のタグ。
+sent: Counter[str] = Counter()  # URLごとに、送った依頼の数。
+
+
+@handler  # HttpRequestを受けるハンドラにする。
+def github(effect: HttpRequest, k):  # ここに届いた依頼は、送った物として数える。
+    sent[effect.url] += 1  # このURLへの依頼を1つ数える。
+    repo = effect.url.removeprefix(f"{GITHUB}/repos/").removesuffix("/releases/latest")  # URLからリポジトリの名を取る。
+    body = json.dumps({"tag_name": TAGS[repo]})  # APIと同じ形の本文を作る。
+    return (yield Resume(k, HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)))  # 状態200の答えでkを再開する。
 ```
 
-- 1回目は`fake_http`が応答を返し、記録の層がそれを保存します。
-- 2回目は`reject_http`を付けても通ります。取得担当まで、依頼が届いていない証拠です。
-- 記録に無いURLは`reject_http`まで届き、`LookupError`になります。
+## 記録の係は、エフェクトをもう一度出す
 
-![記録にあれば、取得担当まで進まない](/images/zenn-use-cases-v0/generated/replay-flow.png)
-*記録の層は、まずSQLiteに記録があるかを尋ねます。記録があれば取得担当を通らず、無い時だけ取得担当が受けます。*
-
-記録は、同じファイルを開けば別の`run`からも読めます。2回目はProgramとハンドラを作り直していますが、記録に当たります。別のプロセスから読んでも当たることを、2026年10月17日に確かめました。
-
-## 記録する時だけ、本物のAPIへ通信する
-
-本物の応答を記録する時は、取得担当を`http_production_handler()`に替えます。httpxで実際に通信する、doeffの標準の取得担当です。
+記録の係は、プログラムと、答えるハンドラの間に座ります。
 
 ```python
-from doeff_core_effects.http_handlers import http_production_handler  # httpxで実際に通信する取得担当。
+# releases.py(抜粋)
+def recording(tape: dict):  # 依頼を1つずつ外へ出し、その答えを取っておく。
+    @handler  # HttpRequestを受けるハンドラにする。
+    def record(effect: HttpRequest, k):  # 依頼と答えの組を、tapeに書く。
+        answer = yield effect  # 同じ依頼を出し直す。1つ外のハンドラが答える。
+        tape[(effect.method, effect.url)] = answer  # メソッドとURLの組で、答えを書き留める。
+        return (yield Resume(k, answer))  # 同じ答えで、kを再開する。
 
-database = "tests/http.sqlite"  # リポジトリに入れる記録のファイル。
-url = "https://api.example.com/articles/1"  # 記録したいAPIのURL。
-# 記録が無い時だけ、本物のAPIへ通信して記録する。記録があれば通信しない。
-text = run_recorded(fetch_text(url), database, http_production_handler())
+    return record  # 作ったハンドラを返す。
 ```
 
-- 記録が無ければ、1回だけ通信して応答を保存します。
-- 記録があれば、通信しません。
-- 記録のファイルは、テストと一緒にリポジトリへ入れます。
-- CIのテストでは、取得担当を`reject_http`にします。
+ハンドラの中の`yield effect`は、受け取ったエフェクトをもう一度出します。答えるのは、1つ外のハンドラです。だから`record`には、依頼が出ていく所と、答えが戻る所が見えます。`record`はその組を取っておき、同じ答えで`k`を再開します。`latest_releases`は、記録の係が間に無い時と同じ物を受け取ります。そして`latest_releases`の中には、記録されている印が何もありません。
 
-2026年10月17日に、この枠のURLを、同じ機械の中に立てたHTTPサーバーに替えて確かめました。1回目は実際に通信して、本文を記録しました。サーバーを止めた後の2回目は、`reject_http`のまま記録から答えました。外のサービスへは通信していません。
+![recordは、出ていく依頼と戻る答えを両方見る](/images/zenn-use-cases-v0/generated/replay-concept.png)
+*recordは依頼を外のgithubへ出し直し、答えをtapeに書いてから、同じ答えでkを再開します。*
 
-同じ日に、この記事のテストを含む完全な例の5つを、pytestで2回走らせました。2回とも5つ全部が通りました。pytestが測った関数の実行時間は、5つ合わせて約1.8秒と約2.9秒でした。同じ機械で、他の重い仕事も動いている時の値です。ライブラリを読み込む時間は、この数に含みません。
+tapeは、依頼をメソッドとURLで引きます。欄が同じ`HttpRequest`の値どうしでも、等しくはなりません。値ではなく、同一性で比べるからです。そこで記録の係が、どの2つの依頼を同じと見るかを決めます。この係は、ヘッダを鍵から外しました。この選び方は、ヘッダのトークンが効いてくる後の節で、また出てきます。
 
-## APIキーを、記録の鍵に入れない
-
-記録の層は、依頼から「記録の鍵」を作り、その鍵で記録を引きます。既定の鍵の`content_address`は、依頼の全部の欄から作ったハッシュです。ヘッダに載せたAPIキーも、鍵に入ります。
-
-そのため、本物の鍵で記録してCIで偽の鍵を使うと、記録に当たりません。鍵の作り方を替えて、ヘッダを鍵から外します。
+## 再生の係は、tapeから答える
 
 ```python
-@do  # APIキーをヘッダに付けて、本文を取る。
-def fetch_private(url: str, api_key: str):  # 鍵の要るAPIを呼ぶ処理。
-    headers = {"Authorization": f"Bearer {api_key}"}  # 鍵をヘッダに載せる。
-    response = yield HttpRequest("GET", url, headers=headers)  # 鍵つきのGETを依頼する。
-    response.raise_for_status()  # 400以上の応答なら、例外にする。
-    return response.text  # 本文を返す。
+# releases.py(抜粋)
+def replaying(tape: dict):  # tapeから答え、外へは決して出さない。
+    @handler  # HttpRequestを受けるハンドラにする。
+    def replay(effect: HttpRequest, k):  # 記録した答えを返す。
+        key = (effect.method, effect.url)  # 記録の係と同じ鍵を作る。
+        if key not in tape:  # tapeに無い依頼なら、
+            error = LookupError(f"not recorded: {effect.method} {effect.url}")  # 記録に無い事を言う例外を作る。
+            return (yield ResumeThrow(k, error))  # プログラムのyieldの所で、例外を起こす。
+        return (yield Resume(k, tape[key]))  # 記録した答えで、kを再開する。
+
+    return replay  # 作ったハンドラを返す。
 
 
-def method_and_url(effect) -> str:  # 記録の鍵を、メソッドとURLだけで作る。
-    return f"{effect.method} {effect.url}"  # ヘッダのAPIキーは、鍵に入れない。
-
-
-def test_replay_without_real_key(tmp_path):  # CIに本物の鍵を置かずに再生する。
-    database = tmp_path / "http.sqlite"  # このテストの記録のファイル。
-    url = "https://example.invalid/private"  # 例のためのURL。
-    run_recorded(fetch_private(url, "本物の鍵"), database, fake_http, method_and_url)  # 鍵つきで記録する。
-    replay = fetch_private(url, "ダミー")  # CIでは、偽の鍵で同じURLを呼ぶ。
-    assert run_recorded(replay, database, reject_http, method_and_url) == "記録した本文"  # 記録に当たる。
+@do  # プログラムを包むプログラムにする。
+def reported(program):  # ハンドラが投げ込んだ例外を、呼ぶ側のtryで受ける。
+    try:  # 包んだプログラムを走らせる。
+        return (yield program)  # 包んだプログラムの結果を、そのまま返す。
+    except LookupError as error:  # 記録に無い依頼で止まったら、
+        return f"LookupError: {error}"  # 例外の型と文を返す。
 ```
 
-- `method_and_url`は、メソッドとURLだけで鍵を作ります。
-- 偽の鍵で呼んでも同じ鍵になるので、記録に当たります。
-- 既定の鍵のままだと、偽の鍵の呼び出しは`LookupError`になります。これも完全な例で確かめています。
+`replay`は、エフェクトを決して外へ出しません。tapeに在る依頼には、記録した答えが返ります。tapeに無い依頼には、`ResumeThrow(k, error)`が返ります。`LookupError`は、`latest_releases`の中の`yield`の所で起きます。そしてほかの例外と同じく上へ伝わり、ここでは`reported`の`try`に届きます。
 
-鍵から外した欄は、記録を引く時に区別されません。`params`や本文で答えが変わるAPIなら、それも鍵に入れます。
+一度記録し、同じプログラムを再生の係だけの下で走らせます。
 
-鍵はメソッドとURLか、ハッシュです。どちらでも、記録のファイルにAPIキーの文字は残りません。ただし、保存される応答のヘッダや本文には、個人の情報が入ることがあります。リポジトリへ入れる前に、記録の中身を確かめます。
+```python
+print(run(github(recording(tape)(latest_releases(REPOS, "secret")))))  # githubの内側に記録の係を付けて走らせる。
+print(run(replaying(tape)(latest_releases(REPOS, "secret"))))  # 同じプログラムを、再生の係だけで走らせる。
+```
 
-## 記録の範囲と、今の実装の限界
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+sent: 2
+```
 
-- 記録の層は、依頼を型で選びます。`HttpRequest`なら、POSTも記録の対象です。再生してよいかは、アプリケーションで決めます。
-- 400や500の応答も、値として返れば記録されます。後の`raise_for_status()`が失敗しても、記録は消えません。
-- 記録の中身は、pickleで保存されます。信頼できない記録のファイルは、読み込みません。
-- 既定の鍵は、依頼をpickleしたバイト列のハッシュです。doeffの版を上げた後も同じ鍵になるかは、確かめていません。
-- 保存のハンドラを付け忘れると、記録の層は毎回取得へ進みます。記録が要るテストでは、2回目の再生まで確かめます。
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+sent: 0
+```
 
-1つのハンドラで記録と再生をする`http_fixture_handler`もあります。`mode="record"`では、本番の取得担当を内側で組み立てます。この道具もヘッダの値を鍵に入れ、鍵の作り方は替えられません。取得担当や鍵を自分で選びたい時は、この記事の組み方が向いています。
+同じ関数で同じ答えが返り、2回目には依頼が1つもありません。2回目は、再生の係の外に`HttpRequest`のハンドラがありません。だから再生が、うっかり通信に届く事はありません。仮に`replay`が依頼を外へ渡せば、doeffは`UnhandledEffect`で走りを止めます。記録していないリポジトリは、その`yield`の所で止まります。
 
-記録と再生だけなら、VCR.pyなどの記録ライブラリでもできます。doeffの記録の層は、依頼の型を選んで付けます。そのため、HTTP以外の依頼にも同じ組み方を使えます。
+```python
+print(run(replaying(tape)(reported(latest_releases(["acme/docs"], "secret")))))  # 記録していないリポジトリを尋ねる。
+```
 
-## まとめ
+```text
+LookupError: not recorded: GET https://api.github.com/repos/acme/docs/releases/latest
+```
 
-- 通信を`yield HttpRequest(...)`の依頼にすると、どう答えるかを外側で選べます。
-- テストでは固定の応答のハンドラを付け、通信せずに確かめます。
-- 本物の応答は、記録の層を付けて一度だけ記録し、次から再生します。
-- 記録に無い依頼は`reject_http`で、通信せずに失敗させます。
-- APIキーを記録の鍵から外せば、CIに本物の鍵を置かずに再生できます。
+## tapeをファイルに置く
 
-待ちを含む処理のテストは、3本目の[テストで20秒待つのをやめる](doeff-time.md)で扱いました。依存を外側から渡す話は、4本目の[依存を引数で引き回すのをやめる](doeff-di.md)にあります。次の7本目では、時刻・値段・注文を同じ形で差し替え、バックテストと本番で同じ処理を動かします。
+辞書は、プロセスが生きている間しか残りません。doeffのパッケージには、記録の係と再生の係を1つにしたハンドラがあります。後ろに保存先を持つ`make_memo_rewriter`です。
+
+```python
+# on_disk.py(抜粋)
+def recorded(program, database, network, key=content_address):  # 保存の層を付けて、最後まで走らせる。
+    program = make_memo_rewriter(HttpRequest, key_fn=key)(program)  # 在れば保存から答え、無ければ外へ出して残す。
+    program = sqlite_memo_handler(database)(program)  # 保存: MemoExists・MemoGet・MemoPutにSQLiteのファイルで答える。
+    program = network(program)  # 保存に無い依頼だけが、ここまで届く。
+    return run(scheduled(await_handler()(slog_discard_handler(program))))  # 補助のハンドラを付けて走らせる。
+
+
+@handler  # HttpRequestを受けるハンドラにする。
+def offline(effect: HttpRequest, k):  # 通信の位置に置く。保存に無い依頼は失敗し、何も送らない。
+    raise LookupError(f"not recorded: {effect.method} {effect.url}")  # 記録に無い事を言う例外を起こす。
+```
+
+内側から順に見ます。
+
+| ハンドラ | すること |
+|---|---|
+| `make_memo_rewriter(HttpRequest, key_fn=key)` | `HttpRequest`ごとに鍵を作り、`MemoExists(key)`を`yield`します。在れば`MemoGet(key)`を`yield`し、保存した答えで`k`を再開します。無ければ`record`と同じく、依頼を外へ出します。そして`MemoPut(key, answer)`を`yield`し、`k`を再開します |
+| `sqlite_memo_handler(database)` | `MemoExists`・`MemoGet`・`MemoPut`に、SQLiteのファイルで答えます |
+| `network` | 保存に無い依頼だけを受けます。ここでは`github`、本番では`http_production_handler()`、CIでは`offline`です |
+| `slog_discard_handler`・`await_handler`・`scheduled` | `slog_discard_handler`は、`make_memo_rewriter`のログの行を捨てます。残りの2つは、保存の層が`yield`する`Await`を走らせます。ファイルの読み書きを、worker threadで行うためです |
+
+![保存に在れば、通信の位置まで届かない](/images/zenn-use-cases-v0/generated/replay-flow.png)
+*make_memo_rewriterは、まず保存に在るかを尋ねます。在れば保存から答え、無い時だけ依頼を外へ出して答えを残します。*
+
+保存も、エフェクトです。`make_memo_rewriter`は、SQLiteについて何も知りません。`MemoGet`と`MemoPut`を`yield`し、行き先は1つ外のハンドラが決めます。`sqlite_memo_handler(database)`の所は、ほかの保存のハンドラでも構いません。`in_memory_memo_handler()`を置けば、tapeはメモリに残ります。`make_memo_rewriter`は、そのままで同じように働きます。
+
+`offline`は、通信の位置に座ります。ファイルが答える依頼は、そこまで届きません。ほかの依頼は、`LookupError`を起こします。例外は前と同じくプログラムの`yield`に届き、何も送られません。
+
+```python
+print(recorded(latest_releases(REPOS, "secret"), tape, github))  # 1回目: ファイルは空なので、githubが答える。
+print(recorded(latest_releases(REPOS, "secret"), tape, offline))  # 2回目: 通信の位置にofflineを置いて走らせる。
+```
+
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+sent: 2
+```
+
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+sent: 0
+```
+
+2回目は、保存のハンドラまで新しく作った組で走ります。同じなのは、ファイルだけです。別のプロセスのテストやCIも、同じようにそのファイルから再生します。
+
+## 2つの依頼を、何で同じと見るか
+
+今度は、別のトークンで再生します。本物のトークンを持たない、CIと同じ形です。
+
+```python
+print(recorded(reported(latest_releases(REPOS, "ci-dummy")), tape, offline))  # CIのように、別のトークンで再生する。
+```
+
+```text
+LookupError: not recorded: GET https://api.github.com/repos/acme/server/releases/latest
+```
+
+既定の鍵の`content_address`は、依頼の全部のハッシュです。メソッド・URL・ヘッダ・params・本文・時間の上限が入ります。トークンはヘッダに在るので、別のトークンの依頼は別の依頼です。だから、保存に当たりません。上で手で書いたtapeは、メソッドとURLで引きました。同じ鍵を、`make_memo_rewriter`に渡します。
+
+```python
+# on_disk.py(抜粋)
+def method_and_url(effect: HttpRequest) -> str:  # ヘッダを外した鍵。だからトークンも入らない。
+    return f"{effect.method} {effect.url}"  # メソッドとURLだけで鍵を作る。
+```
+
+```python
+recorded(latest_releases(REPOS, "secret"), keyed, github, method_and_url)  # メソッドとURLの鍵で記録する。
+print(recorded(latest_releases(REPOS, "ci-dummy"), keyed, offline, method_and_url))  # 別のトークンで再生する。
+```
+
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+```
+
+鍵は、APIごとに選びます。鍵から外した物は、再生の時に区別されません。答えが`params`や本文で変わるなら、それも鍵に入れます。どちらの鍵でも、ファイルにトークンは残りません。鍵は`GET https://...`の文字列かハッシュで、保存する答えは応答だからです。ただし、応答は丸ごと保存されます。そのヘッダや本文には、個人の情報が入ることがあります。commitする前に、ファイルを読んで確かめます。
+
+## I/O:動いているサーバーで記録し、止めて再生する
+
+ここまでは、`github`が辞書から答えてきました。`live.py`は、GitHubのAPIと同じ形で答えるHTTPサーバーを手元に立てます。`http_production_handler()`で記録し、サーバーを止め、ファイルから再生します。
+
+```python
+# live.py(抜粋)
+if __name__ == "__main__":  # ファイルとして走らせた時だけ動く。
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Releases)  # 手元に、空いた番号のHTTPサーバーを立てる。
+    threading.Thread(target=server.serve_forever, daemon=True).start()  # 別のスレッドで答えさせる。
+    api = f"http://127.0.0.1:{server.server_port}"  # 手元のサーバーのURL。
+    with tempfile.TemporaryDirectory() as directory:  # 記録のファイルを、一時のdirに置く。
+        tape = Path(directory) / "releases.sqlite"  # 記録のSQLiteのファイル。
+        print("-- live: httpx sends each request, and the file keeps each answer")  # 区切りの見出し。
+        print(recorded(latest_releases(REPOS, "secret", api), tape, http_production_handler()))  # httpxで送り、記録する。
+        print(f"served: {served.total()}")  # サーバーが答えた数。
+        server.shutdown()  # サーバーを止める。
+        server.server_close()  # サーバーの口を閉じる。
+        print("-- stopped: the server is gone, and the same file answers")  # 区切りの見出し。
+        print(recorded(latest_releases(REPOS, "secret", api), tape, offline))  # 同じファイルが答える。
+```
+
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+served: 2
+```
+
+```text
+{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
+```
+
+1回目は、HTTPで通信します。`http_production_handler()`は、`httpx.AsyncClient`で依頼を送ります。その待ちは、`Await`を通します。サーバーは2回答えます。2回目は話す相手のサーバーが無く、ファイルが答えます。`latest_releases`は前と同じ関数で、`api`を手元のサーバーへ向けただけです。どこにも`async`がありません。その訳は、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で扱います。自分のリポジトリでは、`http_production_handler()`で一度記録し、ファイルをcommitします。CIでは、その所に`offline`を置きます。トークンは要りません。
+
+VCR.pyや`unittest.mock`を知っている人もいるでしょう。VCR.pyは、requestsやhttpxのようなHTTPクライアントにpatchを当てます。そうして、やり取りをカセットに記録します。`unittest.mock`では、テストがクライアントを名前で差し替えます。どちらも、クライアントの所で働きます。VCR.pyはpatchを当てるライブラリを知り、mockは差し替える名前を知っています。ここの記録の係は、エフェクトの所で働きます。どのクライアントが依頼を送るかを知りません。そして同じハンドラが、プログラムが`yield`するどのエフェクトも記録します。[testing_without_mocks/record_replay.py](https://github.com/proboscis/doeff/blob/main/examples/testing_without_mocks/record_replay.py)は、言語モデルの答えを記録します。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#6-keep-the-answers-record-once-replay)は、1つの記録の係で`Chat`と`Draw`を記録します。
+
+## 限界
+
+- 保存する答えは、pickleで残します。信頼できるファイルだけを開きます。pickleを読むと、コードが走ることがあるからです。
+- 既定の鍵は、pickleした依頼のハッシュです。doeffやPythonの版をまたいで同じままかは、約束されていません。`method_and_url`のような自分の鍵は、自分で決めるただの文字列です。
+- 保存のハンドラを付けないと、`make_memo_rewriter`はどの依頼も保存に無いと見ます。そして毎回、黙って外へ出します。通信の位置に`offline`を置いた再生なら、これに気付けます。保存に無い依頼が、例外を起こすからです。
+- `make_memo_rewriter`は、型で選んで記録します。POSTも含めて、どの`HttpRequest`も記録します。記録したPOSTは、再生で送り直しません。たいていは、それがテストの望む形です。いつも外へ出したい依頼があるなら、`record`のような係を書きます。そして、その依頼を`Pass`で外へ渡します。
+- 再生で分かるのは、記録した答えをコードがどう扱うかです。APIが今もそう答えるかは分かりません。APIが変わったら、記録し直します。
+
+## 試す
+
+```bash
+pip install "doeff[http]"   # CPython 3.11から3.14で入る。http extraで、HttpRequestとhttpxが入る。
+python releases.py  # 記録・再生と、記録に無いリポジトリを走らせる。
+python on_disk.py  # ファイルに置いた記録と、トークンを外した鍵を走らせる。
+python live.py  # 手元のサーバーで記録し、止めてから再生する。
+```
+
+この記事の例はどれも、PyPIのdoeff 0.8.0で、載せたとおりに走ります。完全なファイルは、[examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay)にあります。docsの章[Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md)は、`CacheGet`と`CachePut`を扱います。プログラムが、わざとキャッシュする時に自分で`yield`する物です。ここの`make_memo_rewriter`は、外から来た答えを取っておきます。プログラムは、何も頼みません。
+
+時計をハンドラにし、何時間もの待ちを一瞬で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。
+
+自分のコードで、どの答えを取っておきたいですか。鍵を選びにくいのは、どこでしょう。issueは https://github.com/proboscis/doeff/issues で受け付けています。
 
 [doeffとは？：メイン記事へ戻る](doeff-main.md)
 
 ## 参考
 
-この記事のコードは、2026年10月17日に、PyPIのdoeff 0.6.0で確かめました。Pythonは3.12と3.14で試しました。GitHubにあるdoeffのmain(commit `9adc4f8`)でも、同じく動きました。コードは上から順に、前のコードの続きとして動きます。本物のAPIへ通信する枠は、mainの版でだけ、同じ機械のサーバーに替えて確かめました。
+この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.14で試しました。
 
-試す時は、[完全な例](examples/http_replay.py)を`http_replay.py`として保存し、次のコマンドで実行します。
-
-```bash
-uv run --with "doeff[http]==0.6.0" --with pytest pytest -q http_replay.py  # PyPIのdoeff 0.6.0を入れて、完全な例の5つのテストを走らせる。
-```
-
-- [doeff本体(この記事で確かめた版)](https://github.com/proboscis/doeff/tree/9adc4f8e657a552f5253d8a7b422363789c2608c)
-- [HttpRequestとHttpResponseの定義](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
-- [記録の層(make_memo_rewriter)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
-- [SQLiteへの保存](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py)
-- [標準の取得担当とhttp_fixture_handler](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
-- [unittest.mock(Python公式の説明)](https://docs.python.org/ja/3/library/unittest.mock.html)
+- [HttpRequestとHttpResponseの定義(doeff 0.8.0)](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
+- [make_memo_rewriterとcontent_addressの実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
+- [SQLiteへの保存の実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py)
+- [http_production_handlerの実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
 - [VCR.py(公式の説明)](https://vcrpy.readthedocs.io/)
 - 前の回:[ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)
 - 次の回:[バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md)

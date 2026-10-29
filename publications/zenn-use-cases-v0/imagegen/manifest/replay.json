@@ -5,11 +5,11 @@
     "generation_prompt": "replay-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "1f2dacf6927dd25b7104d9cec60dbbaa1deb74a513076fed3185ce4d8d9ce995",
-    "width": 1200,
-    "height": 1800,
-    "bytes": 235172,
-    "review": "2026-10-17：週6の改稿のコード（fetch_text・HttpRequest(\"GET\", url)・fake_http・記録の層 + reject_http・http_production_handler()・HttpResponse）と名前・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+    "sha256": "221741791169326294a82d9c07eeba4c689bb61649c20d3e39aa4547881a9bd7",
+    "width": 1080,
+    "height": 1200,
+    "bytes": 114051,
+    "review": "2026-10-29：英語の4本目「Record and replay」の版に書き直した時に、英語の記事のsequenceDiagramをSVGで描き直した。yield HttpRequest・yield effect・HttpResponse(200, ...)・tape[(\"GET\", url)] = answer・Resume(k, answer)の順を、本文のreleases.pyの抜粋(recording)と照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "replay-flow",
@@ -17,10 +17,10 @@
     "generation_prompt": "replay-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "452e600bae0e30ac3802d0cec35b5a0a3e8880ebfb385aae1daf6c3976489f9b",
-    "width": 1200,
-    "height": 2000,
-    "bytes": 271461,
-    "review": "2026-10-17：週6の改稿のrun_recordedの3層（make_memo_rewriter(HttpRequest)・sqlite_memo_handler(database)・fetcher(program)）と、記録の有無で分かれる道（記録から再開・fake_httpまたは本番の取得担当・reject_httpで失敗）を目視確認。白背景の平面図として採用。"
+    "sha256": "3800b0c7c265d383b6ff9bf873f348a08b1bc84420f9fbc0bed55a41135608e3",
+    "width": 1280,
+    "height": 1480,
+    "bytes": 144434,
+    "review": "2026-10-29：英語の4本目の表の1行目(make_memo_rewriter)を、1回目(ファイルは空・networkはgithub)と2回目(同じファイル・networkはoffline)のsequenceDiagramにした。エフェクトの順(1回目はMemoExists・HttpRequest・MemoPut、2回目はMemoExists・MemoGet)を、reviews/replay-check.pyが印字で照らす順と照合。携帯の幅でも字が読める大きさにした。"
   }
 ]

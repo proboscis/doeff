@@ -38,7 +38,6 @@ OFFLINE = (
     "game_replay",
     "image_pipeline",
     "container_program",
-    "http_replay",
     "event_loop",
     "composition",
     "scheduler_coordination",

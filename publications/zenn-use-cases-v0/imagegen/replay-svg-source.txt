@@ -1,13 +1,17 @@
 外部APIのテストの記事（doeff-replay.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-17）。
 
+2026-10-29に、記事を英語の4本目「Record and replay」（docs/articles/record-and-replay.md）の版に書き直した。1枚目は英語の記事のsequenceDiagramを日本語で描き直した物、2枚目は英語の記事の表の1行目（make_memo_rewriter）をsequenceDiagramにした物にした。
+
 - 正本：../visuals/replay-concept.svg と ../visuals/replay-flow.svg。
-- 図の仕様：記事の掲載コードの名前・値・処理順（fetch_text・HttpRequest("GET", url)・fake_http・reject_http・http_production_handler()・HttpResponse、run_recordedの3層 make_memo_rewriter(HttpRequest)・sqlite_memo_handler(database)・fetcher(program)）。
-- 字の大きさ：図は幅600の座標で描き、字を17px以上にした。携帯の幅（約360px）に縮めても読めるようにするため。
-- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。SVGのwidth・heightを座標の2倍にしてある。
-  - replay-concept：幅1200・高さ1800。
-  - replay-flow：幅1200・高さ2000。
+- 図の仕様：
+  - replay-concept：英語の記事のsequenceDiagram。latest_releases・record・githubの3つの線。①yield HttpRequestでkとして止まる、②recordがyield effectで1つ外へ出し直す、③githubがHttpResponse(200, ...)で答える、recordがtape[("GET", url)] = answerと書く、④recordがResume(k, answer)で同じ答えで再開する。
+  - replay-flow：latest_releases・make_memo_rewriter・sqlite_memo_handler・networkの4つの線。1回目（ファイルは空・networkはgithub）はMemoExists(key)に無い、HttpRequestを外へ出す、HttpResponse、MemoPut(key, answer)、Resume(k, answer)。2回目（同じファイル・networkはoffline）はMemoExists(key)に在る、MemoGet(key)、Resume(k, 保存した答え)で、offlineまで届かない。
+- 字の大きさ：replay-conceptは幅1080、replay-flowは4つの線を並べるため幅1280の座標で描き、字を24px以上にした（24pxは線の箱のmake_memo_rewriterとsqlite_memo_handlerだけ）。携帯の幅（約360px）に縮めても読めるようにするため。
+- PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。SVGの座標とPNGの寸法は同じ。
+  - replay-concept：幅1080・高さ1200。
+  - replay-flow：幅1280・高さ1480。
 - 出力先：リポジトリ直下の images/zenn-use-cases-v0/generated/。
 
 2026-09-16にimagegenで作ったPNGは、.gitignoreの例外がgenerated/に届かず、リポジトリに入っていなかった。
-記事の改稿で図の中身（固定の応答・記録の層・取得担当の3択、記録の有無の分かれ道）も変わったため、SVGで描き直した。
+2026-10-17の改稿で、図の中身（固定の応答・記録の層・取得担当の3択、記録の有無の分かれ道）が変わったため、SVGで描き直した。
 旧い生成の指示（replay-concept*.txt・replay-flow*.txt）は、経緯を残すため消さずに置く。

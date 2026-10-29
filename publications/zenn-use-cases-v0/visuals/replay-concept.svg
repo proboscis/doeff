@@ -1,76 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" width="1200" height="1800">
-  <style>
-    text { font-family: "IPAPGothic", "IPAGothic", "Noto Sans CJK JP", sans-serif; fill: #1b2a4a; }
-    .title { font-size: 28px; font-weight: bold; }
-    .sub { font-size: 19px; fill: #4a5878; }
-    .head { font-size: 21px; font-weight: bold; }
-    .body { font-size: 19px; }
-    .muted { font-size: 18px; fill: #4a5878; }
-    .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 17px; }
-    .name { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; font-weight: bold; }
-    .num { font-size: 22px; font-weight: bold; fill: #ffffff; }
-    .flow { stroke: #0e7c86; stroke-width: 3.5; fill: none; }
-    .answer { stroke: #0e7c86; stroke-width: 3.5; fill: none; stroke-dasharray: 9 7; }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1200" viewBox="0 0 1080 1200">
+  <!-- recordが、HttpRequestを外のgithubへ出し直して答えを取っておく道(英語の記事の1枚目のsequenceDiagramの訳)。 -->
   <defs>
-    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#0e7c86"/>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
     </marker>
+    <style>
+      .ja { font-family: "IPAGothic", sans-serif; fill: #1f2d4d; }
+      .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
+      .life { stroke: #9aa7c0; stroke-width: 4; stroke-dasharray: 14 12; }
+      .call { stroke: #0f8b8d; stroke-width: 7; fill: none; }
+      .back { stroke: #0f8b8d; stroke-width: 7; fill: none; stroke-dasharray: 18 12; }
+    </style>
   </defs>
-  <rect width="600" height="900" fill="#ffffff"/>
+  <rect width="1080" height="1200" fill="#ffffff"/>
 
-  <text class="title" x="300" y="48" text-anchor="middle">通信の答え方を、外側のハンドラで選ぶ</text>
-  <text class="sub" x="300" y="82" text-anchor="middle">fetch_textは変えずに、付けるハンドラだけを替える</text>
+  <text class="ja" x="540" y="76" font-size="40" font-weight="bold" text-anchor="middle">recordは、出ていく依頼と戻る答えを両方見る</text>
 
-  <!-- ① 処理本体 -->
-  <rect x="40" y="104" width="520" height="196" rx="14" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
-  <circle cx="72" cy="136" r="17" fill="#2f5aa8"/><text class="num" x="72" y="144" text-anchor="middle">1</text>
-  <text class="head" x="100" y="143">@doの処理 fetch_text(本体は1つ)</text>
-  <text class="code" x="64" y="184">@do</text>
-  <text class="code" x="64" y="214">def fetch_text(url):</text>
-  <text class="code" x="64" y="244"><tspan xml:space="preserve">    response = yield </tspan><tspan font-weight="bold" fill="#0e7c86">HttpRequest("GET", url)</tspan></text>
-  <text class="code" x="64" y="274"><tspan xml:space="preserve">    return response.text</tspan></text>
+  <!-- 3つの参加者(内から外へ) -->
+  <rect x="30" y="130" width="320" height="130" rx="22" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="code" x="190" y="190" font-size="30" font-weight="bold" text-anchor="middle">latest_releases</text>
+  <text class="ja" x="190" y="238" font-size="30" text-anchor="middle">(プログラム)</text>
+  <rect x="380" y="130" width="320" height="130" rx="22" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="code" x="540" y="190" font-size="38" font-weight="bold" text-anchor="middle">record</text>
+  <text class="ja" x="540" y="238" font-size="30" text-anchor="middle">(記録の係)</text>
+  <rect x="730" y="130" width="320" height="130" rx="22" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="code" x="890" y="190" font-size="38" font-weight="bold" text-anchor="middle">github</text>
+  <text class="ja" x="890" y="238" font-size="30" text-anchor="middle">(1つ外のハンドラ)</text>
 
-  <!-- 依頼と答えの矢印 -->
-  <path class="flow" d="M200,304 V372" marker-end="url(#tip)"/>
-  <text class="body" x="214" y="345">GETを頼んで止まる</text>
-  <path class="answer" d="M420,372 V304" marker-end="url(#tip)"/>
-  <text class="body" x="432" y="345">応答で続きが動く</text>
+  <line class="life" x1="190" y1="260" x2="190" y2="990"/>
+  <line class="life" x1="540" y1="260" x2="540" y2="990"/>
+  <line class="life" x1="890" y1="260" x2="890" y2="990"/>
 
-  <!-- ② ハンドラ -->
-  <rect x="40" y="378" width="520" height="300" rx="14" fill="#f6f8fb" stroke="#9db8e0" stroke-width="2"/>
-  <circle cx="72" cy="410" r="17" fill="#2f5aa8"/><text class="num" x="72" y="418" text-anchor="middle">2</text>
-  <text class="head" x="100" y="417">外側で付けるハンドラ(どれか1つ)</text>
+  <!-- ① latest_releasesが止まり、HttpRequestがいちばん内側のrecordへ -->
+  <text class="code" x="365" y="338" font-size="28" text-anchor="middle">① yield HttpRequest</text>
+  <line class="call" x1="200" y1="362" x2="526" y2="362" marker-end="url(#arrow)"/>
+  <text class="ja" x="365" y="412" font-size="30" text-anchor="middle">kとして止まる</text>
 
-  <rect x="60" y="440" width="480" height="70" rx="10" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
-  <text class="head" x="76" y="469">テスト</text>
-  <text class="name" x="196" y="469">fake_http</text>
-  <text class="body" x="76" y="497">手で書いた応答を、通信せずに返す</text>
+  <!-- ② recordが同じエフェクトを出し直す -->
+  <text class="code" x="715" y="488" font-size="30" text-anchor="middle">② yield effect</text>
+  <line class="call" x1="550" y1="512" x2="876" y2="512" marker-end="url(#arrow)"/>
+  <text class="ja" x="715" y="562" font-size="30" text-anchor="middle">1つ外へ出し直す</text>
 
-  <rect x="60" y="520" width="480" height="70" rx="10" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
-  <text class="head" x="76" y="549">テスト</text>
-  <text class="name" x="196" y="549">記録の層 + reject_http</text>
-  <text class="body" x="76" y="577">記録から答える。記録に無ければ失敗</text>
+  <!-- ③ githubが答える -->
+  <text class="code" x="715" y="638" font-size="26" text-anchor="middle">③ HttpResponse(200, ...)</text>
+  <line class="back" x1="880" y1="662" x2="554" y2="662" marker-end="url(#arrow)"/>
+  <text class="ja" x="715" y="712" font-size="30" text-anchor="middle">recordが受け取る</text>
 
-  <rect x="60" y="600" width="480" height="70" rx="10" fill="#efeafb" stroke="#b6a6e6" stroke-width="2"/>
-  <text class="head" x="76" y="629">記録・本番</text>
-  <text class="name" x="196" y="629">http_production_handler()</text>
-  <text class="body" x="76" y="657">httpxで、本物のAPIへ通信する</text>
+  <!-- recordがtapeに書く -->
+  <rect x="300" y="748" width="480" height="78" rx="16" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
+  <text class="code" x="540" y="798" font-size="26" text-anchor="middle">tape[("GET", url)] = answer</text>
 
-  <!-- ③ 答えの形 -->
-  <path class="answer" d="M300,682 V728" marker-end="url(#tip)"/>
-  <text class="muted" x="314" y="712">GETへの答え</text>
-  <rect x="40" y="734" width="520" height="120" rx="14" fill="#fff7e6" stroke="#e0b25a" stroke-width="2"/>
-  <circle cx="72" cy="766" r="17" fill="#2f5aa8"/><text class="num" x="72" y="774" text-anchor="middle">3</text>
-  <text class="head" x="100" y="773">HttpResponse(どれでも同じ型)</text>
-  <text class="body" x="64" y="808">status・headers・textなど、本番と同じ欄</text>
-  <text class="body" x="64" y="838">fetch_textは、本文の文字列を返す</text>
+  <!-- ④ recordが同じ答えでkを再開する -->
+  <text class="code" x="365" y="888" font-size="28" text-anchor="middle">④ Resume(k, answer)</text>
+  <line class="back" x1="530" y1="912" x2="204" y2="912" marker-end="url(#arrow)"/>
+  <text class="ja" x="365" y="962" font-size="30" text-anchor="middle">同じ答えで続きが進む</text>
 
-  <!-- 凡例 -->
-  <text class="head" x="40" y="886" style="font-size:18px">凡例</text>
-  <path class="flow" d="M92,880 H140" marker-end="url(#tip)"/>
-  <text class="muted" x="148" y="886">依頼</text>
-  <path class="answer" d="M200,880 H248" marker-end="url(#tip)"/>
-  <text class="muted" x="256" y="886">答え</text>
-  <text class="muted" x="312" y="886">1〜3は読む順</text>
+  <rect x="30" y="1020" width="1020" height="140" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="ja" x="70" y="1078" font-size="32" font-weight="bold">latest_releasesが受け取る答えは、</text>
+  <text class="ja" x="70" y="1130" font-size="32" font-weight="bold">記録の係が間に無い時と同じ</text>
 </svg>

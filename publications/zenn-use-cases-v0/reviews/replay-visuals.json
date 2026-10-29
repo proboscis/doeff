@@ -1,14 +1,14 @@
 {
   "concept": {
-    "title": "通信の答え方を、外側のハンドラで選ぶ",
-    "code": "@do\ndef fetch_text(url):\n    response = yield HttpRequest(\"GET\", url)\n    return response.text",
-    "flow": "白背景の平面図（2026-10-17に手で書いたSVG・正本は visuals/replay-concept.svg）。上から順に3つの枠。1 処理本体 fetch_text の4行（HttpRequest(\"GET\", url) を強調）。下向きの実線「GETを頼んで止まる」と上向きの点線「応答で続きが動く」。2 外側で付けるハンドラ（どれか1つ）：テスト fake_http「手で書いた応答を、通信せずに返す」・テスト 記録の層 + reject_http「記録から答える。記録に無ければ失敗」・記録・本番 http_production_handler()「httpxで、本物のAPIへ通信する」。3 HttpResponse（どれでも同じ型）「status・headers・textなど、本番と同じ欄」。3つの選択肢を同時に動くように描かない。",
-    "caption": "処理本体は`HttpRequest`を頼むだけです。固定の応答・記録からの再生・本物の通信のどれで答えるかを、外側のハンドラが決めます。"
+    "title": "recordは、出ていく依頼と戻る答えを両方見る",
+    "code": "@handler  # HttpRequestを受けるハンドラにする。\ndef record(effect: HttpRequest, k):  # 依頼と答えの組を、tapeに書く。\n    answer = yield effect  # 同じ依頼を出し直す。1つ外のハンドラが答える。\n    tape[(effect.method, effect.url)] = answer  # メソッドとURLの組で、答えを書き留める。\n    return (yield Resume(k, answer))  # 同じ答えで、kを再開する。",
+    "flow": "白背景、平面的なsequenceDiagram(英語の記事のsequenceDiagramの訳・2026-10-29に手で書いたSVG・正本は visuals/replay-concept.svg)。左から『latest_releases(プログラム)』『record(記録の係)』『github(1つ外のハンドラ)』の3つの箱と、下へ伸びる点線。①latest_releasesからrecordへ実線『yield HttpRequest』と『kとして止まる』。②recordからgithubへ実線『yield effect』と『1つ外へ出し直す』。③githubからrecordへ点線『HttpResponse(200, ...)』と『recordが受け取る』。recordの線の上に札『tape[(\"GET\", url)] = answer』。④recordからlatest_releasesへ点線『Resume(k, answer)』と『同じ答えで続きが進む』。下に『latest_releasesが受け取る答えは、記録の係が間に無い時と同じ』。",
+    "caption": "recordは依頼を外のgithubへ出し直し、答えをtapeに書いてから、同じ答えでkを再開します。"
   },
   "flow": {
-    "title": "記録にあれば、取得担当まで進まない",
-    "code": "make_memo_rewriter(HttpRequest)  # 1 記録の層\nsqlite_memo_handler(database)  # 2 SQLite\nfetcher(program)  # 3 取得担当",
-    "flow": "白背景の平面図（2026-10-17に手で書いたSVG・正本は visuals/replay-flow.svg）。上にrun_recordedの3層を内側から番号1〜3で示す。fetch_textのHttpRequest → 1 記録の層「記録の鍵を作り、2に尋ねる」⇄ 2 SQLite → 分かれ道「記録はある？」。ある：2から記録した応答を読み、fetch_textを再開する。3の取得担当は通らない（通信しない）。無い：依頼を外側へ出し直し → 3 取得担当（1つ）：fake_httpまたは本番の取得担当なら応答を返し1が記録、reject_httpなら通信せず失敗させる。ある道からreject_httpへ矢印を引かない。",
-    "caption": "記録の層は、まずSQLiteに記録があるかを尋ねます。記録があれば取得担当を通らず、無い時だけ取得担当が受けます。"
+    "title": "保存に在れば、通信の位置まで届かない",
+    "code": "program = make_memo_rewriter(HttpRequest, key_fn=key)(program)  # 在れば保存から答え、無ければ外へ出して残す。\nprogram = sqlite_memo_handler(database)(program)  # 保存: MemoExists・MemoGet・MemoPutにSQLiteのファイルで答える。\nprogram = network(program)  # 保存に無い依頼だけが、ここまで届く。",
+    "flow": "白背景、平面的なsequenceDiagram(英語の記事の表の1行目の図・2026-10-29に手で書いたSVG・正本は visuals/replay-flow.svg)。左から『latest_releases(プログラム)』『make_memo_rewriter(記録と再生を1つに)』『sqlite_memo_handler(SQLiteのファイル)』『network(通信の位置)』の4つの箱。上の段『1回目:ファイルは空(networkはgithub)』は、①HttpRequest、②MemoExists(key)と点線『無い』、③『HttpRequestを外へ出す』をnetworkへ、点線『HttpResponse(200, ...)』、④MemoPut(key, answer)、⑤点線Resume(k, answer)。下の段『2回目:同じファイル(networkはoffline)』は、①HttpRequest、②MemoExists(key)と点線『在る』、③MemoGet(key)と点線『保存した答え』、④点線『Resume(k, 保存した答え)』。networkの線に札『offlineまで届かない』。2回目からnetworkへ矢印を引かない。",
+    "caption": "make_memo_rewriterは、まず保存に在るかを尋ねます。在れば保存から答え、無い時だけ依頼を外へ出して答えを残します。"
   }
 }
