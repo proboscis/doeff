@@ -15,9 +15,8 @@ import threading
 from dataclasses import dataclass
 
 from doeff_agents import AgentType
-from doeff_agents import AgentSpec, SessionHandle, LaunchEffect, LaunchSession, StopEffect
-from doeff_agents import agent_handler_defhandler
-from doeff_agents import MockAgentHandler
+from doeff_agents import AgentSpec, LaunchEffect, LaunchSession, StopEffect
+from doeff_agents import ScenarioWorld, mock_agent_handler, scenario_agent_handler
 from doeff_core_effects import state
 from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 
@@ -107,26 +106,15 @@ class TestMcpE2E:
         Agent defhandler is OUTERMOST so that GetHandlers(k) captures
         the domain handlers (greet, upper) from the continuation chain.
         """
-        mock_handler = MockAgentHandler()
-        agent_defhandler = agent_handler_defhandler(mock_handler)
-
-        wrapped = agent_defhandler(_install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program)))
-        return run(scheduled(state()(wrapped))), mock_handler
+        wrapped = mock_agent_handler()(
+            _install_raw_handler(greet_handler)(_install_raw_handler(upper_handler)(program))
+        )
+        return run(scheduled(state()(wrapped)))
 
     def test_l2_launch_session_receives_in_vm_mcp_server_url(self, tmp_path):
         """L2 LaunchSession receives a URL for an in-VM MCP server."""
 
-        class RecordingAgentHandler(MockAgentHandler):
-            def __init__(self):
-                super().__init__()
-                self.mut_mcp_servers = None
-
-            def handle_launch_session(self, effect, mcp_servers=None):
-                self.mut_mcp_servers = mcp_servers
-                return SessionHandle(session_id=effect.spec.session_id)
-
-        agent_handler = RecordingAgentHandler()
-        agent_defhandler = agent_handler_defhandler(agent_handler)
+        world = ScenarioWorld()
 
         @do
         def program():
@@ -142,13 +130,14 @@ class TestMcpE2E:
             )
             return (yield LaunchSession(spec))
 
-        wrapped = agent_defhandler(_install_raw_handler(greet_handler)(program()))
+        wrapped = scenario_agent_handler(world=world)(_install_raw_handler(greet_handler)(program()))
         handle = run(scheduled(state()(wrapped)))
 
         assert handle.session_id == "run-001-node-mcp-0"
-        assert agent_handler.mut_mcp_servers is not None
-        assert agent_handler.mut_mcp_servers["doeff"].startswith("http://127.0.0.1:")
-        assert agent_handler.mut_mcp_servers["doeff"].endswith("/sse")
+        mcp_server_urls = world.mcp_server_urls("run-001-node-mcp-0")
+        assert mcp_server_urls is not None
+        assert mcp_server_urls["doeff"].startswith("http://127.0.0.1:")
+        assert mcp_server_urls["doeff"].endswith("/sse")
 
     def test_launch_with_mcp_creates_server_and_mcp_json(self, tmp_path):
         """Launch with mcp_tools starts MCP server and writes .mcp.json."""
@@ -166,7 +155,7 @@ class TestMcpE2E:
             )
             return handle
 
-        _handle, _mock = self._run_with_handlers(program())
+        _handle = self._run_with_handlers(program())
 
         # Verify .mcp.json was written
         mcp_json_path = tmp_path / ".mcp.json"
@@ -194,7 +183,7 @@ class TestMcpE2E:
             )
             return handle
 
-        _handle, _mock = self._run_with_handlers(program())
+        _handle = self._run_with_handlers(program())
 
         # Read server URL from .mcp.json
         mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
@@ -265,7 +254,7 @@ class TestMcpE2E:
             yield Perform(StopEffect(handle=handle))
             return observed
 
-        result, _mock = self._run_with_handlers(program())
+        result = self._run_with_handlers(program())
 
         assert errors == []
         assert result[0]["id"] == 1
@@ -288,7 +277,7 @@ class TestMcpE2E:
             )
             return handle
 
-        _handle, _mock = self._run_with_handlers(program())
+        _handle = self._run_with_handlers(program())
 
         mcp_config = json.loads((tmp_path / ".mcp.json").read_text())
         url = mcp_config["mcpServers"]["doeff"]["url"]
@@ -331,7 +320,7 @@ class TestMcpE2E:
             )
             return handle
 
-        _handle, _mock = self._run_with_handlers(program())
+        _handle = self._run_with_handlers(program())
 
         mcp_json_path = tmp_path / ".mcp.json"
         assert not mcp_json_path.exists(), ".mcp.json should NOT be created"

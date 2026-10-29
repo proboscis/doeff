@@ -2,8 +2,8 @@
 
 The public surface is the handler factories (each returns doeff handlers to
 install around a program that yields ``doeff_agents._effects``) and the values
-those factories take. The handler implementation classes live in the inner
-modules and are not part of the public API.
+those factories take. The handlers themselves (defhandler / @handler) live in
+the inner modules and are not part of the public API.
 """
 
 
@@ -16,7 +16,7 @@ import hy  # noqa: F401  # activate Hy import hook for handler modules
 from doeff_claude_code import BypassAll, PermissionPolicy
 from doeff_time import sync_time_handler
 
-from doeff.program import ProgramHandler
+from doeff.program import ProgramHandler, stacked_handlers
 
 if TYPE_CHECKING:
     from doeff_claude_code import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
@@ -28,12 +28,13 @@ if TYPE_CHECKING:
 
 from doeff_agents._agentd_client import LazyAgentdClient as _LazyAgentdClient
 from doeff_agents._handlers.daemon import AgentdSessionClient as AgentdSessionClient
-# The handler objects behind the factories (inner modules — not re-exported).
-from doeff_agents._handlers.daemon import DaemonAgentHandler as _DaemonAgentHandler
-from doeff_agents._handlers.testing import MockAgentHandler as _MockAgentHandler
-from doeff_agents._handlers.testing import ScenarioAgentHandler as _ScenarioAgentHandler
+# The handlers behind the factories (inner modules — not re-exported).
+from doeff_agents._handlers.daemon import _daemon_agent_handler
+from doeff_agents._handlers.testing import MockAgentState as _MockAgentState
+from doeff_agents._handlers.testing import _mock_agent_defhandler, _scenario_session_defhandler
 from doeff_agents._handlers.testing import MockSessionScript as MockSessionScript
 from doeff_agents._handlers.testing import ScenarioStep as ScenarioStep
+from doeff_agents._handlers.testing import ScenarioWorld as ScenarioWorld
 from doeff_agents._runtime import ClaudeRuntimePolicy as ClaudeRuntimePolicy
 from doeff_agents._runtime import CodexRuntimePolicy as CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
@@ -344,25 +345,34 @@ def mock_agent_handler(*, sessions: Sequence[MockSessionScript] = ()) -> Program
     and the screen text before the first one (``initial_output``). The handler
     keeps its own state — nothing is shared between two calls.
     """
-    mock = _MockAgentHandler()
     for script in sessions:
         if script.session_name is None:
             raise ValueError("mock_agent_handler: every MockSessionScript in sessions names its session_name")
-        mock.configure_session(script)
-    return _hy_effectful_module().agent_handler_defhandler(mock)
+    return _mock_agent_defhandler(_MockAgentState(scripts={script.session_name: script for script in sessions}))
 
 
-def scenario_agent_handler(*, scripts: Mapping[str, Sequence[ScenarioStep]]) -> ProgramHandler:
-    """Return a scenario-driven testing handler (a Hy defhandler) for the schema-result effects.
+def scenario_agent_handler(
+    *,
+    scripts: Mapping[str, Sequence[ScenarioStep]] | None = None,
+    world: ScenarioWorld | None = None,
+) -> ProgramHandler:
+    """Return a scenario-driven testing handler for the schema-result effects and the agent effect.
 
     ``scripts`` maps a deterministic session id (``AgentSpec.session_id``) to
     the ``ScenarioStep`` values its awaits return in turn, so retries are
-    explicit in the test data. The agent is replaced by swapping this handler
-    in; application functions are never mocked.
+    explicit in the test data. Pass ``world`` (a ``ScenarioWorld`` the caller
+    keeps, holding the scripts) instead to read afterwards what the handler was
+    asked — launches, follow-ups, stops, releases — or to change a script
+    between runs; one of the two. The agent is replaced by swapping this
+    handler in; application functions are never mocked. The sessions it
+    launches also answer the terminal effects (Monitor, Capture, …) as the mock
+    handler does.
     """
-    return _hy_effectful_module().agent_handler_defhandler(
-        _ScenarioAgentHandler(scripts={session_id: tuple(steps) for session_id, steps in scripts.items()})
-    )
+    if world is None:
+        world = ScenarioWorld(scripts=dict(scripts or {}))
+    elif scripts is not None:
+        raise ValueError("scenario_agent_handler: pass scripts or world, not both")
+    return stacked_handlers(_scenario_session_defhandler(world), _mock_agent_defhandler(world.terminal))
 
 
 def agent_effectful_handlers(
@@ -398,7 +408,12 @@ def daemon_agent_handler(
     codex_runtime_policy: CodexRuntimePolicy | None = None,
     max_running: int = 10,
 ) -> ProgramHandler:
-    """Return the daemon-backed agent handler as a Hy defhandler."""
+    """Return the handler that delegates agent session lifecycle to the doeff-agentd daemon.
+
+    It answers the agent effect, the schema-result effects and the terminal
+    effects through ``client`` (by default a client that connects to — and if
+    needed starts — the daemon at ``socket_path`` / ``db_path`` on first use).
+    """
     active_client = client
     if active_client is None:
         active_client = _LazyAgentdClient(
@@ -407,12 +422,11 @@ def daemon_agent_handler(
             daemon_bin=daemon_bin,
             max_running=max_running,
         )
-    agent_handler = _DaemonAgentHandler(
+    return _daemon_agent_handler(
         client=active_client,
         claude_runtime_policy=claude_runtime_policy,
         codex_runtime_policy=codex_runtime_policy,
     )
-    return _hy_effectful_module().agent_handler_defhandler(agent_handler)
 
 
 def daemon_agent_handlers(

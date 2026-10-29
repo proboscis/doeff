@@ -82,13 +82,16 @@ def test_agent_handlers_are_defhandler_program_wrappers() -> None:
     )
 
 
-def test_scenario_handler_wrap_uses_defhandler_boundary() -> None:
+def test_testing_handlers_are_defhandlers_not_classes() -> None:
+    # ADR-DOE-API-001 R4: the mock and scenario handlers are doeff handlers (defhandler) over a state value —
+    # no handler class with a method per effect.
     handlers_dir = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "_handlers"
     source = (handlers_dir / "testing.hy").read_text()
 
     assert not (handlers_dir / "testing.py").exists()
-    assert "(defclass ScenarioAgentHandler" in source
-    assert "(agent-handler-defhandler self)" in source
+    assert "(defhandler _mock-agent-defhandler [state]" in source
+    assert "(defhandler _scenario-session-defhandler [world]" in source
+    assert "AgentHandler" not in source
     assert "def handler(effect: Effect, k)" not in source
     assert "yield Pass(effect, k)" not in source
 

@@ -1385,9 +1385,9 @@
     (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle "x") :message "m" :mode TurnInputMode.INJECT) :handler "t"))
   (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path) :handler "t")
   (refuse-turn-capabilities (FollowUpEffect :handle (SessionHandle "x") :message "m") :handler "t")
-  (import doeff_agents [MockAgentHandler])
+  (import doeff_agents [mock-agent-handler])
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
-    (.handle-launch (MockAgentHandler) launch-effect))
+    (run ((mock-agent-handler) launch-effect)))
   ;; 手番の資格の参照(turn_credential_ref)を引き換えて置けない端末の handler は、家の資格で黙って走らせずに断る(#665・#979)。
   (with [(pytest.raises AgentCapabilityUnsupportedError)]
     (refuse-turn-capabilities (LaunchEffect :session-name "x" :agent-type AgentType.CLAUDE :work-dir tmp-path
@@ -1641,12 +1641,12 @@
 
 
 (deftest test-terminal-handlers-refuse-warming-by-type [tmp-path]
-  ;; LaunchEffect が既に CLI を起動して待たせる handler(AgentHandler の object を包む defhandler)は、入力の前に事前起動する
+  ;; LaunchEffect が既に CLI を起動して待たせる handler(mock・scenario・daemon の handler)は、入力の前に事前起動する
   ;; WarmSessionEffect に黙って何もせずに応答せず、AgentCapabilityUnsupportedError で拒否する(claude-handler・codex-handler の拒否は
   ;; test_claude_handler.py・test_codex_handler.py)。
-  (import doeff_agents [ScenarioAgentHandler])
+  (import doeff_agents [scenario-agent-handler])
   (with [info (pytest.raises AgentCapabilityUnsupportedError)]
-    (run (scheduled (.wrap (ScenarioAgentHandler) (WarmSession (SessionHandle "x"))))))
+    (run (scheduled ((scenario-agent-handler) (WarmSession (SessionHandle "x"))))))
   (assert (= info.value.capability "WarmSessionEffect") info.value.capability))
 
 

@@ -12,7 +12,7 @@ from doeff_agents import (
     AwaitStatus,
     LaunchSessionEffect,
 )
-from doeff_agents import ScenarioAgentHandler, ScenarioStep
+from doeff_agents import ScenarioStep, ScenarioWorld, scenario_agent_handler
 from doeff_conductor import CreateWorkspace
 from doeff_conductor import Agent, AgentTask
 from doeff_conductor import JournalCorruptionError
@@ -265,7 +265,7 @@ def test_l2_launch_re_adopts_session_by_deterministic_id_after_interrupted_await
         result_schema=ARTIFACT_SCHEMA,
         max_retries=0,
     )
-    handler = ScenarioAgentHandler(
+    world = ScenarioWorld(
         scripts={
             task.session_id: [
                 ScenarioStep.timeout(),
@@ -280,12 +280,12 @@ def test_l2_launch_re_adopts_session_by_deterministic_id_after_interrupted_await
         outcome = yield AwaitResultEffect(handle=handle, timeout_seconds=0.0)
         return handle.session_id, outcome
 
-    first_session_id, first_outcome = run(scheduled(handler.wrap(launch_and_await())))
-    second_session_id, second_outcome = run(scheduled(handler.wrap(launch_and_await())))
+    first_session_id, first_outcome = run(scheduled(scenario_agent_handler(world=world)(launch_and_await())))
+    second_session_id, second_outcome = run(scheduled(scenario_agent_handler(world=world)(launch_and_await())))
 
     assert first_session_id == "run-re-adopt-node-1-0"
     assert second_session_id == first_session_id
     assert first_outcome.status == AwaitStatus.TIMED_OUT
     assert second_outcome.status == AwaitStatus.EXITED
     assert second_outcome.result == {"summary": "resumed result"}
-    assert handler.launch_count(task.session_id) == 1
+    assert world.launch_count(task.session_id) == 1

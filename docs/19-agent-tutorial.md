@@ -32,7 +32,7 @@ last step needs a machine with `tmux`, Claude Code and a session host.
 | `review_file(path)` | a Program: starts a session for one file, waits for its review, stops the session | you write it (Step 1) |
 | `review_all(paths, at_most)` | a Program: reviews several files, at most `at_most` sessions at a time | you write it (Step 4) |
 | `scripted_agent(outcomes, log)` | a test handler: answers the session effects from a script and records them | you write it (Step 2) |
-| `ScenarioAgentHandler` | a test handler: the same job, packaged | `doeff_agents` (Step 5) |
+| `scenario_agent_handler(...)` | a test handler: the same job, packaged | `doeff_agents` (Step 5) |
 | `daemon_agent_handlers()` | the production handlers: send the effects to the session host, which runs Claude Code | `doeff_agents` (Step 6) |
 
 ## The Effects a Review Uses
@@ -386,7 +386,7 @@ The Programs are the same in every step. Only the handlers changed:
 | Run | Handlers around the Program |
 | --- | --- |
 | a test that sees every effect | `scripted_agent(outcomes, log)` |
-| a test with a packaged script | `ScenarioAgentHandler(scripts=...).wrap(...)` |
+| a test with a packaged script | `scenario_agent_handler(scripts=...)` |
 | production, through the session host | `daemon_agent_handlers()` |
 | production, from the calling process | `agent_effectful_handlers()` |
 
@@ -402,7 +402,7 @@ The Programs are the same in every step. Only the handlers changed:
 4. **Clean-up is a `finally` block.** `yield StopSession(session)` in `finally` stops the session
    on success, on failure and on timeout.
 5. **The handler gives the effects their meaning; the Program stays the same.** Under a handler of
-   your own, or `ScenarioAgentHandler`, the same effects are answered without an agent, and
+   your own, or `scenario_agent_handler`, the same effects are answered without an agent, and
    `review_file` runs unchanged.
 
 ## Next Steps
