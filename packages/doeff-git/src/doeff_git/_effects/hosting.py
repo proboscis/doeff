@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from doeff import EffectBase
-from doeff_git.types import MergeStrategy, PRHandle
+from doeff_git._types import MergeStrategy, PRHandle
 
 
 @dataclass(frozen=True, kw_only=True)

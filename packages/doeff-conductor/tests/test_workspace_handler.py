@@ -7,14 +7,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from doeff_conductor import Commit
-from doeff_conductor import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
+from doeff_conductor import (
+    Commit,
+    CreateWorkspace,
+    DeleteWorkspace,
+    Issue,
+    IssueStatus,
+    MergeStatus,
+    MergeStrategy,
+    MergeWorkspaces,
+    Workspace,
+    WorkspaceStateError,
+    git_handler,
+    workspace_handler,
+)
 from doeff_conductor._git_workspace import GitCommandError, GitCommandResult
 from doeff_conductor._handlers._workspace_path import WorkspacePath
-from doeff_conductor import git_handler
-from doeff_conductor import WorkspaceStateError, workspace_handler
-from doeff_conductor import Issue, IssueStatus, MergeStatus, MergeStrategy, Workspace
-from doeff_git.handlers import production_handlers as git_production_handlers
+from doeff_git import production_handlers as git_production_handlers
 
 from doeff import stacked_handlers
 from tests.effect_runner import Answer, answering

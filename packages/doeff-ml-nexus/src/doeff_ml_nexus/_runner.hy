@@ -6,7 +6,7 @@
 ;;;       --interpreter doeff_ml_nexus._runner.runner_interpreter
 
 (require doeff_hy.macros [defk defp <-])
-(require doeff_docker.compose [with-handlers])
+(require doeff_docker._compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff_core_effects [Ask reader slog-handler state writer scheduled])

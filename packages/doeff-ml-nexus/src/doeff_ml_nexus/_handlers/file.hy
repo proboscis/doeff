@@ -8,7 +8,7 @@
 (require doeff_hy.macros [<- defhandler])
 (import doeff [do :as _doeff-do])
 
-(import doeff_docker.effects [ShellRun])
+(import doeff_docker [ShellRun])
 (import doeff_ml_nexus._effects [WriteFile])
 
 

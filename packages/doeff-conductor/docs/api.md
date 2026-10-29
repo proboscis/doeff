@@ -521,7 +521,7 @@ from doeff_conductor import (
     journaled_workspace_handler,
     workspace_handler,
 )
-from doeff_git.handlers import production_handlers as git_production_handlers
+from doeff_git import production_handlers as git_production_handlers
 
 handlers = stacked_handlers(          # outermost first
     git_production_handlers(),        # runs the git / gh commands git_handler performs

@@ -1,0 +1,115 @@
+"""Reference handlers for provider-independent secret workflows."""
+
+
+import os
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from doeff import Effect, Pass, Transfer, do
+from doeff import handler as _program_handler
+from doeff.program import ProgramHandler
+from doeff_secret._effects import GetSecret
+
+ProtocolHandler = Callable[[Any, Any], Any]
+
+
+def _normalize_secret_id(secret_id: str) -> str:
+    normalized_chars = [ch if ch.isalnum() else "_" for ch in secret_id.upper()]
+    normalized = "".join(normalized_chars)
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized.strip("_")
+
+
+def _normalize_prefix(prefix: str) -> str:
+    if not prefix:
+        return ""
+    normalized = _normalize_secret_id(prefix)
+    if not normalized:
+        return ""
+    return f"{normalized}_"
+
+
+def _resolve_env_secret(
+    secret_id: str,
+    *,
+    environ: Mapping[str, str],
+    prefix: str,
+    include_raw_secret_id: bool,
+) -> str | None:
+    normalized_secret_id = _normalize_secret_id(secret_id)
+    candidates = [f"{prefix}{normalized_secret_id}"]
+    if include_raw_secret_id:
+        candidates.append(secret_id)
+
+    for key in candidates:
+        value = environ.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def env_var_handler(
+    *,
+    environ: Mapping[str, str] | None = None,
+    prefix: str = "",
+    include_raw_secret_id: bool = True,
+) -> ProgramHandler:
+    """Build a fallback handler that resolves GetSecret from environment variables.
+
+    This handler delegates when the secret is not present.
+    """
+
+    active_environ = os.environ if environ is None else environ
+    normalized_prefix = _normalize_prefix(prefix)
+
+    @do
+    def handler(effect: Effect, k: Any):
+        # Flat single frame: the final Transfer must come from the
+        # handler's own frame — a sub-@do that transfers would park this
+        # frame forever (ADR-DOE-CORE-EFFECTS-002).
+        if not isinstance(effect, GetSecret):
+            return (yield Pass(effect, k))
+        value = _resolve_env_secret(
+            effect.secret_id,
+            environ=active_environ,
+            prefix=normalized_prefix,
+            include_raw_secret_id=include_raw_secret_id,
+        )
+        if value is None:
+            return (yield Pass(effect, k))
+        return (yield Transfer(k, value))
+
+    return _program_handler(handler)
+
+
+def env_var_handlers(
+    *,
+    environ: Mapping[str, str] | None = None,
+    prefix: str = "",
+    include_raw_secret_id: bool = True,
+) -> ProgramHandler:
+    """Build strict env-var handlers that raise when the secret is missing.
+
+    This variant raises ``KeyError`` when a requested secret is missing.
+    """
+
+    active_environ = os.environ if environ is None else environ
+    normalized_prefix = _normalize_prefix(prefix)
+
+    @do
+    def handler(effect: Effect, k: Any):
+        if not isinstance(effect, GetSecret):
+            return (yield Pass(effect, k))
+        value = _resolve_env_secret(
+            effect.secret_id,
+            environ=active_environ,
+            prefix=normalized_prefix,
+            include_raw_secret_id=include_raw_secret_id,
+        )
+        if value is None:
+            raise KeyError(f"Secret not found in environment variables: {effect.secret_id}")
+        return (yield Transfer(k, value))
+
+    return _program_handler(handler)
+

@@ -14,29 +14,31 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff_notify.effects import Acknowledge, Notify, NotifyThread
-from doeff_notify.handlers import (
+from doeff_notify import (
+    Acknowledge,
+    Channel,
+    NotificationResult,
+    Notify,
+    NotifyThread,
+    Urgency,
     collected_notifications,
     console_handler,
     log_handler,
 )
-from doeff_notify.handlers import (
-    testing_handler as build_testing_handler,
-)
-from doeff_notify.types import Channel, NotificationResult, Urgency
+from doeff_notify import testing_handler as build_testing_handler
 
 from doeff import Effect, Pass, Resume, Tell, WriterTellEffect, do, run
 
 
 def test_effect_exports() -> None:
-    exported = importlib.import_module("doeff_notify.effects")
+    exported = importlib.import_module("doeff_notify._effects")
     assert exported.Notify is Notify
     assert exported.NotifyThread is NotifyThread
     assert exported.Acknowledge is Acknowledge
 
 
 def test_handler_exports() -> None:
-    exported = importlib.import_module("doeff_notify.handlers")
+    exported = importlib.import_module("doeff_notify._handlers")
     assert exported.console_handler is console_handler
     assert exported.testing_handler is build_testing_handler
     assert exported.log_handler is log_handler

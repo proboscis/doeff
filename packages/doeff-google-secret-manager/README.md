@@ -10,10 +10,10 @@ Provider-agnostic effect types live in `doeff-secret`.
 Use unified effects from `doeff-secret`:
 
 ```python
-from doeff_secret.effects import GetSecret, SetSecret, ListSecrets, DeleteSecret
+from doeff_secret import GetSecret, SetSecret, ListSecrets, DeleteSecret
 ```
 
-Legacy imports from `doeff_google_secret_manager.effects` still work, but emit
+The package's old effects submodule (a re-export of the doeff-secret effects) still works, but emits
 `DeprecationWarning`.
 
 ## Quick Start
@@ -58,8 +58,8 @@ print("password length:", len(result))
 from doeff import do, run, with_handlers
 from doeff_core_effects.handlers import lazy_ask, state, try_handler, writer
 from doeff_core_effects.scheduler import scheduled
-from doeff_google_secret_manager.handlers import production_handlers
-from doeff_secret.effects import GetSecret
+from doeff_google_secret_manager import production_handlers
+from doeff_secret import GetSecret
 
 
 @do

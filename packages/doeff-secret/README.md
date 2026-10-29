@@ -19,7 +19,7 @@ pip install doeff-secret
 
 ```python
 from doeff import do
-from doeff_secret.effects import GetSecret, SetSecret
+from doeff_secret import GetSecret, SetSecret
 
 
 @do
@@ -35,7 +35,7 @@ def deploy_workflow():
 
 ```python
 from doeff import run
-from doeff_secret.testing import in_memory_handlers
+from doeff_secret import in_memory_handlers
 
 handler = in_memory_handlers(seed_data={"db-password": "mock-pass"})
 result = run(handler(deploy_workflow()))
@@ -48,7 +48,7 @@ variable is missing).
 
 ```python
 from doeff import run
-from doeff_secret.handlers import env_var_handler
+from doeff_secret import env_var_handler
 
 result = run(env_var_handler()(deploy_workflow()))
 ```

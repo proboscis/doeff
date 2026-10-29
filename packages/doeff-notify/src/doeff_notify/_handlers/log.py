@@ -5,8 +5,8 @@ from itertools import count
 from typing import Any
 
 from doeff import Effect, Pass, Resume, Tell, handler
-from doeff_notify.effects import Acknowledge, Notify, NotifyThread
-from doeff_notify.types import Channel, NotificationResult
+from doeff_notify._effects import Acknowledge, Notify, NotifyThread
+from doeff_notify._types import Channel, NotificationResult
 
 _LOG_IDS = count(1)
 

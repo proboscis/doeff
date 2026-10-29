@@ -8,7 +8,7 @@
 (import doeff [Program WithObserve])
 (import doeff_core_effects [Tell WriterTellEffect])
 
-(import doeff_docker.effects [From Run Copy Workdir SetEnv Expose])
+(import doeff_docker._effects [From Run Copy Workdir SetEnv Expose])
 
 
 (defhandler dockerfile-collector-handler

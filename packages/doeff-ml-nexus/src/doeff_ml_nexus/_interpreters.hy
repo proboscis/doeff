@@ -8,8 +8,8 @@
 
 (import pathlib [Path])
 
-(import doeff_docker.effects [DockerBuild DockerRun])
-(import doeff_docker.handlers.dockerfile [collect-dockerfile])
+(import doeff_docker [DockerBuild DockerRun])
+(import doeff_docker._handlers.dockerfile [collect-dockerfile])
 (import doeff_ml_nexus._effects [Resolve RsyncTo])
 (import doeff_ml_nexus._docker [uv-image uv-gpu-image])
 (import doeff_ml_nexus._uv-deps [

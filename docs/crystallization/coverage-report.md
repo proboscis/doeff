@@ -33,7 +33,7 @@
 ## 発見
 
 ### ① doeff-secretのDelegate残骸(**実バグ、検証済み**)
-`packages/doeff-secret/src/doeff_secret/handlers.py:8` が `from doeff import Delegate` — これは `_Removed` スタブ(doeff/__init__.py:159)であり、**フォールバック経路(非GetSecret効果の通過時・secretが環境変数に無い時)が実行された瞬間にRuntimeErrorで死ぬ**。B9のDelegate→Pass統一(step.rs:258-264)の移行漏れ。`env_var_handlers`の外部利用者はgrepでゼロ — 壊れたまま誰も踏んでいない。→ 削除orPass移行のissue対象。
+`packages/doeff-secret/src/doeff_secret/_handlers.py:8` が `from doeff import Delegate` — これは `_Removed` スタブ(doeff/__init__.py:159)であり、**フォールバック経路(非GetSecret効果の通過時・secretが環境変数に無い時)が実行された瞬間にRuntimeErrorで死ぬ**。B9のDelegate→Pass統一(step.rs:258-264)の移行漏れ。`env_var_handlers`の外部利用者はgrepでゼロ — 壊れたまま誰も踏んでいない。→ 削除orPass移行のissue対象。
 
 ### ② 生成元の使用は集中、導出の長尾は未使用
 頻度実測(335本): Tell 19% / Try 15% / Await 12% / Spawn 8% / Ask・Get・Put 各6%。一方 **Race/Cancel/Semaphore/Zip/Reduce/SortBy/Take は代表タスク群に出現ゼロ**。生成元集合の最小性を支持する一方、Traverse族の語彙は過剰提供の疑い(削減候補 — 急がない。導出物なのでコア健全性に影響なし)。

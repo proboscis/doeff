@@ -5,7 +5,7 @@ import hy  # noqa: F401 - activates Hy import hooks for test modules
 from doeff import run, do
 from doeff_core_effects import reader, state, writer, slog_handler
 
-from doeff_docker.handlers.dockerfile import collect_dockerfile
+from doeff_docker._handlers.dockerfile import collect_dockerfile
 from doeff_ml_nexus._docker import uv_image, uv_gpu_image
 
 

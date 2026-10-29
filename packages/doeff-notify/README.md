@@ -20,9 +20,9 @@ Provider-agnostic notification effects for `doeff`.
 
 ```python
 from doeff import do, run
-from doeff_notify.effects import Notify
-from doeff_notify.handlers import console_handler
-from doeff_notify.types import Urgency
+from doeff_notify import Notify
+from doeff_notify import console_handler
+from doeff_notify import Urgency
 
 @do
 def workflow():
@@ -42,9 +42,9 @@ run(console_handler(workflow()))
 ```python
 from doeff import do, run
 from doeff_core_effects.handlers import state, writer
-from doeff_notify.effects import Notify
-from doeff_notify.handlers import console_handler, log_handler
-from doeff_notify.types import Urgency
+from doeff_notify import Notify
+from doeff_notify import console_handler, log_handler
+from doeff_notify import Urgency
 
 @do
 def workflow():

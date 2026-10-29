@@ -8,10 +8,14 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
-from doeff_secret.handlers import env_var_handler, env_var_handlers  # noqa: E402
-from doeff_secret.testing import (  # noqa: E402
+from doeff_secret import (  # noqa: E402  # noqa: E402  # noqa: E402
+    DeleteSecret,
+    GetSecret,
     InMemorySecretStore,
+    ListSecrets,
+    SetSecret,
+    env_var_handler,
+    env_var_handlers,
     in_memory_handler,
     in_memory_handlers,
 )

@@ -2,10 +2,10 @@
 
 
 from .production import production_handlers
-from .testing import InMemorySecretStore, mock_handlers
+from .testing import mock_handlers
 
+# The in-memory store is doeff-secret's: read it from doeff_secret, not from here.
 __all__ = [
-    "InMemorySecretStore",
     "mock_handlers",
     "production_handlers",
 ]

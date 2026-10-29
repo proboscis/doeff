@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff_git.handlers import production_handlers as _git_production_handlers
+from doeff_git import production_handlers as _git_production_handlers
 
 from doeff import Effect, Resume, do, stacked_handlers
 from doeff.program import ProgramHandler

@@ -5,11 +5,8 @@ import pytest
 from doeff import run, Pure, do
 from doeff_core_effects import reader, state, writer, slog_handler
 
-from doeff_docker.effects import (
-    From, Run, Copy, Workdir, SetEnv, Expose,
-    DockerBuild, DockerRun,
-)
-from doeff_docker.handlers.dockerfile import (
+from doeff_docker import From, Run, Copy, Workdir, SetEnv, Expose, DockerBuild, DockerRun
+from doeff_docker._handlers.dockerfile import (
     collect_dockerfile,
 )
 
