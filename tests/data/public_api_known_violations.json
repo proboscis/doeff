@@ -14521,12 +14521,10 @@
       "write_digest"
      ],
      "doeff_records.event_source": [
-      "ChangedRow",
       "MODULE_TAGS",
       "READ_SIGNAL_EFFECTS",
       "RECORDS_SIGNAL_SOURCE",
       "SOURCE_EFFECTS",
-      "SignalTables",
       "SourcePlan",
       "StreamStart",
       "WATCH_SECONDS",
@@ -14562,14 +14560,12 @@
       "PublicEffect",
       "RECORDS_SIGNAL_SOURCE",
       "RawReply",
-      "RecordsEndpoint",
       "SERVER_TIMING_HEADER",
       "SERVER_TIMING_QUEUE",
       "WATCH_MAX_SECONDS",
       "WRITER_HEADER",
       "WRITE_KEY_BYTES",
       "WireAnswer",
-      "WireError",
       "answer_for_request",
       "answered_riding_stall",
       "call_service",
@@ -14760,17 +14756,14 @@
       "AppendNew",
       "AppendReplay",
       "CLOCK_TICK",
-      "ChangedRow",
       "EventDue",
       "GroupDue",
       "MEMORY_SOURCE_EFFECTS",
       "MODULE_TAGS",
       "MemoryMark",
       "MemorySignals",
-      "MemoryStore",
       "READ",
       "RowDue",
-      "SignalTables",
       "StoreChoice",
       "StoredGroup",
       "StoredRow",
@@ -15732,6 +15725,7 @@
       "WrittenRows"
      ],
      "doeff_records.event_source": [
+      "ChangedRow",
       "EventsQuiet",
       "Reset",
       "SignalSourceFactory",
@@ -15793,6 +15787,7 @@
      ],
      "doeff_records.memory": [
       "ChangeLog",
+      "ChangedRow",
       "Conflict",
       "EventAppend",
       "EventsQuiet",
@@ -16103,6 +16098,9 @@
      "doeff_records.event_source": [
       "SignalSourceUnreachable"
      ],
+     "doeff_records.http_client": [
+      "WireError"
+     ],
      "doeff_records.pg": [
       "RecordsSqlFailed",
       "StoreUnreachable"
@@ -16116,6 +16114,16 @@
      ]
     },
     "境界 — handler の設定の型": {
+     "doeff_records.event_source": [
+      "SignalTables"
+     ],
+     "doeff_records.http_client": [
+      "RecordsEndpoint"
+     ],
+     "doeff_records.memory": [
+      "MemoryStore",
+      "SignalTables"
+     ],
      "doeff_records.values": [
       "ByKeySuffix",
       "DescendingWithin",

@@ -1,4 +1,4 @@
-;; memory の置き場の書きの控え(memory.hy の頭の註の「書きの控え」— card ki-3876dadb767c)の検。置き場の外の読み手は、変更の列と出来事の列に
+;; memory の置き場の書きの控え(_memory.hy の頭の註の「書きの控え」— card ki-3876dadb767c)の検。置き場の外の読み手は、変更の列と出来事の列に
 ;; 控えを添えて、誰がどの欄をどの順に書いたかを置き場の持ち主の側から読む。
 ;;   行の書きの変更 1 つごとに、書き手の名と判定にかけた差分の欄(宣言の外で値が None の欄は落とす)を控える — 変更の値(差分を重ねた後の
 ;;   行の全部)からは書いた欄が分からない
@@ -14,8 +14,9 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectAny RowChanged RowRemoved StreamDecl KeepFor TableDecl FieldDecl Written Conflict Refused Unreachable])
 (import doeff_records [PutRow PutRows RowWrite AppendEvent AdvanceStoreEpoch])
-(import doeff_records.maintenance [SweepExpired PruneChanges])
-(import doeff_records.memory [MemoryStore WriteNote memory-records-handler])
+(import doeff_records [SweepExpired PruneChanges])
+(import doeff_records [MemoryStore memory-records-handler]
+        doeff_records._memory [WriteNote])
 (import doeff_records._laws [LAW-SCHEMA MAKER PAINTER CLOSER])
 
 ;; 期限つきの列 pulses(60 秒)と、終端の状態を持ち保持の期限で刈られる表 leases(60 秒)を足した宣言。

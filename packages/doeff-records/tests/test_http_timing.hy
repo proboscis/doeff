@@ -28,10 +28,11 @@
 (import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay GetMonotonic async-time-handler])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [drop-records-tables])
-(import doeff_records.http_server [records-server-config start-records-server])
-(import doeff_records.request_timing [RequestStage])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records._pg [drop-records-tables])
+(import doeff_records [records-server-config]
+        doeff_records._http_server [start-records-server])
+(import doeff_records._request_timing [RequestStage])
 (import tests.interpreters [fresh-prefix pg-skip-reason postgres-connections prepared-store records-handler-for run-sql])
 
 ;; 区間の和と total の許す差(秒)— 和も total も同じ刻の差なので、違いは浮動小数の丸めだけ。

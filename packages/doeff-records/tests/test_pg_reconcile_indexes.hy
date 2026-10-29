@@ -1,6 +1,6 @@
 ;; 索引の用意(card ki-954c58540d0f — 2026-10-18 13:18〜14:26 JST に、記録の店の表に索引を 1 つ宣言した配備で、起動の表の用意の
 ;; CREATE INDEX が query 用の文の上限 60 秒で cancel され、起動が 65 秒ごとに落ち続けた): 表の用意は宣言と置き場の差を観測して埋める形で、
-;; 置き場の大きさに比例する仕事を起動の道と query 用の文の上限に置かない(pg.hy の頭の註の「索引の用意」)。
+;; 置き場の大きさに比例する仕事を起動の道と query 用の文の上限に置かない(_pg.hy の頭の註の「索引の用意」)。
 ;; 既に在る置き場(表 parts に行)に、宣言 NOTE-SCHEMA が表 parts の索引の欄 note を足す。索引の作りの長さは、書きの代役(書きの錠の外で
 ;; state_rows に RowExclusiveLock を持つ transaction — CREATE INDEX CONCURRENTLY はその終わりを待つ)を持つ秒で作る。
 ;; 性質:
@@ -45,12 +45,14 @@
 (import doeff_records [RecordsSchema Row Page NotIndexed ExpectAbsent Written Unreachable])
 (import doeff_records [ReadRow ListRows PutRow])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
-(import doeff_records.pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key
-                              migrate-lock-key schema-statements])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [prepare-records-store reconcile-indexes index-round drop-records-tables notice-channel INDEX-TOPIC])
+(import doeff_records [migrate-lock-key schema-statements]
+        doeff_records._pg_sql [IndexedField table-index-name table-field-index-name former-field-index-name ordered-index-name ordered-within-index-name index-name index-lock-key])
 (import doeff_records._main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
-(import doeff_records.http_server [MaintenancePlan RecordsListening])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
+(import doeff_records [RecordsListening]
+        doeff_records._http_server [MaintenancePlan])
+(import doeff_records [RecordsEndpoint http-records-handler records-unwaited])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres fresh-prefix])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
@@ -307,7 +309,7 @@
 
 (deftest test-the-former-table-field-index-answers-the-table-field-form-until-the-new-shape-is-sampled
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
-  ;; 表の欄の式の索引の項を書きの刻の順に並べる(pg_sql.hy の頭の註): 前の形の索引(式 1 つ — fx_)は先頭の式が新しい形(ft_)と同じ
+  ;; 表の欄の式の索引の項を書きの刻の順に並べる(_pg_sql.hy の頭の註): 前の形の索引(式 1 つ — fx_)は先頭の式が新しい形(ft_)と同じ
   ;; なので、新しい形を作り終えて見積もれるようになるまで、表の欄の式の条件の読みに答える(scoped に数え、NotIndexed にも前の文の形にも
   ;; しない — 前の文の形を引く索引は無く、表の行を全部読む)。新しい形が見積もれない間は前の形を外さず(settled に数えない)、標本の
   ;; 後の回が外す。
@@ -388,7 +390,7 @@
 (deftest test-a-table-field-index-without-statistics-is-read-in-the-former-form-until-the-table-is-sampled
   {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
   ;; 統計の在る表に足して標本を取り直す前の表の欄の式の索引は、値の組の見積もりが既定の選択度の積み上げになり表を頭から読む計画が
-  ;; 選ばれる(pg.hy の頭の註)。観測はその欄を答える欄に数え(NotIndexed にしない)、表の欄の式で照らす欄(scoped)には標本を取り直した
+  ;; 選ばれる(_pg.hy の頭の註)。観測はその欄を答える欄に数え(NotIndexed にしない)、表の欄の式で照らす欄(scoped)には標本を取り直した
   ;; 後に数える。
   (with-seeded-store
     (fn [prefix quick ddl]

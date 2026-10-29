@@ -1,8 +1,8 @@
 ;;; PostgreSQL の handler — 公開 effect 10 個に PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
 ;;;
-;;; 判断(期待・書きの許可・保持・索引・頁)は admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
-;;; 文は pg_sql.hy(純粋・中立の記法)で、この file はそれを doeff の汎用の SQL の effect(SqlQuery・SqlTransaction)に載せる
+;;; 判断(期待・書きの許可・保持・索引・頁)は _admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
+;;; 文は _pg_sql.hy(純粋・中立の記法)で、この file はそれを doeff の汎用の SQL の effect(SqlQuery・SqlTransaction)に載せる
 ;;; Program だけを持つ(#880 U5・U6)。接続・driver・方言への書き換えは答え手(doeff_core_effects の
 ;;; postgres-sql-handler / pooled-postgres-sql-handler)の持ち物で、組み立ての側(composition root)がこの handler の外側に置く。
 ;;;
@@ -11,7 +11,7 @@
 ;;;   - 答え手の SqlFailed(engine の失敗 — 文と表の形の食い違い)は実装の誤りとして RecordsSqlFailed を上げる(旧い版で psycopg の
 ;;;     接続の失敗でない例外を上げたのと同じ扱い)。
 ;;; 書きの手順(PutRow・PutRows・AppendEvent・版の繰り上げ・期限切れの回収・刈り取り)は SqlTransaction の locks = 書きの錠の中で流す
-;;; (pg_sql.hy の頭の註の「書きの錠」— 置き場全体の錠〔旧い版と同じ錠の番号〕を共有で、触る錠の単位〔表ごと・列ごと〕を排他で持ち、行の書きは
+;;; (_pg_sql.hy の頭の註の「書きの錠」— 置き場全体の錠〔旧い版と同じ錠の番号〕を共有で、触る錠の単位〔表ごと・列ごと〕を排他で持ち、行の書きは
 ;;; 変更の列に積む前に番号の錠も取る。
 ;;; 版の繰り上げだけが置き場全体を排他 — writer-locks)。本番の組み立て(handler の gated)では、書きは接続を借りる前に同じ process の同じ
 ;;; 単位の書きと 1 本ずつに並び(writer-gates)、並んだ秒と錠を持った秒を操作・単位ごとに計器に積む(locked-transaction)。
@@ -30,7 +30,7 @@
 ;;; 送り直しか、期限を過ぎた鍵の片付けが要る)だけ、次の transaction で 2 往復の手順が前の使いを判じ直す(appended)。鍵が在る時の答えと
 ;;; 片付けは 2 往復の手順と同じで、送り直しは往復が 1 回増える。
 ;;; 読みの手順(行・一覧・変更の列・追記の読み)は SqlQuery を 1 文ずつ流す(自動 commit — 旧い版と同じ断面)。
-;;; 束の読みの読み解き(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 錠の外の束の読み(一覧の頁・変更の列・出来事の列と、手入れの送りの
+;;; 束の読みの読み解き(ADR-DOE-RECORDS-002 — _loop_work.hy の頭の註): 錠の外の束の読み(一覧の頁・変更の列・出来事の列と、手入れの送りの
 ;;; 読み — 長さは上限 limit までの、置き場に在る行の数で決まる)は、行の payload の読み解き(listed-rows-of・changes-of・events-of)を
 ;;; decoded-batch が Compute で scheduler の thread の外へ出す — 答え手は組み立ての側が置く(本番 = _main.hy の records-connected の
 ;;; thread の pool)。1 行と 1 出来事の読み(ReadRow・ReadEventByKey・上から読む頁の位置の行)は大きさが 1 行の上限で決まるので
@@ -45,7 +45,7 @@
 ;;; (notice-topics の 1 か所で綴る — 表と列が同じ綴りでも混ざらない)。書きは触った名を合図し(行の書き = その表・追記 = その列・保持の
 ;;; 刈り = 期限の在る表とその列)、待ちは待つ名で呼び鈴を掛ける(WatchChanges = 頼んだ表・WatchEvents = その列)。版の繰り上げと変更の
 ;;; 刈り取り(PruneChanges)は全部の待ち手に関わる(版と床は全部の表の位置を変える — 名の分からない合図 None)。memory の置き場の呼び鈴と
-;;; 同じ分け方(memory.hy の ring-bells)。
+;;; 同じ分け方(_memory.hy の ring-bells)。
 ;;; 読み手の窓の read-modify-write の競合(同じ読み手の位置を 2 つの要求が同時に読んで進める)は旧い版と同じで、ここでは直さない
 ;;; (#880 の構成のレビュー A4)。
 ;;; 保持の期限(#3561): 読みの効果(ReadRow・ListRows・WatchChanges・WatchEvents・ReadEvents・ReadStreamEnd・ReadEventByKey)は回収を流さず、期限を
@@ -58,12 +58,12 @@
 ;;; 「消えた」を積む文を 2 往復目に入れ、無い行として判じる(locked-row)。追記は冪等キーの単位(出来事ごとに数える列は鍵の出来事・組で
 ;;; 数える列は鍵の組)の期限を過ぎた出来事を 1 往復目に読み、それを捨てて鍵の覚えへ移した後の断面で前の使いを判じ、捨てる文と覚えの文を
 ;;; 2 往復目に入れる(earlier-use)。触らない行と出来事は SweepExpired まで置き場に残り(読みには出ない)、その行の「消えた」も SweepExpired が積む。
-;;; 出来事を送ってから外す(card ki-707aad0f88e8 — maintenance.hy の頭の註): 宣言 StreamDecl.archive-before-retire の列は、回収
+;;; 出来事を送ってから外す(card ki-707aad0f88e8 — _maintenance.hy の頭の註): 宣言 StreamDecl.archive-before-retire の列は、回収
 ;;; (purge-expired)が飛ばし、追記の片付けは捨てずに鍵を覚えるだけ(retired-events-statements)。外すのは ReadExpiredEvents で読んで
 ;;; 送り先に在ると確かめた番号の RetireArchivedEvents だけ(回収と同じ文 — retire-expired-events)。組で数える列は、鍵を覚えただけの
 ;;; 出来事を読みの条件が期限を過ぎた物に数える(event-expiry の remembered — 組に新しい鍵が積まれて組の最後の刻が動いても、覚えた
 ;;; 出来事は読みに戻らない)。鍵の引きは覚えを先に見る(earlier-use・pg-read-event-by-key — 覚えた鍵の出来事がまだ置き場に在る)。
-;;; 鍵の覚えの外し(card ki-4ebaefac6668 — maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
+;;; 鍵の覚えの外し(card ki-4ebaefac6668 — _maintenance.hy の頭の註の「鍵の覚えを外す」): 出来事を捨てる transaction は、列の覚え方
 ;;; (StreamDecl.key-memory)に従って覚えを刻つきで入れるか(departed-keys-statements)、覚えを残さない列は入れずに外す。回収
 ;;; (SweepExpired)は長さを限った列ごとに、覚えた刻から長さを過ぎた覚えを錠の単位の transaction を分けて外す(forget-expired-keys)。
 ;;; 行の書きの冪等キー(card ki-78c6d663491f — memory の置き場と同じ形): 鍵つきの PutRow・PutRows は、1 往復目の読みの束の後ろに同じ鍵の覚えの
@@ -116,8 +116,8 @@
 (import doeff_core_effects [ObserveSecondsBatch])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable SqlLock])
-(import doeff_records.request_timing [lock-observations])
-(import doeff_records.loop_work [off-loop])
+(import doeff_records._request_timing [lock-observations])
+(import doeff_records._loop_work [off-loop])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
@@ -126,14 +126,14 @@
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch write-parts])
 (import doeff_records._faults [AdvanceStoreEpoch])
-(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
-(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
+(import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
+(import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
-(import doeff_records.admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
+(import doeff_records._admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
 (import doeff_records._watching [wait-for-signal moved-of])
-(import doeff_records.pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
+(import doeff_records._pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
                               concurrent-index-statement drop-index-statement analyze-statement retired-index? table-shaped-index?
@@ -277,7 +277,7 @@
 
 
 (defrecord RowSteps
-  "行の書きの文の 2 つの組(pg_sql.hy の頭の註の「書きの錠」— 番号の錠の前と後): rows = 行の表の文(表の単位の錠の中で流す — 消す・書く)/
+  "行の書きの文の 2 つの組(_pg_sql.hy の頭の註の「書きの錠」— 番号の錠の前と後): rows = 行の表の文(表の単位の錠の中で流す — 消す・書く)/
    changes = 変更の列に積む文(番号の錠の中で流す — rows と同じ並びの順)。numbered-statements が 1 つの並びにする。"
   (#^ (get tuple #(Statement ...)) rows)
   (#^ (get tuple #(Statement ...)) changes))
@@ -437,7 +437,7 @@
 (defk writer-locks [store units]
   {:pre [(: store PreparedStore) (: units tuple)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "書き 1 回が取る錠の並び(SqlTransaction の locks — pg_sql.hy の頭の註の「書きの錠」)を作るため: units = 排他で持つ部分の錠の単位の名
+  "書き 1 回が取る錠の並び(SqlTransaction の locks — _pg_sql.hy の頭の註の「書きの錠」)を作るため: units = 排他で持つ部分の錠の単位の名
    (空 = 置き場全体を排他)。置き場全体の錠を先に(部分の書きは共有で)、部分の錠を単位の名の順に並べる。"
   (<- whole (writer-lock-key store.prefix))
   (when (not units)
@@ -481,7 +481,7 @@
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
   "program を錠の単位 units(空 = 置き場全体)の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの
-   合図を出すため(pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
+   合図を出すため(_pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
   (<- answer (locked-transaction store gated operation units (signalled store topics program) False))
   answer)
 
@@ -1035,7 +1035,7 @@
   {:pre [(: records (| tuple list)) (: decode Callable)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "束の読み(一覧の頁・変更の列・出来事の列 — 長さが上限 limit までの、置き場に在る行の数で決まる読み)の行 records を、読み解き decode
-   (行の列 → 読み解きの program — listed-rows-of・changes-of・events-of)で Compute に出し、scheduler の thread の外で回すため(loop_work.hy の
+   (行の列 → 読み解きの program — listed-rows-of・changes-of・events-of)で Compute に出し、scheduler の thread の外で回すため(_loop_work.hy の
    頭の註・ADR-DOE-RECORDS-002)。行は 1 度だけ受けて decode に渡す(空の判じと読み解きが同じ行を見る)。行が無ければ回す物が無いので、
    Compute を出さずに空の tuple を返す(thread の受け渡しの上乗せを払わない)。"
   (if records
@@ -1114,7 +1114,7 @@
 (defk numbered-statements [store steps after]
   {:pre [(: store PreparedStore) (: steps RowSteps) (: after tuple)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "行の書きの transaction の残りの文の並びを作るため(pg_sql.hy の頭の註の「書きの錠」): 行の表の文 → 番号の錠 → 変更の列に積む文 → after
+  "行の書きの transaction の残りの文の並びを作るため(_pg_sql.hy の頭の註の「書きの錠」): 行の表の文 → 番号の錠 → 変更の列に積む文 → after
    (変更の列の番号を読む文 — 行の書きの冪等キーの覚え)。番号を取ってから commit するまで番号の錠を持ち、行の表の文(索引の更新で IO を
    待つ文)は表の単位の錠だけで流す。変更を積まなければ番号の錠を取らない(after も変更を積む書きだけが持つ)。答えの中の変更の文の位置は
    (len steps.rows) + 1 から。"
@@ -1340,7 +1340,7 @@
     (when (<= (len top-records) ask.limit)
       (return (Page top-rows None head.epoch head.head)))
     ;; 位置の値は頁の最後の行の全部の欄から読む(返す欄 fields が並べる欄を外しても)。1 行の読み解きは大きさが表の size-budget で
-    ;; 決まるので scheduler の thread で読む(loop_work.hy の頭の註の「持つ」)。
+    ;; 決まるので scheduler の thread で読む(_loop_work.hy の頭の註の「持つ」)。
     (val last-row (row-of (get top-taken -1)))
     (return (Page top-rows
                   (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
@@ -2086,7 +2086,7 @@
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "覚え方の長さを限った列(StreamDecl.key-memory の RememberKeysFor・RememberNoKeys)ごとに、長さを過ぎた鍵の覚えを外すため(SweepExpired の
-   覚えの外し — maintenance.hy の頭の註の「鍵の覚えを外す」。覚えを残さない列は出来事を捨てる transaction が覚えを入れないが、列の覚え方を
+   覚えの外し — _maintenance.hy の頭の註の「鍵の覚えを外す」。覚えを残さない列は出来事を捨てる transaction が覚えを入れないが、列の覚え方を
    替える前の覚えと、送ってから外す列で書きが覚えた鍵の覚えをここで外す)。答え = 外した覚えの数。"
   (var forgotten 0)
   (for [#(name decl) (sorted (.items store.schema.streams))]

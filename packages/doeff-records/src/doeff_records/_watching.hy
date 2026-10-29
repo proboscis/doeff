@@ -1,5 +1,5 @@
 ;;; PostgreSQL の置き場の WatchChanges と WatchEvents の待ち — 置き場の書きの合図(呼び鈴・LISTEN / NOTIFY)が鳴るか timeout 秒が過ぎる
-;;; まで待ち、鳴ったら読み直す(wait-for-signal・#3073)。memory の置き場はこれを使わない(書きが待ち手を起こす呼び鈴 — memory.hy の
+;;; まで待ち、鳴ったら読み直す(wait-for-signal・#3073)。memory の置き場はこれを使わない(書きが待ち手を起こす呼び鈴 — _memory.hy の
 ;;; memory-watch)。HTTP の口の client も使わない(待ちは service の中の置き場の待ちへ渡す long-poll — #3074。前は間隔で読み直す
 ;;; wait-for-changes を使っていた — 使い手が無くなったので消した)。WatchEvents は ReadEvents(limit 1)の読みを moved-of で答えにする。
 ;;; 時計は doeff-time(GetMonotonic で経過を測り、GetTime で保持の期限を刻む)。
@@ -10,7 +10,7 @@
 (import collections.abc [Callable])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
 (import doeff_records._values [Changes Events EventsMoved EventsQuiet Reset Unreachable WaitsClosed])
-(import doeff_records.admission [epoch-ms])
+(import doeff_records._admission [epoch-ms])
 
 
 (defk closing-wake? [woke]
