@@ -75,8 +75,8 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
-from doeff_effect_analyzer import env_places
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer import _env_places as env_places
+from doeff_effect_analyzer._program_effects import (
     _EXPANSION_OBSERVERS,
     _hy_cache_dir,
     reading_sources,
@@ -150,12 +150,16 @@ def importable_name(obj: object) -> str | None:
     return f"{module_name}:{qualname}" if found is obj else None
 
 
-def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) -> T:
+def cached_result(
+    identity: tuple[str, ...] | None, compute: Callable[[], T], *, depends_on: tuple[object, ...] = ()
+) -> T:
     """``compute()``, or an answer stored under ``identity`` whose module files have the same
     content here. ``identity`` names the analysis and its arguments (None = the arguments cannot be
     named: compute without the cache). The answer must pickle, and hold only what ``compute`` read:
     a ``HandlerEffects`` in it would read its clauses not yet asked for when pickled — outside
-    ``reading_sources``, so their modules would not be in the key (``program_effects.Clause``)."""
+    ``reading_sources``, so their modules would not be in the key (``_program_effects.Clause``).
+    ``depends_on`` = the analysis' arguments (the Program function and the values bound to its
+    parameters): the modules they were built from are in the key as ``compute``'s own are."""
     place = _place(identity)
     if place is None:
         return compute()
@@ -174,7 +178,9 @@ def cached_result(identity: tuple[str, ...] | None, compute: Callable[[], T]) ->
         for observer in tuple(_EXPANSION_OBSERVERS):
             observed.enter_context(observer())
         answer = reading_sources(compute)
-        entry = _Entry(material=_material(_depended_modules(answer.read, compute)), value=answer.value)
+        entry = _Entry(
+            material=_material(_depended_modules(answer.read, (compute, *depends_on))), value=answer.value
+        )
         _write_entry(place / _entry_name(entry.material), entry)
         _drop_least_used(place)
     return answer.value
@@ -352,13 +358,14 @@ def _loaded_now() -> _Loaded:
     return _Loaded(by_name=by_name, by_file=by_file, children=children)
 
 
-def _depended_modules(read: frozenset[str], compute: object) -> frozenset[str]:
+def _depended_modules(read: frozenset[str], analysis: tuple[object, ...]) -> frozenset[str]:
     """The modules an answer depends on, so that it is keyed on them only: the modules whose source
-    the analysis read, the module of the analysis itself, and every module reached from them by
-    ``_dependencies`` (the module docstring). ``__main__`` is the program that started the process
-    (another runner for the same analysis), not a module of it."""
+    the analysis read, the modules of the analysis itself and of its arguments (``analysis``), and
+    every module reached from them by ``_dependencies`` (the module docstring). ``__main__`` is the
+    program that started the process (another runner for the same analysis), not a module of it."""
     loaded = _loaded_now()
-    frontier = (read | _value_modules(compute, "", frozenset(), loaded)) & loaded.by_name.keys()
+    used = frozenset(found for value in analysis for found in _value_modules(value, "", frozenset(), loaded))
+    frontier = (read | used) & loaded.by_name.keys()
     reached: frozenset[str] = frozenset()
     while frontier:
         reached = reached | frontier

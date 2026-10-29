@@ -6,7 +6,7 @@ Programs inside ``Try(...)`` and ``SqlTransaction(...)`` were checked nowhere.
 """
 
 import pytest
-from doeff_effect_analyzer.program_effects import runs_where_performed
+from doeff_effect_analyzer._program_effects import runs_where_performed
 
 pytest.importorskip("hy")
 

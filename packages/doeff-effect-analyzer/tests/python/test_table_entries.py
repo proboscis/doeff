@@ -9,7 +9,7 @@ table's functions: each is read, as both branches of a conditional are.
 """
 
 import pytest
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
