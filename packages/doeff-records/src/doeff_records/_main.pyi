@@ -27,7 +27,7 @@ from doeff_core_effects.sql_effects import SqlRows as SqlRows
 from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
 from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler as pooled_postgres_sql_handler
-from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler as thread_pool_compute_handler
+from doeff_core_effects import thread_pool_compute_handler as thread_pool_compute_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_records._values import RecordsSchema as RecordsSchema
 from doeff_records.pg import pg_records_handler as pg_records_handler

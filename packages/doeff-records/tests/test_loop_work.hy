@@ -15,9 +15,10 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [run with_handlers])
 ;; 束の読みの読み解きと綴りの Compute を、数えながらその場で回す(counted-compute)か、本番と同じ thread の pool で回す。
-(import doeff_core_effects.compute_effects [Compute])
-(import doeff_core_effects.inline_compute [computed inline-compute-handler])
-(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import doeff_core_effects [Compute])
+(import doeff_core_effects [inline-compute-handler]
+        doeff_core_effects._inline_compute [computed])
+(import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [state])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])

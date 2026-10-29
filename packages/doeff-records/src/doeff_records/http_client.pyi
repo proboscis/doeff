@@ -12,7 +12,7 @@ from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpPhases as HttpPhases
-from doeff_core_effects.meter_effects import CountMetric as CountMetric
+from doeff_core_effects import CountMetric as CountMetric
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
 from doeff_records.event_source import RECORDS_SIGNAL_SOURCE as RECORDS_SIGNAL_SOURCE
@@ -58,8 +58,8 @@ from doeff_records.wire import SERVER_TIMING_QUEUE as SERVER_TIMING_QUEUE
 from doeff_records.wire import server_timing_spans as server_timing_spans
 from doeff_records.wire import IDEMPOTENCY_HEADER as IDEMPOTENCY_HEADER
 from doeff_records.wire import request_key as request_key
-from doeff_core_effects.random_effects import RandomBytes as RandomBytes
-from doeff_core_effects.os_random import os_random_handler as os_random_handler
+from doeff_core_effects import RandomBytes as RandomBytes
+from doeff_core_effects import os_random_handler as os_random_handler
 DEFAULT_REQUEST_TIMEOUT: float
 EXCHANGE_LOG: str
 

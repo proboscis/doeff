@@ -35,7 +35,7 @@
 (import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
 (import doeff_core_effects [state])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を、仮想の時計の上でその場で回す(本番は thread の pool)。
-(import doeff_core_effects.inline_compute [inline-compute-handler])
+(import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects.sql_effects [SqlQuery])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase postgres-sql-handler])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
