@@ -2,7 +2,7 @@
 # handler supports every chat and structured query, so it belongs outermost, as the catch-all; installed
 # innermost, it answers all three effects and the OpenAI and Gemini handlers never see one. Prints which
 # handler saw each effect and which models each mock answered.
-from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import MockGeminiHandler, gemini_mock_handler
 from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_openai import MockOpenAIConfig, MockOpenAIState, openai_mock_handler
 from doeff_openrouter import MockOpenRouterRuntime, openrouter_mock_handler

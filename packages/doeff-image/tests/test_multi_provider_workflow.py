@@ -43,10 +43,9 @@ if "pydantic" not in sys.modules:
         pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
         sys.modules["pydantic"] = pydantic_stub
 
-import doeff_gemini.handlers.production as gemini_production
-import doeff_seedream.handlers.production as seedream_production
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_image.types import ImageResult
+import doeff_gemini._handlers.production as gemini_production
+import doeff_seedream._handlers.production as seedream_production
+from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do, handler, run
 

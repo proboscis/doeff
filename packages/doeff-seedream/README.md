@@ -54,8 +54,8 @@ Consult [the official API docs](https://www.volcengine.com/docs/82379/1541523) f
 
 `doeff-seedream` now supports provider-agnostic effects from `doeff-image`:
 
-- `doeff_image.effects.ImageGenerate`
-- `doeff_image.effects.ImageEdit`
+- `doeff_image.ImageGenerate`
+- `doeff_image.ImageEdit`
 
 Use `seedream_image_handler` for model-routed protocol handling. It handles
 Seedream models and passes unsupported models outward via `Pass(effect, k)`, so it can be

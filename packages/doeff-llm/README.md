@@ -19,7 +19,7 @@ that route these effects by model name.
 from doeff import WithHandler, do, run
 from doeff_llm import LLMChat
 from doeff_openai import openai_production_handler
-from doeff_gemini.handlers import gemini_production_handler
+from doeff_gemini import gemini_production_handler
 
 
 @do

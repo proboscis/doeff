@@ -23,7 +23,7 @@ class SeedreamGenerate(EffectBase):
 
     def __post_init__(self) -> None:
         warn(
-            "SeedreamGenerate is deprecated; use doeff_image.effects.ImageEdit instead.",
+            "SeedreamGenerate is deprecated; use doeff_image.ImageEdit instead.",
             DeprecationWarning,
             stacklevel=2,
         )
