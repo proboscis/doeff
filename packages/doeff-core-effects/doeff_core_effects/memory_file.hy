@@ -15,7 +15,7 @@
 (import posixpath)
 (import collections.abc [Callable])
 (import dataclasses [replace :as with-fields])
-(import doeff_core_effects.scheduler [CreatePromise CompletePromise Wait])
+(import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry EntryStat LockHeld MemoryFile MemoryLink MemoryFiles ReadMemoryFiles
                                          StatPath MakeSymlink Appended AppendBytes TruncateFile SyncDirectory
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile

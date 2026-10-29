@@ -43,7 +43,7 @@
 (import time)
 (import doeff [with-handlers])
 (import doeff_core_effects.file_effects [FileFailed PathKind PathStat])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects._handlers [state])
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_core_effects.os_file [stat-path])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])

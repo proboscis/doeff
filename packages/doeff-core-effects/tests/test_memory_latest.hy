@@ -7,8 +7,8 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff [run with_handlers])
-(import doeff_core_effects.effects [Get Put])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [Get Put])
+(import doeff_core_effects [state])
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
 (import doeff_core_effects.memory_latest [memory-latest-handler])
 

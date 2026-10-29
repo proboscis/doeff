@@ -75,7 +75,7 @@
 (import collections.abc [Sequence])
 (import typing [TypeGuard TypeVar])
 (import doeff [Program])
-(import doeff_core_effects.scheduler [ExternalPromise])
+(import doeff_core_effects._scheduler [ExternalPromise])
 
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 

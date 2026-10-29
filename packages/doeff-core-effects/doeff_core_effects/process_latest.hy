@@ -20,7 +20,7 @@
 (import threading)
 (import functools [partial])
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
 
 
 ;; process に 1 つ: 名前 → 置き場(型 → 最新の値)と、置き場を作る時の lock。

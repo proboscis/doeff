@@ -24,7 +24,7 @@
 (import dataclasses [dataclass])
 (import threading)
 (import time)
-(import doeff_core_effects.scheduler [scheduler-trace-sink set-scheduler-trace])
+(import doeff_core_effects._scheduler [scheduler-trace-sink set-scheduler-trace])
 (import doeff_core_effects.step_tally_effects [CloseStepTally EMPTY-STEP-TALLY OpenStepTally SiteTally StepTally
                                                CloseTaskTally OpenTaskTally ReadTaskTally TaskTally])
 

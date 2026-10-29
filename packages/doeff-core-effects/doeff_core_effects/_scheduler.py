@@ -1,0 +1,3467 @@
+"""
+Cooperative scheduler — OCaml 5 recursive match_with pattern.
+
+Each task gets its own handler node. Spawn creates a new handler node
+recursively. All handler instances share state via closure.
+
+No envelope needed. Task completion is caught by a @do wrapper that
+performs TaskCompleted.
+
+Usage:
+    from doeff import do, run
+    from doeff.scheduler import scheduled, Spawn, Gather, Wait
+
+    @do
+    def main():
+        t1 = yield Spawn(task1())
+        t2 = yield Spawn(task2())
+        results = yield Gather(t1, t2)
+        return results
+
+    run(scheduled(main()))
+"""
+
+import functools
+import itertools
+import logging
+import os
+import reprlib
+import sys
+import threading
+import time
+import traceback
+import warnings
+import weakref
+from collections import Counter
+from collections.abc import Callable, Generator, Iterable, Mapping
+from dataclasses import dataclass
+from types import FunctionType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypeVar,
+    overload,
+)
+
+from doeff import Call, EffectBase, Err, K, Ok, TailEval
+from doeff import Callable as _VmCallable
+from doeff import WithBoundaries as _WithBoundariesRaw
+from doeff import WithHandlerType as _WithHandlerRaw
+from doeff._vm import native
+from doeff.do import do
+from doeff.handler_utils import get_inner_boundaries
+from doeff.program import Pass, Perform, Pure, Resume, Transfer
+from doeff.program import handler as _program_handler
+
+if TYPE_CHECKING:
+    from doeff import Program
+
+_logger = logging.getLogger(__name__)
+
+# Answer types (docs/23-static-typing.md): Spawn answers Task[T], Wait / Race answer T,
+# Gather answers list[T]. Spawn's static __iter__ also yields the spawned program's
+# effects E: the task runs under the spawner's handlers, so the spawner declares them.
+# Task / Future are covariant in T (a read-only handle: a Task[int] is a Task[object]), so
+# Gather / Race over handles of different result types answer the union. pyright widens _T
+# to the union by itself; mypy joins instead (int and str -> object), so Gather and Race
+# also declare per-position overloads for 2 to 6 handles (as asyncio.gather does) that
+# answer _T1 | ... | _T6 under both checkers.
+_T = TypeVar("_T")
+_E = TypeVar("_E")
+_T_co = TypeVar("_T_co", covariant=True)
+_T1 = TypeVar("_T1")
+_T2 = TypeVar("_T2")
+_T3 = TypeVar("_T3")
+_T4 = TypeVar("_T4")
+_T5 = TypeVar("_T5")
+_T6 = TypeVar("_T6")
+
+# How long a blocking wait for external completions may stay silent before a
+# stall diagnostic is logged (#495b). Blocking semantics are unchanged: the
+# scheduler logs the parked-waiter summary and keeps waiting.
+EXTERNAL_STALL_LOG_INTERVAL_SECONDS = 30.0
+
+# How many parked waiters the stall diagnostic names one by one; the rest are
+# only counted (by waiter type). A long-running service can hold tens of
+# thousands of parked waiters: naming every one made each stall line ~2.7 MB,
+# written twice per interval (agora card ki-1706e931a46c — 57,003 waiters).
+STALL_LOG_WAITERS_SHOWN = 20
+
+# How many fresh_id allocations pass between two sweeps of terminal,
+# unobserved task/promise entries (#502). The sweep runs synchronously inside
+# the scheduler's own dispatch path (fresh_id is only called from effect
+# handlers), never from a GC callback, so it can safely mutate the state dicts.
+HANDLE_SWEEP_INTERVAL = 1024
+
+# Minimum handle_refs list length before dead weakrefs are pruned at
+# registration time (#502): a long-lived PENDING promise whose owner mints
+# `.future` repeatedly must not accumulate dead refs until terminality.
+HANDLE_REFS_PRUNE_MIN = 8
+
+# How many never-retrieved task exceptions the run-end warning names; the rest
+# are counted (card ki-84667a89b47a). A run keeps no more descriptions than this
+# for the tasks the #502 sweep deletes, so a long run of fire-and-forget
+# failures does not grow memory.
+UNRETRIEVED_EXCEPTIONS_NAMED = 10
+
+# The kinds of ready-heap entry, declared in one place (design check of card
+# ki-1294af4fa525): ready_push refuses any other kind, so a new kind is declared
+# here — not taught to Cancel or to the counts one by one.
+# - holding a started task's continuation (a K) at [2], shaped (kind, owner_tid,
+#   k, ...): Cancel/Discard take the continuation out of the heap
+#   (detach_from_ready), and ready_push refuses an entry without one;
+_CONTINUATION_ENTRY_KINDS = frozenset(("resume", "raise", "sem_resume"))
+# - "new" starts a task that has no continuation yet;
+_NEW_TASK_ENTRY_KIND = "new"
+# - "wait_external" is the external-wait placeholder, which never runs anything.
+_PLACEHOLDER_ENTRY_KIND = "wait_external"
+_READY_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND, _PLACEHOLDER_ENTRY_KIND}
+# Derived, not a place to declare a kind: the entries that run a task when
+# popped; has_live_ready_entry counts the ones at or below the shield whose
+# owner is not cancelled.
+_RUNNABLE_ENTRY_KINDS = _CONTINUATION_ENTRY_KINDS | {_NEW_TASK_ENTRY_KIND}
+# Waiter entries registered under one waitable key, holding the waiting task's
+# continuation (a K) at [2] ("wait" and the external "wait_external"). A kind
+# registered under several keys (Gather, Race) holds a shared state instead and
+# is declared with its withdrawal in the scheduler (withdraw_group_of);
+# park_waiter refuses anything else.
+_SINGLE_KEY_WAITER_KINDS = frozenset(("wait", "wait_external"))
+# Test switch (the scheduler tests turn it on through the scheduler_index_self_check
+# fixture of tests/conftest.py): every scheduler step — of both implementations —
+# recomputes the waiters index and the ready counts from the structures and
+# raises SchedulerIndexDriftError on a difference. Read once when a run starts.
+_INDEX_SELF_CHECK = False
+# The wake of a ready entry enqueued while no trace sink was installed.
+_UNTRACKED_WAKE = ("untracked", None)
+# Claimed external-wait placeholders are taken out of the ready heap once there
+# are at least this many and they are more than half of it.
+_CLAIMED_MARKS_COMPACT_MIN = 64
+
+
+class _ReadyItem(NamedTuple):
+    """One item of the ready heap. The heap orders by ``(neg_priority, seq)``: a higher priority is served first and the
+    insertion order breaks a tie (``seq`` is unique, so ``entry`` is never compared)."""
+
+    neg_priority: int
+    seq: int
+    entry: tuple[object, ...]
+
+
+class _ClaimMark:
+    """The claim on one external-wait registration (#490/#505): the waiters side owns the one resume, and the paired
+    ready-heap placeholder drops itself once claimed. ``mut_in_ready`` tells whether that placeholder still sits in
+    the heap, so a claim knows it leaves a dead one there. Both fields only move through the methods."""
+
+    __slots__ = ("mut_claimed", "mut_in_ready")
+
+    def __init__(self) -> None:
+        self.mut_claimed = False
+        self.mut_in_ready = False
+
+    def take(self) -> None:
+        """Mark the registration claimed."""
+        self.mut_claimed = True
+
+    def place(self, in_ready: bool) -> None:
+        """Record whether the placeholder sits in the ready heap."""
+        self.mut_in_ready = in_ready
+
+
+# 測りの口(agora-redesign #3861・#3855)。sink を据えると、scheduler(Python の版も Rust の版も)が出来事ごとに dict を
+# 1 つ渡す。sink が None の間は、呼び所の頭で 1 度だけ見て抜ける — 出来事の dict も時計の読みも作らない(Rust の版は
+# doeff_vm の旗を 1 度読む)。
+TraceSink = Callable[[dict[str, object]], None]
+_trace_sink: TraceSink | None = None
+_trace_runs = itertools.count()
+# sink を据え直すたびに進む番号。歩の始まりの境目はこの番号と組で覚え、据え直す前の境目からは歩を測らない
+# (外していた間の時間を 1 歩に数えない)。
+_trace_generation = 0
+
+
+def set_scheduler_trace(sink: TraceSink | None) -> None:
+    """process 全体で 1 つの測りの sink を据える(None で外す)。
+
+    出来事は Python の版も Rust の版(既定)も出す — 同じ種類・同じ欄の出来事を同じ順で(時計の値と doeff-vm の
+    歩数は版ごとに違う。tests/test_scheduler_trace.py が両方の版の並びを照らす)。run の途中で据えても外しても、
+    次の出来事から従う。出来事の ``event`` は
+    start・enqueued・resumed・spawned・task-enter・task-leave・external-complete・external-drained・
+    external-ignored で、どれも ``run``・``thread``・``ns``(perf_counter_ns)・``cpu_ns``
+    (thread_time_ns)を持つ。task ごとの CPU は、task-leave の直前の区間(同じ task の
+    task-enter か task-leave から)を足して数える — task-leave はその区間を ``step_ns``・
+    ``step_cpu_ns``・``step_vm_steps``・``step_handler_calls``(doeff-vm の数 — process 全体の累計の差)
+    として添える(区間の始まりがこの sink の下に無ければ None)。spawned は ``tid``(子)・``parent``
+    (Spawn を出した task・根は None)・``site`` を持つ(#4188 — task の木を出来事から組み直すため)。
+    task-leave は scheduler の prompt を通る効果ごとに出る — scheduler が渡すだけの効果(外の handler が答える物)にも。
+
+    sink が例外を上げた時: Python の版では出来事を出した所から上がる。Rust の版の中で出す出来事(start と
+    external-complete の外 — この 2 つは両方の版で Python の側が出す)では、状態の書き換えの途中で止めないため、
+    Exception は sys.unraisablehook へ渡して run を続け、KeyboardInterrupt などの BaseException は次に再開する
+    task の yield へ投げ込む。
+    """
+    global _trace_sink, _trace_generation
+    switch = _rust_scheduler_trace_switch()
+    _trace_sink = sink
+    _trace_generation += 1
+    switch(sink is not None)
+
+
+def _rust_scheduler_trace_switch() -> Callable[[bool], None]:
+    """Rust の版の scheduler が読む旗(sink が据えてあるか)の切り替え — Python の sink と揃えるため。
+
+    Rust の拡張が古くて旗を持たない時は ImportError で断る(Python の版の測りも doeff_vm の数を読むので、
+    同じ拡張を build し直す)。sink の状態は変えない。
+    """
+    try:
+        return native._set_scheduler_trace_installed
+    except AttributeError as error:
+        raise ImportError(
+            "set_scheduler_trace needs a doeff_vm extension that carries the scheduler trace switch "
+            "(_set_scheduler_trace_installed): rebuild the Rust extension (`make sync` in a doeff "
+            "checkout, or reinstall doeff-vm)"
+        ) from error
+
+
+def scheduler_trace_sink() -> TraceSink | None:
+    """今据えてある測りの sink(無ければ None)。"""
+    return _trace_sink
+
+
+def _trace_at(sink: TraceSink, event: str, run: int | None, ns: int, cpu_ns: int, fields: dict[str, object]) -> None:
+    """読み済みの時計の値で出来事を 1 つ sink へ渡すため(歩の境目は時計を 1 度だけ読み、その値を出来事と歩の始まりの両方に使う)。"""
+    sink({
+        "event": event,
+        "run": run,
+        "thread": threading.current_thread().name,
+        "ns": ns,
+        "cpu_ns": cpu_ns,
+        **fields,
+    })
+
+
+def _trace(event: str, run: int | None, **fields: object) -> None:
+    """sink がある時だけ時計を読んで出来事を 1 つ渡すため。"""
+    sink = _trace_sink
+    if sink is None:
+        return
+    _trace_at(sink, event, run, time.perf_counter_ns(), time.thread_time_ns(), fields)
+
+
+@dataclass(frozen=True, slots=True)
+class _StepStart:
+    """歩の始まりの境目 1 つ: 据えた sink の番号(generation)・壁の ns・CPU の ns・doeff-vm の歩数と handler の呼びの累計。"""
+
+    generation: int
+    ns: int
+    cpu_ns: int
+    vm_steps: int
+    handler_calls: int
+
+
+def _trace_step_boundary(
+    previous: _StepStart | None, event: str, run: int, tid: int | None, fields: dict[str, object]
+) -> _StepStart | None:
+    """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、次の歩の始まりを返すため(両方の版が使う)。
+
+    時計と doeff-vm の数は 1 度だけ読み、出来事と次の歩の始まりの両方に使う。task-leave には、直前の境目
+    ``previous`` からこの歩の壁と CPU の ns(step_ns・step_cpu_ns)と doeff-vm の歩数と handler の呼び
+    (step_vm_steps・step_handler_calls — #4188。機体の混みで揺れない)を添える — 直前の境目が今の sink の下に
+    無ければ(据えた直後・据え直した後)None。sink が無ければ何も出さず ``previous`` を返す。"""
+    sink = _trace_sink
+    if sink is None:
+        return previous
+    ns, cpu_ns = time.perf_counter_ns(), time.thread_time_ns()
+    work = _read_vm_work()
+    start = _StepStart(_trace_generation, ns, cpu_ns, work.steps, work.handler_calls)
+    if event == "task-leave":
+        fresh = previous is not None and previous.generation == _trace_generation
+        fields = {
+            **fields,
+            "step_ns": ns - previous.ns if fresh else None,
+            "step_cpu_ns": cpu_ns - previous.cpu_ns if fresh else None,
+            "step_vm_steps": work.steps - previous.vm_steps if fresh else None,
+            "step_handler_calls": work.handler_calls - previous.handler_calls if fresh else None,
+        }
+    _trace_at(sink, event, run, ns, cpu_ns, {"tid": tid, **fields})
+    return start
+
+
+def _boundary_callable(kind: str, boundary_callable: Callable[..., object]) -> object:
+    """The callable one captured boundary installs — the same one WithHandler / WithObserve took."""
+    if kind == "handler":
+        # GetBoundaries returns the raw dispatcher already accepted by the VM,
+        # not a Program -> Program installer. Reuse that calling convention:
+        # handler() would repeat its installer Protocol check and allocate a
+        # throwaway closure for every inherited boundary (#1384).
+        # WithBoundaries still performs the normal VM callable/spec validation.
+        return boundary_callable
+    if kind == "observer":
+        return _VmCallable(boundary_callable)
+    raise RuntimeError(f"unknown boundary kind: {kind!r}")
+
+
+def _reinstall_boundaries(
+    prog: object, boundaries: Iterable[tuple[str, Callable[..., object]]]
+) -> _WithBoundariesRaw:
+    """Re-wrap prog with the boundary stack captured at the spawn site (innermost first) in one VM step.
+
+    The same scope as one WithHandler / WithObserve per boundary, nested in that
+    order, without a VM step and an empty body fiber per layer (agora-redesign #3149).
+    """
+    return _WithBoundariesRaw(
+        [(kind, _boundary_callable(kind, boundary_callable)) for kind, boundary_callable in boundaries],
+        prog,
+    )
+
+
+def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
+    """Build doeff traceback from VM execution context + task metadata.
+
+    vm_ctx: from GetExecutionContext — fiber chain at error site (before unwinding).
+            Contains ["frame", ...] and ["handler", ...] entries from the live fiber chain.
+    task_meta: scheduler task metadata with inner_boundaries.
+    """
+    entries = []
+
+    if vm_ctx:
+        # Use VM fiber chain context (captured at error site)
+        entries.extend(vm_ctx)
+    else:
+        # Fallback: extract from Python __traceback__
+        import traceback as tb_mod
+        tb = exc.__traceback__
+        if tb is not None:
+            for fs in tb_mod.extract_tb(tb):
+                fn = fs.filename
+                if any(p in fn for p in ("/doeff_vm/", "/doeff/do.py", "/doeff/run.py",
+                                          "/doeff_core_effects/")):
+                    continue
+                entries.append(["frame", fs.name, fs.filename, fs.lineno])
+
+    if entries:
+        existing = getattr(exc, "__doeff_traceback__", None) or []
+        exc.__doeff_traceback__ = entries + existing
+
+
+# ---------------------------------------------------------------------------
+# Effects
+# ---------------------------------------------------------------------------
+
+PRIORITY_IDLE = 0
+PRIORITY_EXTERNAL_WAIT = 5   # above IDLE (blocks clock driver), below NORMAL (yields to real work)
+PRIORITY_NORMAL = 10
+PRIORITY_HIGH = 20
+
+
+class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
+    """Spawn a task; resumes the spawner with a Task handle.
+
+    ``daemon=True`` declares that the task is background work the run does
+    not need for progress (sim clock driver, persistent listener loops):
+
+    - Daemon tasks and their queued wakes are excluded from the root
+      close-out diagnostic (#501) — abandoning them at root return is
+      their declared lifecycle.
+    - Daemon tasks are the only tasks the PRIORITY_EXTERNAL_WAIT shield
+      may starve while an external completion is pending (#505): a
+      non-daemon entry below the shield always runs before the scheduler
+      blocks, because the run may need it to progress (it may be the very
+      task producing the awaited completion, or the releaser of a blocked
+      semaphore).
+
+    Daemon-ness changes nothing else — scheduling priority, deadlock
+    detection (#495), and the stall log still see daemon tasks like any
+    other task.
+    """
+
+    # The child task carries the spawner's handlers: its Program runs as if performed at
+    # the Spawn (``doeff_core_effects._effects.runs_carried_of``).
+    __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
+
+    def __init__(
+        self, program: "Program[_T, _E]", priority: int = PRIORITY_NORMAL, daemon: bool = False
+    ) -> None:
+        super().__init__()
+        self.program = program
+        self.priority = priority
+        self.daemon = daemon
+
+    if TYPE_CHECKING:
+        # Static model only (runtime: EffectBase.__iter__ yields just the Spawn). The spawned
+        # program runs under the spawner's handler stack, so its effects E are the spawner's
+        # to declare — yielding them here makes `yield from Spawn(p)` add p's E to the caller.
+        # The Spawn itself is yielded as `Spawn[Any, Any]` (the form a row declares), not
+        # `Spawn[_T, _E]`: with the self-referential form, pyright solving `perform(Spawn(p))`
+        # against the declared row filled a child with no effects (E = Never) with
+        # `Spawn[Unknown, Unknown]` — partially Unknown under strict (docs/24-effectful-perform.md).
+        def __iter__(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self,
+        ) -> Generator["Spawn[Any, Any] | _E", Any, "Task[_T]"]: ...
+
+
+class TaskCompleted(EffectBase):
+    def __init__(self, task_id: int, result: "Ok[object] | Err") -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.result = result
+
+
+class Gather(EffectBase[list[_T]], Generic[_T]):
+    """Wait for every Task or Future and answer their values as a list.
+
+    ``Gather(Task[int], Task[str])`` answers ``list[int | str]`` (the overloads
+    below; see the note on the answer types at the top of this module).
+    """
+
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4 | _T5]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", /,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Gather[_T1 | _T2 | _T3 | _T4 | _T5 | _T6]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", t6: "Task[_T6] | Future[_T6]", /,
+    ) -> None: ...
+    @overload
+    def __init__(self, *tasks: "Task[_T] | Future[_T]") -> None: ...
+    def __init__(self, *tasks: "Task[object] | Future[object]") -> None:
+        super().__init__()
+        self.tasks = tasks
+
+
+class Wait(EffectBase[_T], Generic[_T]):
+    """Wait for a Task or Future to resolve.
+
+    ``priority`` controls the priority at which the waiter is re-enqueued
+    when the waitable resolves (#504). ``None`` (default) means the waiter
+    wakes at its own task's spawn priority. For an *external* promise,
+    ``PRIORITY_IDLE`` is a park mode, not a wake priority: the wait is
+    parked without a ready-heap placeholder (so the sim clock driver may
+    run) and the waiter still wakes at its own task priority — an IDLE
+    wake would starve it behind the PRIORITY_EXTERNAL_WAIT shield.
+    """
+
+    def __init__(self, task: "Task[_T] | Future[_T]", priority: int | None = None) -> None:
+        super().__init__()
+        self.task = task
+        self.priority = priority
+
+
+class Cancel(EffectBase[None]):
+    """Request cancellation of a task; the requester resumes immediately.
+
+    - A task that never started is cancelled without running its body.
+    - A started task receives ``TaskCancelledError`` at the point where it
+      is suspended (Wait / Gather / Race / AcquireSemaphore / a queued
+      resume; a self-cancel at its own Cancel). Its ``except``/``finally``
+      blocks run and may perform effects; the task stays live
+      (``cancelling``) until it finishes unwinding.
+    - Waiters are woken when the task has finished unwinding. They observe
+      ``TaskCancelledError`` if it ended by propagating it or by swallowing
+      it and returning (the late value is discarded), or the other
+      exception its cleanup raised.
+    - Each Cancel delivers the exception once; a task that swallows it
+      keeps running until it ends or is cancelled again.
+    - Cancelling a terminal task is a no-op.
+    """
+    def __init__(self, task: "Task[Any]") -> None:
+        super().__init__()
+        self.task = task
+
+
+class Discard(EffectBase[None], Generic[_T]):
+    """Drop a task without unwinding it, like SIGKILL; the requester resumes immediately.
+
+    ``Cancel`` throws into the task so its ``except``/``finally`` run.
+    ``Discard`` does not: the task's continuation is dropped, so no effect of
+    the task is performed any more — not even one inside its ``finally``
+    blocks. Use it to model a hard kill (a process killed with SIGKILL), not
+    a graceful stop.
+
+    CPython closes a dropped generator (it throws ``GeneratorExit``), and no
+    Python API can drop a suspended generator without that. So the plain
+    Python statements of a ``finally`` still run, up to its first effect; that
+    effect is never performed (CPython reports "generator ignored
+    GeneratorExit" through ``sys.unraisablehook``).
+
+    - A task that never started ends without running its body (as Cancel).
+    - A started task ends at once: its continuation is dropped wherever it
+      is suspended (or, for a self-discard, at this Discard), it becomes
+      ``cancelled`` and its waiters wake with ``TaskCancelledError``. A task
+      that is already unwinding from a Cancel stops unwinding.
+    - Like Cancel, the external promises it was waiting on are stopped.
+    - What the task held is not given back (a semaphore permit it acquired
+      stays taken), exactly as with a killed process.
+    - Discarding a terminal task is a no-op.
+    """
+    def __init__(self, task: "Task[_T]") -> None:
+        super().__init__()
+        self.task = task
+
+
+class TaskCancelledError(Exception):
+    """Thrown into a cancelled task, and raised to whoever waits on it."""
+
+
+class ExternalPromiseCancelCallbackError(RuntimeError):
+    """Raised to the ``Cancel`` caller when an ``on_cancel`` callback failed.
+
+    The cancellation itself has already taken effect (the task was sent
+    ``TaskCancelledError`` and the abandoned external promises are
+    ``cancelled``); ``errors`` lists every callback exception so none is
+    lost.
+    """
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self.errors: list[Exception] = list(errors)
+        super().__init__(
+            "external promise cancel callback(s) failed: "
+            + "; ".join(repr(error) for error in self.errors)
+        )
+
+
+class SchedulerIndexDriftError(AssertionError):
+    """The scheduler's index or counts no longer match its structures.
+
+    Raised only while ``_INDEX_SELF_CHECK`` is on (the scheduler tests): the
+    waiters index, the ready counts and the claimed-placeholder count are kept
+    by the entry functions alone, and a change that moves ``waiters`` or
+    ``ready`` some other way breaks them silently (card ki-1294af4fa525).
+    """
+
+
+class SchedulerDeadlockError(RuntimeError):
+    """Raised when the scheduler has parked work that cannot make progress."""
+
+    def __init__(
+        self,
+        semaphore_waiters: Mapping[int, Iterable[int]],
+        parked_waiters: Iterable[str] | None = None,
+    ) -> None:
+        self.semaphore_waiters: dict[int, list[int]] = {
+            sem_id: list(task_ids)
+            for sem_id, task_ids in semaphore_waiters.items()
+        }
+        self.parked_waiters: list[str] = list(parked_waiters or [])
+        details: list[str] = []
+        for sem_id, task_ids in self.semaphore_waiters.items():
+            if task_ids:
+                task_list = ", ".join(str(task_id) for task_id in task_ids)
+                details.append(f"semaphore {sem_id}: tasks {task_list}")
+            else:
+                details.append(f"semaphore {sem_id}: root continuation")
+        parts = []
+        if details:
+            parts.append(
+                "semaphore waiters remain with no runnable tasks "
+                f"({'; '.join(details)})"
+            )
+        if self.parked_waiters:
+            parts.append(
+                "parked waiters that no external completion can wake: "
+                f"{'; '.join(self.parked_waiters)}"
+            )
+        super().__init__("scheduler deadlock: " + "; ".join(parts))
+
+
+class StepBudgetExceeded(BaseException):
+    """Raised by the scheduler (either implementation) when an armed step budget is spent (#3143).
+
+    A run that keeps waking tasks without the virtual clock advancing (a
+    busy loop at one instant) never ends on its own and a wall-clock timeout
+    cannot interrupt the VM's step loop. With a budget armed
+    (``arm_step_budget``), the scheduler fails the run by name, while it is
+    still running, at the first wake after the budget is spent.
+
+    A ``BaseException`` (like ``KeyboardInterrupt``), not an ``Exception``:
+    ``Try`` reinstalls the scheduler's handlers around its program and
+    catches ``Exception``, so an ``Exception`` raised here would come back to
+    the spinning task as ``Err`` and the spin would go on. ``task_id`` is the
+    task about to wake (None = the root body). The scheduler does not read
+    the virtual clock, so the error does not name the last instant it moved.
+    """
+
+    def __init__(self, task_id: int | None, steps_taken: int, limit_steps: int) -> None:
+        self.task_id = task_id
+        self.steps_taken = steps_taken
+        self.limit_steps = limit_steps
+        target = "the root body" if task_id is None else f"task {task_id}"
+        super().__init__(
+            f"step budget exceeded: {steps_taken} doeff-vm steps since the budget was armed, "
+            f"limit {limit_steps} (while waking {target})"
+        )
+
+
+def _read_vm_steps() -> int:
+    """The doeff-vm steps taken so far by the whole process (a running total)."""
+    return _read_vm_work().steps
+
+
+@dataclass(frozen=True)
+class VmWork:
+    """The doeff-vm work the whole process has done so far (running totals): steps and handler calls."""
+
+    steps: int
+    handler_calls: int
+
+
+def _read_vm_work() -> VmWork:
+    """Read the process's doeff-vm running totals, so a measured span can be told in steps that a busy machine does not shift."""
+    steps, handler_calls = native._vm_work_counts()
+    return VmWork(steps=steps, handler_calls=handler_calls)
+
+
+@dataclass(frozen=True)
+class StepBudget:
+    """An armed step budget: the process step total when armed and the steps allowed after it."""
+
+    started_at_steps: int
+    limit_steps: int
+
+
+@dataclass(frozen=True)
+class SpentStepBudget:
+    """A step budget already spent: the error the first wake past the limit raised.
+
+    Every later wake raises the same error, so the run reports the first wake
+    past the limit even when unwinding the run wakes tasks again.
+    """
+
+    budget: StepBudget
+    error: StepBudgetExceeded
+
+
+ProcessStepBudget = StepBudget | SpentStepBudget
+
+# The one step budget of the process (#3143). None (the default) means the
+# scheduler never reads the step count: production runs are unchanged. Both
+# schedulers check it at every wake: the Python one reads it here, the Rust one
+# reads a flag that arm_step_budget / disarm_step_budget switch together with it
+# and, while the flag is set, calls _check_armed_step_budget.
+_armed_step_budget: ProcessStepBudget | None = None
+
+
+def _check_step_budget(armed: ProcessStepBudget, task_id: int | None) -> None:
+    """Raise ``StepBudgetExceeded`` when the armed budget is spent (``task_id`` = the task about to wake)."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    match armed:
+        case SpentStepBudget(error=error):
+            raise error
+        case StepBudget(started_at_steps=started_at_steps, limit_steps=limit_steps):
+            steps_taken = _read_vm_steps() - started_at_steps
+            if steps_taken > limit_steps:
+                error = StepBudgetExceeded(task_id, steps_taken, limit_steps)
+                _armed_step_budget = SpentStepBudget(armed, error)
+                raise error
+
+
+def _check_armed_step_budget(task_id: int | None) -> None:
+    """The Rust scheduler's check at a wake while its flag is set: the same check as the Python scheduler's."""
+    armed = _armed_step_budget
+    if armed is not None:
+        _check_step_budget(armed, task_id)
+
+
+def arm_step_budget(limit_steps: int) -> StepBudget:
+    """Arm the process step budget: either scheduler fails a run that takes more than
+    ``limit_steps`` doeff-vm steps from now (``StepBudgetExceeded``)."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    if limit_steps <= 0:
+        raise ValueError(f"step budget must be a positive number of steps, got {limit_steps}")
+    switch = _rust_scheduler_step_budget_switch()
+    budget = StepBudget(started_at_steps=_read_vm_steps(), limit_steps=limit_steps)
+    _armed_step_budget = budget
+    switch(True)
+    return budget
+
+
+def disarm_step_budget() -> None:
+    """Remove the process step budget; neither scheduler reads the step count any more."""
+    global _armed_step_budget  # noqa: PLW0603 - one budget per process, read by every scheduler run
+    _armed_step_budget = None
+    _rust_scheduler_step_budget_switch()(False)
+
+
+def _rust_scheduler_step_budget_switch() -> Callable[[bool], None]:
+    """The flag the Rust scheduler reads at every wake (a budget is armed), switched with ``_armed_step_budget``.
+
+    Refuses with an ImportError when the Rust extension is too old to carry the flag (the budget is read from the
+    same extension's step count, so the remedy is the same rebuild). The budget is not changed.
+    """
+    try:
+        return native._set_scheduler_step_budget_armed
+    except AttributeError as error:
+        raise ImportError(
+            "the step budget needs a doeff_vm extension that carries the scheduler step budget switch "
+            "(_set_scheduler_step_budget_armed): rebuild the Rust extension (`make sync` in a doeff "
+            "checkout, or reinstall doeff-vm)"
+        ) from error
+
+
+class Race(EffectBase[_T], Generic[_T]):
+    """Wait for the first of several Tasks or Futures to resolve.
+
+    ``priority`` is the same park mode as ``Wait``'s for *external* promises:
+    ``None`` (default) holds a ready-heap placeholder per pending external
+    promise that shields DAEMON tasks (the sim clock driver) from running past
+    the pending completion; ``PRIORITY_IDLE`` parks the race without that
+    placeholder, so the sim clock may advance while it waits — a timed wait
+    (doeff-time's WaitWithin) on a promise that in-run code completes, such as
+    doeff-records' memory-store bell, needs the clock to reach its deadline
+    (agora-redesign #3054). The owner still wakes at its own task priority.
+    Internal waitables park the same way under either value.
+
+    ``Race(Task[int], Task[str])`` answers ``int | str`` (the overloads below;
+    see the note on the answer types at the top of this module).
+    """
+
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", /, *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4 | _T5]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", /, *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self: "Race[_T1 | _T2 | _T3 | _T4 | _T5 | _T6]",
+        t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
+        t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
+        t5: "Task[_T5] | Future[_T5]", t6: "Task[_T6] | Future[_T6]", /,
+        *, priority: int | None = None,
+    ) -> None: ...
+    @overload
+    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: int | None = None) -> None: ...
+    def __init__(
+        self, *tasks: "Task[object] | Future[object]", priority: int | None = None,
+    ) -> None:
+        super().__init__()
+        if priority not in (None, PRIORITY_IDLE):
+            raise ValueError(
+                f"Race priority is a park mode: None or PRIORITY_IDLE, got {priority!r}"
+            )
+        self.tasks = tasks
+        self.priority = priority
+
+
+class CreatePromise(EffectBase["Promise[_T]"], Generic[_T]):
+    """``promise = yield from CreatePromise[int]()`` gives ``Promise[int]``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+
+class CompletePromise(EffectBase[None], Generic[_T]):
+    """Complete ``promise`` with ``value`` and wake every task waiting on it.
+
+    ``yield_to_woken`` says when the completer goes on:
+
+    - ``True`` (default): after every task the completion woke has run (#493).
+      A completer whose waiters must ask again before its next completion — a
+      listener that re-registers a fresh promise per event — relies on it: a
+      completer going on first would complete the next event into an empty
+      registry and lose it.
+    - ``False``: at once, keeping its turn; the woken tasks run when the
+      completer next waits (asyncio's ``Future.set_result``, a Redis
+      ``PUBLISH``). Only for a completer whose waiters cannot miss what it does
+      next — the in-memory notice broker keeps a notice for a subscriber not
+      waiting in that subscriber's queue (agora-redesign #4013). The woken
+      tasks are queued exactly as with ``True``, so a run whose tasks all wait
+      on promises nobody completes is still a deadlock the scheduler names.
+    """
+
+    def __init__(self, promise: "Promise[_T]", value: _T, *, yield_to_woken: bool = True) -> None:
+        super().__init__()
+        self.promise = promise
+        self.value = value
+        self.yield_to_woken = yield_to_woken
+
+
+class FailPromise(EffectBase[None]):
+    """Fail ``promise`` with ``error``: every task waiting on it gets ``error`` raised."""
+
+    def __init__(self, promise: "Promise[Any]", error: BaseException) -> None:
+        super().__init__()
+        self.promise = promise
+        self.error = error
+
+
+class CreateSemaphore(EffectBase["Semaphore"]):
+    """Create a semaphore with ``permits`` (at least 1) and answer its ``Semaphore`` handle."""
+
+    def __init__(self, permits: int = 1) -> None:
+        super().__init__()
+        self.permits = permits
+
+
+class AcquireSemaphore(EffectBase[None]):
+    """Take one permit of ``semaphore``; the task parks until a permit is free."""
+
+    def __init__(self, semaphore: "Semaphore") -> None:
+        super().__init__()
+        self.semaphore = semaphore
+
+
+class ReleaseSemaphore(EffectBase[None]):
+    """Give back one permit of ``semaphore``, waking the next waiter in FIFO order."""
+
+    def __init__(self, semaphore: "Semaphore") -> None:
+        super().__init__()
+        self.semaphore = semaphore
+
+
+class CreateExternalPromise(EffectBase["ExternalPromise[_T]"], Generic[_T]):
+    """Create a promise completed from outside the run (another thread).
+
+    The optional fields say how the promise is known to wake the scheduler,
+    so that blocking on it is not reported as a stall (invariant S1,
+    ``_external_wait_is_stall``):
+
+    - ``deadline`` marks a clock wait: the ``time.monotonic()`` instant by
+      which the producer is known to complete it (a timer /
+      ``asyncio.sleep``, agora-redesign #765).
+    - ``source_alive`` marks a watched wait: the source that completes it is
+      registered (a watched child's exit descriptor) and this callable says,
+      on the scheduler's thread, whether that source is still live — True
+      while the child runs (agora-redesign card ki-6222e22d4179). It must
+      answer at once without blocking.
+
+    Neither = an open-ended external wait; a wait is never both.
+    """
+
+    def __init__(
+        self,
+        deadline: float | None = None,
+        source_alive: Callable[[], bool] | None = None,
+    ) -> None:
+        super().__init__()
+        if deadline is not None and source_alive is not None:
+            raise ValueError(
+                "an external wait is a clock wait (deadline) or a watched wait "
+                "(source_alive), not both"
+            )
+        self.deadline = deadline
+        self.source_alive = source_alive
+
+
+@dataclass(frozen=True)
+class _ClockWake:
+    """A clock wait's wake: due at ``deadline`` (``time.monotonic()``)."""
+
+    deadline: float
+
+
+@dataclass
+class _WatchedWake:
+    """A watched wait's wake: due when the registered source ends.
+
+    ``ended_at`` is the instant the scheduler first saw ``source_alive()``
+    answer False (``None`` while the source is live) — the wake is due from
+    then on. It is per promise, so the scheduler makes one wake per promise.
+    """
+
+    source_alive: Callable[[], bool]
+    ended_at: float | None = None
+
+
+_ExternalWake = _ClockWake | _WatchedWake
+
+
+def _external_wake_of(effect: "CreateExternalPromise[_T]") -> _ExternalWake | None:
+    """The wake a new external promise carries (``None`` = open-ended).
+
+    Both scheduler implementations call it when they create the promise.
+    """
+    if effect.deadline is not None:
+        return _ClockWake(effect.deadline)
+    if effect.source_alive is not None:
+        return _WatchedWake(effect.source_alive)
+    return None
+
+
+def _external_wait_is_stall(wakes: Iterable[_ExternalWake], grace: float) -> bool:
+    """Invariant S1 (packages/doeff-core-effects/architecture.hy): whether a
+    scheduler that blocked on external completions for one interval
+    (``grace`` = EXTERNAL_STALL_LOG_INTERVAL_SECONDS) with none arriving is
+    stalled. ``wakes`` are those of its pending external promises.
+
+    Not a stall while at least one wake is scheduled and none is overdue: a
+    clock wait is due at its deadline; a watched wait is not due while its
+    source is live and is due from the instant its source is first seen
+    ended. A wake is overdue once ``grace`` has passed since it was due — a
+    lost wake. Every other block is a stall (#495b): no scheduled wake, or
+    an overdue one. Both scheduler implementations call this one function.
+    """
+    now = time.monotonic()
+    scheduled = False
+    for wake in wakes:
+        if isinstance(wake, _WatchedWake):
+            if wake.ended_at is None:
+                if wake.source_alive():
+                    scheduled = True
+                    continue
+                wake.ended_at = now
+            due = wake.ended_at
+        else:
+            due = wake.deadline
+        if now > due + grace:
+            return True
+        scheduled = True
+    return not scheduled
+
+
+def _stall_waiters_digest(parked: list[str]) -> str:
+    """The parked-waiter part of the stall diagnostic: how many waiters are
+    parked, how many of each waiter type, and the first
+    ``STALL_LOG_WAITERS_SHOWN`` of them (``parked`` is in the scheduler's
+    waiter order, so the root's waits come first) — "none" when nothing is
+    parked. Both scheduler implementations call this one function, so the
+    line stays a few hundred bytes however many waiters are parked (agora
+    card ki-1706e931a46c).
+    """
+    if not parked:
+        return "none"
+    kinds = Counter(entry.partition(" (")[2].partition(")")[0] for entry in parked)
+    by_kind = ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
+    shown = parked[:STALL_LOG_WAITERS_SHOWN]
+    hidden = len(parked) - len(shown)
+    rest = f" and {hidden} more" if hidden else ""
+    return f"{len(parked)} ({by_kind}): {shown}{rest}"
+
+
+class _SchedulerIntrospection(EffectBase):
+    """Diagnostic effect: resume with the row counts of the scheduler's state tables.
+
+    The result is a dict of non-negative ints keyed by table name (``tasks``,
+    ``promises``, ``semaphores``, ``waiters``, ``ready``, ``handle_refs``,
+    ``handle_ref_total``). It reads only: the tables are closure state with no
+    other way to look at them, so tests of the #502 terminal-state sweep — in
+    doeff, doeff-records and downstream projects — assert on this effect.
+
+    Import it as ``SchedulerIntrospection`` (below). The class keeps its
+    underscore name because the scheduler's spec — which the Rust scheduler
+    reads by that key — names it so.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+
+#: The public name of the diagnostic effect. Strict type checks of other
+#: packages' tests report ``reportPrivateUsage`` for the underscore name.
+SchedulerIntrospection = _SchedulerIntrospection
+
+
+# ---------------------------------------------------------------------------
+# Handles
+# ---------------------------------------------------------------------------
+
+class Task(Generic[_T_co]):
+    """Handle of a spawned task; ``Task[T]`` = a task whose program returns T.
+
+    Covariant in T: the handle only reads the result, so a ``Task[int]`` is a ``Task[object]``.
+    """
+
+    def __init__(self, task_id: int) -> None:
+        self.task_id = task_id
+    def __repr__(self) -> str:
+        return f"Task({self.task_id})"
+
+
+class Future(Generic[_T_co]):
+    """Read-side handle for a promise; covariant in T like ``Task``."""
+    def __init__(self, promise_id: int) -> None:
+        self.promise_id = promise_id
+    def __repr__(self) -> str:
+        return f"Future({self.promise_id})"
+
+
+class Promise(Generic[_T]):
+    """Write-side handle for an internal promise.
+
+    ``_register`` is the owning run's handle registrar (#502): every derived
+    ``Future`` must be registered too, so a promise entry is only swept once
+    the write handle AND every read handle created from it are dead.
+    """
+    def __init__(
+        self,
+        promise_id: int,
+        _register: Callable[[tuple[str, int], object], object] | None = None,
+    ) -> None:
+        self.promise_id = promise_id
+        self._register = _register
+
+    @property
+    def future(self) -> "Future[_T]":
+        future = Future(self.promise_id)
+        if self._register is not None:
+            self._register(("promise", self.promise_id), future)
+        return future
+
+    def __repr__(self) -> str:
+        return f"Promise({self.promise_id})"
+
+
+class Semaphore:
+    """Opaque semaphore handle: ``sem = yield CreateSemaphore(permits)`` makes one.
+
+    ``Semaphore(...)`` raises ``TypeError``. A handle made by hand names no
+    semaphore of the run (``AcquireSemaphore`` fails with ``KeyError``, far
+    from the mistake) or silently shares the permits of the run's semaphore
+    that has the same number. The schedulers mint theirs with
+    ``_semaphore_handle``. A handler that answers ``CreateSemaphore`` itself
+    (doeff-cluster's ``ClusterSemaphore`` / ``ReplaySemaphore``) returns its
+    own subclass, whose ``__init__`` calls ``super().__init__(sem_id)``.
+    """
+    def __init__(self, sem_id: int | str) -> None:
+        if type(self) is Semaphore:
+            raise TypeError(
+                "Semaphore(...) is not a public constructor: create a semaphore with "
+                "`sem = yield CreateSemaphore(permits)` and pass that handle around"
+            )
+        self.sem_id = sem_id
+    def __repr__(self) -> str:
+        return f"Semaphore({self.sem_id})"
+
+
+def _semaphore_handle(sem_id: int) -> Semaphore:
+    """The scheduler's handle for its semaphore ``sem_id`` (both implementations mint with it)."""
+    handle = object.__new__(Semaphore)
+    handle.sem_id = sem_id
+    return handle
+
+
+class _ExternalCompletionQueue(Protocol):
+    """ExternalPromise が完了を入れる列の形(Python の scheduler の SimpleQueue か Rust の SchedulerExternalQueue)。"""
+
+    def put(self, item: tuple[str, int, object], /) -> None: ...
+
+
+class ExternalPromise(Generic[_T]):
+    """Write-side handle for an external promise.
+
+    ``complete``/``fail`` are the ONLY thread-safe operations — they may be
+    called from foreign threads (the primary pattern) or from in-run tasks
+    (a non-daemon in-run completer stays runnable below the external-wait
+    shield, #505). Minting ``.future`` and registering ``on_cancel`` must
+    happen on the scheduler thread: handle registration (#502) and the
+    promise state are scheduler-thread-confined.
+
+    ``complete``/``fail`` は scheduler の thread に割り込む signal の受け手からも呼んでよい
+    (python の実装の外からの完了の列は put が reentrant な ``queue.SimpleQueue`` — agora-redesign #3584)。
+    """
+    def __init__(
+        self,
+        promise_id: int,
+        queue: _ExternalCompletionQueue,
+        _register: Callable[[tuple[str, int], object], object] | None = None,
+        _bind_cancel: Callable[[int, Callable[[], object]], None] | None = None,
+        _run: int | None = None,
+    ) -> None:
+        self.promise_id = promise_id
+        self._queue = queue
+        self._run = _run
+        self._register = _register
+        self._bind_cancel = _bind_cancel
+
+    def on_cancel(self, callback: Callable[[], object]) -> None:
+        """Register ``callback()`` to stop the external producer on cancel.
+
+        The scheduler cancels a PENDING external promise when a ``Cancel``
+        removes its last live waiter (every task parked on it via Wait /
+        Gather / Race is cancelled): the promise becomes ``cancelled`` —
+        later ``complete``/``fail`` calls are ignored and later waits raise
+        ``TaskCancelledError`` — and each registered callback runs once, on
+        the scheduler thread, inside the ``Cancel`` dispatch. Callbacks must
+        therefore be quick and thread-safe towards the producer (e.g.
+        ``concurrent.futures.Future.cancel``). A callback exception is
+        re-raised to the ``Cancel`` caller as
+        ``ExternalPromiseCancelCallbackError`` after the cancellation took
+        effect.
+
+        Registering on an already-cancelled promise runs ``callback``
+        immediately; on a completed/failed promise it is a no-op. Must be
+        called on the scheduler thread (like minting ``.future``).
+        """
+        if not callable(callback):
+            raise TypeError(
+                f"on_cancel expects a callable, got {type(callback).__name__}"
+            )
+        if self._bind_cancel is None:
+            raise RuntimeError(
+                f"{self!r} is not bound to a scheduler run; on_cancel is unavailable"
+            )
+        self._bind_cancel(self.promise_id, callback)
+
+    @property
+    def future(self) -> "Future[_T]":
+        future = Future(self.promise_id)
+        if self._register is not None:
+            self._register(("promise", self.promise_id), future)
+        return future
+
+    def complete(self, value: _T) -> None:
+        """値で完了する。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        if _trace_sink is not None:
+            _trace("external-complete", self._run, pid=self.promise_id)
+        self._queue.put(("complete", self.promise_id, value))
+
+    def fail(self, error: BaseException) -> None:
+        """error で失敗にする。thread をまたいでも signal の受け手からも呼んでよく、外からの完了の列で scheduler を起こす。"""
+        if _trace_sink is not None:
+            _trace("external-complete", self._run, pid=self.promise_id, failed=True)
+        self._queue.put(("fail", self.promise_id, error))
+
+    def __repr__(self) -> str:
+        return f"ExternalPromise({self.promise_id})"
+
+
+def _not_a_waitable(effect: EffectBase, value: object) -> TypeError:
+    """The TypeError a Wait / Gather / Race throws at its yield when ``value``, one of its
+    waitables, is neither a Task nor a Future; also a Cancel / Discard's, when its ``task`` is not
+    a Task (only a task is cancelled, so a Future is no better there).
+
+    Both implementations build it here (Rust through ``_rust_spec``), only after the check failed.
+    The usual cause is a program passed where its task belongs — ``Gather(worker("a"))`` without
+    Spawn — so the message names Spawn, not the VM's node type (``Call``).
+    """
+    from doeff import DoExpr  # doeff imports this package: resolved on the error path only
+
+    name = type(effect).__name__
+    if isinstance(value, (DoExpr, EffectBase)):
+        if isinstance(effect, Wait):
+            return TypeError(
+                f"{name} takes the task that Spawn returns, got a program. Spawn the program "
+                f"first and wait on its task: t = yield Spawn(prog); yield {name}(t)"
+            )
+        if isinstance(effect, (Cancel, Discard)):
+            return TypeError(
+                f"{name} takes the task that Spawn returns, got a program. Spawn the program "
+                f"first and {name.lower()} its task: t = yield Spawn(prog); yield {name}(t)"
+            )
+        return TypeError(
+            f"{name} takes the tasks that Spawn returns, got a program. Spawn each program "
+            f"first and pass the tasks: t = yield Spawn(prog); yield {name}(t, ...)"
+        )
+    if isinstance(effect, (Cancel, Discard)):
+        # No "use its future" advice below: nothing is cancelled through a promise or a Future.
+        return TypeError(
+            f"{name} takes a Task (t = yield Spawn(prog)), "
+            f"got {reprlib.repr(value)} ({type(value).__name__})"
+        )
+    if isinstance(value, (Promise, ExternalPromise)):
+        return TypeError(
+            f"{name} takes the promise's future, not the promise: yield {name}(p.future)"
+        )
+    return TypeError(
+        f"{name} takes a Task (t = yield Spawn(prog)) or a Future (p.future), "
+        f"got {reprlib.repr(value)} ({type(value).__name__})"
+    )
+
+
+def _misused_waitable(effect: EffectBase, waitables: Iterable[object]) -> TypeError | None:
+    """The TypeError for the first of ``waitables`` that is neither a Task nor a Future (None
+    when every one is), checked before the Python scheduler reads any of them."""
+    for value in waitables:
+        if not isinstance(value, (Task, Future)):
+            return _not_a_waitable(effect, value)
+    return None
+
+
+def _misused_task(effect: EffectBase, target: object) -> TypeError | None:
+    """The TypeError for the ``task`` of a Cancel or Discard when it is not a Task (None when it
+    is), checked before the Python scheduler reads its ``task_id``."""
+    if isinstance(target, Task):
+        return None
+    return _not_a_waitable(effect, target)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------
+
+SchedulerImplementation = Literal["python", "rust"]
+
+# Which implementation `scheduled()` uses when neither its argument nor the
+# environment variable chooses. "rust": the same semantics as the Python
+# implementation at about a ninth of the cost per task. The Python
+# implementation stays selectable — DOEFF_SCHEDULER=python for a process,
+# implementation="python" for one call (docs/25-rust-scheduler.md). Both emit
+# the same set_scheduler_trace events.
+DEFAULT_IMPLEMENTATION: SchedulerImplementation = "rust"
+
+# Environment variable that overrides DEFAULT_IMPLEMENTATION ("python" / "rust").
+IMPLEMENTATION_ENV_VAR = "DOEFF_SCHEDULER"
+
+
+def resolve_implementation(
+    implementation: "SchedulerImplementation | None" = None,
+) -> SchedulerImplementation:
+    """The implementation ``scheduled(..., implementation=...)`` will use.
+
+    Order: the explicit argument, then ``$DOEFF_SCHEDULER``, then
+    ``DEFAULT_IMPLEMENTATION``. Read on every call, so a test can switch it
+    with ``monkeypatch.setenv``.
+    """
+    choice = implementation
+    if choice is None:
+        # The environment switch is the operator-facing rollback knob
+        # (docs/25-rust-scheduler.md); the argument is the injected path.
+        choice = os.environ.get(IMPLEMENTATION_ENV_VAR) or DEFAULT_IMPLEMENTATION
+    if choice not in ("python", "rust"):
+        raise ValueError(
+            f"scheduler implementation must be 'python' or 'rust', got {choice!r} "
+            f"(argument or ${IMPLEMENTATION_ENV_VAR})"
+        )
+    return choice
+
+
+def scheduled(
+    body_program: "Program[_T, Any]",
+    *,
+    implementation: "SchedulerImplementation | None" = None,
+) -> "Program[_T, Any]":
+    """Wrap a program with the scheduler. Returns a DoExpr.
+
+    Both implementations handle the same effects with the same semantics
+    (docs/25-rust-scheduler.md); ``implementation`` / ``$DOEFF_SCHEDULER``
+    choose between them for comparison and rollback.
+    """
+    if resolve_implementation(implementation) == "rust":
+        return _scheduled_rust(body_program)
+    return _scheduled_python(body_program)
+
+
+@functools.cache
+def _rust_spec() -> dict[str, object]:
+    """The classes and fixed settings the Rust scheduler reads (built once).
+
+    Module settings a test may monkeypatch are not cached here:
+    HANDLE_SWEEP_INTERVAL / HANDLE_REFS_PRUNE_MIN / UNRETRIEVED_EXCEPTIONS_NAMED
+    are read when a run starts and EXTERNAL_STALL_LOG_INTERVAL_SECONDS whenever
+    the scheduler blocks.
+    """
+    return {
+        "Spawn": Spawn,
+        "TaskCompleted": TaskCompleted,
+        "Wait": Wait,
+        "Gather": Gather,
+        "Race": Race,
+        "Cancel": Cancel,
+        "Discard": Discard,
+        "CreatePromise": CreatePromise,
+        "CompletePromise": CompletePromise,
+        "FailPromise": FailPromise,
+        "CreateExternalPromise": CreateExternalPromise,
+        "_SchedulerIntrospection": _SchedulerIntrospection,
+        "CreateSemaphore": CreateSemaphore,
+        "AcquireSemaphore": AcquireSemaphore,
+        "ReleaseSemaphore": ReleaseSemaphore,
+        "Task": Task,
+        "Future": Future,
+        "Promise": Promise,
+        "ExternalPromise": ExternalPromise,
+        # Rust only calls this with (sem_id,) to mint a handle, and Semaphore(...)
+        # itself refuses to build one (scheduler.rs semaphore_cls).
+        "Semaphore": _semaphore_handle,
+        "TaskCancelledError": TaskCancelledError,
+        "ExternalPromiseCancelCallbackError": ExternalPromiseCancelCallbackError,
+        "SchedulerDeadlockError": SchedulerDeadlockError,
+        "SchedulerIndexDriftError": SchedulerIndexDriftError,
+        "not_a_waitable": _not_a_waitable,
+        "enrich_exception_traceback": _enrich_exception_traceback,
+        "describe_unretrieved_exception": _describe_unretrieved_exception,
+        "logger": _logger,
+        "module": sys.modules[__name__],
+        "external_wake_of": _external_wake_of,
+        "external_wait_is_stall": _external_wait_is_stall,
+        "stall_waiters_digest": _stall_waiters_digest,
+        # 測りの口: 出来事の dict と時計は Python の版と同じ helper で作る(sink が据えてある時だけ呼ばれる)。
+        "trace": _trace,
+        "trace_step_boundary": _trace_step_boundary,
+        # 歩数の上限(#3143): 旗が立っている間だけ、起こすたびに Python の版と同じ確かめを呼ぶ。
+        "check_step_budget": _check_armed_step_budget,
+        "PRIORITY_IDLE": PRIORITY_IDLE,
+        "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
+        "PRIORITY_NORMAL": PRIORITY_NORMAL,
+        "CLAIMED_MARKS_COMPACT_MIN": _CLAIMED_MARKS_COMPACT_MIN,
+    }
+
+
+def _scheduled_rust(body_program: "Program[_T, Any]") -> "Program[_T, Any]":
+    """``scheduled`` backed by the Rust scheduler (doeff_vm SchedulerCore)."""
+    # Looked up on the extension module itself (not the doeff_vm package
+    # namespace), so a stale extension without the Rust scheduler fails here
+    # with an ImportError that names it, not when doeff loads the VM. Never
+    # falls back to the Python implementation silently.
+    try:
+        make_core = native.SchedulerCore
+    except AttributeError as error:
+        raise ImportError(
+            "the Rust scheduler was selected (it is the default; also implementation='rust' "
+            f"or ${IMPLEMENTATION_ENV_VAR}=rust) but the loaded doeff_vm extension has no "
+            "SchedulerCore: rebuild the Rust extension (`make sync` in a doeff checkout, or "
+            "reinstall doeff-vm), or select the Python scheduler "
+            f"(${IMPLEMENTATION_ENV_VAR}=python, or implementation='python')"
+        ) from error
+
+    # 測りの口(#3861): この run の番号は Python の版と同じ通し番号から取り、start も同じ所で出す。
+    run_id = next(_trace_runs)
+    if _trace_sink is not None:
+        _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
+    core = make_core(
+        {
+            **_rust_spec(),
+            "HANDLE_SWEEP_INTERVAL": HANDLE_SWEEP_INTERVAL,
+            "HANDLE_REFS_PRUNE_MIN": HANDLE_REFS_PRUNE_MIN,
+            "UNRETRIEVED_EXCEPTIONS_NAMED": UNRETRIEVED_EXCEPTIONS_NAMED,
+            "INDEX_SELF_CHECK": _INDEX_SELF_CHECK,
+            "trace_run": run_id,
+        }
+    )
+
+    @do
+    def root_close_out(prog):
+        """Unwind, then report, work the run abandons when the root body returns.
+
+        Same meaning as the Python scheduler (agora-redesign #2684 / #2690):
+        live non-daemon tasks are cancelled and their unwinding (finally
+        blocks) is awaited up to ROOT_CLOSE_OUT_GRACE_SECONDS — on the error
+        path too — and whatever is still live afterwards is dropped, but
+        loudly (#501). The return value and the body's exception are unchanged.
+        """
+        try:
+            result = yield prog
+        except GeneratorExit:
+            # Python closes the body a run dropped: there is no run left to unwind work in.
+            raise
+        except BaseException:
+            yield close_out()
+            raise
+        yield close_out()
+        return result
+
+    @do
+    def close_out():
+        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684)."""
+        abandoned, parked = core.close_out_report()
+        to_cancel, to_wait = core.close_out_live_tasks()
+        yield _unwind_abandoned(list(to_cancel), list(to_wait))
+        left_abandoned, left_parked = core.close_out_report()
+        _warn_abandoned_work(abandoned, parked, left_abandoned + left_parked)
+        _warn_unretrieved_exceptions(*core.unretrieved_exceptions())
+        return None
+
+    return _WithHandlerRaw(core.prompt(), root_close_out(body_program))
+
+
+#: Wall-clock bound on unwinding abandoned work at root return
+#: (agora-redesign #2684). A task whose cleanup does not finish by then is
+#: abandoned as before (#501) and still named by the warning — the run's
+#: answer is never held hostage by a cleanup that does not end.
+ROOT_CLOSE_OUT_GRACE_SECONDS = 5.0
+
+
+@do
+def _await_unwound(task_ids: list[int]):
+    """Wait for each cancelled task to finish unwinding (its finally blocks).
+
+    Runs as a daemon task so the close-out can race it against the grace
+    timer; the outcome of each task is not the root's answer, so every
+    exception it ends with is swallowed here.
+    """
+    for task_id in task_ids:
+        try:
+            yield Wait(Task(task_id))
+        except TaskCancelledError:
+            pass
+        except Exception as ending:
+            # Its cleanup raised: named, but not the run's answer.
+            warnings.warn(
+                f"task {task_id} ended its root close-out unwinding with "
+                f"{type(ending).__name__}: {ending}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return None
+
+
+def _warn_close_out_failure(step: str, error: Exception) -> None:
+    """Name a failure of the root close-out itself without touching the answer."""
+    warnings.warn(
+        f"scheduler root close-out (#2684) could not {step}: "
+        f"{type(error).__name__}: {error}",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+@do
+def _unwind_abandoned(to_cancel: list[int], to_wait: list[int]):
+    """Deliver Cancel to work the root return would abandon, then wait (bounded).
+
+    Before #2684 the root return dropped live non-daemon tasks without
+    unwinding them, so a ``finally`` that returns a resource (a leased SQL
+    connection mid-transaction, a lock, a temporary file) never ran. Now each
+    task in ``to_cancel`` receives ``TaskCancelledError`` at its suspension
+    point exactly like an explicit ``Cancel``; an unstarted task ends without
+    running its body. ``to_wait`` adds tasks already unwinding from an earlier
+    Cancel. The root waits up to ``ROOT_CLOSE_OUT_GRACE_SECONDS``; whatever is
+    still live after that is abandoned and reported by the #501 warning as
+    before. A failure of the close-out itself (a raising ``on_cancel``
+    callback, a deadlock) is named by a warning and never replaces the run's
+    answer.
+    """
+    if not to_wait:
+        return None
+    for task_id in to_cancel:
+        try:
+            yield Cancel(Task(task_id))
+        except Exception as error:
+            _warn_close_out_failure(f"cancel task {task_id}", error)
+    try:
+        grace = yield CreateExternalPromise(
+            deadline=time.monotonic() + ROOT_CLOSE_OUT_GRACE_SECONDS
+        )
+        timer = threading.Timer(ROOT_CLOSE_OUT_GRACE_SECONDS, grace.complete, (None,))
+        timer.daemon = True
+        timer.start()
+        try:
+            drain = yield Spawn(_await_unwound(list(to_wait)), daemon=True)
+            yield Race(drain, grace.future)
+        finally:
+            timer.cancel()
+    except Exception as error:
+        _warn_close_out_failure("wait for the cancelled work to unwind", error)
+    return None
+
+
+def _warn_abandoned_work(abandoned: list[str], parked: list[str], left_live: list[str]) -> None:
+    """The #501 close-out warning shared by both implementations.
+
+    ``left_live`` (#2684) names what was still live after the root close-out
+    cancelled the unawaited work and waited for it to unwind (both
+    implementations unwind since #2690).
+    """
+    if abandoned or parked:
+        match left_live:
+            case []:
+                unwound = " — cancelled at root return and unwound (#2684)"
+            case _:
+                unwound = (
+                    " — cancelled at root return; still live after "
+                    f"{ROOT_CLOSE_OUT_GRACE_SECONDS}s of unwinding: "
+                    f"[{'; '.join(left_live)}] (#2684)"
+                )
+        warnings.warn(
+            "scheduler root body returned while abandoning in-flight "
+            f"work (#501): ready entries [{'; '.join(abandoned)}]; "
+            f"parked waiters [{'; '.join(parked)}]{unwound}. Spawned work that "
+            "must finish has to be awaited (Wait/Gather) before the "
+            "root body returns; intentional background work should be "
+            "spawned with Spawn(..., daemon=True).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
+def _program_definition(program: object) -> object:
+    """What the never-retrieved warning names a task's program by: the function
+    a ``@do`` call runs, else the program's type. Taken at the Spawn — a task
+    lets go of its program when it starts."""
+    if isinstance(program, Call):
+        return program.function.function
+    return type(program)
+
+
+def _describe_unretrieved_exception(
+    task_id: int, definition: object, spawn_site: str | None, error: BaseException
+) -> str:
+    """One task's entry in the never-retrieved warning (card ki-84667a89b47a).
+
+    Shared by both implementations; called when a task fails while nothing has
+    claimed its outcome yet, so the entry outlives the task's row.
+    ``definition`` is the task's ``_program_definition``.
+    """
+    match definition:
+        case type() | FunctionType():
+            program = definition.__qualname__
+        case _:
+            program = repr(definition)
+    spawned = f" (spawned at {spawn_site})" if spawn_site else ""
+    raised = ""
+    frame = error.__traceback__
+    if frame is not None:
+        while frame.tb_next is not None:
+            frame = frame.tb_next
+        code = frame.tb_frame.f_code
+        raised = f", raised at {code.co_filename}:{frame.tb_lineno} in {code.co_name}"
+    exception = "".join(traceback.format_exception_only(error)).strip()
+    return f"task {task_id} running {program}{spawned}: {exception}{raised}"
+
+
+def _warn_unretrieved_exceptions(named: list[str], total: int) -> None:
+    """The run-end warning for task exceptions nothing retrieved, shared by both
+    implementations (card ki-84667a89b47a).
+
+    asyncio warns "Task exception was never retrieved" for a failed task
+    dropped unread. A spawned task's outcome is claimed once a Wait, Gather or
+    Race is given the task, or a Cancel or Discard — before or after it ends.
+    A task that failed with no such claim by the end of the run is named here;
+    one that ended with TaskCancelledError ended by cancellation, not by a
+    failure to report.
+    """
+    if total == 0:
+        return
+    listed = "; ".join(named)
+    if total > len(named):
+        listed += f"; and {total - len(named)} more"
+    match total:
+        case 1:
+            head = "spawned task exception was never retrieved"
+            them = "the task"
+        case _:
+            head = f"{total} spawned task exceptions were never retrieved"
+            them = "these tasks"
+    warnings.warn(
+        f"{head}: {listed}. No Wait, Gather or Race was given {them}, and no Cancel or "
+        "Discard, before the scheduler run ended. Wait on a spawned task to receive its "
+        "exception (wrap its program in Try(...) when a failure is expected), or "
+        "Cancel/Discard it when its outcome is not needed.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged
+    """``scheduled`` implemented in Python (the reference implementation)."""
+    import heapq
+    import queue as queue_mod
+
+    # --- State ---
+    next_id = [0]
+    insertion_seq = [0]  # tie-breaker for priority queue (FIFO within same priority)
+    tasks = {}           # tid → {status, result, program, priority}
+    promises = {}        # pid → {status, result}
+    semaphores = {}      # sid → {permits, max_permits, waiters: deque of (owner_tid, k)}
+    waiters = {}         # waitable_key → [(type, owner_tid, k/state, ...)]
+    ready = []           # heapq of _ReadyItem: (-priority, seq, entry)
+    # 待ち手の表と走れる列の索引(card ki-1294af4fa525)。走っている手番ごとに待つ task が居るので、Cancel が待ち手の表を、
+    # 外の待ちの印が走れる列を毎回なめると、1 回の WaitWithin の仕事が待つ task の数で増えた。索引は waiters・ready を
+    # 書き換える入口(park_waiter・unpark_*・keep_waiters・ready_push・ready_pop・ready_remove_at・drop_claimed_marks)だけが保つ。
+    parked_keys_of = {}  # owner_tid → {waitable_key: その task の entry の数}(waiters の逆の索引)
+    waiter_key_stamp = {}  # waitable_key → waiters に入った順の番号(task の鍵を waiters の順で返すため)
+    next_waiter_key_stamp = itertools.count()
+    # 外の待ちの印の下(優先度 PRIORITY_EXTERNAL_WAIT 以下)に並ぶ生きた entry(new・resume・raise・sem_resume で、持ち主が
+    # cancelled でない物)の数: 持ち主 → 数。持ち主が cancelled になった時(finish_cancelled)にその分を外す — cancelled は
+    # 終わりの状態で、その後に並べた entry は数えないので、持ち主の entry は全部 数えてあるか、全部 数えていないかのどちらか。
+    live_ready_of = {}
+    live_ready_count = [0, 0]  # [生きた entry の数, そのうち daemon でない物の数]
+    # 走れる列の entry の数を -priority → {起こされ方: 数} で(測りの口の ahead を、列をなめずに出すため)。測りの口が
+    # 開いている間だけ保つ。数え始めた時の口の番号(_trace_generation)が今の番号と違えば(据え直した・外していた間に
+    # 列が動いたかもしれない)、次に要る時に列から数え直す。
+    ready_wake_count = {}
+    ready_wake_count_generation = [None]
+    # 走れる列に残っている claimed の外の待ちの印の数(pick_next は pop して捨てるだけの死んだ entry)。NORMAL の仕事が
+    # 並び続ける間は pop されないので、多くなったら claim が列から外す。
+    claimed_marks_in_ready = [0]
+    # 索引と数えを毎歩 数え直しと照らすか(テストの切り替え _INDEX_SELF_CHECK を run の始まりに 1 度読む)。
+    self_check = _INDEX_SELF_CHECK
+    # 外からの完了の列。SimpleQueue の put は reentrant(Python の文書 — signal の受け手・__del__ から呼んでよい)。
+    # 止めの合図の受け手(stop_signal_handlers の StopBox.receive)は主 thread の上で bytecode の区切りに割り込み、
+    # ExternalPromise.complete からこの列へ put する。主 thread がこの列の empty / get の中に居ても put は止まらない
+    # (queue.Queue は入れ子で取れない lock を持ち、その lock の中に合図が当たると put が同じ thread を待って止まった —
+    # agora-redesign #3584)。
+    external_queue = queue_mod.SimpleQueue()  # thread-safe, blocking get()
+    # 測りの口(#3861): この run の番号と、ready の entry の通し番号ごとの起こされ方
+    # (external の時は起こした外の約束の id)。sink が無い時は何も積まない。
+    run_id = next(_trace_runs)
+    wake_context: list[tuple[str, int | None]] = [("internal", None)]
+    wake_of_seq: dict[int, tuple[str, int | None]] = {}
+    # 今の歩の始まりの境目(_StepStart)。sink がある時だけ書く。
+    step_start: list[_StepStart | None] = [None]
+    # sys._is_gil_enabled は Python 3.13 から。それより前は GIL が常に有る。
+    if _trace_sink is not None:
+        _trace("start", run_id, gil=sys._is_gil_enabled() if sys.version_info >= (3, 13) else True)
+    handle_refs = {}     # waitable_key → [weakref.ref(Task/Promise/Future/…)]
+    handle_prune_at = {}  # waitable_key → refs length that triggers a dead-ref prune
+    # Never-retrieved task exceptions of rows the #502 sweep deleted (card
+    # ki-84667a89b47a): a tuple of at most UNRETRIEVED_EXCEPTIONS_NAMED
+    # descriptions, and how many there were.
+    unretrieved_swept = [()]
+    unretrieved_swept_count = [0]
+
+    def register_handle(key, handle):
+        """Track handle liveness for the terminal-entry sweep (#502).
+
+        Weakrefs carry no callbacks — liveness is polled by the sweep inside
+        the scheduler's own dispatch path, never from a GC callback, so no
+        reentrant dict mutation can occur.
+
+        Dead refs are pruned amortized at registration time (doubling
+        threshold), so a long-lived PENDING promise whose owner repeatedly
+        mints `.future` handles does not grow its list until terminality.
+        Registration is scheduler-thread-confined — only ``complete``/
+        ``fail`` are thread-safe on ExternalPromise — so the in-place prune
+        cannot race a foreign-thread append.
+        """
+        refs = handle_refs.setdefault(key, [])
+        if len(refs) >= handle_prune_at.get(key, HANDLE_REFS_PRUNE_MIN):
+            refs[:] = [ref for ref in refs if ref() is not None]
+            handle_prune_at[key] = max(HANDLE_REFS_PRUNE_MIN, 2 * len(refs))
+        refs.append(weakref.ref(handle))
+        return handle
+
+    def sweep_terminal_unobserved_entries():
+        """Delete task/promise entries nothing can ever observe again (#502).
+
+        An entry is swept when it is terminal, has no registered waiter, is
+        not referenced by a live Gather/Race resolution, and every handle
+        (Task, Promise/ExternalPromise, and each Future minted from them) is
+        dead. A cancelled task is swept only once it is ``settled`` — nothing
+        can re-read tasks[tid] any more: it ran to its TaskCompleted after
+        the Cancel, or it never started and pick_next skipped its start, or
+        a Discard dropped the continuation the scheduler held. Until then it
+        is exempt: a task dropped by the Cancel fallback (continuation not
+        held by the scheduler) may still run to its TaskCompleted, which
+        re-reads tasks[tid]; ``cancelling`` tasks are live. Without the
+        settled sweep every Cancel of a started task left its row and its
+        TaskCancelledError (whose traceback pins the task's frames) for the
+        life of the run (agora-redesign #3504 — a records service's
+        long-poll waits grew ~15 MB a minute). Semaphores are never swept:
+        "no permits outstanding" is not trackable from handle liveness.
+        """
+        protected = set()
+        for entries in waiters.values():
+            for entry in entries:
+                if entry[0] == "gather":
+                    # Gather re-reads waitable_status for EVERY key (including
+                    # already-terminal ones) at final resolution.
+                    protected.update(entry[2]["keys"])
+                elif entry[0] == "race":
+                    protected.update(entry[2]["pending_keys"])
+        # A cancelled PROMISE (external promise whose last waiter was
+        # cancelled) has no such re-read and is as final as completed/failed.
+        sweepable = {
+            "task": ("completed", "failed"),
+            "promise": ("completed", "failed", "cancelled"),
+        }
+        for kind, store in (("task", tasks), ("promise", promises)):
+            dead = []
+            for wid, meta in store.items():
+                settled_cancel = (
+                    kind == "task"
+                    and meta["status"] == "cancelled"
+                    and meta.get("settled", False)
+                )
+                if meta["status"] not in sweepable[kind] and not settled_cancel:
+                    continue
+                key = (kind, wid)
+                if key in waiters or key in protected:
+                    continue
+                refs = handle_refs.get(key)
+                if refs is None:
+                    continue
+                # register_handle prunes dead refs amortized; here the whole
+                # list is dropped once every handle is dead, at which point
+                # no new registration for this key can happen (a Future is
+                # only minted from a live parent handle).
+                if any(ref() is not None for ref in refs):
+                    continue
+                dead.append(wid)
+            for wid in dead:
+                if kind == "task":
+                    keep_swept_unretrieved(store[wid])
+                del store[wid]
+                del handle_refs[(kind, wid)]
+                handle_prune_at.pop((kind, wid), None)
+
+    def keep_swept_unretrieved(row: dict[str, object]) -> None:
+        """Keep the never-retrieved exception of a task row the sweep deletes:
+        with every handle dead, nothing can retrieve it any more."""
+        description = row.get("unretrieved")
+        if not isinstance(description, str):
+            return
+        unretrieved_swept_count[0] += 1
+        if len(unretrieved_swept[0]) < UNRETRIEVED_EXCEPTIONS_NAMED:
+            unretrieved_swept[0] = (*unretrieved_swept[0], description)
+
+    def mark_retrieved(key: tuple[str, int]) -> None:
+        """A Wait, Gather, Race, Cancel or Discard was given the task: its
+        outcome is claimed, so its exception is not reported as never
+        retrieved (card ki-84667a89b47a)."""
+        kind, wid = key
+        row = tasks.get(wid) if kind == "task" else None
+        if row is not None:
+            row["retrieved"] = True
+            row.pop("unretrieved", None)
+
+    def unretrieved_exceptions() -> tuple[list[str], int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
+        """``(named, total)`` for the run-end warning: the swept tasks' exceptions,
+        then the rows still holding one, in task order."""
+        remaining = [row["unretrieved"] for row in tasks.values() if "unretrieved" in row]
+        named = [*unretrieved_swept[0], *remaining][:UNRETRIEVED_EXCEPTIONS_NAMED]
+        return named, unretrieved_swept_count[0] + len(remaining)
+
+    def fresh_id():
+        i = next_id[0]
+        next_id[0] += 1
+        if next_id[0] % HANDLE_SWEEP_INTERVAL == 0:
+            sweep_terminal_unobserved_entries()
+        return i
+
+    def waitable_key(effect: EffectBase, obj: object) -> tuple[str, int]:  # noqa: DOEFF006 — 内部の小さな組の戻り
+        """Convert a Task or Future of ``effect`` (Wait / Gather / Race) to a dict key.
+
+        The dispatch checks every waitable first (_misused_waitable) and throws the TypeError
+        at the waiter's yield; the raise here only guards a caller that skipped the check.
+        """
+        if isinstance(obj, Task):
+            return ("task", obj.task_id)
+        if isinstance(obj, Future):
+            return ("promise", obj.promise_id)
+        raise _not_a_waitable(effect, obj)
+
+    def waitable_status(key):
+        kind, wid = key
+        if kind == "task":
+            store = tasks
+        elif kind == "promise":
+            store = promises
+        else:
+            return "unknown", None
+        entry = store.get(wid)
+        if entry is None:
+            raise KeyError(
+                f"{kind} {wid} is unknown to this scheduler run: it was swept "
+                "after reaching a terminal state with no live Task/Future "
+                "handle and no registered waiter (#502). Keep a handle alive "
+                "to Wait/Gather/Race on it later."
+            )
+        return entry["status"], entry.get("result")
+
+    def enqueue(
+        entry: tuple[object, ...], priority: int = PRIORITY_NORMAL, wake: tuple[str, int | None] | None = None,
+    ) -> None:
+        """Add entry to priority queue. Higher priority = served first."""
+        seq = insertion_seq[0]
+        insertion_seq[0] += 1
+        if _trace_sink is None:
+            ready_push(_ReadyItem(-priority, seq, entry))
+            return
+        # 起こされ方は並べる前に覚える(ready_push がその起こされ方で数える)。
+        wake_of_seq[seq] = (
+            ("placeholder", None) if entry[0] == "wait_external"
+            else wake if wake is not None
+            else wake_context[0]
+        )
+        ready_push(_ReadyItem(-priority, seq, entry))
+        trace_enqueued(entry, priority, seq)
+
+    def trace_enqueued(entry: tuple[object, ...], priority: int, seq: int) -> None:
+        """測りの口(#3861): 並べた entry の起こされ方を出す。前に並ぶ entry の数と起こされ方は、
+        外から起きた entry の時だけ数える。前に並ぶ = 優先度が同じか高い entry(同じ優先度では今 並べた物が一番後ろ)で、
+        ready をなめずに (-priority, 起こされ方) ごとの数から足す(card ki-1294af4fa525 — なめは ready の長さで増えた)。"""
+        kind, pid = wake_of_seq[seq]
+        if kind != "external":
+            _trace("enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority)
+            return
+        if ready_wake_count_generation[0] != _trace_generation:
+            # Not kept under this sink yet: count the heap once.
+            flat = Counter((neg, wake_of_seq.get(s, _UNTRACKED_WAKE)[0]) for neg, s, _e in ready)
+            ready_wake_count.clear()
+            ready_wake_count.update({
+                neg: Counter({name: n for (other, name), n in flat.items() if other == neg})
+                for neg, _name in flat
+            })
+            ready_wake_count_generation[0] = _trace_generation
+        at_or_above = sum(
+            (counts for neg, counts in ready_wake_count.items() if neg <= -priority), Counter()
+        )
+        ahead_by_wake = dict(at_or_above - Counter(external=1))  # 今 並べた物を外す
+        _trace(
+            "enqueued", run_id, tid=entry[1], wake=kind, pid=pid, priority=priority,
+            ready=len(ready), ahead=sum(ahead_by_wake.values()), ahead_by_wake=ahead_by_wake,
+        )
+
+    def ready_push(heap_item: _ReadyItem) -> None:
+        """Push onto the ready heap — the one way in, so the counts stay in step (card ki-1294af4fa525)."""
+        entry = heap_item[2]
+        if entry[0] in _CONTINUATION_ENTRY_KINDS:
+            if not isinstance(entry[2], K):
+                raise TypeError(
+                    f"ready entry {entry[0]!r} is declared in _CONTINUATION_ENTRY_KINDS but holds "
+                    f"{type(entry[2]).__name__} at [2], not the task's continuation"
+                )
+        elif entry[0] not in _READY_ENTRY_KINDS:
+            raise TypeError(
+                f"ready entry kind {entry[0]!r} is not declared: a kind holding a task's continuation "
+                "belongs in _CONTINUATION_ENTRY_KINDS (Cancel takes it out of the heap from there)"
+            )
+        heapq.heappush(ready, heap_item)
+        # Only entries at or below the shield, or any entry while a sink is installed, are counted.
+        if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
+            count_ready(heap_item, 1)
+
+    def ready_pop() -> _ReadyItem:
+        """Pop the first ready entry (and uncount it)."""
+        heap_item = heapq.heappop(ready)
+        if heap_item[0] >= -PRIORITY_EXTERNAL_WAIT or _trace_sink is not None:
+            count_ready(heap_item, -1)
+        return heap_item
+
+    def ready_remove_at(index: int) -> _ReadyItem:
+        """Take the ready entry at heap position ``index`` out (and uncount it)."""
+        heap_item = ready.pop(index)
+        heapq.heapify(ready)
+        count_ready(heap_item, -1)
+        return heap_item
+
+    def count_ready(heap_item: _ReadyItem, delta: int) -> None:
+        """Keep the counts in step with an entry entering (+1) or leaving (-1) the ready heap.
+
+        The trace's per-wake counts are kept while a sink is installed. A
+        runnable entry (new/resume/raise/sem_resume) at or below the
+        external-wait shield whose owner is not cancelled is counted live
+        for has_live_ready_entry; finish_cancelled uncounts the owner's.
+        """
+        neg, seq, entry = heap_item
+        if _trace_sink is not None and ready_wake_count_generation[0] == _trace_generation:
+            wakes = ready_wake_count.get(neg)
+            if wakes is None:
+                wakes = ready_wake_count[neg] = Counter()
+            wakes[wake_of_seq.get(seq, _UNTRACKED_WAKE)[0]] += delta
+        if entry[0] == "wait_external":
+            # Whether the placeholder sits in the heap, so a claim knows it leaves a dead one there.
+            mark = entry[4]
+            mark.place(delta > 0)
+            if mark.mut_claimed:
+                claimed_marks_in_ready[0] += delta
+            return
+        if neg < -PRIORITY_EXTERNAL_WAIT or entry[0] not in _RUNNABLE_ENTRY_KINDS:
+            return
+        owner = entry[1]
+        if delta > 0:
+            row = tasks.get(owner)  # None for the root
+            if row is None or row["status"] != "cancelled":
+                live_ready_of[owner] = live_ready_of.get(owner, 0) + 1
+                count_live(row, 1)
+            return
+        counted = live_ready_of.get(owner)
+        if counted is None:
+            return  # its owner is cancelled: never counted, or uncounted by finish_cancelled
+        if counted == 1:
+            del live_ready_of[owner]
+        else:
+            live_ready_of[owner] = counted - 1
+        count_live(tasks.get(owner), -1)
+
+    def count_live(row: dict[str, object] | None, delta: int) -> None:
+        """Move has_live_ready_entry's counts by ``delta`` entries of the owner whose task row is ``row`` (None for
+        the root)."""
+        live_ready_count[0] += delta
+        if row is None or not row.get("daemon", False):
+            live_ready_count[1] += delta
+
+    def claim(mark: _ClaimMark) -> None:
+        """Claim an external-wait registration: the waiters side owns its one resume and the paired ready placeholder
+        drops itself (#490/#505).
+
+        A claimed placeholder still in the heap is dead, and it is popped only
+        when no NORMAL work is queued — in a busy run every timed wait whose
+        future won left one there, holding the deadline timer's continuation
+        (card ki-1294af4fa525). Once there are many and they are most of the
+        heap, they are taken out together.
+        """
+        if mark.mut_claimed:
+            return
+        mark.take()
+        if mark.mut_in_ready:
+            claimed_marks_in_ready[0] += 1
+            if (
+                claimed_marks_in_ready[0] >= _CLAIMED_MARKS_COMPACT_MIN
+                and 2 * claimed_marks_in_ready[0] > len(ready)
+            ):
+                drop_claimed_marks()
+
+    def drop_claimed_marks() -> None:
+        """Take every claimed placeholder out of the ready heap at once (pick_next would only pop and skip each)."""
+        ready[:] = [item for item in ready if not (item.entry[0] == "wait_external" and item.entry[4].mut_claimed)]
+        heapq.heapify(ready)
+        claimed_marks_in_ready[0] = 0
+        # The trace's per-wake counts no longer match the heap: counted again when next needed.
+        ready_wake_count_generation[0] = None
+
+    def check_indexes() -> None:
+        """Recompute the index and counts from ``waiters`` and ``ready`` and fail on a difference (only while
+        ``_INDEX_SELF_CHECK`` is on — the scheduler tests), so a change that moves them outside the entry functions
+        is caught by the first test that runs it, not by a later stall (card ki-1294af4fa525)."""
+        held_parked = Counter({
+            (owner, key): count for owner, owned in parked_keys_of.items() for key, count in owned.items()
+        })
+        recounted_parked = Counter((entry[1], key) for key, entries in waiters.items() for entry in entries)
+        traced_counts = _trace_sink is not None and ready_wake_count_generation[0] == _trace_generation
+        held_wakes = Counter({
+            (neg, name): count for neg, counts in ready_wake_count.items() for name, count in counts.items() if count
+        }) if traced_counts else None
+        recounted_wakes = Counter(
+            (neg, wake_of_seq.get(seq, _UNTRACKED_WAKE)[0]) for neg, seq, _entry in ready
+        ) if traced_counts else None
+        live_entries = [
+            entry for neg, _seq, entry in ready
+            if neg >= -PRIORITY_EXTERNAL_WAIT and entry[0] in _RUNNABLE_ENTRY_KINDS
+            and not is_owner_cancelled(entry[1])
+        ]
+        recounted_live = [len(live_entries), sum(not is_daemon(entry[1]) for entry in live_entries)]
+        recounted_marks = sum(
+            entry[4].mut_claimed for _neg, _seq, entry in ready if entry[0] == _PLACEHOLDER_ENTRY_KIND
+        )
+        drifts = [
+            name for name, held, recounted in (
+                ("waiters index (parked_keys_of)", held_parked, recounted_parked),
+                ("waiters key order (waiter_key_stamp)",
+                 sorted(waiter_key_stamp, key=waiter_key_stamp.__getitem__), list(waiters)),
+                ("live ready counts (live_ready_count)", live_ready_count, recounted_live),
+                ("claimed placeholders in ready (claimed_marks_in_ready)", claimed_marks_in_ready[0], recounted_marks),
+                ("trace wake counts (ready_wake_count)", held_wakes, recounted_wakes),
+            )
+            if held != recounted
+        ]
+        if drifts:
+            raise SchedulerIndexDriftError(
+                f"scheduler index drifted from its structures: {', '.join(drifts)} — waiters and ready move only "
+                "through park_waiter/unpark_*/keep_waiters and ready_push/ready_pop/ready_remove_at/drop_claimed_marks"
+            )
+
+    def has_live_ready_entry(include_daemons):
+        """True when the ready heap holds an entry that can still run.
+
+        ``include_daemons=False`` asks the narrower question the
+        external-wait shield needs: is there real (non-daemon) work below
+        the shield? Placeholders are never "work"; cancelled owners are
+        dead entries. Asked only right after pick_next popped an
+        external-wait placeholder (PRIORITY_EXTERNAL_WAIT), when every entry
+        still in the heap is at or below it — so it is answered from the
+        live counts ready_push keeps for those entries, not by walking the
+        heap (card ki-1294af4fa525).
+        """
+        return live_ready_count[0 if include_daemons else 1] > 0
+
+    def is_live_daemon_entry(entry):
+        """True for a runnable entry owned by a live daemon task."""
+        kind = entry[0]
+        if kind == "new":
+            tid = entry[1]
+            return tasks[tid]["status"] != "cancelled" and is_daemon(tid)
+        if kind in ("resume", "raise", "sem_resume"):
+            owner_tid = entry[1]
+            return not is_owner_cancelled(owner_tid) and is_daemon(owner_tid)
+        return False
+
+    def is_owner_cancelled(owner_tid):
+        return (
+            owner_tid is not None
+            and tasks.get(owner_tid, {}).get("status") == "cancelled"
+        )
+
+    def is_daemon(owner_tid):
+        """True when the owner was spawned with daemon=True (root is not)."""
+        return (
+            owner_tid is not None
+            and tasks.get(owner_tid, {}).get("daemon", False)
+        )
+
+    def task_priority(owner_tid):
+        """Stored spawn priority of the owner task; the root (None) is NORMAL.
+
+        Task priority must survive suspension (#493/#504): every wake path
+        that does not have a more specific priority re-enqueues the owner
+        at the priority it was spawned with.
+        """
+        if owner_tid is None:
+            return PRIORITY_NORMAL
+        return tasks[owner_tid]["priority"]
+
+    def enqueue_resume(owner_tid, cont, value, priority=None):
+        """Queue a resume; returns the effective priority used (#493)."""
+        if priority is None:
+            priority = task_priority(owner_tid)
+        enqueue(("resume", owner_tid, cont, value), priority)
+        return priority
+
+    def enqueue_raise(owner_tid, cont, error, priority=None):
+        """Queue a throw-resume; returns the effective priority used (#493)."""
+        if priority is None:
+            priority = task_priority(owner_tid)
+        enqueue(("raise", owner_tid, cont, error), priority)
+        return priority
+
+    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None,
+                   daemon=False):
+        tid = fresh_id()
+        tasks[tid] = {
+            "status": "pending", "result": None,
+            "program": program, "priority": priority,
+            "daemon": daemon,
+            "inner_boundaries": inner_boundaries or [],
+            "definition": _program_definition(program),
+            "retrieved": False,
+        }
+        return tid
+
+    def alloc_promise():
+        pid = fresh_id()
+        promises[pid] = {"status": "pending", "result": None}
+        return pid
+
+    def wrap_task(tid, prog):
+        @do
+        def wrapped():
+            try:
+                result = yield prog
+                yield Perform(TaskCompleted(tid, Ok(result)))
+            except Exception as e:
+                from doeff.program import GetExecutionContext as _GetExecCtx
+                try:
+                    # GetExecutionContext returns the error-site context
+                    # (captured by VM before unwinding), not the except-site.
+                    ctx = yield _GetExecCtx()
+                    task_meta = tasks.get(tid, {})
+                    _enrich_exception_traceback(e, task_meta, ctx)
+                except Exception:
+                    pass
+                yield Perform(TaskCompleted(tid, Err(e)))
+            except (KeyboardInterrupt, SystemExit) as e:
+                # #507: an interrupt must neither vanish into ordinary task
+                # bookkeeping nor bypass it. Record the failure and wake the
+                # waiters directly — performing TaskCompleted here could not
+                # re-raise afterwards because its handler never resumes the
+                # completing task — then RE-RAISE so the interrupt still
+                # unwinds out of the whole run. GeneratorExit and other
+                # BaseExceptions are deliberately not intercepted: close() of
+                # an abandoned task must stay a plain close, without waking
+                # anything.
+                if tasks[tid]["status"] not in terminal_statuses:
+                    tasks[tid]["status"] = "failed"
+                    tasks[tid]["result"] = e
+                    wake_waiters(("task", tid))
+                _release_task_refs(tid)
+                raise
+        return wrapped()
+
+    def _drain_one_external():
+        """Block for one external completion and process it.
+
+        Blocks with a timeout so a stalled scheduler stays observable
+        (#495b): every EXTERNAL_STALL_LOG_INTERVAL_SECONDS a warning with
+        the parked-waiter summary is logged, then blocking continues —
+        semantics are unchanged. A block is a stall only as invariant S1
+        says (``_external_wait_is_stall``): a pending clock wait not overdue
+        (#765) or a watched wait whose source is live (card ki-6222e22d4179)
+        keeps the warning silent.
+        """
+        waited = 0.0
+        while True:
+            interval = EXTERNAL_STALL_LOG_INTERVAL_SECONDS
+            try:
+                action, pid, value = external_queue.get(timeout=interval)
+                break
+            except queue_mod.Empty:
+                waited += interval
+                wakes = [
+                    promise["wake"]
+                    for promise in promises.values()
+                    if promise["status"] == "pending" and promise.get("wake") is not None
+                ]
+                if not _external_wait_is_stall(wakes, interval):
+                    continue
+                _logger.warning(
+                    "scheduler stalled %.0fs waiting on external completions; "
+                    "parked waiters: %s; semaphore waiters: %s",
+                    waited,
+                    _stall_waiters_digest(live_parked_waiter_summary()),
+                    live_semaphore_waiters() or "none",
+                )
+        settle_external(action, pid, value)
+
+    def settle_external(action: str, pid: int, value: object) -> None:
+        """Apply one drained external completion.
+
+        Only a PENDING promise settles: a late completion of a cancelled
+        external promise (its producer finished before observing the
+        cancel) — or a double resolution — is ignored.
+        """
+        promise = promises.get(pid)
+        if promise is None or promise["status"] != "pending":
+            if _trace_sink is not None:
+                _trace(
+                    "external-ignored", run_id, pid=pid,
+                    status="swept" if promise is None else promise["status"],
+                )
+            return
+        promise["status"] = "completed" if action == "complete" else "failed"
+        promise["result"] = value
+        # Settled: nothing left to cancel; drop the callbacks' references.
+        promise.pop("cancel_callbacks", None)
+        if _trace_sink is None:
+            wake_waiters(("promise", pid))
+            return
+        _trace("external-drained", run_id, pid=pid, ready=len(ready))
+        wake_context[0] = ("external", pid)
+        try:
+            wake_waiters(("promise", pid))
+        finally:
+            wake_context[0] = ("internal", None)
+
+    def bind_cancel_callback(pid: int, callback: Callable[[], object]) -> None:
+        """Backs ExternalPromise.on_cancel (scheduler thread only)."""
+        promise = promises[pid]
+        status = promise["status"]
+        if status == "cancelled":
+            callback()
+        elif status == "pending":
+            promise.setdefault("cancel_callbacks", []).append(callback)
+
+    def park_waiter(key: tuple[str, int], entry: tuple[object, ...]) -> None:
+        """Register ``entry`` (owned by ``entry[1]``) under ``key``: the one way into ``waiters``, so its reverse index
+        (parked_keys_of) and key order (waiter_key_stamp) stay in step.
+
+        The entry's kind must be declared — a one-key kind in
+        _SINGLE_KEY_WAITER_KINDS, or a multi-key kind with its withdrawal in
+        withdraw_group_of — so Cancel/Discard can take it out without knowing it.
+        """
+        if entry[0] in _SINGLE_KEY_WAITER_KINDS:
+            if not isinstance(entry[2], K):
+                raise TypeError(
+                    f"waiter entry {entry[0]!r} is declared in _SINGLE_KEY_WAITER_KINDS but holds "
+                    f"{type(entry[2]).__name__} at [2], not the task's continuation: a registration under several "
+                    "keys names the function that withdraws it in withdraw_group_of"
+                )
+        elif entry[0] not in withdraw_group_of:
+            raise TypeError(
+                f"waiter entry kind {entry[0]!r} is not declared: a multi-key registration names the function "
+                "that withdraws it from every key in withdraw_group_of"
+            )
+        entries = waiters.get(key)
+        if entries is None:
+            entries = waiters[key] = []
+            waiter_key_stamp[key] = next(next_waiter_key_stamp)
+        entries.append(entry)
+        owned = parked_keys_of.get(entry[1])
+        if owned is None:
+            owned = parked_keys_of[entry[1]] = {}
+        owned[key] = owned.get(key, 0) + 1
+
+    def unpark_key(key: tuple[str, int]) -> list[tuple[object, ...]]:
+        """Take every entry under ``key`` out of ``waiters`` (answers them; [] when none)."""
+        entries = waiters.pop(key, None)
+        if entries is None:
+            return []
+        del waiter_key_stamp[key]
+        unindex_parked(key, entries)
+        return entries
+
+    def unpark_at(key: tuple[str, int], index: int) -> tuple[object, ...]:
+        """Take the one entry at ``index`` under ``key`` out of ``waiters`` (answers it)."""
+        entries = waiters[key]
+        entry = entries.pop(index)
+        if not entries:
+            del waiters[key]
+            del waiter_key_stamp[key]
+        unindex_parked(key, (entry,))
+        return entry
+
+    def keep_waiters(
+        key: tuple[str, int], kept: list[tuple[object, ...]], removed: list[tuple[object, ...]],
+    ) -> None:
+        """Leave only ``kept`` under ``key`` after a Gather/Race withdrew ``removed`` from it."""
+        if kept:
+            waiters[key] = kept
+        else:
+            del waiters[key]
+            del waiter_key_stamp[key]
+        unindex_parked(key, removed)
+
+    def unindex_parked(key: tuple[str, int], removed: Iterable[tuple[object, ...]]) -> None:
+        """Drop entries just taken out of ``waiters[key]`` from the reverse index."""
+        for entry in removed:
+            owned = parked_keys_of[entry[1]]
+            if owned[key] == 1:
+                del owned[key]
+                if not owned:
+                    del parked_keys_of[entry[1]]
+            else:
+                owned[key] -= 1
+
+    def keys_parked_by(tid: int | None) -> list[tuple[str, int]]:
+        """Waitable keys that hold a Wait/Gather/Race entry owned by ``tid``, in ``waiters``' order.
+
+        Read from the reverse index, so a Cancel does not walk every parked
+        waiter (card ki-1294af4fa525).
+        """
+        return sorted(parked_keys_of.get(tid, ()), key=waiter_key_stamp.__getitem__)
+
+    def cancel_abandoned_external_promises(
+        parked_keys: list[tuple[str, int]],
+    ) -> list[Exception]:
+        """Propagate a task cancellation to the producers it was waiting on.
+
+        ``parked_keys`` are the waitables the cancelled task was parked on
+        (captured before its continuation was detached). A pending external
+        promise among them with ``on_cancel`` callbacks is cancelled when no
+        live waiter remains (every remaining Wait/Gather/Race entry belongs
+        to a cancelled task; the root is never cancelled). Its waiters entry
+        is dropped — nothing can resume from it — and the callbacks run.
+        Promises without callbacks keep the historical semantics (stay
+        pending, a later completion still settles them).
+
+        Returns the callback exceptions; the caller surfaces them only after
+        every abandoned promise was cancelled, so one failing producer
+        cannot leave the others running.
+        """
+        errors = []
+        for key in parked_keys:
+            kind, pid = key
+            if kind != "promise":
+                continue
+            promise = promises.get(pid)
+            if (
+                promise is None
+                or promise["status"] != "pending"
+                or not promise.get("cancel_callbacks")
+            ):
+                continue
+            entries = waiters.get(key, [])
+            if any(not is_owner_cancelled(entry[1]) for entry in entries):
+                continue
+            unpark_key(key)
+            promise["status"] = "cancelled"
+            promise["result"] = TaskCancelledError()
+            for callback in promise.pop("cancel_callbacks"):
+                try:
+                    callback()
+                except Exception as error:  # collected, re-raised by Cancel
+                    errors.append(error)
+        return errors
+
+    def detach_parked_continuation(tid: int | None) -> object | None:
+        """Take the one continuation of started task ``tid`` (None = the root body) the scheduler holds.
+
+        A started task that is not the one currently running is suspended in
+        exactly one scheduler structure: a Wait/Gather/Race registration in
+        ``waiters``, a queued resume/raise/permit in the ready heap, or a
+        semaphore wait queue. The continuation is removed from there (so no
+        wake can resume it a second time) and returned, so Cancel can throw
+        ``TaskCancelledError`` into it (and pick_next a deadlock into the root
+        body). Returns None when the scheduler does not hold the task's
+        continuation.
+        """
+        for detach in (detach_from_waiters, detach_from_ready, detach_from_semaphores):
+            cont = detach(tid)
+            if cont is not None:
+                return cont
+        return None
+
+    def detach_from_waiters(tid: int | None) -> object | None:
+        """Detach a Wait/Gather/Race registration of ``tid`` (see above).
+
+        The external-wait placeholder is claimed so it drops itself, and a
+        multi-key registration (Gather/Race — its state holds ``resolved`` and
+        ``waiter_k``) is resolved and withdrawn from every key by the function
+        its kind declared in withdraw_group_of. Only the keys ``tid`` is parked
+        on are read (card ki-1294af4fa525).
+        """
+        for key in keys_parked_by(tid):
+            for index, entry in enumerate(waiters[key]):
+                if entry[1] != tid:
+                    continue
+                entry_type = entry[0]
+                withdraw = withdraw_group_of.get(entry_type)
+                if withdraw is not None:
+                    state = entry[2]
+                    state["resolved"] = True
+                    withdraw(state)
+                    return state["waiter_k"]
+                if entry_type == "wait_external":
+                    claim(entry[3])  # drop the paired ready placeholder
+                unpark_at(key, index)
+                return entry[2]
+        return None
+
+    def detach_from_ready(tid: int | None) -> object | None:
+        """Detach a queued resume/raise/permit of ``tid`` (see above).
+
+        A permit already transferred to the task is handed on (#496). Every
+        kind declared in _CONTINUATION_ENTRY_KINDS holds the continuation at [2].
+        """
+        for index, heap_item in enumerate(ready):
+            entry = heap_item[2]
+            if entry[0] not in _CONTINUATION_ENTRY_KINDS or entry[1] != tid:
+                continue
+            ready_remove_at(index)
+            if entry[0] == "sem_resume":
+                return_inflight_permit(entry[3], tid)
+            return entry[2]
+        return None
+
+    def detach_from_semaphores(tid: int | None) -> object | None:
+        """Detach ``tid`` from a semaphore wait queue (see above)."""
+        for sem in semaphores.values():
+            for waiter in sem["waiters"]:
+                if waiter[0] == tid:
+                    sem["waiters"].remove(waiter)
+                    return waiter[1]
+        return None
+
+    def finish_cancelled(tid: int, error: BaseException) -> None:
+        """Make ``tid`` terminal as cancelled and wake whoever waits on it."""
+        tasks[tid]["status"] = "cancelled"
+        # Its queued entries are dead from now on (has_live_ready_entry).
+        counted = live_ready_of.pop(tid, None)
+        if counted is not None:
+            count_live(tasks[tid], -counted)
+        tasks[tid]["result"] = error
+        wake_waiters(("task", tid))
+        _release_task_refs(tid)
+
+    def live_parked_waiter_summary(include_daemons=True):
+        """Describe live (non-cancelled) parked waiters for diagnostics.
+
+        ``include_daemons=False`` is the root close-out view (#501): a
+        daemon parked at root return is the documented listener pattern,
+        not lost work. Deadlock detection and the stall log keep the full
+        view — a daemon hung mid-run still hangs the run.
+        """
+        parked = []
+        for (kind, wid), entries in waiters.items():
+            for entry in entries:
+                wtype, owner_tid = entry[0], entry[1]
+                if is_owner_cancelled(owner_tid):
+                    continue
+                if not include_daemons and is_daemon(owner_tid):
+                    continue
+                who = "root" if owner_tid is None else f"task {owner_tid}"
+                parked.append(f"{who} ({wtype}) on {kind} {wid}")
+        return parked
+
+    def abandoned_ready_summary():
+        """Describe live ready-heap entries a root return would abandon (#501).
+
+        "wait_external" placeholders are skipped: an unclaimed one is already
+        reported through its paired waiters registration and a claimed one is
+        inert by construction. Daemon-owned entries are skipped: abandoning
+        daemon work at root return is that flag's declared contract.
+        """
+        abandoned = []
+        for _neg_prio, _seq, entry in ready:
+            kind = entry[0]
+            if kind == "new":
+                tid = entry[1]
+                if tasks[tid]["status"] != "cancelled" and not is_daemon(tid):
+                    abandoned.append(f"unstarted task {tid}")
+            elif kind in ("resume", "raise"):
+                owner_tid = entry[1]
+                if not is_owner_cancelled(owner_tid) and not is_daemon(owner_tid):
+                    who = "root" if owner_tid is None else f"task {owner_tid}"
+                    abandoned.append(f"queued {kind} for {who}")
+            elif kind == "sem_resume":
+                owner_tid, sid = entry[1], entry[3]
+                if not is_owner_cancelled(owner_tid) and not is_daemon(owner_tid):
+                    abandoned.append(
+                        f"queued semaphore {sid} permit for task {owner_tid}"
+                    )
+        return abandoned
+
+    @do
+    def root_close_out(prog):
+        """Unwind, then report, work the run abandons when the root body returns.
+
+        #2684: live non-daemon tasks are cancelled and their unwinding
+        (finally blocks) is awaited up to ROOT_CLOSE_OUT_GRACE_SECONDS, so a
+        resource returned in a finally is returned. #501: whatever is still
+        live afterwards is dropped, but loudly. The return value is unchanged.
+        """
+        try:
+            result = yield prog
+        except GeneratorExit:
+            # Python closes the body a run dropped — an error left the run from inside the
+            # scheduler's dispatch: there is no run left to unwind work in, and yielding here
+            # would make the close print "generator ignored GeneratorExit" over that error.
+            raise
+        except BaseException:
+            # The root body raised: the work it left behind still gets unwound
+            # (a leased connection must come back on the error path too), then
+            # the body's exception propagates unchanged.
+            yield close_out()
+            raise
+        yield close_out()
+        return result
+
+    @do
+    def close_out():
+        """Cancel and await (bounded) the unawaited work, then warn (#501/#2684)."""
+        abandoned = abandoned_ready_summary()
+        parked = live_parked_waiter_summary(include_daemons=False)
+        live = [
+            tid
+            for tid, task in tasks.items()
+            if task["status"] in ("pending", "running", "cancelling") and not is_daemon(tid)
+        ]
+        yield _unwind_abandoned(
+            [tid for tid in live if tasks[tid]["status"] != "cancelling"],
+            live,
+        )
+        _warn_abandoned_work(
+            abandoned,
+            parked,
+            abandoned_ready_summary() + live_parked_waiter_summary(include_daemons=False),
+        )
+        _warn_unretrieved_exceptions(*unretrieved_exceptions())
+        return None
+
+    def live_semaphore_waiters():
+        """Return live semaphore waiters, pruning cancelled task continuations."""
+        blocked = {}
+        for sid, sem in semaphores.items():
+            original_waiters = list(sem["waiters"])
+            live_waiters = [
+                waiter
+                for waiter in original_waiters
+                if not is_owner_cancelled(waiter[0])
+            ]
+            if len(live_waiters) != len(original_waiters):
+                sem["waiters"].clear()
+                sem["waiters"].extend(live_waiters)
+            if live_waiters:
+                blocked[sid] = [
+                    owner_tid
+                    for owner_tid, _waiter_k in live_waiters
+                    if owner_tid is not None
+                ]
+        return blocked
+
+    def unreleasable_semaphores(blocked):
+        """Blocked semaphores whose permit holders can never release (#495c).
+
+        A holder is stuck when it is itself parked in the waiter queue of
+        a semaphore still presumed deadlocked — computed as a greatest
+        fixpoint so a holder awaiting an external event keeps its
+        semaphore (and everything parked behind it) blocking quietly, and
+        cross-semaphore cycles are still caught.
+
+        MODEL: permits are released by their holders. #495b/c require the
+        deadlock diagnosed even while unrelated live external waiters
+        exist, so the check cannot soundly assume "anyone might release
+        later". A program that instead uses a semaphore as a cross-task
+        SIGNAL — every holder parked on the semaphore family while a
+        non-holder plans to release it after an external event — is
+        diagnosed as a deadlock by this model; use a Promise for
+        signalling. A stale holder left by such a cross-task release can
+        additionally make the check miss a later deadlock (never the
+        reverse: a missing/extra holder that is not parked only prunes).
+        """
+        candidates = set(blocked)
+        changed = True
+        while candidates and changed:
+            parked_tids = {
+                owner_tid
+                for sid in candidates
+                for owner_tid, _waiter_k in semaphores[sid]["waiters"]
+            }
+            pruned = {
+                sid
+                for sid in candidates
+                if not semaphores[sid]["holders"]
+                or any(h not in parked_tids for h in semaphores[sid]["holders"])
+            }
+            candidates -= pruned
+            changed = bool(pruned)
+        return {sid: blocked[sid] for sid in candidates}
+
+    def raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters):
+        """Fail loudly when a blocked semaphore cycle can never resolve.
+
+        Called wherever pick_next is about to block on external
+        completions: unrelated pending external waiters must not mask a
+        semaphore deadlock into a silent hang (#495c).
+        """
+        if not blocked_semaphore_waiters:
+            return
+        doomed = unreleasable_semaphores(blocked_semaphore_waiters)
+        if doomed:
+            raise SchedulerDeadlockError(doomed)
+
+    def has_pending_external_waiters():
+        for key, entries in waiters.items():
+            kind, wid = key
+            if kind != "promise":
+                continue
+            promise = promises.get(wid, {})
+            if not promise.get("external") or promise.get("status") in terminal_statuses:
+                continue
+            for entry in entries:
+                if len(entry) >= 2 and not is_owner_cancelled(entry[1]):
+                    return True
+        return False
+
+    def trace_entered(heap_item: tuple[int, int, tuple[object, ...]], tid: int | None) -> None:
+        """測りの口(#3861): 選んだ entry の起こされ方を resumed で、task へ入る時を task-enter で出す。"""
+        if _trace_sink is None:
+            return
+        kind, pid = wake_of_seq.pop(heap_item[1], ("untracked", None))
+        site = None if tid is None else tasks[tid].get("spawn_site")
+        _trace("resumed", run_id, tid=tid, wake=kind, pid=pid, ready=len(ready))
+        trace_step_boundary("task-enter", tid, site=site, ready=len(ready))
+
+    def trace_step_boundary(event: str, tid: int | None, **fields: object) -> None:
+        """測りの口(#3855): task の歩の境目(task-enter・task-leave)を出し、この run の歩の始まりを進めるため
+        (出来事の形は _trace_step_boundary — Rust の版と同じ物)。"""
+        step_start[0] = _trace_step_boundary(step_start[0], event, run_id, tid, fields)
+
+    def pick_next() -> "Program[object, object]":
+        """The next step of the run; a deadlock is thrown into the root body where it waits.
+
+        The root body is where the run's answer comes from, so the SchedulerDeadlockError ends
+        the run at the user's own yield, and root_close_out unwinds the tasks the run leaves
+        behind. Raised from the dispatch only when the scheduler does not hold the root's
+        continuation (nothing to throw it into).
+        """
+        try:
+            return pick_ready_entry()
+        except SchedulerDeadlockError as deadlock:
+            root_k = detach_parked_continuation(None)
+            if not isinstance(root_k, K):
+                raise
+            from doeff.program import ResumeThrow
+            return ResumeThrow(root_k, deadlock)
+
+    def pick_ready_entry() -> "Program[object, object]":  # noqa: PLR0912, PLR0915 - scheduler dispatch loop has one branch per ready entry
+        from doeff.program import ResumeThrow
+        # Heap tuples held out of the heap for the duration of this call:
+        # unclaimed external-wait placeholders deferring to live non-daemon
+        # work below them (#505), plus the daemon entries those placeholders
+        # shield. Re-pushed with their ORIGINAL seq in the finally block, so
+        # heap order is preserved exactly across pick_next calls.
+        held = []
+        shield_deferred = False
+        try:
+            while True:
+                if self_check:
+                    check_indexes()
+                drain()
+                while ready:
+                    heap_item = ready_pop()
+                    entry = heap_item[2]
+                    armed_step_budget = _armed_step_budget
+                    if armed_step_budget is not None:
+                        # Only when a budget is armed (#3143): the default
+                        # never reads the step count.
+                        _check_step_budget(armed_step_budget, entry[1])
+                    if (
+                        shield_deferred
+                        and entry[0] != "wait_external"
+                        and is_live_daemon_entry(entry)
+                    ):
+                        # An unclaimed external-wait placeholder was deferred
+                        # to let non-daemon work run (#505); daemon work stays
+                        # shielded exactly as if the placeholder were still
+                        # ahead of it in the heap.
+                        held.append(heap_item)
+                        continue
+                    if entry[0] == "new":
+                        _, tid = entry
+                        if tasks[tid]["status"] == "cancelled":
+                            # Never started: skipping its start is the last
+                            # read of its row.
+                            tasks[tid]["settled"] = True
+                            continue  # skip cancelled tasks
+                        tasks[tid]["status"] = "running"
+                        prog = tasks[tid].pop("program")
+                        # Re-wrap task with the boundary stack (handlers AND
+                        # observers) captured at the spawn site, innermost first —
+                        # preserves handler/observer nesting order, in one VM step.
+                        prog = _reinstall_boundaries(prog, tasks[tid].pop("inner_boundaries", []))
+                        trace_entered(heap_item, tid)
+                        return make_handler(tid)(wrap_task(tid, prog))
+                    if entry[0] == "resume":
+                        _, owner_tid, cont, value = entry
+                        if is_owner_cancelled(owner_tid):
+                            continue
+                        trace_entered(heap_item, owner_tid)
+                        return Transfer(cont, value)
+                    if entry[0] == "sem_resume":
+                        # A ReleaseSemaphore permit travelling to a parked
+                        # waiter (#496): the entry carries the semaphore id so
+                        # the permit is recoverable at this drop site.
+                        _, owner_tid, cont, sid = entry
+                        if is_owner_cancelled(owner_tid):
+                            return_inflight_permit(sid, owner_tid)
+                            continue
+                        trace_entered(heap_item, owner_tid)
+                        return Transfer(cont, None)
+                    if entry[0] == "raise":
+                        _, owner_tid, cont, error = entry
+                        if is_owner_cancelled(owner_tid):
+                            continue
+                        trace_entered(heap_item, owner_tid)
+                        return ResumeThrow(cont, error)
+                    if entry[0] == "wait_external":
+                        # Placeholder for a task waiting on an external promise.
+                        # Keeps DAEMON tasks (sim clock driver) from running
+                        # while the wait is pending, and drives the blocking
+                        # drain. The resume itself is owned by the paired
+                        # `waiters` registration: wake_waiters claims and
+                        # enqueues it the moment the completion is drained —
+                        # even while this loop is blocked on a DIFFERENT
+                        # unresolved external wait (#490). This entry never
+                        # resumes the continuation; once claimed it is simply
+                        # dropped.
+                        _, owner_tid, _cont, _wk, claimed = entry
+                        if claimed.mut_claimed or is_owner_cancelled(owner_tid):
+                            continue
+                        if has_live_ready_entry(include_daemons=False):
+                            # Real (non-daemon) work is runnable below this
+                            # placeholder. The shield may starve only daemon
+                            # tasks: starving a non-daemon entry can starve
+                            # the very task that would produce the awaited
+                            # completion (in-run completer, #505) or release
+                            # a blocked semaphore (#495c). Defer the
+                            # placeholder for this pass and let the
+                            # non-daemon entry run; daemon entries popped
+                            # after this stay held via the guard above.
+                            held.append(heap_item)
+                            shield_deferred = True
+                            continue
+                        if not has_live_ready_entry(include_daemons=True):
+                            # Deadlock diagnostics must stay reachable while
+                            # this branch keeps the loop from ever reaching
+                            # the bottom of pick_next (#495c/d) — but only
+                            # when NOTHING else can run: any live entry
+                            # (shielded daemon included) may still release a
+                            # blocked semaphore once the external completion
+                            # arrives, so declaring doom while one exists
+                            # would be a false positive.
+                            raise_if_semaphore_cycle_unresolvable(live_semaphore_waiters())
+                        # Not yet resolved — block for one completion, drain rest
+                        _drain_one_external()
+                        drain()
+                        if not claimed.mut_claimed:
+                            enqueue(entry, PRIORITY_EXTERNAL_WAIT)
+                        continue
+                blocked_semaphore_waiters = live_semaphore_waiters()
+                if not has_pending_external_waiters():
+                    parked = live_parked_waiter_summary()
+                    if blocked_semaphore_waiters or parked:
+                        # Nothing is runnable and no pending external
+                        # completion can ever wake any parked waiter — the run
+                        # would hang silently in external_queue.get() forever.
+                        # Fail loudly instead (#495a).
+                        raise SchedulerDeadlockError(blocked_semaphore_waiters, parked)
+                else:
+                    # External waiters exist, but they must not mask a
+                    # semaphore cycle that no holder can ever release (#495c).
+                    raise_if_semaphore_cycle_unresolvable(blocked_semaphore_waiters)
+                if not waiters:
+                    return Pure(None)
+                # All tasks blocked — block for one external completion
+                _drain_one_external()
+        finally:
+            # Restore every held tuple with its original (priority, seq) so
+            # the heap looks exactly as if the deferral never happened.
+            for heap_item in held:
+                ready_push(heap_item)
+
+    terminal_statuses = ("completed", "failed", "cancelled")
+
+    def _release_task_refs(tid):
+        """Drop heavy references from a terminal task.
+
+        Keeps status/result (needed by Wait/Gather) but releases the
+        program, inner_boundaries, spawn_site and definition (a closure's
+        function holds its cells) that pin large Python object graphs into
+        memory.
+        """
+        t = tasks.get(tid)
+        if t is None:
+            return
+        t.pop("program", None)
+        t.pop("inner_boundaries", None)
+        t.pop("spawn_site", None)
+        t.pop("definition", None)
+
+    def resume_with_waitable_result(owner_tid, waiter_k, key, priority=None):
+        """Add a ready entry that resumes waiter with the waitable's result.
+        For failed/cancelled, uses ("raise", k, error) so handler can throw.
+        priority=None wakes the waiter at its own task priority (#504).
+        Returns the effective wake priority, or None if nothing was queued."""
+        status, result = waitable_status(key)
+        if status == "completed":
+            return enqueue_resume(owner_tid, waiter_k, result, priority)
+        if status == "failed":
+            return enqueue_raise(owner_tid, waiter_k, result, priority)
+        if status == "cancelled":
+            return enqueue_raise(owner_tid, waiter_k, TaskCancelledError(), priority)
+        return None
+
+    def register_pending_waiter(
+        wk: tuple[str, int],
+        entry_type: Literal["gather", "race"],
+        owner_tid: int | None,
+        state: dict[str, object],
+        park: bool = False,
+    ) -> None:
+        """Register a gather/race waiter for a pending waitable (#505).
+
+        A pending EXTERNAL promise additionally gets a claimed-style
+        placeholder at PRIORITY_EXTERNAL_WAIT — the same shape Wait uses
+        (#490/#491): the placeholder only blocks DAEMON tasks (the sim
+        clock driver) and drives the blocking drain; non-daemon work below
+        it still runs (in-run completers must not be starved) and it never
+        resumes anything. wake_waiters
+        (or remove_gather_waiters/remove_race_waiters on early resolution)
+        sets ``claimed`` and the placeholder drops itself, so Gather/Race
+        get the same sim-ordering semantics as Wait. ``park`` (a Race with
+        ``priority=PRIORITY_IDLE``) registers without the placeholder, like
+        Wait's IDLE park: the waiter still counts for the blocking drain
+        (has_pending_external_waiters reads ``waiters``), but the sim clock
+        may run (agora-redesign #3054).
+        """
+        claimed = None
+        kind, wid = wk
+        if kind == "promise" and promises[wid].get("external") and not park:
+            claimed = _ClaimMark()
+            enqueue(
+                ("wait_external", owner_tid, None, wk, claimed),
+                PRIORITY_EXTERNAL_WAIT,
+            )
+        park_waiter(wk, (entry_type, owner_tid, state, claimed))
+
+    def remove_gather_waiters(gather_state):
+        """Remove unresolved waiter refs for a fail-fast Gather resolution."""
+        for wk in set(gather_state["pending_keys"]):
+            entries = waiters.get(wk)
+            if not entries:
+                continue
+            withdrawn = [e for e in entries if e[0] == "gather" and e[2] is gather_state]
+            for entry in withdrawn:
+                if entry[3] is not None:
+                    # Drop the paired external-wait placeholder (#505) so
+                    # it cannot block the run on a completion nobody
+                    # observes anymore.
+                    claim(entry[3])
+            keep_waiters(
+                wk,
+                [e for e in entries if not (e[0] == "gather" and e[2] is gather_state)],
+                withdrawn,
+            )
+
+    def resolve_gather_with_error(gather_state, error):
+        """Resolve a Gather with an error; returns the wake priority used."""
+        if gather_state["resolved"]:
+            return None
+        gather_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+        gather_state["failure"] = error  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+        remove_gather_waiters(gather_state)
+        return enqueue_raise(gather_state["owner_tid"], gather_state["waiter_k"], error)
+
+    def wake_gather_waiter(gather_state, completed_key):
+        """Returns the wake priority if the Gather owner was queued, else None."""
+        if gather_state["resolved"]:
+            return None
+
+        status, result = waitable_status(completed_key)
+        if status == "failed":
+            return resolve_gather_with_error(gather_state, result)
+        if status == "cancelled":
+            return resolve_gather_with_error(gather_state, TaskCancelledError())
+
+        if status != "completed":
+            return None
+
+        gather_state["remaining"] -= 1  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+        if gather_state["remaining"] == 0:
+            gather_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+            results = [waitable_status(wk)[1] for wk in gather_state["keys"]]
+            return enqueue_resume(
+                gather_state["owner_tid"], gather_state["waiter_k"], results
+            )
+        return None
+
+    def remove_race_waiters(race_state):
+        """Remove unresolved sibling waiter refs after Race has a winner."""
+        for wk in set(race_state["pending_keys"]):
+            entries = waiters.get(wk)
+            if not entries:
+                continue
+            withdrawn = [e for e in entries if e[0] == "race" and e[2] is race_state]
+            for entry in withdrawn:
+                if entry[3] is not None:
+                    # Drop the paired external-wait placeholder (#505):
+                    # the losing external promise may never complete and
+                    # must not keep blocking the drain loop.
+                    claim(entry[3])
+            keep_waiters(
+                wk,
+                [e for e in entries if not (e[0] == "race" and e[2] is race_state)],
+                withdrawn,
+            )
+
+    # 複数の鍵にまたがる待ち手の登録の種類 → その登録を全部の鍵から外す関数(Cancel・Discard が呼ぶ)。登録の種類を足す effect
+    # はここに 1 行足す — park_waiter が宣言の無い種類を断り、detach_from_waiters は種類の名を持たない(card ki-1294af4fa525 の
+    # 設計検証・盲検 A: cancel が "gather"・"race" の名を持ち、新しい種類の Cancel が state の dict を継続として投げ込んだ)。
+    withdraw_group_of = {"gather": remove_gather_waiters, "race": remove_race_waiters}
+
+    def wake_race_waiter(race_state, completed_key):
+        """Returns the wake priority if the Race owner was queued, else None."""
+        if race_state["resolved"]:
+            return None
+
+        status, result = waitable_status(completed_key)
+        if status not in terminal_statuses:
+            return None
+
+        race_state["resolved"] = True  # noqa: DOEFF007 - the scheduler-owned Gather/Race state cell (pre-existing)
+        remove_race_waiters(race_state)
+        if status == "completed":
+            return enqueue_resume(race_state["owner_tid"], race_state["waiter_k"], result)
+        if status == "failed":
+            return enqueue_raise(race_state["owner_tid"], race_state["waiter_k"], result)
+        return enqueue_raise(
+            race_state["owner_tid"], race_state["waiter_k"], TaskCancelledError()
+        )
+
+    def wake_waiters(completed_key):
+        """Wake everything parked on ``completed_key``.
+
+        Returns the MINIMUM priority at which a waiter was queued (None when
+        nothing was queued), so CompletePromise/FailPromise can guarantee the
+        completer resumes only after every task its resolution woke (#493).
+        """
+        ws = unpark_key(completed_key)
+        woken_min = None
+        for w in ws:
+            queued_at = None
+            if w[0] == "wait":
+                _, owner_tid, waiter_k, wake_priority = w
+                queued_at = resume_with_waitable_result(
+                    owner_tid, waiter_k, completed_key, wake_priority
+                )
+            elif w[0] == "wait_external":
+                # Eager wake for a non-IDLE external wait (#490): enqueue the
+                # resume now and claim it so the paired ready-heap placeholder
+                # drops itself instead of resuming a second time.
+                _, owner_tid, waiter_k, claimed, wake_priority = w
+                claim(claimed)
+                queued_at = resume_with_waitable_result(
+                    owner_tid, waiter_k, completed_key, wake_priority
+                )
+            elif w[0] == "gather":
+                _, _owner_tid, gather_state, claimed = w
+                if claimed is not None:
+                    # External-promise key (#505): drop the paired
+                    # ready-heap placeholder now that the completion is in.
+                    claim(claimed)
+                queued_at = wake_gather_waiter(gather_state, completed_key)
+            elif w[0] == "race":
+                _, _owner_tid, race_state, claimed = w
+                if claimed is not None:
+                    claim(claimed)
+                queued_at = wake_race_waiter(race_state, completed_key)
+            if queued_at is not None and (woken_min is None or queued_at < woken_min):
+                woken_min = queued_at
+        return woken_min
+
+    def drain():
+        """Drain all pending external completions into promise state."""
+        while not external_queue.empty():
+            action, pid, value = external_queue.get()
+            settle_external(action, pid, value)
+
+    def pop_live_semaphore_waiter(sem):
+        while sem["waiters"]:
+            owner_tid, waiter_k = sem["waiters"].popleft()
+            if is_owner_cancelled(owner_tid):
+                continue
+            return owner_tid, waiter_k
+        return None
+
+    def grant_permit_to_next_waiter(sid):
+        """Transfer one permit to the next live waiter of semaphore ``sid``.
+
+        The ready entry is tagged ``sem_resume`` and carries ``sid`` so the
+        permit it holds can be returned if the receiving task is cancelled
+        before the resume is dequeued (#496). Returns True when the permit
+        was transferred, False when no live waiter exists.
+        """
+        sem = semaphores[sid]
+        waiter = pop_live_semaphore_waiter(sem)
+        if waiter is None:
+            return False
+        owner_tid, waiter_k = waiter
+        sem["holders"].append(owner_tid)
+        enqueue(("sem_resume", owner_tid, waiter_k, sid), task_priority(owner_tid))
+        return True
+
+    def return_inflight_permit(sid, cancelled_tid):
+        """Return a permit whose receiving waiter was cancelled in flight.
+
+        The task was cancelled after ReleaseSemaphore transferred the
+        permit to it but before its sem_resume entry was dequeued (#496):
+        re-run the release so the next live waiter — or the free pool —
+        gets the permit instead of it leaking.
+        """
+        sem = semaphores[sid]
+        sem["holders"].remove(cancelled_tid)
+        if not grant_permit_to_next_waiter(sid):
+            sem["permits"] += 1
+
+    def make_handler(current_tid):
+        @do
+        def raw_handler(effect, k):
+            return (yield TailEval(handle_scheduler_effect(current_tid, effect, k)))
+        # The scheduler prompt is execution substrate, not a user handler:
+        # exactly one lives in a VM. Stack-capture consumers (e.g.
+        # doeff-agents tool tasks) must not reinstall it — a second
+        # scheduler prompt inside a spawned task re-routes the exceptions
+        # of Transfer-resumed continuations into that task's dynamic scope
+        # (2026-07-07 exit-0 incident; see doeff_agents mcp_server_loop).
+        raw_handler.__doeff_scheduler_prompt__ = True
+        return _program_handler(raw_handler)
+
+    @do
+    def handle_scheduler_effect(current_tid, effect, k):  # noqa: PLR0911, PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
+        if _trace_sink is not None:
+            trace_step_boundary(
+                "task-leave", current_tid, effect=type(effect).__name__, ready=len(ready),
+                site=tasks[current_tid].get("spawn_site") if current_tid in tasks else None,
+            )
+        if self_check:
+            check_indexes()
+        drain()
+        if isinstance(effect, Spawn):
+            # Capture the boundary stack (handlers AND WithObserve observers)
+            # from the continuation (between yield site and scheduler) so the
+            # spawned task keeps both — with nesting order preserved.
+            inner_boundaries = yield get_inner_boundaries(k)
+
+            # Capture spawn site from continuation's traceback
+            from doeff.program import GetTraceback
+            spawn_frames = yield GetTraceback(k)
+            spawn_site = None
+            if spawn_frames:
+                f = spawn_frames[0]  # innermost = yield Spawn(...) site
+                if isinstance(f, (list, tuple)) and len(f) >= 3:
+                    spawn_site = f"{f[0]}  {f[1]}:{f[2]}"
+
+            tid = alloc_task(effect.program, effect.priority,
+                             inner_boundaries=inner_boundaries,
+                             daemon=effect.daemon)
+            tasks[tid]["spawn_site"] = spawn_site
+            if _trace_sink is not None:
+                # 測りの口(#4188): task の木を出来事から組み直せるように、親(Spawn を出した task — 根は None)と子を名指す
+                _trace("spawned", run_id, tid=tid, parent=current_tid, site=spawn_site)
+            enqueue(("new", tid), effect.priority, wake=("new", None))
+            # Spawner resumes at its OWN task priority (#504): a hard-coded
+            # NORMAL here would promote an IDLE spawner above the
+            # PRIORITY_EXTERNAL_WAIT shield and demote a HIGH spawner.
+            enqueue_resume(current_tid, k, register_handle(("task", tid), Task(tid)))
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, TaskCompleted):
+            tid = effect.task_id
+            r = effect.result
+            status = tasks[tid]["status"]
+            if isinstance(r, Ok):
+                value, error = r.value, None
+            else:
+                value, error = None, r.error
+            if status == "cancelled":
+                # A task dropped by the Cancel fallback ran to its end after
+                # all: nothing re-reads its row any more.
+                _release_task_refs(tid)
+                tasks[tid]["settled"] = True
+            elif status == "cancelling" and (
+                error is None or isinstance(error, TaskCancelledError)
+            ):
+                # The task finished unwinding a Cancel: by propagating the
+                # TaskCancelledError, or by swallowing it and returning — the
+                # late value is discarded, the Cancel still wins.
+                finish_cancelled(
+                    tid, error if error is not None else TaskCancelledError()
+                )
+                tasks[tid]["settled"] = True
+                # The unwound TaskCancelledError's traceback holds the task's
+                # frames, and they hold its row and the handles it touched —
+                # a cycle that keeps those handles alive (so their entries
+                # unswept) until a gc pass. Waiters only need the error type.
+                if error is not None:
+                    error.__traceback__ = None
+            else:
+                # A cancelling task whose cleanup raised something else is
+                # reported as failed with that error (it is not hidden).
+                if error is None:
+                    tasks[tid]["status"] = "completed"
+                    tasks[tid]["result"] = value
+                else:
+                    tasks[tid]["status"] = "failed"
+                    # Add spawn boundary to traceback
+                    if isinstance(error, BaseException) and hasattr(error, "__doeff_traceback__"):
+                        error.__doeff_traceback__.insert(0, {
+                            "kind": "spawn_boundary",
+                            "task_id": tid,
+                            "spawn_site": tasks[tid].get("spawn_site", ""),
+                        })
+                    tasks[tid]["result"] = error
+                    if not tasks[tid]["retrieved"] and not isinstance(error, TaskCancelledError):
+                        # Nothing has claimed the outcome yet: describe the
+                        # exception now, while the program and spawn site are
+                        # still held (card ki-84667a89b47a).
+                        tasks[tid]["unretrieved"] = _describe_unretrieved_exception(
+                            tid, tasks[tid]["definition"], tasks[tid].get("spawn_site"), error
+                        )
+                wake_waiters(("task", tid))
+                _release_task_refs(tid)
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, Wait):
+            misuse = _misused_waitable(effect, (effect.task,))
+            if misuse is not None:
+                # Thrown at the waiter's own yield, as the Rust version does with a dispatch error.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            wk = waitable_key(effect, effect.task)
+            mark_retrieved(wk)
+            status, result = waitable_status(wk)
+            if status == "completed":
+                r = yield Resume(k, result)
+                return r
+            elif status == "failed":
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, result))
+            elif status == "cancelled":
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, TaskCancelledError()))
+            else:
+                kind, wid = wk
+                if kind == "promise" and promises.get(wid, {}).get("external"):
+                    # External promise: by default hold a ready-heap
+                    # placeholder that shields DAEMON tasks (the sim clock
+                    # driver) from running past the pending completion.
+                    # Callers that are just listening in the background
+                    # (MCP server loop, result file polling, etc.) pass
+                    # priority=PRIORITY_IDLE, which parks the task in
+                    # `waiters` just like an internal promise — drain()
+                    # wakes it when the promise resolves, and the clock
+                    # driver is free to advance sim time.
+                    if effect.priority == PRIORITY_IDLE:
+                        # PRIORITY_IDLE is the park mode, not the wake
+                        # priority: the waiter wakes at its own task priority
+                        # (wake_priority=None). Waking at IDLE would starve
+                        # it behind the PRIORITY_EXTERNAL_WAIT shield.
+                        park_waiter(wk, ("wait", current_tid, k, None))
+                    else:
+                        # Register in `waiters` too so the resume is enqueued
+                        # by wake_waiters the moment the completion is drained
+                        # — even while pick_next is blocked on a different
+                        # unresolved external wait (#490). The ready-heap
+                        # placeholder only blocks the clock driver and drives
+                        # the blocking drain; `claimed` marks that the waiters
+                        # side owns the (one-shot) resume.
+                        claimed = _ClaimMark()
+                        park_waiter(
+                            wk, ("wait_external", current_tid, k, claimed, effect.priority)
+                        )
+                        enqueue(
+                            ("wait_external", current_tid, k, wk, claimed),
+                            PRIORITY_EXTERNAL_WAIT,
+                        )
+                else:
+                    # Internal waitable: park in `waiters` (resolved by other
+                    # tasks). An explicit Wait priority is honored as the
+                    # wake priority (#504); None wakes at the waiter's own
+                    # task priority.
+                    park_waiter(wk, ("wait", current_tid, k, effect.priority))
+                yield TailEval(pick_next())
+
+        elif isinstance(effect, Gather):
+            misuse = _misused_waitable(effect, effect.tasks)
+            if misuse is not None:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            wks = [waitable_key(effect, t) for t in effect.tasks]
+            # Every task given to the Gather is claimed, also a sibling that
+            # fails after the fail-fast (asyncio.gather retrieves it too).
+            for wk in wks:
+                mark_retrieved(wk)
+            pending_wks = []
+            for wk in wks:
+                s, r = waitable_status(wk)
+                if s == "failed":
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, r))
+                if s == "cancelled":
+                    from doeff.program import ResumeThrow
+                    return (yield ResumeThrow(k, TaskCancelledError()))
+                if s not in terminal_statuses:
+                    pending_wks.append(wk)
+
+            if not pending_wks:
+                results = [waitable_status(wk)[1] for wk in wks]
+                r = yield Resume(k, results)
+                return r
+
+            gather_state = {
+                "owner_tid": current_tid,
+                "waiter_k": k,
+                "keys": wks,
+                "pending_keys": pending_wks,
+                "remaining": len(pending_wks),
+                "failure": None,
+                "resolved": False,
+            }
+            for wk in pending_wks:
+                register_pending_waiter(wk, "gather", current_tid, gather_state)
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, Race):
+            if not effect.tasks:
+                # An empty Race has no identity (unlike Gather's []): the
+                # caller continuation would otherwise be silently leaked and
+                # the run would "succeed" with None (#501).
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, ValueError(
+                    "Race() requires at least one Task or Future to race"
+                )))
+            # Every waitable is checked before any is read: a settled first one does not let a
+            # program in a later place through.
+            misuse = _misused_waitable(effect, effect.tasks)
+            if misuse is not None:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, misuse))
+            race_wks = [waitable_key(effect, t) for t in effect.tasks]
+            # Every task given to the Race is claimed, also a loser that fails
+            # after the Race was decided.
+            for wk in race_wks:
+                mark_retrieved(wk)
+            for wk in race_wks:
+                status, result = waitable_status(wk)
+                if status == "completed":
+                    r = yield Resume(k, result)
+                    return r
+                elif status in ("failed", "cancelled"):
+                    from doeff.program import ResumeThrow
+                    err = result if status == "failed" else TaskCancelledError()
+                    return (yield ResumeThrow(k, err))
+            # All pending
+            pending_wks = [wk for wk in race_wks if waitable_status(wk)[0] not in terminal_statuses]
+            if pending_wks:
+                race_state = {
+                    "owner_tid": current_tid,
+                    "waiter_k": k,
+                    "pending_keys": pending_wks,
+                    "resolved": False,
+                }
+                for wk in pending_wks:
+                    register_pending_waiter(
+                        wk, "race", current_tid, race_state,
+                        park=effect.priority == PRIORITY_IDLE,
+                    )
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, Cancel):
+            # Cancellation is delivered INTO the task (see Cancel's docstring):
+            # a started task receives TaskCancelledError at its suspension
+            # point, so its except/finally run; it stays live ("cancelling")
+            # until it finishes unwinding, and only then are its waiters woken.
+            from doeff.program import ResumeThrow
+            misuse = _misused_task(effect, effect.task)
+            if misuse is not None:
+                # Thrown at the canceller's own yield, as the Rust version does with a dispatch error.
+                return (yield ResumeThrow(k, misuse))
+            tid = effect.task.task_id
+            mark_retrieved(("task", tid))
+            task = tasks.get(tid)
+            cancel_errors = []
+            if task is not None and task["status"] == "pending":
+                # Never started: no body ran, so there is nothing to unwind.
+                finish_cancelled(tid, TaskCancelledError())
+            elif task is not None and task["status"] in ("running", "cancelling"):
+                task["status"] = "cancelling"
+                if tid == current_tid:
+                    # Self-cancel: this Cancel is the task's suspension point.
+                    return (yield ResumeThrow(k, TaskCancelledError()))
+                parked_keys = keys_parked_by(tid)
+                cont = detach_parked_continuation(tid)
+                if cont is None:
+                    # The scheduler does not hold the task's continuation, so
+                    # it cannot deliver the exception; fall back to the old
+                    # drop-the-task behaviour, loudly.
+                    _logger.warning(
+                        "Cancel(task %s): the scheduler does not hold its "
+                        "continuation; the task is dropped without running "
+                        "its except/finally blocks",
+                        tid,
+                    )
+                    finish_cancelled(tid, TaskCancelledError())
+                else:
+                    enqueue_raise(tid, cont, TaskCancelledError())
+                # Stop the external work the task was parked on (#498).
+                cancel_errors = cancel_abandoned_external_promises(parked_keys)
+            if cancel_errors:
+                error = ExternalPromiseCancelCallbackError(cancel_errors)
+                error.__cause__ = cancel_errors[0]
+                return (yield ResumeThrow(k, error))
+            r = yield Resume(k, None)
+            return r
+
+        elif isinstance(effect, Discard):
+            # A hard kill (see Discard's docstring): the task's continuation is
+            # dropped, never resumed or thrown into, so no except/finally runs.
+            from doeff.program import ResumeThrow
+            misuse = _misused_task(effect, effect.task)
+            if misuse is not None:
+                return (yield ResumeThrow(k, misuse))
+            tid = effect.task.task_id
+            mark_retrieved(("task", tid))
+            task = tasks.get(tid)
+            discard_errors = []
+            live = task is not None and task["status"] in ("pending", "running", "cancelling")
+            if live and tid == current_tid:
+                # Self-discard: this Discard is where the task ends; its
+                # continuation k is dropped and the next ready task runs.
+                finish_cancelled(tid, TaskCancelledError())
+                tasks[tid]["settled"] = True
+                return (yield TailEval(pick_next()))
+            if live:
+                # A pending task has no continuation yet (pick_next skips the
+                # start of a cancelled task); a started one is detached from
+                # wherever it is parked and dropped with it.
+                parked_keys = keys_parked_by(tid)
+                dropped = detach_parked_continuation(tid)
+                finish_cancelled(tid, TaskCancelledError())
+                if dropped is not None:
+                    # The continuation the scheduler held is dropped, so the
+                    # task never runs again.
+                    tasks[tid]["settled"] = True
+                # Stop the external work the task was parked on (#498).
+                discard_errors = cancel_abandoned_external_promises(parked_keys)
+            if discard_errors:
+                error = ExternalPromiseCancelCallbackError(discard_errors)
+                error.__cause__ = discard_errors[0]
+                return (yield ResumeThrow(k, error))
+            r = yield Resume(k, None)
+            return r
+
+        elif isinstance(effect, CreatePromise):
+            pid = alloc_promise()
+            promise_handle = register_handle(
+                ("promise", pid), Promise(pid, _register=register_handle)
+            )
+            r = yield Resume(k, promise_handle)
+            return r
+
+        elif isinstance(effect, CompletePromise):
+            pid = effect.promise.promise_id
+            promise = promises[pid]
+            if promise.get("external"):
+                # #507: external promises are resolved through
+                # ExternalPromise.complete()/fail(); an internal resolution
+                # would silently discard the foreign thread's completion.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"CompletePromise on external promise {pid}: resolve it "
+                    "through ExternalPromise.complete() instead"
+                )))
+            if promise["status"] != "pending":
+                # #507: same guard the drain path has — a double resolution
+                # would silently rewrite the result after waiters were woken
+                # with the old value.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"CompletePromise on promise {pid} which is already "
+                    f"{promise['status']}"
+                )))
+            promise["status"] = "completed"
+            promise["result"] = effect.value
+            woken_min = wake_waiters(("promise", pid))
+            if not effect.yield_to_woken:
+                # The completer keeps its turn (agora-redesign #4013): the woken
+                # tasks are already queued and run when it next waits. Deadlock
+                # detection is unchanged — it reads the ready heap and the
+                # parked waiters, not who is running.
+                r = yield Resume(k, None)
+                return r
+            # Re-queue the completer at min(its OWN task priority, the
+            # lowest wake priority it just caused): the tasks a resolution
+            # woke ALWAYS run before the completer resumes — waiters are
+            # enqueued first, so FIFO within equal priority finishes the
+            # guarantee. Pub/sub loops whose listener re-registers a fresh
+            # promise per event depend on it: a HIGH publisher resuming
+            # ahead of the woken NORMAL listener publishes the next event
+            # before the listener re-registers, silently losing it
+            # (adversarial finding on the first #493 fix). A broker that
+            # keeps the event for a listener not waiting does not — the
+            # doeff_events in-memory broker queues it and completes with
+            # yield_to_woken=False (#4013). #493 itself stays fixed because there is no
+            # hard-coded IDLE demotion: with no woken waiter the completer
+            # keeps its own priority, and it is never demoted below the
+            # tasks it woke — so it cannot freeze behind an external-wait
+            # placeholder unless the tasks it woke are equally frozen.
+            own = task_priority(current_tid)
+            completer_priority = own if woken_min is None else min(own, woken_min)
+            enqueue_resume(current_tid, k, None, completer_priority)
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, FailPromise):
+            pid = effect.promise.promise_id
+            promise = promises[pid]
+            if promise.get("external"):
+                # #507: see CompletePromise — external promises are resolved
+                # through the thread-safe ExternalPromise handle only.
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"FailPromise on external promise {pid}: resolve it "
+                    "through ExternalPromise.fail() instead"
+                )))
+            if promise["status"] != "pending":
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError(
+                    f"FailPromise on promise {pid} which is already "
+                    f"{promise['status']}"
+                )))
+            promise["status"] = "failed"
+            promise["result"] = effect.error
+            woken_min = wake_waiters(("promise", pid))
+            # Same as CompletePromise: the completer resumes only after the
+            # tasks its resolution woke (#493 + pub/sub ordering guarantee).
+            own = task_priority(current_tid)
+            completer_priority = own if woken_min is None else min(own, woken_min)
+            enqueue_resume(current_tid, k, None, completer_priority)
+            yield TailEval(pick_next())
+
+        elif isinstance(effect, CreateExternalPromise):
+            pid = alloc_promise()
+            promises[pid]["external"] = True
+            promises[pid]["wake"] = _external_wake_of(effect)
+            ep = register_handle(
+                ("promise", pid),
+                ExternalPromise(
+                    pid, external_queue,
+                    _register=register_handle,
+                    _bind_cancel=bind_cancel_callback,
+                    _run=run_id,
+                ),
+            )
+            r = yield Resume(k, ep)
+            return r
+
+        elif isinstance(effect, _SchedulerIntrospection):
+            r = yield Resume(k, {
+                "tasks": len(tasks),
+                "promises": len(promises),
+                "semaphores": len(semaphores),
+                "waiters": len(waiters),
+                "ready": len(ready),
+                "handle_refs": len(handle_refs),
+                "handle_ref_total": sum(len(refs) for refs in handle_refs.values()),
+            })
+            return r
+
+        elif isinstance(effect, CreateSemaphore):
+            if effect.permits < 1:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, ValueError("permits must be >= 1")))
+            sid = fresh_id()
+            from collections import deque as deque_type
+            semaphores[sid] = {
+                "permits": effect.permits,
+                "max_permits": effect.permits,
+                "waiters": deque_type(),
+                # Diagnostics-only permit-holder tracking (#495c): which
+                # tasks currently hold a permit (None = root; duplicates
+                # allowed for multi-permit holds).
+                "holders": [],
+            }
+            r = yield Resume(k, _semaphore_handle(sid))
+            return r
+
+        elif isinstance(effect, AcquireSemaphore):
+            sid = effect.semaphore.sem_id
+            sem = semaphores[sid]
+            if sem["permits"] > 0:
+                sem["permits"] -= 1
+                sem["holders"].append(current_tid)
+                r = yield Resume(k, None)
+                return r
+            else:
+                # Park — FIFO queue
+                sem["waiters"].append((current_tid, k))
+                yield TailEval(pick_next())
+
+        elif isinstance(effect, ReleaseSemaphore):
+            sid = effect.semaphore.sem_id
+            sem = semaphores[sid]
+            # Transfer the permit directly to the first live waiter (#496:
+            # via a recoverable sem_resume entry) or bank it.
+            transferred = grant_permit_to_next_waiter(sid)
+            if not transferred and sem["permits"] >= sem["max_permits"]:
+                from doeff.program import ResumeThrow
+                return (yield ResumeThrow(k, RuntimeError("semaphore released too many times")))
+            # Holder tracking is diagnostics-only (#495c): releasing from a
+            # task that never acquired is legal and just leaves it stale.
+            if current_tid in sem["holders"]:
+                sem["holders"].remove(current_tid)
+            if not transferred:
+                sem["permits"] += 1
+            r = yield Resume(k, None)
+            return r
+
+        else:
+            yield Pass(effect, k)
+
+    return make_handler(None)(root_close_out(body_program))

@@ -12,8 +12,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from doeff_core_effects.handlers import env_var_ask, reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects._handlers import env_var_ask, reader
+from doeff_core_effects._scheduler import scheduled
 
 from doeff import Ask, run
 

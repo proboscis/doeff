@@ -5,7 +5,7 @@
 ;;;   fake  同じ種・同じ呼びの順なら run をまたいで同じ値、違う種なら違う値(模擬の名乗りが毎回同じになる)
 (require doeff-hy.macros [deftest defk <-])
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.random_effects [RandomBytes])
 (import doeff_core_effects.seeded_random [seeded-random-handler])
 

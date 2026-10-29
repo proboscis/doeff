@@ -15,7 +15,7 @@
 (import sqlite3)
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [Program])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlEnsureTables SqlParam SqlRows SqlFailed
                                         SqlTransactionMisuse SqlTable SqlColumn SqlColumnType])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler PostgresDatabase PostgresConnections])

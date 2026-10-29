@@ -7,10 +7,10 @@ from functools import partial as partial
 from doeff_core_effects.latest_effects import PublishLatest as PublishLatest
 from doeff_core_effects.latest_effects import ReadLatest as ReadLatest
 from doeff_core_effects.latest_effects import AwaitLatest as AwaitLatest
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
-from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import Wait as Wait
+from doeff_core_effects._scheduler import PRIORITY_IDLE as PRIORITY_IDLE
 BOARDS: Incomplete
 BOARDS_LOCK: Incomplete
 BELLS: Incomplete

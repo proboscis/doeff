@@ -35,7 +35,7 @@ import pytest
 from doeff import run, with_handlers
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import ReadEnvironment
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 SUPPORT_DIR = Path(__file__).resolve().parent
 # binary の置き場を教える外皮(uv の分けた Python 3.12 の環境で走る)。

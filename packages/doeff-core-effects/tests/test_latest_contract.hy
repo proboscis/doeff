@@ -12,7 +12,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects.scheduler [Spawn Wait Cancel CreatePromise CompletePromise])
+(import doeff_core_effects [Spawn Wait Cancel CreatePromise CompletePromise])
 
 
 (defrecord Progress

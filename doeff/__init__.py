@@ -71,40 +71,40 @@ from doeff.result import Ok as Ok
 from doeff.result import Some as Some
 from doeff.run import run as run
 
-from doeff_core_effects.effects import Ask as Ask
-from doeff_core_effects.effects import Await as Await
-from doeff_core_effects.effects import Get as Get
-from doeff_core_effects.effects import Listen as Listen
-from doeff_core_effects.effects import Local as Local
-from doeff_core_effects.effects import Put as Put
-from doeff_core_effects.effects import Slog as Slog
-from doeff_core_effects.effects import SlogEffect as SlogEffect
-from doeff_core_effects.effects import Tell as Tell
-from doeff_core_effects.effects import Try as Try
-from doeff_core_effects.effects import WriterTellEffect as WriterTellEffect
-from doeff_core_effects.effects import MissingEnvKeyError as MissingEnvKeyError
-from doeff_core_effects.effects import slog as slog
-from doeff_core_effects.scheduler import PRIORITY_HIGH as PRIORITY_HIGH
-from doeff_core_effects.scheduler import PRIORITY_IDLE as PRIORITY_IDLE
-from doeff_core_effects.scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
-from doeff_core_effects.scheduler import AcquireSemaphore as AcquireSemaphore
-from doeff_core_effects.scheduler import Cancel as Cancel
-from doeff_core_effects.scheduler import CompletePromise as CompletePromise
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import CreatePromise as CreatePromise
-from doeff_core_effects.scheduler import CreateSemaphore as CreateSemaphore
-from doeff_core_effects.scheduler import FailPromise as FailPromise
-from doeff_core_effects.scheduler import Future as Future
-from doeff_core_effects.scheduler import Gather as Gather
-from doeff_core_effects.scheduler import Promise as Promise
-from doeff_core_effects.scheduler import Race as Race
-from doeff_core_effects.scheduler import ReleaseSemaphore as ReleaseSemaphore
-from doeff_core_effects.scheduler import SchedulerDeadlockError as SchedulerDeadlockError
-from doeff_core_effects.scheduler import Semaphore as Semaphore
-from doeff_core_effects.scheduler import Spawn as Spawn
-from doeff_core_effects.scheduler import Task as Task
-from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects._effects import Ask as Ask
+from doeff_core_effects._effects import Await as Await
+from doeff_core_effects._effects import Get as Get
+from doeff_core_effects._effects import Listen as Listen
+from doeff_core_effects._effects import Local as Local
+from doeff_core_effects._effects import Put as Put
+from doeff_core_effects._effects import Slog as Slog
+from doeff_core_effects._effects import SlogEffect as SlogEffect
+from doeff_core_effects._effects import Tell as Tell
+from doeff_core_effects._effects import Try as Try
+from doeff_core_effects._effects import WriterTellEffect as WriterTellEffect
+from doeff_core_effects._effects import MissingEnvKeyError as MissingEnvKeyError
+from doeff_core_effects._effects import slog as slog
+from doeff_core_effects._scheduler import PRIORITY_HIGH as PRIORITY_HIGH
+from doeff_core_effects._scheduler import PRIORITY_IDLE as PRIORITY_IDLE
+from doeff_core_effects._scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
+from doeff_core_effects._scheduler import AcquireSemaphore as AcquireSemaphore
+from doeff_core_effects._scheduler import Cancel as Cancel
+from doeff_core_effects._scheduler import CompletePromise as CompletePromise
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import CreatePromise as CreatePromise
+from doeff_core_effects._scheduler import CreateSemaphore as CreateSemaphore
+from doeff_core_effects._scheduler import FailPromise as FailPromise
+from doeff_core_effects._scheduler import Future as Future
+from doeff_core_effects._scheduler import Gather as Gather
+from doeff_core_effects._scheduler import Promise as Promise
+from doeff_core_effects._scheduler import Race as Race
+from doeff_core_effects._scheduler import ReleaseSemaphore as ReleaseSemaphore
+from doeff_core_effects._scheduler import SchedulerDeadlockError as SchedulerDeadlockError
+from doeff_core_effects._scheduler import Semaphore as Semaphore
+from doeff_core_effects._scheduler import Spawn as Spawn
+from doeff_core_effects._scheduler import Task as Task
+from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects.vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
 from doeff_core_effects.vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts
 from doeff_core_effects.vm_probe_effects import ReadVmScanCounts as ReadVmScanCounts
@@ -273,7 +273,7 @@ __version__ = "0.8.0"
 
 # Handlers are imported from these modules, not from doeff. The names they hold are the
 # ones the package doeff_core_effects exports from them, so no list of names is kept here.
-_HANDLER_MODULES = ("doeff_core_effects.handlers", "doeff_core_effects.scheduler")
+_HANDLER_MODULES = ("doeff_core_effects._handlers", "doeff_core_effects._scheduler")
 
 
 def _handler_module(name: str) -> str | None:

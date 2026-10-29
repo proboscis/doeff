@@ -6,7 +6,7 @@ from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from collections.abc import Generator as Generator
 from doeff import run as run
-from doeff_core_effects.effects import Await as Await
+from doeff_core_effects._effects import Await as Await
 from doeff_core_effects.process_effects import AwaitProcessExit as AwaitProcessExit
 from doeff_core_effects.process_effects import ProcessEnded as ProcessEnded
 from doeff_core_effects.process_effects import ProcessNotChild as ProcessNotChild

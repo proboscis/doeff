@@ -42,7 +42,7 @@ USED = {
     "postgres_sql": ("PostgresConnections", "PostgresDatabase", "postgres-sql-handler"),
     "process_latest": ("process-latest-handler",),
     "process_meter": ("process-meter-handler",),
-    "scheduler_channel": ("scheduler-channel-handler",),
+    "_scheduler_channel": ("scheduler-channel-handler",),
     "scripted_freeze": ("scripted-freeze-handler",),
     "thread_pool_compute": ("thread-pool-compute-handler",),
 }

@@ -20,7 +20,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import functools [partial])
 (import doeff_core_effects.latest_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
 
 
 (defrecord MemoryLatestStore
