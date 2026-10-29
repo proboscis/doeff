@@ -160,22 +160,28 @@
   (setv plans (.get data "plans" `[]))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
   (setv item-record (_record-test-function test-name [] []))
+  ;; ADR の載せは import の時に effect RegisterAdr として handler adr_registry の下で走らせる(defsemgrep と同じ形・
+  ;; card ki-dab8943cf664)— project の doeff_interpreter fixture に頼らない。名は _doeff-adr-run と _doeff-adr. で読む。
   `(do
      (import doeff_adr.registry
-       [register-adr assert-adr-contract enforcement-ref
+       [assert-adr-contract enforcement-ref
         register-deftest-enforcement])
+     (import doeff [run :as _doeff-adr-run])
+     (import doeff-adr :as _doeff-adr)
      ~@emitted-enforcements
-     (register-adr
-       ~adr-id
-       :title ~title
-       :status ~status
-       :scope ~scope
-       :problem ~problem
-       :context ~context
-       :decision ~decision
-       :laws ~laws
-       :enforcement [~@enforcement-refs]
-       :plans ~plans)
+     (_doeff-adr-run
+       ((_doeff-adr.adr-registry)
+         (_doeff-adr.RegisterAdr
+           ~adr-id
+           :title ~title
+           :status ~status
+           :scope ~scope
+           :problem ~problem
+           :context ~context
+           :decision ~decision
+           :laws ~laws
+           :enforcement [~@enforcement-refs]
+           :plans ~plans)))
      (defn ~test-name []
        (assert-adr-contract ~adr-id))
      ~item-record))

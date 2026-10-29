@@ -8,7 +8,19 @@ from doeff_adr._effects import (
     AdrIds as AdrIds,
 )
 from doeff_adr._effects import (
+    ClearRegistry as ClearRegistry,
+)
+from doeff_adr._effects import (
+    EnforcementIds as EnforcementIds,
+)
+from doeff_adr._effects import (
     GetAdr as GetAdr,
+)
+from doeff_adr._effects import (
+    GetEnforcement as GetEnforcement,
+)
+from doeff_adr._effects import (
+    RegisterAdr as RegisterAdr,
 )
 from doeff_adr._effects import (
     adr_registry as adr_registry,
@@ -36,18 +48,6 @@ from doeff_adr.registry import (
 )
 from doeff_adr.registry import (
     assert_all_adr_contracts as assert_all_adr_contracts,
-)
-from doeff_adr.registry import (
-    clear_registry as clear_registry,
-)
-from doeff_adr.registry import (
-    enforcement_ids as enforcement_ids,
-)
-from doeff_adr.registry import (
-    get_enforcement as get_enforcement,
-)
-from doeff_adr.registry import (
-    register_adr as register_adr,
 )
 from doeff_adr.registry import (
     register_deftest_enforcement as register_deftest_enforcement,

@@ -212,13 +212,30 @@ registry:
 (assert (in ADR-ID ids))
 ```
 
-A test that wants another table installs `adr_registry(specs=[spec ...])`
-around the part of the program that should read it: the inner handler answers
-first, an id missing from that list is a `KeyError` (it does not fall through
-to the process registry), and `AdrIds` answers the ids of that list only.
-`specs=[]` is an empty table, not the registry. The ids are read only through
-`AdrIds` (there is no public `adr_ids` function), and an ADR only through
-`GetAdr` (there is no public `get_adr` function).
+The same handler answers the effects that write and read the rest of the
+registry:
+
+- `RegisterAdr(id, title=…, status=…, …)` puts an ADR on the registry and
+  answers its `AdrSpec` (the fields are those of `defadr`, whose expansion
+  performs this effect under `adr_registry()` at import time). A repeated id or
+  an unknown status is a `ValueError`.
+- `ClearRegistry()` empties the ADRs and the checks.
+- `EnforcementIds()` answers the sorted ids of the checks (`defadr` tests and
+  `defsemgrep` rules), and `GetEnforcement(id)` answers one check, a
+  `KeyError` when it is not on the registry.
+
+A test that wants another registry installs `adr_registry(specs=[spec ...])`,
+`adr_registry(enforcements={...})` or both around the part of the program that
+should read it: the inner handler answers first, and none of the six effects
+falls through to the process registry (an id missing from it is a `KeyError`).
+The ADR table starts as a copy of `specs` (empty when omitted) and lives as
+long as the handler value; the checks table is the given dict itself (empty
+when omitted), so passing one dict to `semgrep_enforcements(table=…)` and
+`adr_registry(enforcements=…)` lets `GetEnforcement` read what `RegisterSemgrep`
+put there. `specs=[]` is an empty table, not the registry. The registry is read
+and written only through these effects (there are no public `get_adr`,
+`adr_ids`, `register_adr`, `clear_registry`, `enforcement_ids` or
+`get_enforcement` functions).
 
 ## Semgrep checks as effects
 
