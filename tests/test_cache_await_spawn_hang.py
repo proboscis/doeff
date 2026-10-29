@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff_core_effects.cache import cache
-from doeff_core_effects.memo_handlers import sqlite_memo_handler
+from doeff_core_effects._cache import cache
+from doeff_core_effects import sqlite_memo_handler
 
 from doeff import Await, Gather, Spawn, do
 from tests._run_helpers import run_with_defaults

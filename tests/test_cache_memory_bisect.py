@@ -12,7 +12,7 @@ import asyncio
 import signal
 from typing import Any
 
-from doeff_core_effects.cache import FrozenDict
+from doeff_core_effects._cache import FrozenDict
 from doeff_vm import GetExecutionContext
 
 from doeff import (

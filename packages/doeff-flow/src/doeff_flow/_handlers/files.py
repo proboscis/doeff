@@ -9,14 +9,8 @@ are: ``os_file_handler`` for the real files, ``memory_file_handler`` in tests.
 from pathlib import Path
 from typing import Any
 
-from doeff_core_effects.file_effects import (
-    FileFailed,
-    ListDirectory,
-    PathKind,
-    ReadText,
-    StatPath,
-    file_done,
-)
+from doeff_core_effects import FileFailed, ListDirectory, PathKind, ReadText, StatPath
+from doeff_core_effects._file_effects import file_done
 
 from doeff import Effect, Pass, Resume, do, handler
 from doeff_flow._effects import ReadTraces

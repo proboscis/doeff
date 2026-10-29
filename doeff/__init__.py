@@ -253,9 +253,9 @@ if not TYPE_CHECKING:
     graph_snapshot = _Removed("graph_snapshot", "concept removed")
     # NOTHING — use Nothing (lowercase singleton) instead
     ReadVar = _Removed("ReadVar", "use var_store directly")
-    CacheGet = _Removed("CacheGet", "renamed to MemoGet in doeff_core_effects.memo_effects")
+    CacheGet = _Removed("CacheGet", "renamed to MemoGet in doeff_core_effects")
     CacheExists = _Removed(
-        "CacheExists", "renamed to MemoExists in doeff_core_effects.memo_effects"
+        "CacheExists", "renamed to MemoExists in doeff_core_effects"
     )
     cache = _Removed("cache", "cache module removed")
     presets = _Removed("presets", "presets module removed")

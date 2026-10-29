@@ -10,15 +10,18 @@ green になる。ratchet 自体の発火は test_stale_known_uncovered_declarat
 
 import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
 import pytest
-from doeff_core_effects import Ask, Get, Local, Put
-from doeff_core_effects.cache_effects import CacheDeleteEffect
-from doeff_core_effects.http_effects import HttpRequest
-from doeff_core_effects.memo_effects import (
+from doeff_core_effects import (
+    Ask,
+    CacheDeleteEffect,
+    Get,
+    Local,
     MemoDeleteEffect,
     MemoExistsEffect,
     MemoGetEffect,
     MemoPutEffect,
+    Put,
 )
+from doeff_core_effects.http_effects import HttpRequest
 from doeff_domain import (
     DomainCheckError,
     assert_domain_covered,

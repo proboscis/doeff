@@ -39,7 +39,7 @@ import weakref
 from typing import Any
 
 import pytest
-from doeff_core_effects.cache_handlers import sqlite_cache_handler
+from doeff_core_effects import sqlite_cache_handler
 
 from doeff import (
     AcquireSemaphore,

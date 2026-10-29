@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import doeff
 
-# REMOVED: from doeff_core_effects.cache import in_memory_cache_handler, memo_rewriters
+# REMOVED: from doeff_core_effects._cache import in_memory_cache_handler, memo_rewriters
 from doeff import EffectBase, do
 from doeff import handler as _program_handler
 

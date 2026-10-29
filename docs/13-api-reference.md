@@ -1008,14 +1008,14 @@ if the task fails or is cancelled.
 
 ## Cache Effects
 
-Located in `doeff_core_effects.cache_effects`.
+Located in `doeff_core_effects._cache_effects`.
 
 ### CacheGet(key)
 
 Retrieve a cached value.
 
 ```python excerpt
-from doeff_core_effects.cache_effects import CacheGet
+from doeff_core_effects import CacheGet
 
 value = yield CacheGet("expensive_key")
 ```
@@ -1029,8 +1029,8 @@ value = yield CacheGet("expensive_key")
 Store a value in cache with optional policy.
 
 ```python excerpt
-from doeff_core_effects.cache_effects import CachePut
-from doeff_core_effects.cache_policy import CacheLifecycle
+from doeff_core_effects import CachePut
+from doeff_core_effects import CacheLifecycle
 
 yield CachePut(
     "key",
@@ -1047,7 +1047,7 @@ yield CachePut(
 ### CachePolicy
 
 ```python
-from doeff_core_effects.cache_policy import CachePolicy, CacheLifecycle, CacheStorage
+from doeff_core_effects import CachePolicy, CacheLifecycle, CacheStorage
 ```
 
 **CacheLifecycle** enum: `TRANSIENT`, `SESSION`, `PERSISTENT`
@@ -1058,7 +1058,7 @@ from doeff_core_effects.cache_policy import CachePolicy, CacheLifecycle, CacheSt
 
 ## Memo Effects
 
-Located in `doeff_core_effects.memo_effects`. Memo effects are the cost-aware memoization
+Located in `doeff_core_effects._memo_effects`. Memo effects are the cost-aware memoization
 system that replaced the old `CacheGet` name in the `doeff` top-level namespace.
 
 ### MemoGet(key)
@@ -1066,7 +1066,7 @@ system that replaced the old `CacheGet` name in the `doeff` top-level namespace.
 Retrieve a memoized value.
 
 ```python excerpt
-from doeff_core_effects.memo_effects import MemoGet
+from doeff_core_effects import MemoGet
 
 value = yield MemoGet("computation_result")
 ```
@@ -1080,7 +1080,7 @@ value = yield MemoGet("computation_result")
 Store a memoized value.
 
 ```python excerpt
-from doeff_core_effects.memo_effects import MemoPut
+from doeff_core_effects import MemoPut
 
 yield MemoPut("key", value, recompute_cost="expensive")
 ```
@@ -1485,8 +1485,8 @@ it. The message names the effect and the handlers in scope.
 | **Promise** | `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise` |
 | **Control** | `Pure`, `Resume`, `Transfer`, `Pass`, `WithObserve`, handler installer calls |
 | **Error** | `Try`, `Ok`, `Err` |
-| **Cache** | `CacheGet`, `CachePut` (in `doeff_core_effects.cache_effects`) |
-| **Memo** | `MemoGet`, `MemoPut` (in `doeff_core_effects.memo_effects`) |
+| **Cache** | `CacheGet`, `CachePut` (in `doeff_core_effects._cache_effects`) |
+| **Memo** | `MemoGet`, `MemoPut` (in `doeff_core_effects._memo_effects`) |
 
 ### Common Imports
 
@@ -1535,11 +1535,11 @@ from doeff_core_effects import (
 )
 
 # Cache effects (separate package)
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
+from doeff_core_effects import CacheGet, CachePut
+from doeff_core_effects import CacheLifecycle, CachePolicy, CacheStorage
 
 # Memo effects (separate package)
-from doeff_core_effects.memo_effects import MemoGet, MemoPut
+from doeff_core_effects import MemoGet, MemoPut
 ```
 
 ### Handler Composition Pattern
@@ -1584,8 +1584,8 @@ importable.
 | `KleisliProgram` | Use `@do` instead |
 | `Delegate` | Use `yield effect` to re-perform in handler body |
 | `cache` (decorator) | Cache module removed |
-| `CacheGet` (top-level) | Renamed to `MemoGet` in `doeff_core_effects.memo_effects` |
-| `CacheExists` (top-level) | Renamed to `MemoExists` in `doeff_core_effects.memo_effects` |
+| `CacheGet` (top-level) | Renamed to `MemoGet` in `doeff_core_effects._memo_effects` |
+| `CacheExists` (top-level) | Renamed to `MemoExists` in `doeff_core_effects._memo_effects` |
 | `graph_snapshot` | Concept removed |
 | `Discontinue`, `Discontinued` | Concept removed |
 | `rust_vm` | Use `PyVM` directly |

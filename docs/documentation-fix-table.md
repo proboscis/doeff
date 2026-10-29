@@ -83,7 +83,7 @@ For anyone fixing the remaining docs, here are the key replacements:
 | `KleisliProgram` | `@do` returns a normal callable |
 | `task.cancel()` | `yield Cancel(task)` |
 | `Gather(*programs)` | `Spawn` each first, then `Gather(*tasks)` |
-| `CacheGet` | `MemoGet` (in `doeff_core_effects.cache_effects`) |
+| `CacheGet` | `MemoGet` (in `doeff_core_effects._cache_effects`) |
 | `Delegate` | `yield effect` to re-perform |
 | `Program.pure(x)` | `Pure(x)` |
 | `StructuredLog` | `slog(msg, **kwargs)` or `WriterTellEffect` |

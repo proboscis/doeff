@@ -12,9 +12,10 @@ Delete は Get が到達しうる全層(同じ cost ガードを通過する全�
 直接観測し、実削除は InMemoryStorage.keys() で直接観測する。
 """
 
-from doeff_core_effects.memo_effects import MemoDelete, MemoGet, MemoPut
-from doeff_core_effects.memo_handlers import make_memo_rewriter, memo_handler
-from doeff_core_effects.memo_policy import MemoPolicy, RecomputeCost
+from doeff_core_effects import MemoDelete, MemoGet, MemoPut
+from doeff_core_effects import memo_handler
+from doeff_core_effects import make_memo_rewriter
+from doeff_core_effects import MemoPolicy, RecomputeCost
 from doeff_core_effects import InMemoryStorage
 
 from doeff import EffectBase, do

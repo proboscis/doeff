@@ -2,10 +2,15 @@
 # when the handler receives it, the storage each policy resolves to, and what in_memory_cache_handler() does with
 # a ttl: it keeps the policy as a hint and stores every entry the same way (docs/07-cache-system.md,
 # "Cache Policy Fields").
-from doeff_core_effects import await_handler, scheduled
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_handlers import in_memory_cache_handler
-from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
+from doeff_core_effects import (
+    CacheGet,
+    CacheLifecycle,
+    CachePut,
+    CacheStorage,
+    await_handler,
+    in_memory_cache_handler,
+    scheduled,
+)
 from doeff_time import Delay, sync_time_handler
 
 from doeff import WithObserve, do, run

@@ -62,7 +62,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [Spawn scheduled])
 (import doeff_core_effects.process_effects [ReadEnvironment])
-(import doeff_core_effects.file_effects [ReadText FileFailed])
+(import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_core_effects.http_server_effects [HttpAddress])
