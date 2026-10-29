@@ -265,6 +265,14 @@ if TYPE_CHECKING:
     from doeff_core_effects._thread_pool_compute import (
         thread_pool_compute_handler as thread_pool_compute_handler,
     )
+    from doeff_core_effects._file_effects import file_done as file_done
+    from doeff_core_effects._inline_compute import computed as computed
+    from doeff_core_effects._meter_prometheus import render_prometheus as render_prometheus
+    from doeff_core_effects._offloaded_call import offloaded as offloaded
+    from doeff_core_effects._python_bytecode import checked_hash_pyc as checked_hash_pyc
+    from doeff_core_effects._python_bytecode import compiled_pyc as compiled_pyc
+    from doeff_core_effects._seeded_random import seeded_bytes as seeded_bytes
+    from doeff_core_effects._stack_dump_effects import stack_dumps_at as stack_dumps_at
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -419,6 +427,15 @@ _LAZY_EXPORTS = {
     "CacheLifecycle": "doeff_core_effects._cache_policy",
     "CachePolicy": "doeff_core_effects._cache_policy",
     "CacheStorage": "doeff_core_effects._cache_policy",
+    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    "file_done": "doeff_core_effects._file_effects",
+    "computed": "doeff_core_effects._inline_compute",
+    "render_prometheus": "doeff_core_effects._meter_prometheus",
+    "offloaded": "doeff_core_effects._offloaded_call",
+    "checked_hash_pyc": "doeff_core_effects._python_bytecode",
+    "compiled_pyc": "doeff_core_effects._python_bytecode",
+    "seeded_bytes": "doeff_core_effects._seeded_random",
+    "stack_dumps_at": "doeff_core_effects._stack_dump_effects",
 }
 
 

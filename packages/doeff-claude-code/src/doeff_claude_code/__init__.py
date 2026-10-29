@@ -147,6 +147,9 @@ if TYPE_CHECKING:
     from doeff_claude_code._fake import fake_claude_code_handler as fake_claude_code_handler
     from doeff_claude_code._fake import fake_claude_print_handler as fake_claude_print_handler
     from doeff_claude_code._print_once import claude_print_handler as claude_print_handler
+    from doeff_claude_code._credential_home import credential_document as credential_document
+    from doeff_claude_code._lines import stderr_tail_within as stderr_tail_within
+    from doeff_claude_code._print_once import print_outcome as print_outcome
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AccountLimitHit": "doeff_claude_code._lines",
@@ -289,6 +292,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "fake_claude_code_handler": "doeff_claude_code._fake",
     "fake_claude_print_handler": "doeff_claude_code._fake",
     "claude_print_handler": "doeff_claude_code._print_once",
+    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    "credential_document": "doeff_claude_code._credential_home",
+    "stderr_tail_within": "doeff_claude_code._lines",
+    "print_outcome": "doeff_claude_code._print_once",
 }
 
 
