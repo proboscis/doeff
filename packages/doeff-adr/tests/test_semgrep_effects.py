@@ -3,8 +3,8 @@ handler を返す工場 semgrep_enforcements が答える(card ki-2a549274055c)�
 
 決め: 依頼書 lt-WVC8PTVD0E022XXMKP1J98ACDP の答え lt-KY48MR4KP2N0GS9MQCCJTJMH55(register-semgrep)と、依頼書
 lt-5CQZ1TMGZSCQ01PXH8JY2JK3DN の答え lt-19276K37Z3TCCRTBMXWBMMXVMN(assert-semgrep)— どちらも effect にする。前の関数
-register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えるまで(card ki-ac39cb3c0bcd)の
-移し替えの層で、その後に消す。
+register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えた後(card ki-ac39cb3c0bcd)に
+消した(card ki-baf84c90f3df)。
 
 semgrep_enforcements() は process の登録簿に載せて読み、semgrep_enforcements(table={…}) はその辞書に載せて読む(辞書に無い id は
 登録簿へ落ちずに KeyError)。semgrep_enforcements(semgrep=…) は渡した実行 file で semgrep を起こす。内側に据えた handler が先に
@@ -192,20 +192,14 @@ def test_the_factory_refuses_a_program_in_place_of_its_settings() -> None:
         semgrep_enforcements(table=[])  # type: ignore[arg-type] — 書き違いを断る事を見るため、辞書でない値を渡す
 
 
-def test_the_effects_are_public_and_the_old_functions_answer_the_same() -> None:
-    """effect と工場は入口に在る。前の関数は外の repo の呼び手を書き換えるまで(card ki-ac39cb3c0bcd)の移し替えの層で、
-    effect と同じ登録簿に載せて読む。"""
+def test_the_semgrep_checks_are_reached_only_through_the_effects() -> None:
+    """effect と工場は入口に在り、前の関数 register_semgrep_enforcement・assert_semgrep_enforcement は入口にも registry にも
+    無い(本体は内側の _register_semgrep_enforcement・_assert_semgrep_enforcement だけ)。"""
     assert {"AssertSemgrep", "RegisterSemgrep", "semgrep_enforcements"} <= set(doeff_adr.__all__)
-    with isolated_registry():
-        spec = doeff_adr.register_semgrep_enforcement(
-            "probe_old_function",
-            pattern="forbidden-token",
-            bad=["forbidden-token"],
-            good=["allowed-token"],
-        )
-        assert get_enforcement("probe_old_function") is spec
-        doeff_adr.assert_semgrep_enforcement("probe_old_function")
-        assert run(semgrep_enforcements()(AssertSemgrep("probe_old_function"))) is None
+    for name in ("register_semgrep_enforcement", "assert_semgrep_enforcement"):
+        assert name not in doeff_adr.__all__
+        assert not hasattr(doeff_adr, name)
+        assert not hasattr(registry_module, name)
 
 
 def test_defsemgrep_expands_to_the_effects_under_their_handler() -> None:

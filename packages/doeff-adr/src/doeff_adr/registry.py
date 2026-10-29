@@ -245,42 +245,6 @@ def _register_semgrep_enforcement(
     return spec
 
 
-def register_semgrep_enforcement(
-    enforcement_id: str,
-    *,
-    pattern: str | None = None,
-    rule_id: str | None = None,
-    config: str = ".semgrep.yaml",
-    declared_in: str | None = None,
-    expand_hy: bool = False,
-    languages: list[str] | tuple[str, ...] | None = None,
-    message: str = "ADR Semgrep enforcement failed",
-    severity: str = "ERROR",
-    bad: list[FixtureSpec] | tuple[FixtureSpec, ...] | None = None,
-    good: list[FixtureSpec] | tuple[FixtureSpec, ...] | None = None,
-    hit_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
-    clean_fixtures: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
-    mode: EnforcementMode = "green",
-) -> SemgrepSpec:
-    """移し替えの層: 外の repo の呼び手を effect RegisterSemgrep へ書き換えたら(card ki-ac39cb3c0bcd)消す(ADR-DOE-API-001 R22)。"""
-    return _register_semgrep_enforcement(
-        enforcement_id,
-        pattern=pattern,
-        rule_id=rule_id,
-        config=config,
-        declared_in=declared_in,
-        expand_hy=expand_hy,
-        languages=languages,
-        message=message,
-        severity=severity,
-        bad=bad,
-        good=good,
-        hit_fixtures=hit_fixtures,
-        clean_fixtures=clean_fixtures,
-        mode=mode,
-    )
-
-
 def register_adr(
     adr_id: str,
     *,
@@ -396,11 +360,6 @@ def _assert_semgrep_enforcement(
         _assert_installed_semgrep_enforcement(executable, spec, enforcements)
         return
     _assert_inline_semgrep_enforcement(executable, spec)
-
-
-def assert_semgrep_enforcement(enforcement_id: str) -> None:
-    """移し替えの層: 外の repo の呼び手を effect AssertSemgrep へ書き換えたら(card ki-ac39cb3c0bcd)消す(ADR-DOE-API-001 R22)。"""
-    _assert_semgrep_enforcement(enforcement_id)
 
 
 def _assert_inline_semgrep_enforcement(semgrep: str, spec: SemgrepSpec) -> None:

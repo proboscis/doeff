@@ -262,7 +262,3 @@ against another table or another semgrep:
                                :bad ["eval('1')"] :good ["print('1')"]))
           (<- (AssertSemgrep "no-eval"))))))
 ```
-
-The functions `register_semgrep_enforcement` and `assert_semgrep_enforcement`
-remain only as a transition layer until the callers outside doeff perform
-`RegisterSemgrep` and `AssertSemgrep`; new code performs the effects.

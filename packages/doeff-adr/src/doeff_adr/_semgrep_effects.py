@@ -4,8 +4,8 @@
 決め: 依頼書 lt-WVC8PTVD0E022XXMKP1J98ACDP の問い register-semgrep の答え lt-KY48MR4KP2N0GS9MQCCJTJMH55 と、依頼書
 lt-5CQZ1TMGZSCQ01PXH8JY2JK3DN の問い assert-semgrep の答え lt-19276K37Z3TCCRTBMXWBMMXVMN(どちらも effect にする・card
 ki-2a549274055c・ADR-DOE-API-001 R22)。本体は内側の registry._register_semgrep_enforcement・registry._assert_semgrep_enforcement に
-移した。前の関数 register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えるまで(card
-ki-ac39cb3c0bcd)移し替えの層として残り、その後に消す。
+移した。前の関数 register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を effect へ書き換えた後に
+(card ki-ac39cb3c0bcd・agora-controllers cef8e6e88a)消した(card ki-baf84c90f3df)。
 
 handler は GetAdr の adr_registry と分ける: AssertSemgrep は外の process(semgrep)を起こすので、ADR を読むだけの program の
 handler の組に semgrep の実行を混ぜない。macro defsemgrep の展開は、自分の載せと検をこの handler の下で走らせる(project の
