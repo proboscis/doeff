@@ -1306,11 +1306,18 @@ def _root_reexports(root: types.ModuleType) -> set[str]:
 
 
 def _shown_by_root(root: types.ModuleType, name: str, value: object) -> bool:
-    """根が名を公開の名として出すか(遅延の表・``X as X``・package の中で定義した物)。"""
+    """根が名を公開の名として出すか(遅延の表・``X as X``・``__all__``・package の中で定義した物)。
+
+    ``__all__`` は入口が名を出す宣言なので、``@handler``・``@do`` で包んで定義の module が包みの側になった物も入口の名と
+    読む(card ki-32a05dc657b8 — doeff-gemini の ``default_gemini_cost_handler`` の定義の module は ``doeff.program``)。
+    """
     lazy = root.__dict__.get("_LAZY_EXPORTS")
     if isinstance(lazy, dict) and name in lazy:
         return True
     if name in _root_reexports(root):
+        return True
+    shown = root.__dict__.get("__all__")
+    if isinstance(shown, (list, tuple)) and name in shown:
         return True
     owner = inspect.getmodule(value)
     return (
