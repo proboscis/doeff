@@ -13,7 +13,7 @@
 ;;; 止まりと読む)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_core_effects.file_effects [FileFailed ReadText WriteText])
+(import doeff_core_effects [FileFailed ReadText WriteText])
 
 ;; 世代の file の名に足して止まりの印の名にする。
 (val LEAVING-SUFFIX ".leaving")

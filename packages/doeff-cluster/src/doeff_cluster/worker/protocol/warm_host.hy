@@ -13,7 +13,8 @@
 (import dataclasses [dataclass replace])
 (import json)
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [FileFailed MakeDirectory RemoveTree ReadText file-done])
+(import doeff_core_effects [FileFailed MakeDirectory RemoveTree ReadText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted
                                             ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

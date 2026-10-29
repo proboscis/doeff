@@ -48,8 +48,8 @@
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.file_effects [MakeDirectory WriteText FileFailed])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [MakeDirectory WriteText FileFailed])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.process_effects [StartProcess StopProcess PollProcess SignalProcess ProcessSignal ProcessSignalled ProcessStarted
                                             ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry
                                             RunProcess ProcessOutcome])

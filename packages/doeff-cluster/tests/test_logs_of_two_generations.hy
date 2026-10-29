@@ -20,8 +20,9 @@
 (import pathlib [Path])
 (import doeff [run with-handlers])
 (import doeff_core_effects [state slog-handler])
-(import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.file_effects [MemoryFiles ReadMemoryFiles AppendText WriteText file-done])
+(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [MemoryFiles ReadMemoryFiles AppendText WriteText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_core_effects.scripted_warm_process [WarmScript WarmSocket WarmRun scripted-warm-process-handler])

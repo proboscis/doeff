@@ -19,7 +19,7 @@
 (import tests.served_fixtures [ROOT HY start-coordinator])
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff [with-handlers])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written leaving-path])
 (import doeff_cluster.worker.entry.main [boot-file-written])
 (import doeff_cluster.worker.entry.drain_main [read-boot])

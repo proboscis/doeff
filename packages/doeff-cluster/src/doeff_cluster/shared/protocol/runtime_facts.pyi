@@ -8,11 +8,11 @@ from doeff_core_effects.process_effects import ResolveModule as ResolveModule
 from doeff_core_effects.process_effects import InterpreterFacts as InterpreterFacts
 from doeff_core_effects.process_effects import ModuleFound as ModuleFound
 from doeff_core_effects.process_effects import ModuleNotFound as ModuleNotFound
-from doeff_core_effects.file_effects import StatPath as StatPath
-from doeff_core_effects.file_effects import ReadText as ReadText
-from doeff_core_effects.file_effects import PathKind as PathKind
-from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects import StatPath as StatPath
+from doeff_core_effects import ReadText as ReadText
+from doeff_core_effects import PathKind as PathKind
+from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import FileFailed as FileFailed
 from doeff_cluster.shared.intent.env_marker_model import ENV_MARKER as ENV_MARKER
 from doeff_cluster.shared.intent.runtime_identity_model import ModuleOrigin as ModuleOrigin
 from doeff_cluster.shared.intent.runtime_identity_model import ProcessFacts as ProcessFacts

@@ -43,9 +43,8 @@
 (import posixpath)
 (import doeff_core_effects [Ask])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText
-                                         AppendText MakeDirectory WalkTree])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText AppendText MakeDirectory WalkTree])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [CHILD-PROTOCOL])

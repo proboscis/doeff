@@ -16,10 +16,10 @@
 (import collections.abc [Callable])
 (import doeff [with_handlers])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_core_effects.file_effects [MemoryFile MemoryFiles])
+(import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_cluster.shared.intent.kube_service_model [EnsureKubeService KubeService KubeServiceOutcome KubeServicePort KubeServiceRefused
                                                         KubeServiceType])
 (import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER kube-services-api service-apply-text service-path])

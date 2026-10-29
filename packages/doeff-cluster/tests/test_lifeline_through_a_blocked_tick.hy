@@ -27,7 +27,7 @@
 (import doeff_hy.table [Table table-of])
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.process_effects [ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])

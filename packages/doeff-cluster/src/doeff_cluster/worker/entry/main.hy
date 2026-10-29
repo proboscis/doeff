@@ -18,8 +18,9 @@
 (import pathlib [Path])
 (import doeff [run with-handlers])
 (import doeff_core_effects [await-handler slog-handler state :as session-store])
-(import doeff_core_effects.file_effects [FileFailed PathKind PathStat ReadText StatPath WriteText file-done])
-(import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler offloaded-file-handler])
+(import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath WriteText]
+        doeff_core_effects._file_effects [file-done])
+(import doeff_core_effects [os-file-handler offloaded-tree-handler offloaded-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_warm_process [os-warm-process-handler])
 (import doeff_core_effects.os_proc_table [os-proc-table-handler])

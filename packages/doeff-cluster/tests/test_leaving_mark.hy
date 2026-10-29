@@ -9,7 +9,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [with-handlers])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_cluster.worker.intent.worker_model [EnvDisk ObserveWorld])
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills])
 (import doeff_cluster.worker.protocol.world [local-host])

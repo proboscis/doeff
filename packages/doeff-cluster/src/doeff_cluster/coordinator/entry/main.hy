@@ -13,9 +13,10 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [FileFailed ListDirectory PathKind ReadText StatPath file-done])
+(import doeff_core_effects [FileFailed ListDirectory PathKind ReadText StatPath]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [slog-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.shared.core.launch_rules [coordinator-commit-env-name])

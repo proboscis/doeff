@@ -16,7 +16,7 @@
 (import pytest)
 (import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
 (import doeff [run with-handlers])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import tests.link_rig [LinkRig])
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])

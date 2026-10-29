@@ -8,7 +8,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import doeff [with_handlers])
-(import doeff_core_effects.file_effects [ReadText ListDirectory])
+(import doeff_core_effects [ReadText ListDirectory])
 (import doeff_cluster.worker.protocol.status_file [status-file status-json])
 (import doeff_cluster.worker.intent.worker_model [JobStatus PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.worker.protocol.observations [CodeTimings])

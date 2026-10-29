@@ -13,7 +13,7 @@
 (import httpx)
 (import doeff [EffectBase Program run with-handlers])
 (import doeff_core_effects [await-handler slog-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])

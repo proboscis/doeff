@@ -30,7 +30,7 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [ReadText FileFailed])
+(import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects.process_effects [ProcessSignal])
 (import doeff_core_effects.proc_table_effects [ReadProcTable SignalPid])
 (import doeff_time [Delay])

@@ -24,8 +24,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
-(import doeff_core_effects.memory_file [memory-file-handler])
-(import doeff_core_effects.file_effects [MemoryFile MemoryFiles RemoveTree StatPath ListDirectory PathKind FileFailed WriteText file-done])
+(import doeff_core_effects [memory-file-handler])
+(import doeff_core_effects [MemoryFile MemoryFiles RemoveTree StatPath ListDirectory PathKind FileFailed WriteText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay SimClock sim-time-handler])

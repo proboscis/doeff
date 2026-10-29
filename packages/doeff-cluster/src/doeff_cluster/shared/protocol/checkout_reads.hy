@@ -12,7 +12,7 @@
 (import hashlib)
 (import os)
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
-(import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadBytes])
+(import doeff_core_effects [PathKind PathStat FileFailed StatPath ReadBytes])
 (import doeff_cluster.shared.intent.checkout_model [CheckoutState ReadCheckout CheckoutRoot SenderSourceRoot])
 (import doeff_cluster.shared.intent.env_marker_model [FileSha256])
 

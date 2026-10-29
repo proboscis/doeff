@@ -20,7 +20,8 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass replace])
-(import doeff_core_effects.file_effects [MakeDirectory ReadText RemoveTree file-done])
+(import doeff_core_effects [MakeDirectory ReadText RemoveTree]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [ReadEnvironment StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessNotStarted
                                             ProcessExited])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

@@ -5,7 +5,8 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import os)
-(import doeff_core_effects.file_effects [MakeDirectory WriteText file-done])
+(import doeff_core_effects [MakeDirectory WriteText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_cluster.worker.intent.worker_model [PublishStatus])
 (import doeff_cluster.worker.protocol.observations [CodeTimings])
 (import doeff_cluster.worker.protocol.heartbeat [status-rows-json])

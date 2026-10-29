@@ -15,9 +15,9 @@
 (import dataclasses [dataclass])  ; defeffect の展開が名指す
 (import pathlib [Path])
 (import doeff [Program with-handlers])
-(import doeff_core_effects.file_effects [DiskUsage ReadDiskUsage])
+(import doeff_core_effects [DiskUsage ReadDiskUsage])
 (import doeff_core_effects [slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import tests.state_rows [table-from-rows])
