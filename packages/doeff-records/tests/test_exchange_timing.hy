@@ -1,4 +1,4 @@
-;;; 往復の計時の行(ki-ca4b41612e2e — http_client.hy の頭の註「往復の計時の行」と request_timing.hy の「答えに載せる区間の秒」)。呼び手の
+;;; 往復の計時の行(ki-ca4b41612e2e — _http_client.hy の頭の註「往復の計時の行」と _request_timing.hy の「答えに載せる区間の秒」)。呼び手の
 ;;; process の中で、記録の service への往復 1 本の秒がどこで過ぎるかを要求ごとに名指すための行の形を守る。
 ;;;   (1) 見出し Server-Timing の綴りと読みは往き帰りで同じ区間の秒になる。答えが決まった後の区間(send・total)は綴らず、知らない名・dur の
 ;;;       無い項・数でない dur・見出しの無い答え(古い版の service)は読み飛ばす
@@ -17,14 +17,15 @@
 (import doeff_time [async-time-handler])
 (import doeff_records [ReadRow WatchChanges])
 (import doeff_records [WatchCursor])
-(import doeff_records.http_client [EXCHANGE-LOG RecordsEndpoint http-records-handler records-unwaited])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records [RecordsEndpoint http-records-handler records-unwaited]
+        doeff_records._http_client [EXCHANGE-LOG])
+(import doeff_records._http_server [records-server-config start-records-server])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.request_timing [RequestStage StageSeconds server-timing-of])
-(import doeff_records.wire [ServerSpan server-timing-spans])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records._request_timing [RequestStage StageSeconds server-timing-of])
+(import doeff_records._wire [ServerSpan server-timing-spans])
 
-;; 行の欄のうち、計時を頼んだ往復で必ず値を持つ物(内訳の全部 — http_client.hy の logged-exchange)。
+;; 行の欄のうち、計時を頼んだ往復で必ず値を持つ物(内訳の全部 — _http_client.hy の logged-exchange)。
 (val BREAKDOWN-FIELDS #("conn" "connect_ms" "acquire_ms" "send_ms" "service_queue_ms" "service_ms" "return_ms" "wait_ms" "receive_ms"
                         "decode_ms" "loop_ms" "http_ms" "total_ms"))
 ;; 返すの秒の計算(待った秒 − service の受けの列と中)の丸めの許す差(ミリ秒 — 欄は小数 2 桁に丸める)。

@@ -1,4 +1,4 @@
-;; PostgreSQL の置き場の行の書きの錠を、表の単位と番号の錠に分けた形の検(card ki-f2888153ff62 — pg_sql.hy の頭の註の「書きの錠」)。
+;; PostgreSQL の置き場の行の書きの錠を、表の単位と番号の錠に分けた形の検(card ki-f2888153ff62 — _pg_sql.hy の頭の註の「書きの錠」)。
 ;; 前は行の書き全部が行の単位 1 つを transaction の初めから持ち、1 つの表への束の書きが索引の更新の IO 待ちで錠を数十秒持つ間、関わりの
 ;; 無い表の 1 行の書きが全部その後ろで待った。今は行の表の文を表の単位の錠だけで流し、番号の錠は変更の列に積んでから commit するまで持つ。
 ;; 本物の PostgreSQL で、別の接続の止め(行の錠・番号の錠)を置いて次を確かめる:
@@ -19,13 +19,14 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.admission [key-text])
+(import doeff_records._admission [key-text])
 (import doeff_records [ExpectAbsent ExpectAny Written WrittenRows Refused])
 (import doeff_records [PutRow PutRows RowWrite])
-(import doeff_records.maintenance [ReadChangeLog])
+(import doeff_records [ReadChangeLog])
 (import doeff_records._laws [MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
-(import doeff_records.pg_sql [ROWS-UNIT table-unit unit-lock-key writer-lock-key])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
+(import doeff_records._pg_sql [ROWS-UNIT table-unit unit-lock-key writer-lock-key])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))

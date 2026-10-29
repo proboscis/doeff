@@ -2,7 +2,7 @@
 ;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
-;;; HTTP の口(_service.hy)と client の handler(http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
+;;; HTTP の口(_service.hy)と client の handler(_http_client.hy)は両方ここを呼ぶ — 綴りを 2 か所に写さない。
 ;;; 契約: この file の綴りが正本。呼び手の系が契約の file(route・要求・答え・断り)と golden を持つ時は、その golden をこの口に通して照合する。
 ;;;
 ;;; 読みは境界の検め: 足りない鍵・型の違う値は WireMalformed(黙って既定へ倒さない)。知らない鍵の扱いは向きで分ける:
@@ -126,8 +126,8 @@
 (val IDEMPOTENCY-HEADER "X-Records-Idempotency-Key")
 
 ;; 答えの区間の秒の見出し(ki-ca4b41612e2e): service は記録の操作の答えに、答えが決まった所までの区間の秒を W3C の Server-Timing の形
-;; (<区間>;dur=<ミリ秒>, …)で載せ(request_timing.hy の server-timing-of)、client は往復 1 本のうち service の受けの列(queue)と service の
-;; 中(残りの区間)の秒を要求ごとに名指す(http_client.hy の往復の計時の行)。区間の名の並びは request_timing.hy の区間の並びと同じで、
+;; (<区間>;dur=<ミリ秒>, …)で載せ(_request_timing.hy の server-timing-of)、client は往復 1 本のうち service の受けの列(queue)と service の
+;; 中(残りの区間)の秒を要求ごとに名指す(_http_client.hy の往復の計時の行)。区間の名の並びは _request_timing.hy の区間の並びと同じで、
 ;; 答えを送った後に決まる区間(send・total・woke)は載せない。
 (val SERVER-TIMING-HEADER "Server-Timing")
 (val SERVER-TIMING-QUEUE "queue")

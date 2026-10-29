@@ -1,4 +1,4 @@
-;;; PostgreSQL の handler の文(純粋 — 接続に触らない)。流すのは pg.hy の Program ちょうど 1 つで、doeff の汎用の SQL の effect
+;;; PostgreSQL の handler の文(純粋 — 接続に触らない)。流すのは _pg.hy の Program ちょうど 1 つで、doeff の汎用の SQL の effect
 ;;; (SqlQuery・SqlTransaction — doeff_core_effects.sql_effects)に載せる。文は中立の記法(引数 = `:name`・値 = SqlParam)で書き、
 ;;; PostgreSQL の方言への書き換えは答え手(postgres-sql-handler / pooled-postgres-sql-handler)が持つ(#880 U5)。
 ;;;
@@ -19,7 +19,7 @@
 ;;;                (forget-keys-statement — 索引 (ledger, remembered_at))。覚えを残さない列は出来事を消す transaction で入れない・外す
 ;;;                (drop-keys-statement)。送ってから外す列の覚えは、鍵の出来事が置き場に在る間は外さない。
 ;;   write_keys   行の書き(PutRow・PutRows)の冪等キーの覚え(card ki-78c6d663491f)— PK = idempotency_key・body_digest = 書きの本文の指紋
-;;                (admission.write-digest)・answer = 確定した答えの綴り(版・値・置き場の版 — pg.hy の remembered-answer-json)・last_seq =
+;;                (admission.write-digest)・answer = 確定した答えの綴り(版・値・置き場の版 — _pg.hy の remembered-answer-json)・last_seq =
 ;;                書きの最後の変更の番号(束の項の番号はそこから束の順に遡る — 同じ往復の変更の文が採る番号を、行の単位の錠の中の変更の列の
 ;;                最大の番号として同じ文で読む)・remembered_at = 覚えた刻(epoch ミリ秒)。行の書きの transaction(行の単位の錠の中)が 1 往復目に鍵を引き(find-write-key-statement)、
 ;;                確定した時だけ 2 往復目に入れる(remember-write-statement)。回収(SweepExpired)が覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を
@@ -111,7 +111,7 @@
 ;;; (ledger, key) の索引は 1 頁 + 1 行だけを辿る。列 key の照合順を "C" に替える形(ALTER COLUMN … COLLATE "C")にしない訳: 替える文は
 ;;; 表の排他の錠(ACCESS EXCLUSIVE)を持ったまま主キーと key を含む索引(上から読む欄の索引 — payload を開き直す式)を作り直し、その間
 ;;; 行の読み書きが全部止まる。足す索引は索引の用意が CONCURRENTLY で作り、読みを止めない(速さだけの索引 — 無くても答えは同じ)。
-;;; 索引の用意(pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
+;;; 索引の用意(_pg.hy の頭の註): 移行の transaction は、その transaction で生まれた表の索引だけを作る(空の表 — 一瞬)。既に在る表に
 ;;; 足りない索引は、索引の用意の task が transaction の外の CREATE INDEX CONCURRENTLY で作る(declared-indexes が宣言の索引の全部・
 ;;; indexes-statement が置き場の索引の観測)。
 ;;; 表の名は接頭辞つき(既定 records_)— 同じ database に在る別の置き場の同名の表と混ざらない。
@@ -137,7 +137,7 @@
 ;;; 書き〔派生の表の作り直し〕が索引の更新の IO 待ちで錠を 39 秒持つ間、関わりの無い表の 1 行の書きが全部その後ろで待った): 行の書きは
 ;;; 触る表の単位(table-unit)を transaction の初めに取り、行の表の文(錠つきの読み・消す・書く — 索引の更新で IO を待つ文)を流してから、
 ;;; 2 往復目の中で番号の錠(numbering-lock-statement)を取り、変更の列に積む文と冪等キーの覚え(変更の列の最大の番号を読む)を流して
-;;; COMMIT する(pg.hy の numbered-statements)。番号の錠を持つのは番号を取ってから commit するまでだけなので、番号の読みの約束は前と同じに
+;;; COMMIT する(_pg.hy の numbered-statements)。番号の錠を持つのは番号を取ってから commit するまでだけなので、番号の読みの約束は前と同じに
 ;;; 保ち、IO を待つ行の表の文は表ごとに並ぶ。同じ表の書きは表の単位で 1 本ずつ(版の読み書きと行の錠は前と同じ)。鍵つきの行の書きは 1 往復目に
 ;;; 冪等キーの錠(write-key-unit)も取る — 同じ鍵を別の表へ並んで撃った書きは表の単位では並ばず、覚えの引きと確定が重なると後の覚えが黙って
 ;;; 捨てられるため(前は行の単位がこれも並べた)。
@@ -156,7 +156,7 @@
 ;;; 部分の錠の鍵は置き場全体の鍵 + "/" + 単位の名(hashtext が 2 つの鍵を同じ数にしても、余計に待つだけで約束は破れない)。
 ;;;
 ;;; 配列の引数は持たない(SqlValue の閉じた集合に配列は無い): `= ANY(配列)` は `IN (:t0, :t1, …)` に展げる。空の組は文にできない
-;;; (`IN ()` は構文の誤り)ので、in-list は空の組を断り、呼び手(pg.hy)が空の組なら文を流さない枝を持つ。
+;;; (`IN ()` は構文の誤り)ので、in-list は空の組を断り、呼び手(_pg.hy)が空の組なら文を流さない枝を持つ。
 ;;;
 ;;; 保持の期限(#3561): 読みの文(行・一覧・変更の列・追記の読み・列の末尾)は、回収を待たずに期限を過ぎた行と出来事を文の条件で除く
 ;;; (RowExpiry・EventExpiry の境 — 境の刻は admission.retention-cutoff-ms)。出来事の期限の条件は回収と読みで同じ expired-event-condition の
@@ -169,11 +169,11 @@
 ;;; 変更の列の刈り(PruneChanges)も同じ形: 書きの錠の外で 1 周の境(刻が境以下の変更を刻の順に limit 件読んだ中の最大の番号 —
 ;;; prune-bound-statement)を読み、錠の中ではその番号までの変更を番号の順に limit 件ずつ消す(prune-changes-statement — 錠の transaction を
 ;;; 分け、錠と錠の間に他の書きが入れる)。どの文も触る行は limit で縛られ、変更の列の長さに依らない。文の上限は置き場の接続の上限より短い
-;;; 手入れの上限(statement-limit-statement)で、切れた周は次の周へ持ち越す(pg.hy の pruned-changes)。2026-10-24 — 前の形は境の読み
+;;; 手入れの上限(statement-limit-statement)で、切れた周は次の周へ持ち越す(_pg.hy の pruned-changes)。2026-10-24 — 前の形は境の読み
 ;;; `max(seq) WHERE at <= 境` を消す文の中に持ち、planner は主鍵を新しい方から辿って境より古い変更に当たるまで保持の窓の変更を全部読んだ
 ;;; (本番 約 150 万行・heap 973 MB)。DB が起き直した直後の冷えた cache でこの 1 文が文の上限 60 秒を越え、その間 番号の錠を待つ書きが
 ;;; 同じ上限で切られた。
-;;; 送ってから外す列(card ki-707aad0f88e8 — maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
+;;; 送ってから外す列(card ki-707aad0f88e8 — _maintenance.hy の頭の註): 送りの頁の読み(expired-page-statement)は期限の条件を
 ;;; expiring-where で書き、(ledger, at) の索引を位置から境まで辿る(積んだ刻と番号の順)。外しは回収と同じ expire-chosen-events-statement。
 ;;; 組で数える列は、冪等キーを覚えた出来事(retired_keys に鍵の在る出来事)も期限を過ぎた物に数える(EventExpiry の remembered)。
 (require doeff-hy.macros [defk <- val var])
@@ -183,7 +183,7 @@
 (import json)
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
-(import doeff_records.admission [key-text])
+(import doeff_records._admission [key-text])
 (import doeff_records._values [RecordsSchema RetiredKey KeepFor ByKeySuffix ListCursor FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
@@ -1317,7 +1317,7 @@
   {:pre [(: prefix str) (: stream str) (: at int) (: payload str) (: origin-host str) (: idempotency-key str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "冪等キー idempotency-key の出来事も鍵の覚えも無い時だけ出来事を 1 つ積み、番号を返す文を作るため(在れば積まずに 0 行 — 追記の
-   1 往復の書き・pg.hy の append-locked)。版は置き場の頭の行から同じ文で読む(書きの錠の中なので、2 往復の書きが 1 往復目に読む頭と同じ)。"
+   1 往復の書き・_pg.hy の append-locked)。版は置き場の頭の行から同じ文で読む(書きの錠の中なので、2 往復の書きが 1 往復目に読む頭と同じ)。"
   (Statement :text (.format "INSERT INTO {p}append_rows (ledger, at, payload, origin_host, epoch)
                        SELECT :ledger, :at, :payload, :origin_host, head.epoch FROM {p}store_epoch AS head
                        WHERE head.id = 1

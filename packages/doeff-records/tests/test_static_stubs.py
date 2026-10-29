@@ -1,5 +1,5 @@
-"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(_values.pyi・_effects.pyi・_faults.pyi・memory.pyi・
-_store_choice.pyi・_typed.pyi・_principals.pyi・_service.pyi・http_server.pyi・_schema_digest.pyi・http_client.pyi)の検。
+"""doeff_records の値・effect・memory の置き場・行の型の層・HTTP の口・client の型(_values.pyi・_effects.pyi・_faults.pyi・_memory.pyi・
+_store_choice.pyi・_typed.pyi・_principals.pyi・_service.pyi・_http_server.pyi・_schema_digest.pyi・_http_client.pyi)の検。
 
 doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyright は import した名を全部 Unknown として読み、使う側
 (使い手の表の宣言・行の読みの答え・変更の欄・memory の置き場の handler)に書き手に直せない reportUnknown* が連なる。
@@ -13,14 +13,14 @@ doeff_records の module は Hy なので、型の宣言(.pyi)が無いと pyrig
 - HTTP の口の層(_service.pyi・_principals.pyi)の失敗ケース: 2 つを外した写しでは、口の組 RecordsService・入口 respond と、
   respond の答えの `.status` が Unknown の赤になり、置くと消える。置いた側では答えの欄の取り違え(int の status に文字列を足す)が赤に
   なる(使い手の模擬の記録の service の相手役が RecordsService を受け、respond の答えを読む形)。
-- 走っている木と表の要約(http_server.pyi・_schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
+- 走っている木と表の要約(_http_server.pyi・_schema_digest.pyi)の失敗ケース: 2 つを外した写しでは、ServedBuild・RepoCommit・
   schema-digests と、要約の答えを受けた変数が Unknown の赤になり、置くと消える。置いた側では欄の取り違え(str の repo に int を
   足す)が赤になる(使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形・#2742)。
-- client の層(http_client.pyi)の失敗ケース: http_client.pyi だけを外した写しでは、口の組 RecordsEndpoint・答え手 http-records-handler・
+- client の層(_http_client.pyi)の失敗ケース: _http_client.pyi だけを外した写しでは、口の組 RecordsEndpoint・答え手 http-records-handler・
   計器の 0 置き zero-client-metrics が Unknown の赤になり、置くと消える。置いた側では口の欄の取り違え(float の上限の秒に文字列を足す)が
   赤になる(書き手の job の土台が口を作り、計器の系列を 0 で置いてから答え手を並べる形)。
 - 一致: stub が宣言する名は実行時の module に在り、dataclass の欄の名・順・既定値の有無・__init__ に載るか、関数の引数の名、答えの union の
-  型の並びが実装と同じ(宣言だけが先へ行かない)。http_client.pyi は道具 doeff_hy.static_stub の出力に置き換えたので(#2844)、
+  型の並びが実装と同じ(宣言だけが先へ行かない)。_http_client.pyi は道具 doeff_hy.static_stub の出力に置き換えたので(#2844)、
   この照らしからは外し、作り直し == commit の一致は tests/test_generated_stubs.py が検める(上の client の層の失敗ケースは残す)。
 """
 
@@ -47,8 +47,8 @@ from doeff_records import _store_choice as store_choice
 from doeff_records import _typed as typed
 from doeff_records import _values as values
 from doeff_records import (
-    http_server,
-    memory,
+    _http_server as http_server,
+    _memory as memory,
 )
 
 from doeff import EffectBase
@@ -75,7 +75,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <- val])
 (import doeff_records._values [RecordsSchema Row RowChanged Changes])
 (import doeff_records._effects [ReadRow WatchChanges])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records._memory [MemoryStore memory-records-handler])
 
 (val SCHEMA (RecordsSchema))
 (val HANDLER (memory-records-handler (MemoryStore SCHEMA) "writer"))
@@ -185,10 +185,10 @@ SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
     '"answer"',
 )
 
-#: 走っている木(http_server.pyi の ServedBuild・RepoCommit)と表の要約(_schema_digest.pyi の schema-digests)を使う検体(#2742 —
+#: 走っている木(_http_server.pyi の ServedBuild・RepoCommit)と表の要約(_schema_digest.pyi の schema-digests)を使う検体(#2742 —
 #: 使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形)。
 SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
-(import doeff_records.http_server [ServedBuild RepoCommit])
+(import doeff_records._http_server [ServedBuild RepoCommit])
 (import doeff_records._schema_digest [schema-digests])
 (import doeff_records._values [RecordsSchema])
 
@@ -212,7 +212,7 @@ SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
   (+ (. (get commits 0) repo) 1))
 """
 
-#: http_server.pyi・_schema_digest.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
+#: _http_server.pyi・_schema_digest.pyi を外すと Unknown になる名(import の行の名・答えを受けた変数)。
 SERVED_UNKNOWN_NAMES: tuple[str, ...] = (
     '"ServedBuild"',
     '"RepoCommit"',
@@ -226,7 +226,7 @@ CLIENT_MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [with-handlers])
 (import doeff_records._effects [ReadRow])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler zero-client-metrics])
+(import doeff_records._http_client [RecordsEndpoint http-records-handler zero-client-metrics])
 
 (defk url-after-read [endpoint]
   {:pre [(: endpoint RecordsEndpoint)] :post [(: % str)]}
@@ -239,7 +239,7 @@ CLIENT_MODULE = """\
   (+ endpoint.request-timeout "x"))
 """
 
-#: http_client.pyi を外すと Unknown になる名(import の行の名)。
+#: _http_client.pyi を外すと Unknown になる名(import の行の名)。
 CLIENT_UNKNOWN_NAMES: tuple[str, ...] = (
     '"RecordsEndpoint"',
     '"http_records_handler"',
@@ -362,7 +362,7 @@ def test_with_the_service_stub_the_answer_is_an_http_answer(tmp_path: Path) -> N
 @needs_pyright
 def test_without_the_served_stubs_the_build_and_the_digests_are_unknown(tmp_path: Path) -> None:
     # 他の stub は置き、走っている木と表の要約の 2 つだけを外す — import した名と、要約の答えを受けた変数が Unknown になる。
-    omit = ("http_server.pyi", "_schema_digest.pyi")
+    omit = ("_http_server.pyi", "_schema_digest.pyi")
     unknown = _check(tmp_path, with_stubs=True, module=SERVED_MODULE, omit=omit).unknown()
     missing = [name for name in SERVED_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
     assert missing == [], unknown
@@ -381,8 +381,8 @@ def test_with_the_served_stubs_the_build_and_the_digests_are_typed(tmp_path: Pat
 
 @needs_pyright
 def test_without_the_client_stub_the_client_is_unknown(tmp_path: Path) -> None:
-    # 他の stub は置き、client の層の http_client.pyi だけを外す — 口の組・答え手・計器の 0 置きの名が Unknown になる。
-    unknown = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE, omit=("http_client.pyi",)).unknown()
+    # 他の stub は置き、client の層の _http_client.pyi だけを外す — 口の組・答え手・計器の 0 置きの名が Unknown になる。
+    unknown = _check(tmp_path, with_stubs=True, module=CLIENT_MODULE, omit=("_http_client.pyi",)).unknown()
     missing = [name for name in CLIENT_UNKNOWN_NAMES if not any(name in e[2] for e in unknown)]
     assert missing == [], unknown
 

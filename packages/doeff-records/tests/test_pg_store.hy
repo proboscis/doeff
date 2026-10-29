@@ -14,7 +14,8 @@
 (import doeff_records [ExpectAbsent Written Conflict Row Unreachable Missing WrittenRows])
 (import doeff_records [PutRow PutRows RowWrite ReadRow ListRows])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [IndexBook PreparedStore pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [IndexBook PreparedStore drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 

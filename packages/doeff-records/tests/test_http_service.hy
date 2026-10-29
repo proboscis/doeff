@@ -14,10 +14,10 @@
 (import doeff_records [Appended ExpectAbsent ExpectAny Missing Unreachable UndeclaredTable Written WrittenRows WatchCursor])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_client [records-unwaited])
-(import doeff_records.http_server [records-server-config RunningServer start-records-server])
-(import doeff_records.http_client [RecordsEndpoint WireError http-records-handler http-table-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records [records-unwaited])
+(import doeff_records._http_server [records-server-config RunningServer start-records-server])
+(import doeff_records [RecordsEndpoint WireError http-records-handler http-table-records-handler])
 (import tests.interpreters [sim-request-handlers])
 
 

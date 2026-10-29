@@ -1,6 +1,6 @@
 """PostgreSQL の置き場の書きの錠を、置き場全体の 1 つから錠の単位(行の単位・列ごとの単位)に分けた形の検(card ki-0306f5a614b4)。
 
-錠の設計は pg_sql.hy の頭の註の「書きの錠」: 書き 1 回は置き場全体の錠を共有で、触る単位の錠を排他で持ち、版の繰り上げと表の用意と
+錠の設計は _pg_sql.hy の頭の註の「書きの錠」: 書き 1 回は置き場全体の錠を共有で、触る単位の錠を排他で持ち、版の繰り上げと表の用意と
 旧い版の書きは置き場全体の錠を排他で持つ。本番の組み立て(pg-records-handler の gated・writer-gates・計器)を本物の PostgreSQL で回し、
 別の接続で錠を持つ「止め」(pg_advisory_lock — 本番の書きと同じ hashtext の鍵)で書きを DB の中に留めて、次を確かめる:
 
@@ -36,8 +36,9 @@ from doeff_core_effects import thread_pool_compute_handler
 from doeff_hy._frozen import FrozenMap
 from doeff_records import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow
 from doeff_records._laws import LAW_SCHEMA, MAKER
-from doeff_records.pg import drop_records_tables, pg_records_handler, prepare_records_store, writer_gates
-from doeff_records.pg_sql import ROWS_UNIT, stream_unit, table_unit, unit_lock_key, writer_lock_key
+from doeff_records import pg_records_handler, writer_gates
+from doeff_records._pg import drop_records_tables, prepare_records_store
+from doeff_records._pg_sql import ROWS_UNIT, stream_unit, table_unit, unit_lock_key, writer_lock_key
 from doeff_records import Appended, ExpectAbsent, ExpectAny, Row, Written
 from doeff_time import SimClock, sim_time_handler, sync_time_handler
 

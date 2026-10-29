@@ -12,7 +12,7 @@ from doeff_records._values import EventsQuiet as EventsQuiet
 from doeff_records._values import Reset as Reset
 from doeff_records._values import Unreachable as Unreachable
 from doeff_records._values import WaitsClosed as WaitsClosed
-from doeff_records.admission import epoch_ms as epoch_ms
+from doeff_records._admission import epoch_ms as epoch_ms
 
 def hyx_closing_wakeXquestion_markX(woke: WaitsClosed | bool | None) -> _Program[bool, object]:
     ...

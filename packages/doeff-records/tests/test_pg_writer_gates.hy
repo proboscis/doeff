@@ -1,4 +1,4 @@
-;; 同じ process の書きの並び(pg.hy の writer-gates — card ki-0306f5a614b4)の、単位ごとの並びの表(session の値 gates)の検。
+;; 同じ process の書きの並び(_pg.hy の writer-gates — card ki-0306f5a614b4)の、単位ごとの並びの表(session の値 gates)の検。
 ;; 起動の直後は表が空で、初めての単位の書きが並びを作る。前の版は単位の並びを 1 つ待つ(AcquireSemaphore で他の task に譲る)たびに
 ;; 次の単位を節の入口で読んだ古い表で調べて書き戻したので、待つ間に他の書きが足した単位を表から消し、その書きの ReleaseWriters が
 ;; KeyError で落ちた(記録の service の宣言し直しの 8 秒後の put-rows が 500 internal — card ki-2b1142ac9146・2026-10-23 21:35:54 UTC)。
@@ -8,7 +8,7 @@
 (import doeff_core_effects [Get Put])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled Spawn Wait CreatePromise CompletePromise Promise])
-(import doeff_records.pg [AdmitWriters ReleaseWriters writer-gates])
+(import doeff_records [AdmitWriters ReleaseWriters writer-gates])
 
 
 (val LOG-KEY "writer-gates-test/log")

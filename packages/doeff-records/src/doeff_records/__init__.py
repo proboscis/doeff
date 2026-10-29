@@ -112,6 +112,42 @@ if TYPE_CHECKING:
     from doeff_records._values import WatchEventsAnswer as WatchEventsAnswer
     from doeff_records._values import Written as Written
     from doeff_records._values import WrittenRows as WrittenRows
+    from doeff_records._memory import MemoryStore as MemoryStore
+    from doeff_records._memory import memory_records_handler as memory_records_handler
+    from doeff_records._memory import memory_signal_handler as memory_signal_handler
+    from doeff_records._http_client import RecordsEndpoint as RecordsEndpoint
+    from doeff_records._http_client import RequestPatience as RequestPatience
+    from doeff_records._http_client import WireError as WireError
+    from doeff_records._http_client import http_records_handler as http_records_handler
+    from doeff_records._http_client import http_table_records_handler as http_table_records_handler
+    from doeff_records._http_client import records_unwaited as records_unwaited
+    from doeff_records._http_client import request_patience_handler as request_patience_handler
+    from doeff_records._http_server import CloseWaits as CloseWaits
+    from doeff_records._http_server import ClosingWaits as ClosingWaits
+    from doeff_records._http_server import KeepPreparedHandlers as KeepPreparedHandlers
+    from doeff_records._http_server import MarkBook as MarkBook
+    from doeff_records._http_server import PreparedHandlers as PreparedHandlers
+    from doeff_records._http_server import StampRequest as StampRequest
+    from doeff_records._http_server import closing_cuts_waits as closing_cuts_waits
+    from doeff_records._http_server import prepared_slot as prepared_slot
+    from doeff_records._http_server import ready_handlers as ready_handlers
+    from doeff_records._http_server import request_stamps as request_stamps
+    from doeff_records._http_server import shell_control as shell_control
+    from doeff_records._http_server import store_not_prepared as store_not_prepared
+    from doeff_records._http_server import wait_stamps as wait_stamps
+    from doeff_records._http_server import waits_closing as waits_closing
+    from doeff_records._event_source import BodyWrapper as BodyWrapper
+    from doeff_records._event_source import ChangedRow as ChangedRow
+    from doeff_records._event_source import SignalSourceFactory as SignalSourceFactory
+    from doeff_records._event_source import SignalSourcePatience as SignalSourcePatience
+    from doeff_records._event_source import SignalSourceUnreachable as SignalSourceUnreachable
+    from doeff_records._event_source import SignalTables as SignalTables
+    from doeff_records._event_source import read_signal_handler as read_signal_handler
+    from doeff_records._event_source import records_signal_handler as records_signal_handler
+    from doeff_records._event_source import source_patience_handler as source_patience_handler
+    from doeff_records._event_source import waits_beside_sources as waits_beside_sources
+    from doeff_records._maintenance import ExpiredCursor as ExpiredCursor
+    from doeff_records._request_timing import RequestMark as RequestMark
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AppendEventAnswer": "doeff_records._values",
@@ -220,6 +256,46 @@ _LAZY_EXPORTS: dict[str, str] = {
     "pg_records_handler": "doeff_records._main",
     "printed_listening": "doeff_records._main",
     "writer_gates": "doeff_records._main",
+    "MemoryStore": "doeff_records._memory",
+    "memory_records_handler": "doeff_records._memory",
+    "memory_signal_handler": "doeff_records._memory",
+    "RecordsEndpoint": "doeff_records._http_client",
+    "RequestPatience": "doeff_records._http_client",
+    "WireError": "doeff_records._http_client",
+    "http_records_handler": "doeff_records._http_client",
+    "http_table_records_handler": "doeff_records._http_client",
+    "records_unwaited": "doeff_records._http_client",
+    "request_patience_handler": "doeff_records._http_client",
+    "CloseWaits": "doeff_records._http_server",
+    "ClosingWaits": "doeff_records._http_server",
+    "KeepPreparedHandlers": "doeff_records._http_server",
+    "MarkBook": "doeff_records._http_server",
+    "PreparedHandlers": "doeff_records._http_server",
+    "StampRequest": "doeff_records._http_server",
+    "closing_cuts_waits": "doeff_records._http_server",
+    "prepared_slot": "doeff_records._http_server",
+    "ready_handlers": "doeff_records._http_server",
+    "request_stamps": "doeff_records._http_server",
+    "shell_control": "doeff_records._http_server",
+    "store_not_prepared": "doeff_records._http_server",
+    "wait_stamps": "doeff_records._http_server",
+    "waits_closing": "doeff_records._http_server",
+    "AdmitWriters": "doeff_records._pg",
+    "RecordsSqlFailed": "doeff_records._pg",
+    "ReleaseWriters": "doeff_records._pg",
+    "StoreUnreachable": "doeff_records._pg",
+    "BodyWrapper": "doeff_records._event_source",
+    "ChangedRow": "doeff_records._event_source",
+    "SignalSourceFactory": "doeff_records._event_source",
+    "SignalSourcePatience": "doeff_records._event_source",
+    "SignalSourceUnreachable": "doeff_records._event_source",
+    "SignalTables": "doeff_records._event_source",
+    "read_signal_handler": "doeff_records._event_source",
+    "records_signal_handler": "doeff_records._event_source",
+    "source_patience_handler": "doeff_records._event_source",
+    "waits_beside_sources": "doeff_records._event_source",
+    "ExpiredCursor": "doeff_records._maintenance",
+    "RequestMark": "doeff_records._request_timing",
 }
 
 

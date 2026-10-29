@@ -31,10 +31,10 @@
                                                 HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServing RecordsListening RecordsPrepared StoreReach StoreReachable StoreSilent StoreUnreachable
-                                   serve-records store-reach])
-(import doeff_records.wire [ANSWER-METRICS list-rows-metrics])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records [RecordsListening RecordsPrepared]
+        doeff_records._http_server [RecordsServing StoreReach StoreReachable StoreSilent StoreUnreachable serve-records store-reach])
+(import doeff_records._wire [ANSWER-METRICS list-rows-metrics])
 (import doeff_core_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects [memory-meter-handler])
 (import doeff_hy._frozen [FrozenMap])
@@ -43,7 +43,7 @@
 (import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_records._main [records-process])
 
-;; 本文の上限(検のために小さく — 本番は http_server.hy の REQUEST-MAX-BYTES)。
+;; 本文の上限(検のために小さく — 本番は _http_server.hy の REQUEST-MAX-BYTES)。
 (val MAX-BYTES 4096)
 ;; 本文の読みの答えを壊す札(待ち受けの答え手の欠陥の代役 — 要求の task が答えの途中で落ちる)。
 (val BROKEN-TICKET "t-broken")

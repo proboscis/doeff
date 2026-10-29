@@ -1,6 +1,6 @@
-"""memory.hy の公開面の型(型検査のための宣言 — 実行時は memory.hy を読む)。
+"""_memory.hy の公開面の型(型検査のための宣言 — 実行時は _memory.hy を読む)。
 
-memory.hy は Hy の module なので、pyright は中を読めず、置き場 MemoryStore と handler memory-records-handler が Unknown になる
+_memory.hy は Hy の module なので、pyright は中を読めず、置き場 MemoryStore と handler memory-records-handler が Unknown になる
 (handler を組む関数の答えが `Unknown | ((...) -> object)` になる等)。ここで型を宣言する。
 
 - MemoryStore の欄は __init__ が置く置き場の data(検と模擬の世界が直に読む — rows・changes・events・head など)。
@@ -38,7 +38,7 @@ from doeff_records._effects import (
 from doeff_records._faults import SetStoreOutage, StoreFault
 from doeff_records._faults import StoreOperation as StoreOperation
 from doeff_records._store_choice import StoreChoice
-from doeff_records.event_source import BodyWrapper, ChangedRow, SignalSourceFactory, SignalTables
+from doeff_records._event_source import BodyWrapper, ChangedRow, SignalSourceFactory, SignalTables
 from doeff_records._values import (
     Appended,
     AppendedEvents,

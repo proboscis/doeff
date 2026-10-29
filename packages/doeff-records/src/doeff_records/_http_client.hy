@@ -4,14 +4,14 @@
 ;;; 書き手の名は endpoint の writer を平文の見出し X-Records-Writer で送る(service は確かめずに書き手の名に使う — 自分の program
 ;;; どうしの呼び出しに token の認証を入れない・#2986・#2988・#3007)。呼び手の job の名は endpoint の caller を見出し X-Records-Caller で
 ;;; 送る(service が一覧の読みを呼び手ごと・表ごとに数える — 宣言された名だけを数え、許可には使わない)。client は Authorization を送らない(欄 token は #2986 で消した)。
-;;; 綴りは wire.hy(service と同じ 1 か所)。
+;;; 綴りは _wire.hy(service と同じ 1 か所)。
 ;;;
 ;;; 答えの写し方:
 ;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes・WrittenRows・RowsConflict・RowsRefused・
 ;;;                          AppendedEvents・BatchRead …)
 ;;;   503 / 届かない          Unreachable(読みは撃ち直してよい・書きは期待つきなら撃ち直してよい)
 ;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)。欄 tables・streams は、撃った要求が
-;;;                          名指した名のうち断りの理由に載った物(wire.hy の undeclared-refusal — 本文の形は変えない)
+;;;                          名指した名のうち断りの理由に載った物(_wire.hy の undeclared-refusal — 本文の形は変えない)
 ;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
 ;;;   ほかの status          400 / 500 と同じ一般の失敗で WireError(401 / 403・間の proxy の 502 など — status ごとの枝を持たない。
 ;;;                          本文が契約の断りの形でない JSON の時だけ WireMalformed)。記録の service は 401 / 403 を出さない
@@ -36,7 +36,7 @@
 ;;; ので、同じ組の中で源は自分の時間だけ止まりに耐える。上限を越えたら、待った秒を名指した Unreachable を返す(呼び手の扱いは今までどおり)。撃ち直しの冪等: 書きは
 ;;; どれも冪等キーつきで撃つ — 追記(AppendEvent・AppendEvents)は effect の鍵(同じ鍵・同じ本文は前の番号を返す・_laws.hy の
 ;;; law-append-is-idempotent)、行の書き(PutRow・PutRows)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
-;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(event_source.hy の ride-out-stall)。
+;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(_event_source.hy の ride-out-stall)。
 ;;;
 ;;; 行の書きの冪等キー(card ki-78c6d663491f — 前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
 ;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows には撃つ前に要求 1 つの鍵を
@@ -52,7 +52,7 @@
 ;;;
 ;;; 往復の計時の行(ki-ca4b41612e2e): endpoint の timed-operations に名指した操作(wire の操作の名 — 例 watch-changes)の要求は、HTTP の
 ;;; 答え手に区間の計時(HttpRequest の trace-phases)を頼み、往復 1 本ごとに log の 1 行(EXCHANGE-LOG — slog)を出す。往復の秒を、接続
-;;; (新しい接続か使い回しか)・送る・service の受けの列・service の中(答えの見出し Server-Timing — request_timing.hy)・返す(service の外の
+;;; (新しい接続か使い回しか)・送る・service の受けの列・service の中(答えの見出し Server-Timing — _request_timing.hy)・返す(service の外の
 ;;; 待ち = 網の往き帰りと、この process の event loop が答えに気づくまで)・本文を受ける・読み解く(JSON と答えの型)と、HttpRequest の
 ;;; effect を出してから戻るまでのうち HTTP の client の外の分(loop — scheduler が答え手の coroutine を回し、答えを呼び手へ戻すまで)に割る。
 ;;; 名指さない endpoint(既定)は trace も行も出さない(log の答え手を持たない使い手が壊れない)。
@@ -68,11 +68,11 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpPhases])
 (import doeff_core_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])
-(import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
+(import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch ReadRequestPatience])
-(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
+(import doeff_records._wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
                             server-timing-spans IDEMPOTENCY-HEADER request-key])

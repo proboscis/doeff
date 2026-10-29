@@ -21,10 +21,10 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.wire [STATUS-OF-ERROR])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records._wire [STATUS-OF-ERROR])
 (import doeff_records._effects [LIST-LIMIT-MAX])
-(import doeff_records.http_server [records-server-config start-records-server metrics-answer])
+(import doeff_records._http_server [records-server-config start-records-server metrics-answer])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 届かない時間枠に送る書きの数(筋書き meter-scenario の q1〜q3)と、届かない状態の理由。
