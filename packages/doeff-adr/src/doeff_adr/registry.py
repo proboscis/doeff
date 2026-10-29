@@ -292,11 +292,6 @@ def _adr_ids() -> list[str]:
     return sorted(_ADRS)
 
 
-def adr_ids() -> list[str]:
-    """移し替えの層: 外の repo の呼び手を effect AdrIds へ書き換えたら消す(ADR-DOE-API-001 R21)。"""
-    return _adr_ids()
-
-
 def enforcement_ids() -> list[str]:
     return sorted(_ENFORCEMENTS)
 
