@@ -75,7 +75,7 @@
 ;; 焼く道具の file(入口・判断の module・焼きの道具 — 入口は後の 2 つを自分の位置から求めた path で読む)。
 (val TOOL-FILES #("worker/entry/code_prepare.hy" "worker/core/bake_plan.hy" "foundation/bytecode_pool.hy"))
 ;; 焼く道具が同じ checkout の doeff-hy から path で読む保存先の入口(root の中の置き場 — 検の doeff の root へ本物の file を写す)。
-(val STORE-FILE "packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py")
+(val STORE-FILE "packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py")
 ;; 起動の入口と同じ名の小さな module(worker/entry/main は worker/core/boot_helper を import する — 閉包)と、どこからも import されない
 ;; worker/core/unused(閉包の外)。
 (val ENTRY-MODULES {"worker/entry/main.hy" "(import doeff_cluster.worker.core.boot_helper [answer])\n(setv V answer)\n"

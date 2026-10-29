@@ -99,8 +99,8 @@
 ;; 焼きの道具(生の process の pool を持つ foundation の console の道具)。
 (val POOL-TOOL (str (/ WORKER-CODE "foundation" "bytecode_pool.hy")))
 ;; 保存先の入口(worker の版の doeff-hy の code_store — worker のコード doeff_cluster は doeff の checkout の packages/doeff-cluster/src/ に在る)と、
-;; その module 名(root の版の doeff_hy_bytecode_guard.code_store と重ならない名)。
-(val CODE-STORE (str (/ (. WORKER-CODE parent parent parent) "doeff-hy" "src" "doeff_hy_bytecode_guard" "code_store.py")))
+;; その module 名(root の版の doeff_hy_bytecode_guard._code_store と重ならない名)。
+(val CODE-STORE (str (/ (. WORKER-CODE parent parent parent) "doeff-hy" "src" "doeff_hy_bytecode_guard" "_code_store.py")))
 (val CODE-STORE-MODULE "doeff_cluster_worker_code_store")
 
 

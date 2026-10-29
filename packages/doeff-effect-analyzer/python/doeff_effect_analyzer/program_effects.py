@@ -995,7 +995,7 @@ def _read_cached_tree(path: Path, whole: Callable[[], ast.Module]) -> _ChunkedTr
     they are not, or the entry is absent or unreadable. The entry starts with the record of those
     macros, so an entry of other macros is not read past it."""
     from doeff_hy_bytecode_guard import record_is_current_here
-    from doeff_hy_bytecode_guard.records import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
     try:
         with path.open("rb") as handle:

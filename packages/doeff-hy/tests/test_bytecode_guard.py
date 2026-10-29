@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_hy_bytecode_guard import records
+from doeff_hy_bytecode_guard import _records as records
 
 if TYPE_CHECKING:
     # collections.abc.Buffer は Python 3.12 から — 注記にだけ使うので、3.11 で module の読み込みを落とさない。
@@ -241,7 +241,7 @@ def _user_pyc(root: Path) -> Path:
 
 def _stored_entries(store: Path | str, name: str, source: Path, data: bytes) -> tuple[str, ...]:
     """共有の置き場の、module 名 name の source(中身 data)の code の鍵の entry(macro の環境ごとに並ぶ — 使った時刻の新しい順)。"""
-    from doeff_hy_bytecode_guard import code_store, loader_hooks
+    from doeff_hy_bytecode_guard import _code_store as code_store, _loader_hooks as loader_hooks
 
     return code_store.code_entries(str(store), loader_hooks._store_key(name, str(source), data))
 
@@ -521,7 +521,7 @@ def _guard_of_the_next_record_generation(tmp_path: Path) -> Path:
         root / "doeff_hy_bytecode_guard",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    records_file = root / "doeff_hy_bytecode_guard" / "records.py"
+    records_file = root / "doeff_hy_bytecode_guard" / "_records.py"
     current = f'RECORD_TAG = "{records.RECORD_TAG}"'
     text = records_file.read_text(encoding="utf-8")
     assert text.count(current) == 1, "記録の印の行が records.py に 1 つでない — 次の世代の代役を作れない"
@@ -642,7 +642,7 @@ def test_a_file_changed_between_compile_and_the_store_write_does_not_file_old_co
     中身の鍵の下に入り、同じ中身の file を読む全部の作業木が古い振る舞いで動いた(実例 2026-10-02 13:57 — doeff-cluster の
     sim/local.hy の検が毎回赤)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -705,7 +705,7 @@ def test_a_named_store_is_filled_even_when_bytecode_is_not_written(tmp_path: Pat
     worker の bytecode を焼く道具は PYTHONDONTWRITEBYTECODE=1 で起きるので、足さないと自分の依存の Hy を起動のたびに source から
     変換し直した(空の置き場で 2 回起こして 2 回とも CPU 約 14〜17 秒・置き場の file 0 — 2026-10-08)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -722,7 +722,7 @@ def test_the_default_store_is_not_filled_when_bytecode_is_not_written(tmp_path: 
     """置き場を名指していない時(既定の利用者の cache の dir)は、書かない設定では今までどおり置き場へ足さない — 書かない設定で
     起こした process が、名指しの無いまま利用者の cache を太らせない。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     monkeypatch.delenv(code_store.STORE_ENV, raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -761,7 +761,7 @@ def test_a_provider_first_loaded_by_the_type_check_expansion_is_not_reused_by_a_
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
     from doeff import run
     from doeff_hy.static_view import static_view
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -812,7 +812,7 @@ def test_a_file_loaded_again_by_path_under_another_name_records_the_macros_its_e
     pytest が書いた bake_plan.hy の entry を patrol の準備が引き、ec08cd77d より前の defrecord の展開で
     ``seal_record() missing ... calls_post_init`` — card ki-9180656459ac)。記録は展開が実際に引いた表から作る。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -855,7 +855,7 @@ def test_a_hy_module_read_from_a_current_pyc_does_not_look_up_the_expansion_modu
     import inspect
 
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     monkeypatch.setenv(code_store.STORE_ENV, str(tmp_path / "store"))
     monkeypatch.setattr(sys, "dont_write_bytecode", False)  # この suite は .pyc を書かない — ここだけ書いて 2 度目に読む
@@ -954,7 +954,7 @@ def test_a_read_outside_import_gets_its_module_only_while_it_compiles(tmp_path: 
     """runpy が呼ぶ形(loader を作り、module を置かずに get_code を直に呼ぶ)で compile した Hy の code は、使った macro の記録を
     持ち、保存先に入る。置いた module は読みの後に残らない(``sys.modules`` を汚さない)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     store = tmp_path / "store"
     monkeypatch.setenv(code_store.STORE_ENV, str(store))
@@ -986,7 +986,7 @@ def test_a_read_outside_import_does_not_replace_another_files_module_of_the_same
     """script の名が、別の file から読み込み済みの module の名と同じ(``hy json.hy``)時は、その module を置き換えない —
     compile の間も、使い手の展開が import する同じ名の module は元のまま(記録は足さない — 今までどおり)。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import loader_hooks
+    from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks
 
     source = tmp_path / "clashing.hy"
     source.write_text("(setv value 1)\n")
@@ -1041,7 +1041,7 @@ def test_records_reads_the_macro_tables_and_the_exported_names_the_way_hy_does(
     替えるとここが赤になる(card ki-ffe72a1fb7d7 — result_cache・macro_use・包みの検が読む名の定義元)。入る名の側は表の名を
     読まず、使い手が同じ名の関数を持つ形(macro が先に引かれる)で測る。"""
     import hy  # noqa: F401 — Hy の source を compile する口を載せる
-    from doeff_hy_bytecode_guard import code_store
+    from doeff_hy_bytecode_guard import _code_store as code_store
 
     monkeypatch.setenv(code_store.STORE_ENV, str(tmp_path / "store"))
     name = "internalnamespkg"

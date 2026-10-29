@@ -1240,11 +1240,11 @@ def _macro_exports(
 ) -> list[tuple[str, Callable[..., object]]]:
     """A Hy module's public macros: ``_hy_export_macros`` when it exports them, else its own macros.
 
-    The names of Hy's tables come from ``doeff_hy_bytecode_guard.records``, their one home (card ki-ffe72a1fb7d7).
+    The names of Hy's tables come from ``doeff_hy_bytecode_guard._records``, their one home (card ki-ffe72a1fb7d7).
     """
     if importlib.util.find_spec("doeff_hy_bytecode_guard") is None:
         return []
-    records = importlib.import_module("doeff_hy_bytecode_guard.records")
+    records = importlib.import_module("doeff_hy_bytecode_guard._records")
     macros = module.__dict__.get(records.MACRO_TABLE)
     if not isinstance(macros, dict):
         return []

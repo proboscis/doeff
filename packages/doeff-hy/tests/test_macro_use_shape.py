@@ -6,8 +6,8 @@ import types
 from collections.abc import Callable
 from types import CodeType
 
-from doeff_hy_bytecode_guard import macro_use
-from doeff_hy_bytecode_guard.macro_use import UsedMacroKey, _code_facts
+from doeff_hy_bytecode_guard import _macro_use as macro_use
+from doeff_hy_bytecode_guard._macro_use import UsedMacroKey, _code_facts
 
 
 def _module_code(source: str) -> CodeType:

@@ -404,11 +404,11 @@ def _has_hy_records() -> bool:
 
 def _macro_tables(namespace: Mapping[str, object]) -> tuple[dict[str, object], ...]:
     """The macro tables Hy put in a module's namespace, named by the one home of the names Hy gives
-    them (``doeff_hy_bytecode_guard.records``). Analyzing a Hy module needs doeff-hy, so a process
+    them (``doeff_hy_bytecode_guard._records``). Analyzing a Hy module needs doeff-hy, so a process
     without it has no Hy module here and no tables."""
     if not _has_hy_records():
         return ()
-    from doeff_hy_bytecode_guard.records import macro_tables
+    from doeff_hy_bytecode_guard._records import macro_tables
 
     return macro_tables(namespace)
 
