@@ -304,6 +304,11 @@ def _assert_moved_and_entry(repo: Path, report: Report) -> None:
     assert tool.is_shim(package_root / "effects.py", tool.Child(ROOT_NAME, "effects", package_root))
     assert tool.is_shim(package_root / "tools.py", tool.Child(ROOT_NAME, "tools", package_root))
     assert not (package_root / "tools").exists()
+    # 型の検に見せる名は 1 つずつ X as X で並べる(* は semgrep の規則 doeff-no-star-imports が断る)。
+    effects_shim = _text(repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py")
+    assert "import *" not in effects_shim
+    assert f"    from {ROOT_NAME}._effects import PingEffect as PingEffect\n" in effects_shim
+    assert f"    from {ROOT_NAME}._effects import call_helper as call_helper\n" in effects_shim
     assert sorted(report.entry_added) == ["PingConfig", "Shout", "ping_handler"]
     names = report.names
     assert names["入口に既に在る"] == [f"{ROOT_NAME}.effects.PingEffect"]

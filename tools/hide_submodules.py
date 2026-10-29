@@ -1770,9 +1770,83 @@ if not any(isinstance(finder, _MovedSubmodules) for finder in sys.meta_path):
 '''
 
 
-def shim_text(child: Child, typed: bool) -> str:
-    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。"""
+def _bound_names(statements: Sequence[ast.stmt], stub: bool) -> Iterator[str]:
+    """上の段の文(``if``・``try`` の中も)が束ねる名。stub の import は ``X as X`` の形だけ(型の検の決まり)。
+
+    ``match`` 文で書かない — commit の hook の semgrep の Python の構文の読みが ``match`` 文を読めない。
+    """
+    for statement in statements:
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            yield statement.name
+        elif isinstance(statement, ast.Assign):
+            yield from (t.id for t in statement.targets if isinstance(t, ast.Name))
+        elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            yield statement.target.id
+        elif isinstance(statement, ast.Import | ast.ImportFrom):
+            yield from (
+                alias.asname or alias.name.split(".")[0]
+                for alias in statement.names
+                if alias.name != "*" and (not stub or alias.asname == alias.name)
+            )
+        elif isinstance(statement, ast.If):
+            yield from _bound_names([*statement.body, *statement.orelse], stub)
+        elif isinstance(statement, ast.Try):
+            caught = [s for h in statement.handlers for s in h.body]
+            nested = [*statement.body, *caught, *statement.orelse, *statement.finalbody]
+            yield from _bound_names(nested, stub)
+
+
+def _listed_all(tree: ast.Module) -> tuple[str, ...] | None:
+    """``__all__ = [...]`` の名(文字列の並びで書いた時だけ)。"""
+    for statement in tree.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in statement.targets)
+            and isinstance(statement.value, ast.List | ast.Tuple)
+        ):
+            return tuple(
+                e.value
+                for e in statement.value.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            )
+    return None
+
+
+def typed_names(child: Child) -> tuple[str, ...]:
+    """移した子の型の宣言(``.pyi`` を先に、無ければ ``.py``)から、型の検が ``from <子> import *`` で読む名。
+
+    移し替えの module は、この名を ``if TYPE_CHECKING:`` の ``X as X`` で並べる(``*`` は semgrep の規則
+    doeff-no-star-imports が断る)。型の宣言の無い子(Hy の module だけ)は空。
+    """
+    files = _module_file(child.root_dir, child.root, child.new)
+    typed = sorted(
+        (path for path in files if path.suffix in PYTHON_SUFFIXES), key=lambda p: p.suffix != ".pyi"
+    )
+    if not typed:
+        return ()
+    tree = ast.parse(typed[0].read_text(encoding="utf-8"))
+    listed = _listed_all(tree)
+    names = (
+        listed
+        if listed is not None
+        else tuple(_bound_names(tree.body, stub=typed[0].suffix == ".pyi"))
+    )
+    return tuple(sorted({name for name in names if not name.startswith("_")}, key=_isort_key))
+
+
+def _isort_key(name: str) -> tuple[int, str, str]:
+    """isort(ruff の I)の名の順: 定数・class・それ以外の順に、大文字と小文字を区別せずに並べる。"""
+    rank = 0 if name.isupper() and len(name) > 1 else 1 if name[:1].isupper() else 2
+    return (rank, name.lower(), name)
+
+
+def shim_text(child: Child, names: Sequence[str]) -> str:
+    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。
+
+    ``names`` は型の検に見せる名(``typed_names`` — 空なら ``if TYPE_CHECKING:`` を書かない)。
+    """
     package = child.is_package()
+    typed = bool(names)
     imports = (
         (
             "import importlib.abc",
@@ -1787,7 +1861,10 @@ def shim_text(child: Child, typed: bool) -> str:
         else ("import sys", "from importlib import import_module")
     ) + (("from typing import TYPE_CHECKING",) if typed else ())
     checking = (
-        f"\nif TYPE_CHECKING:\n    from {child.new} import *  # noqa: F403\n" if typed else ""
+        "\nif TYPE_CHECKING:\n"
+        + "".join(_type_checking_line(child.new, name, "    ") for name in names)
+        if typed
+        else ""
     )
     finder = _SHIM_FINDER.format(old=child.old, new=child.new) if package else ""
     return (
@@ -2067,9 +2144,7 @@ def hide(
     )
     moved = tuple(note for child in children for note in _move(tree, child))
     for child in children:
-        child.shim.write_text(
-            shim_text(child, _typed(child.root_dir, child.root, child.new)), encoding="utf-8"
-        )
+        child.shim.write_text(shim_text(child, typed_names(child)), encoding="utf-8")
         _git(tree, "add", str(child.shim))
     entries = {
         root: update_entry(
