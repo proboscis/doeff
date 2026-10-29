@@ -8,7 +8,7 @@ green になる。ratchet 自体の発火は test_stale_known_uncovered_declarat
 が固定する。
 
 表は effect で読み、domain_registry() が process の表(dogfood の module が import の時に載せる所)から答える
-(ADR-DOE-API-001 R23・card ki-03a7f0af2b64)。
+(ADR-DOE-API-001 R24・card ki-03a7f0af2b64)。
 """
 
 import doeff_domain._core_effects_domains as dogfood  # noqa: F401 — import 時に登録

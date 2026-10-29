@@ -1,6 +1,6 @@
 """Handles 宣言と二層の処理集合導出 (ADR-DOE-DOMAIN-001 D5/D6)。
 
-導出は effect HandledEffects で読み、domain_registry が答える(ADR-DOE-API-001 R23・card ki-03a7f0af2b64)。生 Python
+導出は effect HandledEffects で読み、domain_registry が答える(ADR-DOE-API-001 R24・card ki-03a7f0af2b64)。生 Python
 handler は domain の handlers に宣言の型 Handles(handler, effect …) で置く(前の関数 handles() は handler に印を後付けした)。
 
 導出テストは実物の defhandler 産物(無引数形・引数形・lazy 節・:when ガード)

@@ -19582,7 +19582,7 @@
    "package": "doeff-domain",
    "module": "doeff_domain",
    "name": "Handles",
-   "訳": "domain の handlers に置く、生 Python の handler が答える effect の宣言の型(effect RegisterDomain の値 Domain の欄の値 — R2 の effect の値の型)。前の関数 handles() は R3 の工場でも R18 の helper でもない import の時の宣言なので、ADR-DOE-API-001 R23 で R19 と同じく型にした(依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV)。目録が R2 の型を許す物と数えるまでは、ここに置く(R12)",
+   "訳": "domain の handlers に置く、生 Python の handler が答える effect の宣言の型(effect RegisterDomain の値 Domain の欄の値 — R2 の effect の値の型)。前の関数 handles() は R3 の工場でも R18 の helper でもない import の時の宣言なので、ADR-DOE-API-001 R24 で R19 と同じく型にした(依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV)。目録が R2 の型を許す物と数えるまでは、ここに置く(R12)",
    "決め": "ki-03a7f0af2b64"
   }
  ]

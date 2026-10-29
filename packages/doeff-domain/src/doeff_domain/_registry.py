@@ -12,7 +12,7 @@ Violations of the table invariants raise immediately:
   registered domain, keyed by class identity (D3 — includes are unlimited).
 
 Inside the package: programs read and check the tables through the effects of
-doeff_domain._effects (ADR-DOE-API-001 R23 — card ki-03a7f0af2b64).
+doeff_domain._effects (ADR-DOE-API-001 R24 — card ki-03a7f0af2b64).
 """
 
 from collections.abc import Iterator
@@ -222,10 +222,6 @@ class DomainTable:
         """All registered domains, in registration order."""
         return list(self._domains.values())
 
-    def names(self) -> list[str]:
-        """The registered names, sorted — what a missing-name message lists."""
-        return sorted(self._domains)
-
     def introduces(self, effect: type) -> bool:
         """Whether some domain of the table introduces the effect class (what check (c) asks)."""
         return effect in self._effect_home
@@ -272,24 +268,9 @@ def get_domain(name: str) -> Domain:
     return PROCESS_TABLE.get(name)
 
 
-def registered_domains() -> list[Domain]:
-    """All domains of the process table, in registration order."""
-    return PROCESS_TABLE.domains()
-
-
-def domain_names() -> list[str]:
-    """The process table's names, sorted (for reading what is declared in this process)."""
-    return PROCESS_TABLE.names()
-
-
 def introducing_domain(effect: type) -> Domain:
     """The process table's domain that introduces the given effect class."""
     return PROCESS_TABLE.introducing(effect)
-
-
-def clear_registry() -> None:
-    """Empty the process table. Test support only."""
-    PROCESS_TABLE.clear()
 
 
 @contextmanager

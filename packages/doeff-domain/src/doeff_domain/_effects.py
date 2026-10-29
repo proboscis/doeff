@@ -1,7 +1,7 @@
 """語彙のまとまり(domain)の表に置く・引く・check する effect と、表から答える handler を返す工場 domain_registry。
 
 決め: 依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の問い domain の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV(effect にする・card
-ki-03a7f0af2b64・ADR-DOE-API-001 R23)。前の関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・
+ki-03a7f0af2b64・ADR-DOE-API-001 R24)。前の関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・
 assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は公開の名から消した — 本体は内側の
 _registry・_checks・_introspect に在り、handler がそれで答える。isolated_registry は domain_registry(domains=[]) が代わり、
 handles は宣言の型 Handles になった(_introspect の docstring)。
@@ -9,7 +9,8 @@ handles は宣言の型 Handles になった(_introspect の docstring)。
 宣言 defdomain は今のまま import の時に process の表へ載せる。program は表を effect で読み、domain_registry() は process の表を
 答える時に読み、domain_registry(domains=[domain, …]) は渡した domain だけを載せた別の表から答える(RegisterDomain もその表へ
 載せ、process の表へ落ちない)。内側に据えた方が先に答えるので、test は program の一部だけを別の表で走らせられる。
-check の外れ(DomainError の子)・表に無い名(KeyError)・走査で読めない module(ImportError)は、effect を出した所へ投げ返す。
+check の失敗は DomainError の子(走査で読めない module も DomainCheckError に包む — 元の例外は __cause__)、表に無い名は
+KeyError で、どちらも effect を出した所へ投げ返す。
 """
 
 from dataclasses import dataclass
@@ -48,9 +49,9 @@ class GetDomain(EffectBase[Domain]):
 
 @dataclass(frozen=True)
 class HandledEffects(EffectBase[frozenset[type]]):
-    """domain の handlers の 1 つが答える effect の class を読む: yield HandledEffects(entry, vocabulary=(…)) → frozenset。
+    """domain の handlers の 1 つが答える effect の class を読む: yield HandledEffects(handler, vocabulary=(…)) → frozenset。
 
-    entry は Handles(handler, …) の宣言か、__doeff_handles__ の印か defhandler の節を持つ handler。読めなければ
+    handler は domain の handlers の 1 つ — Handles(handler, …) の宣言か、__doeff_handles__ の印か defhandler の節を持つ handler。読めなければ
     DomainCheckError。vocabulary は節の head の名を解く時の控え(普通は照らす domain の effects)。
     """
 
@@ -98,7 +99,7 @@ class AssertNoOrphanEffects(EffectBase[None]):
     """check (c): 名指した package の EffectBase の子が、どれも表のどれかの domain に導入されている。外れは OrphanEffectError。
 
     packages は module か package の import の名(package は下まで歩く)。known_orphans は申告した孤児(もう孤児でなければ
-    stale の DomainCheckError)。
+    stale の DomainCheckError)。import できない module も DomainCheckError(元の例外は __cause__)。
     """
 
     packages: tuple[str, ...]
@@ -146,8 +147,8 @@ def _answer(table: DomainTable, effect: DomainEffect) -> object:
             return table.register(domain)
         case GetDomain(name=name):
             return table.get(name)
-        case HandledEffects(handler=entry, vocabulary=vocabulary):
-            return handled_effects(entry, vocabulary=vocabulary)
+        case HandledEffects(handler=entry_handler, vocabulary=vocabulary):
+            return handled_effects(entry_handler, vocabulary=vocabulary)
         case AssertDomainCovered(domain=domain, known_uncovered=known):
             return assert_domain_covered(table, domain, known_uncovered=known)
         case AssertRegisteredDomainsCovered(known_uncovered=known):
@@ -165,6 +166,10 @@ def domain_registry(*, domains: list[Domain] | tuple[Domain, ...] | None = None)
     domains が無ければ process の表(defdomain が載せる所)を答える時に読み、domains を渡せばその domain だけを載せた別の表から
     答える(domains=[] は空の表で、process の表ではない — 前の isolated_registry の代わり)。
 
+    別の表は工場を呼んだ時に 1 つ作る: 同じ handler の値を使い回す間は RegisterDomain で載せた domain が残るので、test ごとに
+    新しい表が要るなら工場を呼び直す(pytest の fixture は function の scope)。domains の名の重なり・2 度目の導入・Domain で
+    ない値は、program の中でなく工場を呼んだ時に例外になる(DomainRegistrationError の子か TypeError)。
+
     使い方: domain_registry()(program)・domain_registry(domains=[domain])(program)。
     """
     table = PROCESS_TABLE if domains is None else _table(domains)
@@ -181,7 +186,7 @@ def domain_registry(*, domains: list[Domain] | tuple[Domain, ...] | None = None)
     ):
         try:
             value = _answer(table, effect)
-        except (DomainError, KeyError, ImportError) as failure:
+        except (DomainError, KeyError) as failure:
             return (yield TransferThrow(k, failure))
         return (yield Transfer(k, value))
 

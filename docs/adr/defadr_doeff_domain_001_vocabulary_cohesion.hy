@@ -13,13 +13,13 @@
 
 
 (defk failure-of [program]
-  {:pre [(: program DoExpr)] :post [(: % (| DomainError KeyError ImportError))]
+  {:pre [(: program DoExpr)] :post [(: % (| DomainError KeyError))]
    :tags {:context "doeff-domain-adr" :role "program"}}
-  "red の側の確かめ: program が domain の表の handler から投げ返された失敗で終わる事を確かめ、その失敗を返す(答えれば赤)。"
+  "red の側の確かめ: program が domain の表の handler から投げ返された失敗(DomainError の子か KeyError)で終わる事を確かめ、その失敗を返す(答えれば赤)。"
   (try
     (<- answer program)
     (raise (AssertionError (+ "the program answered instead of failing: " (repr answer))))
-    (except [failure #(DomainError KeyError ImportError)]
+    (except [failure #(DomainError KeyError)]
       failure)))
 
 
@@ -72,7 +72,7 @@
      (rule R5 "裁定(2026-07-17, i): defdomain は完全 opt-in である — doeff 利用の必須要素ではなく組織化戦略であり、既定ゲート(run()/CLI/default interpreter)への強制はしない。適合検査は採用プロジェクトが自分のテストとして配線する。doeff 自身は dogfood として自パッケージ範囲(doeff-core-effects)に採用する。")
      (rule R6 "裁定(2026-07-17, ii): 導入 1 / 包含 ∞ — 1 つの effect クラスは全体でちょうど 1 つの domain の effects(導入)に現れてよい。2 つ目の domain が同じクラスを導入しようとしたら登録時に両 domain 名を明示して即例外。includes による参照はいくつでも可。キーはクラス同一性。")
      (rule R7 "裁定(2026-07-17, iii): 処理集合の導出は二層 — (1) 注釈層: domain の handlers に置く宣言の値 Handles(handler, effect …)と、handler が自分で持つ __doeff_handles__ の印(core の installer が付ける)の順に読む(生 Python handler の opt-in 宣言。他パッケージの handler も、その handler に何も付けずに宣言できる。全域性の保証ではなく、実態照合は E2/E3 の SEDA が担う。改めた前の形: 関数 handles() が handler に __doeff_handles__ を後付けした — 2026-10-29 に R8 で型 Handles に改めた)。(2) 構造層: defhandler 産物の __doeff_body__(quoted 節リスト。属性ダックタイピングで判定し doeff-hy を import しない。ドリフト不能)。lazy 初期化節(defhandler が認める 3 head: lazy / lazy-val / lazy-var)はスキップし、:when ガードや条件付き reperform を含む節も『処理に参加する宣言』として数える。名前解決は sys.modules[handler.__module__] 属性 → 照合先 domain の effect クラス名との文字列一致の順で試み、どちらも失敗したら検査エラー(fail loud)。宣言も、どちらの属性も無い handler も検査エラー。")
-     (rule R8 "表に置く・引く・check する関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は、effect RegisterDomain・GetDomain・HandledEffects・AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects と、表から答える handler を返す工場 domain_registry にし、関数は内側(doeff_domain._registry・_checks・_introspect)へ移した(2026-10-29・依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の問い domain の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV — effect にする・card ki-03a7f0af2b64・ADR-DOE-API-001 R23)。domain_registry() は process の表(defdomain が import の時に載せる所)を答える時に読み、domain_registry(domains=[Domain …]) は渡した domain だけの別の表から答える — isolated_registry の代わりで、RegisterDomain もその表へ載せ、名の無い時は process の表へ落ちずに KeyError。内側に据えた方が先に答えるので、test は program の一部だけを別の表で走らせられる。check の外れ(DomainError の子)・表に無い名(KeyError)・走査で読めない module(ImportError)は effect を出した所へ投げ返す。handles は呼ぶと印の付いた handler を返す工場(ADR-DOE-API-001 R3)でも、program を返す helper(R18)でもない import の時の宣言なので、effect にせず宣言の型 Handles にした(R19 の check と同じ道 — 型は R2)。defdomain・宣言の型・例外は今のまま入口と doeff_domain.macros から見せる。")]
+     (rule R8 "表に置く・引く・check する関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は、effect RegisterDomain・GetDomain・HandledEffects・AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects と、表から答える handler を返す工場 domain_registry にし、関数は内側(doeff_domain._registry・_checks・_introspect)へ移した(2026-10-29・依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の問い domain の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV — effect にする・card ki-03a7f0af2b64・ADR-DOE-API-001 R24)。domain_registry() は process の表(defdomain が import の時に載せる所)を答える時に読み、domain_registry(domains=[Domain …]) は渡した domain だけの別の表から答える — isolated_registry の代わりで、RegisterDomain もその表へ載せ、名の無い時は process の表へ落ちずに KeyError。内側に据えた方が先に答えるので、test は program の一部だけを別の表で走らせられる。別の表は工場を呼んだ時に 1 つ作り、同じ handler の値を使い回す間は RegisterDomain の載せが残る(test ごとに新しい表が要るなら工場を呼び直す)。check の失敗は DomainError の子(走査で import できない module も DomainCheckError に包む — 元の例外は __cause__)、表に無い名は KeyError で、どちらも effect を出した所へ投げ返す。handles は呼ぶと印の付いた handler を返す工場(ADR-DOE-API-001 R3)でも、program を返す helper(R18)でもない import の時の宣言なので、effect にせず宣言の型 Handles にした(R19 の check と同じ道 — 型は R2)。defdomain・宣言の型・例外は今のまま入口と doeff_domain.macros から見せる。")]
   :laws
     [(law vocabulary-has-single-home
        :statement "for_all semantic_predicate_or_effect v: canonical_declaration_count(v) == 1 AND declared_in_some_domain(v); duplicate_definitions_detected_by_conformance_check"

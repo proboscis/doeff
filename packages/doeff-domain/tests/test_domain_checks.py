@@ -1,7 +1,7 @@
 """opt-in 適合検査 — (a) 被覆と (c) 孤児禁止 (ADR-DOE-DOMAIN-001 D7)。
 
 検査は effect AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects で、domain_registry が表から
-答える(ADR-DOE-API-001 R23・card ki-03a7f0af2b64)。ここでは domain_registry(domains=[…]) の別の表で走らせる。
+答える(ADR-DOE-API-001 R24・card ki-03a7f0af2b64)。ここでは domain_registry(domains=[…]) の別の表で走らせる。
 """
 
 import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)
@@ -212,8 +212,19 @@ class TestOrphans:
             )
 
     def test_missing_package_fails_loud(self):
-        with pytest.raises(ModuleNotFoundError):
+        # 読めない module も check の失敗の型 DomainCheckError で届き、元の例外は __cause__ に残る
+        with pytest.raises(DomainCheckError, match="no_such_package_doeff_domain_xyz") as excinfo:
             check(AssertNoOrphanEffects(["no_such_package_doeff_domain_xyz"]))
+        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+
+    def test_a_module_that_fails_on_import_is_a_check_error(self, tmp_path, monkeypatch):
+        (tmp_path / "domain_broken_scan_fixture.py").write_text(
+            "raise RuntimeError('broken at import')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        with pytest.raises(DomainCheckError, match="domain_broken_scan_fixture") as excinfo:
+            check(AssertNoOrphanEffects(["domain_broken_scan_fixture"]))
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
 
     def test_the_failure_is_thrown_where_the_effect_was_performed(self):
         from doeff import do
