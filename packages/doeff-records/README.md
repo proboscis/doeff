@@ -224,7 +224,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   `other` = 記録の操作でない route)と実際に送った答えの status ごとの counter `records_requests_<種>_<status>` を doeff の `CountMetric` で
   1 つ数える(本文の断りの 400・答えの途中で落ちた 500 も同じ 1 か所)。答えの送りが例外になれば、標準の誤りへ 1 行名指して 500 internal を
   1 度だけ送り直し、500 として数える(送れなかった答えの status は数えない)。`GET /metrics` は身元を引く前に答え、`ReadMeter` の断面を
-  `doeff_core_effects.meter_prometheus.render_prometheus` で描く(名は末尾に `_total`・label なし)。系列は種 3 × status(200 と断りの
+  `doeff_core_effects._meter_prometheus.render_prometheus` で描く(名は末尾に `_total`・label なし)。系列は種 3 × status(200 と断りの
   status)の 15 本で閉じていて、起動の時に全部を 0 で置く。置き場に届かなかった数 = `*_503_total`(表の用意の前と `/readyz` の不達を
   含む)・答えの途中で落ちた数 = `*_500_total`。`other` には kubelet の `/healthz`・`/readyz` と `/metrics` 自身の読みが入る。値は
   process の再起動で 0 に戻る(読み手は区間の差で数える)。計器の答え手は doeff の `memory-meter-handler`(差し替えの欄 `RecordsServing.meter` が在れば、その内側に被せる)。
@@ -246,7 +246,7 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
   `Compute` を出して thread の外で回す。**記録の service を起こす組み立ては `Compute` の答え手を置く**: 本番の土台の口
   `records-connected` と検の殻 `start_records_server` は thread の pool(`thread-pool-compute-handler` — free-threaded の Python では
   scheduler の thread と並んで走る)を自分で開いて閉じる。`serve_records` と `respond` を自分の土台で回す台本の検と模擬は
-  `doeff_core_effects.inline_compute.inline-compute-handler` を置く(置かない組み立ては、行を運ぶ最初の束の読みで答え手の無い `Compute`
+  `doeff_core_effects._inline_compute.inline-compute-handler` を置く(置かない組み立ては、行を運ぶ最初の束の読みで答え手の無い `Compute`
   として 500 internal になる)。PostgreSQL の handler を直に組む組み立ても同じ(読み解きの `Compute` は置き場の handler が出す)。
 - 検と模擬の殻は `doeff_records.http_server.start_records_server(run(records_server_config(schema, handler_for, request_handlers=…)))`:
   入口の Program を別の thread の run で回し、表の用意の告知(`RecordsPrepared`)を待って `url` と `close()` を持つ `RunningServer` を返す

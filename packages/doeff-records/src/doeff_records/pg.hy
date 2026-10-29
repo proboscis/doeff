@@ -113,7 +113,7 @@
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_time [Delay GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects [ExternalPromise TaskCancelledError CreateSemaphore AcquireSemaphore ReleaseSemaphore])
-(import doeff_core_effects.meter_effects [ObserveSecondsBatch])
+(import doeff_core_effects [ObserveSecondsBatch])
 (import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
                                         SqlUnreachable SqlLock])
 (import doeff_records.request_timing [lock-observations])

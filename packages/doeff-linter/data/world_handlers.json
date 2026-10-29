@@ -114,12 +114,28 @@
    "why": "signal.signal で SIGINT・SIGTERM を捕まえる"
   },
   {
+   "handler": "doeff_core_effects._thread_pool_compute:thread-pool-compute-handler",
+   "touches": [
+    "thread",
+    "clock"
+   ],
+   "why": "pool.submit で別 thread の VM。pool の負荷(ReadComputeLoad)の待ちの秒を time.monotonic で測り、process に 1 つの置き場を threading.Lock で pool の thread と共有する(_thread_pool_compute.hy)"
+  },
+  {
+   "handler": "doeff_core_effects:thread_pool_compute_handler",
+   "touches": [
+    "thread",
+    "clock"
+   ],
+   "why": "thread_pool_compute_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
+  },
+  {
    "handler": "doeff_core_effects.thread_pool_compute:thread-pool-compute-handler",
    "touches": [
     "thread",
     "clock"
    ],
-   "why": "pool.submit で別 thread の VM。pool の負荷(ReadComputeLoad)の待ちの秒を time.monotonic で測り、process に 1 つの置き場を threading.Lock で pool の thread と共有する(thread_pool_compute.hy)"
+   "why": "thread_pool_compute_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects.process_meter:process-meter-handler",
@@ -137,11 +153,41 @@
    "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(process_latest.hy)"
   },
   {
+   "handler": "doeff_core_effects._gc_freeze:gc-freeze-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "gc.collect・gc.freeze で process の GC の状態を変える(_gc_freeze.hy)"
+  },
+  {
+   "handler": "doeff_core_effects:gc_freeze_handler",
+   "touches": [
+    "process"
+   ],
+   "why": "gc_freeze_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
+  },
+  {
    "handler": "doeff_core_effects.gc_freeze:gc-freeze-handler",
    "touches": [
     "process"
    ],
-   "why": "gc.collect・gc.freeze で process の GC の状態を変える(gc_freeze.hy)"
+   "why": "gc_freeze_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
+  },
+  {
+   "handler": "doeff_core_effects._faulthandler_stack_dump:faulthandler-stack-dump-handler",
+   "touches": [
+    "thread",
+    "file"
+   ],
+   "why": "faulthandler.dump_traceback_later の C の thread が期限を数え、過ぎたら sys.stderr の file に全 thread の stack を書く(_faulthandler_stack_dump.hy)"
+  },
+  {
+   "handler": "doeff_core_effects:faulthandler_stack_dump_handler",
+   "touches": [
+    "thread",
+    "file"
+   ],
+   "why": "faulthandler_stack_dump_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-32623e1651c6)"
   },
   {
    "handler": "doeff_core_effects.faulthandler_stack_dump:faulthandler-stack-dump-handler",
@@ -149,7 +195,7 @@
     "thread",
     "file"
    ],
-   "why": "faulthandler.dump_traceback_later の C の thread が期限を数え、過ぎたら sys.stderr の file に全 thread の stack を書く(faulthandler_stack_dump.hy)"
+   "why": "faulthandler_stack_dump_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects._handlers:await_handler",

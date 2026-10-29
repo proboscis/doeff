@@ -18,7 +18,7 @@
 (import collections.abc [Callable])
 (import doeff [Program EffectBase run with-handlers])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
-(import doeff_core_effects.inline_compute [inline-compute-handler])
+(import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn scheduled])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])

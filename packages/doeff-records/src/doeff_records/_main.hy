@@ -69,7 +69,7 @@
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
 (import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
-(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records._values [RecordsSchema])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])

@@ -20,7 +20,7 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import doeff [DoExpr])
-(import doeff_core_effects.compute_effects [Compute Computed ComputeFailed])
+(import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_records._values [Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events WrittenRows RowsConflict
                               RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents])
 (import doeff_records.wire [WireAnswer])
