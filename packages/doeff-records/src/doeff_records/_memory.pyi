@@ -19,7 +19,7 @@ from doeff_core_effects import ExternalPromise
 from doeff import WithHandlerType
 
 from doeff import Program
-from doeff_hy.frozen import FrozenMap
+from doeff_hy._frozen import FrozenMap
 from doeff_records._values import RememberedWrite, RetiredKey
 from doeff_records._effects import (
     AppendEvent,
