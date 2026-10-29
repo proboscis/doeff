@@ -42,8 +42,9 @@ dev = [
 ]
 
 [project.scripts]
-# Note: doeff-agentic binary is provided by the Rust package (doeff-agentic-cli)
-# for fast plugin integration (~5ms startup). This Python package only provides the TUI.
+# doeff-agentic answers ps・show・watch・attach・send・stop with the arguments and the JSON of the
+# Rust CLI (packages/doeff-agentic-cli), which it replaces (card ki-626bf91b0560).
+doeff-agentic = "doeff_agentic._cli:main"
 doeff-agentic-tui = "doeff_agentic._tui:main"
 
 [project.urls]

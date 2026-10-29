@@ -123,7 +123,7 @@ Pause workflow for human review.
 ```bash
 uv run python examples/05_human_in_loop.py
 # When waiting, in another terminal:
-doeff-agentic send <workflow-id>:drafter "approve"
+doeff-agentic send <workflow-id> "approve"
 ```
 
 ### 06. Parallel Agents
@@ -174,13 +174,13 @@ doeff-agentic ps
 doeff-agentic watch <workflow-id>
 
 # Attach to agent's session
-doeff-agentic attach <workflow-id>:<session-name>
+doeff-agentic attach <workflow-id> --agent <session-name>
 
 # View agent output
 doeff-agentic logs <workflow-id>
 
 # Send a message to a session
-doeff-agentic send <workflow-id>:<session-name> "your message"
+doeff-agentic send <workflow-id> "your message" --agent <session-name>
 
 # Stop a workflow
 doeff-agentic stop <workflow-id>

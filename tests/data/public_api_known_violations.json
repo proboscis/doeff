@@ -312,20 +312,7 @@
       "AgenticAPI"
      ],
      "doeff_agentic.cli": [
-      "AgenticAPI",
-      "attach",
-      "cli",
-      "console",
-      "env",
-      "env_cleanup",
-      "env_list",
-      "logs",
-      "ps",
-      "send",
-      "show",
-      "stop",
-      "tui",
-      "watch"
+      "cli"
      ],
      "doeff_agentic.event_log": [
       "EventLogEntry",
@@ -404,10 +391,6 @@
       "AgenticWorkflowHandle",
       "AgenticWorkflowStatus",
       "WorkflowInfo",
-      "WorkflowStatus"
-     ],
-     "doeff_agentic.cli": [
-      "AgentStatus",
       "WorkflowStatus"
      ],
      "doeff_agentic.state": [
@@ -19878,6 +19861,13 @@
    "name": "FoldCarried",
    "訳": "effect CheckCoverage の欄 fold の値の型(運ばれた Program を出した所で数える運び手 — R2 の effect の値の型)。前の関数 runs_where_performed と、呼び手が渡した述語(include)の代わり(ADR-DOE-API-001 R24)",
    "決め": "lt-646XDCG0CJXMX7JP6558JD426W"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "(console script)",
+   "name": "doeff-agentic",
+   "訳": "Rust の CLI doeff-agentic-cli の実行 file doeff-agentic を Python の console script へ寄せた(利用者の答え lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1「消して寄せる」)。IDE の plugin が呼ぶ 6 動詞を同じ引数と JSON で答える。doeff-agentic-cli を消す card ki-7b2e293a2db7 で、その package の (実行 file) の行が消える",
+   "決め": "ki-626bf91b0560"
   }
  ]
 }

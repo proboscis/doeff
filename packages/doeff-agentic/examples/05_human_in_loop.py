@@ -5,7 +5,7 @@ Pause workflow for human review.
 
 This demonstrates how to create workflows that wait for
 human input before continuing. The user can provide input via:
-- doeff-agentic send <workflow-id>:<session-name> "approve"
+- doeff-agentic send <workflow-id> "approve"
 - Attaching to the session
 
 Run:
@@ -13,9 +13,9 @@ Run:
     uv run python examples/05_human_in_loop.py
 
 In another terminal, when the workflow is waiting:
-    doeff-agentic send <workflow-id>:drafter "approve"
+    doeff-agentic send <workflow-id> "approve"
     # or
-    doeff-agentic send <workflow-id>:drafter "revise: make it shorter"
+    doeff-agentic send <workflow-id> "revise: make it shorter"
 """
 
 import time
@@ -116,9 +116,9 @@ def draft_with_approval(task: str):
     print(draft[:500])
     print("\n" + "=" * 50)
     print("To continue, run in another terminal:")
-    print("  doeff-agentic send <workflow-id>:drafter 'approve'")
-    print("  doeff-agentic send <workflow-id>:drafter 'revise: <feedback>'")
-    print("  doeff-agentic send <workflow-id>:drafter 'reject'")
+    print("  doeff-agentic send <workflow-id> 'approve'")
+    print("  doeff-agentic send <workflow-id> 'revise: <feedback>'")
+    print("  doeff-agentic send <workflow-id> 'reject'")
     print("=" * 50 + "\n")
 
     # Wait for user input
