@@ -37,7 +37,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts postgres-sql-handler])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlFailed SqlNotify])
 (import doeff_core_effects.stop_signal_effects [StopRequested])

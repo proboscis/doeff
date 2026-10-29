@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_agents.session_store_sql -> doeff_agents._session_store_sql
+# moved-submodule-shim-names doeff_agents.session_store_sql:
+#   AgentSessionLifecycle AgentSessionQuery AgentSessionSnapshot AgentType COLUMNS COLUMN_LIST
+#   COLUMN_NAMES Column DEFAULT_TABLE INDEXED_COLUMNS POSTGRES QUERY_COLUMNS QueryColumn
+#   QueryCondition SQLITE SessionStatus SqlDialect SqlStatement TranscriptRef TurnRef
+#   checked_table_name decode_required_time decode_time encode_time row_to_snapshot
+#   select_many_statement select_one_statement session_table_ddl snapshot_row_values
+#   upsert_statement
 """Moved: ``doeff_agents.session_store_sql`` is now ``doeff_agents._session_store_sql`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agents.ready_physics -> doeff_agents._ready_physics
+# moved-submodule-shim-names doeff_agents.ready_physics:
+#   CLAUDE_SCREEN_READER_READY_PATTERN CODEX_READY_PATTERN has_claude_screen_reader_trust_prompt
 """Moved: ``doeff_agents.ready_physics`` is now ``doeff_agents._ready_physics`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

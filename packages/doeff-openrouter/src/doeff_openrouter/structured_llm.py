@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_openrouter.structured_llm -> doeff_openrouter._structured_llm
+# moved-submodule-shim-names doeff_openrouter.structured_llm:
+#   build_messages build_response_format_payload ensure_strict_schema process_structured_response
+#   process_unstructured_response structured_llm
 """Moved: ``doeff_openrouter.structured_llm`` is now ``doeff_openrouter._structured_llm`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

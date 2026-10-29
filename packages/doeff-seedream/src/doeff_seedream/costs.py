@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_seedream.costs -> doeff_seedream._costs
+# moved-submodule-shim-names doeff_seedream.costs:
+#   CostEstimate DEFAULT_COST_PER_IMAGE DEFAULT_SIZE_PRICING calculate_cost
 """Moved: ``doeff_seedream.costs`` is now ``doeff_seedream._costs`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

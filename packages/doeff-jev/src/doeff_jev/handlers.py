@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_jev.handlers -> doeff_jev._handlers
+# moved-submodule-shim-names doeff_jev.handlers:
+#   HTTP_RETRIES jev_handler jev_memo_handler journal_handler verdict_fields
+# moved-submodule-shim-names doeff_jev.handlers.journal:
+#   JOURNAL_EVENT journal_handler
+# moved-submodule-shim-names doeff_jev.handlers.production:
+#   HTTP_RETRIES JevTarget Prepared cache_key jev_handler jev_memo_handler key_required parse
+#   prepare proxy_outcome verdict_fields
 """Moved: ``doeff_jev.handlers`` is now ``doeff_jev._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

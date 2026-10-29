@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.thread_pool_compute -> doeff_core_effects._thread_pool_compute
+# moved-submodule-shim-names doeff_core_effects.thread_pool_compute:
+#   Compute ComputeLoad CreateExternalPromise ExternalPromise IDLE_LOAD LOADS LOADS_LOCK MODULE_TAGS
+#   ReadComputeLoad Wait computed load_of run_computed settle shift_load thread_pool_compute_handler
 """Moved: ``doeff_core_effects.thread_pool_compute`` is now ``doeff_core_effects._thread_pool_compute`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

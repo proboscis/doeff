@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_openai.streaming -> doeff_openai._streaming
+# moved-submodule-shim-names doeff_openai.streaming:
+#   StreamChunk TokenUsage buffered_stream calculate_cost count_tokens process_stream
+#   stream_to_chunks stream_with_accumulator stream_with_metadata
 """Moved: ``doeff_openai.streaming`` is now ``doeff_openai._streaming`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

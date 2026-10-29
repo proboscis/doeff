@@ -42,7 +42,7 @@
 (val MODULE-TAGS {:context "http-server" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
-(import doeff_core_effects.http_server_effects [HttpListen HttpNextRequest HttpTakeQueued HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose
+(import doeff_core_effects._http_server_effects [HttpListen HttpNextRequest HttpTakeQueued HttpRespond HttpForward WsForward WsAccept WsSendText WsSendTextEach WsClose
                                                 HttpShutdown HttpStopListening TakeWsSendReport WsSendReport ReadHttpServed AppendHttpScript HttpServed
                                                 WsTextSent WsCloseSent WsOpened WsClosed HttpServerClosed HttpScript ScriptedUpstream
                                                 HttpBodyBytes HttpBodyFileRange HttpNoBody DEFAULT-WS-SEND-MAX-BYTES FLUSH-SAMPLES-LIMIT

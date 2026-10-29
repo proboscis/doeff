@@ -1,4 +1,15 @@
 # moved-submodule-shim: doeff_openai.handlers -> doeff_openai._handlers
+# moved-submodule-shim-names doeff_openai.handlers:
+#   MockOpenAIConfig MockOpenAIState calculate_cost_handler mock_handlers openai_mock_handler
+#   openai_production_handler production_handlers
+# moved-submodule-shim-names doeff_openai.handlers.production:
+#   CalculateCost ChatCompletion DEFAULT_STRUCTURED_MAX_TOKENS DEFAULT_STRUCTURED_TEMPERATURE
+#   Embedding MissingCachedPricingError OPENAI_MODEL_EXCLUSIONS OPENAI_MODEL_PREFIXES
+#   StreamingChatCompletion StructuredOutput UnknownModelPricingError build_api_parameters
+#   calculate_cost calculate_cost_handler chat_completion create_embedding openai_production_handler
+#   process_structured_response production_handlers
+# moved-submodule-shim-names doeff_openai.handlers.testing:
+#   MockOpenAIConfig MockOpenAIState ProtocolHandler mock_handlers openai_mock_handler
 """Moved: ``doeff_openai.handlers`` is now ``doeff_openai._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

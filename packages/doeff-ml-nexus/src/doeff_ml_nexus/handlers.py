@@ -1,4 +1,13 @@
 # moved-submodule-shim: doeff_ml_nexus.handlers -> doeff_ml_nexus._handlers
+# moved-submodule-shim-names doeff_ml_nexus.handlers:
+# moved-submodule-shim-names doeff_ml_nexus.handlers.docker:
+#   docker_run_handler
+# moved-submodule-shim-names doeff_ml_nexus.handlers.file:
+#   WriteFile write_file_handler
+# moved-submodule-shim-names doeff_ml_nexus.handlers.resolve:
+#   Resolve resolve_handler
+# moved-submodule-shim-names doeff_ml_nexus.handlers.rsync:
+#   RsyncTo rsync_handler
 """Moved: ``doeff_ml_nexus.handlers`` is now ``doeff_ml_nexus._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

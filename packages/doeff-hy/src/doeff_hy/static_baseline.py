@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.static_baseline -> doeff_hy._static_baseline
+# moved-submodule-shim-names doeff_hy.static_baseline:
+#   BASELINE_VERSION Baseline BaselineUnreadable Identity Reported Split baseline_json
+#   comparable_message errors_of fold_anon_var_numbers identity read_baseline split
 """Moved: ``doeff_hy.static_baseline`` is now ``doeff_hy._static_baseline`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

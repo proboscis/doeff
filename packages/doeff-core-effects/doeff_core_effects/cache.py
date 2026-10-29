@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.cache -> doeff_core_effects._cache
+# moved-submodule-shim-names doeff_core_effects.cache:
+#   CACHE_PATH_ENV_KEY FrozenDict cache cache_1hour cache_1min cache_5min cache_forever
+#   clear_persistent_cache default_cache_key persistent_cache_path
 """Moved: ``doeff_core_effects.cache`` is now ``doeff_core_effects._cache`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

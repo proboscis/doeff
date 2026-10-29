@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_codex.effects -> doeff_codex._effects
+# moved-submodule-shim-names doeff_codex.effects:
+#   Answered BackendLost CodexAnswerRequest CodexCloseSession CodexEvent CodexInput
+#   CodexInterruptTurn CodexLaunchCount CodexReadTurnEvents CodexSessionSpec CodexStartTurn
+#   CodexSteerTurn CodexTurn CodexTurnEnd FreshThread InterruptRequested LaunchFailed MODULE_TAGS
+#   NoSuchRequest NoTurnInFlight ProcessStillAlive RequestRefused ResumeThread SessionClosed
+#   StartTurnOutcome Steered ThreadUnknown ToolsUnavailable TurnEnded TurnEventPage TurnInFlight
+#   TurnStarted UnknownTurn
 """Moved: ``doeff_codex.effects`` is now ``doeff_codex._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

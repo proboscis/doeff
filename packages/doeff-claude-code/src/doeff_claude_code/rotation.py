@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_claude_code.rotation -> doeff_claude_code._rotation
+# moved-submodule-shim-names doeff_claude_code.rotation:
+#   ARCHIVE_SUFFIX BOUNDARY_MARK BOUNDARY_TAIL_BYTES ROTATE_ABOVE_BYTES TranscriptKept
+#   TranscriptRotated TranscriptRotationFailed TranscriptUnrotatable boundary_record line_around
+#   preserved_uuids read_tail rotate_transcript rotation_cut tail_to_keep uuid_line_head
 """Moved: ``doeff_claude_code.rotation`` is now ``doeff_claude_code._rotation`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

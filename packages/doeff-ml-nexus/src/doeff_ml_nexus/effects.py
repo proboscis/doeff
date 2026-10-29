@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_ml_nexus.effects -> doeff_ml_nexus._effects
+# moved-submodule-shim-names doeff_ml_nexus.effects:
+#   Resolve RsyncTo WriteFile
 """Moved: ``doeff_ml_nexus.effects`` is now ``doeff_ml_nexus._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

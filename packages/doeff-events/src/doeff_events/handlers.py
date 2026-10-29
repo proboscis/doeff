@@ -1,4 +1,40 @@
 # moved-submodule-shim: doeff_events.handlers -> doeff_events._handlers
+# moved-submodule-shim-names doeff_events.handlers:
+#   BrokerConnectionsExhausted Drop EventBus GapAnswer MarkGap MemoryBroker MemoryFiles
+#   NoticeDropped NoticeGapMarked NoticeGapTold NoticeRoute NoticeSent NoticeSourceUnreachable
+#   PublishAnswer SubscriberQueue UnroutedNotice WhenUnsent announce_file_change
+#   broker_back_by_retry broker_patience_handler cut_broker event_handler hold_broker
+#   memory_file_watch_handler memory_notice_handler notice_events_handler os_file_watch_handler
+#   redis_notice_handler release_broker restore_broker subscribed_event_handler timer_handler
+# moved-submodule-shim-names doeff_events.handlers.memory:
+#   EMPTY Empty EventBus SubscriberQueue event_handler subscribed_event_handler
+# moved-submodule-shim-names doeff_events.handlers.memory_files:
+#   CloseFileWatch FileWatch FilesChanged MemoryFiles NextFileChanges WatchFiles WatchRefused
+#   announce_file_change memory_file_watch_handler
+# moved-submodule-shim-names doeff_events.handlers.memory_notices:
+#   AckAnnouncement Announce Announcement AwaitBrokerBack BrokerUnreachable ChannelSubscription
+#   CloseSubscription KEPT_REDELIVERY_SECONDS KeptReaders MemoryBroker NextAnnouncement ProbeBroker
+#   SubscribeChannels cut_broker hold_broker memory_notice_handler release_broker restore_broker
+# moved-submodule-shim-names doeff_events.handlers.notice_events:
+#   AckAnnouncement Announce Announcement AwaitBrokerBack BrokerPatience BrokerUnreachable
+#   ChannelSubscription CloseSubscription Drop GapAnswer MarkGap NOTICE_EVENTS_EFFECTS
+#   NextAnnouncement NoticeDropped NoticeGapMarked NoticeGapTold NoticeRoute NoticeSent
+#   NoticeSourceUnreachable Publish PublishAnswer PublishEffect PublishGapEffect ReadBrokerPatience
+#   SourceFailed SourceMissed SourceResumed SourceStalled SourceStarted SubscribeChannels
+#   UnroutedNotice WaitForEventEffect WaitForEventsEffect WhenUnsent broker_patience_handler
+#   notice_events_handler publish_effect_type
+# moved-submodule-shim-names doeff_events.handlers.os_files:
+#   CloseFileWatch DEBOUNCE_MS FileWatch FilesChanged LIBRARY_POLL_DELAY_MS NOTIFIER_TIMEOUT_MS
+#   NextFileChanges STEP_MS WatchFiles WatchRefused os_file_watch_handler
+# moved-submodule-shim-names doeff_events.handlers.redis_notices:
+#   AckAnnouncement Announce Announcement AwaitBrokerBack BROKER_BACK_ANSWERS BROKER_BACK_EFFECTS
+#   BrokerAnswerMalformed BrokerConnectionsExhausted BrokerUnreachable ChannelSubscription
+#   CloseSubscription KEPT_KEY_PREFIX KEPT_LOG_LENGTH KEPT_REDELIVERY_SECONDS KeptReaders
+#   NextAnnouncement ProbeBroker REDIS_NOTICE_ANSWERS REDIS_NOTICE_EFFECTS RedisNoticeAnswer
+#   SUBSCRIPTION_SILENCE_SECONDS SubscribeChannels broker_back_by_retry redis_notice_handler
+# moved-submodule-shim-names doeff_events.handlers.timer:
+#   ArmTimerEffect ArmedTimer ArmedTimersEffect DisarmTimerEffect Publish TimerFired
+#   WaitForEventEffect WaitForEventsEffect timer_handler
 """Moved: ``doeff_events.handlers`` is now ``doeff_events._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

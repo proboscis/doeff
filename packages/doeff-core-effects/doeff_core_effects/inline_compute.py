@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.inline_compute -> doeff_core_effects._inline_compute
+# moved-submodule-shim-names doeff_core_effects.inline_compute:
+#   Compute ComputeFailed ComputeLoad Computed INLINE_LOAD MODULE_TAGS ReadComputeLoad computed
+#   inline_compute_handler
 """Moved: ``doeff_core_effects.inline_compute`` is now ``doeff_core_effects._inline_compute`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
