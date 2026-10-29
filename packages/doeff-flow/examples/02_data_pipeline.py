@@ -19,7 +19,7 @@ import argparse
 import random
 import sys
 
-from doeff_flow import run_workflow
+from doeff_flow._run import run_workflow
 from doeff_time import Delay
 
 from doeff import Ask, do, slog

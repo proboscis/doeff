@@ -161,7 +161,7 @@ def test_legacy_agentic_handler_polls_with_time_delay(tmp_path: Path) -> None:
 
 def test_legacy_agentic_handler_writes_observed_agent_status(tmp_path: Path) -> None:
     """The state files report each agent with the status the runtime's Monitor gave."""
-    from doeff_agentic import StateManager
+    from doeff_agentic._state import StateManager
 
     @do
     def workflow():

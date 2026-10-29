@@ -282,13 +282,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — handler の中へ入れる": {
-     "doeff_agentic": [
-      "EventLogReader",
-      "EventLogWriter",
-      "StateManager",
-      "get_default_state_dir",
-      "with_visual_logging"
-     ],
      "doeff_agentic.event_log": [
       "EventLogReader",
       "EventLogWriter",
@@ -303,11 +296,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_agentic": [
-      "AgenticAPI",
-      "WorkflowIndex",
-      "generate_workflow_id"
-     ],
      "doeff_agentic.api": [
       "AgenticAPI"
      ],
@@ -12880,9 +12868,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_events": [
-      "SubscriberQueue"
-     ],
      "doeff_events.handlers": [
       "SubscriberQueue"
      ],
@@ -13227,21 +13212,12 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — handler の中へ入れる": {
-     "doeff_flow": [
-      "get_default_trace_dir",
-      "run_result",
-      "run_workflow",
-      "trace_observer"
-     ],
      "doeff_flow.trace": [
       "get_default_trace_dir",
       "trace_observer"
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_flow": [
-      "validate_workflow_id"
-     ],
      "doeff_flow.env_places": [
       "state_home",
       "trace_dir_setting"
@@ -14756,9 +14732,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — 内側の module へ移す": {
-     "doeff_notify": [
-      "collected_notifications"
-     ],
      "doeff_notify.handlers": [
       "collected_notifications"
      ],

@@ -188,25 +188,33 @@ doeff-agentic stop <workflow-id>
 
 ## Using the Python API
 
-You can also use the Python API directly:
+You can also read and drive the recorded workflows from a program, with the effects that
+`recorded_workflows_handler()` answers:
 
 ```python
-from doeff_agentic import AgenticAPI
+from doeff import do, run
+from doeff_agentic import (
+    AgenticAnswerInput,
+    AgenticFindWorkflow,
+    AgenticListWorkflows,
+    recorded_workflows_handler,
+)
 
-api = AgenticAPI()
 
-# List workflows
-workflows = api.list_workflows()
+@do
+def check():
+    # List workflows
+    workflows = yield AgenticListWorkflows()
 
-# Get workflow details
-wf = api.get_workflow("a3f")
+    # Get workflow details (id or unique prefix)
+    wf = yield AgenticFindWorkflow(workflow_id="a3f")
 
-# Watch for updates
-for update in api.watch("a3f"):
-    print(update.workflow.status)
+    # Answer the workflow's WaitForUserInput
+    yield AgenticAnswerInput(workflow_id="a3f", text="continue")
+    return workflows, wf
 
-# Send message
-api.send_message("a3f", "continue")
+
+result = run(recorded_workflows_handler()(check()))
 ```
 
 ## Testing Without OpenCode
