@@ -11,7 +11,7 @@
 (import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 (import tests.test_quiet_due_placement_rollout [LONG-LEASE WINDOW-OVER-DEADLINE])
 

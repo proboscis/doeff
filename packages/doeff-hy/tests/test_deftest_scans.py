@@ -12,7 +12,7 @@ from pathlib import Path
 
 import hy
 import pytest
-from doeff_hy.pytest_items import FunctionItem, Mark, decode_records, module_record_texts
+from doeff_hy._pytest_items import FunctionItem, Mark, decode_records, module_record_texts
 
 
 @pytest.fixture

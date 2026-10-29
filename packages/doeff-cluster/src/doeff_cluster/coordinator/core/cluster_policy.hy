@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.core.due_policy [due-of-instants])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_hy.table [Table TableWrite TableDraft draft-of table-of])
+(import doeff_hy._table [Table TableWrite TableDraft draft-of table-of])
 (import doeff_cluster.coordinator.core.cluster_rules [component-versions-of format-version-refusal])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field int-field])

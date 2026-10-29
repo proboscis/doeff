@@ -316,7 +316,7 @@
 
   ;; Build state key: __name__ + "/handler-name/lazy-name"
   ;; 旧い lazy は今までの式のまま。session val / session var は公開の session-key 1 点でキーを作る
-  ;; (同じ文字列 — 外の handler と検査も doeff_hy.session.session_key で同じキーを引く)。
+  ;; (同じ文字列 — 外の handler と検査も doeff_hy._session.session_key で同じキーを引く)。
   (setv key-suffix (+ "/" (str handler-name) "/" (str lazy-name)))
   (setv key-expr
     (if legacy?
@@ -856,7 +856,7 @@
 
    節の文法は defhandler と同じ 1 つ(_build-handler-expr)で、出来る program は `((defhandler 名 節…) body)` と同じ答えを返す
    (一度きりは handle・再利用は defhandler — 節を defhandler へ移して名を付けるだけ・card ki-fb1c0fb41ff5)。handler の直下の
-   session val / session var(と旧い lazy)は受けない: セッションの値は handler の名でキーを作る(doeff_hy.session.session_key)ので、
+   session val / session var(と旧い lazy)は受けない: セッションの値は handler の名でキーを作る(doeff_hy._session.session_key)ので、
    名を持つ defhandler に置く。"
   (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
   (_refuse-session-clauses clauses)
@@ -1009,7 +1009,7 @@
       (or (not lazy-defs) (static-view-enabled)) `(do)
       True
         `(do ~(import-form ["Some" "Get" "Put"])
-             (import doeff-hy.session [session-key :as _doeff-session-key]))))
+             (import doeff-hy._session [session-key :as _doeff-session-key]))))
 
   ;; defhandler produces a Program -> Program function instead of exposing a
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection

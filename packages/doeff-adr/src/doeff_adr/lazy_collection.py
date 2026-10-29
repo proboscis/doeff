@@ -2,7 +2,7 @@
 
 収集で test module を import すると module の最上位の実行が走り、1 file で 10 秒かかる(#1211 の実測)。そこで:
 
-- **収集**: item を作る macro が展開の式で module に積んだ記録(``doeff_hy.pytest_items``)を、doeff-adr のキャッシュ
+- **収集**: item を作る macro が展開の式で module に積んだ記録(``doeff_hy._pytest_items``)を、doeff-adr のキャッシュ
   (``item_cache`` — 鍵は source の内容の hash と、展開が使った macro の記録・#1291)から引き、記録と同じ引数・印・
   parametrize を持つ仮の関数を並べた仮の module を作る。その仮の module を pytest の Module の収集に渡すので、nodeid・
   parametrize の id・印は import して収集した時と同じ pytest の手順で作られる。
@@ -27,12 +27,12 @@ import pytest
 from _pytest.fixtures import FixtureFunctionDefinition, getfixturemarker
 from _pytest.mark.structures import Mark as PytestMark
 from _pytest.mark.structures import ParameterSet, get_unpacked_marks
-from doeff_hy.pytest_items import (
+from doeff_hy import MalformedRecord
+from doeff_hy._pytest_items import (
     Decorator,
     Dynamic,
     FunctionItem,
     LiteralValue,
-    MalformedRecord,
     Mark,
     ModuleMarks,
     OpaqueValue,

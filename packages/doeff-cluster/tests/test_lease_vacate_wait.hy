@@ -13,7 +13,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_core_effects [Spawn Wait Task])
 (import doeff_time [Delay])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.lease_rules [semaphore-key outside-holders])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

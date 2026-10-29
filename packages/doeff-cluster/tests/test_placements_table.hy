@@ -12,7 +12,7 @@
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))

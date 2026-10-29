@@ -19,7 +19,7 @@
 (require doeff-hy.macros [deftest val])
 (import doeff [run])
 (import pathlib [Path])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming BoardRow])
 (import doeff_cluster.shared.intent.due_model [DueNow DueNever])

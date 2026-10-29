@@ -1,6 +1,6 @@
 """Hy の test file の item の記録のキャッシュ — 鍵は source の内容の hash と、展開が使った macro の記録(agora-redesign #1291)。
 
-item を作る macro は、展開の式で記録を module に積む(``doeff_hy.pytest_items``)。この module は、収集で 1 度 import した
+item を作る macro は、展開の式で記録を module に積む(``doeff_hy._pytest_items``)。この module は、収集で 1 度 import した
 file の記録を保存し、次の収集からは import せずに引けるようにする。Hy の importer には手を入れない(#1290 の利用者の決定)。
 
 - 置き場: ``<dir>/<source の sha256>.json``。dir は :func:`items_cache_dir_for` の 1 か所で決める(ini → 環境変数
@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from doeff_hy.pytest_items import Record, decode_records, encode_records
+from doeff_hy._pytest_items import Record, decode_records, encode_records
 from doeff_hy_bytecode_guard import (
     file_sha256,
     loaded_record,
@@ -60,7 +60,7 @@ CACHE_FORMAT = 6
 
 #: 記録を積む実行時の口の module — 展開の式が import の時に呼ぶ ``record-at-import`` の在処。展開の記録はこの code を覆わない
 #: (展開の間には実行されない)ので、file の sha256 で別に覆う。
-RECORDING_RUNTIME = "doeff_hy.pytest_items"
+RECORDING_RUNTIME = "doeff_hy._pytest_items"
 
 #: 読めなかった file の sha256 の代わり(16 進の sha256 と決して一致しない — 記録はいつも古いと判じられる)。
 _UNREADABLE = "unreadable"

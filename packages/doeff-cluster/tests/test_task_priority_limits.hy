@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_hy.table [Table])
+(import doeff_hy._table [Table])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo Placement ClusterState TaskRecord ComponentVersion TaskUnplacedKind])
@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
 (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))

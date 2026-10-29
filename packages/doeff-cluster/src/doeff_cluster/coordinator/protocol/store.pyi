@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from doeff import EffectBase, Program
-from doeff_hy.table import TableWrite
+from doeff_hy._table import TableWrite
 
 MODULE_TAGS: dict[str, str]
 

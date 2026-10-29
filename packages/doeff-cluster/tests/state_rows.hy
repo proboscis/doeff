@@ -2,7 +2,7 @@
 ;;;
 ;;; 欄が Table[V] になった後は、test が `:tasks {"t1" 行}` と dict を直に渡せない。行を鍵 → 行の dict で書き、ここで表に直して ClusterState に渡す。
 (require doeff-hy.macros [defk])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 
 
 (defk table-from-rows [rows]
