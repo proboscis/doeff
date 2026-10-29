@@ -1,5 +1,5 @@
 //! 意味の規則(DOEFF201・202)— 決定的な規則では読めない「コードが何をしているか」を Jev(TypeSafe の System One の model)に問う。
-//! 宛先(URL・model・通信の形・API キー)の決め方は doeff の packages/doeff-jev/src/doeff_jev/target.py の写し(下の resolve_target)、
+//! 宛先(URL・model・通信の形・API キー)の決め方は doeff の packages/doeff-jev/src/doeff_jev/_target.py の写し(下の resolve_target)、
 //! 通信の形(direct = TypeSafe の /v1/systemone・gateway = Vercel AI Gateway の evaluation-model v4)は同じ package の wire.py の写し。
 //!
 //! - 問いの文(instructions・criteria)はこの file の 1 か所の宣言(英語のまま — jev-lint の questions.py の J2・J3 と同じ内容)。
@@ -830,7 +830,7 @@ pub enum PeekedMany {
     Unreachable(String),
 }
 
-/// 呼び手の名を送る見出し(doeff の packages/doeff-jev/src/doeff_jev/wire.py の CALLER_HEADER と同じ名)。proxy が問いを呼び手と規則で
+/// 呼び手の名を送る見出し(doeff の packages/doeff-jev/src/doeff_jev/_wire.py の CALLER_HEADER と同じ名)。proxy が問いを呼び手と規則で
 /// 分けて数える。本文に入れると proxy の鍵(proxy_key)が変わるので見出しで送る。
 pub const CALLER_HEADER: &str = "x-jev-caller";
 /// 覚えている時だけの問いの束(peek)の呼び手の名(束は規則をまたぐので規則の id を付けない)。
@@ -859,7 +859,7 @@ pub trait Gateway: Sync {
     fn model(&self) -> String;
 }
 
-// ---- 宛先の決め方(doeff の packages/doeff-jev/src/doeff_jev/target.py の写し — 決め方は target.py の docstring の順と既定値のまま)----
+// ---- 宛先の決め方(doeff の packages/doeff-jev/src/doeff_jev/_target.py の写し — 決め方は _target.py の docstring の順と既定値のまま)----
 // 解き方(上が勝つ):
 // 1. 環境変数 JEV_BASE_URL / JEV_MODEL / JEV_WIRE / JEV_API_KEY / JEV_API_KEY_FILE
 // 2. 設定 file ~/.config/jev/client.json(欄 base_url / model / wire / api_key_file)

@@ -11,7 +11,7 @@
 (import pathlib [Path])
 
 (import doeff_docker.effects [ShellRun])
-(import doeff_ml_nexus.effects [RsyncTo])
+(import doeff_ml_nexus._effects [RsyncTo])
 
 
 (defk _rsync-args [src host dst-path * [excludes #()] [includes #()]]

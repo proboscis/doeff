@@ -9,7 +9,7 @@
 (import doeff [do :as _doeff-do])
 
 (import doeff_docker.effects [ShellRun])
-(import doeff_ml_nexus.effects [WriteFile])
+(import doeff_ml_nexus._effects [WriteFile])
 
 
 (defhandler write-file-handler

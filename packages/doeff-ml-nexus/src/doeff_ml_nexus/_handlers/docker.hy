@@ -65,8 +65,8 @@
                     "-e" f"DOEFF_OUTPUT={container-exchange}/result.pkl"
                     image
                     "uv" "run" "doeff" "run"
-                    "--program" "doeff_ml_nexus.runner.p_run"
-                    "--interpreter" "doeff_ml_nexus.runner.runner_interpreter"])
+                    "--program" "doeff_ml_nexus._runner.p_run"
+                    "--interpreter" "doeff_ml_nexus._runner.runner_interpreter"])
 
     ;; Execute
     (setv run-args (_build-shell-args parts :host host))

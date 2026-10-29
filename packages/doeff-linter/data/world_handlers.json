@@ -511,7 +511,7 @@
    "why": "JSONL の追記・DOEFF_FLOW_TRACE_DIR"
   },
   {
-   "handler": "doeff_jev.handlers.journal:journal_handler",
+   "handler": "doeff_jev._handlers.journal:journal_handler",
    "touches": [
     "file",
     "clock"

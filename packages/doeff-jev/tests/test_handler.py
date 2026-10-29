@@ -5,8 +5,7 @@ import pickle
 
 from doeff_core_effects import HttpRequest, HttpResponse
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
-from doeff_jev import JevTarget, jev_handler, judge_stack
-from doeff_jev.wiring import run_judgment
+from doeff_jev import JevTarget, jev_handler, judge_stack, run_judgment
 from doeff_system_one import JudgeError, Verdict, choice, judge, noul
 
 from doeff import Err, Ok, Pass, Resume, ResumeThrow, Try, do, run, with_handlers

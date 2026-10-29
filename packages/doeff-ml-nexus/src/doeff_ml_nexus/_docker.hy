@@ -7,8 +7,8 @@
 (import pathlib [Path])
 
 (import doeff_docker.effects [From Run Copy Workdir SetEnv Expose])
-(import doeff_ml_nexus.effects [Resolve RsyncTo])
-(import doeff_ml_nexus.uv-deps [find-local-deps _find-top-level-deps])
+(import doeff_ml_nexus._effects [Resolve RsyncTo])
+(import doeff_ml_nexus._uv-deps [find-local-deps _find-top-level-deps])
 
 
 ;; ===========================================================================

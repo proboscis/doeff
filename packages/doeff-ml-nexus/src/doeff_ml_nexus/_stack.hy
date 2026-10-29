@@ -7,11 +7,11 @@
 (import doeff [run])
 (import doeff_core_effects [reader state writer slog-handler scheduled])
 
-(import doeff_ml_nexus.serializer [default-serializer])
-(import doeff_ml_nexus.handlers.resolve [resolve-handler])
-(import doeff_ml_nexus.handlers.docker [docker-run-handler])
-(import doeff_ml_nexus.handlers.rsync [rsync-handler])
-(import doeff_ml_nexus.handlers.file [write-file-handler])
+(import doeff_ml_nexus._serializer [default-serializer])
+(import doeff_ml_nexus._handlers.resolve [resolve-handler])
+(import doeff_ml_nexus._handlers.docker [docker-run-handler])
+(import doeff_ml_nexus._handlers.rsync [rsync-handler])
+(import doeff_ml_nexus._handlers.file [write-file-handler])
 (import doeff_docker.handlers.docker [docker-build-handler image-push-handler])
 (import doeff_docker.handlers.shell [shell-run-handler])
 

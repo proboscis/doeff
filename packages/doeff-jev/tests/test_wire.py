@@ -5,7 +5,7 @@ import json
 
 import pytest
 from doeff_jev import JevTarget, cache_key, parse, prepare
-from doeff_jev.wire import CALLER_HEADER, IMAGES_HEADER, PROXY_HEADER
+from doeff_jev._wire import CALLER_HEADER, IMAGES_HEADER, PROXY_HEADER
 from doeff_system_one import Image, Judge, JudgeError, choice, noul, score
 
 DIRECT = JevTarget("https://api.typesafe.ai/v1/systemone", "jev-latest", "direct", "k-direct", "default")

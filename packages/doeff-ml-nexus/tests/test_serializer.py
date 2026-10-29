@@ -4,7 +4,7 @@ import hy  # noqa: F401
 import pytest
 
 from doeff import Pure, run, do
-from doeff_ml_nexus.serializer import default_serializer, CloudpickleSerializer
+from doeff_ml_nexus._serializer import default_serializer, CloudpickleSerializer
 
 
 class TestCloudpickleSerializer:

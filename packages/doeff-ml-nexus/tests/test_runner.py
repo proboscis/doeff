@@ -5,8 +5,8 @@ import pytest
 from pathlib import Path
 
 from doeff import Pure, run
-from doeff_ml_nexus.runner import p_run, runner_interpreter
-from doeff_ml_nexus.runner_env import (
+from doeff_ml_nexus._runner import p_run, runner_interpreter
+from doeff_ml_nexus._runner_env import (
     DEFAULT_RUNNER_INPUT_PATH,
     DEFAULT_RUNNER_OUTPUT_PATH,
     RUNNER_INPUT_PATH_KEY,
@@ -15,7 +15,7 @@ from doeff_ml_nexus.runner_env import (
     resolve_runner_env,
     runner_env_from_process,
 )
-from doeff_ml_nexus.serializer import default_serializer
+from doeff_ml_nexus._serializer import default_serializer
 
 
 def _write_pickled_program(path, program):
@@ -104,10 +104,10 @@ def test_resolve_runner_env_accepts_program_env(monkeypatch, tmp_path):
 def test_docker_handler_preserves_process_env_file_exchange_contract():
     repo_root = Path(__file__).resolve().parents[3]
     docker_handler = (
-        repo_root / "packages/doeff-ml-nexus/src/doeff_ml_nexus/handlers/docker.hy"
+        repo_root / "packages/doeff-ml-nexus/src/doeff_ml_nexus/_handlers/docker.hy"
     ).read_text()
 
     assert 'f"DOEFF_INPUT={container-exchange}/program.pkl"' in docker_handler
     assert 'f"DOEFF_OUTPUT={container-exchange}/result.pkl"' in docker_handler
-    assert '"--program" "doeff_ml_nexus.runner.p_run"' in docker_handler
-    assert '"--interpreter" "doeff_ml_nexus.runner.runner_interpreter"' in docker_handler
+    assert '"--program" "doeff_ml_nexus._runner.p_run"' in docker_handler
+    assert '"--interpreter" "doeff_ml_nexus._runner.runner_interpreter"' in docker_handler

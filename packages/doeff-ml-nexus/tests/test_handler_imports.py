@@ -13,10 +13,10 @@ import pytest
     [
         "doeff_docker.handlers.dockerfile",
         "doeff_docker.handlers.docker",
-        "doeff_ml_nexus.handlers.file",
-        "doeff_ml_nexus.handlers.docker",
-        "doeff_ml_nexus.handlers.rsync",
-        "doeff_ml_nexus.handlers.resolve",
+        "doeff_ml_nexus._handlers.file",
+        "doeff_ml_nexus._handlers.docker",
+        "doeff_ml_nexus._handlers.rsync",
+        "doeff_ml_nexus._handlers.resolve",
     ],
 )
 def test_handler_modules_import_under_current_macro_guard(module_name: str) -> None:
