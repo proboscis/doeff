@@ -19,7 +19,7 @@ two things:
 
 **The Python 3.14 fix.** Hy replaces `ast.unparse`. On Python 3.14, when pytest reads
 fixture annotations as strings, that replacement recurses without end. The plugin
-installs a corrected replacement (`doeff_hy.ast_unparse.install()`) as soon as pytest
+installs a corrected replacement (`doeff_hy._ast_unparse.install()`) as soon as pytest
 starts, so it is in place even if a conftest or another plugin imports Hy first.
 
 **Why this is a separate package.** pytest marks every module of a distribution that

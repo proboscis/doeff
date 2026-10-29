@@ -25,7 +25,7 @@
 (defn run-mock [p] (run (scheduled (mock p))))
 
 ;; Tests
-(import doeff_hy.sexpr [list-stages stage-of])
+(import doeff_hy._sexpr [list-stages stage-of])
 
 (print "=== list-stages ===")
 (setv stages (list-stages my-pipeline))

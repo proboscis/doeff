@@ -1,7 +1,7 @@
 """declarations.hy の公開面の型(型検査のための宣言 — 実行時は declarations.hy を読む・agora-redesign #2335・#2324 の子)。
 
 declarations.hy は Hy の module なので、pyright は中を読めず、defk / deff / defp / defhandler の :tags・:effects の展開が名指す
-`doeff_hy.declarations.DefinitionTags`・`doeff_hy.declarations.effect_types` が Unknown になる。module の直下の定義では
+`doeff_hy._declarations.DefinitionTags`・`doeff_hy._declarations.effect_types` が Unknown になる。module の直下の定義では
 型検査の展開が記帳(`setattr(名, '__doeff_…__', …)`)を外すので見えないが、class の中の deff(method)の記帳は class の
 本体に置かれて残り、使う側の method ごとに書き手に直せない reportUnknownMemberType が 1 組(`declarations`・`DefinitionTags`)
 出ていた。ここで型を宣言する。

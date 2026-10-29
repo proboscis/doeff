@@ -1,5 +1,5 @@
 {
-  "about": "defrecord / defwire の欄の読み方の共通の検の表。Hy 側の正本 doeff_hy.declarations/field-targets(defrecord・defwire)と Rust 側の正本 doeff-indexer の hy_index::fields::record_field_targets(hy-index の record_def・doeff-linter の DOEFF204)の両方がこの表を読み、同じ答えを出すことを確かめる。forms は record の body の form の列、names は欄の名を書いた順(書かれた綴り)。",
+  "about": "defrecord / defwire の欄の読み方の共通の検の表。Hy 側の正本 doeff_hy._declarations/field-targets(defrecord・defwire)と Rust 側の正本 doeff-indexer の hy_index::fields::record_field_targets(hy-index の record_def・doeff-linter の DOEFF204)の両方がこの表を読み、同じ答えを出すことを確かめる。forms は record の body の form の列、names は欄の名を書いた順(書かれた綴り)。",
   "cases": [
     {"forms": "#^ str a #^ int b", "names": ["a", "b"]},
     {"forms": "(#^ str a) (#^ int b)", "names": ["a", "b"]},

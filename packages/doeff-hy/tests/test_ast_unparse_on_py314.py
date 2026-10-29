@@ -1,6 +1,6 @@
 """Hy の `ast.unparse` の差し替えが Python 3.14 の注記の文字列化で止まらなくなる不具合の回帰。
 
-仕組みと直し方は doeff_hy/ast_unparse.py。暴走するとメモリを秒 150 MB で食うので、確かめは
+仕組みと直し方は doeff_hy/_ast_unparse.py。暴走するとメモリを秒 150 MB で食うので、確かめは
 子 process の中で行い、子は自分の最大 RSS を見張って 400 MB を超えたら exit 3 で終わる。
 """
 

@@ -1,7 +1,7 @@
 """doeff-hy の macro の中で落ちた時、traceback が落ちた行を指すこと。
 
 macro が作り直した式は位置を持たず、Hy が macro 呼び出し(`defk` の頭)の位置で埋めていた。
-`doeff_hy.positions.locate-synthesized` が合成した式に、包んでいる利用者の式の範囲を付ける。
+`doeff_hy._positions.locate-synthesized` が合成した式に、包んでいる利用者の式の範囲を付ける。
 Hy の source を一時 file に書いて import し、落ちた行を traceback の枠の行番号で確かめる
 (`hy.eval` では filename と行が source に対応しないため)。
 """

@@ -8,7 +8,7 @@ import hy
 import pytest
 from hy.models import Expression, Object, Symbol
 
-from doeff_hy.type_forms import runtime_type_form
+from doeff_hy._type_forms import runtime_type_form
 
 
 def mapped(source: str) -> Object:

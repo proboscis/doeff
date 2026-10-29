@@ -1,7 +1,7 @@
-"""deff の :tags・:effects の展開と doeff_hy.declarations の型(declarations.pyi)の失敗ケース(agora-redesign #2335・#2324 の子)。
+"""deff の :tags・:effects の展開と doeff_hy._declarations の型(declarations.pyi)の失敗ケース(agora-redesign #2335・#2324 の子)。
 
-deff は定義の後に `setattr(名, '__doeff_tags__', doeff_hy.declarations.DefinitionTags(…))` と
-`setattr(名, '__doeff_effects__', doeff_hy.declarations.effect_types(…))` を出す。型検査の展開は module の直下の記帳を外すが、
+deff は定義の後に `setattr(名, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(…))` と
+`setattr(名, '__doeff_effects__', doeff_hy._declarations.effect_types(…))` を出す。型検査の展開は module の直下の記帳を外すが、
 class の中の deff(method)の記帳は class の本体に残る。declarations.hy は Hy の module で型の宣言が無かったので、使う側の
 method ごとに strict の reportUnknownMemberType が 1 組(`declarations`・`DefinitionTags`)出ていた(agora の
 controllers/screen/tests/world.hy で method 32 本に 64 件)。→ declarations.pyi で宣言する。
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff_hy import declarations
+from doeff_hy import _declarations as declarations
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -49,7 +49,7 @@ MODULE = """\
 
 #: 前に deff の行に出ていた赤の文言(どれも書き手に直せない)。
 FORMER_ERRORS: tuple[str, ...] = (
-    'Type of "declarations" is unknown',
+    'Type of "_declarations" is unknown',
     'Type of "DefinitionTags" is unknown',
     'Type of "effect_types" is unknown',
 )

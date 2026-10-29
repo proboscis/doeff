@@ -72,7 +72,7 @@
        :evidence "doeff-linter wt/hy-smells の editor-json(agora-controllers wt/hy-smells)")
      (fact
        "defk / deff / defp / defhandler / defeffect の頭の辞書は :tags を受け、定義の属性に残す(agora-redesign #800)。素の defclass にはタグの置き場が無く、タグから定義を並べる閲覧に現れない。"
-       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy")
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy")
      (fact
        "operator の指摘 2026-09-28(R8 の出自): wire.hy に在る JsonValue が使われている。誰にもそれを直に使わせず、pydantic のように実際に parse して検める形にすべきである。"
        :evidence "agora-redesign #840(2026-09-28 の議論)")

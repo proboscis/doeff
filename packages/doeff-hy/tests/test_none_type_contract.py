@@ -1,7 +1,7 @@
 """契約 `(: % None)` と型付き束縛 `(<- x None e)` が実行時に通ること。
 
 型の注記の `None` は isinstance に渡せない(`TypeError: isinstance() arg 2 must be a type`)。
-契約と `<-` の型付き束縛は `doeff_hy.type_forms.runtime_type_form` の 1 点で `None.__class__` へ写す(名前を引かない形 — #1825・#1845)。
+契約と `<-` の型付き束縛は `doeff_hy._type_forms.runtime_type_form` の 1 点で `None.__class__` へ写す(名前を引かない形 — #1825・#1845)。
 """
 
 from __future__ import annotations

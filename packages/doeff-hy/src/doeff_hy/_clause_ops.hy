@@ -9,7 +9,7 @@
 ;;;                 (実行の時の検め。印の名は handle.hy だけが知り、行の rewrite は知らない)
 ;;;   tail          節の末尾の位置で替える操作の名(resume → transfer — handler の frame を残さない)。None は替えない
 ;;;   nodes         実行時の展開が handler の頭で doeff から import する node の名(別名 `_doeff_<名>` で束ねる — 書き手の同じ名の effect を
-;;;                 隠さない・doeff_hy/expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
+;;;                 隠さない・doeff_hy/_expansion_names.py。rewrite が読む綴りも alias-symbol で同じ別名を引く)
 ;;;   static-nodes  型検査のための展開(doeff_hy/_static_view.py)が handler の頭で doeff から import する node の名(同じく別名)
 ;;;   rewrite       (rewrite 引数の list 中を書き換える関数) → VM へ渡す form。None は書いたまま残す(Python の raise)
 ;;;
@@ -43,7 +43,7 @@
 (import enum [StrEnum])
 (import hy.models [Expression Symbol])
 (import doeff-hy._static-view [static-view-enabled])
-(import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol])
+(import doeff-hy._expansion-names [alias-symbol import-form effect-symbol continuation-symbol])
 
 
 (defclass Ending [StrEnum]
@@ -153,7 +153,7 @@
 
 
 (setv _LINTER-ABOUT
-  (+ "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。"
+  (+ "doeff-hy の表 CLAUSE-OPS(packages/doeff-hy/src/doeff_hy/_clause_ops.hy)の行から書き出した、節の操作の名・終わり方・引数の数。"
      "生成物 — 手で直さない(直す所は表で、書き直しは uv run python scripts/export_clause_ops.py --write)。"
      "doeff-linter の business_fakes(DOEFF143 ほか)が節の終わりを判じるのに読み、終わり方ごとの読みは src/project/clause_ops.rs と business_fakes.rs が持つ。"))
 

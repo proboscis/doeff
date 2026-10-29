@@ -11,7 +11,7 @@
 (import enum [StrEnum])
 (import hy)
 (import pytest)
-(import doeff_hy.declarations [DefinitionTags])
+(import doeff_hy._declarations [DefinitionTags])
 (import doeff_hy._frozen [freeze-json])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._wire [parse parse-json dump dump-json json-schema Malformed MalformedField WireShape])

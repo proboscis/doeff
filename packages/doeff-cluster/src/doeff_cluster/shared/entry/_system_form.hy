@@ -33,7 +33,7 @@
 (import itertools [takewhile])
 (import typing [TypeAlias])
 (import hy.models [Dict Expression Float Integer Keyword List Object Set String Symbol])
-(import doeff-hy.declarations [needs-names record-names])
+(import doeff-hy._declarations [needs-names record-names])
 ;; :update の綴りと job の望む台数として書ける値(coordinator の Service の replicas が受ける値と同じ — 0 = 取り下げ・1 = 動かす)は、
 ;; 系の型の module が持つ(展開の時の検めと、構成子 service_build.job の実行時の検めが 1 つの定義を読む)。
 (import doeff_cluster.shared.intent.service_model [UPDATE-FORMS REPLICAS-VALUES])
@@ -41,7 +41,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 
 ;; 展開が import する module(系の型 System・CallShape・GroupLimit の置き場と、構成子 job・system-of の置き場)と、展開がそれを束ねる名。
-;; 名は展開の名の頭 `_doeff_`(doeff_hy.expansion_names.PREFIX)で付ける — 書き手の名と分け合わず、doeff-hy-check の型検査のための
+;; 名は展開の名の頭 `_doeff_`(doeff_hy._expansion_names.PREFIX)で付ける — 書き手の名と分け合わず、doeff-hy-check の型検査のための
 ;; 展開の掃除が「展開の合成した import」と読んで、1 つの module に系を 2 つ書いた時の重ねを 1 つに畳み、関数・class の本体の中の物を
 ;; module の段へ移す(doeff_hy._static_check._synthesized_import — 素の `import <module>` だと畳む綴りを doeff-hy が持つことになる)。
 (setv DEFSYSTEM-MODEL #("doeff_cluster.shared.intent.service_model" "_doeff_cluster_service_model"))
@@ -297,10 +297,10 @@
   ;; (static_check.without_bookkeeping — 束ねる名が `_doeff_` の頭の import を展開の合成した物と読む)。
   `(do
      ~@(lfor place DEFSYSTEM-IMPORTS (import-of place))
-     (import doeff_hy.declarations)
+     (import doeff_hy._declarations)
      (defn #^ ~(in-module DEFSYSTEM-MODEL "System") ~name [~@params]
        ~@(if (is doc None) [] [doc])
        (~(in-module DEFSYSTEM-BUILD "system-of") ~(String system) #(~@job-forms)
          ~@(if limit-forms [(Keyword "task-limits") `#(~@limit-forms)] [])))
      (setattr ~name "__doeff_system__" ~description)
-     (setattr ~name "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context ~(String system) :role "entry"))))
+     (setattr ~name "__doeff_tags__" (doeff_hy._declarations.DefinitionTags :context ~(String system) :role "entry"))))

@@ -173,7 +173,7 @@
        :evidence "agora-redesign #798(2026-09-27 の指示)")
      (fact
        "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す(agora-redesign #800)。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
-       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
      (fact
        "実測 2026-09-27: doeff repo の packages・docs・tests の .hy に defn / defn/a が 269 file・2,135 定義ある(packages/doeff-hy の macro の実装を含む)。2026-08-21 版の R1 は Python との境界の defn を対象外にしていた。"
        :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")

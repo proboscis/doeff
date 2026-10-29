@@ -47,7 +47,7 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   module を require して落ちうる — 落ちた時は名だけを入れる。
 - import の途中の状態の digest(agora-redesign card ki-464fa307a62b): 歩みが import の途中の module(名前空間がまだ揃って
   いない)か import できない module に当たった digest は、import の進み具合 — どの process がどの順で何を読んだか — に依る
-  (deff の閉包の doeff_hy.outcome_forms は、doeff_hy.record を .pyc から読む途中では import できず、読み込みの済んだ process
+  (deff の閉包の doeff_hy._outcome_forms は、doeff_hy.record を .pyc から読む途中では import できず、読み込みの済んだ process
   では中身ごと辿られる)。その digest は process の覚えに入れず、記録にも入れない(None)。記録は代わりに、閉包が依った
   module の file の sha256(:attr:`MacroRecord.files`)を持ち、記録か今の歩みのどちらかが import の途中に当たった行は、
   digest でなくその file で比べる。両方が読み込みの済んだ状態なら digest で比べる(file の行は見ない)。

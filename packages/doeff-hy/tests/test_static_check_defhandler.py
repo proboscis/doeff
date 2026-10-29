@@ -175,7 +175,7 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
         "def __doeff_handler_fn__(__doeff_body__: _doeff_HandlerBody[_doeff_HandledAnswer])"
         " -> _doeff_HandledScope[_doeff_HandledAnswer]:"
     ) in static
-    assert "doeff_hy.clause_endings" not in static
+    assert "doeff_hy._clause_endings" not in static
     assert "from doeff import Pass as _doeff_Pass" in static
     assert "Resume as" not in static
     assert "Transfer as" not in static
@@ -187,8 +187,8 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
         "from doeff import Resume as _doeff_Resume, Transfer as _doeff_Transfer, Pass as _doeff_Pass"
         in runtime
     )
-    assert "from doeff_hy.clause_endings import check_clause_endings_once" in runtime
-    assert "from doeff_hy.clause_endings import fell_through" in runtime
+    assert "from doeff_hy._clause_endings import check_clause_endings_once" in runtime
+    assert "from doeff_hy._clause_endings import fell_through" in runtime
     for name in ("_doeff_Continuation", "_doeff_ClauseRun", "_doeff_HandlerBody", "_doeff_perform"):
         assert name not in runtime
     # 欄の束ねの「読んだ」印(_ = 欄)は型検査のための展開だけ(agora-redesign #2514)

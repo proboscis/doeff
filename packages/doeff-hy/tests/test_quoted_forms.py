@@ -12,8 +12,8 @@ import hy
 import hy.compiler
 import hy.models
 
-from doeff_hy.quoted_forms import QuotedForms
-from doeff_hy.sexpr import args_of, body_of
+from doeff_hy._quoted_forms import QuotedForms
+from doeff_hy._sexpr import args_of, body_of
 
 SOURCE = """
 (require doeff-hy.macros [defk defp defhandler <-])

@@ -5,7 +5,7 @@
       "path": "packages/doeff-hy-pytest/src/doeff_hy_pytest/__init__.py",
       "reason": "registered-with-legacy",
       "rule": "dependency-uncontracted",
-      "subject": "packages/doeff-hy/src/doeff_hy/ast_unparse.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_ast_unparse.py"
     },
     {
       "count": 4,
