@@ -106,7 +106,8 @@ result = run_sync(my_workflow(), scheduled_handlers=mock_handlers())
 ### Using Templates
 
 ```python
-from doeff_conductor import basic_pr, Issue
+from doeff_conductor import Issue
+from doeff_conductor._templates import basic_pr
 
 issue = Issue(id="ISSUE-001", title="Add feature", body="...")
 program = basic_pr(issue)

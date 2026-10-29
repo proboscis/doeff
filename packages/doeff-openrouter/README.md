@@ -30,7 +30,8 @@ pip install doeff-openrouter
 
 ```python
 from doeff import do, SyncRuntime
-from doeff_openrouter import chat_completion, structured_llm
+from doeff_openrouter import structured_llm
+from doeff_openrouter._chat import chat_completion
 from pydantic import BaseModel
 
 class Summary(BaseModel):

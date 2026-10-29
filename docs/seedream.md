@@ -36,7 +36,7 @@ program in one of two ways:
 from doeff import do, run
 from doeff_core_effects import reader, state, writer
 from doeff_core_effects import scheduled
-from doeff_seedream import edit_image__seedream4
+from doeff_seedream._structured_llm import edit_image__seedream4
 
 @do
 def main():

@@ -26,11 +26,9 @@ from doeff_core_effects import state as state_handler  # noqa: E402
 from doeff_core_effects._effects import (  # noqa: E402 - late import follows sys.path fixture setup
     EffectBase as Effect,
 )
-from doeff_google_secret_manager import (  # noqa: E402
-    SecretManagerClient,
-    access_secret,
-    get_secret_manager_client,
-)
+from doeff_google_secret_manager import SecretManagerClient  # noqa: E402
+from doeff_google_secret_manager._client import get_secret_manager_client  # noqa: E402
+from doeff_google_secret_manager._secrets import access_secret  # noqa: E402
 
 from doeff import (  # noqa: E402 - late import preserves existing import/setup order
     AskEffect,
