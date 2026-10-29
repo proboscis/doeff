@@ -12,7 +12,7 @@
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects.process_latest [process-latest-handler])
-(import doeff_core_effects.memory_latest [memory-latest-handler])
+(import doeff_core_effects [memory-latest-handler])
 
 (val PROCESS-LATEST "process-latest")
 (val MEMORY-LATEST "memory-latest")

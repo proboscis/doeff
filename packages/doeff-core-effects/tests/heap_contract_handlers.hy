@@ -10,8 +10,8 @@
 (import functools [partial])
 (import gc)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.gc_freeze [gc-freeze-handler])
-(import doeff_core_effects.scripted_freeze [scripted-freeze-handler])
+(import doeff_core_effects [gc-freeze-handler])
+(import doeff_core_effects [scripted-freeze-handler])
 
 (val GC-FREEZE "gc-freeze")
 (val SCRIPTED-FREEZE "scripted-freeze")

@@ -9,8 +9,8 @@
 (import functools [partial])
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.os_random [os-random-handler])
-(import doeff_core_effects.seeded_random [seeded-random-handler])
+(import doeff_core_effects [os-random-handler])
+(import doeff_core_effects [seeded-random-handler])
 
 (val OS-RANDOM "os-random")
 (val SEEDED-RANDOM "seeded-random")

@@ -52,7 +52,7 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
-(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
+(import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
 ;; 値の Python の型 → 引数の ClickHouse の型(閉じた表・bool は int より先に引く)。None は型が分からないので Nullable(String)。
 (val CLICKHOUSE-TYPES #(#(bool "Bool") #(int "Int64") #(float "Float64") #(str "String") #(bytes "String") #((type None) "Nullable(String)")))

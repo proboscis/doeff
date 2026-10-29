@@ -21,7 +21,7 @@
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
                                          CopyTree RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree DiskUsage ReadDiskUsage
                                          MeasureTree LinkFile CompilePythonSources SourceNotCompiled])
-(import doeff_core_effects.python_bytecode [compiled-pyc kept-pyc pyc-path])
+(import doeff_core_effects._python_bytecode [compiled-pyc kept-pyc pyc-path])
 
 ;; 置き場の根と、断りの文(OSError の文と同じ形)。
 (val ROOT "/")

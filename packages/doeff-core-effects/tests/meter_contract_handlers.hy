@@ -11,9 +11,9 @@
 (import itertools [count])
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.meter_effects [MeterBucket MeterSettings])
+(import doeff_core_effects [MeterBucket MeterSettings])
 (import doeff_core_effects.process_meter [process-meter-handler])
-(import doeff_core_effects.memory_meter [memory-meter-handler])
+(import doeff_core_effects [memory-meter-handler])
 
 (val PROCESS-METER "process-meter")
 (val MEMORY-METER "memory-meter")

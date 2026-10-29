@@ -14,7 +14,7 @@
 (import threading)
 (import queue [Queue])
 (import concurrent.futures [Future])
-(import doeff_core_effects.offloaded_call [ThreadPerCall])
+(import doeff_core_effects._offloaded_call [ThreadPerCall])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase offloaded-statement])
 (import doeff_core_effects.sql_effects [SqlRows])
 (import doeff_core_effects [CreateExternalPromise Wait Spawn Cancel TaskCancelledError])

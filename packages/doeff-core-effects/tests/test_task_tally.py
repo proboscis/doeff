@@ -21,16 +21,19 @@ import time
 from typing import Any
 
 import pytest
-from doeff_core_effects import Spawn, Wait, scheduled, step_tally_handler
-from doeff_core_effects._scheduler import scheduler_trace_sink
-from doeff_core_effects.step_tally_effects import (
+from doeff_core_effects import (
     CloseStepTally,
     CloseTaskTally,
     OpenStepTally,
     OpenTaskTally,
     ReadTaskTally,
+    Spawn,
     TaskTally,
+    Wait,
+    scheduled,
+    step_tally_handler,
 )
+from doeff_core_effects._scheduler import scheduler_trace_sink
 
 from doeff import do, run, with_handlers
 

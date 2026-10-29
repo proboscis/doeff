@@ -47,9 +47,9 @@ from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff_core_effects.file_effects import SourceNotCompiled as SourceNotCompiled
-from doeff_core_effects.python_bytecode import compiled_pyc as compiled_pyc
-from doeff_core_effects.python_bytecode import kept_pyc as kept_pyc
-from doeff_core_effects.python_bytecode import pyc_path as pyc_path
+from doeff_core_effects._python_bytecode import compiled_pyc as compiled_pyc
+from doeff_core_effects._python_bytecode import kept_pyc as kept_pyc
+from doeff_core_effects._python_bytecode import pyc_path as pyc_path
 ROOT: str
 NO_ENTRY: str
 NOT_DIRECTORY: str

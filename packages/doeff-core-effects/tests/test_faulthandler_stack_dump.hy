@@ -2,7 +2,7 @@
 ;;; 本当に全 thread の stack を 1 度書き、期限の前に外せば何も書かない(agora-redesign #2748)。契約の性質は test_stack_dump_contract.hy。
 ;;; 実時間で待つ(1 本 0.5 秒前後 — 期限の後の待ちは、機体の負荷で見張りの thread の起き上がりが遅れても書き終わる幅)。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_core_effects.stack_dump_effects [ArmStackDump DisarmStackDump])
+(import doeff_core_effects [ArmStackDump DisarmStackDump])
 (import doeff_time [Delay GetMonotonic])
 (import stack_dump_contract_handlers [WrittenText])
 
