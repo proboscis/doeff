@@ -8,10 +8,13 @@ backend-path = ["."]
 
 [project]
 name = "doeff-indexer"
-version = "0.1.4"
+version = "0.2.0"
 description = "Static indexer for doeff programs and Kleisli programs"
-# Python の口は effect FindSymbols と handler rust_indexer(python/doeff_indexer/_effects.py)なので doeff を読み、
-# doeff と同じ版の Python から(ADR-DOE-API-001・agora card ki-1e51e218527e)。
+# Python の口は effect FindSymbols(python/doeff_indexer/_effects.py)と handler rust_indexer(_handlers.py)なので doeff を
+# 読み、doeff と同じ版の Python から(ADR-DOE-API-001・agora card ki-1e51e218527e)。拡張の abi3 は Cargo.toml の pyo3 の
+# abi3-py310 のまま(wheel の tag は cp310-abi3 で、入れられる版はこの requires-python が決める)— py311 へ上げるのは、wheel を
+# 組む CI(.github/workflows/build-indexer.yml)の 3.10 の Python を 3.11 へ替えるのと同じ変更で。
+# 0.2.0 で Python の口が替わった(class Indexer は入口に無い)。
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [

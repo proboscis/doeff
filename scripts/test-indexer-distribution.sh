@@ -102,26 +102,26 @@ echo "3. Testing Python API..."
 echo "-------------------------"
 
 # Test Python import
-if $PYTHON -c "from doeff_indexer import Indexer, SymbolInfo; print('OK')" 2>/dev/null; then
-    pass "from doeff_indexer import Indexer, SymbolInfo"
+if $PYTHON -c "from doeff_indexer import FindSymbols, SymbolInfo, rust_indexer; print('OK')" 2>/dev/null; then
+    pass "from doeff_indexer import FindSymbols, SymbolInfo, rust_indexer"
 else
     fail "Python import failed"
 fi
 
-# Test Indexer usage
+# Test reading the index through the effect
 if $PYTHON -c "
-from doeff_indexer import Indexer
+from doeff import run
+from doeff_indexer import FindSymbols, rust_indexer
 try:
-    indexer = Indexer.for_module('doeff')
-    symbols = indexer.find_symbols(tags=['doeff'], symbol_type='function')
+    symbols = run(rust_indexer(FindSymbols('doeff', ('doeff',), 'function')))
     print(f'Found {len(symbols)} symbols')
 except Exception as e:
     print(f'Error: {e}')
     exit(1)
 " 2>/dev/null; then
-    pass "Indexer.for_module() and find_symbols()"
+    pass "run(rust_indexer(FindSymbols(...)))"
 else
-    warn "Indexer test had issues (may be expected if not in doeff module)"
+    warn "FindSymbols test had issues (may be expected if not in doeff module)"
 fi
 
 echo ""

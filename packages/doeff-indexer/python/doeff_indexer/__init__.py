@@ -5,6 +5,7 @@ Python の口は effect FindSymbols と、Rust の索引器で答える handler 
 同梱の binary を起こす(_cli)。
 
 名は最初に使う時に読む: CLI コマンドの入口 doeff_indexer._cli はこの package を読むので、doeff と拡張を CLI の起動で読まない。
+拡張を読むのは rust_indexer(_handlers)だけで、FindSymbols と SymbolInfo(_effects)は拡張の .so 無しに読める。
 """
 
 from typing import TYPE_CHECKING
@@ -12,18 +13,20 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from doeff_indexer._effects import FindSymbols as FindSymbols
     from doeff_indexer._effects import SymbolInfo as SymbolInfo
-    from doeff_indexer._effects import rust_indexer as rust_indexer
+    from doeff_indexer._handlers import rust_indexer as rust_indexer
 
-_PUBLIC_API_NAMES = ("FindSymbols", "SymbolInfo", "rust_indexer")
+#: 公開の名と、それを定義する内側の module。
+_DEFINED_IN = {"FindSymbols": "_effects", "SymbolInfo": "_effects", "rust_indexer": "_handlers"}
+_PUBLIC_API_NAMES = tuple(_DEFINED_IN)
 
 
 def __getattr__(name: str) -> object:
     """宣言した公開名だけを遅延解決する。import の失敗は呼び手へそのまま伝える。"""
-    if name not in _PUBLIC_API_NAMES:
+    if name not in _DEFINED_IN:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from doeff_indexer import _effects
+    from importlib import import_module
 
-    return getattr(_effects, name)
+    return getattr(import_module(f"{__name__}.{_DEFINED_IN[name]}"), name)
 
 
 def __dir__() -> list[str]:

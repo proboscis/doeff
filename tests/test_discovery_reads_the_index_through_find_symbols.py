@@ -4,12 +4,15 @@ lt-ZDN45RSNPV16BKSM997GGZ9CVB・card ki-1e51e218527e)。前は class Indexer を
 
 - Rust の索引器の下で、印の付いた interpreter のうち program の module の階層で最も近い物と、階層の印の付いた env を根から選ぶ。
 - doeff run の resolve_context が同じ program で既定の interpreter と env を決める(--env が在れば env は探さない)。
-- FindSymbols に test の handler で答えれば、Rust の索引器も file も無しに同じ program が走る。
-- 索引を作れない失敗は program を通って run の外へ出る(doeff run はそれを記録して既定の interpreter へ落ちる)。
+- FindSymbols に test の handler で答えれば、Rust の索引器も拡張も file も無しに同じ program が走る。
+- 索引を作れない失敗は program(discover)の中で受けて warning に出し、何も探さない(doeff run は既定の interpreter へ落ちる)。
+- doeff-indexer が無ければ黙って探さず、在るのに拡張を読めなければ warning を出して探さない。
 """
 
 from __future__ import annotations
 
+import importlib
+import logging
 import re
 import sys
 from pathlib import Path
@@ -20,7 +23,7 @@ from doeff_indexer import FindSymbols, SymbolInfo, rust_indexer
 
 from doeff import K, Transfer, TransferThrow, handler, run
 from doeff.cli.discovery import Discovered, discover, find_default_interpreter
-from doeff.cli.run_services import RunContext, resolve_context
+from doeff.cli.run_services import RunContext, _discover, resolve_context
 
 PROGRAM = "myapp.features.auth.login.login_program"
 
@@ -154,6 +157,51 @@ def broken_index(effect: FindSymbols, k: K):
     return (yield TransferThrow(k, RuntimeError(f"cannot index {effect.module_path}")))
 
 
-def test_an_index_that_cannot_be_built_fails_the_discovery_program() -> None:
-    with pytest.raises(RuntimeError, match=re.escape("cannot index myapp.features.auth.login")):
-        run(broken_index(discover(PROGRAM)))
+def test_an_index_that_cannot_be_built_is_logged_and_discovers_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """失敗は program の中の 1 か所(discover)で受ける — run は例外を見ず、doeff run は既定の interpreter へ落ちる。"""
+    with caplog.at_level(logging.WARNING, logger="doeff.cli.discovery"):
+        assert run(broken_index(discover(PROGRAM))) == Discovered(None, ())
+    assert "cannot index myapp.features.auth.login" in caplog.text
+
+
+def _forget_doeff_indexer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """読み済みの doeff_indexer の内側の module を、この test の間だけ読み直させる(test の後に元へ戻る)。
+
+    `from doeff_indexer import _native` は package の属性を先に見るので、sys.modules と一緒に package の属性も外す。
+    """
+    package = sys.modules["doeff_indexer"]
+    for name in [name for name in sys.modules if name.startswith("doeff_indexer.")]:
+        monkeypatch.delitem(sys.modules, name)
+        monkeypatch.delattr(package, name.rpartition(".")[2], raising=False)
+
+
+def test_the_effect_and_its_answer_type_are_read_without_the_rust_extension(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FindSymbols と SymbolInfo は拡張の .so 無しに読め(test の handler が答えられる)、rust_indexer だけが拡張を読む。
+    doeff-indexer は在るのに拡張を読めない時、doeff run は黙らずに warning を出して探さない(構成のレビュー
+    lt-QHQJEWJDSAHGTT1ZASS28F9V68 の所見 A)。"""
+    _forget_doeff_indexer(monkeypatch)
+    monkeypatch.setitem(
+        sys.modules, "doeff_indexer._native", None
+    )  # import すると ModuleNotFoundError
+    effects = importlib.import_module("doeff_indexer._effects")
+    assert effects.FindSymbols("myapp").module_path == "myapp"
+    with pytest.raises(ImportError, match=re.escape("doeff_indexer._native")):
+        importlib.import_module("doeff_indexer._handlers")
+    with caplog.at_level(logging.WARNING, logger="doeff.cli.run_services"):
+        assert _discover(PROGRAM, envs=True) is None
+    assert "doeff-indexer cannot be read" in caplog.text
+
+
+def test_without_doeff_indexer_doeff_run_discovers_nothing_quietly(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """doeff-indexer が入っていなければ discovery は任意の物なので、warning を出さずに探さない。"""
+    _forget_doeff_indexer(monkeypatch)
+    monkeypatch.setitem(sys.modules, "doeff_indexer", None)
+    with caplog.at_level(logging.WARNING):
+        assert _discover(PROGRAM, envs=True) is None
+    assert not caplog.records

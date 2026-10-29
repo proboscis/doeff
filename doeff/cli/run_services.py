@@ -290,20 +290,25 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
 
 
 def _discover(program_path: str, *, envs: bool) -> "Discovered | None":
-    """Run the discovery program under doeff-indexer's handler (None when doeff-indexer is not
-    installed, or its index cannot be built — logged)."""
+    """Run the discovery program under doeff-indexer's handler.
+
+    None when doeff-indexer is not installed (discovery is optional), or when it is installed but its
+    handler cannot be read (a broken Rust extension — logged as a warning). An index that cannot be
+    built is the program's to decide (``discover`` logs it and finds nothing).
+    """
     try:
         from doeff_indexer import rust_indexer
-    except ImportError:
+    except ModuleNotFoundError as missing:
+        if missing.name != "doeff_indexer":
+            _logger.warning("doeff-indexer cannot be read, so nothing is discovered: %s", missing)
+        return None
+    except ImportError as broken:
+        _logger.warning("doeff-indexer cannot be read, so nothing is discovered: %s", broken)
         return None
     from doeff.cli.discovery import discover
     from doeff.run import run
 
-    try:
-        return run(rust_indexer(discover(program_path, envs=envs)))
-    except RuntimeError as failed:
-        _logger.warning("Failed to index %s for discovery: %s", program_path, failed)
-        return None
+    return run(rust_indexer(discover(program_path, envs=envs)))
 
 
 def default_interpreter(program: object) -> object:

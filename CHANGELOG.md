@@ -10,6 +10,13 @@
 
 ### Changed
 
+- **doeff-indexer 0.2.0:** the Python API reads the index with the effect `FindSymbols`, answered by the handler
+  `rust_indexer` (the Rust indexer): write `run(rust_indexer(FindSymbols(module, ("interpreter", "default"),
+  "function")))` — or yield `FindSymbols` in a program — where you wrote
+  `Indexer.for_module(module).find_symbols(tags=[...], symbol_type=...)`. `Indexer` is gone from the package (the
+  extension is the internal `doeff_indexer._native`), and the answer's rows are `SymbolInfo` values a test handler can
+  build. doeff-indexer now depends on doeff and needs Python 3.11. The `doeff-indexer` command is unchanged. `doeff
+  run`'s discovery of the default interpreter and envs is a program yielding `FindSymbols` (`doeff.cli.discovery`).
 - **doeff-core-effects:** `await_handler` is a handler, not a handler factory: it has no settings, so write
   `await_handler(prog)` and `[await_handler, lazy_ask(strict=True), try_handler, state(), writer]` (in Hy,
   `await-handler`) where you wrote `await_handler()(prog)` and `[await_handler(), …]`. The former call

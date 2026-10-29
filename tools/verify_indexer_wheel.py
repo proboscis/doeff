@@ -88,7 +88,8 @@ def smoke_problems(wheel: Path, work: Path) -> list[str]:
     created = _run([sys.executable, "-m", "venv", venv])
     if created.returncode != 0:
         return [f"venv を作れない: {created.stderr.strip()}"]
-    # 依存は無い(Rust の命令と拡張 module だけ)ので、PyPI へ出ずに wheel だけで入れる。
+    # 命令の入口(_cli)は doeff も拡張 module も読まないので、依存(doeff — Python の口の effect と handler が読む)を入れずに、
+    # PyPI へ出ずに wheel だけで入れて命令を撃つ。
     installed = _run(
         [
             _venv_tool(venv, "python"),

@@ -7,6 +7,7 @@ with the Rust indexer (``doeff/cli/run_services.py``). A test answers ``FindSymb
 handler. doeff-indexer is optional: ``doeff run`` discovers only when it is installed.
 """
 
+import logging
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from doeff_indexer import FindSymbols, SymbolInfo
 
 EnvProgram: TypeAlias = "Pure[dict[Any, Any]] | Expand[dict[Any, Any]]"
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,11 @@ def _marked(
     module_path: str, tags: tuple[str, ...], symbol_type: Literal["function", "variable"]
 ) -> "FindSymbols":
     """The effect asking the index for the symbols with every tag (its handler raises RuntimeError
-    into the program when the index cannot be built)."""
+    or OSError into the program when the index cannot be built).
+
+    Imported here, not at the top: ``doeff run`` reads this module for ``StandardEnvMerger`` without
+    doeff-indexer installed. ``FindSymbols`` is pure Python (no Rust extension is read).
+    """
     from doeff_indexer import FindSymbols
 
     return FindSymbols(module_path, tags, symbol_type)
@@ -88,13 +95,22 @@ def discover_default_envs(program_path: str) -> Generator[Any, Any, tuple[str, .
 @do
 def discover(program_path: str, *, envs: bool = True) -> Generator[Any, Any, Discovered]:
     """The default interpreter of a program path and, when ``envs``, its default envs (``doeff run``
-    asks for the envs only when no ``--env`` names them)."""
-    with profile("Find default interpreter", indent=1):
-        interpreter: str | None = yield find_default_interpreter(program_path)
-    if not envs:
-        return Discovered(interpreter, ())
-    with profile("Find default environments", indent=1):
-        found: tuple[str, ...] = yield discover_default_envs(program_path)
+    asks for the envs only when no ``--env`` names them).
+
+    An index that cannot be built (the handler raises ``RuntimeError`` or ``OSError`` into the
+    program) is logged as a warning and discovers nothing, so ``doeff run`` falls back to its
+    default interpreter — the one place that decides the fallback.
+    """
+    try:
+        with profile("Find default interpreter", indent=1):
+            interpreter: str | None = yield find_default_interpreter(program_path)
+        if not envs:
+            return Discovered(interpreter, ())
+        with profile("Find default environments", indent=1):
+            found: tuple[str, ...] = yield discover_default_envs(program_path)
+    except (RuntimeError, OSError) as failed:
+        logger.warning("Failed to index %s for discovery: %s", program_path, failed)
+        return Discovered(None, ())
     return Discovered(interpreter, found)
 
 

@@ -812,7 +812,7 @@ prefix = "packages/doeff-indexer/"
 tests = [
     "tests/test_indexer_wheel_layout.py",
     "tests/test_indexer_cli_finds_binary_on_package_path.py",
-    "tests/test_discovery_reads_the_index_through_find_symbols.py",  # 4 本で 1 秒 — doeff run の discovery が FindSymbols で引く
+    "tests/test_discovery_reads_the_index_through_find_symbols.py",  # 6 本で 1 秒 — doeff run の discovery が FindSymbols で引く
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-indexer]",  # 0.5 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
