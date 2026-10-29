@@ -20,34 +20,41 @@ from doeff_conductor._workflow_effect_journal import (
 SimpleHandler = Callable[[Any], Any]
 
 
-def make_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
-    """Create a handler-protocol callable from a pure effect handler."""
+def _scheduled_body(handler: SimpleHandler) -> Callable[..., Any]:
+    """The ``(effect, k)`` body that resumes ``k`` with ``handler(effect)``.
+
+    Not a handler (it has no handler marker and answers whatever effect it is given): a handler
+    that picks the body by effect type calls it with ``(effect, k)``, as ``mock_handlers`` does.
+    """
 
     @do
-    def scheduled_handler(effect: Effect, k: Any):
+    def scheduled_body(effect: Effect, k: Any):
         return (yield Resume(k, handler(effect)))
 
-    return scheduled_handler
+    return scheduled_body
 
 
 def make_blocking_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
     """Alias for sync blocking handlers."""
-    return make_scheduled_handler(handler)
+    return _scheduled_body(handler)
 
 
-def make_offloaded_scheduled_handler(handler: SimpleHandler) -> Callable[..., Any]:
-    """Bridge a blocking handler through the scheduler's ExternalPromise (``offloaded_call``).
+def _offloaded_scheduled_body(handler: SimpleHandler) -> Callable[..., Any]:
+    """The ``(effect, k)`` body that bridges a blocking handler through the scheduler's
+    ExternalPromise (``offloaded_call``).
 
     The handler executes in a daemon thread while the cooperative scheduler is free to
-    dispatch sibling tasks — the agent-await bridge required by L-K4-1.
+    dispatch sibling tasks — the agent-await bridge required by L-K4-1. Like
+    ``_scheduled_body``, it is called with ``(effect, k)`` from a handler that picks it by
+    effect type.
     """
 
     @do
-    def scheduled_handler(effect: Effect, k: Any):
+    def offloaded_scheduled_body(effect: Effect, k: Any):
         result = yield _offloaded_call(lambda: handler(effect))
         return (yield Resume(k, result))
 
-    return scheduled_handler
+    return offloaded_scheduled_body
 
 
 def make_scheduled_handler_with_store(_handler: Callable[..., Any]) -> Callable[..., Any]:
@@ -71,7 +78,7 @@ def make_async_scheduled_handler(
         DeprecationWarning,
         stacklevel=2,
     )
-    return make_scheduled_handler(handler)
+    return _scheduled_body(handler)
 
 
 def default_scheduled_handlers(

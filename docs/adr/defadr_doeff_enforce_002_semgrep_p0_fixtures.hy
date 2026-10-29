@@ -149,7 +149,7 @@
        [{"relative-path"
            "packages/doeff-conductor/src/doeff_conductor/_handlers/agent.py"
          "source"
-           "handlers = [(AgentEffect, make_offloaded_scheduled_handler(handle_agent))]\n"}])
+           "handlers = [(AgentEffect, _offloaded_scheduled_body(handle_agent))]\n"}])
      (defsemgrep p0-k4-no-sync-await-result-in-scheduled-handler
        "k4-no-sync-await-result-in-scheduled-handler"
        [{"relative-path"
@@ -159,7 +159,7 @@
        [{"relative-path"
            "packages/doeff-agents/src/doeff_agents/_handlers/agent.py"
          "source"
-           "handler = make_offloaded_scheduled_handler(lambda effect: client.await_result(effect))\n"}])
+           "handler = _offloaded_scheduled_body(lambda effect: client.await_result(effect))\n"}])
      (defsemgrep p0-k4-deadline-not-transport-timeout
        "k4-deadline-not-transport-timeout"
        [{"relative-path"

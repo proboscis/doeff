@@ -37,9 +37,6 @@ from doeff_conductor._handlers.utils import (
     make_blocking_scheduled_handler_with_store as make_blocking_scheduled_handler_with_store,
 )
 from doeff_conductor._handlers.utils import (
-    make_scheduled_handler as make_scheduled_handler,
-)
-from doeff_conductor._handlers.utils import (
     make_scheduled_handler_with_store as make_scheduled_handler_with_store,
 )
 from doeff_conductor._handlers.workspace_handler import workspace_handler as workspace_handler
