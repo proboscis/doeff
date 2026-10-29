@@ -3484,14 +3484,6 @@
   "doeff-claude-judge": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_claude_judge": [
-      "run_judgment"
-     ],
-     "doeff_claude_judge.wiring": [
-      "run_judgment"
-     ]
-    },
     "外れ — handler の中へ入れる": {
      "doeff_claude_judge.handler": [
       "LOG",
@@ -3508,12 +3500,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_claude_judge": [
-      "DEFAULT_COMMAND",
-      "parse",
-      "prepare",
-      "state_text"
-     ],
      "doeff_claude_judge.handler": [
       "parse",
       "prepare"
@@ -14516,20 +14502,7 @@
   "doeff-jev": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_jev": [
-      "run_judgment"
-     ],
-     "doeff_jev.wiring": [
-      "run_judgment"
-     ]
-    },
     "外れ — handler の中へ入れる": {
-     "doeff_jev": [
-      "read_text_from_disk",
-      "resolve_target",
-      "target_from_process_environment"
-     ],
      "doeff_jev.handlers": [
       "HTTP_RETRIES"
      ],
@@ -14555,15 +14528,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_jev": [
-      "DEFAULT_CACHE_DB",
-      "DEFAULT_JOURNAL",
-      "cache_key",
-      "key_required",
-      "parse",
-      "prepare",
-      "verdict_fields"
-     ],
      "doeff_jev.handlers": [
       "verdict_fields"
      ],

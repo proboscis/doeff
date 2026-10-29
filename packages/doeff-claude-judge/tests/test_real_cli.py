@@ -26,12 +26,13 @@ import pytest
 from doeff_claude_judge import (
     ClaudeJudgeTarget,
     JudgeCredential,
+    claude_judge_stack,
     fixed_credential_lender,
-    run_judgment,
 )
+from doeff_core_effects import scheduled
 from doeff_system_one import Judge, Verdict, choice, noul
 
-from doeff import do
+from doeff import do, run, with_handlers
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
@@ -129,7 +130,8 @@ def test_a_fifty_thousand_character_document_is_judged_by_the_real_cli(tmp_path:
         return (yield judge)
 
     started = time.monotonic()
-    verdict = run_judgment(flow(), target=target, lender=fixed_credential_lender(_lent_credential(environment[CREDENTIALS_ENV])))
+    lender = fixed_credential_lender(_lent_credential(environment[CREDENTIALS_ENV]))
+    verdict = run(scheduled()(with_handlers(claude_judge_stack(target, lender=lender), flow())))
     seconds = time.monotonic() - started
     record_property("seconds", round(seconds, 2))
     record_property("chars", len(document))

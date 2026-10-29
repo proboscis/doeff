@@ -26,18 +26,6 @@ from doeff_claude_judge._wire import (
 from doeff_claude_judge._wire import (
     QueryImage as QueryImage,
 )
-from doeff_claude_judge._wire import (
-    parse as parse,
-)
-from doeff_claude_judge._wire import (
-    prepare as prepare,
-)
-from doeff_claude_judge._wire import (
-    state_text as state_text,
-)
-from doeff_claude_judge._wiring import (
-    DEFAULT_COMMAND as DEFAULT_COMMAND,
-)
 from doeff_claude_judge._wiring import (
     AccountLimitHit as AccountLimitHit,
 )
@@ -49,9 +37,6 @@ from doeff_claude_judge._wiring import (
 )
 from doeff_claude_judge._wiring import (
     production_printer as production_printer,
-)
-from doeff_claude_judge._wiring import (
-    run_judgment as run_judgment,
 )
 from doeff_claude_judge._wiring import (
     scripted_printer as scripted_printer,
