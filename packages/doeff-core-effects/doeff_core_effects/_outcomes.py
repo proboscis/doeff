@@ -11,8 +11,8 @@
 - 境目の handler(effect → 値に畳む): ``maybe``・``result``・``on_raise``・``absent_as``(R2・R7・R8)。
   どれも中核の ``state()`` と同じく、呼ぶと handler を返す工場で、program はその handler に当てる —
   ``maybe()(p)``・``result()(p)``・``on_raise(受け…)(p)``・``absent_as(既定値)(p)``(ADR-DOE-API-001 R6)。
-  旧い形 ``maybe(p)``・``result(p)``・``on_raise(p, 受け…)``・``absent_as(既定値, p)`` は新しい形と同じに動く移し替えの
-  層で、doeff の main を読む repo(agora-controllers ほか)の呼び手を書き換え終えたら消す(agora card ki-d27fd0acfe07)。
+  program を工場に渡す旧い形 ``maybe(p)``・``result(p)``・``on_raise(p, 受け…)``・``absent_as(既定値, p)`` は
+  TypeError で断る(移し替えの層は agora card ki-53be25c354e4 で消した)。
   続きを再開しない(スコープをその値で終える)。再開してよいのは ``absent_as`` が、自分の字面の中の ``<-`` が出した
   ``Absent`` を再開する時だけ。
 
@@ -37,7 +37,6 @@ from typing import (
     cast,
     get_args,
     get_origin,
-    overload,
 )
 
 from doeff import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
@@ -431,51 +430,22 @@ _MAYBE = _boundary("maybe", _program_handler(_absent_to_nothing), _some_of)
 _RESULT = _boundary("result", _program_handler(_raise_to_err), _ok_of)
 
 
-class _NoProgram:
-    """工場に program を渡さない印: 工場の形 ``maybe()``(渡せば旧い形 ``maybe(p)`` — 移し替えの層)。"""
-
-
-_NO_PROGRAM = _NoProgram()
-
-
-@overload
-def maybe() -> BoundaryHandler: ...
-
-
-@overload
-def maybe(program: "Bindable") -> "DoExpr": ...
-
-
-def maybe(program: "Bindable | _NoProgram" = _NO_PROGRAM) -> "BoundaryHandler | DoExpr":
+def maybe() -> BoundaryHandler:
     """``((maybe) body)`` / ``maybe()(body)`` — 呼ぶと、Absent を Nothing に、成功を Some に畳む handler を返す(Raise は素通り)。
 
     body は ``<-`` に渡せる物なら何でもよい(宣言を持つ effect をそのまま渡しても開いてから畳む)。
-    旧い形 ``maybe(body)`` は ``maybe()(body)`` と同じ(移し替えの層 — module の頭の文)。
     """
-    if isinstance(program, _NoProgram):
-        return _MAYBE
-    return _MAYBE(program)
+    return _MAYBE
 
 
-@overload
-def result() -> BoundaryHandler: ...
-
-
-@overload
-def result(program: "Bindable") -> "DoExpr": ...
-
-
-def result(program: "Bindable | _NoProgram" = _NO_PROGRAM) -> "BoundaryHandler | DoExpr":
+def result() -> BoundaryHandler:
     """``((result) body)`` / ``result()(body)`` — 呼ぶと、Raise(理由) を Err(理由) に、成功を Ok に畳む handler を返す
     (Absent は素通り)。
 
     入れ子の順で組み合わせの型を選ぶ: ``result()(maybe()(b))`` は Ok(Some v)・Ok(Nothing)・Err(e)、
     ``maybe()(result()(b))`` は Some(Ok v)・Some(Err e)・Nothing(R2)。
-    旧い形 ``result(body)`` は ``result()(body)`` と同じ(移し替えの層 — module の頭の文)。
     """
-    if isinstance(program, _NoProgram):
-        return _RESULT
-    return _RESULT(program)
+    return _RESULT
 
 
 @dataclass(frozen=True)
@@ -502,32 +472,20 @@ class RaiseCase:
                 )
 
 
-@overload
-def on_raise(*cases: RaiseCase) -> BoundaryHandler: ...
-
-
-@overload
-def on_raise(program: "Bindable", /, *cases: RaiseCase) -> "DoExpr": ...
-
-
-def on_raise(*given: "Bindable | RaiseCase") -> "BoundaryHandler | DoExpr":
+def on_raise(*cases: RaiseCase) -> BoundaryHandler:
     """``(on-raise body パターン 写し先 …)`` の実行時 — 呼ぶと、合う受けのある Raise だけを業務の答えへ写してスコープを終える
     handler を返す(macro on-raise は ``((on_raise 受け…) body)`` に展開する)。
 
     合う受けの無い Raise は外へ渡す。Python の例外は受けない(Raise だけを見る)。成功はそのまま返す。
-    旧い形 ``on_raise(body, 受け…)``(頭が受けでない)は ``on_raise(受け…)(body)`` と同じ(移し替えの層 — module の頭の文)。
     """
-    old_form = bool(given) and not isinstance(given[0], RaiseCase)
-    listed = given[1:] if old_form else given
-    if not listed:
+    if not cases:
         raise TypeError("on-raise には受けが 1 つ以上要る")
-    stray = [case for case in listed if not isinstance(case, RaiseCase)]
+    stray = [case for case in cases if not isinstance(case, RaiseCase)]
     if stray:
         raise TypeError(
             f"on_raise の受けは RaiseCase: {stray[0]!r} — on_raise は handler を返す工場で、program は返った handler に"
             "当てる: on_raise(受け…)(program)(ADR-DOE-API-001 R6)"
         )
-    cases = tuple(case for case in listed if isinstance(case, RaiseCase))
 
     @do
     def recover_raise(effect: EffectBase, k: object) -> "EffectGenerator[object]":
@@ -541,29 +499,17 @@ def on_raise(*given: "Bindable | RaiseCase") -> "BoundaryHandler | DoExpr":
                         raise TypeError(f"on-raise の受けは Some か Nothing を返す: {chosen!r}")
         yield Pass(effect, k)
 
-    if old_form:
-        return _boundary("on_raise", _program_handler(recover_raise), _opened_only)(given[0])
     return _boundary("on_raise", _program_handler(recover_raise), _opened_only)
 
 
-@overload
-def absent_as(default: _D, *, token: AbsentAsToken | None = None) -> BoundaryHandler: ...
-
-
-@overload
-def absent_as(default: _D, program: "Bindable", token: AbsentAsToken | None = None) -> "DoExpr": ...
-
-
-def absent_as(
-    default: _D, program: "Bindable | _NoProgram" = _NO_PROGRAM, token: AbsentAsToken | None = None
-) -> "BoundaryHandler | DoExpr":
+def absent_as(default: _D, *, token: AbsentAsToken | None = None) -> BoundaryHandler:
     """``(absent-as 既定値 body)`` の実行時(R8)— 呼ぶと、中で出た Absent を既定値に畳む handler を返す
     (macro absent-as は ``((absent_as 既定値 :token 印) body)`` に展開する)。
 
     中で出た Absent のうち、印 ``token`` の付いた物(absent-as の字面の中の ``<-`` が値の代わりに出した物)は
     既定値で再開し、ほか(呼んだ defk の奥の Absent・直に書いた (<- (Absent …)))は再開せず既定値でスコープを終える。
-    旧い形 ``absent_as(既定値, body, 印)`` は ``absent_as(既定値, token=印)(body)`` と同じ(移し替えの層 — module の頭の文。
-    前の macro の展開を compile 済みの Hy もこの形で呼ぶ)。
+    前の macro の展開(``absent_as(既定値, body, 印)``)を compile した bytecode は、doeff-hy の bytecode の見張りが
+    macro の変わりを見て compile し直す。
     """
 
     @do
@@ -574,9 +520,7 @@ def absent_as(
             return default
         yield Pass(effect, k)
 
-    if isinstance(program, _NoProgram):
-        return _boundary("absent_as", _program_handler(default_absent), _opened_only)
-    return _boundary("absent_as", _program_handler(default_absent), _opened_only)(program)
+    return _boundary("absent_as", _program_handler(default_absent), _opened_only)
 
 
 def absent_raises(reason: Callable[[], object]) -> ProgramHandler:
