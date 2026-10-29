@@ -36,6 +36,7 @@ from doeff_records._effects import ReadEvents as ReadEvents
 from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
+from doeff_records._effects import CountRows as CountRows
 from doeff_records._effects import ReadRequestPatience as ReadRequestPatience
 from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
 from doeff_records.wire import PublicEffect as PublicEffect
@@ -135,14 +136,14 @@ def request_patience_handler(patience: RequestPatience) -> _Handler:
     ...
 records_unwaited: _Handler
 
-def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch) -> _Program[tuple[str, ...], object]:
+def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[tuple[str, ...], object]:
     ...
 WRITE_KEY_BYTES: int
 
-def fresh_write_key(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch) -> _Program[str | None, object]:
+def fresh_write_key(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[str | None, object]:
     ...
 
-def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch) -> _Program[WireAnswer | Unreachable, object]:
+def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[WireAnswer | Unreachable, object]:
     ...
 
 def long_poll(endpoint: RecordsEndpoint, ask: WatchChanges | WatchEvents) -> _Program[Changes | Reset | EventsMoved | EventsQuiet | Unreachable, object]:

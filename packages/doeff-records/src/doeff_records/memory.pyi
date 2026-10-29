@@ -19,6 +19,7 @@ from doeff_core_effects import ExternalPromise
 from doeff import WithHandlerType
 
 from doeff import Program
+from doeff_hy.frozen import FrozenMap
 from doeff_records._values import RememberedWrite, RetiredKey
 from doeff_records._effects import (
     AppendEvent,
@@ -32,6 +33,7 @@ from doeff_records._effects import (
     ReadEvents,
     ReadRow,
     ReadStreamEnd,
+    CountRows,
     WatchChanges,
     WatchEvents,
 )
@@ -45,6 +47,8 @@ from doeff_records._values import (
     BatchRead,
     Changes,
     Conflict,
+    Count,
+    TableDecl,
     Event,
     EventAbsent,
     EventRetired,
@@ -175,6 +179,8 @@ WRITE: StoreOperation
 def purge_expired(store: MemoryStore, now_ms: int) -> int: ...
 # 読みの関数は刻 now_ms(epoch ミリ秒)を受け、保持の期限を過ぎた行と出来事を回収の前でも出さない(#3561)。
 def memory_read_row(store: MemoryStore, ask: ReadRow, now_ms: int) -> Row | Missing: ...
+def memory_matching_texts(store: MemoryStore, decl: TableDecl, table_name: str, where: FrozenMap, where_any: FrozenMap, now_ms: int) -> list: ...
+def memory_count_rows(store: MemoryStore, ask: CountRows, now_ms: int) -> Count | NotIndexed: ...
 def memory_list_rows(store: MemoryStore, ask: ListRows, now_ms: int) -> object: ...
 def memory_read_batch(store: MemoryStore, ask: ReadBatch, now_ms: int) -> BatchRead: ...
 def memory_current_row(store: MemoryStore, table: str, key: tuple[str, ...]) -> Row | None: ...

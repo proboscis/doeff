@@ -24,9 +24,9 @@
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
-                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS BatchRead])
+                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS BatchRead Count])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows])
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
                                    RetireArchivedEvents RetiredEvents EventsArchived archive-expired-events])
@@ -1953,6 +1953,63 @@
   (! (unplaced-all [first kept inside forgot outside])))
 
 
+;; --- 法 6b3: 昇順の ListRows と件数の CountRows は、全件を読んで数えた物と同じ -------------------------------
+
+(defk ascending-pages [harness where limit]
+  {:pre [(: harness LawHarness) (: where FrozenMap) (: limit int)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "昇順の ListRows(欄 note の小さい順)の頁を、最初から next-cursor が尽きるまで読み、頁を全部並べるため(DESCENDING-PAGE-CAP 頁で止める)。"
+  (var pages [])
+  (var at None)
+  (while True
+    (<- page (as-writer harness MAKER (ListRows "parts" :where where :cursor at :limit limit :ascending-by "note")))
+    (:= pages (+ pages [page]))
+    (when (or (not (isinstance page Page)) (is page.next-cursor None) (>= (len pages) DESCENDING-PAGE-CAP)) (return pages))
+    (:= at page.next-cursor)))
+
+
+(defk law-ascending-list-and-count-follow-the-scan [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "昇順と件数の法: ascending-by を付けた読みは、where に合う行のうち欄 note の値が整数の行を (値, 鍵) の小さい順に並べた上から limit 件と
+   同じ行を返し、続きの位置を辿った頁を連ねると全部を欠けも重なりも無く小さい順に返す。CountRows は where に合う行の件数を、at-least が
+   あれば欄の値が整数で下限以上の行の件数を返し、索引の無い欄の絞りは NotIndexed。使い手が古い頁を索引で引き、件数を数えるため。"
+  (val law "昇順の ListRows と CountRows は全件を読んで並べた・数えた物と同じ")
+  (var transcript [])
+  (for [#(n note) (.items TOP-NOTES)]
+    (val value (| {"color" (get COLORS (% n 3)) "label" (get LABELS (% n 2))} (if (is note None) {} {"note" note})))
+    (<- written (as-writer harness MAKER (PutRow "parts" #((.format "p{:02d}" n)) (FrozenMap value) (ExpectAbsent))))
+    (:= transcript (+ transcript [written])))
+  (for [where TOP-WHERES]
+    (<- pages (collect-pages harness "parts" where 500))
+    (val scanned (lfor page pages row page.rows :setv noted (.get row.value "note")
+                       :if (and (isinstance noted int) (not (isinstance noted bool))) row))
+    (val ordered (tuple (sorted scanned :key (fn [row] #((get row.value "note") (key-text row.key))))))
+    (for [limit [1 3 50]]
+      (<- top (as-writer harness MAKER (ListRows "parts" :where where :ascending-by "note" :limit limit)))
+      (<- (require-law (and (isinstance top Page) (= (is top.next-cursor None) (<= (len ordered) limit))) law
+                       (.format "{!r} の昇順の {} 件の答えが頁でない・続きの有無が並べた行の数({} 件)と合わない: {!r}" where limit (len ordered) top)))
+      (<- (require-law (= top.rows (tuple (cut ordered limit))) law
+                       (.format "{!r} の昇順の {} 件が全件を並べた上の {} 件と違う: {!r} / {!r}" where limit limit top.rows (cut ordered limit))))
+      (:= transcript (+ transcript [top])))
+    (<- walked (ascending-pages harness where 2))
+    (<- (require-law (= (tuple (gfor page walked row page.rows row)) ordered) law
+                     (.format "{!r} の昇順の頁を連ねた行が全件を並べた物と違う: {!r}" where walked)))
+    (<- everything (as-writer harness MAKER (CountRows "parts" :where where)))
+    (<- (require-law (= everything (Count (len (tuple (gfor page pages row page.rows row))))) law
+                     (.format "{!r} の件数が全件の数と違う: {!r}" where everything)))
+    (for [floor [-5 10 20 30 99]]
+      (<- floored (as-writer harness MAKER (CountRows "parts" :where where :at-least #("note" floor))))
+      (<- (require-law (= floored (Count (len (lfor row ordered :if (>= (get row.value "note") floor) row)))) law
+                       (.format "{!r} の note >= {} の件数が全件を数えた物と違う: {!r}" where floor floored)))
+      (:= transcript (+ transcript [floored]))))
+  (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 30}) :ascending-by "note")))
+  (<- (require-law (= loose (NotIndexed #("note"))) law (.format "昇順の読みの索引の無い欄: {!r}" loose)))
+  (<- loose-count (as-writer harness MAKER (CountRows "parts" :where (FrozenMap {"note" 30}))))
+  (<- (require-law (= loose-count (NotIndexed #("note"))) law (.format "件数の索引の無い欄: {!r}" loose-count)))
+  (+ transcript [loose loose-count]))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read は SHARED-LAWS に
 ;; 入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents・ReadBatch を答えない handler の組(呼び手の系の
@@ -1965,6 +2022,7 @@
             "indexed-list-equals-filtered-scan" law-indexed-list-equals-filtered-scan
             "descending-list-is-the-head-of-the-sorted-scan" law-descending-list-is-the-head-of-the-sorted-scan
             "descending-pages-follow-the-sorted-scan" law-descending-pages-follow-the-sorted-scan
+            "ascending-list-and-count-follow-the-scan" law-ascending-list-and-count-follow-the-scan
             "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
             "append-is-idempotent" law-append-is-idempotent
             "append-events-answer-like-appends-in-order" law-append-events-answer-like-appends-in-order

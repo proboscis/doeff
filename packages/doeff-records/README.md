@@ -60,6 +60,13 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
   送れる)。頁の間に書かれた行は、位置より小さい組なら後の頁に出て、大きい組なら出ない。上から読む読みの `cursor` は `after_value` を持つ
   位置だけ・キーの順の読みの `cursor` は `after_value` の無い位置だけ(作る時に `ValueError`)。HTTP の口の位置の鍵 `afterValue` は上から読む
   読みの位置の時だけ載る。`where`・`where_any` はそのまま効く。
+- `ListRows.ascending_by`(欄の名)は `descending_by` の逆向き: 値が整数の行だけを値の小さい順(同じ値は鍵の綴りの順)に `limit` 件読み、
+  `next_cursor`(`after_value`・`after_key` の keyset)を渡した読みはその組より大きい行から続ける。`descending_by` とは組みで使えない
+  (`ValueError`)。PostgreSQL の置き場は `TableDecl.descending` / `descending_within` の並べる式の索引を逆に辿る(索引の宣言は増えない)。
+  値の正負を入れ替えて向きを変える手は使わない。HTTP の口の本文の鍵は `ascendingBy`(使う読みの時だけ載る)。
+- `CountRows(table, where, where_any, at_least)` は行の件数を数える: `where`・`where_any` は `ListRows` と同じ絞り、`at_least = (欄の名, 下限)` は
+  欄の値が整数で下限以上の行だけ(無ければ下限なし)。保持の期限を過ぎた終端の行は数えない。答え = `Count` | `Unreachable` | `NotIndexed`。
+  HTTP の口の操作は `count-rows`(答えの kind は `count` | `notIndexed`)。
 - HTTP の口の本文(`list-rows`)は、`descendingBy` と `whereAny`(欄 → 値の組の配列)の鍵を使う読みの時だけ載せる — 使わない読みの本文は
   鍵を足す前と同じ。古い記録の service は知らない鍵を 400 で断るので、鍵を使う client より先に service を新しい版で起こす。
 - HTTP の口の答えの本文は鍵を足すだけ: client の読み(`wire.hy` の `answer-object-of`)は答えの object の知らない鍵を読み捨てるので、

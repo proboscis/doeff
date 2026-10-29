@@ -28,10 +28,10 @@
 (import doeff_hy._json_value [JsonValue])
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
-                              RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
+                              RowsConflict RowsRefused Count StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
                               EventsQuiet EventAbsent EventRetired BatchRead stored-text])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows])
 
 (setv PATH-PREFIX "/v1/records/")
 ;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
@@ -56,8 +56,11 @@
 ;; 読みごとの row | missing | page | reset | notIndexed})。前の 11 個の綴りは変えずに足した(card ki-177a4f287c42 — 複数の表から行を読む
 ;; 読み手が、読みの数だけ往復を待たないため。使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-READ-BATCH "read-batch")
+;; 行の件数を数える操作(本文 = {table, where?, whereAny?, atLeast?: [欄の名, 下限の整数]} — 答え = count{count} | notIndexed)。前の 12 個の
+;; 綴りは変えずに足した(使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
+(val OP-COUNT-ROWS "count-rows")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
-                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS OP-READ-BATCH))
+                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS OP-READ-BATCH OP-COUNT-ROWS))
 ;; 束の読み(read-batch)の本文の 1 項に載せてよい操作(束の中の読みの操作の名 — 束の中に束・書き・待ちは載せない)。
 (val BATCH-READ-OPERATIONS #(OP-READ-ROW OP-LIST-ROWS))
 ;; 変化の待ち(watch-changes・watch-events)1 回の要求で service が待つ秒の上限(#3074 の long-poll)。要求の読み(decode-request)が
@@ -190,14 +193,15 @@
                     OP-WATCH-EVENTS #("eventsMoved" "eventsQuiet")
                     OP-READ-EVENT-BY-KEY #("event" "eventAbsent" "eventRetired")
                     OP-APPEND-EVENTS #("appendedEvents")
-                    OP-READ-BATCH #("batchRead")})
+                    OP-READ-BATCH #("batchRead")
+                    OP-COUNT-ROWS #("count" "notIndexed")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy._json_value)。
 (setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents ReadEventByKey
-                      AppendEvents ReadBatch))
+                      AppendEvents ReadBatch CountRows))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
                     WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired
-                    AppendedEvents BatchRead))
+                    AppendedEvents BatchRead Count))
 
 
 (defclass WireMalformed [ValueError]
@@ -565,13 +569,21 @@
   (match ask
     (ReadRow :table table :key key)
       (WireRequest OP-READ-ROW {"table" table "key" (list key)})
-    (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by :where_any where-any)
+    (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by :where_any where-any
+              :ascending_by ascending-by)
       ;; 鍵 descendingBy は上から読む読みの時だけ・鍵 whereAny(欄 → 値の組の配列)は値の組で絞る時だけ送る(どちらも使わない読みは前の
       ;; 形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。
       (WireRequest OP-LIST-ROWS (| {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
                                     "cursor" (! (list-cursor-json cursor)) "limit" limit}
                                    (if (is descending-by None) {} {"descendingBy" descending-by})
+                                   (if (is ascending-by None) {} {"ascendingBy" ascending-by})
                                    (if where-any {"whereAny" (thaw-json where-any)} {})))
+    (CountRows :table table :where where :where_any where-any :at_least at-least)
+      ;; 鍵 where・whereAny・atLeast は使う時だけ送る(絞りも下限も無い件数は鍵 table だけ)。
+      (WireRequest OP-COUNT-ROWS (| {"table" table}
+                                    (if where {"where" (thaw-json where)} {})
+                                    (if where-any {"whereAny" (thaw-json where-any)} {})
+                                    (if (is at-least None) {} {"atLeast" (list at-least)})))
     (PutRow :table table :key key :value value :expect expect)
       (WireRequest OP-PUT-ROW {"table" table "key" (list key) "value" (thaw-json value) "expect" (! (expect-json expect))})
     (WatchChanges :tables tables :cursor cursor :timeout timeout :limit limit :streams streams)
@@ -642,7 +654,7 @@
         (do (<- (object-of body "read-row の本文" #("table" "key") #()))
             (ReadRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))))
       "list-rows"
-        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy" "whereAny")))
+        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy" "whereAny" "ascendingBy")))
             (setv keywords {})
             (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
             (when (in "fields" body)
@@ -652,6 +664,8 @@
             (when (in "limit" body) (setv (get keywords "limit") (! (integer-of (get body "limit") "limit"))))
             (when (in "descendingBy" body)
               (setv (get keywords "descending_by") (! (string-of (get body "descendingBy") "descendingBy"))))
+            (when (in "ascendingBy" body)
+              (setv (get keywords "ascending_by") (! (string-of (get body "ascendingBy") "ascendingBy"))))
             ;; 鍵 whereAny は値の組で絞る時だけ在る(encode-request は空の写像を送らない)— 空の object は綴りの外として断る。組の配列の
             ;; 形・空の組・上限・where との重なりは ListRows が作る時に断る(malformed に写る)。
             (when (in "whereAny" body)
@@ -659,6 +673,21 @@
               (when (not any-of) (raise (WireMalformed "list-rows の whereAny は空でない object(絞らない時は鍵ごと無い)")))
               (setv (get keywords "where_any") any-of))
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
+      "count-rows"
+        (do (<- (object-of body "count-rows の本文" #("table") #("where" "whereAny" "atLeast")))
+            (setv keywords {})
+            (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
+            ;; whereAny の形・空の組・上限・where との重なりは CountRows が作る時に断る(malformed に写る)。空の object は list-rows と同じく綴りの外。
+            (when (in "whereAny" body)
+              (<- any-of (json-object-in (get body "whereAny") "whereAny"))
+              (when (not any-of) (raise (WireMalformed "count-rows の whereAny は空でない object(絞らない時は鍵ごと無い)")))
+              (setv (get keywords "where_any") any-of))
+            (when (in "atLeast" body)
+              (<- floor-pair (list-in (get body "atLeast") "atLeast"))
+              (when (!= (len floor-pair) 2)
+                (raise (WireMalformed (.format "count-rows の atLeast は [欄の名, 下限] の 2 つの配列: {!r}" floor-pair))))
+              (setv (get keywords "at_least") #((! (string-of (get floor-pair 0) "atLeast[0]")) (! (integer-of (get floor-pair 1) "atLeast[1]")))))
+            (CountRows (! (string-of (get body "table") "table")) #** keywords))
       "put-row"
         (do (<- (object-of body "put-row の本文" #("table" "key" "value" "expect") #("approval")))
             ;; approval は契約で deprecated(承認トークンは廃止 — operator の宣言の欄は書き手の主体で判じる)。前の版の client が
@@ -723,6 +752,7 @@
   (match ask
     (ReadRow :table table) (NamedStores #(table) #())
     (ListRows :table table) (NamedStores #(table) #())
+    (CountRows :table table) (NamedStores #(table) #())
     (PutRow :table table) (NamedStores #(table) #())
     (WatchChanges :tables tables :streams streams) (NamedStores tables streams)
     (AppendEvent :stream stream) (NamedStores #() #(stream))
@@ -910,6 +940,7 @@
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (answer-object current value-of))}
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
+    (Count :count count) {"kind" "count" "count" count}
     (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
     (StreamEmpty) {"kind" "streamEmpty"}
     (EventsMoved) {"kind" "eventsMoved"}
@@ -1089,6 +1120,9 @@
             (setv items [])
             (for [item (! (list-in (get value "items") "events.items"))] (.append items (! (event-from item))))
             (Events (tuple items) (! (integer-of (get value "lastSequence") "events.lastSequence"))))
+      {"kind" "count"}
+        (do (<- (answer-object-of value "count" #("kind" "count") #()))
+            (Count (! (integer-of (get value "count") "count.count"))))
       {"kind" "streamEnd"}
         (do (<- (answer-object-of value "streamEnd" #("kind" "sequence") #()))
             (StreamEnd (! (integer-of (get value "sequence") "streamEnd.sequence"))))
