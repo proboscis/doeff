@@ -16,7 +16,7 @@
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
-(import doeff_hy.table [table-of])
+(import doeff_hy._table [table-of])
 (import json)
 (import pathlib [Path])
 (import doeff [with-handlers])

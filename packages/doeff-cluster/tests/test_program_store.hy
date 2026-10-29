@@ -5,7 +5,7 @@
 ;;; 置き場は保存する(state file の "programs"・durable KV の program/<sha>)。
 (require doeff-hy.macros [deftest defk <- val])
 (import hashlib)
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ProgramRow])
 (import doeff_cluster.shared.protocol.inbox [http-request])

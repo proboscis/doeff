@@ -1,11 +1,21 @@
-"""doeff-hy の pytest plugin(entry point `pytest11`)。
+# moved-submodule-shim: doeff_hy.pytest_plugin -> doeff_hy._pytest_plugin
+"""Moved: ``doeff_hy.pytest_plugin`` is now ``doeff_hy._pytest_plugin`` (ADR-DOE-API-001 R5).
 
-pytest は起動時に plugin と conftest を読み、fixture の注記を Python 3.14 では
-`annotation_format=Format.STRING` で読む。Hy がそれより前に(他の plugin や conftest から)
-import されていると、Hy の `ast.unparse` の差し替えがそこで止まらない再帰になる
-(doeff_hy/ast_unparse.py)。`import doeff_hy` を待たず、pytest の起動の時点で置き換える。
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_hy.pytest_plugin…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
 """
 
-from doeff_hy.ast_unparse import install
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-install()
+if TYPE_CHECKING:
+    from doeff_hy._pytest_plugin import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
+
+if __name__ == "__main__":
+    import runpy
+
+    runpy.run_module("doeff_hy._pytest_plugin", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_hy._pytest_plugin")

@@ -11,7 +11,7 @@
 ;;;   - 外す規則: DOEFF004(os.environ を直に読む)— 名指しの module(doeff_hy_bytecode_guard とその下)に限る。
 ;;;   - 禁じる import: doeff の業務の module。外した層に業務の code が入ると DOEFF032 が赤にする(外した規則が業務の code にも
 ;;;     当たらなくなる形を作らない)。
-;;; 道具が使う置き場を環境変数から読む module(doeff_hy.env_places)を外していた層 environment は消した — 環境変数を ReadEnvironment の
+;;; 道具が使う置き場を環境変数から読む module(doeff_hy._env_places)を外していた層 environment は消した — 環境変数を ReadEnvironment の
 ;;;   効果で本物の答え手 subprocess_handler の下で問う形にしたので、DOEFF004 が当たらない(agora-redesign #3012)。
 ;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり見張りに当たる。
 ;;;

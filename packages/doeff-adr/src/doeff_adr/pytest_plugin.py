@@ -18,7 +18,7 @@ from typing import Literal
 
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
-from doeff_hy.pytest_items import FunctionItem
+from doeff_hy._pytest_items import FunctionItem
 from hy.importer import HyLoader
 
 from doeff_adr.indexed_pytest import IndexedFunctions, supports_indexed_collection

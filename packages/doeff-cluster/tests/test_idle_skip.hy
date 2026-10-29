@@ -9,7 +9,7 @@
 ;; - 期限の関数(liveness-due・sweep-due・task-due)は、判断が比べに使う期限の値と同じ刻を返す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import doeff [Program])

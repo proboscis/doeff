@@ -74,7 +74,7 @@ def _unknown_on_watched(run: Run) -> list[tuple[str, int, str]]:
 
 @needs_pyright
 def test_using_a_table_has_no_unknown(tmp_path: Path) -> None:
-    run = _check(_probe(tmp_path, "doeff_hy.table"))
+    run = _check(_probe(tmp_path, "doeff_hy._table"))
     assert not _unknown_on_watched(run), run.errors()
     # 表を作る・下書きに書く・凍らせる・引く行(7〜12 行目)には赤が 1 つも無い。
     assert not [e for e in run.errors() if 7 <= e[1] <= 12], run.errors()
@@ -83,13 +83,13 @@ def test_using_a_table_has_no_unknown(tmp_path: Path) -> None:
 @needs_pyright
 def test_a_table_answer_used_as_the_wrong_type_is_red(tmp_path: Path) -> None:
     # size の答えが int と読めるので、str を足す(13 行目)と型の取り違えで赤。
-    errors = _check(_probe(tmp_path, "doeff_hy.table")).errors()
+    errors = _check(_probe(tmp_path, "doeff_hy._table")).errors()
     assert [e for e in errors if e[1] == 13 and e[0] == "reportOperatorIssue"], errors
 
 
 @needs_pyright
 def test_the_counterexample_a_table_without_the_declaration_reads_as_unknown(tmp_path: Path) -> None:
-    import doeff_hy.table as table
+    import doeff_hy._table as table
 
     # 同じ table.hy を、宣言(.pyi)の無い module として検査の根の外に置いて読む(根の中の .hy は検査がその場で投影するので外に置く)
     # — 同じ行が Unknown の赤になる。

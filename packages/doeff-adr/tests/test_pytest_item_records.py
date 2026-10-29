@@ -1,12 +1,12 @@
 """defadr・defsemgrep と defadr の :enforcement の中の deftest / defsemgrep が、展開の式で pytest の item の記録を module に積む
-(記録の形の定義元 = doeff_hy/pytest_items.py・agora-redesign #1291)。記録は module を import すれば読める。
+(記録の形の定義元 = doeff_hy/_pytest_items.py・agora-redesign #1291)。記録は module を import すれば読める。
 """
 
 import importlib
 import sys
 from pathlib import Path
 
-from doeff_hy.pytest_items import FunctionItem, decode_records, module_record_texts
+from doeff_hy._pytest_items import FunctionItem, decode_records, module_record_texts
 
 ADR = """
 (require doeff-adr.macros [defadr deftest defsemgrep rule law])

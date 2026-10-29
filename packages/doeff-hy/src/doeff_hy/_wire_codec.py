@@ -26,7 +26,7 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
 - decode と encode_json は先に速い道で読み書きする(入力を写し直さない・欄を並べ切った読み手と書き手を型ごとに 1 度組む・defrecord の
   型は構築子を通さずに作る)。答えは今までの道と同じで、受けない所は今までの道へ戻る(card ki-c43f34494b42 — 節「判じ手」の註・
   tests/test_wire_codec_fast.py)。
-- この module は pydantic を import しない(標準の module と doeff_hy._json_value・doeff_hy._wire_malformed・doeff_hy.record_runtime だけを読む —
+- この module は pydantic を import しない(標準の module と doeff_hy._json_value・doeff_hy._wire_malformed・doeff_hy._record_runtime だけを読む —
   ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
 """
 
@@ -48,9 +48,9 @@ from typing import Any, Final, ForwardRef, Generic, TypeAlias, TypeGuard, TypeVa
 
 # 名を _ で始めて読む: この module の公開の名は Codec と codec_of と row_codec_of だけ(Malformed は wire_malformed・OpaqueJson は json_value が出す)。
 from doeff_hy._json_value import OpaqueJson as _OpaqueJson
+from doeff_hy._record_runtime import RECORD_PARAMS as _RECORD_PARAMS
 from doeff_hy._wire_malformed import Malformed as _Malformed
 from doeff_hy._wire_malformed import MalformedField as _MalformedField
-from doeff_hy.record_runtime import RECORD_PARAMS as _RECORD_PARAMS
 
 _T = TypeVar("_T")
 

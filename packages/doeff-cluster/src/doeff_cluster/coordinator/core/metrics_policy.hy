@@ -22,7 +22,7 @@
 (import dataclasses [replace])
 (import math)
 (import doeff [run])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster.coordinator.intent.request_bodies [MetricsBody MetricsPayload])

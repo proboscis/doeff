@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run])
 (import dataclasses [replace])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutRow RolloutStatus TaskRecord TargetView DeploymentUnreadable])
 (import doeff_cluster.shared.protocol.inbox [http-request])

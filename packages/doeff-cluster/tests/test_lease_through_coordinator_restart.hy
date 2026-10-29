@@ -12,7 +12,7 @@
 ;;       作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
 (require doeff-hy.macros [deftest defk <- val])
 (require doeff-cluster.shared.entry.macros [defsystem])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import collections.abc [Callable])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])

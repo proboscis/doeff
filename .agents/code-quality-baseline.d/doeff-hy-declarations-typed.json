@@ -11,9 +11,9 @@
     {
       "count": 1,
       "path": "packages/doeff-hy/src/doeff_hy/declarations.hy",
-      "reason": "declarations.hy の defeffect の展開が出す form の中の `(import doeff_hy.record_runtime)`(展開先の module が読む実行時の補助)を、検査器が declarations.hy 自身の依存と数える既存の形。record_runtime.py に module の契約が無い。declarations.hy を品質検査の対象(include)に入れた時(card ki-d7ab768e7315)に初めて測られた。解くのは record_runtime.py に module の契約を与える便で、型の契約の便とは別。",
+      "reason": "declarations.hy の defeffect の展開が出す form の中の `(import doeff_hy._record_runtime)`(展開先の module が読む実行時の補助)を、検査器が declarations.hy 自身の依存と数える既存の形。record_runtime.py に module の契約が無い。declarations.hy を品質検査の対象(include)に入れた時(card ki-d7ab768e7315)に初めて測られた。解くのは record_runtime.py に module の契約を与える便で、型の契約の便とは別。",
       "rule": "dependency-uncontracted",
-      "subject": "packages/doeff-hy/src/doeff_hy/record_runtime.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_record_runtime.py"
     }
   ]
 }

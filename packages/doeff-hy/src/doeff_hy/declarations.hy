@@ -386,7 +386,7 @@
             ~@(lfor s syms `(_doeff-object.__setattr__ ~self-sym ~(hy.mangle (str s)) ~s))
             ~@(if post-init [`(.__post-init__ ~self-sym)] [])
             None)
-         `(defn [(doeff_hy.record_runtime.recursive-repr)] __repr__ [~self-sym]
+         `(defn [(doeff_hy._record_runtime.recursive-repr)] __repr__ [~self-sym]
             (.format ~(+ "{}(" (.join ", " (gfor s syms (+ (hy.mangle (str s)) "={!r}"))) ")") (. ~self-sym __class__ __qualname__)
                      ~@(lfor s syms `(. ~self-sym ~s))))
          ;; dataclass(Python 3.14)の __eq__ と同じ形: 同じ物なら真・欄ごとの == を and で繋ぐ(組どうしの比較は NaN と真偽でない値を
@@ -401,11 +401,11 @@
             (hash #(~@(lfor s syms `(. ~self-sym ~s)))))
          `(defn __setattr__ [~self-sym ~attr ~value]
             (when ~guard
-              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
+              (raise (doeff_hy._record_runtime.FrozenInstanceError (.format "cannot assign to field {!r}" ~attr))))
             (.__setattr__ (super) ~attr ~value))
          `(defn __delattr__ [~self-sym ~attr]
             (when ~guard
-              (raise (doeff_hy.record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
+              (raise (doeff_hy._record_runtime.FrozenInstanceError (.format "cannot delete field {!r}" ~attr))))
             (.__delattr__ (super) ~attr))]
         []))
   `(do
@@ -420,7 +420,7 @@
      ;; 別名の綴りと置き場は展開の名の表から引く(defwire と同じ — record.hy)。class の本体に書いた型の本体は名を module の段から
      ;; 引くので、型検査の投影は表の綴りのこの import を module の段へ移す(static_check._synthesized_import)。
      ~(import-form ["ClassVar" "cast"])
-     ~@(if written [`(import doeff_hy.record_runtime) `(import builtins [object :as _doeff-object])] [])
+     ~@(if written [`(import doeff_hy._record_runtime) `(import builtins [object :as _doeff-object])] [])
      ;; 型の引数(:tp)は型検査の展開だけに置く(`class E[T](…)` — PEP 695 の綴りを実行時の code に出さない。requires-python 3.10 の
      ;; 環境でも定義が読める・class の __type_params__ は空)。実行時の答えと欄の型の T は module の TypeVar を読む(#2939)。
      (defclass [~(if written
@@ -435,7 +435,7 @@
        ~@methods
        ~@(bound-answer-methods answer outcome-types))
      ~@(if written
-           [`(doeff_hy.record_runtime.seal-effect ~name #(~@(lfor s syms (String (hy.mangle (str s))))) ~(bool post-init))]
+           [`(doeff_hy._record_runtime.seal-effect ~name #(~@(lfor s syms (String (hy.mangle (str s))))) ~(bool post-init))]
            [])
      (setattr ~name "__doeff_tags__" ~(tags-form tags where))
      (setattr ~name "__doeff_defeffect__" True)

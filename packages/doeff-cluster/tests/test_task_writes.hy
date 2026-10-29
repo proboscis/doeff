@@ -14,7 +14,7 @@
 (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster.coordinator.core [cluster_policy])
 (import doeff_cluster.coordinator.core.cluster_policy [place-tasks tasks-placed heard-tasks])
-(import doeff_hy.table [TableWrite draft-of table-of])
+(import doeff_hy._table [TableWrite draft-of table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])
 

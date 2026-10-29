@@ -10,7 +10,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import tests.state_rows [table-from-rows])
-(import doeff_hy.table [table-of])
+(import doeff_hy._table [table-of])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import pytest)

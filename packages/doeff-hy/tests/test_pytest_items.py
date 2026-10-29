@@ -1,4 +1,4 @@
-"""item を作る macro が展開の式で module に積む pytest の item の記録(doeff_hy/pytest_items.py・agora-redesign #1291)。
+"""item を作る macro が展開の式で module に積む pytest の item の記録(doeff_hy/_pytest_items.py・agora-redesign #1291)。
 
 記録は展開の式として module に入るので、test module を import して ``__doeff_pytest_items__`` を読めば確かめられる
 (Hy の importer にも pyc にも頼らない — #1290 の利用者の決定)。
@@ -10,12 +10,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from doeff_hy.pytest_items import (
+from doeff_hy import MalformedRecord
+from doeff_hy._pytest_items import (
     Dynamic,
     FunctionItem,
     LiteralValue,
     Mark,
-    MalformedRecord,
     ModuleMarks,
     OpaqueValue,
     Parametrize,

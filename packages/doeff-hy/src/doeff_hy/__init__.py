@@ -11,12 +11,14 @@ File extensions:
 """
 import importlib.machinery
 import os
+from importlib import import_module
+from typing import TYPE_CHECKING
 
 import doeff_hy_bytecode_guard
 import hy.importer
 
+from doeff_hy._light_stack import install as _install_light_stack
 from doeff_hy.ast_unparse import install as _install_ast_unparse
-from doeff_hy.light_stack import install as _install_light_stack
 
 # macro が変わった Hy の module の古い bytecode を使わない(agora-redesign #1292)。本来の入れ所は venv の起動時の
 # doeff_hy_bytecode_guard.pth で、ここは .pth が読まれない起動(python -S 等)のための 2 つ目(2 度目は何もしない)。
@@ -42,5 +44,31 @@ hy.importer._could_be_hy_src = _could_be_hy_src
 # 定数の値を複製しない同じ変換へ置き換える(理由と上流の報告は doeff_hy/ast_unparse.py)。
 _install_ast_unparse()
 
-# Hy の require 系が呼ぶ inspect.stack を軽い版へ(Hy 以外の呼び出しは元の関数。理由は doeff_hy/light_stack.py)。
+# Hy の require 系が呼ぶ inspect.stack を軽い版へ(Hy 以外の呼び出しは元の関数。理由は doeff_hy/_light_stack.py)。
 _install_light_stack()
+
+
+# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
+# them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
+# lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
+# defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)と、doeff_hy._pytest_plugin の
+# install(doeff_hy.ast_unparse の install と同じ物)は入口から出さない — 展開と plugin は `_` の path を読む(card ki-797d1e7b122b)。
+if TYPE_CHECKING:
+    from doeff_hy._pytest_items import MalformedRecord as MalformedRecord
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "MalformedRecord": "doeff_hy._pytest_items",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_LAZY_EXPORTS})

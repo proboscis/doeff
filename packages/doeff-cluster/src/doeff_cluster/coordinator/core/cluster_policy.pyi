@@ -66,11 +66,11 @@ from doeff_cluster.shared.intent.due_model import DueNever as DueNever
 from doeff_cluster.shared.core.due_policy import due_of_instants as due_of_instants
 from doeff_cluster.coordinator.intent.worker_notices import WorkerBack as WorkerBack
 from doeff_cluster.coordinator.intent.worker_notices import WorkerGone as WorkerGone
-from doeff_hy.table import Table as Table
-from doeff_hy.table import TableWrite as TableWrite
-from doeff_hy.table import TableDraft as TableDraft
-from doeff_hy.table import draft_of as draft_of
-from doeff_hy.table import table_of as table_of
+from doeff_hy._table import Table as Table
+from doeff_hy._table import TableWrite as TableWrite
+from doeff_hy._table import TableDraft as TableDraft
+from doeff_hy._table import draft_of as draft_of
+from doeff_hy._table import table_of as table_of
 from doeff_cluster.coordinator.core.cluster_rules import component_versions_of as component_versions_of
 from doeff_cluster.coordinator.core.cluster_rules import format_version_refusal as format_version_refusal
 from doeff_cluster.coordinator.intent.request_bodies import LeaseBody as LeaseBody

@@ -12,7 +12,7 @@
 ;;     間も経過に数えず、Service に載った後の歩で WorkerGone を出さない。heartbeat が待ちの上限(REACH-WAIT-MS)まで 1 つも来なければ、
 ;;     その後は従来どおり数える。
 (require doeff-hy.macros [defk deftest <- val])
-(import doeff_hy.table [TableWrite table-of])
+(import doeff_hy._table [TableWrite table-of])
 (import doeff [run])
 (import dataclasses [fields replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

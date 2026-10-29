@@ -252,7 +252,7 @@
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory memory-relabel])
 (import doeff_core_effects [slog-discard-handler])
 
-(import doeff_hy.table [Table TableWrite table-of])
+(import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
 
 (setv COMPANY "company-machine")

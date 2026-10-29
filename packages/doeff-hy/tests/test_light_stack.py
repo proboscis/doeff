@@ -1,4 +1,4 @@
-"""inspect.stack の軽い版(doeff_hy.light_stack)の契約(agora-redesign #1293)。"""
+"""inspect.stack の軽い版(doeff_hy._light_stack)の契約(agora-redesign #1293)。"""
 import importlib.util
 import inspect
 import subprocess
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import doeff_hy.light_stack as light_stack
+import doeff_hy._light_stack as light_stack
 
 _MODULE_PATH = Path(light_stack.__file__)
 
@@ -76,7 +76,7 @@ def test_require_result_is_the_same_before_and_after(tmp_path):
         import sys, inspect
         sys.path.insert(0, {tmp!r})
         import hy
-        import doeff_hy.light_stack as ls
+        import doeff_hy._light_stack as ls
         if sys.argv[1] == "off":
             ls.uninstall()
         else:
