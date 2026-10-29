@@ -480,6 +480,8 @@
       (return None))
     (setv outcome (await (asyncio.to-thread ws-shortcut-outcome shortcut ticket text)))
     (match outcome
+      ;; 答えの文が無ければ何も積まず、当たらなかった 1 通と同じ形で並べる(answered-at は積んだ時だけ — 頭の註)。
+      (WsShortcutAnswered :texts #()) (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))
       (WsShortcutAnswered :texts texts)
         (do (for [one texts]
               (self.send-text ticket one))
