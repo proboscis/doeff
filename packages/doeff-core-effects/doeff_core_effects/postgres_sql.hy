@@ -70,7 +70,7 @@
 (import dataclasses [dataclass field])
 (import doeff [Program])
 (import doeff_hy.wire [Malformed dump-json parse-json])
-(import doeff_core_effects._offloaded_call [ReusedThreads offloaded run-detached keep-nothing])
+(import doeff_core_effects._offloaded_call [ReusedThreads :as _ReusedThreads offloaded run-detached keep-nothing])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlRows SqlFailed SqlUnreachable SqlLock
@@ -91,7 +91,7 @@
 ;; 同時に貸す接続の既定の上限(database ごと)。
 (val DEFAULT-POOL-SIZE 8)
 ;; postgres-sql-handler が driver の I/O を回す Executor(空いた thread を使い回し、上限を置かない — 頭の註)。process に 1 つ。
-(val DRIVER-THREADS (ReusedThreads))
+(val DRIVER-THREADS (_ReusedThreads))
 
 ;; 待ち受けの接続が切れてから繋ぎ直すまでの秒(頭の註 — 境界の答え手の中だけの時間)。
 (val LISTEN-RETRY-SECONDS 1)

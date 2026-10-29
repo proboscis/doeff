@@ -12,7 +12,7 @@ from doeff_core_effects._scheduler import CreateExternalPromise as CreateExterna
 from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
 NOT_DELIVERED: Incomplete
-IDLE_SECONDS: float
+_IDLE_SECONDS: float
 
 class Delivered:
     __slots__ = ...

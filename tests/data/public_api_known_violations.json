@@ -11128,7 +11128,6 @@
       "PostgresTimeouts",
       "RaisedNotices",
       "StatementCursor",
-      "ThreadPerCall",
       "TransactionDriver",
       "TransactionFlush",
       "TransactionLease",
@@ -19716,6 +19715,13 @@
    "name": "WarmInputWritten",
    "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule warm_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
    "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.offloaded_call",
+   "name": "ReusedThreads",
+   "訳": "塞ぐ呼びを scheduler の外で回す Executor(空いた thread を使い回す — 表に在る ThreadPerCall と同じ土台の資源の係で、effect でも handler でもない)。postgres-sql-handler の DRIVER-THREADS と、取り消しの test の Executor の殻が使う。commit c83155f55(card ki-8fc4f9017572)が表を直さずに足した — 依頼 lt-8QEEZEZDFMDZWA38NTYHR9NERA が doeff main b73544311 の目録で見つけた。submodule offloaded_call は移し替えの module で、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-8fc4f9017572"
   }
  ]
 }
