@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 import doeff_hy  # noqa: F401  Hy の import hook を入れる(clause_ops.hy を読むため)
-from doeff_hy import clause_ops
+from doeff_hy import _clause_ops as clause_ops
 
 LINTER_TABLE = Path(__file__).resolve().parent.parent / "packages" / "doeff-linter" / "data" / "clause_ops.json"
 

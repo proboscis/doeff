@@ -7,8 +7,8 @@ controllers/messaging/protocol/intake_router.hy・intake.hy の AppendEvent — 
 :effects の宣言が名を解けずに落ちるので、書き手は直せない。
 
 - 宣言にだけ出る名を import した handler の検体に、reportUnusedImport の赤が無い。
-- 記帳の :effects の文は、doeff_hy.declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めて残す(ほかの記帳と
-  doeff_hy.declarations の import は今までどおり外す)。
+- 記帳の :effects の文は、doeff_hy._declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めて残す(ほかの記帳と
+  doeff_hy._declarations の import は今までどおり外す)。
 """
 
 import ast
@@ -82,9 +82,9 @@ def test_a_name_only_in_the_effects_declaration_is_not_an_unused_import(tmp_path
 def test_the_effects_bookkeeping_keeps_its_names_without_the_declarations_module() -> None:
     tree = ast.parse(
         "from m import A, B\n"
-        "import doeff_hy.declarations\n"
-        "setattr(h, '__doeff_effects__', doeff_hy.declarations.effect_types('defhandler h', tuple([A, B])))\n"
-        "setattr(h, '__doeff_tags__', doeff_hy.declarations.DefinitionTags(context='c', role='protocol'))\n"
+        "import doeff_hy._declarations\n"
+        "setattr(h, '__doeff_effects__', doeff_hy._declarations.effect_types('defhandler h', tuple([A, B])))\n"
+        "setattr(h, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(context='c', role='protocol'))\n"
         "setattr(h, '__doeff_needs__', None)\n"
     )
     projected = ast.unparse(without_bookkeeping(tree)).splitlines()

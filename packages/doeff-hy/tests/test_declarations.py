@@ -10,7 +10,7 @@ from __future__ import annotations
 import hy
 import pytest
 
-from doeff_hy.declarations import ROLES, DefinitionTags
+from doeff_hy._declarations import ROLES, DefinitionTags
 
 PRELUDE = """
 (require doeff-hy.macros [defk deff defp defeffect do! <-])

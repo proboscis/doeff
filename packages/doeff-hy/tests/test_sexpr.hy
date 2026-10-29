@@ -24,7 +24,7 @@
 
 ;; Run tests
 (defn main []
-  (import doeff_hy.sexpr [body-of args-of name-of collect-effects
+  (import doeff_hy._sexpr [body-of args-of name-of collect-effects
                           effect-tree print-effect-tree assert-handlers
                           _get-module-globals _walk-calls _call-head classify-call])
 

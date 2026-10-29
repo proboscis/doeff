@@ -9,7 +9,7 @@ from typing import Annotated
 
 import pytest
 from doeff.handler_values import BuiltBy
-from doeff_hy.type_forms import runtime_class
+from doeff_hy._type_forms import runtime_class
 
 
 def _factory() -> None:

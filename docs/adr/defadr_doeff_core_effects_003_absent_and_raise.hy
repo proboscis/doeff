@@ -121,8 +121,8 @@
 (import doeff-traverse [Fail])
 (import doeff-traverse [normalize-to-none])
 (import doeff-hy.handle [_check-clause-terminates])
-(import doeff-hy.declarations [EFFECT-KEYS])
-(import doeff-hy.clause-endings [ClauseEndingError])
+(import doeff-hy._declarations [EFFECT-KEYS])
+(import doeff-hy [ClauseEndingError])
 
 
 (val REPO-ROOT (. (Path __file__) parent parent parent))
@@ -369,11 +369,11 @@
           "packages/doeff-core-effects/tests/test_outcomes.hy"
           "packages/doeff-core-effects/tests/test_outcome_binds.hy"
           "packages/doeff-hy/src/doeff_hy/macros.hy"
-          "packages/doeff-hy/src/doeff_hy/declarations.hy"
+          "packages/doeff-hy/src/doeff_hy/_declarations.hy"
           "packages/doeff-hy/src/doeff_hy/handle.hy"
-          "packages/doeff-hy/src/doeff_hy/outcome_forms.hy"
-          "packages/doeff-hy/src/doeff_hy/clause_endings.hy"
-          "packages/doeff-hy/src/doeff_hy/binding_forms.py"
+          "packages/doeff-hy/src/doeff_hy/_outcome_forms.hy"
+          "packages/doeff-hy/src/doeff_hy/_clause_endings.hy"
+          "packages/doeff-hy/src/doeff_hy/_binding_forms.py"
           "packages/doeff-effect-analyzer"
           "packages/doeff-records"
           "packages/doeff-traverse"
@@ -417,7 +417,7 @@
        :evidence "packages/doeff-traverse/doeff_traverse/_effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
      (fact
        "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無かった(段階 2 で :absent / :failure / :value を足した — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
-       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/_effects.hy:39")
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/_effects.hy:39")
      (fact
        "handler の節の中で出した effect は、その handler より外側の handler へ行き、本文とその handler の間に置いた受け手を飛び越える — この ADR のテスト effect-performed-in-a-handler-skips-the-callers-scope(提案の時点の probe)と raise-in-a-handler-clause-skips-the-bodys-result(実装した Raise と result)で確かめた。"
        :evidence "この ADR の probe-read-handler・probe-raising-read-handler とテスト")
@@ -426,7 +426,7 @@
        :evidence "packages/doeff-hy/src/doeff_hy/handle.hy(_terminates・_check-clause-terminates)・packages/doeff-hy/src/doeff_hy/macros.hy(_reject-handler-signature)・この ADR のテスト handler-without-resume-ends-the-scope と defhandler-clause-must-end-explicitly・uv run python で @do の handler が return None した時の run の答え(None)")
      (fact
        "defk・deff・defp・defhandler の頭の辞書は既に :effects(その定義が出す effect の型の名の list・任意)を受け、__doeff_effects__ に残す(書かなければ None)。この宣言を読んで推論と照らす道具は無い(読むのは doeff-hy のテストだけ)。"
-       :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy:1-13・:26(CONTRACT-KEYS)・:59-70(effects-form)・git grep '__doeff_effects__'(当たりは declarations.hy と packages/doeff-hy/tests/test_declarations.py だけ)")
+       :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy:1-13・:26(CONTRACT-KEYS)・:59-70(effects-form)・git grep '__doeff_effects__'(当たりは declarations.hy と packages/doeff-hy/tests/test_declarations.py だけ)")
      (fact
        "doeff-effect-analyzer の Python の入口は、Program の関数が出す effect を、呼び先を推移的にたどって集める。Hy は macro を展開してから読み、defhandler の節(isinstance の分かれ道)から handler が受ける effect を読み、追えない物は unresolved と報告して黙って落とさない。引数で渡された Program(Spawn の子など)は carried として別に報告し、畳むかどうかは呼び手が決める。module の cache は process の中だけ。Rust の Hy の読み(hy_analyzer.rs の extract_effect_from_bind)は <- の形を 2〜4 要素でだけ読み、末尾の :absent <失敗> を知らない(段階 4 で直す)。"
        :evidence "packages/doeff-effect-analyzer/README.md:7-58・python/doeff_effect_analyzer/program_effects.py:159-180(_MODULE_CACHE)・:590(analyze_program)・src/hy_analyzer.rs:418-438")

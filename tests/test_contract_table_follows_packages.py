@@ -58,8 +58,8 @@ LOCK_READER = "scripts/semgrep_locked.py"
 #: 4f284efa9 が変えた 3 file — macro の定義元・節の操作・名の綴りの定義元)と、それを本物の macro で展開して読む analyzer の検の file。
 HANDLER_EXPANSION_MODULES = (
     "packages/doeff-hy/src/doeff_hy/handle.hy",
-    "packages/doeff-hy/src/doeff_hy/clause_ops.hy",
-    "packages/doeff-hy/src/doeff_hy/expansion_names.py",
+    "packages/doeff-hy/src/doeff_hy/_clause_ops.hy",
+    "packages/doeff-hy/src/doeff_hy/_expansion_names.py",
 )
 ANALYZER_EXPANSION_CHECKS = (
     "packages/doeff-effect-analyzer/tests/python/test_program_effects.py",

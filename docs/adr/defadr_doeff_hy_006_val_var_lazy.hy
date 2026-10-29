@@ -70,7 +70,7 @@
 (defadr ADR-DOE-HY-006
   :title "defk・deftest・defhandler の本体と module の直下で、名前の束縛を val(一度だけ)・var(:= で書き換える)・lazy val / lazy var(その呼び出しの中で初めて使った時に評価)で書く。セッションで共有する値は defhandler の session val / session var に置き、状態の効果(Get / Put)を通す。旧い lazy-val / lazy-var / set! は defhandler では動きを変えず移行を警告し、defk では誤り"
   :status "accepted"
-  :scope ["packages/doeff-hy/src/doeff_hy/binding_forms.py"
+  :scope ["packages/doeff-hy/src/doeff_hy/_binding_forms.py"
           "packages/doeff-hy/src/doeff_hy/_lazy.py"
           "packages/doeff-hy/src/doeff_hy/_session.py"
           "packages/doeff-hy/src/doeff_hy/macros.hy"

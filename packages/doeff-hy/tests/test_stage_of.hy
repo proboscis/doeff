@@ -55,7 +55,7 @@
 
 
 ;; === Test list-stages ===
-(import doeff_hy.sexpr [list-stages stage-of])
+(import doeff_hy._sexpr [list-stages stage-of])
 
 (print "=== list-stages (full-pipeline) ===")
 (setv stages (list-stages full-pipeline))

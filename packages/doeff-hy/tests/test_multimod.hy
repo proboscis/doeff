@@ -1,5 +1,5 @@
 ;;; Multi-module S-expr analysis + transform test
-(import doeff_hy.sexpr [body-of collect-effects effect-tree
+(import doeff_hy._sexpr [body-of collect-effects effect-tree
                         print-effect-tree assert-handlers])
 
 ;; ========================================================================

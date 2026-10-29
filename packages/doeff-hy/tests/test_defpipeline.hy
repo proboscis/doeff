@@ -96,7 +96,7 @@
 ;; === Part 3: S-expr analysis ===
 (print)
 (print "=== Part 3: S-expr analysis on pipeline stages ===")
-(import doeff_hy.sexpr [collect-effects print-effect-tree effect-tree])
+(import doeff_hy._sexpr [collect-effects print-effect-tree effect-tree])
 (setv KNOWN #{"FetchOhlc" "FetchNews" "LLMRank"})
 
 (print "effects of p-daily-cllm-ohlc:" (collect-effects p-daily-cllm-ohlc :extra-effects KNOWN))

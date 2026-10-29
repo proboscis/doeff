@@ -1,7 +1,7 @@
 """契約 `(: % (get tuple #(X ...)))` / `(: % (of dict K V))` と型付き束縛が実行時に通ること。
 
 要素の型つきの総称型は isinstance に渡せない(`TypeError: isinstance() argument 2 cannot be a
-parameterized generic`)。契約と `<-` の型付き束縛は `doeff_hy.type_forms.runtime_type_form` の 1 点で外側の型(tuple・dict)
+parameterized generic`)。契約と `<-` の型付き束縛は `doeff_hy._type_forms.runtime_type_form` の 1 点で外側の型(tuple・dict)
 へ写し、実行時には外側の型だけを確かめる(要素の型は静的な型検査が見る — #1790)。
 """
 

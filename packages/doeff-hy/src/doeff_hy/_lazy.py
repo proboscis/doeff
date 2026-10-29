@@ -2,7 +2,7 @@
 
 defk・deftest・defhandler の節の本体で `(lazy val x 式)` と書くと、macro はその呼び出しの
 局所に LazyCell を 1 つ作り、`x` の参照を「用意ができていれば覚えた値・まだなら force を
-実行して覚える」式に書き換える(doeff_hy/binding_forms.py)。
+実行して覚える」式に書き換える(doeff_hy/_binding_forms.py)。
 
 - 入れ物は呼び出しごとに作る局所の値(本体の局所変数と同じ寿命)。セッションをまたぐ状態は
   持たない — それは defhandler の session val / session var の役目(状態の効果 Get / Put を通す)。

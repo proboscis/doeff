@@ -3,7 +3,7 @@
 (import doeff [do :as _doeff-do])
 (import multimod.effects [FetchPrice])
 (import multimod.python_layer [python-risk-check ComputeRisk])
-(import doeff_hy.sexpr [body-of collect-effects effect-tree
+(import doeff_hy._sexpr [body-of collect-effects effect-tree
                         print-effect-tree classify-call])
 
 ;; Hy defk that calls a Python @do function

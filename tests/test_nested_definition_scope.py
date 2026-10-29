@@ -879,7 +879,7 @@ def test_static_projection_nested_scopes_read_macro_names_bound_at_module_level(
     assert _macro_names_read_from_module(tree) <= _module_level_names(tree)
 
 
-# handler の展開が `_doeff_<名>` の別名で読む doeff の node(doeff_hy/expansion_names.py)— 節の関数と本文に被せる関数が読む。
+# handler の展開が `_doeff_<名>` の別名で読む doeff の node(doeff_hy/_expansion_names.py)— 節の関数と本文に被せる関数が読む。
 _HANDLER_NODE_ALIASES = frozenset({"_doeff_Pass", "_doeff_WithHandlerType"})
 
 
@@ -912,7 +912,7 @@ def test_static_projection_of_nested_defhandler_reads_module_level_nodes(
     assert _HANDLER_NODE_ALIASES <= _module_level_names(tree)
 
 
-# 型を建てる定義が型の本体(注記の ClassVar・:check と答えの型の cast)で読む typing の別名(doeff_hy/expansion_names.py)。
+# 型を建てる定義が型の本体(注記の ClassVar・:check と答えの型の cast)で読む typing の別名(doeff_hy/_expansion_names.py)。
 _TYPING_ALIASES = frozenset({"_doeff_ClassVar", "_doeff_cast"})
 
 

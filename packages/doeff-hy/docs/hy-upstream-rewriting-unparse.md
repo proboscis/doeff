@@ -1,6 +1,6 @@
 # Hy 上流への報告の文面(未提出)
 
-doeff-hy は `doeff_hy/ast_unparse.py` で当て物をしている。根は Hy 本体にあるので、下の文面を
+doeff-hy は `doeff_hy/_ast_unparse.py` で当て物をしている。根は Hy 本体にあるので、下の文面を
 [removed]
 master の `hy/compat.py` も同じ形)。上流が直した版が出たら、`install()` は何もしなくなる
 (`ast.unparse` が `hy.compat.rewriting_unparse` でなくなる)ので、その時に当て物を消す。

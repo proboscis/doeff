@@ -379,7 +379,8 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """表の行の書き換えが新しい node を素の Symbol で読む変異(`ResumeBare`)— 9 つの名の一覧は拾えず(一覧に無い名)、一般の形が拾う。"""
-    from doeff_hy import clause_ops, expansion_names
+    from doeff_hy import _clause_ops as clause_ops
+    from doeff_hy import _expansion_names as expansion_names
 
     def bare_rewrite(
         args: list[hy.models.Object], recur: Callable[[hy.models.Object], hy.models.Object]

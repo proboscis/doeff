@@ -11,7 +11,7 @@
 (import hy)
 (import pytest)
 (import doeff [Pure])
-(import doeff_hy.declarations [DefinitionTags])
+(import doeff_hy._declarations [DefinitionTags])
 (import doeff_hy._static_view [static-view])
 
 (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
@@ -209,7 +209,7 @@
   (<- _ (Pure None))
   ;; 欄の読み方の Hy 側の正本 field-targets が、Rust 側の正本(doeff-indexer の hy_index::fields)と同じ表で同じ答えを出す。
   (import json pathlib [Path])
-  (import doeff_hy.declarations [field-targets])
+  (import doeff_hy._declarations [field-targets])
   (setv table (json.loads (.read-text (/ (. (Path __file__) parent) "data" "record_field_cases.json") :encoding "utf-8")))
   (for [case (get table "cases")]
     (setv got (lfor target (field-targets (hy.read-many (get case "forms"))) (str target)))

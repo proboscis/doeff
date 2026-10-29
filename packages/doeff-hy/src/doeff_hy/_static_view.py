@@ -52,8 +52,8 @@ from dataclasses import dataclass
 # 記録を付けず、.pyc と共有の code の置き場から普通の import へ渡らないようにするため(doeff_hy_bytecode_guard/_expansion.py)。
 from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION as _STATIC_VIEW
 
-from doeff_hy.binding_forms import Finding
-from doeff_hy.expansion_names import alias, import_source
+from doeff_hy._binding_forms import Finding
+from doeff_hy._expansion_names import alias, import_source
 
 
 @dataclass(frozen=True)
