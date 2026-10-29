@@ -680,40 +680,100 @@
   #^ (get Callable #([] StatementCursor)) cursor)
 
 
-(defk pipelined [connection step]
-  {:pre [(: connection PipelineConnection) (: step (| PostgresStep None))] :post [(: % (| StatementCursor None))]
+(defk step-queries [transformer step]
+  {:pre [(: transformer "psycopg の Transformer") (: step (| PostgresStep None))] :post [(: % tuple)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline mode の接続に文 1 つを積み、答えを受ける cursor を返すため(答えは sync の後に読む・文を流さない request は None)。"
-  (cond
-    (is step None) None
-    (is step.rows None) (.execute connection step.text (if (is step.params None) None (dfor p step.params p.name p.value))
-                                  :binary step.binary)
-    True (do (val cursor (.cursor connection))
-             (.executemany cursor step.text (list step.rows))
-             cursor)))
+  "pipeline に積む文 1 つを、libpq へ送る形(psycopg の PostgresQuery — 文の bytes・引数の bytes・型・形)の並びにするため(文 1 つは 1 つ・
+   executemany の文は行ごとに 1 つ・文を流さない request は 0)。引数の書き換えと値の写しは psycopg の cursor の execute と同じ物を使う
+   (同じ文・同じ値なら server に届く message は cursor の道と同じ)。"
+  (import psycopg._queries [PostgresQuery])
+  (when (is step None)
+    (return #()))
+  (val values (if (is step.rows None)
+                  #((if (is step.params None) None (dfor p step.params p.name p.value)))
+                  step.rows))
+  (var queries #())
+  (for [one values]
+    (val query (PostgresQuery transformer))
+    (.convert query step.text one)
+    (:= queries (+ queries #(query))))
+  queries)
 
 
-(defk step-answer [step cursor]
-  {:pre [(: step (| PostgresStep None)) (: cursor (| StatementCursor None))] :post [(: % SqlRows)]
+(defk socket-ready [pgconn events]
+  {:pre [(: pgconn "psycopg の PGconn") (: events int)] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
-  "pipeline の sync の後に、文 1 つの答えを cursor から読むため(文を流さなかった request は 0 行)。"
+  "接続の socket が events(select の POLLIN | POLLOUT)のどれかになるまで driver の thread で待ち、起きた events を返すため(上限は持たない —
+   死んだ相手は接続の上限 tcp_user_timeout と keepalive が socket の誤りにし、文の上限は server の statement_timeout が持つ — 頭の註)。"
+  (import select)
+  (val poller (select.poll))
+  (.register poller pgconn.socket events)
+  (var happened 0)
+  (while (not happened)
+    (:= happened (sum (gfor #(_ seen) (.poll poller) seen))))
+  happened)
+
+
+(defk libpq-sent [pgconn]
+  {:pre [(: pgconn "psycopg の PGconn")] :post [(: % None)]
+   :tags {:context "sql" :role "foundation"}}
+  "libpq の送りの buffer に積んだ文を、全部 socket へ送り切るため(送れない間は書けるか読めるまで待ち、読める時は先に受けて server の
+   送りが詰まらないようにする — libpq の PQflush の作法)。"
+  (import select)
+  (while (.flush pgconn)
+    (<- happened (socket-ready pgconn (| select.POLLIN select.POLLOUT)))
+    (when (& happened select.POLLIN)
+      (.consume-input pgconn)))
+  None)
+
+
+(defk libpq-results [pgconn]
+  {:pre [(: pgconn "psycopg の PGconn")] :post [(: % tuple)]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline の sync までの答え(文ごとの PGresult — 送った順・sync の印は含めない)を受けるため(受けるまで読めるのを待つ)。"
+  (import select)
+  (import psycopg [pq])
+  (var results #())
+  (while True
+    (while (.is-busy pgconn)
+      (<- (socket-ready pgconn select.POLLIN))
+      (.consume-input pgconn))
+    (val result (.get-result pgconn))
+    (cond
+      (is result None) None
+      (= result.status pq.ExecStatus.PIPELINE-SYNC) (break)
+      True (:= results (+ results #(result)))))
+  results)
+
+
+(defk result-failure [connection results]
+  {:pre [(: connection "psycopg の接続") (: results tuple)] :post [(: % (| Exception None))]
+   :tags {:context "sql" :role "foundation"}}
+  "往復の答えのうち、最初に落ちた文の失敗を psycopg の例外にするため(落ちた文の後ろは sync まで PIPELINE_ABORTED — 落ちていなければ None)。"
+  (import psycopg [pq errors])
+  (val failed (next (gfor result results :if (= result.status pq.ExecStatus.FATAL-ERROR) result) None))
   (cond
-    (is cursor None) (SqlRows :rows #() :rowcount 0)
-    (is cursor.description None) (SqlRows :rows #() :rowcount (if (>= cursor.rowcount 0) cursor.rowcount None))
-    True (do (val rows (! (normalized-rows (.fetchall cursor))))
+    (is-not failed None) (errors.error-from-result failed :encoding connection.info.encoding)
+    (any (gfor result results (= result.status pq.ExecStatus.PIPELINE-ABORTED)))
+      (errors.PipelineAborted "pipeline の文が流されなかった(落ちた文の答えが無い)")
+    True None))
+
+
+(defk results-answer [transformer step results]
+  {:pre [(: transformer "psycopg の Transformer") (: step (| PostgresStep None)) (: results tuple)] :post [(: % SqlRows)]
+   :tags {:context "sql" :role "foundation"}}
+  "pipeline の sync の後に、文 1 つの答え(PGresult の並び — executemany は行ごとに 1 つ)を SqlRows にするため(文を流さなかった request は 0 行・
+   行を返さない文は engine が数えた行の数 — executemany は和)。"
+  (import psycopg [pq])
+  (cond
+    (not results) (SqlRows :rows #() :rowcount 0)
+    (!= (. (get results 0) status) pq.ExecStatus.TUPLES-OK)
+      (do (val counts (tuple (gfor result results result.command-tuples)))
+          (SqlRows :rows #() :rowcount (if (any (gfor count counts (is count None))) None (sum counts))))
+    True (do (val result (get results 0))
+             (.set-pgresult transformer result)
+             (val rows (! (normalized-rows (tuple (.load-rows transformer 0 result.ntuples tuple)))))
              (SqlRows :rows rows :rowcount (len rows)))))
-
-
-(defk first-failure [error]
-  {:pre [(: error Exception)] :post [(: % Exception)]
-   :tags {:context "sql" :role "foundation"}}
-  "pipeline の出口が上げた失敗から、最初に落ちた文の失敗を取り出すため: 出口の後始末が、落ちた文の後ろの文の PipelineAborted で先の失敗を
-   上書きして上げた時(psycopg は上書きした例外の __context__ に先の失敗を持つ)は先の失敗・他はそのまま。"
-  (import psycopg)
-  (val earlier error.__context__)
-  (if (and (isinstance error psycopg.errors.PipelineAborted) (isinstance earlier psycopg.Error))
-      earlier
-      error))
 
 
 (defk postgres-flush [connection locks origin flush]
@@ -723,42 +783,53 @@
   "transaction の往復 1 回(TransactionFlush)を 1 つの pipeline で送り、答えを順に受けるため(頭の註)。答え = requests と同じ順の SqlRows の
    tuple | 最初に落ちた文の失敗(BEGIN・錠・合図・COMMIT を含む — PostgreSQL は落ちた文から sync までを流さない)。driver の I/O なので
    driver の thread で回す。locks = 最初の往復で BEGIN の次に取る錠の並び・origin = 合図の本文に載せる貸し出しの印(flush-steps)。
-   sync は pipeline の出口(with の終わり)の 1 度だけ — 中で sync を呼ぶと出口がもう 1 度 sync して往復が 1 回増える。文を積む間に先の文の
-   失敗が届けば、その場で積むのを止めて覚え、例外を with の外へ抜かない(抜くと psycopg が出口の後始末の失敗を warning の log に出す)。
-   出口が上げる失敗は、最初に落ちた文の失敗か、それを __context__ に持つ後ろの文の PipelineAborted(first-failure)。pipeline は with で
-   必ず出る(失敗の道でも — 出られずに残った接続は返す時に捨てる)。"
+   文は psycopg の cursor を通さず、libpq の口(接続の pgconn)で pipeline mode の送りの buffer に全部積み、sync を 1 度積んでから 1 度に
+   送り切り、sync までの答えを順に受ける(card ki-f7a1ef77251f — cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
+   待ちを作り、本番の free-threaded の Python の psycopg〔C の拡張の無い pure-python の libpq の口〕で文 1 つに約 0.25 ms の CPU を使い、
+   DB は文が 1 つ届くごとに起きて次の文を待った〔pipeline の中の ClientRead〕。手元の 8 文の往復で client の CPU 2.09 → 0.62 ms)。
+   引数の書き換えと値の写し・答えの値の読みは cursor と同じ psycopg の部品(step-queries・results-answer)。pipeline mode は答えを sync まで
+   受け切った後に出る(落ちた往復でも — 送りか受けの途中で接続が切れて出られずに残った接続は、返す時に捨てる)。"
   (import psycopg)
+  (import psycopg.adapt [Transformer])
   (<- steps (flush-steps locks origin flush))
   ;; 送りの印は積む前に付ける(落ちた往復でも buffer は伸びている — postgres-run と同じ)。
   (for [step steps]
     (<- sent (step-sent-bytes step))
     (<- (noted-carry connection sent)))
-  (var cursors #())
-  (var failed None)
+  (val pgconn connection.pgconn)
+  (val transformer (Transformer connection))
   (try
-    (with [_ (.pipeline connection)]
-      (try
-        (for [step steps]
-          (<- cursor (pipelined connection step))
-          (:= cursors (+ cursors #(cursor))))
-        (except [error psycopg.Error]
-          (:= failed error))))
+    (with [_ connection.lock]
+      (var queued #())
+      (for [step steps]
+        (<- queries (step-queries transformer step))
+        (:= queued (+ queued #(queries))))
+      (.enter-pipeline-mode pgconn)
+      (for [#(step queries) (zip steps queued :strict True)]
+        (for [query queries]
+          (.send-query-params pgconn query.query query.params :param-types query.types :param-formats query.formats
+                              :result-format (if step.binary psycopg.pq.Format.BINARY psycopg.pq.Format.TEXT))))
+      (.pipeline-sync pgconn)
+      (<- (libpq-sent pgconn))
+      (<- results (libpq-results pgconn))
+      (.exit-pipeline-mode pgconn))
     (except [error psycopg.Error]
-      (when (is failed None)
-        (<- first (first-failure error))
-        (:= failed first))))
+      (<- failure (postgres-error error))
+      (return failure)))
+  (<- failed (result-failure connection results))
   (when (is-not failed None)
     (<- failure (postgres-error failed))
     (return failure))
   (var answers #())
-  (for [#(step cursor) (zip steps cursors :strict True)]
+  (var at 0)
+  (for [#(step queries) (zip steps queued :strict True)]
+    (val mine (cut results at (+ at (len queries))))
+    (:= at (+ at (len queries)))
     (when (or (is step None) step.answered)
-      (<- answer (step-answer step cursor))
+      (<- answer (results-answer transformer step mine))
       (<- received (largest-message-bytes answer.rows (not (and (is-not step None) step.binary))))
       (<- (noted-carry connection received))
-      (:= answers (+ answers #(answer))))
-    (when (is-not cursor None)
-      (.close cursor)))
+      (:= answers (+ answers #(answer)))))
   answers)
 
 
