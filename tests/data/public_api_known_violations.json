@@ -10064,7 +10064,6 @@
       "doeff_conductor.handlers.workspace_handler",
       "doeff_conductor.interpreters",
       "doeff_conductor.journal",
-      "doeff_conductor.macros",
       "doeff_conductor.monitor",
       "doeff_conductor.monitor_app",
       "doeff_conductor.overseer",
@@ -12156,17 +12155,11 @@
     },
     "外れ — submodule を _ で隠す": {
      "(submodule)": [
-      "doeff_docker.compose",
       "doeff_docker.effects",
       "doeff_docker.handlers",
       "doeff_docker.handlers.docker",
       "doeff_docker.handlers.dockerfile",
       "doeff_docker.handlers.shell"
-     ]
-    },
-    "境界 — Hy の macro": {
-     "doeff_docker.compose": [
-      "with_handlers"
      ]
     },
     "境界 — effect の結果の型": {
@@ -12182,14 +12175,6 @@
   "doeff-domain": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — Hy の macro": {
-     "(submodule)": [
-      "doeff_domain.macros"
-     ],
-     "doeff_domain.macros": [
-      "defdomain"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_domain": [
       "Domain",
@@ -12339,13 +12324,7 @@
       "doeff_events.handlers.os_files",
       "doeff_events.handlers.redis_notices",
       "doeff_events.handlers.timer",
-      "doeff_events.macros",
       "doeff_events.notice_laws"
-     ]
-    },
-    "境界 — Hy の macro": {
-     "doeff_events.macros": [
-      "event_loop"
      ]
     },
     "境界 — effect の値の型": {
@@ -12859,7 +12838,6 @@
       "doeff_hy.outcome_forms",
       "doeff_hy.positions",
       "doeff_hy.pytest_items",
-      "doeff_hy.pytest_plugin",
       "doeff_hy.quoted_forms",
       "doeff_hy.record_runtime",
       "doeff_hy.session",
@@ -13650,16 +13628,6 @@
       "defenum",
       "defrecord",
       "defwire"
-     ]
-    },
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-hy-check"
-     ]
-    },
-    "境界 — pytest の plugin の登録": {
-     "doeff_hy.pytest_plugin": [
-      "install"
      ]
     },
     "境界 — 例外の型": {
@@ -16505,97 +16473,6 @@
    "name": "MalformedField",
    "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)",
    "決め": "ki-923c16d33551"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "<-",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "agent!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "defphase",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "defworkflow",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "gate!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "loop",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "merge!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "parallel",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "parallel_for",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "pipeline",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "random!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "time!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.macros",
-   "name": "workspace!",
-   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
   },
   {
    "package": "doeff-cluster",

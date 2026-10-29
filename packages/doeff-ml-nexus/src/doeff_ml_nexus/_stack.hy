@@ -2,7 +2,6 @@
 ;;; Provides a reference handler chain for doeff-ml-nexus programs.
 
 (require doeff_hy.macros [defk <-])
-(require doeff_docker._compose [with-handlers])
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff_core_effects [reader state writer slog-handler scheduled])
@@ -28,16 +27,15 @@
 
   (run (scheduled
     ;; slog-handler and writer keep their logs via Get/Put, so state must sit outside them.
-    (with-handlers
-      [(state)
-       (reader :env resolved-env)
-       slog-handler
-       writer
-       resolve-handler
-       write-file-handler
-       rsync-handler
-       image-push-handler
-       docker-build-handler
-       docker-run-handler
-       shell-run-handler]
-      program))))
+    ;; h1(h2(p)): the first handler is the outermost (ADR-DOE-API-001 R16).
+    ((state)
+     ((reader :env resolved-env)
+      (slog-handler
+       (writer
+        (resolve-handler
+         (write-file-handler
+          (rsync-handler
+           (image-push-handler
+            (docker-build-handler
+             (docker-run-handler
+              (shell-run-handler program))))))))))))))

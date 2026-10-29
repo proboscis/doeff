@@ -68,15 +68,14 @@
     ;; doeff-hy に残すのは effect・handler・test を書く macro と土台で、conductor の workflow の macro 13 個(旧 doeff_hy/conductor.hy)は
     ;; doeff-conductor へ、系を宣言する defsystem(旧 doeff_hy/macros.hy)は doeff-cluster へ、持ち主の package に置く。
     ;; 戻し方 = この 2 行を消し、macro を doeff-hy へ戻す(使い手の require を同じ pin で直す)。
-    "packages/doeff-conductor/src/doeff_conductor/_macros.hy"
+    "packages/doeff-conductor/src/doeff_conductor/macros.hy"
     "packages/doeff-cluster/src/doeff_cluster/shared/entry/macros.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
-    "packages/doeff-docker/src/doeff_docker/_compose.hy"
     ;; R5 の operator 裁定による増額(2026-10-04・agora-redesign #1201): 出来事を待つ
     ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。
     ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
-    "packages/doeff-events/src/doeff_events/_macros.hy"})
+    "packages/doeff-events/src/doeff_events/macros.hy"})
 
 ;; 走査から除く木(一時複製・生成物・環境)。
 (setv SCAN-SKIP-PARTS

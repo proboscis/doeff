@@ -1,6 +1,6 @@
 ;;; event-loop — 出来事を待つ係のループの macro(agora-redesign #3080・設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
 ;;;
-;;;   (require doeff-events._macros [event-loop])
+;;;   (require doeff-events.macros [event-loop])
 ;;;   (event-loop [board (! (ReadBoard))]
 ;;;     (:stop reason)          (stop board)                      ; 止めの節(必ず 1 つ)
 ;;;     (BoardMoved keys)       (! (read-board-at board keys))    ; 合図の所を読み直した盤 = 次の state
@@ -15,6 +15,8 @@
 ;;; - 待ちの部品(止めの待ち・競わせ・出来事ごとの slog)は doeff_events/_event_loop.py。展開は doeff-hy の <- と do! を
 ;;;   hy.R で直に参照する(使う側の require に頼らない)。節の本体と初期値は do! に包むので、defk の本体の ! がその場で
 ;;;   (yield …) に書き換わっても、出来事ごとに回る位置は変わらない。
+;;; - この module は名に _ を付けずに公開の境界に置く(ADR-DOE-API-001 R31 — Hy の require が module の path で macro を
+;;;   読むので、R14・R15 と同じく R5 の外の境界。card ki-d80c9c978b35 が段 1 の _macros から戻した)。
 
 (import hy)
 

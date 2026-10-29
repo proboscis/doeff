@@ -51,8 +51,8 @@ _install_light_stack()
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
-# defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)と、doeff_hy._pytest_plugin の
-# install(doeff_hy._ast_unparse の install と同じ物)は入口から出さない — 展開と plugin は `_` の path を読む(card ki-797d1e7b122b)。
+# defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)は入口から出さない — 展開は `_` の
+# path を読む(card ki-797d1e7b122b)。doeff_hy._ast_unparse の install は doeff-hy-pytest の plugin が `_` の path から読む。
 if TYPE_CHECKING:
     from doeff_hy._http import http_get as http_get
     from doeff_hy._json_lines import jsonl_lines as jsonl_lines

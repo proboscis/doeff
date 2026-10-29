@@ -32,7 +32,7 @@ Generic publish/subscribe effects for doeff.
 係のループを「状態を読む → 出来事か止めの合図を待つ → 来た物の節を回す」の 1 つの形で書く Hy の macro です。
 
 ```hy
-(require doeff-events._macros [event-loop])
+(require doeff-events.macros [event-loop])
 
 (event-loop [board Board (! (read-board))]    ; state の名・型・初期値(初期値は do! の中 — 読みは (! …) で書く)
   (:stop reason)          board                ; 止めの節(必ず 1 つ)— この値が event-loop の値

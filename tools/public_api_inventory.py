@@ -128,6 +128,11 @@ PROGRAM_HELPER = "program の helper"
 #: The forms of a function that returns a program and whose body goes past a helper's.
 HELPER_INSTALLS = "handler を被せる program を返す関数"
 HELPER_ANSWERS = "effect に答える program を返す関数"
+#: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14・R15・R31).
+MACRO_FORM = "Hy の macro"
+#: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
+CONSOLE_SCRIPT = "console script"
+RUST_EXECUTABLE = "Rust の実行 file"
 # What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
 _INSTALL_NAMES = ("WithHandler", "WithHandlerType", "with_handlers")
 _ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
@@ -1707,7 +1712,7 @@ def _macro_row(
         module=door,
         name=_display_name(name),
         kind="other",
-        form="Hy の macro",
+        form=MACRO_FORM,
         defined_at=_place_text(_code_place(macro) or Place(module.__name__)),
         reason="Hy の macro(書き方の道具)",
     )
@@ -1783,7 +1788,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
                 module="(console script)",
                 name=script,
                 kind="other",
-                form="console script",
+                form=CONSOLE_SCRIPT,
                 defined_at=_entry_location(target),
                 reason=f"命令の入口 {target}",
             )
@@ -1806,7 +1811,7 @@ def _metadata_rows(layout: PackageLayout) -> list[ExportRow]:
                 module="(実行 file)",
                 name=binary,
                 kind="other",
-                form="Rust の実行 file",
+                form=RUST_EXECUTABLE,
                 defined_at=cargo,
                 reason="maturin の bin が置く実行 file",
             )
