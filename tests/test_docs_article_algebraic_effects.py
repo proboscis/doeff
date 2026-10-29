@@ -258,8 +258,8 @@ def test_the_excerpt_check_finds_a_shortened_excerpt() -> None:
     assert excerpt_problem("b = 2\nd = 4", source) == "塊が file に無いか順が違う: 'b = 2'"
 
 
-# 記事の中に、AI が書いた・AI の agent が書いたと名乗る行を置かない(利用者 2026-10-22 13:31 JST の差し戻し
-# lt-F6VCGD0NBZ2KASSQ1A063ZJ7BX「記事内にAIで書いたと書くのは禁止」)。書き手を名乗る文の形だけを探す。
+# 記事の中に、AI が書いた・AI の agent が書いたと名乗る行を置かない(持ち主の決定 2026-10-22・差し戻し
+# lt-F6VCGD0NBZ2KASSQ1A063ZJ7BX)。書き手を名乗る文の形だけを探す。
 _AI_AUTHORSHIP = re.compile(
     r"\b(written|drafted|generated|authored)\s+(by|with)\s+(an?\s+)?(AI|LLM|agent|Claude|ChatGPT)\b"
     r"|\b(an?\s+)?(AI|LLM)(\s+agent)?\s+(wrote|drafted|generated|authored)\b",
