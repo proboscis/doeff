@@ -18,7 +18,8 @@
 (import doeff_cluster.coordinator.core.resource_policy [needs-override-due])
 (import doeff_cluster.shared.intent.due_model [DueAt])
 (import doeff_cluster.shared.intent.cluster_control [KillWorker StopWorker])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ReadCoordinator ClientLink StartWorker ReplaceWorker send-request])
+(import doeff_cluster [sim-cluster SimWorker ReadCoordinator ClientLink StartWorker ReplaceWorker]
+        doeff_cluster._sim.local [SimLink send-request])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons thirteen-beacons])
 (import tests.program_rows [SAMPLE-RUN])

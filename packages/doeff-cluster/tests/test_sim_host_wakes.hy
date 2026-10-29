@@ -16,8 +16,8 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNever])
 (import doeff_cluster.worker.intent.worker_model [WakeSet])
 (import doeff_cluster.worker.protocol.coordinator_link [RESEND-AFTER-MS])
-(import doeff_cluster.sim.local [sim-cluster SimWorker HostTruth HostTruthOf ProcessesOf PreparationsOf SimPreparation
-                                 fresh-truth host-wakes])
+(import doeff_cluster [sim-cluster SimWorker HostTruthOf ProcessesOf PreparationsOf SimPreparation]
+        doeff_cluster._sim.local [HostTruth fresh-truth host-wakes])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])
 

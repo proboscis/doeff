@@ -11,7 +11,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker PreparationsOf])
+(import doeff_cluster [sim-cluster SimWorker DrainWorker PreparationsOf])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState])
 (import doeff_cluster.shared.core.warm_rules [warm-runtime-env])

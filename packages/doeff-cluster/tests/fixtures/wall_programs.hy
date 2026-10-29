@@ -1,4 +1,4 @@
-;;; 壁の時計の sim-cluster(doeff_cluster.sim.local の wall-sim-cluster)の検(test_local_wall_clock.hy)の service と task の Program の見本。
+;;; 壁の時計の sim-cluster(doeff_cluster._sim.local の wall-sim-cluster)の検(test_local_wall_clock.hy)の service と task の Program の見本。
 ;;;
 ;;; どの Program も sim の土台で本体を包む(scheduler と時計は sim-cluster の外側が答える)。本物の待ち受けを持つ service は、土台に
 ;;; Await の答え手(await-handler)と aiohttp の待ち受けを並べる(wall-io-foundation)— 柵は Await を通さない(host_contract.SIM-PASSABLE)
@@ -20,7 +20,7 @@
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.sim.local [SharedRows])
+(import doeff_cluster [SharedRows])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])

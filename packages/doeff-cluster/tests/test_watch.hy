@@ -19,7 +19,8 @@
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged same-view])
 (import dataclasses [replace])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.sim.local [sim-cluster send-request ClientLink SimLink SimWorker ReadCoordinator DrainWorker StopCoordinator])
+(import doeff_cluster [sim-cluster ClientLink SimWorker ReadCoordinator DrainWorker StopCoordinator]
+        doeff_cluster._sim.local [send-request SimLink])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons quitters])

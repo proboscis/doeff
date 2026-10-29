@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# import 名 doeff_cluster は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+# import 名 doeff_cluster の module は Hy で書き、hy を読み込んだ process が import する。根の __init__.py は外に見せる名の
+# 入口で、遅延の import だけを持つ(ADR-DOE-API-001 R5・R15 — hy を読む前に .py の module を読む process の起動を変えない)。
 packages = ["src/doeff_cluster"]
 
 [tool.uv.sources]

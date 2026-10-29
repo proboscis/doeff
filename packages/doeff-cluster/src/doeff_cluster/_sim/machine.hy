@@ -63,9 +63,9 @@
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
                                                      CrashCoordinator Redeclare RestartService ServiceRestarted RestartRefused Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
-(import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
+(import doeff_cluster._sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
 
-;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/sim/ に在る)。
+;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/_sim/ に在る)。
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
 ;; 起き上がりを問い直す間隔・SIGKILL の後に回収を問い直す間隔(秒)。
 (val PROBE-SECONDS 0.2)

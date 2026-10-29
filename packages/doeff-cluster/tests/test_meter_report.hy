@@ -9,7 +9,7 @@
 (import doeff_core_effects.meter_effects [MeterSnapshot SecondsTotal])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.sim.local [sim-cluster ReadCoordinator])
+(import doeff_cluster [sim-cluster ReadCoordinator])
 (import doeff_cluster.shared.protocol.meter_report [report-metrics-of])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.meter_programs [records-writers silent-records-writers])

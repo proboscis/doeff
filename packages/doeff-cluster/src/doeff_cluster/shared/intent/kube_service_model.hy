@@ -1,5 +1,5 @@
 ;;; job が自分へ届く網の宛先(k8s の Service)を、YAML でなく宣言(値と effect)で作る時の型と effect(関数は持たない — 本番の答え手は
-;;; doeff_cluster.shared.protocol.kube_services の kube-services-api・模擬の答え手は doeff_cluster.sim.k8s_services の held-kube-services)。
+;;; doeff_cluster.shared.protocol.kube_services の kube-services-api・模擬の答え手は doeff_cluster._sim.k8s_services の held-kube-services)。
 ;;; この package の service(名前付きで動き続ける Program)と区別するため、k8s の Service は名に Kube を付ける。
 ;;;
 ;;;   KubeServiceType      Service の種類: CLUSTER-IP = cluster の中の宛先・LOAD-BALANCER = load balancer の実装(class で名指す)が外へ出す宛先
