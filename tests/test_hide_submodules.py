@@ -415,3 +415,42 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _check_table(repo)
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)
+
+
+def _export(module: str, name: str, defined_at: str) -> dict[str, str]:
+    return {
+        "module": f"{ROOT_NAME}.{module}",
+        "name": name,
+        "kind": "other",
+        "form": "class",
+        "defined_at": defined_at,
+        "reason": "class",
+    }
+
+
+def test_a_name_two_children_show_from_one_definition_goes_to_the_root_once() -> None:
+    """2 つの子が同じ定義の名を出し直す時は、定義の在る子から 1 度だけ入口へ足し、定義が違えば足さずにぶつかりにする。"""
+    root_dir = Path("packages") / PACKAGE / "src" / ROOT_NAME
+    values = f"packages/{PACKAGE}/src/{ROOT_NAME}/values.hy:10"
+    rows = [
+        _export("effects", "Home", values),
+        _export("values", "Home", values),
+        _export("effects", "Same", f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.hy:3"),
+        _export("values", "Same", f"packages/{PACKAGE}/src/{ROOT_NAME}/values.hy:30"),
+    ]
+    groups = {
+        (f"{ROOT_NAME}.{module}", name): "境界 — effect の値の型"
+        for module in ("effects", "values")
+        for name in ("Home", "Same")
+    }
+    children = [tool.Child(ROOT_NAME, name, root_dir) for name in ("effects", "values")]
+    fates = {
+        (f.modules, f.name): (f.fate, f.source)
+        for f in tool.decide_names(rows, children, groups, set())
+    }
+    assert fates == {
+        ((f"{ROOT_NAME}.effects",), "Home"): ("already", None),
+        ((f"{ROOT_NAME}.values",), "Home"): ("entry", f"{ROOT_NAME}._values"),
+        ((f"{ROOT_NAME}.effects",), "Same"): ("conflict", None),
+        ((f"{ROOT_NAME}.values",), "Same"): ("conflict", None),
+    }

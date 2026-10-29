@@ -1318,6 +1318,7 @@ class NameFate:
     fate: Fate
     source: str | None = None  # 入口が読む module(新しい path)
     note: str = ""
+    definition: str | None = None  # 入口へ出す名の定義の場所(目録の defined_at)
 
 
 def _table_groups(
@@ -1420,20 +1421,43 @@ def _name_fate(
         note = f"入口の {name} は別の定義({', '.join(sorted(existing))})"
         return NameFate(name, modules, kind, group, "conflict", note=note)
     source = _renamed(_preferred_module(entry_rows), child)
-    return NameFate(name, modules, kind, group, "entry", source=source)
+    [definition] = definitions
+    return NameFate(name, modules, kind, group, "entry", source=source, definition=definition)
+
+
+def _defining_first(fate: NameFate) -> tuple[bool, int, str]:
+    """同じ定義を入口へ出す子の順: 定義の在る module を持つ子、無ければ浅い module の子。"""
+    defined = cast(str, fate.definition).split(":")[0]
+    here = any(
+        defined.endswith(module.replace(".", "/") + Path(defined).suffix) for module in fate.modules
+    )
+    return (not here, min(module.count(".") for module in fate.modules), fate.modules[0])
 
 
 def _dedupe_across_children(fates: list[NameFate]) -> list[NameFate]:
-    """2 つの子が同じ名を入口へ出す時は、どちらも足さずにぶつかりにする。"""
-    counted = collections.Counter(f.name for f in fates if f.fate == "entry")
-    return [
-        NameFate(
-            f.name, f.modules, f.kind, f.group, "conflict", note="2 つ以上の子が同じ名を入口へ出す"
-        )
-        if f.fate == "entry" and counted[f.name] > 1
-        else f
-        for f in fates
-    ]
+    """2 つ以上の子が同じ名を入口へ出す時: 定義が 1 つなら定義の在る子から 1 度だけ足し(ほかの子は「入口に既に在る」)、
+    定義が違えばどれも足さずにぶつかりにする。"""
+    entry_names = {f.name for f in fates if f.fate == "entry"}
+    entries = {
+        name: [f for f in fates if f.fate == "entry" and f.name == name] for name in entry_names
+    }
+    kept = {
+        name: min(same, key=_defining_first)
+        for name, same in entries.items()
+        if len({f.definition for f in same}) == 1
+    }
+    return [_deduped(f, len(entries.get(f.name, ())), kept.get(f.name)) for f in fates]
+
+
+def _deduped(fate: NameFate, entry_count: int, kept: NameFate | None) -> NameFate:
+    """名 1 つの行き先を、同じ名を入口へ出す子の数(``entry_count``)と、足す子(``kept`` — 定義が 1 つの時)で決め直す。"""
+    if fate.fate != "entry" or entry_count == 1 or fate is kept:
+        return fate
+    if kept is not None:
+        note = f"同じ定義を {kept.modules[0]} から入口へ出す"
+        return NameFate(fate.name, fate.modules, fate.kind, fate.group, "already", note=note)
+    note = "2 つ以上の子が同じ名を入口へ出す"
+    return NameFate(fate.name, fate.modules, fate.kind, fate.group, "conflict", note=note)
 
 
 # --- 入口と移し替えの module ---
