@@ -445,6 +445,12 @@
   #((+ "early:" text)))
 
 
+(defk no-texts [ticket text]
+  {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
+  "答えの文を持たない ws の口の answer — 何も積まず、当たらなかった 1 通と同じ形で本体へ届く。"
+  #())
+
+
 (defk broken-texts [ticket text]
   {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
   "落ちる ws の口の answer — 本体の run の handler(契約の世界)を読もうとする(answer は答え手の自分の run で走るので届かない)。"
@@ -487,17 +493,19 @@
 (deftest test-a-ws-shortcut-answers-before-the-program-and-keeps-the-order-of-the-connection
   {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
   ;; marker を含む 1 通は答え手が answer で先に答え、同じ 1 通が積んだ文の列 answered と積み終えた拍を載せて本体へ届く(本体の答えは
-  ;; その後ろ)。answer が落ちた 1 通は何も積まずに answered が空のまま届き、本体がいつもどおり答える。当たらない 1 通は今のまま。
+  ;; その後ろ)。answer が落ちた 1 通と空の答えの 1 通は何も積まずに answered が空のまま届き、本体がいつもどおり答える。当たらない
+  ;; 1 通は今のまま。
   ;; 同じ接続の 1 通の順は変わらない。
-  (val shortcuts #((WsShortcut :marker "fast" :answer early-texts) (WsShortcut :marker "boom" :answer broken-texts)))
-  (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("fast1" "hi" "boom1" "bye")))
+  (val shortcuts #((WsShortcut :marker "fast" :answer early-texts) (WsShortcut :marker "boom" :answer broken-texts)
+                   (WsShortcut :marker "quiet" :answer no-texts)))
+  (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("fast1" "hi" "boom1" "quiet1" "bye")))
                                     shortcuts))
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
                                 #("text" "1" "fast1" #("early:fast1")) #("text" "1" "hi" #())
-                                #("text" "1" "boom1" #()) #("text" "1" "bye" #())
+                                #("text" "1" "boom1" #()) #("text" "1" "quiet1" #()) #("text" "1" "bye" #())
                                 #("closed" "1" 4001 "さようなら"))
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
-  (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1") #(4001 "さようなら")])
+  (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1" "echo:quiet1") #(4001 "さようなら")])
           answer))
