@@ -90,7 +90,7 @@ def probe_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.Module
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "doeff_hy_table_probe", raising=False)
     monkeypatch.delitem(sys.modules, _PROBE, raising=False)
-    monkeypatch.setattr(macros, "_runtime_do", lambda: macros.RuntimeDo(_PROBE, "do"))
+    monkeypatch.setattr(macros, "_runtime_do", lambda: macros._RuntimeDo(_PROBE, "do"))
     import doeff_hy_table_probe.table  # type: ignore[import-not-found]  # tmp_path に置いた検の部品
 
     return doeff_hy_table_probe.table
