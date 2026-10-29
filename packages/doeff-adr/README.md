@@ -214,6 +214,7 @@ A test that wants another table installs `adr_registry(specs=[spec ...])`
 around the part of the program that should read it: the inner handler answers
 first, an id missing from that list is a `KeyError` (it does not fall through
 to the process registry), and `AdrIds` answers the ids of that list only.
-`specs=[]` is an empty table, not the registry. The functions `get_adr` and
-`adr_ids` remain only as transition layers until the callers outside doeff read
-`GetAdr` and `AdrIds`; new code reads the effects.
+`specs=[]` is an empty table, not the registry. The ids are read only through
+`AdrIds` (there is no public `adr_ids` function). The function `get_adr`
+remains only as a transition layer until the callers outside doeff read
+`GetAdr`; new code reads the effects.

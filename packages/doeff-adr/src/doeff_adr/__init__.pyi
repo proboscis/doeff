@@ -23,9 +23,6 @@ from doeff_adr.registry import (
     SemgrepSpec as SemgrepSpec,
 )
 from doeff_adr.registry import (
-    adr_ids as adr_ids,
-)
-from doeff_adr.registry import (
     assert_adr_contract as assert_adr_contract,
 )
 from doeff_adr.registry import (

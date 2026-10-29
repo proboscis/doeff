@@ -2,8 +2,8 @@
 
 決め: GetAdr は依頼書 [id] の問い get-adr の答え [id](effect にする・card
 [id]・ADR-DOE-API-001 R20)。AdrIds は依頼書 [id] の答え [id]
-(effect にする・card [id]・ADR-DOE-API-001 R21)。前の関数 get_adr・adr_ids は、外の repo の呼び手を書き換えるまで
-移し替えの層として残る。
+(effect にする・card [id]・ADR-DOE-API-001 R21)。前の関数 get_adr は、外の repo の呼び手を書き換えるまで
+移し替えの層として残る。前の関数 adr_ids は外の repo の呼び手を書き換えた後に消した(本体は内側の registry._adr_ids)。
 
 deftest で使うには、project の doeff_interpreter fixture が adr_registry() を据える(doeff-adr は handler の組を選ばない —
 README の「doeff_interpreter」の節)。test の中で別の表を使う時は、program の一部に adr_registry(specs=[spec, …]) を据える:
