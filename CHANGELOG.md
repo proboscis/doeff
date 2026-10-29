@@ -20,14 +20,15 @@
   gone. Write `log = yield ReadWriterLog()` (`from doeff_core_effects import ReadWriterLog`) where you wrote
   `log = yield writer_log()`. Without `writer`, `ReadWriterLog` is an unhandled effect whose hint names
   `state()(writer(prog))`.
-- **doeff-core-effects:** `maybe`, `result`, `on_raise` and `absent_as` are handler factories, like `state`: call
-  one to get the handler, then apply that to the program. Write `maybe()(prog)` where you wrote `maybe(prog)`,
-  `result()(prog)` for `result(prog)`, `on_raise(case, …)(prog)` for `on_raise(prog, case, …)` and
+- **Breaking (doeff-core-effects):** `maybe`, `result`, `on_raise` and `absent_as` are handler factories, like
+  `state`: call one to get the handler, then apply that to the program. Write `maybe()(prog)` where you wrote
+  `maybe(prog)`, `result()(prog)` for `result(prog)`, `on_raise(case, …)(prog)` for `on_raise(prog, case, …)` and
   `absent_as(default)(prog)` for `absent_as(default, prog)`; in Hy, `((maybe) body)` and `((result) body)`. The
   handlers carry the handler marker, so they also go in `with_handlers` and `stacked_handlers`. The `on-raise` and
-  `absent-as` macros of doeff-hy expand to the new form, so code written with them does not change. The old forms
-  still give the same answers while the callers in the repos that read doeff's main are rewritten (agora card
-  ki-2caf0f53603a); they are then removed.
+  `absent-as` macros of doeff-hy expand to the new form, so code written with them does not change. The old forms,
+  which pass the program to the function, are gone: `maybe(prog)`, `result(prog)`, `on_raise(prog, case, …)` and
+  `absent_as(default, prog)` raise `TypeError`. Hy bytecode compiled from an older expansion of `absent-as` is
+  compiled again on import, since the doeff-hy bytecode guard sees that the macro changed.
 
 ## 0.8.0 — 2026-10-27
 
