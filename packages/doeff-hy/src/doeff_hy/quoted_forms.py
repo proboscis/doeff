@@ -3,7 +3,7 @@
 なぜ: 本体を ``'~body`` の quote で埋め込むと、Hy はその quote を「import のたびに model の木を 1 節ずつ組み立てる
 Python code」へ compile する。2026-09-28 の実測では、agora-controllers の手番の模擬の import の木(.pyc が無い状態で 44 秒)の
 compile のちょうど半分(22 秒)がこの quote の展開だった。本体を ``hy.repr`` した 1 本の文字列にすれば、compile は文字列の
-定数 1 つで済み、本体を読む道具(doeff_hy.sexpr・doeff_domain.introspect)が触った時だけ ``hy.read`` で読み戻す。
+定数 1 つで済み、本体を読む道具(doeff_hy.sexpr・doeff_domain._introspect)が触った時だけ ``hy.read`` で読み戻す。
 
 往復の忠実さ: ``hy.read(hy.repr(forms))`` は ``(quote forms)`` を返し、その中身は元の model と等しい(同日の実測 —
 agora-controllers と doeff の defk / defhandler / defp の本体 6,090 個で不一致 0)。位置(行と桁)は運ばない。

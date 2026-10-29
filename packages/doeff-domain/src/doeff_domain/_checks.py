@@ -1,14 +1,16 @@
-"""Opt-in conformance checks (ADR-DOE-DOMAIN-001 D7).
+"""Opt-in conformance checks (ADR-DOE-DOMAIN-001 D7) — the bodies the domain table handler answers with.
 
-Nothing here runs by default — adopting projects wire these functions as
-their own tests. doeff itself adopts them for its own packages (dogfood).
+Nothing here runs by default — adopting projects perform the check effects
+(AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects)
+in their own tests under ``domain_registry``. doeff itself adopts them for its
+own packages (dogfood).
 
 - ``assert_domain_covered`` — check (a): the union of the domain handlers'
   handled sets must be a superset of the effects the domain *introduces*
   (included vocabulary is the introducing domain's responsibility).
 - ``assert_no_orphan_effects`` — check (c): every ``EffectBase`` subclass
   defined at module level in the named packages must be introduced by some
-  registered domain. Double introduction is already impossible at
+  domain of the table. Double introduction is already impossible at
   registration time (D3).
 
 Both checks accept an explicit known-gap parameter with ratchet semantics:
@@ -19,29 +21,32 @@ import importlib
 import pkgutil
 import sys
 from collections.abc import Iterable
+from types import ModuleType
 
 from doeff import EffectBase
-from doeff_domain.introspect import handled_effects
-from doeff_domain.registry import (
+from doeff_domain._introspect import handled_effects
+from doeff_domain._registry import (
     Domain,
     DomainCheckError,
     DomainCoverageError,
+    DomainTable,
     OrphanEffectError,
-    get_domain,
-    introducing_domain,
-    registered_domains,
 )
 
 
-def assert_domain_covered(domain: Domain | str, *, known_uncovered: Iterable[type] = ()) -> None:
-    """Check (a): the domain's handlers cover every effect it introduces."""
-    resolved = get_domain(domain) if isinstance(domain, str) else domain
+def assert_domain_covered(
+    table: DomainTable, domain: Domain | str, *, known_uncovered: Iterable[type] = ()
+) -> None:
+    """Check (a): the domain's handlers cover every effect it introduces (a name is read from the table)."""
+    resolved = table.get(domain) if isinstance(domain, str) else domain
     _assert_domains_covered([resolved], tuple(known_uncovered))
 
 
-def assert_registered_domains_covered(*, known_uncovered: Iterable[type] = ()) -> None:
-    """Check (a) over every domain currently registered."""
-    _assert_domains_covered(list(registered_domains()), tuple(known_uncovered))
+def assert_registered_domains_covered(
+    table: DomainTable, *, known_uncovered: Iterable[type] = ()
+) -> None:
+    """Check (a) over every domain of the table."""
+    _assert_domains_covered(table.domains(), tuple(known_uncovered))
 
 
 def _assert_domains_covered(domains: list[Domain], known_uncovered: tuple[type, ...]) -> None:
@@ -83,22 +88,18 @@ def _assert_domains_covered(domains: list[Domain], known_uncovered: tuple[type, 
 
 
 def assert_no_orphan_effects(
-    packages: Iterable[str], *, known_orphans: Iterable[type] = ()
+    table: DomainTable, packages: Iterable[str], *, known_orphans: Iterable[type] = ()
 ) -> None:
-    """Check (c): no EffectBase subclass in the named packages lacks a domain.
+    """Check (c): no EffectBase subclass in the named packages lacks a domain of the table.
 
     ``packages`` are module or package names; packages are import-walked
     recursively. A class counts as *defined* in the module whose name equals
-    its ``__module__`` — re-exports are not counted. Import failures
-    propagate (fail loud).
+    its ``__module__`` — re-exports are not counted. A module that cannot be
+    imported fails the check loud as a DomainCheckError (its cause is the
+    import error).
     """
     defined = _effect_classes_defined_in(packages)
-    orphans: list[type] = []
-    for effect in defined:
-        try:
-            introducing_domain(effect)
-        except KeyError:
-            orphans.append(effect)
+    orphans = [effect for effect in defined if not table.introduces(effect)]
 
     known = set(known_orphans)
     unexpected = [effect for effect in orphans if effect not in known]
@@ -120,39 +121,52 @@ def assert_no_orphan_effects(
 
 
 def _effect_classes_defined_in(packages: Iterable[str]) -> list[type]:
-    module_names: list[str] = []
-    for package_name in packages:
-        root = importlib.import_module(package_name)
-        module_names.append(root.__name__)
-        if hasattr(root, "__path__"):
-            for info in pkgutil.walk_packages(
-                root.__path__, prefix=root.__name__ + ".", onerror=_reraise_walk_error
-            ):
-                module_names.append(info.name)
-
-    defined: dict[type, None] = {}
-    for module_name in module_names:
-        module = importlib.import_module(module_name)
-        for value in sorted(vars(module).values(), key=_attribute_sort_key):
-            if (
-                isinstance(value, type)
-                and issubclass(value, EffectBase)
-                and value is not EffectBase
-                and value.__module__ == module_name
-            ):
-                defined[value] = None
+    """The EffectBase subclasses defined (not re-exported) in the named modules and below — what check (c) scans."""
+    module_names = [name for package_name in packages for name in _modules_under(package_name)]
+    defined = {
+        value: None
+        for module_name in module_names
+        for value in sorted(vars(_import_for_scan(module_name)).values(), key=_attribute_sort_key)
+        if isinstance(value, type)
+        and issubclass(value, EffectBase)
+        and value is not EffectBase
+        and value.__module__ == module_name
+    }
     return list(defined)
 
 
+def _modules_under(package_name: str) -> list[str]:
+    """The named module and, for a package, every module below it (walked by import)."""
+    root = _import_for_scan(package_name)
+    if not hasattr(root, "__path__"):
+        return [root.__name__]
+    walked = pkgutil.walk_packages(
+        root.__path__, prefix=root.__name__ + ".", onerror=_reraise_walk_error
+    )
+    return [root.__name__, *(info.name for info in walked)]
+
+
+def _import_for_scan(module_name: str) -> ModuleType:
+    """Import a module the scan reads. Any failure becomes a DomainCheckError naming the module, so check (c)
+    fails with one error type (ADR-DOE-API-001 R29) — the original error stays as its cause."""
+    try:
+        return importlib.import_module(module_name)
+    except Exception as error:
+        raise DomainCheckError(
+            f"cannot import {module_name} during the orphan-effect scan (check (c)): {error!r}"
+        ) from error
+
+
 def _attribute_sort_key(value: object) -> str:
+    """Sort the module's values by class name so the scan reports in a stable order."""
     if isinstance(value, type):
         return value.__name__
     return ""
 
 
 def _reraise_walk_error(module_name: str) -> None:
-    # pkgutil.walk_packages swallows ImportError by default — fail loud instead.
+    """pkgutil.walk_packages swallows the import errors of the packages it walks by default — fail loud instead."""
     error = sys.exc_info()[1]
-    if error is not None:
-        raise error
-    raise ImportError(f"failed to import {module_name} during orphan-effect scan")
+    raise DomainCheckError(
+        f"cannot import {module_name} during the orphan-effect scan (check (c)): {error!r}"
+    ) from error

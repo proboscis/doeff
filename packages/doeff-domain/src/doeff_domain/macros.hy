@@ -27,21 +27,23 @@
 
 
 (defmacro defdomain [name #* forms]
-  "Declare a vocabulary cohesion domain and register it in the process registry.
+  "Declare a vocabulary cohesion domain and register it in the process table.
 
    (defdomain doeff-reader
      :title \"Reader vocabulary\"
      :effects [Ask]
      :includes []
      :terms [(DomainTerm :name \"ask\" :home \"pkg.effects\" :description \"...\")]
-     :handlers [reader lazy-ask]
+     :handlers [(Handles reader Ask) (Handles lazy-ask Ask Local)]
      :laws [(DomainLaw :name \"...\" :statement \"...\")]
      :adrs [\"ADR-DOE-DOMAIN-001\"]
      :docs \"...\")
 
    Binds NAME to the registered Domain value. Registration happens at import
    time of the declaring module; same-name re-registration (D2) and a second
-   introduction of an effect class (D3) raise immediately."
+   introduction of an effect class (D3) raise immediately. Programs read the
+   table through the effects of doeff_domain (GetDomain・AssertDomainCovered …)
+   under domain_registry()."
   (setv data (_pairs-to-dict forms))
   (setv unknown (sorted (lfor key (.keys data) :if (not-in key _DEFDOMAIN-KEYS) key)))
   (when unknown
@@ -50,7 +52,7 @@
   (when (not-in "title" data)
     (raise (SyntaxError "defdomain requires :title")))
   `(do
-     (import doeff_domain.registry :as _doeff-domain-registry)
+     (import doeff_domain._registry :as _doeff-domain-registry)
      (setv ~name
        (_doeff-domain-registry.register-domain
          (_doeff-domain-registry.Domain
