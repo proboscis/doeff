@@ -8,26 +8,26 @@ from collections.abc import Mapping as Mapping
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_hy.frozen import thaw_json as thaw_json
-from doeff_records.values import RecordsSchema as RecordsSchema
-from doeff_records.values import TableDecl as TableDecl
-from doeff_records.values import StreamDecl as StreamDecl
-from doeff_records.values import KeepFor as KeepFor
-from doeff_records.values import ByKeySuffix as ByKeySuffix
-from doeff_records.values import Row as Row
-from doeff_records.values import Missing as Missing
-from doeff_records.values import Conflict as Conflict
-from doeff_records.values import Refused as Refused
-from doeff_records.values import NotIndexed as NotIndexed
-from doeff_records.values import Event as Event
-from doeff_records.values import RetiredKey as RetiredKey
-from doeff_records.values import ExpectAbsent as ExpectAbsent
-from doeff_records.values import ExpectVersion as ExpectVersion
-from doeff_records.values import ExpectAny as ExpectAny
-from doeff_records.values import RowsConflict as RowsConflict
-from doeff_records.values import RowsRefused as RowsRefused
-from doeff_records.values import Written as Written
-from doeff_records.values import WrittenRows as WrittenRows
-from doeff_records.values import RememberedWrite as RememberedWrite
+from doeff_records._values import RecordsSchema as RecordsSchema
+from doeff_records._values import TableDecl as TableDecl
+from doeff_records._values import StreamDecl as StreamDecl
+from doeff_records._values import KeepFor as KeepFor
+from doeff_records._values import ByKeySuffix as ByKeySuffix
+from doeff_records._values import Row as Row
+from doeff_records._values import Missing as Missing
+from doeff_records._values import Conflict as Conflict
+from doeff_records._values import Refused as Refused
+from doeff_records._values import NotIndexed as NotIndexed
+from doeff_records._values import Event as Event
+from doeff_records._values import RetiredKey as RetiredKey
+from doeff_records._values import ExpectAbsent as ExpectAbsent
+from doeff_records._values import ExpectVersion as ExpectVersion
+from doeff_records._values import ExpectAny as ExpectAny
+from doeff_records._values import RowsConflict as RowsConflict
+from doeff_records._values import RowsRefused as RowsRefused
+from doeff_records._values import Written as Written
+from doeff_records._values import WrittenRows as WrittenRows
+from doeff_records._values import RememberedWrite as RememberedWrite
 
 def canonical_json(value: object) -> str:
     ...

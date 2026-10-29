@@ -5,14 +5,14 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff_core_effects.sql_effects import SqlParam as SqlParam
 from doeff_records.admission import key_text as key_text
-from doeff_records.values import RecordsSchema as RecordsSchema
-from doeff_records.values import RetiredKey as RetiredKey
-from doeff_records.values import KeepFor as KeepFor
-from doeff_records.values import ByKeySuffix as ByKeySuffix
-from doeff_records.values import ListCursor as ListCursor
-from doeff_records.values import FIELD_NAME_PATTERN as FIELD_NAME_PATTERN
-from doeff_records.values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
-from doeff_records.values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
+from doeff_records._values import RecordsSchema as RecordsSchema
+from doeff_records._values import RetiredKey as RetiredKey
+from doeff_records._values import KeepFor as KeepFor
+from doeff_records._values import ByKeySuffix as ByKeySuffix
+from doeff_records._values import ListCursor as ListCursor
+from doeff_records._values import FIELD_NAME_PATTERN as FIELD_NAME_PATTERN
+from doeff_records._values import SEPARATOR_PATTERN as SEPARATOR_PATTERN
+from doeff_records._values import TABLE_NAME_PATTERN as TABLE_NAME_PATTERN
 PREFIX_PATTERN: Incomplete
 RETIRED_INDEX_PATTERN: Incomplete
 TABLE_SHAPED_INDEX_PATTERN: Incomplete

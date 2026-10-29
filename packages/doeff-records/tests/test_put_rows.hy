@@ -4,8 +4,8 @@
 (require doeff-hy.macros [deftest defk val <-])
 (import collections.abc [Callable])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent ExpectAny ExpectVersion])
-(import doeff_records.effects [PutRow PutRows RowWrite])
+(import doeff_records [ExpectAbsent ExpectAny ExpectVersion])
+(import doeff_records [PutRow PutRows RowWrite])
 
 
 (defk refuses? [thunk exception]

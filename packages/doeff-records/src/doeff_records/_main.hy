@@ -1,0 +1,370 @@
+;;; 記録の service の composition root — env と Secret の file を読み、PostgreSQL の答え手・待ち受けを組んで、入口の Program
+;;; (http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = _service.hy・
+;;; 判断 = admission.hy・綴り = wire.hy・待ち受けの形 = http_server.hy)。
+;;;
+;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
+;;;   records-settings       設定の読み: 呼び手が渡す DSN の Program と env(ReadEnvironment)から、設定の値 RecordsSettings にする
+;;;   pg-url-file-dsn        単独の入口の DSN の得方: env RECORDS_PG_URL_FILE の path の file を ReadText で読み、呼び手の dsn-of で DSN にする
+;;;   records-serving        本体の設定: 表の宣言 schema と設定の値と置き場の選び(StoreChoice — PostgreSQL = PG-STORE・memory =
+;;;                          doeff_records.memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
+;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
+;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
+;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
+;;;                          印字・書きの並び(pg.writer-gates — 書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる)・PostgreSQL の
+;;;                          答え手(pooled-postgres-sql-handler — 接続の許可は scheduler の semaphore・driver の I/O だけを
+;;;                          pool の thread へ)・計算の答え手(thread-pool-compute-handler — 束の読みの行の読み解きと答えの綴りの Compute を
+;;;                          COMPUTE-WORKERS 本の pool で scheduler の thread の外で回す・ADR-DOE-RECORDS-002)の下で本体を走らせ、終われば
+;;;                          接続と pool を閉じる。索引の用意(pg.hy の頭の註)の文は別の
+;;;                          database の名 DDL-DATABASE の接続 1 本(文の上限なし — DDL-TIMEOUTS)へ流す。外側(scheduler・Await の橋・session の値の
+;;;                          置き場・時計・止めの合図)は持たない — 呼び手が自分の外側の内側に差す
+;;;   records-foundation     単独で起こす時の本番の土台の全部 = 外側(scheduler・Await の橋・session の値の置き場・async-time-handler
+;;;                          〔scheduler を塞がない時計・#880 A1〕・止めの合図 os-signal-stop-handler)+ records-connected
+;;;   serve-records-service  単独で起こす入口: records-settings(DSN は pg-url-file-dsn)→ records-serving → records-foundation の下で records-process。
+;;;                          答え = process の終わりの code
+;;;
+;;; 置き場の宣言(RecordsSchema)と接続 URL の file の綴りの読み方は呼び手の系が持つので、呼び手の系の入口がこの部品を呼ぶ:
+;;;
+;;;   (import myapp.tables [SCHEMA])
+;;;   (defk dsn-of [text] {:pre [(: text str)] :post [(: % str)]} (.strip text))
+;;;   (when (= __name__ "__main__")
+;;;     (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
+;;;
+;;; 自分の process の外側を持つ系は、records-settings と records-serving(置き場の選びを渡す)で値を作り、(records-process (fn [body] (<自分の外側>
+;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・StopRequested の答え手が要る)。
+;;;
+;;; DSN の得方は呼び手が決める: records-settings は DSN を返す Program(dsn-source)を受け、接続 URL がどこに在るか(file・cluster の Secret
+;;; など)を知らない。file から読む呼び手は (records-settings (pg-url-file-dsn dsn-of)) と書く(単独の入口 serve-records-service はこの形)。
+;;; dsn-of = 接続 URL の file の中身 → PostgreSQL の DSN の Program(file の綴りは呼び手の系ごとに違う — 例: env の 1 行 KEY=URL)。
+;;; env の読み(ReadEnvironment)と file の読み(ReadText)は呼び手が外側に置く答え手(doeff_core_effects の subprocess-handler・os-file-handler)が答える。
+;;;
+;;; 受け取る env(宣言はここ 1 点・既定の宿の literal を持たない)。名は RECORDS_ で始める — DOEFF_ で始まる名は doeff-cluster が worker の
+;;; 組む環境変数として予約し、job の宣言の :environ に置けない(doeff_cluster/runtime_env_model.hy の RESERVED-ENV-PREFIXES)ので、この service を
+;;; doeff-cluster の job として動かせるよう、以前の DOEFF_RECORDS_* から改めた(2026-10-01)。
+;;;   RECORDS_PG_URL_FILE            PostgreSQL の接続 URL の file(pg-url-file-dsn が読む — DSN を file から得る呼び手だけ必須・Secret の mount)
+;;;   RECORDS_PREFIX                 表の名の接頭辞(既定 records_ — 同じ database の別の置き場の表と混ざらない)
+;;;   RECORDS_HOST / _PORT           HTTP の口(既定 0.0.0.0 / 8875)
+;;;   RECORDS_POOL_SIZE              要求に同時に貸す接続の上限(既定 8 — 手入れの係の 1 本を足した数を開く)
+;;;   RECORDS_MAINTENANCE_SECONDS    手入れの間隔(既定 60)
+;;;   RECORDS_KEEP_CHANGES_SECONDS   変更の列に残す秒(既定 604800 = 7 日 — これより遅れた読み手は Reset で一覧から読み直す)
+;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
+;;;   RECORDS_CALLERS                一覧の読みを呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
+;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。http_server.hy の頭の註の一覧の読みの数)
+;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
+;;; CREATE INDEX CONCURRENTLY で作る(pg.hy の頭の註の「索引の用意」)。
+(require doeff-hy.macros [defhandler defk <- val])
+(require doeff-hy.record [defrecord])
+(import sys)
+(import functools)
+(import dataclasses [dataclass])
+(import collections.abc [Callable])
+(import concurrent.futures [ThreadPoolExecutor])
+(import doeff [Program EffectBase with-handlers])
+(import doeff_core_effects.handlers [await-handler state])
+(import doeff_core_effects.scheduler [Spawn scheduled])
+(import doeff_core_effects.process_effects [ReadEnvironment])
+(import doeff_core_effects.file_effects [ReadText FileFailed])
+(import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
+(import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
+(import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
+(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import doeff_time [async-time-handler])
+(import doeff_records._values [RecordsSchema])
+(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
+(import doeff_records.pg_sql [DEFAULT-PREFIX])
+(import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
+(import doeff_records._store_choice [StoreChoice StorePressure PressureUnread])
+
+(val MODULE-TAGS {:context "records" :role "entry"})
+
+(val ENV-PG-URL-FILE "RECORDS_PG_URL_FILE")
+(val ENV-PREFIX "RECORDS_PREFIX")
+(val ENV-HOST "RECORDS_HOST")
+(val ENV-PORT "RECORDS_PORT")
+(val ENV-POOL-SIZE "RECORDS_POOL_SIZE")
+(val ENV-MAINTENANCE-SECONDS "RECORDS_MAINTENANCE_SECONDS")
+(val ENV-KEEP-CHANGES-SECONDS "RECORDS_KEEP_CHANGES_SECONDS")
+(val ENV-ORIGIN-HOST "RECORDS_ORIGIN_HOST")
+(val ENV-CALLERS "RECORDS_CALLERS")
+(val ENV-HOSTNAME "HOSTNAME")
+(val DEFAULT-HOST "0.0.0.0")
+(val DEFAULT-PORT 8875)
+(val DEFAULT-POOL-SIZE 8)
+(val DEFAULT-MAINTENANCE-SECONDS 60.0)
+(val DEFAULT-KEEP-CHANGES-SECONDS 604800.0)
+;; SqlQuery に書く database の名(この service の置き場は 1 つ — 答え手の宣言と揃える)。
+(val DATABASE "records")
+;; 索引の用意(pg.hy の頭の註)が CREATE INDEX CONCURRENTLY と索引の用意の錠を流す database の名(同じ DSN の別の貸し出し)。接続は 1 本
+;; (錠は session の advisory lock — 取る文と外す文を同じ接続に届ける)。文の上限は付けない: 作る時間は表の大きさで決まり、query 用の
+;; 上限(60 秒)で切ると作りかけを残して同じ所からやり直すだけ(2026-10-18 の 13:18〜14:26 JST)。死んだ相手を見つける上限(keepalive・
+;; 送った bytes の返事を待つ上限)は query 用と同じ。
+(val DDL-DATABASE "records-ddl")
+(val DDL-TIMEOUTS (PostgresTimeouts :connect-seconds DEFAULT-TIMEOUTS.connect-seconds
+                                    :keepalive-idle-seconds DEFAULT-TIMEOUTS.keepalive-idle-seconds
+                                    :keepalive-interval-seconds DEFAULT-TIMEOUTS.keepalive-interval-seconds
+                                    :keepalive-count DEFAULT-TIMEOUTS.keepalive-count
+                                    :unacknowledged-milliseconds DEFAULT-TIMEOUTS.unacknowledged-milliseconds
+                                    :statement-milliseconds None
+                                    :idle-transaction-milliseconds DEFAULT-TIMEOUTS.idle-transaction-milliseconds))
+;; 束の読みの行の読み解きと答えの綴り(Compute — loop_work.hy の頭の註)を回す pool の thread の数。1 頁 500 行の読み解きと綴りは CPU で
+;; 40〜125 ms(ADR-DOE-RECORDS-002 の測り)— 一覧の読みは 1 秒に 7〜18 本なので、重なる大きな頁は 2 本ほど。free-threaded の Python では
+;; 1 本が core 1 つを使う(機体の core を食い尽くさない数)。足りない時は pool の列で待つだけで、scheduler の thread は塞がない。
+(val COMPUTE-WORKERS 4)
+;; 書き手の名 → 記録の handler の覚えの上限(pg-handlers-of — 本番の書き手の名は job の数ほど。越えた名は古い方から組み直す)。
+(val WRITER-HANDLERS-KEPT 256)
+;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
+(val STOP-POLL-SECONDS 0.5)
+(val DRAIN-SECONDS 0.0)
+
+
+(defrecord RecordsSettings
+  "env と Secret の file から読んだ設定の値(records-settings が作る — 土台の口 records-connected と本体の設定 records-serving の材料):
+   dsn = PostgreSQL の DSN・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
+   接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期・callers = 一覧の読みを呼び手ごとに
+   数える呼び手の job の名(RecordsServing の callers)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
+  {:check [(> (len dsn) 0) (> (len prefix) 0) (> (len origin-host) 0) (> pool-size 0)]}
+  (#^ str dsn)
+  (#^ str prefix)
+  (#^ str origin-host)
+  (#^ int pool-size)
+  (#^ HttpAddress address)
+  (#^ MaintenancePlan maintenance)
+  (setv #^ (get tuple #(str ...)) callers #()))
+
+
+;; --- env と Secret の file の読み --------------------------------------------------------------------------------------------------
+
+(defk env-text [name default]
+  {:pre [(: name str) (: default str)] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "env の文字列の値を読むため(空・未宣言 = 既定)。"
+  (<- found tuple (ReadEnvironment #(name)))
+  (val value (if found (.strip (. (get found 0) value)) ""))
+  (if (= value "") default value))
+
+
+(defk required-env [name]
+  {:pre [(: name str)] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "必須の env を読むため(無ければ起動を止める — 黙って既定へ倒さない)。"
+  (<- value str (env-text name ""))
+  (when (= value "")
+    (raise (SystemExit (.format "記録の service: env {} が要る" name))))
+  value)
+
+
+(defk env-number [name default]
+  {:pre [(: name str) (: default float)] :post [(: % float)] :tags {:context "records" :role "entry"}}
+  "env の 0 より大きい数を読むため(空・未宣言 = 既定・0 以下は起動を止める)。"
+  (<- text str (env-text name ""))
+  (when (= text "")
+    (return default))
+  (val parsed (float text))
+  (when (<= parsed 0)
+    (raise (SystemExit (.format "記録の service: env {} は 0 より大きい数(読んだ値 {})" name text))))
+  parsed)
+
+
+(defk read-secret [path]
+  {:pre [(: path str)] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "Secret の mount の file を読むため(末尾の改行を除く。読めなければ起動を止める)。"
+  (<- content (| str FileFailed) (ReadText path))
+  (when (isinstance content FileFailed)
+    (raise (SystemExit (.format "記録の service: file {} を読めない({})" path content.detail))))
+  (.strip content))
+
+
+(defk origin-host []
+  {:pre [] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "行に刻む機体の名を読むため(RECORDS_ORIGIN_HOST → HOSTNAME。どちらも無ければ起動を止める)。"
+  (<- declared str (env-text ENV-ORIGIN-HOST ""))
+  (when (!= declared "")
+    (return declared))
+  (<- hostname str (required-env ENV-HOSTNAME))
+  hostname)
+
+
+;; --- 本番の用意と土台 ----------------------------------------------------------------------------------------------------------------
+
+(defk pg-handlers-of [schema prefix host]
+  {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
+  "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
+   1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い索引(旧い形か宣言から外した表ごとの形)が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
+   serving と別の daemon の task で立てる — 用意の終わりも serving の生死も索引の作りと外しに縛られない(pg.hy の頭の註の「索引の用意」)。"
+  (<- store (prepare-records-store DATABASE DDL-DATABASE schema prefix))
+  (when store.indexes.missing
+    (print (.format "記録の service: 宣言の索引 {} 本が置き場に無い — 索引の用意の task が作る({})"
+                    (len store.indexes.missing) (.join "・" store.indexes.missing))
+           :file sys.stderr :flush True))
+  (when store.indexes.retired
+    (print (.format "記録の service: 宣言に無い索引(旧い形か宣言から外した表ごとの形) {} 本が置き場に在る — 索引の用意の task が外す({})"
+                    (len store.indexes.retired) (.join "・" store.indexes.retired))
+           :file sys.stderr :flush True))
+  (when (or store.indexes.missing store.indexes.retired)
+    (<- (Spawn (reconcile-indexes store) :daemon True)))
+  ;; 書き手の名ごとの handler は 1 度だけ組んで使い回す(handler は用意した置き場と名と機体の名の値だけを持つ — 要求ごとに組むと、組むたびに
+  ;; 節の関数と型の注釈を作り直して、1 要求の scheduler の thread の CPU を使っていた・card [id])。名は呼び手の名乗りなので、
+  ;; 覚える数に上限を置く(WRITER-HANDLERS-KEPT)。
+  ((functools.lru-cache :maxsize WRITER-HANDLERS-KEPT) (fn [writer] (pg-records-handler store writer host :gated True))))
+
+
+(defhandler printed-listening [#^ str prefix]
+  "本番の土台で、待ち受けが結んだ宛先と、表の用意が済んで答え始めた拍(RecordsPrepared)を 1 行ずつ名乗るため(使い手の土台が告知に
+   別の答えを持つなら、この handler より内側に置く)。"
+  {:tags {:context "records" :role "entry"}}
+  ;; 引数に残す理由: prefix は名乗りの行に載せる組み立ての値(Ask で読む設定ではない)。
+  (RecordsListening [address]
+    (print (.format "記録の service: {}:{} で待ち受ける(接頭辞 {}・表の用意は task)" address.host address.port prefix)
+           :file sys.stderr :flush True)
+    (resume None))
+  (RecordsPrepared [address seconds]
+    (print (.format "記録の service: 表の用意が {} 秒で済んだ — {}:{} で答える" (round seconds 1) address.host address.port)
+           :file sys.stderr :flush True)
+    (resume None)))
+
+
+(defk records-connected [settings body]
+  {:tp [T] :pre [(: settings RecordsSettings) (: body (| (get Program #(T object)) (get EffectBase T)))] :post [(: % T)]
+   :tags {:context "records" :role "entry"}}
+  "土台の口(頭の註 — 待ち受けと置き場)の下で本体を走らせるため: PostgreSQL の接続の貸し出しと pool を開き、待ち受け → 名乗り →
+   PostgreSQL の並び(外側が先)で本体を走らせ、終われば(例外でも)接続と pool を閉じる。外側(scheduler・Await の橋・session の値の
+   置き場・時計・止めの合図)は呼び手が置く。答えは本体の答え(型の引数 T — 呼び手の型検査へ本体の答えの型を運ぶ・#2893)。"
+  ;; 要求に貸す pool-size 本と、手入れの係の 1 本。pool の worker の数 = 宣言した接続の数(pooled-postgres-sql-handler の契約)。
+  ;; 接続の貸し出しは借りた時に初めて開く(作るだけでは繋がない)。索引の用意の貸し出しは別に 1 本(DDL-DATABASE — 使うのは足りない
+  ;; 索引の在る起動だけ)。答え手は database の名で分かれる(知らない名は外側へ回す)。
+  (val connections (PostgresConnections #((PostgresDatabase :name DATABASE :dsn settings.dsn)) :size (+ settings.pool-size 1)))
+  (val pool (ThreadPoolExecutor :max-workers (+ settings.pool-size 1) :thread-name-prefix "records-pg"))
+  (val ddl-connections (PostgresConnections #((PostgresDatabase :name DDL-DATABASE :dsn settings.dsn)) :size 1 :timeouts DDL-TIMEOUTS))
+  (val ddl-pool (ThreadPoolExecutor :max-workers 1 :thread-name-prefix "records-pg-ddl"))
+  (val compute-pool (ThreadPoolExecutor :max-workers COMPUTE-WORKERS :thread-name-prefix "records-compute"))
+  (try
+    ;; 書きの並び(writer-gates)は、同じ process の書きを錠の単位ごとに、接続を借りる前に 1 本ずつに並べる(pg.hy の locked-transaction)。
+    ;; 計算の答え手は束の読みの読み解きと綴りを compute-pool で回す(頭の註・ADR-DOE-RECORDS-002)。
+    (<- answer (with-handlers [aiohttp-http-server (printed-listening settings.prefix) writer-gates
+                               (pooled-postgres-sql-handler connections pool) (pooled-postgres-sql-handler ddl-connections ddl-pool)
+                               (thread-pool-compute-handler compute-pool)]
+                 body))
+    answer
+    (finally
+      (.close connections)
+      (.close ddl-connections)
+      (.shutdown pool :wait False :cancel-futures True)
+      (.shutdown ddl-pool :wait False :cancel-futures True)
+      (.shutdown compute-pool :wait False :cancel-futures True))))
+
+
+(defk records-foundation [settings body]
+  {:pre [(: settings RecordsSettings) (: body (| Program EffectBase))] :post [(: % int)] :tags {:context "records" :role "entry"}}
+  "単独で起こす時の本番の土台の全部(#834 の形)で本体(serve-records — 答え = process の終わりの code)を走らせるため。並び(外側が先):
+   scheduler → Await の橋 → session の値の置き場 → 時計 → 止めの合図 → 土台の口 records-connected(待ち受け → 名乗り → PostgreSQL)。"
+  (<- answer (scheduled (with-handlers [(await-handler) (state) (async-time-handler) os-signal-stop-handler]
+                                       (records-connected settings body))))
+  answer)
+
+
+(defk pg-url-file-dsn [dsn-of]
+  {:pre [(: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % str)] :tags {:context "records" :role "entry"}}
+  "DSN を接続 URL の file から得るため(頭の註の「DSN の得方」— 単独の入口と、file を mount する呼び手の形): env RECORDS_PG_URL_FILE の path の
+   file を ReadText で読み(env が無い・file が読めなければ起動を止める)、dsn-of(file の中身 → DSN の Program)で DSN にする。"
+  (<- url-text str (read-secret (! (required-env ENV-PG-URL-FILE))))
+  (<- dsn str (dsn-of url-text))
+  dsn)
+
+
+(defk records-settings [dsn-source]
+  {:pre [(: dsn-source (| Program EffectBase))] :post [(: % RecordsSettings)] :tags {:context "records" :role "entry"}}
+  "呼び手の DSN の Program と env を読み、設定の値を作るため(頭の註の env の一覧 — 必須が欠ければ起動を止める)。dsn-source = DSN を返す
+   Program(接続 URL がどこに在るかは呼び手が決める — file から読む呼び手は pg-url-file-dsn)。env の読みは ReadEnvironment(呼び手の外側の
+   答え手が答える)。"
+  (<- dsn str dsn-source)
+  (<- prefix str (env-text ENV-PREFIX DEFAULT-PREFIX))
+  (<- host str (origin-host))
+  (<- size float (env-number ENV-POOL-SIZE (float DEFAULT-POOL-SIZE)))
+  (<- listen-host str (env-text ENV-HOST DEFAULT-HOST))
+  (<- listen-port str (env-text ENV-PORT (str DEFAULT-PORT)))
+  (<- interval float (env-number ENV-MAINTENANCE-SECONDS DEFAULT-MAINTENANCE-SECONDS))
+  (<- keep float (env-number ENV-KEEP-CHANGES-SECONDS DEFAULT-KEEP-CHANGES-SECONDS))
+  (<- callers-text str (env-text ENV-CALLERS ""))
+  (RecordsSettings :dsn dsn :prefix prefix :origin-host host :pool-size (int size)
+                   :address (HttpAddress :host listen-host :port (int listen-port))
+                   :maintenance (MaintenancePlan :interval-seconds interval :keep-seconds keep)
+                   :callers (tuple (gfor name (.split callers-text ",") :if (.strip name) (.strip name)))))
+
+
+(defk store-reachable []
+  {:pre [] :post [(: % bool)] :tags {:context "records" :role "entry"}}
+  "/readyz の問い: PostgreSQL の置き場へ SELECT 1 を撃ち、答えが行なら True(届かない・断られた なら False)— 置き場に届くかを口の外から
+   見分けるため。"
+  (<- answer (SqlQuery DATABASE "SELECT 1" #()))
+  (isinstance answer SqlRows))
+
+
+;; /readyz の詰まりの読み(#1858): この置き場の database で錠(pg_advisory_xact_lock を含む)を待っている接続の本数と、transaction を開いた
+;; まま止まっている接続のうち最も長い秒。2026-10-01 19:4x の着地の台帳の事故では readyz が「1.0 秒の内に答えない」だけで、錠を待つ本数も
+;; 持ち主も見えなかった。
+(val PRESSURE-SQL
+  (+ "SELECT (SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
+     " WHERE NOT l.granted AND a.datname = current_database()),"
+     " (SELECT COALESCE(EXTRACT(EPOCH FROM max(now() - state_change)), 0)::float8 FROM pg_stat_activity"
+     " WHERE state IN ('idle in transaction', 'idle in transaction (aborted)') AND datname = current_database())"))
+
+
+(defk store-pressure-of-rows [answer]
+  {:pre [(: answer (| SqlRows SqlFailed SqlUnreachable))] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "entry"}}
+  "詰まりの読みの SQL の答えを型へ読むため: 1 行 2 列(本数・秒)だけを StorePressure にし、それ以外(失敗・届かない・形の外)は理由を名乗る。"
+  (match answer
+    (SqlRows :rows #(#(waiters idle)))
+      (if (and (isinstance waiters int) (not (isinstance waiters bool)) (isinstance idle #(int float)) (not (isinstance idle bool)))
+          (StorePressure :lock-waiters waiters :idle-in-transaction-max-seconds (float idle))
+          (PressureUnread :reason (.format "詰まりの読みの答えの形が違う: {!r}" answer.rows)))
+    (SqlRows) (PressureUnread :reason (.format "詰まりの読みの答えが 1 行 2 列でない: {!r}" answer.rows))
+    (SqlFailed :reason reason) (PressureUnread :reason (+ "詰まりの読みが断られた: " reason))
+    (SqlUnreachable :reason reason) (PressureUnread :reason (+ "詰まりの読みが届かない: " reason))
+    _ (PressureUnread :reason (.format "詰まりの読みの知らない答え: {!r}" answer))))
+
+
+(defk store-pressure-pg []
+  {:pre [] :post [(: % (| StorePressure PressureUnread))] :tags {:context "records" :role "entry"}}
+  "/readyz の詰まりの読み(PostgreSQL): 錠を待つ接続の本数と idle in transaction の最長の秒を 1 本の SQL で読むため(#1858)。"
+  (<- answer (SqlQuery DATABASE PRESSURE-SQL #()))
+  (! (store-pressure-of-rows answer)))
+
+
+;; PostgreSQL の置き場の選び(表の用意 pg-handlers-of・/readyz の問い store-reachable・詰まりの読み store-pressure-pg)— 単独の本番と、
+;; PostgreSQL の土台の口を差す呼び手が records-serving に渡す(答える SQL の答え手は土台の口 records-connected が置く)。
+(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable :pressure store-pressure-pg))
+
+
+(defk records-serving [schema settings choice]
+  {:pre [(: schema RecordsSchema) (: settings RecordsSettings) (: choice StoreChoice)] :post [(: % RecordsServing)]
+   :tags {:context "records" :role "entry"}}
+  "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
+   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice。
+   以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
+  (RecordsServing :address settings.address :schema schema
+                  :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
+                  :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
+                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
+                  :pressure choice.pressure :callers settings.callers
+                  ;; 土台の口 records-connected が開く計算の pool の thread の数(GET /metrics の利用率の割る数)。
+                  :compute-workers COMPUTE-WORKERS))
+
+
+(defk records-process [foundation serving]
+  {:pre [(: foundation Callable) (: serving RecordsServing)] :post [(: % int)] :tags {:context "records" :role "entry"}}
+  "記録の service の Program: 土台 foundation(本体 → 土台の下で走らせる Program — 単独の本番 = 設定を渡した records-foundation・外側を
+   持つ呼び手 = 自分の外側 + records-connected・検 = 台本の待ち受けの土台)の下で serve-records を走らせ、process の終わりの code を返すため。"
+  (<- code int (foundation (serve-records serving)))
+  code)
+
+
+(defk serve-records-service [schema dsn-of]
+  {:pre [(: schema RecordsSchema) (: dsn-of (get Callable #([str] (get Program #(str object)))))] :post [(: % int)] :tags {:context "records" :role "entry"}}
+  "記録の service を単独で起こすため: env を読んで設定の値を作り(records-settings)、本体の設定(records-serving)を単独の本番の土台
+   (records-foundation — 接続と pool は土台の口が開いて閉じる)の下で records-process に撃つ。dsn-of = 接続 URL の file の中身 → DSN の
+   Program。答え = process の終わりの code(用意の失敗は例外のまま上げる)。"
+  (<- settings RecordsSettings (records-settings (pg-url-file-dsn dsn-of)))
+  (<- serving RecordsServing (records-serving schema settings PG-STORE))
+  (<- code int (records-process (fn [body] (records-foundation settings body)) serving))
+  (print "記録の service: 止まった" :file sys.stderr :flush True)
+  code)

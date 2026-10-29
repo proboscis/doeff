@@ -9,13 +9,13 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectVersion Row Missing RowRemoved])
-(import doeff_records.effects [AppendEvent ReadEvents PutRow ReadRow ListRows])
+(import doeff_records [StreamDecl KeepFor ExpectAbsent ExpectVersion Row Missing RowRemoved])
+(import doeff_records [AppendEvent ReadEvents PutRow ReadRow ListRows])
 (import doeff_records.maintenance [SweepExpired])
 (import doeff_records.admission [key-text])
 (import doeff_records.memory :as memory)
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS PAIR-KEEP-SECONDS])
+(import doeff_records._laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS PAIR-KEEP-SECONDS])
 
 ;; 期限つきの列 pulses(60 秒)を足した宣言。
 (val PULSE-KEEP-SECONDS 60)

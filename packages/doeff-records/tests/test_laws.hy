@@ -1,8 +1,8 @@
 ;; 節 3 の手順 1 の法を、memory の handler・PostgreSQL の handler・記録の service の HTTP の口越し(memory と PostgreSQL の置き場)の
-;; 4 つの組で同じ筋書き(doeff_records.laws)で確かめる。
+;; 4 つの組で同じ筋書き(doeff_records._laws)で確かめる。
 ;; PostgreSQL は env DOEFF_RECORDS_TEST_PG_DSN が在る時だけ(無ければ skip と表示し、緑とは数えない)。
 (require doeff-hy.macros [deftest <-])
-(import doeff_records.laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
+(import doeff_records._laws [law-stale-put-conflicts law-committed-changes-appear-once-in-order law-epoch-change-resets
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
                             law-append-events-answer-like-appends-in-order law-read-batch-answers-like-each-read

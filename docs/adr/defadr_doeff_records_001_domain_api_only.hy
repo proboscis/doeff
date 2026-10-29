@@ -30,7 +30,7 @@
   :title "記録の service の生の操作(表と列を直に読み書きする操作)は cluster の外へ提供しない。外の呼び手はドメインの API だけを使う。cluster の中の形は利用者に確かめている最中で未定"
   :status "accepted"
   :scope ["packages/doeff-records/src/doeff_records/wire.hy"
-          "packages/doeff-records/src/doeff_records/service.hy"
+          "packages/doeff-records/src/doeff_records/_service.hy"
           "docs/adr/defadr_doeff_records_001_domain_api_only.hy"]
   :problem
     [(fact

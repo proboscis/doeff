@@ -2,18 +2,18 @@
   "include": [
     "packages/doeff-hy/src/doeff_hy/declarations.hy",
     "packages/doeff-hy/src/doeff_hy/declarations.pyi",
-    "packages/doeff-records/src/doeff_records/values.hy",
-    "packages/doeff-records/src/doeff_records/values.pyi",
-    "packages/doeff-records/src/doeff_records/effects.hy",
-    "packages/doeff-records/src/doeff_records/effects.pyi",
+    "packages/doeff-records/src/doeff_records/_values.hy",
+    "packages/doeff-records/src/doeff_records/_values.pyi",
+    "packages/doeff-records/src/doeff_records/_effects.hy",
+    "packages/doeff-records/src/doeff_records/_effects.pyi",
     "packages/doeff-records/src/doeff_records/admission.hy",
     "packages/doeff-records/src/doeff_records/admission.pyi",
     "packages/doeff-records/src/doeff_records/pg.hy",
     "packages/doeff-records/src/doeff_records/pg_sql.hy",
     "packages/doeff-records/src/doeff_records/pg_sql.pyi",
-    "packages/doeff-records/src/doeff_records/watching.hy",
-    "packages/doeff-records/src/doeff_records/watching.pyi",
-    "packages/doeff-records/src/doeff_records/faults.hy",
-    "packages/doeff-records/src/doeff_records/faults.pyi"
+    "packages/doeff-records/src/doeff_records/_watching.hy",
+    "packages/doeff-records/src/doeff_records/_watching.pyi",
+    "packages/doeff-records/src/doeff_records/_faults.hy",
+    "packages/doeff-records/src/doeff_records/_faults.pyi"
   ]
 }

@@ -22,7 +22,7 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler DEFAULT-TIMEOUTS])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.maintenance [PruneChanges Pruned])
-(import doeff_records.laws [MAKER])
+(import doeff_records._laws [MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables PRUNE-BATCH PRUNE-STATEMENT-MILLISECONDS])
 (import doeff_records.pg_sql [Statement prune-bound-statement prune-changes-statement UNBOUNDED-SEQ])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE postgres-connections fresh-prefix run-sql prepared-store

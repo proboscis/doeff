@@ -8,10 +8,10 @@
 (import doeff_core_effects.scheduler [scheduled HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent])
-(import doeff_records.effects [PutRow AppendEvent])
+(import doeff_records [ExpectAbsent])
+(import doeff_records [PutRow AppendEvent])
 (import doeff_records.memory [MemoryStore memory-records-handler hang-bell drop-bell])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 
 
 (defn #^ object in-store [#^ MemoryStore store program]  ; defk にできない: 検の入口で run を撃つ

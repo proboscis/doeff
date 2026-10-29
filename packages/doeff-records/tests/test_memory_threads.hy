@@ -11,10 +11,10 @@
 (import doeff_core_effects.scheduler [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectAny])
-(import doeff_records.effects [AppendEvent ReadEvents PutRow])
+(import doeff_records [StreamDecl KeepFor ExpectAbsent ExpectAny])
+(import doeff_records [AppendEvent ReadEvents PutRow])
 (import doeff_records.memory [MemoryStore memory-records-handler new-store-lock])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 
 ;; 直す前の code では、この大きさで 5 回走らせて 5 回とも赤になった(出来事 400 個のうち 168〜219 個だけ残る・変更の番号が重なる)。
 (val EVENT-COUNT 400)

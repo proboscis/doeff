@@ -4,14 +4,14 @@
 (require doeff-hy.macros [deftest defhandler defk <- val var])
 (import collections.abc [Callable])
 (import doeff [with_handlers])
-(import doeff_records.values [Event Unreachable])
+(import doeff_records [Event Unreachable])
 (import doeff_records.maintenance [ArchivedThrough MaintenanceReport PruneChanges Pruned SweepExpired Swept maintenance-tick
                                    ReadExpiredEvents ExpiredEvents ExpiredCursor RetireArchivedEvents RetiredEvents EventsArchived
                                    EventsArchiveReport])
 (import functools [partial])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.http_server [MaintenancePlan unsent-streams])
-(import doeff_records.laws [LAW-SCHEMA])
+(import doeff_records._laws [LAW-SCHEMA])
 
 
 (defhandler recorder [#^ list asked]

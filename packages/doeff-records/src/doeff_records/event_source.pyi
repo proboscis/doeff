@@ -34,24 +34,24 @@ from doeff_time import WaitWithin as WaitWithin
 from doeff_time.effects.time import GetTimeEffect as GetTimeEffect
 from doeff_time.effects.time import WaitWithinEffect as WaitWithinEffect
 from doeff_records.admission import key_text as key_text
-from doeff_records.effects import AwaitRecordsBack as AwaitRecordsBack
-from doeff_records.effects import ListRows as ListRows
-from doeff_records.effects import ReadSignalSource as ReadSignalSource
-from doeff_records.effects import ReadSourcePatience as ReadSourcePatience
-from doeff_records.effects import ReadStreamEnd as ReadStreamEnd
-from doeff_records.effects import WatchChanges as WatchChanges
-from doeff_records.effects import WatchEvents as WatchEvents
-from doeff_records.values import Changes as Changes
-from doeff_records.values import EventsMoved as EventsMoved
-from doeff_records.values import EventsQuiet as EventsQuiet
-from doeff_records.values import NotIndexed as NotIndexed
-from doeff_records.values import Page as Page
-from doeff_records.values import Reset as Reset
-from doeff_records.values import StreamEmpty as StreamEmpty
-from doeff_records.values import StreamEnd as StreamEnd
-from doeff_records.values import Unreachable as Unreachable
-from doeff_records.values import WatchCursor as WatchCursor
-from doeff_records.values import checked_table_name as checked_table_name
+from doeff_records._effects import AwaitRecordsBack as AwaitRecordsBack
+from doeff_records._effects import ListRows as ListRows
+from doeff_records._effects import ReadSignalSource as ReadSignalSource
+from doeff_records._effects import ReadSourcePatience as ReadSourcePatience
+from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
+from doeff_records._effects import WatchChanges as WatchChanges
+from doeff_records._effects import WatchEvents as WatchEvents
+from doeff_records._values import Changes as Changes
+from doeff_records._values import EventsMoved as EventsMoved
+from doeff_records._values import EventsQuiet as EventsQuiet
+from doeff_records._values import NotIndexed as NotIndexed
+from doeff_records._values import Page as Page
+from doeff_records._values import Reset as Reset
+from doeff_records._values import StreamEmpty as StreamEmpty
+from doeff_records._values import StreamEnd as StreamEnd
+from doeff_records._values import Unreachable as Unreachable
+from doeff_records._values import WatchCursor as WatchCursor
+from doeff_records._values import checked_table_name as checked_table_name
 WATCH_SECONDS: float
 
 @dataclass(frozen=True, kw_only=True)

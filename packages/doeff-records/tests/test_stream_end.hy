@@ -1,5 +1,5 @@
 ;; 列の末尾の読み ReadStreamEnd: 列の最後の出来事の番号を 1 回で答え、空の列は StreamEmpty で答える。
-;;   - 法(doeff_records.laws の law-stream-end-is-the-last-sequence)を memory・PostgreSQL・HTTP の口越し(送り方 2 つ・置き場 2 つ)で回す
+;;   - 法(doeff_records._laws の law-stream-end-is-the-last-sequence)を memory・PostgreSQL・HTTP の口越し(送り方 2 つ・置き場 2 つ)で回す
 ;;     — 空の列・積んだ後・別の列を数えない・再送で動かない・保持で一部 / 全部刈った後。
 ;;   - HTTP の口越しの読みは要求 1 つで答える(使い手の前の形 = ReadEvents の倍々の先読みと二分は、列の長さに応じて要求が増えた)。
 ;;   - 置き場に届かない時は Unreachable(memory の置き場の不達・一部の断り、HTTP の口の 503)。
@@ -10,10 +10,10 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [StreamEnd StreamEmpty Unreachable Appended])
-(import doeff_records.effects [AppendEvent ReadStreamEnd])
-(import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
-(import doeff_records.laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
+(import doeff_records [StreamEnd StreamEmpty Unreachable Appended])
+(import doeff_records [AppendEvent ReadStreamEnd])
+(import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault])
+(import doeff_records._laws [LAW-SCHEMA MAKER law-stream-end-is-the-last-sequence])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [records-server-config start-records-server])

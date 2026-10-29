@@ -27,7 +27,7 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.scheduler [Spawn Task Wait])
 (import doeff_time [Delay GetMonotonic async-time-handler])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.pg [drop-records-tables])
 (import doeff_records.http_server [records-server-config start-records-server])

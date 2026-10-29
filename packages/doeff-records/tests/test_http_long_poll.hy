@@ -18,9 +18,9 @@
 (import doeff_core_effects.http_effects [HttpRequest HttpFailed HttpFailureKind])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [GetMonotonic])
-(import doeff_records.values [Changes EventsQuiet Unreachable WatchCursor ExpectAbsent])
-(import doeff_records.effects [ListRows PutRow WatchChanges WatchEvents AppendEvent])
-(import doeff_records.laws [LawHarness MAKER as-writer late-write])
+(import doeff_records [Changes EventsQuiet Unreachable WatchCursor ExpectAbsent])
+(import doeff_records [ListRows PutRow WatchChanges WatchEvents AppendEvent])
+(import doeff_records._laws [LawHarness MAKER as-writer late-write])
 (import doeff_records.wire [WATCH-MAX-SECONDS])
 (import doeff_records.http_client [RecordsEndpoint])
 (import tests.interpreters [LawSetup])
@@ -96,7 +96,7 @@
 
 (deftest test-a-write-during-the-wait-answers-at-its-instant
   {:interpreters ["http-memory"]}
-  ;; 60 秒の待ちの 5 秒目に別の書き手が書く(laws.hy の late-write)— 5 秒で答え、待ちの要求は 1 回(上限の 25 秒の内に起きた)。
+  ;; 60 秒の待ちの 5 秒目に別の書き手が書く(_laws.hy の late-write)— 5 秒で答え、待ちの要求は 1 回(上限の 25 秒の内に起きた)。
   (<- harness (LawSetup))
   (<- cursor WatchCursor (cursor-now harness))
   (<- writer (Spawn (late-write harness)))

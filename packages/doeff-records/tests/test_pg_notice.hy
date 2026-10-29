@@ -16,9 +16,9 @@
 (import doeff_core_effects.postgres_sql [NOTICE-STATEMENT postgres-sql-handler notice-payload])
 (import doeff_time [Delay GetMonotonic WaitWithin SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.effects [ListRows PutRow WatchChanges])
-(import doeff_records.values [Changes WatchCursor ExpectAbsent Written])
-(import doeff_records.laws [LawHarness MAKER as-writer])
+(import doeff_records [ListRows PutRow WatchChanges])
+(import doeff_records [Changes WatchCursor ExpectAbsent Written])
+(import doeff_records._laws [LawHarness MAKER as-writer])
 (import tests.interpreters [LawSetup DATABASE session-dsn PG-DSN-VARIABLE pg-skip-reason postgres-connections])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))

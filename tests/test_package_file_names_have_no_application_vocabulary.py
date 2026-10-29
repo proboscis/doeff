@@ -134,7 +134,7 @@ def test_the_scan_covers_the_packages() -> None:
     # 母集団が空で緑にならない: 各 package の source・型の stub・文書・配備の材料が入っている。
     wanted = {
         "packages/doeff-cluster": ["README.md", "pyproject.toml", "src/doeff_cluster/shared/entry/cluster_foundation.hy"],
-        "packages/doeff-records": ["README.md", "pyproject.toml", "src/doeff_records/values.pyi"],
+        "packages/doeff-records": ["README.md", "pyproject.toml", "src/doeff_records/_values.pyi"],
         "packages/doeff-claude-code": ["pyproject.toml"],
     }
     for package, names in wanted.items():

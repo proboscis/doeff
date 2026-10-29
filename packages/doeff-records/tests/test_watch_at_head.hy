@@ -16,9 +16,9 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.effects [PutRow WatchChanges])
-(import doeff_records.values [Changes ExpectAbsent Reset WatchCursor])
-(import doeff_records.laws [MAKER])
+(import doeff_records [PutRow WatchChanges])
+(import doeff_records [Changes ExpectAbsent Reset WatchCursor])
+(import doeff_records._laws [MAKER])
 (import doeff_records.pg [drop-records-tables pg-records-handler])
 (import tests.interpreters [DATABASE ORIGIN-HOST fresh-prefix pg-skip-reason postgres-connections prepared-store run-sql])
 

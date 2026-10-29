@@ -14,7 +14,7 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.wire [CALLER-HEADER WRITER-HEADER list-rows-metrics])
 (import doeff_records.http_server [records-server-config start-records-server])

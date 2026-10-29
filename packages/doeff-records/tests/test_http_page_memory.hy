@@ -15,8 +15,8 @@
 (import doeff_core_effects.handlers [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler http-client-factory])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.effects [ReadEvents])
-(import doeff_records.values [Events])
+(import doeff_records [ReadEvents])
+(import doeff_records [Events])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
 
 ;; 1 頁の出来事の数と、出来事 1 つの本文の大きさ(本番の読みと同じ 1,000 件の頁・1 頁の本文が約 1.1 MiB)。

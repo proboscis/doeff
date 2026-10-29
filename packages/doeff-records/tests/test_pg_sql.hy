@@ -30,16 +30,16 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_records.values [ExpectAbsent Written])
-(import doeff_records.effects [PutRow])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records [ExpectAbsent Written])
+(import doeff_records [PutRow])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records.pg [pg-records-handler drop-records-tables])
 (import doeff_records.pg_sql [schema-statements writer-lock-key migrate-lock-key in-list changes-statement terminal-rows-statement RowExpiry
                               declared-indexes index-name table-index-name retired-index? table-shaped-index? table-field-index-name
                               ordered-index-name ordered-within-index-name former-field-index-name])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix run-sql prepared-store])
-(import doeff_records.main [store-pressure-pg])
-(import doeff_records.store_choice [StorePressure])
+(import doeff_records._main [store-pressure-pg])
+(import doeff_records._store_choice [StorePressure])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
 ;; env が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)— 無いのは立てられなかった時で、その理由を名指す。
