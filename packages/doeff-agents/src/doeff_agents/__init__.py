@@ -203,6 +203,9 @@ _LAZY_EXPORTS = {
     "driver_io_handler": "._io_handlers",
     "fake_driver_io_handler": "._io_fake",
     "recorded_spawn_handler": "._io_fake",
+    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    "account_limit_of": "._handlers.headless_codex",
+    "mcp_server_loop": "._handlers.mcp_server_loop",
 }
 
 if TYPE_CHECKING:
