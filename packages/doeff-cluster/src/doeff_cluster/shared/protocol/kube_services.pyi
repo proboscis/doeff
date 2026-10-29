@@ -28,16 +28,16 @@ APPLY_CONTENT_TYPE: str
 def service_path(service: KubeService) -> _Program[str, object]:
     ...
 
-def metadata_of(declaration: KubeService | KubeIngress) -> _Program[dict, object]:
+def _metadata_of(declaration: KubeService | KubeIngress) -> _Program[dict, object]:
     ...
 
 def service_apply_text(service: KubeService) -> _Program[str, object]:
     ...
 
-def ingress_path(ingress: KubeIngress) -> _Program[str, object]:
+def _ingress_path(ingress: KubeIngress) -> _Program[str, object]:
     ...
 
-def ingress_apply_text(ingress: KubeIngress) -> _Program[str, object]:
+def _ingress_apply_text(ingress: KubeIngress) -> _Program[str, object]:
     ...
 
 def refused(place: str, reason: str) -> _Program[KubeServiceRefused, object]:
@@ -46,6 +46,6 @@ def refused(place: str, reason: str) -> _Program[KubeServiceRefused, object]:
 def outcome_of_answer(place: str, answer: HttpResponse | HttpFailed) -> _Program[KubeServiceOutcome, object]:
     ...
 
-def applied_object(place: str, path: str, body: str) -> _Program[KubeServiceOutcome, object]:
+def _applied_object(place: str, path: str, body: str) -> _Program[KubeServiceOutcome, object]:
     ...
 kube_services_api: _Handler
