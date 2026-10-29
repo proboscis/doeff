@@ -19737,21 +19737,21 @@
    "package": "doeff-effect-analyzer",
    "module": "doeff_effect_analyzer.program_effects",
    "name": "SuppliedDeclaration",
-   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、この行は対症 — submodule を _ へ移す段 1 の card と、外が使う 14 名の答えで消える",
    "決め": "ki-827dc43fa730"
   },
   {
    "package": "doeff-effect-analyzer",
    "module": "doeff_effect_analyzer.program_effects",
    "name": "declared_builders",
-   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、この行は対症 — submodule を _ へ移す段 1 の card と、外が使う 14 名の答えで消える",
    "決め": "ki-827dc43fa730"
   },
   {
    "package": "doeff-effect-analyzer",
    "module": "doeff_effect_analyzer.program_effects",
    "name": "supplied_declarations",
-   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、この行は対症 — submodule を _ へ移す段 1 の card と、外が使う 14 名の答えで消える",
    "決め": "ki-827dc43fa730"
   }
  ]
