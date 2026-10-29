@@ -1,6 +1,6 @@
 """検の call の間の process の木の CPU 秒 — pytest の process と、その子孫の process の CPU 秒(user+sys)の和を測る
 (agora-redesign card ki-ef6d57782313)。印ごとの壁の時計の上限(``doeff_test_call_budget_by_marker``)の代わりに、この値で判じると
-宣言した検(``budget.declare_process_tree_cpu``)だけが使う。
+宣言した検(``doeff_hy_pytest.declare_process_tree_cpu``)だけが使う。
 
 何のためにあるか: 印の付いた検(real_world)は壁の時計で判じる。重さが子 process と外の待ちに在り、process の CPU 秒
 (``time.process_time``)には出ないため(card ki-f35bb95eddda)。ところが重さが子 process の CPU に在る検(型検査の道具を子で撃つ検
