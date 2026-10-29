@@ -6,8 +6,8 @@
 ;;; stop-signal)は effect の module ごとに 1 domain、Absent / Raise は束ねの
 ;;; 境目の受け手(maybe / result / on-raise / absent-as / absent-raises)で 1 domain。
 ;;;
-;;; - 生 Python handler(installer / factory)には handles() を後付け注釈する
-;;;   (core-effects は編集しない — D5)。
+;;; - 生 Python handler(installer / factory)は :handlers に Handles(handler, effect …) で宣言する
+;;;   (core-effects は編集せず、その handler に何も付けない — D5)。
 ;;; - defhandler 製 factory(http / memo)は注釈せずそのまま列挙し、
 ;;;   __doeff_body__ からの二層導出(D6)を dogfood する。
 ;;; - このモジュールは doeff-domain の中で唯一 doeff-core-effects に依存して
@@ -15,8 +15,7 @@
 
 (require doeff-domain.macros [defdomain])
 
-(import doeff_domain.registry [DomainLaw DomainTerm])
-(import doeff_domain.introspect [handles])
+(import doeff_domain [DomainLaw DomainTerm Handles])
 
 (import doeff_core_effects [Ask Get Put Local Listen Await Try WriterTellEffect ReadWriterLog SlogEffect])
 (import doeff_core_effects.http-effects [HttpRequest])
@@ -106,31 +105,11 @@
 (import doeff_core_effects [seeded-random-handler])
 
 
-;; --- 生 Python handler への後付け注釈(D5)。注釈は「処理に参加する宣言」で
-;; あり全域性の保証ではない。実態照合は E2/E3 の SEDA が担う。
-((handles Ask) reader)
-((handles Ask) env-var-ask)
-((handles Ask Local) lazy-ask)
-((handles Get Put) state)
-((handles WriterTellEffect ReadWriterLog) writer)
-((handles SlogEffect) slog-handler)
-((handles SlogEffect) slog-discard-handler)
-((handles Try) try-handler)
-((handles Local) local-handler)
-((handles Listen) listen-handler)
-((handles Await) await-handler)
-((handles CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect) cache-handler)
-((handles Spawn TaskCompleted Gather Wait Cancel Discard Race
-          CreatePromise CompletePromise FailPromise
-          CreateSemaphore AcquireSemaphore ReleaseSemaphore
-          CreateExternalPromise SchedulerIntrospection) scheduled)
-;; Absent / Raise の受け手は束ねの境目の handler を返す工場(呼ぶと scope を包む handler が返る — ADR-DOE-API-001 R6)。
-;; BoundAbsent は Absent の子で、印を見て再開し分けるのは absent-as だけ — ほかの受け手には普通の Absent。
-((handles Absent) maybe)
-((handles Absent) absent-raises)
-((handles Absent BoundAbsent) absent-as)
-((handles Raise) result)
-((handles Raise) on-raise)
+;; --- 生 Python handler の宣言(D5)。節を読めない handler(installer / factory)は、domain の :handlers に
+;; Handles(handler, effect …) で置く — 宣言は domain の側に在り、core-effects の handler に何も付けない(関数 handles() の
+;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R23・card ki-03a7f0af2b64)。宣言は「処理に参加する宣言」であり
+;; 全域性の保証ではない。lazy-ask は doeff-reader と doeff-scope の 2 つで同じ宣言を置く。
+(setv _lazy-ask-handles (Handles lazy-ask Ask Local))
 
 
 (defdomain doeff-reader
@@ -139,7 +118,7 @@
   :terms [(DomainTerm :name "Ask"
                       :home "doeff_core_effects._effects"
                       :description "環境キー照会の正典 effect")]
-  :handlers [reader lazy-ask env-var-ask]
+  :handlers [(Handles reader Ask) _lazy-ask-handles (Handles env-var-ask Ask)]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "reader / lazy_ask / env_var_ask が被覆する。lazy_ask は Local も処理する(doeff-scope 参照)。")
 
@@ -147,7 +126,7 @@
 (defdomain doeff-state
   :title "State 語彙 — 可変状態の Get/Put"
   :effects [Get Put]
-  :handlers [state]
+  :handlers [(Handles state Get Put)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
@@ -157,7 +136,7 @@
   :terms [(DomainTerm :name "Tell"
                       :home "doeff_core_effects._effects"
                       :description "WriterTellEffect の正典コンストラクタ")]
-  :handlers [writer]
+  :handlers [(Handles writer WriterTellEffect ReadWriterLog)]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-001"])
 
 
@@ -167,7 +146,7 @@
   :terms [(DomainTerm :name "slog"
                       :home "doeff_core_effects._effects"
                       :description "SlogEffect の正典コンストラクタ")]
-  :handlers [slog-handler slog-discard-handler]
+  :handlers [(Handles slog-handler SlogEffect) (Handles slog-discard-handler SlogEffect)]
   :laws [(DomainLaw :name "slog-tell-types-disjoint"
                     :statement "wire_type(slog) = SlogEffect and wire_type(Tell) = WriterTellEffect and SlogEffect is_not WriterTellEffect"
                     :counterexamples ["writer() が slog の出力を collect する / slog_handler が Tell を consume する(旧 default_interpreter の実態)"])]
@@ -177,7 +156,7 @@
 (defdomain doeff-error
   :title "Error 語彙 — Try による Ok/Err 化"
   :effects [Try]
-  :handlers [try-handler]
+  :handlers [(Handles try-handler Try)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
@@ -185,7 +164,7 @@
   :title "Scoped env 語彙 — Local による環境の局所上書き"
   :effects [Local]
   :includes [doeff-reader]
-  :handlers [local-handler lazy-ask]
+  :handlers [(Handles local-handler Local) _lazy-ask-handles]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "Local は Ask 語彙(doeff-reader)を参照して意味を持つ — includes は参照合成であり導入ではない(D3)。")
 
@@ -193,14 +172,14 @@
 (defdomain doeff-listen
   :title "Listen 語彙 — effect の値フロー収集(tee)"
   :effects [Listen]
-  :handlers [listen-handler]
+  :handlers [(Handles listen-handler Listen)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
 (defdomain doeff-await
   :title "Async bridge 語彙 — coroutine の Await"
   :effects [Await]
-  :handlers [await-handler]
+  :handlers [(Handles await-handler Await)]
   :adrs ["ADR-DOE-DOMAIN-001"])
 
 
@@ -210,7 +189,11 @@
             CreatePromise CompletePromise FailPromise
             CreateSemaphore AcquireSemaphore ReleaseSemaphore
             CreateExternalPromise SchedulerIntrospection]
-  :handlers [scheduled]
+  :handlers [(Handles scheduled
+                      Spawn TaskCompleted Gather Wait Cancel Discard Race
+                      CreatePromise CompletePromise FailPromise
+                      CreateSemaphore AcquireSemaphore ReleaseSemaphore
+                      CreateExternalPromise SchedulerIntrospection)]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "scheduled が単一の実行基盤 prompt として全 scheduler effect を被覆する。")
 
@@ -236,9 +219,9 @@
 (defdomain doeff-cache
   :title "Cache 語彙 — 内容アドレスの永続キャッシュ"
   :effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect]
-  :handlers [cache-handler]
+  :handlers [(Handles cache-handler CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "4 effect 全てを cache-handler が被覆する(handles 後付け注釈)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により CacheDeleteEffect 分岐が実装され解消済み。")
+  :docs "4 effect 全てを cache-handler が被覆する(Handles の宣言)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により CacheDeleteEffect 分岐が実装され解消済み。")
 
 
 (defdomain doeff-outcome
@@ -247,7 +230,10 @@
   :terms [(DomainTerm :name "open_bind"
                       :home "doeff_core_effects._outcomes"
                       :description "<- と ! が宣言に従って答えを開き、不在を Absent・失敗を Raise にして出す 1 点")]
-  :handlers [maybe absent-raises absent-as result on-raise]
+  ;; Absent / Raise の受け手は束ねの境目の handler を返す工場(呼ぶと scope を包む handler が返る — ADR-DOE-API-001 R6)。
+  ;; BoundAbsent は Absent の子で、印を見て再開し分けるのは absent-as だけ — ほかの受け手には普通の Absent。
+  :handlers [(Handles maybe Absent) (Handles absent-raises Absent) (Handles absent-as Absent BoundAbsent)
+             (Handles result Raise) (Handles on-raise Raise)]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-003"]
   :docs "受け手は束ねの境目の handler を返す工場で、どれも再開しない(absent-as が自分の字面の BoundAbsent を既定値で再開するのだけが例外)。maybe は Absent を Nothing に、absent-raises は Absent を Raise に、result は Raise を Err に、on-raise は型の合う Raise を業務の答えに畳む。")
 
@@ -396,3 +382,19 @@
   :handlers [os-random-handler seeded-random-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
   :docs "os-random-handler(本物・os.urandom)と seeded-random-handler(I/O なし・種から決まる)が答える。")
+
+
+;; VM の数と switch の effect(card ki-27e8ea225b62 が doeff_vm の関数から effect にした — 宣言が無く、検 (c) が 2026-10-29 の
+;; 日次の検で赤だった)。vm_probe_handler は生 Python の handler で節を読めないので Handles で宣言する(card ki-03a7f0af2b64)。
+(import doeff_core_effects [ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
+                            SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled vm-probe-handler])
+
+(defdomain doeff-vm-probe
+  :title "VM probe 語彙 — doeff-vm の数を読み switch を替える"
+  :effects [ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
+            SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled]
+  :handlers [(Handles vm-probe-handler
+                      ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
+                      SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled)]
+  :adrs ["ADR-DOE-DOMAIN-001"]
+  :docs "vm-probe-handler(この process の VM に問う・状態を持たない)が 7 effect 全てに答える。")

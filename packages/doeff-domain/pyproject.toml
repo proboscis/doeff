@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The dogfood declaration module (doeff_domain.core_effects_domains) is the
+# The dogfood declaration module (doeff_domain._core_effects_domains) is the
 # ONLY part of this package allowed to depend on doeff-core-effects
 # (ADR-DOE-DOMAIN-001 D1, one-way).
 # 検 assert-no-orphan-effects は doeff-core-effects の module を全部 import するので、任意の依存(extra)の module

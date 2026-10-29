@@ -1,8 +1,13 @@
-"""handles annotation and two-layer handled-effects derivation (ADR-DOE-DOMAIN-001 D5/D6).
+"""Handles declarations and two-layer handled-effects derivation (ADR-DOE-DOMAIN-001 D5/D6).
 
-Layer 1 — annotation: ``handles(*effect_classes)`` sets ``__doeff_handles__``
-on the target. This is the opt-in path for raw Python handlers/factories and
-can be applied post-hoc to objects owned by other packages.
+Layer 1 — declaration: a domain lists a raw Python handler/factory as
+``Handles(handler, *effect_classes)`` in its ``handlers``. This is the opt-in
+path for raw handlers, and it declares handlers owned by other packages
+without touching them. A handler that carries its own ``__doeff_handles__``
+mark (the core's installers set it) is read from that mark. The function
+``handles()`` that set the mark post-hoc on the target was made this type
+(ADR-DOE-API-001 R23 — card ki-03a7f0af2b64: neither a handler factory (R3)
+nor a program helper (R18), so it became a value, as R19 did for check).
 
 Layer 2 — structure: objects produced by doeff-hy's ``defhandler`` carry
 ``__doeff_body__``, the quoted clause list. The handled set is derived from
@@ -21,11 +26,12 @@ raises — a clause that cannot be resolved must never be silently dropped.
 
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 import hy
 
 from doeff import EffectBase
-from doeff_domain.registry import DomainCheckError, DomainDefinitionError
+from doeff_domain._registry import DomainCheckError, DomainDefinitionError
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"
@@ -33,47 +39,52 @@ BODY_ATTRIBUTE = "__doeff_body__"
 # (doeff-hy handle.hy の _extract-lazy-clauses)。session = (session val|var 名 式)
 # (ADR-DOE-HY-006)、lazy / lazy-val / lazy-var = 旧い形(_is-lazy-clause)。
 # quoted body は書かれたままの Symbol を保持するが、mangle 済み表記も安全側で含める。
-_LAZY_CLAUSE_HEADS = frozenset(
-    {"session", "lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"}
-)
+_LAZY_CLAUSE_HEADS = frozenset({"session", "lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"})
 
 
-def handles(*effect_classes: type):
-    """Annotate a raw handler (or handler factory) with its handled effect classes.
+@dataclass(frozen=True, init=False)
+class Handles:
+    """A domain's handler entry that declares the effect classes the handler answers (D5).
 
-    Sets ``__doeff_handles__`` on the target and returns it — nothing else
-    (D5). Usable as a decorator or applied post-hoc:
-    ``handles(Ask, Local)(lazy_ask)``.
+    For raw Python handlers and factories, whose clauses cannot be read: the
+    domain lists ``Handles(lazy_ask, Ask, Local)`` in its ``handlers``. The
+    declaration lives in the domain, so a handler owned by another package is
+    declared without setting anything on it. A participation declaration, not
+    a totality guarantee.
     """
-    if not effect_classes:
-        raise DomainDefinitionError("handles() requires at least one effect class")
-    for effect in effect_classes:
-        if not isinstance(effect, type) or not issubclass(effect, EffectBase):
-            raise DomainDefinitionError(
-                f"handles() arguments must be EffectBase subclasses, got {effect!r}"
-            )
 
-    def apply(handler):
-        setattr(handler, HANDLES_ATTRIBUTE, tuple(effect_classes))
-        return handler
+    handler: object
+    effects: tuple[type, ...]
 
-    return apply
+    def __init__(self, handler: object, *effects: type) -> None:
+        if not effects:
+            raise DomainDefinitionError("Handles(handler, …) requires at least one effect class")
+        for effect in effects:
+            if not isinstance(effect, type) or not issubclass(effect, EffectBase):
+                raise DomainDefinitionError(
+                    f"Handles(handler, …) effects must be EffectBase subclasses, got {effect!r}"
+                )
+        object.__setattr__(self, "handler", handler)
+        object.__setattr__(self, "effects", tuple(effects))
 
 
 def handled_effects(handler, *, vocabulary: Iterable[type] = ()) -> frozenset[type]:
-    """Derive the set of effect classes a handler declares to handle (D6).
+    """Derive the set of effect classes a domain's handler entry declares to handle (D6).
 
-    ``vocabulary`` is the fallback resolution context — normally the effects
-    of the domain the handler is checked against.
+    The answer of the effect HandledEffects. ``vocabulary`` is the fallback
+    resolution context — normally the effects of the domain the handler is
+    checked against.
     """
+    if isinstance(handler, Handles):
+        return frozenset(handler.effects)
     if hasattr(handler, HANDLES_ATTRIBUTE):
         return _effects_from_annotation(handler)
     if hasattr(handler, BODY_ATTRIBUTE):
         return _effects_from_defhandler_body(handler, tuple(vocabulary))
     raise DomainCheckError(
-        f"cannot determine handled effects for {_handler_label(handler)}: it has "
-        f"neither a {HANDLES_ATTRIBUTE} annotation (use doeff_domain.handles(...)) "
-        f"nor {BODY_ATTRIBUTE} clause data (defhandler product)"
+        f"cannot determine handled effects for {_handler_label(handler)}: it is not "
+        f"declared with doeff_domain.Handles(handler, …) and has neither a "
+        f"{HANDLES_ATTRIBUTE} mark nor {BODY_ATTRIBUTE} clause data (defhandler product)"
     )
 
 

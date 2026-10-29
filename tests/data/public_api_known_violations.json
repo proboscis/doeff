@@ -12542,121 +12542,33 @@
    }
   },
   "doeff-domain": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — Hy の macro": {
      "(submodule)": [
-      "doeff_domain.checks",
-      "doeff_domain.core_effects_domains",
-      "doeff_domain.introspect",
-      "doeff_domain.macros",
-      "doeff_domain.registry"
-     ],
-     "doeff_domain": [
-      "BODY_ATTRIBUTE",
-      "Domain",
-      "DomainCheckError",
-      "DomainCoverageError",
-      "DomainDefinitionError",
-      "DomainError",
-      "DomainLaw",
-      "DomainRegistrationError",
-      "DomainTerm",
-      "DuplicateDomainNameError",
-      "DuplicateEffectIntroductionError",
-      "HANDLES_ATTRIBUTE",
-      "OrphanEffectError",
-      "assert_domain_covered",
-      "assert_no_orphan_effects",
-      "assert_registered_domains_covered",
-      "clear_registry",
-      "domain_names",
-      "get_domain",
-      "handled_effects",
-      "handles",
-      "introducing_domain",
-      "isolated_registry",
-      "register_domain",
-      "registered_domains"
-     ],
-     "doeff_domain.checks": [
-      "Domain",
-      "DomainCheckError",
-      "DomainCoverageError",
-      "OrphanEffectError",
-      "assert_domain_covered",
-      "assert_no_orphan_effects",
-      "assert_registered_domains_covered",
-      "get_domain",
-      "handled_effects",
-      "introducing_domain",
-      "registered_domains"
-     ],
-     "doeff_domain.core_effects_domains": [
-      "DomainLaw",
-      "DomainTerm",
-      "doeff_await",
-      "doeff_cache",
-      "doeff_channel",
-      "doeff_compute",
-      "doeff_error",
-      "doeff_file",
-      "doeff_heap",
-      "doeff_http",
-      "doeff_http_server",
-      "doeff_latest",
-      "doeff_listen",
-      "doeff_memo",
-      "doeff_meter",
-      "doeff_outcome",
-      "doeff_proc_table",
-      "doeff_process",
-      "doeff_process_exit",
-      "doeff_random",
-      "doeff_reader",
-      "doeff_scheduler",
-      "doeff_scope",
-      "doeff_slog",
-      "doeff_sql",
-      "doeff_stack_dump",
-      "doeff_state",
-      "doeff_step_tally",
-      "doeff_stop_signal",
-      "doeff_warm_process",
-      "doeff_writer",
-      "doeff_ws_client",
-      "handles"
-     ],
-     "doeff_domain.introspect": [
-      "BODY_ATTRIBUTE",
-      "DomainCheckError",
-      "DomainDefinitionError",
-      "HANDLES_ATTRIBUTE",
-      "handled_effects",
-      "handles"
+      "doeff_domain.macros"
      ],
      "doeff_domain.macros": [
       "defdomain"
-     ],
-     "doeff_domain.registry": [
+     ]
+    },
+    "境界 — effect の値の型": {
+     "doeff_domain": [
       "Domain",
+      "DomainLaw",
+      "DomainTerm"
+     ]
+    },
+    "境界 — 例外の型": {
+     "doeff_domain": [
       "DomainCheckError",
       "DomainCoverageError",
       "DomainDefinitionError",
       "DomainError",
-      "DomainLaw",
       "DomainRegistrationError",
-      "DomainTerm",
       "DuplicateDomainNameError",
       "DuplicateEffectIntroductionError",
-      "OrphanEffectError",
-      "clear_registry",
-      "domain_names",
-      "get_domain",
-      "introducing_domain",
-      "isolated_registry",
-      "register_domain",
-      "registered_domains"
+      "OrphanEffectError"
      ]
     }
    }
@@ -19719,6 +19631,13 @@
    "name": "ReusedThreads",
    "訳": "塞ぐ呼びを scheduler の外で回す Executor(空いた thread を使い回す — 表に在る ThreadPerCall と同じ土台の資源の係で、effect でも handler でもない)。postgres-sql-handler の DRIVER-THREADS と、取り消しの test の Executor の殻が使う。commit c83155f55(card ki-8fc4f9017572)が表を直さずに足した — 依頼 lt-8QEEZEZDFMDZWA38NTYHR9NERA が doeff main b73544311 の目録で見つけた。submodule offloaded_call は移し替えの module で、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
    "決め": "ki-8fc4f9017572"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
+   "name": "Handles",
+   "訳": "domain の handlers に置く、生 Python の handler が答える effect の宣言の型(effect RegisterDomain の値 Domain の欄の値 — R2 の effect の値の型)。前の関数 handles() は R3 の工場でも R18 の helper でもない import の時の宣言なので、ADR-DOE-API-001 R23 で R19 と同じく型にした(依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV)。目録が R2 の型を許す物と数えるまでは、ここに置く(R12)",
+   "決め": "ki-03a7f0af2b64"
   }
  ]
 }
