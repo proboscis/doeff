@@ -34,6 +34,13 @@
 ;;; 故障の口の当たる回数(faults.StoreFault.times)は当たるたびに 1 使い、尽きた故障は列から外れる(memory-spend-fault)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
+;;; 書きの控え(card ki-3876dadb767c): 置き場は確定した書きごとに、書き手と書いた欄を控える — 行の書きの変更 1 つごとに WriteNote(書き手の名と、
+;;; 判定にかけた差分の欄の名 — admission.judged-diff)を変更の番号で(written-by)、積んだ出来事 1 つごとに積んだ時の変更の番号の頭を出来事の
+;;; 番号で(appended-at-head — 変更と出来事は別の番号で数えるので、確定の順は対でしか決まらない)。置き場の外の読み手(検)は、変更の列と
+;;; 出来事の列にこの 2 つを添えて、誰がどの欄をどの順に書いたかを置き場の持ち主の側から読む(変更の値 RowChanged.value は差分を重ねた後の
+;;; 行の全部で、書いた欄は値からは分からない)。PostgreSQL の置き場は行の今の書き手を state_rows の updated_by に持つ(変更ごとの控えは持たない)。
+;;; 控えは控えた物と一緒に置き場を去る(変更の刈りと版の更新は変更の控えを・出来事の回収は出来事の控えを外す)。保持の刈りの RowRemoved は
+;;; 書き手を持たないので控えない。
 ;;;
 ;;; 置き場は thread の間で共有してよい(書き手の thread と実況の読みの thread が同じ MemoryStore を使う — この系の Python は GIL の無い
 ;;; free-threaded)。置き場の不変条件(列・番号・索引)の持ち主は MemoryStore なので、錠(MemoryStore.lock・RLock)も置き場が持ち、
@@ -75,7 +82,7 @@
                                    RetireArchivedEvents RetiredEvents])
 (import doeff_records._store_choice [StoreChoice])
 (import functools [partial])
-(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
+(import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append judged-diff
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
                                  listed-row key-text canonical-json
                                  next-watch-sequence
@@ -113,6 +120,13 @@
   #^ str stream
   #^ str group
   #^ int last-at)
+
+
+(defrecord WriteNote
+  "行の書きの変更 1 つの控え(頭の註の「書きの控え」): writer = 書いた書き手の名(handler を組む時の writer)・fields = 書いた欄の名(判定に
+   かけた差分の欄 — admission.judged-diff・名の順)。"
+  #^ str writer
+  #^ (get tuple #(str ...)) fields)
 
 
 (deff new-store-lock []  ; defk にできない: 置き場を同期に組む呼び(MemoryStore の組み立てと、pickle・copy から戻す所が呼ぶ — 錠は thread の間の取り決めで effect にならない)
@@ -175,7 +189,11 @@
           ;; 索引(heap — 項は #(外してよい刻 積んだ順 鍵))。頭の註の「行の書きの冪等キー」。
           self.write-keys {}
           self.write-remembered-at {}
-          self.write-forgets []))
+          self.write-forgets []
+          ;; 書きの控え(頭の註の「書きの控え」— card ki-3876dadb767c): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
+          ;; 変更の番号の頭。
+          self.written-by {}
+          self.appended-at-head {}))
   ;; 錠と呼び鈴は置き場の中身ではなく、この process の thread と実行の間の取り決め — pickle と copy は錠と呼び鈴を除いた中身だけを運び、
   ;; 戻した側で新しい錠と空の呼び鈴を作る(置き場を含む値を pickle する使い手 — worker の結果の file・coordinator の状態 — を壊さないため。
   ;; 呼び鈴は掛けた実行の中でしか意味を持たない)。
@@ -191,7 +209,7 @@
     {:pre [(: self MemoryStore) (: memo dict)] :post [(: % MemoryStore)] :tags {:context "records" :role "foundation"}}
     "置き場の写しを作るため(使い手の模擬の検が、種を置いた置き場を検ごとに写す — 写しへの書きは元の置き場に届かない)。書き換える
      入れ物だけを写し、中身の値は共有する: 表 → 鍵 → 置き場の行の 2 段の dict・変更の列と刻・出来事の列と冪等キーの引き・消した鍵の覚え・
-     期限の索引は写す。行 Row・置き場の行 StoredRow・変更・出来事・期限の項は作った後に変えない値(書きは新しい値で置き換える)なので
+     期限の索引・書きの控えは写す。行 Row・置き場の行 StoredRow・変更・出来事・期限の項は作った後に変えない値(書きは新しい値で置き換える)なので
      辿らない — 5 万行の置き場で行ごとに写しを作らない(#2670 根 E の (a))。組 StoredGroup は出来事を書き足し最後の刻を
      進めるので組ごとに写す。錠と呼び鈴は運ばず新しく作る(__getstate__ / __setstate__ と同じ取り決め)。"
     (setv copied (.__new__ MemoryStore MemoryStore))
@@ -200,7 +218,8 @@
     (setv (get state "rows") (dfor [table held] (.items self.rows) table (dict held)))
     (for [name #("changes" "events" "expiry" "key_forgets" "write_forgets")]
       (setv (get state name) (list (get state name))))
-    (for [name #("changed_at" "by_idempotency" "retired_keys" "remembered_at" "write_keys" "write_remembered_at")]
+    (for [name #("changed_at" "by_idempotency" "retired_keys" "remembered_at" "write_keys" "write_remembered_at" "written_by"
+                 "appended_at_head")]
       (setv (get state name) (dict (get state name))))
     (setv groups {})
     (for [[slot group] (.items self.groups)]
@@ -419,6 +438,7 @@
   (setv stored (.pop (get store.rows table) text))
   (+= store.head 1)
   (setv (get store.changed-at store.head) now-ms)
+  ;; 保持の刈りの変更は書き手を持たないので、書きの控えを置かない(頭の註の「書きの控え」)。
   (.append store.changes (RowRemoved table stored.row.key store.head))
   None)
 
@@ -476,7 +496,8 @@
    (PostgreSQL の鍵だけの表の ON CONFLICT DO NOTHING と同じ)。列は番号の順なので、1 つずつ番号で二分探索して外す。列は差し替える
    (写しは 1 回の C の複写 — 錠の外で前の列を読んでいる読み手の走査を壊さないため。前の形も差し替えていた)。"
   (for [event events]
-    (.pop store.by-idempotency #(event.stream event.idempotency-key) None))
+    (.pop store.by-idempotency #(event.stream event.idempotency-key) None)
+    (.pop store.appended-at-head event.sequence None))
   (settle-departed-keys store events now-ms)
   (setv kept (list store.events))
   (for [sequence (sorted (gfor event events event.sequence) :reverse True)]
@@ -546,8 +567,9 @@
 
 
 (defn #^ Written memory-store-row [#^ MemoryStore store #^ str table #^ tuple key #^ (| Row None) current #^ FrozenMap value
-                                   #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
-  "判定を通った 1 行を置き場に書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
+                                   #^ str writer #^ FrozenMap diff #^ int now-ms]  ; defk にできない: 同期の置き場の書き(memory-put-row / memory-put-rows)が呼ぶ置き場の更新
+  "判定を通った 1 行を置き場に書き、変更の列に 1 つ積み、書き手 writer が書いた差分 diff の書きの控えを変更の番号で置く(PutRow と PutRows の
+   書きを 1 つにし、版と番号の採り方と書いた欄の導き方 — 判定にかけた差分の欄・admission.judged-diff の 1 か所 — を揃えるため)。"
   (setv version (if (is current None) 1 (+ current.version 1)))
   ;; 値は書いた時に 1 度だけ綴り、行と変更に持たせる(PostgreSQL の置き場の payload と同じ綴り — 読みの答えは綴りをそのまま継ぐ・
   ;; _values.hy の頭の註の保存の綴り)。
@@ -556,7 +578,8 @@
         stored (StoredRow (spelled-row key value spelled version) now-ms))
   (setv (get (get store.rows table) text) stored)
   (+= store.head 1)
-  (setv (get store.changed-at store.head) now-ms)
+  (setv (get store.changed-at store.head) now-ms
+        (get store.written-by store.head) (WriteNote :writer writer :fields (tuple (sorted (judged-diff (store.schema.table table) diff)))))
   (.append store.changes (spelled-change table key version value spelled store.head now-ms))
   (ring-bells store (_bell-names #(table) #()))
   (setv decl (store.schema.table table))
@@ -623,7 +646,7 @@
   (when conflict (return conflict))
   (setv verdict (judge-put decl current ask.key ask.value))
   (when (isinstance verdict Refused) (return verdict))
-  (setv written (memory-store-row store ask.table ask.key current verdict.value now-ms))
+  (setv written (memory-store-row store ask.table ask.key current verdict.value writer ask.value now-ms))
   (remember-write store ask written now-ms)
   written)
 
@@ -639,7 +662,7 @@
         verdict (judge-put-rows store.schema ask.writes currents))
   (when (not (isinstance verdict tuple)) (return verdict))
   (setv written (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
-                                          (memory-store-row store write.table write.key current admitted.value now-ms)))))
+                                          (memory-store-row store write.table write.key current admitted.value writer write.value now-ms)))))
   (remember-write store ask written now-ms)
   written)
 
@@ -816,7 +839,9 @@
     True (do (+= store.event-head 1)
              (setv event (Event ask.stream store.event-head ask.idempotency-key ask.body writer now-ms))
              (.append store.events event)
-             (setv (get store.by-idempotency slot) event)
+             (setv (get store.by-idempotency slot) event
+                   ;; 書きの控え: 積んだ時の変更の番号の頭(追記は頭を動かさない — 頭の註の「書きの控え」)。
+                   (get store.appended-at-head event.sequence) store.head)
              (when (isinstance decl.retention KeepFor)
                (note-event-due store decl event))
              ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
@@ -884,7 +909,8 @@
     (+= store.epoch 1)
     (setv store.floor store.head
           store.changes []
-          store.changed-at {})
+          store.changed-at {}
+          store.written-by {})
     (ring-bells store None)
     store.epoch))
 
@@ -911,7 +937,9 @@
         timed (max (gfor change store.changes :if (<= (get store.changed-at change.sequence) before) change.sequence) :default 0)
         edge (if (is ask.upto-seq None) timed (min timed ask.upto-seq))
         old (lfor change store.changes :if (<= change.sequence edge) change))
-  (for [change old] (del (get store.changed-at change.sequence)))
+  (for [change old]
+    (del (get store.changed-at change.sequence))
+    (.pop store.written-by change.sequence None))
   (when old
     (setv store.floor (max store.floor (. (get old -1) sequence)))
     (ring-bells store None))

@@ -102,6 +102,11 @@ class GroupDue:
     group: str
     last_at: int
 
+@dataclass(frozen=True, kw_only=True)
+class WriteNote:
+    writer: str
+    fields: tuple[str, ...]
+
 def new_store_lock() -> threading.RLock: ...
 
 class MemoryStore:
@@ -130,6 +135,8 @@ class MemoryStore:
     write_keys: dict[str, RememberedWrite]
     write_remembered_at: dict[str, int]
     write_forgets: list[tuple[int, int, str]]
+    written_by: dict[int, WriteNote]
+    appended_at_head: dict[int, int]
     def __init__(self, schema: RecordsSchema, make_lock: Callable[[], threading.RLock] = ...) -> None: ...
     def __deepcopy__(self, memo: dict[int, object]) -> MemoryStore: ...
 
