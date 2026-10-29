@@ -46,10 +46,10 @@
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import tests.fixtures.machine_app [pings machine-foundation])
-(import doeff_cluster.sim.machine :as machine-module)
-(import doeff_cluster.sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
-(import doeff_cluster.sim.machine [LocalMachine MachineCell MachineCannotAnswer GitSource local-machine-cluster machine-answers machine-run
-                                   coordinator-url])
+(import doeff_cluster._sim.machine :as machine-module)
+(import doeff_cluster [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
+(import doeff_cluster [LocalMachine MachineCannotAnswer GitSource local-machine-cluster machine-answers]
+        doeff_cluster._sim.machine [MachineCell machine-run coordinator-url])
 
 (val WORKER "w-local")
 

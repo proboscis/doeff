@@ -12,7 +12,7 @@
 ;; 差し替える口は boundary-recorder に無い(置き場は Ask RECORD-OTLP-KEY の URL だけ)ので、差し替えのために src に口を足さず、OTLP の
 ;; 受け口の fake をこの検の process の thread に立てて受ける(送りは記録係が出す HttpRequest に、土台の http-production-handler が答える)。
 ;; 子の process で走らせるのは、本番の worker の子と同じ終わり方(Program の終わりに残りの行を送る close-log)で記録が届くことも一緒に
-;; 確かめるため。HTTP の答え手を差し替えて置き場を模擬する検は src/doeff_cluster/sim/test_recording_on_sim.hy。1 の replay の枝の検は、
+;; 確かめるため。HTTP の答え手を差し替えて置き場を模擬する検は src/doeff_cluster/_sim/test_recording_on_sim.hy。1 の replay の枝の検は、
 ;; 渡す状態を作るためだけに test_effect_record と同じ形(open-log が組む EffectLog + MemorySink)で記録を作る(record の枝の検ではない)。
 (require doeff-hy.macros [deftest defk deff <- val var])
 (require doeff-hy.record [defrecord])

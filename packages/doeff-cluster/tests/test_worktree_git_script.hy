@@ -13,7 +13,7 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.scripted_process [scripted-command-peer])
-(import doeff_cluster.sim.worktree_git_script [OriginBranch worktree-git-command sha-of])
+(import doeff_cluster [OriginBranch worktree-git-command sha-of])
 
 (val MAIN "/repos/app")
 (val TREE "/work/trees/app-wt-x")

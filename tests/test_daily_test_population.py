@@ -61,7 +61,7 @@ def _test_file_patterns(repo: Path) -> tuple[str, ...]:
     - executable ADR: doeff-adr の plugin の既定の pattern と root の ini の doeff_adr_hy_files。
 
     `.py` だけを数えていた時は、母集団の外の `.hy` の検が日次で走らなくても赤にならなかった
-    (#2542 の packages/doeff-cluster/src/doeff_cluster/sim/test_entries_on_sim.hy・agora-redesign #2577)。
+    (#2542 の packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy・agora-redesign #2577)。
     Hy の条件を検の側に `test_*.hy` と写していた時は、集める conftest の無い dir の test_*.hy(packages/doeff-hy/tests
     の 6 本)を「検の file」と数えながら、どの集め手も集めていなかった(agora-redesign #2591)。
     """
