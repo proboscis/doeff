@@ -86,7 +86,13 @@
    where-any = 欄 → 値の組(JSON の値の空でない tuple)の凍らせた写像(既定 = 空 = 絞らない): 行の欄の値が組のどれかに等しい行だけ
    (等しさは where の等号と同じ・欄どうしと where とは AND・索引の欄だけ — 他は NotIndexed)。使い手が値の組 1 つを値ごとの往復でなく
    1 回の読みで引くため。組の値の数は全部の欄の和で WHERE-ANY-LIMIT まで・空の組・where と同じ欄は作る時に断る(ValueError — 配列で
-   ない組は TypeError)。頁の順・続きの位置・上から読む読み・保持の期限の除きは where だけの読みと同じ。"
+   ない組は TypeError)。頁の順・続きの位置・上から読む読み・保持の期限の除きは where だけの読みと同じ。
+   ascending-by = 欄の名(None = 鍵の綴りの順): 値が整数の行だけを、その値の小さい順(同じ値は鍵の綴りの順)に limit 件読む(descending-by の
+   逆向き — 値が整数でない行・欄の無い行は出さない)。続きが在れば答えの next-cursor は頁の最後の行の (値, 鍵の綴り) を持つ位置
+   (descending-by と同じ ListCursor の after-value と after-key — keyset)で、それを cursor に渡した読みは (値, 鍵の綴り) がその組より
+   大きい行から次の頁を読む。descending-by とは組みで使えない(作る時に ValueError)。値の正負を入れ替えて向きを変える手は使わない —
+   昇順の読みは欄の値をそのまま並べる。PostgreSQL の置き場は、欄が表の descending / descending-within に在れば、その並べる式の索引を
+   逆向きに辿る(昇順のための索引の宣言は要らない)。"
   (#^ str table)
   (setv #^ FrozenMap where (field :default-factory FrozenMap))
   (setv #^ (| tuple None) fields None)
@@ -94,6 +100,7 @@
   (setv #^ int limit DEFAULT-LIST-LIMIT)
   (setv #^ (| str None) descending-by None)
   (setv #^ FrozenMap where-any (field :default-factory FrozenMap))
+  (setv #^ (| str None) ascending-by None)
   (defn #^ None __post_init__ [self]
     (checked-table-name self.table "ListRows.table")
     (freeze-field self "where" "ListRows.where")
@@ -120,10 +127,54 @@
                                   self.limit LIST-LIMIT-MAX LIST-LIMIT-MAX))))
     (when (is-not self.descending-by None)
       (checked-field-name self.descending-by "ListRows.descending_by"))
-    (when (and (is-not self.cursor None) (!= (is self.descending-by None) (is self.cursor.after-value None)))
-      (raise (ValueError (if (is self.descending-by None)
-                             "ListRows の鍵の順の読みの cursor は after_value の無い位置(上から読む読みの位置を渡さない)"
-                             "ListRows.descending_by の読みの cursor は after_value を持つ位置(上から読む読みが返した next_cursor)"))))))
+    (when (is-not self.ascending-by None)
+      (checked-field-name self.ascending-by "ListRows.ascending_by")
+      (when (is-not self.descending-by None)
+        (raise (ValueError "ListRows の ascending_by と descending_by は組みで使えない(向きは 1 つ)"))))
+    (setv ordered (or (is-not self.descending-by None) (is-not self.ascending-by None)))
+    (when (and (is-not self.cursor None) (!= ordered (is-not self.cursor.after-value None)))
+      (raise (ValueError (if ordered
+                             "ListRows.descending_by / ascending_by の読みの cursor は after_value を持つ位置(並べて読む読みが返した next_cursor)"
+                             "ListRows の鍵の順の読みの cursor は after_value の無い位置(並べて読む読みの位置を渡さない)"))))))
+
+
+(defn #^ bool checked-at-least [#^ object at-least]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+  "CountRows の下限 at-least(None か (欄の名, 下限の整数) の tuple)を作る時に検める。通れば True。"
+  (when (is-not at-least None)
+    (when (not (and (isinstance at-least tuple) (= (len at-least) 2)))
+      (raise (TypeError (.format "CountRows.at_least は (欄の名, 下限の整数) の tuple か None: {!r}" at-least))))
+    (checked-field-name (get at-least 0) "CountRows.at_least の欄")
+    (when (or (isinstance (get at-least 1) bool) (not (isinstance (get at-least 1) int)))
+      (raise (TypeError (.format "CountRows.at_least の下限は整数: {!r}" (get at-least 1))))))
+  True)
+
+
+(defclass [(dataclass :frozen True)] CountRows [EffectBase]
+  "表の行の件数を数える。where・where-any = ListRows と同じ絞り(欄 → 値の凍らせた写像・索引の欄の等号の AND、組のどれかに等しい行 —
+   索引の無い欄は NotIndexed)/ at-least = (順の欄の名, 下限の整数)(None = 下限なし): 欄の値が整数で下限以上の行だけを数える
+   (値が整数でない行・欄の無い行は数えない — ListRows の ascending-by / descending-by が並べる行と同じ)。保持の期限を過ぎた終端の行は
+   回収の前でも数えない。答え = Count | Unreachable | NotIndexed。件数は 1 つの断面で数えた値(頁を連ねた和ではない)。"
+  (#^ str table)
+  (setv #^ FrozenMap where (field :default-factory FrozenMap))
+  (setv #^ FrozenMap where-any (field :default-factory FrozenMap))
+  (setv #^ (| tuple None) at-least None)
+  (defn #^ None __post_init__ [self]
+    (checked-table-name self.table "CountRows.table")
+    (freeze-field self "where" "CountRows.where")
+    (for [name self.where] (checked-field-name name "CountRows.where の欄"))
+    (freeze-field self "where_any" "CountRows.where_any")
+    (for [#(name members) (.items self.where-any)]
+      (checked-field-name name "CountRows.where_any の欄")
+      (when (not (isinstance members tuple))
+        (raise (TypeError (.format "CountRows.where_any の欄 {} の組は JSON の値の配列: {!r}" name members))))
+      (when (not members)
+        (raise (ValueError (.format "CountRows.where_any の欄 {} の組が空(絞らない欄は写像に置かない)" name))))
+      (when (in name self.where)
+        (raise (ValueError (.format "CountRows の欄 {} が where と where_any の両方に在る(等号と組を同じ欄に重ねない)" name)))))
+    (setv counted (sum (gfor members (.values self.where-any) (len members))))
+    (when (> counted WHERE-ANY-LIMIT)
+      (raise (ValueError (.format "CountRows.where_any の値の数 {} が上限 {} を越える(組を割って数える)" counted WHERE-ANY-LIMIT))))
+    (checked-at-least self.at-least)))
 
 
 (defclass [(dataclass :frozen True)] ReadBatch [EffectBase]

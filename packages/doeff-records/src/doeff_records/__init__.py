@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from doeff_records._effects import AppendEvents as AppendEvents
     from doeff_records._effects import AwaitRecordsBack as AwaitRecordsBack
     from doeff_records._effects import EventAppend as EventAppend
+    from doeff_records._effects import CountRows as CountRows
     from doeff_records._effects import ListRows as ListRows
     from doeff_records._effects import PutRow as PutRow
     from doeff_records._effects import PutRows as PutRows
@@ -69,6 +70,8 @@ if TYPE_CHECKING:
     from doeff_records._values import ByKeySuffix as ByKeySuffix
     from doeff_records._values import Changes as Changes
     from doeff_records._values import Conflict as Conflict
+    from doeff_records._values import Count as Count
+    from doeff_records._values import CountRowsAnswer as CountRowsAnswer
     from doeff_records._values import DescendingWithin as DescendingWithin
     from doeff_records._values import EachEvent as EachEvent
     from doeff_records._values import Event as Event
@@ -198,6 +201,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ByKeySuffix": "doeff_records._values",
     "Changes": "doeff_records._values",
     "Conflict": "doeff_records._values",
+    "Count": "doeff_records._values",
+    "CountRowsAnswer": "doeff_records._values",
     "DescendingWithin": "doeff_records._values",
     "EachEvent": "doeff_records._values",
     "Event": "doeff_records._values",
@@ -260,6 +265,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AppendEvents": "doeff_records._effects",
     "AwaitRecordsBack": "doeff_records._effects",
     "EventAppend": "doeff_records._effects",
+    "CountRows": "doeff_records._effects",
     "ListRows": "doeff_records._effects",
     "PutRow": "doeff_records._effects",
     "PutRows": "doeff_records._effects",

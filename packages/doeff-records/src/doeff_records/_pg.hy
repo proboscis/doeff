@@ -120,11 +120,11 @@
 (import doeff_records._loop_work [off-loop])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
-                              EventAbsent EventRetired key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
+                              EventAbsent EventRetired Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
                               Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey ReadBatch write-parts])
+                               ReadEventByKey ReadBatch CountRows write-parts])
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
@@ -139,6 +139,7 @@
                               concurrent-index-statement drop-index-statement analyze-statement retired-index? table-shaped-index?
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
+                              ordered-rows-statement count-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement find-event-statement
                               prune-bound-statement prune-changes-statement statement-limit-statement UNBOUNDED-SEQ
@@ -1313,11 +1314,13 @@
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
   ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
   (val scoped (.scoped-fields store.indexes ask.table))
-  (when (is-not ask.descending-by None)
-    ;; 上から読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) より小さい行から 1 頁 + 1 行(続きの有無を知るため)。表の上から読む
-    ;; 欄は並べる式の索引の順に辿る形(pg_sql の頭の註)。
-    (<- top-statement Statement (top-rows-statement store.prefix ask.table decl.key-fields scoped ask.descending-by
-                                                    (in ask.descending-by decl.descending) ask.cursor where-json where-any-json ask.limit expiry))
+  (val ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
+  (when (is-not ordered-by None)
+    ;; 並べて読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) を越えた行から 1 頁 + 1 行(続きの有無を知るため)。降順は位置より小さい
+    ;; 行・昇順は大きい行。表の上から読む欄は並べる式の索引の順に(昇順は逆に)辿る形(pg_sql の頭の註)。
+    (<- top-statement Statement (ordered-rows-statement store.prefix ask.table decl.key-fields scoped ordered-by
+                                                        (in ordered-by decl.descending) (is-not ask.ascending-by None) ask.cursor
+                                                        where-json where-any-json ask.limit expiry))
     (return top-statement))
   (<- statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
                                                (if (is ask.cursor None) None ask.cursor.after-key)
@@ -1334,7 +1337,8 @@
   "ListRows の文(list-rows-plan)の答えの行 top-records(頁の上限 + 1 行まで — 続きの有無を知るため)から、置き場の頭 head の頁を組むため
    (1 つの読みと束の読みが同じ頁を組む 1 点)。"
   (val decl (store.schema.table ask.table))
-  (when (is-not ask.descending-by None)
+  (val ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
+  (when (is-not ordered-by None)
     (val top-taken (cut top-records ask.limit))
     (<- top-rows (decoded-batch top-taken (fn [records-of-page] (listed-rows-of decl ask.fields records-of-page))))
     (when (<= (len top-records) ask.limit)
@@ -1343,7 +1347,7 @@
     ;; 決まるので scheduler の thread で読む(_loop_work.hy の頭の註の「持つ」)。
     (val last-row (row-of (get top-taken -1)))
     (return (Page top-rows
-                  (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ask.descending-by))
+                  (ListCursor head.epoch (get (get top-taken -1) 0) (get last-row.value ordered-by))
                   head.epoch
                   head.head)))
   (val records top-records)
@@ -1353,6 +1357,27 @@
         (if (> (len records) ask.limit) (ListCursor head.epoch (get (get taken -1) 0)) None)
         head.epoch
         head.head))
+
+
+(defk pg-count-rows [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask CountRows) (: now-ms int)] :post [(: % (| Count NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "CountRows に答えるため: 絞りに合う行の件数を 1 文で数える(刻 now-ms で保持の期限を過ぎた終端の行は回収の前でも数えない — ListRows と
+   同じ条件・索引の無い欄の絞りは NotIndexed)。下限 at-least の欄が表の上から読む欄なら、並べる式の索引の範囲で数える。"
+  (val decl (store.schema.table ask.table))
+  (val refusal (where-refusal decl ask.where ask.where-any))
+  (when refusal (return refusal))
+  (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
+  (when unbuilt (return (NotIndexed unbuilt)))
+  (<- expiry (row-expiry decl now-ms))
+  (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
+  (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
+  (val scoped (.scoped-fields store.indexes ask.table))
+  (<- statement Statement (count-rows-statement store.prefix ask.table decl.key-fields scoped ask.at-least
+                                                (and (is-not ask.at-least None) (in (get ask.at-least 0) decl.descending))
+                                                where-json where-any-json expiry))
+  (<- records (query-rows store.database statement))
+  (Count (int (get (get records 0) 0))))
 
 
 (defk pg-read-batch [store ask now-ms]
@@ -2145,6 +2170,10 @@
   (ListRows [table where fields cursor limit]
     (<- now (GetTime))
     (<- answer (reached (pg-list-rows store effect (epoch-ms now))))
+    (resume answer))
+  (CountRows [table where where-any at-least]
+    (<- now (GetTime))
+    (<- answer (reached (pg-count-rows store effect (epoch-ms now))))
     (resume answer))
   (ReadBatch [reads]
     (<- now (GetTime))

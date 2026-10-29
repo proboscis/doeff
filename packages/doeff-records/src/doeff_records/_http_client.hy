@@ -71,7 +71,7 @@
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
-                               ReadStreamEnd ReadEventByKey ReadBatch ReadRequestPatience])
+                               ReadStreamEnd ReadEventByKey ReadBatch CountRows ReadRequestPatience])
 (import doeff_records._wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
@@ -217,6 +217,7 @@
   (val names (match ask
                (WatchChanges :tables tables) (tuple tables)
                (ListRows :table table) #(table)
+               (CountRows :table table) #(table)
                (ReadRow :table table) #(table)
                (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads one.table))))
                (WatchEvents :stream stream) #(stream)
@@ -322,13 +323,14 @@
 
 
 (defk stall-names [ask]
-  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch))]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
    :post [(: % (get tuple #(str ...)))]
    :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask が触る表と列の名前を知るため(戻りの問い AwaitRecordsBack に渡す — 置き場は名ごとに止まり得る)。"
   (match ask
     (ReadRow :table table) #(table)
     (ListRows :table table) #(table)
+    (CountRows :table table) #(table)
     (PutRow :table table) #(table)
     (PutRows :writes writes) (! (first-seen (tuple (gfor write writes write.table))))
     (AppendEvent :stream stream) #(stream)
@@ -344,7 +346,7 @@
 
 
 (defk fresh-write-key [ask]
-  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch))]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
    :post [(: % (| str None))]
    :tags {:context "records" :role "foundation"}}
   "鍵の無い行の書き(PutRow・PutRows)に付ける、要求 1 つの冪等キーを作るため(file の頭の註「行の書きの冪等キー」— 撃ち直しにも同じ鍵を
@@ -358,7 +360,7 @@
 
 
 (defk answered-riding-stall [endpoint ask]
-  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch))]
+  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
    :post [(: % (| WireAnswer Unreachable))] :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask 1 つに、置き場の止まりを越えて答えるため(file の頭の註「置き場の止まり」— client の 1 か所)。待つ時間を要求のたびに
    問い、届けばその答え、届かなければ待つ時間(0 秒なら待たない)の残りまで置き場の戻りを待って同じ要求を撃ち直す。越えたら、待った秒と
@@ -447,6 +449,10 @@
   (ReadEventByKey [stream idempotency-key]
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
+  (CountRows [table where where-any at-least]
+    ;; 件数の読みも 1 回の要求(wire の count-rows)— 届かない時は止まりを越えて撃ち直す(読みは置き場を変えない)。
+    (<- answer (answered-riding-stall endpoint effect))
+    (resume answer))
   (ReadBatch [reads]
     ;; 読みの束は 1 回の要求(wire の read-batch — card ki-177a4f287c42)— 届かない時は止まりを越えて同じ束を撃ち直す(読みは置き場を変えない)。
     (<- answer (answered-riding-stall endpoint effect))
@@ -466,6 +472,10 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ListRows [table where fields cursor limit]
+    :when (in table served)
+    (<- answer (answered-riding-stall endpoint effect))
+    (resume answer))
+  (CountRows [table where where-any at-least]
     :when (in table served)
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
