@@ -1,9 +1,13 @@
 -- doeff.nvim workflows module
--- Integrates with doeff-agentic CLI for workflow monitoring and interaction
+-- Integrates with the doeff-agentic CLI (the Python package's console script) for workflow
+-- monitoring and interaction
 
 local M = {}
 
 local config = require('doeff.config')
+
+---How to install the CLI, shown when it is not found
+M.install_hint = 'pip install doeff-agentic'
 
 ---@class DoeffAgent
 ---@field name string Agent name
@@ -67,7 +71,12 @@ function M.exec(args)
   local cmd = build_cmd_prefix()
   vim.list_extend(cmd, args)
 
-  local result = vim.system(cmd, { text = true }):wait()
+  -- vim.system raises when the binary is missing; answer that as an error like a failed run
+  local started, proc = pcall(vim.system, cmd, { text = true })
+  if not started then
+    return nil, tostring(proc)
+  end
+  local result = proc:wait()
 
   if result.code ~= 0 then
     local err = result.stderr or 'Unknown error'

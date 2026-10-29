@@ -1,5 +1,11 @@
 -- Tests for doeff.nvim workflows module
 
+-- The `ps --json` the doeff-agentic CLI writes, shared with VS Code's doeff-runner tests
+local PS_FIXTURE = vim.fn.fnamemodify(
+  vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h') .. '/../../../test-fixtures/doeff-agentic-ps.json',
+  ':p'
+)
+
 describe('doeff.workflows', function()
   local workflows
   local config
@@ -66,21 +72,59 @@ describe('doeff.workflows', function()
   end)
 
   describe('list', function()
-    it('should return empty table when CLI not available', function()
-      -- Configure with non-existent binary
+    -- Outside a uv project the configured binary is called (inside one, `uv run doeff-agentic`)
+    local cwd
+    local outside
+
+    before_each(function()
+      cwd = vim.fn.getcwd()
+      outside = vim.fn.tempname()
+      vim.fn.mkdir(outside, 'p')
+      vim.cmd.cd(outside)
+    end)
+
+    after_each(function()
+      vim.cmd.cd(cwd)
+    end)
+
+    it('should return nil with an error when CLI not available', function()
       config.setup({
         workflows = {
           binary = 'nonexistent-binary-xyz-12345',
         },
       })
-      -- Reload workflows to pick up new config
-      package.loaded['doeff.workflows'] = nil
-      workflows = require('doeff.workflows')
 
       local result, err = workflows.list()
-      -- Should return nil with error when binary not found
       assert.is_nil(result)
       assert.is_string(err)
+    end)
+
+    it('should read the workflows the doeff-agentic CLI writes for ps --json', function()
+      -- A stand-in CLI that answers only `ps --json`, with what the Python CLI writes for a
+      -- recorded state directory (packages/doeff-agentic/tests/test_cli.py pins the file to
+      -- the CLI's output under its real handlers)
+      local cli = outside .. '/doeff-agentic'
+      vim.fn.writefile({
+        '#!/bin/sh',
+        '[ "$*" = "ps --json" ] || { echo "unexpected: $*" >&2; exit 2; }',
+        'cat ' .. vim.fn.shellescape(PS_FIXTURE),
+      }, cli)
+      vim.fn.setfperm(cli, 'rwxr-xr-x')
+      config.setup({ workflows = { binary = cli } })
+
+      local result, err = workflows.list()
+
+      assert.is_nil(err)
+      assert.same(
+        { { 'b7e1d4f', 'blocked', 'fixer' }, { 'a3f8b2c', 'running', 'reviewer' } },
+        vim.tbl_map(function(wf)
+          return { wf.id, wf.status, wf.current_agent }
+        end, result)
+      )
+      assert.same(
+        { 'reviewer', 'running', 'doeff-wf-reviewer', '%3' },
+        { result[2].agents[1].name, result[2].agents[1].status, result[2].agents[1].session_name, result[2].agents[1].pane_id }
+      )
     end)
   end)
 end)

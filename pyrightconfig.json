@@ -2,7 +2,6 @@
     "include": [
         "doeff",
         "packages/doeff-adr/src",
-        "packages/doeff-agentic-cli/src",
         "packages/doeff-agentic/src",
         "packages/doeff-agents/src",
         "packages/doeff-claude-code/src",

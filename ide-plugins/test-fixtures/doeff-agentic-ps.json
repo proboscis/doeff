@@ -1,0 +1,48 @@
+[
+  {
+    "id": "b7e1d4f",
+    "name": "flow-b7e1d4f",
+    "status": "blocked",
+    "started_at": "2026-10-29T11:00:00+00:00",
+    "updated_at": "2026-10-29T11:59:00+00:00",
+    "current_agent": "fixer",
+    "agents": [
+      {
+        "name": "fixer",
+        "status": "blocked",
+        "session_name": "doeff-wf-fixer",
+        "pane_id": null,
+        "started_at": "2026-10-29T11:50:00+00:00",
+        "last_output_hash": null
+      }
+    ],
+    "last_slog": {
+      "status": "reviewing",
+      "msg": "step 2"
+    },
+    "error": null
+  },
+  {
+    "id": "a3f8b2c",
+    "name": "flow-a3f8b2c",
+    "status": "running",
+    "started_at": "2026-10-29T11:00:00+00:00",
+    "updated_at": "2026-10-29T11:55:00+00:00",
+    "current_agent": "reviewer",
+    "agents": [
+      {
+        "name": "reviewer",
+        "status": "running",
+        "session_name": "doeff-wf-reviewer",
+        "pane_id": "%3",
+        "started_at": "2026-10-29T11:50:00+00:00",
+        "last_output_hash": null
+      }
+    ],
+    "last_slog": {
+      "status": "reviewing",
+      "msg": "step 2"
+    },
+    "error": null
+  }
+]

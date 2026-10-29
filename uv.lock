@@ -13,7 +13,6 @@ members = [
     "doeff",
     "doeff-adr",
     "doeff-agentic",
-    "doeff-agentic-cli",
     "doeff-agents",
     "doeff-claude-code",
     "doeff-claude-judge",
@@ -787,11 +786,6 @@ requires-dist = [
     { name = "textual", specifier = ">=0.44.0" },
 ]
 provides-extras = ["legacy", "dev"]
-
-[[package]]
-name = "doeff-agentic-cli"
-version = "0.1.0"
-source = { editable = "packages/doeff-agentic-cli" }
 
 [[package]]
 name = "doeff-agents"
