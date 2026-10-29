@@ -1,27 +1,29 @@
 # The discovery scenes: what doeff run's discovery (doeff/cli/discovery.py) sees for login_program. Prints the
 # module hierarchy, every marked interpreter with its place in the hierarchy and the one chosen, the marked envs in
 # merge order with what each holds, and the merged env. Run from project/ (run.sh does).
-from doeff_indexer import Indexer
+# The index is read through doeff-indexer's effect FindSymbols, answered by its handler rust_indexer (the Rust
+# indexer), as doeff run's discovery program reads it.
+from doeff_indexer import FindSymbols, rust_indexer
 
 from doeff import run
-from doeff.cli.discovery import IndexerBasedDiscovery, StandardEnvMerger
+from doeff.cli.discovery import StandardEnvMerger, discover, module_hierarchy
 from doeff.cli.run_services import import_symbol
 
 PROGRAM = "myapp.features.auth.login.login_program"
-discovery = IndexerBasedDiscovery()
 module = PROGRAM.rsplit(".", 1)[0]
-hierarchy = discovery._get_module_hierarchy(module)
+hierarchy = module_hierarchy(module)
 print("program:", PROGRAM)
 print("hierarchy:", hierarchy)
 
-index = Indexer.for_module(module)
+marked = run(rust_indexer(FindSymbols(module, ("interpreter", "default"), "function")))
 print("marked interpreters (# doeff: interpreter, default):")
-for symbol in sorted(index.find_symbols(tags=["interpreter", "default"], symbol_type="function"), key=lambda s: s.full_path):
+for symbol in sorted(marked, key=lambda s: s.full_path):
     place = hierarchy.index(symbol.module_path) if symbol.module_path in hierarchy else None
     print(f"  {symbol.full_path}  index {place}")
-print("chosen:", discovery.find_default_interpreter(PROGRAM))
+found = run(rust_indexer(discover(PROGRAM)))
+print("chosen:", found.interpreter)
 
-envs = discovery.discover_default_envs(PROGRAM)
+envs = list(found.envs)
 print("marked envs (# doeff: default), in merge order:")
 for path in envs:
     print(f"  {path}  {run(import_symbol(path))}")

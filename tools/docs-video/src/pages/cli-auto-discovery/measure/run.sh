@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # The runs behind every value the CLI Auto-Discovery video shows. Run from anywhere; writes discover.log and cli.log
-# next to this file. doeff-indexer 0.1.3 is what `pip install doeff-indexer` installs; `python -m doeff run` is the
-# same command as `doeff run`, run by the python that has doeff-indexer next to doeff.
+# next to this file. doeff-indexer is the workspace's (the dev group installs it: discover.py reads the index through its
+# effect FindSymbols, which PyPI's 0.1.3 does not have); `python -m doeff run` is the same command as `doeff run`, run by
+# the python that has doeff-indexer next to doeff.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../../../../.." && pwd)"
 cd "$here/project"
 doeff_run() {
   echo "\$ doeff run $*"
-  PYTHONPATH=. uv run --quiet --project "$repo" --with doeff-indexer==0.1.3 python -m doeff run "$@" 2>&1 | grep -v '^\s*$'
+  PYTHONPATH=. uv run --quiet --project "$repo" python -m doeff run "$@" 2>&1 | grep -v '^\s*$'
   echo
 }
-PYTHONPATH=. uv run --quiet --project "$repo" --with doeff-indexer==0.1.3 python "$here/discover.py" > "$here/discover.log" 2>&1
+PYTHONPATH=. uv run --quiet --project "$repo" python "$here/discover.py" > "$here/discover.log" 2>&1
 {
-  echo "doeff $(git -C "$repo" rev-parse --short HEAD), doeff-indexer 0.1.3"
+  echo "doeff $(git -C "$repo" rev-parse --short HEAD), doeff-indexer $(uv run --quiet --project "$repo" python -c 'import importlib.metadata as m; print(m.version("doeff-indexer"))')"
   echo
   doeff_run --program myapp.features.auth.login.login_program
   doeff_run --program myapp.features.auth.login.login_program --format json

@@ -8,8 +8,7 @@ This note captures the structure of the `doeff run` command pipeline. Use it as 
   - Collects the raw CLI arguments into a single data object (`program_path`, `interpreter_path`, `env_paths`, `set_vars`, `apply_paths`, `transformer_paths`, `output_format`).
 - **resolve_context(ctx: RunContext) -> ResolvedRunContext**
   - Loads the target program via `import_symbol()`.
-  - Auto-discovers the interpreter (via `IndexerBasedDiscovery`) if none was specified.
-  - Auto-discovers default envs if none were specified.
+  - Auto-discovers the interpreter if none was specified, and default envs if none were specified: the discovery program `discover()` (`doeff/cli/discovery.py`) reads the index with doeff-indexer's effect `FindSymbols`, run under its handler `rust_indexer` (the Rust indexer). Without doeff-indexer installed, nothing is discovered.
   - Falls back to `default_interpreter` when no interpreter is found.
 - **execute(resolved: ResolvedRunContext) -> Any**
   - Applies `--apply` (Kleisli) and `--transform` stages sequentially.
@@ -50,7 +49,7 @@ sequenceDiagram
     participant CLI as CLI Entry
     participant RS as resolve_context()
     participant EX as execute()
-    participant DI as IndexerBasedDiscovery
+    participant DI as discover() under rust_indexer
     participant IS as import_symbol()
     participant INT as Interpreter
     participant OUT as Output Renderer
@@ -58,10 +57,8 @@ sequenceDiagram
     CLI->>RS: Build RunContext
     RS->>IS: import_symbol(program_path)
     IS-->>RS: Program
-    RS->>DI: find_default_interpreter(program_path)
-    DI-->>RS: interpreter path
-    RS->>DI: discover_default_envs(program_path)
-    DI-->>RS: env path list
+    RS->>DI: run(rust_indexer(discover(program_path)))
+    DI-->>RS: Discovered(interpreter path, env paths)
     RS-->>CLI: ResolvedRunContext
     CLI->>EX: execute(resolved)
     EX->>IS: import_symbol(apply/transform paths)
@@ -87,6 +84,6 @@ sequenceDiagram
 ## Extension Guidance
 
 - Add new pre-run manipulations as additional `--apply` or `--transform` stages.
-- Extend auto-discovery logic via `IndexerBasedDiscovery` so dependent subsystems remain injectable.
+- Extend auto-discovery logic as programs that yield `FindSymbols`, so a test answers the index with its own handler.
 - New output formats should be funneled through the output rendering layer.
 - `import_symbol()` is the single importer to avoid redundant module loads.

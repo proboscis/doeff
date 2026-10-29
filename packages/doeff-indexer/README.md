@@ -16,7 +16,7 @@ Each indexed item includes detected type-argument usage so you can query for spe
 ### Via pip (Recommended)
 
 The easiest way to install `doeff-indexer` is via pip. This installs both the CLI binary and the
-Python API:
+Python API (the effect `FindSymbols` and its handler — they need `doeff`, installed with it):
 
 ```bash
 pip install doeff-indexer
@@ -65,23 +65,33 @@ doeff-indexer index --root . --output index.json
 
 ## Python API
 
-The indexer also provides a Python API for programmatic access:
+From Python, the index is read with the effect `FindSymbols`, answered by the handler `rust_indexer`
+(the Rust indexer). The answer is a tuple of `SymbolInfo` — the marked functions and variables that
+carry every tag, of the given `symbol_type` (any type when it is `None`):
 
 ```python
-from doeff_indexer import Indexer, SymbolInfo
+from doeff import do, run
+from doeff_indexer import FindSymbols, SymbolInfo, rust_indexer
 
-# Create an indexer for a module
-indexer = Indexer.for_module("myproject.core")
 
-# Find symbols with specific tags
-symbols = indexer.find_symbols(
-    tags=["doeff", "interpreter", "default"],
-    symbol_type="function"
-)
+@do
+def default_interpreters(module_path: str):
+    symbols: tuple[SymbolInfo, ...] = yield FindSymbols(
+        module_path, tags=("interpreter", "default"), symbol_type="function"
+    )
+    return [f"{symbol.full_path} at line {symbol.line_number}" for symbol in symbols]
 
-for sym in symbols:
-    print(f"{sym.full_path} at line {sym.line_number}")
+
+# The Rust indexer reads every Python file under the current directory.
+print(run(rust_indexer(default_interpreters("myproject.core"))))
 ```
+
+A test answers `FindSymbols` with its own handler (returning `SymbolInfo` values it builds), so the
+same program runs without the Rust indexer or the files. When the index cannot be built, the handler
+raises `RuntimeError` into the program at the `FindSymbols` it yielded.
+
+`doeff run` finds its default interpreter and envs this way: its discovery
+(`doeff/cli/discovery.py`) is a program that yields `FindSymbols`, run under `rust_indexer`.
 
 ## IDE Integration
 
