@@ -2,10 +2,10 @@
  "説明": [
   "subpackage の公開 API は effect と handler だけ、の決まりが名ごとに許した、effect と handler の外の名の表(tests/test_public_api_known_violations.py が読む)。外れと境界は既知の違反の表 tests/data/public_api_known_violations.json に在り、許した名はこの表だけに置く(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。",
   "1 行 = 許した名 1 つ: package(packages/ の下の dir)・module(名を出す module)・name・組・決め。鍵 (package, module, name) は目録の行と同じで、行は鍵の順に並べ、重ねない。違反の表と同じ鍵を置かない。",
-  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)だけで、test は目録の形が program の helper でない名を赤にする。形を確かめない組は置けない。",
+  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R30 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R30 — console script と Rust の実行 file の行)の 3 つで、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
   "決め = 許した決めの id(card ki-… か依頼 lt-… か利用者の発言 ci-…)。この表は決めの id つきで足せる(違反の表と違い減るだけでない)。決めの id の無い行は test が赤にする。",
   "名を submodule から入口へ移した行は、違反の表と同じく表の module を書き換えずに同じ行と読む。表に在るのに目録に無い名は赤 — 直した名と隠した submodule の名は表から消す(tools/hide_submodules.py finish が隠した子の行を消す)。",
-  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)。"
+  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R30)。"
  ],
  "許した物": [
   {
@@ -996,6 +996,104 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-conductor",
+   "module": "(submodule)",
+   "name": "doeff_conductor.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "<-",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "agent!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "defphase",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "defworkflow",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "gate!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "loop",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "merge!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "parallel",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "parallel_for",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "pipeline",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "random!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "time!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "workspace!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_ws_client",
    "name": "closing_links",
@@ -1346,6 +1444,27 @@
    "決め": "ki-f20b18c2aad9"
   },
   {
+   "package": "doeff-domain",
+   "module": "(submodule)",
+   "name": "doeff_domain.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain.macros",
+   "name": "defdomain",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-events",
+   "module": "(submodule)",
+   "name": "doeff_events.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
    "package": "doeff-events",
    "module": "doeff_events",
    "name": "cut_broker",
@@ -1423,6 +1542,13 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-events",
+   "module": "doeff_events.macros",
+   "name": "event_loop",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d80c9c978b35"
+  },
+  {
    "package": "doeff-gemini",
    "module": "doeff_gemini",
    "name": "edit_image__gemini",
@@ -1463,6 +1589,13 @@
    "name": "structured_llm__gemini",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "(console script)",
+   "name": "doeff-hy-check",
+   "組": "許した物 — CLI コマンド",
+   "決め": "ki-d80c9c978b35"
   },
   {
    "package": "doeff-hy",

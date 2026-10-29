@@ -28,7 +28,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
 6. 許した物の表は決めの id つきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めが card・依頼・
    発言の id でない行・違反の表と同じ鍵の行は赤。組は目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。組「許した物 —
    program の helper」(ADR-DOE-API-001 R18 — 決まりが名ごとに許した、effect を出すだけの program を返す関数)に置けるのは、
-   目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。
+   目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
+   Hy の macro」(R14・R15・R30 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
+   macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
+   組「許した物 — CLI コマンド」(R7・R30)に置けるのは console script と Rust の実行 file の行だけ。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -70,8 +73,19 @@ GROUP_HEADS = ("外れ — ", "境界 — ", "未分け — ")
 ALLOWED_HEAD = "許した物 — "
 #: 決まりが名ごとに許した program の helper の組(ADR-DOE-API-001 R18)— 目録の形が program の helper の名だけを置ける。
 HELPER_GROUP = "許した物 — program の helper"
-#: 許した物の組の全部(組ごとに、目録で形を確かめる — 確かめの無い組は置けない)。
-ALLOWED_GROUPS = (HELPER_GROUP,)
+#: 決まりが許した Hy の macro の組(ADR-DOE-API-001 R14・R15・R30)— macro の名と macro の module の行だけを置ける。
+MACRO_GROUP = "許した物 — Hy の macro"
+#: 決まりが許した CLI コマンドの組(ADR-DOE-API-001 R7・R30)— console script と Rust の実行 file の行だけを置ける。
+COMMAND_GROUP = "許した物 — CLI コマンド"
+#: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
+ALLOWED_SHAPES: dict[str, str] = {
+    HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
+    MACRO_GROUP: "Hy の macro と、Hy の macro だけを出す公開の submodule(macro の module)だけを置ける"
+    "(ADR-DOE-API-001 R14・R15・R30)",
+    COMMAND_GROUP: "console script と Rust の実行 file だけを置ける(ADR-DOE-API-001 R7・R30)",
+}
+#: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
+ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
 #: 決めの id: card(ki-)・依頼(lt-)・利用者の発言(ci-)。
 DECISION = re.compile(r"(ki-[0-9a-f]{12}|lt-[0-9A-Z]{26}|ci-[0-9A-Z]{26})")
 #: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒・混みの倍率は根の conftest が掛ける)。
@@ -200,13 +214,30 @@ def allowed_names(allowed: AllowedTable, package_dir: str) -> set[Key]:
     }
 
 
-def helper_names(allowed: AllowedTable, package_dir: str) -> set[Key]:
-    """1 package の、許した物の表に組「許した物 — program の helper」で置いた (module, 名)。"""
+def allowed_groups(allowed: AllowedTable, package_dir: str) -> dict[Key, str]:
+    """1 package の、許した物の表に置いた (module, 名) から組へ(目録で形を確かめる組の行だけ)。"""
     return {
-        (row["module"], row["name"])
+        (row["module"], row["name"]): row["組"]
         for row in allowed["許した物"]
-        if row["package"] == package_dir and row["組"] == HELPER_GROUP
+        if row["package"] == package_dir and row["組"] in ALLOWED_SHAPES
     }
+
+
+def _is_macro_module(package: Mapping[str, Any], module: str) -> bool:
+    """module の目録の名が 1 つ以上在り、全部が Hy の macro(macro の module — ADR-DOE-API-001 R14・R15・R30)。"""
+    forms = {row["form"] for row in package["exports"] if row["module"] == module}
+    return forms == {tool.MACRO_FORM}
+
+
+def fits_allowed_group(group: str, row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
+    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。"""
+    if group == HELPER_GROUP:
+        return row["form"] == tool.PROGRAM_HELPER
+    if group == MACRO_GROUP:
+        return row["form"] == tool.MACRO_FORM or (
+            row["module"] == SUBMODULE and _is_macro_module(package, row["name"])
+        )
+    return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
@@ -273,11 +304,10 @@ def _stale_allowed_text(directory: str, stale: list[Key]) -> str:
     )
 
 
-def _not_helper_text(directory: str, rows: list[Mapping[str, Any]]) -> str:
+def _misshapen_text(directory: str, group: str, rows: list[Mapping[str, Any]]) -> str:
     return (
-        f"{directory}: 許した物の表の組「{HELPER_GROUP}」に、目録の形が {tool.PROGRAM_HELPER} でない名が {len(rows)} 個 — "
-        "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)。"
-        "直すか、許した物の表から外して既知の表の外れか境界の組へ戻す:\n"
+        f"{directory}: 許した物の表の組「{group}」に、目録の形が組に合わない名が {len(rows)} 個 — "
+        f"{ALLOWED_SHAPES[group]}。直すか、許した物の表から外して既知の表の外れか境界の組へ戻す:\n"
         + "\n".join(
             f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['reason']})"
             for row in rows
@@ -318,8 +348,8 @@ def check_package(
     """目録の 1 package を既知の表(違反の表)と許した物の表と突き合わせる。どちらの表にも無い外れと、表に在るのに目録に
     無い名(表ごと)を名指して止める。
 
-    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。許した物の表の組「許した物 —
-    program の helper」の名は、目録の形が program の helper でなければ名指して止める(入口へ移した行は入口の行の形で見る)。
+    名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。許した物の表の名は、目録の形が
+    置いた組の形に合わなければ組ごとに名指して止める(fits_allowed_group — 入口へ移した行は入口の行の形で見る)。
     決まりの範囲の Rust の拡張を持つ package は、目録が import で読めなければ止める(unread_native_modules)。
     """
     directory = package["dir"]
@@ -338,16 +368,25 @@ def check_package(
     new = sorted(set(found) - known - permitted - {root for root, _old in moved})
     stale = sorted(known - set(found) - olds)
     stale_allowed = sorted(permitted - set(found) - olds)
-    helpers = helper_names(allowed, directory)
-    shown_helpers = sorted((helpers & set(found)) | {root for root, old in moved if old in helpers})
-    not_helpers = [found[key] for key in shown_helpers if found[key]["form"] != tool.PROGRAM_HELPER]
+    groups = allowed_groups(allowed, directory)
+    shown = {key: groups[key] for key in groups.keys() & found.keys()} | {
+        root: groups[old] for root, old in moved if old in groups
+    }
+    misshapen = {
+        group: [
+            found[key]
+            for key in sorted(shown)
+            if shown[key] == group and not fits_allowed_group(group, found[key], package)
+        ]
+        for group in ALLOWED_GROUPS
+    }
     unread = unread_native_modules(package, entry, repo)
     problems = [
         *([_unread_native_text(directory, unread)] if unread else []),
         *([_new_text(directory, new, found)] if new else []),
         *([_stale_text(directory, stale)] if stale else []),
         *([_stale_allowed_text(directory, stale_allowed)] if stale_allowed else []),
-        *([_not_helper_text(directory, not_helpers)] if not_helpers else []),
+        *(_misshapen_text(directory, group, rows) for group, rows in misshapen.items() if rows),
     ]
     assert not problems, "\n".join(problems)
 
@@ -632,16 +671,21 @@ def _fixture_table(
 
 def _fixture_allowed(helpers: Iterable[str], decision: str = "ki-5b3b2320de40") -> AllowedTable:
     """使い捨ての package の入口の名を、組「許した物 — program の helper」で許した物の表。"""
+    return _fixture_grouped({(FIXTURE_ROOT, name): HELPER_GROUP for name in helpers}, decision)
+
+
+def _fixture_grouped(groups: Mapping[Key, str], decision: str = "ki-d80c9c978b35") -> AllowedTable:
+    """使い捨ての package の (module, 名) を、それぞれの組で許した物の表。"""
     return {
         "許した物": [
             {
                 "package": FIXTURE_DIR,
-                "module": FIXTURE_ROOT,
+                "module": module,
                 "name": name,
-                "組": HELPER_GROUP,
+                "組": groups[(module, name)],
                 "決め": decision,
             }
-            for name in sorted(helpers)
+            for module, name in sorted(groups)
         ]
     }
 
@@ -868,6 +912,88 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
         match=r"許した物の表に在るのに目録に無い名が 1 個[\s\S]*doeff_fixture_api\.gone",
     ):
         check_package(package, *tables(["gone", "pinging"]))
+
+
+#: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。
+MACRO_MODULE = """
+(defmacro ping! []
+  "A macro module's macro."
+  '(PingEffect))
+"""
+MIXED_MODULE = """
+(defmacro pong! []
+  "A macro beside a function."
+  1)
+
+(defn plain [x]
+  "A plain function beside the macro."
+  x)
+"""
+COMMAND_PYPROJECT = (
+    FIXTURE_PYPROJECT + f'\n[project.scripts]\nfixture-command = "{FIXTURE_ROOT}:helper"\n'
+)
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
+    tmp_path: Path,
+) -> None:
+    """組「許した物 — Hy の macro」に置けるのは Hy の macro の名と macro だけを出す公開の submodule の行、組「許した物 — CLI
+    コマンド」に置けるのは console script の行だけ(ADR-DOE-API-001 R7・R14・R15・R30)。
+
+    macro の module(名に _ の無い submodule)と macro と console script を許した物の表に置けば緑。macro の外の名も出す
+    submodule・macro でない関数・console script を macro の組に、macro と関数を CLI コマンドの組に置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_tree(
+        tmp_path,
+        {
+            "__init__.py": EFFECTS_AND_HANDLERS + OUTLIER,
+            "macros.hy": MACRO_MODULE,
+            "mixed.hy": MIXED_MODULE,
+        },
+    )
+    (repo / "packages" / FIXTURE_DIR / "pyproject.toml").write_text(
+        textwrap.dedent(COMMAND_PYPROJECT), encoding="utf-8"
+    )
+    package = _read_fixture(repo)
+    macros, mixed = f"{FIXTURE_ROOT}.macros", f"{FIXTURE_ROOT}.mixed"
+    forms = {(row["module"], row["name"]): row["form"] for row in package["exports"]}
+    assert forms[(macros, "ping!")] == forms[(mixed, "pong!")] == tool.MACRO_FORM
+    assert forms[("(console script)", "fixture-command")] == tool.CONSOLE_SCRIPT
+    placed = {
+        (macros, "ping!"): MACRO_GROUP,
+        (SUBMODULE, macros): MACRO_GROUP,
+        (mixed, "pong!"): MACRO_GROUP,
+        ("(console script)", "fixture-command"): COMMAND_GROUP,
+    }
+    outliers = {FIXTURE_ROOT: ["helper"], mixed: ["plain"], SUBMODULE: [mixed]}
+
+    def tables(moved: Mapping[Key, str]) -> tuple[KnownTable, AllowedTable]:
+        listed = {
+            module: [name for name in names if (module, name) not in moved]
+            for module, names in outliers.items()
+        }
+        return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
+            {**placed, **moved}
+        )
+
+    check_package(package, *tables({}))
+    misplaced = [
+        ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(公開の submodule)(公開の submodule・"),
+        ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper(関数・"),
+        (
+            ("(console script)", "fixture-command"),
+            MACRO_GROUP,
+            f"(console script).fixture-command({tool.CONSOLE_SCRIPT}・",
+        ),
+        ((macros, "ping!"), COMMAND_GROUP, f"{macros}.ping!({tool.MACRO_FORM}・"),
+        ((FIXTURE_ROOT, "helper"), COMMAND_GROUP, f"{FIXTURE_ROOT}.helper(関数・"),
+    ]
+    for key, group, said in misplaced:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
+            check_package(package, *tables({key: group}))
+        assert said in str(failure.value)
+        assert ALLOWED_SHAPES[group] in str(failure.value)
 
 
 def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
