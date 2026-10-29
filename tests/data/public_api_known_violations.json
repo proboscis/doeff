@@ -18959,6 +18959,13 @@
    "name": "supplied_hold_step",
    "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsShortcutFailed",
+   "訳": "4fa2eb931(agora card ki-d5887d5edbd5)が ws の口の答えを段に分けた時に足した名。台本の答え手が import した型が module から見える。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠すと目録から消える",
+   "決め": "ki-d5887d5edbd5"
   }
  ]
 }
