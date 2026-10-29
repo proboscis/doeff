@@ -239,7 +239,7 @@ closed today
 ['Hello, Ada', 'Hello, Grace']
 ~~~
 
-`closed` answers by not resuming. `twice` stops at its first `yield`, and `"closed today"` is the result of the whole run. asyncio has no move that leaves a task at its `await` and ends the run with another value; cancelling raises inside the task instead.
+`closed` answers by not resuming. `twice` stops at its first `yield`, and `"closed today"` is the result of the whole run. doeff closes the paused generators, so their `finally` blocks run, but they never get a value. asyncio's loop has no move that ends the run with a value of its own: `task.cancel()` raises `CancelledError` at the `await`, and the task decides what happens next.
 
 Holding `k` for later is how concurrency works. `Spawn` and `Gather` are effects, and `scheduled` is the handler for them: it keeps the `k` of each task that waits and transfers to it when the task can go on, the job asyncio's loop does for its tasks. It is installed like `ada`. Both tasks run under the handlers around `together`, and the second task's program is `grace(greet())`, so it greets Grace.
 
@@ -355,7 +355,7 @@ print(repr(text), len(waits))
 - **Inside an asyncio application, `run()` blocks.** Call it in a worker thread: `await asyncio.to_thread(run, program)`.
 - **The `Await` bridge has rules of its own.** All the `Await`s of a process run on one background loop, so a coroutine that blocks that loop, with a synchronous call inside async code, stalls every `Await` in the process. Cancelling the doeff task that waits delivers `CancelledError` to the coroutine, but only requests it: the cancel returns without waiting for the coroutine's `finally` blocks to run.
 - **A handler takes on the contract of its operation.** What happens on cancellation, on an exception and in which order is now the handler's job, and you test it like any other code.
-- **A task costs more.** doeff's Rust scheduler takes about 17 µs of CPU per spawned task, against about 11 µs for asyncio.
+- **A task costs more.** doeff's Rust scheduler takes about 17 µs of CPU per spawned task, against about 11 µs for asyncio ([how this was measured](https://github.com/proboscis/doeff#performance)).
 
 ## Summary
 
@@ -381,6 +381,6 @@ python stream.py
 
 Every example in this post runs as shown with doeff 0.8.0. The complete files are in [examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async). The docs chapter [Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md) covers `Await`, `Spawn`, `Gather`, `Race` and cancellation, and the FAQ answers [How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio).
 
-The previous post, [Algebraic effects for Python](algebraic-effects-in-python.md), stacks handlers for time, concurrency, retries, budgets and I/O around one program. The next one is about time: a clock as a handler, so hours of waiting run in an instant.
+The previous post, [Algebraic effects for Python](algebraic-effects-in-python.md), stacks handlers for time, concurrency, retries, budgets and I/O around one program. The next one is about time: a clock as a handler, so days of waiting run in milliseconds.
 
 Do you have asyncio code where the event loop gets in the way, or a case where a plain `await` is clearly the better tool? Issues are open at https://github.com/proboscis/doeff/issues.
