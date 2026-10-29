@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING
 import doeff_hy as doeff_hy
 
 if TYPE_CHECKING:
+    from doeff_adr._effects import (
+        GetAdr as GetAdr,
+    )
+    from doeff_adr._effects import (
+        adr_registry as adr_registry,
+    )
     from doeff_adr.registry import (
         AdrSpec as AdrSpec,
     )
@@ -37,9 +43,6 @@ if TYPE_CHECKING:
         enforcement_ids as enforcement_ids,
     )
     from doeff_adr.registry import (
-        get_adr as get_adr,
-    )
-    from doeff_adr.registry import (
         get_enforcement as get_enforcement,
     )
     from doeff_adr.registry import (
@@ -56,20 +59,23 @@ if TYPE_CHECKING:
 _PUBLIC_API_NAMES = (
     "AdrSpec",
     "EnforcementRef",
+    "GetAdr",
     "SemgrepSpec",
     "adr_ids",
+    "adr_registry",
     "assert_adr_contract",
     "assert_all_adr_contracts",
     "assert_semgrep_enforcement",
     "clear_registry",
     "doeff_hy",
     "enforcement_ids",
-    "get_adr",
     "get_enforcement",
     "register_adr",
     "register_deftest_enforcement",
     "register_semgrep_enforcement",
 )
+#: registry の外の内側の module(_effects)で定義する公開の名 — effect と handler(card ki-24a2bca4339f)。
+_EFFECT_NAMES = frozenset({"GetAdr", "adr_registry"})
 
 
 def __getattr__(name: str) -> object:
@@ -79,10 +85,12 @@ def __getattr__(name: str) -> object:
         return _PUBLIC_API_NAMES
     if name not in _PUBLIC_API_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from doeff_adr import registry
+    from doeff_adr import _effects, registry
 
     exports: dict[str, object] = {
-        key: vars(registry)[key] for key in _PUBLIC_API_NAMES if key != "doeff_hy"
+        key: vars(_effects if key in _EFFECT_NAMES else registry)[key]
+        for key in _PUBLIC_API_NAMES
+        if key != "doeff_hy"
     }
     globals().update(exports)
     return exports[name]

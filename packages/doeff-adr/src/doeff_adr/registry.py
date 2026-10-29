@@ -295,7 +295,8 @@ def enforcement_ids() -> list[str]:
     return sorted(_ENFORCEMENTS)
 
 
-def get_adr(adr_id: str) -> AdrSpec:
+def _get_adr(adr_id: str) -> AdrSpec:
+    """登録簿の ADR を id で引く。外からは effect GetAdr で引く(handler adr_registry が答える・card ki-24a2bca4339f)。"""
     return _ADRS[adr_id]
 
 
@@ -304,7 +305,7 @@ def get_enforcement(enforcement_id: str) -> EnforcementRef | SemgrepSpec:
 
 
 def assert_adr_contract(adr_id: str) -> None:
-    spec = get_adr(adr_id)
+    spec = _get_adr(adr_id)
     if spec.status == "accepted" and not spec.enforcement:
         raise AssertionError(f"{adr_id}: accepted ADR must have executable enforcement")
     for ref in spec.enforcement:
