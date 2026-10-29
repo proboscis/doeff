@@ -135,6 +135,7 @@ from doeff_cluster.shared.protocol.detached import detached_queue_of_state as de
 from doeff_cluster.shared.protocol.detached import outbox_answer as outbox_answer
 from doeff_cluster.shared.protocol.detached import outbox_ack_answer as outbox_ack_answer
 from doeff_cluster.shared.protocol.detached import outbox_path as outbox_path
+from doeff_cluster.shared.protocol.detached import outbox_query as outbox_query
 from doeff_cluster.shared.core.capabilities import env_mapping as env_mapping
 from doeff_cluster.shared.core.detached_rules import task_placing_json as task_placing_json
 from doeff_cluster.shared.core.detached_rules import task_notify_json as task_notify_json
@@ -1046,7 +1047,7 @@ def ended_task_keys(writes: tuple) -> _Program[frozenset, object]:
 def outbox_read_of(answer: tuple) -> dict | str:
     ...
 
-def await_detached_outbox(link: SimLink, prefix: str, timeout_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
+def await_detached_outbox(link: SimLink, prefix: str, kinds: tuple, timeout_seconds: float) -> _Program[DetachedOutboxAnswer, object]:
     ...
 
 def ring_ended_tasks(queue: RequestQueue, writes: tuple) -> _Program[int, object]:

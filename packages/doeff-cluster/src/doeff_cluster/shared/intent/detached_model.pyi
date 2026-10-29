@@ -286,6 +286,9 @@ DetachedQueueAnswer: TypeAlias = DetachedQueueReason | DetachedUnknown | Detache
 @_doeff_dataclass(frozen=True)
 class ReadDetachedQueue(_doeff_effect_base[DetachedQueueAnswer]):
     key: str
+OUTBOX_ENDED: str
+OUTBOX_QUEUED_OVERDUE: str
+OUTBOX_KINDS: frozenset[str]
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedEnded:
@@ -296,6 +299,7 @@ class DetachedEnded:
     detail: str
     failure_kind: str
     finished_ms: int
+    kind: str = ...
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedOutbox:
@@ -310,6 +314,7 @@ class DetachedEndedWire:
     detail: str
     failure_kind: str
     finished_ms: int
+    kind: str = ...
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedOutboxWire:
@@ -320,6 +325,7 @@ DetachedOutboxAnswer: TypeAlias = DetachedOutbox | DetachedUnreachable
 class AwaitDetachedOutbox(_doeff_effect_base[DetachedOutboxAnswer]):
     prefix: str
     timeout_seconds: float
+    kinds: tuple[str, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class DetachedOutboxAcked:

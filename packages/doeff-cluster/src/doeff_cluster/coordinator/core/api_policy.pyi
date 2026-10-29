@@ -95,6 +95,7 @@ from doeff_cluster.coordinator.core.detached_policy import cancel_detached as ca
 from doeff_cluster.coordinator.core.detached_policy import release_detached as release_detached
 from doeff_cluster.coordinator.core.detached_policy import outbox_read as outbox_read
 from doeff_cluster.coordinator.core.detached_policy import outbox_ack as outbox_ack
+from doeff_cluster.shared.intent.detached_model import OUTBOX_ENDED as OUTBOX_ENDED
 from doeff_cluster.coordinator.core.rollout_policy import rollout_step as rollout_step
 from doeff_cluster.coordinator.core.rollout_policy import rollout_targets as rollout_targets
 from doeff_cluster.coordinator.core.rollout_policy import target_key as target_key

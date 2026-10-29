@@ -27,6 +27,7 @@ class ClusterTiming:
     watch_max_ms: int = 10000
     client_reply_ms: int = 15000
     inbox_reply_ms: int = 30000
+    queued_notice_ms: int = 900000
 
 @dataclass(frozen=True, eq=False)
 class Request:

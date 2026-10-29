@@ -720,6 +720,7 @@ class TaskRecord:
     priority: int = 0
     limits: tuple[TaskLimit, ...] = ...
     notify: str = ''
+    queued_noticed_ms: int | None = None
 PLACED_PHASES: frozenset[str]
 ENDED_PHASES: frozenset[str]
 
