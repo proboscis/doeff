@@ -30,7 +30,7 @@
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import signal)
 (import doeff [run])
-(import doeff_traverse.helpers [sequence])
+(import doeff_traverse [sequence])
 (import doeff_cluster.worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
   Outcome JobRecord JobNotStarted WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild

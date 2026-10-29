@@ -47,7 +47,7 @@
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
 (import doeff_events [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
-(import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
+(import doeff_time [GetTimeEffect WaitWithinEffect])
 (import doeff_records.admission [key-text])
 (import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
 (import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor

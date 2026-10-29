@@ -5,7 +5,7 @@ from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 import signal as signal
 from doeff import run as run
-from doeff_traverse.helpers import sequence as sequence
+from doeff_traverse import sequence as sequence
 from doeff_cluster.worker.intent.worker_model import Action as Action
 from doeff_cluster.worker.intent.worker_model import CodeState as CodeState
 from doeff_cluster.worker.intent.worker_model import CodeView as CodeView

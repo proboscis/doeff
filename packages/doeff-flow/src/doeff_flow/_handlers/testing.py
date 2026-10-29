@@ -9,7 +9,7 @@ from typing import Any
 
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_flow.effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
+from doeff_flow._effects import TraceAnnotate, TraceCapture, TracePush, TraceSnapshot
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

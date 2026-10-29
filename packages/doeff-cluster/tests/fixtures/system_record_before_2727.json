@@ -40,7 +40,7 @@
   "e": 3,
   "t": "root.0",
   "at": 1000000,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.3
@@ -94,7 +94,7 @@
   "e": 8,
   "t": "root.1",
   "at": 1000000,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.5
@@ -148,7 +148,7 @@
   "e": 13,
   "t": "root.2",
   "at": 1000000,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.7
@@ -206,7 +206,7 @@
   "e": 17,
   "t": "root.0",
   "at": 1000300,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -241,7 +241,7 @@
   "e": 21,
   "t": "root.0",
   "at": 1000300,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.3
@@ -262,7 +262,7 @@
   "e": 23,
   "t": "root.1",
   "at": 1000500,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -298,7 +298,7 @@
   "e": 27,
   "t": "root.1",
   "at": 1000500,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.5
@@ -319,7 +319,7 @@
   "e": 29,
   "t": "root.0",
   "at": 1000600,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -356,7 +356,7 @@
   "e": 33,
   "t": "root.0",
   "at": 1000600,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.3
@@ -377,7 +377,7 @@
   "e": 35,
   "t": "root.2",
   "at": 1000700,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -415,7 +415,7 @@
   "e": 39,
   "t": "root.2",
   "at": 1000700,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.7
@@ -436,7 +436,7 @@
   "e": 41,
   "t": "root.0",
   "at": 1000900,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -475,7 +475,7 @@
   "e": 45,
   "t": "root.0",
   "at": 1000900,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.3
@@ -496,7 +496,7 @@
   "e": 47,
   "t": "root.1",
   "at": 1001000,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -536,7 +536,7 @@
   "e": 51,
   "t": "root.1",
   "at": 1001000,
-  "ty": "doeff_time.effects.time:DelayEffect",
+  "ty": "doeff_time._effects.time:DelayEffect",
   "m": "read",
   "a": {
    "seconds": 0.5
@@ -557,7 +557,7 @@
   "e": 53,
   "t": "root.0",
   "at": 1001200,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -607,7 +607,7 @@
   "e": 58,
   "t": "root.2",
   "at": 1001400,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {
@@ -658,7 +658,7 @@
   "e": 63,
   "t": "root.1",
   "at": 1001500,
-  "ty": "doeff_time.effects.time:GetTimeEffect",
+  "ty": "doeff_time._effects.time:GetTimeEffect",
   "m": "read",
   "ok": true,
   "v": {

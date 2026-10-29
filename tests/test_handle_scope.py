@@ -26,7 +26,7 @@ import hy
 import pytest
 from doeff_core_effects import state, try_handler
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.handlers import fail_handler, sequential
+from doeff_traverse import fail_handler, sequential
 from hy.compiler import hy_compile
 
 from doeff import Program, run

@@ -30,14 +30,14 @@
 ;; Fail: low-level failure effect. Handler decides what to do.
 ;; Reduce: fold over opaque collection. f is kleisli: (acc, item) -> DoExpr[acc]
 ;; Inspect: extract per-item value + history for post-hoc analysis
-(import doeff_traverse.effects [Fail Reduce Inspect])
+(import doeff_traverse [Fail Reduce Inspect])
 ;; sequential: Traverse handler — runs items one by one, isolates per-item failure
 ;; fail_handler: converts unhandled Fail into Python exception
-(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
+(import doeff_traverse [sequential fail-handler :as fail_handler])
 ;; try_call: wraps a plain Python function as a yield site.
 ;;           If it raises, performs Fail(exception).
 ;;           Handler can Resume with a substitute value.
-(import doeff_traverse.helpers [try-call :as try_call])
+(import doeff_traverse [try-call :as try_call])
 
 
 ;; ===========================================================================

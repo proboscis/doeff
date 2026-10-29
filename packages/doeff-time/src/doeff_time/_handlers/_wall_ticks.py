@@ -7,14 +7,14 @@ one clause answers the three waits the same way.
 
 from doeff_core_effects.scheduler import Future, Task
 
-from doeff_time._internals.deadline import DEADLINE_PASSED
-from doeff_time.effects import (
+from doeff_time._effects import (
     RaceOutcome,
     RaceWithinEffect,
     TicksOutcome,
     WaitTicksEffect,
     WaitWithinEffect,
 )
+from doeff_time._internals.deadline import DEADLINE_PASSED
 
 TimedWait = WaitWithinEffect[object] | WaitTicksEffect[object] | RaceWithinEffect[object]
 

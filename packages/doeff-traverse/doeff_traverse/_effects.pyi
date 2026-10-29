@@ -13,7 +13,7 @@ from typing import Any, ClassVar, Generic, Literal, Never, TypeAlias, TypeVar
 from _typeshed import SupportsRichComparison
 
 from doeff import EffectBase, Program
-from doeff_traverse.collection import Collection, ItemResult
+from doeff_traverse._collection import Collection, ItemResult
 
 _Item = TypeVar("_Item")
 _Answer = TypeVar("_Answer")

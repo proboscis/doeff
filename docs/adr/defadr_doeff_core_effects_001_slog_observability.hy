@@ -26,7 +26,7 @@
        :evidence "packages/doeff-core-effects/doeff_core_effects/handlers.py:76,89,153; git log -S 'install.log'(削除を記録した ADR なし)")
      (fact
        "表示系 preset は現行 API に対して既に壊れている: log_display.py:94 は WriterTellEffect に存在しない effect.message を参照(現行は .msg/.kwargs)、旧 Pass() シグネチャも使用。tests/test_pass_then_typed_handler.py:54 も同属性を参照。sim_time.py:130 と docker dockerfile.hy:58 は WriterTellEffect に横から isinstance しており、型分離の影響面。"
-       :evidence "packages/doeff-preset/src/doeff_preset/handlers/log_display.py:90-102; packages/doeff-time/src/doeff_time/handlers/sim_time.py:130; packages/doeff-docker/src/doeff_docker/_handlers/dockerfile.hy:58")]
+       :evidence "packages/doeff-preset/src/doeff_preset/handlers/log_display.py:90-102; packages/doeff-time/src/doeff_time/_handlers/sim_time.py:130; packages/doeff-docker/src/doeff_docker/_handlers/dockerfile.hy:58")]
   :context
     [(interpretation
        "slog と Tell は正しいデフォルトが正反対の別エフェクトである: Writer(Tell)は『静かに蓄積してこそ正しい』データフロー、slog は『見えてこそ正しい』observability。同一ワイヤ型を共有する限り、どちらかのハンドラがもう一方の期待を裏切る構成(ログが黙って消える)が常に組めてしまう。業界の収束も同じ教訓を示す: Go slog と Python logging(lastResort)は『デフォルト sink = stderr』へ収束し、デフォルト nop の Rust log / OCaml Logs は有名な footgun になった。")

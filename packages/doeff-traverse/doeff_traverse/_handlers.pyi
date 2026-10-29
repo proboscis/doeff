@@ -7,7 +7,7 @@ py.typed の package の注記の無い関数は、pyright が答えの型を推
 from typing import Protocol, TypeAlias
 
 from doeff.program import ProgramHandler
-from doeff_traverse.effects import Inspect, ItemOutcome, Reduce, Skip, SortBy, Take, Traverse, Zip
+from doeff_traverse._effects import Inspect, ItemOutcome, Reduce, Skip, SortBy, Take, Traverse, Zip
 
 CollectionEffect: TypeAlias = (
     Skip
