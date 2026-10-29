@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import records
+from doeff_hy_bytecode_guard import _records as records
 
 #: README の Hy の例(``(require doeff-hy.macros [do! <-])`` の行を持つ正しい形)。
 CORRECT = """\
@@ -189,7 +189,7 @@ def test_the_hint_is_a_warning_that_python_can_turn_into_an_error(
     assert result.returncode != 0
     # 実行に入る前に警告の例外で止まる(落ちた表示の最後の行が警告の文で、module の本体の行は無い)。
     last = result.stderr.rstrip().splitlines()[-1]
-    assert last.startswith("doeff_hy_bytecode_guard.macro_hints.HyMacroUseWarning:")
+    assert last.startswith("doeff_hy_bytecode_guard._macro_hints.HyMacroUseWarning:")
     assert 'main.hy", line' not in result.stderr
 
 
@@ -204,7 +204,7 @@ HOMES = {
 @pytest.mark.parametrize("hy_name", sorted(HOMES))
 def test_the_table_of_macro_names_is_what_require_star_brings(hy_name: str) -> None:
     # 表が実物の macro の表と食い違うと、新しい macro の require し忘れを黙って見逃す・無い名を勧める。
-    from doeff_hy_bytecode_guard import macro_hints
+    from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 
     module = importlib.import_module(HOMES[hy_name])
     import hy
@@ -216,7 +216,7 @@ def test_the_table_of_macro_names_is_what_require_star_brings(hy_name: str) -> N
 @pytest.mark.parametrize("hy_name", sorted(HOMES))
 def test_no_name_in_the_table_is_also_a_runtime_attribute_of_its_provider(hy_name: str) -> None:
     # import で入れた名が macro と同じ名の関数なら、import は正しい(警告すると誤り)。
-    from doeff_hy_bytecode_guard import macro_hints
+    from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 
     module = importlib.import_module(HOMES[hy_name])
     import hy
@@ -226,7 +226,7 @@ def test_no_name_in_the_table_is_also_a_runtime_attribute_of_its_provider(hy_nam
 
 
 def test_the_table_lists_the_providers_in_the_order_the_line_prefers() -> None:
-    from doeff_hy_bytecode_guard import macro_hints
+    from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 
     assert list(macro_hints.MACRO_HOMES) == list(HOMES)
 
@@ -244,7 +244,7 @@ def test_a_module_that_uses_a_macro_spelling_only_as_a_local_name_is_not_walked(
     # ``(defn f [check] (check 1))`` の形 — 記録の absent に check が在っても、読みは LOAD_FAST で co_names に無い。大きな
     # module で命令を歩くと 1 本 1 秒前後かかる(card ki-ef8a3e593353)ので、co_names の照合だけで終わる事を測る。
     import hy  # noqa: F401 — 表は Hy の mangle で作る
-    from doeff_hy_bytecode_guard import macro_hints
+    from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 
     local = compile("def f(check):\n    return check(1)\n", "main.hy", "exec")
     walked: list[object] = []
@@ -256,7 +256,7 @@ def test_a_module_that_uses_a_macro_spelling_only_as_a_local_name_is_not_walked(
 def test_a_macro_spelling_read_as_a_global_inside_a_function_is_still_reported() -> None:
     # 絞りが入れ子の code の co_names も見る事 — 関数の中で束縛せずに読む check は require し忘れ。
     import hy  # noqa: F401 — 表は Hy の mangle で作る
-    from doeff_hy_bytecode_guard import macro_hints
+    from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 
     nested = compile("def f(row):\n    return check(row)\n", "main.hy", "exec")
     hints = list(macro_hints._hints(nested, _record("check")))

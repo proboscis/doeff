@@ -32,7 +32,7 @@ from dataclasses import dataclass, replace
 from functools import reduce
 from pathlib import Path
 
-from doeff_hy_bytecode_guard.records import GENERATED_NAME_PREFIX
+from doeff_hy_bytecode_guard._records import GENERATED_NAME_PREFIX
 
 from doeff_hy.static_check import CompileFailure, hy_files, import_roots, project, pyright_settings
 

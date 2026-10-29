@@ -61,7 +61,7 @@
       "path": "packages/doeff-core-effects/tests/test_python_bytecode_records.py",
       "reason": "registered-with-legacy",
       "rule": "private-module",
-      "subject": "packages/doeff-hy/src/doeff_hy_bytecode_guard/records.py"
+      "subject": "packages/doeff-hy/src/doeff_hy_bytecode_guard/_records.py"
     },
     {
       "count": 1,

@@ -15,7 +15,7 @@
 ;;;   効果で本物の答え手 subprocess_handler の下で問う形にしたので、DOEFF004 が当たらない(agora-redesign #3012)。
 ;;; 戻し方: :exempt の行を消せば、DOEFF004 が元どおり見張りに当たる。
 ;;;
-;;; 不変条件(startup の層の .pyc の記録の照らし — doeff_hy_bytecode_guard.macro_use。Program の外なので defservice の :invariants に
+;;; 不変条件(startup の層の .pyc の記録の照らし — doeff_hy_bytecode_guard._macro_use。Program の外なので defservice の :invariants に
 ;;; 置けず、条をここに 1 か所で書く):
 ;;;   B1 stale-expansion-is-never-current — 記録の digest が依った物(macro を定義した file の中身・macro が辿る値の module の file の
 ;;;     中身・環境変数など file の外で決まる値)のどれかが記録を作った時と違えば、照らしは古いと判じて展開し直させる。digest も

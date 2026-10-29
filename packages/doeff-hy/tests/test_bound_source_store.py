@@ -1,4 +1,4 @@
-"""辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard.bound_source.binding_of)を、置き場(DOEFF_HY_CODE_STORE)に覚える形の
+"""辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard._bound_source.binding_of)を、置き場(DOEFF_HY_CODE_STORE)に覚える形の
 失敗ケース(agora-redesign card ki-38508e6e56fd)。
 
 置き場の読みは、同じ中身・同じ名・同じ読み方の時だけ前の読みを返す — 返す物は、その process で解き直した読みと同じでなければ
@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import bound_source
+from doeff_hy_bytecode_guard import _bound_source as bound_source
 
 
 @pytest.fixture

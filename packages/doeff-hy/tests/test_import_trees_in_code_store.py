@@ -19,8 +19,9 @@ import time
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import code_store, expansion_trees
-from doeff_hy_bytecode_guard.records import MacroRecord
+from doeff_hy_bytecode_guard import _code_store as code_store
+from doeff_hy_bytecode_guard import _expansion_trees as expansion_trees
+from doeff_hy_bytecode_guard._records import MacroRecord
 
 SOURCE = "(setv answer 42)\n"
 TREE = ast.parse("answer = 42\n")

@@ -50,10 +50,10 @@ def cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def import_leaves_no_tree(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests count the analyzer's own expansions and entries, so a module they import must not also leave
-    its tree for the analysis (``doeff_hy_bytecode_guard.expansion_trees``); the tests that ask for
+    its tree for the analysis (``doeff_hy_bytecode_guard._expansion_trees``); the tests that ask for
     ``real_import_trees`` (or ``import_trees_on``, which builds on it) are the ones about that."""
     if "real_import_trees" not in request.fixturenames:
-        from doeff_hy_bytecode_guard import expansion_trees
+        from doeff_hy_bytecode_guard import _expansion_trees as expansion_trees
 
         monkeypatch.setattr(expansion_trees, "add_import_tree", lambda *args, **kwargs: None)
 

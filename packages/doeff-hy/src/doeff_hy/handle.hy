@@ -184,7 +184,7 @@
 
 (defn _fresh-lazy-tmp [lazy-name suffix]
   "lazy の初期化の一時の名を作るため。Hy の gensym で作る — 名の番号は compile の口の正準化
-   (doeff_hy_bytecode_guard.records.canonical_gensyms)が module の中の順へ振り直すので、compile の順に依らない
+   (doeff_hy_bytecode_guard._records.canonical_gensyms)が module の中の順へ振り直すので、compile の順に依らない
    (自前の数えを持つと、その番号が compile の順で変わっていた — agora-redesign #3667)。"
   (hy.gensym (+ "lazy_" (str lazy-name) "_" suffix)))
 

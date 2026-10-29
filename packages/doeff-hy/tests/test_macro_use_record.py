@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import record_is_current_here, records, source_to_code_as_import
+from doeff_hy_bytecode_guard import record_is_current_here, _records as records, source_to_code_as_import
 
 #: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
 #: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
@@ -560,7 +560,7 @@ sys.path.insert(0, root)
 import hy
 import doeff_hy
 from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
 if mode == "record":
     path = root + "/macro_use_probe/user.hy"
     loader = importlib.machinery.SourceFileLoader("macro_use_probe.user", path)
@@ -784,7 +784,7 @@ root, mode, stored = sys.argv[1], sys.argv[2], Path(sys.argv[3])
 sys.path.insert(0, root)
 import doeff_hy
 from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
 users = ("user", "assigning")
 if mode == "record":
     made = {}
@@ -880,8 +880,8 @@ def counting(self, data, path, *args, **kwargs):
     return code
 importlib.machinery.SourceFileLoader.source_to_code = counting
 import doeff_hy
-from doeff_hy_bytecode_guard import loader_hooks, macro_use, record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use, record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
 def digest(spec):
     module, name = spec.split(":")
     key = macro_use.UsedMacroKey(records.MACRO_TABLE, module, hy.mangle(name))
@@ -1079,8 +1079,8 @@ user = sys.argv[5] if len(sys.argv) > 5 else "user"
 sys.path.insert(0, root)
 import hy
 import doeff_hy
-from doeff_hy_bytecode_guard import bound_source, macro_use, record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _bound_source as bound_source, _macro_use as macro_use, record_from_json, record_is_current_here, record_to_json
+from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
 counts = {"parsed": 0, "facts": 0}
 def counting(name, original):
     def counted(*args, **kwargs):
@@ -1249,7 +1249,7 @@ def test_a_class_in_a_source_with_an_unlisted_extension_is_covered_by_its_body(
     # 3 と 30 で同じ digest になった。
     import types
 
-    from doeff_hy_bytecode_guard import loader_hooks, macro_use
+    from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
 
     name = f"macro_use_ext_{uuid.uuid4().hex[:8]}"  # 2 つの版で同じ名(名も digest に入る)
 
@@ -1328,7 +1328,7 @@ def counting(self, data, path, *args, **kwargs):
     return code
 importlib.machinery.SourceFileLoader.source_to_code = counting
 import doeff_hy
-from doeff_hy_bytecode_guard import macro_use
+from doeff_hy_bytecode_guard import _macro_use as macro_use
 stats = {}
 stating = macro_use._file_state
 def counted(path):
@@ -1435,7 +1435,7 @@ def test_the_digest_is_the_sha256_of_the_length_prefixed_parts() -> None:
     # し直される(歩みの文字列の入れ方を速くした card ki-be596ac8276f の便が、綴りを変えていない証拠)。
     import hashlib
 
-    from doeff_hy_bytecode_guard import loader_hooks, macro_use
+    from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use
 
     walker = macro_use._Walker(loader_hooks.file_sha256, macro_use.CodeReadings({}))
     fed = (("module", "a"), ("値", ""), ("\ud800",))
@@ -1610,7 +1610,7 @@ def test_the_import_scope_variable_is_read_only_through_current_scope() -> None:
     uses = tuple(
         use
         for source in sorted(package.glob("*.py"))
-        if source.name != "import_scope.py"
+        if source.name != "_import_scope.py"
         for use in _scope_variable_uses(source)
     )
     assert not uses, f"import_scope.py の外で IMPORT_SCOPE を set・reset の呼びの外で使う — 読みは current_scope() を通す: {uses}"
@@ -1623,7 +1623,7 @@ def test_the_code_reading_entry_is_keyed_by_the_hy_version(
     # 置き場の entry の鍵に Hy の版が無かった — Hy を上げて mangle が変わっても、前の Hy の読みを引く(置き場は作業木と版をまたぐ)。
     import hy
 
-    from doeff_hy_bytecode_guard import macro_use
+    from doeff_hy_bytecode_guard import _macro_use as macro_use
 
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", str(tmp_path))
     key = macro_use.UsedMacroKey("macros", "doeff_hy.macros", "defk")
@@ -1639,7 +1639,7 @@ def test_every_function_the_code_reading_calls_is_in_the_module_its_key_covers()
     # 大域の名で呼ぶ関数は全部この module に在る事を確かめる(Hy の関数は鍵の Hy の版が覆う — 関数の中で import する)。
     from types import CodeType, FunctionType
 
-    from doeff_hy_bytecode_guard import macro_use
+    from doeff_hy_bytecode_guard import _macro_use as macro_use
 
     def names(code: CodeType) -> set[str]:
         inner = (constant for constant in code.co_consts if isinstance(constant, CodeType))
@@ -1780,7 +1780,7 @@ def test_macros_that_do_not_read_the_environment_stay_checkable_beside_ones_that
 def test_a_row_of_an_environment_read_is_stale_even_when_the_walk_now_compares_files() -> None:
     # 緑のまま守る: 環境変数の読みに当たった記録の行は、今の歩みが import の途中の module に当たって file の行で比べる形(digest が
     # None)になっても古い — file は環境変数の違いを写さない。今の歩みが環境変数の読みに当たった時も、記録の印と同じでも古い。
-    from doeff_hy_bytecode_guard import macro_use
+    from doeff_hy_bytecode_guard import _macro_use as macro_use
 
     for recorded, now in (
         (records.ENVIRONMENT_READ, None),
@@ -1827,7 +1827,7 @@ def test_the_environment_mark_is_read_only_by_the_walk_and_the_check() -> None:
     uses = tuple(
         f"{source.name}:{getattr(node, 'lineno', 0)}"
         for source in sorted(package.glob("*.py"))
-        if source.name not in ("records.py", "macro_use.py")
+        if source.name not in ("_records.py", "_macro_use.py")
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8")))
         if (isinstance(node, ast.Name) and node.id == "ENVIRONMENT_READ")
         or (isinstance(node, ast.Attribute) and node.attr == "ENVIRONMENT_READ")

@@ -24,12 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
-from doeff_hy_bytecode_guard.records import fold_anon_var_numbers
+from doeff_hy_bytecode_guard._records import fold_anon_var_numbers
 
 BASELINE_VERSION = 1
 
 # doeff-hy の lazy が展開で振る名(`_lazy_sent_cached_1` など)の番号。Hy が振る名(`_hy_anon_44`・`_hy_let_first_28` など)の形と畳み方は
-# Hy の内部の名の定義元(doeff_hy_bytecode_guard.records.fold_anon_var_numbers)に在り、ここは持たない(card ki-ffe72a1fb7d7)。
+# Hy の内部の名の定義元(doeff_hy_bytecode_guard._records.fold_anon_var_numbers)に在り、ここは持たない(card ki-ffe72a1fb7d7)。
 # 比べの鍵では 1 つの印に畳む。行番号や型の名の数字は `_hy_` / `_lazy_` で始まらないので畳まない(vg-w39 の #2286 の形 + kn-w26 の lazy の名)。
 _LAZY_GENERATED_NUMBER = re.compile(r"\b(_lazy_[A-Za-z0-9_]*?[A-Za-z])_\d+\b")
 
