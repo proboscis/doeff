@@ -11,7 +11,8 @@
    model `typesafe-ai/jev`・キーは `AI_GATEWAY_API_KEY` → `~/jev_key`。
 
 `resolve_target` は純粋(環境と file の読みは引数で受け取る)。process の環境から解く入口は
-`target_from_process_environment`(組み立て点だけが呼ぶ I/O)。
+`target_from_process_environment`(宛先を渡されない `judge_stack` が積みを作る時だけ呼ぶ I/O)。どちらも handler の中の部品で、
+入口からは出さない(ADR-DOE-API-001 R1 — 使い手は宛先を `judge_stack` に任せるか、型 `JevTarget` を渡す)。
 """
 
 import json
@@ -117,7 +118,7 @@ def read_text_from_disk(path: str) -> str | None:
 
 
 def target_from_process_environment(*, wire: str | None = None) -> JevTarget:
-    """組み立て点(CLI・hook の入口)だけが呼ぶ: この process の環境と home の file から宛先を解く。
+    """宛先を渡されない judge_stack(組み立て点の CLI・hook の入口が呼ぶ形)だけが呼ぶ: この process の環境と home の file から宛先を解く。
 
     環境は os.environ を直に読まず、foundation の handler(subprocess_handler)が答える ReadEnvironment の写像で受ける
     (agora-redesign #3012・doeff-linter DOEFF004)。"""

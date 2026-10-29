@@ -3,12 +3,16 @@
 doeff-system-one の `Judge` effect を **Claude の構造化の答え**(structured output)で判定する。doeff-jev(TypeSafe の Jev)と
 同じ位置(provider 側)で、純粋な変換と、Judge を Claude Code の CLI の 1 回きりの print へ運ぶ handler を持つ。
 
-| 部品 | 中身 |
+入口 `doeff_claude_judge` が見せるのは、handler と handler の工場と、effect `BorrowJudgeCredential` と、値・結果・設定の型だけ
+(doeff の ADR-DOE-API-001 R1)。下の module は内側(名に `_` を付けた所)に在り、問いの部品を綴る `prepare`・答えを読む
+`parse`・本文の札の `state_text`・既定の命令 `DEFAULT_COMMAND` も内側の部品で、使い手は読まない。
+
+| 部品(内側) | 中身 |
 |---|---|
-| `wire.py` | `prepare(judge) -> ClaudeQuery`: Judge を Claude への 1 回の問いの部品(system の文・利用者の文〔画像の在る Judge は文字と画像の並び〕・答えの JSON Schema の文)に写す。`parse(judge, answer, *, model, input_tokens, elapsed_ms) -> Verdict \| MalformedAnswer`: 構造化の答え(JSON の文か読んだ値)を Verdict に写す |
-| `target.py` | `ClaudeJudgeTarget`(model・家の設定 dir・子の env・thinking の token 数・effort・資格を借りるか)・`JudgeCredential`(借りた access token と期限)・`NoJudgeCredential`・effect `BorrowJudgeCredential`(判定 1 回の資格を借りる — 使い手の貸し手が答える) |
-| `handler.py` | `claude_judge_handler(target)`: Judge → 資格を借りる → doeff-claude-code の `ClaudePrintOnce` を 1 回出す → Verdict。process は起こさない(semgrep の規則 `doeff-claude-judge-starts-no-process`) |
-| `wiring.py` | `claude_judge_stack(target, *, printer, lender, command, log_stderr)`(積みの 1 か所)・`run_judgment`・`production_printer(command)`(本番の print の実体)・`scripted_printer(answer, limited=None)`(検の fake — CLI を起こさない。`limited(問いの部品, model)` が尽きの事実 `AccountLimitHit` を返す print は `PrintLimited` で答える — 口座の利用枠が尽きた筋書き)・`fixed_credential_lender(credential)` |
+| `_wire.py` | `prepare(judge) -> ClaudeQuery`: Judge を Claude への 1 回の問いの部品(system の文・利用者の文〔画像の在る Judge は文字と画像の並び〕・答えの JSON Schema の文)に写す。`parse(judge, answer, *, model, input_tokens, elapsed_ms) -> Verdict \| MalformedAnswer`: 構造化の答え(JSON の文か読んだ値)を Verdict に写す |
+| `_target.py` | `ClaudeJudgeTarget`(model・家の設定 dir・子の env・thinking の token 数・effort・資格を借りるか)・`JudgeCredential`(借りた access token と期限)・`NoJudgeCredential`・effect `BorrowJudgeCredential`(判定 1 回の資格を借りる — 使い手の貸し手が答える) |
+| `_handler.py` | `claude_judge_handler(target)`: Judge → 資格を借りる → doeff-claude-code の `ClaudePrintOnce` を 1 回出す → Verdict。process は起こさない(semgrep の規則 `doeff-claude-judge-starts-no-process`) |
+| `_wiring.py` | `claude_judge_stack(target, *, printer, lender, command, log_stderr)`(積みの 1 か所)・`production_printer(command)`(本番の print の実体)・`scripted_printer(answer, limited=None)`(検の fake — CLI を起こさない。`limited(問いの部品, model)` が尽きの事実 `AccountLimitHit` を返す print は `PrintLimited` で答える — 口座の利用枠が尽きた筋書き)・`fixed_credential_lender(credential)` |
 
 使い手は、この package の型(`ClaudeJudgeTarget`・`JudgeCredential`・`BorrowJudgeCredential`・検の筋書きの尽きの事実 `AccountLimitHit`)と
 組み立ての道具だけを読み、doeff-claude-code の型を名指さない。
@@ -56,11 +60,14 @@ Verdict を作らずに `MalformedAnswer(detail, question)` で返す。運ぶ h
 
 ## 使い方
 
+program は effect `Judge` を出すだけで、組み立て点が `claude_judge_stack` の積みを被せて doeff の `run` で回す。
+
 ```python
-from doeff_claude_judge import ClaudeJudgeTarget, JudgeCredential, fixed_credential_lender, run_judgment
+from doeff_claude_judge import ClaudeJudgeTarget, JudgeCredential, claude_judge_stack, fixed_credential_lender
+from doeff_core_effects import scheduled
 from doeff_system_one import Judge, noul
 
-from doeff import do
+from doeff import do, run, with_handlers
 
 target = ClaudeJudgeTarget(model="claude-sonnet-5-5", config_dir="/var/lib/judge/claude",
                            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/var/lib/judge"})
@@ -73,7 +80,8 @@ def flow():
     return (yield judge)
 
 
-verdict = run_judgment(flow(), target=target, lender=fixed_credential_lender(JudgeCredential(access_token=token, expires_at=None)))
+lender = fixed_credential_lender(JudgeCredential(access_token=token, expires_at=None))
+verdict = run(scheduled()(with_handlers(claude_judge_stack(target, lender=lender), flow())))
 ```
 
 家の設定 dir は判定だけの空の dir を勧める(借りた資格の dir は、家の設定 dir の中身への link を持つ)。

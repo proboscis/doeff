@@ -26,15 +26,14 @@ from doeff_claude_judge import (
     NoJudgeCredential,
     claude_judge_stack,
     fixed_credential_lender,
-    prepare,
-    run_judgment,
     scripted_printer,
 )
-from doeff_claude_judge._wire import NOUL_HEAD
+from doeff_claude_judge._wire import NOUL_HEAD, prepare
+from doeff_core_effects import scheduled
 from doeff_hy._frozen import freeze_json
 from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
 
-from doeff import Err, Pass, Resume, ResumeThrow, Try, do
+from doeff import Err, Pass, Resume, ResumeThrow, Try, do, run, with_handlers
 from doeff import handler as _program_handler
 
 if TYPE_CHECKING:
@@ -92,12 +91,17 @@ def _lender(answer: object):
     return _program_handler(raw)
 
 
+def _judged(program, layers):
+    """使い手の組み立てと同じ形: 積みを被せ、scheduler の下で doeff の run で回す。"""
+    return run(scheduled()(with_handlers(layers, program)))
+
+
 def _run(judge: Judge, *, target: ClaudeJudgeTarget = TARGET, printer=None, lender=None):
     @do
     def flow():
         return (yield judge)
 
-    return run_judgment(flow(), target=target, layers=claude_judge_stack(target, printer=printer, lender=lender))
+    return _judged(flow(), claude_judge_stack(target, printer=printer, lender=lender))
 
 
 def _refusal(judge: Judge, **kwargs) -> JudgeError:
@@ -108,7 +112,7 @@ def _refusal(judge: Judge, **kwargs) -> JudgeError:
         return (yield Try(judge))
 
     target = kwargs.pop("target", TARGET)
-    outcome = run_judgment(flow(), target=target, layers=claude_judge_stack(target, **kwargs))
+    outcome = _judged(flow(), claude_judge_stack(target, **kwargs))
     assert isinstance(outcome, Err), outcome
     assert isinstance(outcome.error, JudgeError), outcome.error
     return outcome.error

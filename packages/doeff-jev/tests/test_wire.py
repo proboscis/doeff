@@ -4,7 +4,8 @@ import hashlib
 import json
 
 import pytest
-from doeff_jev import JevTarget, cache_key, parse, prepare
+from doeff_jev import JevTarget
+from doeff_jev._wire import cache_key, parse, prepare
 from doeff_jev._wire import CALLER_HEADER, IMAGES_HEADER, PROXY_HEADER
 from doeff_system_one import Image, Judge, JudgeError, choice, noul, score
 
