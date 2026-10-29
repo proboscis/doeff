@@ -9,7 +9,7 @@ clock again, and check that the delay was answered and that the clock moved by t
 from datetime import timedelta
 from pathlib import Path
 
-from doeff_flow import run_result, run_workflow
+from doeff_flow._run import run_result, run_workflow
 from doeff_time import Delay, GetTime
 
 from doeff import EffectGenerator, Ok, do

@@ -6,8 +6,8 @@ import threading
 from pathlib import Path
 
 from click.testing import CliRunner
-from doeff_flow import run_result, run_workflow
 from doeff_flow._cli import cli
+from doeff_flow._run import run_result, run_workflow
 
 from doeff import Ask, Effect, Get, Pass, Pure, Put, do
 from doeff import handler as _install_raw_handler

@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from doeff_agentic import (
-    AgenticAPI,
     AgentInfo,
     AgentStatus,
-    StateManager,
     WorkflowInfo,
     WorkflowStatus,
 )
+from doeff_agentic._api import AgenticAPI
+from doeff_agentic._state import StateManager
 
 
 class FakeBackend:

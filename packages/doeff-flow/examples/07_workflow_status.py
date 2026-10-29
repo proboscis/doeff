@@ -20,7 +20,7 @@ The slog effect is designed for semantic workflow status that agents can emit,
 making multi-agent orchestration observable.
 """
 
-from doeff_flow import run_workflow
+from doeff_flow._run import run_workflow
 from doeff_time import Delay
 
 from doeff import Pure, do, slog

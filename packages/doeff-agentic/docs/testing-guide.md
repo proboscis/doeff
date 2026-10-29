@@ -48,14 +48,13 @@ import tempfile
 from datetime import datetime, timezone
 
 from doeff_agentic import (
-    EventLogWriter,
-    EventLogReader,
-    WorkflowIndex,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,
     AgenticSessionHandle,
     AgenticSessionStatus,
 )
+# The event log is the handlers' internal storage (not part of the public API).
+from doeff_agentic._event_log import EventLogReader, EventLogWriter, WorkflowIndex
 
 # Create a temporary state directory
 state_dir = Path(tempfile.mkdtemp())
