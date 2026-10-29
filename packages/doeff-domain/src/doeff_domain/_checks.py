@@ -21,6 +21,7 @@ import importlib
 import pkgutil
 import sys
 from collections.abc import Iterable
+from types import ModuleType
 
 from doeff import EffectBase
 from doeff_domain._introspect import handled_effects
@@ -93,8 +94,9 @@ def assert_no_orphan_effects(
 
     ``packages`` are module or package names; packages are import-walked
     recursively. A class counts as *defined* in the module whose name equals
-    its ``__module__`` — re-exports are not counted. Import failures
-    propagate (fail loud).
+    its ``__module__`` — re-exports are not counted. A module that cannot be
+    imported fails the check loud as a DomainCheckError (its cause is the
+    import error).
     """
     defined = _effect_classes_defined_in(packages)
     orphans = [effect for effect in defined if not table.introduces(effect)]
@@ -119,39 +121,52 @@ def assert_no_orphan_effects(
 
 
 def _effect_classes_defined_in(packages: Iterable[str]) -> list[type]:
-    module_names: list[str] = []
-    for package_name in packages:
-        root = importlib.import_module(package_name)
-        module_names.append(root.__name__)
-        if hasattr(root, "__path__"):
-            for info in pkgutil.walk_packages(
-                root.__path__, prefix=root.__name__ + ".", onerror=_reraise_walk_error
-            ):
-                module_names.append(info.name)
-
-    defined: dict[type, None] = {}
-    for module_name in module_names:
-        module = importlib.import_module(module_name)
-        for value in sorted(vars(module).values(), key=_attribute_sort_key):
-            if (
-                isinstance(value, type)
-                and issubclass(value, EffectBase)
-                and value is not EffectBase
-                and value.__module__ == module_name
-            ):
-                defined[value] = None
+    """The EffectBase subclasses defined (not re-exported) in the named modules and below — what check (c) scans."""
+    module_names = [name for package_name in packages for name in _modules_under(package_name)]
+    defined = {
+        value: None
+        for module_name in module_names
+        for value in sorted(vars(_import_for_scan(module_name)).values(), key=_attribute_sort_key)
+        if isinstance(value, type)
+        and issubclass(value, EffectBase)
+        and value is not EffectBase
+        and value.__module__ == module_name
+    }
     return list(defined)
 
 
+def _modules_under(package_name: str) -> list[str]:
+    """The named module and, for a package, every module below it (walked by import)."""
+    root = _import_for_scan(package_name)
+    if not hasattr(root, "__path__"):
+        return [root.__name__]
+    walked = pkgutil.walk_packages(
+        root.__path__, prefix=root.__name__ + ".", onerror=_reraise_walk_error
+    )
+    return [root.__name__, *(info.name for info in walked)]
+
+
+def _import_for_scan(module_name: str) -> ModuleType:
+    """Import a module the scan reads. Any failure becomes a DomainCheckError naming the module, so check (c)
+    fails with one error type (ADR-DOE-API-001 R24) — the original error stays as its cause."""
+    try:
+        return importlib.import_module(module_name)
+    except Exception as error:
+        raise DomainCheckError(
+            f"cannot import {module_name} during the orphan-effect scan (check (c)): {error!r}"
+        ) from error
+
+
 def _attribute_sort_key(value: object) -> str:
+    """Sort the module's values by class name so the scan reports in a stable order."""
     if isinstance(value, type):
         return value.__name__
     return ""
 
 
 def _reraise_walk_error(module_name: str) -> None:
-    # pkgutil.walk_packages swallows ImportError by default — fail loud instead.
+    """pkgutil.walk_packages swallows the import errors of the packages it walks by default — fail loud instead."""
     error = sys.exc_info()[1]
-    if error is not None:
-        raise error
-    raise ImportError(f"failed to import {module_name} during orphan-effect scan")
+    raise DomainCheckError(
+        f"cannot import {module_name} during the orphan-effect scan (check (c)): {error!r}"
+    ) from error

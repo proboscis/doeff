@@ -6,7 +6,7 @@ path for raw handlers, and it declares handlers owned by other packages
 without touching them. A handler that carries its own ``__doeff_handles__``
 mark (the core's installers set it) is read from that mark. The function
 ``handles()`` that set the mark post-hoc on the target was made this type
-(ADR-DOE-API-001 R23 — card ki-03a7f0af2b64: neither a handler factory (R3)
+(ADR-DOE-API-001 R24 — card ki-03a7f0af2b64: neither a handler factory (R3)
 nor a program helper (R18), so it became a value, as R19 did for check).
 
 Layer 2 — structure: objects produced by doeff-hy's ``defhandler`` carry
