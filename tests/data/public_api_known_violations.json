@@ -14524,9 +14524,9 @@
    }
   },
   "doeff-linter": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — CLI": {
      "(実行 file)": [
       "doeff-linter"
      ]
@@ -17572,7 +17572,7 @@
    }
   },
   "doeff-vm-core": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {}
   }
  },
@@ -19732,6 +19732,27 @@
    "name": "WarmInputWritten",
    "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule warm_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
    "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer.program_effects",
+   "name": "SuppliedDeclaration",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "決め": "ki-827dc43fa730"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer.program_effects",
+   "name": "declared_builders",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "決め": "ki-827dc43fa730"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer.program_effects",
+   "name": "supplied_declarations",
+   "訳": "読めない handler に呼び手が渡す宣言の型(SuppliedDeclaration)とその読み手。commit 2da663d40(card ki-827dc43fa730)が表を直さずに足した — doeff main 628253daf で card ki-40f991cef6c6 の調べが見つけ、card ki-4c1d18a98579 が doeff main 6675fb4c72c1 の目録で同じ 3 名を確かめた。doeff-effect-analyzer は範囲の答え待ち(ADR-DOE-API-001 R13 (b) — 名ごとの材料は card ki-4c1d18a98579 の発言)で、答えが出たら範囲と組を改める card が消す",
+   "決め": "ki-827dc43fa730"
   }
  ]
 }
