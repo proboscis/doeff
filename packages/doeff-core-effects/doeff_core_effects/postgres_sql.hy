@@ -103,6 +103,11 @@
 (val LARGE-CARRY-BYTES (* 256 1024))
 ;; 目安を越える値を通した接続の印(release が空きの列に戻さず閉じる)。接続が消えれば印も消える(弱い参照)。
 (val CARRIED-LARGE (weakref.WeakSet))
+;; 束ねた transaction の文を名つきの prepared statement にした覚え(接続 → PreparedBook — postgres-flush の註)。接続を捨てれば覚えも消える。
+;; 覚える文の数は接続ごとに PREPARED-MAX まで(越えた文は名を付けずに流す — 文の綴りは宣言から決まる有限の組だが、上限で守る)。
+(val PREPARED (weakref.WeakKeyDictionary))
+(val PREPARED-LOCK (threading.Lock))
+(val PREPARED-MAX 256)
 
 ;; 宣言の欄の型 → PostgreSQL の型。
 (val POSTGRES-TYPES {SqlColumnType.INTEGER "bigint" SqlColumnType.FLOAT "double precision" SqlColumnType.TEXT "text"
@@ -700,6 +705,23 @@
   queries)
 
 
+(defclass [(dataclass :kw-only True)] PreparedBook []
+  "接続 1 本で名つきにした文の覚え(postgres-flush の註): names = (文の bytes, 引数の型の oid の並び) → server の上の名・issued = 次に付ける
+   名の番号。書き換えるのは接続を借りた driver の thread だけなので値の型ではない。"
+  (setv #^ dict names (field :default-factory dict))
+  (setv #^ int issued 0))
+
+
+(defk prepared-book [connection]
+  {:pre [(: connection "psycopg の接続")] :post [(: % PreparedBook)]
+   :tags {:context "sql" :role "foundation"}}
+  "接続の名つきの文の覚えを引くため(無ければ空で作る — 覚えの表は thread の間で分け合うので錠の中で)。"
+  (with [_ PREPARED-LOCK]
+    (when (not-in connection PREPARED)
+      (setv (get PREPARED connection) (PreparedBook)))
+    (get PREPARED connection)))
+
+
 (defk socket-ready [pgconn events]
   {:pre [(: pgconn "psycopg の PGconn") (: events int)] :post [(: % int)]
    :tags {:context "sql" :role "foundation"}}
@@ -787,6 +809,8 @@
    送り切り、sync までの答えを順に受ける(card ki-f7a1ef77251f — cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
    待ちを作り、本番の free-threaded の Python の psycopg〔C の拡張の無い pure-python の libpq の口〕で文 1 つに約 0.25 ms の CPU を使い、
    DB は文が 1 つ届くごとに起きて次の文を待った〔pipeline の中の ClientRead〕。手元の 8 文の往復で client の CPU 2.09 → 0.62 ms)。
+   文は接続ごとに名つきの prepared statement にして使い回す(PREPARED — 初めての文は同じ往復で用意してから流す。cursor の道でも psycopg が
+   5 回目から用意していた。名を付けないと server が毎回 plan を組み、索引 76 本の表の行の錠つきの読みで 1 回 約 0.4 ms)。
    引数の書き換えと値の写し・答えの値の読みは cursor と同じ psycopg の部品(step-queries・results-answer)。pipeline mode は答えを sync まで
    受け切った後に出る(落ちた往復でも — 送りか受けの途中で接続が切れて出られずに残った接続は、返す時に捨てる)。"
   (import psycopg)
@@ -798,6 +822,14 @@
     (<- (noted-carry connection sent)))
   (val pgconn connection.pgconn)
   (val transformer (Transformer connection))
+  (<- book (prepared-book connection))
+  ;; この往復で新しく名を付けた文(往復が通った時だけ覚えに足す — 落ちた往復の名は server に残るが、名は番号で重ねない)。
+  (var fresh {})
+  ;; 文ごとの答えの数(名を付けた往復の文は、用意の答えと流した答えの 2 つ)— step の順・step の中の文の順。
+  (var spans #())
+  (var counts #())
+  (var name None)
+  (var made False)
   (try
     (with [_ connection.lock]
       (var queued #())
@@ -806,9 +838,24 @@
         (:= queued (+ queued #(queries))))
       (.enter-pipeline-mode pgconn)
       (for [#(step queries) (zip steps queued :strict True)]
+        (:= counts #())
         (for [query queries]
-          (.send-query-params pgconn query.query query.params :param-types query.types :param-formats query.formats
-                              :result-format (if step.binary psycopg.pq.Format.BINARY psycopg.pq.Format.TEXT))))
+          (val shape #(query.query (tuple (or query.types #()))))
+          (:= name (or (.get book.names shape) (.get fresh shape)))
+          (:= made False)
+          (when (and (is name None) (< (+ (len book.names) (len fresh)) PREPARED-MAX))
+            (:= name (.encode (.format "doeff_pq_{}" book.issued) "ascii"))
+            (setv book.issued (+ book.issued 1))
+            (setv (get fresh shape) name)
+            (.send-prepare pgconn name query.query :param-types query.types)
+            (:= made True))
+          (val shaped (if step.binary psycopg.pq.Format.BINARY psycopg.pq.Format.TEXT))
+          (if (is name None)
+              (.send-query-params pgconn query.query query.params :param-types query.types :param-formats query.formats
+                                  :result-format shaped)
+              (.send-query-prepared pgconn name query.params :param-formats query.formats :result-format shaped))
+          (:= counts (+ counts #((if made 2 1)))))
+        (:= spans (+ spans #(counts))))
       (.pipeline-sync pgconn)
       (<- (libpq-sent pgconn))
       (<- results (libpq-results pgconn))
@@ -820,11 +867,16 @@
   (when (is-not failed None)
     (<- failure (postgres-error failed))
     (return failure))
+  (.update book.names fresh)
   (var answers #())
   (var at 0)
-  (for [#(step queries) (zip steps queued :strict True)]
-    (val mine (cut results at (+ at (len queries))))
-    (:= at (+ at (len queries)))
+  (var mine #())
+  (for [#(step step-counts) (zip steps spans :strict True)]
+    ;; 文ごとに、その文の答えの最後(名を付けた文は用意の答えの次)を取る。
+    (:= mine #())
+    (for [count step-counts]
+      (:= mine (+ mine #((get results (+ at count -1)))))
+      (:= at (+ at count)))
     (when (or (is step None) step.answered)
       (<- answer (results-answer transformer step mine))
       (<- received (largest-message-bytes answer.rows (not (and (is-not step None) step.binary))))
