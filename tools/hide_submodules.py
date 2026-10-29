@@ -787,9 +787,12 @@ def _hy_head(node: HyNode) -> str | None:
 
 
 def _hy_mangle(text: str) -> str:
-    """Hy で書いた名を Python の名へ(``a-b.c?`` -> ``a_b.hyx_cXquestion_markX``)。"""
+    """Hy で書いた名を Python の名へ(``a-b.c?`` -> ``a_b.hyx_cXquestion_markX``)。
+
+    相対の import(``.runtime-env-model``)の頭の点の空の部分は、そのまま空で残す(``hy.mangle`` は空の名を断る)。
+    """
     hy = importlib.import_module("hy")
-    return ".".join(str(hy.mangle(part)) for part in text.split("."))
+    return ".".join(str(hy.mangle(part)) if part else part for part in text.split("."))
 
 
 def _hy_spans(parsed: HyText) -> Spans:
