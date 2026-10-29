@@ -27,7 +27,7 @@ from types import CodeType
 import pytest
 from doeff_hy_bytecode_guard import _code_store as code_store
 from doeff_hy_bytecode_guard import _records as records
-from doeff_hy_bytecode_guard import source_to_code_as_import
+from doeff_hy_bytecode_guard._loader_hooks import source_to_code_as_import
 
 #: 直す前の記録の印(gensym の名を正準化していない code の記録)。
 PREVIOUS_RECORD_TAG = "doeff-hy/macro-dependencies/1"

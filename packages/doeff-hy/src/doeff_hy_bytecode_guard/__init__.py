@@ -20,9 +20,10 @@ Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包�
   ので、別の木から引き継いだ .pyc も今の木の macro で照らす — agora-redesign #2598)。使っていない macro・行番号だけの変更では
   compile し直さない。
 
-import の外で bytecode を前もって作る道具は :func:`source_to_code_as_import` で compile する(import と同じく module を
-置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。前の木から引き継いだ .pyc を
-焼き直すかは :func:`bytecode_is_current`(読みの口と同じ照らし方)で決める。
+import の外で bytecode を前もって作る道具は :func:`doeff_hy_bytecode_guard._loader_hooks.source_to_code_as_import` で
+compile する(import と同じく module を置いた中で compile し、記録を付ける — 記録の無い .pyc は読みの口が compile し直す)。
+前の木から引き継いだ .pyc を焼き直すかは :func:`doeff_hy_bytecode_guard._loader_hooks.bytecode_is_current`(読みの口と同じ
+照らし方)で決める。
 
 同じ保存先(code_store)で、dataclass が型ごとに作る関数の source の compile も中身で覚える(:mod:`doeff_hy_bytecode_guard._dataclass_code`
 — compile は文と Python の版だけで決まるので照らしは要らない。読み込みの固定費の大半が型ごとの compile だった・card ki-e77d44aa61e5)。
@@ -45,30 +46,22 @@ card ki-909e814cc835)。
 
 from importlib import import_module
 
-from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION as TYPE_CHECK_EXPANSION
-from doeff_hy_bytecode_guard._import_scope import SharedScope as SharedScope
-from doeff_hy_bytecode_guard._loader_hooks import bytecode_is_current as bytecode_is_current
-from doeff_hy_bytecode_guard._loader_hooks import file_sha256 as file_sha256
-from doeff_hy_bytecode_guard._loader_hooks import gensym_renaming as gensym_renaming
+# 入口が出すのは起動の口 install だけ(.pth と ``import doeff_hy`` が呼ぶ)。ほかの口 — 照らし(bytecode_is_current・
+# record_is_current_here)・記録の作りと読み(macro_recording・record_to_json ほか)・import の外の compile(source_to_code_as_import)・
+# 型検査の展開の印(_expansion.TYPE_CHECK_EXPANSION)・file の状態の覚え(_import_scope.SharedScope)— は doeff の中の道具だけが
+# 内側の module から読む(ADR-DOE-API-001 R1・R14・card ki-97f5f5d3dea4)。install は venv ごとに写した .pth
+# (``import doeff_hy_bytecode_guard; doeff_hy_bytecode_guard.install()`` — 入れた時の写しで、doeff を上げても書き換わらない)が呼ぶので、
+# 入口に残す。
 from doeff_hy_bytecode_guard._loader_hooks import install as install
-from doeff_hy_bytecode_guard._loader_hooks import installed as installed
-from doeff_hy_bytecode_guard._loader_hooks import loaded_record as loaded_record
-from doeff_hy_bytecode_guard._loader_hooks import macro_recording as macro_recording
-from doeff_hy_bytecode_guard._loader_hooks import record_fingerprint as record_fingerprint
-from doeff_hy_bytecode_guard._loader_hooks import record_from_json as record_from_json
-from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here as record_is_current_here
-from doeff_hy_bytecode_guard._loader_hooks import record_to_json as record_to_json
-from doeff_hy_bytecode_guard._loader_hooks import (
-    source_to_code_as_import as source_to_code_as_import,
-)
-from doeff_hy_bytecode_guard._loader_hooks import value_reference as value_reference
 
 TYPE_CHECKING = False  # typing と records を起動時に読まない — 型検査器はこの名の分岐を真として読む
 
 if TYPE_CHECKING:
-    # 記録の型(注記に使う公開の名 — 値は macro_recording・record_from_json・loaded_record が作る)。
+    # 記録の型(注記に使う公開の名 — 値は _loader_hooks の macro_recording・record_from_json・loaded_record が作る)。
     from doeff_hy_bytecode_guard._macro_hints import HyMacroUseWarning as HyMacroUseWarning
     from doeff_hy_bytecode_guard._records import MacroRecord as MacroRecord
+
+del TYPE_CHECKING  # 入口の名にしない(目録は入口の module の名を数える)
 
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
 # them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`

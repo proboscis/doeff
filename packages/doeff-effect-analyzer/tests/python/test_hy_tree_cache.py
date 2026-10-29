@@ -1003,7 +1003,7 @@ def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
     """Blind A, another candidate: inside ``doeff_hy._static_view`` doeff-hy's macros write another
     tree (for type checking). The import side keeps no record of such code; the analyzer neither
     stores such a tree under a plain key nor gives a stored plain tree to such an expansion."""
-    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
+    from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION
 
     seen = expansions(monkeypatch)
     pe._compile_hy(SOURCE, "/src/m.hy", "m")  # the positive case: a plain expansion is stored

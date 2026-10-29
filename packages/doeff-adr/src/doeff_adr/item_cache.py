@@ -10,7 +10,7 @@ file の記録を保存し、次の収集からは import せずに引けるよ�
   展開で実行された関数の中身だけを覆う)、記録を積む実行時の口(:data:`RECORDING_RUNTIME` の module の file の sha256)が今も
   同じで、記録の形の版が同じ時だけ有効。item の記録は展開の結果の文字列の定数で、import の時に実行時の口が module に積む
   だけなので、展開と実行時の口が同じなら同じ記録になる。記録は module 名で macro を引き直すので、絶対 path に縛られない。
-- 展開の記録の取り方と照らし方は、doeff-hy の ``doeff_hy_bytecode_guard`` の公開の口(``loaded_record`` と
+- 展開の記録の取り方と照らし方は、doeff-hy の ``doeff_hy_bytecode_guard._loader_hooks`` の口(``loaded_record`` と
   ``record_is_current_here`` — 古い bytecode を見つける仕組み #1292 と同じ 1 つの照らし方)を使う。ここに 2 つ目の照らし方を
   書かない。前は macro の提供元の file の sha256 で照らし、doeff_hy の macros.hy のどの行の変更でも Hy の test file を全部
   import で収集し直して、doeff の日次が時間の上限を越えた(10-12 04:00・08:00 の回 — #3769 の子)。
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Literal
 
 from doeff_hy._pytest_items import Record, decode_records, encode_records
-from doeff_hy_bytecode_guard import (
+from doeff_hy_bytecode_guard._loader_hooks import (
     file_sha256,
     loaded_record,
     record_from_json,

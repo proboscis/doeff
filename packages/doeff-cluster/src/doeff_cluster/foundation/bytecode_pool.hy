@@ -27,6 +27,8 @@
 ;;;
 ;;; 版に依らず効く形: root の側から import するのは python_bytecode の compiled-pyc・checked-hash-pyc・pyc-path と doeff-hy の
 ;;; bytecode-is-current だけ(cluster で動く job の doeff の版から変わっていない名前と引数の形 — どれも 2026-10-02 の #2463・#2598 から在る)。
+;;; 読む module の path は内側の doeff_core_effects._python_bytecode と doeff_hy_bytecode_guard._loader_hooks(どちらも 2026-10-29 の
+;;; 段 1 の hide から在る — doeff_hy_bytecode_guard の入口は bytecode-is-current を出さない・ADR-DOE-API-001 R14)。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (import argparse)
@@ -43,7 +45,7 @@
 (import types [ModuleType])
 (import hy)
 (import doeff [run])
-(import doeff_hy_bytecode_guard [bytecode-is-current])
+(import doeff_hy_bytecode_guard._loader_hooks [bytecode-is-current])
 (import doeff_core_effects [SourceNotCompiled])
 (import doeff_core_effects._python_bytecode [compiled-pyc checked-hash-pyc pyc-path])
 

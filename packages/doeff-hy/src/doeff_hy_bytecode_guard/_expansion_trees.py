@@ -36,7 +36,7 @@ import zlib
 from dataclasses import dataclass
 
 from doeff_hy_bytecode_guard import _code_store as code_store
-from doeff_hy_bytecode_guard import record_fingerprint, record_is_current_here
+from doeff_hy_bytecode_guard._loader_hooks import record_fingerprint, record_is_current_here
 from doeff_hy_bytecode_guard._records import RECORD_TAG, MacroRecord
 
 #: 木の entry の形の印(形か置き場を変えたら末尾の番号を上げる — 古い鍵は当たらなくなる)。2 = 置き場が bytecode の置き場の中で、
