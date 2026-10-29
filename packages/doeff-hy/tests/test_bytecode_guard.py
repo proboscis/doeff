@@ -134,7 +134,7 @@ import importlib
 import importlib.util
 import json
 import types
-from doeff_hy_bytecode_guard import source_to_code_as_import
+from doeff_hy_bytecode_guard._loader_hooks import source_to_code_as_import
 
 importlib.import_module("pkg.macros")
 spec = importlib.util.find_spec("pkg.user")
@@ -739,7 +739,8 @@ def test_the_venv_installs_the_guard_at_startup_before_hy() -> None:
         [
             sys.executable,
             "-c",
-            "import sys, doeff_hy_bytecode_guard as g; print(g.installed(), 'hy' in sys.modules)",
+            "import sys; from doeff_hy_bytecode_guard._loader_hooks import installed;"
+            " print(installed(), 'hy' in sys.modules)",
         ],
         capture_output=True,
         text=True,

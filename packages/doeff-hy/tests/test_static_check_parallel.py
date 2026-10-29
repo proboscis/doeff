@@ -126,7 +126,7 @@ cache.load = load
 # 温まった実行は closure の束の行で引き、entry の load を呼ばない — 束の行で引いた数も数える。行は stat が書いた時と同じなら
 # row_is_current で、書いた直後で stat を信じない行は中身の場所の名と記録の照らし(入口が直に呼ぶ record_is_current_here)で
 # 引く。どちらも macro の記録を今の環境と照らす(入口の名と展開の子の名が食い違うと引けない)。
-import doeff_hy_bytecode_guard as guard
+import doeff_hy_bytecode_guard._loader_hooks as guard
 real_row = cache.row_is_current
 def row_is_current(row, module, stat):
     current = real_row(row, module, stat)

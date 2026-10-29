@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_hy_bytecode_guard import record_is_current_here, _records as records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _records as records
+from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here, source_to_code_as_import
 
 #: macro の module。used = 補助の関数(同じ module)と別の module の定数を読む macro・unused = 誰も使わない macro・
 #: reads = 自分の module の大域を文字列の key で読む補助を呼ぶ macro・peeks = 別の module の値を getattr で読む補助を呼ぶ macro・
@@ -559,8 +560,8 @@ root, mode, stored = sys.argv[1], sys.argv[2], Path(sys.argv[3])
 sys.path.insert(0, root)
 import hy
 import doeff_hy
-from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _records as records
+from doeff_hy_bytecode_guard._loader_hooks import record_from_json, record_is_current_here, record_to_json, source_to_code_as_import
 if mode == "record":
     path = root + "/macro_use_probe/user.hy"
     loader = importlib.machinery.SourceFileLoader("macro_use_probe.user", path)
@@ -783,8 +784,8 @@ from pathlib import Path
 root, mode, stored = sys.argv[1], sys.argv[2], Path(sys.argv[3])
 sys.path.insert(0, root)
 import doeff_hy
-from doeff_hy_bytecode_guard import record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _records as records
+from doeff_hy_bytecode_guard._loader_hooks import record_from_json, record_is_current_here, record_to_json, source_to_code_as_import
 users = ("user", "assigning")
 if mode == "record":
     made = {}
@@ -880,8 +881,8 @@ def counting(self, data, path, *args, **kwargs):
     return code
 importlib.machinery.SourceFileLoader.source_to_code = counting
 import doeff_hy
-from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use, record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _loader_hooks as loader_hooks, _macro_use as macro_use, _records as records
+from doeff_hy_bytecode_guard._loader_hooks import record_from_json, record_is_current_here, record_to_json, source_to_code_as_import
 def digest(spec):
     module, name = spec.split(":")
     key = macro_use.UsedMacroKey(records.MACRO_TABLE, module, hy.mangle(name))
@@ -1079,8 +1080,8 @@ user = sys.argv[5] if len(sys.argv) > 5 else "user"
 sys.path.insert(0, root)
 import hy
 import doeff_hy
-from doeff_hy_bytecode_guard import _bound_source as bound_source, _macro_use as macro_use, record_from_json, record_is_current_here, record_to_json
-from doeff_hy_bytecode_guard import _records as records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _bound_source as bound_source, _macro_use as macro_use, _records as records
+from doeff_hy_bytecode_guard._loader_hooks import record_from_json, record_is_current_here, record_to_json, source_to_code_as_import
 counts = {"parsed": 0, "facts": 0}
 def counting(name, original):
     def counted(*args, **kwargs):
@@ -1846,7 +1847,7 @@ def _expand_on_its_own(name: str, source: str, filename: str, entered, before) -
 
     import hy
     import hy.compiler
-    from doeff_hy_bytecode_guard import macro_recording
+    from doeff_hy_bytecode_guard._loader_hooks import macro_recording
 
     scratch = types.ModuleType(name)
     scratch.__file__ = filename

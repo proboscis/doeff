@@ -13534,22 +13534,7 @@
       "wire_shape"
      ],
      "doeff_hy_bytecode_guard": [
-      "SharedScope",
-      "TYPE_CHECKING",
-      "TYPE_CHECK_EXPANSION",
-      "bytecode_is_current",
-      "file_sha256",
-      "gensym_renaming",
-      "install",
-      "installed",
-      "loaded_record",
-      "macro_recording",
-      "record_fingerprint",
-      "record_from_json",
-      "record_is_current_here",
-      "record_to_json",
-      "source_to_code_as_import",
-      "value_reference"
+      "install"
      ],
      "doeff_hy_bytecode_guard.bound_source": [
       "BINDING_TAG",

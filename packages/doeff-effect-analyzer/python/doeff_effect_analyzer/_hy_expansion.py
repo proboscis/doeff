@@ -53,7 +53,7 @@ def _expand_hy(source: str, filename: str, module_name: str) -> _Expanded:
     """Expand a Hy module with Hy's own compiler so user macros become the Python AST the reader walks."""
     import hy
     import hy.compiler
-    from doeff_hy_bytecode_guard import macro_recording
+    from doeff_hy_bytecode_guard._loader_hooks import macro_recording
 
     # A fresh module object: expansion registers macros on it and must not
     # disturb the imported module whose globals resolve names.
@@ -142,7 +142,7 @@ def _expander_digest() -> str:
 def _entry_name(macros: "MacroRecord") -> str:
     """The entry of one set of macros used: the fingerprint of their record (module names, macro
     names and digests — no path, so the same macros in another worktree name the same entry)."""
-    from doeff_hy_bytecode_guard import record_fingerprint
+    from doeff_hy_bytecode_guard._loader_hooks import record_fingerprint
 
     return f"{record_fingerprint(macros)}.pickle"
 
@@ -187,7 +187,7 @@ def _type_check_expansion() -> bool:
     then write another tree (no ``:pre`` check, no runtime import), which no store may keep under the
     key of a plain expansion — as the import side keeps no record of such code (``TYPE_CHECK_EXPANSION``).
     Callers keep nothing derived from such a tree either (``program_effects._hy_cache_dir``)."""
-    from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION
+    from doeff_hy_bytecode_guard._expansion import TYPE_CHECK_EXPANSION
 
     return TYPE_CHECK_EXPANSION.get()
 
@@ -205,7 +205,7 @@ def _read_expansion(path: Path) -> _Expanded | None:
     """The entry's tree when the macros it was expanded with are this environment's; None when they
     are not, or the entry is absent or unreadable. The entry starts with the record of those macros,
     so an entry of other macros is not read past it."""
-    from doeff_hy_bytecode_guard import record_is_current_here
+    from doeff_hy_bytecode_guard._loader_hooks import record_is_current_here
     from doeff_hy_bytecode_guard._records import MacroRecord
 
     try:
