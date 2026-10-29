@@ -19,8 +19,9 @@
 (import doeff_claude_code._argv [print-once-argv print-once-env])
 (import doeff_claude_code._dialogue [print-once-stdin])
 (import doeff_claude_code [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
-(import doeff_claude_code.print_once [claude-print-handler print-outcome])
-(import doeff_claude_code.fake [fake-claude-print-handler])
+(import doeff_claude_code [claude-print-handler]
+        doeff_claude_code._print_once [print-outcome])
+(import doeff_claude_code [fake-claude-print-handler])
 
 (val STUB-PATH (str (/ (. (Path __file__) (resolve) parent) "stub_cli" "claude_print.py")))
 ;; -I = 呼び手の env と作業 dir を読まない・-B = bytecode を checkout に書かない(子の env は家の env ちょうどなので PYTHONDONTWRITEBYTECODE が無い)。

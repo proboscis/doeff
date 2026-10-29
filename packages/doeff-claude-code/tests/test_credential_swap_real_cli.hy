@@ -19,8 +19,9 @@
 (import doeff_claude_code [Completed])
 (import doeff_claude_code [ClaudeStartTurn ClaudeCloseSession ClaudeReplaceSessionCredential CredentialReplaced SessionClosed])
 (import doeff_claude_code [ClaudeLiveProcess LiveProcess])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler wait-until])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler]
+        doeff_claude_code._handler [wait-until])
 (import tests.fake_messages_api [FakeMessagesApi])
 (import tests.scenario_steps [read-to-end])
 

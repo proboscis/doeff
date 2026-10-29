@@ -18,8 +18,9 @@
 (import doeff_claude_code [ClaudeHome ClaudeTurn])
 (import doeff_claude_code [ClaudeStreamLine Other])
 (import doeff_claude_code [ClaudeReadTurnEvents])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [Binding ClaudeCodeHost SessionRuntime claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler]
+        doeff_claude_code._handler [Binding SessionRuntime])
 
 (val SID "8d7f3c1e-5b2a-4c6d-9e8f-0a1b2c3d4e5f")
 (val AT (datetime 2026 10 12 4 0 0 :tzinfo timezone.utc))

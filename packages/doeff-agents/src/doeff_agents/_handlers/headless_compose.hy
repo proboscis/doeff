@@ -17,9 +17,9 @@
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code [ClaudeHome BypassAll PermissionPolicy])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
 ;; 模擬の返事(FakeReply)の usage と last-call-usage の型(agora-redesign #3744)と、口座の側が要求を断る筋書き(account-refusal)・model の
 ;; 安全装置が要求を断る筋書き(model-refusal)の型と、
 ;; CLI が会話を自動で圧縮する筋書き(compactions)の行の型と起き方の語(agora-redesign #4189)。呼び手が doeff_claude_code を import せずに

@@ -17,9 +17,9 @@
 (import doeff_claude_code [AssistantMessage CallClosed CallOpened Completed Interrupted PartialMessage TurnResult Usage]
         doeff_claude_code._lines [CallStep call-step classify-record closed-usage])
 (import doeff_claude_code [ClaudeStartTurn ClaudeInterruptTurn])
-(import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code.clock [clock-of])
+(import doeff_claude_code [FakeClaudeWorld FakeReply fake-claude-code-handler])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [STREAMED-CALLS-PHRASE sleep-prompt])
 (import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start new-id typed])

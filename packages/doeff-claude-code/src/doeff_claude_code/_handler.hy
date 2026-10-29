@@ -82,9 +82,9 @@
 (import doeff_claude_code._dialogue [DialogueState])
 (import doeff_claude_code._decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
 (import doeff_claude_code._argv [transcript-dir transcript-path subagent-transcript-path launch-argv launch-key cold-resume-argv process-env])
-(import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
+(import doeff_claude_code._process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
 (import doeff_claude_code._credential_home [open-credential-home replace-credential close-credential-home])
-(import doeff_claude_code.rotation [ROTATE-ABOVE-BYTES TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed
+(import doeff_claude_code._rotation [ROTATE-ABOVE-BYTES TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed
                                     rotate-transcript])
 
 ;; 会話が持ち続ける手番の記録(stdout の行の全部)の本数。読み手(上の層)は今の手番と、止めて生き残った入力の続きの手番しか読まない

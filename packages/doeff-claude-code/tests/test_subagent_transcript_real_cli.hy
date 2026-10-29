@@ -19,8 +19,8 @@
 (import doeff_claude_code [AssistantMessage Completed SubagentTranscript TaskEvent])
 (import doeff_claude_code [ClaudeStartTurn ClaudeCloseSession])
 (import doeff_claude_code._argv [PER-TURN-SETTINGS-ENV])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
 (import tests.fake_subagent_api [FakeSubagentApi MAIN-MARK AGENT-TOOL-USE-ID])
 (import tests.scenario_steps [TurnRecord read-to-end])
 

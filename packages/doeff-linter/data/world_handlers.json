@@ -463,7 +463,7 @@
    "why": "上の再輸出の綴り"
   },
   {
-   "handler": "doeff_claude_code.handler:claude-code-handler",
+   "handler": "doeff_claude_code._handler:claude-code-handler",
    "touches": [
     "process",
     "file",

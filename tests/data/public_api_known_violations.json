@@ -2642,7 +2642,6 @@
       "FAKE_TOOL_NAME",
       "FAKE_TOOL_USE_ID",
       "FakeInjection",
-      "FakeReply",
       "FakeSession",
       "FakeTurn",
       "MIN_SLEEP",
@@ -2655,7 +2654,6 @@
       "SUBAGENT_TASK_TYPE",
       "SYNTHETIC_MODEL",
       "SYNTHETIC_USAGE",
-      "StopHookRejection",
       "advance",
       "api_error_turn",
       "begin_fake_turn",
@@ -3473,6 +3471,10 @@
      "doeff_claude_code.effects": [
       "SessionState",
       "TranscriptState"
+     ],
+     "doeff_claude_code.fake": [
+      "FakeReply",
+      "StopHookRejection"
      ],
      "doeff_claude_code.values": [
       "PermissionPolicy"

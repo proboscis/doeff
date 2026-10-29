@@ -15,7 +15,7 @@ from doeff_claude_code import (
     PrintLimited,
     PrintTimedOut,
 )
-from doeff_claude_code.fake import fake_claude_print_handler
+from doeff_claude_code import fake_claude_print_handler
 from doeff_claude_code import AccountLimitHit, Usage
 from doeff_claude_code import ImageAttachment, LentCredential, PrintContent
 from doeff_claude_judge import (

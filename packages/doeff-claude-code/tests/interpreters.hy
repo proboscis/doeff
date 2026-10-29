@@ -16,9 +16,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
 (import doeff_claude_code._lines [classify-record])
 (import tests.scenario_rules [reply-for REJECTED-ANSWER COMPACT-METADATA advice-stdout])
 

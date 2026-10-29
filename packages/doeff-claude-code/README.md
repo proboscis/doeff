@@ -28,8 +28,8 @@
 
 借りた資格(`credential`)は会話の process と同じく、その process だけの設定 dir の `.credentials.json` に置いて、降りたら dir ごと消す。
 `thinking_tokens` は子の env の `MAX_THINKING_TOKENS`(0 = 考えない)。待ちの上限(`timeout_seconds`)は CLI の起動と終わりの秒
-(1 回 4〜6 秒)を含み、越えたら process の組を止めて `PrintTimedOut`。本番 = `doeff_claude_code.print_once.claude-print-handler(command)`・
-fake = `doeff_claude_code.fake.fake-claude-print-handler(respond)`(respond = 宣言 → 答えの Program)。本番の handler は外側に doeff の
+(1 回 4〜6 秒)を含み、越えたら process の組を止めて `PrintTimedOut`。本番 = `doeff_claude_code.claude-print-handler(command)`・
+fake = `doeff_claude_code.fake-claude-print-handler(respond)`(respond = 宣言 → 答えの Program)。本番の handler は外側に doeff の
 scheduler が要る(時間の handler は要らない)。
 
 `ClaudeExportSession` が写すのは transcript の jsonl 1 つだけ。`<session-id>/` の下の subagent の記録と `memory/` は写さない(残りの設計)。
@@ -54,10 +54,10 @@ effect・答え・欄の値・行の種類と手番の終わりの型は、入�
 
 ## handler
 
-- `doeff_claude_code.handler.claude-code-handler(host)` — 本番。`ClaudeCodeHost(command, clock, live_limit, credential_floor_seconds)` を composition root が 1 つ作る(生かす CLI の本数の上限と、借りた資格の期限の手前で止める床の秒 — どちらも既定なし・#3672)。
-  `command` = 実行ファイルと前置きの引数(例 `#("claude")`)、`clock` = 行の時刻を刻む関数(`doeff_claude_code.clock.clock-of` に
+- `doeff_claude_code.claude-code-handler(host)` — 本番。`ClaudeCodeHost(command, clock, live_limit, credential_floor_seconds)` を composition root が 1 つ作る(生かす CLI の本数の上限と、借りた資格の期限の手前で止める床の秒 — どちらも既定なし・#3672)。
+  `command` = 実行ファイルと前置きの引数(例 `#("claude")`)、`clock` = 行の時刻を刻む関数(`doeff_claude_code._clock.clock-of` に
   doeff-time の時間の handler を渡して作る)。手番ごとに process を起こし、手番の終わりの行で降ろす。
-- `doeff_claude_code.fake.fake-claude-code-handler(world)` — fake。`FakeClaudeWorld(responder)` の筋書き(入力の本文 → `FakeReply`)
+- `doeff_claude_code.fake-claude-code-handler(world)` — fake。`FakeClaudeWorld(responder)` の筋書き(入力の本文 → `FakeReply`)
   で同じ effect に memory の上で答える。doeff-time の時計で進むので、仮想の時計の下では一瞬で終わる。返事を作る時に効果を出したい
   筋書きは `FakeClaudeWorld(respond=<kleisli>)`(入力の本文 → `FakeReply` の Program — 効果は fake の handler の外側が答える)。
 - 生かす本数の上限(#4072 の E1b): 本番の handler は上限(`live_limit`)を越える起動でも process を止めず、待たせず、失敗にもしない。
