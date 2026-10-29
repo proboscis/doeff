@@ -65,6 +65,12 @@
 
 (defmacro defsemgrep [name #* forms]
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
+  ;; 展開は、載せを import の時に、検を生まれる test の中で、effect RegisterSemgrep と AssertSemgrep として handler
+  ;; semgrep_enforcements の下で走らせる(card ki-2a549274055c)— project の doeff_interpreter fixture に頼らないので、外の repo の
+  ;; defsemgrep は doeff の版を上げるだけで動く。名は使い手の module の名と重ならない _doeff-adr-run と _doeff-adr. で読む。
+  (setv semgrep-imports
+    ['(import doeff [run :as _doeff-adr-run])
+     '(import doeff-adr :as _doeff-adr)])
   (setv rule-id (hy.models.String (_symbol-text name)))
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_defsemgrep")))
   (setv item-record (_record-test-function test-name [] []))
@@ -93,16 +99,17 @@
                  `[:expand-hy ~(get options "expand-hy")]
                  `[])))
         `(do
-           (import doeff_adr.registry
-             [register-semgrep-enforcement assert-semgrep-enforcement])
-           (register-semgrep-enforcement
-             ~rule-id
-             :rule-id ~installed-rule-id
-             :hit-fixtures ~hit-fixtures
-             :clean-fixtures ~clean-fixtures
-             ~@config-forms)
+           ~@semgrep-imports
+           (_doeff-adr-run
+             ((_doeff-adr.semgrep-enforcements)
+               (_doeff-adr.RegisterSemgrep
+                 ~rule-id
+                 :rule-id ~installed-rule-id
+                 :hit-fixtures ~hit-fixtures
+                 :clean-fixtures ~clean-fixtures
+                 ~@config-forms)))
            (defn ~test-name []
-             (assert-semgrep-enforcement ~rule-id))
+             (_doeff-adr-run ((_doeff-adr.semgrep-enforcements) (_doeff-adr.AssertSemgrep ~rule-id))))
            ~item-record))
       (do
         (setv data (_pairs-to-dict forms))
@@ -115,20 +122,21 @@
         (setv mode (.get data "mode" (hy.models.String "green")))
         (setv config (.get data "config" (hy.models.String ".semgrep.yaml")))
         `(do
-           (import doeff_adr.registry
-             [register-semgrep-enforcement assert-semgrep-enforcement])
-           (register-semgrep-enforcement
-             ~rule-id
-             :pattern ~pattern
-             :config ~config
-             :languages ~languages
-             :message ~message
-             :severity ~severity
-             :bad ~bad
-             :good ~good
-             :mode ~mode)
+           ~@semgrep-imports
+           (_doeff-adr-run
+             ((_doeff-adr.semgrep-enforcements)
+               (_doeff-adr.RegisterSemgrep
+                 ~rule-id
+                 :pattern ~pattern
+                 :config ~config
+                 :languages ~languages
+                 :message ~message
+                 :severity ~severity
+                 :bad ~bad
+                 :good ~good
+                 :mode ~mode)))
            (defn ~test-name []
-             (assert-semgrep-enforcement ~rule-id))
+             (_doeff-adr-run ((_doeff-adr.semgrep-enforcements) (_doeff-adr.AssertSemgrep ~rule-id))))
            ~item-record))))
 
 (defmacro defadr [name #* forms]

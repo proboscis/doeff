@@ -13,6 +13,15 @@ from doeff_adr._effects import (
 from doeff_adr._effects import (
     adr_registry as adr_registry,
 )
+from doeff_adr._semgrep_effects import (
+    AssertSemgrep as AssertSemgrep,
+)
+from doeff_adr._semgrep_effects import (
+    RegisterSemgrep as RegisterSemgrep,
+)
+from doeff_adr._semgrep_effects import (
+    semgrep_enforcements as semgrep_enforcements,
+)
 from doeff_adr.registry import (
     AdrSpec as AdrSpec,
 )

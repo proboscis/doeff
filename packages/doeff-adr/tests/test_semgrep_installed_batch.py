@@ -16,14 +16,23 @@ from unittest import mock
 
 import doeff_adr.registry as registry_module
 import pytest
-from doeff_adr.registry import (
-    assert_semgrep_enforcement,
-    isolated_registry,
-    register_semgrep_enforcement,
-)
+from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
+from doeff_adr.registry import isolated_registry
 from doeff_adr.semgrep_verdicts import verdict_store
 
+from doeff import run
+
 WORDS = ("eval", "exec", "compile")
+
+
+def _register(effect: RegisterSemgrep) -> None:
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    run(semgrep_enforcements()(effect))
+
+
+def _check(enforcement_id: str) -> None:
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
 def _rules() -> str:
@@ -50,15 +59,17 @@ def tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path]:
     monkeypatch.chdir(root)
     with isolated_registry():
         for word in WORDS:
-            register_semgrep_enforcement(
-                f"batch_probe_{word}",
-                rule_id=f"batch-probe-no-{word}",
-                hit_fixtures=[{"relative-path": "pkg/mod.py", "source": f"{word}('1')\n"}],
-                clean_fixtures=[
-                    {"relative-path": "pkg/mod.py", "source": "print('1')\n"},
-                    # 規則の include(/pkg/**)の外 — root が正しければ当たらない。
-                    {"relative-path": "other/mod.py", "source": f"{word}('1')\n"},
-                ],
+            _register(
+                RegisterSemgrep(
+                    f"batch_probe_{word}",
+                    rule_id=f"batch-probe-no-{word}",
+                    hit_fixtures=[{"relative-path": "pkg/mod.py", "source": f"{word}('1')\n"}],
+                    clean_fixtures=[
+                        {"relative-path": "pkg/mod.py", "source": "print('1')\n"},
+                        # 規則の include(/pkg/**)の外 — root が正しければ当たらない。
+                        {"relative-path": "other/mod.py", "source": f"{word}('1')\n"},
+                    ],
+                )
             )
         yield root
 
@@ -70,7 +81,7 @@ def test_specs_sharing_a_config_are_checked_with_one_semgrep_run(
     monkeypatch.setattr(registry_module.subprocess, "run", spy)
 
     for word in WORDS:
-        assert_semgrep_enforcement(f"batch_probe_{word}")
+        _check(f"batch_probe_{word}")
 
     semgrep_runs = [
         call
@@ -94,34 +105,38 @@ def test_the_batch_keeps_root_anchored_paths_inside_an_outer_git_repo(
     monkeypatch.setenv("GIT_WORK_TREE", str(outer))
 
     for word in WORDS:
-        assert_semgrep_enforcement(f"batch_probe_{word}")
+        _check(f"batch_probe_{word}")
 
 
 def test_a_hit_fixture_under_a_tests_dir_is_read(tree: Path) -> None:
     # 失敗ケース(#1201): 組の dir を渡すと、semgrep は dir の中の tests/ を既定で読み飛ばす(.semgrepignore の無い root)—
     # tests/ の下の当たる例に規則が当たらず赤になった(doeff の enforce_002 の 4 本)。例の file は名指しで読む。
-    register_semgrep_enforcement(
-        "batch_probe_inside_tests",
-        rule_id="batch-probe-no-eval",
-        hit_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "eval('1')\n"}],
-        clean_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "print('1')\n"}],
+    _register(
+        RegisterSemgrep(
+            "batch_probe_inside_tests",
+            rule_id="batch-probe-no-eval",
+            hit_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "eval('1')\n"}],
+            clean_fixtures=[{"relative-path": "pkg/tests/test_mod.py", "source": "print('1')\n"}],
+        )
     )
 
-    assert_semgrep_enforcement("batch_probe_inside_tests")
+    _check("batch_probe_inside_tests")
 
 
 def test_a_rule_that_does_not_fire_on_its_hit_fixture_is_still_red(
     tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    register_semgrep_enforcement(
-        "batch_probe_outside_the_include",
-        rule_id="batch-probe-no-eval",
-        hit_fixtures=[{"relative-path": "other/mod.py", "source": "eval('1')\n"}],
-        clean_fixtures=[{"relative-path": "pkg/mod.py", "source": "print('1')\n"}],
+    _register(
+        RegisterSemgrep(
+            "batch_probe_outside_the_include",
+            rule_id="batch-probe-no-eval",
+            hit_fixtures=[{"relative-path": "other/mod.py", "source": "eval('1')\n"}],
+            clean_fixtures=[{"relative-path": "pkg/mod.py", "source": "print('1')\n"}],
+        )
     )
 
     with pytest.raises(AssertionError, match="did not fire on hit fixtures"):
-        assert_semgrep_enforcement("batch_probe_outside_the_include")
+        _check("batch_probe_outside_the_include")
 
 
 def test_an_outer_verdict_store_does_not_reach_the_mechanism_checks() -> None:
