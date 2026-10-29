@@ -45,8 +45,7 @@ from doeff_records import (
     WatchEvents,
     WrittenRows,
 )
-from doeff_records.event_source import (
-    RECORDS_SIGNAL_SOURCE,
+from doeff_records import (
     ReadSignalSource,
     SignalSourceFactory,
     SignalSourceUnreachable,
@@ -54,13 +53,10 @@ from doeff_records.event_source import (
     read_signal_handler,
     records_signal_handler,
 )
-from doeff_records.http_client import RecordsEndpoint, http_records_handler
-from doeff_records.memory import (
-    MemoryStore,
-    memory_records_handler,
-    memory_signal_handler,
-    memory_signal_source,
-)
+from doeff_records._event_source import RECORDS_SIGNAL_SOURCE
+from doeff_records import RecordsEndpoint, http_records_handler
+from doeff_records import MemoryStore, memory_records_handler, memory_signal_handler
+from doeff_records._memory import memory_signal_source
 from doeff_time import Delay, DelayEffect, GetTime
 
 # 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
@@ -346,7 +342,7 @@ def test_read_signal_source_lives_with_the_records_effects() -> None:
     """源の工場の問いは記録の effect の置き場 doeff_records._effects に在り、event_source からも同じ型が読める(模擬の柵は effects と faults の
     module の型を集めるので、ここに在れば柵が通す — #3127)。"""
     from doeff_records import _effects as effects
-    from doeff_records import event_source
+    from doeff_records import _event_source as event_source
 
     assert effects.ReadSignalSource is event_source.ReadSignalSource
 

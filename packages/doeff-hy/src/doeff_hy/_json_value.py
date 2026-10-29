@@ -6,7 +6,7 @@ dict にすぎない。構造を持つ値は、型を宣言した値(doeff-hy �
 そのものを行う foundation の module だけ — それ以外で使うと doeff-linter の DOEFF120 が誤りにする。
 
 置き場: doeff-hy(解き手の置き場)の Python の module。doeff-hy は doeff-records を import できない(依存の向きが逆)
-ので、以前の正本 ``doeff_records.wire`` はここを import する。Python の module にしたのは、型検査器(pyright)が Hy の
+ので、以前の正本 ``doeff_records._wire`` はここを import する。Python の module にしたのは、型検査器(pyright)が Hy の
 module を読めないため — Python の読み手(agora-controllers の model の ``.py``)もこの 1 か所から同じ型を得る。
 
 形を呼び手が決める任意の JSON(tool の引数と結果・耐久の走行の memo の値)を中を読まずに運ぶ時は、JsonValue ではなく

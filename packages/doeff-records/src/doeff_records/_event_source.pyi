@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = event_source.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _event_source.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
@@ -33,7 +33,7 @@ from doeff_time import GetTime as GetTime
 from doeff_time import WaitWithin as WaitWithin
 from doeff_time import GetTimeEffect as GetTimeEffect
 from doeff_time import WaitWithinEffect as WaitWithinEffect
-from doeff_records.admission import key_text as key_text
+from doeff_records._admission import key_text as key_text
 from doeff_records._effects import AwaitRecordsBack as AwaitRecordsBack
 from doeff_records._effects import ListRows as ListRows
 from doeff_records._effects import ReadSignalSource as ReadSignalSource

@@ -1,11 +1,11 @@
 ;; PostgreSQL の置き場の版(store_epoch の epoch)の初めの値(#3632): 置き場を空から作るたびに、版は行を作った時の server の時計の ms で
-;; 始まる(pg_sql.hy の頭の註の store_epoch)。性質:
+;; 始まる(_pg_sql.hy の頭の註の store_epoch)。性質:
 ;;   - 同じ接頭辞の置き場を消して空から作り直すと、版が前の置き場の版と違う。
 ;;   - 前の置き場で読んだ位置 (epoch, sequence) で、作り直した置き場を WatchChanges で読むと Reset になる — 作り直した置き場の変更の
 ;;     番号が古い位置を越えた後でも。版が両方 1 で始まると、番号が越えた後は Reset にならず、別の置き場の変更が位置の続きとして混ざる。
 ;;   - store_epoch の行が既に在る置き場(旧い版の文 tests/pg_ddl_before_880.json で作った epoch 1 の置き場)に表の用意の文を流し直しても、
 ;;     版は 1 のまま(ON CONFLICT DO NOTHING — 既に在る置き場の版に触らない)。
-;; 反例: 版を 1 で始める文(#3632 の前の pg_sql.hy)では、1 つ目と 2 つ目の検が赤になる(版が同じ・Changes が返る)。
+;; 反例: 版を 1 で始める文(#3632 の前の _pg_sql.hy)では、1 つ目と 2 つ目の検が赤になる(版が同じ・Changes が返る)。
 ;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
@@ -18,7 +18,8 @@
 (import doeff_records [ExpectAbsent Reset WatchCursor])
 (import doeff_records [PutRow ListRows WatchChanges])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [PreparedStore drop-records-tables prepare-records-store])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres postgres-connections fresh-prefix])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))

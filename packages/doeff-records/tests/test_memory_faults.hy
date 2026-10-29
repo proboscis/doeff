@@ -13,7 +13,7 @@
 (import doeff_records [ExpectAbsent Written WrittenRows Missing Refused Unreachable Appended Changes Page Events WatchCursor])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
 (import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 (val REFUSED (Refused "断る(筋書き)"))

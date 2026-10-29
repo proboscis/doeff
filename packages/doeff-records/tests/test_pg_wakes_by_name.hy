@@ -25,7 +25,8 @@
 (import doeff_records [ExpectAny ExpectAbsent WatchCursor Changes Reset Unreachable Written Appended EventsMoved EventsQuiet Events])
 (import doeff_records [PutRow ListRows WatchChanges WatchEvents AppendEvent ReadEvents])
 (import doeff_records._laws [MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 (import pytest)
 

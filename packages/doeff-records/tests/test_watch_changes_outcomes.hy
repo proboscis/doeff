@@ -16,7 +16,7 @@
 (import doeff_records [ListRows PutRow WatchChanges])
 (import doeff_records [AdvanceStoreEpoch SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
 

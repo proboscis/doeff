@@ -13,7 +13,7 @@
         doeff_records._values [stored-row stored-change stored-text])
 (import doeff_records [ListRows WatchChanges PutRow])
 (import doeff_records._laws [MAKER LawHarness as-writer])
-(import doeff_records.wire [encode-answer answer-text])
+(import doeff_records._wire [encode-answer answer-text])
 (import tests.interpreters [build-interpreter session-dsn PG-DSN-VARIABLE pg-skip-reason])
 
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))

@@ -1,4 +1,4 @@
-;; 記録の service の scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註)を確かめる。
+;; 記録の service の scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — _loop_work.hy の頭の註)を確かめる。
 ;;   - 束の読み(一覧の頁・変更の列・出来事の列)の行の読み解きと、束の読みの答えの綴りは Compute を通る: 行を運ぶ束の読み 1 回は、置き場の
 ;;     読み解きの Compute 1 つと答えの綴りの Compute 1 つを出す。行を運ばない束(空の頁)と 1 行の読みは Compute を出さない
 ;;     (置き場は本物の PostgreSQL — 無ければ理由を名指して skip)
@@ -27,9 +27,10 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [FieldDecl TableDecl RecordsSchema ExpectAbsent])
 (import doeff_records [ListRows PutRow AppendEvent])
-(import doeff_records.admission [key-text])
+(import doeff_records._admission [key-text])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [IndexBook PreparedStore pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [IndexBook PreparedStore drop-records-tables])
 (import doeff_records._service [HttpAnswer HttpRequest RecordsService respond])
 (import tests.interpreters [pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 
@@ -106,7 +107,7 @@
 (deftest test-batch-reads-decode-and-spell-their-rows-off-the-scheduler-thread
   {:skip-if (bool PG-SKIP-REASON) :skip-reason PG-SKIP-REASON}
   ;; 束の読み 1 回 = 置き場の読み解きの Compute 1 つ(listed-rows-of・changes-of・events-of)+ 答えの綴りの Compute 1 つ
-  ;; (sendable-reply-of)。行を運ばない束と 1 行の読みは Compute を出さない(loop_work.hy の頭の註)。
+  ;; (sendable-reply-of)。行を運ばない束と 1 行の読みは Compute を出さない(_loop_work.hy の頭の註)。
   (val connections (postgres-connections))
   (val store (prepared-store connections (fresh-prefix)))
   (val handler-for (fn [writer] (pg-records-handler store writer ORIGIN-HOST)))

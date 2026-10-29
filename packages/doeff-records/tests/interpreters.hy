@@ -20,8 +20,8 @@
 ;;; 法は LawSetup の effect で自分の LawHarness(書き手の名 → その書き手の handler で包む関数)を読む。
 ;;;
 ;;; build-interpreter の :aligned-epoch True(test_parity_memory_pg だけが渡す)は、PostgreSQL の置き場の版の行を用意の直後に memory の
-;;; 置き場の初めの版(memory.hy の MemoryStore の epoch 1)にする。PostgreSQL の置き場の版は作った時の server の時計の ms で始まる
-;;; (pg_sql.hy の頭の註・#3632)ので、揃えないと版の値だけで答えの列が食い違う。仮想の時計で時刻を揃えるのと同じ、始まりの状態の揃え。
+;;; 置き場の初めの版(_memory.hy の MemoryStore の epoch 1)にする。PostgreSQL の置き場の版は作った時の server の時計の ms で始まる
+;;; (_pg_sql.hy の頭の註・#3632)ので、揃えないと版の値だけで答えの列が食い違う。仮想の時計で時刻を揃えるのと同じ、始まりの状態の揃え。
 (require doeff-hy.macros [defhandler defk <-])
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
@@ -31,8 +31,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA LawHarness])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records [MemoryStore memory-records-handler])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [PreparedStore drop-records-tables prepare-records-store])
 (import doeff_core_effects [state])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を、仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects [inline-compute-handler])
@@ -41,10 +42,10 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import concurrent.futures [ThreadPoolExecutor])
 (import urllib.parse [urlsplit])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler])
-(import doeff_records.http_client [records-unwaited])
+(import doeff_records [RecordsEndpoint http-records-handler])
+(import doeff_records [records-unwaited])
 (import doeff_records._service [RecordsService respond HttpRequest :as ServiceRequest])
-(import doeff_records.wire [WRITER-HEADER IDEMPOTENCY-HEADER])
+(import doeff_records._wire [WRITER-HEADER IDEMPOTENCY-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_hy._frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])

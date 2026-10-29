@@ -20,10 +20,11 @@
 (import doeff_records [Appended Changes Event Events ExpectAbsent StreamEmpty StreamTail StreamTailEmpty UndeclaredTable WatchCursor Written])
 (import doeff_records [AppendEvent ListRows PutRow ReadEvents ReadStreamEnd WatchChanges])
 (import doeff_records._laws [LAW-SCHEMA LawHarness MAKER PULSE-KEEP-SECONDS as-writer law-watch-tails-match-last-events])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._service [RecordsService respond HttpRequest :as ServiceRequest])
-(import doeff_records.wire [WireMalformed encode-answer encode-request])
-(import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
+(import doeff_records [encode-request]
+        doeff_records._wire [WireMalformed encode-answer])
+(import doeff_records [RecordsEndpoint http-records-handler records-unwaited])
 (import tests.interpreters [LawSetup])
 
 ;; (f) の待ちの秒と、待ちの間に列へ積む刻・表へ書く刻(待ちの始まりからの秒)。

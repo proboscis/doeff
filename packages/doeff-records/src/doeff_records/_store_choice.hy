@@ -1,6 +1,6 @@
 ;;; 記録の service の置き場の選び — 表の用意の作り手(prepare-of)と /readyz の問い(readiness)の組。
 ;;; 本体の設定 records-serving(_main.hy)がこの値を引数で受け、RecordsServing の prepare と readiness を作る。置き場ごとの値は置き場の module が
-;;; 持つ: PostgreSQL = _main.hy の PG-STORE・memory = memory.hy の memory-store-choice。以前は records-serving が PostgreSQL に固定していて、
+;;; 持つ: PostgreSQL = _main.hy の PG-STORE・memory = _memory.hy の memory-store-choice。以前は records-serving が PostgreSQL に固定していて、
 ;;; 使い手が dataclasses.replace で上書きしていた(#1604 の過渡の差し替え口)。
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す

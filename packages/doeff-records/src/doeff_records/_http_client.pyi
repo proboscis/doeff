@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = http_client.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _http_client.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
@@ -15,10 +15,10 @@ from doeff_core_effects.http_effects import HttpPhases as HttpPhases
 from doeff_core_effects import CountMetric as CountMetric
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
-from doeff_records.event_source import RECORDS_SIGNAL_SOURCE as RECORDS_SIGNAL_SOURCE
-from doeff_records.event_source import ReadSignalSource as ReadSignalSource
-from doeff_records.event_source import came_back_within as came_back_within
-from doeff_records.event_source import first_seen as first_seen
+from doeff_records._event_source import RECORDS_SIGNAL_SOURCE as RECORDS_SIGNAL_SOURCE
+from doeff_records._event_source import ReadSignalSource as ReadSignalSource
+from doeff_records._event_source import came_back_within as came_back_within
+from doeff_records._event_source import first_seen as first_seen
 from doeff_records._values import Changes as Changes
 from doeff_records._values import EventsMoved as EventsMoved
 from doeff_records._values import EventsQuiet as EventsQuiet
@@ -37,27 +37,27 @@ from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
 from doeff_records._effects import ReadRequestPatience as ReadRequestPatience
-from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
-from doeff_records.wire import PublicEffect as PublicEffect
-from doeff_records.wire import WireAnswer as WireAnswer
-from doeff_records.wire import JsonValue as JsonValue
-from doeff_records.wire import encode_request as encode_request
-from doeff_records.wire import decode_answer as decode_answer
-from doeff_records.wire import answer_for_request as answer_for_request
-from doeff_records.wire import refusal_from as refusal_from
-from doeff_records.wire import undeclared_refusal as undeclared_refusal
-from doeff_records.wire import CLIENT_ANSWER_METRICS as CLIENT_ANSWER_METRICS
-from doeff_records.wire import CLIENT_UNREACHABLE as CLIENT_UNREACHABLE
-from doeff_records.wire import client_answer_metric as client_answer_metric
-from doeff_records.wire import client_status_outcome as client_status_outcome
-from doeff_records.wire import WRITER_HEADER as WRITER_HEADER
-from doeff_records.wire import CALLER_HEADER as CALLER_HEADER
-from doeff_records.wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
-from doeff_records.wire import SERVER_TIMING_HEADER as SERVER_TIMING_HEADER
-from doeff_records.wire import SERVER_TIMING_QUEUE as SERVER_TIMING_QUEUE
-from doeff_records.wire import server_timing_spans as server_timing_spans
-from doeff_records.wire import IDEMPOTENCY_HEADER as IDEMPOTENCY_HEADER
-from doeff_records.wire import request_key as request_key
+from doeff_records._wire import PATH_PREFIX as PATH_PREFIX
+from doeff_records._wire import PublicEffect as PublicEffect
+from doeff_records._wire import WireAnswer as WireAnswer
+from doeff_records._wire import JsonValue as JsonValue
+from doeff_records._wire import encode_request as encode_request
+from doeff_records._wire import decode_answer as decode_answer
+from doeff_records._wire import answer_for_request as answer_for_request
+from doeff_records._wire import refusal_from as refusal_from
+from doeff_records._wire import undeclared_refusal as undeclared_refusal
+from doeff_records._wire import CLIENT_ANSWER_METRICS as CLIENT_ANSWER_METRICS
+from doeff_records._wire import CLIENT_UNREACHABLE as CLIENT_UNREACHABLE
+from doeff_records._wire import client_answer_metric as client_answer_metric
+from doeff_records._wire import client_status_outcome as client_status_outcome
+from doeff_records._wire import WRITER_HEADER as WRITER_HEADER
+from doeff_records._wire import CALLER_HEADER as CALLER_HEADER
+from doeff_records._wire import WATCH_MAX_SECONDS as WATCH_MAX_SECONDS
+from doeff_records._wire import SERVER_TIMING_HEADER as SERVER_TIMING_HEADER
+from doeff_records._wire import SERVER_TIMING_QUEUE as SERVER_TIMING_QUEUE
+from doeff_records._wire import server_timing_spans as server_timing_spans
+from doeff_records._wire import IDEMPOTENCY_HEADER as IDEMPOTENCY_HEADER
+from doeff_records._wire import request_key as request_key
 from doeff_core_effects import RandomBytes as RandomBytes
 from doeff_core_effects import os_random_handler as os_random_handler
 DEFAULT_REQUEST_TIMEOUT: float

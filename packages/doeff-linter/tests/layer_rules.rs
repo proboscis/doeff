@@ -1352,8 +1352,8 @@ fn json_value_is_allowed_only_in_parsers_and_listed_foundation_modules() {
         ("app/foundation/other.py", "from doeff_hy.wire import JsonValue\n"),
         // :wire-modules の pattern に当たるが foundation の外 → 許さない(訳を説明に出す)。
         ("app/billing/protocol/wire_codec.hy", "(import doeff_hy.wire [JsonValue])\n"),
-        // 組み込みの汎用の解き手(module の綴りの末尾が doeff_records.wire)は、どこに置かれても許す。
-        ("vendor/doeff_records/wire.hy", "(setv JsonValue object)\n"),
+        // 組み込みの汎用の解き手(module の綴りの末尾が doeff_records._wire)は、どこに置かれても許す。
+        ("vendor/doeff_records/_wire.hy", "(setv JsonValue object)\n"),
         // 隠し dir の下は母集団の外。
         (".venv/lib/x.py", "JsonValue = dict\n"),
         // 登録簿に載った既知の分は registered_severity(この設定では info)。

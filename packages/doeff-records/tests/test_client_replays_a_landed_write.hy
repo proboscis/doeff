@@ -14,7 +14,7 @@
 (import doeff_records [ReadRow PutRow PutRows RowWrite])
 (import doeff_records [AddStoreFault StoreFault StoreOperation])
 (import doeff_records._laws [LawHarness MAKER as-writer])
-(import doeff_records.http_client [RequestPatience request-patience-handler])
+(import doeff_records [RequestPatience request-patience-handler])
 (import tests.interpreters [LawSetup])
 
 (val DETAIL "記録の service が書きを確定した後で答えを落とした(撃ち直しの検の筋書き)")

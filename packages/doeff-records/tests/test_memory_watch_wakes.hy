@@ -15,10 +15,11 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written EventsMoved EventsQuiet])
 (import doeff_records [PutRow ListRows WatchChanges WatchEvents AppendEvent])
-(import doeff_records.maintenance [PruneChanges Pruned SweepExpired Swept])
-(import doeff_records.admission [epoch-ms])
-(import doeff_records.memory :as memory)
-(import doeff_records.memory [MemoryStore memory-records-handler memory-put-row memory-append])
+(import doeff_records [PruneChanges Pruned SweepExpired Swept])
+(import doeff_records._admission [epoch-ms])
+(import doeff_records._memory :as memory)
+(import doeff_records [MemoryStore memory-records-handler]
+        doeff_records._memory [memory-put-row memory-append])
 (import doeff_records._laws [LAW-SCHEMA MAKER TICKET-KEEP-SECONDS])
 (import pytest)
 

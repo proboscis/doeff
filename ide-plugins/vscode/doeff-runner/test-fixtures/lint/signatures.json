@@ -886,7 +886,7 @@
   {
    "rule": "DOEFF120",
    "adr": null,
-   "statement": "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy.wire・doeff_records.wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
+   "statement": "JsonValue・JSONValue・JsonObject・JSONObject(素の dict・list・str … を名で包んだだけの型)を使ってよいのは、汎用の解き手(doeff_hy._wire・doeff_records._wire)と、architecture.hy の :wire-modules に挙げた foundation の層の送受信の module だけ。ほかの module(protocol・intent・core …)は、解き手が形を確かめた型のある値だけを見る",
    "wired": false,
    "title": "送受信の外で JsonValue",
    "family": "wire"

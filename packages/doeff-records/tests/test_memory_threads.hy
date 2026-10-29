@@ -13,7 +13,8 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [StreamDecl KeepFor ExpectAbsent ExpectAny])
 (import doeff_records [AppendEvent ReadEvents PutRow])
-(import doeff_records.memory [MemoryStore memory-records-handler new-store-lock])
+(import doeff_records [MemoryStore memory-records-handler]
+        doeff_records._memory [new-store-lock])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 ;; 直す前の code では、この大きさで 5 回走らせて 5 回とも赤になった(出来事 400 個のうち 168〜219 個だけ残る・変更の番号が重なる)。

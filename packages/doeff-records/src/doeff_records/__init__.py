@@ -127,6 +127,66 @@ if TYPE_CHECKING:
     from doeff_records._values import WatchEventsAnswer as WatchEventsAnswer
     from doeff_records._values import Written as Written
     from doeff_records._values import WrittenRows as WrittenRows
+    from doeff_records._memory import MemoryStore as MemoryStore
+    from doeff_records._memory import answered as answered
+    from doeff_records._memory import at_now as at_now
+    from doeff_records._memory import drop_bell as drop_bell
+    from doeff_records._memory import hang_bell as hang_bell
+    from doeff_records._memory import memory_await_back as memory_await_back
+    from doeff_records._memory import memory_records_handler as memory_records_handler
+    from doeff_records._memory import memory_signal_handler as memory_signal_handler
+    from doeff_records._memory import memory_watch as memory_watch
+    from doeff_records._memory import read_at_now as read_at_now
+    from doeff_records._http_client import RecordsEndpoint as RecordsEndpoint
+    from doeff_records._http_client import RequestPatience as RequestPatience
+    from doeff_records._http_client import WireError as WireError
+    from doeff_records._http_client import http_records_handler as http_records_handler
+    from doeff_records._http_client import http_table_records_handler as http_table_records_handler
+    from doeff_records._http_client import records_unwaited as records_unwaited
+    from doeff_records._http_client import request_bytes as request_bytes
+    from doeff_records._http_client import request_patience_handler as request_patience_handler
+    from doeff_records._http_client import stall_names as stall_names
+    from doeff_records._http_server import CloseWaits as CloseWaits
+    from doeff_records._http_server import ClosingWaits as ClosingWaits
+    from doeff_records._http_server import KeepPreparedHandlers as KeepPreparedHandlers
+    from doeff_records._http_server import MarkBook as MarkBook
+    from doeff_records._http_server import PreparedHandlers as PreparedHandlers
+    from doeff_records._http_server import StampRequest as StampRequest
+    from doeff_records._http_server import closing_cuts_waits as closing_cuts_waits
+    from doeff_records._http_server import prepared_slot as prepared_slot
+    from doeff_records._http_server import records_server_config as records_server_config
+    from doeff_records._http_server import request_stamps as request_stamps
+    from doeff_records._http_server import shell_control as shell_control
+    from doeff_records._http_server import store_not_prepared as store_not_prepared
+    from doeff_records._http_server import store_reach as store_reach
+    from doeff_records._http_server import wait_stamps as wait_stamps
+    from doeff_records._http_server import waits_closing as waits_closing
+    from doeff_records._wire import answer_from as answer_from
+    from doeff_records._wire import decode_answer as decode_answer
+    from doeff_records._wire import decode_request as decode_request
+    from doeff_records._wire import encode_request as encode_request
+    from doeff_records._wire import list_rows_metrics as list_rows_metrics
+    from doeff_records._wire import named_stores as named_stores
+    from doeff_records._wire import refusal_from as refusal_from
+    from doeff_records._wire import request_kind as request_kind
+    from doeff_records._pg_sql import migrate_lock_key as migrate_lock_key
+    from doeff_records._pg_sql import schema_statements as schema_statements
+    from doeff_records._pg_sql import writer_lock_key as writer_lock_key
+    from doeff_records._event_source import BodyWrapper as BodyWrapper
+    from doeff_records._event_source import ChangedRow as ChangedRow
+    from doeff_records._event_source import SignalSourceFactory as SignalSourceFactory
+    from doeff_records._event_source import SignalSourcePatience as SignalSourcePatience
+    from doeff_records._event_source import SignalSourceUnreachable as SignalSourceUnreachable
+    from doeff_records._event_source import SignalTables as SignalTables
+    from doeff_records._event_source import came_back_within as came_back_within
+    from doeff_records._event_source import first_seen as first_seen
+    from doeff_records._event_source import read_signal_handler as read_signal_handler
+    from doeff_records._event_source import records_signal_handler as records_signal_handler
+    from doeff_records._event_source import ride_out_stall as ride_out_stall
+    from doeff_records._event_source import source_patience_handler as source_patience_handler
+    from doeff_records._event_source import waits_beside_sources as waits_beside_sources
+    from doeff_records._maintenance import ExpiredCursor as ExpiredCursor
+    from doeff_records._request_timing import RequestMark as RequestMark
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AppendEventAnswer": "doeff_records._values",
@@ -247,6 +307,72 @@ _LAZY_EXPORTS: dict[str, str] = {
     "list_typed": "doeff_records._typed",
     "put_typed": "doeff_records._typed",
     "read_typed": "doeff_records._typed",
+    # 置き場・http・wire・pg の子の名(ADR-DOE-API-001 R5)
+    "MemoryStore": "doeff_records._memory",
+    "answered": "doeff_records._memory",
+    "at_now": "doeff_records._memory",
+    "drop_bell": "doeff_records._memory",
+    "hang_bell": "doeff_records._memory",
+    "memory_await_back": "doeff_records._memory",
+    "memory_records_handler": "doeff_records._memory",
+    "memory_signal_handler": "doeff_records._memory",
+    "memory_watch": "doeff_records._memory",
+    "read_at_now": "doeff_records._memory",
+    "RecordsEndpoint": "doeff_records._http_client",
+    "RequestPatience": "doeff_records._http_client",
+    "WireError": "doeff_records._http_client",
+    "http_records_handler": "doeff_records._http_client",
+    "http_table_records_handler": "doeff_records._http_client",
+    "records_unwaited": "doeff_records._http_client",
+    "request_bytes": "doeff_records._http_client",
+    "request_patience_handler": "doeff_records._http_client",
+    "stall_names": "doeff_records._http_client",
+    "CloseWaits": "doeff_records._http_server",
+    "ClosingWaits": "doeff_records._http_server",
+    "KeepPreparedHandlers": "doeff_records._http_server",
+    "MarkBook": "doeff_records._http_server",
+    "PreparedHandlers": "doeff_records._http_server",
+    "StampRequest": "doeff_records._http_server",
+    "closing_cuts_waits": "doeff_records._http_server",
+    "prepared_slot": "doeff_records._http_server",
+    "records_server_config": "doeff_records._http_server",
+    "request_stamps": "doeff_records._http_server",
+    "shell_control": "doeff_records._http_server",
+    "store_not_prepared": "doeff_records._http_server",
+    "store_reach": "doeff_records._http_server",
+    "wait_stamps": "doeff_records._http_server",
+    "waits_closing": "doeff_records._http_server",
+    "answer_from": "doeff_records._wire",
+    "decode_answer": "doeff_records._wire",
+    "decode_request": "doeff_records._wire",
+    "encode_request": "doeff_records._wire",
+    "list_rows_metrics": "doeff_records._wire",
+    "named_stores": "doeff_records._wire",
+    "refusal_from": "doeff_records._wire",
+    "request_kind": "doeff_records._wire",
+    "AdmitWriters": "doeff_records._pg",
+    "RecordsSqlFailed": "doeff_records._pg",
+    "ReleaseWriters": "doeff_records._pg",
+    "StoreUnreachable": "doeff_records._pg",
+    "purge_expired": "doeff_records._pg",
+    "migrate_lock_key": "doeff_records._pg_sql",
+    "schema_statements": "doeff_records._pg_sql",
+    "writer_lock_key": "doeff_records._pg_sql",
+    "BodyWrapper": "doeff_records._event_source",
+    "ChangedRow": "doeff_records._event_source",
+    "SignalSourceFactory": "doeff_records._event_source",
+    "SignalSourcePatience": "doeff_records._event_source",
+    "SignalSourceUnreachable": "doeff_records._event_source",
+    "SignalTables": "doeff_records._event_source",
+    "came_back_within": "doeff_records._event_source",
+    "first_seen": "doeff_records._event_source",
+    "read_signal_handler": "doeff_records._event_source",
+    "records_signal_handler": "doeff_records._event_source",
+    "ride_out_stall": "doeff_records._event_source",
+    "source_patience_handler": "doeff_records._event_source",
+    "waits_beside_sources": "doeff_records._event_source",
+    "ExpiredCursor": "doeff_records._maintenance",
+    "RequestMark": "doeff_records._request_timing",
 }
 
 

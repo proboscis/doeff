@@ -21,8 +21,8 @@
 (import doeff_records [Changes EventsQuiet Unreachable WatchCursor ExpectAbsent])
 (import doeff_records [ListRows PutRow WatchChanges WatchEvents AppendEvent])
 (import doeff_records._laws [LawHarness MAKER as-writer late-write])
-(import doeff_records.wire [WATCH-MAX-SECONDS])
-(import doeff_records.http_client [RecordsEndpoint])
+(import doeff_records._wire [WATCH-MAX-SECONDS])
+(import doeff_records [RecordsEndpoint])
 (import tests.interpreters [LawSetup])
 
 ;; 待ちの秒(上限 WATCH-MAX-SECONDS = 25 秒の 2 倍より長い — 要求が 3 つに分かれる)。

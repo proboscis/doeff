@@ -5479,8 +5479,8 @@ fn judge_definitions(
 const JSON_VALUE_NAMES: &[&str] = &["JsonValue", "JSONValue", "JsonObject", "JSONObject"];
 
 /// どの repo でも JsonValue を使ってよい汎用の解き手の module(doeff-hy の defwire の実行時・doeff-records の wire)。
-/// module の綴りの末尾の段で照らす(doeff の repo の `packages/doeff-hy/src/doeff_hy/wire.hy` = `packages.doeff-hy.src.doeff_hy.wire` も当たる)。
-const BUILTIN_WIRE_MODULES: &[&str] = &["doeff_hy.wire", "doeff_records.wire"];
+/// module の綴りの末尾の段で照らす(doeff の repo の `packages/doeff-hy/src/doeff_hy/_wire.hy` = `packages.doeff-hy.src.doeff_hy._wire` も当たる)。
+const BUILTIN_WIRE_MODULES: &[&str] = &["doeff_hy._wire", "doeff_records._wire"];
 
 /// DOEFF120 の母集団で降りない dir(`.` で始まる隠し dir も降りない — `.venv`・`.git`・`.worktrees` …)。
 const JSON_VALUE_SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];

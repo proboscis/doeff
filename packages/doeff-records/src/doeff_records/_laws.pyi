@@ -72,22 +72,22 @@ from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
 from doeff_records._faults import AdvanceStoreEpoch as AdvanceStoreEpoch
-from doeff_records.maintenance import SweepExpired as SweepExpired
-from doeff_records.maintenance import PruneChanges as PruneChanges
-from doeff_records.maintenance import ReadChangeLog as ReadChangeLog
-from doeff_records.maintenance import ChangeLog as ChangeLog
-from doeff_records.maintenance import Swept as Swept
-from doeff_records.maintenance import Pruned as Pruned
-from doeff_records.maintenance import ReadExpiredEvents as ReadExpiredEvents
-from doeff_records.maintenance import ExpiredEvents as ExpiredEvents
-from doeff_records.maintenance import RetireArchivedEvents as RetireArchivedEvents
-from doeff_records.maintenance import RetiredEvents as RetiredEvents
-from doeff_records.maintenance import EventsArchived as EventsArchived
-from doeff_records.maintenance import archive_expired_events as archive_expired_events
+from doeff_records._maintenance import SweepExpired as SweepExpired
+from doeff_records._maintenance import PruneChanges as PruneChanges
+from doeff_records._maintenance import ReadChangeLog as ReadChangeLog
+from doeff_records._maintenance import ChangeLog as ChangeLog
+from doeff_records._maintenance import Swept as Swept
+from doeff_records._maintenance import Pruned as Pruned
+from doeff_records._maintenance import ReadExpiredEvents as ReadExpiredEvents
+from doeff_records._maintenance import ExpiredEvents as ExpiredEvents
+from doeff_records._maintenance import RetireArchivedEvents as RetireArchivedEvents
+from doeff_records._maintenance import RetiredEvents as RetiredEvents
+from doeff_records._maintenance import EventsArchived as EventsArchived
+from doeff_records._maintenance import archive_expired_events as archive_expired_events
 from functools import partial as partial
-from doeff_records.admission import hyx_row_matchesXquestion_markX as hyx_row_matchesXquestion_markX
-from doeff_records.admission import epoch_ms as epoch_ms
-from doeff_records.admission import key_text as key_text
+from doeff_records._admission import hyx_row_matchesXquestion_markX as hyx_row_matchesXquestion_markX
+from doeff_records._admission import epoch_ms as epoch_ms
+from doeff_records._admission import key_text as key_text
 MAKER: str
 PAINTER: str
 CLOSER: str

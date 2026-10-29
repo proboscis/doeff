@@ -1,0 +1,271 @@
+;;; 記録の service の要求ごとの計時(純粋 — #3688)。要求 1 つに打った刻(単調時計の秒)を区間の秒に割り、計器の秒の観測
+;;; (doeff の ObserveSecondsBatch の列の 1 項 SecondsObservation)の名を綴る。刻を打つのは入口(_http_server.hy の要求の task と、記録の
+;;; handler の包み)で、観測の列を計器へ 1 回で積むのも入口。ここは計算と綴りだけ。
+;;;
+;;; 何のためか: 書き 1 回が本番で 0.05〜0.11 秒かかるのに、service の側に要求ごとの秒が無く、どの区間が遅いかを読めなかった。区間ごとの
+;;; 秒の和と数を GET /metrics で読み、2 回読んだ差を数の差で割れば、その間の区間ごとの平均の秒になる。
+;;;
+;;; 刻(RequestMark):
+;;;   started      要求の task が始まった
+;;;   read         本文を読み終えた(本文を持たない method も同じ所で打つ)
+;;;   handler-in   記録の handler に公開 effect を渡す直前
+;;;   handler-out  記録の handler が答えた直後
+;;;   wait-in      handler の中の待ち(doeff-time の WaitWithin — 変化の待ちの long-poll の置き場の待ち)に入った
+;;;   woke         その待ちから起きた
+;;;   decided      答えが決まった
+;;;   sent         答えを待ち受けへ渡し終えた(HttpRespond が戻った — 本物の待ち受けは答えを待ち受けの loop へ積むだけで戻り、待ち受けの
+;;;                thread が書くので、相手が答えを受けるのはこれより前のことがある・#3688 の子 (3) の 3b)
+;;; 受けた刻は待ち受けの答え手が出来事に載せる値(HttpRequestArrived の received-at — time.monotonic と同じ物差し)で、刻ではなく引数で
+;;; 受ける(台本の待ち受けは載せないことがある — None)。
+;;;
+;;; 区間(RequestStage — queue・body・decode・handler・wait・encode・send の 7 つは重ならず、和が total に等しい):
+;;;   queue    受けた → task が始まった(本物の待ち受けが宣言の小さい本文を先に読む間・待ち受けの列と scheduler の待ち)
+;;;   body     task が始まった → 本文を読み終えた(本物の待ち受けが先に読んだ本文は往復せずに渡るので 0 に近い — 宣言の無い・大きい
+;;;            本文だけが待ち受けの loop との往復で読む・#3688 の子 (3) の 3c)
+;;;   decode   本文を読み終えた → handler に入る(JSON の読み・要求の読み・書き手の名・宣言の照らし)
+;;;   handler  handler に入ってから出るまでのうち、待ちを除いた秒(起きている間 — 置き場の錠・SQL の往復・COMMIT・合図を含む)
+;;;   wait     handler の中で待った秒の和(変化の待ちの要求だけ — 待たなかった要求は観測しない)
+;;;   encode   handler から出た → 答えが決まった(答えの綴り)
+;;;   send     答えが決まった → 送った(答えを byte にして待ち受けの loop へ積む — 本物の待ち受けは書き終わりを待たない)
+;;;   total    受けた → 送った(受けた刻が無ければ task が始まった → 送った)
+;;;   woke     最後に起きた → 送った(待った要求だけ。起きてから相手へ答えを渡すまで — total の内訳ではなく handler・encode・send に重なる)
+;;; 両端の刻のどちらかが欠けた区間は観測しない(本文を断った 400 と、handler に届かない 404 / 400 は decode・handler・encode が無い —
+;;; 本文を読み終えてから答えが決まるまでを内訳に割れない。落ちた 500 は欠けた刻に触る区間が無い)。total はどの答えにも在る。
+;;;
+;;; 計器の名: records_stage_<操作>_<区間>(操作の名の - は _ — Prometheus の名に - を使えない)。描く名は doeff の render-prometheus が
+;;; 末尾に _seconds_sum と _seconds_count を付ける。系列は操作 9 × 区間 9 で閉じている(STAGE-METRIC-HELPS の鍵)。秒の観測は 0 で置くと数が 1 増える
+;;; ので、起動の時には置かない(初めて観測した時に現れる)。
+(require doeff-hy.macros [defk val])
+(require doeff-hy.record [defenum defrecord])
+(import dataclasses [dataclass])  ; defrecord の展開が名指す
+(import enum [StrEnum])  ; defenum の展開が名指す
+(import doeff_hy._frozen [FrozenMap])
+(import doeff_core_effects [SecondsObservation])
+(import doeff_records._wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
+(import doeff_records._pg_sql [ROWS-UNIT stream-unit table-unit])
+
+(val MODULE-TAGS {:context "records" :role "judgment"})
+
+;; 刻の名(頭の註)。
+(defenum RequestMark STARTED READ HANDLER-IN HANDLER-OUT WAIT-IN WOKE DECIDED SENT)
+
+;; 区間の名(頭の註)。
+(defenum RequestStage QUEUE BODY DECODE HANDLER WAIT ENCODE SEND TOTAL WOKE)
+
+;; 計器の秒の観測の名の綴り(頭の註): records_stage_<操作>_<区間>。
+(val STAGE-METRIC "records_stage_{}_{}")
+
+
+(defrecord MarkAt
+  "刻 1 つ: mark = 刻の名・at = 打った時の単調時計の秒。"
+  {:tags {:context "records" :role "type"}}
+  (#^ RequestMark mark)
+  (#^ float at))
+
+
+(defrecord StageSeconds
+  "区間 1 つの秒: stage = 区間の名・seconds = 秒。"
+  {:tags {:context "records" :role "type"}}
+  (#^ RequestStage stage)
+  (#^ float seconds))
+
+
+(defrecord WaitSum
+  "handler の中の待ちの読み: seconds = 待った秒の和・last-woke = 最後に起きた刻(待たなかった要求は None)。"
+  {:tags {:context "records" :role "type"}}
+  (#^ float seconds)
+  (#^ (| float None) last-woke))
+
+
+(defk stage-metric [operation stage]
+  {:pre [(: operation str) (: stage RequestStage)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "操作 operation の区間 stage の秒を積む計器の名を綴るため(STAGE-METRIC — 操作の名の - は _ にする)。"
+  (when (not-in operation OPERATIONS)
+    (raise (ValueError (.format "計時する操作は {} のどれか: {!r}" OPERATIONS operation))))
+  (.format STAGE-METRIC (.replace operation "-" "_") stage))
+
+
+(defrecord StageMeaning
+  "区間 1 つの説明(計器の # HELP に載せる): stage = 区間の名・meaning = 何から何までの秒か。"
+  {:tags {:context "records" :role "type"}}
+  (#^ RequestStage stage)
+  (#^ str meaning))
+
+
+;; 区間ごとの説明(頭の註の区間と同じ並び)。
+(val STAGE-MEANINGS
+  #((StageMeaning :stage RequestStage.QUEUE :meaning "受けた → 要求の task が始まった")
+    (StageMeaning :stage RequestStage.BODY :meaning "要求の task が始まった → 本文を読み終えた")
+    (StageMeaning :stage RequestStage.DECODE :meaning "本文を読み終えた → 記録の handler に入る")
+    (StageMeaning :stage RequestStage.HANDLER :meaning "記録の handler に入ってから出るまでのうち、待ちを除いた間")
+    (StageMeaning :stage RequestStage.WAIT :meaning "記録の handler の中で待った間の和 — 待った要求だけ")
+    (StageMeaning :stage RequestStage.ENCODE :meaning "記録の handler から出た → 答えが決まった")
+    (StageMeaning :stage RequestStage.SEND :meaning "答えが決まった → 送った")
+    (StageMeaning :stage RequestStage.TOTAL :meaning "受けた → 送った")
+    (StageMeaning :stage RequestStage.WOKE :meaning "最後に起きた → 送った — 待った要求だけ")))
+
+;; 操作 → 区間 → 計器の名(STAGE-METRIC の綴り — 要求ごとに綴らずに引く・card [id])。
+(val STAGE-METRIC-NAMES
+  (FrozenMap (gfor operation OPERATIONS
+                   #(operation (FrozenMap (gfor described STAGE-MEANINGS
+                                                #(described.stage (.format STAGE-METRIC (.replace operation "-" "_") described.stage))))))))
+
+;; 閉じた系列の全部(操作 × 区間)→ 各系列の # HELP の説明。
+(val STAGE-METRIC-HELPS
+  (FrozenMap (gfor operation OPERATIONS described STAGE-MEANINGS
+                   #((.format STAGE-METRIC (.replace operation "-" "_") described.stage)
+                     (.format "記録の service が操作 {} の要求に答えた区間 {}({})の秒(起動からの和と数)"
+                              operation described.stage described.meaning)))))
+
+
+(defk first-at [marks mark]
+  {:pre [(: marks (get tuple #(MarkAt ...))) (: mark RequestMark)] :post [(: % (| float None))] :tags {:context "records" :role "judgment"}}
+  "刻の列から名 mark の最初の刻を読むため(打っていなければ None)。"
+  (next (gfor stamped marks :if (= stamped.mark mark) stamped.at) None))
+
+
+(defk waited [marks]
+  {:pre [(: marks (get tuple #(MarkAt ...)))] :post [(: % WaitSum)] :tags {:context "records" :role "judgment"}}
+  "刻の列から、handler の中の待ち(wait-in と直後の woke の組)の秒の和と最後に起きた刻を読むため(起きる前に終わった待ちは数えない)。
+   待っている間はその要求の task が止まっているので、1 つの札の刻の列では wait-in の次の刻は必ずその待ちの woke になる。"
+  (val naps (tuple (gfor #(went came) (zip marks (cut marks 1 None))
+                         :if (and (= went.mark RequestMark.WAIT-IN) (= came.mark RequestMark.WOKE))
+                         (- came.at went.at))))
+  (val woken (tuple (gfor stamped marks :if (= stamped.mark RequestMark.WOKE) stamped.at)))
+  (WaitSum :seconds (float (sum naps)) :last-woke (if woken (get woken -1) None)))
+
+
+(defk between [since until]
+  {:pre [(: since (| float None)) (: until (| float None))] :post [(: % (| float None))] :tags {:context "records" :role "judgment"}}
+  "2 つの刻の差の秒を読むため(どちらかが欠ければ None — その区間は観測しない)。"
+  (if (or (is since None) (is until None)) None (- until since)))
+
+
+;; --- 答えに載せる区間の秒([id])------------------------------------------------------------------------------------------
+;; 記録の操作の答えは、答えが決まった所までの区間の秒を見出し Server-Timing に載せる(綴りと読みは _wire.hy の SERVER-TIMING-HEADER の註 —
+;; client と同じ 1 か所)。計器の和と数(GET /metrics)は平均しか言えず、p95 の要求の内訳を言えないので、呼び手が要求ごとに名指せるように
+;; する。載せる区間の名の並びは wire の SERVER-TIMING-NAMES(区間の名と同じ綴り)。
+(val SERVER-TIMING-STAGES (tuple (gfor name SERVER-TIMING-NAMES (RequestStage name))))
+
+
+(defk server-timing-spans-of [stages]
+  {:pre [(: stages (get tuple #(StageSeconds ...)))] :post [(: % (get tuple #(ServerSpan ...)))] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing に載せる区間を選ぶため: 区間の列のうち SERVER-TIMING-STAGES の区間を、wire の区間(ServerSpan)の列にする
+   (綴るのは wire の server-timing-spelled — 要求の task が続けて呼ぶ。ここで綴りを呼ぶと、この関数が要求ごとに Program になる)。"
+  (tuple (gfor stage stages :if (in stage.stage SERVER-TIMING-STAGES)
+               (ServerSpan :name (str stage.stage) :seconds stage.seconds))))
+
+
+(defk server-timing-of [stages]
+  {:pre [(: stages (get tuple #(StageSeconds ...)))] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "答えの見出し Server-Timing の値を綴るため: 区間の列のうち SERVER-TIMING-STAGES の区間を、wire の綴り(server-timing-spelled)にする。"
+  (! (server-timing-spelled (! (server-timing-spans-of stages)))))
+
+
+(defk request-stages [received-at marks wait]
+  {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...))) (: wait WaitSum)]
+   :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
+  "要求 1 つの受けた刻と、答えが決まるまでの刻の列 marks(と、その待ちの読み wait — waited)を、答えを送る前に決まる区間(queue・body・
+   decode・handler・wait・encode — 頭の註の区間)の秒の列にするため(両端の刻が欠けた区間は入れない)。送り終わりの刻で決まる区間は
+   sent-stages。刻は名ごとの最初の刻を 1 度の走りで引く(first-at と between の意味のまま、要求ごとに刻の数だけ Program を撃たない —
+   card [id]。他の defk を呼ばないので、この関数も Program にならない — card [id])。"
+  (val firsts {})
+  (for [stamped marks]
+    (.setdefault firsts stamped.mark stamped.at))
+  (val gap (fn [since until] (if (or (is since None) (is until None)) None (- until since))))
+  (val started (.get firsts RequestMark.STARTED))
+  (val read (.get firsts RequestMark.READ))
+  (val handler-in (.get firsts RequestMark.HANDLER-IN))
+  (val handler-out (.get firsts RequestMark.HANDLER-OUT))
+  (val decided (.get firsts RequestMark.DECIDED))
+  (val handled (gap handler-in handler-out))
+  (val slept (is-not wait.last-woke None))
+  (val spans #(#(RequestStage.QUEUE (gap received-at started))
+               #(RequestStage.BODY (gap started read))
+               #(RequestStage.DECODE (gap read handler-in))
+               #(RequestStage.HANDLER (if (is handled None) None (- handled wait.seconds)))
+               #(RequestStage.WAIT (if slept wait.seconds None))
+               #(RequestStage.ENCODE (gap handler-out decided))))
+  (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
+
+
+(defk sent-stages [received-at marks wait sent-at]
+  {:pre [(: received-at (| float None)) (: marks (get tuple #(MarkAt ...))) (: wait WaitSum) (: sent-at float)]
+   :post [(: % (get tuple #(StageSeconds ...)))] :tags {:context "records" :role "judgment"}}
+  "送り終えた刻 sent-at で決まる区間(send・total・woke — 頭の註の区間)の秒の列にするため。答えが決まるまでの刻の列 marks を
+   request-stages で 1 度割って答えの見出しに載せた要求の task が、送った後にこの区間だけを足して計器に積む(刻の列を送った後に割り直さない
+   — card [id])。"
+  (val firsts {})
+  (for [stamped marks]
+    (.setdefault firsts stamped.mark stamped.at))
+  (val started (.get firsts RequestMark.STARTED))
+  (val decided (.get firsts RequestMark.DECIDED))
+  (val last-woke wait.last-woke)
+  (val gap (fn [since] (if (is since None) None (- sent-at since))))
+  (val spans #(#(RequestStage.SEND (gap decided))
+               #(RequestStage.TOTAL (gap (if (is received-at None) started received-at)))
+               #(RequestStage.WOKE (gap last-woke))))
+  (tuple (gfor #(stage seconds) spans :if (is-not seconds None) (StageSeconds :stage stage :seconds seconds))))
+
+
+;; --- 書きの錠の秒(card [id])-------------------------------------------------------------------------------------------
+;; 記録の service の書き 1 回が、錠の単位(_pg_sql.hy の頭の註の「書きの錠」— 表の単位 table:<表>・番号の単位 rows・列の単位 stream:<列>)ごとの同じ process の
+;; 並びを待った秒(wait)と、並びを通ってから transaction の答えまで錠を持った秒(hold — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT)。
+;; 積むのは _pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を
+;; 長く持ち、どの単位の書きが待ったかを、2 回読んだ差を数の差で割って読む。系列は宣言の表と列の数で閉じる(LOCK-OPERATIONS × 単位 × 相)。
+;; 行の書きの持った秒は、2 往復目の中で番号の錠を DB で待った秒も含む(番号の錠は同じ process の並びを通らない)。
+(defenum LockPhase WAIT HOLD)
+(val LOCK-METRIC "records_lock_{}_{}_{}")
+;; 錠の単位ごとの書きの操作の名(_pg.hy の handler と回収が名乗る — 単位の名は pg_sql の table-unit・ROWS-UNIT・stream-unit)。
+(val TABLE-LOCK-OPERATIONS #("put-row" "put-rows" "sweep-rows"))
+(val ROWS-LOCK-OPERATIONS #("prune-changes" "forget-write-keys"))
+(val STREAM-LOCK-OPERATIONS #("append-event" "append-events" "sweep-stream"))
+
+
+(defk metric-word [text]
+  {:pre [(: text str)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "操作や錠の単位の名を、計器の名の 1 語にするため(Prometheus の名に使えない - と : を _ にする)。"
+  (.replace (.replace text "-" "_") ":" "_"))
+
+
+(defk lock-metric [operation unit phase]
+  {:pre [(: operation str) (: unit str) (: phase LockPhase)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
+  "操作 operation が錠の単位 unit で待った秒(wait)か持った秒(hold)を積む計器の名を綴るため(LOCK-METRIC)。"
+  (.format LOCK-METRIC (! (metric-word operation)) (! (metric-word unit)) phase))
+
+
+(defk lock-observations [operation units waited held]
+  {:pre [(: operation str) (: units tuple) (: waited float) (: held float)] :post [(: % (get tuple #(SecondsObservation ...)))]
+   :tags {:context "records" :role "judgment"}}
+  "書き 1 回(操作 operation・錠の単位 units)の並んだ秒 waited と錠を持った秒 held を、単位ごとの秒の観測の列にするため(束の追記が列を
+   2 つ触れば、同じ秒を 2 つの列の単位に積む — どの列の書きが待ったかを列ごとに読む)。"
+  (var observations #())
+  (for [unit units]
+    (<- wait-name (lock-metric operation unit LockPhase.WAIT))
+    (<- hold-name (lock-metric operation unit LockPhase.HOLD))
+    (:= observations (+ observations #((SecondsObservation :name wait-name :seconds (max waited 0.0))
+                                       (SecondsObservation :name hold-name :seconds (max held 0.0))))))
+  observations)
+
+
+;; 相ごとの説明(計器の # HELP に載せる)。
+(val LOCK-PHASE-MEANINGS #(#(LockPhase.WAIT "同じ process の同じ単位の書きの並びを待った秒")
+                           #(LockPhase.HOLD "並びを通ってから transaction の答えまで錠を持った秒")))
+
+
+(defk lock-metric-helps [tables streams]
+  {:pre [(: tables tuple) (: streams tuple)] :post [(: % (get FrozenMap str))] :tags {:context "records" :role "judgment"}}
+  "宣言の表 tables と列 streams の書きの錠の系列の全部 → 各系列の # HELP の説明(GET /metrics が描く — 表ごとの単位と番号の単位と列ごとの
+   単位)。"
+  (var units #(#(ROWS-UNIT ROWS-LOCK-OPERATIONS)))
+  (for [table (sorted tables)]
+    (<- unit (table-unit table))
+    (:= units (+ units #(#(unit TABLE-LOCK-OPERATIONS)))))
+  (for [stream (sorted streams)]
+    (<- unit (stream-unit stream))
+    (:= units (+ units #(#(unit STREAM-LOCK-OPERATIONS)))))
+  (var helps {})
+  (for [#(unit operations) units operation operations #(phase meaning) LOCK-PHASE-MEANINGS]
+    (<- name (lock-metric operation unit phase))
+    (setv (get helps name) (.format "記録の service の書き {} が錠の単位 {} で{}(起動からの和と数)" operation unit meaning)))
+  (FrozenMap helps))

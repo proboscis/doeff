@@ -8,9 +8,9 @@
 (import doeff_records [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows ListCursor WatchCursor])
 (import doeff_records [PutRow PutRows RowWrite ReadRow ListRows]
         doeff_records._effects [WHERE-ANY-LIMIT])
-(import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
+(import doeff_records._admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 
@@ -63,7 +63,7 @@
 (deftest test-a-retired-key-is-judged-like-a-live-event
   ;; 保持の期限で出来事を消した鍵の覚え(番号と本文の指紋だけ)にも、生きた出来事と同じ規則を当てる(#3022): 正規の綴りが同じ本文
   ;; (鍵の順だけ違う)は前の番号・別の本文(True と 1 も別)は「冪等キー」を名指す断り。指紋は正規の綴りの sha256。
-  (import doeff_records.admission [judge-append body-digest AppendReplay] doeff_records [RetiredKey])
+  (import doeff_records._admission [judge-append body-digest AppendReplay] doeff_records [RetiredKey])
   (import doeff_records [Event])
   (val decl (StreamDecl "pulses" #("w") :retention (KeepFor 60)))
   (val body {"a" 1 "b" [True "日本"]})
@@ -81,7 +81,7 @@
 (deftest test-key-text-is-ascii-and-round-trips
   ;; 頁の順は鍵の綴りの符号点の順(PG では COLLATE "C")。綴りが ASCII だけなので、byte の順と符号点の順が同じになる
   ;; (UTF-8 の多 byte の字も \u の綴りに落ちる)。鍵の部品を前から比べた順とは限らない(順の約束は綴りの順だけ)。
-  (import doeff_records.admission [key-from-text])
+  (import doeff_records._admission [key-from-text])
   (for [key [#("a" "b") #("a") #("日本" "x") #("quote\"" "back\\slash")]]
     (setv text (key-text key))
     (assert (.isascii text) text)

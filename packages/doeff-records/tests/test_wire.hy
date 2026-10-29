@@ -7,8 +7,8 @@
 (import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch]
         doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])
-(import doeff_records.wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-request decode-request encode-answer answer-for-request
-                            decode-answer])
+(import doeff_records [encode-request decode-request decode-answer]
+        doeff_records._wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-answer answer-for-request])
 
 (setv ROW (Row #("g1" "t1") {"group" "g1" "id" "t1" "nested" {"a" [1 2.5 True None "x"]}} 3))
 
