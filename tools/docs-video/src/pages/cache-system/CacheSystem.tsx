@@ -531,7 +531,7 @@ const HandlerScene: React.FC = () => {
       <Box x={670} y={96} w={560} h={224} color={slot.color} on={lane >= 0 && frame < f(lane * 7.5 + 6.0)} opacity={fadeAt(frame, 0.6)}>
         <div style={{position: 'absolute', left: 20, top: 14, fontFamily: SANS, fontSize: 17, color: MUTED}}>each run is a separate run(...):</div>
         <div style={{position: 'absolute', left: 20, top: 44, fontFamily: MONO, fontSize: 18, lineHeight: '34px', color: TEXT, whiteSpace: 'pre'}}>
-          {'run(scheduled(sync_time_handler()(\n    await_handler()(\n        '}
+          {'run(scheduled(sync_time_handler()(\n    await_handler(\n        '}
           <span style={{color: slot.color, fontWeight: 700}}>{slot.name}</span>
           {'(\n            cached_answer())))))'}
         </div>

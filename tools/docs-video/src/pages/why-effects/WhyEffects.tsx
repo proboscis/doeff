@@ -641,7 +641,7 @@ const TOTAL = [
 ];
 // The runs of measure/async_vs_effects.py: 5 runs of each.
 const HANDLERS = [
-  {name: 'async_http', how: 'Await(download(url)) under await_handler()', y: 400, at: 12.8, result: '36 · 11.08–27.58 ms'},
+  {name: 'async_http', how: 'Await(download(url)) under await_handler', y: 400, at: 12.8, result: '36 · 11.08–27.58 ms'},
   {name: 'instant_http', how: 'answers at once, no event loop', y: 490, at: 14.6, result: '36 · 0.29–0.39 ms'},
 ];
 

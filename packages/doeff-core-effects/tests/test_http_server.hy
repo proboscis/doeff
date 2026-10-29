@@ -322,7 +322,7 @@
   (defn :async #^ None scenario []
     "相手役を開き、本物の答え手を別の thread で回して、HTTP の中継と ws の中継を確かめるため。"
     (setv #(runner up) (await (upstream-app)))
-    (.start (threading.Thread :target (fn [] (try (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+    (.start (threading.Thread :target (fn [] (try (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                  (serve-on-port (.format "http://127.0.0.1:{}" up)))))
                                                   (except [asyncio.CancelledError] None)))
                               :daemon True))
@@ -350,7 +350,7 @@
   (import queue)
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
   (setv result (queue.Queue) bound (queue.Queue))
-  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                        (ws-echo 64 bound.put))))))
                             :daemon True))
   (defn :async #^ WSMessage scenario [#^ str base]
@@ -384,7 +384,7 @@
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
     "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
-    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                          (named-echo name address bound.put))))))
                               :daemon True)))
   (open-listener "A" bound-a result-a)
@@ -431,7 +431,7 @@
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
     "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
-    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                          (named-echo name address bound.put))))))
                               :daemon True)))
   (open-listener "A" bound-a result-a)
@@ -486,7 +486,7 @@
     (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
     (<- (HttpNextRequest))
     2)
-  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [(await-handler) (state) aiohttp-http-server]
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
                                                                                        (answer-after-the-peer-left))))))
                             :daemon True))
   (setv port (. (.get bound :timeout 30) port))
@@ -646,7 +646,7 @@
   "本物の答え手の下で probe-while-held を走らせるため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
-  (<- got HeldAnswers (with-handler [(await-handler) (state) aiohttp-http-server] (probe-while-held hold)))
+  (<- got HeldAnswers (with-handler [await-handler (state) aiohttp-http-server] (probe-while-held hold)))
   got)
 
 
@@ -716,7 +716,7 @@
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target ask-once :args #(box answers) :daemon True))
-  (<- entered int (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (respond-awaits box)))
+  (<- entered int (with-handler [await-handler (state) awaits-counted aiohttp-http-server] (respond-awaits box)))
   (val got (.get answers :timeout HOLD-SECONDS))
   (when (isinstance got Exception)
     (raise got))
@@ -744,7 +744,7 @@
   "本物の答え手の下で listen-answer-a-gone-ticket-and-close を走らせるため(aiohttp の無い venv では skip)。"
   (pytest.importorskip "aiohttp" :reason "aiohttp は extra http-server の依存")
   (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
-  (<- done str (with-handler [(await-handler) (state) aiohttp-http-server] (listen-answer-a-gone-ticket-and-close)))
+  (<- done str (with-handler [await-handler (state) aiohttp-http-server] (listen-answer-a-gone-ticket-and-close)))
   done)
 
 
@@ -811,7 +811,7 @@
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target hear-until-closed :args #(box answers) :daemon True))
-  (<- entered int (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (send-awaits box)))
+  (<- entered int (with-handler [await-handler (state) awaits-counted aiohttp-http-server] (send-awaits box)))
   (val got (.get answers :timeout HOLD-SECONDS))
   (when (isinstance got Exception)
     (raise got))
@@ -885,7 +885,7 @@
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target send-once :args #(box answers) :daemon True))
-  (<- read tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (read-awaits box)))
+  (<- read tuple (with-handler [await-handler (state) awaits-counted aiohttp-http-server] (read-awaits box)))
   (val got (.get answers :timeout HOLD-SECONDS))
   (when (isinstance got Exception)
     (raise got))
@@ -1005,7 +1005,7 @@
   (val sent (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target fire-wave :args #(box sent answers) :daemon True))
-  (<- got tuple (with-handler [(await-handler) (state) awaits-counted aiohttp-http-server] (take box sent)))
+  (<- got tuple (with-handler [await-handler (state) awaits-counted aiohttp-http-server] (take box sent)))
   (val replies (frozenset (gfor _ (range WAVE-SIZE) (.get answers :timeout WAVE-SECONDS))))
   (+ got #(replies)))
 
@@ -1240,7 +1240,7 @@
   (val box (queue.Queue))
   (val answers (queue.Queue))
   (.start (threading.Thread :target dial-once :args #(box answers texts quiet) :daemon True))
-  (<- _relayed int (with-handler [(await-handler) (state) aiohttp-http-server] (relay-until-done upstream box release)))
+  (<- _relayed int (with-handler [await-handler (state) aiohttp-http-server] (relay-until-done upstream box release)))
   (val got (.get answers :timeout DIAL-SECONDS))
   (when (isinstance got Exception)
     (raise got))

@@ -103,7 +103,7 @@ class TestGetHandlersDirectNesting:
             return (yield Wait(t))
 
         composed = _compose(prog(),
-            writer, try_handler, state(), await_handler(),
+            writer, try_handler, state(), await_handler,
             slog_handler,
             marker_handler,
         )
@@ -160,7 +160,7 @@ class TestGetHandlersViaDefk:
         @do
         def defk_interpreter():
             composed = _compose(prog(),
-                writer, try_handler, state(), await_handler(),
+                writer, try_handler, state(), await_handler,
                 slog_handler,
                 marker_handler,
             )

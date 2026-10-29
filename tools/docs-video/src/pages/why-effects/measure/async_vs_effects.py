@@ -59,7 +59,7 @@ for i in range(5):
     a = asyncio.run(total_size_async(urls))
     t_async = (time.perf_counter() - t) * 1000
     t = time.perf_counter()
-    b = run(scheduled(await_handler()(handler(async_http)(total_size(urls)))))
+    b = run(scheduled(await_handler(handler(async_http)(total_size(urls)))))
     t_await = (time.perf_counter() - t) * 1000
     t = time.perf_counter()
     c = run(scheduled(handler(instant_http)(total_size(urls))))

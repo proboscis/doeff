@@ -56,7 +56,7 @@ def test_an_awaited_value_is_freed_once_the_awaiter_drops_it(implementation: str
         return [index for index, ref in enumerate(payload_refs) if ref() is not None]
 
     alive = run(
-        scheduled(with_handlers([await_handler()], program()), implementation=implementation)
+        scheduled(with_handlers([await_handler], program()), implementation=implementation)
     )
 
     assert set(alive) <= {AWAITS - 1}, f"awaited values {alive} of {AWAITS} are still alive"
@@ -79,6 +79,6 @@ def test_the_awaiter_still_receives_the_value_and_the_failure(implementation: st
             return value, str(error)
         return value, None
 
-    got = run(scheduled(with_handlers([await_handler()], program()), implementation=implementation))
+    got = run(scheduled(with_handlers([await_handler], program()), implementation=implementation))
 
     assert got == ({"n": 1}, "broken")

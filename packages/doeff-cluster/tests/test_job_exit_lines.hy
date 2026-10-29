@@ -175,7 +175,7 @@
   ;; 観測した拍の回収で 1 行 — 終了 code は shim が写した 139・signal は SIGSEGV・起こし直すまでの間は 1 回目の restart-backoff-ms。
   (<- settings HostSettings (host-settings tmp-path :hy-command HY :policy POLICY))
   (val spec (JobSpec "svc" "tests.fixtures.sleeper" #((str (/ tmp-path "beat")) "--segfault") "rev-a"))
-  (val lines (run (scheduled (with-handlers [(await-handler) (async-time-handler) subprocess-handler process-exit-handler (state)
+  (val lines (run (scheduled (with-handlers [await-handler (async-time-handler) subprocess-handler process-exit-handler (state)
                                              os-file-handler exit-lines-noted (process-host settings)
                                              (crashing-world spec PACKAGE CRASH-DEADLINE-MS)
                                              stop-signal-never-comes tick-pauses (wakes-every 100)]

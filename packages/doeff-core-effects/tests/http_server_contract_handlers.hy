@@ -297,7 +297,7 @@
     (<- dead int (vacant-port))
     (val world (World :site site :upstream (.format "http://127.0.0.1:{}" upstream.server-port) :dead (.format "http://127.0.0.1:{}" dead)))
     (try
-      (<- ran (with_handlers [(await-handler) (state) (contract-world world) aiohttp-http-server live-peer] program))
+      (<- ran (with_handlers [await-handler (state) (contract-world world) aiohttp-http-server live-peer] program))
       (:= answer ran)
       (finally
         (.shutdown upstream)

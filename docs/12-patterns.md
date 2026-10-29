@@ -16,7 +16,7 @@ Each layer yields effects for what it needs from the layer below, and the outerm
 infrastructure, is a set of handlers. `order_service` reads and saves an order with `GetOrder` and
 `SaveOrder` and caches it with `CachePut`; it holds no database or cache client. `sql_orders`
 answers the order effects from SQL tables, `in_memory_orders` from a dict a test can read, and
-`in_memory_cache_handler()` answers `CachePut` (it needs `await_handler()` and `scheduled()`
+`in_memory_cache_handler()` answers `CachePut` (it needs `await_handler` and `scheduled()`
 outside it, see [Cache System](07-cache-system.md)):
 
 ```python
@@ -109,7 +109,7 @@ def with_log(program):
     return response, (yield ReadWriterLog())
 
 def serve(orders_handler, order_id):
-    stack = [state(), writer, try_handler, await_handler(), in_memory_cache_handler(), orders_handler]
+    stack = [state(), writer, try_handler, await_handler, in_memory_cache_handler(), orders_handler]
     return run(scheduled(with_handlers(stack, with_log(get_order_handler(order_id)))))
 
 # Production stack: SQLite

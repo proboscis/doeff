@@ -784,7 +784,7 @@ value = yield Await(async_call())
 
 **Signature:** `Await(coroutine)`
 
-Requires `await_handler()` and `scheduled()` to be installed.
+Requires `await_handler` and `scheduled()` to be installed.
 
 ---
 
@@ -1332,7 +1332,7 @@ prog = listen_handler(my_program())
 
 ---
 
-### await_handler()
+### await_handler
 
 Handles `Await(coroutine)` by bridging async into the scheduler via `ExternalPromise`.
 Requires `scheduled()` to be installed.
@@ -1340,7 +1340,7 @@ Requires `scheduled()` to be installed.
 ```python
 from doeff_core_effects import await_handler
 
-prog = await_handler()(my_program())
+prog = await_handler(my_program())
 ```
 
 ---

@@ -106,7 +106,7 @@ def _run_with_handler(
                 [
                     # Retry waits yield doeff-time's Delay: the virtual clock answers them.
                     sim_time_handler(clock=clock),
-                    await_handler(),
+                    await_handler,
                     lazy_ask(strict=True),
                     try_handler,
                     state(),

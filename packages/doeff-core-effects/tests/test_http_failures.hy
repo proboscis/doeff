@@ -33,7 +33,7 @@
    :tags {:context "http" :role "foundation"}}
   "応答しない相手(MockTransport が要求ごとに error-class の例外を上げる)へ本番の答え手で 1 回要求し、答え手の答えを読むため。"
   (<- answer (| HttpResponse HttpFailed)
-      (with-handler [(await-handler)
+      (with-handler [await-handler
                      (http-production-handler
                        :client-factory (fn [] (httpx.AsyncClient :transport (httpx.MockTransport (fn [request] (raise (error-class text :request request)))))))]
         (ask "https://api.test/x" values)))
@@ -104,7 +104,7 @@
   ;; 失敗ケース(#2337): connect-timeout-seconds は接続の段だけの上限として client に渡り(全体の上限は timeout-seconds のまま)、
   ;; 付けない要求は今までどおり全体の上限だけを渡す。
   (val spy (TimeoutSpy))
-  (<- answers tuple (with-handler [(await-handler) (http-production-handler :client-factory (fn [] spy))] (ask-with-connect-limit)))
+  (<- answers tuple (with-handler [await-handler (http-production-handler :client-factory (fn [] spy))] (ask-with-connect-limit)))
   (assert (= (tuple (gfor a answers a.status)) #(200 200)) answers)
   (val limited (get spy.timeouts 0))
   (val plain (get spy.timeouts 1))
@@ -159,7 +159,7 @@
   ;; 直した後は範囲ごとに client を作って閉じる: 2 つとも答え、作った数 = 閉じた数 = 2。
   (val made (Made))
   (val handler (http-production-handler :client-factory (fn [] (ClosingSpy made))))
-  (<- first HttpResponse (with-handler [(await-handler) handler] (ask-once "https://api.test/one")))
-  (<- second HttpResponse (with-handler [(await-handler) handler] (ask-once "https://api.test/two")))
+  (<- first HttpResponse (with-handler [await-handler handler] (ask-once "https://api.test/one")))
+  (<- second HttpResponse (with-handler [await-handler handler] (ask-once "https://api.test/two")))
   (assert (= #(first.status second.status) #(200 200)) #(first second))
   (assert (= #(made.opened made.closed) #(2 2)) #(made.opened made.closed)))

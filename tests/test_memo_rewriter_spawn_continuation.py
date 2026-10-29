@@ -115,7 +115,7 @@ class TestMemoRewriterSpawnContinuation:
             writer,
             try_handler,
             state(),
-            await_handler(),
+            await_handler,
             slog_handler,
             simple_fetch_handler,
         ))
@@ -132,7 +132,7 @@ class TestMemoRewriterSpawnContinuation:
             writer,
             try_handler,
             state(),
-            await_handler(),
+            await_handler,
             slog_handler,
             spawn_fetch_handler,
         ))

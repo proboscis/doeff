@@ -108,15 +108,15 @@ async def _async_sleep_compute(x):
 
 ;; async backend + sequential: 10 × 100ms = ~1.0s
 (timed-run "async + sequential:   "
-  [try_handler async-backend fail_handler (await_handler) (sequential)])
+  [try_handler async-backend fail_handler await_handler (sequential)])
 
 ;; async backend + parallel(10): all at once = ~0.1s
 (timed-run "async + parallel(10): "
-  [try_handler async-backend fail_handler (await_handler) (parallel 10)])
+  [try_handler async-backend fail_handler await_handler (parallel 10)])
 
 ;; async backend + parallel(3): 4 batches = ~0.4s
 (timed-run "async + parallel(3):  "
-  [try_handler async-backend fail_handler (await_handler) (parallel 3)])
+  [try_handler async-backend fail_handler await_handler (parallel 3)])
 
 ;; sync backend + sequential: 10 × 100ms = ~1.0s (same as async seq)
 (timed-run "sync + sequential:    "

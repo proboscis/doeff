@@ -40,7 +40,7 @@ def ttl_hint():
 
 
 def under_cache(prog):
-    return run(scheduled(sync_time_handler()(await_handler()(in_memory_cache_handler()(prog)))))
+    return run(scheduled(sync_time_handler()(await_handler(in_memory_cache_handler()(prog)))))
 
 
 under_cache(WithObserve(seen, store_all()))

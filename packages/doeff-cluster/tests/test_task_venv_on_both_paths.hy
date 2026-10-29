@@ -215,7 +215,7 @@
   {:pre [(: place str) (: warm-dir str) (: program Program)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "program を本物の答え手の組(外側が先 — 宿の表の state・event loop・実時間・file・子 process・子の終わりの待ち・待ちの子・宿 warm_host)の
    上で回すため。待ちの子の置き場の根は warm-dir・log は place の下(socket の path は unix socket の上限 107 byte の内)。"
-  (run (scheduled (with-handlers [(state) (await-handler) (async-time-handler) slog-handler os-file-handler subprocess-handler process-exit-handler
+  (run (scheduled (with-handlers [(state) await-handler (async-time-handler) slog-handler os-file-handler subprocess-handler process-exit-handler
                                   os-warm-process-handler bytecode-kept-out (worker-path-led-by (+ place "/boot/bin"))
                                   (warm-host (WarmSettings :warm-dir warm-dir :log-dir (+ place "/logs") :generation "0b6f5e2a9c1d" :uv "uv"))]
                     program))))

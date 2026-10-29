@@ -236,7 +236,7 @@ named in the handler columns (all under `doeff_core_effects`).
 | Reader, state, writer | `doeff_core_effects`: `Ask`, `Local`, `Get`, `Put`, `Tell`, `Listen`, `slog` | `handlers`: `reader(env)`, `lazy_ask(env)`, `env_var_ask`, `state(initial)`, `writer`, `local_handler`, `listen_handler`, `slog_handler` | same | — |
 | Errors | `doeff_core_effects`: `Try` | `handlers.try_handler` | same | — |
 | Absence and failure | `doeff_core_effects`: `Absent`, `Raise` | `outcomes`: `maybe`, `result`, `on_raise`, `absent_as` | same | — |
-| asyncio bridge | `doeff_core_effects`: `Await` | `handlers.await_handler()` | — | — |
+| asyncio bridge | `doeff_core_effects`: `Await` | `handlers.await_handler` | — | — |
 | Concurrency | `scheduler`: `Spawn`, `Wait`, `Gather`, `Race`, `Cancel`, `CreatePromise`, `CreateExternalPromise`, `CreateSemaphore` | `scheduler.scheduled(program)` | same | — |
 | Channels | `channel_effects`: `CreateChannel`, `PutChannel`, `TakeChannel` | `scheduler_channel.scheduler_channel_handler` | same | `hy` |
 | HTTP client | `http_effects`: `HttpRequest`, `HttpResponse`, `HttpError` | `http_handlers.http_production_handler` | `http_handlers.http_fixture_handler(path, mode="record" or "replay")` | `http` |

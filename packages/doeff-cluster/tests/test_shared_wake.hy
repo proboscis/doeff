@@ -58,7 +58,7 @@
 (defk taken-by-loop [inbox timeout]
   {:pre [(: inbox RequestInbox) (: timeout float)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
   "調停ループと同じ形(本番の受付の答え手 http-requests と壁の時計)で、受付から 1 度取るため。"
-  (<- batch list (with-handlers [(await-handler) (async-time-handler) (http-requests inbox)] (NextRequests timeout 10)))
+  (<- batch list (with-handlers [await-handler (async-time-handler) (http-requests inbox)] (NextRequests timeout 10)))
   batch)
 
 
@@ -141,7 +141,7 @@ stop = StopState()
 run(stop_on_signals(stop, wake=inbox.wake))
 print('ready', flush=True)
 started = time.monotonic()
-run(scheduled(with_handlers([await_handler(), async_time_handler(), http_requests(inbox)], NextRequests(20.0, 10))))
+run(scheduled(with_handlers([await_handler, async_time_handler(), http_requests(inbox)], NextRequests(20.0, 10))))
 print(f'{stop.requested} {time.monotonic() - started:.3f}', flush=True)
 ")
 
@@ -169,7 +169,7 @@ def body():
     reason = yield StopRequested()
     print(f'{reason} {time.monotonic() - started:.3f}', flush=True)
 
-run(scheduled(with_handlers([await_handler(), async_time_handler(), state(), os_signal_stop_handler, tick_pauses], body())))
+run(scheduled(with_handlers([await_handler, async_time_handler(), state(), os_signal_stop_handler, tick_pauses], body())))
 ")
 
 

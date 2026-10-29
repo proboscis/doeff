@@ -85,7 +85,7 @@ def fetch_value():
     value = yield Await(read_answer())
     return value
 
-print(run(scheduled(await_handler()(fetch_value()))))  # 42
+print(run(scheduled(await_handler(fetch_value()))))  # 42
 ```
 
 `@do` does not take an `async def` function: it raises `TypeError` where it is applied, since
@@ -98,7 +98,7 @@ program on `sim_time_handler()`'s virtual clock.
 
 ### Handler behavior
 
-`Await` is handled by `await_handler()` (from `doeff_core_effects._handlers`), installed inside
+`Await` is handled by `await_handler` (from `doeff_core_effects._handlers`), installed inside
 `scheduled()`. It bridges completion through `CreateExternalPromise` plus `Wait`:
 
 - it submits the awaitable to one background asyncio loop thread, shared by the process

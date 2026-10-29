@@ -102,7 +102,7 @@ class TestDoBangSelfContained:
         """do! should work without (import doeff [do :as _doeff-do])."""
         result = _eval_no_doeff_do("""
         (run (scheduled
-          ((await_handler) ((lazy_ask :env {"key" "hello"})
+          (await_handler ((lazy_ask :env {"key" "hello"})
               (do!
                 (<- val (Ask "key"))
                 (+ val " world"))) )))
@@ -128,7 +128,7 @@ class TestDefpSelfContained:
           (+ val " world"))
 
         (run (scheduled
-          ((await_handler) ((lazy_ask :env {"key" "hello"})
+          (await_handler ((lazy_ask :env {"key" "hello"})
               my-prog) )))
         """)
         assert result == "hello world"

@@ -33,8 +33,8 @@ result = run(
     scheduled(
         with_handlers(
             [
-                await_handler(),
-                async_time_handler(),  # inside await_handler(), which answers its Await
+                await_handler,
+                async_time_handler(),  # inside await_handler, which answers its Await
                 lazy_ask({"seedream_api_key": "YOUR_ARK_KEY"}, strict=True),
                 try_handler,
                 state(),

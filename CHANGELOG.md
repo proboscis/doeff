@@ -10,6 +10,16 @@
 
 ### Changed
 
+- **doeff-core-effects:** `await_handler` is a handler, not a handler factory: it has no settings, so write
+  `await_handler(prog)` and `[await_handler, lazy_ask(strict=True), try_handler, state(), writer]` (in Hy,
+  `await-handler`) where you wrote `await_handler()(prog)` and `[await_handler(), …]`. The former call
+  `await_handler()` still answers the same handler for one release, with a `DeprecationWarning` (pyright's
+  `reportDeprecated` marks it too — `doeff.program.FormerFactoryHandler`). The rule behind it (ADR-DOE-API-002): a
+  handler with neither settings nor per-call state is a value; a factory without parameters is kept only when each call
+  builds a handler over its own new state (`in_memory_cache_handler()`). `tools/handler_factory_census.py` lists the
+  factories without parameters, and a test compares the list with `tests/data/zero_parameter_handler_factories.json`.
+  `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` keep `await_handler()`, since they run daily
+  against the doeff on PyPI.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export

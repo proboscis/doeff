@@ -1,7 +1,7 @@
 # The miss-and-hit scene: the page's with_manual_cache(), called twice under in_memory_cache_handler().
 # The first CacheGet finds nothing: the handler throws KeyError into the program at the yield, the program
 # computes the value (0.4 s of work) and stores it with CachePut. The handler reaches its storage through Await,
-# so the run has await_handler() inside scheduled(), as on the page. The second CacheGet is answered from the cache.
+# so the run has await_handler inside scheduled(), as on the page. The second CacheGet is answered from the cache.
 # Prints every cache effect the program yields, the log, and the wall time of each call
 # (docs/07-cache-system.md, "Manual Cache Control").
 import time
@@ -56,7 +56,7 @@ def seen(effect):
 
 
 prog = in_memory_cache_handler()(WithObserve(seen, twice()))
-times, log = run(scheduled(sync_time_handler()(await_handler()(state()(writer(prog))))))
+times, log = run(scheduled(sync_time_handler()(await_handler(state()(writer(prog))))))
 for i, (value, ms) in enumerate(times, 1):
     print(f"call {i}: returns {value} in {ms:.1f} ms")
 print("log:", log)

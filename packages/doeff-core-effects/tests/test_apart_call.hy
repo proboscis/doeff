@@ -79,7 +79,7 @@
 
 
 (deftest test-the-program-computes-apart-and-its-effects-are-answered-here
-  (<- seen tuple (with_handlers [(await-handler) (async-time-handler) caller-answers]
+  (<- seen tuple (with_handlers [await-handler (async-time-handler) caller-answers]
                                 (with-ticker (run-apart (computed-on COMPUTE-SECONDS)))))
   (val answer (get seen 0))
   (val ticks (get seen 1))
@@ -92,7 +92,7 @@
 
 (deftest test-computing-in-place-holds-the-thread
   ;; 反例: run-apart なしの同じ program は、計算の間 撃った run の他の task を止める。
-  (<- seen tuple (with_handlers [(await-handler) (async-time-handler) caller-answers]
+  (<- seen tuple (with_handlers [await-handler (async-time-handler) caller-answers]
                                 (with-ticker (computed-on COMPUTE-SECONDS))))
   (assert (<= (get seen 1) 1) (.format "その場の計算の間に拍が {} 回 進んだ" (get seen 1))))
 
@@ -169,7 +169,7 @@
 
 (deftest test-cancelling-the-caller-closes-the-lane
   (val closed (threading.Event))
-  (<- cancelled bool (with_handlers [(await-handler) (async-time-handler)] (cancelled-while-waiting closed)))
+  (<- cancelled bool (with_handlers [await-handler (async-time-handler)] (cancelled-while-waiting closed)))
   (assert cancelled "撃った task が取り消しで終わらない")
   (assert (.wait closed CLOSE-SECONDS) "通い路が閉じたのに program へ ApartClosed が届かない"))
 

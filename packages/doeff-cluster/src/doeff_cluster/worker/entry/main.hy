@@ -251,7 +251,7 @@
    すぐ内側に置き(拍の宣言の読みの答えを受け取って label に写す)、自区画の API server 宛ての要求だけを区画の CA で検める
    in-cluster-api-routed を http-production-handler のすぐ内側に置く(coordinator への要求は外側の client のまま)。"
   (+
-  [(await-handler) (async-time-handler) (http-production-handler)]
+  [await-handler (async-time-handler) (http-production-handler)]
   (if (is pod-labels None) [] [(in-cluster-api-routed KUBE-API SERVICE-ACCOUNT-CA-PATH)])
   [slog-handler subprocess-handler]
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])

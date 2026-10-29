@@ -34,7 +34,7 @@ def test_public_installers_accept_one_program_and_preserve_identity() -> None:
     assert install.__name__ == _forward.__name__
     assert run(install(Pure(42))) == 42
     assert run(slog_discard_handler(Pure(42))) == 42
-    assert run(scheduled(await_handler()(Pure(42)))) == 42
+    assert run(scheduled(await_handler(Pure(42)))) == 42
 
 
 @do
@@ -84,10 +84,10 @@ from doeff import Program, Pure, handler
 from doeff_core_effects._handlers import await_handler, slog_discard_handler
 
 assert_type(slog_discard_handler(Pure(42)), Program[int, Any])
-assert_type(await_handler()(Pure(42)), Program[int, Any])
+assert_type(await_handler(Pure(42)), Program[int, Any])
 assert_type(handler(slog_discard_handler)(Pure(42)), Program[int, Any])
 slog_discard_handler()  # missing body
-await_handler()(Pure(42), Pure(0))  # extra argument
+await_handler(Pure(42), Pure(0))  # extra argument
 handler(42)  # non-callable
 """)
     # handler は installer と素の handler の 2 つの overload を持つので、どちらにも合わない 42 は

@@ -19,7 +19,7 @@
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :needs #{"cluster-net"} :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本番の形の土台: scheduler・構造化ログ・HTTP の答え手(coordinator への要求も答える — #2337)・session の置き場・環境変数の読み・宿の読み・実時計の
    外側に、coordinator に話す組を並べる。"
-  (<- answer (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (state) (os-environ-reader) host-reader (async-time-handler)]
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (http-production-handler) (state) (os-environ-reader) host-reader (async-time-handler)]
                           (with-cluster-handlers body))))
   answer)
 

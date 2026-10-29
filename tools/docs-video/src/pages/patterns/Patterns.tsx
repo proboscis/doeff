@@ -104,7 +104,7 @@ const STACK = [
   {name: 'state()', note: 'the store writer keeps its log in', color: TEST},
   {name: 'writer', note: 'answers Tell, keeps the log', color: TEST},
   {name: 'try_handler', note: 'answers Try with Ok or Err', color: TEST},
-  {name: 'await_handler()', note: 'runs what the cache awaits', color: TEST},
+  {name: 'await_handler', note: 'runs what the cache awaits', color: TEST},
   {name: 'in_memory_cache_handler()', note: 'answers CachePut', color: ACCENT},
   {name: 'in_memory_orders', note: 'GetOrder, SaveOrder', color: ACCENT},
 ];
@@ -190,7 +190,7 @@ const LayerScene: React.FC = () => {
         <HandlerBox key={h.name} x={stackX + i * 10} y={stackY(i)} w={stackW - i * 10} h={boxH} name={h.name} note={h.note} color={h.color} on={handlerOn(i)} opacity={fadeAt(frame, 3.0 + i * 0.4)} />
       ))}
       <div style={{position: 'absolute', left: stackX + 4, top: 432, fontFamily: MONO, fontSize: 14, lineHeight: '20px', color: MUTED, whiteSpace: 'pre', opacity: fadeAt(frame, 5.4) * (1 - ramp(frame, 19.0, 19.4))}}>
-        {'run(scheduled(with_handlers([\n    state(), writer, try_handler, await_handler(),\n    in_memory_cache_handler(), in_memory_orders(orders)],\n    with_log(get_order_handler(7)))))'}
+        {'run(scheduled(with_handlers([\n    state(), writer, try_handler, await_handler,\n    in_memory_cache_handler(), in_memory_orders(orders)],\n    with_log(get_order_handler(7)))))'}
       </div>
       {/* The effects of order 7, each to the handler that answers it. */}
       {YIELDS.map(([at, text, layer, line, h], i) => (

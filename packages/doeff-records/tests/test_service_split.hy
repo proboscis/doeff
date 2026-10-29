@@ -144,7 +144,7 @@
 (defk callers-outer [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % "body の答え")] :tags {:context "records" :role "foundation"}}
   "呼び手の系が持つ外側の代役(scheduler・Await の橋・session の値の置き場・時計・止めの合図 — 止めは初めから立つ)。"
-  (<- answer (scheduled (with-handlers [(await-handler) (state) (async-time-handler) stop-at-once] body)))
+  (<- answer (scheduled (with-handlers [await-handler (state) (async-time-handler) stop-at-once] body)))
   answer)
 
 

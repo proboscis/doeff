@@ -4093,7 +4093,7 @@
    筋書きは Await を出してよい(ここの await-handler が答える)。job の Await は柵を通らない(SIM-PASSABLE — 本番の子と同じく土台が
    await-handler を並べる)ので、本物の待ち受けを持つ job は土台に await-handler を置くか、その I/O を outside の handler に置く
    (時計の内側なので、ここの await-handler が答える)。自分で scheduler を持つ。"
-  (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler)]
+  (<- answer (scheduled (with-handlers [await-handler (async-time-handler)]
                           (sim-under-clock system scenario workers environ revision timing policy outside store deployments runtime-env nodes
                                            :notice-broker notice-broker))
                         :implementation implementation))

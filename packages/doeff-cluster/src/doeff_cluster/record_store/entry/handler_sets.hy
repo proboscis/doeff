@@ -27,7 +27,7 @@
 (defk production-handlers [root inbox stop]
   {:pre [(: root str) (: inbox RecordInbox) (: stop StopState)] :post [(: % list)]}
   "本番の組(外側が先)。root = 置き場の dir・inbox = 起動済みの HTTP の受付・stop = SIGTERM の handler と共有する停止の合図。"
-  [(await-handler) (async-time-handler) slog-handler (stop-flag stop) (http-requests inbox) os-file-handler (record-files root)])
+  [await-handler (async-time-handler) slog-handler (stop-flag stop) (http-requests inbox) os-file-handler (record-files root)])
 
 
 ;; --- まねた環境 -------------------------------------------------------------------------------

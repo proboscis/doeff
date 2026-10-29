@@ -69,7 +69,7 @@
   (setv server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers clock)))))
   (try
-    (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
+    (run (scheduled (with_handlers [await-handler (http-production-handler) (count-http-requests sent)
                                     (sim-time-handler :clock clock) records-unwaited
                                     (http-records-handler (RecordsEndpoint server.url :writer MAKER))]
                                    ask)))
