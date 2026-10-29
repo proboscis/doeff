@@ -33,6 +33,7 @@ class WorkerFactName(StrEnum):
     NODE_NAME = 'node-name'
     SYSTEMD_ROOT = 'systemd-root'
     WORK_ROOT = 'work-root'
+    WORKER_NAME = 'worker-name'
 
 class WorkerFactMissing(RuntimeError):
     ...

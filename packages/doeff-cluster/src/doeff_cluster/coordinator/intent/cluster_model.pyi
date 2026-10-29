@@ -800,6 +800,7 @@ class HeartbeatReply:
     formats: tuple[int, ...]
     revision: int
     handover_pending: bool = False
+    supplied: tuple[str, ...] | None = None
 
 @dataclass(frozen=True)
 class Watcher:

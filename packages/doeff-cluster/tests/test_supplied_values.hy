@@ -72,9 +72,10 @@
 
 (defk refusal-of [files cluster ref]
   {:pre [(: files MemoryFiles) (: cluster SuppliedCluster) (: ref SuppliedRef)] :post [(: % (| str None))]}
-  "worker の file が files・cluster が cluster の世界で参照 ref の値を問うた時の断りの文を得るため(断らなければ None)。"
+  "worker の file が files・cluster が cluster の世界で参照 ref の値を問うた時の断りの文を得るため(断らなければ None)。worker は作業の根だけを
+   持ち、値の写しを持たない(届かない時も写しで答えない — 写しで答える筋書きは test_supplied_held.hy)。"
   (try
-    (<- (with_handlers [(state) (k8s-supplied-peer cluster) (memory-file-handler files)] (supplied-value ref)))
+    (<- (with_handlers [(state) (worker-environ WORKER) (k8s-supplied-peer cluster) (memory-file-handler files)] (supplied-value ref)))
     None
     (except [error SuppliedValueUnavailable]
       (str error))))

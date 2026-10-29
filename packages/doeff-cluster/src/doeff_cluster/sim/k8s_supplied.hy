@@ -28,7 +28,8 @@
 (import httpx [ConnectError])
 (import doeff_core_effects [ReadText])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_cluster.shared.protocol.supplied_values [KUBE-API OBJECT-SPELLING REF-SPELLING SERVICE-ACCOUNT-TOKEN-FILE text-field])
+(import doeff_cluster.shared.core.supplied_spelling [OBJECT-SPELLING REF-SPELLING])
+(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE text-field])
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 
@@ -168,13 +169,15 @@
                (isinstance url str) (.startswith url KUBE-API)
                (is-not (.match OBJECT-PATH (cut url (len KUBE-API) None)) None))
     (val target (! (text-field url)))
-    (when cluster.down
-      (if failures-as-values
-          (resume (HttpFailed :url target :detail (+ "ConnectError: " UNREACHABLE) :kind HttpFailureKind.CONNECT-FAILED))
-          (raise (ConnectError UNREACHABLE))))
-    (val found (.match OBJECT-PATH (cut target (len KUBE-API) None)))
-    ;; :when が path の形を確かめた後なので無い事は無いが、型の上で None を外す(形の違う path に黙って答えない)。
-    (when (is found None)
-      (raise (ValueError (+ "API server の相手役が答える形でない path: " target))))
-    (val presented (.get (! (headers-field (or headers {}))) "authorization"))
-    (resume (! (answer-of cluster presented (.group found 1) (.group found 2) (.group found 3) target)))))
+    ;; 届かない世界の答えと届く世界の答えは別の枝に置く — resume は本体の終わりから戻るので、続けて書くと 2 度目の resume に成る
+    ;; (届かない読みを本体が値で受けて続ける時 — 値の写しで答える読み・ADR-DOE-CLUSTER-004)。
+    (if cluster.down
+        (if failures-as-values
+            (resume (HttpFailed :url target :detail (+ "ConnectError: " UNREACHABLE) :kind HttpFailureKind.CONNECT-FAILED))
+            (raise (ConnectError UNREACHABLE)))
+        (do (val found (.match OBJECT-PATH (cut target (len KUBE-API) None)))
+            ;; :when が path の形を確かめた後なので無い事は無いが、型の上で None を外す(形の違う path に黙って答えない)。
+            (when (is found None)
+              (raise (ValueError (+ "API server の相手役が答える形でない path: " target))))
+            (val presented (.get (! (headers-field (or headers {}))) "authorization"))
+            (resume (! (answer-of cluster presented (.group found 1) (.group found 2) (.group found 3) target)))))))
