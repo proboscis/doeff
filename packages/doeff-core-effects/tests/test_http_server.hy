@@ -28,8 +28,8 @@
 (import doeff_core_effects [PublishLatest ReadLatest])
 (import doeff_core_effects.process_latest [process-latest-handler])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.file_effects [MemoryFiles])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [MemoryFiles])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpHeader HttpRequestArrived HttpServerClosed HttpListen HttpNextRequest
                                                 HttpRespond HttpForward WsForward HttpBodyBytes HttpBodyFileRange HttpNoBody HttpScript
                                                 ScriptedUpstream ReadHttpServed HttpEvent WsAccept WsSendText WsClose

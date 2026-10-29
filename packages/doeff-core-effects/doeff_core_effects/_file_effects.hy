@@ -57,6 +57,8 @@
 
 
 (defenum PathKind FILE DIRECTORY SYMLINK MISSING OTHER)
+;; defenum は docstring を受けないので、入口から出す名の説明(tests/test_public_names_documented)を後から置く。
+(setv PathKind.__doc__ "path の指す物の種類(file・dir・symlink・無い・その外)。PathStat と DirEntry の kind の値。")
 
 
 (defrecord FileFailed

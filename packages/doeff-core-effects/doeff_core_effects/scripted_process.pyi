@@ -36,12 +36,12 @@ from doeff_core_effects.process_effects import not_started_outcome as not_starte
 from doeff_core_effects.process_effects import start_refusal as start_refusal
 from doeff_core_effects.process_effects import executable_file_answer as executable_file_answer
 from doeff_core_effects.process_effects import environment_answer as environment_answer
-from doeff_core_effects.file_effects import PathKind as PathKind
-from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.file_effects import StatPath as StatPath
-from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
-from doeff_core_effects.file_effects import AppendText as AppendText
-from doeff_core_effects.file_effects import FileFailed as FileFailed
+from doeff_core_effects._file_effects import PathKind as PathKind
+from doeff_core_effects._file_effects import PathStat as PathStat
+from doeff_core_effects._file_effects import StatPath as StatPath
+from doeff_core_effects._file_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects._file_effects import AppendText as AppendText
+from doeff_core_effects._file_effects import FileFailed as FileFailed
 
 @dataclass(frozen=True, kw_only=True)
 class ScriptedCommand:

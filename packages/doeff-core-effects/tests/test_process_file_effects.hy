@@ -22,14 +22,11 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled Spawn Wait])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])
-(import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
-                                         ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile
-                                         CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile
-                                         CompilePythonSources MakeSymlink])
+(import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile CopyTree RenamePath RemoveTree AcquireLock ReleaseLock DiskUsage ReadDiskUsage MeasureTree LinkFile CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [pyc-path])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_file [os-file-handler])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [os-file-handler])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler scripted-command-peer SCRIPTED-COMMAND-EFFECTS run-scripted])
 
 

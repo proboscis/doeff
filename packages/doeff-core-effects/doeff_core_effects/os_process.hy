@@ -42,10 +42,10 @@
 (import threading)
 (import time)
 (import doeff [with-handlers])
-(import doeff_core_effects.file_effects [FileFailed PathKind PathStat])
+(import doeff_core_effects._file_effects [FileFailed PathKind PathStat])
 (import doeff_core_effects._handlers [state])
 (import doeff_core_effects._meter_effects [CountMetric])
-(import doeff_core_effects.os_file [stat-path])
+(import doeff_core_effects._os_file [stat-path])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_lifeline [Lifeline])
 (import doeff_core_effects.process_effects [ChildLifetime EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory

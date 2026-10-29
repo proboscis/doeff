@@ -94,7 +94,7 @@
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import doeff [EffectBase])
-(import doeff_core_effects.file_effects [PathKind])
+(import doeff_core_effects._file_effects [PathKind])
 
 ;; 時間切れの時の exit-code(coreutils の timeout と同じ)と、起こせない時の exit-code(shell と同じ)。
 (val TIMED-OUT-CODE 124)

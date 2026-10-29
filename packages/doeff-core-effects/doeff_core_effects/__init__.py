@@ -106,6 +106,26 @@ from doeff_core_effects import _unhandled_hints  # noqa: F401 - registers the hi
 if TYPE_CHECKING:
     from doeff_core_effects._apart_call import ApartClosed as ApartClosed
     from doeff_core_effects._apart_call import run_apart as run_apart
+    from doeff_core_effects._cache_effects import CacheDelete as CacheDelete
+    from doeff_core_effects._cache_effects import CacheDeleteEffect as CacheDeleteEffect
+    from doeff_core_effects._cache_effects import CacheExists as CacheExists
+    from doeff_core_effects._cache_effects import CacheExistsEffect as CacheExistsEffect
+    from doeff_core_effects._cache_effects import CacheGet as CacheGet
+    from doeff_core_effects._cache_effects import CacheGetEffect as CacheGetEffect
+    from doeff_core_effects._cache_effects import CachePut as CachePut
+    from doeff_core_effects._cache_effects import CachePutEffect as CachePutEffect
+    from doeff_core_effects._cache_effects import cache_delete as cache_delete
+    from doeff_core_effects._cache_effects import cache_exists as cache_exists
+    from doeff_core_effects._cache_effects import cache_get as cache_get
+    from doeff_core_effects._cache_effects import cache_put as cache_put
+    from doeff_core_effects._cache_handlers import cache_handler as cache_handler
+    from doeff_core_effects._cache_handlers import (
+        in_memory_cache_handler as in_memory_cache_handler,
+    )
+    from doeff_core_effects._cache_handlers import sqlite_cache_handler as sqlite_cache_handler
+    from doeff_core_effects._cache_policy import CacheLifecycle as CacheLifecycle
+    from doeff_core_effects._cache_policy import CachePolicy as CachePolicy
+    from doeff_core_effects._cache_policy import CacheStorage as CacheStorage
     from doeff_core_effects._compute_effects import Compute as Compute
     from doeff_core_effects._compute_effects import Computed as Computed
     from doeff_core_effects._compute_effects import ComputeFailed as ComputeFailed
@@ -114,12 +134,67 @@ if TYPE_CHECKING:
     from doeff_core_effects._faulthandler_stack_dump import (
         faulthandler_stack_dump_handler as faulthandler_stack_dump_handler,
     )
+    from doeff_core_effects._file_effects import AcquireLock as AcquireLock
+    from doeff_core_effects._file_effects import AppendBytes as AppendBytes
+    from doeff_core_effects._file_effects import Appended as Appended
+    from doeff_core_effects._file_effects import AppendText as AppendText
+    from doeff_core_effects._file_effects import CompilePythonSources as CompilePythonSources
+    from doeff_core_effects._file_effects import CopyFile as CopyFile
+    from doeff_core_effects._file_effects import CopyTree as CopyTree
+    from doeff_core_effects._file_effects import DirEntry as DirEntry
+    from doeff_core_effects._file_effects import DiskUsage as DiskUsage
+    from doeff_core_effects._file_effects import EntryStat as EntryStat
+    from doeff_core_effects._file_effects import FileFailed as FileFailed
+    from doeff_core_effects._file_effects import LinkFile as LinkFile
+    from doeff_core_effects._file_effects import ListDirectory as ListDirectory
+    from doeff_core_effects._file_effects import LockHeld as LockHeld
+    from doeff_core_effects._file_effects import MakeDirectory as MakeDirectory
+    from doeff_core_effects._file_effects import MakeSymlink as MakeSymlink
+    from doeff_core_effects._file_effects import MeasureTree as MeasureTree
+    from doeff_core_effects._file_effects import MemoryFile as MemoryFile
+    from doeff_core_effects._file_effects import MemoryFiles as MemoryFiles
+    from doeff_core_effects._file_effects import MemoryLink as MemoryLink
+    from doeff_core_effects._file_effects import PathKind as PathKind
+    from doeff_core_effects._file_effects import PathStat as PathStat
+    from doeff_core_effects._file_effects import ReadBytes as ReadBytes
+    from doeff_core_effects._file_effects import ReadDiskFree as ReadDiskFree
+    from doeff_core_effects._file_effects import ReadDiskUsage as ReadDiskUsage
+    from doeff_core_effects._file_effects import ReadMemoryFiles as ReadMemoryFiles
+    from doeff_core_effects._file_effects import ReadText as ReadText
+    from doeff_core_effects._file_effects import ReleaseLock as ReleaseLock
+    from doeff_core_effects._file_effects import RemoveTree as RemoveTree
+    from doeff_core_effects._file_effects import RenamePath as RenamePath
+    from doeff_core_effects._file_effects import StatPath as StatPath
+    from doeff_core_effects._file_effects import StatTree as StatTree
+    from doeff_core_effects._file_effects import SyncDirectory as SyncDirectory
+    from doeff_core_effects._file_effects import TruncateFile as TruncateFile
+    from doeff_core_effects._file_effects import WalkTree as WalkTree
+    from doeff_core_effects._file_effects import WriteBytes as WriteBytes
+    from doeff_core_effects._file_effects import WriteText as WriteText
     from doeff_core_effects._gc_freeze import gc_freeze_handler as gc_freeze_handler
     from doeff_core_effects._heap_effects import CollectAndFreeze as CollectAndFreeze
     from doeff_core_effects._inline_compute import inline_compute_handler as inline_compute_handler
     from doeff_core_effects._latest_effects import AwaitLatest as AwaitLatest
     from doeff_core_effects._latest_effects import PublishLatest as PublishLatest
     from doeff_core_effects._latest_effects import ReadLatest as ReadLatest
+    from doeff_core_effects._memo_effects import MemoDelete as MemoDelete
+    from doeff_core_effects._memo_effects import MemoDeleteEffect as MemoDeleteEffect
+    from doeff_core_effects._memo_effects import MemoExists as MemoExists
+    from doeff_core_effects._memo_effects import MemoExistsEffect as MemoExistsEffect
+    from doeff_core_effects._memo_effects import MemoGet as MemoGet
+    from doeff_core_effects._memo_effects import MemoGetEffect as MemoGetEffect
+    from doeff_core_effects._memo_effects import MemoPut as MemoPut
+    from doeff_core_effects._memo_effects import MemoPutEffect as MemoPutEffect
+    from doeff_core_effects._memo_handlers import MemoKeyFn as MemoKeyFn
+    from doeff_core_effects._memo_handlers import in_memory_memo_handler as in_memory_memo_handler
+    from doeff_core_effects._memo_handlers import make_memo_rewriter as make_memo_rewriter
+    from doeff_core_effects._memo_handlers import memo_handler as memo_handler
+    from doeff_core_effects._memo_handlers import memo_rewriters as memo_rewriters
+    from doeff_core_effects._memo_handlers import sqlite_memo_handler as sqlite_memo_handler
+    from doeff_core_effects._memo_policy import Lifecycle as Lifecycle
+    from doeff_core_effects._memo_policy import MemoPolicy as MemoPolicy
+    from doeff_core_effects._memo_policy import RecomputeCost as RecomputeCost
+    from doeff_core_effects._memory_file import memory_file_handler as memory_file_handler
     from doeff_core_effects._memory_latest import MemoryLatestStore as MemoryLatestStore
     from doeff_core_effects._memory_latest import memory_latest_handler as memory_latest_handler
     from doeff_core_effects._memory_meter import memory_meter_handler as memory_meter_handler
@@ -136,12 +211,17 @@ if TYPE_CHECKING:
     from doeff_core_effects._meter_effects import SecondsObservation as SecondsObservation
     from doeff_core_effects._meter_effects import SecondsTotal as SecondsTotal
     from doeff_core_effects._meter_effects import SetGauge as SetGauge
+    from doeff_core_effects._os_file import offloaded_file_handler as offloaded_file_handler
+    from doeff_core_effects._os_file import offloaded_lock_handler as offloaded_lock_handler
+    from doeff_core_effects._os_file import offloaded_tree_handler as offloaded_tree_handler
+    from doeff_core_effects._os_file import os_file_handler as os_file_handler
     from doeff_core_effects._os_random import os_random_handler as os_random_handler
     from doeff_core_effects._outcomes import AbsentAsToken as AbsentAsToken
     from doeff_core_effects._outcomes import BoundAbsent as BoundAbsent
     from doeff_core_effects._outcomes import absent_raises as absent_raises
     from doeff_core_effects._python_bytecode import SourceNotCompiled as SourceNotCompiled
     from doeff_core_effects._random_effects import RandomBytes as RandomBytes
+    from doeff_core_effects._rooted_file import rooted_file_handler as rooted_file_handler
     from doeff_core_effects._scheduler import ProcessStepBudget as ProcessStepBudget
     from doeff_core_effects._scheduler import SchedulerImplementation as SchedulerImplementation
     from doeff_core_effects._scheduler import SchedulerIndexDriftError as SchedulerIndexDriftError
@@ -257,6 +337,84 @@ _LAZY_EXPORTS = {
     "SecondsTotal": "doeff_core_effects._meter_effects",
     "SetGauge": "doeff_core_effects._meter_effects",
     "memory_meter_handler": "doeff_core_effects._memory_meter",
+    "AcquireLock": "doeff_core_effects._file_effects",
+    "AppendBytes": "doeff_core_effects._file_effects",
+    "AppendText": "doeff_core_effects._file_effects",
+    "Appended": "doeff_core_effects._file_effects",
+    "CompilePythonSources": "doeff_core_effects._file_effects",
+    "CopyFile": "doeff_core_effects._file_effects",
+    "CopyTree": "doeff_core_effects._file_effects",
+    "DirEntry": "doeff_core_effects._file_effects",
+    "DiskUsage": "doeff_core_effects._file_effects",
+    "EntryStat": "doeff_core_effects._file_effects",
+    "FileFailed": "doeff_core_effects._file_effects",
+    "LinkFile": "doeff_core_effects._file_effects",
+    "ListDirectory": "doeff_core_effects._file_effects",
+    "LockHeld": "doeff_core_effects._file_effects",
+    "MakeDirectory": "doeff_core_effects._file_effects",
+    "MakeSymlink": "doeff_core_effects._file_effects",
+    "MeasureTree": "doeff_core_effects._file_effects",
+    "MemoryFile": "doeff_core_effects._file_effects",
+    "MemoryFiles": "doeff_core_effects._file_effects",
+    "MemoryLink": "doeff_core_effects._file_effects",
+    "PathKind": "doeff_core_effects._file_effects",
+    "PathStat": "doeff_core_effects._file_effects",
+    "ReadBytes": "doeff_core_effects._file_effects",
+    "ReadDiskFree": "doeff_core_effects._file_effects",
+    "ReadDiskUsage": "doeff_core_effects._file_effects",
+    "ReadMemoryFiles": "doeff_core_effects._file_effects",
+    "ReadText": "doeff_core_effects._file_effects",
+    "ReleaseLock": "doeff_core_effects._file_effects",
+    "RemoveTree": "doeff_core_effects._file_effects",
+    "RenamePath": "doeff_core_effects._file_effects",
+    "StatPath": "doeff_core_effects._file_effects",
+    "StatTree": "doeff_core_effects._file_effects",
+    "SyncDirectory": "doeff_core_effects._file_effects",
+    "TruncateFile": "doeff_core_effects._file_effects",
+    "WalkTree": "doeff_core_effects._file_effects",
+    "WriteBytes": "doeff_core_effects._file_effects",
+    "WriteText": "doeff_core_effects._file_effects",
+    "offloaded_file_handler": "doeff_core_effects._os_file",
+    "offloaded_lock_handler": "doeff_core_effects._os_file",
+    "offloaded_tree_handler": "doeff_core_effects._os_file",
+    "os_file_handler": "doeff_core_effects._os_file",
+    "memory_file_handler": "doeff_core_effects._memory_file",
+    "rooted_file_handler": "doeff_core_effects._rooted_file",
+    "MemoDelete": "doeff_core_effects._memo_effects",
+    "MemoDeleteEffect": "doeff_core_effects._memo_effects",
+    "MemoExists": "doeff_core_effects._memo_effects",
+    "MemoExistsEffect": "doeff_core_effects._memo_effects",
+    "MemoGet": "doeff_core_effects._memo_effects",
+    "MemoGetEffect": "doeff_core_effects._memo_effects",
+    "MemoPut": "doeff_core_effects._memo_effects",
+    "MemoPutEffect": "doeff_core_effects._memo_effects",
+    "MemoKeyFn": "doeff_core_effects._memo_handlers",
+    "in_memory_memo_handler": "doeff_core_effects._memo_handlers",
+    "make_memo_rewriter": "doeff_core_effects._memo_handlers",
+    "memo_handler": "doeff_core_effects._memo_handlers",
+    "memo_rewriters": "doeff_core_effects._memo_handlers",
+    "sqlite_memo_handler": "doeff_core_effects._memo_handlers",
+    "Lifecycle": "doeff_core_effects._memo_policy",
+    "MemoPolicy": "doeff_core_effects._memo_policy",
+    "RecomputeCost": "doeff_core_effects._memo_policy",
+    "CacheDelete": "doeff_core_effects._cache_effects",
+    "CacheDeleteEffect": "doeff_core_effects._cache_effects",
+    "CacheExists": "doeff_core_effects._cache_effects",
+    "CacheExistsEffect": "doeff_core_effects._cache_effects",
+    "CacheGet": "doeff_core_effects._cache_effects",
+    "CacheGetEffect": "doeff_core_effects._cache_effects",
+    "CachePut": "doeff_core_effects._cache_effects",
+    "CachePutEffect": "doeff_core_effects._cache_effects",
+    "cache_delete": "doeff_core_effects._cache_effects",
+    "cache_exists": "doeff_core_effects._cache_effects",
+    "cache_get": "doeff_core_effects._cache_effects",
+    "cache_put": "doeff_core_effects._cache_effects",
+    "cache_handler": "doeff_core_effects._cache_handlers",
+    "in_memory_cache_handler": "doeff_core_effects._cache_handlers",
+    "sqlite_cache_handler": "doeff_core_effects._cache_handlers",
+    "CacheLifecycle": "doeff_core_effects._cache_policy",
+    "CachePolicy": "doeff_core_effects._cache_policy",
+    "CacheStorage": "doeff_core_effects._cache_policy",
 }
 
 

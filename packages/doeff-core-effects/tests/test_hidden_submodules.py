@@ -15,7 +15,7 @@ import sys
 import pytest
 
 #: 子の古い path と新しい path(card ki-c09b3b527fad で移した中核の 10 個 — storage は下の module も・card ki-32623e1651c6 で
-#: 移した計算・VM・乱数・測りの 23 個)。
+#: 移した計算・VM・乱数・測りの 23 個・card ki-375e0a35b7a0 で移した file・memo・cache の 11 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -52,6 +52,17 @@ MOVED = {
     "doeff_core_effects.meter_effects": "doeff_core_effects._meter_effects",
     "doeff_core_effects.memory_meter": "doeff_core_effects._memory_meter",
     "doeff_core_effects.meter_prometheus": "doeff_core_effects._meter_prometheus",
+    "doeff_core_effects.file_effects": "doeff_core_effects._file_effects",
+    "doeff_core_effects.os_file": "doeff_core_effects._os_file",
+    "doeff_core_effects.memory_file": "doeff_core_effects._memory_file",
+    "doeff_core_effects.rooted_file": "doeff_core_effects._rooted_file",
+    "doeff_core_effects.memo_effects": "doeff_core_effects._memo_effects",
+    "doeff_core_effects.memo_handlers": "doeff_core_effects._memo_handlers",
+    "doeff_core_effects.memo_policy": "doeff_core_effects._memo_policy",
+    "doeff_core_effects.cache_effects": "doeff_core_effects._cache_effects",
+    "doeff_core_effects.cache_handlers": "doeff_core_effects._cache_handlers",
+    "doeff_core_effects.cache_policy": "doeff_core_effects._cache_policy",
+    "doeff_core_effects.cache": "doeff_core_effects._cache",
 }
 
 #: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
@@ -69,6 +80,11 @@ LAZY_NAMES = {
     "ArmStackDump": "doeff_core_effects._stack_dump_effects",
     "run_apart": "doeff_core_effects._apart_call",
     "thread_pool_compute_handler": "doeff_core_effects._thread_pool_compute",
+    "ReadText": "doeff_core_effects._file_effects",
+    "os_file_handler": "doeff_core_effects._os_file",
+    "MemoGet": "doeff_core_effects._memo_effects",
+    "memo_rewriters": "doeff_core_effects._memo_handlers",
+    "CachePolicy": "doeff_core_effects._cache_policy",
 }
 
 #: `import doeff` が読まない module(入口の遅延の名だけが読む)。
@@ -99,6 +115,17 @@ NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._meter_effects",
     "doeff_core_effects._memory_meter",
     "doeff_core_effects._meter_prometheus",
+    "doeff_core_effects._file_effects",
+    "doeff_core_effects._os_file",
+    "doeff_core_effects._memory_file",
+    "doeff_core_effects._rooted_file",
+    "doeff_core_effects._memo_effects",
+    "doeff_core_effects._memo_handlers",
+    "doeff_core_effects._memo_policy",
+    "doeff_core_effects._cache_effects",
+    "doeff_core_effects._cache_handlers",
+    "doeff_core_effects._cache_policy",
+    "doeff_core_effects._cache",
 )
 
 

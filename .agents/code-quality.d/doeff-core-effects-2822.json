@@ -17,8 +17,8 @@
         "packages/doeff-core-effects/doeff_core_effects/_effects.py",
         "packages/doeff-core-effects/doeff_core_effects/_compute_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/_compute_effects.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_file_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_file_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_heap_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/_heap_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
@@ -50,8 +50,8 @@
         "packages/doeff-core-effects/doeff_core_effects/_effects.py",
         "packages/doeff-core-effects/doeff_core_effects/_compute_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/_compute_effects.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/file_effects.hy",
-        "packages/doeff-core-effects/doeff_core_effects/file_effects.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_file_effects.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_file_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_heap_effects.hy",
         "packages/doeff-core-effects/doeff_core_effects/_heap_effects.pyi",
         "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
@@ -108,8 +108,8 @@
         "packages/doeff-core-effects/doeff_core_effects/_meter_prometheus.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_offloaded_call.hy",
         "packages/doeff-core-effects/doeff_core_effects/_offloaded_call.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/os_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_os_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_os_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
         "packages/doeff-core-effects/doeff_core_effects/os_process.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_os_random.hy",
@@ -124,8 +124,8 @@
         "packages/doeff-core-effects/doeff_core_effects/process_meter.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_python_bytecode.hy",
         "packages/doeff-core-effects/doeff_core_effects/_python_bytecode.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_rooted_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_rooted_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.hy",
         "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
@@ -178,8 +178,8 @@
         "packages/doeff-core-effects/doeff_core_effects/_meter_prometheus.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_offloaded_call.hy",
         "packages/doeff-core-effects/doeff_core_effects/_offloaded_call.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/os_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/os_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_os_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_os_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
         "packages/doeff-core-effects/doeff_core_effects/os_process.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_os_random.hy",
@@ -194,8 +194,8 @@
         "packages/doeff-core-effects/doeff_core_effects/process_meter.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_python_bytecode.hy",
         "packages/doeff-core-effects/doeff_core_effects/_python_bytecode.pyi",
-        "packages/doeff-core-effects/doeff_core_effects/rooted_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/rooted_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_rooted_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_rooted_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.hy",
         "packages/doeff-core-effects/doeff_core_effects/_scheduler_channel.pyi",
         "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
@@ -222,12 +222,12 @@
       "layer": "effects",
       "name": "doeff-core-effects-memo-effects",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_effects.py"
+        "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_effects.py"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/cache_effects.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_effects.py"
+        "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_effects.py"
       ],
       "responsibility": "cache と memo の effect の宣言 — 読み・書き・存在の確かめの要求と答えの型。",
       "typed": true
@@ -242,15 +242,15 @@
       "layer": "io",
       "name": "doeff-core-effects-memo-handlers",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/cache.py",
-        "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_cache.py",
+        "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py",
         "packages/doeff-core-effects/doeff_core_effects/_memo_handlers_impl.hy"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/cache.py",
-        "packages/doeff-core-effects/doeff_core_effects/cache_handlers.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_handlers.py"
+        "packages/doeff-core-effects/doeff_core_effects/_cache.py",
+        "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_handlers.py"
       ],
       "responsibility": "cache と memo の effect に答える handler と、Program を memo する飾り — 置き場への読み書きを storage の口へ渡す。",
       "typed": true
@@ -260,12 +260,12 @@
       "layer": "pure",
       "name": "doeff-core-effects-memo-policy",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_policy.py"
+        "packages/doeff-core-effects/doeff_core_effects/_cache_policy.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_policy.py"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/cache_policy.py",
-        "packages/doeff-core-effects/doeff_core_effects/memo_policy.py"
+        "packages/doeff-core-effects/doeff_core_effects/_cache_policy.py",
+        "packages/doeff-core-effects/doeff_core_effects/_memo_policy.py"
       ],
       "responsibility": "cache と memo の方策の型 — 鍵の作り方・寿命・置き場の選び方を、effect と handler が共有する値で表す(I/O はしない)。",
       "typed": true
@@ -279,8 +279,8 @@
       "layer": "io",
       "name": "doeff-core-effects-memory-handlers",
       "paths": [
-        "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_memory_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_memory_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_memory_latest.hy",
         "packages/doeff-core-effects/doeff_core_effects/_memory_latest.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_memory_meter.hy",
@@ -303,8 +303,8 @@
         "packages/doeff-core-effects/doeff_core_effects/scripted_proc_table.pyi"
       ],
       "public": [
-        "packages/doeff-core-effects/doeff_core_effects/memory_file.hy",
-        "packages/doeff-core-effects/doeff_core_effects/memory_file.pyi",
+        "packages/doeff-core-effects/doeff_core_effects/_memory_file.hy",
+        "packages/doeff-core-effects/doeff_core_effects/_memory_file.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_memory_latest.hy",
         "packages/doeff-core-effects/doeff_core_effects/_memory_latest.pyi",
         "packages/doeff-core-effects/doeff_core_effects/_memory_meter.hy",
