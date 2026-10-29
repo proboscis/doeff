@@ -67,12 +67,12 @@ def _read(name: str) -> str | None:
     以前は ReadEnvironment を process 全般の答え手 subprocess_handler(doeff_core_effects.os_process)の下で問うていた。読むのは
     変数 1 つなのに、子 process・thread・signal の答え手を持つ大きな Hy の module とその Hy の bytecode の確かめを読み込み、
     doeff-hy-check の子 process 1 回ごとに 1.8〜4.7 秒かかった(card acp:kanban-issue:ki-efa3d187b136)。env_var_ask は Python の
-    foundation の module(doeff_core_effects.handlers — 層の宣言で環境変数の読みを許された所)に在り、読み込みは 0.3 秒前後。
+    foundation の module(doeff_core_effects._handlers — 層の宣言で環境変数の読みを許された所)に在り、読み込みは 0.3 秒前後。
     env_var_ask は `{module.path}` の形の値を import の名として読むので、置き場の path をその形で書かない。"""
     # doeff-core-effects は doeff-hy の macro を読むので、この module を読み込む時点ではなく呼ばれた時に読む。
     from doeff import run, with_handlers
-    from doeff_core_effects.effects import Ask
-    from doeff_core_effects.handlers import env_var_ask, reader
+    from doeff_core_effects import Ask
+    from doeff_core_effects import env_var_ask, reader
 
     value = run(with_handlers([reader({name: None}), env_var_ask(prefix="")], Ask(name)))
     return value if isinstance(value, str) else None

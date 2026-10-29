@@ -42,8 +42,8 @@ _HOMES: dict[str, str] = {
     "typed_transfer": "doeff",
     "WithHandlerType": "doeff",
     "ProgramHandler": "doeff.program",
-    "Get": "doeff_core_effects.effects",
-    "Put": "doeff_core_effects.effects",
+    "Get": "doeff_core_effects._effects",
+    "Put": "doeff_core_effects._effects",
     "ClassVar": "typing",
     "cast": "typing",
 }

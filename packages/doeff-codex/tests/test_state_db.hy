@@ -15,7 +15,7 @@
 (import doeff_codex._handler :as handler)
 (import pathlib [Path])
 (import doeff [with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Gather])
+(import doeff_core_effects [scheduled Spawn Gather])
 (import doeff_time [sync-time-handler])
 (import doeff_codex [FreshThread ResumeThread CodexInput CodexSessionSpec CodexHome])
 (import doeff_codex [AgentMessageDone])

@@ -4,7 +4,7 @@ import threading
 from collections.abc import Callable, Generator
 from typing import Any
 
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait
+from doeff_core_effects import CreateExternalPromise, Wait
 
 from doeff import EffectBase, do
 

@@ -127,7 +127,7 @@
 
 (import doeff [run])
 (import doeff [do :as _doeff-do])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (require doeff-hy.macros [defk defhandler <-])
 (import multimod.effects [FetchPrice FetchNews])
 

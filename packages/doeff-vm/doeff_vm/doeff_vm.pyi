@@ -5,7 +5,7 @@
 # 宣言した関数が拡張に在ることは packages/doeff-vm/tests/test_memory_stats.py が確かめる。
 #
 # _ で始まる関数は VM の数と切り替えで、公開の名ではない(拡張の __all__ に載らない — src/lib.rs の bind_internal)。
-# 利用者は doeff の effect(ReadVmWorkCounts・SetInvariantChecks など)を出し、doeff_core_effects.handlers.vm_probe_handler が
+# 利用者は doeff の effect(ReadVmWorkCounts・SetInvariantChecks など)を出し、doeff_core_effects._handlers.vm_probe_handler が
 # これらを呼んで答える。ほかに呼ぶのは doeff_core_effects の scheduler と world_phases だけ(agora card ki-27e8ea225b62)。
 from _typeshed import Incomplete
 
@@ -32,19 +32,19 @@ def _set_invariant_checks(on: bool) -> None:
 
 def _set_scheduler_trace_installed(installed: bool) -> None:
     """Rust の版の scheduler の測りの口の旗(sink が据えてあるか)を切り替える — 呼び手は
-    doeff_core_effects.scheduler.set_scheduler_trace と effect SetSchedulerTraceInstalled の handler だけ
+    doeff_core_effects._scheduler.set_scheduler_trace と effect SetSchedulerTraceInstalled の handler だけ
     (src/scheduler.rs の TRACE_INSTALLED)。"""
     ...
 
 def _set_scheduler_step_budget_armed(armed: bool) -> None:
     """Rust の版の scheduler の歩数の上限の旗(上限が入っているか)を切り替える — 呼び手は
-    doeff_core_effects.scheduler.arm_step_budget と disarm_step_budget と effect SetSchedulerStepBudgetArmed の
+    doeff_core_effects._scheduler.arm_step_budget と disarm_step_budget と effect SetSchedulerStepBudgetArmed の
     handler だけ(src/scheduler.rs の STEP_BUDGET_ARMED)。"""
     ...
 
 class StateHandler:
     """state の答え手(Rust の handler — src/state_handler.rs)。Get / Put(2 つの class の instance)に store から VM の中で答える。
-    作り手は doeff_core_effects.handlers.state だけ。VM が呼ぶ物で、Python から呼ぶと TypeError。"""
+    作り手は doeff_core_effects._handlers.state だけ。VM が呼ぶ物で、Python から呼ぶと TypeError。"""
 
     def __init__(self, store: dict[object, object], get_type: type, put_type: type, /) -> None: ...
     @property

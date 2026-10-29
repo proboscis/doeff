@@ -10,8 +10,8 @@
 (import doeff [EffectBase Program run with_handlers])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects.inline_compute [inline-compute-handler])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.sql_effects [SqlQuery SqlHangNotice SqlDropNotice])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler])

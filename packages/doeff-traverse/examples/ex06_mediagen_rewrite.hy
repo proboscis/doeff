@@ -17,8 +17,8 @@
 (import doeff [run EffectBase])
 
 (import doeff_core_effects [try-handler :as try_handler Ask slog])
-(import doeff_core_effects.handlers [lazy-ask :as lazy_ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [lazy-ask :as lazy_ask])
+(import doeff_core_effects [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse [Collection])

@@ -131,7 +131,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff_core_effects.scheduler import scheduled
+            from doeff_core_effects import scheduled
 
             from doeff import run
 

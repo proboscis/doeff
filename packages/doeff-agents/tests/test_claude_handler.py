@@ -12,7 +12,7 @@ from doeff_agents import (
     StopEffect,
     WarmSessionEffect,
 )
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 from doeff import Perform, do, run
 
@@ -56,7 +56,7 @@ class FakeTmuxBackend:
 
 def _run(program, backend):
     from doeff_agents import claude_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
     handler = claude_handler(backend=backend)
     wrapped = state()(handler(program))
     return run(scheduled(wrapped))

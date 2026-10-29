@@ -4,7 +4,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from doeff_core_effects.effects import EffectBase as Effect
+from doeff_core_effects._effects import EffectBase as Effect
 from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do

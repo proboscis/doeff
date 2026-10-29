@@ -12,7 +12,7 @@
 ;; 往復は増えない。出来事ごとに数える列への新しい鍵の追記は文を足さない。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler NOTICE-STATEMENT])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy.frozen [FrozenMap])

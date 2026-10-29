@@ -14,7 +14,7 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, final
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
+from doeff_core_effects import CompletePromise, CreatePromise, Promise, Wait
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler

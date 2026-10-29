@@ -18,7 +18,7 @@
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
 (import doeff_agents)
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents [AgentType AgentSessionLifecycle])
 (import doeff_agents [LaunchEffect FollowUp Interrupt Events Monitor Stop ExportContextEffect WarmSession SessionHandle AgentEventPage TurnInputMode InputFateState InputImage NamedContextId ModelWindow AgentTextEvent AgentTextDeltaEvent AgentInputFateEvent AgentTurnEndEvent AgentCallUsageEvent AgentToolCallStartedEvent AgentToolUseEvent AgentToolResultEvent AgentTurnCompleted AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentAccountLimit AgentProviderCapacity AgentCapabilityUnsupportedError NoTurnInFlightError RedeemTurnCredentialEffect TurnCredential CodexTurnCredential TurnCredentialUnavailable TurnCredentialUnavailableError])

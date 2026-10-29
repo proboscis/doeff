@@ -19,8 +19,8 @@
 (import sys)
 (import pytest)
 (import doeff [run with_handlers EffectBase])
-(import doeff_core_effects.handlers [state :as session-store slog-discard-handler])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects [state :as session-store slog-discard-handler])
+(import doeff_core_effects [scheduled Spawn Wait])
 ;; 故障の注入だけは層 2 のテスト用の effect を使う(公開 effect ではない — process を消す手段が公開面に無いため)。事前起動した runtime
 ;; を最初のターンが使い回したか(層 2 の起動回数)を読む effect も同じ(公開面は process を見せない)。
 (import doeff_claude_code [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess])

@@ -14,7 +14,7 @@
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
+from doeff_core_effects import CreatePromise, Promise, Spawn, Wait
 from doeff_events import (
     Drop,
     EventBus,

@@ -32,7 +32,7 @@
 (import sqlite3)
 (import threading)
 (import doeff [run])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise])
 (import doeff_time [GetMonotonic WaitWithin])
 (import doeff_codex._values [CodexSessionSpec CodexTurn CodexEvent CodexInput FreshThread ResumeThread])
 (import doeff_codex._lines :as lines)

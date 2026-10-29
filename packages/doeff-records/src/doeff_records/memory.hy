@@ -56,8 +56,7 @@
 (import dataclasses [dataclass replace])
 (import datetime [timedelta])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects.scheduler [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task
-                                      TaskCancelledError Wait Cancel])
+(import doeff_core_effects [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait Cancel])
 (import doeff_events [PublishEffect])
 (import doeff_records.event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
                                     first-seen ride-out-stall stop-source waits-beside-sources])

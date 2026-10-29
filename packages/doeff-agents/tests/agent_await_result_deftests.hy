@@ -2,7 +2,7 @@
 
 (import pathlib [Path])
 (import doeff [run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff-agents [AgentType])
 (import doeff-agents [AgentSpec AwaitOutcome AwaitResult AwaitStatus LaunchSession])
 (import doeff-agents._effects._ids [deterministic-session-id])

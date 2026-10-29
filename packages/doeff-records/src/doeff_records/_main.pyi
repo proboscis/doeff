@@ -8,10 +8,10 @@ from concurrent.futures import ThreadPoolExecutor as ThreadPoolExecutor
 from doeff import Program as Program
 from doeff import EffectBase as EffectBase
 from doeff import with_handlers as with_handlers
-from doeff_core_effects.handlers import await_handler as await_handler
-from doeff_core_effects.handlers import state as state
-from doeff_core_effects.scheduler import Spawn as Spawn
-from doeff_core_effects.scheduler import scheduled as scheduled
+from doeff_core_effects import await_handler as await_handler
+from doeff_core_effects import state as state
+from doeff_core_effects import Spawn as Spawn
+from doeff_core_effects import scheduled as scheduled
 from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects.file_effects import ReadText as ReadText
 from doeff_core_effects.file_effects import FileFailed as FileFailed

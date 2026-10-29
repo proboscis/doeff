@@ -54,11 +54,11 @@ def _stall_messages(caplog) -> list[str]:
 
 @pytest.fixture(params=["python", "rust"])
 def stall_watch(request, monkeypatch, caplog):
-    import doeff_core_effects.scheduler as sched_module
+    import doeff_core_effects._scheduler as sched_module
 
     monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
     monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", _STALL_INTERVAL)
-    caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+    caplog.set_level(logging.WARNING, logger="doeff_core_effects._scheduler")
     return caplog
 
 
@@ -82,11 +82,11 @@ def test_async_delay_that_oversleeps_its_deadline_is_reported(stall_watch) -> No
         loop = asyncio.get_running_loop()
         reported = asyncio.Event()
         watcher = _OnStallReport(lambda: loop.call_soon_threadsafe(reported.set))
-        logging.getLogger("doeff_core_effects.scheduler").addHandler(watcher)
+        logging.getLogger("doeff_core_effects._scheduler").addHandler(watcher)
         try:
             await asyncio.wait_for(reported.wait(), timeout=seconds + _STALL_INTERVAL * 40)
         finally:
-            logging.getLogger("doeff_core_effects.scheduler").removeHandler(watcher)
+            logging.getLogger("doeff_core_effects._scheduler").removeHandler(watcher)
 
     run_with_handlers(async_time_handler(sleep=wake_on_stall_report)(_delay_program(_STALL_INTERVAL)))
     assert _stall_messages(stall_watch), "an overdue clock wait must be reported as stalled"

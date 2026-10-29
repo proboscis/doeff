@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (import sys)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_codex [CodexSessionSpec CodexHome FreshThread CodexInput])
 (import doeff_codex [ApprovalPolicy SandboxMode])

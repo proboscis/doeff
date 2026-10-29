@@ -11,16 +11,16 @@ ADR-DOE-PRESET-001), so this example entry point composes its own — mirroring
 from collections.abc import Sequence
 from typing import Any
 
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
     await_handler,
     lazy_ask,
     listen_handler,
+    scheduled,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import handler as _program_handler
 from doeff import run

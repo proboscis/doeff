@@ -4,7 +4,7 @@
 from doeff_conductor import Issue, IssueStatus, multi_agent
 from doeff_conductor import mock_handlers
 from doeff_conductor._handlers import run_sync
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 def main() -> None:

@@ -21,8 +21,7 @@
 
 (require doeff-hy.macros [<- defk val])
 (import doeff.handler_utils [reinstaller])
-(import doeff_core_effects.scheduler [
-  CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
 (import doeff_agents._mcp-server [
   McpToolServer McpToolRequest TOOL_VM_TIMEOUT])
 (import queue [Empty])

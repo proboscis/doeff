@@ -30,7 +30,7 @@ from doeff_agents.tmux import (
     PASTE_SETTLE_SECONDS,
     send_keys_program,
 )
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time import Delay, SimClock, sim_time_handler
 from fake_io_support import FakeIoWorld, ProcessOutcome
 

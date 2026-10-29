@@ -11,7 +11,7 @@
 (import uuid)
 (import pathlib [Path])
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code [AssistantMessage CallClosed CallOpened Completed Interrupted PartialMessage TurnResult Usage]

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
 import pytest
-from doeff_core_effects.scheduler import SchedulerImplementation, Spawn, Wait, scheduled
+from doeff_core_effects import SchedulerImplementation, Spawn, Wait, scheduled
 from doeff_events import EventBus, Publish, WaitForEvents, subscribed_event_handler
 
 from doeff import Program, Pure, do, run

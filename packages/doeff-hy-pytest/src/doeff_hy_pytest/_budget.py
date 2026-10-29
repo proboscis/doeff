@@ -28,7 +28,7 @@
   終われば古い宣言として赤。宣言の無い検は今までどおり既定の上限(と登録簿)で判じる。
 - 模擬の世界の走りの歩数だけで判じる(調整役 cisco-c8 の決め 2026-10-12 15:47 JST・card ki-a27b195a3f92 — #2670 の数え方を改めた):
   doeff-cluster の ``sim-main`` は、始まり・立ち上がり(宣言の job が全部 起きた後、世界が初めて静まった時)・止め始め・終わりの
-  印を ``doeff_core_effects.world_phases`` に残す。``doeff_test_call_steps_counted = "world-running"`` の repo では(既定 ``call`` は
+  印を ``doeff_core_effects._world_phases`` に残す。``doeff_test_call_steps_counted = "world-running"`` の repo では(既定 ``call`` は
   今までどおり call の全部)、歩数で判じる検の call の間はその記録を開き、世界を回した検は、立ち上がりから
   止め始めまでの走りの歩数だけを上限(宣言)と比べる。起動・止め・世界の外(支度と判定)の歩数は数えず、報告の文に別の値で出す
   (部品を足すたびに伸びる起動と止めの費用で上限を上げ続けず、空回りを見つける感度を保つため)。世界を回さない検は今までどおり
@@ -189,7 +189,7 @@ VmBuild = CheckedVmBuild | UncheckedVmBuild | UnknownVmBuild
 def read_vm_build() -> VmBuild:
     """doeff-vm の build の種類を doeff の effect ``ReadInvariantChecks`` で読む(session の始めに 1 回)。"""
     try:
-        from doeff_core_effects.handlers import vm_probe_handler
+        from doeff_core_effects import vm_probe_handler
 
         from doeff import ReadInvariantChecks, run
     except ImportError as exc:
@@ -240,7 +240,7 @@ def read_work_source() -> WorkSource:
     """積み上げの数の口を session の始めに 1 回探す: doeff の effect ``ReadVmWorkCounts`` と、それに答える ``vm_probe_handler``。
     1 度読んでみて、doeff-vm の拡張が古くて答えられなければ(handler が ImportError で断る)口は無い。"""
     try:
-        from doeff_core_effects.handlers import vm_probe_handler
+        from doeff_core_effects import vm_probe_handler
 
         from doeff import ReadVmWorkCounts, run
     except ImportError as exc:
@@ -260,7 +260,7 @@ def read_work_source() -> WorkSource:
 
 @dataclass(frozen=True)
 class SchedulerStepGuard:
-    """doeff の scheduler の歩の上限の口(``doeff_core_effects.scheduler`` の ``arm_step_budget`` /
+    """doeff の scheduler の歩の上限の口(``doeff_core_effects._scheduler`` の ``arm_step_budget`` /
     ``disarm_step_budget`` — #3143)。入れている間、上限を越えて task を起こそうとした走行は ``StepBudgetExceeded`` で落ちる。"""
 
     arm: Callable[[int], object]
@@ -280,18 +280,18 @@ StepGuard = SchedulerStepGuard | NoSchedulerStepGuard
 def read_step_guard() -> StepGuard:
     """scheduler の歩の上限の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ入れないだけ)。"""
     try:
-        import doeff_core_effects.scheduler as scheduler
+        import doeff_core_effects._scheduler as scheduler
     except ImportError as exc:
-        return NoSchedulerStepGuard(f"doeff_core_effects.scheduler を import できない: {exc}")
+        return NoSchedulerStepGuard(f"doeff_core_effects._scheduler を import できない: {exc}")
     arm = getattr(scheduler, "arm_step_budget", None)
     disarm = getattr(scheduler, "disarm_step_budget", None)
     if arm is None or disarm is None:
-        return NoSchedulerStepGuard("doeff_core_effects.scheduler に arm_step_budget が無い(歩の上限の口より前の版)")
+        return NoSchedulerStepGuard("doeff_core_effects._scheduler に arm_step_budget が無い(歩の上限の口より前の版)")
     return SchedulerStepGuard(arm, disarm)
 
 
 class PhaseMarkRead(Protocol):
-    """区切りの印の口が返す印 1 つの形(``doeff_core_effects.world_phases.PhaseMark`` — この plugin は doeff に依らないので形だけ読む)。"""
+    """区切りの印の口が返す印 1 つの形(``doeff_core_effects._world_phases.PhaseMark`` — この plugin は doeff に依らないので形だけ読む)。"""
 
     @property
     def phase(self) -> str: ...
@@ -302,7 +302,7 @@ class PhaseMarkRead(Protocol):
 
 @dataclass(frozen=True)
 class WorldPhaseLog:
-    """模擬の世界の区切りの印の口(``doeff_core_effects.world_phases`` の ``open_phase_log`` / ``close_phase_log`` — card
+    """模擬の世界の区切りの印の口(``doeff_core_effects._world_phases`` の ``open_phase_log`` / ``close_phase_log`` — card
     ki-a27b195a3f92)。開いている間、doeff-cluster の ``sim-main`` が始まり・立ち上がり・止め始め・終わりの印を、その時の歩数と残す。"""
 
     open: Callable[[], None]
@@ -322,9 +322,9 @@ PhaseLogSource = WorldPhaseLog | NoWorldPhaseLog
 def read_phase_log() -> PhaseLogSource:
     """区切りの印の口を session の始めに 1 回探す(この plugin は doeff に依らないので、無ければ call の全部で判じるだけ)。"""
     try:
-        from doeff_core_effects import world_phases
+        from doeff_core_effects import _world_phases as world_phases
     except ImportError as exc:
-        return NoWorldPhaseLog(f"doeff_core_effects.world_phases を import できない: {exc}")
+        return NoWorldPhaseLog(f"doeff_core_effects._world_phases を import できない: {exc}")
     return WorldPhaseLog(world_phases.open_phase_log, world_phases.close_phase_log)
 
 

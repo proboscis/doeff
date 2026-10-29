@@ -1,7 +1,7 @@
 ;;; 不在と失敗(ADR-DOE-CORE-EFFECTS-003)の展開の時の補助 — <- の :absent・束ねが yield する open-bind の形・
 ;;; on-raise と absent-as の展開。
 ;;;
-;;; 実行時の意味は doeff_core_effects.outcomes が持ち、ここは形だけを作る:
+;;; 実行時の意味は doeff_core_effects._outcomes が持ち、ここは形だけを作る:
 ;;;
 ;;;   (<- x e)              → (setv x (yield (open-bind e)))       宣言を持つ effect の答えを開く・Result / Maybe の値を開く・
 ;;;                                                                 ほかは e そのものを yield する(今までと同じ物)
@@ -145,7 +145,7 @@
   (let [module (if (is helpers None) (hy.gensym "outcomes") (Symbol helpers))
         bound (if (is bound None) (hy.gensym "bound") bound)
         imported (if (is helpers None)
-                     `(setx ~module (__import__ "doeff_core_effects.outcomes" :fromlist #("open_bind")))
+                     `(setx ~module (__import__ "doeff_core_effects._outcomes" :fromlist #("open_bind")))
                      (Symbol helpers))
         opened (if (is absent None)
                    `(. ~imported (open_bind ~expr))
@@ -218,7 +218,7 @@
                (match ~reason
                  ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)
                  _ _doeff-nothing))))))
-    `(do (import doeff_core_effects.outcomes [on-raise :as _doeff-on-raise RaiseCase :as _doeff-raise-case])
+    `(do (import doeff_core_effects [on-raise :as _doeff-on-raise RaiseCase :as _doeff-raise-case])
          (import doeff.result [Some :as _doeff-some Nothing :as _doeff-nothing])
          (_doeff-on-raise ~program ~@cases))))
 
@@ -262,8 +262,7 @@
         body (if (= (head-name program) "do!")
                  (Expression [(get program 0) #* (lfor form (cut program 1 None) (mark-direct-binds form token))])
                  program)]
-    `(do (import doeff_core_effects.outcomes [absent-as :as _doeff-absent-as
-                                              new-absent-token :as _doeff-new-absent-token
-                                              direct-bind :as _doeff-direct-bind])
+    `(do (import doeff_core_effects [absent-as :as _doeff-absent-as]
+                 doeff_core_effects._outcomes [new-absent-token :as _doeff-new-absent-token direct-bind :as _doeff-direct-bind])
          (let [~token (_doeff-new-absent-token)]
            (_doeff-absent-as ~default (_doeff-direct-bind ~token ~body) ~token)))))

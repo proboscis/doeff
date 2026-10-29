@@ -17,7 +17,7 @@
 (import dataclasses [dataclass field replace])
 (import uuid)
 (import doeff_time [GetMonotonic GetTime WaitWithin])
-(import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise])
 (import doeff_hy.frozen [FrozenMap FrozenJson frozen-json-object])
 (import doeff_claude_code._values [ClaudeTurn ClaudeSessionSpec FreshSession ResumeSession ForkSession Rebuilt LinkFromHome
                                   IMAGE-MIMES LentCredential])

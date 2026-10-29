@@ -13,7 +13,7 @@
 (import shutil)
 (import uuid)
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput LentCredential])
 (import doeff_claude_code [AssistantMessage Completed SubagentTranscript TaskEvent])

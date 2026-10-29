@@ -29,7 +29,7 @@ from doeff_agents import (
     agent,
 )
 from doeff_agents import ScenarioAgentHandler, ScenarioStep
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import do, run
 

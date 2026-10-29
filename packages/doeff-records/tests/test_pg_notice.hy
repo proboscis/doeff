@@ -11,7 +11,8 @@
 (import gc)
 (import uuid)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled ExternalPromise Spawn Wait HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
+(import doeff_core_effects [scheduled ExternalPromise Spawn Wait]
+        doeff_core_effects._scheduler [HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlParam SqlRows SqlFailed])
 (import doeff_core_effects.postgres_sql [NOTICE-STATEMENT postgres-sql-handler notice-payload])
 (import doeff_time [Delay GetMonotonic WaitWithin SimClock sim-time-handler])

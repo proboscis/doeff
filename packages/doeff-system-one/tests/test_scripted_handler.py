@@ -1,7 +1,6 @@
 """台本 handler で Judge を走らせる — program 側は provider を知らない。"""
 
-from doeff_core_effects import await_handler, slog_discard_handler, try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, scheduled, slog_discard_handler, try_handler
 from doeff_system_one import (
     JudgeError,
     ScriptedJudgeState,

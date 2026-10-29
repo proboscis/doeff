@@ -1,6 +1,6 @@
 ;;; 記録の client が頁を何度読んでも、読んだ頁の本文と値が読みの後に残らない事 — 頁を N 回読んだ常駐量(RSS)の伸びが頁の数に比例しない。
 ;;; 前は答え手の組(http-production-handler の Await)が、待ち終えた httpx の応答を scheduler の約束の表に残し、id を 1024 個払い出すごとの
-;;; 掃除まで放さなかった(doeff_core_effects.handlers の _AwaitedValue)。1 頁 約 3 MiB の列を位置 0 から 238 頁読む job の RSS が
+;;; 掃除まで放さなかった(doeff_core_effects._handlers の _AwaitedValue)。1 頁 約 3 MiB の列を位置 0 から 238 頁読む job の RSS が
 ;;; 131 → 895 MiB に育ち、gc の後も戻らなかった(表は scheduler の持ち物で、循環ではない)。
 ;;; 検は模擬の HTTP の相手(127.0.0.1 の空き port)で 1 頁の本文を大きくし、本番と同じ答え手の組で読む。
 (require doeff-hy.macros [deftest deff defk <- val])
@@ -11,8 +11,8 @@
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [scheduled])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler http-client-factory])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [ReadEvents])
