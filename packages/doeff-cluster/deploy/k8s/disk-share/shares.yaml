@@ -12,18 +12,27 @@
 #                            持ち主が消せば、その分が Longhorn の分へ移る
 #   worker の分              空きの最低(minFreeGiB)+ near の幅 + 戻りの幅(worker の env_upkeep の NEAR-MARGIN-BYTES・
 #                            NEAR-RETURN-BYTES — 値はそこから読む)+ roots の上限(rootsGiB)+ roots の外の worker の state(stateBytes)
-#   Longhorn の分            残り
+#   Longhorn の分            残り(Longhorn の disk の欄 longhornDisk ほかを持たない機体では、誰の分でもない余り — 負なら釣り合わない)
 #
 # ここから導く物(derive.py が書く — 手で直さない。宣言を直したら `uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py`):
 #   ../nodes/<機体>/disk-share.yaml  worker の env WORKER_ENV_MIN_FREE_GIB = minFreeGiB・WORKER_ENV_ROOTS_GIB = rootsGiB
 #   longhorn-nodes.yaml              Longhorn の disk の予約 storageReserved = disk − Longhorn の分 × 100 / overProvisioningPercent
+#                                    (Longhorn の disk の欄を持つ機体だけ)
+#   ../nodes/<機体>/kubelet-image-gc.conf  kubelet の image GC の線(drop-in — 置き先と効く時はその file の頭の註)。
+#                                    high = 空きが worker の near の線(最低 + near の幅)を割らない最も高い使用率(上限 85)・low = high − 10
 # 予約をこう置くと、Longhorn が受ける写しの名目の合計の上限((disk − 予約)× overProvisioningPercent / 100 — Longhorn の置き方の判じ)が
 # Longhorn の分に等しくなる。写しは名目の大きさまでしか育たないので、worker と Longhorn がそれぞれ許された大きさまで育っても、空きは
 # 空きの最低 + near の幅 + 戻りの幅を割らない(worker は ok のまま)。
 #
+# image GC の線を同じ宣言から導く訳(card ki-57ff91db1411): 2026-10-30 に atlas の worker が near を名乗り続けた。kubelet の image GC は
+# 手で置いた high 85・low 80(使用 85% = 空き 31.5 GB で消し始め、80% = 空き 42 GB で止める)で、worker の near の帯(空き 26.8〜46.8 GB)
+# の中で「まだ消さなくてよい」と読んだ — 誰も消さない帯ができた。線を worker の線から導くと、kubelet は worker が near を名乗る前に
+# 使われていない image を消し始め、ok へ戻る線の上まで消す。
+#
 # 守りの外(この宣言が持たない物):
 # - snapshot を重ねた写しは名目を越えて育つ。写しの snapshot の消化と filesystem-trim は、上に載る系の Longhorn の手入れの job が持つ。
-# - systemBytes を越える image や log の育ちは、何も止めない。越えた時は worker の near(見回りの検査)が最後に知らせる。
+# - systemBytes を越える log の育ちと、使っている image の育ちは、何も止めない。kubelet の image GC が消すのは使われていない image だけ。
+#   越えた時は worker の near(見回りの検査)が最後に知らせる。
 # - 既に置かれた写しは、予約を上げても動かない。名目の合計が分を越えている機体は、写しを退かせて分の内へ戻す(volume の持ち主の可が要る)。
 #
 # Longhorn の置き方(longhornScheduling・longhornDiskTags)— Flux の server-side apply は、kubectl の manager(kubectl-edit・kubectl-patch
@@ -35,8 +44,10 @@
 #   longhornDiskTags    disk の札(StorageClass の diskSelector が引く — longhorn-warm は warm)。Node の札は持たない([] を書く)
 #
 # overProvisioningPercent は Longhorn の設定 storage-over-provisioning-percentage(cluster 全体の値)の写し。設定を替える時はここも直す
-# (替えると導く予約が変わる)。atlas・eos・zeus はこの宣言の外 — atlas と eos の根の disk の Longhorn の disk は写しを受けず
-# (allowScheduling false)、zeus の worker は USB の SSD に在る(根の disk を分け合わない)。
+# (替えると導く予約が変わる)。zeus はこの宣言の外 — zeus の worker は USB の SSD に在る(根の disk を分け合わない)。
+# atlas と eos は Longhorn の disk の欄を持たない — 根の disk の Longhorn の disk(/var/lib/longhorn)は写しを受けず(allowScheduling
+# false)、atlas の Longhorn の Node は根の外の disk(/mnt/nvme・/mnt/bulk)も持つ。この宣言から Node を書くと、Flux の server-side apply
+# が根の外の disk の欄を引き取って消しうるので、Node は導かない。
 overProvisioningPercent: 200
 
 # 機体の形(shapes — 機体の行が `<<:` で受ける雛形。derive.py は nodes だけを読む)。
@@ -78,3 +89,30 @@ nodes:
     <<: *k3s-vps
     # merge-queue-land 7.57・merge-queue-ledger 0.59・旧い worker の state 2.64 GB
     otherResidentsBytes: 10_900_000_000
+  # atlas の根の disk(nvme0n1p2・ext4)。worker の空きの最低と roots の上限は boot.sh の既定のまま(25 GiB・20 GiB)。値の出所は
+  # 2026-10-30 06:10 JST の du(card ki-81403f265589 の調べ)と 06:49 JST の df(worker の Pod の /work):
+  #   systemBytes          OS 13.8・k3s(containerd の snapshot と content — image 127 個)53.7・/var/log 3.0 GB の上に余り
+  #   otherResidentsBytes  /var/lib/agent-worker-coord 9.7・/home 7.3・旧い作業の dir(retired-1010・agent-worker-exp ほか)8.8 GB
+  #   worker.stateBytes    /var/lib/agent-worker 51.5 GB から roots 21.4 GB を引いた物(effect の解析の cache 10.1・Hy の検の cache 2.4・log 1.5 ほか)
+  atlas:
+    diskBytes: 210_241_560_576
+    filesystemReservedBytes: 10_754_195_456
+    systemBytes: 72_000_000_000
+    otherResidentsBytes: 26_000_000_000
+    worker:
+      minFreeGiB: 25
+      rootsGiB: 20
+      stateBytes: 31_000_000_000
+  # eos の根の disk(nvme0n1p2・ext4)。worker の空きの最低と roots の上限は boot.sh の既定のまま(25 GiB・20 GiB)。値の出所は
+  # 2026-10-30 06:49 JST の df と du(worker の Pod の /work — 使用 286.4 GB のうち worker は 14.3 GB・roots 3.7 GB):
+  #   systemBytes          worker の外の使用 272.1 GB(内訳は worker の Pod から読めない — control plane・container の image ほか)の上に余り
+  #   worker.stateBytes    /work 14.3 GB から roots 3.7 GB を引いた物の上に余り
+  eos:
+    diskBytes: 502_392_610_816
+    filesystemReservedBytes: 25_595_371_520
+    systemBytes: 280_000_000_000
+    otherResidentsBytes: 0
+    worker:
+      minFreeGiB: 25
+      rootsGiB: 20
+      stateBytes: 12_000_000_000

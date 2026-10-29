@@ -1,0 +1,15 @@
+# 導いた物 — ../../disk-share/derive.py が ../../disk-share/shares.yaml の eos の分け前から書く(手で直さない)。
+# worker の空きの最低と roots の上限(boot.sh が GiB の整数で読む)。分け前の訳は shares.yaml の頭の註。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doeff-worker
+  namespace: agent-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - { name: WORKER_ENV_MIN_FREE_GIB, value: "25" }
+            - { name: WORKER_ENV_ROOTS_GIB, value: "20" }

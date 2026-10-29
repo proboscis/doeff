@@ -1,18 +1,25 @@
-"""根の disk を worker と Longhorn が分け合う機体の分け前(shares.yaml)から、worker の env と Longhorn の disk の予約を導く。
+"""根の disk を worker と Longhorn と container の image が分け合う機体の分け前(shares.yaml)から、worker の env と Longhorn の disk の
+予約と kubelet の image GC の線を導く。
 
-分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 2 つ:
-  ../nodes/<機体>/disk-share.yaml  worker の Deployment の env WORKER_ENV_MIN_FREE_GIB・WORKER_ENV_ROOTS_GIB(boot.sh が GiB の整数で読む)
-  longhorn-nodes.yaml              Longhorn の Node の disk の予約 storageReserved
+分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 3 つ:
+  ../nodes/<機体>/disk-share.yaml        worker の Deployment の env WORKER_ENV_MIN_FREE_GIB・WORKER_ENV_ROOTS_GIB(boot.sh が GiB の整数で読む)
+  ../nodes/<機体>/kubelet-image-gc.conf  kubelet の drop-in(imageGCHighThresholdPercent・imageGCLowThresholdPercent — 機体の
+                                         /etc/rancher/k3s/kubelet.conf.d/ に置く。Flux は当てない)
+  longhorn-nodes.yaml                    Longhorn の Node の disk の予約 storageReserved(Longhorn の disk を宣言した機体だけ)
 
 使い方(repo の根で):
   uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py           導いた file を書く(宣言が釣り合わなければ書かずに 1)
   uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py --check   書いてある file が宣言から導いた物と同じかを確かめる(違えば 1)
+  uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py --live    機体の kubelet が今 使う image GC の線(kubectl で configz を
+                                                                                 読む)が宣言から導いた線と同じかを確かめる(違えば 1)
 
 test(packages/doeff-cluster/tests/test_disk_share.py)がこの module を読み、宣言の釣り合いと、Flux が当てる組み立ての値を確かめる。
 """
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,15 +32,21 @@ K8S = HERE.parent
 SHARES = HERE / "shares.yaml"
 LONGHORN_NODES = HERE / "longhorn-nodes.yaml"
 NODE_PATCH = "disk-share.yaml"
+KUBELET_DROPIN = "kubelet-image-gc.conf"
+# drop-in を置く機体の dir と名(k3s の config.yaml の kubelet-arg の config-dir — zeus の置き方と同じ dir)。
+KUBELET_DROPIN_HOST_PATH = "/etc/rancher/k3s/kubelet.conf.d/60-disk-share-image-gc.conf"
+# image GC の high と low の間(使用率の point)— k3s の VPS と zeus が使ってきた 70 / 60 の間。
+IMAGE_GC_SPAN_PERCENT = 10
+# high の上限(kubelet の既定 85)— disk が大きくても、既定より遅くは消し始めない。
+IMAGE_GC_HIGH_MAX_PERCENT = 85
 GIB = 1 << 30
 GB = 10**9
 LONGHORN_NAMESPACE = "longhorn-system"
 TOP_KEYS = frozenset({"overProvisioningPercent", "shapes", "nodes"})
+# Longhorn の disk の 3 つの欄は、揃って在るか揃って無い(無い機体 = 根の disk の Longhorn の disk を宣言しない機体 — Node を導かない)。
+LONGHORN_KEYS = frozenset({"longhornDisk", "longhornScheduling", "longhornDiskTags"})
 NODE_KEYS = frozenset(
     {
-        "longhornDisk",
-        "longhornScheduling",
-        "longhornDiskTags",
         "diskBytes",
         "filesystemReservedBytes",
         "systemBytes",
@@ -58,14 +71,20 @@ class WorkerShare:
 
 
 @dataclass(frozen=True)
+class LonghornDisk:
+    """根の disk の上の Longhorn の disk の置き方。scheduling が偽の disk は Longhorn を外した機体(写しを受けず、在る写しを退かせる)。"""
+
+    disk: str
+    scheduling: bool
+    tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class NodeShare:
-    """機体 1 つの分け前(byte)。Longhorn の分は残り — longhorn_bytes。longhorn_scheduling が偽の機体は Longhorn を外した機体
-    (写しを受けず、在る写しを退かせる)。"""
+    """機体 1 つの分け前(byte)。残り(longhorn_bytes)は、longhorn を持つ機体では Longhorn の分、持たない機体では誰の分でもない余り。"""
 
     node: str
-    longhorn_disk: str
-    longhorn_scheduling: bool
-    longhorn_disk_tags: tuple[str, ...]
+    longhorn: LonghornDisk | None
     disk_bytes: int
     filesystem_reserved_bytes: int
     system_bytes: int
@@ -77,6 +96,14 @@ class NodeShare:
 class Declaration:
     over_provisioning_percent: int
     nodes: tuple[NodeShare, ...]
+
+
+@dataclass(frozen=True)
+class ImageGc:
+    """kubelet の image GC の線(使用率の %)— 使用が high に達すると、low まで使われていない image を消す。"""
+
+    high_percent: int
+    low_percent: int
 
 
 @dataclass(frozen=True)
@@ -137,22 +164,18 @@ def parse(text: str) -> Declaration:
 def _node_share(name: str, raw: object) -> NodeShare:
     """nodes の 1 行を機体の分け前にする(parse の一部 — 機体ごとに鍵と量を確かめる)。"""
     where = f"nodes.{name}"
-    entry = _keys(raw, NODE_KEYS, where)
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{where} が mapping でない: {raw!r}")
+    present = LONGHORN_KEYS & set(raw)
+    if present and present != LONGHORN_KEYS:
+        raise ValueError(
+            f"{where} の Longhorn の欄は {sorted(LONGHORN_KEYS)} が揃って在るか揃って無い — 在る欄 {sorted(present)}"
+        )
+    entry = _keys(raw, NODE_KEYS | present, where)
     worker = _keys(entry["worker"], WORKER_KEYS, f"{where}.worker")
-    disk = entry["longhornDisk"]
-    if not isinstance(disk, str) or not disk:
-        raise ValueError(f"{where}.longhornDisk は Longhorn の disk の名: {disk!r}")
-    scheduling = entry["longhornScheduling"]
-    if not isinstance(scheduling, bool):
-        raise ValueError(f"{where}.longhornScheduling は true か false: {scheduling!r}")
-    tags = entry["longhornDiskTags"]
-    if not isinstance(tags, list) or not all(isinstance(tag, str) and tag for tag in tags):
-        raise ValueError(f"{where}.longhornDiskTags は札の名の list: {tags!r}")
     return NodeShare(
         node=name,
-        longhorn_disk=disk,
-        longhorn_scheduling=scheduling,
-        longhorn_disk_tags=tuple(tags),
+        longhorn=_longhorn_disk(entry, where) if present else None,
         disk_bytes=_count(entry["diskBytes"], f"{where}.diskBytes"),
         filesystem_reserved_bytes=_count(
             entry["filesystemReservedBytes"], f"{where}.filesystemReservedBytes"
@@ -165,6 +188,20 @@ def _node_share(name: str, raw: object) -> NodeShare:
             state_bytes=_count(worker["stateBytes"], f"{where}.worker.stateBytes"),
         ),
     )
+
+
+def _longhorn_disk(entry: Mapping[str, object], where: str) -> LonghornDisk:
+    """機体の行の Longhorn の 3 つの欄を読む(_node_share の一部)。"""
+    disk = entry["longhornDisk"]
+    if not isinstance(disk, str) or not disk:
+        raise ValueError(f"{where}.longhornDisk は Longhorn の disk の名: {disk!r}")
+    scheduling = entry["longhornScheduling"]
+    if not isinstance(scheduling, bool):
+        raise ValueError(f"{where}.longhornScheduling は true か false: {scheduling!r}")
+    tags = entry["longhornDiskTags"]
+    if not isinstance(tags, list) or not all(isinstance(tag, str) and tag for tag in tags):
+        raise ValueError(f"{where}.longhornDiskTags は札の名の list: {tags!r}")
+    return LonghornDisk(disk=disk, scheduling=scheduling, tags=tuple(tags))
 
 
 def load() -> Declaration:
@@ -185,7 +222,8 @@ def worker_bytes(share: NodeShare, margins: Margins) -> int:
 
 
 def longhorn_bytes(share: NodeShare, margins: Margins) -> int:
-    """Longhorn の分 = disk - filesystem の予約 - OS ほか - 別の系の旧い state - worker の分(負なら disk に収まらない宣言)。"""
+    """残り = disk - filesystem の予約 - OS ほか - 別の系の旧い state - worker の分(負なら disk に収まらない宣言)。Longhorn の disk を
+    持つ機体では Longhorn の分。"""
     return (
         share.disk_bytes
         - share.filesystem_reserved_bytes
@@ -193,6 +231,30 @@ def longhorn_bytes(share: NodeShare, margins: Margins) -> int:
         - share.other_residents_bytes
         - worker_bytes(share, margins)
     )
+
+
+def near_entry_bytes(share: NodeShare, margins: Margins) -> int:
+    """worker が near を名乗る線 — 空きがこれを割ると near(空きの最低 + near の幅)。"""
+    return share.worker.min_free_gib * GIB + margins.near_bytes
+
+
+def ok_return_bytes(share: NodeShare, margins: Margins) -> int:
+    """near を名乗った worker が ok へ戻る線 — 空きがこれ以上なら ok(空きの最低 + near の幅 + 戻りの幅)。"""
+    return near_entry_bytes(share, margins) + margins.return_bytes
+
+
+def free_at_usage(disk_bytes: int, percent: int) -> int:
+    """使用率 percent の時の空き(byte)— kubelet は使用率を (容量 - 空き) / 容量 で読み、空きは filesystem の予約を除いた avail
+    (worker の読む空きと同じ)。"""
+    return disk_bytes * (100 - percent) // 100
+
+
+def image_gc(share: NodeShare, margins: Margins) -> ImageGc:
+    """kubelet の image GC の線 — high は、その使用率の空きが worker の near の線を割らない最も高い %(上限 IMAGE_GC_HIGH_MAX_PERCENT)、
+    low は high - IMAGE_GC_SPAN_PERCENT。kubelet は worker が near を名乗る前に消し始め、ok へ戻る線の上まで消す。"""
+    room = share.disk_bytes - near_entry_bytes(share, margins)
+    high = min(IMAGE_GC_HIGH_MAX_PERCENT, room * 100 // share.disk_bytes) if room > 0 else 0
+    return ImageGc(high_percent=high, low_percent=high - IMAGE_GC_SPAN_PERCENT)
 
 
 def storage_reserved(share: NodeShare, margins: Margins, over_provisioning_percent: int) -> int:
@@ -216,15 +278,45 @@ def faults(declaration: Declaration, margins: Margins) -> tuple[str, ...]:
 
 
 def _node_faults(share: NodeShare, margins: Margins, percent: int) -> tuple[str, ...]:
-    """機体 1 つの釣り合わない所: Longhorn の分が無い・導いた予約が disk の外・予約の下で Longhorn が分を越えて受ける。"""
-    room = longhorn_bytes(share, margins)
-    if room <= 0:
+    """機体 1 つの釣り合わない所: image GC の線が worker の線の下・残りが無い・導いた予約が disk の外・予約の下で Longhorn が分を越えて受ける。"""
+    return _image_gc_faults(share, margins) or _share_faults(share, margins, percent)
+
+
+def _image_gc_faults(share: NodeShare, margins: Margins) -> tuple[str, ...]:
+    """image GC の線が worker の線と合わない所: low が 1 % を割る・high の空きが near の線を割る・low の空きが ok へ戻る線を割る。"""
+    gc = image_gc(share, margins)
+    if gc.low_percent < 1:
         return (
-            f"{share.node}: 分け前の合計が disk を越える — Longhorn の分 {room / GB:.2f} GB"
+            f"{share.node}: disk {share.disk_bytes / GB:.2f} GB が worker の near の線 "
+            f"{near_entry_bytes(share, margins) / GB:.2f} GB に比べて小さく、image GC の線を置けない(high {gc.high_percent}%)",
+        )
+    start = free_at_usage(share.disk_bytes, gc.high_percent)
+    if start < near_entry_bytes(share, margins):
+        return (
+            f"{share.node}: image GC は空き {start / GB:.2f} GB で消し始め、worker の near の線 "
+            f"{near_entry_bytes(share, margins) / GB:.2f} GB の下",
+        )
+    end = free_at_usage(share.disk_bytes, gc.low_percent)
+    if end < ok_return_bytes(share, margins):
+        return (
+            f"{share.node}: image GC は空き {end / GB:.2f} GB まで消して止まり、worker が ok へ戻る線 "
+            f"{ok_return_bytes(share, margins) / GB:.2f} GB の下",
+        )
+    return ()
+
+
+def _share_faults(share: NodeShare, margins: Margins, percent: int) -> tuple[str, ...]:
+    """分け前が disk に収まらない所: 残りが負(Longhorn の disk を持つ機体は 0 も)・導いた予約が disk の外・Longhorn が分を越えて受ける。"""
+    room = longhorn_bytes(share, margins)
+    if room < 0 or (share.longhorn is not None and room == 0):
+        return (
+            f"{share.node}: 分け前の合計が disk を越える — 残り {room / GB:.2f} GB"
             f"(disk {share.disk_bytes / GB:.2f}・filesystem の予約 {share.filesystem_reserved_bytes / GB:.2f}・"
             f"OS ほか {share.system_bytes / GB:.2f}・別の系 {share.other_residents_bytes / GB:.2f}・"
             f"worker {worker_bytes(share, margins) / GB:.2f} GB)",
         )
+    if share.longhorn is None:
+        return ()
     reserved = storage_reserved(share, margins, percent)
     if not 0 <= reserved <= share.disk_bytes:
         return (f"{share.node}: 導いた予約 {reserved} が disk {share.disk_bytes} の外",)
@@ -274,17 +366,36 @@ LONGHORN_NODES_HEAD = """\
 """
 
 
-def _longhorn_node(share: NodeShare, margins: Margins, percent: int) -> str:
+def _kubelet_dropin(share: NodeShare, margins: Margins) -> str:
+    """機体の kubelet の image GC の線の drop-in — 線の空きと、比べた worker の線を註に残す。"""
+    gc = image_gc(share, margins)
+    disk = share.disk_bytes
+    return f"""\
+# 導いた物 — ../../disk-share/derive.py が ../../disk-share/shares.yaml の {share.node} の分け前から書く(手で直さない)。
+# 置き先 = 機体の {KUBELET_DROPIN_HOST_PATH}(k3s の config.yaml の kubelet-arg に
+# config-dir=/etc/rancher/k3s/kubelet.conf.d を置き、image-gc-high-threshold・image-gc-low-threshold の flag は置かない — flag は
+# drop-in より強い)。効く時 = k3s を起動し直して kubelet が読んだ後。効いているかは derive.py --live が kubelet の configz と比べる。
+# high {gc.high_percent}% = 空き {free_at_usage(disk, gc.high_percent) / GB:.2f} GB で消し始める — worker が near を名乗る線
+#   {near_entry_bytes(share, margins) / GB:.2f} GB(空きの最低 {share.worker.min_free_gib} GiB + near の幅)より上
+# low {gc.low_percent}% = 空き {free_at_usage(disk, gc.low_percent) / GB:.2f} GB まで消す — worker が ok へ戻る線 {ok_return_bytes(share, margins) / GB:.2f} GB より上
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+imageGCHighThresholdPercent: {gc.high_percent}
+imageGCLowThresholdPercent: {gc.low_percent}
+"""
+
+
+def _longhorn_node(share: NodeShare, longhorn: LonghornDisk, margins: Margins, percent: int) -> str:
     """機体 1 つの Longhorn の Node の文書(置き方の欄の全部 — FLUX_NODE_FIELDS・FLUX_DISK_FIELDS)— 予約の式と、その下で受ける名目の
     上限を註に残す。"""
     room = longhorn_bytes(share, margins)
     reserved = storage_reserved(share, margins, percent)
     admits = longhorn_admits(share.disk_bytes, reserved, percent)
-    schedule = "true" if share.longhorn_scheduling else "false"
-    evict = "false" if share.longhorn_scheduling else "true"
+    schedule = "true" if longhorn.scheduling else "false"
+    evict = "false" if longhorn.scheduling else "true"
     role = (
         "写しを受ける"
-        if share.longhorn_scheduling
+        if longhorn.scheduling
         else "Longhorn を外した機体 — 写しを受けず、在る写しを退かせる"
     )
     return f"""\
@@ -301,10 +412,10 @@ spec:
   evictionRequested: {evict}
   tags: []
   disks:
-    {share.longhorn_disk}:
+    {longhorn.disk}:
       allowScheduling: {schedule}
       evictionRequested: {evict}
-      tags: {json.dumps(list(share.longhorn_disk_tags))}
+      tags: {json.dumps(list(longhorn.tags))}
       storageReserved: {reserved}
 """
 
@@ -315,11 +426,19 @@ def render(declaration: Declaration, margins: Margins) -> tuple[Derived, ...]:
     nodes_text = (
         LONGHORN_NODES_HEAD
         + "---\n"
-        + "---\n".join(_longhorn_node(share, margins, percent) for share in declaration.nodes)
+        + "---\n".join(
+            _longhorn_node(share, share.longhorn, margins, percent)
+            for share in declaration.nodes
+            if share.longhorn is not None
+        )
     )
     return (
         *(
             Derived(K8S / "nodes" / share.node / NODE_PATCH, _node_patch(share))
+            for share in declaration.nodes
+        ),
+        *(
+            Derived(K8S / "nodes" / share.node / KUBELET_DROPIN, _kubelet_dropin(share, margins))
             for share in declaration.nodes
         ),
         Derived(LONGHORN_NODES, nodes_text),
@@ -335,6 +454,41 @@ def stale(files: tuple[Derived, ...]) -> tuple[str, ...]:
     )
 
 
+def live_image_gc(node: str) -> ImageGc:
+    """機体の kubelet が今 使う image GC の線 — kubectl で Node の proxy の configz を読む(kubectl が無ければ・読めなければ止まる)。"""
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        raise RuntimeError("kubectl が無い — kubelet の configz を読めない")
+    done = subprocess.run(
+        [kubectl, "get", "--raw", f"/api/v1/nodes/{node}/proxy/configz"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"{node} の kubelet の configz を読めない: {done.stderr.strip()}")
+    config = json.loads(done.stdout)["kubeletconfig"]
+    return ImageGc(
+        high_percent=int(config["imageGCHighThresholdPercent"]),
+        low_percent=int(config["imageGCLowThresholdPercent"]),
+    )
+
+
+def differ_live(declaration: Declaration, margins: Margins) -> tuple[str, ...]:
+    """kubelet が今 使う image GC の線が、宣言から導いた線と違う機体(drop-in を置いていない・k3s を起動し直していない機体)。"""
+    found = []
+    for share in declaration.nodes:
+        derived = image_gc(share, margins)
+        live = live_image_gc(share.node)
+        if live != derived:
+            found.append(
+                f"{share.node}: kubelet は high {live.high_percent}% / low {live.low_percent}%・宣言から導いた線は "
+                f"high {derived.high_percent}% / low {derived.low_percent}%(drop-in {KUBELET_DROPIN_HOST_PATH} を置き、k3s を起動し直す)"
+            )
+    return tuple(found)
+
+
 def main(argv: list[str] | None = None) -> int:
     """入口 — 宣言を読み、釣り合えば導いた file を書く(--check は書かずに違いを数える)。"""
     parser = argparse.ArgumentParser(
@@ -345,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="書かずに、書いてある file が宣言から導いた物と同じかを確かめる",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="書かずに、機体の kubelet が今 使う image GC の線が宣言から導いた線と同じかを確かめる(kubectl で configz を読む)",
+    )
     args = parser.parse_args(argv)
     declaration = load()
     margins = worker_margins()
@@ -352,6 +511,15 @@ def main(argv: list[str] | None = None) -> int:
     if found:
         print("derive: 宣言が釣り合わない — 導かない:\n  " + "\n  ".join(found), file=sys.stderr)
         return 1
+    if args.live:
+        live = differ_live(declaration, margins)
+        if live:
+            print(
+                "derive: kubelet の image GC の線が宣言と違う機体:\n  " + "\n  ".join(live),
+                file=sys.stderr,
+            )
+            return 1
+        return 0
     files = render(declaration, margins)
     if args.check:
         differ = stale(files)
