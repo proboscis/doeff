@@ -14,7 +14,7 @@
 (require doeff-hy.macros [deftest val])
 (import typing [get-args])
 (import doeff_records.wire [WireAnswer])
-(import doeff_records.effects [DEFAULT-LIST-LIMIT LIST-LIMIT-MAX])
+(import doeff_records._effects [DEFAULT-LIST-LIMIT LIST-LIMIT-MAX])
 (import doeff_records.loop_work [BATCH-READ-ANSWERS ON-LOOP-ANSWERS])
 
 
@@ -23,10 +23,10 @@
   :status "accepted"
   :scope ["packages/doeff-records/src/doeff_records/loop_work.hy"
           "packages/doeff-records/src/doeff_records/pg.hy"
-          "packages/doeff-records/src/doeff_records/service.hy"
+          "packages/doeff-records/src/doeff_records/_service.hy"
           "packages/doeff-records/src/doeff_records/http_server.hy"
-          "packages/doeff-records/src/doeff_records/main.hy"
-          "packages/doeff-records/src/doeff_records/effects.hy"
+          "packages/doeff-records/src/doeff_records/_main.hy"
+          "packages/doeff-records/src/doeff_records/_effects.hy"
           "packages/doeff-records/src/doeff_records/wire.hy"
           "docs/adr/defadr_doeff_records_002_scheduler_thread_admits_and_orders.hy"]
   :problem
@@ -44,7 +44,7 @@
        :evidence "packages/doeff-core-effects/doeff_core_effects/compute_effects.hy・thread_pool_compute.hy・inline_compute.hy")
      (fact
        "束の読みを Compute へ出した後も、1 要求の計算の量は「頁の行の数 × 行の大きさ」で決まり、行の大きさの側だけが型で縛られていた(表の size-budget)。wire の list-rows の limit は上限を持たず、本文の上限 16 MiB の中なら何行でも頼めた。使い手の 4 つの repo の main(2026-10-22)で一覧の読みの limit は、固定の値で最も大きいもので 5,000 行(全行の一覧の 1 頁 — 1 回の要求の固定費 約 0.2 秒との釣り合いで選ばれた頁)。外から渡る数をそのまま載せる読みが 2 つ在った(呼び手の CLI の --limit N の N + 1・cursor が古い時に窓を限り無く倍にする読み — どちらも同じ日に続きの位置で頁を送る形に直した)。手元の測りの比で、5,000 行の頁の読み解きと綴りは 1 頁 約 0.9 秒、計算の pool の thread を 1 本塞ぐ(500 行で 92 ms)。"
-       :evidence "card ki-42c40cb6014d の作業の測り・packages/doeff-records/src/doeff_records/effects.hy の LIST-LIMIT-MAX")
+       :evidence "card ki-42c40cb6014d の作業の測り・packages/doeff-records/src/doeff_records/_effects.hy の LIST-LIMIT-MAX")
      (fact
        "計算の pool の詰まり(大きな束の読みが pool の全部の thread を塞ぎ、後の束の読みの計算が pool の列で待つ)は、要求ごとの区間の秒(handler と encode)に混ざって数えられ、別の計器を持たなかった — 遅れが pool の列の待ちか置き場の読みかを、/metrics の数で見分けられなかった。"
        :evidence "packages/doeff-records/src/doeff_records/request_timing.hy の区間の名(queue・body・decode・handler・wait・encode・send)")]

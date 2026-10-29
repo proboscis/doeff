@@ -1,6 +1,6 @@
 ;;; 表ごとの行の型で読み書きする層 — 汎用の effect(ReadRow / ListRows / PutRow)の上の Program と純関数。
 ;;;
-;;; 汎用の層(values.hy・effects.hy)は行の値を「欄の名 → JSON の値」の凍らせた写像で持つ。表の欄は宣言(TableDecl)が決め、
+;;; 汎用の層(_values.hy・_effects.hy)は行の値を「欄の名 → JSON の値」の凍らせた写像で持つ。表の欄は宣言(TableDecl)が決め、
 ;;; 置き場の handler(memory・PostgreSQL・写し)は表の中身を知らないので、その層は写像のままにする。業務の呼び手は写像を
 ;;; 見ずに、表ごとの行の型(素の defrecord — defwire でない frozen の dataclass)で読み書きする — その写しの 1 か所がこの file。
 ;;;
@@ -22,9 +22,9 @@
 (import doeff_hy.frozen [FrozenMap frozen-json-object])
 (import doeff_hy.wire_codec [Codec row-codec-of])
 (import doeff_hy.wire_malformed [Malformed])
-(import doeff_records.values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
+(import doeff_records._values [Row Missing Page Written Conflict RowChanged RowRemoved ListCursor WatchCursor ExpectAbsent
                               ExpectVersion ExpectAny checked-table-name])
-(import doeff_records.effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
+(import doeff_records._effects [ReadRow ListRows PutRow DEFAULT-LIST-LIMIT])
 
 (setv M (TypeVar "M"))
 

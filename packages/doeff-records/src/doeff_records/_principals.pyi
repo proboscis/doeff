@@ -1,7 +1,7 @@
-"""principals.hy の公開面の型(型検査のための宣言 — 実行時は principals.hy を読む)。
+"""_principals.hy の公開面の型(型検査のための宣言 — 実行時は _principals.hy を読む)。
 
-principals.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、書き手 Principal が
-Unknown になる(service.pyi の respond の書き手の名の読みが Unknown に連なる)。ここで型を宣言する。
+_principals.hy は Hy の module なので、型の宣言が無いと pyright は中を読めず、書き手 Principal が
+Unknown になる(_service.pyi の respond の書き手の名の読みが Unknown に連なる)。ここで型を宣言する。
 
 - `(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
 - defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。

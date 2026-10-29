@@ -8,7 +8,7 @@
 (require doeff-hy.macros [defk val])
 (import hashlib)
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [RecordsSchema])
+(import doeff_records._values [RecordsSchema])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})
 

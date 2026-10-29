@@ -8,7 +8,7 @@ http_server.hy は Hy の module なので、型の宣言が無いと pyright �
 - `(defrecord …)` は kw_only の frozen の dataclass、`(defclass [(dataclass :frozen True)] …)` は位置でも渡せる frozen の dataclass。
 - `(defeffect …)` は答えの型を持つ EffectBase の frozen の dataclass。
 - defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。
-- handler-for は「書き手の名 → その書き手の記録の handler」。handler の形は置き場ごとに違うので、答えは object に留める(service.pyi と
+- handler-for は「書き手の名 → その書き手の記録の handler」。handler の形は置き場ごとに違うので、答えは object に留める(_service.pyi と
   同じ扱い)。readiness・pressure・meter も実装の注記と同じ素の Callable。
 - HttpAddress の module(doeff_core_effects.http_server_effects)には型の宣言がまだ無い。
 - 実装との食い違いは packages/doeff-records/tests/test_static_stubs.py が名・欄の名と順・既定値の有無・引数の名で検める。
@@ -22,9 +22,9 @@ from doeff_core_effects.http_server_effects import HttpAddress
 from doeff_core_effects.scheduler import Promise
 from doeff_hy.static_types import Handler as _Handler
 from doeff_records.request_timing import MarkAt, RequestMark
-from doeff_records.service import HttpAnswer, HttpRequest
-from doeff_records.store_choice import PressureUnread, StorePressure
-from doeff_records.values import RecordsSchema, WaitsClosed
+from doeff_records._service import HttpAnswer, HttpRequest
+from doeff_records._store_choice import PressureUnread, StorePressure
+from doeff_records._values import RecordsSchema, WaitsClosed
 
 from doeff import EffectBase, Program
 

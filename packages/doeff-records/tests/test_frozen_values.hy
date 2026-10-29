@@ -5,10 +5,10 @@
 (import dataclasses)
 (import pickle)
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_records.values [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField FieldDecl TableDecl DescendingWithin])
-(import doeff_records.effects [PutRow ListRows AppendEvent ReadRow RowWrite])
+(import doeff_records [RecordsSchema Row Written RowChanged ExpectAbsent UndeclaredField FieldDecl TableDecl DescendingWithin])
+(import doeff_records [PutRow ListRows AppendEvent ReadRow RowWrite])
 (import doeff_records.admission [canonical-json])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 (import tests.interpreters [LawSetup])
 
 

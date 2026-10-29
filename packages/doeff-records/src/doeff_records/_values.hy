@@ -11,7 +11,7 @@
 ;;; 行の値を運ぶ答え(Row・RowChanged)は、置き場が保存した値の綴り(JSON の文字列)を一緒に持てる(stored-row・stored-change・
 ;;; spelled-row・spelled-change)。綴りを持つ値は使われた時に 1 度だけ解いて凍らせ(stored-value)、HTTP の口は綴りをそのまま答えに継ぐ
 ;;; (wire.answer-text — 欄を絞らない一覧と変更の読みが、変わっていない行を読みのたびに解き直し綴り直さないため)。
-;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が typed.hy に在る — 業務の呼び手はそちらを使う。
+;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が _typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val deff])
 (require doeff-hy.record [defrecord])
 (import copy)

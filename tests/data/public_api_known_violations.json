@@ -16126,22 +16126,9 @@
       "value_of_fields"
      ],
      "doeff_records.values": [
-      "ByKeySuffix",
-      "DescendingWithin",
-      "EachEvent",
       "FIELD_NAME_PATTERN",
-      "FieldDecl",
-      "KeepFor",
-      "KeepForever",
-      "RecordsSchema",
-      "RememberKeysFor",
-      "RememberKeysForever",
-      "RememberNoKeys",
-      "RowChanged",
-      "RowRemoved",
       "SEPARATOR_PATTERN",
       "TABLE_NAME_PATTERN",
-      "TableDecl",
       "WRITE_KEY_MAX_LENGTH",
       "WRITE_KEY_MEMORY_SECONDS",
       "checked_field_name",
@@ -16624,6 +16611,8 @@
       "ReadStreamEndAnswer",
       "Refused",
       "Row",
+      "RowChanged",
+      "RowRemoved",
       "RowsRefused",
       "Unreachable",
       "WaitsClosed",
@@ -16674,6 +16663,21 @@
      ],
      "doeff_records.wire": [
       "UndeclaredTable"
+     ]
+    },
+    "境界 — handler の設定の型": {
+     "doeff_records.values": [
+      "ByKeySuffix",
+      "DescendingWithin",
+      "EachEvent",
+      "FieldDecl",
+      "KeepFor",
+      "KeepForever",
+      "RecordsSchema",
+      "RememberKeysFor",
+      "RememberKeysForever",
+      "RememberNoKeys",
+      "TableDecl"
      ]
     }
    }
@@ -18018,6 +18022,8 @@
    "name": "wire_types_in",
    "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
    "決め": "ki-2526a4b4f561"
-  }
+  },
+  {"package": "doeff-records", "module": "doeff_records.values", "name": "BatchRead", "訳": "ReadBatch(card ki-177a4f287c42)の答えの型(R2 の effect の結果の型 — BatchRead は束の答え・ReadBatchAnswer は答えの和)。名を足した commit が表を直さずに入った(card ki-40f991cef6c6)ので、ReadBatch を入口へ出す card ki-551676d22ba5 が入口へ出す時に足した", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
+  {"package": "doeff-records", "module": "doeff_records.values", "name": "ReadBatchAnswer", "訳": "ReadBatch(card ki-177a4f287c42)の答えの型(R2 の effect の結果の型 — BatchRead は束の答え・ReadBatchAnswer は答えの和)。名を足した commit が表を直さずに入った(card ki-40f991cef6c6)ので、ReadBatch を入口へ出す card ki-551676d22ba5 が入口へ出す時に足した", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"}
  ]
 }

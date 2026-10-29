@@ -1,5 +1,5 @@
 ;;; 記録の service の composition root — env と Secret の file を読み、PostgreSQL の答え手・待ち受けを組んで、入口の Program
-;;; (http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = service.hy・
+;;; (http_server.hy の serve-records)を本番の土台の下で走らせる。判断はここに無い(流れ = _service.hy・
 ;;; 判断 = admission.hy・綴り = wire.hy・待ち受けの形 = http_server.hy)。
 ;;;
 ;;; 割り方(#1280 — 呼び手の系が自分の process の外側〔scheduler・時計・止めの合図〕の下へ、土台の口だけを差せるように):
@@ -71,11 +71,11 @@
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
-(import doeff_records.values [RecordsSchema])
+(import doeff_records._values [RecordsSchema])
 (import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
 (import doeff_records.pg_sql [DEFAULT-PREFIX])
 (import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
-(import doeff_records.store_choice [StoreChoice StorePressure PressureUnread])
+(import doeff_records._store_choice [StoreChoice StorePressure PressureUnread])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 

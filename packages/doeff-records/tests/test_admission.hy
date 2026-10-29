@@ -5,13 +5,13 @@
 (import doeff [with_handlers])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable
-                              ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows ListCursor WatchCursor])
-(import doeff_records.effects [PutRow PutRows RowWrite ReadRow ListRows WHERE-ANY-LIMIT])
+(import doeff_records [FieldDecl TableDecl StreamDecl RecordsSchema KeepFor ByKeySuffix EachEvent Row Missing Conflict Refused NotIndexed UndeclaredTable ExpectAbsent ExpectVersion ExpectAny RowsRefused Written WrittenRows ListCursor WatchCursor])
+(import doeff_records [PutRow PutRows RowWrite ReadRow ListRows]
+        doeff_records._effects [WHERE-ANY-LIMIT])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
 (import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 
 
 (defn refuses? [thunk exception]
@@ -63,8 +63,8 @@
 (deftest test-a-retired-key-is-judged-like-a-live-event
   ;; 保持の期限で出来事を消した鍵の覚え(番号と本文の指紋だけ)にも、生きた出来事と同じ規則を当てる(#3022): 正規の綴りが同じ本文
   ;; (鍵の順だけ違う)は前の番号・別の本文(True と 1 も別)は「冪等キー」を名指す断り。指紋は正規の綴りの sha256。
-  (import doeff_records.admission [judge-append body-digest AppendReplay] doeff_records.values [RetiredKey])
-  (import doeff_records.values [Event])
+  (import doeff_records.admission [judge-append body-digest AppendReplay] doeff_records [RetiredKey])
+  (import doeff_records [Event])
   (val decl (StreamDecl "pulses" #("w") :retention (KeepFor 60)))
   (val body {"a" 1 "b" [True "日本"]})
   (val live (Event "pulses" 7 "k" body "w" 0))

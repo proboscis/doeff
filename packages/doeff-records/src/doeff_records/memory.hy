@@ -23,7 +23,7 @@
 ;;; 期限を過ぎた出来事を捨てて覚えへ移してから、前の使いを引く(retire-touched-events)。触らない物は SweepExpired まで残る(読みには出ない)。
 ;;; 送ってから外す列(StreamDecl.archive-before-retire — maintenance.hy の頭の註の「出来事を送ってから外す」)は、回収が外さず(期限の索引に
 ;;; 項を積まない)、書きは鍵を覚えるだけで、手入れの送りが確かめた出来事だけを RetireArchivedEvents が外す(PostgreSQL の handler と同じ形)。
-;;; 鍵の覚えの外し(StreamDecl.key-memory — values.hy の KeyMemory の註): 覚えた刻を覚えの隣に持ち(remembered-at)、出来事が置き場を
+;;; 鍵の覚えの外し(StreamDecl.key-memory — _values.hy の KeyMemory の註): 覚えた刻を覚えの隣に持ち(remembered-at)、出来事が置き場を
 ;;; 去った時に、覚えを残さない列(RememberNoKeys)は覚えを外し、長さを限った列(RememberKeysFor)は外してよい刻を覚えの外しの索引
 ;;; (key-forgets — 刻の heap)に積む。回収(SweepExpired)が索引の刻の来た覚えを、出来事が置き場に無く覚えた刻から長さを過ぎた時だけ外す
 ;;; (forget-keys-locked — PostgreSQL の handler の forget-keys と同じ判じ)。
@@ -64,17 +64,17 @@
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
+(import doeff_records._values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
                               EventAbsent EventRetired BatchRead key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
-(import doeff_records.watching [closing-wake?])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
+(import doeff_records._watching [closing-wake?])
+(import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch AwaitRecordsBack ReadSourcePatience write-parts])
-(import doeff_records.faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
+(import doeff_records._faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
-(import doeff_records.store_choice [StoreChoice])
+(import doeff_records._store_choice [StoreChoice])
 (import functools [partial])
 (import doeff_records.admission [Admitted AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append
                                  retention-group-of key-head-of key-head-refusal where-refusal row-matches? row-matches-any? descending-value?
@@ -551,7 +551,7 @@
   "判定を通った 1 行を置き場に書き、変更の列に 1 つ積む(PutRow と PutRows の書きを 1 つにし、版と番号の採り方を揃えるため)。"
   (setv version (if (is current None) 1 (+ current.version 1)))
   ;; 値は書いた時に 1 度だけ綴り、行と変更に持たせる(PostgreSQL の置き場の payload と同じ綴り — 読みの答えは綴りをそのまま継ぐ・
-  ;; values.hy の頭の註の保存の綴り)。
+  ;; _values.hy の頭の註の保存の綴り)。
   (setv spelled (canonical-json value)
         text (key-text key)
         stored (StoredRow (spelled-row key value spelled version) now-ms))
@@ -1311,7 +1311,7 @@
 (defk memory-store-choice [store]
   {:pre [(: store MemoryStore)] :post [(: % StoreChoice)] :tags {:context "records" :role "foundation"}}
   "memory の置き場 store を使う置き場の選びを作るため(模擬・手元の 1 process・単体の検が records-serving に渡す。/readyz は置き場全体の
-   止まりの間だけ届かない — memory-readiness)。PostgreSQL の選びは doeff_records.main の PG-STORE。"
+   止まりの間だけ届かない — memory-readiness)。PostgreSQL の選びは doeff_records._main の PG-STORE。"
   (StoreChoice :prepare-of (partial memory-prepared store) :readiness (partial memory-readiness store)))
 
 

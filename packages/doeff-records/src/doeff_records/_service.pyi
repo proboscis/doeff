@@ -1,13 +1,13 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = service.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _service.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from collections.abc import Callable as Callable
 from doeff import with_handlers as with_handlers
-from doeff_records.values import RecordsSchema as RecordsSchema
-from doeff_records.values import Unreachable as Unreachable
-from doeff_records.principals import Principal as Principal
-from doeff_records.principals import writer_of as writer_of
+from doeff_records._values import RecordsSchema as RecordsSchema
+from doeff_records._values import Unreachable as Unreachable
+from doeff_records._principals import Principal as Principal
+from doeff_records._principals import writer_of as writer_of
 from doeff_records.loop_work import off_loop as off_loop
 from doeff_records.loop_work import hyx_off_loop_answerXquestion_markX as hyx_off_loop_answerXquestion_markX
 from doeff_records.wire import PATH_PREFIX as PATH_PREFIX

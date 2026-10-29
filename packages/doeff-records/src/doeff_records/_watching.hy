@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
-(import doeff_records.values [Changes Events EventsMoved EventsQuiet Reset Unreachable WaitsClosed])
+(import doeff_records._values [Changes Events EventsMoved EventsQuiet Reset Unreachable WaitsClosed])
 (import doeff_records.admission [epoch-ms])
 
 

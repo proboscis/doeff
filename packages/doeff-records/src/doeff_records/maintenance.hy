@@ -29,7 +29,7 @@
 ;;; 過ぎた出来事は頁に無く、境の読み直しでも外れない)。送りが Unreachable の頁で回を終える(その頁と残りは次の回)。
 ;;;
 ;;; 鍵の覚えを外す(card ki-4ebaefac6668): 置き場を去った出来事の冪等キーの覚え(values.RetiredKey)は、前は外さず、列に積んだ出来事の数
-;;; だけ際限なく育った。列の宣言の覚え方 StreamDecl.key-memory(values.hy の KeyMemory の註)が RememberKeysFor の列は、覚えた刻から
+;;; だけ際限なく育った。列の宣言の覚え方 StreamDecl.key-memory(_values.hy の KeyMemory の註)が RememberKeysFor の列は、覚えた刻から
 ;;; 宣言の長さを過ぎた覚えを SweepExpired が外し(答え Swept.forgotten)、RememberNoKeys の列は出来事が置き場を去る時に覚えを残さない。
 ;;; 送ってから外す列の覚えは、出来事が送り先に在ると確かめて外れるまで外さない — 送り先に届かない間は出来事も覚えも置き場に残り、
 ;;; 送り直しの答えは変わらない。外れた覚えの中身(鍵・番号・本文)は送り先の出来事の行が持つので、覚えの行は送らずに外す(送り先の無い
@@ -44,7 +44,7 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase])
 (import doeff_time [Delay GetTime])
-(import doeff_records.values [Event RowChanged RowRemoved Unreachable])
+(import doeff_records._values [Event RowChanged RowRemoved Unreachable])
 (import datetime [datetime])
 
 ;; 出来事の送りの 1 頁の出来事の数の上限(送りの関数に渡す 1 回の量 — 外しの書きの錠の中で触る行もこの数で縛る)。
@@ -91,7 +91,7 @@
 
 (defclass [(dataclass :frozen True)] Swept []
   "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)/ forgotten = 外した鍵の覚えの数(覚え方の長さを過ぎた覚え —
-   values.hy の KeyMemory の註)/ write-keys = 外した行の書きの冪等キーの覚えの数(覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた
+   _values.hy の KeyMemory の註)/ write-keys = 外した行の書きの冪等キーの覚えの数(覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた
    覚え — card ki-78c6d663491f)。"
   (#^ int rows)
   (setv #^ int forgotten 0)

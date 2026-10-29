@@ -11,7 +11,7 @@
 ;;;   start-records-server 検の殻: 入口の Program を別の thread の run で回し、表の用意の告知を待って、結んだ宛先の url と止める close を持つ
 ;;;                        RunningServer を返す(使い手の検と模擬が使う口 — 置き場は呼び手が渡す)。止めの合図は殻の合図(threading.Event)を
 ;;;                        shell-control が StopRequested の答えにする。
-;;; 本番の土台と env の読みは main.hy。
+;;; 本番の土台と env の読みは _main.hy。
 ;;;
 ;;; 入口の形(他の記録の service の入口と同じ形):
 ;;;   - 受けの loop(receive-requests)は HttpNextRequest で受け、要求ごとに Spawn した task(answer-arrival)が答える。loop は走り中の要求の
@@ -24,7 +24,7 @@
 ;;;   - 用意の告知(#3733): 用意の task は 書き手の名 → handler の関数を prepared-slot に置いた後に RecordsPrepared(結んだ宛先・所要の秒)を
 ;;;     1 度だけ出す — 告知が出たなら記録の操作に答えられる。告知は用意の task の終わりで、止めの道(watch-stop → CloseWaits → HttpShutdown)の
 ;;;     外(止めの合図で受けの loop が先に終われば、告知の前でも途中でも用意の task ごと取り消す)。答え手: 本番の土台は 1 行を印字し
-;;;     (main.hy の printed-listening)、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答え手が落ちれば用意の失敗と同じく run を
+;;;     (_main.hy の printed-listening)、使い手の土台は準備の報告を立て、検の殻は開いた口を返す。答え手が落ちれば用意の失敗と同じく run を
 ;;;     例外で終える
 ;;;   - 止めの見張り(watch-stop)は StopRequested を問い、合図で保留中の置き場の待ちを止めの印で起こし(CloseWaits)、HttpShutdown を撃つ。
 ;;;     止めの印(#3713): 入口の session(waits-closing)が印を持ち、要求ごとの記録の handler の中の待ち(WaitWithin — 変化の待ちの long-poll の
@@ -70,8 +70,8 @@
 ;;;     名は付けない(区間 9 × 表 80 の観測の列になる — 遅い表は呼びの数と行の数から絞り、区間は操作ごとに読む)
 ;;;   - scheduler の thread の仕事の分け(ADR-DOE-RECORDS-002 — loop_work.hy の頭の註): 受けの loop・要求の task・書きの門・変化の待ちは
 ;;;     全部 1 本の scheduler の thread の上で回るので、その thread は要求の受けと順の制御と、大きさが要求の本文か 1 行で決まる計算だけを持つ。
-;;;     束の読みの行の読み解き(pg.hy の decoded-batch)と束の読みの答えの綴り(service.hy の answer-reply)は Compute を出す。入口の
-;;;     Program は Compute に答えない — 答え手は土台が置く(本番の土台の口 = main.hy の records-connected の thread の pool・検の殻 =
+;;;     束の読みの行の読み解き(pg.hy の decoded-batch)と束の読みの答えの綴り(_service.hy の answer-reply)は Compute を出す。入口の
+;;;     Program は Compute に答えない — 答え手は土台が置く(本番の土台の口 = _main.hy の records-connected の thread の pool・検の殻 =
 ;;;     start-records-server の thread の pool・台本の検と模擬 = inline-compute-handler)
 ;;; 表を用意せずに書けない約束(PreparedStore)は、handler の関数を用意の task だけが作ることで守る(用意の前の要求は prepared-slot が
 ;;; 空なので store-not-prepared が Unreachable で答える)。
@@ -101,20 +101,20 @@
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time.effects.time [WaitWithinEffect])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
-(import doeff_records.schema_digest [schema-digests])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
+(import doeff_records._values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
+(import doeff_records._schema_digest [schema-digests])
+(import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
                                ReadEventByKey ReadBatch])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
                                       lock-metric-helps])
-(import doeff_records.service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
+(import doeff_records._service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
 (import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
                             operation-of server-timing-spelled])
 (import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
-(import doeff_records.store_choice [StorePressure PressureUnread])
+(import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation
                                          SecondsTotal])
 (import doeff_core_effects.memory_meter [memory-meter-handler])
@@ -171,7 +171,7 @@
 (val SHELL-OPEN-SECONDS 30.0)
 (val SHELL-CLOSE-SECONDS 10.0)
 (val SHELL-STOP-REASON "検の殻の close")
-;; 検の殻の計算の pool の thread の数(束の読みの読み解きと綴り — 本番の土台の口は main.hy の COMPUTE-WORKERS)。
+;; 検の殻の計算の pool の thread の数(束の読みの読み解きと綴り — 本番の土台の口は _main.hy の COMPUTE-WORKERS)。
 (val SHELL-COMPUTE-WORKERS 2)
 
 

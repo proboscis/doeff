@@ -34,16 +34,16 @@
 ;;; 止まりの日まで隠れない。待つかどうかは組み立てが値で名を選ぶ(待つ秒の request-patience-handler か、待たない 0 秒 = records-unwaited)—
 ;;; 待てない組み立てと呼び(処理ループ・coordinator の居ない process)は、client の外側に 0 秒の答え手を置く。合図の源の問いには答えない
 ;;; ので、同じ組の中で源は自分の時間だけ止まりに耐える。上限を越えたら、待った秒を名指した Unreachable を返す(呼び手の扱いは今までどおり)。撃ち直しの冪等: 書きは
-;;; どれも冪等キーつきで撃つ — 追記(AppendEvent・AppendEvents)は effect の鍵(同じ鍵・同じ本文は前の番号を返す・laws.hy の
+;;; どれも冪等キーつきで撃つ — 追記(AppendEvent・AppendEvents)は effect の鍵(同じ鍵・同じ本文は前の番号を返す・_laws.hy の
 ;;; law-append-is-idempotent)、行の書き(PutRow・PutRows)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
 ;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(event_source.hy の ride-out-stall)。
 ;;;
 ;;; 行の書きの冪等キー(card ki-78c6d663491f — 前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
 ;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows には撃つ前に要求 1 つの鍵を
 ;;; 乱数で作り(keyed-write)、1 回目と撃ち直しの全部に同じ鍵を見出し X-Records-Idempotency-Key(wire の IDEMPOTENCY-HEADER)で付ける。
-;;; 置き場は確定した鍵の答えを覚え、同じ鍵・同じ本文の撃ち直しに前の答え(Written・WrittenRows の replayed 真)を返す(laws.hy の
+;;; 置き場は確定した鍵の答えを覚え、同じ鍵・同じ本文の撃ち直しに前の答え(Written・WrittenRows の replayed 真)を返す(_laws.hy の
 ;;; law-a-keyed-write-replays-its-answer)。呼び手が鍵を選んだ書き(effect の idempotency-key)はその鍵で撃つ。覚えは置き場が
-;;; values.WRITE-KEY-MEMORY-SECONDS の間持つ — 待つ時間(RequestPatience)はそれより短く選ぶ(values.hy の註)。
+;;; values.WRITE-KEY-MEMORY-SECONDS の間持つ — 待つ時間(RequestPatience)はそれより短く選ぶ(_values.hy の註)。
 ;;;
 ;;; 計器(#2740): endpoint に計器の答え手(meter)を渡すと、送った要求 1 つごとに要求の種 × 結果(service の答えの status・届かない・
 ;;; それ以外の status)を doeff の CountMetric で 1 つ数える(名の綴りは wire の CLIENT-ANSWER-METRIC)。記録の service に届かなかった
@@ -69,8 +69,8 @@
 (import doeff_core_effects.meter_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
-(import doeff_records.values [Changes EventsMoved EventsQuiet Reset Unreachable])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
+(import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
+(import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch ReadRequestPatience])
 (import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome

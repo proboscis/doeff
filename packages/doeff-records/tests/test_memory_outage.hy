@@ -10,11 +10,11 @@
 (import doeff_time [Delay GetTime])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
-(import doeff_records.effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
-(import doeff_records.faults [SetStoreOutage])
+(import doeff_records [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
+(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
+(import doeff_records [SetStoreOutage])
 (import doeff_records.memory [MemoryStore memory-records-handler memory-store-choice])
-(import doeff_records.laws [LAW-SCHEMA MAKER])
+(import doeff_records._laws [LAW-SCHEMA MAKER])
 
 (val DETAIL "記録の service が落ちている(筋書き)")
 

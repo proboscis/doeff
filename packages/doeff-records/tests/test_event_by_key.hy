@@ -1,5 +1,5 @@
 ;; 出来事を冪等キーで 1 つ引く読み ReadEventByKey(#3750): 列を頭から読まずに、置き場の (列, 冪等キー) の一意の索引で答える。
-;;   - 法(doeff_records.laws の law-event-by-key-reads-the-same-event)を memory・PostgreSQL・HTTP の口越し(送り方 2 つ・置き場 2 つ)で回す
+;;   - 法(doeff_records._laws の law-event-by-key-reads-the-same-event)を memory・PostgreSQL・HTTP の口越し(送り方 2 つ・置き場 2 つ)で回す
 ;;     — 列の読みと同じ出来事・積んでいない鍵と別の列の鍵は EventAbsent・再送で変わらない・保持の期限を過ぎた鍵は回収の前も後も EventRetired。
 ;;   - HTTP の口越しの読みは、列の長さ(短い列と長い列)に依らず要求ちょうど 1 つで答える(使い手の前の形 = 列を頭から頁で読み切る読みは、
 ;;     列の長さに応じて要求が増えた)。PostgreSQL の文が読む行の数が置き場の大きさに依らない事は test_pg_index_reads.hy。
@@ -15,10 +15,10 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_records.values [Event EventAbsent EventRetired Unreachable Appended])
-(import doeff_records.effects [AppendEvent ReadEventByKey])
-(import doeff_records.faults [SetStoreOutage StoreFault StoreOperation AddStoreFault])
-(import doeff_records.laws [LAW-SCHEMA MAKER PULSE-KEEP-SECONDS law-event-by-key-reads-the-same-event])
+(import doeff_records [Event EventAbsent EventRetired Unreachable Appended])
+(import doeff_records [AppendEvent ReadEventByKey])
+(import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault])
+(import doeff_records._laws [LAW-SCHEMA MAKER PULSE-KEEP-SECONDS law-event-by-key-reads-the-same-event])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records.memory [MemoryStore memory-records-handler])
 (import doeff_records.http_server [records-server-config start-records-server])

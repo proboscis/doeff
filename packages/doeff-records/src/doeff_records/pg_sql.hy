@@ -184,7 +184,7 @@
 (import re)
 (import doeff_core_effects.sql_effects [SqlParam])
 (import doeff_records.admission [key-text])
-(import doeff_records.values [RecordsSchema RetiredKey KeepFor ByKeySuffix ListCursor FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
+(import doeff_records._values [RecordsSchema RetiredKey KeepFor ByKeySuffix ListCursor FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (val PREFIX-PATTERN (re.compile "^[a-z_][a-z0-9_]{0,30}$"))
@@ -1096,7 +1096,7 @@
          (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "上から読む ListRows(descending-by — effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
+  "上から読む ListRows(descending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
    descending-by の値が JSON の整数の行(memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、
    (値, 鍵の綴り) の大きい順に。cursor = 前の頁の位置(None = 上から): (値, 鍵の綴り) が位置の (after-value, after-key) より小さい行
    だけ(keyset)。位置の値は文字列で渡して numeric に読む(JSON の整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any

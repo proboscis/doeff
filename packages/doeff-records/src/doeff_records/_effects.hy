@@ -13,7 +13,7 @@
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
 ;;;
-;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は values.hy。
+;;; 書き手の身元は effect の引数にしない — handler を組む時(composition root)に渡す。答えの型は _values.hy。
 ;;; 欄 → 値の写像(PutRow.value・ListRows.where・ListRows.where-any)と出来事の本文(AppendEvent.body・EventAppend.body)は、作る時に深く
 ;;; 凍らせる(dict を渡してもよい — where-any の組の配列は tuple になる)。
 (require doeff-hy.macros [defeffect])
@@ -21,7 +21,7 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy.frozen [FrozenMap freeze-json])
-(import doeff_records.values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
+(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
                               Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused])

@@ -1,6 +1,6 @@
-"""values.hy の公開面の型(型検査のための宣言 — 実行時は values.hy を読む)。
+"""_values.hy の公開面の型(型検査のための宣言 — 実行時は _values.hy を読む)。
 
-values.hy は Hy の module なので、pyright は中を読めず、`from doeff_records.values import RecordsSchema` の名が全部 Unknown に
+_values.hy は Hy の module なので、pyright は中を読めず、`from doeff_records._values import RecordsSchema` の名が全部 Unknown に
 なる(使う側の表の宣言・行の読みの答え・変更の欄の読みに、書き手に直せない reportUnknown* が出る)。ここで型を宣言する。
 
 - 値の型は全部 frozen の dataclass(実装と同じ欄の名・順・既定値)。欄の注記は実装の注記に、実装が素の `tuple` / `object` と
@@ -199,7 +199,7 @@ class RowChanged:
     sequence: int
     at: int
 
-# 保存の綴り(values.hy の頭の註): 置き場が保存した値の JSON の綴りを持つ答えの作り手と読み。
+# 保存の綴り(_values.hy の頭の註): 置き場が保存した値の JSON の綴りを持つ答えの作り手と読み。
 STORED_TEXT: str
 def stored_text(holder: Row | RowChanged) -> str | None: ...
 def stored_row(key: tuple[str, ...], text: str, version: int) -> Row: ...

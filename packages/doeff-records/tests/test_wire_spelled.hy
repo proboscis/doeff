@@ -1,5 +1,5 @@
 ;;; 記録の service の答えの本文(wire.answer-text)が、行と変更の値を置き場の保存の綴りのまま継ぎ(値を解かず・凍らせず・戻さず・綴り
-;;; 直さない)、前の綴り(encode-answer の object を json.dumps で綴った物)と JSON として同じ本文を返す事(values.hy の頭の註の保存の綴り)。
+;;; 直さない)、前の綴り(encode-answer の object を json.dumps で綴った物)と JSON として同じ本文を返す事(_values.hy の頭の註の保存の綴り)。
 ;;; 前は欄を絞らない一覧と変更の読みのたびに、変わっていない行も 1 行ごとに json.loads・凍らせ・thaw-json・json.dumps を回していた。
 ;;; - memory の置き場と PostgreSQL の置き場の両方で、一覧(欄を絞らない・絞る・上から読む)と変更の読みの答えの新旧の本文が JSON として同じ。
 ;;; - 欄を絞らない一覧と変更の読みの行は保存の綴りを持ち、PostgreSQL の置き場の行は答えを綴った後も値を解いていない(欄 value が無い)。
@@ -9,10 +9,10 @@
 (import pytest)
 (import doeff [run])
 (import doeff_hy.frozen [FrozenMap thaw-json])
-(import doeff_records.values [ExpectAbsent ExpectVersion Row RowChanged Page Changes Written WatchCursor stored-row stored-change
-                              stored-text])
-(import doeff_records.effects [ListRows WatchChanges PutRow])
-(import doeff_records.laws [MAKER LawHarness as-writer])
+(import doeff_records [ExpectAbsent ExpectVersion Row RowChanged Page Changes Written WatchCursor]
+        doeff_records._values [stored-row stored-change stored-text])
+(import doeff_records [ListRows WatchChanges PutRow])
+(import doeff_records._laws [MAKER LawHarness as-writer])
 (import doeff_records.wire [encode-answer answer-text])
 (import tests.interpreters [build-interpreter session-dsn PG-DSN-VARIABLE pg-skip-reason])
 

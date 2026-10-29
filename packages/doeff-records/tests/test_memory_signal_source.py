@@ -36,21 +36,54 @@ from doeff_events import (
 )
 from doeff_events import WaitForEvent
 from doeff_hy.frozen import FrozenMap
-from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
+from doeff_records import (
+    ExpectAny,
+    PutRows,
+    RowWrite,
+    SetStoreOutage,
+    WatchChanges,
+    WatchEvents,
+    WrittenRows,
+)
 from doeff_records.event_source import (
     RECORDS_SIGNAL_SOURCE,
-    SignalSourceUnreachable,
     ReadSignalSource,
     SignalSourceFactory,
+    SignalSourceUnreachable,
     SignalTables,
     read_signal_handler,
     records_signal_handler,
 )
-from doeff_records.faults import SetStoreOutage
-from doeff_records.memory import MemoryStore, memory_records_handler, memory_signal_handler, memory_signal_source
 from doeff_records.http_client import RecordsEndpoint, http_records_handler
-from doeff_records.values import ExpectAny, WrittenRows
+from doeff_records.memory import (
+    MemoryStore,
+    memory_records_handler,
+    memory_signal_handler,
+    memory_signal_source,
+)
 from doeff_time import Delay, DelayEffect, GetTime
+
+# 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
+from event_signal_invariants import (  # noqa: E402 - test_event_source の path の後
+    INVARIANTS,
+    Changed,
+    Invariant,
+    SignalWorld,
+)
+
+from doeff import (
+    EffectBase,
+    EffectGenerator,
+    K,
+    Pass,
+    Program,
+    Resume,
+    do,
+    handler,
+    run,
+    with_handlers,
+)
+from doeff.program import ProgramHandler
 from tests.test_event_source import (
     DETAIL,
     OUTAGE_SECONDS,
@@ -70,12 +103,6 @@ from tests.test_event_source import (
     _write,
     assert_resumed_promptly,
 )
-
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Resume, do, handler, run, with_handlers
-from doeff.program import ProgramHandler
-
-# 共有の不変条件(test_event_source が path に足した doeff-events の tests から読む)。
-from event_signal_invariants import INVARIANTS, Changed, Invariant, SignalWorld  # noqa: E402 - test_event_source の path の後
 
 
 def memory_world() -> SignalWorld:
@@ -316,9 +343,10 @@ def test_read_signal_handler_uses_the_source_of_the_records_handler_in_scope() -
 
 
 def test_read_signal_source_lives_with_the_records_effects() -> None:
-    """源の工場の問いは記録の effect の置き場 doeff_records.effects に在り、event_source からも同じ型が読める(模擬の柵は effects と faults の
+    """源の工場の問いは記録の effect の置き場 doeff_records._effects に在り、event_source からも同じ型が読める(模擬の柵は effects と faults の
     module の型を集めるので、ここに在れば柵が通す — #3127)。"""
-    from doeff_records import effects, event_source
+    from doeff_records import _effects as effects
+    from doeff_records import event_source
 
     assert effects.ReadSignalSource is event_source.ReadSignalSource
 

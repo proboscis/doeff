@@ -7,9 +7,9 @@
 (require doeff-hy.macros [deftest <- var])
 (import pickle)
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_records.values [FieldDecl TableDecl StreamDecl RecordsSchema UndeclaredTable])
-(import doeff_records.effects [ReadRow PutRows RowWrite AppendEvent WatchChanges])
-(import doeff_records.values [ExpectAny WatchCursor])
+(import doeff_records [FieldDecl TableDecl StreamDecl RecordsSchema UndeclaredTable])
+(import doeff_records [ReadRow PutRows RowWrite AppendEvent WatchChanges])
+(import doeff_records [ExpectAny WatchCursor])
 (import doeff_records.wire [undeclared-reason undeclared-refusal])
 
 (setv SCHEMA (RecordsSchema :tables (FrozenMap {"parts" (TableDecl :name "parts" :key-fields #("id")

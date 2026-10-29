@@ -25,14 +25,14 @@
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
     "packages/doeff-records/src/doeff_records/wire.hy",
-    "packages/doeff-records/src/doeff_records/principals.hy",
-    "packages/doeff-records/src/doeff_records/service.hy",
+    "packages/doeff-records/src/doeff_records/_principals.hy",
+    "packages/doeff-records/src/doeff_records/_service.hy",
     "packages/doeff-records/src/doeff_records/http_client.hy",
     "packages/doeff-records/src/doeff_records/http_server.hy",
-    "packages/doeff-records/src/doeff_records/schema_digest.hy",
+    "packages/doeff-records/src/doeff_records/_schema_digest.hy",
     "packages/doeff-records/src/doeff_records/maintenance.hy",
-    "packages/doeff-records/src/doeff_records/store_choice.hy",
-    "packages/doeff-records/src/doeff_records/main.hy"
+    "packages/doeff-records/src/doeff_records/_store_choice.hy",
+    "packages/doeff-records/src/doeff_records/_main.hy"
   ],
   "exclude": [],
   "baseline": ".agents/code-quality-baseline.json",
@@ -558,12 +558,12 @@
     {
       "name": "records-principals",
       "paths": [
-        "packages/doeff-records/src/doeff_records/principals.hy"
+        "packages/doeff-records/src/doeff_records/_principals.hy"
       ],
       "responsibility": "記録の service の呼び手の書き手の名: X-Records-Writer の名乗りをそのまま書き手の名にする(無ければ anonymous)。I/O なし",
       "layer": "pure",
       "public": [
-        "packages/doeff-records/src/doeff_records/principals.hy"
+        "packages/doeff-records/src/doeff_records/_principals.hy"
       ],
       "allow": [],
       "typed": true
@@ -586,12 +586,12 @@
     {
       "name": "records-service",
       "paths": [
-        "packages/doeff-records/src/doeff_records/service.hy"
+        "packages/doeff-records/src/doeff_records/_service.hy"
       ],
       "responsibility": "記録の service の HTTP の口の流れ: 要求 1 つ → 身元 → 本文の読み → 宣言に在る表か → 呼び手の書き手の handler の下で公開 effect を撃つ → 答え。判断は持たない(綴り = records-wire・身元 = records-principals・書きの判断 = 記録の handler)",
       "layer": "effects",
       "public": [
-        "packages/doeff-records/src/doeff_records/service.hy"
+        "packages/doeff-records/src/doeff_records/_service.hy"
       ],
       "allow": [
         "records-wire",
@@ -644,12 +644,12 @@
     {
       "name": "records-schema-digest",
       "paths": [
-        "packages/doeff-records/src/doeff_records/schema_digest.hy"
+        "packages/doeff-records/src/doeff_records/_schema_digest.hy"
       ],
       "responsibility": "置き場の宣言の表ごとの要約(表の名 → 表の宣言の repr の sha256)の評価の 1 か所。GET /served と使い手の木の data が同じ評価を使う(#2742)。I/O なし",
       "layer": "pure",
       "public": [
-        "packages/doeff-records/src/doeff_records/schema_digest.hy"
+        "packages/doeff-records/src/doeff_records/_schema_digest.hy"
       ],
       "allow": [
         "records-values",
@@ -660,12 +660,12 @@
     {
       "name": "records-store-choice",
       "paths": [
-        "packages/doeff-records/src/doeff_records/store_choice.hy"
+        "packages/doeff-records/src/doeff_records/_store_choice.hy"
       ],
       "responsibility": "記録の service の置き場の選びの型 StoreChoice(表の用意の作り手 prepare-of と /readyz の問い readiness と詰まりの読み pressure の組)と、詰まりの読みの答えの型 StorePressure・PressureUnread(錠を待つ本数・idle in transaction の最長の秒 — agora-redesign #1858)。data だけで I/O なし。本体の設定 records-serving が引数で受け、値は置き場の module が持つ(PostgreSQL = main の PG-STORE・memory = memory の memory-store-choice — agora-redesign #1608)",
       "layer": "domain",
       "public": [
-        "packages/doeff-records/src/doeff_records/store_choice.hy"
+        "packages/doeff-records/src/doeff_records/_store_choice.hy"
       ],
       "allow": [],
       "typed": true
@@ -673,12 +673,12 @@
     {
       "name": "records-main",
       "paths": [
-        "packages/doeff-records/src/doeff_records/main.hy"
+        "packages/doeff-records/src/doeff_records/_main.hy"
       ],
       "responsibility": "記録の service の composition root: env と Secret の file を effect で読み、置き場の宣言・PostgreSQL の SQL の答え手と接続の貸し出し(doeff_core_effects)・本番の土台を組んで入口の Program を走らせる(判断を持たない)",
       "layer": "runtime",
       "public": [
-        "packages/doeff-records/src/doeff_records/main.hy"
+        "packages/doeff-records/src/doeff_records/_main.hy"
       ],
       "allow": [
         "records-principals",
@@ -694,12 +694,12 @@
     {
       "name": "records-values",
       "paths": [
-        "packages/doeff-records/src/doeff_records/values.hy"
+        "packages/doeff-records/src/doeff_records/_values.hy"
       ],
       "responsibility": "記録の仕組みの値の型: 表と追記の列の宣言・書きの期待・位置・effect の答え(成功と失敗の判別可能な union)。data だけで I/O なし",
       "layer": "domain",
       "public": [
-        "packages/doeff-records/src/doeff_records/values.hy"
+        "packages/doeff-records/src/doeff_records/_values.hy"
       ],
       "allow": [
         "doeff-hy-frozen"
@@ -709,12 +709,12 @@
     {
       "name": "records-effects",
       "paths": [
-        "packages/doeff-records/src/doeff_records/effects.hy"
+        "packages/doeff-records/src/doeff_records/_effects.hy"
       ],
       "responsibility": "記録の公開 effect 11 個(ReadRow・ListRows・PutRow・WatchChanges・AppendEvent・ReadEvents・PutRows・ReadStreamEnd・ReadEventByKey・AppendEvents・ReadBatch)と PutRows の書きの束の 1 行 RowWrite・AppendEvents の追記の束の 1 つ EventAppend の宣言。書き手の身元は引数にしない",
       "layer": "effects",
       "public": [
-        "packages/doeff-records/src/doeff_records/effects.hy"
+        "packages/doeff-records/src/doeff_records/_effects.hy"
       ],
       "allow": [
         "records-values"
@@ -724,12 +724,12 @@
     {
       "name": "records-faults",
       "paths": [
-        "packages/doeff-records/src/doeff_records/faults.hy"
+        "packages/doeff-records/src/doeff_records/_faults.hy"
       ],
       "responsibility": "検の口の effect(置き場の版を進める AdvanceStoreEpoch・置き場に届かない状態を起こす SetStoreOutage — 公開 effect ではない)",
       "layer": "effects",
       "public": [
-        "packages/doeff-records/src/doeff_records/faults.hy"
+        "packages/doeff-records/src/doeff_records/_faults.hy"
       ],
       "allow": [
         "records-values"
@@ -755,12 +755,12 @@
     {
       "name": "records-watching",
       "paths": [
-        "packages/doeff-records/src/doeff_records/watching.hy"
+        "packages/doeff-records/src/doeff_records/_watching.hy"
       ],
       "responsibility": "WatchChanges の待ちの Program(変更が来るか timeout まで poll する・doeff-time の時計)— handler の組が共有する 1 つ",
       "layer": "effects",
       "public": [
-        "packages/doeff-records/src/doeff_records/watching.hy"
+        "packages/doeff-records/src/doeff_records/_watching.hy"
       ],
       "allow": [
         "records-values",

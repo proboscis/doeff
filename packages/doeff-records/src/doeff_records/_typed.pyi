@@ -1,6 +1,6 @@
-"""typed.hy の公開面の型(型検査のための宣言 — 実行時は typed.hy を読む)。
+"""_typed.hy の公開面の型(型検査のための宣言 — 実行時は _typed.hy を読む)。
 
-typed.hy は Hy の module なので、pyright は中を読めず、`from doeff_records.typed import RowType` の名・`typed-change` の答え・
+_typed.hy は Hy の module なので、pyright は中を読めず、`from doeff_records._typed import RowType` の名・`typed-change` の答え・
 `list-typed` の頁の行が全部 Unknown になる(使う側が行の型の値 `.value` を読む所に、書き手に直せない reportUnknown* が出る)。
 ここで型を宣言する。
 
@@ -16,11 +16,12 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Generic, TypeVar
 
-from doeff import Program
 from doeff_hy.frozen import FrozenMap
 from doeff_hy.wire_codec import Codec
 from doeff_hy.wire_malformed import Malformed
-from doeff_records.values import (
+
+from doeff import Program
+from doeff_records._values import (
     Expectation,
     ListCursor,
     Missing,

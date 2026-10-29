@@ -49,8 +49,8 @@
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_records.admission [key-text])
-(import doeff_records.effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
-(import doeff_records.values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
+(import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
+(import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
                               checked-table-name])
 
 ;; 記録の変化の待ちの上限(秒)— 変化が無ければこの秒で静かな答えが返り、同じ位置から待ち直す(long-poll の 1 回の長さ)。
@@ -490,7 +490,7 @@
 (val RECORDS-SIGNAL-SOURCE (SignalSourceFactory :make records-signal-handler))
 
 
-;; 源の工場の問い ReadSignalSource は記録の effect の置き場 doeff_records.effects に在る(上の import で読み、ここからも公開する — #3127)。
+;; 源の工場の問い ReadSignalSource は記録の effect の置き場 doeff_records._effects に在る(上の import で読み、ここからも公開する — #3127)。
 
 
 (defk run-read-signal [bindings subscriber body]
