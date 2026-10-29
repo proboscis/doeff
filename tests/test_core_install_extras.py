@@ -274,8 +274,9 @@ def _core_effects_needs() -> dict[str, frozenset[NormalizedName]]:
         }
     ) != needs:
         needs = grown
-    # `from doeff_core_effects import HttpRequest` などの遅い名(__init__.py の _LAZY_EXPORTS)は、Hy で書いた HTTP の
-    # effect と handler を初めて使う時に読む。
+    # `from doeff_core_effects import ReadText` などの遅い名(__init__.py の _LAZY_EXPORTS)は、名を出す module を初めて
+    # 使う時に読む。その module が上の段で結ばず自分の __getattr__ で遅れて出す名(_effects の HttpRequest — Hy で書いた
+    # HTTP の effect)は、Hy も要る。上の段で結ぶ .py の module の名(memo・cache の effect と handler)は、module の要る物だけ。
     lazy = next(
         ast.literal_eval(node.value)
         for node in ast.parse(modules["doeff_core_effects"].read_text(encoding="utf-8")).body
@@ -284,10 +285,34 @@ def _core_effects_needs() -> dict[str, frozenset[NormalizedName]]:
         == ["_LAZY_EXPORTS"]
     )
     return needs | {
-        f"{where}.{name}": frozenset({DOEFF_HY}) | needs[module]
+        f"{where}.{name}": needs[module]
+        | (NOTHING if name in _bound_names(modules[module]) else frozenset({DOEFF_HY}))
         for name, module in lazy.items()
         for where in ("doeff_core_effects", module)
     }
+
+
+def _bound_names(path: Path) -> frozenset[str]:
+    """.py の module の上の段が結ぶ名(def・class・代入・import)。module の __getattr__ が遅れて出す名は入らない。
+
+    .hy の module は空(.hy の module は、それだけで Hy を要る — 上の needs が持つ)。
+    """
+    if path.suffix != ".py":
+        return frozenset()
+    names: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        match node:
+            case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name) | ast.ClassDef(name=name):
+                names.add(name)
+            case ast.Assign(targets=targets):
+                names.update(target.id for target in targets if isinstance(target, ast.Name))
+            case ast.AnnAssign(target=ast.Name(id=name)):
+                names.add(name)
+            case ast.Import(names=aliases) | ast.ImportFrom(names=aliases):
+                names.update((alias.asname or alias.name).split(".")[0] for alias in aliases)
+            case _:
+                pass
+    return frozenset(names)
 
 
 def _shipped_sources(directory: Path) -> Iterator[tuple[Path, str]]:
