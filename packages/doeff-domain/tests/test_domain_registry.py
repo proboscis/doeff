@@ -1,6 +1,6 @@
 """Domain データ構造と表の意味論 (ADR-DOE-DOMAIN-001 D2/D3)。
 
-表は effect RegisterDomain・GetDomain で読み書きし、handler を返す工場 domain_registry が答える(ADR-DOE-API-001 R24・
+表は effect RegisterDomain・GetDomain で読み書きし、handler を返す工場 domain_registry が答える(ADR-DOE-API-001 R29・
 card ki-03a7f0af2b64)。domain_registry() は process の表(defdomain が載せる所)、domain_registry(domains=[…]) は渡した
 domain だけの別の表から答える。
 """

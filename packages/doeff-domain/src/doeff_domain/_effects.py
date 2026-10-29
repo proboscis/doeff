@@ -1,7 +1,7 @@
 """語彙のまとまり(domain)の表に置く・引く・check する effect と、表から答える handler を返す工場 domain_registry。
 
 決め: 依頼書 lt-71XZ9Z3RP0W3V2WFN3R7TW6SSV の問い domain の答え lt-FP17P0A4CPBC1RJCF9BFBVF4WV(effect にする・card
-ki-03a7f0af2b64・ADR-DOE-API-001 R24)。前の関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・
+ki-03a7f0af2b64・ADR-DOE-API-001 R29)。前の関数 8 個(register_domain・isolated_registry・get_domain・handles・handled_effects・
 assert_domain_covered・assert_registered_domains_covered・assert_no_orphan_effects)は公開の名から消した — 本体は内側の
 _registry・_checks・_introspect に在り、handler がそれで答える。isolated_registry は domain_registry(domains=[]) が代わり、
 handles は宣言の型 Handles になった(_introspect の docstring)。

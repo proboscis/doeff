@@ -29,7 +29,7 @@ reader is a writer agent, for whom documentation means a failing check.
 ```
 
 The public surface is the declaration types, the effects on the domain table,
-and the factory of the handler that answers them (ADR-DOE-API-001 R24):
+and the factory of the handler that answers them (ADR-DOE-API-001 R29):
 
 | Name | What it is |
 |---|---|

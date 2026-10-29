@@ -1,7 +1,7 @@
 """opt-in 適合検査 — (a) 被覆と (c) 孤児禁止 (ADR-DOE-DOMAIN-001 D7)。
 
 検査は effect AssertDomainCovered・AssertRegisteredDomainsCovered・AssertNoOrphanEffects で、domain_registry が表から
-答える(ADR-DOE-API-001 R24・card ki-03a7f0af2b64)。ここでは domain_registry(domains=[…]) の別の表で走らせる。
+答える(ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。ここでは domain_registry(domains=[…]) の別の表で走らせる。
 """
 
 import doeff_hy  # noqa: F401 — .hy fixture module の import hook 登録(test-only)

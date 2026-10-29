@@ -148,7 +148,7 @@ def _modules_under(package_name: str) -> list[str]:
 
 def _import_for_scan(module_name: str) -> ModuleType:
     """Import a module the scan reads. Any failure becomes a DomainCheckError naming the module, so check (c)
-    fails with one error type (ADR-DOE-API-001 R24) — the original error stays as its cause."""
+    fails with one error type (ADR-DOE-API-001 R29) — the original error stays as its cause."""
     try:
         return importlib.import_module(module_name)
     except Exception as error:

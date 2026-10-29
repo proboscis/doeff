@@ -107,7 +107,7 @@
 
 ;; --- 生 Python handler の宣言(D5)。節を読めない handler(installer / factory)は、domain の :handlers に
 ;; Handles(handler, effect …) で置く — 宣言は domain の側に在り、core-effects の handler に何も付けない(関数 handles() の
-;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R24・card ki-03a7f0af2b64)。宣言は「処理に参加する宣言」であり
+;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。宣言は「処理に参加する宣言」であり
 ;; 全域性の保証ではない。lazy-ask は doeff-reader と doeff-scope の 2 つで同じ宣言を置く。
 (setv _lazy-ask-handles (Handles lazy-ask Ask Local))
 
