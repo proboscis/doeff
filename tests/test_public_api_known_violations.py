@@ -19,6 +19,8 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    残すと赤・訳と決めつきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
    (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
    移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
+   戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
+   直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
 """
 
 from __future__ import annotations
@@ -478,6 +480,48 @@ def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 訳が空",
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 決め '決めた' が card(ki-)・依頼(lt-)・発言(ci-)の id でない",
     ]
+
+
+FACTORY = '''
+
+from doeff.program import ProgramHandler
+
+
+def ping_handlers() -> ProgramHandler:
+    """A handler factory: calling it gives the handler."""
+    return ping_handler
+'''
+NOT_A_FACTORY = '''
+
+from doeff.program import ProgramHandler
+
+
+def ping_handlers() -> ProgramHandler:
+    """Read as a factory by its return type; calling it gives a function without the handler marker."""
+    return lambda program: program
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_factory_whose_call_is_not_a_handler_turns_red(tmp_path: Path) -> None:
+    """戻りの型で handler を返す関数(工場)と読める名も、呼ぶと印 _doeff_is_handler_fn の無い値を返せば外れ — 赤(名指す)。
+    handler を返すように直すと緑で、目録はその名を、呼んで印を確かめた handler と数える(ADR-DOE-API-001 R3)。
+    """
+    table = _fixture_table({})
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + NOT_A_FACTORY)
+    with pytest.raises(
+        AssertionError,
+        match=r"既知の表に無い[\s\S]*"
+        + re.escape(f"{FIXTURE_ROOT}.ping_handlers({tool.NOT_A_FACTORY}・other"),
+    ):
+        check_package(_read_fixture(repo), table)
+
+    _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + FACTORY)
+    package = _read_fixture(repo)
+    check_package(package, table)
+    [row] = [row for row in package["exports"] if row["name"] == "ping_handlers"]
+    assert (row["kind"], row["form"]) == ("handler", "handler を返す関数")
+    assert row["reason"].endswith("引数なしで呼ぶと handler を返す")
 
 
 def test_a_name_put_into_the_listed_groups_turns_red() -> None:
