@@ -309,11 +309,6 @@ def _get_adr(adr_id: str) -> AdrSpec:
     return _ADRS[adr_id]
 
 
-def get_adr(adr_id: str) -> AdrSpec:
-    """移し替えの層: 外の repo の呼び手を effect GetAdr へ書き換えたら(card ki-f2d54a67497b)消す(ADR-DOE-API-001 R20)。"""
-    return _get_adr(adr_id)
-
-
 def get_enforcement(enforcement_id: str) -> EnforcementRef | SemgrepSpec:
     return _ENFORCEMENTS[enforcement_id]
 

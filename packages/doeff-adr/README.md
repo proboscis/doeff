@@ -217,9 +217,8 @@ around the part of the program that should read it: the inner handler answers
 first, an id missing from that list is a `KeyError` (it does not fall through
 to the process registry), and `AdrIds` answers the ids of that list only.
 `specs=[]` is an empty table, not the registry. The ids are read only through
-`AdrIds` (there is no public `adr_ids` function). The function `get_adr`
-remains only as a transition layer until the callers outside doeff read
-`GetAdr`; new code reads the effects.
+`AdrIds` (there is no public `adr_ids` function), and an ADR only through
+`GetAdr` (there is no public `get_adr` function).
 
 ## Semgrep checks as effects
 
