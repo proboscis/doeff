@@ -41,7 +41,7 @@
     [(interpretation
        "置き場は doeff-core-effects。業務も cluster も知らない、動き続ける process の汎用の effect だから(隣の stop_signal・thread_pool_compute・scheduler_channel と同じ種類)。doeff-cluster の ReportMetrics は coordinator へ断面を送る effect で役が違うので、断面の形(counters・gauges・秒の合計と回数)だけを揃えて、後で ReadMeter の答えを ReportMetrics へ渡せるようにした。")
      (interpretation
-       "本物の置き場を class にしない(ADR-DOE-HY-007 R3・R4 — lock と gc の callback を持ち、状態が変わる)。答え手の module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。process に 1 つの物を module が持つ先例 = doeff_core_effects/handlers.py の Await の橋。答え手の引数は変わらない値(名前と設定)だけ。戻せる決定(#1440 comment 5888677819)。")
+       "本物の置き場を class にしない(ADR-DOE-HY-007 R3・R4 — lock と gc の callback を持ち、状態が変わる)。答え手の module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。process に 1 つの物を module が持つ先例 = doeff_core_effects/_handlers.py の Await の橋。答え手の引数は変わらない値(名前と設定)だけ。戻せる決定(#1440 comment 5888677819)。")
      (interpretation
        "heap の凍結を計器と別の module にした。計器は観測を積んで読むだけで process の振る舞いを変えない。凍結は process の GC の状態を変える操作で、計器を持たない program も使う。一緒に置くと、計器を差し替える模擬が GC の操作まで一緒に差し替える形になる(manager の決めの条件 2)。")
      (interpretation
@@ -83,7 +83,7 @@
        ;; law meter-write-is-whole-within-one-name の機械面(1 つの run の中): 観測のたびに読み、inf の桁と回数がいつも同じ。
        ;; thread をまたぐ面は packages/doeff-core-effects/tests/test_process_meter.hy の test-a-reader-in-another-thread-never-sees-half-of-one-name。
        (import doeff [run with_handlers])
-       (import doeff_core_effects.handlers [state])
+       (import doeff_core_effects [state])
        (import doeff_core_effects.meter_effects [MeterBucket MeterSettings ObserveSeconds ReadMeter])
        (import doeff_core_effects.memory_meter [memory-meter-handler])
        (val settings (MeterSettings :buckets #((MeterBucket :label "le_1s" :ceiling 1.0)) :inf-label "le_inf"))
@@ -97,7 +97,7 @@
      (deftest test-adr-doe-core-effects-004-two-names-are-not-written-at-once
        ;; law meter-writes-across-names-are-not-atomic の反例の検: 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る。
        (import doeff [run with_handlers])
-       (import doeff_core_effects.handlers [state])
+       (import doeff_core_effects [state])
        (import doeff_core_effects.meter_effects [CountMetric MeterSettings ReadMeter])
        (import doeff_core_effects.memory_meter [memory-meter-handler])
        (val reads (run (with_handlers [(state) (memory-meter-handler (MeterSettings))]

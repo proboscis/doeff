@@ -2,8 +2,7 @@
 # called for every effect in the body, the children's included, and its return value is ignored: the children
 # still get the reader's answer (docs/18-effect-combinations.md, Law 6). Prints each effect the observer saw, in
 # order, and what the body returned.
-from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader, scheduled
 
 from doeff import Ask, AskEffect, Gather, Spawn, WithObserve, do, run
 

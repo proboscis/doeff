@@ -1,8 +1,7 @@
 # The composition scene: update_counter() from docs/02-core-concepts.md ("Core Example") under
 # state(writer(reader(...))), and under the reversed order writer(state(...)). Prints which handler each effect
 # reached, in order, the answer and the log, and the error of the reversed order.
-from doeff_core_effects import Ask, Get, Put, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import Ask, Get, Put, Tell, reader, state, writer
 
 from doeff import Pass, WithObserve, do, handler, run
 

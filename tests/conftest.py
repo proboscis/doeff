@@ -11,18 +11,18 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
     await_handler,
     lazy_ask,
     listen_handler,
     local_handler,
     reader,
+    scheduled,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 
 from doeff import handler as _program_handler
 from doeff import run
@@ -295,6 +295,6 @@ def scheduler_index_self_check(monkeypatch: pytest.MonkeyPatch) -> None:
     """Turn the Python scheduler's index self-check on: a step whose waiters index
     or ready counts drifted from the structures raises SchedulerIndexDriftError
     (card ki-1294af4fa525). Scheduler test files use it through pytestmark."""
-    from doeff_core_effects import scheduler as scheduler_module
+    from doeff_core_effects import _scheduler as scheduler_module
 
     monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", True)

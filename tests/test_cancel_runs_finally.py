@@ -27,7 +27,7 @@ from typing import Any
 
 import doeff_hy  # noqa: F401  # registers the Hy import hook for the defk module
 from doeff_core_effects import Await, await_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     AcquireSemaphore,
     Cancel,

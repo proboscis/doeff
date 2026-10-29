@@ -1,8 +1,7 @@
 # The run scene: fetch_user(42) from docs/02-core-concepts.md ("@do and Macro Expansion").
 # Calling a @do function runs nothing: it returns an Expand node. run() evaluates it. Prints the node, what the
 # generator yields and is sent back, and the answers.
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import Ask, reader
 
 from doeff import Expand, Perform, do, run
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, assert_type
 
 from doeff import EffectBase, Spawn, do
-from doeff_core_effects.scheduler import Task
+from doeff_core_effects import Task
 
 
 @dataclass(frozen=True)

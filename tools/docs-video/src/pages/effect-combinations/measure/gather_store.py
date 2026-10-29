@@ -4,8 +4,7 @@
 # read the same old value (docs/18-effect-combinations.md, Laws 8a and 8b). Runs both under the Rust and the
 # Python scheduler and prints, for each, the order of the reads and writes and what Gather and the store hold.
 # The suspension is the page's own: Delay(0.05) on sim_time_handler()'s virtual clock, the example of Law 8b.
-from doeff_core_effects import scheduled
-from doeff_core_effects.handlers import state
+from doeff_core_effects import scheduled, state
 from doeff_time import Delay, sim_time_handler
 
 from doeff import Gather, Get, Put, Spawn, do, run

@@ -165,10 +165,10 @@ The following variables are automatically injected into your script's global nam
 |----------|------|-------------|
 | `Program` | `Type[Program]` | Program class for type checking |
 | `run` | `Callable[..., T]` | Runtime entrypoint for executing programs (returns raw value) |
-| `reader` | `Callable` | Reader handler from `doeff_core_effects.handlers` |
-| `state` | `Callable` | State handler from `doeff_core_effects.handlers` |
-| `writer` | `Callable` | Writer handler from `doeff_core_effects.handlers` |
-| `scheduled` | `Callable` | Scheduler from `doeff_core_effects.scheduler` |
+| `reader` | `Callable` | Reader handler from `doeff_core_effects._handlers` |
+| `state` | `Callable` | State handler from `doeff_core_effects._handlers` |
+| `writer` | `Callable` | Writer handler from `doeff_core_effects._handlers` |
+| `scheduled` | `Callable` | Scheduler from `doeff_core_effects._scheduler` |
 
 ### Standard Library
 

@@ -222,7 +222,7 @@ def func(  # doeff: interpreter
 Mark functions that create interpreters/transforms:
 ```python
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 def create_interpreter(config: dict):  # doeff: interpreter
     def inner(program):
@@ -258,8 +258,8 @@ def simple_interpreter(program):  # doeff: interpreter
 ### Interpreter with Handlers
 ```python
 from doeff import run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 def full_interpreter(  # doeff: interpreter
     program,
@@ -272,7 +272,7 @@ def full_interpreter(  # doeff: interpreter
 
 ### Transform Chain
 ```python
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 def optimization_pipeline(  # doeff: transform
     program,
@@ -340,7 +340,7 @@ print(saved)  # ['ROWS FROM API.EXAMPLE.COM']
 ### Class Method Interpreter
 ```python
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 class Executor:
     def execute(self, program):  # doeff: interpreter

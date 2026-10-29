@@ -143,8 +143,8 @@ STALE_EXAMPLES = {
         "python",
         """from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import writer
-from doeff_core_effects.scheduler import scheduled, Spawn, Wait, Gather
+from doeff_core_effects._handlers import writer
+from doeff_core_effects._scheduler import scheduled, Spawn, Wait, Gather
 
 @do
 def worker(label):

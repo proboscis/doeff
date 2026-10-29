@@ -3,7 +3,7 @@
 決まり: doeff の subpackage が利用者に見せる公開 API は effect と handler だけ。doeff-vm の数を測る・設定する関数 9 個
 (doeff_vm の根の vm_live_counts・invariant_checks_enabled と、拡張 doeff_vm.doeff_vm の 7 個)は、effect
 (ReadVmLiveCounts・ReadVmWorkCounts・ReadVmScanCounts・ReadInvariantChecks・SetInvariantChecks・SetSchedulerStepBudgetArmed・
-SetSchedulerTraceInstalled)にして doeff の根から出し、doeff_core_effects.handlers.vm_probe_handler が VM に問うて答える。
+SetSchedulerTraceInstalled)にして doeff の根から出し、doeff_core_effects._handlers.vm_probe_handler が VM に問うて答える。
 拡張の関数は _ で始まる名で拡張の __all__ の外に置く(src/lib.rs の bind_internal)。
 
 失敗ケース: 古い名が doeff_vm か拡張の公開の名に戻る・_ の名が拡張の __all__ に載る・effect が拡張の関数と違う値を答える・
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import doeff_vm
 import pytest
-from doeff_core_effects.handlers import reader, vm_probe_handler
+from doeff_core_effects import reader, vm_probe_handler
 from doeff_vm import doeff_vm as vm_ext
 
 import doeff

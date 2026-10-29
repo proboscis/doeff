@@ -34,8 +34,8 @@ program in one of two ways:
 
 ```python
 from doeff import do, run
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 from doeff_seedream import edit_image__seedream4
 
 @do

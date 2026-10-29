@@ -22,8 +22,8 @@ import threading
 from typing import Any
 
 import pytest
-from doeff_core_effects import Await, await_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
+    Await,
     Cancel,
     CreateExternalPromise,
     ExternalPromiseCancelCallbackError,
@@ -32,6 +32,7 @@ from doeff_core_effects.scheduler import (
     Spawn,
     TaskCancelledError,
     Wait,
+    await_handler,
     scheduled,
 )
 

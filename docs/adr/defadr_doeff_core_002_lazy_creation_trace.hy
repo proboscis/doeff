@@ -62,7 +62,7 @@
        ;; 回帰ガード(C1 spike 2026-07-14 で確認済みの性質を固定):
        ;; エラーなしの effect dispatch ループで行テキスト解決(linecache.getline)ゼロ。
        ;; per-effect の作成文脈捕捉が将来復活したら、ここが red になる。
-       (import doeff_core_effects.handlers [reader])
+       (import doeff_core_effects [reader])
        (setv calls [])
        (setv orig linecache.getline)
        (defn _counting [#* a #** k]

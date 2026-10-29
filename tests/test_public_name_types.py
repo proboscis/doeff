@@ -48,14 +48,14 @@ _DOEFF_GAPS: dict[str, str] = {
 _CORE_HEAD_GAPS: dict[str, str] = {}
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。
 _CORE_TYPED_MODULES = (
-    "doeff_core_effects.effects",
-    "doeff_core_effects.scheduler",
-    "doeff_core_effects.handlers",
+    "doeff_core_effects._effects",
+    "doeff_core_effects._scheduler",
+    "doeff_core_effects._handlers",
     "doeff_core_effects.cache_effects",
     "doeff_core_effects.cache_handlers",
     "doeff_core_effects.memo_effects",
     "doeff_core_effects.memo_handlers",
-    "doeff_core_effects.storage",
+    "doeff_core_effects._storage",
 )
 #: 廃止した名の置き物(実行時だけに在り、使うと替わりの名を言う)。
 _REMOVED = {

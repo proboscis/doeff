@@ -135,10 +135,10 @@
      (defsemgrep p0-scheduler-spawn-must-capture-boundaries
        "doeff-scheduler-spawn-must-capture-boundaries"
        [{"relative-path"
-           "packages/doeff-core-effects/doeff_core_effects/scheduler.py"
+           "packages/doeff-core-effects/doeff_core_effects/_scheduler.py"
          "source" "boundaries = yield get_inner_handlers(k)\n"}]
        [{"relative-path"
-           "packages/doeff-core-effects/doeff_core_effects/scheduler.py"
+           "packages/doeff-core-effects/doeff_core_effects/_scheduler.py"
          "source" "boundaries = yield get_inner_boundaries(k)\n"}])
      (defsemgrep p0-k4-no-blocking-agent-handler
        "k4-no-blocking-agent-handler"

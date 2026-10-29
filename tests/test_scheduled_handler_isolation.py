@@ -5,8 +5,7 @@ inside a @do function work correctly when the body yields sub-programs
 whose handlers emit effects.
 """
 
-from doeff_core_effects.handlers import lazy_ask
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import lazy_ask, scheduled
 from doeff_vm import EffectBase, Pass, Resume
 
 from doeff import Ask, do, run

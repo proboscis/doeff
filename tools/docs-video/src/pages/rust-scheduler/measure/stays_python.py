@@ -1,6 +1,6 @@
 # What stays in Python under both implementations: the effect classes (subclasses resolve as their parent),
 # the handle classes and the exception classes.
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     AcquireSemaphore,
     CreateSemaphore,
     Promise,

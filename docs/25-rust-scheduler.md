@@ -4,14 +4,14 @@ The scheduler behind `scheduled()` (Spawn, Wait, Gather, Race, Cancel, Discard, 
 ExternalPromise) has two implementations, one in Rust and one in Python. They have the same semantics.
 **The Rust implementation is the default**; the Python implementation is opt-in.
 The Rust implementation lives in `packages/doeff-vm/src/scheduler.rs`, the Python one is
-`_scheduled_python` in `packages/doeff-core-effects/doeff_core_effects/scheduler.py`.
+`_scheduled_python` in `packages/doeff-core-effects/doeff_core_effects/_scheduler.py`.
 
 [![A narrated video, about two and a half minutes: the scheduler as the handler that answers Spawn, Wait and Gather; how scheduled() chooses between the Rust and the Python implementation; one program giving the same order, Cancel and trace events under both; what moved to Rust and what stays in Python; and the benchmark taken again](assets/videos/rust-scheduler.gif)](assets/videos/rust-scheduler.mp4)
 
 ## Choosing an implementation
 
 ```python
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 run(scheduled(main()))                              # the default (DEFAULT_IMPLEMENTATION = "rust")
 run(scheduled(main(), implementation="python"))    # the Python implementation for this call only

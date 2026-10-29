@@ -4,7 +4,7 @@
 from typing import Any, assert_type
 
 from doeff import Ask, do, run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 
 
 @do

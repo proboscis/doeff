@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time import Delay, GetTime, sim_time_handler
 
 from doeff import EffectBase, Resume, do, handler, run

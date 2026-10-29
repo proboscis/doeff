@@ -26,8 +26,8 @@ from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
 from doeff_core_effects import ReadWriterLog, Tell
 from doeff_core_effects.cache_effects import CachePut
 from doeff_core_effects.cache_handlers import in_memory_cache_handler
-from doeff_core_effects.handlers import await_handler, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, state, try_handler, writer
+from doeff_core_effects import scheduled
 
 @dataclass(frozen=True)
 class Item:
@@ -223,7 +223,7 @@ whichever handlers are installed around it supply them:
 from dataclasses import dataclass
 from doeff import Ask, EffectBase, Resume, do, handler, run, with_handlers
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 @dataclass(frozen=True)
 class LoadSales(EffectBase):
@@ -267,7 +267,7 @@ import sqlite3
 from dataclasses import dataclass
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects import state, try_handler, writer
 
 @dataclass(frozen=True)
 class Begin(EffectBase):
@@ -488,7 +488,7 @@ import sqlite3
 from dataclasses import dataclass
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.handlers import state, try_handler, writer
+from doeff_core_effects import state, try_handler, writer
 
 @dataclass(frozen=True)
 class Acquire(EffectBase):
@@ -750,7 +750,7 @@ Verify effects were executed:
 ```python
 from doeff import do, run
 from doeff_core_effects import Put, Tell
-from doeff_core_effects.handlers import state, writer
+from doeff_core_effects import state, writer
 
 def test_effects_executed():
     @do
@@ -775,7 +775,7 @@ print("passed")  # passed
 from hypothesis import given, strategies as st
 from doeff import do, run
 from doeff_core_effects import Get, Put
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 
 @given(st.integers(min_value=0, max_value=1000))
 def test_counter_properties(initial_value):

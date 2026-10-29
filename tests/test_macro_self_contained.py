@@ -13,9 +13,7 @@ import doeff_hy  # noqa — registers extensions
 import hy
 import hy.macros
 import pytest
-from doeff_core_effects import Ask
-from doeff_core_effects.handlers import await_handler, lazy_ask
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Ask, await_handler, lazy_ask, scheduled
 
 from doeff import EffectBase, Expand, Pure, run
 

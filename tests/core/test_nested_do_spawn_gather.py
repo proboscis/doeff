@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_core_effects.effects import EffectBase
+from doeff_core_effects._effects import EffectBase
 
 from doeff import (
     AcquireSemaphore,

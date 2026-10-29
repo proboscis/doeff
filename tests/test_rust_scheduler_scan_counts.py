@@ -21,16 +21,17 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.handlers import await_handler, vm_probe_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     Cancel,
     CreateExternalPromise,
     Spawn,
     Task,
     Wait,
-    _SchedulerIntrospection,
+    await_handler,
     scheduled,
+    vm_probe_handler,
 )
+from doeff_core_effects._scheduler import _SchedulerIntrospection
 from doeff_time import WaitWithin, async_time_handler
 
 from doeff import EffectBase, K, ReadVmScanCounts, Resume, do, handler, with_handlers

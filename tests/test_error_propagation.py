@@ -1,7 +1,7 @@
 """Tests for error propagation — Python exceptions flow through the VM correctly."""
 
 import pytest
-from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
+from doeff_core_effects import Gather, Spawn, Wait, scheduled
 from doeff_vm import EffectBase
 
 from doeff import do

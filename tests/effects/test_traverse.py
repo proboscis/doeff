@@ -1,8 +1,7 @@
 """Tests for doeff-traverse: Fail, Traverse, Reduce, Zip, Inspect, Skip, SortBy, Take."""
 
 import pytest
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, try_handler
 from doeff_traverse.collection import Collection
 from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
 from doeff_traverse.handlers import (

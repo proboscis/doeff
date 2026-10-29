@@ -6,7 +6,7 @@ from types import FrameType
 from typing import Any, NamedTuple
 
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     AcquireSemaphore,
     Cancel,
@@ -441,7 +441,7 @@ class TestRace:
 class TestPriority:
     def test_high_priority_runs_first(self):
         """Higher priority task runs before lower priority."""
-        from doeff_core_effects.scheduler import PRIORITY_HIGH, PRIORITY_IDLE
+        from doeff_core_effects import PRIORITY_HIGH, PRIORITY_IDLE
 
         order = []
 
@@ -651,7 +651,7 @@ class TestConcurrency:
 class TestPromise:
     def test_create_and_complete_promise(self):
         """Internal promise: create, complete, wait."""
-        from doeff_core_effects.scheduler import CompletePromise, CreatePromise
+        from doeff_core_effects import CompletePromise, CreatePromise
 
         @do
         def body():
@@ -663,7 +663,7 @@ class TestPromise:
 
     def test_promise_across_tasks(self):
         """One task creates promise, another waits, first completes."""
-        from doeff_core_effects.scheduler import CompletePromise, CreatePromise
+        from doeff_core_effects import CompletePromise, CreatePromise
 
         @do
         def body():
@@ -688,7 +688,7 @@ class TestPromise:
 class TestExternalPromise:
     def test_external_promise_complete(self):
         """ExternalPromise: complete from outside, task gets value."""
-        from doeff_core_effects.scheduler import CreateExternalPromise
+        from doeff_core_effects import CreateExternalPromise
 
         @do
         def body():
@@ -702,7 +702,7 @@ class TestExternalPromise:
 
     def test_external_promise_with_spawned_task(self):
         """Spawned task waits on external promise, main completes it."""
-        from doeff_core_effects.scheduler import CreateExternalPromise
+        from doeff_core_effects import CreateExternalPromise
 
         @do
         def body():
@@ -725,7 +725,7 @@ class TestExternalPromise:
         import threading
         import time
 
-        from doeff_core_effects.scheduler import CreateExternalPromise
+        from doeff_core_effects import CreateExternalPromise
 
         @do
         def sleep_task(i):
@@ -766,7 +766,7 @@ class TestExternalPromise:
         """
         import time
 
-        from doeff_core_effects.scheduler import CreateExternalPromise
+        from doeff_core_effects import CreateExternalPromise
 
         t_fast_completed: list[float] = [0.0]
         t_fast_resumed: list[float] = [0.0]
@@ -831,8 +831,7 @@ class TestPrioritySurvivesSuspension:
         import asyncio
         import time
 
-        from doeff_core_effects.effects import Await
-        from doeff_core_effects.handlers import await_handler
+        from doeff_core_effects import Await, await_handler
 
         timeline: dict[str, float] = {}
         t0 = time.perf_counter()
@@ -876,7 +875,7 @@ class TestPrioritySurvivesSuspension:
         so a HIGH publisher resuming ahead of the woken NORMAL listener
         publishes into an empty registry and the event is silently lost
         (doeff_events memory handler shape)."""
-        from doeff_core_effects.scheduler import PRIORITY_HIGH
+        from doeff_core_effects import PRIORITY_HIGH
 
         mailbox: list[Any] = []
         delivered: list[int] = []
@@ -919,7 +918,7 @@ class TestPrioritySurvivesSuspension:
         within the same priority) and the HIGH spawner was demoted to NORMAL
         after each Spawn.
         """
-        from doeff_core_effects.scheduler import PRIORITY_HIGH
+        from doeff_core_effects import PRIORITY_HIGH
 
         order: list[str] = []
 
@@ -1027,7 +1026,7 @@ class TestPrioritySurvivesSuspension:
 class TestCancel:
     def test_cancel_blocked_task(self):
         """Cancel a task that's blocked waiting on a promise."""
-        from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, TaskCancelledError
+        from doeff_core_effects import Cancel, CreateExternalPromise, TaskCancelledError
 
         @do
         def body():
@@ -1109,7 +1108,7 @@ class TestCancel:
 
     def test_cancel_does_not_affect_completed(self):
         """Cancelling an already-completed task is a no-op."""
-        from doeff_core_effects.scheduler import Cancel
+        from doeff_core_effects import Cancel
 
         @do
         def fast():
@@ -1158,9 +1157,9 @@ def _scheduler_lines_per_timed_wait(parked: int, waits: int, *, traced: bool) ->
     import statistics
     from collections import Counter
 
-    import doeff_core_effects.scheduler as scheduler_module
-    from doeff_core_effects.handlers import await_handler
-    from doeff_core_effects.scheduler import ExternalPromise, set_scheduler_trace
+    import doeff_core_effects._scheduler as scheduler_module
+    from doeff_core_effects import ExternalPromise, await_handler
+    from doeff_core_effects._scheduler import set_scheduler_trace
     from doeff_time import WaitWithin, async_time_handler
 
     from doeff import with_handlers
@@ -1245,7 +1244,7 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
 
     @pytest.mark.parametrize("traced", [False, True], ids=["untraced", "traced"])
     def test_one_timed_wait_does_not_walk_the_parked_tasks(self, monkeypatch, traced):
-        from doeff_core_effects import scheduler as scheduler_module
+        from doeff_core_effects import _scheduler as scheduler_module
 
         # The terminal-entry sweep walks every task row once per
         # HANDLE_SWEEP_INTERVAL ids (amortized, #502) — kept out of the count.
@@ -1280,8 +1279,8 @@ class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
         timer's continuation): 3,971 of a 4,110-entry heap in the card's
         simulation. Here other NORMAL work stays queued for the whole run;
         the heap must not grow with the waits done meanwhile."""
-        from doeff_core_effects.handlers import await_handler
-        from doeff_core_effects.scheduler import _SchedulerIntrospection
+        from doeff_core_effects import await_handler
+        from doeff_core_effects._scheduler import _SchedulerIntrospection
         from doeff_time import WaitWithin, async_time_handler
 
         from doeff import with_handlers
@@ -1394,7 +1393,7 @@ class TestErrorPropagation:
 class TestSemaphore:
     def test_binary_semaphore_mutual_exclusion(self):
         """Binary semaphore (permits=1) ensures mutual exclusion."""
-        from doeff_core_effects.scheduler import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
 
         log = []
 
@@ -1421,7 +1420,7 @@ class TestSemaphore:
 
     def test_counting_semaphore(self):
         """Counting semaphore allows N concurrent accessors."""
-        from doeff_core_effects.scheduler import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import AcquireSemaphore, CreateSemaphore, ReleaseSemaphore
 
         @do
         def worker(sem, i):
@@ -1443,7 +1442,7 @@ class TestSemaphore:
 
     def test_release_too_many_raises(self):
         """Releasing more than max permits raises error."""
-        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import CreateSemaphore, ReleaseSemaphore
 
         @do
         def body():
@@ -1458,7 +1457,7 @@ class TestSemaphore:
 
     def test_semaphore_only_deadlock_raises_scheduler_deadlock_error(self):
         """Semaphore waiters must keep the scheduler from silently returning None."""
-        from doeff_core_effects.scheduler import SchedulerDeadlockError
+        from doeff_core_effects import SchedulerDeadlockError
 
         @do
         def waiter(sem: Any):
@@ -1488,7 +1487,7 @@ class TestSemaphore:
         cancelled before its resume entry is dequeued — the next live waiter
         gets it instead of it leaking (which surfaced as a spurious
         SchedulerDeadlockError)."""
-        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import CreateSemaphore, ReleaseSemaphore
 
         @do
         def acquirer(sem: Any, name: str):
@@ -1522,7 +1521,7 @@ class TestDeadlockDiagnostics:
         """#495a: waiting on an internal promise nobody completes must raise a
         SchedulerDeadlockError instead of blocking forever in
         external_queue.get()."""
-        from doeff_core_effects.scheduler import SchedulerDeadlockError
+        from doeff_core_effects import SchedulerDeadlockError
 
         @do
         def body():
@@ -1539,10 +1538,7 @@ class TestDeadlockDiagnostics:
     def test_semaphore_deadlock_detected_despite_idle_external_listener(self):
         """#495c (repro F): an unrelated idle external listener must not mask
         a semaphore cycle that no permit holder can ever release."""
-        from doeff_core_effects.scheduler import (
-            CreateSemaphore,
-            SchedulerDeadlockError,
-        )
+        from doeff_core_effects import CreateSemaphore, SchedulerDeadlockError
 
         @do
         def listener(ep: Any):
@@ -1571,10 +1567,7 @@ class TestDeadlockDiagnostics:
     def test_semaphore_deadlock_detected_behind_pending_external_wait_entry(self):
         """#495c/d: the deadlock check must fire even while a non-IDLE
         wait_external placeholder keeps the pick_next loop cycling."""
-        from doeff_core_effects.scheduler import (
-            CreateSemaphore,
-            SchedulerDeadlockError,
-        )
+        from doeff_core_effects import CreateSemaphore, SchedulerDeadlockError
 
         @do
         def recv(ep: Any):
@@ -1606,7 +1599,7 @@ class TestDeadlockDiagnostics:
         deadlock: the sem waiter must simply wait until the holder releases."""
         import time
 
-        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import CreateSemaphore, ReleaseSemaphore
 
         @do
         def holder(sem: Any, ep: Any):
@@ -1641,7 +1634,7 @@ class TestDeadlockDiagnostics:
         """daemon=True only opts out of the #501 close-out diagnostic. A
         daemon parked on an unresolvable wait mid-run still hangs the run and
         must still be diagnosed loudly (#495a)."""
-        from doeff_core_effects.scheduler import SchedulerDeadlockError
+        from doeff_core_effects import SchedulerDeadlockError
 
         @do
         def stuck_daemon():
@@ -1665,7 +1658,7 @@ class TestDeadlockDiagnostics:
         releaser needed no external event, only its turn to run)."""
         import time
 
-        from doeff_core_effects.scheduler import CreateSemaphore, ReleaseSemaphore
+        from doeff_core_effects import CreateSemaphore, ReleaseSemaphore
 
         @do
         def double_acquirer(sem: Any):
@@ -1707,11 +1700,7 @@ class TestDeadlockDiagnostics:
         for cross-task signalling."""
         import time
 
-        from doeff_core_effects.scheduler import (
-            CreateSemaphore,
-            ReleaseSemaphore,
-            SchedulerDeadlockError,
-        )
+        from doeff_core_effects import CreateSemaphore, ReleaseSemaphore, SchedulerDeadlockError
 
         @do
         def double_acquirer(sem: Any):
@@ -1751,10 +1740,10 @@ class TestDeadlockDiagnostics:
         import logging
         import time
 
-        import doeff_core_effects.scheduler as sched_module
+        import doeff_core_effects._scheduler as sched_module
 
         monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
-        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects._scheduler")
 
         @do
         def body():
@@ -1788,10 +1777,10 @@ class TestDeadlockDiagnostics:
         import logging
         import time
 
-        import doeff_core_effects.scheduler as sched_module
+        import doeff_core_effects._scheduler as sched_module
 
         monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
-        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects._scheduler")
         waiting = 300
 
         @do
@@ -1843,10 +1832,10 @@ class TestDeadlockDiagnostics:
         import logging
         import time
 
-        import doeff_core_effects.scheduler as sched_module
+        import doeff_core_effects._scheduler as sched_module
 
         monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
-        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects._scheduler")
 
         @do
         def body():
@@ -1879,10 +1868,10 @@ class TestDeadlockDiagnostics:
         intervals and the assertion fails."""
         import logging
 
-        import doeff_core_effects.scheduler as sched_module
+        import doeff_core_effects._scheduler as sched_module
 
         monkeypatch.setattr(sched_module, "EXTERNAL_STALL_LOG_INTERVAL_SECONDS", 0.05)
-        caplog.set_level(logging.WARNING, logger="doeff_core_effects.scheduler")
+        caplog.set_level(logging.WARNING, logger="doeff_core_effects._scheduler")
         reported = threading.Event()
 
         class OnStall(logging.Handler):
@@ -1891,7 +1880,7 @@ class TestDeadlockDiagnostics:
                     reported.set()
 
         watcher = OnStall(level=logging.WARNING)
-        logging.getLogger("doeff_core_effects.scheduler").addHandler(watcher)
+        logging.getLogger("doeff_core_effects._scheduler").addHandler(watcher)
 
         @do
         def body():
@@ -1907,7 +1896,7 @@ class TestDeadlockDiagnostics:
         try:
             assert doeff_run(scheduled(body(), implementation=implementation)) == "woken"
         finally:
-            logging.getLogger("doeff_core_effects.scheduler").removeHandler(watcher)
+            logging.getLogger("doeff_core_effects._scheduler").removeHandler(watcher)
         assert reported.is_set(), "a watched wait whose source ended must be reported as stalled"
 
 
@@ -2147,7 +2136,7 @@ class TestRootCloseOut:
         abandoned after the grace period and named as still live."""
         import time as time_mod
 
-        from doeff_core_effects import scheduler as scheduler_mod
+        from doeff_core_effects import _scheduler as scheduler_mod
 
         monkeypatch.setattr(scheduler_mod, "ROOT_CLOSE_OUT_GRACE_SECONDS", 0.2)
 
@@ -2413,7 +2402,7 @@ class TestTerminalEntrySweep:
     the default)."""
 
     def test_spawn_wait_cycles_do_not_grow_scheduler_state(self):
-        from doeff_core_effects.scheduler import (
+        from doeff_core_effects._scheduler import (
             HANDLE_SWEEP_INTERVAL,
             _SchedulerIntrospection,
         )
@@ -2453,11 +2442,8 @@ class TestTerminalEntrySweep:
         a completed task. doeff-time's WaitWithin cancels its deadline timer
         every time the awaited future wins — a records service's long-poll
         waits grew ~15 MB a minute without this."""
-        from doeff_core_effects.scheduler import (
-            HANDLE_SWEEP_INTERVAL,
-            TaskCancelledError,
-            _SchedulerIntrospection,
-        )
+        from doeff_core_effects import TaskCancelledError
+        from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
         cycles = 3000
 
@@ -2495,11 +2481,8 @@ class TestTerminalEntrySweep:
     def test_killing_never_started_tasks_does_not_grow_scheduler_state(self, kill):
         """A task killed before it started is settled when pick_next skips its
         start — that skip is the last read of its row (agora-redesign #3504)."""
-        from doeff_core_effects.scheduler import (
-            HANDLE_SWEEP_INTERVAL,
-            TaskCancelledError,
-            _SchedulerIntrospection,
-        )
+        from doeff_core_effects import TaskCancelledError
+        from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
         cycles = 3000
 
@@ -2535,11 +2518,8 @@ class TestTerminalEntrySweep:
     def test_discarding_started_tasks_does_not_grow_scheduler_state(self):
         """Discard drops the continuation the scheduler held, so the task never
         runs again and its row is settled (agora-redesign #3504)."""
-        from doeff_core_effects.scheduler import (
-            HANDLE_SWEEP_INTERVAL,
-            TaskCancelledError,
-            _SchedulerIntrospection,
-        )
+        from doeff_core_effects import TaskCancelledError
+        from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
         cycles = 3000
 
@@ -2573,11 +2553,8 @@ class TestTerminalEntrySweep:
     def test_self_discarding_tasks_do_not_grow_scheduler_state(self):
         """A task that Discards itself ends at that Discard; its row is settled
         (agora-redesign #3504)."""
-        from doeff_core_effects.scheduler import (
-            HANDLE_SWEEP_INTERVAL,
-            TaskCancelledError,
-            _SchedulerIntrospection,
-        )
+        from doeff_core_effects import TaskCancelledError
+        from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
         cycles = 3000
 
@@ -2608,7 +2585,7 @@ class TestTerminalEntrySweep:
     def test_live_handle_keeps_a_cancelled_task_readable_across_sweeps(self):
         """A settled cancelled task whose Task handle is still alive must keep
         raising TaskCancelledError on Wait across sweep boundaries."""
-        from doeff_core_effects.scheduler import TaskCancelledError
+        from doeff_core_effects import TaskCancelledError
 
         @do
         def parked(started, release):
@@ -2642,7 +2619,7 @@ class TestTerminalEntrySweep:
         must not accumulate dead weakrefs until terminality (adversarial
         finding on #502): the sweep never scans non-terminal entries, so
         dead refs are pruned amortized at registration time instead."""
-        from doeff_core_effects.scheduler import _SchedulerIntrospection
+        from doeff_core_effects._scheduler import _SchedulerIntrospection
 
         mints = 1000
 
@@ -2736,7 +2713,7 @@ class TestPromiseResolutionGuards:
         assert "already completed" in doeff_run(scheduled(body()))
 
     def test_fail_after_complete_raises(self):
-        from doeff_core_effects.scheduler import FailPromise
+        from doeff_core_effects import FailPromise
 
         @do
         def body():
@@ -2779,7 +2756,7 @@ class TestPromiseResolutionGuards:
         assert "external" in doeff_run(scheduled(body()))
 
     def test_internal_fail_on_external_promise_raises(self):
-        from doeff_core_effects.scheduler import FailPromise
+        from doeff_core_effects import FailPromise
 
         @do
         def body():

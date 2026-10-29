@@ -15,8 +15,7 @@ Contract:
 from __future__ import annotations
 
 import pytest
-from doeff_core_effects.handlers import env_var_ask, lazy_ask
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import Gather, Spawn, env_var_ask, lazy_ask, scheduled
 
 from doeff import Ask, Pass, Resume, do, run
 from doeff import handler as _install_raw_handler

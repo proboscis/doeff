@@ -11,14 +11,8 @@ See: ISSUE-INF-023 (proboscis-ema)
 """
 from __future__ import annotations
 
-from doeff_core_effects.handlers import (
-    await_handler,
-    slog_handler,
-    state,
-    try_handler,
-    writer,
-)
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import await_handler, slog_handler, state, try_handler, writer
+from doeff_core_effects import Spawn, Wait, scheduled
 from doeff_vm import EffectBase as VMEffectBase
 
 from doeff import (

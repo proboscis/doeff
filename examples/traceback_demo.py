@@ -16,7 +16,7 @@ This demo shows three failures:
 
 import sys
 
-from doeff_core_effects.handlers import reader, state, writer
+from doeff_core_effects import reader, state, writer
 
 from doeff import Ask, Get, Pass, Put, Resume, Tell, do, handler, run
 

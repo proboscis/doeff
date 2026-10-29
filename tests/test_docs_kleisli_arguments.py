@@ -70,7 +70,7 @@ call_expr = use_values(Ask("x"), Pure(10))
 # raw_program: Program -> should_unwrap=False -> Pure(10) becomes Pure(...)
 
 from doeff import run
-from doeff_core_effects.handlers import reader
+from doeff_core_effects._handlers import reader
 print(run(reader(env={"x": 5})(call_expr)))  # 5:10
 """,
     102,

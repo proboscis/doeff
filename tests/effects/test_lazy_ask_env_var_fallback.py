@@ -27,8 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from doeff_core_effects.handlers import lazy_ask
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import lazy_ask, scheduled
 
 from doeff import (
     Ask,
@@ -176,7 +175,7 @@ class TestLazyAskEnvVarFallback:
 
         Mirrors cllm_interpreter layout (minus the workaround dual lazy_ask).
         """
-        from doeff_core_effects.handlers import state, try_handler, writer
+        from doeff_core_effects import state, try_handler, writer
 
         source = {"secret_path": "/run/secrets/api-key"}
 

@@ -86,7 +86,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "type-suppression",
       "subject": "# pyright: ignore[reportIncompatibleMethodOverride]"
@@ -121,7 +121,7 @@
     },
     {
       "count": 5,
-      "path": "packages/doeff-core-effects/doeff_core_effects/effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_effects.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -135,7 +135,7 @@
     },
     {
       "count": 6,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -219,7 +219,7 @@
     },
     {
       "count": 11,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -275,21 +275,21 @@
     },
     {
       "count": 6,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/__init__.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/__init__.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 5,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -394,42 +394,42 @@
     },
     {
       "count": 9,
-      "path": "packages/doeff-core-effects/doeff_core_effects/effects.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_effects.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "attempt"
     },
     {
       "count": 5,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "observer_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "run_coro"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/handlers.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_handlers.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "scope_reader"
@@ -639,308 +639,308 @@
     },
     {
       "count": 8,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 5,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "abandoned_ready_summary"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "alloc_promise"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "alloc_task"
     },
     {
       "count": 2,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "close_out"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "drain"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "enqueue"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "enqueue_raise"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "enqueue_resume"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "fail"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "fresh_id"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "grant_permit_to_next_waiter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "handle_scheduler_effect"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "has_live_ready_entry"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "has_pending_external_waiters"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "is_daemon"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "is_live_daemon_entry"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "is_owner_cancelled"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "live_parked_waiter_summary"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "live_semaphore_waiters"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "make_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "pick_next"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "pop_live_semaphore_waiter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "raise_if_semaphore_cycle_unresolvable"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "raw_handler"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "register_handle"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "register_pending_waiter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "remove_gather_waiters"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "remove_race_waiters"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "resolve_gather_with_error"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "resume_with_waitable_result"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "return_inflight_permit"
     },
     {
       "count": 2,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "root_close_out"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "sweep_terminal_unobserved_entries"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "task_priority"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "unreleasable_semaphores"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "waitable_key"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "waitable_status"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "wake_gather_waiter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "wake_race_waiter"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "wake_waiters"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "wrap_task"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scheduler.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scheduler.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "wrapped"
@@ -982,56 +982,56 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "delete"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "exists"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "get"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/memory.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/memory.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "put"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "delete"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "exists"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "get"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_storage/sqlite.py",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "put"

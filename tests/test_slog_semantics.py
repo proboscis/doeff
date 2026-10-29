@@ -9,8 +9,7 @@ plan: docs/doeff-2026-07-13-slog-semantics-architecture-plan.md
 """
 
 import pytest
-from doeff_core_effects.effects import Listen, Tell
-from doeff_core_effects.handlers import listen_handler, slog_handler, state, writer
+from doeff_core_effects import Listen, Tell, listen_handler, slog_handler, state, writer
 from doeff_vm import UnhandledEffect
 
 from doeff import do, slog

@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest defk defp <- defhandler])
 (import doeff [run EffectBase Some])
 (import doeff_core_effects [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_hy.session [session-key])
 (import dataclasses [dataclass])
 (import types)

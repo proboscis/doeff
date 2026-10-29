@@ -20,18 +20,18 @@ import pytest
 import doeff
 
 HANDLER_HOMES = [
-    ("state", "doeff_core_effects.handlers"),
-    ("reader", "doeff_core_effects.handlers"),
-    ("writer", "doeff_core_effects.handlers"),
-    ("lazy_ask", "doeff_core_effects.handlers"),
-    ("env_var_ask", "doeff_core_effects.handlers"),
-    ("try_handler", "doeff_core_effects.handlers"),
-    ("await_handler", "doeff_core_effects.handlers"),
-    ("listen_handler", "doeff_core_effects.handlers"),
-    ("local_handler", "doeff_core_effects.handlers"),
-    ("slog_handler", "doeff_core_effects.handlers"),
-    ("slog_discard_handler", "doeff_core_effects.handlers"),
-    ("scheduled", "doeff_core_effects.scheduler"),
+    ("state", "doeff_core_effects._handlers"),
+    ("reader", "doeff_core_effects._handlers"),
+    ("writer", "doeff_core_effects._handlers"),
+    ("lazy_ask", "doeff_core_effects._handlers"),
+    ("env_var_ask", "doeff_core_effects._handlers"),
+    ("try_handler", "doeff_core_effects._handlers"),
+    ("await_handler", "doeff_core_effects._handlers"),
+    ("listen_handler", "doeff_core_effects._handlers"),
+    ("local_handler", "doeff_core_effects._handlers"),
+    ("slog_handler", "doeff_core_effects._handlers"),
+    ("slog_discard_handler", "doeff_core_effects._handlers"),
+    ("scheduled", "doeff_core_effects._scheduler"),
 ]
 
 

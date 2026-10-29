@@ -2,9 +2,7 @@
 # tasks Spawned inside it, and only those. The observer only looks: what it returns is ignored, and the effect
 # still goes on to its handler, which answers it as before. Prints what the observer saw and what the program got,
 # to back the WithObserve scene of the Advanced Effects video (the example of docs/09-advanced-effects.md).
-from doeff_core_effects import Ask, ReadWriterLog, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Ask, ReadWriterLog, Tell, reader, scheduled, state, writer
 
 from doeff import Gather, Spawn, WithObserve, do, run
 

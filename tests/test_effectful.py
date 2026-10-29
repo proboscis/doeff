@@ -25,7 +25,7 @@ from typing import Any
 
 import cloudpickle
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 import doeff._effectful_rewrite as rewrite
 from doeff import Effects, Pass, Resume, Transfer, effectful, handler, run, with_handlers
@@ -410,9 +410,9 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, assert_type
 
 from doeff import EffectBase, Effects, Expand, Program, K, Pure, effectful, typed_resume
-from doeff_core_effects.effects import Ask, Get, Put, Try
+from doeff_core_effects._effects import Ask, Get, Put, Try
 from doeff_vm import Ok, Err
-from doeff_core_effects.scheduler import CreatePromise, Gather, Promise, Spawn, Task, Wait
+from doeff_core_effects._scheduler import CreatePromise, Gather, Promise, Spawn, Task, Wait
 
 T = TypeVar("T")
 

@@ -17,13 +17,13 @@
   :problem
     [(fact
        "slog という名前(Go slog 由来の構造化ロギング語彙)は『yield すれば見える』という observability の期待を作るのに、実装は Writer の Tell と同一ワイヤ型(Slog = WriterTellEffect)で、slog_handler() は黙って list に集めるだけ。CLI の default_interpreter は slog_handler() を装備するがその収集結果は誰も読まずに捨てる — ユーザーは slog を yield しても何も見えない(2026-07-13 実測: 素の run() では UnhandledEffect、slog_handler 装備では完全な沈黙)。"
-       :evidence "doeff/cli/run_services.py:191; packages/doeff-core-effects/doeff_core_effects/handlers.py:135-154; packages/doeff-core-effects/doeff_core_effects/effects.py:110-134")
+       :evidence "doeff/cli/run_services.py:191; packages/doeff-core-effects/doeff_core_effects/_handlers.py:135-154; packages/doeff-core-effects/doeff_core_effects/_effects.py:110-134")
      (fact
        "default_interpreter のスタックでは slog_handler が writer() より内側に居るため Tell() も含む全 WriterTellEffect を slog_handler が先に consume し、writer() は何も collect しない — Writer と slog の conflation はデフォルト構成で既に機能していない。"
        :evidence "doeff/cli/run_services.py:190-197 の wrap 順(reversed)")
      (fact
        "handler install に mutable 収集属性を生やす .log side-channel は削除済み API のはずが enforcement 不在で生存/再生した(erosion)。生産者: handlers.py:89(writer)と handlers.py:153(slog_handler)。読者: tests/test_core_effects.py:170-171、tests/effects/http_request_support.hy:85、packages/doeff-vm/tests/test_pyvm.py:210。handlers.py:76 の docstring は実在しない handler_log にも言及。"
-       :evidence "packages/doeff-core-effects/doeff_core_effects/handlers.py:76,89,153; git log -S 'install.log'(削除を記録した ADR なし)")
+       :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py:76,89,153; git log -S 'install.log'(削除を記録した ADR なし)")
      (fact
        "表示系 preset は現行 API に対して既に壊れている: log_display.py:94 は WriterTellEffect に存在しない effect.message を参照(現行は .msg/.kwargs)、旧 Pass() シグネチャも使用。tests/test_pass_then_typed_handler.py:54 も同属性を参照。sim_time.py:130 と docker dockerfile.hy:58 は WriterTellEffect に横から isinstance しており、型分離の影響面。"
        :evidence "packages/doeff-preset/src/doeff_preset/handlers/log_display.py:90-102; packages/doeff-time/src/doeff_time/handlers/sim_time.py:130; packages/doeff-docker/src/doeff_docker/handlers/dockerfile.hy:58")]
@@ -85,10 +85,10 @@
        :good ["if isinstance(effect, SlogEffect):\n    pass"])
      (defsemgrep no-writer-tell-alias-slog
        :languages ["python"]
-       :pattern "from doeff_core_effects.effects import WriterTellEffect as Slog"
+       :pattern "from doeff_core_effects._effects import WriterTellEffect as Slog"
        :message "WriterTellEffect を Slog 名で別名 import するのは ADR-DOE-CORE-EFFECTS-001 R1 が退役させた conflation の再生(memo_handlers 2026-07-13 実例)。observability は SlogEffect / slog()。"
-       :bad ["from doeff_core_effects.effects import WriterTellEffect as Slog"]
-       :good ["from doeff_core_effects.effects import Slog"])
+       :bad ["from doeff_core_effects._effects import WriterTellEffect as Slog"]
+       :good ["from doeff_core_effects._effects import Slog"])
      (defsemgrep no-structured-payload-on-writer-tell
        :languages ["python"]
        :pattern "WriterTellEffect($MSG, **$KW)"

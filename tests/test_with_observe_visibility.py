@@ -7,13 +7,7 @@ before reaching the observer.
 Expected: WithObserve observes every effect that passes through the VM,
 regardless of whether it's yielded from the main program or from a handler body.
 """
-from doeff_core_effects import Tell, slog
-from doeff_core_effects.handlers import (
-    slog_handler,
-    state,
-    try_handler,
-    writer,
-)
+from doeff_core_effects import Tell, slog, slog_handler, state, try_handler, writer
 from doeff_vm import Callable as VMCallable
 from doeff_vm import EffectBase
 
