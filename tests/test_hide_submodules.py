@@ -475,6 +475,115 @@ def test_a_name_added_to_an_entry_with_all_is_listed_in_all_too(tmp_path: Path) 
     assert "__all__" in (tool.EntryShape.read(inline).problem() or "")
 
 
+WRAPPED_PACKAGE = "doeff-fixture-wrapped"
+WRAPPED_ROOT = "doeff_fixture_wrapped"
+
+#: 入口が子を即座に読んで ``__all__`` で名を出し、handler を ``@handler`` で包んだ package(包んだ物の定義の module は
+#: 包みの側の module になる)。
+WRAPPED_FILES = {
+    f"packages/{WRAPPED_PACKAGE}/pyproject.toml": f"""
+        [project]
+        name = "{WRAPPED_PACKAGE}"
+        version = "0"
+
+        [build-system]
+        requires = ["hatchling"]
+        build-backend = "hatchling.build"
+
+        [tool.hatch.build.targets.wheel]
+        packages = ["src/{WRAPPED_ROOT}"]
+    """,
+    f"packages/{WRAPPED_PACKAGE}/src/{WRAPPED_ROOT}/__init__.py": '''
+        """The fixture package: the entry reads its child at once and names the names in __all__."""
+
+        from .handlers import PingEffect, mock_ping_handler, ping_handler
+
+        __all__ = ["PingEffect", "mock_ping_handler", "ping_handler"]
+    ''',
+    f"packages/{WRAPPED_PACKAGE}/src/{WRAPPED_ROOT}/handlers/__init__.py": """
+        from .production import PingEffect, ping_handler
+        from .testing import mock_ping_handler
+    """,
+    f"packages/{WRAPPED_PACKAGE}/src/{WRAPPED_ROOT}/handlers/production.py": '''
+        from doeff import EffectBase, Pass, handler
+
+
+        class PingEffect(EffectBase):
+            """The one effect."""
+
+
+        @handler
+        def ping_handler(effect: PingEffect, k):
+            yield Pass()
+    ''',
+    f"packages/{WRAPPED_PACKAGE}/src/{WRAPPED_ROOT}/handlers/testing.py": f"""
+        from doeff import Pass, handler
+
+        from {WRAPPED_ROOT}.handlers.production import PingEffect
+
+
+        @handler
+        def mock_ping_handler(effect: PingEffect, k):
+            yield Pass()
+    """,
+    "tests/data/public_api_known_violations.json": json.dumps(
+        {
+            "packages": {
+                WRAPPED_PACKAGE: {
+                    "範囲": "決まりの範囲",
+                    "名": {
+                        "外れ — submodule を _ で隠す": {
+                            "(submodule)": [
+                                f"{WRAPPED_ROOT}.handlers",
+                                f"{WRAPPED_ROOT}.handlers.production",
+                                f"{WRAPPED_ROOT}.handlers.testing",
+                            ]
+                        },
+                    },
+                }
+            },
+            "足した名": [],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ),
+    "callers/pytest.ini": "[pytest]\n",
+    "callers/test_callers.py": f"""
+        from {WRAPPED_ROOT}.handlers import mock_ping_handler, ping_handler
+        from {WRAPPED_ROOT}.handlers.production import PingEffect
+
+
+        def test_names_read_through_the_imports():
+            assert isinstance(PingEffect, type)
+            assert ping_handler is not mock_ping_handler
+    """,
+}
+
+
+@pytest.mark.timeout(600)
+def test_hide_points_callers_at_the_entry_for_wrapped_names_in_the_entry_all(
+    tmp_path: Path,
+) -> None:
+    """入口の ``__all__`` に在る名は、``@handler`` で包んで定義の module が包みの側になった物でも入口から読ませる。
+
+    前は入口が出す名を、遅延の表・``X as X``・package の中で定義した物だけと読み、``__all__`` で出す包んだ handler の
+    呼び手を _ の path へ向けていた(card ki-32a05dc657b8 — doeff-gemini の ``default_gemini_cost_handler`` の定義の
+    module は ``doeff.program``)。
+    """
+    repo = _write_repo(tmp_path / "repo", WRAPPED_FILES)
+    src = repo / "packages" / WRAPPED_PACKAGE / "src"
+    _run_callers(repo / "callers", src)
+
+    report = tool.hide(repo / "packages" / WRAPPED_PACKAGE, ["handlers"], None, None, [])
+
+    callers = _text(repo, "callers/test_callers.py")
+    assert f"from {WRAPPED_ROOT} import mock_ping_handler, ping_handler\n" in callers
+    assert f"from {WRAPPED_ROOT} import PingEffect\n" in callers
+    assert report.rewrite.names_to_entry == 3
+    assert report.rewrite.names_to_underscore == 0
+    _run_callers(repo / "callers", src)
+
+
 @pytest.mark.timeout(600)
 def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: Path) -> None:
     """hide・rewrite・finish のどの後でも、doeff の木と外の repo の呼び手の test が緑のまま。"""
