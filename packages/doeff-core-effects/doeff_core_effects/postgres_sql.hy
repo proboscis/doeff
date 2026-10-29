@@ -29,7 +29,8 @@
 ;;;     thread が走り切る前に ROLLBACK が割り込まない)。pipeline mode を持たない psycopg / libpq(libpq 14 未満)では、接続の貸し出しを作る時
 ;;;     (起動の時)に名を挙げて落ちる — batched の transaction を文 1 つずつ流す道へ黙って倒さない。
 ;;;   - scheduler を塞がない(agora-redesign #1215): postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
-;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で回し、撃った task
+;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、空いた thread を使い回す Executor(offloaded_call.hy の ReusedThreads — 空きが
+;;;     無い時だけ thread を起こす・agora card ki-8fc4f9017572)で回し、撃った task
 ;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
 ;;;     上限は PostgresConnections の許可(thread の間の錠)が持ち、許可を待つのも thread の中 — thread の数に上限を置かないので、許可を持つ
 ;;;     transaction の次の文が thread の空きを待って詰まることがない。手順(文・値の写し・transaction の段・取り消しの後始末)は
@@ -69,7 +70,7 @@
 (import dataclasses [dataclass field])
 (import doeff [Program])
 (import doeff_hy.wire [Malformed dump-json parse-json])
-(import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
+(import doeff_core_effects._offloaded_call [ReusedThreads offloaded run-detached keep-nothing])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise TaskCancelledError])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlRows SqlFailed SqlUnreachable SqlLock
@@ -89,8 +90,8 @@
 (val UNREACHABLE-SQLSTATES #("57P01" "57P02" "57P03"))
 ;; 同時に貸す接続の既定の上限(database ごと)。
 (val DEFAULT-POOL-SIZE 8)
-;; postgres-sql-handler が driver の I/O を回す Executor(呼び 1 つに thread 1 本 — 頭の註)。持ち物が無いので module に 1 つ。
-(val DRIVER-THREADS (ThreadPerCall))
+;; postgres-sql-handler が driver の I/O を回す Executor(空いた thread を使い回し、上限を置かない — 頭の註)。process に 1 つ。
+(val DRIVER-THREADS (ReusedThreads))
 
 ;; 待ち受けの接続が切れてから繋ぎ直すまでの秒(頭の註 — 境界の答え手の中だけの時間)。
 (val LISTEN-RETRY-SECONDS 1)

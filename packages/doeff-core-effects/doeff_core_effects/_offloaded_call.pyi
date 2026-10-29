@@ -5,11 +5,14 @@ from doeff import Program as _Program
 from collections.abc import Callable as Callable
 from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
+from queue import Empty as Empty
+from queue import SimpleQueue as SimpleQueue
 from doeff import PyVM as PyVM
 from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
 NOT_DELIVERED: Incomplete
+IDLE_SECONDS: float
 
 class Delivered:
     __slots__ = ...
@@ -36,6 +39,22 @@ class ThreadPerCall(Executor):
         ...
 
     def submit(self: ThreadPerCall, call: Incomplete, *args: Incomplete) -> Future:
+        ...
+
+class ReusedThreads(Executor):
+    idle_seconds: float
+    idle_lock: Incomplete
+    jobs: Incomplete
+    idle: Incomplete
+    started: Incomplete
+
+    def __init__(self: ReusedThreads, idle_seconds: float=...) -> None:
+        ...
+
+    def submit(self: ReusedThreads, call: Incomplete, *args: Incomplete) -> Future:
+        ...
+
+    def serve(self: ReusedThreads) -> Incomplete:
         ...
 
 class Handoff:
