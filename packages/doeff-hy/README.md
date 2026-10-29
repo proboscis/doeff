@@ -238,9 +238,10 @@ Expected absence and failure are two effects in `doeff_core_effects._effects`:
 `Absent(why)` (the Maybe side) and `Raise(reason)` (the Result side). Code writes only
 the success path; the places that want to *do* something about absence or failure
 fold them into values: `maybe` (`Absent` → `Nothing`) and `result` (`Raise` → `Err`)
-from `doeff_core_effects._outcomes`, and the `on-raise` / `absent-as` macros. The
-nesting order picks the shape: `(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` /
-`Err(e)`.
+from `doeff_core_effects`, and the `on-raise` / `absent-as` macros. `maybe` and `result`
+are handler factories, like `state`: call one to get the handler, then apply that to the
+body — `((maybe) b)`. The nesting order picks the shape: `((result) ((maybe) b))` is
+`Ok(Some v)` / `Ok(Nothing)` / `Err(e)`.
 
 `defeffect` may split its answer by meaning — `:absent [Missing] :failure [Unreachable]
 :value [Conflict]`; the rest is success. For such an effect `(<- x (ReadRow …))` binds

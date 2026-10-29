@@ -2828,7 +2828,7 @@ def _is_program_expr(expr: ast.expr, scope: _Scope) -> bool:
                 return True
             head = scope.resolve(func)
             # A lambda / nested def called here (``(on-raise (do! …) …)`` expands to
-            # ``on_raise(<local def>(), …)``) is read as ``_local_call`` reads it.
+            # ``on_raise(…)(<local def>())``) is read as ``_local_call`` reads it.
             return head is not UNBOUND and (
                 _is_effect_class(head)
                 or isinstance(head, _LocalFunction)

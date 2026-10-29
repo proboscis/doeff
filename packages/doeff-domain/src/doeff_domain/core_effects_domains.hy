@@ -133,7 +133,7 @@
           CreatePromise CompletePromise FailPromise
           CreateSemaphore AcquireSemaphore ReleaseSemaphore
           CreateExternalPromise SchedulerIntrospection) scheduled)
-;; Absent / Raise の受け手は束ねの境目の関数(scope を包む installer と factory)。
+;; Absent / Raise の受け手は束ねの境目の handler を返す工場(呼ぶと scope を包む handler が返る — ADR-DOE-API-001 R6)。
 ;; BoundAbsent は Absent の子で、印を見て再開し分けるのは absent-as だけ — ほかの受け手には普通の Absent。
 ((handles Absent) maybe)
 ((handles Absent) absent-raises)
@@ -258,7 +258,7 @@
                       :description "<- と ! が宣言に従って答えを開き、不在を Absent・失敗を Raise にして出す 1 点")]
   :handlers [maybe absent-raises absent-as result on-raise]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-003"]
-  :docs "受け手は束ねの境目の関数で、どれも再開しない(absent-as が自分の字面の BoundAbsent を既定値で再開するのだけが例外)。maybe は Absent を Nothing に、absent-raises は Absent を Raise に、result は Raise を Err に、on-raise は型の合う Raise を業務の答えに畳む。")
+  :docs "受け手は束ねの境目の handler を返す工場で、どれも再開しない(absent-as が自分の字面の BoundAbsent を既定値で再開するのだけが例外)。maybe は Absent を Nothing に、absent-raises は Absent を Raise に、result は Raise を Err に、on-raise は型の合う Raise を業務の答えに畳む。")
 
 
 (defdomain doeff-file

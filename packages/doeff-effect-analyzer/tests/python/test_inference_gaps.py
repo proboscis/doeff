@@ -405,7 +405,7 @@ OUTCOMES_HY = """\
 
 (defk looked-up []
   {:pre [] :post [(: % (| Ok Err))] :tags {:context "analyzer-test" :role "program"}}
-  (<- r (result (looking)))
+  (<- r ((result) (looking)))
   r)
 
 (defk missing []
@@ -426,8 +426,8 @@ OUTCOMES_HY = """\
   (<- r (absent-as 0 (do! (<- (Ping)) (<- n (missing)) n)))
   r)
 
-;; on-raise is a function: its body argument (do! …) is the call of the local def the
-;; do! made, handed to on_raise as its Program parameter.
+;; on-raise expands to on_raise(case …)(<local def>()): the handler the factory returns is
+;; applied to the call of the local def the do! made.
 (defk recovered-inline []
   {:pre [] :post [(: % str)] :tags {:context "analyzer-test" :role "program"}}
   (<- r (on-raise (do! (<- (Ping)) (<- v (looking)) v) (Down d) d))
@@ -436,7 +436,7 @@ OUTCOMES_HY = """\
 ;; The function absent_as called without the macro: nothing wraps the (do! …) it is handed.
 (defk defaulted-unmarked []
   {:pre [] :post [(: % int)] :tags {:context "analyzer-test" :role "program"}}
-  (<- r (outcomes.absent-as 0 (do! (<- (Ping)) (<- n (missing)) n)))
+  (<- r ((outcomes.absent-as 0) (do! (<- (Ping)) (<- n (missing)) n)))
   r)
 """
 
@@ -860,9 +860,9 @@ def test_a_do_block_written_as_an_expression_is_read(pkg: str) -> None:
 
 
 def test_a_do_block_handed_to_on_raise_is_read(pkg: str) -> None:
-    # (on-raise (do! …) …) expands to on_raise(<local def>(), case …): the call of the
-    # local def is the Program on_raise binds to its parameter and performs.  It used to
-    # be left unbound, and on_raise's body yielded "a value that is not a call program".
+    # (on-raise (do! …) …) expands to on_raise(case …)(<local def>()): the call of the
+    # local def is the Program the handler on_raise returns is applied to.  It used to be
+    # left unbound, and on_raise's body yielded "a value that is not a call program".
     recovered = analyze_program(f"{pkg}.outcomes:recovered_inline")
 
     assert recovered.residual.unresolved == ()

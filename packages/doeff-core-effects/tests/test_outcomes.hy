@@ -7,18 +7,19 @@
 ;;;   * on-raise は合う型の Raise だけを写し、合わない Raise は外へ渡し、Python の例外は受けない
 ;;;   * absent-as は奥の不在で既定値のスコープの終わりを返す
 ;;;   * 受け手の無い Absent / Raise は未処理の effect として止まる(黙って Nothing にしない)
+;;;   * 4 つとも呼ぶと handler を返す工場で、program はその handler に当てる — ((maybe) body)(ADR-DOE-API-001 R6)
 
 (require doeff-hy.macros [deftest defk <- val on-raise absent-as])
 
 (import dataclasses [dataclass fields])
 (import hy)
 (import pytest)
-(import doeff [run])
+(import doeff [run with-handlers])
 (import doeff.result [Nothing Some])
 (import doeff [Err Ok UnhandledEffect])
 (import doeff_core_effects [Absent Raise Resumption Ask]
         doeff_core_effects._effects [resumption-of])
-(import doeff_core_effects [maybe result absent-as :as absent-as-fn RaiseCase])
+(import doeff_core_effects [maybe result on-raise :as on-raise-fn absent-as :as absent-as-fn RaiseCase])
 
 
 (defclass [(dataclass :frozen True)] Conflict []
@@ -75,34 +76,34 @@
 
 (deftest test-maybe-folds-absent-into-nothing-and-drops-the-rest
   (val seen [])
-  (<- folded (maybe (absent-then-note seen)))
+  (<- folded ((maybe) (absent-then-note seen)))
   (assert (is folded Nothing) folded)
   (assert (= seen []) "maybe は続きを再開しない")
-  (<- kept (maybe (succeeds)))
+  (<- kept ((maybe) (succeeds)))
   (assert (= kept (Some 7)) kept))
 
 
 (deftest test-result-folds-raise-into-err-and-drops-the-rest
   (val seen [])
-  (<- folded (result (raise-then-note (Conflict "負けた") seen)))
+  (<- folded ((result) (raise-then-note (Conflict "負けた") seen)))
   (assert (= (repr folded) "Err(Conflict(detail='負けた'))") folded)
   (assert (= seen []) "result は続きを再開しない")
-  (<- kept (result (succeeds)))
+  (<- kept ((result) (succeeds)))
   (assert (= (repr kept) "Ok(7)") kept))
 
 
 (deftest test-nesting-order-chooses-the-shape
-  ;; (result (maybe b)) : Result[Option[T]]、(maybe (result b)) : Option[Result[T]](R2)
+  ;; ((result) ((maybe) b)) : Result[Option[T]]、((maybe) ((result) b)) : Option[Result[T]](R2)
   (val lost (Unreachable "届かない"))
-  (<- r-ok (result (maybe (succeeds))))
-  (<- r-none (result (maybe (absent-then-note []))))
-  (<- r-err (result (maybe (raise-then-note lost []))))
+  (<- r-ok ((result) ((maybe) (succeeds))))
+  (<- r-none ((result) ((maybe) (absent-then-note []))))
+  (<- r-err ((result) ((maybe) (raise-then-note lost []))))
   ;; Ok / Err は値で比べられない(Rust の型)ので形を repr で比べる
   (assert (= (repr #(r-ok r-none r-err)) "(Ok(Some(7)), Ok(Nothing), Err(Unreachable(detail='届かない')))")
           #(r-ok r-none r-err))
-  (<- m-ok (maybe (result (succeeds))))
-  (<- m-err (maybe (result (raise-then-note lost []))))
-  (<- m-none (maybe (result (absent-then-note []))))
+  (<- m-ok ((maybe) ((result) (succeeds))))
+  (<- m-err ((maybe) ((result) (raise-then-note lost []))))
+  (<- m-none ((maybe) ((result) (absent-then-note []))))
   (assert (= (repr #(m-ok m-err m-none)) "(Some(Ok(7)), Some(Err(Unreachable(detail='届かない'))), Nothing)")
           #(m-ok m-err m-none)))
 
@@ -127,7 +128,7 @@
 (deftest test-on-raise-maps-only-matching-reasons
   (<- mapped (recovers (Conflict "版")))
   (assert (= mapped "conflict: 版") mapped)
-  (<- passed (result (recovers (Unreachable "網"))))
+  (<- passed ((result) (recovers (Unreachable "網"))))
   (assert (= (repr passed) "Err(Unreachable(detail='網'))") "合わない Raise は外の result へ渡る"))
 
 
@@ -196,5 +197,49 @@
   (<- n (defaults-when-absent seen))
   (assert (= n 0) n)
   (assert (= seen []) "奥の不在では続きを再開しない(奥の行に既定値を渡さない)")
-  (<- kept (absent-as-fn 0 (succeeds)))
+  (<- kept ((absent-as-fn 0) (succeeds)))
   (assert (= kept 7) kept))
+
+
+(deftest test-the-boundaries-are-handler-factories
+  ;; 中核の state() と同じく、呼ぶと印 _doeff_is_handler_fn の付いた handler が返り、program はその handler に当てる
+  ;; (ADR-DOE-API-001 R6・2026-10-28 の決定 ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA)。
+  (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
+  (val handlers {"maybe" (maybe)
+                 "result" (result)
+                 "on_raise" (on-raise-fn conflict-case)
+                 "absent_as" (absent-as-fn 0)})
+  (for [[name h] (.items handlers)]
+    (assert (is (getattr h "_doeff_is_handler_fn" None) True) name)
+    (assert (= h.__name__ name) h.__name__))
+  (<- some ((get handlers "maybe") (succeeds)))
+  (<- nothing ((get handlers "maybe") (absent-then-note [])))
+  (<- ok ((get handlers "result") (succeeds)))
+  (<- err ((get handlers "result") (raise-then-note (Conflict "負けた") [])))
+  (<- mapped ((get handlers "on_raise") (raise-then-note (Conflict "版") [])))
+  (<- defaulted ((get handlers "absent_as") (absent-then-note [])))
+  (assert (= (repr #(some nothing ok err mapped defaulted))
+             "(Some(7), Nothing, Ok(7), Err(Conflict(detail='負けた')), 'conflict: 版', 0)")
+          #(some nothing ok err mapped defaulted))
+  ;; handler の束にも置ける(外が先): result の中の maybe は Ok(Nothing)。
+  (<- stacked (with-handlers [(result) (maybe)] (absent-then-note [])))
+  (assert (= (repr stacked) "Ok(Nothing)") stacked)
+  ;; 受けでない物を受けの所に置くと、呼んだ所で断る。
+  (with [(pytest.raises TypeError :match "handler を返す工場")]
+    (on-raise-fn conflict-case (succeeds))))
+
+
+(deftest test-the-old-forms-answer-as-the-factories
+  ;; 旧い形(program を工場に渡す)は新しい形と同じ答え — doeff の main を読む repo の呼び手を書き換え終えるまでの
+  ;; 移し替えの層(agora card ki-d27fd0acfe07)。absent_as は前の macro の展開の形(印を 3 つ目に置く)も受ける。
+  (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
+  (<- some (maybe (succeeds)))
+  (<- nothing (maybe (absent-then-note [])))
+  (<- ok (result (succeeds)))
+  (<- err (result (raise-then-note (Conflict "負けた") [])))
+  (<- mapped (on-raise-fn (raise-then-note (Conflict "版") []) conflict-case))
+  (<- defaulted (absent-as-fn 0 (absent-then-note [])))
+  (<- marked (absent-as-fn 0 (absent-then-note []) None))
+  (assert (= (repr #(some nothing ok err mapped defaulted marked))
+             "(Some(7), Nothing, Ok(7), Err(Conflict(detail='負けた')), 'conflict: 版', 0, 0)")
+          #(some nothing ok err mapped defaulted marked)))

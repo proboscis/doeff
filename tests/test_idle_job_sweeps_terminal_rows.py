@@ -73,9 +73,8 @@ def _request(tick: int):
 def _idle_tick(tick: int):
     """One tick of a job with no work: sleep to the next tick, then one timed request."""
     yield Delay(TICK_SECONDS)
-    request = on_raise(
-        with_handlers([try_handler], _request(tick)),
-        RaiseCase((_Refused,), lambda _reason: Some(-1)),
+    request = on_raise(RaiseCase((_Refused,), lambda _reason: Some(-1)))(
+        with_handlers([try_handler], _request(tick))
     )
     task = yield Spawn(request)
     return (yield wait_within(task, DEADLINE_SECONDS))

@@ -77,7 +77,7 @@
 ;;;     Raise[BodyConflict | BodyUnreachable] が外へ漏れ、外から見た型が変わる(推論がそれを見せる)。
 ;;;   - Conflict はこの例のための失敗の型(説明の文 d を持つ)で、doeff-records の Conflict(current)とは別。
 ;;;   - :absent の受け手は on-raise の内側(束ねる行)に置かれるので、それが出す Raise は on-raise に届く(R4 の落とし穴には当たらない)。
-;;;   - on-raise の本文は Program の式 1 つ(複数の行は do! で包む)。maybe・result は関数で、(maybe (ReadRow …)) のように宣言を持つ
+;;;   - on-raise の本文は Program の式 1 つ(複数の行は do! で包む)。maybe・result は handler を返す工場で(ADR-DOE-API-001 R6)、((maybe) (ReadRow …)) のように宣言を持つ
 ;;;     effect をそのまま渡してもよい(開いてから畳む)。
 ;;;
 ;;; 業務の core では境目を書かない例 — notify-landed(本線には無い名。近い実物は controllers/core/land_notice.hy:53-70 の
@@ -468,11 +468,11 @@
        "段階 4 の古い分岐の規則(R14 (4) — 2026-10-23・card ki-aab9174cebde・この実装の担当が決めた戻せる決定。戻し方は各項の後ろ):\n(1) 規則の番号と題は DOEFF175 Stale Branch On A Declared Absent Or Failure、重さは critical で、既知の一覧(registry)では下げない — 毎回の切り替えの門なので、当たりが 0 になるまでその版を着地させない(lowered_by_registry を偽にしてある)。戻し方: rule.rs の目録の行を直す。\n(2) 当てるのは effect の頭を直に束ねた答え((<- x (E …))・(<- x T (E …))・(<- x (E …) :absent F)・(val x (! (E …)))・(match (! (E …)) …))だけ。defk を経由した答え((<- x (read-typed …)))は追わない — 経由する defk の戻りの型の枝は、その defk 自身の effect を切り替える版で直す。戻し方: 束ねた式の頭が defk なら defk の推論を辿る枝を足す(DOEFF127 の推論の世界が使える)。\n(3) 型は import と module で module まで解いて比べる(DOEFF122 と同じ — 同じ名の型が別の module にあっても、宣言した方だけ)。宣言の読みは DOEFF122 の failure_types_in を effect ごとに分けて使い回した。\n(4) 母集団は定義の規則の母集団(definitions の paths と test_paths — 検の呼び手も切り替えで古くなる)。ADR と doeff-core-effects の probe の検は doeff の母集団の外で、母集団を全 Hy の file に広げても当たりは 0(2026-10-23 の測り)。戻し方: 母集団を専用の節に分ける。\n(5) defhandler の節は定義ごと読まない(effect を受ける側で、答えを束ねる側ではない)。名の覚えは前から順に読み、束ね直した名・引数・for / with / let / except / comprehension / match の pattern で隠れた名は捨てる(見逃す方に倒す)。戻し方: 覚えを flow に沿って追う読みに替える。")]
   :decision
     [(rule R1 "不在と失敗を、意味で分けた 2 つの effect にする。Absent(想定内の不在・Maybe の側)は中身を持たず、記録と調べ物のための説明の文だけを添える。Raise(e)(失敗・Result の側)は理由 e を持つ(理由に Python の例外は置けない — R11)。2 つの間に継承の関係を作らない(isinstance で互いに捕まらない)。境目の handler のうち maybe・result・on-raise と組み立ての方針の handler は、答えを返さず続きを捨てる。続きを再開してよいのは R8 の absent-as だけ。文献の fail / empty(Maybe の側)と raise / throw(Result の側)に当たる。失敗の側を Fail と呼ばない — 文献では Maybe の側の名であり、doeff-traverse の Fail(再開できる失敗の知らせ)とも紛れる。置き場は Try と同じ doeff-core-effects(doeff_core_effects._effects の Absent・Raise、doeff_core_effects._outcomes の境目の handler)。")
-     (rule R2 "Absent・Raise の受け取り方は、外側のスコープの境目の handler が決める。(maybe body) は Absent を Nothing に、成功を Some に写す。(result body) は Raise(e) を Err(e) に、成功を Ok に写す。組み合わせの型は入れ子の順で選ぶ: (result (maybe …)) は Result の中に Maybe(Ok(Some v)・Ok(Nothing)・Err(e))、(maybe (result …)) は Maybe の中に Result(Some(Ok v)・Some(Err e)・Nothing)。組み立ての方針の handler(1 件を飛ばして記録する・全体を止める)も Raise を受けてよい — 飛ばすのは受けたスコープ 1 つ分で、続きは戻らない。受け手の無い Absent / Raise は、ほかの effect と同じく未処理の effect として止まる(黙って Nothing や None にしない)。runner・env の組は境目の handler を既定で置かない(ADR-DOE-CLUSTER-001 R2)。")
+     (rule R2 "Absent・Raise の受け取り方は、外側のスコープの境目の handler が決める。((maybe) body) は Absent を Nothing に、成功を Some に写す。((result) body) は Raise(e) を Err(e) に、成功を Ok に写す。組み合わせの型は入れ子の順で選ぶ: ((result) (maybe …)) は Result の中に Maybe(Ok(Some v)・Ok(Nothing)・Err(e))、((maybe) (result …)) は Maybe の中に Result(Some(Ok v)・Some(Err e)・Nothing)。組み立ての方針の handler(1 件を飛ばして記録する・全体を止める)も Raise を受けてよい — 飛ばすのは受けたスコープ 1 つ分で、続きは戻らない。受け手の無い Absent / Raise は、ほかの effect と同じく未処理の effect として止まる(黙って Nothing や None にしない)。runner・env の組は境目の handler を既定で置かない(ADR-DOE-CLUSTER-001 R2)。")
      (rule R3 "出す側は最初から Absent / Raise を出すのを既定にする(Koka と同じ素直な書き方)。defk の本文は直に (<- (Raise e)) / (<- (Absent 説明)) を出す — 本文は呼び手の動的なスコープで走るので、呼び手の maybe / result に届く。(<- x (危ない呼び)) の x は成功の値 T だけで、誰に呼ばれても『T か、逃げる』の 1 通り — 同じ行の意味が呼び手で変わらない。『成功だけを見る』範囲を宣言する構文(success-only)は置かない(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定。戻し方: 範囲の宣言の macro を足し、R3 をその形の文へ戻す)。")
-     (rule R4 "effect に答える handler(ReadRow に答える土台の handler・翻訳の handler)は、節の中で Absent / Raise を出してはいけない。handler の節で出した effect はその handler より外側の handler へ行き、呼び手の本文のスコープ(maybe / result)を飛び越える:\n  組み立ての根: [外の受け手 … 土台の handler(ReadRow に答える)]   ← 外側\n    呼び手の本文: (result (maybe (<- row (ReadRow …))))              ← 内側\n  ReadRow は本文から外へ向かい、maybe・result を素通りして土台の handler に届く。土台の handler がそこで Absent を出すと、それは土台の handler より外へ行き、内側の maybe・result には戻らない。\nだから handler は今までどおり値で答え(記録係も値を書き留め、再生も変わらない)、呼び手の側の <- が defeffect の宣言(R5)に従って、不在の答えを Absent に、失敗の答えを Raise(答え)に変えて本文のスコープで出す。大事な落とし穴なので、doeff-linter の規則にする(R9 の 2 つ目の閉じる所と同じ規則)。")
-     (rule R5 "何を成功・不在・失敗・値とみなすかは effect ごとの defeffect の宣言で決め、型の名から推し量らない。形は {:answer (| Row Missing Unreachable Conflict) :absent [Missing] :failure [Unreachable] :value [Conflict]} — :absent / :failure / :value はどれも任意で、:answer の union の要素の list(None も書ける)。どれにも書かない要素が成功。要素が :answer に無い・2 つの鍵に重なるのは展開の時の誤り(:answer が union の form でない時は定義の時に Outcomes.declare が断る)。1 つでも書けば effect の型に __doeff_outcomes__(doeff_core_effects._outcomes.Outcomes)が付く。<- は宣言に従い、成功と値なら中身を束ね、不在なら Absent を、失敗なら Raise(答え)を出す。宣言の無い effect の答えは変換せず、答えのまま束ねる(yield する物も今までと同じ)。業務で普通に扱う答えは失敗と宣言しない — 例: PutRow の Conflict(版の負け)は CAS の繰り返しで普通に扱う答えなので :value と宣言する。不在を値で受けたい所は、その行を maybe で包む((maybe (ReadRow …)) は Maybe の値)。doeff-records の effect(今は defclass)は defeffect へ移してこの宣言を持つ(移し方は R14)。")
-     (rule R6 "役を 2 つに分ける(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。開く(値 → effect): <- と ! だけ(! は <- と同じ開きを通る)— 宣言に従う変換(R5)、:absent <失敗>、Result / Option の値を渡すと開く形。畳む(effect → 値): 境目の handler maybe・result・on-raise・absent-as だけ。:absent <失敗> は <- の末尾の引数で、その 1 行の束ねを包む狭い受け手として、中で出た Absent(直にも、呼んだ defk の奥にも)を Raise(<失敗>) に変える(束ねる行と意味を同じ場所に置く。受け手は呼び手の本文の内側にあるので、出した Raise は呼び手の境目に届く)。<失敗> は不在の時にだけ評価する値の式で、効果は使えない。受け取った Result / Option の値は、もう一度 <- に渡せば開ける(Ok・Some → 中身、Err(e) → Raise(e)、Nothing → Absent。Err の中身が Python の例外なら例外のまま上げる — R11)— 値と effect を行き来でき、開くための別の構文は作らない。型(Option は doeff の Maybe = Some | Nothing):\n  (<- x (dangerous-call))      x : T\n  dangerous-call               : Program[T] ! {Raise[E], …}\n  (maybe body)                 : Program[Option[T]] ! {Raise[E], …}\n  (result body)                : Program[Result[T]] ! {Absent, …}\n  (result (maybe body))        : Program[Result[Option[T]]] ! {…}")
+     (rule R4 "effect に答える handler(ReadRow に答える土台の handler・翻訳の handler)は、節の中で Absent / Raise を出してはいけない。handler の節で出した effect はその handler より外側の handler へ行き、呼び手の本文のスコープ(maybe / result)を飛び越える:\n  組み立ての根: [外の受け手 … 土台の handler(ReadRow に答える)]   ← 外側\n    呼び手の本文: ((result) ((maybe) (<- row (ReadRow …))))              ← 内側\n  ReadRow は本文から外へ向かい、maybe・result を素通りして土台の handler に届く。土台の handler がそこで Absent を出すと、それは土台の handler より外へ行き、内側の maybe・result には戻らない。\nだから handler は今までどおり値で答え(記録係も値を書き留め、再生も変わらない)、呼び手の側の <- が defeffect の宣言(R5)に従って、不在の答えを Absent に、失敗の答えを Raise(答え)に変えて本文のスコープで出す。大事な落とし穴なので、doeff-linter の規則にする(R9 の 2 つ目の閉じる所と同じ規則)。")
+     (rule R5 "何を成功・不在・失敗・値とみなすかは effect ごとの defeffect の宣言で決め、型の名から推し量らない。形は {:answer (| Row Missing Unreachable Conflict) :absent [Missing] :failure [Unreachable] :value [Conflict]} — :absent / :failure / :value はどれも任意で、:answer の union の要素の list(None も書ける)。どれにも書かない要素が成功。要素が :answer に無い・2 つの鍵に重なるのは展開の時の誤り(:answer が union の form でない時は定義の時に Outcomes.declare が断る)。1 つでも書けば effect の型に __doeff_outcomes__(doeff_core_effects._outcomes.Outcomes)が付く。<- は宣言に従い、成功と値なら中身を束ね、不在なら Absent を、失敗なら Raise(答え)を出す。宣言の無い effect の答えは変換せず、答えのまま束ねる(yield する物も今までと同じ)。業務で普通に扱う答えは失敗と宣言しない — 例: PutRow の Conflict(版の負け)は CAS の繰り返しで普通に扱う答えなので :value と宣言する。不在を値で受けたい所は、その行を maybe で包む(((maybe) (ReadRow …)) は Maybe の値)。doeff-records の effect(今は defclass)は defeffect へ移してこの宣言を持つ(移し方は R14)。")
+     (rule R6 "役を 2 つに分ける(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。開く(値 → effect): <- と ! だけ(! は <- と同じ開きを通る)— 宣言に従う変換(R5)、:absent <失敗>、Result / Option の値を渡すと開く形。畳む(effect → 値): 境目の handler maybe・result・on-raise・absent-as だけ。:absent <失敗> は <- の末尾の引数で、その 1 行の束ねを包む狭い受け手として、中で出た Absent(直にも、呼んだ defk の奥にも)を Raise(<失敗>) に変える(束ねる行と意味を同じ場所に置く。受け手は呼び手の本文の内側にあるので、出した Raise は呼び手の境目に届く)。<失敗> は不在の時にだけ評価する値の式で、効果は使えない。受け取った Result / Option の値は、もう一度 <- に渡せば開ける(Ok・Some → 中身、Err(e) → Raise(e)、Nothing → Absent。Err の中身が Python の例外なら例外のまま上げる — R11)— 値と effect を行き来でき、開くための別の構文は作らない。型(Option は doeff の Maybe = Some | Nothing):\n  (<- x (dangerous-call))      x : T\n  dangerous-call               : Program[T] ! {Raise[E], …}\n  (maybe body)                 : Program[Option[T]] ! {Raise[E], …}\n  (result body)                : Program[Result[T]] ! {Absent, …}\n  ((result) (maybe body))        : Program[Result[Option[T]]] ! {…}")
      (rule R7 "境目の on-raise は (on-raise 本文 パターン [:if 番] 写し先 …) の形 — 失敗の型のパターン((型 欄 …) か (| (A …) (B …)))と、それを写す業務の答えだけを並べる。何でも受ける形(_・名前 1 つの capture・object・Exception・BaseException)は展開の時に断り、例外の型を名指す受けは作る時に断る(RaiseCase)。パターンに合わない Raise は受けずに外へ渡す。Python の例外(実装の誤り)は on-raise が受けない(Raise だけを見る)。番と写し先は値の式(効果は使えない)(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。")
      (rule R8 "(absent-as 既定値 本文) は、中で出た Absent を既定値に畳む(effect ならではの形 — Maybe を値で受けて既定値へ畳む手間が要らない)。『知らない値を黙って既定値にしない』(code-quality の方針)に触れるので、既定値を与える handler はその場に書いた (absent-as …) のような明示の物に限り、runner・env の組・土台の handler に既定値での再開を置かない。再開の値が型に合うのは、Absent が absent-as の字面の中の <- で値の代わりに出た時だけ — 本文が (do! …) なら、その字面の中に直に書いた <- と ! が出した不在だけを既定値で再開する(その束ねが既定値を受けて続く)。呼んだ defk の奥で出た Absent に既定値を返すと、奥の行が別の型の値を受ける。コードに直に書いた (<- (Absent …)) を再開すると、不在を前提にしない続きが走る。この 2 つの場合は再開せず、既定値で absent-as のスコープを終える。入れ子の do! / fnk / 関数の中の束ねは『奥』に数える。")
      (rule R9 "境目の handler(maybe・result・on-raise・absent-as)を書くのは、不在か失敗に対して何かしたい所だけ。それ以外は成功の道だけを書き、Absent / Raise は外へ逃がす(try-catch を受け止めたい所にだけ書くのと同じ)。ただし構造上必ず閉じる所が 2 つある。(1) job の入口 — runner は handler を足さない(ADR-DOE-CLUSTER-001 R2)ので、service の本体の方針の handler(飛ばして記録・止める等)で閉じる。確かめ: job の Program の推論した残りの effect が空。(2) handler の節の中で Program を走らせて答える所(翻訳の handler)— handler の中から逃げた Raise は handler より外側へ行き呼び手のスコープを飛び越える(R4)ので、答えの値(業務の effect の答えの型)に閉じてから返す。確かめ: handler の節で走らせる Program の推論した残りの effect に Absent / Raise が無い — doeff-linter の新しい規則の候補(番号は未定)(2026-09-27・f143ee92 の席が推奨どおり決めた戻せる決定)。")
@@ -494,7 +494,7 @@
        :enforced-by ["test-adr-doe-core-effects-003-absent-and-raise-are-distinct"]
        :wiring "配線済み(2026-09-28)— 欄・継承・再開の宣言と、maybe / result が続きを再開しないことを検が確かめる。組み立ての方針の handler(Traverse の 1 件ごとの受け手)は段階 4 の後")
      (law fold-handlers-choose-the-shape
-       :statement "for_all スコープ s: s の外へ出る値の形は、s を囲む境目の handler の入れ子の順だけで決まる — (result (maybe b)) : Result[Maybe[T]] ∧ (maybe (result b)) : Maybe[Result[T]] ∧ 受け手の無い Absent / Raise は未処理の effect として止まる ∧ runner・env の組は境目の handler を置かない"
+       :statement "for_all スコープ s: s の外へ出る値の形は、s を囲む境目の handler の入れ子の順だけで決まる — ((result) ((maybe) b)) : Result[Maybe[T]] ∧ ((maybe) ((result) b)) : Maybe[Result[T]] ∧ 受け手の無い Absent / Raise は未処理の effect として止まる ∧ runner・env の組は境目の handler を置かない"
        :counterexamples
          [(counterexample "runner や env の組が既定で maybe を置く — Program を読んでもどの形で返るか分からない(ADR-DOE-CLUSTER-001 R2 と同じ害)")
           (counterexample "受け手の無い Raise を最上位で黙って None にする — 失敗が成功の値に化ける")]
@@ -679,14 +679,14 @@
        (with [(pytest.raises TypeError)]
          (Raise (ValueError "例外は理由にならない")))
        (val seen [])
-       (assert (is (run (maybe (probe-absent-then-note seen))) Nothing))
-       (assert (= (repr (run (result (probe-raise-then-note seen)))) "Err(ProbeDown(detail='届かない'))"))
+       (assert (is (run ((maybe) (probe-absent-then-note seen))) Nothing))
+       (assert (= (repr (run ((result) (probe-raise-then-note seen)))) "Err(ProbeDown(detail='届かない'))"))
        (assert (= seen []) "maybe と result は続きを再開しない"))
      (deftest test-adr-doe-core-effects-003-nesting-order-chooses-the-shape
-       ;; (a) R2: (result (maybe b)) と (maybe (result b)) で形が変わる(Ok / Err は値で比べられないので repr で比べる)。
+       ;; (a) R2: ((result) ((maybe) b)) と ((maybe) ((result) b)) で形が変わる(Ok / Err は値で比べられないので repr で比べる)。
        (val shapes
          (lfor b [probe-one (fn [] (probe-absent-then-note [])) (fn [] (probe-raise-then-note []))]
-               #((repr (run (result (maybe (b))))) (repr (run (maybe (result (b))))))))
+               #((repr (run ((result) ((maybe) (b))))) (repr (run ((maybe) ((result) (b))))))))
        (assert (= shapes [#("Ok(Some(1))" "Some(Ok(1))")
                           #("Ok(Nothing)" "Nothing")
                           #("Err(ProbeDown(detail='届かない'))" "Some(Err(ProbeDown(detail='届かない')))")])
@@ -698,15 +698,15 @@
      (deftest test-adr-doe-core-effects-003-raise-in-a-handler-clause-skips-the-bodys-result
        ;; (b) R4: handler の節の中で出した Raise は、本文を包んだ result を飛び越え、handler より外の result に届く
        ;; (内側の result が受けていれば Ok(Err …) になるはず)。
-       (val answer (run (result (probe-raising-read-handler (result (probe-reads-a-row))))))
+       (val answer (run ((result) (probe-raising-read-handler ((result) (probe-reads-a-row))))))
        (assert (= (repr answer) "Err(ProbeConflict(detail='handler の節の中で出した'))") answer))
      (deftest test-adr-doe-core-effects-003-declared-bind-opens-the-answer
        ;; R5・R6: 宣言を持つ effect の <- は成功を束ね、不在を Absent に、失敗を Raise(答え) に変えて呼び手のスコープで出す。
        (assert (isinstance ProbeDeclaredRead.__doeff_outcomes__ Outcomes))
-       (assert (= (run (probe-rows (maybe (probe-read-value "a")))) (Some "A")))
-       (assert (is (run (probe-rows (maybe (probe-read-value "zz")))) Nothing))
-       (assert (= (repr (run (probe-rows (result (probe-read-value "down"))))) "Err(ProbeDown(detail='網が落ちた'))"))
-       (assert (is (run (probe-rows (maybe (ProbeDeclaredRead "zz")))) Nothing) "maybe に宣言を持つ effect をそのまま渡しても開く"))
+       (assert (= (run (probe-rows ((maybe) (probe-read-value "a")))) (Some "A")))
+       (assert (is (run (probe-rows ((maybe) (probe-read-value "zz")))) Nothing))
+       (assert (= (repr (run (probe-rows ((result) (probe-read-value "down"))))) "Err(ProbeDown(detail='網が落ちた'))"))
+       (assert (is (run (probe-rows ((maybe) (ProbeDeclaredRead "zz")))) Nothing) "maybe に宣言を持つ effect をそのまま渡しても開く"))
      (deftest test-adr-doe-core-effects-003-undeclared-bind-is-unchanged
        ;; (c) R5: 宣言の無い effect の <- は、yield する物も束ねる答えも今までと同じ(不在・失敗の値もそのまま束ね、外へ何も出さない)。
        (val effect (ProbePlainRead "zz"))
@@ -717,18 +717,18 @@
        (assert (= (run (probe-rows (probe-read-plain "down"))) (ProbeDown :detail "網が落ちた")) "失敗の値をそのまま束ねる"))
      (deftest test-adr-doe-core-effects-003-a-bind-has-one-meaning
        ;; R3: 同じ束ねの行(probe-read-value の <-)は、呼び手の maybe・result・on-raise のどの下でも成功の型を束ねる。
-       (val under-maybe (run (probe-rows (maybe (probe-read-value "a")))))
-       (val under-result (run (probe-rows (result (probe-read-value "a")))))
+       (val under-maybe (run (probe-rows ((maybe) (probe-read-value "a")))))
+       (val under-result (run (probe-rows ((result) (probe-read-value "a")))))
        (val under-on-raise (run (probe-rows (on-raise (probe-read-value "a") (ProbeDown :detail d) d))))
        (assert (= #(under-maybe (repr under-result) under-on-raise) #((Some "A") "Ok('A')" "A"))
                #(under-maybe under-result under-on-raise)))
      (deftest test-adr-doe-core-effects-003-absent-option-maps-one-bind
        ;; (e) R6: <- の :absent は、その束ねの中の不在(呼んだ defk の奥の物も)を Raise(失敗) に写す。失敗はそのまま。
-       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "zz")))))
+       (assert (= (repr (run (probe-rows ((result) (probe-read-or-conflict "zz")))))
                   "Err(ProbeConflict(detail='zz の行が無い'))"))
-       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "down")))))
+       (assert (= (repr (run (probe-rows ((result) (probe-read-or-conflict "down")))))
                   "Err(ProbeDown(detail='網が落ちた'))"))
-       (assert (= (repr (run (probe-rows (result (probe-read-or-conflict "a"))))) "Ok('A')")))
+       (assert (= (repr (run (probe-rows ((result) (probe-read-or-conflict "a"))))) "Ok('A')")))
      (deftest test-adr-doe-core-effects-003-on-raise-refuses-python-exceptions-and-catch-all
        ;; (d) R7: on-raise は Python の例外を受けない・何でも受けるパターンは展開の時に断る・例外の型を名指す受けは作る時に断る。
        (with [(pytest.raises ValueError :match "boom")]

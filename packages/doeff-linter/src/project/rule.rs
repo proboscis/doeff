@@ -1273,7 +1273,7 @@ impl ProjectRule {
             ProjectRule::FieldsJoinedIntoText => "型のある値のまま渡す(欄を文字列に潰さない)— 文にするのは人に見せる境目の 1 か所だけ",
             ProjectRule::RebuiltAccumulator => "蓄えは内包表記(lfor)で 1 度に作る — ループの中で (+ xs #(…)) の作り直しを重ねない",
             ProjectRule::EffectsDisagreeWithInference => ":effects に起こしている effect を足すか、起こしていない effect を消す(推論は handler で受けた effect を引かない — 本体で受けているなら登録簿に載せる)",
-            ProjectRule::StaleOutcomeBranch => "枝を消して成功の道だけにする — 不在で何かしたい所は (<- x (E …) :absent <失敗>) か absent-as、失敗で何かしたい所は on-raise、不在や失敗を値として持ち回る所は (maybe (E …)) で包んで Nothing を受ける形にする(R14 (3))",
+            ProjectRule::StaleOutcomeBranch => "枝を消して成功の道だけにする — 不在で何かしたい所は (<- x (E …) :absent <失敗>) か absent-as、失敗で何かしたい所は on-raise、不在や失敗を値として持ち回る所は ((maybe) (E …)) で包んで Nothing を受ける形にする(R14 (3))",
             ProjectRule::TestFormNotDeftest => "deftest に書き直す(判定の関数は同じ process で呼ぶ)— 守る物が消えたなら file ごと消す。module ごとの skip は足りない物を直すか、その検だけを skip する",
             ProjectRule::VocabularyOutsideSinglePoint => "群の :instead が名指す判定の1点(:except の file)の答えを読む — 直せない既存の当たりは登録簿に載せる",
             ProjectRule::SpellingOutsideItsFiles => "綴りを :except の file へ移し、外の file はその file の口を通す — 書いてよい file を増やすなら、理由を :why に書いて :except に足す",

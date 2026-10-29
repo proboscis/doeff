@@ -9,6 +9,9 @@
 ;;;   (on-raise body (Conflict d) (WriteConflict :detail d) …)       合う型の Raise だけを業務の答えへ写す(何でも受ける形は断る)
 ;;;   (absent-as 0 body)                                             Absent を既定値に畳む(字面の中の <- の不在だけ再開する)
 ;;;
+;;; on-raise と absent-as の展開先は、呼ぶと handler を返す工場 — ((on-raise 受け…) body)・((absent-as 0 :token 印) body)
+;;; (ADR-DOE-API-001 R6)。
+;;;
 ;;; macros.hy と handle.hy は、展開の時に関数の中でこの module を import する(macros.hy を compile している間は deff の
 ;;; 展開が呼ぶ補助がまだ無いので、deff で書く補助は macros.hy の外に置く)。
 
@@ -220,7 +223,7 @@
                  _ _doeff-nothing))))))
     `(do (import doeff_core_effects [on-raise :as _doeff-on-raise RaiseCase :as _doeff-raise-case])
          (import doeff.result [Some :as _doeff-some Nothing :as _doeff-nothing])
-         (_doeff-on-raise ~program ~@cases))))
+         ((_doeff-on-raise ~@cases) ~program))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -265,4 +268,4 @@
     `(do (import doeff_core_effects [absent-as :as _doeff-absent-as]
                  doeff_core_effects._outcomes [new-absent-token :as _doeff-new-absent-token direct-bind :as _doeff-direct-bind])
          (let [~token (_doeff-new-absent-token)]
-           (_doeff-absent-as ~default (_doeff-direct-bind ~token ~body) ~token)))))
+           ((_doeff-absent-as ~default :token ~token) (_doeff-direct-bind ~token ~body))))))
