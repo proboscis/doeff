@@ -17,9 +17,10 @@
 (import doeff_claude_code [Completed])
 (import doeff_claude_code [ClaudeStartTurn ClaudeWarmSession ClaudeCloseSession ClaudeSessionStatus ClaudeLiveLimitExceeded TurnStarted SessionWarmed TurnRunning])
 (import doeff_claude_code [ClaudeLiveProcess LiveProcess])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [LIVE-LIMIT-LOG ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code.fake [FakeClaudeWorld fake-claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler]
+        doeff_claude_code._handler [LIVE-LIMIT-LOG])
+(import doeff_claude_code [FakeClaudeWorld fake-claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env fake-responder])
 (import tests.scenario_rules [reply-prompt sleep-prompt])
 (import tests.scenario_steps [read-to-end read-to-tool-start])

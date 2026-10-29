@@ -166,7 +166,7 @@ EXPECTED: dict[str, dict[str, Declared]] = {
         "CarryRefused": Declared(fields={"detail": "str"}),
         "LaunchFailed": Declared(fields={"exit_code": "int | None", "stderr_tail": "str"}),
     },
-    "fake": {
+    "_fake": {
         "StopHookRejection": Declared(fields={"answer": "str", "reason": "str"}),
         "FakeReply": Declared(
             fields={

@@ -141,6 +141,12 @@ if TYPE_CHECKING:
     from doeff_claude_code._values import SessionOrigin as SessionOrigin
     from doeff_claude_code._values import TranscriptCarry as TranscriptCarry
     from doeff_claude_code._values import TurnInput as TurnInput
+    from doeff_claude_code._fake import FakeClaudeWorld as FakeClaudeWorld
+    from doeff_claude_code._fake import FakeReply as FakeReply
+    from doeff_claude_code._fake import StopHookRejection as StopHookRejection
+    from doeff_claude_code._fake import fake_claude_code_handler as fake_claude_code_handler
+    from doeff_claude_code._fake import fake_claude_print_handler as fake_claude_print_handler
+    from doeff_claude_code._print_once import claude_print_handler as claude_print_handler
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AccountLimitHit": "doeff_claude_code._lines",
@@ -275,6 +281,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "LiveProcess": "doeff_claude_code._faults",
     "NoLiveProcess": "doeff_claude_code._faults",
     "StopReason": "doeff_claude_code._faults",
+    "ClaudeCodeHost": "doeff_claude_code._handler",
+    "claude_code_handler": "doeff_claude_code._handler",
+    "FakeClaudeWorld": "doeff_claude_code._fake",
+    "FakeReply": "doeff_claude_code._fake",
+    "StopHookRejection": "doeff_claude_code._fake",
+    "fake_claude_code_handler": "doeff_claude_code._fake",
+    "fake_claude_print_handler": "doeff_claude_code._fake",
+    "claude_print_handler": "doeff_claude_code._print_once",
 }
 
 
