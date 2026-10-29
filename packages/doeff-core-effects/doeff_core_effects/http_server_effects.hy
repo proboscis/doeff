@@ -76,8 +76,14 @@
 ;;;   1 通を今までどおり出来事 WsTextArrived として列へ並べ、欄 answered に積んだ文の列・answered-at に積み終えた拍の単調時計を載せる
 ;;;   (当たらなかった 1 通と、answer が空の tuple で答えた 1 通は answered が空・answered-at が None)。本体は同じ 1 通を受け、自分の状態を
 ;;;   変える(答えを積み直すかは本体が決める)。
-;;;   接続ごとの 1 通の順は変わらない: 答え手は当たった 1 通の答えを積み終えるまで、その接続の次の 1 通を読まない。answer が落ちた・答えの型が
-;;;   違う時は何も積まず(WsShortcutFailed の理由を答え手が 1 行名乗る)、1 通は answered が空のまま並ぶ — 本体がいつもどおり答える。
+;;;   答えは 2 段にも分けられる(agora card ki-d5887d5edbd5 — 先に「読み込み中」を送り、記録を読んでから行を送る): answer の Program が
+;;;   WsShortcutAhead(texts と続きの閉じた Program rest)で答えれば、答え手は texts を積んでから rest を同じ自分の run で走らせ、rest の答えを
+;;;   同じ形で受ける(rest がまた WsShortcutAhead なら続ける)。終わりの答えが WsShortcutCarried(texts と値 carried)なら、texts を積み、
+;;;   1 通の出来事の欄 carried に値を載せて本体へ渡す(本体が答え手の読んだ物を自分の状態へ畳み、同じ物を読み直さない)。answered は全部の段で
+;;;   積んだ文の列・answered-at は最後の段を積み終えた拍。
+;;;   接続ごとの 1 通の順は変わらない: 答え手は当たった 1 通の答えを(全部の段を)積み終えるまで、その接続の次の 1 通を読まない。answer が落ちた・答えの型が
+;;;   違う時は何も積まず(WsShortcutFailed の理由を答え手が 1 行名乗る)、1 通は answered が空のまま並ぶ — 本体がいつもどおり答える。続きの段が
+;;;   落ちた時は、それまでに積んだ文を answered に載せ、carried は空のまま並べる。
 ;;;   本物の答え手は answer を待ち受けの loop の外の thread で走らせる(本体の scheduler が止まっていても答える)。台本の答え手は、列の頭が当たる
 ;;;   1 通の時に answer を走らせ、送った文を記録(WsTextSent)に残してから出来事を渡す。
 ;;; 2 つの答え手が同じに決める物は、ここの判断の defk を両方が呼ぶ: carries-content(本文を運ぶ答えか — HEAD・1xx・204・304 は送らない)・
@@ -144,12 +150,13 @@
 (defrecord WsTextArrived
   "ws に上げた札の接続に文字の 1 通が届いた(分割は組み立て済み・UTF-8 は検め済み)。answered = 答え手がその場で答える口(ws-shortcuts)で
    この 1 通の前にその接続の送りの箱へ積んだ文の列(当たらなければ空)・answered-at = 積み終えた拍の単調時計の秒(当たらなければ None —
-   頭の註)。"
+   頭の註)・carried = 答え手の口の終わりの段が本体へ渡した値(WsShortcutCarried — 渡さなければ None)。"
   (#^ str ticket)
   (#^ str text)
   (setv #^ (| float None) received-at None
         #^ (get tuple #(str ...)) answered #()
-        #^ (| float None) answered-at None))
+        #^ (| float None) answered-at None
+        #^ object carried None))
 
 
 (defrecord WsBinaryArrived
@@ -253,9 +260,26 @@
   (#^ (get Callable #([str str] Program)) answer))
 
 
+(defrecord WsShortcutAhead
+  "ws の口の answer の途中の答え(頭の註の 2 段の答え): texts = 今その接続へ順に積む文の列・rest = 積んだ後に答え手が同じく自分の run で
+   走らせる続きの閉じた Program(答えは answer と同じ形 — 文の tuple・WsShortcutAhead・WsShortcutCarried)。"
+  (#^ (get tuple #(str ...)) texts)
+  (#^ Program rest))
+
+
+(defrecord WsShortcutCarried
+  "ws の口の answer の終わりの答えのうち、本体へ値を渡す物(頭の註): texts = その接続へ順に積む文の列・carried = 1 通の出来事
+   WsTextArrived の欄 carried に載せて本体へ渡す値(None は渡さない)。"
+  (#^ (get tuple #(str ...)) texts)
+  (#^ object carried))
+
+
 (defrecord WsShortcutAnswered
-  "ws の口の answer の答え: その接続へ順に積む文の列(空なら何も積まない)。"
-  (#^ (get tuple #(str ...)) texts))
+  "ws の口の answer の 1 段の答え: texts = その接続へ順に積む文の列(空なら何も積まない)・rest = 積んだ後に走らせる続きの段(None = 終わり)・
+   carried = 終わりの段が本体へ渡す値(頭の註)。"
+  (#^ (get tuple #(str ...)) texts)
+  (setv #^ (| Program None) rest None
+        #^ object carried None))
 
 
 (defrecord WsShortcutFailed
@@ -437,15 +461,25 @@
   {:pre [(: shortcut WsShortcut) (: ticket str) (: text str)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))]
    :tags {:context "http-server" :role "foundation"}}
   "ws の口に当たった 1 通の答えの文を、本体の run(scheduler・session の値・Await の共有の event loop)に触れずに出すため(頭の註): answer の
-   Program を自分の run で走らせ、答えが文の tuple なら WsShortcutAnswered、落ちた・型が違えば WsShortcutFailed。2 つの答え手が同じこの関数で
-   答える。"
+   Program を自分の run で走らせ、その 1 段目の答えを ws-shortcut-stage で読む。2 つの答え手が同じこの関数で答える。"
+  (ws-shortcut-stage (shortcut.answer ticket text)))
+
+
+(deff ws-shortcut-stage [program]  ; defk にできない: ws-shortcut-outcome と同じく、答え手が本体の Program の外で閉じた段を自分の run で走らせる入口
+  {:pre [(: program Program)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))] :tags {:context "http-server" :role "foundation"}}
+  "ws の口の答えの 1 段(answer の Program か、前の段の rest)を自分の run で走らせ、答えを読むため(頭の註の 2 段の答え): 文の tuple なら
+   終わりの段・WsShortcutAhead なら続き rest つきの段・WsShortcutCarried なら値 carried つきの終わりの段の WsShortcutAnswered、落ちた・型が
+   違えば WsShortcutFailed。2 つの答え手が段ごとに同じこの関数で答える。"
   (try
-    (setv texts (run (shortcut.answer ticket text)))
+    (setv answer (run program))
     (except [error Exception]
       (return (WsShortcutFailed :reason (+ (. (type error) __name__) ": " (str error))))))
-  (if (and (isinstance texts tuple) (all (gfor one texts (isinstance one str))))
-      (WsShortcutAnswered :texts texts)
-      (WsShortcutFailed :reason (+ "answer の答えが文の tuple でない: " (repr texts)))))
+  (setv texts (if (isinstance answer (| WsShortcutAhead WsShortcutCarried)) answer.texts answer))
+  (when (not (and (isinstance texts tuple) (all (gfor one texts (isinstance one str)))))
+    (return (WsShortcutFailed :reason (+ "answer の答えが文の tuple でない: " (repr answer)))))
+  (cond (isinstance answer WsShortcutAhead) (WsShortcutAnswered :texts texts :rest answer.rest)
+        (isinstance answer WsShortcutCarried) (WsShortcutAnswered :texts texts :carried answer.carried)
+        True (WsShortcutAnswered :texts texts)))
 
 
 ;; --- 台本の語彙(scripted-http-server) -----------------------------------------------------------------------------------

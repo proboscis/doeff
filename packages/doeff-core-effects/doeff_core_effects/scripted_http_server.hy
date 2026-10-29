@@ -50,7 +50,7 @@
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
                                                 probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader
-                                                WsShortcut WsShortcutAnswered ws-shortcut-for ws-shortcut-outcome])
+                                                WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
 (import doeff_core_effects._file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
@@ -266,9 +266,11 @@
   (when (and (isinstance head WsTextArrived) (in head.ticket opened))
     (<- shortcut (| WsShortcut None) (ws-shortcut-for shortcuts head.text))
     (when (is-not shortcut None)
-      (val outcome (ws-shortcut-outcome shortcut head.ticket head.text))
-      ;; 答えの文が無ければ何も送らず、当たらなかった 1 通と同じ形で渡す(本物と同じ — answered は積んだ時だけ)。
-      (when (and (isinstance outcome WsShortcutAnswered) outcome.texts)
+      ;; 段ごとに送る(本物と同じ — 続き rest の在る段は送ってから rest を走らせる・落ちた段はそれまでに送った文で渡す)。
+      (var outcome (ws-shortcut-outcome shortcut head.ticket head.text))
+      (var answered #())
+      (var carried None)
+      (while (isinstance outcome WsShortcutAnswered)
         (for [one outcome.texts]
           (<- sent ScriptSend (script-sent head.ticket one limit stalled record still-open boxes counted later))
           (:= record sent.served)
@@ -276,8 +278,15 @@
           (:= boxes sent.backlog)
           (:= counted sent.tally)
           (:= later sent.pending))
-        (:= head (WsTextArrived :ticket head.ticket :text head.text :received-at head.received-at :answered outcome.texts
-                                :answered-at head.received-at)))))
+        (:= answered (+ answered outcome.texts))
+        (:= carried outcome.carried)
+        (:= outcome (if (is outcome.rest None) None (ws-shortcut-stage outcome.rest))))
+      (when (isinstance outcome WsShortcutFailed)
+        (:= carried None))
+      ;; 答えの文が無ければ何も送らず、当たらなかった 1 通と同じ形で渡す(本物と同じ — answered は積んだ時だけ)。
+      (when (or answered (is-not carried None))
+        (:= head (WsTextArrived :ticket head.ticket :text head.text :received-at head.received-at :answered answered
+                                :answered-at (if answered head.received-at None) :carried carried)))))
   (when (isinstance head WsClosed)
     ;; 相手が閉じた札: 以後の送りは捨てる・箱の溜まりは捨てた勘定へ。
     (:= still-open (- still-open #{head.ticket}))

@@ -3,6 +3,7 @@
 from typing import TypeAlias
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
+from collections.abc import Callable as Callable
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
 from doeff import run as run
@@ -45,6 +46,9 @@ class WsTextArrived:
     ticket: str
     text: str
     received_at: float | None = None
+    answered: tuple[str, ...] = ...
+    answered_at: float | None = None
+    carried: object = None
 
 @dataclass(frozen=True, kw_only=True)
 class WsBinaryArrived:
@@ -114,6 +118,31 @@ class HttpProbe:
     path: str
     answer: Program[HttpProbeAnswer, object]
 
+@dataclass(frozen=True, kw_only=True)
+class WsShortcut:
+    marker: str
+    answer: Callable[[str, str], Program]
+
+@dataclass(frozen=True, kw_only=True)
+class WsShortcutAhead:
+    texts: tuple[str, ...]
+    rest: Program
+
+@dataclass(frozen=True, kw_only=True)
+class WsShortcutCarried:
+    texts: tuple[str, ...]
+    carried: object
+
+@dataclass(frozen=True, kw_only=True)
+class WsShortcutAnswered:
+    texts: tuple[str, ...]
+    rest: Program | None = None
+    carried: object = None
+
+@dataclass(frozen=True, kw_only=True)
+class WsShortcutFailed:
+    reason: str
+
 @dataclass(frozen=True)
 class HttpListen(EffectBase[HttpAddress]):
     address: HttpAddress
@@ -121,6 +150,7 @@ class HttpListen(EffectBase[HttpAddress]):
     ws_send_max_bytes: int = ...
     probes: tuple[HttpProbe, ...] = ...
     share_port: bool = False
+    ws_shortcuts: tuple[WsShortcut, ...] = ...
 
 @dataclass(frozen=True)
 class HttpNextRequest(EffectBase[HttpEvent]):
@@ -211,6 +241,15 @@ def probe_failure(path: str, reason: str) -> _Program[HttpProbeAnswer, object]:
     ...
 
 def probe_answer(probe: HttpProbe) -> HttpProbeAnswer:
+    ...
+
+def ws_shortcut_for(shortcuts: tuple[WsShortcut, ...], text: str) -> _Program[WsShortcut | None, object]:
+    ...
+
+def ws_shortcut_outcome(shortcut: WsShortcut, ticket: str, text: str) -> WsShortcutAnswered | WsShortcutFailed:
+    ...
+
+def ws_shortcut_stage(program: Program) -> WsShortcutAnswered | WsShortcutFailed:
     ...
 
 @dataclass(frozen=True, kw_only=True)
