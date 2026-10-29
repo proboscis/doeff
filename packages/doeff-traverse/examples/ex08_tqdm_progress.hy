@@ -112,7 +112,7 @@ async def async_compute(x):
 ;; Without tqdm
 (print "=== without tqdm (parallel) ===")
 (setv result (run (with-stack
-  [try_handler compute-backend fail_handler (await_handler) (parallel 10)]
+  [try_handler compute-backend fail_handler await_handler (parallel 10)]
   program)))
 (print "Done:" (. result valid_values))
 
@@ -122,7 +122,7 @@ async def async_compute(x):
 (print)
 (print "=== with tqdm (parallel) ===")
 (setv result (run (with-stack
-  [try_handler compute-backend fail_handler (await_handler) (tqdm-progress) (parallel 10)]
+  [try_handler compute-backend fail_handler await_handler (tqdm-progress) (parallel 10)]
   program)))
 (print "Done:" (. result valid_values))
 
@@ -131,7 +131,7 @@ async def async_compute(x):
 (print)
 (print "=== with tqdm, item 7 failing (parallel) ===")
 (setv result (run (with-stack
-  [try_handler flaky-backend fail_handler (await_handler) (tqdm-progress) (parallel 10)]
+  [try_handler flaky-backend fail_handler await_handler (tqdm-progress) (parallel 10)]
   program)))
 (print "Done:" (len (. result valid_values)) "valid,"
        (lfor item (. result failed_items) (. item index)) "failed")

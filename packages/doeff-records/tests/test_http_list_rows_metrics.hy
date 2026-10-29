@@ -96,7 +96,7 @@
                                                                 :request-handlers (sim-request-handlers (SimClock))
                                                                 :callers #(READER)))))
   (try
-    (<- seen ListRun (with_handlers [(await-handler) (http-production-handler)] (list-scenario server.url)))
+    (<- seen ListRun (with_handlers [await-handler (http-production-handler)] (list-scenario server.url)))
     (finally (.close server)))
   seen)
 

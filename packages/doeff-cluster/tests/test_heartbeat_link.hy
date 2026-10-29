@@ -92,7 +92,7 @@
    scheduler は内側にもう 1 つ置く — 待ちの背景の task は筋書きの終わりで一緒に終わり、deftest の scheduler へ漏れない。"
   ;; 環境変数の読み(ReadEnvironment — 準備の file の名 DOEFF_WORKER_READY_FILE)は、共有の run-on-link(link_rig.hy)と同じ本物の
   ;; subprocess-handler — 答え手が無いと名乗りが落ち、待ちが起きない(#3014 で読みが effect になった)。
-  (<- answer (scheduled (with-handlers [(await-handler) (async-time-handler) (transport-http link.transport) yielding-http os-file-handler
+  (<- answer (scheduled (with-handlers [await-handler (async-time-handler) (transport-http link.transport) yielding-http os-file-handler
                                         subprocess-handler slog-handler
                                         (coordinator-link link.state link.cell LINK-ROUTE link.watch-cell)]
                                        scenario)))

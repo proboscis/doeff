@@ -59,7 +59,7 @@
   (gc.collect)
   (gc.disable)
   (try
-    (<- answer HttpResponse (with-handler [(await-handler) (http-production-handler :client-factory factory)]
+    (<- answer HttpResponse (with-handler [await-handler (http-production-handler :client-factory factory)]
                               (fetch-many REQUESTS)))
     (assert (= #(answer.status (len answer.content)) #(200 (len BODY))) answer.status)
     (assert (in "first" seen) seen)

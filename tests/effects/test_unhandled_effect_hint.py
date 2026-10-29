@@ -4,7 +4,7 @@ A first-time user who forgets a handler used to read only the effect that fell
 off the top (``unhandled effect: Spawn (<… object at 0x…>)``), which names
 neither the handler nor how to install it. Worse, two of the common mistakes
 surface an effect the user never wrote: ``writer`` without ``state()`` fails on
-``writer``'s own ``Get`` of an internal key, and ``await_handler()`` without
+``writer``'s own ``Get`` of an internal key, and ``await_handler`` without
 ``scheduled()`` fails on the ``CreateExternalPromise`` it performs.
 
 The message now ends with one ``hint:`` line, looked up from the effect's type
@@ -130,19 +130,19 @@ class TestTheFourFirstLookMistakes:
         assert "run(scheduled(prog))" in hint
 
     def test_await_handler_without_scheduled_names_scheduled(self):
-        """await_handler() performs CreateExternalPromise; without scheduled()
+        """await_handler performs CreateExternalPromise; without scheduled()
         that is the effect that falls off, so its hint says where it came from."""
-        message = _unhandled_await_message(await_handler())
+        message = _unhandled_await_message(await_handler)
         assert "CreateExternalPromise" in message
         hint = _hint_line(message)
-        assert "await_handler()" in hint
-        assert "run(scheduled(await_handler()(prog)))" in hint
-        assert run(scheduled(await_handler()(await_program(_answer())))) == 42
+        assert "await_handler" in hint
+        assert "run(scheduled(await_handler(prog)))" in hint
+        assert run(scheduled(await_handler(await_program(_answer())))) == 42
 
     def test_await_without_any_handler_names_await_handler_and_scheduled(self):
         hint = _hint_line(_unhandled_await_message(lambda program: program))
-        assert "run(scheduled(await_handler()(prog)))" in hint
-        assert run(scheduled(await_handler()(await_program(_answer())))) == 42
+        assert "run(scheduled(await_handler(prog)))" in hint
+        assert run(scheduled(await_handler(await_program(_answer())))) == 42
 
     def test_ask_without_handler_names_reader(self):
         hint = _hint_line(_message(ask_program()))

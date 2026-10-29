@@ -1,5 +1,5 @@
 """``@do`` on an ``async def`` function is a TypeError where the decorator is applied, and the
-message says how to write the awaits: ``yield Await(...)`` under ``await_handler()`` inside
+message says how to write the awaits: ``yield Await(...)`` under ``await_handler`` inside
 ``scheduled()``.
 
 Before: ``@do`` over ``async def prog(): await asyncio.sleep(0.01); return 42`` said nothing,
@@ -46,8 +46,8 @@ COROUTINE_FUNCTION_MESSAGE = (
     "@do cannot wrap 'fetch_answer': it is an async def function, so calling it would "
     "return a coroutine that nothing awaits, not a program. Make it a plain def and write "
     "each await as a yield of Await: value = yield Await(coro) instead of value = await coro "
-    "(Await from doeff). Await is handled by await_handler(), which needs scheduled outside "
-    "it: run(scheduled(await_handler()(fetch_answer()))) (await_handler from "
+    "(Await from doeff). Await is handled by await_handler, which needs scheduled outside "
+    "it: run(scheduled(await_handler(fetch_answer()))) (await_handler from "
     "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
 )
 
@@ -56,8 +56,8 @@ ASYNC_GENERATOR_FUNCTION_MESSAGE = (
     "yield), so calling it would return an async generator, not a program. Make it a plain "
     "def that keeps its yields and write each await as a yield of Await: value = yield "
     "Await(coro) instead of value = await coro (Await from doeff). Await is handled by "
-    "await_handler(), which needs scheduled outside it: "
-    "run(scheduled(await_handler()(stream_answers()))) (await_handler from "
+    "await_handler, which needs scheduled outside it: "
+    "run(scheduled(await_handler(stream_answers()))) (await_handler from "
     "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
 )
 
@@ -89,7 +89,7 @@ def test_do_with_options_refuses_async_def_the_same_way() -> None:
 def test_the_run_line_shows_the_arguments_when_the_function_needs_them() -> None:
     message = str(_decorate(do, answer_with_offset))
     assert "@do cannot wrap 'answer_with_offset': it is an async def function" in message
-    assert "run(scheduled(await_handler()(answer_with_offset(...))))" in message
+    assert "run(scheduled(await_handler(answer_with_offset(...))))" in message
 
 
 def test_a_partial_of_a_coroutine_function_is_refused_with_the_wrapped_name() -> None:
@@ -114,14 +114,14 @@ def test_the_error_is_raised_where_the_decorator_is_applied() -> None:
 
 def test_the_advised_rewrite_runs() -> None:
     """失敗ケースの対: the message's rewrite — a plain def yielding Await, run under
-    await_handler() inside scheduled() — gives the value the async def meant."""
+    await_handler inside scheduled() — gives the value the async def meant."""
 
     @do
     def fetch_answer_program():
         value = yield Await(fetch_answer())
         return value
 
-    assert run(scheduled(await_handler()(fetch_answer_program()))) == 42
+    assert run(scheduled(await_handler(fetch_answer_program()))) == 42
 
 
 def test_plain_and_generator_functions_are_still_accepted() -> None:
@@ -136,5 +136,5 @@ def test_plain_and_generator_functions_are_still_accepted() -> None:
     def plain_program() -> int:
         return 7
 
-    assert run(scheduled(await_handler()(generator_program()))) == 43
+    assert run(scheduled(await_handler(generator_program()))) == 43
     assert run(plain_program()) == 7

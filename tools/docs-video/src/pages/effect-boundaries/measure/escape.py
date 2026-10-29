@@ -72,7 +72,7 @@ def at(text):
 for i in range(10):
     LOG.clear()
     START[0] = time.perf_counter()
-    result = run(scheduled(await_handler()(stepped(main()))))
+    result = run(scheduled(await_handler(stepped(main()))))
     total = (time.perf_counter() - START[0]) * 1000
     print(f"run {i + 1}: result {result} in {total:.1f} ms")
     if i == 0:

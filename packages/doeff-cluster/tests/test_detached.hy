@@ -144,7 +144,7 @@
   (val sender (detached-sender "r"))
   ;; 実時間: lease は heartbeat の間隔(0.2 秒)の十倍以上に取る(込んだ機体で heartbeat が遅れても消失と取り違えない)。
   (Rig :kind "served"
-       :handlers [(await-handler) (async-time-handler) (http-production-handler) (rig-runner-loss worker)
+       :handlers [await-handler (async-time-handler) (http-production-handler) (rig-runner-loss worker)
                   (detached-cluster (route-cell url) TEST-ROUTE sender :poll-seconds 0.2)]
        :worker worker :slow 1.0 :lease 2.5 :poll 0.2 :url url))
 

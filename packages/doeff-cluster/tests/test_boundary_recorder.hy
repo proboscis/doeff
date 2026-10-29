@@ -191,7 +191,7 @@
   (assert (= (len handlers) 1) handlers)
   ;; 置き場の口は 500 行たまると送る — 600 の読みで送りを 1 度は試みて断られ、業務の答えはそのまま返る(記録は貯め続ける)。
   ;; 送りは記録係が出す HttpRequest で、本番の土台と同じ HTTP の答え手が答える(接続を断られた = 届かない)。
-  (<- total int (with-handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+  (<- total int (with-handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock))
                                 #* (board-handlers {"row/0" 1 "row/1" 2}) #* handlers]
                                (read-rows 600)))
   (assert (= total 400) total)

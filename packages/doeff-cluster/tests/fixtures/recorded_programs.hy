@@ -80,7 +80,7 @@
    無い鍵は外へ通す)・共有の盤(tests/board_fake.hy の fake の盤 — process ごとに空から始まる・宛先の部品が時刻を読むので仮想の時計)の
    下で本体を走らせる。記録の置き場への送り(記録係が出す HttpRequest)には本番の土台と同じ HTTP の答え手(http-production-handler)が
    答える(検は OTLP の受け口の fake を thread で立てる — test_boundary_recorder.hy)。"
-  (<- answer (scheduled (with-handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock)) (state) host-reader
+  (<- answer (scheduled (with-handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock)) (state) host-reader
                                         (os-environ-reader) #* (board-handlers {})]
                           body)))
   answer)

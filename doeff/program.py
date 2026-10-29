@@ -6,6 +6,7 @@ The VM classifies them via downcast (not tag-based getattr).
 
 import functools
 import types
+import warnings
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from inspect import CO_GENERATOR, CO_VARARGS
@@ -41,12 +42,20 @@ from doeff_vm import WithObserve as WithObserve
 from doeff_vm._effect_types import check_handler_annotation
 
 if TYPE_CHECKING:
+    from typing_extensions import deprecated
     from doeff_vm.doeff_vm import StateHandler
 
     from doeff import Program
+else:
+
+    def deprecated(message: str) -> "Callable[[_Decorated], _Decorated]":
+        """Run-time stand-in for ``typing_extensions.deprecated``: type checkers read the real one
+        (from their own stubs), and the installer warns at run time itself (``_install_raw``)."""
+        return lambda function: function
 
 
 _Result = TypeVar("_Result")
+_Decorated = TypeVar("_Decorated")
 # The effect a raw handler's effect parameter takes (``handler``): bound to ``EffectBase`` so that
 # an annotation no effect can match (``effect: str``) is a type error, as it is a ``TypeError`` at
 # run time. A parameter typed ``object`` or ``Any``, or left bare, takes every effect.
@@ -69,6 +78,27 @@ class ProgramHandler(Protocol):
     """
 
     def __call__(self, program: "Program[_Result, Any]", /) -> "Program[_Result, Any]": ...
+
+
+class FormerFactoryHandler(ProgramHandler, Protocol):
+    """A handler without settings that used to be a handler factory called with no arguments.
+
+    A handler with nothing to set is a value, not a factory (ADR-DOE-API-002): it is applied to the
+    program itself, ``await_handler(prog())``, and put in a stack as it is,
+    ``[await_handler, try_handler]``. For one release the former call ``await_handler()`` still
+    answers the handler itself with a ``DeprecationWarning`` (pyright's ``reportDeprecated``
+    marks it too), so callers written for the factory keep running while they are rewritten.
+    """
+
+    @overload
+    def __call__(self, program: "Program[_Result, Any]", /) -> "Program[_Result, Any]": ...
+
+    @overload
+    @deprecated(
+        "This handler has no settings, so it is not a handler factory: write the handler itself, "
+        "without the call (ADR-DOE-API-002)"
+    )
+    def __call__(self) -> "FormerFactoryHandler": ...
 
 
 @runtime_checkable
@@ -271,8 +301,22 @@ def _refuse_unmarked(value: object, caller: str) -> None:
     )
 
 
+def _called_as_former_factory(name: str) -> str:
+    """The message of the DeprecationWarning for a handler without settings called as the factory
+    it used to be (``await_handler`` for ``await_handler``)."""
+    return (
+        f"{name}() is deprecated: {name} has no settings, so it is a handler, not a handler factory. "
+        f"Write {name} itself — {name}(program), or {name} in a handler stack — not {name}() "
+        "(ADR-DOE-API-002). The call keeps answering the handler for one release."
+    )
+
+
 def _install_raw(
-    raw_handler: Callable[..., object], caller: str, name: str | None = None
+    raw_handler: Callable[..., object],
+    caller: str,
+    name: str | None = None,
+    *,
+    former_factory: bool = False,
 ) -> _InstalledHandler:
     """The installer for a handler body ``(effect, k)``: what ``@handler`` makes of it.
 
@@ -294,7 +338,10 @@ def _install_raw(
     (``doeff_vm._effect_types.check_handler_annotation``).
 
     The installer is named after the raw handler (``_handler_label``), or
-    ``name`` when given (``_named_handler``).
+    ``name`` when given (``_named_handler``). With ``former_factory`` — a handler
+    without settings that used to be a factory called with no arguments — the
+    call with no program answers the installer itself with a DeprecationWarning
+    instead (``FormerFactoryHandler``).
     """
     body = _as_do_function(raw_handler, caller)
     taken = _positional_capacity(raw_handler)
@@ -308,8 +355,13 @@ def _install_raw(
         )
     check_handler_annotation(raw_handler)
 
-    def install(program: object = _NO_PROGRAM) -> WithHandlerType:
+    def install(program: object = _NO_PROGRAM) -> object:
         if program is _NO_PROGRAM:
+            if former_factory:
+                warnings.warn(
+                    _called_as_former_factory(install.__name__), DeprecationWarning, stacklevel=2
+                )
+                return install
             raise TypeError(_called_without_program(install.__name__))
         return WithHandlerType(body, program)
 
@@ -380,6 +432,13 @@ def _named_handler(raw_handler: Callable[..., object], name: str) -> ProgramHand
     a ``defhandler`` handler is one too.
     """
     return _install_raw(raw_handler, "handler", name)
+
+
+def _former_factory_handler(raw_handler: Callable[..., object], name: str) -> FormerFactoryHandler:
+    """``_named_handler`` for a handler without settings that used to be a factory called with no
+    arguments (``await_handler``): ``name()`` answers the handler itself with a DeprecationWarning
+    for one release (ADR-DOE-API-002 R3), and every other call is the handler's."""
+    return cast(FormerFactoryHandler, _install_raw(raw_handler, "handler", name, former_factory=True))
 
 
 def _rust_handler_installer(raw_handler: "StateHandler") -> ProgramHandler:

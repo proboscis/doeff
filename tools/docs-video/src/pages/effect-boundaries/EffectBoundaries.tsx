@@ -579,9 +579,9 @@ const LOOP_BOX: Box = {x: 950, y: 412, w: 290, h: 40};
 // measure/handler_rules.log run 1, one line per nesting, with the second each one is shown.
 const OUTCOMES = [
   {at: 10.0, code: 'scheduled(from_table(prog))', result: "-> '<html>a.dev</html>'", color: TEST},
-  {at: 22.2, code: 'scheduled(await_handler()(over_async(prog)))', result: "-> '<html>a.dev</html> from doeff-await-bridge'", color: TEST},
+  {at: 22.2, code: 'scheduled(await_handler(over_async(prog)))', result: "-> '<html>a.dev</html> from doeff-await-bridge'", color: TEST},
   {at: 26.2, code: 'scheduled(over_async(prog))', result: 'raises UnhandledEffect: no handler found for effect: Await', color: FAIL},
-  {at: 29.6, code: 'scheduled(over_async(await_handler()(prog)))', result: 'raises UnhandledEffect: no handler found for effect: Await', color: FAIL},
+  {at: 29.6, code: 'scheduled(over_async(await_handler(prog)))', result: 'raises UnhandledEffect: no handler found for effect: Await', color: FAIL},
 ];
 const RULE_TEXTS = [
   'Answer domain effects in handlers, inside doeff.',

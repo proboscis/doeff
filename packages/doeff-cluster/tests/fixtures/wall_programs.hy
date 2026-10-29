@@ -1,7 +1,7 @@
 ;;; 壁の時計の sim-cluster(doeff_cluster.sim.local の wall-sim-cluster)の検(test_local_wall_clock.hy)の service と task の Program の見本。
 ;;;
 ;;; どの Program も sim の土台で本体を包む(scheduler と時計は sim-cluster の外側が答える)。本物の待ち受けを持つ service は、土台に
-;;; Await の答え手(await-handler)と aiohttp の待ち受けを並べる(wall-io-foundation)— 柵は Await を通さない(host_contract.SIM-PASSABLE)
+;;; Await の答え手await-handlerと aiohttp の待ち受けを並べる(wall-io-foundation)— 柵は Await を通さない(host_contract.SIM-PASSABLE)
 ;;; ので、本番の土台と同じく job の中の await-handler が Await を外部の promise(CreateExternalPromise・Wait — 柵を通る)に変える。
 ;;; 外の thread の客(talk-over-ws)は Program の外の本物の socket の客で、筋書きが Await で待つ(壁の時計の入口の await-handler が答える)。
 (require doeff-hy.macros [defk deff <- val var])
@@ -40,7 +40,7 @@
    :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本物の待ち受けを持つ sim の土台: session の値の置き場(state)・Await の答え手・aiohttp の待ち受け。scheduler と時計は sim-cluster の
    外側が答える。"
-  (<- answer (with-handlers [(state) (await-handler) aiohttp-http-server] body))
+  (<- answer (with-handlers [(state) await-handler aiohttp-http-server] body))
   answer)
 
 

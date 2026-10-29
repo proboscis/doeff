@@ -117,7 +117,7 @@
   (.start (threading.Thread :target server.serve-forever :daemon True))
   (val url (.format "http://127.0.0.1:{}/write" (get server.server-address 1)))
   (try
-    (<- answers tuple (with-handler [(await-handler) handler] (program-of url)))
+    (<- answers tuple (with-handler [await-handler handler] (program-of url)))
     (Observed :answers answers :connections server.tally.connections :arrivals server.tally.arrivals)
     (finally
       (.shutdown server)
@@ -185,11 +185,11 @@
   ;; httpx の既定 5 秒だった(30 秒空いた書きは毎回張り直した)。
   (val make http-handlers.http-client-factory)
   (val context (ssl.create-default-context))
-  (<- plain MadeClient (with-handler [(await-handler)] (made-client httpx.AsyncClient)))
+  (<- plain MadeClient (with-handler [await-handler] (made-client httpx.AsyncClient)))
   (for [#(factory trust-env given) [#(make True None)
                                     #((fn [] (make :trust-env False)) False None)
                                     #((fn [] (make :verify context :trust-env False)) False context)]]
-    (<- made MadeClient (with-handler [(await-handler)] (made-client factory)))
+    (<- made MadeClient (with-handler [await-handler] (made-client factory)))
     (assert (= #(made.max-connections made.max-keepalive) #(plain.max-connections plain.max-keepalive)) made)
     (assert (= made.keepalive-seconds http-handlers.CLIENT-KEEPALIVE-SECONDS) made)
     (assert (> made.keepalive-seconds CALL-GAP-SECONDS) made)

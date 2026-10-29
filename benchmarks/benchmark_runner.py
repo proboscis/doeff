@@ -221,7 +221,7 @@ def _run_python_callable_boundary(iterations: int, callback: VmCallable) -> Any:
 
 
 def run_benchmarks(config: BenchmarkConfig) -> list[BenchmarkStats]:
-    await_effect_handler = await_handler()
+    await_effect_handler = await_handler
     boundary_callback = VmCallable(_increment)
     results: list[BenchmarkStats] = []
 

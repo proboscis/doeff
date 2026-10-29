@@ -338,7 +338,7 @@ def test_os_watch_waits_leave_the_default_executor_free(
         asyncio.get_running_loop().set_default_executor(small)
 
     async def restore_default_executor() -> None:
-        # The loop is shared by the whole process (await_handler): give it back an executor like asyncio's own default.
+        # The loop is shared by the whole process await_handler: give it back an executor like asyncio's own default.
         asyncio.get_running_loop().set_default_executor(
             ThreadPoolExecutor(thread_name_prefix="asyncio")
         )

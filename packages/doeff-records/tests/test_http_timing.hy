@@ -174,7 +174,7 @@
 (defk on-real-clock [program]
   {:pre [(: program (| Program EffectBase))] :post [(: % "program の答え")] :tags {:context "records" :role "foundation"}}
   "client の筋書きを本物の時計と HTTP の答え手の下で走らせるため。"
-  (<- answer (with_handlers [(await-handler) (http-production-handler) (async-time-handler)] program))
+  (<- answer (with_handlers [await-handler (http-production-handler) (async-time-handler)] program))
   answer)
 
 

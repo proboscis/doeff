@@ -43,7 +43,7 @@ def default_handlers(env=None):
     """
     return [
         reader(env=env), state(), writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler(), lazy_ask(),
+        local_handler, listen_handler, await_handler, lazy_ask(),
     ]
 
 

@@ -460,7 +460,7 @@ Reference handlers (from `doeff_core_effects._handlers`), written like any other
 | Slog | `slog_handler` | `Slog` |
 | Local | `local_handler` | `Local` |
 | Listen | `listen_handler` | `Listen` |
-| Await | `await_handler()` | `Await` |
+| Await | `await_handler` | `Await` |
 | Scheduler | `scheduled(prog)` (from `doeff_core_effects._scheduler`) | `Spawn`, `Wait`, `Gather`, `Race`, etc. |
 
 `writer` keeps its log in state: install `state()` outside it, and read the log by yielding the

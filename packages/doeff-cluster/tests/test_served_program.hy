@@ -64,7 +64,7 @@
   (<- declaration Declaration (declaration-for-this-test))
   (val sha (get (get declaration.rows 0) "run" "program"))
   ;; declare: 置き場へ Program を置いてから Service を書く(書きの HTTP は declare の入口と同じ汎用の答え手が本物の coordinator へ送る)。
-  (<- applied bool (with-handlers [(await-handler) (http-production-handler) slog-handler]
+  (<- applied bool (with-handlers [await-handler (http-production-handler) slog-handler]
                      (apply-declaration served-coordinator declaration "c-served-test")))
   (assert applied "宣言の書きのどれかが 300 以上を返した")
   (val stored (httpx.get (+ served-coordinator "/programs/" sha) :timeout 10))

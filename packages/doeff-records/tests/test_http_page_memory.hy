@@ -95,7 +95,7 @@
   (val endpoint (RecordsEndpoint (+ "http://127.0.0.1:" (str (get server.server-address 1))) :request-timeout 10.0))
   (try
     (do
-      (val growth (run (scheduled (with_handlers [(await-handler)
+      (val growth (run (scheduled (with_handlers [await-handler
                                                   (http-production-handler :client-factory (fn [] (http-client-factory :trust-env False)))
                                                   (sim-time-handler :clock (SimClock)) records-unwaited (http-records-handler endpoint)]
                                                  (measured-growth WARM-PAGES PAGES)))))

@@ -44,7 +44,7 @@ async def run_program(
         try_handler,
         slog_handler,
         listen_handler,
-        await_handler(),
+        await_handler,
         *custom_handlers,
     ]
     wrapped = program

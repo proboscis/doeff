@@ -68,7 +68,7 @@ def run_result(
     The stack is the same as ``doeff.cli.run_services.default_interpreter``
     (reader, state, writer, try, slog, listen, await, scheduler), with the
     caller's ``env`` seeded into Ask and ``store`` into Get/Put, plus
-    doeff-time's ``async_time_handler()`` inside ``await_handler()``: a program
+    doeff-time's ``async_time_handler()`` inside ``await_handler``: a program
     that yields ``Delay`` / ``GetTime`` waits on the wall clock. An exception
     raised by the program is returned as ``Err(error)`` instead of propagating,
     so the value can be handed to ``write_terminal_trace``.
@@ -99,8 +99,8 @@ def run_result(
         try_handler,
         slog_handler,
         listen_handler,
-        await_handler(),
-        # Innermost: it answers a time effect with an Await, which await_handler() above answers.
+        await_handler,
+        # Innermost: it answers a time effect with an Await, which await_handler above answers.
         async_time_handler(),
     ]
     wrapped = _captured()

@@ -63,7 +63,7 @@ def test_access_secret_real_secret():
     result = run(
         scheduled(
             with_handlers(
-                [await_handler(), lazy_ask(strict=True), try_handler, state(), writer],
+                [await_handler, lazy_ask(strict=True), try_handler, state(), writer],
                 flow(),
             )
         )

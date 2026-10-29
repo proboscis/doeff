@@ -56,7 +56,7 @@ def on_event_loop():
 CASES = [
     ("Wait(promise)", lambda: run(scheduled(on_promise()))),
     ("Delay(3)", lambda: run(scheduled(sim_time_handler()(on_virtual_clock())))),
-    ("Await(asyncio.sleep(0.3))", lambda: run(scheduled(await_handler()(on_event_loop())))),
+    ("Await(asyncio.sleep(0.3))", lambda: run(scheduled(await_handler(on_event_loop())))),
 ]
 
 for i in range(5):

@@ -305,7 +305,7 @@ def default_interpreter(program: object) -> object:
 
     handlers = [
         lazy_ask(), state(), writer, try_handler, slog_handler,
-        listen_handler, await_handler(),
+        listen_handler, await_handler,
     ]
     return run(scheduled(with_handlers(handlers, program)))
 

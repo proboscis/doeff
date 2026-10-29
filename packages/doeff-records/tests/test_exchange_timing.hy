@@ -59,7 +59,7 @@
   {:pre [(: url str) (: timed (get frozenset str)) (: body (| Program EffectBase))] :post [(: % tuple)] :tags {:context "records" :role "foundation"}}
   "口 url の client(timed-operations = timed)の下で body を本物の時計と HTTP の答え手で走らせ、出た log の行の列を返すため。"
   (val endpoint (RecordsEndpoint url :timed-operations timed))
-  (<- lines tuple (with_handlers [(await-handler) (http-production-handler) (async-time-handler) (state) slog-kept records-unwaited]
+  (<- lines tuple (with_handlers [await-handler (http-production-handler) (async-time-handler) (state) slog-kept records-unwaited]
                                  (read-then-kept (with_handlers [(http-records-handler endpoint)] body))))
   lines)
 

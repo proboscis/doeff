@@ -263,7 +263,7 @@ replays them makes the repeated part cheap
   The continuation holds the suspended generators of the program, which is one reason it cannot be
   resumed twice.
 - **`@do` refuses an `async def` function.** Existing coroutines run through `yield Await(coro)`
-  under `await_handler()` ([How is it different from asyncio?](../faq.md#how-is-it-different-from-asyncio)).
+  under `await_handler` ([How is it different from asyncio?](../faq.md#how-is-it-different-from-asyncio)).
 
 ### Other limits
 

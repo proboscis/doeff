@@ -120,7 +120,7 @@
   (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers (SimClock)) :meter meter))))
   (try
-    (<- seen MeterRun (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+    (<- seen MeterRun (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock))
                                       (memory-records-handler store MAKER)]
                                      (meter-scenario server.url)))
     (finally (.close server)))
@@ -233,7 +233,7 @@
   (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers (SimClock))))))
   (try
-    (<- response (with_handlers [(await-handler) (http-production-handler)]
+    (<- response (with_handlers [await-handler (http-production-handler)]
                                 (HttpRequest "GET" (+ server.url "/metrics") :headers {"Authorization" "Bearer not-in-roster"}
                                              :max-retries 0)))
     (assert (= response.status 200) #(response.status response.text))
@@ -290,7 +290,7 @@
   (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers (SimClock))))))
   (try
-    (<- seen LoadRun (with_handlers [(await-handler) (http-production-handler)] (load-scenario server.url)))
+    (<- seen LoadRun (with_handlers [await-handler (http-production-handler)] (load-scenario server.url)))
     (finally (.close server)))
   (assert (= seen.listed 200) seen)
   (assert (= seen.above 400) seen)

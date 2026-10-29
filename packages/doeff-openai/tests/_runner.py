@@ -73,7 +73,7 @@ def _build_chain(program: Any, env: dict | None, clock: SimClock | None = None):
     """
     wrapped = program
     wrapped = calculate_cost_handler(wrapped)
-    wrapped = await_handler()(wrapped)
+    wrapped = await_handler(wrapped)
     wrapped = listen_handler(wrapped)
     wrapped = local_handler(wrapped)
     wrapped = try_handler(wrapped)

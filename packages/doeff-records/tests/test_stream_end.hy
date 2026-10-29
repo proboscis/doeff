@@ -66,7 +66,7 @@
   (val sent [])
   (try
     (val endpoint (RecordsEndpoint server.url :writer MAKER))
-    (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (count-http-requests sent)
+    (val answer (run (scheduled (with_handlers [await-handler (http-production-handler) (count-http-requests sent)
                                                 (sim-time-handler :clock clock) records-unwaited (http-records-handler endpoint)]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (StreamEnd (get sequences -1))) (repr answer))
@@ -97,7 +97,7 @@
   (val server (start-records-server (run (records-server-config LAW-SCHEMA (fn [writer] (memory-records-handler store writer))
                                                          :request-handlers (sim-request-handlers clock)))))
   (try
-    (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
+    (val answer (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock clock)
                                                 records-unwaited (http-records-handler (RecordsEndpoint server.url :writer MAKER))]
                                                (ReadStreamEnd "journal")))))
     (assert (= answer (Unreachable DETAIL)) (repr answer))

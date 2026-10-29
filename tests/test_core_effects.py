@@ -247,7 +247,7 @@ class TestAwait:
             result = yield Await(async_add(3, 4))
             return result
 
-        result = doeff_run(scheduled(await_handler()(body())))
+        result = doeff_run(scheduled(await_handler(body())))
         assert result == 7
 
     def test_await_multiple(self):
@@ -266,7 +266,7 @@ class TestAwait:
             b = yield Await(fetch(2))
             return a + b
 
-        result = doeff_run(scheduled(await_handler()(body())))
+        result = doeff_run(scheduled(await_handler(body())))
         assert result == 30
 
     @pytest.mark.realtime
@@ -281,7 +281,7 @@ class TestAwait:
             await asyncio.sleep(0.1)
             return x
 
-        ah = await_handler()
+        ah = await_handler
 
         @do
         def task(x):
@@ -324,7 +324,7 @@ class TestAwait:
 
         def worker() -> None:
             try:
-                doeff_run(scheduled(await_handler()(body())))
+                doeff_run(scheduled(await_handler(body())))
             except BaseException as exc:  # re-checked below
                 error["value"] = exc
 
@@ -338,7 +338,7 @@ class TestAwait:
         assert isinstance(error.get("value"), asyncio.CancelledError)
 
     def test_await_handler_instances_share_one_loop_thread(self):
-        """#498: sequential runs with fresh await_handler() instances must
+        """#498: sequential runs with fresh await_handler instances must
         share one process-global loop thread, not leak one thread per run."""
         import asyncio
         import threading
@@ -352,7 +352,7 @@ class TestAwait:
 
         before = threading.active_count()
         for _ in range(20):
-            assert doeff_run(scheduled(await_handler()(body()))) == 1
+            assert doeff_run(scheduled(await_handler(body()))) == 1
         after = threading.active_count()
         # At most +1: the shared bridge loop thread (0 if an earlier test
         # already created it).
@@ -399,13 +399,13 @@ class TestAwait:
 
         def run_b() -> None:
             try:
-                results["b"] = doeff_run(scheduled(await_handler()(body_b())))
+                results["b"] = doeff_run(scheduled(await_handler(body_b())))
             except BaseException as exc:  # re-checked below
                 results["b_exc"] = exc
 
         def run_a() -> None:
             try:
-                results["a"] = doeff_run(scheduled(await_handler()(body_a())))
+                results["a"] = doeff_run(scheduled(await_handler(body_a())))
             except BaseException as exc:  # re-checked below
                 results["a_exc"] = exc
 

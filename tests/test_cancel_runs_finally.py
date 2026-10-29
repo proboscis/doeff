@@ -57,7 +57,7 @@ def _run(program: Any, *, with_await: bool = False) -> Any:
 
     def _worker() -> None:
         try:
-            body = await_handler()(program) if with_await else program
+            body = await_handler(program) if with_await else program
             result["value"] = doeff_run(scheduled(body))
         except BaseException as exc:  # re-raised below on the test thread
             result["error"] = exc

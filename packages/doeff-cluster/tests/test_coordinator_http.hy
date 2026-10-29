@@ -30,7 +30,7 @@
 (deff serve [inbox stop]  ; defk にできない: threading.Thread が別の thread で呼ぶ target
   {:pre [(: inbox RequestInbox) (: stop threading.Event)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "検の HTTP server の答え手(path-echoes)を、本番の受付の答え手(http-requests)と scheduler の上で、別の thread で回すため。"
-  (run (scheduled (with-handlers [(await-handler) (async-time-handler) (http-requests inbox)] (path-echoes stop))))
+  (run (scheduled (with-handlers [await-handler (async-time-handler) (http-requests inbox)] (path-echoes stop))))
   None)
 
 

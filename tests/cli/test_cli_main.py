@@ -79,7 +79,7 @@ def _env_interpreter(program, env=None):
 
     handlers = [
         reader(env_dict), state(), writer, try_handler, slog_handler,
-        local_handler, listen_handler, await_handler(),
+        local_handler, listen_handler, await_handler,
     ]
     wrapped = program
     for h in reversed(handlers):

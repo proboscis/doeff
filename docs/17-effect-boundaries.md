@@ -63,14 +63,14 @@ running.
 | State / Writer / Result | `Get`, `Put`, `Tell`, `Listen`, `Try` | Inside doeff |
 | Scheduler | `Spawn`, `Wait`, `Gather`, `Race` | Inside doeff |
 | Promise | `CreatePromise`, `CompletePromise`, `FailPromise` | Inside doeff |
-| Async handoff | `Await` via `await_handler()` | Leaves doeff: the coroutine runs on the bridge thread's event loop |
+| Async handoff | `Await` via `await_handler` | Leaves doeff: the coroutine runs on the bridge thread's event loop |
 
 ## How `Await` Leaves doeff
 
-`Await(awaitable)` is answered by `await_handler()`, which needs `scheduled` outside it:
+`Await(awaitable)` is answered by `await_handler`, which needs `scheduled` outside it:
 
 ```python
-run(scheduled(await_handler()(program())))
+run(scheduled(await_handler(program())))
 ```
 
 For each `Await`, the handler:
@@ -95,7 +95,7 @@ Key points:
 
 - `await` cannot be evaluated inside a normal sync function without handing control to an event
   loop.
-- `await_handler()` is the one place that hands work to an event loop; everything else stays in
+- `await_handler` is the one place that hands work to an event loop; everything else stays in
   the handler stack.
 - The bridge is not a general-purpose "leave doeff" mechanism; it is specifically for Python async
   integration.
@@ -109,7 +109,7 @@ These are different mechanisms:
   - Tasks can be queued/suspended/resumed internally; a `Delay` under `sim_time_handler()` moves
     a virtual clock and takes no real time.
 - **Leaving doeff (external)**:
-  - `await_handler()` hands the coroutine to the bridge thread's event loop.
+  - `await_handler` hands the coroutine to the bridge thread's event loop.
   - The awaiting task is suspended on an `ExternalPromise`, like any other wait.
   - Control returns to the task once the coroutine finishes and completes the promise.
 
@@ -142,7 +142,7 @@ When adding handlers, keep the boundary strict:
 
 1. Handle domain effects inside handlers whenever possible.
 2. Perform `Await` only for operations that must execute in Python async context, and compose
-   `await_handler()` outside the handler that performs it, with `scheduled` outside both.
+   `await_handler` outside the handler that performs it, with `scheduled` outside both.
 3. Keep scheduler state transitions internal to scheduler handlers.
 
 Example:
@@ -189,8 +189,8 @@ def over_async(effect: Fetch, k):
     body = yield Await(http_get(effect.url))
     return (yield Resume(k, body))
 
-assert run(scheduled(await_handler()(over_async(page("a.dev"))))) == "<html>a.dev</html>"
+assert run(scheduled(await_handler(over_async(page("a.dev"))))) == "<html>a.dev</html>"
 ```
 
-Without `await_handler()`, or with it inside `over_async`, the `Await` finds no handler and the run
+Without `await_handler`, or with it inside `over_async`, the `Await` finds no handler and the run
 raises `UnhandledEffect`.

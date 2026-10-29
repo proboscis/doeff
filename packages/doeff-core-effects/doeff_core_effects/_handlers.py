@@ -28,10 +28,12 @@ from doeff import do
 from doeff._vm import native, program_shown, uncalled_do_function_call
 from doeff.handler_utils import reinstaller
 from doeff.program import (
+    FormerFactoryHandler,
     Pass,
     ProgramHandler,
     Transfer,
     TransferThrow,
+    _former_factory_handler,
     _named_handler,
     _rust_handler_installer,
 )
@@ -546,7 +548,8 @@ class _AwaitedValue:
         return value
 
 
-def await_handler() -> ProgramHandler:
+@do
+def _await_handler(effect: Await, k):
     """Await handler: runs async coroutines via a background thread with asyncio.
 
     Uses ExternalPromise to bridge async into the scheduler.
@@ -578,46 +581,50 @@ def await_handler() -> ProgramHandler:
     Isolation trade-off of the shared loop: a bridged coroutine that blocks
     the loop (e.g. a synchronous call inside async code) now stalls every
     run's Awaits process-wide, not just its own run's.
+
+    It has no settings, so it is a handler, not a factory (ADR-DOE-API-002):
+    write ``await_handler(prog)`` or ``[await_handler, ...]``. The former call
+    ``await_handler()`` answers the same handler with a DeprecationWarning for
+    one release.
     """
-    import asyncio
+    if isinstance(effect, Await):
+        # Read when the first Await is answered (sys.modules afterwards): asyncio is not loaded
+        # by importing doeff, and the scheduler module loads after this one.
+        import asyncio
 
-    from doeff_core_effects._scheduler import CreateExternalPromise, Wait
+        from doeff_core_effects._scheduler import CreateExternalPromise, Wait
 
-    @do
-    def handler(effect: Await, k):
-        if isinstance(effect, Await):
-            ep = yield CreateExternalPromise(
-                deadline=effect.deadline, source_alive=effect.source_alive
-            )
-            loop = _get_await_bridge_loop()
+        ep = yield CreateExternalPromise(deadline=effect.deadline, source_alive=effect.source_alive)
+        loop = _get_await_bridge_loop()
 
-            async def run_coro():
-                try:
-                    result = await effect.coroutine
-                except BaseException as e:
-                    # Resolve the promise on EVERY exit — a swallowed
-                    # BaseException (e.g. asyncio.CancelledError) would
-                    # otherwise park the scheduler forever (#494).
-                    # Never re-raise here, not even KeyboardInterrupt or
-                    # SystemExit: asyncio would propagate it out of
-                    # run_forever and kill the SHARED loop thread, silently
-                    # hanging every other in-flight Await in the process.
-                    # ep.fail already delivers it to the run() caller.
-                    ep.fail(e)
-                else:
-                    # Boxed so the scheduler's promise table does not keep
-                    # the value after the hand-over (_AwaitedValue).
-                    ep.complete(_AwaitedValue(result))
+        async def run_coro():
+            try:
+                result = await effect.coroutine
+            except BaseException as e:
+                # Resolve the promise on EVERY exit — a swallowed
+                # BaseException (e.g. asyncio.CancelledError) would
+                # otherwise park the scheduler forever (#494).
+                # Never re-raise here, not even KeyboardInterrupt or
+                # SystemExit: asyncio would propagate it out of
+                # run_forever and kill the SHARED loop thread, silently
+                # hanging every other in-flight Await in the process.
+                # ep.fail already delivers it to the run() caller.
+                ep.fail(e)
+            else:
+                # Boxed so the scheduler's promise table does not keep
+                # the value after the hand-over (_AwaitedValue).
+                ep.complete(_AwaitedValue(result))
 
-            fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
-            fut.add_done_callback(_observe_await_bridge_future)
-            # Thread-safe: schedules the bridge task's cancel on the loop.
-            ep.on_cancel(fut.cancel)
-            box = yield Wait(ep.future)
-            return (yield Transfer(k, box.take()))
-        yield Pass(effect, k)
+        fut = asyncio.run_coroutine_threadsafe(run_coro(), loop)
+        fut.add_done_callback(_observe_await_bridge_future)
+        # Thread-safe: schedules the bridge task's cancel on the loop.
+        ep.on_cancel(fut.cancel)
+        box = yield Wait(ep.future)
+        return (yield Transfer(k, box.take()))
+    yield Pass(effect, k)
 
-    return _program_handler(handler)
+
+await_handler: FormerFactoryHandler = _former_factory_handler(_await_handler, "await_handler")
 
 
 def lazy_ask(env: Mapping[Any, Any] | None = None, *, strict: bool = False) -> ProgramHandler:  # noqa: PLR0915 - baseline cleanup keeps existing control flow unchanged

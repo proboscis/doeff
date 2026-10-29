@@ -47,7 +47,7 @@ def default_handlers(env: Any = None, store: Any = None) -> list[Any]:
         slog_handler,
         local_handler,
         listen_handler,
-        await_handler(),
+        await_handler,
         lazy_ask(env=env),
     ]
 

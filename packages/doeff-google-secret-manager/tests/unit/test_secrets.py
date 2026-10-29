@@ -79,7 +79,7 @@ def _run_with_mock(program, mock_handler):
     return run(
         scheduled(
             with_handlers(
-                [await_handler(), try_handler, state_handler(), writer, mock_handler],
+                [await_handler, try_handler, state_handler(), writer, mock_handler],
                 program,
             )
         )

@@ -67,7 +67,7 @@
   (<- pair
       (slog-handler
         (listen-handler
-          ((await-handler)
+          (await-handler
             ((http-production-handler :client-factory (fn [] client)
                                       :sleep noop-sleep)
               (do!
@@ -112,7 +112,7 @@
   (<- pair
       (slog-handler
         (listen-handler
-          ((await-handler)
+          (await-handler
             ((http-production-handler :client-factory (fn [] client)
                                       :sleep noop-sleep)
               (do!
@@ -134,7 +134,7 @@
                  [(make-response 201 {"Content-Type" "application/json"} b"{}" "{}"
                                  "https://example.test/api" 0.1)]))
   (<- response
-      ((state) (slog-handler ((await-handler)
+      ((state) (slog-handler (await-handler
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep noop-sleep)
             (do!
@@ -154,7 +154,7 @@
                  [(make-response 302 {"Location" "/next"} b"" ""
                                  "https://example.test/start" 0.1)]))
   (<- response
-      ((state) (slog-handler ((await-handler)
+      ((state) (slog-handler (await-handler
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep noop-sleep)
             (do!
@@ -175,7 +175,7 @@
                   (make-response 200 {} b"ok" "ok" "https://example.test/api" 0.1)]))
   (setv sleeps [])
   (<- response
-      ((state) (slog-handler ((await-handler)
+      ((state) (slog-handler (await-handler
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep (record-sleep sleeps))
             (do!
@@ -194,7 +194,7 @@
                   (make-response 200 {} b"ok" "ok" "https://example.test/api" 0.1)]))
   (setv sleeps [])
   (<- response
-      ((state) (slog-handler ((await-handler)
+      ((state) (slog-handler (await-handler
           ((http-production-handler :client-factory (fn [] client)
                                     :sleep (record-sleep sleeps))
             (do!

@@ -140,7 +140,7 @@ def _scans_per_op(op: Callable[[], object], *, parked: int, layers: int, ops: in
             by_scan=Counter({name: count / ops for name, count in total.items()}),
         )
 
-    stack = [await_handler(), async_time_handler(), *[unrelated_handler] * layers, vm_probe_handler]
+    stack = [await_handler, async_time_handler(), *[unrelated_handler] * layers, vm_probe_handler]
     return doeff_run(scheduled(with_handlers(stack, body()), implementation="rust"))
 
 
@@ -201,7 +201,7 @@ def test_cancelled_deadline_timers_do_not_pile_up_in_the_rust_ready_heap():
         return counts["ready"]
 
     ready = doeff_run(scheduled(
-        with_handlers([await_handler(), async_time_handler()], body()),
+        with_handlers([await_handler, async_time_handler()], body()),
         implementation="rust",
     ))
     assert ready < waits / 4, (

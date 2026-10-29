@@ -21,7 +21,7 @@
   {:pre [(: ctx RunContext) (: encoded str)] :post [(: % None)] :tags {:context "worker" :role "main"}}
   "task の詰めた結果 encoded を coordinator の POST /tasks/<id>/result へ届けるため(届かなければ worker の heartbeat が file の結果を運ぶ)。
    送り直しは接続の段の一巡し直し 1 回だけ(子の終わりを長く止めない)。"
-  (run (scheduled (with-handlers [(await-handler) slog-handler (http-production-handler) (sync-time-handler)]
+  (run (scheduled (with-handlers [await-handler slog-handler (http-production-handler) (sync-time-handler)]
                                  (delivered-task-result ctx.coordinator-url ctx.job ctx.worker ctx.instance encoded
                                                         (RouteOptions :reply-seconds (/ (. (ClusterTiming) client-reply-ms) 1000.0)
                                                                       :watch-seconds (/ (. (ClusterTiming) watch-max-ms) 1000.0)

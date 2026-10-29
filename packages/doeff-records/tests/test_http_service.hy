@@ -35,7 +35,7 @@
 
 (defn run-as [server clock #^ (| str None) writer program]
   "writer を名乗る client の handler で Program を走らせる(None = 名乗らない — anonymous の書き手)。client は token を送らない(#2986)。"
-  (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
+  (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock clock)
                                   records-unwaited (http-records-handler (RecordsEndpoint server.url :writer writer))]
                                  program))))
 
@@ -172,7 +172,7 @@
         (for [ask [(ReadRow "parts" #("p1")) (PutRow "parts" #("p1") {"label" "a"} (ExpectAny))]]
           (var raised None)
           (try
-            (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+            (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock))
                                             records-unwaited (http-records-handler endpoint)]
                                            ask)))
             (except [error WireError]
@@ -279,7 +279,7 @@
   ;; 送り方は HttpRequest の effect で、届かない口は Unreachable の値で答える(例外で上げない)—
   ;; 処理ループと同じ scheduler の task が読む時に、記録の service の不達で task を落とさないため。
   (val closed (RecordsEndpoint "http://127.0.0.1:9" :request-timeout 2.0))
-  (val answer (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock (SimClock))
+  (val answer (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock (SimClock))
                                               records-unwaited (http-records-handler closed)]
                                              (ReadRow "parts" #("p1"))))))
   (assert (isinstance answer Unreachable) (repr answer))
@@ -296,7 +296,7 @@
   (val maker "maker")
   (try
     (defn both [program]
-      (run (scheduled (with_handlers [(await-handler) (http-production-handler) (sim-time-handler :clock clock)
+      (run (scheduled (with_handlers [await-handler (http-production-handler) (sim-time-handler :clock clock)
                                       records-unwaited (http-records-handler (RecordsEndpoint tickets-server.url :writer maker))
                                       (http-table-records-handler (RecordsEndpoint parts-server.url :writer maker) (frozenset ["parts"]))]
                                      program))))

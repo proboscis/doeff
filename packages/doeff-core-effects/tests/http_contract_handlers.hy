@@ -72,7 +72,7 @@
   {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "http-test" :role "foundation"}}
   "本物の http-production-handler の下で program を走らせる(client は契約の世界に繋がる MockTransport)。"
-  (<- answer (with_handlers [(await-handler) (http-production-handler :client-factory world-client :sleep no-wait)] program))
+  (<- answer (with_handlers [await-handler (http-production-handler :client-factory world-client :sleep no-wait)] program))
   answer)
 
 
@@ -83,7 +83,7 @@
    replay の handler は作る時に fixture を読むので、record の実行の後に作る。"
   (with [directory (tempfile.TemporaryDirectory)]
     (val path (/ (Path directory) "contract.pickle"))
-    (<- (with_handlers [(await-handler) (http-fixture-handler path :mode "record" :client-factory world-client :sleep no-wait)]
+    (<- (with_handlers [await-handler (http-fixture-handler path :mode "record" :client-factory world-client :sleep no-wait)]
           program))
     (<- answer (with_handlers [(http-fixture-handler path :mode "replay")] program)))
   answer)

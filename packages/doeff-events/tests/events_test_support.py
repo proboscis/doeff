@@ -45,7 +45,7 @@ def run_scheduled(program: Any) -> Any:
     """Run ``program`` under the scheduler with ``Await`` support and return its value."""
 
     # await_handler performs scheduler effects, so it sits inside ``scheduled``.
-    return run(scheduled(await_handler()(program)))
+    return run(scheduled(await_handler(program)))
 
 
 def announce_listening(registered: Promise[object]) -> "ProgramHandler":

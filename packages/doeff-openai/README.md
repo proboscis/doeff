@@ -29,7 +29,7 @@ delegated with `Delegate()` so outer handlers can process them.
 
 Retries of chat completions, embeddings and structured calls wait with doeff-time's `Delay` effect rather than sleeping, so the caller's time handler
 decides what a second is. Install `doeff_time.async_time_handler()` (the wall clock) in the handler
-stack, inside `await_handler()`, which answers its `Await`; a test installs `sim_time_handler()`, whose virtual clock moves at once, and the retry path
+stack, inside `await_handler`, which answers its `Await`; a test installs `sim_time_handler()`, whose virtual clock moves at once, and the retry path
 runs without sleeping. Without a time handler, a retry fails with an unhandled `DelayEffect`.
 
 ## Installation

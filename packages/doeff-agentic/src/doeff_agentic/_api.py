@@ -413,7 +413,7 @@ class AgenticAPI:
             try_handler,
             slog_handler,
             listen_handler,
-            await_handler(),
+            await_handler,
             # The agentic handler polls with doeff_time Delay.
             sync_time_handler(),
         ]

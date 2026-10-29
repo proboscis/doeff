@@ -211,7 +211,7 @@
                       :dead (.format "ws://127.0.0.1:{}/ws" dead) :install aiohttp-ws-client))
   (var answer None)
   (try
-    (<- ran (with_handlers [(await-handler) (state) (contract-ws-world world) (aiohttp-ws-client) (live-closures peer.closures)] program))
+    (<- ran (with_handlers [await-handler (state) (contract-ws-world world) (aiohttp-ws-client) (live-closures peer.closures)] program))
     (:= answer ran)
     (finally
       (<- (stop-echo-peer peer))))
