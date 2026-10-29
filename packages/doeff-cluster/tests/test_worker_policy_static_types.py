@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from doeff_hy.static_stub import strict_errors
+from doeff_hy._static_stub import strict_errors
 
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster"
 

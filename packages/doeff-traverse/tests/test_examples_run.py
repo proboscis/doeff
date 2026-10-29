@@ -57,7 +57,7 @@ from pathlib import Path
 
 import hy
 import pytest
-from doeff_hy.static_stub import hidden_name
+from doeff_hy._static_stub import hidden_name
 from hy.errors import HyMacroExpansionError
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"

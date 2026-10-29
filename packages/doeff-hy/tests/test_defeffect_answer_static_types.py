@@ -69,7 +69,7 @@ class Run:
 
 
 def _check(root: Path) -> Run:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -112,7 +112,7 @@ def test_answer_does_not_add_type_form_errors(probe: Path) -> None:
 def test_projection_keeps_the_answer_in_the_class_body() -> None:
     # 型検査の展開の中で __doeff_answer__ は class の本体の ClassVar[object] の注記つきの代入で、:answer の名を読む。
     # 記帳の setattr(型検査が外す)には置かない。
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     with static_view():
         module = hy.compiler.hy_compile(hy.read_many(MODULE), "__main__", import_stdlib=False)

@@ -75,7 +75,7 @@
           "packages/doeff-hy/src/doeff_hy/_session.py"
           "packages/doeff-hy/src/doeff_hy/macros.hy"
           "packages/doeff-hy/src/doeff_hy/handle.hy"
-          "packages/doeff-hy/src/doeff_hy/static_check.py"
+          "packages/doeff-hy/src/doeff_hy/_static_check.py"
           "docs/adr/defadr_doeff_hy_006_val_var_lazy.hy"]
   :problem
     [(fact

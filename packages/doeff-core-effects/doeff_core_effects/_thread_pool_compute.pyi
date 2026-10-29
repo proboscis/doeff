@@ -1,7 +1,7 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _thread_pool_compute.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _thread_pool_compute.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
-from doeff_hy.static_types import Handler as _Handler
+from doeff_hy._static_types import Handler as _Handler
 from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
 from doeff import Program as Program

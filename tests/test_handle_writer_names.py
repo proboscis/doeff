@@ -28,7 +28,7 @@ import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
 from doeff_core_effects import scheduled, state
-from doeff_hy.static_view import static_view
+from doeff_hy._static_view import static_view
 
 from doeff import run
 

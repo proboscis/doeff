@@ -13,7 +13,7 @@ import random
 from collections.abc import Iterator
 from pathlib import Path
 
-from doeff_hy.static_check import (
+from doeff_hy._static_check import (
     HyPosition,
     Projection,
     Span,

@@ -11,7 +11,7 @@ doeff-hy-check はその綴りの表を持たず、束ねる名の頭 `_doeff_`(
 
 import ast
 
-from doeff_hy.static_check import with_module_level_imports, without_bookkeeping
+from doeff_hy._static_check import with_module_level_imports, without_bookkeeping
 
 
 def test_a_repeated_reserved_alias_import_is_folded_to_one() -> None:

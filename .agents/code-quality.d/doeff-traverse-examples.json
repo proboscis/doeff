@@ -17,7 +17,7 @@
         "packages/doeff-traverse/examples/*.hy"
       ],
       "public": [],
-      "responsibility": "doeff-traverse の例 — script として走らせる読み物(Traverse の流れ・Zip・for/do・進みの表示)。検 test_examples_run.py が期待の出力と比べる。for/do の macro の展開が doeff_hy/static_types.py を import するので、その依存を許す。",
+      "responsibility": "doeff-traverse の例 — script として走らせる読み物(Traverse の流れ・Zip・for/do・進みの表示)。検 test_examples_run.py が期待の出力と比べる。for/do の macro の展開が doeff_hy/_static_types.py を import するので、その依存を許す。",
       "typed": true
     }
   ]

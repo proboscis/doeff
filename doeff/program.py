@@ -74,7 +74,7 @@ class ProgramHandler(Protocol):
 
     Every installer has this type: the reference handlers (``reader``, ``state``,
     ``writer``, ...), ``handler(raw)`` and ``stacked_handlers(...)``. A
-    ``defhandler`` handler (``doeff_hy.static_types.Handler``) is one too.
+    ``defhandler`` handler (``doeff_hy._static_types.Handler``) is one too.
     """
 
     def __call__(self, program: "Program[_Result, Any]", /) -> "Program[_Result, Any]": ...

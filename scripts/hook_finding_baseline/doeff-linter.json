@@ -28,7 +28,7 @@
       "packages/doeff-gemini/src/doeff_gemini/_costs.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/_handlers/testing.py": 1,
       "packages/doeff-gemini/src/doeff_gemini/_structured_llm.py": 1,
-      "packages/doeff-hy/src/doeff_hy/static_baseline.py": 1,
+      "packages/doeff-hy/src/doeff_hy/_static_baseline.py": 1,
       "packages/doeff-hy/tests/test_defhandler_effect_type_filter.py": 1,
       "packages/doeff-hy/tests/test_defhandler_passed_effects.py": 1,
       "packages/doeff-notify/src/doeff_notify/_handlers/testing.py": 1,

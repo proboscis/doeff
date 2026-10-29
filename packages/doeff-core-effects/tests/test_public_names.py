@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import doeff_core_effects
-from doeff_hy.static_check import python_without_bytecode
+from doeff_hy._static_check import python_without_bytecode
 
 PACKAGE_DIR = Path(doeff_core_effects.__file__).resolve().parent
 

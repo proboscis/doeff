@@ -147,7 +147,7 @@ def exhaustiveness(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[d
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     root: Path = tmp_path_factory.mktemp("defenum_check")
     files = {

@@ -24,7 +24,7 @@ import pytest
 import doeff
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 from doeff_hy import record
-from doeff_hy.static_check import without_bookkeeping
+from doeff_hy._static_check import without_bookkeeping
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -71,7 +71,7 @@ class Run:
 
 
 def _check(root: Path) -> Run:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -96,7 +96,7 @@ def test_only_the_runtime_expansion_refuses_a_program_verdict() -> None:
     # 型検査の展開に在ると、pyright 1.1.414 は同じ process で前に検めた file によってこの tuple を
     # `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType を出した(agora-controllers の
     # 日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つ)。書き手は直せない。
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(MODULE)
     with static_view():

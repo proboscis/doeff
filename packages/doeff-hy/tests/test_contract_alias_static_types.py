@@ -42,7 +42,7 @@ MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

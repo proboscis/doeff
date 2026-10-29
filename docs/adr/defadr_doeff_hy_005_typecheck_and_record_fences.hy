@@ -24,8 +24,9 @@
 (import re)
 (import pathlib [Path])
 
-(import doeff_hy.typecheck [TypeCheckError type-check type-check-verdict])
-(import doeff_hy.typecheck_handlers [run-with-type-checks run-without-type-checks])
+(import doeff_hy [TypeCheckError type-check]
+        doeff_hy._typecheck [type-check-verdict])
+(import doeff_hy._typecheck_handlers [run-with-type-checks run-without-type-checks])
 
 
 ;; ---------------------------------------------------------------------------
@@ -108,8 +109,8 @@
   :title "Hy の柵の残り 2 本: 実行時の型検査は TypeCheck の要求にして handler で切り替える(既定 off・静的は常時)。記録の足場の macro は doeff-hy に投影の規則と一緒に置き、各 repo に macro を生やさない(既存の所有者は凍結台帳)"
   :status "accepted"
   :scope ["docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy"
-          "packages/doeff-hy/src/doeff_hy/typecheck.hy"
-          "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy"
+          "packages/doeff-hy/src/doeff_hy/_typecheck.hy"
+          "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.hy"
           "packages/doeff-hy/src/doeff_hy/record.hy"
           ".agents/code-quality.json"]
   :problem
@@ -138,7 +139,7 @@
      (interpretation
        "macro を doeff-hy に集める理由は house style ではなく検査の到達である。macro と投影の規則が 1 対 1 で同じ便に置かれる限り、使う側の repo は宣言を 1 つも書かずに静的検査を通る。repo ごとに macro を生やすと、その repo の契約に macros を宣言する手間と、checker が現物の形を検証できる範囲の制約が毎回付いてくる。")]
   :decision
-    [(rule R1 "実行時の型検査は `doeff_hy.typecheck` の TypeCheck の要求として出す。果たす家は 2 つ(`type-checks-off` / `type-checks-on`)で、どちらを当てるかは composition root が選ぶ。既定は off。")
+    [(rule R1 "実行時の型検査は `doeff_hy._typecheck` の TypeCheck の要求として出す。果たす家は 2 つ(`type-checks-off` / `type-checks-on`)で、どちらを当てるかは composition root が選ぶ。既定は off。")
      (rule R2 "静的の型検査に切替の口を作らない。Hy の面は共通の品質検査の module 契約に `typed: true` で登録し、投影と pyright が常時かかる状態を保つ。")
      (rule R3 "赤の文言(何がどの型を期待して何だったか)の定義点は `type-check-verdict` の 1 点。handler の中に文言を埋めない。")
      (rule R4 "記録の足場の macro は `doeff_hy.record` が所有し、共通の品質検査の投影の規則(`quality.hy_record`)と同じ便で出荷する。記録の欄(中身)はここに書かない。")
@@ -183,7 +184,7 @@
        ;; 針: 柵の module が module 契約に typed: true で載っている。
        (setv repo-root (. (Path __file__) parent parent parent))
        (setv modules (contract-modules repo-root))
-       (setv fences ["packages/doeff-hy/src/doeff_hy/typecheck.hy"
+       (setv fences ["packages/doeff-hy/src/doeff_hy/_typecheck.hy"
                      "packages/doeff-hy/src/doeff_hy/record.hy"])
        (for [fence fences]
          (setv owners (lfor m modules :if (in fence (get m "paths")) m))

@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from doeff_hy.static_stub import stub_of
+from doeff_hy._static_stub import stub_of
 
 EFFECTS = """\
 (require doeff-hy.macros [defeffect])
@@ -131,7 +131,7 @@ def test_a_bind_reads_the_bound_answer_and_a_relay_reads_the_declared_one(tmp_pa
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     user = source.with_name("user_mod.hy")
     user.write_text(USER, encoding="utf-8")
-    command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
+    command = [sys.executable, "-m", "doeff_hy._static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
     done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
     found = json.loads(done.stdout) if done.stdout.strip() else []
     errors = [(d["line"], d["rule"]) for d in found if d["severity"] == "error"]

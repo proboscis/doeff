@@ -183,7 +183,7 @@ def _imported_expansion(source: str, module_name: str) -> _Expanded | None:
 
 
 def _type_check_expansion() -> bool:
-    """Whether expansions now are for type checking (``doeff_hy.static_view``): doeff-hy's macros
+    """Whether expansions now are for type checking (``doeff_hy._static_view``): doeff-hy's macros
     then write another tree (no ``:pre`` check, no runtime import), which no store may keep under the
     key of a plain expansion — as the import side keeps no record of such code (``TYPE_CHECK_EXPANSION``).
     Callers keep nothing derived from such a tree either (``program_effects._hy_cache_dir``)."""

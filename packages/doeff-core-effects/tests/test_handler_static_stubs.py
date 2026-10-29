@@ -106,7 +106,7 @@ def _copy_renamed(target: Path, *, with_stubs: bool) -> None:
 
 def _check(tmp_path: Path, *, with_stubs: bool) -> Run:
     """写し(_copy_renamed)を import の根に置き、検体を doeff-hy-check --strict にかける。"""
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     copy = tmp_path / ("stubbed" if with_stubs else "bare") / COPY_NAME
     _copy_renamed(copy, with_stubs=with_stubs)

@@ -59,7 +59,7 @@ FIRST_DEFTEST_LINE = 8
 
 
 def _check(root: Path, *extra: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -128,7 +128,7 @@ def _expand(source: str) -> str:
 
 
 def test_static_view_annotates_only_the_static_expansion() -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(PROBE)
     with static_view():
@@ -156,7 +156,7 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
 
 def test_every_fixture_type_is_declared_in_the_stub() -> None:
     # 表(static_view.DEFTEST_FIXTURE_TYPES)の型の名は、static_types.pyi に宣言が在る(無ければ注記が Unknown になる)
-    from doeff_hy import static_view
+    from doeff_hy import _static_view as static_view
 
     stub = Path(static_view.__file__).with_name("static_types.pyi")
     body = ast.parse(stub.read_text(encoding="utf-8")).body

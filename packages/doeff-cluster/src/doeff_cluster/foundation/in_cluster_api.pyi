@@ -1,8 +1,8 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = in_cluster_api.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = in_cluster_api.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_hy.static_types import Handler as _Handler
+from doeff_hy._static_types import Handler as _Handler
 from urllib.parse import SplitResult as SplitResult
 from urllib.parse import urlsplit as urlsplit
 from doeff import Program as Program

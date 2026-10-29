@@ -26,9 +26,9 @@ import doeff_hy  # 拡張を登録する(_READERS は置き場の __file__ を�
 import hy
 import pytest
 from doeff_hy import clause_endings, clause_ops, expansion_names, handle
+from doeff_hy._static_view import static_view
 from doeff_hy.clause_ops import ClauseOp, Ending
 from doeff_hy.expansion_names import alias, alias_symbol, continuation_symbol
-from doeff_hy.static_view import static_view
 from hy.models import Expression, Object, Sequence, String, Symbol
 
 from doeff import run

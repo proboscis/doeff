@@ -1,10 +1,10 @@
-"""doeff-claude-code の Hy の module の型の宣言のうち、doeff_hy.static_stub が作った .pyi の失敗ケース(#2843)。
+"""doeff-claude-code の Hy の module の型の宣言のうち、doeff_hy._static_stub が作った .pyi の失敗ケース(#2843)。
 
 使い手の repo が import する values・lines・faults・fake・effects は .pyi が無く、使い手がその名を使う行を足すと、strict の型の門が
 書き手に直せない Unknown の赤で止まった。.pyi は道具が .hy から作る。
 
 - 使い手が import する名を 1 つずつ束ねた検の module に、「型が分からない」の赤が出ない(.pyi を外すと赤になる)。
-- 一致の検 = 作り直した物 == commit された物(.hy を変えたら `python -m doeff_hy.static_stub --write <.hy>` で作り直す)。
+- 一致の検 = 作り直した物 == commit された物(.hy を変えたら `python -m doeff_hy._static_stub --write <.hy>` で作り直す)。
 """
 
 import shutil
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import UsedModule, stale_in, unknown_in_users
+from doeff_hy._static_stub import UsedModule, stale_in, unknown_in_users
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 

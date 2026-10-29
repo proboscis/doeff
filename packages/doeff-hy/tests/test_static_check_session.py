@@ -110,7 +110,7 @@ def _render(change: dict[str, str]) -> str:
 
 
 def _check(root: Path, text: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
     (root / "probe.hy").write_text(text, encoding="utf-8")

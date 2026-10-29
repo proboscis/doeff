@@ -533,7 +533,7 @@ def _doeff_hy_handler_types() -> tuple[object, ...]:
     """doeff-hy's ``Handler`` type (a ``defhandler`` handler's type), when doeff-hy is installed."""
     if importlib.util.find_spec("doeff_hy") is None:
         return ()
-    static_types = importlib.import_module("doeff_hy.static_types")
+    static_types = importlib.import_module("doeff_hy._static_types")
     return (static_types.__dict__["Handler"],) if "Handler" in static_types.__dict__ else ()
 
 

@@ -41,7 +41,7 @@ class _Checked(NamedTuple):
 
 def _checked(argv: list[str]) -> _Checked:
     """main を 1 度走らせ、終わりの code・所見(規則・重さ・行)・stderr を返すため。"""
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):

@@ -18,8 +18,8 @@ import pytest
 from hy.errors import HyMacroExpansionError
 
 from doeff_hy.binding_forms import RULE_LEGACY_LAZY, RULE_REBIND, RULE_SETV, Finding
-from doeff_hy.static_check import Projection, project
-from doeff_hy.static_view import collect_findings, static_view
+from doeff_hy._static_check import Projection, project
+from doeff_hy._static_view import collect_findings, static_view
 
 PRELUDE = """
 (require doeff-hy.macros [defk deftest defp <- set! defhandler with-handler])

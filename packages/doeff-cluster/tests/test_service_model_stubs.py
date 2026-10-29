@@ -2,7 +2,7 @@
 
 service_model.hy の判断と構成子を、層に合わせて core/service_rules.hy と entry/service_build.hy へ分けた。型の宣言は手書きなので、
 関数を移す・引数を変えると、宣言だけが古い置き場に黙って残る(使い手の strict では Unknown か、実行時に無い名を型が通す)。
-(worker/protocol/declared.hy・worker/protocol/heartbeat.hy・shared/entry/declare.hy の .pyi は道具 doeff_hy.static_stub が .hy の契約から
+(worker/protocol/declared.hy・worker/protocol/heartbeat.hy・shared/entry/declare.hy の .pyi は道具 doeff_hy._static_stub が .hy の契約から
 作るので、ここでは照らさない — 作り直した物と commit された物の一致は tests/test_generated_stubs.py が検める・#2824。)
 ここで .hy の source を読み、module の直下で定義した公開の名と宣言の名を照らし、さらに:
 
