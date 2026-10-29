@@ -60,6 +60,9 @@ LISTEN_RETRY_SECONDS: int
 NOTICE_PAYLOAD_LIMIT: int
 LARGE_CARRY_BYTES: int
 CARRIED_LARGE: Incomplete
+PREPARED: Incomplete
+PREPARED_LOCK: Incomplete
+PREPARED_MAX: int
 POSTGRES_TYPES: dict[SqlColumnType, str]
 
 @dataclass(frozen=True, kw_only=True)
@@ -245,6 +248,14 @@ class PipelineConnection(Protocol):
     cursor: Callable[[], StatementCursor]
 
 def step_queries(transformer: Incomplete, step: PostgresStep | None) -> _Program[tuple, object]:
+    ...
+
+@dataclass(kw_only=True)
+class PreparedBook:
+    names: dict = ...
+    issued: int = 0
+
+def prepared_book(connection: Incomplete) -> _Program[PreparedBook, object]:
     ...
 
 def socket_ready(pgconn: Incomplete, events: int) -> _Program[int, object]:
