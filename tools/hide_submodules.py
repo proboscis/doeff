@@ -23,15 +23,17 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 - ``--child``(何度でも): 子の名。import の根のすぐ下の module(``.py``・``.hy`` と、隣の ``.pyi``)か package の dir。
   ``rewrite`` と ``finish`` では ``_<名>`` へ移した後の子を、移す前の名で渡す。
 - ``--tree``: 書き換える木(git の作業木)。``hide`` と ``finish`` の既定は package を持つ git の木。
-- ``--table``(``hide``): 既知の表(既定 ``tests/data/public_api_known_violations.json``)。名の行き先を決める。
+- ``--table``: 既知の表(違反の表 — 既定 ``tests/data/public_api_known_violations.json``)。``--allowed``: 許した物の表
+  (既定 ``tests/data/public_api_allowed.json``)。2 つで名の行き先を決め、``finish`` は 2 つから消えた行を消す。
 - ``--underscore-only``(何度でも): import の根の外で、入口でなく ``_`` の path だけを読む file か dir(木からの相対)。
   読み込みの順の固い所(例: doeff-core-effects を隠す時の ``doeff``)に使う。
 - ``--json``: 結果を JSON で書く file(``-`` は stdout)。``--dry-run``(``rewrite``): 書かずに数だけ出す。
 
 名の行き先(``hide``): 目録(``public_api_inventory``)が子とその下の module から読む名を、種類と既知の表の組で分ける。
 
-- 入口へ出す: 種類 effect・handler、表の組「境界 — …」(R2 の型と答えの出ていない境界の名)と「未分け — …」、「足した名」。
-- ``_`` の中に残す: 表の組「外れ — …」の名(R1 の「内側の module へ移す」)と、表に無いそれ以外の名(注に出す)。
+- 入口へ出す: 種類 effect・handler、表の組「境界 — …」(R2 の型と答えの出ていない境界の名)と「未分け — …」、「足した名」、
+  許した物の表の名(R18 の program の helper ほか)。
+- ``_`` の中に残す: 表の組「外れ — …」の名(R1 の「内側の module へ移す」)と、2 つの表に無いそれ以外の名(注に出す)。
 - Hy の macro は入口の遅延の名にできないので ``_`` に残し、``require`` は ``_`` の path を読む(注に出す)。
 - 同じ名で定義の違う物が 2 つ在る(子どうし・入口に在る名と)時は足さずに「ぶつかり」に出す。入口に同じ定義が在れば足さない。
   子が別の子の名を import して出し直す(定義が 1 つ)時は、定義の在る子から 1 度だけ足す。
@@ -61,14 +63,16 @@ import の根の外の file(呼び手)は、名が入口から読めて入口の
 import の根の中の file と ``--underscore-only`` は ``_`` の path だけを読む。Hy の ``require`` はいつも ``_`` の path。
 
 書き換えない file: 設計の記録(``pyproject.toml`` の ``[tool.doeff] record-dirs`` と ``docs/design/``)・``docs/history/``・
-``publications/``・``evidence`` の dir・``CHANGELOG.md``(歴史)、既知の表(表を直す card が扱う)、移し替えの module。
+``publications/``・``evidence`` の dir・``CHANGELOG.md``(歴史)、既知の表と許した物の表(表を直す card が扱う)、
+移し替えの module。
 
 出力(stdout と ``--json``): 前と後の数 — 子・名(行き先ごと)・古い path を読む場所(前)・書き換えた場所(種類ごと)・
 入口へ向けた名と ``_`` の path へ向けた名(うち表の外れの名)・残った古い path(file ごと)・ぶつかりと注。
 
-``finish`` は移し替えの module を ``git rm`` で消し、木に残った古い path を数え、消した後の目録と既知の表を表の test
-(``tests/test_public_api_known_violations.py``)と同じ突き合わせで比べて、隠した子の消えた行(隠した submodule の行・
-``_`` に残した外れの名の行)を表から消す。入口へ移した名の行は残る(表の test が入口の名と同じ行と読む)。
+``finish`` は移し替えの module を ``git rm`` で消し、木に残った古い path を数え、消した後の目録と既知の表・許した物の表を
+表の test(``tests/test_public_api_known_violations.py``)と同じ突き合わせで比べて、隠した子の消えた行(隠した submodule の
+行・``_`` に残した外れの名の行・``_`` に残した許した名の行)を 2 つの表から消す。入口へ移した名の行は残る(表の test が
+入口の名と同じ行と読む)。
 ``hide`` の間は表を書き換えない(移し替えの module が古い名で名を出し、目録が古い名で数える)。
 
 stage ごとに数える物(card の発言に写す):
@@ -107,6 +111,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TABLE = Path("tests/data/public_api_known_violations.json")
+DEFAULT_ALLOWED = Path("tests/data/public_api_allowed.json")
 SHIM_MARK = "# moved-submodule-shim:"
 LINE_LIMIT = 100
 
@@ -1384,10 +1389,17 @@ class NameFate:
 
 
 def _table_groups(
-    table: dict[str, object] | None, package_dir: str
+    table: dict[str, object] | None, allowed: dict[str, object] | None, package_dir: str
 ) -> tuple[dict[tuple[str, str], str], set[tuple[str, str]]]:
+    """既知の表の組と許した物の表の組((module, 名) から組の名へ)と、既知の表の「足した名」。"""
+    allowed_rows = cast(list[dict[str, str]], allowed["許した物"]) if allowed is not None else []
+    permitted = {
+        (row["module"], row["name"]): row["組"]
+        for row in allowed_rows
+        if row["package"] == package_dir
+    }
     if table is None:
-        return {}, set()
+        return permitted, set()
     packages = cast(dict[str, dict[str, object]], table["packages"])
     entry = packages.get(package_dir, {})
     groups = cast(dict[str, dict[str, list[str]]], entry.get("名", {}))
@@ -1396,7 +1408,7 @@ def _table_groups(
         for group, modules in groups.items()
         for module, names in modules.items()
         for name in names
-    }
+    } | permitted
     added = {
         (row["module"], row["name"])
         for row in cast(list[dict[str, str]], table.get("足した名", []))
@@ -1417,7 +1429,7 @@ def _row_destination(
         return ("underscore" if group.startswith("外れ") else "entry"), group, ""
     if (row["module"], row["name"]) in added:
         return "entry", "足した名", ""
-    return "underscore", None, "既知の表に無い effect と handler の外の名"
+    return "underscore", None, "既知の表と許した物の表に無い effect と handler の外の名"
 
 
 def _preferred_module(rows: Sequence[ExportRow]) -> str:
@@ -2065,13 +2077,13 @@ class Report:
 
         return (
             *(
-                [f"既知の表から消した行: {groups(self.table_rows_removed)}"]
+                [f"既知の表と許した物の表から消した行: {groups(self.table_rows_removed)}"]
                 if self.table_rows_removed
                 else []
             ),
             *(
                 [
-                    f"既知の表に残した隠した module の行(入口の名と同じと読む行): {groups(self.table_rows_left)}"
+                    f"既知の表と許した物の表に残した隠した module の行(入口の名と同じと読む行): {groups(self.table_rows_left)}"
                 ]
                 if self.table_rows_left
                 else []
@@ -2080,7 +2092,7 @@ class Report:
 
 
 def _load_table(path: Path) -> dict[str, object] | None:
-    """既知の表(JSON)を読む。表の無い木(外の repo・使い捨ての木)は None — 名の分けは種類だけで決める。"""
+    """既知の表か許した物の表(JSON)を読む。表の無い木(外の repo・使い捨ての木)は None — 名の分けは種類だけで決める。"""
     if not path.is_file():
         return None
     return cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
@@ -2176,11 +2188,17 @@ def _move_one(tree: Path, source: Path) -> str:
 
 
 def _name_notes(fates: Sequence[NameFate]) -> tuple[str, ...]:
-    unlisted = [f"{f.modules[0]}.{f.name}" for f in fates if f.note.startswith("既知の表に無い")]
+    unlisted = [
+        f"{f.modules[0]}.{f.name}"
+        for f in fates
+        if f.note.startswith("既知の表と許した物の表に無い")
+    ]
     macros = [f"{f.modules[0]}.{f.name}" for f in fates if f.fate == "macro"]
     return (
         *(
-            [f"既知の表に無い effect と handler の外の名を _ に残した: {', '.join(unlisted)}"]
+            [
+                f"既知の表と許した物の表に無い effect と handler の外の名を _ に残した: {', '.join(unlisted)}"
+            ]
             if unlisted
             else []
         ),
@@ -2197,6 +2215,7 @@ def hide(
     names: Sequence[str],
     tree_path: Path | None,
     table_path: Path | None,
+    allowed_path: Path | None,
     underscore_only: Sequence[str],
 ) -> Report:
     """stage 1: 子を ``_`` へ移し、移し替えの module を置き、入口へ名を足し、木の import を書き換える。"""
@@ -2219,7 +2238,8 @@ def hide(
     if package["error"] is not None:
         raise SystemExit(f"目録が {package_dir.name} を読めなかった: {package['error']}")
     table = _load_table(table_path or tree / DEFAULT_TABLE)
-    groups, added = _table_groups(table, package_dir.name)
+    allowed = _load_table(allowed_path or tree / DEFAULT_ALLOWED)
+    groups, added = _table_groups(table, allowed, package_dir.name)
     fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added)
     counted = tuple(
         {"old": c.old, "new": c.new, "modules": _module_count(c, c.name)} for c in children
@@ -2247,6 +2267,7 @@ def hide(
         _git(tree, "add", str(path))
     kept = {
         DEFAULT_TABLE.as_posix(),
+        DEFAULT_ALLOWED.as_posix(),
         *(c.shim.resolve().relative_to(tree).as_posix() for c in children),
     }
     result = rewrite_tree(
@@ -2291,6 +2312,7 @@ def rewrite(
     names: Sequence[str],
     tree_path: Path,
     table_path: Path | None,
+    allowed_path: Path | None,
     underscore_only: Sequence[str],
     dry_run: bool,
 ) -> Report:
@@ -2302,10 +2324,12 @@ def rewrite(
     tree = tree_path.resolve()
     doeff_tree = git_toplevel(package_dir)
     groups, _added = _table_groups(
-        _load_table(table_path or doeff_tree / DEFAULT_TABLE), package_dir.name
+        _load_table(table_path or doeff_tree / DEFAULT_TABLE),
+        _load_table(allowed_path or doeff_tree / DEFAULT_ALLOWED),
+        package_dir.name,
     )
     kept = {
-        *({DEFAULT_TABLE.as_posix()} if tree == doeff_tree else set()),
+        *({DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix()} if tree == doeff_tree else set()),
         *(
             c.shim.resolve().relative_to(tree).as_posix()
             for c in children
@@ -2333,9 +2357,13 @@ def rewrite(
 
 
 def finish(
-    package_dir: Path, names: Sequence[str], tree_path: Path | None, table_path: Path | None
+    package_dir: Path,
+    names: Sequence[str],
+    tree_path: Path | None,
+    table_path: Path | None,
+    allowed_path: Path | None,
 ) -> Report:
-    """stage 3: 移し替えの module を消し、木に残った古い path を数え、既知の表から消えた古い名の行を消す。"""
+    """stage 3: 移し替えの module を消し、木に残った古い path を数え、既知の表と許した物の表から消えた古い名の行を消す。"""
     tool = _inventory_tool()
     package_dir = package_dir.resolve()
     layout = tool.read_layout(package_dir)
@@ -2350,7 +2378,9 @@ def finish(
         # 1 行目の印で道具が置いた file と確かめた — commit 前の(index にだけ在る)移し替えの module も消す。
         _git(tree, "rm", "-q", "-f", str(child.shim))
     patterns = Patterns.of(children)
-    candidates = _tree_of(tree, layout, (), {DEFAULT_TABLE.as_posix()}).candidates(patterns)
+    candidates = _tree_of(
+        tree, layout, (), {DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix()}
+    ).candidates(patterns)
     remaining = {
         relative: left
         for relative, kind in candidates
@@ -2360,7 +2390,13 @@ def finish(
             )
         )
     }
-    table = _finish_table(tool, package_dir, children, table_path or tree / DEFAULT_TABLE)
+    table = _finish_table(
+        tool,
+        package_dir,
+        children,
+        table_path or tree / DEFAULT_TABLE,
+        allowed_path or tree / DEFAULT_ALLOWED,
+    )
     return Report(
         "finish",
         package_dir.name,
@@ -2375,7 +2411,7 @@ def finish(
 
 @dataclass(frozen=True)
 class _TableResult:
-    """stage 3 の既知の表の直し: 組ごとに消した行・残した隠した module の行・注。"""
+    """stage 3 の既知の表と許した物の表の直し: 組ごとに消した行・残した隠した module の行・注。"""
 
     removed: dict[str, int] = field(default_factory=dict)
     left: dict[str, int] = field(default_factory=dict)
@@ -2383,9 +2419,13 @@ class _TableResult:
 
 
 def _finish_table(
-    tool: _Inventory, package_dir: Path, children: Sequence[Child], path: Path
+    tool: _Inventory,
+    package_dir: Path,
+    children: Sequence[Child],
+    path: Path,
+    allowed_path: Path,
 ) -> _TableResult:
-    """移し替えの module を消した後の目録と既知の表を突き合わせ、隠した子の消えた行を表から消す。"""
+    """移し替えの module を消した後の目録と 2 つの表を突き合わせ、隠した子の消えた行を表から消す。"""
     table = _load_table(path)
     if table is None or package_dir.name not in cast(dict[str, object], table["packages"]):
         return _TableResult(notes=(f"既知の表 {path} に {package_dir.name} が無い — 表は触らない",))
@@ -2394,11 +2434,16 @@ def _finish_table(
         return _TableResult(
             notes=(f"目録が {package_dir.name} を読めなかった — 表は触らない: {package['error']}",)
         )
+    allowed = _load_table(allowed_path) or {"許した物": []}
     stale = {
-        key for key in stale_rows(package, table) if _row_is_hidden(key, children, tool.SUBMODULE)
+        key
+        for key in stale_rows(package, table, allowed)
+        if _row_is_hidden(key, children, tool.SUBMODULE)
     }
-    removed = drop_rows(path, table, package_dir.name, stale)
-    groups, _added = _table_groups(table, package_dir.name)
+    removed = drop_rows(path, table, package_dir.name, stale) | drop_allowed_rows(
+        allowed_path, allowed, package_dir.name, stale
+    )
+    groups, _added = _table_groups(table, allowed, package_dir.name)
     left = collections.Counter(
         group for key, group in groups.items() if _row_is_hidden(key, children, tool.SUBMODULE)
     )
@@ -2420,11 +2465,13 @@ def _table_guard() -> ModuleType:
     return loaded
 
 
-def stale_rows(package: dict[str, object], table: dict[str, object]) -> set[tuple[str, str]]:
-    """表に在るのに目録に無い行(入口へ移した名と同じと読む行を除く — 表の test と同じ突き合わせ)。"""
+def stale_rows(
+    package: dict[str, object], table: dict[str, object], allowed: dict[str, object]
+) -> set[tuple[str, str]]:
+    """2 つの表に在るのに目録に無い行(入口へ移した名と同じと読む行を除く — 表の test と同じ突き合わせ)。"""
     guard = _table_guard()
     found = guard.outside_rows(package)
-    known = guard.known_names(table, package["dir"])
+    known = guard.known_names(table, package["dir"]) | guard.allowed_names(allowed, package["dir"])
     moved = guard.moved_to_root(package["import_roots"], found, known)
     return cast(set[tuple[str, str]], known - set(found) - {old for _root, old in moved})
 
@@ -2473,6 +2520,23 @@ def drop_rows(
     return {group: count for group, count in removed.items() if count}
 
 
+def drop_allowed_rows(
+    path: Path, allowed: dict[str, object], package_dir: str, rows: set[tuple[str, str]]
+) -> dict[str, int]:
+    """許した物の表から行を消して書く(組ごとに消した数を返す)。行を消さなければ書かない。"""
+    kept: list[dict[str, str]] = []
+    removed: collections.Counter[str] = collections.Counter()
+    for row in cast(list[dict[str, str]], allowed["許した物"]):
+        if row["package"] == package_dir and (row["module"], row["name"]) in rows:
+            removed[row["組"]] += 1
+        else:
+            kept.append(row)
+    if removed.total():
+        allowed["許した物"] = kept
+        path.write_text(json.dumps(allowed, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return dict(removed)
+
+
 # --- 命令 ---
 
 
@@ -2487,6 +2551,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command.add_argument("--child", action="append", required=True, dest="children")
         command.add_argument("--tree", type=Path, required=stage == "rewrite")
         command.add_argument("--table", type=Path)
+        command.add_argument("--allowed", type=Path)
         command.add_argument("--json")
         if stage != "finish":
             command.add_argument("--underscore-only", action="append", default=[])
@@ -2503,6 +2568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.children,
             arguments.tree,
             arguments.table,
+            arguments.allowed,
             arguments.underscore_only,
         )
     elif arguments.stage == "rewrite":
@@ -2511,11 +2577,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.children,
             arguments.tree,
             arguments.table,
+            arguments.allowed,
             arguments.underscore_only,
             arguments.dry_run,
         )
     elif arguments.stage == "finish":
-        report = finish(arguments.package, arguments.children, arguments.tree, arguments.table)
+        report = finish(
+            arguments.package,
+            arguments.children,
+            arguments.tree,
+            arguments.table,
+            arguments.allowed,
+        )
     else:
         parser.print_help()
         return 2
