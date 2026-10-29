@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 
-from doeff_agentic.types import AgenticEnvironmentType
+from doeff_agentic._types import AgenticEnvironmentType
 
 from .workflow import AgenticEffectBase
 

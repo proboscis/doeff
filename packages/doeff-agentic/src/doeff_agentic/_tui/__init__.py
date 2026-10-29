@@ -3,7 +3,7 @@ Textual TUI for doeff-agentic workflow monitoring and interaction.
 
 This module provides an interactive terminal UI for humans to monitor
 and interact with agentic workflows. The screens read and act on the recorded
-workflows with the effects of ``doeff_agentic.effects.recorded``; ``main`` is the
+workflows with the effects of ``doeff_agentic._effects.recorded``; ``main`` is the
 composition root that runs them under ``recorded_workflows_handler``.
 
 Usage:
@@ -14,7 +14,7 @@ Usage:
     $ doeff-agentic tui
 """
 
-from doeff_agentic.handlers.recorded import recorded_workflows_handler
+from doeff_agentic._handlers.recorded import recorded_workflows_handler
 
 from .app import AgenticTUI
 

@@ -18,14 +18,14 @@ from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
 
 from doeff import do
-from doeff_agentic.effects.recorded import (
+from doeff_agentic._effects.recorded import (
     AgenticAttachAgent,
     AgenticCaptureAgentOutput,
     AgenticFindWorkflow,
     AgenticListWorkflows,
     AgenticStopWorkflow,
 )
-from doeff_agentic.types import WorkflowInfo
+from doeff_agentic._types import WorkflowInfo
 
 from .widgets import (
     AgentListItem,

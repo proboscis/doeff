@@ -39,7 +39,7 @@ from doeff_agentic import (
     AgenticSendMessage,
     AgenticGetMessages,
 )
-from doeff_agentic.opencode_handler import opencode_handler
+from doeff_agentic import opencode_handler
 
 @do
 def my_workflow():
@@ -191,7 +191,7 @@ doeff-agentic stop <workflow-id>
 You can also use the Python API directly:
 
 ```python
-from doeff_agentic.api import AgenticAPI
+from doeff_agentic import AgenticAPI
 
 api = AgenticAPI()
 

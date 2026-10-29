@@ -1,18 +1,21 @@
-"""Runtime helpers for explicit handler stacking with ``WithHandler``."""
+# moved-submodule-shim: doeff_agentic.runtime -> doeff_agentic._runtime
+"""Moved: ``doeff_agentic.runtime`` is now ``doeff_agentic._runtime`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_agentic.runtime…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from collections.abc import Sequence
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from doeff import handler as _program_handler
+if TYPE_CHECKING:
+    from doeff_agentic._runtime import *  # noqa: F403
 
+if __name__ == "__main__":
+    import runpy
 
-def with_handlers(program: Any, handlers: Sequence[Any]) -> Any:
-    """Wrap ``program`` with handlers ordered from outer to inner."""
-    wrapped = program
-    for handler in reversed(tuple(handlers)):
-        wrapped = _program_handler(handler)(wrapped)
-    return wrapped
-
-
-__all__ = ["with_handlers"]
+    runpy.run_module("doeff_agentic._runtime", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_agentic._runtime")

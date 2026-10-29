@@ -24,8 +24,8 @@ from doeff_agentic import (
     AgenticNextEvent,
     AgenticSendMessage,
     AgenticTimeoutError,
+    opencode_handler,
 )
-from doeff_agentic.opencode_handler import opencode_handler
 
 from doeff import do, slog
 
