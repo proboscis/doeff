@@ -51,7 +51,7 @@ Quick Start:
 CLI Usage:
     $ doeff-agentic ps                           # List workflows
     $ doeff-agentic watch <id>                   # Monitor workflow
-    $ doeff-agentic attach <id>:<session>        # Attach to session
+    $ doeff-agentic attach <id> --agent <name>   # Attach to session
     $ doeff-agentic logs <id>                    # View logs
     $ doeff-agentic stop <id>                    # Stop workflow
 """
@@ -66,8 +66,10 @@ from ._api import AgenticAPI
 from ._effects import (
     AgenticAbortSession,
     # Recorded workflow effects (the monitor's)
+    AgenticAnswerInput,
     AgenticAttachAgent,
     AgenticCaptureAgentOutput,
+    AgenticCleanupEnvironments,
     # Environment effects
     AgenticCreateEnvironment,
     # Session effects
@@ -86,11 +88,14 @@ from ._effects import (
     # Status effects
     AgenticGetSessionStatus,
     AgenticGetWorkflow,
+    AgenticInputRequested,
+    AgenticListEnvironments,
     AgenticListWorkflows,
     # Event effects
     AgenticNextEvent,
     # Message effects
     AgenticSendMessage,
+    AgenticSendToAgent,
     AgenticStopWorkflow,
     AgenticSupportsCapability,
     AgentNotRunningError,
@@ -200,8 +205,10 @@ __all__ = [
     "AgenticAPI",
     "AgenticAbortSession",
     "AgenticAmbiguousPrefixError",
+    "AgenticAnswerInput",
     "AgenticAttachAgent",
     "AgenticCaptureAgentOutput",
+    "AgenticCleanupEnvironments",
     "AgenticCreateEnvironment",
     "AgenticCreateSession",
     "AgenticCreateWorkflow",
@@ -226,11 +233,14 @@ __all__ = [
     "AgenticGetSession",
     "AgenticGetSessionStatus",
     "AgenticGetWorkflow",
+    "AgenticInputRequested",
+    "AgenticListEnvironments",
     "AgenticListWorkflows",
     "AgenticMessage",
     "AgenticMessageHandle",
     "AgenticNextEvent",
     "AgenticSendMessage",
+    "AgenticSendToAgent",
     "AgenticServerError",
     "AgenticSessionHandle",
     "AgenticSessionNotFoundError",
