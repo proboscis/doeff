@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_conductor.overseer -> doeff_conductor._overseer
+# moved-submodule-shim-names doeff_conductor.overseer:
+#   GateOption OpenGateView ProgressEvent RUN_STATE_FILENAME RunStateView VALID_GATE_OUTCOMES
+#   answered_gate_options answered_gate_stakes answered_retry_agent_counts clear_open_gates
+#   list_gates_with_status list_open_gates load_run_state make_progress_event progress_since
+#   record_gate_answer record_open_gates run_state_path save_run_state
 """Moved: ``doeff_conductor.overseer`` is now ``doeff_conductor._overseer`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

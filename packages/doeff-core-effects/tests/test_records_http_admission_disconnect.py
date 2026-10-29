@@ -98,9 +98,10 @@ def assert_http_callable_timed_out(abandoned):
 
 def records_config(connections, pool, observer, prefix, enabled):
     from doeff_records._laws import LAW_SCHEMA
-    from doeff_records.http_server import records_server_config
-    from doeff_records.pg import pg_records_handler, prepare_records_store, writer_gates
-    from doeff_records.pg_sql import writer_lock_key
+    from doeff_records import records_server_config
+    from doeff_records import pg_records_handler, writer_gates
+    from doeff_records._pg import prepare_records_store
+    from doeff_records import writer_lock_key
 
     key = run(writer_lock_key(prefix))
     store = run(
@@ -134,7 +135,7 @@ def records_config(connections, pool, observer, prefix, enabled):
 )
 @pytest.mark.parametrize("enabled", [False, True], ids=["admission-off", "admission-on"])
 def test_client_disconnect_does_not_cancel_waiting_write(enabled):
-    from doeff_records.http_server import start_records_server
+    from doeff_records._http_server import start_records_server
 
     prefix = "http_probe_" + uuid.uuid4().hex[:8] + "_"
     connections = PostgresConnections((PostgresDatabase(name="probe", dsn=DSN),), size=3)

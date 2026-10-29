@@ -1,4 +1,11 @@
 # moved-submodule-shim: doeff_core_effects.rooted_file -> doeff_core_effects._rooted_file
+# moved-submodule-shim-names doeff_core_effects.rooted_file:
+#   ANSWER AcquireLock AppendBytes AppendText Appended CompilePythonSources CopyFile CopyTree
+#   DiskUsage FileFailed LinkFile ListDirectory LockHeld MODULE_TAGS MOVE_EFFECTS MakeDirectory
+#   MakeSymlink MeasureTree PATH_EFFECTS PathStat ReadBytes ReadDiskFree ReadDiskUsage ReadText
+#   ReleaseLock RemoveTree RenamePath StatPath StatTree SyncDirectory TruncateFile WalkTree
+#   WriteBytes WriteText inner_answer inner_detail inner_path moved outer_path rooted_file_handler
+#   unchanged
 """Moved: ``doeff_core_effects.rooted_file`` is now ``doeff_core_effects._rooted_file`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy.outcome_forms -> doeff_hy._outcome_forms
+# moved-submodule-shim-names doeff_hy.outcome_forms:
+#   CATCH_ALL_NAMES OPAQUE_HEADS PLAIN_VALUE_SYMBOLS SplitBind absent_as_form bind_form head_name
+#   hyx_performs_effectXquestion_markX mark_direct_binds on_raise_form open_form pattern_types
+#   plain_value_of plain_value_refusal source_of split_absent
 """Moved: ``doeff_hy.outcome_forms`` is now ``doeff_hy._outcome_forms`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

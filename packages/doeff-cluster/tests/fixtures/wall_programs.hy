@@ -15,9 +15,8 @@
 (import doeff [with-handlers EffectBase Program])
 (import doeff_core_effects [Await])
 (import doeff_core_effects [state await-handler])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpListen HttpNextRequest HttpRequestArrived HttpServerClosed WsAccept
-                                                WsTextArrived WsSendText HttpShutdown])
-(import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
+(import doeff_core_effects [HttpAddress HttpListen HttpNextRequest HttpRequestArrived HttpServerClosed WsAccept WsTextArrived WsSendText HttpShutdown])
+(import doeff_core_effects [aiohttp-http-server])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster [SharedRows])

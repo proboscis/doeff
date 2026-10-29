@@ -13,7 +13,7 @@
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest val])
 (import typing [get-args])
-(import doeff_records.wire [WireAnswer])
+(import doeff_records._wire [WireAnswer])
 (import doeff_records._effects [DEFAULT-LIST-LIMIT LIST-LIMIT-MAX])
 (import doeff_records.loop_work [BATCH-READ-ANSWERS ON-LOOP-ANSWERS])
 
@@ -22,17 +22,17 @@
   :title "記録の service の scheduler の thread は要求の受けと順の制御だけを持ち、置き場に在る行の数で大きさが決まる計算(束の読みの行の読み解きと答えの綴り)は Compute で thread の外で回す"
   :status "accepted"
   :scope ["packages/doeff-records/src/doeff_records/loop_work.hy"
-          "packages/doeff-records/src/doeff_records/pg.hy"
+          "packages/doeff-records/src/doeff_records/_pg.hy"
           "packages/doeff-records/src/doeff_records/_service.hy"
-          "packages/doeff-records/src/doeff_records/http_server.hy"
+          "packages/doeff-records/src/doeff_records/_http_server.hy"
           "packages/doeff-records/src/doeff_records/_main.hy"
           "packages/doeff-records/src/doeff_records/_effects.hy"
-          "packages/doeff-records/src/doeff_records/wire.hy"
+          "packages/doeff-records/src/doeff_records/_wire.hy"
           "docs/adr/defadr_doeff_records_002_scheduler_thread_admits_and_orders.hy"]
   :problem
     [(fact
        "記録の service の process は 1 つの run・1 つの scheduler で動き、受けの loop・要求の task・書きの門・変化の待ちの全部が 1 本の scheduler の thread の上で回る。その thread が 1 要求の計算で塞がる間、後から届いた要求は、待ち受けが受けた後、要求の task が始まるまで受けの列で待つ。"
-       :evidence "packages/doeff-records/src/doeff_records/http_server.hy の頭の註(入口の形)")
+       :evidence "packages/doeff-records/src/doeff_records/_http_server.hy の頭の註(入口の形)")
      (fact
        "2026-10-22 の本番の 100 分の測り(process ごとに 200 ms ごとの probe の受けの列・1 秒ごとの計器・50 ms ごとの scheduler の thread の走りの秒): 受けの列が 60 ms 以上 跳ねた probe は、書きの詰まりの窓を除くと 97〜100% が、一覧の読みが 300 行以上を返した 1 秒と重なった。跳ねる前の 50 ms の scheduler の thread の走りは 88〜98%(全体の平均 35〜53%)で、run queue の待ちは 0.6〜2.0% — thread は CPU を貰えていて、自分の仕事で塞がっていた。"
        :evidence "card ki-974e5ae37eca の発言 ob-844fea23612759cf(表)・ob-cd4ccf8d5e81153d(訳と削る手)")

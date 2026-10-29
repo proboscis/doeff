@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy.check_slot -> doeff_hy._check_slot
+# moved-submodule-shim-names doeff_hy.check_slot:
+#   CANON_CALLS CANON_ERRORS CANON_OPTIONAL_CALLS CANON_UNDER_HOME EnvironmentByName MARK
+#   MODULE_KEY_PREFIX SlotExpired SlotHeld absent_optional canon_module slot_label take_slot
+#   unfit_names
 """Moved: ``doeff_hy.check_slot`` is now ``doeff_hy._check_slot`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

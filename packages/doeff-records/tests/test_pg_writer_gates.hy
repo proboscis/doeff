@@ -8,7 +8,7 @@
 (import doeff_core_effects [Get Put])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled Spawn Wait CreatePromise CompletePromise Promise])
-(import doeff_records.pg [AdmitWriters ReleaseWriters writer-gates])
+(import doeff_records [AdmitWriters ReleaseWriters writer-gates])
 
 
 (val LOG-KEY "writer-gates-test/log")

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_seedream.structured_llm -> doeff_seedream._structured_llm
+# moved-submodule-shim-names doeff_seedream.structured_llm:
+#   DEFAULT_MODEL DEFAULT_RESPONSE_FORMAT edit_image__seedream4
 """Moved: ``doeff_seedream.structured_llm`` is now ``doeff_seedream._structured_llm`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

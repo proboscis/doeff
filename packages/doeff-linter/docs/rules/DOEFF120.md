@@ -6,7 +6,7 @@
 
 この規則は、`architecture.hy` の在る repo で、JsonValue を使ってよい module を次の 2 つだけにします。
 
-1. 汎用の解き手 — doeff-hy の `defwire` が使う `doeff_hy._wire` と、doeff-records の `doeff_records.wire`(module の綴りの末尾の段で照らす)。
+1. 汎用の解き手 — doeff-hy の `defwire` が使う `doeff_hy._wire` と、doeff-records の `doeff_records._wire`(module の綴りの末尾の段で照らす)。
 2. `architecture.hy` の `:wire-modules` に挙げ、かつ foundation の層(`:foundation` の層の置き場)に在る、JSON の送受信そのものを行う module。
 
 ほかの module(protocol・intent・core …)は、解き手が pydantic と同じ仕組み(TypeAdapter)で一度に形を確かめた、型のある値

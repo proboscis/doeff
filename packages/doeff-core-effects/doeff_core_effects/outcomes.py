@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_core_effects.outcomes -> doeff_core_effects._outcomes
+# moved-submodule-shim-names doeff_core_effects.outcomes:
+#   Absent AbsentAsToken AbsentDefault BoundAbsent BoundaryHandler DirectBind
+#   FormerFactoryBoundaryHandler Outcome Outcomes Raise RaiseCase absent_as absent_raises
+#   direct_bind maybe new_absent_token on_raise open_bind outcomes_of result
 """Moved: ``doeff_core_effects.outcomes`` is now ``doeff_core_effects._outcomes`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

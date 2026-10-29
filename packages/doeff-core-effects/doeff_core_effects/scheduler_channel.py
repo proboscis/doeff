@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.scheduler_channel -> doeff_core_effects._scheduler_channel
+# moved-submodule-shim-names doeff_core_effects.scheduler_channel:
+#   Channel CompletePromise CreateChannel CreatePromise MODULE_TAGS PutChannel TakeChannel Wait
+#   filled scheduler_channel_handler woken
 """Moved: ``doeff_core_effects.scheduler_channel`` is now ``doeff_core_effects._scheduler_channel`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

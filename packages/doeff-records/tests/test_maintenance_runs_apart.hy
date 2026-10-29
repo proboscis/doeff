@@ -18,9 +18,11 @@
 (import doeff_records [Missing Unreachable])
 (import doeff_records [ReadRow])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler records-unwaited])
-(import doeff_records.http_server [MaintenancePlan RecordsServerConfig RunningServer records-server-config start-records-server])
+(import doeff_records [records-server-config]
+        doeff_records._http_server [MaintenancePlan RecordsServerConfig RunningServer start-records-server])
 
 ;; 送りの関数が effect を出さずに計算する秒(本番の 4 分の代わり — 読みの答えの上限の数倍)・並べて撃つ読みの数・読み 1 本の答えの上限の秒・
 ;; 送りが計算を始めるのと終わるのを待つ上限の秒・口を閉じた後に手入れの別の thread の終わりを待つ上限の秒・run-apart が立てる thread の名。

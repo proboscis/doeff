@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_conductor.exceptions -> doeff_conductor._exceptions
+# moved-submodule-shim-names doeff_conductor.exceptions:
+#   AgentError AgentTimeoutError ConductorError ConductorStateWarning GitCommandError
+#   IssueAlreadyExistsError IssueFileCorruptError IssueNotFoundError JournalCorruptionError PRError
+#   WorkspaceError
 """Moved: ``doeff_conductor.exceptions`` is now ``doeff_conductor._exceptions`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_seedream.handlers -> doeff_seedream._handlers
+# moved-submodule-shim-names doeff_seedream.handlers:
+#   MockSeedreamHandler mock_handlers production_handlers seedream_image_handler
+# moved-submodule-shim-names doeff_seedream.handlers.production:
+#   ProtocolHandler SEEDREAM_IMAGE_MODEL_PREFIXES SeedreamGenerate SeedreamImageEditResult
+#   SeedreamStructuredOutput production_handlers seedream_image_handler
+# moved-submodule-shim-names doeff_seedream.handlers.testing:
+#   MockSeedreamHandler ProtocolHandler SeedreamGenerate SeedreamImage SeedreamImageEditResult
+#   SeedreamStructuredOutput mock_handlers
 """Moved: ``doeff_seedream.handlers`` is now ``doeff_seedream._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

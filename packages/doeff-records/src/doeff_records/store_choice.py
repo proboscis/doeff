@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_records.store_choice -> doeff_records._store_choice
+# moved-submodule-shim-names doeff_records.store_choice:
+#   PressureUnread StoreChoice StorePressure
 """Moved: ``doeff_records.store_choice`` is now ``doeff_records._store_choice`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

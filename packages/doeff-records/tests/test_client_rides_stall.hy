@@ -24,9 +24,10 @@
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA LawHarness MAKER as-writer])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records._service [RecordsService])
-(import doeff_records.wire [PublicEffect])
+(import doeff_records._wire [PublicEffect])
 (import doeff_records.event_source [SignalSourcePatience source-patience-handler came-back-within])
 (import doeff_records.http_client [RecordsEndpoint RequestPatience http-records-handler request-patience-handler records-unwaited])
 (import tests.interpreters [LawSetup IN-PROCESS-URL in-process-records-http])

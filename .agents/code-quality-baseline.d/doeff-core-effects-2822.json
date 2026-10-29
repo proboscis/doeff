@@ -156,7 +156,7 @@
     },
     {
       "count": 7,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_server_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_server_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -226,7 +226,7 @@
     },
     {
       "count": 12,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scripted_http_server.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scripted_http_server.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"

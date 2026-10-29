@@ -1,4 +1,14 @@
 # moved-submodule-shim: doeff_openai.effects -> doeff_openai._effects
+# moved-submodule-shim-names doeff_openai.effects:
+#   CalculateCost ChatCompletion Embedding StreamingChatCompletion StructuredOutput
+# moved-submodule-shim-names doeff_openai.effects.chat:
+#   ChatCompletion StreamingChatCompletion
+# moved-submodule-shim-names doeff_openai.effects.cost:
+#   CalculateCost
+# moved-submodule-shim-names doeff_openai.effects.embedding:
+#   Embedding
+# moved-submodule-shim-names doeff_openai.effects.structured:
+#   StructuredOutput
 """Moved: ``doeff_openai.effects`` is now ``doeff_openai._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy.table -> doeff_hy._table
+# moved-submodule-shim-names doeff_hy.table:
+#   COMPACT_RATIO MIN_DELTA TABLE_LEN_REFUSAL TABLE_MAPPING_EQ_REFUSAL TABLE_TRUTH_REFUSAL Table
+#   TableDraft TableWrite V draft_of table_of
 """Moved: ``doeff_hy.table`` is now ``doeff_hy._table`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

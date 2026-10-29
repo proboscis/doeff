@@ -895,7 +895,7 @@ agora-redesign #840・operator の決定 2026-09-28(JsonValue を直に使わせ
   tuple の中・quote の中)。文字列・註・docstring・`#_` の form は数えない。Python は字句の名(名前・属性の名・import の名)と、注釈(引数・
   戻り値・`x: T`)と型の別名(`X: TypeAlias = …` の値・`type X = …`)の文字列の中の語(前後が識別子の文字でない物)。docstring・註・f 文字列は数えない。
 - **許す module**(`json_value_allowance` — 方針はこの関数 1 つだけにあり、差し替えられる):
-  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy._wire`・`doeff_records.wire` か、`.` + それで終わる。
+  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy._wire`・`doeff_records._wire` か、`.` + それで終わる。
   2. architecture.hy の `:wire-modules` の pattern(`.` 区切り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)に当たり、かつ層の置き場で
      `:foundation` の層に入る。当たっても foundation の外なら許さない(説明に訳)。
 - **違反**: module ごとに 1 件・error。鍵 `<path>::DOEFF120`(細目なし)。位置は最初の使用の名。説明の主体に使った名・数・最初の行・ほかの行

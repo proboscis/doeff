@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.python_bytecode -> doeff_core_effects._python_bytecode
+# moved-submodule-shim-names doeff_core_effects.python_bytecode:
+#   CHECKED_HASH_FLAGS MODULE_TAGS SourceNotCompiled checked_hash_pyc compile_one
+#   compile_python_sources compiled_pyc kept_pyc prepare_compile_path pyc_path
 """Moved: ``doeff_core_effects.python_bytecode`` is now ``doeff_core_effects._python_bytecode`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

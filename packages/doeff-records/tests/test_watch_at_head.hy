@@ -19,7 +19,8 @@
 (import doeff_records [PutRow WatchChanges])
 (import doeff_records [Changes ExpectAbsent Reset WatchCursor])
 (import doeff_records._laws [MAKER])
-(import doeff_records.pg [drop-records-tables pg-records-handler])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
 (import tests.interpreters [DATABASE ORIGIN-HOST fresh-prefix pg-skip-reason postgres-connections prepared-store run-sql])
 
 (val pytestmark (pytest.mark.skipif (bool (pg-skip-reason)) :reason (pg-skip-reason)))

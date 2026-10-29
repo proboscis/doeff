@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_events.macros -> doeff_events._macros
+# moved-submodule-shim-names doeff_events.macros:
+#   event_loop
 """Moved: ``doeff_events.macros`` is now ``doeff_events._macros`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

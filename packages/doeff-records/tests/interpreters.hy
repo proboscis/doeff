@@ -31,8 +31,10 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA LawHarness])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.pg [PreparedStore pg-records-handler drop-records-tables prepare-records-store])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [PreparedStore drop-records-tables prepare-records-store])
 (import doeff_core_effects [state])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を、仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects [inline-compute-handler])
@@ -44,7 +46,7 @@
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import doeff_records.http_client [records-unwaited])
 (import doeff_records._service [RecordsService respond HttpRequest :as ServiceRequest])
-(import doeff_records.wire [WRITER-HEADER IDEMPOTENCY-HEADER])
+(import doeff_records._wire [WRITER-HEADER IDEMPOTENCY-HEADER])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_hy._frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])

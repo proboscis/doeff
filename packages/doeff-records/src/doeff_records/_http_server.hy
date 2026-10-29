@@ -93,10 +93,8 @@
 (import doeff_core_effects [run-apart])
 (import doeff_core_effects [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader
-                                                HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
-                                                HttpShutdown])
+(import doeff_core_effects [aiohttp-http-server])
+(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown])
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time [WaitWithinEffect])
 (import doeff_hy._frozen [FrozenMap])
@@ -109,9 +107,9 @@
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
                                       lock-metric-helps])
 (import doeff_records._service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
-(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
+(import doeff_records._wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
                             operation-of server-timing-spelled])
-(import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
+(import doeff_records._wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_core_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation SecondsTotal])

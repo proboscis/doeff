@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_time.epoch_ms -> doeff_time._epoch_ms
+# moved-submodule-shim-names doeff_time.epoch_ms:
+#   ensure_aware_datetime epoch_ms_of
 """Moved: ``doeff_time.epoch_ms`` is now ``doeff_time._epoch_ms`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agents.shell -> doeff_agents._shell
+# moved-submodule-shim-names doeff_agents.shell:
+#   assert_no_forbidden_agent_env assert_session_env_is_non_auth_overlay forbidden_agent_env_keys
+#   wrap_with_shell_exports
 """Moved: ``doeff_agents.shell`` is now ``doeff_agents._shell`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

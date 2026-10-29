@@ -5,9 +5,11 @@
 (import urllib.request [Request urlopen])
 (import doeff [run with_handlers])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records._service [HttpRequest RecordsService records-service respond])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records [records-server-config]
+        doeff_records._http_server [start-records-server])
 (import tests.interpreters [sim-request-handlers])
 (import doeff_time [SimClock sim-time-handler])
 

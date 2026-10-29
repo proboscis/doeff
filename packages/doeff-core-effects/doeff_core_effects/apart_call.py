@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_core_effects.apart_call -> doeff_core_effects._apart_call
+# moved-submodule-shim-names doeff_core_effects.apart_call:
+#   ApartAsked ApartClosed ApartDone ApartFailed ApartLane CreateExternalPromise ExternalPromise
+#   MODULE_TAGS TaskCancelledError Wait answered_here apart_thread forwarding_handler next_message
+#   run_apart try_handler
 """Moved: ``doeff_core_effects.apart_call`` is now ``doeff_core_effects._apart_call`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

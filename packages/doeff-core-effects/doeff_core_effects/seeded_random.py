@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.seeded_random -> doeff_core_effects._seeded_random
+# moved-submodule-shim-names doeff_core_effects.seeded_random:
+#   MODULE_TAGS RandomBytes seeded_bytes seeded_random_handler
 """Moved: ``doeff_core_effects.seeded_random`` is now ``doeff_core_effects._seeded_random`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

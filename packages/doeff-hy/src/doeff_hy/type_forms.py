@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.type_forms -> doeff_hy._type_forms
+# moved-submodule-shim-names doeff_hy.type_forms:
+#   RuntimeClass runtime_class runtime_type_form
 """Moved: ``doeff_hy.type_forms`` is now ``doeff_hy._type_forms`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

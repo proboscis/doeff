@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.step_tally_effects -> doeff_core_effects._step_tally_effects
+# moved-submodule-shim-names doeff_core_effects.step_tally_effects:
+#   CloseStepTally CloseTaskTally EMPTY_STEP_TALLY OpenStepTally OpenTaskTally ReadTaskTally
+#   SiteTally StepTally TaskTally
 """Moved: ``doeff_core_effects.step_tally_effects`` is now ``doeff_core_effects._step_tally_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

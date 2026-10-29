@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_seedream.effects -> doeff_seedream._effects
+# moved-submodule-shim-names doeff_seedream.effects:
+#   ImageEdit ImageGenerate SeedreamGenerate SeedreamStructuredOutput
+# moved-submodule-shim-names doeff_seedream.effects.generate:
+#   SeedreamGenerate
+# moved-submodule-shim-names doeff_seedream.effects.structured:
+#   SeedreamStructuredOutput
 """Moved: ``doeff_seedream.effects`` is now ``doeff_seedream._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

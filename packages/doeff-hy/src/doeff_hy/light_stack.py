@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.light_stack -> doeff_hy._light_stack
+# moved-submodule-shim-names doeff_hy.light_stack:
+#   install uninstall
 """Moved: ``doeff_hy.light_stack`` is now ``doeff_hy._light_stack`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_hy.pytest_items -> doeff_hy._pytest_items
+# moved-submodule-shim-names doeff_hy.pytest_items:
+#   Decorator Dynamic FunctionItem ITEMS_ATTR JsonValue LiteralValue MalformedRecord Mark
+#   ModuleMarks OpaqueValue ParamValue Parametrize Record SkipIf decode_records encode_records
+#   module_record_texts record_at_import record_function record_module_binding
 """Moved: ``doeff_hy.pytest_items`` is now ``doeff_hy._pytest_items`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

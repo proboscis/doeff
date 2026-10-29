@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.typecheck -> doeff_hy._typecheck
+# moved-submodule-shim-names doeff_hy.typecheck:
+#   TypeCheck TypeCheckError type_check type_check_verdict
 """Moved: ``doeff_hy.typecheck`` is now ``doeff_hy._typecheck`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
