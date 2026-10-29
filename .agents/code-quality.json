@@ -7,11 +7,11 @@
     "packages/doeff-agents/src/doeff_agents/_io_fake.hy",
     "docs/adr/defadr_doeff_agents_013_driver_io_through_handlers.hy",
     "packages/doeff-agents/src/doeff_agents/_agentd_client.py",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
-    "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy",
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/host.pyi",
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy",
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/store.pyi",
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/store_memory.hy",
     "packages/doeff-agents/src/doeff_agents/_io_root.py",
     "packages/doeff-agents/src/doeff_agents/_io_effects.pyi",
     "packages/doeff-agents/src/doeff_agents/_io_handlers.pyi",
@@ -38,7 +38,7 @@
   "baseline": ".agents/code-quality-baseline.json",
   "untyped_dependencies": [
     {
-      "path": "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
+      "path": "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
       "reason": "deff macro の Hy(typed:false の legacy)で検査器が型を投影できない。読み手(python -m の入口 / usage.py / entry.py / 検)は隣の host.pyi の宣言で型を読む(段 12 lane 12b・agora-redesign #207 / #229・検査器の直し = code-quality #1)。",
       "moved_from": ""
     }
@@ -58,12 +58,12 @@
     {
       "name": "sessionhost-policy",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
       ],
       "responsibility": "共有 session-host の monitor cycle の判断(ADR-DOE-AGENTS-004 C1・行から level-trigger で再導出する program・effect を yield するだけで I/O を呼ばない)。2026-09-19 に契約を与えた — 冊 012 がこの module の語(SEAT-ENV-CREDENTIAL-SHAPED-SEGMENTS ほか)を針で読むのに、依存先の契約が無く dependency-uncontracted になっていたため",
       "layer": "pure",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
       ],
       "allow": [
         "agent-env-vocabulary"
@@ -88,12 +88,12 @@
     {
       "name": "sessionhost-drivers",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/drivers.py"
       ],
       "responsibility": "session host の 3 つの土台(tmux / zellij / herdr)の driver の選択",
       "layer": "runtime",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/drivers.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/drivers.py"
       ],
       "allow": [],
       "typed": true
@@ -120,14 +120,14 @@
     {
       "name": "sessionhost-host",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/host.pyi"
       ],
       "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy。依存先として宣言・検が触る面の pyi。backend は tmux / herdr — headless の分岐は agora-redesign #668 で退いた)",
       "layer": "runtime",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/host.pyi"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/host.pyi"
       ],
       "allow": [
         "sessionhost-store",
@@ -138,16 +138,16 @@
     {
       "name": "sessionhost-store",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store.pyi",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store_memory.hy"
       ],
       "responsibility": "sessionhost の行の置き場の答え手 2 つ — SQLite の store(store.hy の sqlite-session-store・書きを直列にする actor・lease)と、その fake の memory の store(store_memory.hy の memory-session-store)。行の値の並び・書きの重ね方(changed-policy-patch と列の OVERLAY-RULES)・terminal の行を戻さない断り・出来事に載せる行は store.hy の defk 1 つずつで、両方が呼ぶ(agora-redesign #1351)。pyi は検が触る StoreActor だけ",
       "layer": "io",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store.pyi",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store_memory.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store.pyi",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store_memory.hy"
       ],
       "allow": [
         "sessionhost-effects",
@@ -159,12 +159,12 @@
     {
       "name": "sessionhost-effects",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
       ],
       "responsibility": "session host の effect と行の型(SessionRow・TerminalCause・SessionStore* ほか — ADR-DOE-AGENTS-004 R1)。値と effect の宣言だけで I/O を呼ばない。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無く dependency-uncontracted になっていたため(agora-redesign #1351)",
       "layer": "pure",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
       ],
       "allow": [],
       "typed": false
@@ -172,12 +172,12 @@
     {
       "name": "sessionhost-store-health",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store_health.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store_health.py"
       ],
       "responsibility": "store の書き込みの健康(続いた書きの失敗を数えて host の readiness を落とす判断)。値の計算だけ — sqlite3 は失敗の型の名を読むためだけに import する。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無かったため(agora-redesign #1351)",
       "layer": "pure",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/store_health.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/store_health.py"
       ],
       "allow": [],
       "typed": false
@@ -513,12 +513,12 @@
     {
       "name": "sessionhost-attachment",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/attachment.py"
       ],
       "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o・agora-redesign #96)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は doeff-claude-code の Dialogue。判断も I/O も持たない",
       "layer": "pure",
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/attachment.py"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/attachment.py"
       ],
       "allow": [],
       "typed": true
@@ -526,10 +526,10 @@
     {
       "name": "sessionhost-claude-code",
       "paths": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy"
       ],
       "public": [
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy"
       ],
       "allow": [
         "sessionhost-policy"

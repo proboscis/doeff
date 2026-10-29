@@ -20,7 +20,7 @@
        :evidence "ACP src/Acp/App/Agentd*.hs; ユーザー討議 2026-07-05 深夜")
      (fact
        "launch 面の session_env(汎用 env dict)は auth 物理(合成 CODEX_HOME / CLAUDE_CONFIG_DIR)が effect user から流れ込む構造裏口だった — FORBIDDEN_AGENT_ENV_KEYS(provider API キーの blocklist)が既に『env に auth を運ばせない』意図を刻んでいたのに、profile ディレクトリ系キーは現行アーキテクチャ自身が必要とするためリストに載せられなかった(blocklist の腐敗そのもの)。『the effect user should not know the auth specifics』(2026-07-07 裁定)。"
-       :evidence "doeff_agents/shell.py FORBIDDEN_AGENT_ENV_KEYS; 旧 impls の session_env 経由 CODEX_HOME 解決; ユーザー討議 2026-07-07")]
+       :evidence "doeff_agents/_shell.py FORBIDDEN_AGENT_ENV_KEYS; 旧 impls の session_env 経由 CODEX_HOME 解決; ユーザー討議 2026-07-07")]
   :context
     [(interpretation
        "agentd の存在理由は効果の解釈ではなく寿命の外部性(セッションが呼び手より長生きする・複数 user 間で真実が一つ)。意味論は doeff-native であり、daemon とは handler stack を寿命の外側でホストする場所にすぎない(ユーザー裁定)。多重化点は host の内側 = kubelet/CRI 同型で、ACP は multi-backend を持たない。")
@@ -33,7 +33,7 @@
      (rule R4 "conformance 先行: Rust agentd を oracle に black-box 契約 suite(mini_conformance 前例)+ 台本駆動の conformance-agent(偽 CLI、実クォータ非消費)を先に整備し、Hy 実装は parity 到達で交代。cargo 93 tests + 2026-07-05 の trust/hooks 傷跡を挙動として結晶化してから Rust を退役する。")
      (rule R5 "host は kinds.list で {kind, apiVersion, スキーマ} を広告し、ACP は宣言時に照合して未知 kind/version を fail-loud 拒否する。wire は有限の versioned 語彙に限る(任意 effect のリモート転送は禁止)。【2026-07-08 縮小裁定(plan 裁定 9)で landed: 広告は {kind, agent_type, required_field, api_version} の有限表のみ — alias 解決や registry 転送は host に持たせない。表と広告関数(policy.hy BINDING-KIND-* 表 + binding-kind-advertisement)がスキーマの単一の家で、host.hy の kinds.list dispatch は純粋・store 非依存。『宣言時に照合』は精密化: ACP 自身の語彙への宣言時 fail-loud は ACP admission(0044 R3)が担い、host 広告とのクロスチェックは ACP daemon の level-triggered 周期照合(verifyBindingKindsOnce → BindingKindUnsupported condition)が担う — 登録と host liveness は結合せず、CLI `doeff-agents agentd kinds` は ensure/spawn しない純 read で host 不達 = 観測なし ≠ 違反。照合 law の家は ACP 0044 kind-verification-is-level-triggered。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(表と広告の乖離を red 化)。】【同日 #15 で版が per-kind 化: api_version は BINDING-KIND-API-VERSION 表(claude-code = v1 / codex = v2)。codex v2 = 受理形の拡張({codex_home} XOR {auth_file, profile_dir}、BINDING-KIND-SHAPES)であり、required_field は人間可読ラベルへ(照合の機械面は kind+api_version のみ — shapes DSL は機械消費者不在の YAGNI 棄却)。スキーマを変えながら版を据え置くのは versioned 語彙の形骸化であり本 rule 違反。】【2026-09(従量課金の便 lane A)で kind は 4 つ: 定額の codex(v2)/ claude-code(v1)と、従量課金の claude-code-metered {config_dir}(v1)/ codex-metered {auth_file, profile_dir}(v1)。従量課金の kind は新語彙なので初版 v1 で、既存 kind の形・版・required_field は 1 文字も動かない(受理形が変わっていない kind の版を進めると偽の BindingKindUnsupported を招く — 上の裁定どおり)。⚠ 課金の階級(billing class)は広告に載せない: 照合の機械面は (kind, api_version) のままで、階級は kind 名が運ぶ(表 policy.hy BINDING-KIND-BILLING)。codex-metered が native 形 {codex_home} を取らないのは意図で、env / 機体に転がる家から課金の階級を拾える形を作らないため。deftest: sessionhost_host_deftests.hy test-dispatch-kinds-list(4 kind の広告)。】")
      (rule R6 "デプロイは frozen 環境から(pin 済み専用 env)。dev venv / target-debug 依存の自己参照(子守りが子守られる開発環境に依存する)を禁止する。")
-     (rule R7 "退役後の正典 executor は host の入口の module doeff_agents.sessionhost.host: ensure_agentd は effect StartSessionHost で host を起こし、その handler は DOEFF_AGENTD_BIN(明示 seam)が在ればそれを、無ければ実行中 interpreter の `-m doeff_agents.sessionhost.host` を起こす。CLI コマンドも PATH の探索もサブコマンドも無く、結果の MCP server は別の入口 doeff_agents.sessionhost.result_mcp(2026-10-27 改訂: 利用者の答え lt-72NHAT8F7QDV6JER8GTDACPKMB = split-entries・card ki-bb337cfd0336 — 旧条項の console script doeff-sessionhost と serve・report-result-mcp のサブコマンドは消した)。退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。rollback 可用性は git 履歴だけが担う: 退役 Rust の in-tree 凍結コピーは保持せず、削除直前 commit へ打つ tag agentd-rust-final を唯一の rollback 座標とする【2026-07-30 改訂(issue #575 M0): 旧条項『Rust binary/source の保存理由は rollback 可用性のみ』は in-tree 保存を含意し、(a) 素の pytest の退役 gate 束縛(27 件既知 red、#556)、(b) 欠陥修理の二重メンテ(#573/PR #574 — 同一欠陥を Rust/Hy 両実装へ出荷)、(c) 修理が届かず古い欠陥を抱えたままの rollback 先、を生んだため廃止】。正しさの基準として参照する禁止は不変(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。移植出典表記(『oracle = main.rs:行番号』型 docstring)は tag 経由で git 解決可能な agentd-rust-final:src/main.rs:行番号 形式へ再アンカーし(issue #575 M3)、挙動契約の正本は conformance suite(README の F-* 表)に置く。")
+     (rule R7 "退役後の正典 executor は host の入口の module doeff_agents._sessionhost.host: ensure_agentd は effect StartSessionHost で host を起こし、その handler は DOEFF_AGENTD_BIN(明示 seam)が在ればそれを、無ければ実行中 interpreter の `-m doeff_agents._sessionhost.host` を起こす。CLI コマンドも PATH の探索もサブコマンドも無く、結果の MCP server は別の入口 doeff_agents._sessionhost.result_mcp(2026-10-27 改訂: 利用者の答え lt-72NHAT8F7QDV6JER8GTDACPKMB = split-entries・card ki-bb337cfd0336 — 旧条項の console script doeff-sessionhost と serve・report-result-mcp のサブコマンドは消した)。退役 Rust binary は解決対象に含めない(silent rollback の根絶、ACP ADR 0045 R5)。rollback 可用性は git 履歴だけが担う: 退役 Rust の in-tree 凍結コピーは保持せず、削除直前 commit へ打つ tag agentd-rust-final を唯一の rollback 座標とする【2026-07-30 改訂(issue #575 M0): 旧条項『Rust binary/source の保存理由は rollback 可用性のみ』は in-tree 保存を含意し、(a) 素の pytest の退役 gate 束縛(27 件既知 red、#556)、(b) 欠陥修理の二重メンテ(#573/PR #574 — 同一欠陥を Rust/Hy 両実装へ出荷)、(c) 修理が届かず古い欠陥を抱えたままの rollback 先、を生んだため廃止】。正しさの基準として参照する禁止は不変(U1: それは一度も oracle ではなく partial-unreliable-impl だった)。移植出典表記(『oracle = main.rs:行番号』型 docstring)は tag 経由で git 解決可能な agentd-rust-final:src/main.rs:行番号 形式へ再アンカーし(issue #575 M3)、挙動契約の正本は conformance suite(README の F-* 表)に置く。")
      (rule R8 "result-contract 検証の意味論は JSON Schema 仕様が唯一の正(U1 裁定): 検証器は準拠参照実装(jsonschema)の輸入であり、subset を自前実装しない。仕様適合は公式 JSON-Schema-Test-Suite を repo 内に vendor して adapter に直接通すことで検証する(draft2020-12 required 全 1260 case green。skip 21 は全て裁定記録付き: remote レジストリ依存 = 契約は自己完結前提で unresolvable $ref は fail-loud / ECMA \\p regex = admission が launch 時 fail-closed で拒否 — 対 deftest あり)。schema 自体は launch 時に meta-schema で fail-closed 検証(壊れた契約で session を作らない)。旧 Rust 実装の fail-open 挙動を expected に固定するテストは歴史ピンとしても置かない。")
      (rule R9 "公開 launch 面(effect 語彙と wire launch の両方)は auth-blind: auth/profile 物理(CODEX_HOME / CLAUDE_CONFIG_DIR / 生鍵)は typed `binding`(束縛時構成の serialize、kind 判別スキーマ: codex {codex_home} / claude-code {config_dir})でのみ運ぶ。session_env は非 auth overlay に縮む — binding 所有キーの混入は全副作用より前に typed reject(所有権ベース: 既知の悪いキーの列挙は腐るが所有権は腐らない。provider API キーの FORBIDDEN blocklist は substrate 境界の防御として併存)。非 auth の per-launch env(観測フラグ・result channel 配線値など)は overlay として正当であり、handler 構成へ押し込まない(2026-07-07 裁定: env には auth と run 意図の 2 住人が居て、家が違う)。kind 別 auth 材料スキーマは handler の束縛時構成 — ローカル束縛 = main、host 束縛 = binding registry を持つ control plane(ACP 0044 R2/R5 と同じ線)。binding admission は ADR 0044 R3 と同思想: 未知 kind / kind↔agent_type 不整合 / 必須 field 欠落 / 未知 field を typed reject。【2026-09 改訂(従量課金の便 lane A): 課金の階級も auth-blind の同じ線で運ぶ — (1) **宣言は kind(型)**: 従量課金の家は binding kind claude-code-metered / codex-metered が名乗り、階級の表は policy.hy BINDING-KIND-BILLING の 1 点(binding-billing-class)。(2) **許可は host の方針**: host の起動時の旗 --allow-metered-billing(既定 off・argv だけ・同名の env は作らない — R10(d) と同じ理由で env 宣言は課金の門にならない)。旗の無い host は metered の kind を全副作用より前に断り、resume / fork も同じ 1 点(admit-launch)を通る。(3) **一致は per-kind impl が起動前に検める**: 家の中の従量課金の宣言(claude = settings.json の apiKeyHelper か Vertex の env の対 / codex = auth.json の **非空の** OPENAI_API_KEY)が無ければ PreLaunchSetup で typed reject(行を作らない)。⚠ 判定は「欄が在り、かつ中身が非空」— 欄の有無では判じない(codex の CLI は定額の login でも OPENAI_API_KEY を null で書き出す。実測 2026-09-15: 運用主の家 3 つとも欄は在る・中身は空。欄の有無で判じると定額の家を全部従量課金と誤る)。鍵の**値**は host を通らない: 判断は policy の純関数が宣言の名だけを返し、行の effective_identity には家の path と印 billing = metered(+ codex は resume 用の二軸の宣言 codex_auth_file / codex_profile_dir — env の名ではない綴りで、BINDING-OWNED-ENV-KEYS には足さない)だけが載る。session_env の *_API_KEY の締め出しと substrate の hard reject は **旗の有無に関わらず不変**。】")
      (rule R10 "単一インスタンス排他の実体は socket bind であり、lease はその影(観測面)。この主従を順序と述語で守る: (a) host 起動順は bind → store open → lease 取得 → latch clear — bind に負けた競合者は store にも lease にも触れずに死ぬ。(b) ensure の spawn 述語は『socket に live listener が居ない』(path 不在 / ECONNREFUSED)のみ — 生きた listener が status probe に遅い場合は長い予算(AGENTD_BUSY_STATUS_TIMEOUT_SECONDS)で再試行し、それでも駄目なら spawn せず loud エラー(slow ≠ dead。証明されない死で競合 host を作らない)。(c) heartbeat は失効した他人名義 lease を再取得する(level-triggered 自己修復 — 盗んで死んだ競合者の残骸から bind 保持者が回復する)が、未失効の他人名義は loud エラーのまま(別 socket 同一 DB 誤構成 = 生きた二重 host の検出面)。判定と upsert は BEGIN IMMEDIATE で原子化。(d) 単一 supervisor 原則(2026-07-26、doeff#558 / ACP ADR 0024 改訂と一括): canonical socket が state dir の agentd.supervisor.json で supervisor 管理下と宣言されている場合、(b) の証明された死でも ensure は self-spawn しない — 起動・再起動の所有者は supervisor(launchd 等)であり、ensure は宣言された kick_command(構成注入 argv — doeff は launchd も label もハードコードしない)への委譲 + readiness 待ちのみを行い、kick_command 不在なら loud fail する。壊れた宣言は fail-closed(typed AgentdSupervisorConfigError)で self-spawn への silent fallback を持たない。宣言は呼び手 env ではなくマシン状態(state dir のファイル)に置く — env を継承しない任意の呼び手が supervisor 停止窓(bootout・crash throttle)に野良 host を bind してしまう穴を env 宣言は塞げない。")
@@ -237,21 +237,21 @@
      ;; のみ — 生 IO(subprocess / sqlite3 / open / os.system)を直接呼ぶことを
      ;; 禁止する。glob は C1 で `packages/doeff-agents/impls/` を先行予約し、
      ;; C2 実装時に import 可能なパッケージ内
-     ;; `packages/doeff-agents/src/doeff_agents/sessionhost/impls/` へ具体化
+     ;; `packages/doeff-agents/src/doeff_agents/_sessionhost/impls/` へ具体化
      ;; (doeff-agents は hatchling src-layout — src 外のモジュールは wheel に
      ;; 入らず import 不能)。installed rule は .semgrep.yaml の
      ;; doeff-agents-substrate-clean-impls。
      (defsemgrep substrate-clean
        "doeff-agents-substrate-clean-impls"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/kimi.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/kimi.hy"
          "source" ";; per-kind impl が subprocess を直接叩く違反\n(import subprocess)\n(defn launch [argv] (subprocess.run argv))\n"}
-        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/opencode.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/opencode.hy"
          "source" ";; per-kind impl が sqlite3 を直接読む違反\n(import sqlite3 [connect])\n"}
-        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/awskind.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/awskind.hy"
          "source" ";; per-kind impl がファイル IO を直接行う違反\n(defn read-home [path] (with [f (open path)] (.read f)))\n"}
-        {"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/geminikind.hy"
+        {"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/geminikind.hy"
          "source" ";; per-kind impl が shell を直接叩く違反\n(defn kick [cmd] (os.system cmd))\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/impls/cleankind.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/cleankind.hy"
          "source" ";; substrate-clean な per-kind impl: substrate effect を yield するのみ\n(defhandler cleankind-handler\n  (ClassifyPane [agent-type output]\n    (resume (classify-frame output)))\n  (DeliverMessage [pane-id text]\n    (<- _ (TmuxSendKeys :pane-id pane-id :text text :literal True :submit True))\n    (resume None)))\n"}
         {"relative-path" "packages/doeff-agents/src/doeff_agents/session_store_sub.py"
          "source" "# substrate handler 側(impls/ の外)は生 IO を持ってよい\nimport sqlite3\nimport subprocess\n"}])
@@ -280,7 +280,7 @@
        ;; 動かす。家の中の宣言は「非空」で判じる(欄の有無ではない)。
        (import json)
        (import doeff [run])
-       (import doeff_agents.sessionhost.policy [
+       (import doeff_agents._sessionhost.policy [
          BILLING-METERED
          BILLING-SUBSCRIPTION
          binding-billing-class
@@ -347,7 +347,7 @@
              (setv result (.invoke runner cli-module.cli argv))
              (assert (= result.exit-code 1) f"{argv}: exit code {result.exit-code}")
              ;; 観測なし = 起動の命令を案内して終わる(黙って 0 を返さない)
-             (assert (in "doeff_agents.sessionhost.host" result.output) f"{argv}: {result.output}")
+             (assert (in "doeff_agents._sessionhost.host" result.output) f"{argv}: {result.output}")
              ;; listener を作っていない(観測が host を生まない)
              (assert (not (os.path.exists socket-path))
                      f"{argv} left a socket behind"))
@@ -370,8 +370,8 @@
        ;; 所有(adopted)で絞り、寿命(lifecycle)では絞らない。
        ;; adopt = 観測 — lifecycle を問わず容量に数えない。
        ;; launch 所有 — interactive でも substrate を消費するので数える。
-       (import doeff_agents.sessionhost.effects [SessionRow])
-       (import doeff_agents.sessionhost.policy [counts-toward-launch-capacity])
+       (import doeff_agents [SessionRow])
+       (import doeff_agents._sessionhost.policy [counts-toward-launch-capacity])
        (defn mk [lifecycle adopted]
          (SessionRow :session-id "adr4cap" :session-name "adr4cap" :pane-id "%0"
                      :agent-type "claude" :lifecycle lifecycle :status "running"
@@ -387,11 +387,11 @@
      ;; label 解決 + waiver marker 直下の唯一の実在確認 probe。
      (defsemgrep herdr-session-identity-not-agent-name
        "doeff-agents-herdr-session-identity-not-agent-name"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr_name_identity_bad.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate_herdr_name_identity_bad.hy"
          "source" ";; ⚠ 語彙（deff / defk）はこの検体の争点ではない — rule の pattern は agent.get の regex で、定義の綴りに依存しない。実 code には deff のまま残る関数も在るが、ADR-DOE-HY-004 の台帳は文字列の中の字面も数えるので検体は defk で書く。\n;; 名札(agent 名簿)で session 同一性・kill を解決する旧形(PR #569)\n(defk herdr-agent-pane-id-io [socket-path session-name]\n  (get (get (herdr-call socket-path \"agent.get\" {\"target\" session-name}) \"agent\") \"pane_id\"))\n(defk herdr-kill-session-io [socket-path session-name]\n  (herdr-call socket-path \"pane.close\" {\"pane_id\" (herdr-agent-pane-id-io socket-path session-name)}))\n"}
         {"relative-path" "packages/doeff-agents/conformance/harness_name_identity_bad.py"
          "source" "def session_exists_out_of_band(session_id: str) -> bool:\n    return 'error' not in _herdr_call(\"agent.get\", {\"target\": session_id})\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr_label_ok.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate_herdr_label_ok.hy"
          "source" ";; ⚠ 語彙（deff / defk）はこの検体の争点ではない — rule の pattern は agent.get の regex で、定義の綴りに依存しない。実 code には deff のまま残る関数も在るが、ADR-DOE-HY-004 の台帳は文字列の中の字面も数えるので検体は defk で書く。\n;; 同一性は workspace label(集合)— kill は全 holder の閉鎖\n(defk herdr-kill-session-io [socket-path session-name]\n  (for [ws-id (herdr-label-workspace-ids-io socket-path session-name)]\n    (herdr-call socket-path \"workspace.close\" {\"workspace_id\" ws-id})))\n;; 唯一の実在確認 probe(waiver marker 直下)\n(defk herdr-external-agent-pane-id-io [socket-path name]\n  (try\n    ;; registry-existence-probe: 外部命名席の実在確認だけに許す(同一性・帰属・kill は label)\n    (setv result (herdr-call socket-path \"agent.get\" {\"target\" name}))\n    (except [e HerdrApiError]\n      (when (= e.code \"agent_not_found\") (return None))\n      (raise)))\n  (herdr-registry-agent-pane-id result name))\n"}])
      (deftest test-adr-doe-agents-004-herdr-identity-pure-rules
        ;; law herdr-session-identity-is-workspace-label の純関数面(実 herdr
@@ -399,7 +399,7 @@
        ;; target を「その名前の席」と誤認しない)。(b) 重複判定は id の順序に
        ;; 依存しない — 事前照会に holder が居れば順序に関わらず duplicate、
        ;; 作成後に自分が居なければ vanished。(c) label holder は集合(listing 順)。
-       (import doeff_agents.sessionhost.substrate_herdr [
+       (import doeff_agents._sessionhost.substrate_herdr [
          herdr-registry-agent-pane-id herdr-new-session-verdict herdr-label-holders])
        (setv reply {"agent" {"name" "s-7bfc5d5028" "pane_id" "w4XN:p9"}})
        (assert (= (herdr-registry-agent-pane-id reply "s-7bfc5d5028") "w4XN:p9"))

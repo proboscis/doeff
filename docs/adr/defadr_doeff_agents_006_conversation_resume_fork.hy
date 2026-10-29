@@ -13,10 +13,10 @@
   :problem
     [(fact
        "agent_sessions 行に agent ネイティブの会話 identity が存在しない。列は session_id(host 自前 ID)/ session_name / pane_id / agent_type / work_dir / status / backend_kind / backend_ref_json(mux 参照)/ 時刻群 / pr_url / output_snippet / terminal_cause_json のみで、claude の session UUID も codex の rollout も保存されない。したがって host は会話を蘇生する術を構造的に持たず、session kill = 会話の喪失が仕様になっている。"
-       :evidence "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy:62-78(CREATE TABLE agent_sessions)")
+       :evidence "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy:62-78(CREATE TABLE agent_sessions)")
      (fact
        "effect 語彙にも wire 語彙にも resume / fork が無い。kind 面は BuildLaunch / PreLaunchSetup / ClassifyPane / DeliverMessage / WireResultChannel の 5 語彙、RPC は session.launch / get / list / capture / send / cancel / cleanup / await_result / report_result のみで、lifecycle は launch → terminal → cleanup の一方通行。"
-       :evidence "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy:172-215; host.hy の dispatch(daemon.status / kinds.list / session.*)")
+       :evidence "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy:172-215; host.hy の dispatch(daemon.status / kinds.list / session.*)")
      (fact
        "CLI ネイティブ物理は両 kind とも resume と fork を一級提供済みである: claude は --session-id <uuid>(起動前に identity を指定可能)/ --resume <id> / --fork-session(resume 時に新 session ID を鋳造)、codex は codex resume <SESSION_ID> / codex fork をサブコマンドとして持つ(2026-07-13 に --help 実測)。抽象の欠落は sessionhost 側だけにある。"
        :evidence "claude --help / codex --help / codex resume --help(2026-07-13 実測)")
@@ -25,7 +25,7 @@
        :evidence "orch repo docs/adr/defadr_0005_run_session_lifecycle.hy; orch PR #532")
      (fact
        "【2026-08-11 改訂の駆動問題】ACP(agent-control-plane)の枠切れ failover は operator 裁定(決裁 decision-acp-ratelimit-attempt-loss-2026-08-11・案 A 採択)で、別アカウントでの同一会話の resume を要求するが、session.resume は蘇生元行の effective_identity から binding を再構成する一択で、呼び手が別 auth home を指定する口が無い。また transcript の家(claude projects jsonl / codex rollout)は auth home 単位なので、home を替えるだけでは実 CLI が transcript を発見できない(claude は『No conversation found with session ID』rc=1、codex は『no rollout found for thread id』rc=1 — resume-physics.md 2026-08-11 プローブ (a)(c))。さらに resume の admission 失敗は素の RuntimeError → {\"ok\":false,\"error\":\"<msg>\"} で error_code が無く、機械消費者(ACP Haskell client)が message substring 照合に依存する形になっていた。"
-       :evidence "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy(resume-session の binding 再構成); packages/doeff-agents/conformance/resume-physics.md(cross-binding 追加プローブ)")
+       :evidence "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy(resume-session の binding 再構成); packages/doeff-agents/conformance/resume-physics.md(cross-binding 追加プローブ)")
      (fact
        "【2026-08-18 改訂の駆動問題】本番の resume は 1 本も完走していなかった(agentd.sqlite: resumed_from_session_id 非 NULL 105 行・done 0・2026-08-12〜08-17)。うち 91 行の一次原因は宿り先の消失: ACP は invocation 終了後に workspace(.acp/workspaces/inv_wi_*)を削除するが、resume failover は蘇生元行の work_dir(source copy 固定)をそのまま使う。sessionhost は work_dir の実在を検査せず tmux に渡し、tmux は不在 start-directory を黙って $HOME に差し替える — pane の shell prompt が `CA-…:~` で立つ。claude の --resume は cwd 鍵(projects/<mangle(realpath cwd)>)で会話を解決するため、transplant が正しく敷設した transcript ごと見えず『No conversation found with session ID』rc=1 で即死。起動 gate はこの画面の分類名を持たず 120s の予算切れまで待って no-agent-frame / prompt_undelivered で終端していた(91/91 の証拠 frame で確認 — 全件に『HOME の shell prompt + No conversation found』)。R4 の『source copy 固定が transcript 発見可能性の保証』は work_dir が実在する間しか成立しない、という前提の穴。"
        :evidence "~/.local/state/doeff/agentd.sqlite(resumed_from 非 NULL 105 行の output_snippet 全件照合 2026-08-18); fleet-stall-steward v143 起票 route-de257d16f2; sessionhost-steward v215")]
@@ -116,13 +116,13 @@
        :bad ["settings = {\"autoMemoryDirectory\": f\"{config_dir}/projects/{cwd}/memory\"}"]
        :good ["(setv memory-dir (.get params \"memory_dir\"))"])]
   :plans ["docs/adr/defadr_doeff_agents_006_conversation_resume_fork.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy(conversation_json / generation / lineage 列とterminal 不可逆の機械面)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy(BuildResume + 2026-08-11: TransplantConversation / FsLinkArtifact / RESUME-ERR-* 語彙)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy(--session-id 鋳造は現行、+ resume / fork argv + claude-transplant-conversation)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy(rollout 発見による identity 捕獲 + resume / fork argv + codex-transplant-conversation)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy(session.resume / session.fork dispatch + admit-expected-result 共有 + ResumeRejected→error_code 写像)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy(capability 広告 + admission + 共有 incarnation program)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy(resume-session の binding / new_session_id / expected_result 拡張 + ResumeRejected)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy(FsLinkArtifact — share.py link_session_artifact の意味移植)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy(conversation_json / generation / lineage 列とterminal 不可逆の機械面)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy(BuildResume + 2026-08-11: TransplantConversation / FsLinkArtifact / RESUME-ERR-* 語彙)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy(--session-id 鋳造は現行、+ resume / fork argv + claude-transplant-conversation)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy(rollout 発見による identity 捕獲 + resume / fork argv + codex-transplant-conversation)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy(session.resume / session.fork dispatch + admit-expected-result 共有 + ResumeRejected→error_code 写像)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy(capability 広告 + admission + 共有 incarnation program)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy(resume-session の binding / new_session_id / expected_result 拡張 + ResumeRejected)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy(FsLinkArtifact — share.py link_session_artifact の意味移植)"
           "agora-controllers controllers/agent_task(R11 の新しい持ち主: 置き場を会話 id で決める 1 点と、その検。agora-redesign #668 で agentd〔sessionhost/acp/judgment.hy・acp/effects.py・sessionhost_acp_memory_home_deftests.hy〕と一緒に doeff から退いた)"
           "packages/doeff-agents/conformance(偽 CLI の resume / fork 契約 + loud 失敗整合 + S21 cross-binding シナリオ + resume-physics Phase 0 プローブ文書)"])

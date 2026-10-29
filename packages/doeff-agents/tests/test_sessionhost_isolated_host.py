@@ -23,7 +23,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 
 def test_serve_argv_always_disables_the_prompt_judge() -> None:
     argv = sessionhost_serve_argv(
-        ("/venv/bin/python", "-m", "doeff_agents.sessionhost.host"),
+        ("/venv/bin/python", "-m", "doeff_agents._sessionhost.host"),
         db_path=Path("/tmp/x.sqlite"),
         socket_path=Path("/tmp/x.sock"),
         monitor_interval_ms=100,
@@ -31,11 +31,11 @@ def test_serve_argv_always_disables_the_prompt_judge() -> None:
     )
     index = argv.index("--prompt-judge-cmd")
     assert argv[index + 1] == ""
-    assert argv[:3] == ["/venv/bin/python", "-m", "doeff_agents.sessionhost.host"]
+    assert argv[:3] == ["/venv/bin/python", "-m", "doeff_agents._sessionhost.host"]
     assert "serve" not in argv
     with pytest.raises(ValueError, match="never wire a prompt judge"):
         sessionhost_serve_argv(
-            ("/venv/bin/python", "-m", "doeff_agents.sessionhost.host"),
+            ("/venv/bin/python", "-m", "doeff_agents._sessionhost.host"),
             db_path=Path("/tmp/x.sqlite"),
             socket_path=Path("/tmp/x.sock"),
             extra_args=("--prompt-judge-cmd", "claude --model haiku"),

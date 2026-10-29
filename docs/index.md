@@ -178,7 +178,7 @@ pip install doeff doeff-time ./doeff/packages/doeff-llm   # the names and paths 
 
 - **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 - **[MCP Tools](12-mcp-tools.md)** - Exposing `defk` functions as MCP tools to agents
-- **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the session host (`python -m doeff_agents.sessionhost.host`), and joining an agent control plane
+- **[doeff-agents / session host](../packages/doeff-agents/README.md)** - Agent session management, the session host (`python -m doeff_agents._sessionhost.host`), and joining an agent control plane
 
 ### LLM and image providers — `doeff-llm`, `doeff-gemini`, `doeff-openai`, `doeff-openrouter`, `doeff-seedream`
 

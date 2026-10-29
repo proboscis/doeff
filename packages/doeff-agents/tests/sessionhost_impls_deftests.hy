@@ -22,31 +22,11 @@
 (import pytest)
 (import doeff [EffectBase run])
 
-(import doeff_agents.sessionhost.effects [
-  PaneObservation
-  BuildLaunch
-  FsComposeHomeView
-  PreLaunchSetup
-  ClassifyPane
-  DeliverMessage
-  WireResultChannel
-  TmuxNewSession
-  TmuxSendKeys
-  FsCanonicalPath
-  FsReadText
-  FsRemoveFile
-  FsWriteTextAtomic
-  FsMakeDirs
-  EnvGet
-  build-launch
-  build-resume
-  pre-launch-setup
-  classify-pane
-  deliver-message
-  wire-result-channel])
-(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl autocompact-arg-pair-ok])
-(import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-reading-of
+(import doeff_agents [PaneObservation BuildLaunch FsComposeHomeView PreLaunchSetup ClassifyPane DeliverMessage WireResultChannel TmuxNewSession TmuxSendKeys FsCanonicalPath FsReadText FsRemoveFile FsWriteTextAtomic FsMakeDirs EnvGet build-launch build-resume pre-launch-setup classify-pane deliver-message wire-result-channel])
+(import doeff_agents [claude-code-impl]
+        doeff_agents._sessionhost.impls.claude_code [autocompact-arg-pair-ok])
+(import doeff_agents [codex-impl])
+(import doeff_agents._sessionhost.impls.markers [is-api-limit-refusal api-limit-names-a-model api-limit-reading-of
                                                   api-limit-resets-at ApiLimitReading])
 
 
@@ -124,7 +104,7 @@
 
 (defn channel-spec []
   {"command" "/opt/venv/bin/python"
-   "args" ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]})
+   "args" ["-m" "doeff_agents._sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]})
 
 
 (defk perform [op]
@@ -174,7 +154,7 @@
   (assert (= (get server "type") "stdio"))
   (assert (= (get server "command") "/opt/venv/bin/python"))
   (assert (= (get server "args")
-             ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
+             ["-m" "doeff_agents._sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
   (assert (in "--strict-mcp-config" argv))
   ;; prompt は argv に載らない・print mode 不使用(launch invariant)
   (assert (not-in "do the task" argv))
@@ -488,7 +468,7 @@
   (assert (in "mcp_servers.\"tools\".url=\"http://127.0.0.1:9/sse\"" argv))
   (assert (in "mcp_servers.\"doeff_result\".command=\"/opt/venv/bin/python\"" argv))
   (assert (in (+ "mcp_servers.\"doeff_result\".args="
-                 "[\"-m\",\"doeff_agents.sessionhost.result_mcp\",\"--session\",\"s1\",\"--socket\",\"/tmp/agentd.sock\"]")
+                 "[\"-m\",\"doeff_agents._sessionhost.result_mcp\",\"--session\",\"s1\",\"--socket\",\"/tmp/agentd.sock\"]")
               argv))
   ;; -c が各値の直前に居る
   (setv effort-idx (.index argv "model_reasoning_effort=\"high\""))
@@ -517,7 +497,7 @@
   (<- spec (run-codex world (wire-result-channel "codex" "s1" "/tmp/agentd.sock")))
   (assert (= (get spec "command") "/opt/venv/bin/python"))
   (assert (= (get spec "args")
-             ["-m" "doeff_agents.sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
+             ["-m" "doeff_agents._sessionhost.result_mcp" "--session" "s1" "--socket" "/tmp/agentd.sock"]))
   (setv world2 (ImplWorld))
   (<- spec2 (run-claude world2 (wire-result-channel "claude" "s1" "/tmp/agentd.sock")))
   (assert (= spec spec2)))

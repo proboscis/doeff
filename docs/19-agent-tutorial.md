@@ -334,7 +334,7 @@ Use `scenario_agent_handler` when the script of results is all the test needs.
 
 ## Step 6: Run It Against Claude Code
 
-In production the effects go to the session host, the module `doeff_agents.sessionhost.host`. The
+In production the effects go to the session host, the module `doeff_agents._sessionhost.host`. The
 host owns the sessions: it starts Claude Code in a terminal, watches it, checks its result against
 the schema and stops it, and a session lives on even when the program that launched it exits. This
 step needs:
@@ -351,7 +351,7 @@ if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
 else
   AGENTD_SOCKET="/tmp/doeff-agentd-${USER:-unknown}.sock"
 fi
-python -m doeff_agents.sessionhost.host --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10
+python -m doeff_agents._sessionhost.host --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10
 ```
 
 Then install `daemon_agent_handlers()` around the same `review_all`, in place of `scripted_agent`.

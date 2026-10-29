@@ -37,9 +37,9 @@
 (import sqlite3)
 (import threading)
 (import types [NoneType])
-(import doeff_agents.sessionhost.store_health [StoreWriteHealth next-health storage-failure-name])
+(import doeff_agents._sessionhost.store_health [StoreWriteHealth next-health storage-failure-name])
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   SessionRow
   TerminalCause
   SessionStoreListActive
@@ -49,7 +49,7 @@
   SessionStoreResultPayload
   SessionStoreRecordEvent
   SessionStoreKnownConversationIds])
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES
+(import doeff_agents._sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES
                                          parse-iso])
 
 

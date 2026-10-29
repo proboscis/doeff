@@ -14,11 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import ClaudeRuntimePolicy
 from doeff_agents import ClaudeLaunchEffect
 from doeff_agents._handlers.production import TmuxAgentHandler
-from doeff_agents.session_backend import SessionConfig
+from doeff_agents import SessionConfig
 from doeff_agents import AgentType
 from doeff_agents._adapters.base import InjectionMethod, LaunchParams
 from doeff import Pure
-from doeff_agents.session_backend import SessionBackend
+from doeff_agents import SessionBackend
 
 
 class FakeClaudeAdapter:
@@ -105,7 +105,7 @@ def test_prepare_claude_home_prefers_auth_already_in_agent_home(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from doeff_agents import claude_home as claude_home_mod
+    from doeff_agents import _claude_home as claude_home_mod
 
     source_home = tmp_path / "default-home"
     source_home.mkdir()

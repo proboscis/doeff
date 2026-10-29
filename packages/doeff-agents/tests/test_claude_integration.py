@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from doeff_agents import AgentType
 from doeff_agents import LaunchEffect, SessionHandle, StopEffect
-from doeff_agents.session_backend import SessionBackend
+from doeff_agents import SessionBackend
 from doeff_core_effects import lazy_ask, state
 
 from doeff import EffectBase, Pass, Perform, Resume, do, run
@@ -33,7 +33,7 @@ class FakeTmuxBackend:
     def new_session(self, cfg):
         from datetime import datetime, timezone
 
-        from doeff_agents.tmux import SessionInfo
+        from doeff_agents import SessionInfo
         pane_id = f"%fake{self._mut_next_pane}"
         self._mut_next_pane += 1
         self.sessions[cfg.session_name] = {"pane_id": pane_id, "work_dir": cfg.work_dir}

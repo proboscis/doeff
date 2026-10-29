@@ -16,7 +16,7 @@
 ;;;
 ;;; I/O の家: SQL の文を接続へ流すのはこの module の `SqlAgentSessionRepository`
 ;;; ちょうど 1 つ。何を流すか(DDL・書き・読み・行の写し)は
-;;; `doeff_agents.session_store_sql` の純粋な関数が決める(ADR-DOE-AGENTS-013 R4)。
+;;; `doeff_agents._session_store_sql` の純粋な関数が決める(ADR-DOE-AGENTS-013 R4)。
 
 (require doeff-hy.handle [defhandler])
 
@@ -30,7 +30,7 @@
   GetAgentSessionEffect
   ListAgentSessionsEffect
   PutAgentSessionEffect])
-(import doeff_agents.session_store_sql [
+(import doeff_agents._session_store_sql [
   DEFAULT-TABLE
   SqlDialect
   checked-table-name
@@ -53,7 +53,7 @@
    失敗は rollback してから投げ直す。1 つの接続を lock で直列に使う。
    作る時に表と索引を用意する(何度でも同じ)。
 
-   文と行の写しは `doeff_agents.session_store_sql` の defk(bind の無い純粋な Program)が決め、
+   文と行の写しは `doeff_agents._session_store_sql` の defk(bind の無い純粋な Program)が決め、
    この class は DB-API の接続を持つ Python の境界なので、それを `run` で値にしてから流す。"
 
   (defn __init__ [self connection dialect [table DEFAULT-TABLE]]

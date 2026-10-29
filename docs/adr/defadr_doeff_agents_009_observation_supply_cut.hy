@@ -10,10 +10,10 @@
 (defadr ADR-DOE-AGENTS-009
   :title "観測断 ≠ 死亡: 観測の途絶は観測経路(supply)の命題であり被観測対象の死亡命題ではない — stale-observation watchdog は terminal 化せず observation_gap_at へ記帳して第 2 証拠 arm に裁定を委ね、証拠つき死亡は lost から分割した vanished(retryable=true)で即時終端し、死亡裁定クラス(exited)への遅延 report_result は result-first で受理して done へ上書きする"
   :status "accepted"
-  :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
+  :scope ["packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
           "packages/doeff-agents/conformance (S9 / S19)"]
   :problem
     [(fact
@@ -66,7 +66,7 @@
     [(deftest test-adr-doe-agents-009-lost-is-not-constructible
        ;; R3 の機械面: lost は凍結表から消え、make-cause が拒否する。
        ;; vanished が retryable=true で表に居る。
-       (import doeff_agents.sessionhost.policy [TERMINAL-CAUSE-RETRYABLE make-cause])
+       (import doeff_agents._sessionhost.policy [TERMINAL-CAUSE-RETRYABLE make-cause])
        (import pytest)
        (assert (not-in "lost" TERMINAL-CAUSE-RETRYABLE))
        (assert (= (get TERMINAL-CAUSE-RETRYABLE "vanished") True))
@@ -74,7 +74,7 @@
          (make-cause "lost" "x" "2026-07-28T00:00:00+00:00")))
      (deftest test-adr-doe-agents-009-gap-field-exists
        ;; R1/R2 の配線ピン: observation_gap_at が SessionRow と store 列に実在する。
-       (import doeff_agents.sessionhost.effects [SessionRow])
+       (import doeff_agents [SessionRow])
        (setv row (SessionRow :session-id "adr9" :session-name "adr9" :pane-id "%0"
                              :agent-type "claude" :lifecycle "run_to_completion"
                              :status "running"
@@ -82,14 +82,14 @@
        (assert (is row.observation-gap-at None)))
      (defsemgrep lost-cause-is-banned
        "doeff-agents-no-lost-terminal-cause"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(setv row (cause-if-absent\n            row (make-cause \"lost\" \"tmux session disappeared\" observed-at)))\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(setv row (cause-if-absent\n            row (make-cause \"vanished\" \"tmux session disappeared\" observed-at)))\n"}])]
   :plans ["docs/adr/defadr_doeff_agents_009_observation_supply_cut.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy(stale arm fall-through + launch 窓再スタート + vanished)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy(SessionRow observation-gap-at)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy(additive 列 + COALESCE(excluded, existing))"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy(report-result-op 救済 arm + RPC 層 cleanup)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy(stale arm fall-through + launch 窓再スタート + vanished)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy(SessionRow observation-gap-at)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy(additive 列 + COALESCE(excluded, existing))"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy(report-result-op 救済 arm + RPC 層 cleanup)"
           "packages/doeff-agents/conformance/README.md(TerminalCause 表・S9/S19 改訂)"
           "packages/doeff-agents/conformance/test_s19_watchdogs.py / test_s9_out_of_band_kill.py"])

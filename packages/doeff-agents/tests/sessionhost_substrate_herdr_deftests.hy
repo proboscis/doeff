@@ -17,28 +17,9 @@
 (import time)
 (import doeff [EffectBase run])
 
-(import doeff_agents.sessionhost.effects [
-  tmux-new-session
-  tmux-has-session
-  tmux-pane-current-command
-  tmux-session-pane-ids
-  tmux-capture
-  tmux-send-keys
-  tmux-kill-session])
-(import doeff_agents.sessionhost.substrate_herdr [
-  DEFAULT-HERDR-SOCKET
-  REQUEST-LINE-BYTE-LIMIT
-  HerdrApiError
-  HerdrContractError
-  herdr-substrate
-  herdr-call
-  herdr-key-name
-  herdr-label-holders
-  herdr-registry-agent-pane-id
-  herdr-request-line
-  herdr-pane-current-command-io
-  chunked-send-texts
-  normalize-ansi-read])
+(import doeff_agents [tmux-new-session tmux-has-session tmux-pane-current-command tmux-session-pane-ids tmux-capture tmux-send-keys tmux-kill-session])
+(import doeff_agents [HerdrApiError HerdrContractError herdr-substrate]
+        doeff_agents._sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET REQUEST-LINE-BYTE-LIMIT herdr-call herdr-key-name herdr-label-holders herdr-registry-agent-pane-id herdr-request-line herdr-pane-current-command-io chunked-send-texts normalize-ansi-read])
 
 
 (deff herdr-server-available? []
@@ -290,7 +271,7 @@
   ;; (0.9.1 の公開 schema と source)に沿って、保証された欄から読む:
   ;;   前面の job の group leader(pid = foreground_process_group_id)の
   ;;   argv0(省略・null あり)→ argv の先頭(省略・null あり)→ name(必須)。
-  (import doeff_agents.sessionhost.substrate_herdr [herdr-foreground-command])
+  (import doeff_agents._sessionhost.substrate_herdr [herdr-foreground-command])
   (setv answer (fn [pgid processes]
                  {"type" "pane_process_info"
                   "process_info" (| {"pane_id" "w1:p1" "foreground_processes" processes}
@@ -656,7 +637,7 @@
   ;; test-herdr-new-session-verdict-ignores-id-order)。ここで固定するのは
   ;; 「競合者どうしが同じ勝者を選べる決定的な全順序であること」だけ。素の
   ;; 文字列比較は桁境界で順序が変わる("w1VS" < "w3R")ため桁数優先にする。
-  (import doeff_agents.sessionhost.substrate_herdr [herdr-workspace-order-key])
+  (import doeff_agents._sessionhost.substrate_herdr [herdr-workspace-order-key])
   (assert (< (herdr-workspace-order-key "w3R") (herdr-workspace-order-key "w1VS")))
   (assert (< (herdr-workspace-order-key "w1VS") (herdr-workspace-order-key "w1VT")))
   (assert (< (herdr-workspace-order-key "w1VT") (herdr-workspace-order-key "w1VV")))
@@ -677,7 +658,7 @@
   ;; 事後照合は「事前照会と作成の間に割り込んだ同時作成」どうしが同じ勝者に
   ;; 合意するためだけに使う。事後照合の順序鍵は合意のための全順序であって、
   ;; 創出順の主張ではない。
-  (import doeff_agents.sessionhost.substrate_herdr [herdr-new-session-verdict])
+  (import doeff_agents._sessionhost.substrate_herdr [herdr-new-session-verdict])
   ;; ① 既存 session あり + 自分の id のほうが小さい(実測の反転形)= 重複
   (assert (= (herdr-new-session-verdict "w3M0" ["w3MZ"] ["w3M0" "w3MZ"]) "duplicate"))
   ;; ② 既存 session あり + 自分の id のほうが大きい = 重複(順序前提でも成立した形)

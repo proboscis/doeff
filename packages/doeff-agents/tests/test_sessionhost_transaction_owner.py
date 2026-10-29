@@ -19,7 +19,7 @@ from pathlib import Path
 import hy
 import hy.models
 
-SESSIONHOST = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "sessionhost"
+SESSIONHOST = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "_sessionhost"
 
 #: 開閉してよい定義(sessionhost からの相対 path, トップレベルの定義の名)→ 理由。
 OWNERS: dict[tuple[str, str], str] = {

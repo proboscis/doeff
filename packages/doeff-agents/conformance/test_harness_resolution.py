@@ -2,7 +2,7 @@
 
 issue #575 M1(ADR-DOE-AGENTS-004 R7 / retired-impl-lives-only-in-git-history)・card ki-bb337cfd0336:
 conformance の既定 daemon は host の入口の module(実行中 interpreter の
-`-m doeff_agents.sessionhost.host`)であり、CLI コマンドも PATH の探索も、退役 Rust crate の
+`-m doeff_agents._sessionhost.host`)であり、CLI コマンドも PATH の探索も、退役 Rust crate の
 ビルド(cargo)経路も無い。`CONFORMANCE_AGENTD_BIN` は最優先の明示 seam のまま(契約語彙)。
 """
 
@@ -27,7 +27,7 @@ def test_default_is_the_entry_module_on_the_running_interpreter(monkeypatch, tmp
     assert harness.resolve_agentd_command() == (
         sys.executable,
         "-m",
-        "doeff_agents.sessionhost.host",
+        "doeff_agents._sessionhost.host",
     )
 
 

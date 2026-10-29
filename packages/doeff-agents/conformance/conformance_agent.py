@@ -467,7 +467,7 @@ def report_result(spec: object) -> None:
         [
             sys.executable,
             "-m",
-            "doeff_agents.sessionhost.result_mcp",
+            "doeff_agents._sessionhost.result_mcp",
             "--session",
             ENV["DOEFF_RESULT_SESSION_ID"],
             "--socket",

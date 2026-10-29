@@ -21,9 +21,9 @@ from test_vm_failfast_semgrep_rules import _semgrep_results
 pytestmark = pytest.mark.semgrep
 
 RULE = "symlink-install-has-one-home"
-VERB_FILE = "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy"
+VERB_FILE = "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy"
 FIXTURE = (
-    "packages/doeff-agents/src/doeff_agents/sessionhost/impls/"
+    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/"
     "symlink_install_outside_substrate_forbidden.hy"
 )
 

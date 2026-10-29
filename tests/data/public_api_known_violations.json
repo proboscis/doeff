@@ -1296,8 +1296,6 @@
      ],
      "doeff_agents.session_backend": [
       "IoGenerator",
-      "SessionConfig",
-      "SessionInfo",
       "as_optional_str",
       "resolve_default_executable",
       "which_executable"
@@ -1826,8 +1824,6 @@
       "CONFIRM_RETRY_WAITS",
       "IoGenerator",
       "PASTE_SETTLE_SECONDS",
-      "SessionConfig",
-      "SessionInfo",
       "TRANSCRIPT_DIR_MODE",
       "TRANSCRIPT_DIR_NAME",
       "TRANSCRIPT_FILE_MODE",
@@ -2426,10 +2422,14 @@
      ],
      "doeff_agents.session_backend": [
       "SessionBackend",
+      "SessionConfig",
+      "SessionInfo",
       "default_session_backend"
      ],
      "doeff_agents.tmux": [
-      "SessionBackend"
+      "SessionBackend",
+      "SessionConfig",
+      "SessionInfo"
      ]
     },
     "境界 — 例外の型": {

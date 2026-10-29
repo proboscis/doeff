@@ -24,7 +24,7 @@
                                 overlay-env-offenders
                                 policy-normalized-env-key
                                 provider-auth-env-offenders])
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   SessionRow
   TerminalCause
   PaneObservation

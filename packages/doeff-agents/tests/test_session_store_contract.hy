@@ -16,16 +16,8 @@
 ;;; UPDATE・起動時の latch の解除・履歴の刈り取りは SQLite の store の actor の op で、effect ではない(sessionhost_store_deftests.hy)。
 (require doeff-hy.macros [defk deftest <- val var])
 (import dataclasses [replace])
-(import doeff_agents.sessionhost.effects [
-  SessionRow
-  TerminalCause
-  SessionStoreGet
-  SessionStoreUpsert
-  SessionStoreListActive
-  SessionStoreListCleanupPending
-  SessionStoreResultPayload
-  SessionStoreRecordEvent
-  SessionStoreKnownConversationIds])
+(import doeff_agents [SessionRow SessionStoreGet SessionStoreUpsert SessionStoreListActive SessionStoreListCleanupPending SessionStoreResultPayload SessionStoreRecordEvent SessionStoreKnownConversationIds]
+        doeff_agents._sessionhost.effects [TerminalCause])
 (import session_store_contract_handlers [RecordedEvents])
 
 (val STARTED "2026-09-29T00:00:00+00:00")

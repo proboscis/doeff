@@ -56,7 +56,7 @@ from doeff_agents._handlers._session_host import (
     session_host_handlers,
     terminal_session_handlers,
 )
-from doeff_agents.tmux import TmuxError
+from doeff_agents._tmux import TmuxError
 
 _T = TypeVar("_T")
 
@@ -64,7 +64,7 @@ console = Console()
 
 # All doeff-agents sessions are prefixed with this to distinguish from other tmux sessions
 SESSION_PREFIX = "doeff-"
-AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または python -m doeff_agents.sessionhost.host ...)を実行してください。"
+AGENTD_UNAVAILABLE_HINT = "agentd が起動していません。doeff-agents agentd ensure(または python -m doeff_agents._sessionhost.host ...)を実行してください。"
 TERMINAL_STATUSES = {
     SessionStatus.DONE,
     SessionStatus.FAILED,
@@ -216,7 +216,7 @@ def cli() -> None:
 @cli.group()
 def agentd() -> None:
     """Manage the session host (the retired `doeff-agentd` binary is now
-    the entry module `doeff_agents.sessionhost.host`; only the socket, database and protocol keep the
+    the entry module `doeff_agents._sessionhost.host`; only the socket, database and protocol keep the
     `agentd` name)."""
 
 

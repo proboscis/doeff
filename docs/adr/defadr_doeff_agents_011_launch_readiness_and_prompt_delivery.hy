@@ -20,10 +20,10 @@
 (defadr ADR-DOE-AGENTS-011
   :title "launch ready gate は『入力欄が描かれた』ではなく『この composer が我々の貼り付けを消費し、消去できる』で定義する(入力 loop 配線 ∧ 未送信内容なし ∧ 有界 probe の消費と消去)。不成立は閉語彙 class で自己記述し、証拠 frame を有界複数保持する。prompt が一度も届かなかった attempt は timed_out ではなく prompt_undelivered(独立の分類・retryable=true)"
   :status "accepted"
-  :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy"
+  :scope ["packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy"
           "packages/doeff-agents/tests/sessionhost_launch_deftests.hy"]
   :problem
     [(fact
@@ -94,8 +94,8 @@
        ;; R-paste-ready-a71c / R-frame-class-6f3d / R-evidence-frames-9c17 /
        ;; R-undelivered-first-class-b5e8 の機械面: 閉語彙・probe 物理・保持数・
        ;; category 表が宣言どおり実在する。
-       (import doeff_agents.sessionhost.effects :as effects-mod)
-       (import doeff_agents.sessionhost.policy :as policy-mod)
+       (import doeff_agents._sessionhost.effects :as effects-mod)
+       (import doeff_agents._sessionhost.policy :as policy-mod)
        (assert (= effects-mod.READY-PROBE-TEXT "doeff-ready-probe"))
        (assert (= effects-mod.READY-PROBE-CLEAR-KEY "BSpace"))
        (assert (= effects-mod.READY-GATE-FRAME-RETENTION 3))
@@ -126,8 +126,8 @@
        ;; それぞれ別の class になる(0 標本の区分を「実装済み」と呼ばないため、
        ;; live に無い形〔unknown-dialog〕は合成標本で撃つ)。
        (import doeff [run])
-       (import doeff_agents.sessionhost.impls.markers [classify-output])
-       (import doeff_agents.sessionhost.policy [launch-not-ready-class])
+       (import doeff_agents._sessionhost.impls.markers [classify-output])
+       (import doeff_agents._sessionhost.policy [launch-not-ready-class])
        (setv shapes
              {"no-output" ""
               ;; 実測 314 件の形(起動 command の echo + zsh の告知)
@@ -168,7 +168,7 @@
        ;; R-timeout-kind-single-home-3c5f の機械面: 産出 site の実物 reason が
        ;; 1 つも unclassified に落ちない + 既存観測面が依存する逐語が残る。
        (import doeff [run])
-       (import doeff_agents.sessionhost.policy [LAUNCH-NOT-READY-CLASSES
+       (import doeff_agents._sessionhost.policy [LAUNCH-NOT-READY-CLASSES
                                                 launch-not-ready-reason
                                                 sessionhost-timeout-kind])
        ;; (i) 起動段 gate: 全 class の reason が launch-ready-gate へ落ちる
@@ -200,7 +200,7 @@
        ;; R-frame-class-6f3d の tripwire: 実測 341 件で 0 件だった断定文言と、
        ;; 分類を持たない旧 gate(bool を返す wait-for-repl-idle)への回帰を禁止。
        (import pathlib [Path])
-       (import doeff_agents.sessionhost.launch :as launch-mod)
+       (import doeff_agents._sessionhost.launch :as launch-mod)
        (setv source (.read-text (Path (. launch-mod __file__)) :encoding "UTF-8"))
        ;; 検査対象はコード行のみ — 註釈は退役の経緯として逐語を引用して
        ;; よい(なぜ消えたかを追える価値がある)。産出される文言だけを禁じる。

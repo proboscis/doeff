@@ -20,9 +20,9 @@
 (import re)
 (import uuid)
 
-(import doeff_agents.sessionhost.drivers [DRIVER-EXECUTABLE])
+(import doeff_agents._sessionhost.drivers [DRIVER-EXECUTABLE])
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   BuildLaunch
   BuildResume
   DiscoverConversation
@@ -51,7 +51,7 @@
   env-get
   proc-run
   tmux-send-keys])
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents._sessionhost.policy [
   AUTOCOMPACT-PARAM-KEY
   BILLING-METERED
   CARRIED-INSTRUCTION-SOURCES-PARAM
@@ -71,11 +71,11 @@
   HOME-READING-MALFORMED
   binding-billing-class
   claude-home-metered-reading])
-(import doeff_agents.sessionhost.impls.channel [
+(import doeff_agents._sessionhost.impls.channel [
   REPORT-RESULT-MCP-SERVER
   result-channel-spec])
-(import doeff_agents.sessionhost.impls.markers [classify-output])
-(import doeff_agents.sessionhost.impls.fast_jev [
+(import doeff_agents._sessionhost.impls.markers [classify-output])
+(import doeff_agents._sessionhost.impls.fast_jev [
   FAST-JEV-KEY-FILE-ENV
   fast-jev-compaction-enabled
   fast-jev-home-settings
@@ -85,7 +85,7 @@
   fast-jev-installed-version
   fast-jev-plugin-outdated
   fast-jev-update-command])
-(import doeff_agents.sessionhost.impls.otel_telemetry [
+(import doeff_agents._sessionhost.impls.otel_telemetry [
   OTEL-ENDPOINT-ENV
   OTEL-TENANT-ENV
   OTEL-HOST-ENV

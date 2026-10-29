@@ -7,12 +7,12 @@
 
 
 (defadr ADR-DOE-AGENTS-008
-  :title "readiness/idle 判定の物理事実(pattern 文字列・trust-prompt 述語・repl-idle 予算既定値)は定義箇所を 1 箇所に限る — gate 形式は doeff-free leaf の doeff_agents/ready_physics.hy、observation 形式は impls/markers.hy、予算既定値は effects.hy MonitorKnobs 語彙。消費者(adapters / _session.py / launch.hy / host.hy)は import 参照のみ"
+  :title "readiness/idle 判定の物理事実(pattern 文字列・trust-prompt 述語・repl-idle 予算既定値)は定義箇所を 1 箇所に限る — gate 形式は doeff-free leaf の doeff_agents/_ready_physics.hy、observation 形式は impls/markers.hy、予算既定値は effects.hy MonitorKnobs 語彙。消費者(adapters / _session.py / launch.hy / host.hy)は import 参照のみ"
   :status "accepted"
   :scope ["packages/doeff-agents/src/doeff_agents/_adapters"
           "packages/doeff-agents/src/doeff_agents/_session.py"
-          "packages/doeff-agents/src/doeff_agents/ready_physics.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost"]
+          "packages/doeff-agents/src/doeff_agents/_ready_physics.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost"]
   :problem
     [(fact
        "claude の readiness が 2 つの生きた家に fork していた: adapters/claude.py の CLAUDE_READY_PATTERN(screen-reader mode の footer 「shift+tab to cycle」)と markers.hy の has-idle-prompt(通常 TUI mode の行頭 `❯`)。両 stack は起動 argv 自体も fork している(legacy = --ax-screen-reader 付き / sessionhost impls/claude_code.hy = なし)— 同一 kind の物理が 2 実装に散り『見ていた方だけ直る』ADR-004 の反例そのもの(2026-07-05 trust-dialog 永久ハングの構造)。"
@@ -37,7 +37,7 @@
      (interpretation
        "claude の 2 mode fork(screen-reader vs 通常 TUI)は『物理が 2 つある』のではなく『同一 kind の 2 つの描画 mode の物理』— 家が 1 つなら両事実は並んで文書化され drift が構造的に不可能になる。mode の統一(= legacy 命令型 stack の退役・ADR-004 R2 の in-process defhandler 束縛への合流)は別 issue の follow-up。gemini は sessionhost impl を持たない legacy-only kind で物理の定義は既に 1 箇所(gemini.py)のみ — 重複が無いため移動しない(sessionhost に偽の家を作らない)。")]
   :decision
-    [(rule R1 "readiness のテキスト物理は定義 1 箇所: gate 形式(ready pattern 文字列・screen-reader trust prompt 述語)= doeff_agents/ready_physics.hy(doeff-free leaf)、observation 形式(has-idle-prompt / dialog 検出等)= sessionhost/impls/markers.hy。adapters / _session.py は import 参照のみで、pattern literal の再定義は installed semgrep rule doeff-agents-ready-pattern-literal-outside-physics-home が ban する。")
+    [(rule R1 "readiness のテキスト物理は定義 1 箇所: gate 形式(ready pattern 文字列・screen-reader trust prompt 述語)= doeff_agents/_ready_physics.hy(doeff-free leaf)、observation 形式(has-idle-prompt / dialog 検出等)= sessionhost/impls/markers.hy。adapters / _session.py は import 参照のみで、pattern literal の再定義は installed semgrep rule doeff-agents-ready-pattern-literal-outside-physics-home が ban する。")
      (rule R2 "repl-idle 予算既定値(120s)の literal は sessionhost/effects.hy(MonitorKnobs knob 語彙)にのみ置く。launch.hy(ready gate 予算 fallback)と host.hy(boot watchdog 予算材料)は import 参照 — installed semgrep rule doeff-agents-repl-idle-budget-literal-single-home が sessionhost 内の再定義を ban する。")
      (rule R3 "codex の gate regex と observation 述語は同一物理の 2 形式であり、両 gate が定義される全 fixture frame(ready / mcp-boot / login / update-dialog)で判定が一致すること(parity)。一致検定は tests/test_ready_physics_single_home.py が verbatim fixture で執行する。既知 divergence(trust-dialog frame)は problem fact 5 の別 issue で解消するまで parity 対象外 — expected に固定しない。")
      (rule R4 "退役 Rust(rollback tag agentd-rust-final に保存)を readiness 物理の『oracle』と呼ぶ文言は本 ADR が触った物理帯(ready_physics.hy / markers.hy header / launch.hy 予算コメント / adapters)から除去した。出自表記は『退役 Rust 移植出典(rollback 専用・正しさの基準ではない — ADR-004 R7/U1)』とし、物理の正当性根拠は conformance fixture(tests/data/ready_screens/ の verbatim capture)と conformance suite に置く。残余モジュール(policy.hy / host.hy / store.hy / substrate.hy 等)の同種文言の一掃は follow-up。")]
@@ -59,7 +59,7 @@
        ;; そのもの(is 一致)。literal 再定義では同一オブジェクトにならない。
        (import doeff_agents._adapters.claude [ClaudeAdapter])
        (import doeff_agents._adapters.codex [CodexAdapter])
-       (import doeff_agents.ready-physics :as ready-physics)
+       (import doeff_agents._ready-physics :as ready-physics)
        (assert (is (. (ClaudeAdapter) ready-pattern)
                    ready-physics.CLAUDE-SCREEN-READER-READY-PATTERN))
        (assert (is (. (CodexAdapter) ready-pattern)
@@ -68,8 +68,8 @@
        ;; 予算の一貫性: effects(家)・launch(import 先)・MonitorKnobs 既定が
        ;; 同値。literal の不在は semgrep rule + test_ready_physics_single_home
        ;; の source 検査が担う。
-       (import doeff_agents.sessionhost.effects :as fx)
-       (import doeff_agents.sessionhost.launch :as launch)
+       (import doeff_agents._sessionhost.effects :as fx)
+       (import doeff_agents._sessionhost.launch :as launch)
        (assert (= fx.REPL-IDLE-MAX-WAIT-SECONDS 120))
        (assert (= launch.REPL-IDLE-MAX-WAIT-SECONDS fx.REPL-IDLE-MAX-WAIT-SECONDS))
        (assert (= (. (fx.MonitorKnobs) repl-idle-max-wait-seconds)
@@ -81,16 +81,16 @@
         {"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/codex.py"
          "source" "CODEX_READY_PATTERN = r\"(?ims)composer\"\n"}]
        [{"relative-path" "packages/doeff-agents/src/doeff_agents/_adapters/claude.py"
-         "source" "from doeff_agents.ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN\n"}])
+         "source" "from doeff_agents._ready_physics import CLAUDE_SCREEN_READER_READY_PATTERN\n"}])
      (defsemgrep repl-idle-budget-literal-outside-home
        "doeff-agents-repl-idle-budget-literal-single-home"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy"
          "source" ";; 予算の再定義(旧形)\n(setv REPL-IDLE-MAX-WAIT-SECONDS 120)\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy"
-         "source" "(import doeff_agents.sessionhost.effects [REPL-IDLE-MAX-WAIT-SECONDS])\n"}])]
-  :plans ["packages/doeff-agents/src/doeff_agents/ready_physics.hy(gate 形式の家 — doeff-free leaf)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy(observation 形式の家)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy(予算既定値の家)"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy"
+         "source" "(import doeff_agents._sessionhost.effects [REPL-IDLE-MAX-WAIT-SECONDS])\n"}])]
+  :plans ["packages/doeff-agents/src/doeff_agents/_ready_physics.hy(gate 形式の家 — doeff-free leaf)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy(observation 形式の家)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy(予算既定値の家)"
           "packages/doeff-agents/tests/test_ready_physics_single_home.py(identity + parity + source 検査)"
           "follow-up issue: codex trust-frame の fail-closed 化(problem fact 5)"
           "follow-up issue: legacy 命令型 stack の退役 / claude 起動 mode の統一 / 残余 oracle 文言の一掃"])

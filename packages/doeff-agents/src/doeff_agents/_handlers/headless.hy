@@ -4,7 +4,7 @@
 ;;; 層: claude の print mode の CLI ← doeff-claude-code(process の寿命)← この adapter(agent の寿命)← 呼び手の Program。
 ;;; この module は process を知らない: 子 process・起動の引数・pid・信号・降りた process の起こし直しは doeff-claude-code の handler の
 ;;; 中にある。ここが持つのは agent の寿命の判断だけ — 手番の順番(走っている手番の後に回す入力を待たせる)・続きの身元(resume_from)・
-;;; 層 2 の行から層 3 の出来事の型への写し。session host(doeff_agents.sessionhost)の socket も台帳も使わない。
+;;; 層 2 の行から層 3 の出来事の型への写し。session host(doeff_agents._sessionhost)の socket も台帳も使わない。
 ;;;
 ;;; 写し(layer2-effects-design.md 10 節):
 ;;;   LaunchEffect(CLAUDE)            → ClaudeStartTurn(FreshSession か、resume_from なら ResumeSession)— prompt が無ければ手番を始めない
@@ -106,7 +106,7 @@
 (import doeff_agents._effects.agent [SessionStatus])
 ;; 出来事の記録の守り手(LaunchEffect.event_record の畳みと file の置き換え — agora card ki-31b41eac5071)。
 (import doeff_agents._handlers._event_record [RecordKeeper :as _RecordKeeper])
-(import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
+(import doeff_agents._shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents._effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect
