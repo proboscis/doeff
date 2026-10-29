@@ -26,7 +26,7 @@ from doeff_agents import (
     SessionStatus,
 )
 from doeff_agents import _agentd_client as agentd_client
-# The agentd client and the daemon handler object are internal to doeff-agents (not on its public API).
+# The agentd client is internal to doeff-agents (not on its public API).
 from doeff_agents._agentd_client import (
     AGENTD_SOCKET_ENV,
     DEFAULT_END_SESSION_BUDGET_SECONDS,
@@ -40,13 +40,13 @@ from doeff_agents._agentd_client import (
     default_agentd_paths,
     ensure_agentd,
 )
-from doeff_agents import DaemonAgentHandler
+from doeff_agents import daemon_agent_handler
 from doeff_agents import recorded_spawn_handler
 from doeff_agents._io_fake import SpawnLedger
 from doeff_agents import driver_io_handler
 from fake_io_support import FakeIoWorld, fake_io_root
 
-from doeff import Program, Pure, run
+from doeff import Perform, Program, Pure, run
 from doeff_agents._io_root import IoRoot
 
 
@@ -1270,9 +1270,9 @@ def test_lazy_agentd_client_singleflights_concurrent_resolution(
 
 def test_daemon_handler_observe_is_read_only() -> None:
     fake_client = FakeAgentdClient()
-    handler = DaemonAgentHandler(client=fake_client)
+    handler = daemon_agent_handler(client=fake_client)
 
-    snapshot = handler.handle_observe_session(ObserveAgentSessionEffect(session_id="s1"))
+    snapshot = run(handler(Perform(ObserveAgentSessionEffect(session_id="s1"))))
 
     assert snapshot.session_id == "s1"
     assert fake_client.calls == [("get_session", "s1")]
@@ -1282,16 +1282,20 @@ def test_daemon_handler_launch_delegates_lifecycle_to_client(monkeypatch, tmp_pa
     adapter = FakeAdapter()
     monkeypatch.setattr("doeff_agents._handlers.daemon.get_adapter", lambda _agent_type: adapter)
     fake_client = FakeAgentdClient()
-    handler = DaemonAgentHandler(client=fake_client)
+    handler = daemon_agent_handler(client=fake_client)
 
-    handle = handler.handle_launch(
-        LaunchEffect(
-            session_name="s2",
-            agent_type=AgentType.CUSTOM,
-            work_dir=tmp_path,
-            prompt="review this",
-            model="test-model",
-            lifecycle=AgentSessionLifecycle.INTERACTIVE,
+    handle = run(
+        handler(
+            Perform(
+                LaunchEffect(
+                    session_name="s2",
+                    agent_type=AgentType.CUSTOM,
+                    work_dir=tmp_path,
+                    prompt="review this",
+                    model="test-model",
+                    lifecycle=AgentSessionLifecycle.INTERACTIVE,
+                )
+            )
         )
     )
 
@@ -1315,17 +1319,21 @@ def test_daemon_agent_handler_sends_codex_binding_from_policy(
         "doeff_agents._handlers.daemon.get_adapter", lambda _t: FakeAdapter()
     )
     fake_client = FakeAgentdClient()
-    handler = DaemonAgentHandler(
+    handler = daemon_agent_handler(
         client=fake_client,
         codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
     )
 
-    handler.handle_launch(
-        LaunchEffect(
-            session_name="s-codex",
-            agent_type=AgentType.CODEX,
-            work_dir=tmp_path,
-            prompt="do it",
+    run(
+        handler(
+            Perform(
+                LaunchEffect(
+                    session_name="s-codex",
+                    agent_type=AgentType.CODEX,
+                    work_dir=tmp_path,
+                    prompt="do it",
+                )
+            )
         )
     )
 
@@ -1347,14 +1355,18 @@ def test_daemon_agent_handler_codex_binding_falls_back_to_binder_env(
     )
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "env-home"))
     fake_client = FakeAgentdClient()
-    handler = DaemonAgentHandler(client=fake_client)
+    handler = daemon_agent_handler(client=fake_client)
 
-    handler.handle_launch(
-        LaunchEffect(
-            session_name="s-codex",
-            agent_type=AgentType.CODEX,
-            work_dir=tmp_path,
-            prompt="do it",
+    run(
+        handler(
+            Perform(
+                LaunchEffect(
+                    session_name="s-codex",
+                    agent_type=AgentType.CODEX,
+                    work_dir=tmp_path,
+                    prompt="do it",
+                )
+            )
         )
     )
 
@@ -1373,16 +1385,20 @@ def test_daemon_agent_handler_rejects_codex_home_in_session_env(
         "doeff_agents._handlers.daemon.get_adapter", lambda _t: FakeAdapter()
     )
     fake_client = FakeAgentdClient()
-    handler = DaemonAgentHandler(client=fake_client)
+    handler = daemon_agent_handler(client=fake_client)
 
     with pytest.raises(ValueError, match="non-auth overlay"):
-        handler.handle_launch(
-            LaunchEffect(
-                session_name="s-codex",
-                agent_type=AgentType.CODEX,
-                work_dir=tmp_path,
-                prompt="do it",
-                session_env={"CODEX_HOME": "/x"},
+        run(
+            handler(
+                Perform(
+                    LaunchEffect(
+                        session_name="s-codex",
+                        agent_type=AgentType.CODEX,
+                        work_dir=tmp_path,
+                        prompt="do it",
+                        session_env={"CODEX_HOME": "/x"},
+                    )
+                )
             )
         )
     assert fake_client.launches == []

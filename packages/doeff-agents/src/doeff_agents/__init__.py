@@ -140,6 +140,7 @@ _LAZY_EXPORTS = {
     "AgentdSessionClient": "._handlers",
     "MockSessionScript": "._handlers",
     "ScenarioStep": "._handlers",
+    "ScenarioWorld": "._handlers",
     "agent_effectful_handler": "._handlers",
     "agent_effectful_handlers": "._handlers",
     "codex_agent_handler": "._handlers",
@@ -170,9 +171,6 @@ _LAZY_EXPORTS = {
     "InputImage": "._effects.agent",
     "AgentHandler": "._handlers.production",
     "ClaudeLaunchEffect": "._handlers.daemon",
-    "DaemonAgentHandler": "._handlers.daemon",
-    "MockAgentHandler": "._handlers.testing",
-    "ScenarioAgentHandler": "._handlers.testing",
     "agent_handler_defhandler": "._handlers.effectful",
     "agent_session_store": "._handlers.session_store",
     "claude_agent_handler": "._handlers",
@@ -341,6 +339,7 @@ if TYPE_CHECKING:
     )
     from doeff_agents._handlers import (
         AgentdSessionClient as AgentdSessionClient,
+        ScenarioWorld as ScenarioWorld,
         agent_effectful_handler as agent_effectful_handler,
         agent_effectful_handlers as agent_effectful_handlers,
         codex_agent_handler as codex_agent_handler,
@@ -376,7 +375,6 @@ if TYPE_CHECKING:
     from doeff_agents._effects.agent import InputImage as InputImage
     from doeff_agents._handlers.production import AgentHandler as AgentHandler
     from doeff_agents._handlers.daemon import ClaudeLaunchEffect as ClaudeLaunchEffect
-    from doeff_agents._handlers.daemon import DaemonAgentHandler as DaemonAgentHandler
     from doeff_agents._handlers import claude_agent_handler as claude_agent_handler
     from doeff_agents._handlers.headless_compose import (
         fake_headless_claude_handlers as fake_headless_claude_handlers,

@@ -143,7 +143,13 @@ class AgentHandler(ABC):
 
     def handle_agent(self, effect: AgentEffect) -> object:
         """Handle the schema-validated ``agent`` effect."""
-        return _run_agent_task(self, effect.task)
+        return _run_agent_task(
+            effect.task,
+            launch_session=self.handle_launch_session,
+            await_result=self.handle_await_result,
+            follow_up=self.handle_follow_up,
+            release_session=self.handle_release_session,
+        )
 
     def handle_launch_session(
         self,
@@ -288,8 +294,18 @@ def _claude_mcp_permission_prompt_visible(output: str) -> bool:
     )
 
 
-def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
+def _run_agent_task(
+    task: AgentTask,
+    *,
+    launch_session: Callable[[LaunchSessionEffect], SessionHandle],
+    await_result: Callable[[AwaitResultEffect], AwaitOutcome],
+    follow_up: Callable[[FollowUpEffect], SessionHandle],
+    release_session: Callable[[ReleaseSessionEffect], None],
+) -> object:
     """Run Launch → AwaitResult → validate/retry → Release for ``agent``.
+
+    The four functions answer one L2 effect each, synchronously — the way the
+    handler answering ``agent`` answers that effect.
 
     Retry authority is SINGLE: result-contract retries belong to the
     session supervisor (agentd's ``expected_result.max_retries`` — it
@@ -318,12 +334,12 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
     attempt exhaustion.  Extension is a gate answer; there is no
     automatic extension policy here.
     """
-    handle = handler.handle_launch_session(LaunchSessionEffect(spec=task))
+    handle = launch_session(LaunchSessionEffect(spec=task))
     started_at = time.monotonic()
     attempts = 0
     try:
         while True:
-            outcome = handler.handle_await_result(
+            outcome = await_result(
                 AwaitResultEffect(
                     handle=handle,
                     timeout_seconds=_await_heartbeat_seconds(task, started_at),
@@ -368,12 +384,12 @@ def _run_agent_task(handler: AgentHandler, task: AgentTask) -> object:
                     last_error=last_error,
                 )
 
-            handle = handler.handle_follow_up(
+            handle = follow_up(
                 FollowUpEffect(handle=handle, message=_retry_message(last_error))
             )
             attempts += 1
     finally:
-        handler.handle_release_session(ReleaseSessionEffect(handle=handle))
+        release_session(ReleaseSessionEffect(handle=handle))
 
 
 def _deadline_remaining_seconds(task: AgentTask, started_at: float) -> float | None:

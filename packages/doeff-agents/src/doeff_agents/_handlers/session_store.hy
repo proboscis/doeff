@@ -11,7 +11,7 @@
 ;;;     — agora の状態の正本の PostgreSQL に別の表(operator 8.1.5 の 5f)。
 ;;;   - 手元で残したい時: `(SqlAgentSessionRepository (sqlite3.connect <path>) SQLITE)`
 ;;;
-;;; 同じ effect を別の handler(TmuxAgentHandler / DaemonAgentHandler の節)も
+;;; 同じ effect を別の handler(TmuxAgentHandler / daemon_agent_handler の節)も
 ;;; 答えるので、どれを内側に置くかは composition root が 1 つ選ぶ。
 ;;;
 ;;; I/O の家: SQL の文を接続へ流すのはこの module の `SqlAgentSessionRepository`
