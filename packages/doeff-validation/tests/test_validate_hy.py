@@ -23,7 +23,7 @@ ENV = {"seats-a": 3, "seats-n1": 5, "seats-empty": 0}
 
 def _run(program: Program, traverse_handler: ProgramHandler | None = None) -> object:
     """検査の Program を、reader と traverse の handler(既定は逐次)の下で走らせる。"""
-    handler = traverse_handler if traverse_handler is not None else sequential()
+    handler = traverse_handler if traverse_handler is not None else sequential
     return run(scheduled(reader(ENV)(handler(program))))
 
 

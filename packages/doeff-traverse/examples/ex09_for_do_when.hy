@@ -97,7 +97,7 @@
     (setv body (h body)))
   (scheduled body))
 
-(setv stack [try_handler fail_handler (sequential)])
+(setv stack [try_handler fail_handler sequential])
 
 (print "=== for/do + When + SortBy + Take ===")
 (setv out (run (with-stack stack (pipeline items))))

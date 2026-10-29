@@ -1,6 +1,6 @@
-"""sequential() が Traverse 1 回に内側の handler を読むのは、件を 1 つ目に走らせる時の 1 度だけである事の検(agora-redesign #2958)。
+"""sequential が Traverse 1 回に内側の handler を読むのは、件を 1 つ目に走らせる時の 1 度だけである事の検(agora-redesign #2958)。
 
-Traverse の件は、Traverse を出した所と sequential() の間に入っている handler(内側の handler)の下で走る。sequential() は
+Traverse の件は、Traverse を出した所と sequential の間に入っている handler(内側の handler)の下で走る。sequential は
 それを継続から読み(GetHandlers)、件ごとに入れ直す。前は件が 1 つも走らない Traverse(件 0・失敗した件だけの Collection)
 でも読み、読みは @do の関数 get_inner_handlers の呼び 1 段を経ていた(件 0 の Traverse 1 回の固定費 約 5.8 µs のうち
 約 1.1 µs — #2927)。「最後の 1 つ = 受けた handler 自身を外す」の規則は doeff.handler_utils.inner_of の 1 か所にあり、
@@ -52,7 +52,7 @@ def traverse_under_answer(items: Iterable[int]) -> Collection[int]:
     def body():
         return (yield Traverse(plus_ask, items))
 
-    return run(sequential()(program_handler(answer)(body())))
+    return run(sequential(program_handler(answer)(body())))
 
 
 def test_inner_of_drops_the_catching_handler() -> None:

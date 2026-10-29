@@ -62,11 +62,6 @@
       "why": "module の値 openrouter_production_handler を返すだけ — agora card ki-e9166ac1c3b1"
     },
     {
-      "key": "packages/doeff-traverse/doeff_traverse/_handlers.py::sequential",
-      "verdict": "直す",
-      "why": "設定も呼びごとの状態も無い(中の @do def handler を返すだけ)— agora card ki-b10e81c19717"
-    },
-    {
       "key": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy::tqdm-progress",
       "verdict": "呼びごとの状態",
       "why": "progress_bars(tqdm) を呼び、呼ぶたびに新しい open_bars の表を作る(呼びごとに別の進みの棒)"

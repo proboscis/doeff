@@ -200,7 +200,7 @@
 ;; Sequential + fail-handler (BADCO and CLOSED become failed items)
 (print "=== sequential (failed items skipped) ===")
 (setv out (run (with-stack
-  [try_handler mock-backend fail_handler (sequential)]
+  [try_handler mock-backend fail_handler sequential]
   program)))
 (print "Success:" (get out "success"))
 (print "Failed:" (get out "fail"))

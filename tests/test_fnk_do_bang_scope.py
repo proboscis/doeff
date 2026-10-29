@@ -64,7 +64,7 @@ def _eval_module(code: str, header: str = _DEFK_HEADER) -> types.ModuleType:
 
 
 def _run(program: object) -> object:
-    return run(scheduled(try_handler(fail_handler(sequential()(program)))))
+    return run(scheduled(try_handler(fail_handler(sequential(program)))))
 
 
 def test_helper_names_follow_helper_imports() -> None:

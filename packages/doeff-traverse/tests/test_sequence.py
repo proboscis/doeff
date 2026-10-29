@@ -121,7 +121,7 @@ def test_a_failing_row_is_not_dropped_as_it_is_under_traverse_sequential(
         collection = yield Traverse(lambda index: make_row(index, events, 2), [1, 2, 3])
         return (yield Inspect(collection))
 
-    items = run(sequential()(traversed()))
+    items = run(sequential(traversed()))
     assert events == ["run 1", "run 2", "run 3"]
     assert [item.failed for item in items] == [False, True, False]
 

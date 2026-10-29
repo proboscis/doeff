@@ -1,4 +1,4 @@
-"""sequential() が要素の失敗を要素に残す契約の検(agora-redesign #2871)。
+"""sequential が要素の失敗を要素に残す契約の検(agora-redesign #2871)。
 
 要素の失敗は、要素ごとの Try effect ではなく handler の中の try で受ける(要素 1 つあたりの費用の 6 割が Try の往復だった)。
 受け方を変えても次の 4 つは前と同じでなければならない: 要素の例外は失敗した要素として例外と履歴を残す・要素の中の
@@ -49,13 +49,13 @@ def _inner(x: int):
 
 
 def _traverse(f: Callable[[int], Program[_Answer]], items: list[int]) -> Collection[_Answer]:
-    """sequential() だけを入れて Traverse を 1 回走らせた答え(try_handler を外に入れない)。"""
+    """sequential だけを入れて Traverse を 1 回走らせた答え(try_handler を外に入れない)。"""
 
     @do
     def program():
         return (yield Traverse(f, items))
 
-    return run(sequential()(program()))
+    return run(sequential(program()))
 
 
 def test_an_item_exception_stays_as_a_failed_item_with_its_history() -> None:

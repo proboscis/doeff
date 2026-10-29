@@ -119,7 +119,7 @@ def validate(*items: "Check | Program[object]") -> "Program[None]":
     - 失敗が 1 つでもあれば ``ValidationException`` を投げる。無ければ ``None``(「確かめて、だめなら
       投げる」文なので値は返さない。値が要る処理は validate の前か後に書く)。
     - 逐次か並行か fail-fast かは、組み立ての根に置いた doeff-traverse の handler で選ぶ
-      (``sequential()`` / ``parallel(n)`` / ``parallel_fail_fast(n)``)。
+      (``sequential`` / ``parallel(n)`` / ``parallel_fail_fast(n)``)。
     """
     for item in items:
         if not isinstance(item, Check) and not _is_program(item):

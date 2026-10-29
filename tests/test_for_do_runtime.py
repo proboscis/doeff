@@ -48,8 +48,8 @@ def _eval(code: str) -> Program:
 
 
 def _collect(code: str) -> Collection:
-    """for/do の式(Traverse の effect)を sequential() の下で走らせた答え。"""
-    return run(sequential()(_eval(code)))
+    """for/do の式(Traverse の effect)を sequential の下で走らせた答え。"""
+    return run(sequential(_eval(code)))
 
 
 def test_values_skips_and_failures_keep_their_places() -> None:
@@ -77,7 +77,7 @@ def test_the_step_is_one_do_function_per_traverse() -> None:
         yield Pass(effect, k)
 
     program = _eval("(for/do (<- x (From [0 1 3])) (<- y (half x)) y)")
-    collection = run(sequential()(program_handler(watch)(program)))
+    collection = run(sequential(program_handler(watch)(program)))
     assert collection.valid_values == [0, 0, 1]
     [step] = seen
     assert hasattr(step, "__doeff_generator_function__"), "Traverse の関数が @do で包まれていない(件ごとに包み直す形)"
@@ -132,7 +132,7 @@ def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
 # program の間に持ち続けない。持ち続ける handler は、外の件が枠を占めたまま内の件を待って止まる(枠 1 で必ず止まる)。
 # 出荷する handler の全部をここで回し、どれかがこの形に変わると赤になる。
 _SHIPPED_HANDLERS = {
-    "sequential": lambda: sequential(),
+    "sequential": lambda: sequential,
     "parallel-1": lambda: parallel(concurrency=1),
     "parallel-2": lambda: parallel(concurrency=2),
     "parallel_fail_fast-1": lambda: parallel_fail_fast(concurrency=1),

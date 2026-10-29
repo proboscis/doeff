@@ -43,7 +43,7 @@ def sequence(programs: "Iterable[Program[_T]]") -> "EffectGenerator[tuple[_T, ..
 
     No handler is needed and the policy is fixed: sequential, and the first failure stops it.
     A program's exception goes up as it is and the programs after it are never made or run
-    (``Traverse`` under ``sequential()`` instead records a failed item and reads on, so a caller that
+    (``Traverse`` under ``sequential`` instead records a failed item and reads on, so a caller that
     reads only its valid values loses the failed rows without a word). ``programs`` is read lazily:
     each program is made just before it runs, so a generator is fine. The programs run under the
     caller's handlers. The answers keep their order, duplicates and ``None``.

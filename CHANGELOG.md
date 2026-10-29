@@ -20,6 +20,11 @@
   factories without parameters, and a test compares the list with `tests/data/zero_parameter_handler_factories.json`.
   `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` keep `await_handler()`, since they run daily
   against the doeff on PyPI.
+- **doeff-traverse:** `sequential` is a handler, not a handler factory, for the same reason (ADR-DOE-API-002): write
+  `sequential(prog)` and `[fail_handler, sequential]` (in Hy, `(sequential prog)` and `[fail-handler sequential]`)
+  where you wrote `sequential()(prog)` and `(sequential)`. The former call `sequential()` still answers the same
+  handler for one release, with a `DeprecationWarning`. `tools/former_factory_call_rewrite.py` rewrites the former
+  calls of a repository (`census` counts them, `rewrite` edits the working tree).
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
