@@ -2,10 +2,10 @@
 # `effect: LLMChat` is never called for an LLMStructuredQuery. The installed scope carries the annotation as a
 # runtime filter, so the structured query skips chat_only and goes on to any_model, which takes every effect.
 # Prints which handler was called for each effect, and the answers.
+from doeff_llm import LLMChat, LLMStructuredQuery
 from pydantic import BaseModel
 
 from doeff import Resume, do, handler, run
-from doeff_llm.effects import LLMChat, LLMStructuredQuery
 
 
 class Analysis(BaseModel):

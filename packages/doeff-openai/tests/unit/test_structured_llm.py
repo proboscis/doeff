@@ -14,7 +14,7 @@ from doeff_openai import (
     requires_max_completion_tokens,
     structured_llm__openai,
 )
-from doeff_openai.structured_llm import (
+from doeff_openai._structured_llm import (
     build_api_parameters,
     build_messages,
     ensure_strict_schema,
