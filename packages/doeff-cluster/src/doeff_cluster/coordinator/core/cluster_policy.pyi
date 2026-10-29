@@ -350,7 +350,10 @@ def hold_limits(held: dict, limits: tuple, worker: str | None, groups: Table) ->
 def foreground_reserve_of(worker: WorkerInfo) -> _Program[int, object]:
     ...
 
-def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:
+def background_reserve_of(worker: WorkerInfo) -> _Program[int, object]:
+    ...
+
+def task_misfit(limits: tuple, priority: int, worker: WorkerInfo, room: int, held: dict, groups: Table, bg_held: int, bg_wanted: int) -> _Program[TaskUnplacedKind | None, object]:
     ...
 
 def limits_misfit(limits: tuple, worker: str, held: dict, groups: Table) -> _Program[TaskUnplacedKind | None, object]:

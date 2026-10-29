@@ -117,6 +117,54 @@
   (val later (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
   (assert (= (! (phases later builds)) ["assigned" "assigned" "assigned"]) later))
 
+(deftest test-background-tasks-keep-their-half-of-the-reserve-while-foreground-groups-run
+  ;; 失敗ケース(card ki-66ebb596d7d6・本番 2026-10-29 17:09〜21:11 JST): zeus の形(capacity 40・task-reserve 6・常駐の job 33 → task の
+  ;; 空き 7)で優先 0 の task 4 本(日次の検・着地の後の検 2 組・着地の宣言し直し)が走ると、残る空き 3 は予約の半分 3 を越えず、背景の仕事は
+  ;; 1 本も置かれなかった(long-command 最大 27 本が 3〜4 時間 queued)。背景の仕事は予約の残りの半分(切り捨て — 6 なら 3)を自分の分として
+  ;; 持つ: 優先 0 の 4 本と背景の仕事 10 本(呼び手はみな別)を積むと、1 拍で優先 0 の 4 本と背景の仕事 3 本が置かれる。同じ拍に積んだ
+  ;; 優先 0 の 5 本目は、背景の仕事が待っている間は背景の仕事の分を使わず、その旨の文で待つ。
+  (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
+  (val fronts ["f1" "f2" "f3" "f4" "f5"])
+  (setv tasks {})
+  (for [id fronts]
+    (setv (get tasks id) (! (queued id))))
+  (for [#(i id) (enumerate LONG-IDS)]
+    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
+  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 40 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val placed (! (tasks-placed 1000 state placements T)))
+  (assert (= (! (phases placed fronts)) ["assigned" "assigned" "assigned" "assigned" "queued"]) placed)
+  (assert (= (. (.row placed "f5") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-BACKGROUND-RESERVED))) (.row placed "f5"))
+  (val longs (! (phases placed LONG-IDS)))
+  (assert (= (.count longs "assigned") 3) longs))
+
+(deftest test-foreground-tasks-use-the-whole-reserve-when-no-background-task-waits
+  ;; 背景の仕事の分は、背景の仕事が待っている時だけ残す: 同じ zeus の形(task の空き 7)で優先 0 の task 7 本だけを積むと 7 本とも置かれる
+  ;; (待つ者の無い分を空けたままにしない)。背景の仕事が予約の残りの半分を既に持っていれば、待っている背景の仕事が在っても優先 0 の
+  ;; task は残りの空きを全部使える。
+  (setv #(jobs placements) (! (resident (tuple (gfor i (range 33) (.format "j{:02d}" i))))))
+  (val fronts (lfor i (range 7) (.format "f{}" i)))
+  (setv only {})
+  (for [id fronts]
+    (setv (get only id) (! (queued id))))
+  (val alone (! (tasks-placed 1000 (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 40 6))})) placements
+                                                 (! (table-from-rows only)) :group-limits GROUPS)
+                              placements T)))
+  (assert (= (.count (! (phases alone fronts)) "assigned") 7) alone)
+  ;; 背景の仕事 10 本だけを先に積む: 空き 7 のうち優先 0 以上の task に残す 3 を除いた 4 本が置かれる(優先 0 の側の守りは今までどおり)。
+  (setv tasks {})
+  (for [#(i id) (enumerate LONG-IDS)]
+    (setv (get tasks id) (! (background id (.format "c-{}" i)))))
+  (val state (ClusterState jobs (! (table-from-rows {"zeus" (! (zeus-like 40 6))})) placements (! (table-from-rows tasks)) :group-limits GROUPS))
+  (val first (! (tasks-placed 1000 state placements T)))
+  (assert (= (.count (! (phases first LONG-IDS)) "assigned") 4) first)
+  ;; 後から積んだ優先 0 の task 4 本: 背景の仕事は自分の分 3 を越えて持っているので、優先 0 の側は残りの 3 を全部使い、4 本目は空きを待つ。
+  (setv more (dict (.items first)))
+  (for [id (cut fronts 4)]
+    (setv (get more id) (! (queued id))))
+  (val later (! (tasks-placed 2000 (replace state :tasks (! (table-from-rows more))) placements T)))
+  (assert (= (! (phases later (cut fronts 4))) ["assigned" "assigned" "assigned" "queued"]) later)
+  (assert (= (. (.row later "f3") detail) (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM))) (.row later "f3")))
+
 (deftest test-one-caller-runs-at-most-two-background-tasks-at-once
   ;; 同じ呼び手の背景の仕事 3 本: 呼び手ごとの上限 2(cluster の範囲)で 2 本だけ置かれ、3 本目は上限の文で待つ。別の呼び手の 1 本は置かれる。
   ;; 1 本が終われば 3 本目が置かれる。
