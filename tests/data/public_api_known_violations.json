@@ -12358,26 +12358,6 @@
       "HandlerEffects",
       "ProgramEffects"
      ]
-    },
-    "外れ — effect にする": {
-     "doeff_effect_analyzer.handler_effects": [
-      "check_coverage"
-     ],
-     "doeff_effect_analyzer.program_effects": [
-      "analyze_program",
-      "runs_where_performed"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_effect_analyzer.handler_effects",
-      "doeff_effect_analyzer.program_effects"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_effect_analyzer.program_effects": [
-      "qualified_name"
-     ]
     }
    }
   },

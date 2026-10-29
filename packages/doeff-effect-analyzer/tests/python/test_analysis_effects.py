@@ -84,18 +84,10 @@ def test_the_root_shows_the_effects_the_factory_and_the_answer_types_only() -> N
         _ = doeff_effect_analyzer.analyze  # the Rust core stays in _native
 
 
-def test_the_old_paths_keep_only_the_names_the_other_repos_import() -> None:
-    old_program = importlib.import_module("doeff_effect_analyzer.program_effects")
-    old_handler = importlib.import_module("doeff_effect_analyzer.handler_effects")
-    assert {name for name in vars(old_program) if not name.startswith("_")} == {
-        "ProgramEffects",
-        "analyze_program",
-        "qualified_name",
-        "runs_where_performed",
-    }
-    assert {name for name in vars(old_handler) if not name.startswith("_")} == {"check_coverage"}
-    assert old_program.analyze_program is pe.analyze_program
-    assert old_handler.check_coverage is he.check_coverage
+def test_the_old_paths_are_gone() -> None:
+    for old in ("doeff_effect_analyzer.program_effects", "doeff_effect_analyzer.handler_effects"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(old)
 
 
 def test_the_effects_answer_what_the_functions_inside_read(
