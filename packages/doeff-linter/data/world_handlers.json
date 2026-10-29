@@ -502,7 +502,7 @@
    "why": "git と gh を subprocess.run"
   },
   {
-   "handler": "doeff_flow.handlers.production:production_handlers",
+   "handler": "doeff_flow._handlers.production:production_handlers",
    "touches": [
     "file",
     "env",

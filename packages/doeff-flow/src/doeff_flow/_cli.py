@@ -31,9 +31,9 @@ from rich.tree import Tree
 
 from doeff import Effect, EffectBase, Pass, Program, Resume, do, handler, run, with_handlers
 from doeff.program import ProgramHandler
-from doeff_flow.effects import ReadTraces
-from doeff_flow.handlers.files import trace_files_handler
-from doeff_flow.trace import LiveTrace, TraceFrame, get_default_trace_dir, validate_workflow_id
+from doeff_flow._effects import ReadTraces
+from doeff_flow._handlers.files import trace_files_handler
+from doeff_flow._trace import LiveTrace, TraceFrame, get_default_trace_dir, validate_workflow_id
 
 console = Console()
 

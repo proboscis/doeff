@@ -23,7 +23,7 @@ from collections.abc import Callable, Generator, Iterable
 from types import CodeType
 from typing import Any, Never, TypeVar
 
-from doeff_traverse.effects import Traverse
+from doeff_traverse import Traverse
 
 import doeff
 from doeff import Program, do

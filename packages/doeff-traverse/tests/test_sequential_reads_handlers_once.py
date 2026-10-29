@@ -10,9 +10,7 @@ Traverse の件は、Traverse を出した所と sequential() の間に入って
 from collections.abc import Iterable
 
 import pytest
-from doeff_traverse.collection import Collection, ItemResult
-from doeff_traverse.effects import Traverse
-from doeff_traverse.handlers import sequential
+from doeff_traverse import Collection, ItemResult, Traverse, sequential
 
 from doeff import EffectBase, Resume, do, handler_utils, run
 from doeff import handler as program_handler

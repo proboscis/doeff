@@ -3,16 +3,23 @@
 import pytest
 from doeff_core_effects.handlers import try_handler
 from doeff_core_effects.scheduler import scheduled
-from doeff_traverse.collection import Collection
-from doeff_traverse.effects import Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip
-from doeff_traverse.handlers import (
+from doeff_traverse import (
+    Collection,
+    Fail,
+    Inspect,
+    Reduce,
+    Skip,
+    SortBy,
+    Take,
+    Traverse,
+    Zip,
     fail_handler,
     normalize_to_none,
     parallel,
     parallel_fail_fast,
     sequential,
+    try_call,
 )
-from doeff_traverse.helpers import try_call
 
 from doeff import do, run
 from doeff import handler as _program_handler

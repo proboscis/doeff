@@ -39,7 +39,7 @@ from doeff_core_effects.scheduler import scheduled
 from doeff_hy.pytest_items import module_record_texts
 from doeff_hy.static_check import Projection, project
 from doeff_hy_bytecode_guard.records import MACRO_TABLE
-from doeff_traverse.handlers import fail_handler, sequential
+from doeff_traverse import fail_handler, sequential
 
 from doeff import run
 

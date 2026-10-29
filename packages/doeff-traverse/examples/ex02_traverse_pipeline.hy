@@ -11,10 +11,10 @@
 (import doeff_core_effects [try-handler :as try_handler])
 (import doeff_core_effects.scheduler [scheduled])
 
-(import doeff_traverse.collection [Collection])
-(import doeff_traverse.effects [Fail Traverse Reduce Inspect])
-(import doeff_traverse.handlers [sequential fail-handler :as fail_handler])
-(import doeff_traverse.helpers [try-call :as try_call])
+(import doeff_traverse [Collection])
+(import doeff_traverse [Fail Traverse Reduce Inspect])
+(import doeff_traverse [sequential fail-handler :as fail_handler])
+(import doeff_traverse [try-call :as try_call])
 
 
 ;; ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ import pytest
 from doeff_core_effects import try_handler
 from doeff_core_effects.scheduler import scheduled
 from doeff_hy import macros
-from doeff_traverse.handlers import fail_handler, sequential
+from doeff_traverse import fail_handler, sequential
 
 from doeff import run
 
@@ -47,7 +47,7 @@ _HELPER_NAMES = _helper_names()
 _DEFK_HEADER = """
 (require doeff-hy.macros [defk fnk do! <- traverse for/do])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
-(import doeff_traverse.effects [Reduce])
+(import doeff_traverse._effects [Reduce])
 """
 
 # defk を持たず、`_doeff_do` も import しない module の頭 — fnk・do! が自分で要る物を持つ事を見る。

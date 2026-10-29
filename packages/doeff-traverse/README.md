@@ -190,7 +190,7 @@ Both `failed` and `skipped` items are excluded from downstream `for/do` and `fol
 
 ```hy
 (import tqdm [tqdm])
-(import doeff_traverse.handlers [progress-bars parallel])
+(import doeff_traverse [progress-bars parallel])
 
 (run (with-stack [backend fail_handler (progress-bars tqdm) (parallel 10)] program))
 ```

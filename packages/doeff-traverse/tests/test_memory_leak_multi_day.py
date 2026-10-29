@@ -30,8 +30,7 @@ from doeff_core_effects.handlers import (
 )
 from doeff_core_effects.scheduler import scheduled
 from doeff_time import sim_time_handler
-from doeff_traverse.effects import Inspect, Traverse
-from doeff_traverse.handlers import fail_handler, parallel
+from doeff_traverse import Inspect, Traverse, fail_handler, parallel
 
 from doeff import EffectBase, Pass, Program, Resume, do, run, slog
 from doeff import handler as _program_handler

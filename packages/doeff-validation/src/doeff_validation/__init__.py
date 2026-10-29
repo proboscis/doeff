@@ -15,33 +15,33 @@ Hy: ``(require doeff-hy.macros [defk validate check])`` → ``(! (validate (chec
 設計の記録: ``docs/design/doeff-validation/design.md``。
 """
 
-from doeff_validation.api import (
+from doeff_validation._api import (
     check as check,
 )
-from doeff_validation.api import (
+from doeff_validation._api import (
     perform as perform,
 )
-from doeff_validation.api import (
+from doeff_validation._api import (
     validate as validate,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     CheckArgument as CheckArgument,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     CheckError as CheckError,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     CheckFailure as CheckFailure,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     CheckSpec as CheckSpec,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     EvaluatedArgument as EvaluatedArgument,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     Performed as Performed,
 )
-from doeff_validation.failures import (
+from doeff_validation._failures import (
     ValidationException as ValidationException,
 )

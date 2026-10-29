@@ -116,8 +116,8 @@
 (import doeff-core-effects.effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名
 (import doeff-core-effects.outcomes [maybe result open-bind RaiseCase Outcomes])
 (import doeff-records.values [ReadRowAnswer Row Missing Unreachable])
-(import doeff-traverse.effects [Fail])
-(import doeff-traverse.handlers [normalize-to-none])
+(import doeff-traverse [Fail])
+(import doeff-traverse [normalize-to-none])
 (import doeff-hy.handle [_check-clause-terminates])
 (import doeff-hy.declarations [EFFECT-KEYS])
 (import doeff-hy.clause-endings [ClauseEndingError])
@@ -412,7 +412,7 @@
        :evidence "agora-controllers origin/main eb2abb27: controllers/messaging/placed_input.hy:84-101・:167-168・controllers/scheduling/input_port.hy:130-131・controllers/core/land_notice.hy:53-70・git log --all -S 'notify-landed'(当たり 0)")
      (fact
        "doeff には既に Fail という名の effect がある(doeff-traverse)。意味は『失敗の知らせ』で、handler が続きを代わりの値で再開できる — normalize_to_none は Fail を None で再開し、fail_handler は例外として投げ直す。try_call は Python の関数の例外を Fail にする。Traverse は 1 件ごとの失敗の扱いを handler に任せ、sequential は Traverse の中の未処理の Fail をその 1 件の失敗にする。"
-       :evidence "packages/doeff-traverse/doeff_traverse/effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
+       :evidence "packages/doeff-traverse/doeff_traverse/_effects.py:20-38(Fail)・:40-51(Traverse — Handler decides … error strategy per item)・handlers.py:18-27(sequential)・:502-517(fail_handler)・:520-533(normalize_to_none)・helpers.py:9-22(try_call)")
      (fact
        "提案の時点(2026-09-27)の defeffect の頭の辞書が受けるキーは :fields・:answer・:tags・:pre で、答えは :answer の 1 つの型(union でよい)として __doeff_answer__ に残るだけだった — union のどの型が成功・不在・失敗かを宣言する場所は無かった(段階 2 で :absent / :failure / :value を足した — R5)。doeff-records の effect は defeffect でなく素の defclass で書かれている。"
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy(EFFECT-KEYS・defeffect-form)・packages/doeff-records/src/doeff_records/effects.hy:39")
