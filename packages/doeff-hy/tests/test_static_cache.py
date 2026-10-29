@@ -1,4 +1,4 @@
-"""doeff-hy-check の展開の保存(doeff_hy/static_cache.py)の失敗ケース — 引くか、展開し直すか。
+"""doeff-hy-check の展開の保存(doeff_hy/_static_cache.py)の失敗ケース — 引くか、展開し直すか。
 
 保存した展開は、展開が依った物が今の環境と同じ時だけ引く(agora-redesign #3862)。依った物 = source の中身・module 名・
 根からの相対 path・Hy の版と、展開が通った file(require した macro の module・macro が呼ぶ補助の module・推移的な require・
@@ -21,8 +21,8 @@ from pathlib import Path
 
 import doeff_hy
 import pytest
-from doeff_hy import static_cache, static_check
-from doeff_hy.static_check import Projection, project_cached
+from doeff_hy import _static_cache as static_cache, _static_check as static_check
+from doeff_hy._static_check import Projection, project_cached
 
 PACKAGE = "probe_cache"
 
@@ -520,7 +520,7 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     # 失敗ケース(#3863): 日次の検証の task は HOME を走りごとの空の dir に替えるので、XDG の cache の下の保存先は毎回空で、
     # 全部の .hy を展開し直していた。DOEFF_HY_CHECK_CACHE が名指す dir を保存先にし、走りをまたいで残る dir へ向けられる
     # ようにする(テストの実行の側の DOEFF_HY_CODE_STORE・doeff-effect-analyzer の DOEFF_EFFECT_ANALYZER_CACHE と同じ形)。
-    from doeff_hy.static_cache import default_cache_dir
+    from doeff_hy._static_cache import default_cache_dir
 
     # 名指しの無い形を確かめるので、走らせる側(日次の task・worker)が渡す名指しを外す(日次 10-11 08:05 JST の赤 — 名指しが
     # 在ると XDG の段に届かない)。
@@ -537,7 +537,7 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
 WRITER = """\
 import sys
 from pathlib import Path
-from doeff_hy.static_cache import CachedProjection, store
+from doeff_hy._static_cache import CachedProjection, store
 from doeff_hy_bytecode_guard._records import MacroRecord
 cache, mark, rounds = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
 used = MacroRecord("probe", (), (), (), (), ())
@@ -553,7 +553,7 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
     import json
     import subprocess
 
-    from doeff_hy import static_cache
+    from doeff_hy import _static_cache as static_cache
 
     cache = tmp_path / ".cache"
     writers = [
@@ -570,7 +570,7 @@ def test_two_writers_of_one_entry_do_not_mix(tmp_path: Path) -> None:
 
 def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 失敗ケース(#3863 の (b)): 2 度の書きが同じ一時の file を使わない(直す前は <entry>.tmp で同じ — 赤)。
-    from doeff_hy import static_cache
+    from doeff_hy import _static_cache as static_cache
     from doeff_hy_bytecode_guard._records import MacroRecord
 
     written: list[str] = []
@@ -593,7 +593,7 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
 
 def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> None:
     # import の名を entry が持つ(引くたびに展開の text を ast で読み直さない)。名を持たない古い entry は None で読める。
-    from doeff_hy import static_cache
+    from doeff_hy import _static_cache as static_cache
     from doeff_hy_bytecode_guard._records import MacroRecord
 
     used = MacroRecord("probe", (), (), (), (), ())
@@ -609,7 +609,7 @@ def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> N
 
 def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 候補の有無は dir ごとに 1 度だけ引く(候補ごとに stat しない)。dir が無くても空で、file でない名(dir)は数えない。
-    from doeff_hy import static_check
+    from doeff_hy import _static_check as static_check
 
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "a.hy").write_text("", encoding="utf-8")

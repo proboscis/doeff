@@ -12,7 +12,7 @@
 (import pytest)
 (import doeff [Pure])
 (import doeff_hy.declarations [DefinitionTags])
-(import doeff_hy.static_view [static-view])
+(import doeff_hy._static_view [static-view])
 
 (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
 (setv KINDS (frozenset #("chat" "agent")))

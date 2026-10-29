@@ -94,7 +94,7 @@ def _render(change: dict[str, str]) -> str:
 
 
 def _check(root: Path, text: str) -> list[dict[str, object]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
     (root / "probe.hy").write_text(text, encoding="utf-8")
@@ -162,7 +162,7 @@ def _expand(source: str) -> str:
 
 
 def test_static_view_annotates_only_the_static_expansion() -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(_render({}))
     with static_view():
@@ -200,7 +200,7 @@ def test_static_view_annotates_only_the_static_expansion() -> None:
 
 def test_every_handler_name_is_declared_in_the_stub() -> None:
     # 表(static_view.HANDLER_STATIC_NAMES)の名は static_types.pyi に宣言が在る(無ければ注記と呼びが Unknown になる)
-    from doeff_hy import static_view
+    from doeff_hy import _static_view as static_view
 
     stub = Path(static_view.__file__).with_name("static_types.pyi")
     body = ast.parse(stub.read_text(encoding="utf-8")).body
@@ -263,7 +263,7 @@ NAMED_PROBE = """\
 
 @needs_pyright
 def test_writer_effects_named_like_the_expansion_names_are_not_an_error(tmp_path: Path) -> None:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "probe_effects.hy").write_text(NAMED_EFFECTS, encoding="utf-8")
     (tmp_path / "probe.hy").write_text(NAMED_PROBE, encoding="utf-8")
@@ -286,7 +286,7 @@ def test_writer_effects_named_like_the_expansion_names_are_not_an_error(tmp_path
 
 def test_static_expansion_reads_only_aliases_of_the_expansion_names() -> None:
     """型検査のための展開は、書き手の Transfer・Pass・Put の effect と 1 つの名を分け合わない — 読む名は `_doeff_` の別名。"""
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     with static_view():
         static = _expand(NAMED_PROBE)
@@ -350,7 +350,7 @@ FIELD_NAMED_PROBE = """\
 
 @needs_pyright
 def test_clause_fields_named_k_and_effect_are_not_an_error(tmp_path: Path) -> None:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "probe_effects.hy").write_text(FIELD_NAMED_EFFECTS, encoding="utf-8")
     (tmp_path / "probe.hy").write_text(FIELD_NAMED_PROBE, encoding="utf-8")
@@ -377,7 +377,7 @@ def test_static_expansion_binds_the_writers_effect_and_k_only_where_the_clause_w
     """書き手が `effect`・`k` を書かない節は、型検査のための展開でも素の名を束ねない。書いた節の在る handler だけが、節を回す関数の
     頭で `effect` を絞る前の値に束ね、書いた節の判定が `effect` も節の型へ絞る(絞った型のまま読める)。`k` は書いた節が宣言して
     読む。欄の名が同じ名の節は束ねず、欄が優先する。"""
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     with static_view():
         static = _expand(
@@ -441,7 +441,7 @@ def _isinstance_subjects(test: ast.expr) -> list[str]:
     [("field-named", 6), ("generic", 5), ("probe", 6), ("named", 3)],
 )
 def test_static_clause_test_narrows_each_name_once(label: str, clauses: int) -> None:
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     sources = {
         "field-named": FIELD_NAMED_EFFECTS
@@ -466,7 +466,7 @@ def test_static_clause_test_narrows_each_name_once(label: str, clauses: int) -> 
 @needs_pyright
 def test_writers_effect_keeps_the_clause_effect_type(tmp_path: Path) -> None:
     # 型は逃げていない: 書き手の `effect` は節の effect の型のまま読め、無い欄の読みは赤になる(Any・object に落ちていない)。
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     text = FIELD_NAMED_PROBE.replace("(resume (+ n effect.n))", "(resume (+ n effect.missing))")
     (tmp_path / "probe_effects.hy").write_text(FIELD_NAMED_EFFECTS, encoding="utf-8")
@@ -577,7 +577,7 @@ def test_wrong_answer_to_a_generic_effect_is_still_caught(tmp_path: Path) -> Non
 def test_static_expansion_rebinds_the_effect_only_where_the_clause_reads_it() -> None:
     """節が欄を束ねるか typed_resume で effect を読む時だけ、絞った `_doeff_effect` を型引数がすべて Any の型に束ね直す。
     何も読まない節と実行時の展開は変わらない。"""
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     runtime = _expand(_generic({}))
     with static_view():

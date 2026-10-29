@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from doeff_hy.static_check import python_without_bytecode
+from doeff_hy._static_check import python_without_bytecode
 
 #: ``python -m doeff demo``(doeff/cli/demo.py)は自分の source を README の例と同じ書き方(注記を書かない例)のまま
 #: 印字して走らせる。注記を足すと、印字する program と handler が README の例とずれる。

@@ -46,15 +46,15 @@
 (import doeff-hy.positions [locate-synthesized])
 (import doeff-hy.declarations [DECLARATION-KEYS refuse-unknown-keys declaration-setters])
 (import hy.models [Dict])
-(import doeff-hy.static-view [static-view-enabled report-findings])
+(import doeff-hy._static-view [static-view-enabled report-findings])
 (import doeff-hy.clause-ops [clause-op node-names])
 (import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol WRITER-VISIBLE])
 (import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
                                 legacy-session-finding legacy-session-message])
 
 (defn _do-import []
-  "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/static_view.py)
-   では型付きの doeff_hy.static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
+  "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/_static_view.py)
+   では型付きの doeff_hy._static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
    型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
    (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`(card ki-973b4e44d7bc)。"
   (if (static-view-enabled)
@@ -68,7 +68,7 @@
 
 (defn _clause-endings-import [name alias]
   "節の終わり方の検め(clause_endings.hy の name)を alias で引く import。型検査のための展開では、型付きの
-   doeff_hy.static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
+   doeff_hy._static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
    HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない・agora-redesign #2279)。"
   (if (static-view-enabled)
       '(do)
@@ -90,7 +90,7 @@
 (defn _handler-fn-form [endings-check]
   "handler を本文に被せる関数 __doeff-handler-fn__ の定義。型検査のための展開では、本文を
    `HandlerBody[HandledAnswer]`、答えを `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ)と注記する
-   (doeff_hy/static_types.pyi・agora-redesign #2279)。実行時の展開は注記を付けない。"
+   (doeff_hy/_static_types.pyi・agora-redesign #2279)。実行時の展開は注記を付けない。"
   (if (static-view-enabled)
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
@@ -262,7 +262,7 @@
    (`(Race [tasks] …)`・`(Spawn [program] …)` — 欄の名は effect の定義で決まり、赤は展開が作る名と呼びの物)。絞る元の型を
    `EffectBase[Any]` にすると基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のままで、
    型変数の既定値は isinstance の絞りでは使われない。型引数の数は展開の時に知れない(macro は import した名の class を引けない)ので、
-   構成子の呼び `_doeff_any_specialized(Race, *_doeff_any_args, **_doeff_any_kwargs)` で型を作る(doeff_hy/static_types.pyi)。構成子の
+   構成子の呼び `_doeff_any_specialized(Race, *_doeff_any_args, **_doeff_any_kwargs)` で型を作る(doeff_hy/_static_types.pyi)。構成子の
    引数がすべて Any なので、型引数がすべて Any で解かれ、欄の型は effect の定義の型のまま(`tuple[Task[Any] | Future[Any], ...]`)、
    総称でない class は絞りと同じ型になる。型検査のための展開は走らせず pyright が読むだけなので、呼びの値は要らない。
 
@@ -334,7 +334,7 @@
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
-  ;; 型検査のための展開(doeff_hy/static_view.py — 走らせず pyright が読むだけ・agora-redesign #2293): 名は初期化の式の値に
+  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ・agora-redesign #2293): 名は初期化の式の値に
   ;; 束ねる。実行時は Get の答え(Some の中身)か初期化の値のどちらかだが、状態に置くのは同じ初期化の値なので型は同じ —
   ;; Get の答えは型を持たないので、そのまま写すと名とそれを使う式が全部 Unknown になり、書き手に直せない赤が出ていた。
   ;; キーの名は := の Put が引くので残す。
@@ -673,7 +673,7 @@
             (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. _doeff_effect field))
-  ;; 型検査のための展開(doeff_hy/static_view.py — 走らせず pyright が読むだけ・agora-redesign #2514)では、束ねの直後に
+  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ・agora-redesign #2514)では、束ねの直後に
   ;; `_ = field` を置いて名を「読んだ」ことにする。欄の名で束ねるので、本体が使わない欄(例 `[stored mark]` の mark)は
   ;; reportUnusedVariable の赤になり、書き手は名を変えられない(`_` で始めると欄に当たらない)。本体が名を参照するかを
   ;; 記号の走査で決めると `stored.version` のような点つきの記号や macro が作る参照を取り逃がすので、全部の欄に置く。
@@ -745,7 +745,7 @@
   (.append cond-forms `(yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol))))
 
   ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
-  ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/static_types.pyi)。
+  ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/_static_types.pyi)。
   ;; 書き手が `effect` を書いた節の在る handler は、節の判定より前に `effect` を絞る前の値に束ねる(_narrowed-alias-bindings)。
   ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
   (setv dispatcher

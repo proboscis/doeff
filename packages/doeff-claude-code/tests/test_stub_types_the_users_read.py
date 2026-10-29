@@ -3,7 +3,7 @@
 使い手の repo は、この package の型の宣言の手書きの写し 6 file を自分の typings/ に持つ。pyright は写しを package の .pyi より先に
 読むので、ここで名や欄が増えても、写しに足すまで使い手に見えない(2026-10-09 の日次で約 32 件の赤)。写しを消せない訳は 2 つ:
 
-- doeff_hy.static_stub が作る .pyi の型が、使い手が読む所で写しより粗い: ToolCall.input・FakeReply.tool_input・
+- doeff_hy._static_stub が作る .pyi の型が、使い手が読む所で写しより粗い: ToolCall.input・FakeReply.tool_input・
   ClaudeSessionSpec.settings が型引数の無い FrozenMap・FakeClaudeWorld の responder・respond・restarted が Incomplete・
   層 2 の effect の答えの型が型引数の無い EffectBase(pyright にはどれも Any か object に見え、取り違えが赤にならない)。
 - package の入口の宣言(__init__.pyi)が無く、package そのものを import する使い手の行が strict で「型の宣言が無い」の赤になる。
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import strict_errors
+from doeff_hy._static_stub import strict_errors
 
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "doeff_claude_code"
 

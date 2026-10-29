@@ -1000,7 +1000,7 @@ def test_the_expansion_module_imports_no_other_module_of_the_analyzer() -> None:
 def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(
     cache_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Blind A, another candidate: inside ``doeff_hy.static_view`` doeff-hy's macros write another
+    """Blind A, another candidate: inside ``doeff_hy._static_view`` doeff-hy's macros write another
     tree (for type checking). The import side keeps no record of such code; the analyzer neither
     stores such a tree under a plain key nor gives a stored plain tree to such an expansion."""
     from doeff_hy_bytecode_guard import TYPE_CHECK_EXPANSION

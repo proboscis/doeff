@@ -4,17 +4,17 @@ doeff-hy-check の cache の置き場(と pyright の thread の数)は、検査
 Ask ではなく環境変数で受ける。この module は読むだけ — 関数は 1 つの変数の素の値(か XDG の cache の根)を返し、
 どの置き場・上限を使うかは呼び手が決める。読みは os.environ を直に読まず、設定の Ask を環境変数から答える foundation の答え手
 env_var_ask の下で問う(agora-redesign #3012 — 環境変数の読みは foundation の handler の中だけ・card ki-efa3d187b136)。
-機体の検の枠の正本が名指して読む変数と、名乗りに足す会話の id(doeff_hy.check_slot・card ki-26ebd3f636e0)も同じ訳でここで読む。
+機体の検の枠の正本が名指して読む変数と、名乗りに足す会話の id(doeff_hy._check_slot・card ki-26ebd3f636e0)も同じ訳でここで読む。
 """
 
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 #: doeff-hy-check が撃つ pyright の thread の数(pyright の --threads)を呼び手ごとに替える環境変数(値の判じは
-#: doeff_hy.static_check.pyright_threads)。
+#: doeff_hy._static_check.pyright_threads)。
 PYRIGHT_THREADS_ENV = "DOEFF_HY_CHECK_PYRIGHT_THREADS"
 
-#: agora が会話の process に渡す会話の id — doeff-hy-check が機体の検の枠の保持者の名乗りに足す(doeff_hy.check_slot)。
+#: agora が会話の process に渡す会話の id — doeff-hy-check が機体の検の枠の保持者の名乗りに足す(doeff_hy._check_slot)。
 CONVERSATION_ENV = "AGORA_CONVERSATION_ID"
 
 
@@ -43,7 +43,7 @@ def conversation_setting() -> str | None:
 
 class EnvironmentByName(Mapping[str, str]):
     """環境変数を名指しで 1 つずつ読む写し(名ごとに _read で問う)。どの名を読むかを知る読み手(機体の検の枠の正本の take)へ渡し、
-    渡す側が名を知らずに済ませるため(doeff_hy.check_slot・card ki-26ebd3f636e0 の盲検 A — 写す名を 1 つに絞ると、正本が新しい名を
+    渡す側が名を知らずに済ませるため(doeff_hy._check_slot・card ki-26ebd3f636e0 の盲検 A — 写す名を 1 つに絞ると、正本が新しい名を
     読んだ時に doeff だけが黙って従わない)。並べる読み(iter・len)は断る — 環境の全部を読む道は持たない(os.environ を値として
     使わない・DOEFF004)。"""
 

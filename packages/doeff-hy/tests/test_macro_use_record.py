@@ -1034,7 +1034,7 @@ def test_processes_importing_in_different_orders_share_the_store_without_recompi
 #: 環境変数から組んだ値を返す macro(条 3 — file の外で決まる値)・looks と rows = 辿れない大域の表を読む macro(Hy と Python の
 #: source の文で覆う — binding_of を通る)・limited = macro と別の top の package から import した素の値を返す macro(条 2 の別の形 —
 #: 記録が名指す module はどれもその package に無い)・placed = 補助が作った module に __file__ を書く macro(code の名の表に
-#: __file__ が出るが、置き場を値として読まない — doeff_hy.static_check の project の形・使い手は placed.hy)。
+#: __file__ が出るが、置き場を値として読まない — doeff_hy._static_check の project の形・使い手は placed.hy)。
 CROSS_MACROS = """\
 (import os)
 (import types)

@@ -20,8 +20,8 @@ from pathlib import Path
 import hy
 import pytest
 
-from doeff_hy.static_check import Projection, project
-from doeff_hy.static_stub import stub_of, strict_errors
+from doeff_hy._static_check import Projection, project
+from doeff_hy._static_stub import stub_of, strict_errors
 
 # 型検査の展開と stub が書く型の引数の構文(PEP 695・Hy の :tp)は Python 3.12 から — 3.11 の Hy は :tp を断る。
 needs_type_parameter_syntax = pytest.mark.skipif(sys.version_info < (3, 12), reason="型の引数の構文は Python 3.12 から")

@@ -4,7 +4,7 @@ main.hy と cluster_json.hy は Hy の module で型の宣言が無かったの�
 (使い手の repo の模擬の世界の検)の strict に、書き手に直せない Unknown の赤(Type of "load_state" is unknown ほか)が出る。
 #2760 で task-record-from-json を defk にし、#2751 で load-state を defk にしたので、使い手は答えの Program を <- で受ける形に
 書き直す — その時に型が読めないと、使い手の型検査の門が新しい赤で止まる。→ 2 つの .pyi で宣言する。宣言を外すと赤になる。
-.pyi は doeff_hy.static_stub が .hy から作り(#2826)、実装との一致は tests/test_generated_stubs.py(作り直した物 == commit された物)が検める。
+.pyi は doeff_hy._static_stub が .hy から作り(#2826)、実装との一致は tests/test_generated_stubs.py(作り直した物 == commit された物)が検める。
 """
 
 import json
@@ -45,12 +45,12 @@ MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ(検の module が道具の中身を import しない)。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ(検の module が道具の中身を import しない)。
     done = subprocess.run(
         [
             sys.executable,
             "-m",
-            "doeff_hy.static_check",
+            "doeff_hy._static_check",
             "--root",
             str(root),
             "--json",

@@ -319,10 +319,10 @@ defk {name}: :post must include a return type check (: % Type).
 ;; 注記は文字列で書く(Python 3.13 以前でも定義の時に評価しない — 後で定義する名前の型を
 ;; 契約に書いても定義が落ちない)。文字列の型 `(: x "説明")` は注記にしない。
 
-(import doeff-hy.static-view [static-view-enabled])
+(import doeff-hy._static-view [static-view-enabled])
 
 (defn _static-view? []
-  "doeff-hy-check が型検査のための展開をしている間だけ真(doeff_hy/static_view.py)。"
+  "doeff-hy-check が型検査のための展開をしている間だけ真(doeff_hy/_static_view.py)。"
   (static-view-enabled))
 
 (defn _type-source [tp]
@@ -633,7 +633,7 @@ defk {name}: :post type annotation cannot be an empty string.
    defk の method からも見えるように)ので、import は pyright のための宣言を兼ねる
    (型は macros.pyi)。
    型検査のための展開(`_static-view?`)では何も出さない — 型付きの `do`・`_doeff_perform` と補助は、doeff-hy-check が
-   module の頭に 1 度だけ import する(doeff_hy/static_view.py の STATIC_HELPER_IMPORTS)。defk ごとに出すと 1 つの名に
+   module の頭に 1 度だけ import する(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)。defk ごとに出すと 1 つの名に
    宣言が積み上がり、64 を超えた module で pyright が `_doeff_do` を Unknown にする(agora-redesign #1686)。"
   (if (_static-view?)
       '(do)
@@ -704,7 +704,7 @@ defk {name}: :post type annotation cannot be an empty string.
      test_class_body_type_definition_runs_without_module_doeff_hy)。defhandler は module の globals を変えない決めなので、
      `nested-reads` を真にしない(test_class_body_handle_leaves_module_globals_alone)。
    - 型検査のための展開では補助を import しない(`_helper-imports` の空の展開を使う)。ここは包まないので、import は外の
-     関数・class の本体の局所の名になる — 型検査の展開の後処理が module の段へ移す(doeff_hy/static_check.py の
+     関数・class の本体の局所の名になる — 型検査の展開の後処理が module の段へ移す(doeff_hy/_static_check.py の
      with_module_level_imports — doeff_hy の module・`_doeff_` の別名の import・defeffect の答えの分け方の module の import)。"
   (cond
     (_in-function-body? compiler) `(setv ~name ((fn [] ~@forms ~name)))
@@ -942,7 +942,7 @@ defk {name}: :post type annotation cannot be an empty string.
 (import doeff-hy.binding-forms [rewrite-body BodyKind ModuleBindings ModuleNames module-declaration])
 ;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う — agora-redesign #2036)
 (import doeff-hy.match-fields [mangle-match-fields])
-(import doeff-hy.static-view [report-findings])
+(import doeff-hy._static-view [report-findings])
 ;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function
                                record-module-binding :as _record-module-binding])
@@ -1430,7 +1430,7 @@ defk {name}: {{:post [...]}} is required.
   (setv bound (hy.gensym "bound"))
   (setv performed (open-form expr absent helpers bound))
   (cond
-    ;; 型検査のための展開(doeff_hy/static_view.py): x の型 = expr の答えの型。
+    ;; 型検査のための展開(doeff_hy/_static_view.py): x の型 = expr の答えの型。
     ;; Python の `@effectful` の `x = perform(e)`(docs/24-effectful-perform.md)と同じ形で、
     ;; `_doeff_perform` の宣言は static_types.pyi。`(<- x T e)` は x に T を注記するので、
     ;; e の答えの型が T に入らなければ pyright が赤にする。e は 1 回だけ現れる。
@@ -1662,7 +1662,7 @@ defk {name}: {{:post [...]}} is required.
      (import doeff_traverse [Skip :as _doeff_traverse_Skip])   ; only when a (When …) guard is used
 
    The `_doeff-do` import has the same type as the `do` doeff-hy-check places for defk
-   (doeff_hy/static_types.pyi re-exports doeff.do.do), so it does not change how the type checker
+   (doeff_hy/_static_types.pyi re-exports doeff.do.do), so it does not change how the type checker
    reads the module's defk (agora-redesign #2321). Without a When guard the expansion never names
    Skip, and pyright strict reports its import as unused — leave it out then."
   (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
@@ -2078,7 +2078,7 @@ the effect in the enclosing do-context.
         (setv scans (_test-scans v)))))
   #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body))
 
-(import doeff-hy.static-view [deftest-fixture-annotation])
+(import doeff-hy._static-view [deftest-fixture-annotation])
 
 (defn _deftest-param [param]
   "deftest の引数 1 つを #(名 書き手の注記か None) にする。Hy の reader は `#^ T 名` を `(annotate 名 T)` に読む。
@@ -2090,7 +2090,7 @@ the effect in the enclosing do-context.
 
 (defn _deftest-annotation [param-name written]
   "型検査のための展開で deftest の引数に付ける注記(agora-redesign #2214)。書き手の `#^ T 名` があればそれを、
-   無ければ fixture の名の表(doeff_hy/static_view.py の DEFTEST_FIXTURE_TYPES)の型を、表に無い名(利用者の
+   無ければ fixture の名の表(doeff_hy/_static_view.py の DEFTEST_FIXTURE_TYPES)の型を、表に無い名(利用者の
    fixture・:params の引数)は `object` を付ける — Unknown のまま strict の赤にせず、型も逃がさない。"
   (if (is-not written None)
       written
@@ -2237,7 +2237,7 @@ the effect in the enclosing do-context.
     (setv item-decorators (+ item-decorators [#("scans" None (hy.models.List scans))])))
 
   ;; 型検査のための展開では、decorator の pytest を doeff-hy-check が module の頭に 1 度だけ置く別名
-  ;; `_doeff_pytest`(doeff_hy/static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
+  ;; `_doeff_pytest`(doeff_hy/_static_view.py の STATIC_HELPER_IMPORTS)で引く — deftest ごとの `import pytest` が
   ;; 書き手の import と重なって strict の reportDuplicateImport になっていた(agora-redesign #2214)。
   (setv #(pytest-name pytest-import)
     (if (_static-view?) #('_doeff_pytest '(do)) #('pytest '(import pytest))))
@@ -2536,7 +2536,7 @@ defpipeline {pipeline}: no stages defined.
    :post の型に見ていた(agora-redesign #1686 と同じ訳)。
 
    型検査のための展開は import を 1 つも出さない。tool の値の McpToolDef / McpParamSchema も、doeff-hy-check が module の
-   頭に 1 度だけ置く `_doeff_McpToolDef` / `_doeff_McpParamSchema`(doeff_hy/static_view.py の MCP_STATIC_IMPORTS)で引く —
+   頭に 1 度だけ置く `_doeff_McpToolDef` / `_doeff_McpParamSchema`(doeff_hy/_static_view.py の MCP_STATIC_IMPORTS)で引く —
    tool ごとに `doeff.mcp` を import すると、tool を 65 個持つ module か class で McpToolDef の宣言が 64 を超え、tool の値が
    Unknown になった(card ki-4848d81e0bc5 の設計検証の盲検 A)。実行時の展開は今までどおり tool ごとに doeff.mcp を import する。"
   (when (not (isinstance description hy.models.String))
@@ -2612,7 +2612,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
     :stacklevel 2)
   (setv key-var (hy.models.Symbol (+ "_lazy_" (str name) "_key")))
   ;; どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — doeff_hy/expansion_names.py)。
-  ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/static_view.py の
+  ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/_static_view.py の
   ;; SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
   (setv put (alias-symbol "Put")
         some (alias-symbol "Some"))
@@ -2730,7 +2730,7 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   ;; 別名は validate / check の展開だけが使う名前にする: defk の本体の中で import すると関数の局所名に
   ;; なるので、defk が使う _doeff_do などと同じ名前を import すると、それより前の参照が未束縛になる。
   (if (_static-view?)
-      `(do (import doeff-hy.static-types [do :as _doeff_validation_do])
+      `(do (import doeff-hy._static-types [do :as _doeff_validation_do])
            (import doeff-validation :as _doeff_validation)
            (import doeff-validation._api :as _doeff_validation_api))
       `(do ~(_runtime-do-import '_doeff_validation_do)

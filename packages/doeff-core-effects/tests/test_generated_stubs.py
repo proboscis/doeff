@@ -1,4 +1,4 @@
-"""doeff-core-effects の Hy の module の型の宣言のうち、doeff_hy.static_stub が作った .pyi の失敗ケース(#2842)。
+"""doeff-core-effects の Hy の module の型の宣言のうち、doeff_hy._static_stub が作った .pyi の失敗ケース(#2842)。
 
 使い手の repo の main が import する、この package の .hy のうち .pyi の無かった 13 module は、使い手がその名を使う行を
 足すと、strict の型の門が書き手に直せない Unknown の赤で止まった(使い手の多い順: os_process・aiohttp_http_server・
@@ -8,7 +8,7 @@ import の行が「解けない」になった(公開の前の型の報告の抜
 
 - 使い手が import する名を 1 つずつ束ねた検の module に、「型が分からない」の赤が出ない(.pyi を外すと赤になる)。
 - 公開の .hy(名が _ で始まらない物)は全部、道具が作った .pyi を隣に持つ(内向きの _memo_handlers_impl などは除く)。
-- 一致の検 = 作り直した物 == commit された物(.hy を変えたら `python -m doeff_hy.static_stub --write <.hy>` で作り直す)。
+- 一致の検 = 作り直した物 == commit された物(.hy を変えたら `python -m doeff_hy._static_stub --write <.hy>` で作り直す)。
 """
 
 import json
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import generated, stale_in
+from doeff_hy._static_stub import generated, stale_in
 
 # stub(.pyi)は型の引数の構文(PEP 695 — `class SqlTransaction[T]`)で書き、3.11 の ast はそれを読めない。stub と module の
 # 突き合わせは Python の版に依らないので、3.12 から見る。
@@ -77,7 +77,7 @@ def _probe() -> str:
 def _errors(root: Path) -> list[str]:
     """検の module を、使い手の型の門と同じ strict で検めた赤の文。"""
     done = subprocess.run(
-        [sys.executable, "-m", "doeff_hy.static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
+        [sys.executable, "-m", "doeff_hy._static_check", "--root", str(root), "--json", "--strict", "--no-cache", str(root / "probe.hy")],
         capture_output=True,
         text=True,
         timeout=240,

@@ -1,4 +1,4 @@
-"""Hy の module の型の宣言(.pyi)を型検査のための展開から作る道具(doeff_hy.static_stub)の失敗ケース(agora-redesign #2826)。
+"""Hy の module の型の宣言(.pyi)を型検査のための展開から作る道具(doeff_hy._static_stub)の失敗ケース(agora-redesign #2826)。
 
 手で書いた .pyi は実装と食い違い、doeff の定義を defn → defk に変えるたびに使い手(agora)の型の門が Unknown の赤で止まった
 (2026-10-02 に 4 回)。道具は展開の木から宣言を作り、一致の検は「作り直した物 == commit された物」。
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import MARK, UsedModule, generated, stale_in, stub_of, users_probe
+from doeff_hy._static_stub import MARK, UsedModule, generated, stale_in, stub_of, users_probe
 
 MODULE = """\
 (require doeff-hy.macros [defk deff defhandler val <-])
@@ -304,7 +304,7 @@ def test_a_user_reads_the_answer_of_a_generated_effect(tmp_path: Path) -> None:
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     user = source.with_name("user_mod.hy")
     user.write_text(USER, encoding="utf-8")
-    command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
+    command = [sys.executable, "-m", "doeff_hy._static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
     done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
     found = json.loads(done.stdout) if done.stdout.strip() else []
     assert [f"{d['line']}: {d['rule']}: {d['message']}" for d in found if d["severity"] == "error"] == []
@@ -391,7 +391,7 @@ def test_a_class_whose_init_places_the_fields_satisfies_a_protocol_of_fields(tmp
     source.with_suffix(".pyi").write_text(stub_of(tmp_path, [tmp_path], source).text, encoding="utf-8")
     user = source.with_name("log_user.hy")
     user.write_text(LOG_USER, encoding="utf-8")
-    command = [sys.executable, "-m", "doeff_hy.static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
+    command = [sys.executable, "-m", "doeff_hy._static_check", "--root", str(tmp_path), "--json", "--strict", "--no-cache", str(user)]
     done = subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
     found = json.loads(done.stdout) if done.stdout.strip() else []
     assert [f"{d['line']}: {d['rule']}: {d['message']}" for d in found if d["severity"] == "error"] == []

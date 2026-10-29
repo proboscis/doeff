@@ -46,7 +46,7 @@ def _repository(directory: Path) -> Path:
 def _write_stub(repository: Path) -> None:
     source = repository / HY
     subprocess.run(
-        ["uv", "run", "--project", str(ROOT), "python", "-m", "doeff_hy.static_stub", "--write", "--root", str(source.parents[1]), str(source)],
+        ["uv", "run", "--project", str(ROOT), "python", "-m", "doeff_hy._static_stub", "--write", "--root", str(source.parents[1]), str(source)],
         check=True, capture_output=True,
     )
 

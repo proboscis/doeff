@@ -17,13 +17,13 @@
     "packages/doeff-agents/src/doeff_agents/_io_handlers.pyi",
     "packages/doeff-agents/src/doeff_agents/_io_fake.pyi",
     "packages/doeff-agents/tests/fake_io_support.py",
-    "packages/doeff-hy/src/doeff_hy/typecheck.hy",
+    "packages/doeff-hy/src/doeff_hy/_typecheck.hy",
     "packages/doeff-hy/src/doeff_hy/record.hy",
     "packages/doeff-hy/src/doeff_hy/_json_value.py",
     "packages/doeff-hy/src/doeff_hy/_wire.hy",
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
-    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
-    "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
+    "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.hy",
+    "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.pyi",
     "packages/doeff-records/src/doeff_records/wire.hy",
     "packages/doeff-records/src/doeff_records/_principals.hy",
     "packages/doeff-records/src/doeff_records/_service.hy",
@@ -374,10 +374,10 @@
     {
       "name": "doeff-hy-typecheck",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/typecheck.hy"
+        "packages/doeff-hy/src/doeff_hy/_typecheck.hy"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/typecheck.hy"
+        "packages/doeff-hy/src/doeff_hy/_typecheck.hy"
       ],
       "allow": [
         "adr-agents-013",
@@ -496,12 +496,12 @@
     {
       "name": "doeff-hy-typecheck-handlers",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
-        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+        "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.hy",
+        "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.pyi"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
-        "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi"
+        "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.hy",
+        "packages/doeff-hy/src/doeff_hy/_typecheck_handlers.pyi"
       ],
       "allow": [
         "doeff-hy-typecheck"

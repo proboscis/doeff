@@ -287,7 +287,7 @@ def do(
     A function without ``yield`` is accepted too: the VM calls it and its return value
     becomes the program's value (``program_factory`` — ``DoFunction`` records whether ``fn``
     is a generator function), so ``f`` is ``Callable[P, Expand[T, Never]]``. This is the
-    one type of ``do``: doeff-hy's type-check expansion (doeff_hy/static_types.pyi) re-exports
+    one type of ``do``: doeff-hy's type-check expansion (doeff_hy/_static_types.pyi) re-exports
     it instead of declaring a second ``do``, so a module that imports ``do`` as ``_doeff_do``
     itself (the for/do contract) does not give the name a second, different type
     (agora-redesign #2321).

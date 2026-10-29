@@ -219,11 +219,11 @@
 (defn #^ (get list Object) bound-answer-methods [#^ Object answer #^ (get dict #(str (get list Object))) outcome-types]  ; defk にできない: macro の展開の時に呼ぶ関数
   "型検査のための展開で、答えの分け方(:absent・:failure)を宣言した effect の class に置く method `__iter__` の form の list
    (置かない時は空)。返り値の型 = :answer の union から :absent と :failure の要素を除いた物 — `<-` が束ねる名の型で、
-   返り値の型は doeff_hy/static_types.pyi の BoundRun(`Program[T, E]` が `__iter__` から T を読む)。実行時の `<-` は不在を Absent に・
+   返り値の型は doeff_hy/_static_types.pyi の BoundRun(`Program[T, E]` が `__iter__` から T を読む)。実行時の `<-` は不在を Absent に・
    失敗を Raise に変えて呼び手のスコープで出すので、束ねた名には成功と :value の要素だけが来る。effect の基底 `EffectBase[Answer]`
    の Answer は宣言の全部のまま(handler は値で答える — R4)。:answer が union でも名前 1 つでもない時と、要素が全部外れる時は
    置かない(束ねた名の型は答えの全部のまま)。"
-  (import doeff_hy.static_view [static-view-enabled])
+  (import doeff_hy._static_view [static-view-enabled])
   (setv members (cond
                   (and (isinstance answer hy.models.Expression) (> (len answer) 0) (= (str (get answer 0)) "|"))
                     (list (cut answer 1 None))
@@ -294,12 +294,12 @@
 
 (defn #^ Object answer-value-form [#^ Object answer]  ; defk にできない: macro の展開の時に呼ぶ関数
   "defeffect の本体の __doeff_answer__ に置く値の form を作るため。実行時は :answer の式そのもの(handler が resume で返す値の型)。
-   型検査の展開(doeff_hy/static_view.py)では `cast(object, (A, B, …))`(:answer の union の要素の tuple・union でなければ
+   型検査の展開(doeff_hy/_static_view.py)では `cast(object, (A, B, …))`(:answer の union の要素の tuple・union でなければ
    要素 1 つ)にする: pyright は値の位置の `A | B` も型として評価し、素の総称(`dict | X` — reportMissingTypeArgument)や
    `Callable | None`(reportOperatorIssue)を赤にするが、要素を並べた tuple なら名を読むだけ。cast は、要素に型の分からない名
    (stub の無い module から import した名)があっても属性の型を Unknown にしない(agora-redesign #2322)。
    cast の別名 _doeff-cast は defeffect-form が import する。"
-  (import doeff_hy.static_view [static-view-enabled])
+  (import doeff_hy._static_view [static-view-enabled])
   (if (static-view-enabled)
       `(_doeff-cast object
                     #(~@(if (and (isinstance answer hy.models.Expression) (> (len answer) 0) (= (str (get answer 0)) "|"))
@@ -361,7 +361,7 @@
   ;; 時に dataclass が関数の source を exec(compile)しない。既定値に field の呼びを書いた欄が在る時と、型検査の投影(static-view)の時は
   ;; 今までの形(dataclass が関数を作る)のまま。書く関数は定義した型を名でなく `__class__` と引数なしの super で読む(class の本体に
   ;; 書いた型の名は method から引けない — record.hy の class-form の注と同じ)。
-  (import doeff_hy.static_view [static-view-enabled])
+  (import doeff_hy._static_view [static-view-enabled])
   (setv items (or (declared-value contract ":fields") [])
         field-call? (fn [item] (and (= (len item) 4) (isinstance (get item 3) hy.models.Expression) (get item 3)
                                     (isinstance (get (get item 3) 0) Symbol)

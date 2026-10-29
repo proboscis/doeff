@@ -64,12 +64,12 @@ RECORD_MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ。
     done = subprocess.run(
         [
             sys.executable,
             "-m",
-            "doeff_hy.static_check",
+            "doeff_hy._static_check",
             "--root",
             str(root),
             "--json",

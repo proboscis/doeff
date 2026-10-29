@@ -211,7 +211,7 @@
   (when (and rest (isinstance (get rest 0) String))
     (setv docstring (get rest 0)
           rest (cut rest 1 None)))
-  (import doeff_hy.static_view [static-view-enabled])
+  (import doeff_hy._static_view [static-view-enabled])
   (setv static-view (static-view-enabled))
   ;; 実行の展開の class の form(頭注「関数は展開の時に書く」— card ki-a0cca3bdb9a0): dataclass には欄の表(__dataclass_fields__・
   ;; 既定値・field の default-factory・可変の既定の断り)だけを作らせ、関数(__init__・__repr__・__eq__・__hash__・凍結の

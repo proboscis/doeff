@@ -6,7 +6,7 @@ memory.hy は Hy の module なので、pyright は中を読めず、置き場 M
 - MemoryStore の欄は __init__ が置く置き場の data(検と模擬の世界が直に読む — rows・changes・events・head など)。
 - defn(普通の関数)は実装の注記どおり。defk は呼ぶと Program を返す(答えの型 = 実装の :post の型)。
 - memory-records-handler は defhandler — (store writer) を受け、本文の Program を受けて handler を被せた本文を返す関数を返す
-  (答えの型は本文と同じ — doeff_hy/static_types.pyi の HandlerBody / HandledScope と同じ形)。
+  (答えの型は本文と同じ — doeff_hy/_static_types.pyi の HandlerBody / HandledScope と同じ形)。
 """
 
 import threading

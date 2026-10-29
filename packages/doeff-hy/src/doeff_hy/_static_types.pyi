@@ -1,4 +1,4 @@
-"""型検査のための展開(doeff_hy/static_view.py)だけが参照する型の宣言。
+"""型検査のための展開(doeff_hy/_static_view.py)だけが参照する型の宣言。
 
 実行時の展開はこの module を import しない。pyright にだけ見せる。型そのものは doeff core
 の物(`Expand[T, E]`・`Program[T, E]`・`EffectBase[T]` — docs/23-static-typing.md)を使い、
@@ -57,7 +57,7 @@ def traverse_item(items: Iterable[_T], item: object, /) -> _T: ...
 # ---------------------------------------------------------------------------
 # deftest の展開の引数の型(agora-redesign #2214)
 # ---------------------------------------------------------------------------
-# 型検査のための展開では、deftest が作る関数の引数に注記を付ける。注記の名は doeff_hy/static_view.py の
+# 型検査のための展開では、deftest が作る関数の引数に注記を付ける。注記の名は doeff_hy/_static_view.py の
 # DEFTEST_FIXTURE_TYPES(fixture の名 → ここの型の名の表・唯一の定義元)が引き、doeff-hy-check が module の頭で
 # `_doeff_<型の名>` として import する。表に無い fixture(利用者が conftest で定義した物)は、書き手が `#^ T 名`
 # と注記すればそれを、しなければ `object` を付ける。
@@ -92,7 +92,7 @@ DoctestNamespace: TypeAlias = dict[str, object]
 # ---------------------------------------------------------------------------
 # defhandler / handle の展開の型(agora-redesign #2279)
 # ---------------------------------------------------------------------------
-# 型検査のための展開(doeff_hy/handle.hy)が、名を doeff_hy/static_view.py の HANDLER_STATIC_NAMES から
+# 型検査のための展開(doeff_hy/handle.hy)が、名を doeff_hy/_static_view.py の HANDLER_STATIC_NAMES から
 # `_doeff_<名>` として引く。実行時の展開は注記を付けず、節の終わり方の検めは clause_endings.hy から import する。
 
 #: handler を被せる本文の答えの型。被せた結果は同じ答えの型を運ぶ(handler は本文の答えを変えない)。

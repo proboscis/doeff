@@ -1,4 +1,4 @@
-"""doeff-hy-check(doeff_hy.static_check)が pyright を 1 本の thread でしか撃てない失敗ケース(card acp:kanban-issue:ki-1475765a3f18)。
+"""doeff-hy-check(doeff_hy._static_check)が pyright を 1 本の thread でしか撃てない失敗ケース(card acp:kanban-issue:ki-1475765a3f18)。
 
 agora-controllers の日次の型の測り(hy-type-trend・範囲の .hy 2,551 本)は、展開の後の pyright 1 本が 1 core で約 2,250 秒かかり、
 処理ステージの上限 3,300 秒の 80%(2,640 秒)に展開の秒を足すと収まらない(10-12 12:00 JST の回の atlas の Pod の読み: pyright の
@@ -20,8 +20,8 @@ from pathlib import Path
 import pytest
 
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
-from doeff_hy import static_check
-from doeff_hy.check_slot import SlotHeld
+from doeff_hy import _static_check as static_check
+from doeff_hy._check_slot import SlotHeld
 
 
 def _recording_pyright(tmp_path: Path, log: Path) -> Path:

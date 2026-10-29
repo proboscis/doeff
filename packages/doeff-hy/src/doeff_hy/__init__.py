@@ -55,9 +55,24 @@ _install_light_stack()
 # install(doeff_hy.ast_unparse の install と同じ物)は入口から出さない — 展開と plugin は `_` の path を読む(card ki-797d1e7b122b)。
 if TYPE_CHECKING:
     from doeff_hy._pytest_items import MalformedRecord as MalformedRecord
+    from doeff_hy._static_baseline import BaselineUnreadable as BaselineUnreadable
+    from doeff_hy._static_carry import CarryUnreadableError as CarryUnreadableError
+    from doeff_hy._static_check import ExpansionWorkerLostError as ExpansionWorkerLostError
+    from doeff_hy._static_stub import StubUnmade as StubUnmade
+    from doeff_hy._typecheck_handlers import type_checks_off as type_checks_off
+    from doeff_hy._typecheck_handlers import type_checks_on as type_checks_on
 
 _LAZY_EXPORTS: dict[str, str] = {
     "MalformedRecord": "doeff_hy._pytest_items",
+    "BaselineUnreadable": "doeff_hy._static_baseline",
+    "CarryUnreadableError": "doeff_hy._static_carry",
+    "ExpansionWorkerLostError": "doeff_hy._static_check",
+    "StubUnmade": "doeff_hy._static_stub",
+    "TypeCheck": "doeff_hy._typecheck",
+    "TypeCheckError": "doeff_hy._typecheck",
+    "type_check": "doeff_hy._typecheck",
+    "type_checks_off": "doeff_hy._typecheck_handlers",
+    "type_checks_on": "doeff_hy._typecheck_handlers",
 }
 
 

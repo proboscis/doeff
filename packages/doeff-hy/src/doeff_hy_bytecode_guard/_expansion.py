@@ -1,6 +1,6 @@
-"""今の compile が型検査のための展開かの印 — 持ち主はこの module 1 つ(doeff_hy.static_view が立て、包みの compile の口が読む)。
+"""今の compile が型検査のための展開かの印 — 持ち主はこの module 1 つ(doeff_hy._static_view が立て、包みの compile の口が読む)。
 
-型検査のための展開(doeff-hy-check・:func:`doeff_hy.static_view.static_view`)は、:pre の isinstance と実行の時の import を
+型検査のための展開(doeff-hy-check・:func:`doeff_hy._static_view.static_view`)は、:pre の isinstance と実行の時の import を
 出さない、実行できない code を作る。その最中に require で初めて読み込まれた macro の提供元の module に macro の依存の記録を
 付けると、その code は .pyc と共有の code の置き場(``DOEFF_HY_CODE_STORE``)に普通の展開と同じ鍵で残り、後の普通の import が
 それを読んで ``NameError: name '_doeff_do' is not defined`` で落ちる(milestone I の I-3 の再現 2026-10-03)。包みの compile の口は

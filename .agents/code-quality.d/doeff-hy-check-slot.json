@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-hy/src/doeff_hy/check_slot.py"
+    "packages/doeff-hy/src/doeff_hy/_check_slot.py"
   ],
   "module_extensions": {
     "doeff-hy-static-check": {
@@ -17,10 +17,10 @@
       "layer": "io",
       "name": "doeff-hy-check-slot",
       "paths": [
-        "packages/doeff-hy/src/doeff_hy/check_slot.py"
+        "packages/doeff-hy/src/doeff_hy/_check_slot.py"
       ],
       "public": [
-        "packages/doeff-hy/src/doeff_hy/check_slot.py"
+        "packages/doeff-hy/src/doeff_hy/_check_slot.py"
       ],
       "responsibility": "doeff-hy-check の 1 回の実行が、同じ機体の検と共有する機体の検の枠を展開と pyright の前に 1 つ取る口 — 枠の正本(dotfiles の machine_check_slots.py)を宿の home の path で読んで read_policy と take を呼ぶだけで、枠の値は持たない(card ki-26ebd3f636e0)",
       "typed": true

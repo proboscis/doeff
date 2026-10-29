@@ -19,49 +19,49 @@
       "path": "packages/doeff-traverse/examples/ex04_simple.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex04_traverse_macro.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex05_parallel_timing.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex06_mediagen_rewrite.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex07_proboscis_ema_rewrite.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex08_tqdm_progress.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,
       "path": "packages/doeff-traverse/examples/ex09_for_do_when.hy",
       "reason": "registered-with-legacy",
       "rule": "private-symbol",
-      "subject": "packages/doeff-hy/src/doeff_hy/static_types.py"
+      "subject": "packages/doeff-hy/src/doeff_hy/_static_types.py"
     },
     {
       "count": 1,

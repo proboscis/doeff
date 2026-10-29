@@ -1,4 +1,4 @@
-"""doeff-hy-check(doeff_hy/static_check.py)が Hy のわざとの間違いを静的に捕まえること。
+"""doeff-hy-check(doeff_hy/_static_check.py)が Hy のわざとの間違いを静的に捕まえること。
 
 2026-09-23 の実測(agora-controllers の実験 branch)では、Python の doeff に型を付けた版が
 pyright で 10 種を捕まえたのに、Hy 版は静的に 1 つも捕まえなかった。ここでは同じ種類の
@@ -96,7 +96,7 @@ def _render(change: dict[str, str]) -> str:
 
 @pytest.fixture(scope="module")
 def results(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str, object]]]:
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     root: Path = tmp_path_factory.mktemp("static_check")
     (root / "probe_effects.hy").write_text(EFFECTS, encoding="utf-8")
@@ -138,7 +138,7 @@ def test_static_view_does_not_leak_into_the_runtime_expansion() -> None:
     import ast
 
     import doeff_hy  # noqa: F401
-    from doeff_hy.static_view import static_view
+    from doeff_hy._static_view import static_view
 
     source = (
         "(require doeff-hy.macros [defk <-])\n"
@@ -223,7 +223,7 @@ def test_defk_calls_stay_programs_past_sixty_four_definitions(tmp_path: Path, mi
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "many.hy").write_text(_many_definitions(70, mistake), encoding="utf-8")
     out = io.StringIO()
@@ -279,7 +279,7 @@ def test_defmcp_tool_imports_nothing_of_its_own_in_the_static_view(tmp_path: Pat
     import すると、tool を 65 個持つ module か class で宣言が 64 を超え、pyright がその名を Unknown にする)。"""
     import ast
 
-    from doeff_hy.static_check import Projection, project
+    from doeff_hy._static_check import Projection, project
 
     tool = (
         "(defmcp-tool {name}\n"
@@ -322,7 +322,7 @@ def test_defk_calls_stay_programs_past_sixty_four_mcp_tools(tmp_path: Path, mist
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "tools.hy").write_text(_many_mcp_tools(70, mistake), encoding="utf-8")
     out = io.StringIO()
@@ -374,7 +374,7 @@ def test_defmcp_tool_handler_params_carry_the_schema_types(tmp_path: Path, mista
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "tool.hy").write_text(_typed_mcp_tool(mistake), encoding="utf-8")
     out = io.StringIO()
@@ -412,7 +412,7 @@ def test_a_bind_after_a_union_bind_keeps_its_answer_type(tmp_path: Path, mistake
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "union_first.hy").write_text(_union_bind_first(mistake), encoding="utf-8")
     out = io.StringIO()
@@ -442,7 +442,7 @@ def test_binding_findings_are_reported_on_their_lines(tmp_path: Path) -> None:
     import contextlib
     import io
 
-    from doeff_hy.static_check import main
+    from doeff_hy._static_check import main
 
     (tmp_path / "bindings.hy").write_text(BINDINGS, encoding="utf-8")
     out = io.StringIO()
@@ -471,7 +471,7 @@ def test_one_source_is_read_by_the_hy_reader_once(tmp_path: Path, monkeypatch: p
     # 失敗ケース(agora-redesign #3869 の (c)): project は source を Hy の reader で 2 度読んでいた(compile と、一番外の setv の
     # 所見)。2 度目の読みが展開の約 2 割(依存 76 file で 2.6 秒)。1 度だけ読み、compile が読んだ form を所見にも使う。
     # file の中で定義した reader macro(#twice)は compile が前の form を処理してから次を読む作りで効くので、それも崩さない。
-    from doeff_hy.static_check import Projection, project
+    from doeff_hy._static_check import Projection, project
 
     source = tmp_path / "probe.hy"
     source.write_text(READ_ONCE_MODULE, encoding="utf-8")
@@ -503,7 +503,7 @@ def test_the_expansion_text_does_not_depend_on_what_was_expanded_before(tmp_path
     # 失敗ケース(agora-redesign #3869 の (b) の前提): Hy の gensym の番号は process に 1 つの数えなので、同じ source でも、同じ
     # process で先に別の file を展開したかで展開の文が変わっていた。保存の中身が実行の順(と、並べた時の process の割り振り)で
     # 変わらないよう、展開の文の gensym の名は file の中で出てくる順に振り直す。
-    from doeff_hy.static_check import Projection, project
+    from doeff_hy._static_check import Projection, project
 
     first = tmp_path / "first.hy"
     other = tmp_path / "other.hy"

@@ -4,7 +4,7 @@ cluster_model.hy は Hy の module で型の宣言が無かったので、Rollou
 世界の反例)の strict に、書き手に直せない Unknown の赤(Type of "RolloutSpec" is unknown ほか)が出た。→ cluster_model.pyi で
 宣言する。宣言を外すと、ここの検(欄と要素の型を読む使い手)が赤になる。
 
-.pyi は #2907 から doeff_hy.static_stub が cluster_model.hy から作る(要素の型は .hy の欄の注記に書く)。宣言と実装の一致
+.pyi は #2907 から doeff_hy._static_stub が cluster_model.hy から作る(要素の型は .hy の欄の注記に書く)。宣言と実装の一致
 (名・欄の順・型)は tests/test_generated_stubs.py の一致の検が見る — 手書きの時代の「欄の名と順・enum の値を照らす」2 本は外した。
 """
 
@@ -40,12 +40,12 @@ MODULE = """\
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
-    # 型検査の道具は hook と同じく `python -m doeff_hy.static_check` で撃つ。
+    # 型検査の道具は hook と同じく `python -m doeff_hy._static_check` で撃つ。
     done = subprocess.run(
         [
             sys.executable,
             "-m",
-            "doeff_hy.static_check",
+            "doeff_hy._static_check",
             "--root",
             str(root),
             "--json",

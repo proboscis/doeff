@@ -5,7 +5,7 @@
 RouteRefused を except で受ける)に、strict の型検査が書き手に直せない赤を 6 件出した:
 - coordinator_route.hy に型の宣言(.pyi)が無く、RouteRefused・RouteUnreachable が Unknown(except で受けた名と `(str e)` も Unknown)。
 - lease_rules.pyi の live-holders の引数の行と答えが要素の型の無い dict で、名が partially unknown。
-→ coordinator_route.pyi を doeff_hy.static_stub で作り、live-holders の引数と答えの要素の型を lease_rules.hy の注記に書いて作り直す。
+→ coordinator_route.pyi を doeff_hy._static_stub で作り、live-holders の引数と答えの要素の型を lease_rules.hy の注記に書いて作り直す。
 宣言と実装の一致は tests/test_generated_stubs.py の一致の検が見る。
 """
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff_hy.static_stub import strict_errors
+from doeff_hy._static_stub import strict_errors
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
