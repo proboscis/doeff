@@ -80,7 +80,7 @@
       ;; :config relative → resolved against the directory of the file that
       ;; declares this defsemgrep, so the rule file can sit next to its ADR.
       ;; :expand-hy True → `.hy` fixtures are macro-expanded to Python before the
-      ;; scan (doeff_adr.semgrep_hy), so `languages: [python]` rules read Hy code.
+      ;; scan (doeff_adr._semgrep_hy), so `languages: [python]` rules read Hy code.
       (do
         (setv installed-rule-id (get forms 0))
         (setv hit-fixtures (get forms 1))
@@ -161,7 +161,7 @@
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
   (setv item-record (_record-test-function test-name [] []))
   `(do
-     (import doeff_adr.registry
+     (import doeff_adr._registry
        [register-adr assert-adr-contract enforcement-ref
         register-deftest-enforcement])
      ~@emitted-enforcements
@@ -182,22 +182,22 @@
 
 (defn #^ (get dict #(str object)) fact [#^ str text #^ object #** extra]
   "ADR の事実の項を登録簿の形で作るため(defadr の :facts に並べる)。"
-  (import doeff_adr.registry [make-fact])
+  (import doeff_adr._registry [make-fact])
   (make-fact text #** extra))
 
 (defn #^ (get dict #(str object)) interpretation [#^ str text #^ object #** extra]
   "ADR の解釈の項を登録簿の形で作るため(defadr の :interpretations に並べる)。"
-  (import doeff_adr.registry [make-interpretation])
+  (import doeff_adr._registry [make-interpretation])
   (make-interpretation text #** extra))
 
 (defmacro rule [rule-id text #* forms]
   `(do
-     (import doeff_adr.registry [make-rule])
+     (import doeff_adr._registry [make-rule])
      (make-rule ~(hy.models.String (str rule-id)) ~text ~@forms)))
 
 (defn #^ (get dict #(str object)) counterexample [#^ str text #^ object #** extra]
   "ADR の反例の項を登録簿の形で作るため(law の :counterexamples に並べる)。"
-  (import doeff_adr.registry [make-counterexample])
+  (import doeff_adr._registry [make-counterexample])
   (make-counterexample text #** extra))
 
 (defmacro law [law-id #* forms]
@@ -208,7 +208,7 @@
       (.append extra-forms (get forms idx))
       (.append extra-forms (get forms (+ idx 1)))))
   `(do
-     (import doeff_adr.registry [make-law])
+     (import doeff_adr._registry [make-law])
      (make-law
        ~(hy.models.String (str law-id))
        ~(get data "statement")

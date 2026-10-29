@@ -3,12 +3,13 @@ import re
 import sys
 import textwrap
 
-import doeff_adr.registry
+import doeff_adr._registry
 import doeff_hy  # noqa: F401 - registers Hy import hooks
 import pytest
 from doeff import run
 from doeff_adr import AssertSemgrep, GetAdr, RegisterSemgrep, adr_registry, semgrep_enforcements
-from doeff_adr.registry import SemgrepSpec, get_enforcement, isolated_registry
+from doeff_adr import SemgrepSpec, get_enforcement
+from doeff_adr._registry import isolated_registry
 
 pytest_plugins = ["pytester"]
 
@@ -179,7 +180,7 @@ def test_installed_defsemgrep_reads_config_next_to_the_declaring_file(tmp_hy_dir
 
     spec = get_enforcement("near_rule")
     assert isinstance(spec, SemgrepSpec)
-    assert doeff_adr.registry.resolved_config_path(spec) == (
+    assert doeff_adr._registry.resolved_config_path(spec) == (
         tmp_hy_dir / "rules" / "near.semgrep.yaml"
     ).resolve()
     mod.test_near_rule_defsemgrep()
@@ -246,7 +247,7 @@ def test_installed_defsemgrep_without_config_keeps_the_cwd_ancestor_walk(tmp_hy_
 
     spec = get_enforcement("cwd_rule")
     assert isinstance(spec, SemgrepSpec)
-    assert doeff_adr.registry.resolved_config_path(spec) == (tree / ".semgrep.yaml").resolve()
+    assert doeff_adr._registry.resolved_config_path(spec) == (tree / ".semgrep.yaml").resolve()
     mod.test_cwd_rule_defsemgrep()
 
 
@@ -356,7 +357,7 @@ def test_defsemgrep_fails_when_semgrep_executable_is_missing(
                 )
             )
         )
-        monkeypatch.setattr(doeff_adr.registry.shutil, "which", missing_executable)
+        monkeypatch.setattr(doeff_adr._registry.shutil, "which", missing_executable)
 
         with pytest.raises(AssertionError, match="semgrep executable is required"):
             run(semgrep_enforcements()(AssertSemgrep("missing_semgrep")))

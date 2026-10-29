@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 from _pytest.mark.structures import ParameterSet
-from doeff_adr.runtime_records import UnrecordableError, parametrize_record
-from doeff_adr.source_dependencies import (
+from doeff_adr._runtime_records import UnrecordableError, parametrize_record
+from doeff_adr._source_dependencies import (
     RACY_WINDOW_NS,
     DependencyChecks,
     SourceDependency,

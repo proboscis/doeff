@@ -2,23 +2,23 @@
   "dynamic_imports": [
     {
       "function": "import_module_for",
-      "path": "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
+      "path": "packages/doeff-adr/src/doeff_adr/_lazy_collection.py",
       "reason": "pytestが選んだHy test moduleの親packageを通常のimport経路で先に読み、読み込んだ子moduleを親へ結び付けるため（#1212・#1468・#1470）。"
     }
   ],
   "include": [
     "packages/doeff-hy/src/doeff_hy/_pytest_items.py",
-    "packages/doeff-adr/src/doeff_adr/runtime_records.py",
-    "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
-    "packages/doeff-adr/src/doeff_adr/item_cache.py",
-    "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-    "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+    "packages/doeff-adr/src/doeff_adr/_runtime_records.py",
+    "packages/doeff-adr/src/doeff_adr/_source_dependencies.py",
+    "packages/doeff-adr/src/doeff_adr/_item_cache.py",
+    "packages/doeff-adr/src/doeff_adr/_lazy_collection.py",
+    "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py",
     "packages/doeff-adr/tests/test_dynamic_item_cache.py",
     "packages/doeff-adr/tests/test_lazy_collection.py",
     "packages/doeff-hy/tests/test_pytest_item_types.py",
     "packages/doeff-adr/src/doeff_adr/__init__.py",
     "packages/doeff-adr/src/doeff_adr/__init__.pyi",
-    "packages/doeff-adr/src/doeff_adr/indexed_pytest.py",
+    "packages/doeff-adr/src/doeff_adr/_indexed_pytest.py",
     "packages/doeff-adr/tests/test_indexed_collection.py",
     "packages/doeff-adr/tests/test_recorded_collection.py",
     "packages/doeff-adr/tests/test_collection_paths.py",
@@ -46,10 +46,10 @@
       "layer": "pure",
       "name": "pytest-runtime-records",
       "paths": [
-        "packages/doeff-adr/src/doeff_adr/runtime_records.py"
+        "packages/doeff-adr/src/doeff_adr/_runtime_records.py"
       ],
       "public": [
-        "packages/doeff-adr/src/doeff_adr/runtime_records.py"
+        "packages/doeff-adr/src/doeff_adr/_runtime_records.py"
       ],
       "responsibility": "評価済みのpytestの印から、保存可能な実値とidを判断する。値を再実行しない。",
       "typed": true
@@ -64,23 +64,23 @@
       "layer": "io",
       "name": "pytest-item-collection",
       "paths": [
-        "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
-        "packages/doeff-adr/src/doeff_adr/item_cache.py",
-        "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/_source_dependencies.py",
+        "packages/doeff-adr/src/doeff_adr/_item_cache.py",
+        "packages/doeff-adr/src/doeff_adr/_lazy_collection.py",
+        "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py",
         "packages/doeff-adr/src/doeff_adr/__init__.py",
         "packages/doeff-adr/src/doeff_adr/__init__.pyi",
-        "packages/doeff-adr/src/doeff_adr/indexed_pytest.py"
+        "packages/doeff-adr/src/doeff_adr/_indexed_pytest.py"
       ],
       "public": [
-        "packages/doeff-adr/src/doeff_adr/source_dependencies.py",
-        "packages/doeff-adr/src/doeff_adr/item_cache.py",
-        "packages/doeff-adr/src/doeff_adr/lazy_collection.py",
-        "packages/doeff-adr/src/doeff_adr/pytest_plugin.py",
+        "packages/doeff-adr/src/doeff_adr/_source_dependencies.py",
+        "packages/doeff-adr/src/doeff_adr/_item_cache.py",
+        "packages/doeff-adr/src/doeff_adr/_lazy_collection.py",
+        "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py",
         "packages/doeff-adr/src/doeff_adr/__init__.py",
         "packages/doeff-adr/src/doeff_adr/__init__.pyi",
-        "packages/doeff-adr/src/doeff_adr/indexed_pytest.py",
-        "packages/doeff-adr/src/doeff_adr/registry.py"
+        "packages/doeff-adr/src/doeff_adr/_indexed_pytest.py",
+        "packages/doeff-adr/src/doeff_adr/_registry.py"
       ],
       "responsibility": "記録の保存・sourceの照合・pytest収集とsetup時のimportを組み立てる。古い値の実行を拒否する。 実行 API の遅延読み込みと、記録専用の pytest 内部境界・session 内の fixture 解決の共有を所有する (#1551)。registry は変更しない実行 API の依存先。",
       "typed": true

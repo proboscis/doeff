@@ -19,10 +19,10 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest import mock
 
-import doeff_adr.registry as registry_module
+import doeff_adr._registry as registry_module
 import pytest
 from doeff_adr import AssertSemgrep, RegisterSemgrep, semgrep_enforcements
-from doeff_adr.registry import isolated_registry
+from doeff_adr._registry import isolated_registry
 
 from doeff import run as run_doeff
 

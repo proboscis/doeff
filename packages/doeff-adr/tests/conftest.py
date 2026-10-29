@@ -1,7 +1,7 @@
 """doeff-adr の検の共通の土台。"""
 
 import pytest
-from doeff_adr.env_places import SEMGREP_VERDICTS_ENV
+from doeff_adr._env_places import SEMGREP_VERDICTS_ENV
 
 
 @pytest.fixture(autouse=True)

@@ -207,7 +207,7 @@ def test_wiring_walk_budget_rejects_non_positive_or_garbage_values(
 
 
 _GATE_TEST_HEAD = """\
-from doeff_adr.pytest_plugin import (
+from doeff_adr._pytest_plugin import (
     NotDefaultScope,
     WiringUncollected,
     WiringVerified,
@@ -320,7 +320,7 @@ def test_wiring_measures_the_collection_scope_not_the_selection(
 def test_verify_wiring_cli_runs_strict_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import doeff_adr.cli
+    import doeff_adr._cli
 
     commands: list[Sequence[str]] = []
 
@@ -337,9 +337,9 @@ def test_verify_wiring_cli_runs_strict_collection(
         commands.append(command)
         return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(doeff_adr.cli.subprocess, "run", run_command)
+    monkeypatch.setattr(doeff_adr._cli.subprocess, "run", run_command)
 
-    exit_code: int = doeff_adr.cli.main(["verify-wiring", "docs/adr"])
+    exit_code: int = doeff_adr._cli.main(["verify-wiring", "docs/adr"])
 
     assert exit_code == 0
     assert commands == [

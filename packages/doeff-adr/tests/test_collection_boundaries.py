@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from doeff_adr.source_dependencies import DependencyChecks, ProviderFound, ProviderState
+from doeff_adr._source_dependencies import DependencyChecks, ProviderFound, ProviderState
 
 pytest_plugins = ["pytester"]
 
@@ -35,7 +35,7 @@ def test_session_paths_resolve_the_root_and_prepare_patterns_once(
         ".hy", test_once="(require doeff-hy.macros [deftest])\n(deftest test-once (assert True))"
     )
     pytester.makeconftest("""
-from doeff_adr.pytest_plugin import session_paths
+from doeff_adr._pytest_plugin import session_paths
 
 def pytest_configure(config):
     from pathlib import Path
@@ -80,7 +80,7 @@ def test_collection_internals_have_one_owner_with_repo_fixtures(tmp_path: Path) 
     )
     assert result.returncode == 0, result.stdout + result.stderr
     # 所有 module は例外ではなく、唯一の検査対象外の所有者として宣言されている。
-    assert rule["paths"]["exclude"] == ["**/doeff_adr/indexed_pytest.py"]
+    assert rule["paths"]["exclude"] == ["**/doeff_adr/_indexed_pytest.py"]
     found = subprocess.run(
         [
             "semgrep",

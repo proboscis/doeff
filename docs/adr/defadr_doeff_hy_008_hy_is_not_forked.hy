@@ -48,7 +48,7 @@
 (val FORK-EXCEPTIONS-EXPIRE (date 2026 10 13))
 
 ;; PyPI の Hy に無い名前の import の例外 — #(path module 名)。空: この ADR を書いた時の 5 つ(doeff_hy/_pytest_items.py の 4 つ・
-;; doeff_adr/lazy_collection.py の read_valid_records)は #1291 が main の c6783e8e2 で消した(この ADR の着地の前)。
+;; doeff_adr/_lazy_collection.py の read_valid_records)は #1291 が main の c6783e8e2 で消した(この ADR の着地の前)。
 ;; 足す時は期限(FORK-EXCEPTIONS-EXPIRE)の内に消す物だけにし、理由を :problem に足す。
 (val FORK-ONLY-IMPORT-EXCEPTIONS #{})
 
@@ -650,7 +650,7 @@
        "フォークは本家 1.3.1 に 10 commit・6 file(hy/importer.py +439 行)。本家のメンテナは 8 行の変更(hylang/hy#2728)にも慎重で、取り込みは見込めない。"
        :evidence "agora-redesign #1290 本文の実測")
      (fact
-       "2026-09-29 の実測: doeff の依存の宣言はフォークの rev adbe989a を指し(pyproject.toml の [tool.uv.sources] と uv.lock)、doeff の code は PyPI の Hy 1.3.1 に無い名前を 5 つ import していた(packages/doeff-hy/src/doeff_hy/_pytest_items.py の 4 つ・packages/doeff-adr/src/doeff_adr/lazy_collection.py の read_valid_records)。5 つは #1291 が main の c6783e8e2(同じ日)で消した — この ADR の R5 の検査が、台帳に残った 5 つを「原因の消えた例外」として赤にして確かめた。"
+       "2026-09-29 の実測: doeff の依存の宣言はフォークの rev adbe989a を指し(pyproject.toml の [tool.uv.sources] と uv.lock)、doeff の code は PyPI の Hy 1.3.1 に無い名前を 5 つ import していた(packages/doeff-hy/src/doeff_hy/_pytest_items.py の 4 つ・packages/doeff-adr/src/doeff_adr/_lazy_collection.py の read_valid_records)。5 つは #1291 が main の c6783e8e2(同じ日)で消した — この ADR の R5 の検査が、台帳に残った 5 つを「原因の消えた例外」として赤にして確かめた。"
        :evidence "この ADR の scan-hy-imports と missing-on-pypi-hy の出力")
      (fact
        "2026-10-12 の実測: R4 の検は Hy の source の `(import hy.X [...])` を 1 つも数えていなかった — Hy 1.3.1 の reader は `hy.scoping` を式 `(. hy scoping)` に読み、import-form-names は記号だけを見ていた。macros.hy が Hy の公開の API に無い hy.scoping から import する 3 つの名(nearest-python-scope・is-function-scope・ScopeGlobal)は照合から漏れていた。照合の版も写しの定数 \"hy==1.3.1\" で、uv.lock の Hy を上げても照合は 1.3.1 のままだった。どちらも、Hy の版上げで消えた名を検が見逃し、macros.hy の読み込みが ImportError で落ちて doeff-hy を使う全部が止まる形。"
@@ -807,7 +807,7 @@
        (assert (= (len (run (dependency-violations [#("pyproject.toml" other-line)] before pin))) 1))
        (assert (= (len (run (dependency-violations [#("pyproject.toml" pin-line)] after pin))) 1))
        (assert (= (len (run (dependency-violations [#("pyproject.toml" pin-line)] before None))) 1))
-       (val registered #("packages/doeff-adr/src/doeff_adr/lazy_collection.py" "hy.importer" "read_valid_records"))
+       (val registered #("packages/doeff-adr/src/doeff_adr/_lazy_collection.py" "hy.importer" "read_valid_records"))
        (val unregistered #("packages/doeff-hy/src/doeff_hy/new_module.py" "hy.importer" "read_valid_records"))
        (val ledger #{registered})
        (assert (= (run (import-violations [registered] before ledger)) []))

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
-from doeff_adr.registry import AdrSpec, _adr_ids, _get_adr
+from doeff_adr._registry import AdrSpec, _adr_ids, _get_adr
 
 
 @dataclass(frozen=True)

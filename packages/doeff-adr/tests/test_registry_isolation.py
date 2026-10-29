@@ -6,7 +6,8 @@
 
 from doeff import run
 from doeff_adr import AdrIds, GetAdr, adr_registry
-from doeff_adr.registry import AdrSpec, _ADRS, isolated_registry
+from doeff_adr import AdrSpec
+from doeff_adr._registry import _ADRS, isolated_registry
 
 
 def test_isolated_registry_restores_adrs_registered_before_it() -> None:
