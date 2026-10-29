@@ -9,53 +9,35 @@ enabling full observability through Graph and Log effects for:
 - Error tracking
 - Streaming support
 
+The public API is the effects (``ChatCompletion``, ``Embedding``, ``StructuredOutput`` and the
+provider-agnostic effects of doeff-llm they extend) and the handlers that answer them
+(``production_handlers``, ``openai_production_handler``, ``mock_handlers``). The program helpers
+the handlers are built from (``chat_completion``, ``create_embedding``, ``get_total_cost`` ...)
+live in the modules behind ``_`` and are not part of it (ADR-DOE-API-001).
+
 Example:
-    >>> from doeff import do, run
-    >>> from doeff_openai import chat_completion, get_total_cost
+    >>> from doeff import do
+    >>> from doeff_llm import LLMChat
     >>>
     >>> @do
     >>> def my_ai_workflow():
-    >>>     # API key provided via Reader environment
-    >>>     response = yield chat_completion(
+    >>>     # Answered by production_handlers; API key provided via Reader environment
+    >>>     response = yield LLMChat(
     >>>         messages=[{"role": "user", "content": "Hello!"}],
     >>>         model="gpt-3.5-turbo"
     >>>     )
-    >>>
-    >>>     # Check accumulated cost
-    >>>     total_cost = yield get_total_cost()
-    >>>     print(f"Total cost: ${total_cost:.4f}")
-    >>>
     >>>     return response
-    >>>
-    >>> # Run with API key in environment
-    >>> result = run(
-    >>>     my_ai_workflow(),
-    >>>     env={"openai_api_key": "sk-..."}
-    >>> )
 """
 
 from importlib import import_module
 from typing import TYPE_CHECKING
 
 # Client exports
-# Chat exports
-from doeff_openai._chat import (
-    chat_completion,
-    chat_completion_async,
-    process_stream_chunks,
-    simple_chat,
-)
 from doeff_openai._client import (
     ClientHolder,
     OpenAIClient,
     extract_request_id,
     extract_token_usage,
-    get_api_calls,
-    get_model_cost,
-    get_openai_client,
-    get_total_cost,
-    reset_cost_tracking,
-    track_api_call,
 )
 
 # Cost calculation exports
@@ -82,30 +64,8 @@ from doeff_openai._effects import (
     StructuredOutput,
 )
 
-# Embedding exports
-from doeff_openai._embeddings import (
-    batch_embeddings,
-    cosine_similarity,
-    create_embedding,
-    create_embedding_async,
-    get_single_embedding,
-    semantic_search,
-)
-
-# Streaming exports
-from doeff_openai._streaming import (
-    buffered_stream,
-    process_stream,
-    stream_to_chunks,
-    stream_with_accumulator,
-    stream_with_metadata,
-)
-
 # Structured LLM exports
 from doeff_openai._structured_llm import (
-    gpt4o_structured,
-    gpt5_nano_structured,
-    gpt5_structured,
     is_gpt5_model,
     requires_max_completion_tokens,
     structured_llm__openai,
@@ -151,53 +111,26 @@ __all__ = [
     "StructuredOutput",
     "TokenUsage",
     "UnknownModelPricingError",
-    "batch_embeddings",
-    "buffered_stream",
     "calculate_cost",
     "calculate_cost_handler",
-    # Chat
-    "chat_completion",
-    "chat_completion_async",
-    "cosine_similarity",
     "count_embedding_tokens",
     "count_message_tokens",
     "count_tokens",
-    # Embeddings
-    "create_embedding",
-    "create_embedding_async",
     "estimate_cost",
     "estimate_max_cost",
     "extract_request_id",
     "extract_token_usage",
-    "get_api_calls",
     # Cost calculation
     "get_encoding",
-    "get_model_cost",
     "get_model_pricing",
-    "get_openai_client",
-    "get_single_embedding",
-    "get_total_cost",
-    "gpt4o_structured",
-    "gpt5_nano_structured",
-    "gpt5_structured",
     "is_gpt5_model",
     "mock_handlers",
     "openai_mock_handler",
     "openai_production_handler",
-    # Streaming
-    "process_stream",
-    "process_stream_chunks",
     "production_handlers",
     "requires_max_completion_tokens",
-    "reset_cost_tracking",
-    "semantic_search",
-    "simple_chat",
-    "stream_to_chunks",
-    "stream_with_accumulator",
-    "stream_with_metadata",
     # Structured LLM
     "structured_llm__openai",
-    "track_api_call",
 ]
 
 

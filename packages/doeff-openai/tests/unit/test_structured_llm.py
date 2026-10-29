@@ -7,17 +7,13 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from _runner import run_program
-from doeff_openai import (
-    get_api_calls,
-    gpt5_structured,
-    is_gpt5_model,
-    requires_max_completion_tokens,
-    structured_llm__openai,
-)
+from doeff_openai import is_gpt5_model, requires_max_completion_tokens, structured_llm__openai
+from doeff_openai._client import get_api_calls
 from doeff_openai._structured_llm import (
     build_api_parameters,
     build_messages,
     ensure_strict_schema,
+    gpt5_structured,
     process_structured_response,
     process_unstructured_response,
 )

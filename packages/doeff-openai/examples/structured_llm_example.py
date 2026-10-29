@@ -15,12 +15,9 @@ To run this example with pinjected:
 
 from typing import Protocol
 
-from doeff_openai import (
-    get_total_cost,
-    gpt5_nano_structured,
-    reset_cost_tracking,
-    structured_llm__openai,
-)
+from doeff_openai import structured_llm__openai
+from doeff_openai._client import get_total_cost, reset_cost_tracking
+from doeff_openai._structured_llm import gpt5_nano_structured
 from pinjected import injected, instance
 from pydantic import BaseModel, Field
 

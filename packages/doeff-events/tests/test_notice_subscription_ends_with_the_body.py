@@ -37,11 +37,10 @@ from doeff_events import (
     SourceResumed,
     SourceStarted,
     WaitForEvent,
-    hold_broker,
     memory_notice_handler,
-    release_broker,
     subscribed_event_handler,
 )
+from doeff_events._handlers import hold_broker, release_broker
 from doeff_events._handlers.notice_events import GAP_NOTICE
 from doeff_events._notice_laws import LawNote, law_routes
 from events_test_support import patient_notice_events

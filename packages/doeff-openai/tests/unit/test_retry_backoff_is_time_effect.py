@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from _runner import run_program
-from doeff_openai import OpenAIClient, chat_completion, create_embedding, structured_llm__openai
+from doeff_openai import OpenAIClient, structured_llm__openai
+from doeff_openai._chat import chat_completion
+from doeff_openai._embeddings import create_embedding
 from doeff_time import SimClock
 
 from doeff import Ask, EffectGenerator, do

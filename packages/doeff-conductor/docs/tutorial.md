@@ -137,8 +137,9 @@ conductor template show basic_pr
 ### Using a Template Programmatically
 
 ```python
-from doeff_conductor import Issue, IssueStatus, basic_pr
+from doeff_conductor import Issue, IssueStatus
 from doeff_conductor import mock_handlers
+from doeff_conductor._templates import basic_pr
 from doeff_conductor._handlers import run_sync
 
 # Create an issue

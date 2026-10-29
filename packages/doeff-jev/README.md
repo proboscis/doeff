@@ -24,11 +24,17 @@ TypeSafe と Vercel 以外の宛先ではキーが無くても送る。TypeSafe 
 ## 使い方(組み立て点)
 
 ```python
-from doeff_system_one import judge, noul
+from doeff import do
+from doeff_system_one import Judge, noul
 from doeff_jev import run_judgment, target_from_process_environment, durable_cache
 
+@do
+def is_japanese():
+    return (yield Judge(state="この文章は日本語か。",
+                        questions={"ja": noul("この文章は日本語で書かれているか。")}))
+
 verdict = run_judgment(
-    judge("この文章は日本語か。", {"ja": noul("この文章は日本語で書かれているか。")}),
+    is_japanese(),
     target=target_from_process_environment(),
     cache=durable_cache(),      # 省くと process 内だけの cache
     caller="my-hook",

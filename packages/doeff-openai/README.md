@@ -42,7 +42,8 @@ pip install doeff-openai
 
 ```python
 from doeff import do, ProgramInterpreter, ExecutionContext
-from doeff_openai import chat_completion, get_total_cost
+from doeff_openai._chat import chat_completion
+from doeff_openai._client import get_total_cost
 
 @do
 def ai_workflow():
@@ -349,14 +350,10 @@ Here's a complete example showing all observability features:
 
 ```python
 from doeff import do, ProgramInterpreter, ExecutionContext
-from doeff_openai import (
-    chat_completion,
-    create_embedding,
-    semantic_search,
-    get_total_cost,
-    reset_cost_tracking,
-    Gather,
-)
+from doeff_openai import Gather
+from doeff_openai._chat import chat_completion
+from doeff_openai._client import get_total_cost, reset_cost_tracking
+from doeff_openai._embeddings import create_embedding, semantic_search
 
 @do
 def rag_pipeline(query: str, documents: list[str]):

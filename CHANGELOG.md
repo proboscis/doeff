@@ -34,6 +34,24 @@
   `publications/zenn-use-cases-v0` keeps the calls, since it runs against the packages on PyPI.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
+- **Breaking (doeff-openai, doeff-gemini, doeff-openrouter, doeff-conductor, doeff-events, doeff-seedream,
+  doeff-google-secret-manager, doeff-system-one):** the import roots no longer export 50 program helpers that no
+  other repository reads, since a subpackage's public API is its effects and handlers (ADR-DOE-API-001). doeff-openai
+  drops `chat_completion`, `chat_completion_async`, `simple_chat`, `process_stream_chunks`, `create_embedding`,
+  `create_embedding_async`, `get_single_embedding`, `batch_embeddings`, `cosine_similarity`, `semantic_search`,
+  `process_stream`, `stream_to_chunks`, `stream_with_accumulator`, `stream_with_metadata`, `buffered_stream`,
+  `gpt4o_structured`, `gpt5_structured`, `gpt5_nano_structured`, `get_openai_client`, `track_api_call`,
+  `get_api_calls`, `get_model_cost`, `get_total_cost` and `reset_cost_tracking`; doeff-gemini drops
+  `build_contents`, `build_generation_config`, `process_structured_response`, `process_unstructured_response`,
+  `process_image_edit_response`, `image_edit__gemini` (the alias of `edit_image__gemini`, which stays),
+  `gemini_cost_calculator__default`, `get_gemini_client` and `track_api_call`; doeff-openrouter drops
+  `chat_completion`, `get_openrouter_client`, `get_model_cost`, `get_total_cost` and `reset_cost_tracking`;
+  doeff-conductor drops the templates `basic_pr`, `enforced_pr`, `multi_agent` and `reviewed_pr` (run them by name
+  with `get_template`); doeff-events drops `hold_broker` and `release_broker`; doeff-seedream drops
+  `edit_image__seedream4`, `get_seedream_client` and `track_api_call`; doeff-google-secret-manager drops
+  `access_secret` and `get_secret_manager_client`; doeff-system-one drops `judge` (yield the effect `Judge`). The
+  helpers the other repositories read stay: `structured_llm__openai`, `structured_llm__gemini`, `edit_image__gemini`,
+  doeff-openrouter's `structured_llm`, `cut_broker`, `restore_broker` and `judge_many`.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).

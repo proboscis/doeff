@@ -9,13 +9,11 @@ from ._client import (
     DEFAULT_BASE_URL,
     DEFAULT_TIMEOUT,
     SeedreamClient,
-    get_seedream_client,
-    track_api_call,
 )
 from ._costs import DEFAULT_COST_PER_IMAGE, DEFAULT_SIZE_PRICING, CostEstimate, calculate_cost
 from ._effects import SeedreamGenerate, SeedreamStructuredOutput
 from ._handlers import mock_handlers, production_handlers, seedream_image_handler
-from ._structured_llm import DEFAULT_MODEL, DEFAULT_RESPONSE_FORMAT, edit_image__seedream4
+from ._structured_llm import DEFAULT_MODEL, DEFAULT_RESPONSE_FORMAT
 from ._types import SeedreamImage, SeedreamImageEditResult
 
 __all__ = [
@@ -36,12 +34,9 @@ __all__ = [
     "SeedreamImageEditResult",
     "SeedreamStructuredOutput",
     "calculate_cost",
-    "edit_image__seedream4",
-    "get_seedream_client",
     "mock_handlers",
     "production_handlers",
     "seedream_image_handler",
-    "track_api_call",
 ]
 
 

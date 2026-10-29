@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Example 03: basic PR workflow with mock handlers."""
 
-from doeff_conductor import Issue, IssueStatus, basic_pr
+from doeff_conductor import Issue, IssueStatus
+from doeff_conductor._templates import basic_pr
 from doeff_conductor import mock_handlers
 from doeff_conductor._handlers import run_sync
 

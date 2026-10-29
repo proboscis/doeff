@@ -10,16 +10,12 @@ from doeff_openai import (
     OpenAIClient,
     TokenUsage,
     calculate_cost,
-    chat_completion,
     count_message_tokens,
     count_tokens,
-    create_embedding,
-    get_api_calls,
-    get_model_cost,
-    get_single_embedding,
-    get_total_cost,
-    reset_cost_tracking,
 )
+from doeff_openai._chat import chat_completion
+from doeff_openai._client import get_api_calls, get_model_cost, get_total_cost, reset_cost_tracking
+from doeff_openai._embeddings import create_embedding, get_single_embedding
 
 from doeff import (
     Ask,
@@ -402,7 +398,7 @@ async def test_track_api_call_accumulates_under_gather():
     import math
     import time
 
-    from doeff_openai import track_api_call
+    from doeff_openai._client import track_api_call
 
     model = "gpt-4"
 
