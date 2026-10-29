@@ -3481,6 +3481,72 @@ rules:
       category: layer-boundary
       rationale: "the VM is an implementation detail of doeff; users and subpackages see doeff's root only"
 
+  # job の道(入口・foundation・job の本体が読む doeff の module)は pydantic を読まない(card ki-5ddadb736f62・親 card ki-2e0dce8d1ebb・
+  # 利用者の決定 2026-10-27 lt-SJK77NQZ8NSESDVVZ0P41407XQ の問い scope の答え all)。defwire の解き手は自前の doeff_hy/wire_codec.py で、
+  # pydantic は照らしの道具 doeff_hy/wire_parity.py(test の依存 doeff-hy[parity])だけが読む。LLM の出力を受ける doeff-openai・
+  # doeff-gemini・doeff-openrouter は範囲の外。Python は型検査の時だけの import(if TYPE_CHECKING)と、pydantic が自分で呼ぶ口
+  # __get_pydantic_core_schema__ の中の import(pydantic が既に読まれた時だけ走る — doeff_hy/json_value.py)を断らない。
+  # 検 = tests/semgrep/test_job_path_imports_no_pydantic_rule.py(検体の fires の行だけが鳴り、実物の packages と doeff は鳴らない)。
+  - id: doeff-job-path-imports-no-pydantic
+    patterns:
+      - pattern-either:
+          - pattern: import $MODULE
+          - pattern: from $MODULE import $NAME
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: ^pydantic(_core)?(\.|$)
+      - pattern-not-inside: |
+          if TYPE_CHECKING:
+              ...
+      - pattern-not-inside: |
+          def __get_pydantic_core_schema__(...):
+              ...
+    paths:
+      # 根に錨を置く(/ で始める — semgrep は錨の無い形を後の版で根からの形に読み替えると告げている)。検体の dir は名指して入れる。
+      include:
+        - "/doeff/**/*.py"
+        - "/packages/**/*.py"
+        - "/tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/**"
+      exclude: &job-path-pydantic-exclude
+        - "/packages/doeff-openai/**"
+        - "/packages/doeff-gemini/**"
+        - "/packages/doeff-openrouter/**"
+        - "/packages/doeff-hy/src/doeff_hy/wire_parity.py"
+        - "/packages/**/tests/**"
+        - "/doeff/**/tests/**"
+    message: |
+      A module on the job path imports pydantic (card ki-5ddadb736f62 — the user's decision of 2026-10-27,
+      lt-SJK77NQZ8NSESDVVZ0P41407XQ: no job reads pydantic). Parse and write JSON with doeff_hy.wire
+      (parse / parse-as / dump-json — the decoder of doeff_hy/wire_codec.py) or the row codec
+      (doeff_hy.wire_codec row-codec-of), and catch the failure as doeff_hy.wire_malformed Malformed, not
+      pydantic's ValidationError. Only the parity tool doeff_hy/wire_parity.py and tests read pydantic.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: layer-boundary
+      rationale: "pydantic and pydantic_core cost every job process about 8 MB of Pss; the job path parses with doeff's own decoder"
+
+  # 上の規則の Hy の側(Hy の import の形 `(import pydantic [...])`・`(import json pydantic-core)` — 名の - は _ と同じ module)。
+  - id: doeff-job-path-imports-no-pydantic-hy
+    pattern-regex: \(import\s[^()]*?(?<![\w.\-])pydantic([-_]core)?(?![\w\-])
+    paths:
+      include:
+        - "/doeff/**/*.hy"
+        - "/packages/**/*.hy"
+        - "/tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/**"
+      exclude: *job-path-pydantic-exclude
+    message: |
+      A Hy module on the job path imports pydantic (card ki-5ddadb736f62 — the user's decision of 2026-10-27,
+      lt-SJK77NQZ8NSESDVVZ0P41407XQ: no job reads pydantic). Parse and write JSON with doeff_hy.wire
+      (parse / parse-as / dump-json) or the row codec (doeff_hy.wire_codec row-codec-of), and catch the
+      failure as doeff_hy.wire_malformed Malformed. Only the parity tool doeff_hy/wire_parity.py and tests
+      read pydantic.
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: layer-boundary
+      rationale: "pydantic and pydantic_core cost every job process about 8 MB of Pss; the job path parses with doeff's own decoder"
+
   - id: no-legacy-intercept-api
     pattern-either:
       - pattern-regex: (?m)^from\s+doeff\s+import\s+.*\bIntercept\b

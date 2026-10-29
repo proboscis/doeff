@@ -2,7 +2,9 @@
 
 利用者の決定 2026-10-27(依頼書 lt-SJK77NQZ8NSESDVVZ0P41407XQ の問い decoder の答え): defwire の解き手は doeff の中に自前で持ち、pydantic は
 test で照らす相手としてだけ残す。この module はその「照らす相手」の唯一の置き場で、pydantic を読む。job の道(入口・foundation・本体)は
-この module を import しない(doeff_hy.wire・wire_codec は読まない — import の閉包の test が確かめる)。
+この module を import しない(doeff_hy.wire・wire_codec は読まない — import の閉包の test が確かめる)。pydantic は doeff-hy の本体の
+依存に無く、照らしの test を持つ project が test の依存の群に置く extra doeff-hy[parity] から入る(card ki-5ddadb736f62)。job の道の
+module が pydantic を import したら .semgrep.yaml の doeff-job-path-imports-no-pydantic が断り、この module はその範囲の外に置く。
 
 契約は設計の記録 ``docs/design/defwire-decoder/design.md`` の節 7「照らしの test が比べる物」:
 

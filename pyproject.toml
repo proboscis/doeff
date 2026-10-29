@@ -929,6 +929,8 @@ dev = [
     "watchfiles>=1.0",
     "hy>=1.2.0",
     "doeff-hy",
+    # 自前の defwire の解き手を pydantic と照らす test(packages/doeff-hy/tests/test_wire_parity.py)が読む pydantic(card ki-5ddadb736f62)。
+    "doeff-hy[parity]",
     "doeff-adr",
     "doeff-domain[dogfood]",
     "doeff-system-one",
