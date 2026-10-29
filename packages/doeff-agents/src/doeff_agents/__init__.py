@@ -169,9 +169,7 @@ _LAZY_EXPORTS = {
     "AgentEffectBase": "._effects.agent",
     "CodexTurnCredential": "._effects.agent",
     "InputImage": "._effects.agent",
-    "AgentHandler": "._handlers.production",
     "ClaudeLaunchEffect": "._handlers.daemon",
-    "agent_handler_defhandler": "._handlers.effectful",
     "agent_session_store": "._handlers.session_store",
     "claude_agent_handler": "._handlers",
     "claude_handler": "._handlers.claude",
@@ -471,7 +469,6 @@ if TYPE_CHECKING:
     from doeff_agents._effects.agent import AgentEffectBase as AgentEffectBase
     from doeff_agents._effects.agent import CodexTurnCredential as CodexTurnCredential
     from doeff_agents._effects.agent import InputImage as InputImage
-    from doeff_agents._handlers.production import AgentHandler as AgentHandler
     from doeff_agents._handlers.daemon import ClaudeLaunchEffect as ClaudeLaunchEffect
     from doeff_agents._handlers import claude_agent_handler as claude_agent_handler
     from doeff_agents._handlers.headless_compose import (

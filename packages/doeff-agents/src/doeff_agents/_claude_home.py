@@ -3,7 +3,7 @@
 段 7 lane 7c(agora-redesign・決定 1.3): 何を作り何を写すかの判断はこの
 module に残り、file の読み書きは `doeff_agents._io_effects` の要求になった。
 実行する家は本番 `doeff_agents._io_handlers` と検 `doeff_agents._io_fake` の
-2 つで、どちらを当てるかは composition root(`TmuxAgentHandler` /
+2 つで、どちらを当てるかは composition root(tmux の handler の world の `io` /
 daemon の handler の `io_root`)が選ぶ。
 """
 

@@ -2,12 +2,15 @@
 ;;;
 ;;; The handler boundary is Hy `defhandler`. The parts every agent handler answers the same way — the in-VM MCP
 ;;; server a launch carries and the AwaitResult loop over a transport looked at once at a time — are the programs
-;;; `_serve-mcp-tools` and `_await-result-by-polling`, which the mock, scenario and daemon handlers share.
+;;; `_serve-mcp-tools` and `_await-result-by-polling`, which the tmux, mock and scenario handlers share. The
+;;; production tmux handler `tmux-agent-defhandler` answers each effect with one function of
+;;; doeff_agents._handlers.production over the tmux world it builds on its first effect.
 
 (require doeff-hy.handle [defhandler])
 (require doeff-hy.macros [<- defk val var])
 
 (import time threading)
+(import functools [partial])
 (import collections.abc [Callable])
 (import doeff [Ask GetHandlers GetOuterHandlers K])
 (import doeff_core_effects [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
@@ -36,8 +39,30 @@
 (import doeff_agents._effects [AwaitOutcome :as _AwaitOutcome SessionHandle :as _SessionHandle])
 (import doeff_agents._effects._handler-effects [ClaudeLaunchEffect])
 (import doeff_agents._session-backend [SessionBackend])
+(import doeff_agents._runtime [ClaudeRuntimePolicy CodexRuntimePolicy])
 (import doeff_agents._handlers.production [
-  TmuxAgentHandler
+  _TmuxAgentState
+  _attach-session
+  _await-result
+  _cancel-session
+  _capture
+  _claude-launch
+  _cleanup-session
+  _create-result-sink
+  _discard-result-sink
+  _follow-up
+  _get-session
+  _launch
+  _launch-session
+  _list-sessions
+  _monitor
+  _observe-session
+  _release-session
+  _run-agent
+  _send
+  _stop
+  _stop-session
+  _tmux-agent-state
   make-report-result-tool
   spec-uses-report-result-transport])
 (import doeff_agents._mcp-server [McpToolServer])
@@ -118,153 +143,24 @@
   outcome)
 
 
-(defn _mcp-server-map [agent-handler]
-  (when (not (hasattr agent-handler "_doeff_mcp_servers"))
-    (setattr agent-handler "_doeff_mcp_servers" {}))
-  (getattr agent-handler "_doeff_mcp_servers"))
-
-
-(defn _remember-mcp-server [agent-handler session-id server]
-  (setv servers (_mcp-server-map agent-handler))
-  (setv (get servers session-id) server)
-  None)
-
-
-(defn _shutdown-mcp-server-for-session [agent-handler session-id]
-  (when (hasattr agent-handler "_doeff_mcp_servers")
-    (setv servers (getattr agent-handler "_doeff_mcp_servers"))
-    (setv server (.pop servers session-id None))
-    (when (is-not server None)
-      (.shutdown server)))
-  None)
-
-
-(defn _cached-tmux-handler [handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy]
-  (setv handler (.get handler-ref "handler"))
-  (when (is handler None)
-    (setv handler
-      (TmuxAgentHandler
-        :backend active-backend
-        :session-repository session-repository
-        :claude-runtime-policy claude-runtime-policy
-        :codex-runtime-policy codex-runtime-policy))
-    (setv (get handler-ref "handler") handler))
-  handler)
-
-
-(defhandler agent-handler-defhandler [agent-handler]
-  "Define the Hy defhandler boundary for an AgentHandler object."
-
-  (AgentEffect [task]
-    (resume (.handle-agent agent-handler effect)))
-
-  (LaunchSessionEffect [spec]
-    (setv mcp-server-urls None)
-    ;; ADR-DOE-AGENTS-005 R1: every schema session gets the report_result
-    ;; data channel — start the in-VM server even when the spec carries no
-    ;; domain tools. Terminal bytes are never a result transport.
-    (setv report-transport?
-          (and agent-handler.supports-inprocess-report-result
-               (spec-uses-report-result-transport spec)))
-    (setv wants-server? (or (bool spec.mcp-tools) report-transport?))
-    (when wants-server?
-      (setv server-tools (tuple spec.mcp-tools))
-      (when report-transport?
-        (setv sink (.create-result-sink agent-handler spec.session-id))
-        (setv server-tools
-              (+ server-tools
-                 #((make-report-result-tool sink spec.result-schema)))))
-      (<- server (_serve-mcp-tools k server-tools))
-      (_remember-mcp-server agent-handler spec.session-id server)
-      (setv mcp-server-urls {spec.mcp-server-name server.url}))
-    (setv launch-result None)
-    (try
-      (setv launch-result
-        (.handle-launch-session agent-handler effect :mcp-servers mcp-server-urls))
-      (except [e Exception]
-        (when wants-server?
-          (_shutdown-mcp-server-for-session agent-handler spec.session-id))
-        (when agent-handler.supports-inprocess-report-result
-          (.discard-result-sink agent-handler spec.session-id))
-        (raise e)))
-    (resume launch-result))
-
-  (AwaitResultEffect [handle timeout-seconds]
-    (<- outcome (_await-result-by-polling agent-handler.handle-await-result handle timeout-seconds))
-    (resume outcome))
-
-  (FollowUpEffect [handle message]
-    (resume (.handle-follow-up agent-handler effect)))
-
-  ;; 入力の前に runtime を事前起動する WarmSessionEffect は、AgentHandler の会話では LaunchEffect が既に CLI を起動して入力を待たせて
-  ;; いる — 黙って何もせずに応答せず、型で拒否する。
-  (WarmSessionEffect [handle]
-    (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "agent-handler-defhandler")))
-
-  (StopSessionEffect [handle reason]
-    (.handle-stop-session agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
-    (resume None))
-
-  (ReleaseSessionEffect [handle]
-    (.handle-release-session agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
-    (resume None))
-
-  (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-    (setv mcp-server-urls None)
-    (when mcp-tools
-      (<- server (_serve-mcp-tools k (tuple mcp-tools)))
-      (_remember-mcp-server agent-handler session-name server)
-      (setv mcp-server-urls {mcp-server-name server.url}))
-    (setv launch-result None)
-    (try
-      (setv launch-result
-        (.handle-launch agent-handler effect :mcp-servers mcp-server-urls))
-      (except [e Exception]
-        (when mcp-tools
-          (_shutdown-mcp-server-for-session agent-handler session-name))
-        (raise e)))
-    (resume launch-result))
-
-  (ClaudeLaunchEffect [session-name work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-    (resume (.handle-claude-launch agent-handler effect)))
-
-  (MonitorEffect [handle]
-    (resume (.handle-monitor agent-handler effect)))
-
-  (CaptureEffect [handle lines]
-    (resume (.handle-capture agent-handler effect)))
-
-  (SendEffect [handle message enter literal]
-    (.handle-send agent-handler effect)
-    (resume None))
-
-  (StopEffect [handle]
-    (.handle-stop agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
-    (resume None))
-
-  (GetAgentSessionEffect [session-id]
-    (resume (.handle-get-session agent-handler effect)))
-
-  (ListAgentSessionsEffect [query]
-    (resume (.handle-list-sessions agent-handler effect)))
-
-  (ObserveAgentSessionEffect [session-id lines]
-    (resume (.handle-observe-session agent-handler effect)))
-
-  (AttachAgentSessionEffect [session-id]
-    (.handle-attach-session agent-handler effect)
-    (resume None))
-
-  (CancelAgentSessionEffect [session-id]
-    (resume (.handle-cancel-session agent-handler effect)))
-
-  (CleanupAgentSessionEffect [session-id]
-    (_shutdown-mcp-server-for-session agent-handler session-id)
-    (resume (.handle-cleanup-session agent-handler effect))))
+(defk _tmux-state [tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy]
+  {:pre [(: tmux-ref dict) (: backend "SessionBackend | None") (: session-repository "AgentSessionRepository | None")
+         (: claude-runtime-policy (| ClaudeRuntimePolicy None)) (: codex-runtime-policy (| CodexRuntimePolicy None))]
+   :post [(: % _TmuxAgentState)]
+   :tags {:context "agent-handler" :role "foundation"}}
+  "The tmux world the handler answers from (kept in `tmux-ref`), built on its first effect over the handler's
+   backend (a SessionBackend; None reads one through Ask), session repository and runtime policies."
+  (when (not-in "state" tmux-ref)
+    (var active-backend backend)
+    (when (is active-backend None)
+      (<- asked (Ask SessionBackend))
+      (:= active-backend asked))
+    (setv (get tmux-ref "state")
+          (_tmux-agent-state :backend active-backend
+                             :session-repository session-repository
+                             :claude-runtime-policy claude-runtime-policy
+                             :codex-runtime-policy codex-runtime-policy)))
+  (get tmux-ref "state"))
 
 
 (defhandler tmux-agent-defhandler [* [session-repository None] [backend None]
@@ -272,273 +168,128 @@
                                    [codex-runtime-policy None]]
   "Create the production tmux-backed agent defhandler.
 
+  Every clause answers its effect from one tmux world (the backend, the runtime policies, the session
+  repository and the sessions it opened), built when the first handled effect arrives, with one function of
+  doeff_agents._handlers.production; the clauses that start or stop a session's in-VM MCP server do that here.
   If backend is omitted, it is read through Ask(SessionBackend) when the first
   handled effect arrives.
   "
-  (lazy-var handler-ref {})
+  (session val tmux-ref {})
+
   (AgentEffect [task]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-agent agent-handler effect)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_run-agent tmux effect)))
 
   (LaunchSessionEffect [spec]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    ;; ADR-DOE-AGENTS-005 R1 — same registration as the
-    ;; agent-handler-defhandler branch above: every schema session gets the
-    ;; report_result data channel, with or without domain tools.
-    (setv report-transport?
-          (and agent-handler.supports-inprocess-report-result
-               (spec-uses-report-result-transport spec)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    ;; ADR-DOE-AGENTS-005 R1: every schema session gets the report_result
+    ;; data channel — start the in-VM server even when the spec carries no
+    ;; domain tools. Terminal bytes are never a result transport.
+    (val report-transport? (spec-uses-report-result-transport spec))
     (if (or (bool spec.mcp-tools) report-transport?)
         (do
-          (<- inner-handlers (GetHandlers k))
-          (<- outer-handlers (GetOuterHandlers))
-          (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-          (setv server-tools (tuple spec.mcp-tools))
+          (var server-tools (tuple spec.mcp-tools))
           (when report-transport?
-            (setv sink (.create-result-sink agent-handler spec.session-id))
-            (setv server-tools
-                  (+ server-tools
-                     #((make-report-result-tool sink spec.result-schema)))))
-          (setv server (McpToolServer :tools server-tools))
-          (<- ready-ep (CreateExternalPromise))
-          (.start server :ready-promise ready-ep)
-          (<- _ (Wait ready-ep.future))
-          (<- _ (Spawn (mcp-server-loop server captured-handlers) :daemon True))
-          (_remember-mcp-server agent-handler spec.session-id server)
-          (setv launch-result None)
+            (val sink (_create-result-sink tmux spec.session-id))
+            (:= server-tools (+ server-tools #((make-report-result-tool sink spec.result-schema)))))
+          (<- server (_serve-mcp-tools k server-tools))
+          (setv (get tmux.mcp-servers spec.session-id) server)
+          (var handle None)
           (try
-            (setv launch-result
-              (.handle-launch-session agent-handler effect
-                :mcp-servers {spec.mcp-server-name server.url}))
+            (:= handle (_launch-session tmux effect :mcp-servers {spec.mcp-server-name server.url}))
             (except [e Exception]
-              (_shutdown-mcp-server-for-session agent-handler spec.session-id)
-              (.discard-result-sink agent-handler spec.session-id)
+              (<- (_stop-mcp-server tmux.mcp-servers spec.session-id))
+              (_discard-result-sink tmux spec.session-id)
               (raise e)))
-          (resume launch-result))
-        (resume (.handle-launch-session agent-handler effect :mcp-servers None))))
+          (resume handle))
+        (resume (_launch-session tmux effect))))
 
   (AwaitResultEffect [handle timeout-seconds]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (setv effective-timeout
-      (if (is timeout-seconds None) DEFAULT_AWAIT_BUDGET_SECONDS timeout-seconds))
-    (setv deadline (+ (time.monotonic) effective-timeout))
-    (setv awaiting-input-deadline None)
-    (setv outcome None)
-    (while True
-      (setv outcome
-        (.handle-await-result agent-handler
-          (AwaitResultEffect :handle handle :timeout-seconds 0.0)))
-      (when (and (is-not outcome.result None)
-                 (is outcome.validation-error None))
-        (break))
-      (cond
-        (= outcome.status AwaitStatus.TIMED_OUT)
-        (setv awaiting-input-deadline None)
-
-        (= outcome.status AwaitStatus.AWAITING_INPUT)
-        (do
-          (when (is awaiting-input-deadline None)
-            (setv awaiting-input-deadline
-                  (+ (time.monotonic)
-                     AWAIT-RESULT-AWAITING-INPUT-STABILITY-SECONDS)))
-          (when (or (not (getattr outcome "continuable" True))
-                    (>= (time.monotonic) awaiting-input-deadline))
-            (break)))
-
-        True
-        (break))
-      (when (>= (time.monotonic) deadline)
-        (break))
-      (setv delay-seconds
-            (max 0.0
-                 (min AWAIT-RESULT-POLL-INTERVAL-SECONDS
-                      (- deadline (time.monotonic)))))
-      (when (> delay-seconds 0.0)
-        (<- delay-ep (CreateExternalPromise))
-        (.start (threading.Timer delay-seconds delay-ep.complete [None]))
-        (<- _ (Wait delay-ep.future :priority PRIORITY_IDLE))))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (<- outcome (_await-result-by-polling (partial _await-result tmux) handle timeout-seconds))
     (resume outcome))
 
-  (FollowUpEffect [handle message]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-follow-up agent-handler effect)))
+  (FollowUpEffect []
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_follow-up tmux effect)))
 
   ;; 入力の前に runtime を事前起動する WarmSessionEffect は、tmux の会話では LaunchEffect が既に CLI を起動して入力を待たせている —
   ;; 黙って何もせずに応答せず、型で拒否する。
   (WarmSessionEffect [handle]
     (raise (AgentCapabilityUnsupportedError :capability "WarmSessionEffect" :handler "tmux-agent-defhandler")))
 
-  (StopSessionEffect [handle reason]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (.handle-stop-session agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
+  (StopSessionEffect [handle]
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (_stop-session tmux effect)
+    (<- (_stop-mcp-server tmux.mcp-servers handle.session-id))
     (resume None))
 
   (ReleaseSessionEffect [handle]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (.handle-release-session agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (_release-session tmux effect)
+    (<- (_stop-mcp-server tmux.mcp-servers handle.session-id))
     (resume None))
 
-  (LaunchEffect [session-name agent-type work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
+  (LaunchEffect [session-name mcp-tools mcp-server-name]
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
     (if mcp-tools
         (do
-          (<- inner-handlers (GetHandlers k))
-          (<- outer-handlers (GetOuterHandlers))
-          (setv captured-handlers (+ (list inner-handlers) (list outer-handlers)))
-          (setv server (McpToolServer :tools mcp-tools))
-          (<- ready-ep (CreateExternalPromise))
-          (.start server :ready-promise ready-ep)
-          (<- _ (Wait ready-ep.future))
-          (<- _ (Spawn (mcp-server-loop server captured-handlers) :daemon True))
-          (_remember-mcp-server agent-handler session-name server)
-          (setv launch-result None)
+          (<- server (_serve-mcp-tools k (tuple mcp-tools)))
+          (setv (get tmux.mcp-servers session-name) server)
+          (var handle None)
           (try
-            (setv launch-result
-              (.handle-launch agent-handler effect
-                :mcp-servers {mcp-server-name server.url}))
+            (:= handle (_launch tmux effect :mcp-servers {mcp-server-name server.url}))
             (except [e Exception]
-              (_shutdown-mcp-server-for-session agent-handler session-name)
+              (<- (_stop-mcp-server tmux.mcp-servers session-name))
               (raise e)))
-          (resume launch-result))
-        (resume (.handle-launch agent-handler effect))))
+          (resume handle))
+        (resume (_launch tmux effect))))
 
-  (ClaudeLaunchEffect [session-name work-dir prompt model mcp-tools mcp-server-name effort bare ready-timeout session-env]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-claude-launch agent-handler effect)))
+  (ClaudeLaunchEffect []
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_claude-launch tmux effect)))
 
   (MonitorEffect [handle]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-monitor agent-handler effect)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_monitor tmux effect)))
 
-  (CaptureEffect [handle lines]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-capture agent-handler effect)))
+  (CaptureEffect [handle]
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_capture tmux effect)))
 
-  (SendEffect [handle message enter literal]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (.handle-send agent-handler effect)
+  (SendEffect [handle]
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (_send tmux effect)
     (resume None))
 
   (StopEffect [handle]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (.handle-stop agent-handler effect)
-    (_shutdown-mcp-server-for-session agent-handler handle.session-id)
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (_stop tmux effect)
+    (<- (_stop-mcp-server tmux.mcp-servers handle.session-id))
     (resume None))
 
   (GetAgentSessionEffect [session-id]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-get-session agent-handler effect)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_get-session tmux effect)))
 
   (ListAgentSessionsEffect [query]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-list-sessions agent-handler effect)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_list-sessions tmux effect)))
 
-  (ObserveAgentSessionEffect [session-id lines]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-observe-session agent-handler effect)))
+  (ObserveAgentSessionEffect [session-id]
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_observe-session tmux effect)))
 
   (AttachAgentSessionEffect [session-id]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (.handle-attach-session agent-handler effect)
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (_attach-session tmux effect)
     (resume None))
 
   (CancelAgentSessionEffect [session-id]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (resume (.handle-cancel-session agent-handler effect)))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (resume (_cancel-session tmux effect)))
 
   (CleanupAgentSessionEffect [session-id]
-    (setv active-backend backend)
-    (when (is active-backend None)
-      (<- active-backend (Ask SessionBackend)))
-    (setv agent-handler
-      (_cached-tmux-handler handler-ref active-backend session-repository
-                            claude-runtime-policy codex-runtime-policy))
-    (_shutdown-mcp-server-for-session agent-handler session-id)
-    (resume (.handle-cleanup-session agent-handler effect))))
+    (<- tmux (_tmux-state tmux-ref backend session-repository claude-runtime-policy codex-runtime-policy))
+    (<- (_stop-mcp-server tmux.mcp-servers session-id))
+    (resume (_cleanup-session tmux effect))))

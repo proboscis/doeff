@@ -42,6 +42,7 @@ from doeff_agents import LaunchEffect  # noqa: E402
 from doeff_agents import SessionStatus  # noqa: E402
 from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy  # noqa: E402
 from doeff_agents import InMemoryAgentSessionRepository  # noqa: E402
+from doeff_agents._handlers import production  # noqa: E402
 from test_ready_gate import (  # noqa: E402
     CLAUDE_READY,
     CODEX_MCP_BOOT,
@@ -89,9 +90,7 @@ class RegistrationProbeBackend(ScriptedBackend):
 
 
 def _handler(backend: ScriptedBackend, repository, tmp_path: Path):
-    from doeff_agents._handlers.production import TmuxAgentHandler
-
-    return TmuxAgentHandler(
+    return production._tmux_agent_state(
         backend=backend,
         session_repository=repository,
         codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
@@ -136,9 +135,9 @@ def test_handle_launch_registers_booting_row_before_ready_wait(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _handler(backend, repository, tmp_path)
+    tmux = _handler(backend, repository, tmp_path)
 
-    handler.handle_launch(
+    production._launch(tmux,
         LaunchEffect(
             session_name="codex-reg",
             agent_type=AgentType.CODEX,
@@ -172,10 +171,10 @@ def test_handle_launch_ready_timeout_transitions_row_to_failed(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _handler(backend, repository, tmp_path)
+    tmux = _handler(backend, repository, tmp_path)
 
     with pytest.raises(EffectsAgentReadyTimeoutError):
-        handler.handle_launch(
+        production._launch(tmux,
             LaunchEffect(
                 session_name="codex-cold-reg",
                 agent_type=AgentType.CODEX,
@@ -219,9 +218,9 @@ def test_handle_claude_launch_registers_booting_row_before_ready_wait(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
-    handler = _handler(backend, repository, tmp_path)
+    tmux = _handler(backend, repository, tmp_path)
 
-    handler.handle_claude_launch(
+    production._claude_launch(tmux,
         ClaudeLaunchEffect(
             session_name="claude-reg",
             work_dir=tmp_path / "ws",
@@ -250,10 +249,10 @@ def test_handle_claude_launch_ready_timeout_transitions_row_to_failed(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
-    handler = _handler(backend, repository, tmp_path)
+    tmux = _handler(backend, repository, tmp_path)
 
     with pytest.raises(EffectsAgentReadyTimeoutError):
-        handler.handle_claude_launch(
+        production._claude_launch(tmux,
             ClaudeLaunchEffect(
                 session_name="claude-cold-reg",
                 work_dir=tmp_path / "ws",
@@ -293,12 +292,12 @@ def test_handle_launch_terminalizes_before_failed_tmux_cleanup(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _handler(backend, repository, tmp_path)
+    tmux = _handler(backend, repository, tmp_path)
 
     # The typed ready-timeout error must survive the failing cleanup — the
     # kill error is logged, never allowed to mask the launch failure.
     with pytest.raises(EffectsAgentReadyTimeoutError):
-        handler.handle_launch(
+        production._launch(tmux,
             LaunchEffect(
                 session_name="codex-kill-broken",
                 agent_type=AgentType.CODEX,

@@ -43,6 +43,7 @@ from doeff_agents import (
 )
 from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter
+from doeff_agents._handlers import production
 from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
@@ -345,14 +346,12 @@ def test_launch_session_claude_pastes_prompt_only_after_ready_frame(monkeypatch)
 
 
 # =============================================================================
-# handlers/production.py TmuxAgentHandler (effects API)
+# handlers/production.py — the tmux handler's per-effect functions (effects API)
 # =============================================================================
 
 
 def _production_handler(backend: ScriptedBackend, tmp_path: Path):
-    from doeff_agents._handlers.production import TmuxAgentHandler
-
-    return TmuxAgentHandler(
+    return production._tmux_agent_state(
         backend=backend,
         codex_runtime_policy=CodexRuntimePolicy(codex_home=tmp_path / "codex-home"),
         claude_runtime_policy=ClaudeRuntimePolicy(agent_home=tmp_path / "agent-home"),
@@ -367,7 +366,7 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    tmux = _production_handler(backend, tmp_path)
 
     launch = LaunchEffect(
         session_name="codex-cold",
@@ -378,7 +377,7 @@ def test_handle_launch_codex_hard_fails_when_composer_never_appears(
     )
 
     with pytest.raises(EffectsAgentReadyTimeoutError):
-        handler.handle_launch(launch)
+        production._launch(tmux, launch)
 
     assert PROMPT not in backend.sent_texts()
     assert "codex-cold" in backend.killed
@@ -393,7 +392,7 @@ def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeCodexAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    tmux = _production_handler(backend, tmp_path)
 
     launch = LaunchEffect(
         session_name="codex-warm",
@@ -403,7 +402,7 @@ def test_handle_launch_codex_pastes_prompt_only_after_ready_frame(
         ready_timeout=5.0,
     )
 
-    handle = handler.handle_launch(launch)
+    handle = production._launch(tmux, launch)
 
     assert handle.session_id == "codex-warm"
     prompt_sends = [(t, k, f) for t, k, f in backend.sent if k == PROMPT]
@@ -421,7 +420,7 @@ def test_handle_claude_launch_hard_fails_when_composer_never_appears(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    tmux = _production_handler(backend, tmp_path)
 
     launch = ClaudeLaunchEffect(
         session_name="claude-cold",
@@ -431,7 +430,7 @@ def test_handle_claude_launch_hard_fails_when_composer_never_appears(
     )
 
     with pytest.raises(EffectsAgentReadyTimeoutError):
-        handler.handle_claude_launch(launch)
+        production._claude_launch(tmux, launch)
 
     assert PROMPT not in backend.sent_texts()
     assert "claude-cold" in backend.killed
@@ -446,7 +445,7 @@ def test_handle_claude_launch_pastes_prompt_only_after_ready_frame(
         "doeff_agents._handlers.production.get_adapter",
         lambda _agent_type: ReadyFakeClaudeAdapter(),
     )
-    handler = _production_handler(backend, tmp_path)
+    tmux = _production_handler(backend, tmp_path)
 
     launch = ClaudeLaunchEffect(
         session_name="claude-warm",
@@ -455,7 +454,7 @@ def test_handle_claude_launch_pastes_prompt_only_after_ready_frame(
         ready_timeout=5.0,
     )
 
-    handler.handle_claude_launch(launch)
+    production._claude_launch(tmux, launch)
 
     prompt_sends = [(t, k, f) for t, k, f in backend.sent if k == PROMPT]
     assert len(prompt_sends) == 1

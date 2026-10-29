@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import ClaudeRuntimePolicy
 from doeff_agents import ClaudeLaunchEffect
-from doeff_agents._handlers.production import TmuxAgentHandler
+from doeff_agents._handlers import production
 from doeff_agents import SessionConfig
 from doeff_agents import AgentType
 from doeff_agents._adapters.base import InjectionMethod, LaunchParams
@@ -85,11 +85,11 @@ class FakeBackend(SessionBackend):
 
 def test_prepare_claude_home_seeds_trusted_workspace(tmp_path: Path) -> None:
     backend = FakeBackend()
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
 
     agent_home = tmp_path / "agent-home"
     workspace = tmp_path / "workspace"
-    handler._prepare_claude_home(agent_home, (workspace,))
+    production._prepare_claude_home(tmux, agent_home, (workspace,))
 
     claude_json = json.loads((agent_home / ".claude.json").read_text())
     project = claude_json["projects"][str(workspace)]
@@ -116,7 +116,7 @@ def test_prepare_claude_home_prefers_auth_already_in_agent_home(
     monkeypatch.setattr(claude_home_mod.Path, "home", lambda: source_home)
 
     backend = FakeBackend()
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     agent_home = tmp_path / "personal-profile"
     agent_home.mkdir()
     (agent_home / ".claude.json").write_text(
@@ -124,7 +124,7 @@ def test_prepare_claude_home_prefers_auth_already_in_agent_home(
         encoding="utf-8",
     )
 
-    handler._prepare_claude_home(agent_home, (tmp_path / "workspace",))
+    production._prepare_claude_home(tmux, agent_home, (tmp_path / "workspace",))
 
     for path in (agent_home / ".claude.json", agent_home / ".claude" / ".claude.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -143,7 +143,7 @@ def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
     agent_home = tmp_path / "agent-home"
-    handler = TmuxAgentHandler(
+    tmux = production._tmux_agent_state(
         backend=backend,
         claude_runtime_policy=ClaudeRuntimePolicy(
             agent_home=agent_home,
@@ -158,7 +158,7 @@ def test_handle_claude_launch_materializes_workspace_and_uses_runtime_env(
         model="opus",
     )
 
-    handle = handler.handle_claude_launch(effect)
+    handle = production._claude_launch(tmux, effect)
 
     assert handle.session_id == "worker"
     assert not hasattr(handle, "agent_type")
@@ -184,7 +184,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_session_env(
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
     forbidden_key = "ANTHROPIC" + "_API_KEY"
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
     effect = ClaudeLaunchEffect(
         session_name="worker",
         work_dir=work_dir,
@@ -193,7 +193,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_session_env(
     )
 
     with pytest.raises(ValueError, match="provider API keys"):
-        handler.handle_claude_launch(effect)
+        production._claude_launch(tmux, effect)
 
     assert backend.created == []
 
@@ -210,7 +210,7 @@ def test_handle_claude_launch_rejects_anthropic_api_key_bootstrap_exports(
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()
     forbidden_key = "ANTHROPIC" + "_API_KEY"
-    handler = TmuxAgentHandler(
+    tmux = production._tmux_agent_state(
         backend=backend,
         claude_runtime_policy=ClaudeRuntimePolicy(
             bootstrap_exports={forbidden_key: "secret"},
@@ -223,6 +223,6 @@ def test_handle_claude_launch_rejects_anthropic_api_key_bootstrap_exports(
     )
 
     with pytest.raises(ValueError, match="provider API keys"):
-        handler.handle_claude_launch(effect)
+        production._claude_launch(tmux, effect)
 
     assert backend.created == []

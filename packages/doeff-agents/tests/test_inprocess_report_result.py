@@ -38,12 +38,12 @@ from doeff_agents import agent_effectful_handler
 from doeff_agents._handlers.production import (
     REPORT_RESULT_TOOL_NAME,
     SessionState,
-    TmuxAgentHandler,
     _launch_effect_from_spec,
     get_adapter,
     make_report_result_tool,
     spec_uses_report_result_transport,
 )
+from doeff_agents._handlers import production
 from doeff_agents._mcp_server import McpToolServer
 from doeff_agents import SessionBackend
 from doeff_agents import SessionInfo
@@ -108,14 +108,14 @@ class _AliveBackend:
         return self.pane_output
 
 
-def _handler_with_session(
+def _tmux_with_session(
     backend: _AliveBackend,
     session_id: str,
     tmp_path: Path,
-) -> TmuxAgentHandler:
-    handler = TmuxAgentHandler(backend=backend)
+) -> production._TmuxAgentState:
+    tmux = production._tmux_agent_state(backend=backend)
     handle = SessionHandle(session_id=session_id)
-    handler._sessions[session_id] = SessionState(
+    tmux.sessions[session_id] = SessionState(
         handle=handle,
         adapter=get_adapter(AgentType.CLAUDE),
         pane_id="%0",
@@ -124,7 +124,7 @@ def _handler_with_session(
         lifecycle=AgentSessionLifecycle.RUN_TO_COMPLETION,
         result_schema=RESULT_SCHEMA,
     )
-    return handler
+    return tmux
 
 
 def _spec(tmp_path: Path, **overrides: object) -> AgentSpec:
@@ -176,11 +176,11 @@ def test_report_result_tool_is_a_servable_mcp_tool() -> None:
 def test_await_result_returns_reported_payload_result_first(tmp_path: Path) -> None:
     """The sink wins even while the pane shows an unparseable wrapped block."""
     backend = _AliveBackend(_wrapped_marker_block(LONG_PAYLOAD))
-    handler = _handler_with_session(backend, "run-rr-node-rr-0", tmp_path)
-    sink = handler.create_result_sink("run-rr-node-rr-0")
+    tmux = _tmux_with_session(backend, "run-rr-node-rr-0", tmp_path)
+    sink = production._create_result_sink(tmux, "run-rr-node-rr-0")
     sink["payload"] = LONG_PAYLOAD
 
-    outcome = handler.handle_await_result(
+    outcome = production._await_result(tmux,
         AwaitResultEffect(
             handle=SessionHandle(session_id="run-rr-node-rr-0"),
             timeout_seconds=0.0,
@@ -202,10 +202,10 @@ def test_pane_marker_block_is_never_parsed_as_result(tmp_path: Path) -> None:
     oneline = json.dumps(LONG_PAYLOAD, ensure_ascii=False, separators=(",", ":"))
     pane = f"{LEGACY_BEGIN}\n{oneline}\n{LEGACY_END}\n"
     backend = _AliveBackend(pane)
-    handler = _handler_with_session(backend, "run-rr-node-rr-0", tmp_path)
-    handler.create_result_sink("run-rr-node-rr-0")
+    tmux = _tmux_with_session(backend, "run-rr-node-rr-0", tmp_path)
+    production._create_result_sink(tmux, "run-rr-node-rr-0")
 
-    outcome = handler.handle_await_result(
+    outcome = production._await_result(tmux,
         AwaitResultEffect(
             handle=SessionHandle(session_id="run-rr-node-rr-0"),
             timeout_seconds=0.0,
@@ -224,10 +224,10 @@ def test_dead_session_without_report_yields_typed_no_result(tmp_path: Path) -> N
             return False
 
     backend = _DeadBackend(_wrapped_marker_block(LONG_PAYLOAD))
-    handler = _handler_with_session(backend, "run-rr-node-rr-0", tmp_path)
-    handler.create_result_sink("run-rr-node-rr-0")
+    tmux = _tmux_with_session(backend, "run-rr-node-rr-0", tmp_path)
+    production._create_result_sink(tmux, "run-rr-node-rr-0")
 
-    outcome = handler.handle_await_result(
+    outcome = production._await_result(tmux,
         AwaitResultEffect(
             handle=SessionHandle(session_id="run-rr-node-rr-0"),
             timeout_seconds=0.0,
@@ -244,14 +244,14 @@ def test_release_session_discards_sink(tmp_path: Path) -> None:
     from doeff_agents import ReleaseSessionEffect
 
     backend = _AliveBackend("")
-    handler = _handler_with_session(backend, "run-rr-node-rr-0", tmp_path)
-    handler.create_result_sink("run-rr-node-rr-0")
+    tmux = _tmux_with_session(backend, "run-rr-node-rr-0", tmp_path)
+    production._create_result_sink(tmux, "run-rr-node-rr-0")
 
-    handler.handle_release_session(
+    production._release_session(tmux,
         ReleaseSessionEffect(handle=SessionHandle(session_id="run-rr-node-rr-0"))
     )
 
-    assert handler._result_sinks == {}
+    assert tmux.result_sinks == {}
 
 
 def test_spec_predicate_is_schema_only(tmp_path: Path) -> None:
@@ -289,17 +289,17 @@ def test_launch_session_without_sink_fails_fast(tmp_path: Path) -> None:
     """ADR-DOE-AGENTS-005 R5: direct schema launches without the defhandler
     path (which registers the sink) must not start an unreadable agent."""
     backend = _AliveBackend("")
-    handler = TmuxAgentHandler(backend=backend)
+    tmux = production._tmux_agent_state(backend=backend)
 
     with pytest.raises(AgentLaunchError, match="report_result sink"):
-        handler.handle_launch_session(LaunchSessionEffect(spec=_spec(tmp_path)))
+        production._launch_session(tmux, LaunchSessionEffect(spec=_spec(tmp_path)))
 
 
 # ---------------------------------------------------------------------------
 # Integration through agent_effectful_handler (tmux-agent-defhandler): the
 # handler that nakagawa installs. Regression guard for the duplicated
 # LaunchSessionEffect branches in effectful.hy — the first fix landed only in
-# agent-handler-defhandler and this launch path kept marker-mode prompts.
+# AgentHandler-object defhandler and this launch path kept marker-mode prompts.
 # ---------------------------------------------------------------------------
 
 
