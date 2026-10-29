@@ -1,5 +1,5 @@
 ;;; Executable ADR: bytecode(.pyc の中身の code と、閉包の歩みが読む import の名)を引く・足す保存先は 1 つ — doeff-hy の
-;;; doeff_hy_bytecode_guard/code_store.py。鍵は source の中身と、中身の読みを変える物(Hy の source は module 名と Hy の版・Python の版の印・
+;;; doeff_hy_bytecode_guard/_code_store.py。鍵は source の中身と、中身の読みを変える物(Hy の source は module 名と Hy の版・Python の版の印・
 ;;; 最適化の段)だけで、版(commit)と木の path に依らない。macro の出所の中身は鍵に入れず、当たった code の記録を今の環境の macro の file と
 ;;; 照らす(合わなければ焼き直す)。鍵 1 つには macro の環境ごとの entry が並び、焼き直した code は今の環境の entry として足す(R2b — 他の
 ;;; 環境の entry を上書きしない)。
@@ -22,7 +22,7 @@
 ;; 台帳
 
 ;; 保存先の入口(並び・鍵・使った印・壊れた entry の扱いの定義点)。
-(val ENTRY "packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py")
+(val ENTRY "packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py")
 
 ;; worker の bytecode の準備の道具(入口を worker の版の file として path で読む所)と、起動の script(保存先の既定を置く所)。
 (val PREPARE-TOOL "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy")
@@ -125,8 +125,8 @@
 (defadr ADR-DOE-BUILD-002
   :title "bytecode を引く・足す保存先は doeff-hy の code_store 1 つ。鍵は source の中身と中身の読みを変える物だけで版に依らず、macro の出所は当たった code の記録で照らす。worker の bytecode の準備は前の版の木から引き継がず、保存先から書いて中身の変わった物だけを焼く"
   :status "accepted"
-  :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/code_store.py"
-          "packages/doeff-hy/src/doeff_hy_bytecode_guard/loader_hooks.py"
+  :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py"
+          "packages/doeff-hy/src/doeff_hy_bytecode_guard/_loader_hooks.py"
           "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
           "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
           "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
@@ -212,7 +212,7 @@
        (assert (in "export DOEFF_HY_CODE_STORE=\"${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code-store}\"" boot)
                "起動の script が保存先の既定を worker の state の下に置かない(ADR-DOE-BUILD-002 R4)")
        (val tool (.read-text (/ repo-root PREPARE-TOOL) :encoding "utf-8"))
-       (assert (in "\"doeff-hy\" \"src\" \"doeff_hy_bytecode_guard\" \"code_store.py\"" tool)
+       (assert (in "\"doeff-hy\" \"src\" \"doeff_hy_bytecode_guard\" \"_code_store.py\"" tool)
                "準備の道具が worker の版の doeff-hy の保存先の入口を読まない(ADR-DOE-BUILD-002 R1)")
        (val upkeep (.read-text (/ repo-root UPKEEP) :encoding "utf-8"))
        (assert (in "(val CODE-STORE-UNUSED-SECONDS WHEEL-UNUSED-SECONDS)" upkeep)

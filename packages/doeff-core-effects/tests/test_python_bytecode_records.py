@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from doeff_hy_bytecode_guard import records
+from doeff_hy_bytecode_guard import _records as records
 
 #: 子の process へ渡さない環境変数(.pyc の置き場を木の外へ移すと、読む側が焼いた .pyc を見ない)。子は bytecode を書かない
 #: (PYTHONDONTWRITEBYTECODE=1 — checkout の中の package の .pyc を書かない。焼く側は .pyc を自分で書き、読む側が compile し直したかは

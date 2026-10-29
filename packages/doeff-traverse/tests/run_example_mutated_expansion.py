@@ -30,7 +30,7 @@ from pathlib import Path
 
 import doeff_hy.macros as doeff_hy_macros
 import hy
-from doeff_hy_bytecode_guard.records import MACRO_TABLE
+from doeff_hy_bytecode_guard._records import MACRO_TABLE
 
 # 展開を包む式の頭: doeff の公開の名を、名を束ねずに引く(例が import している名に依らない)。
 _WITH_HANDLER_TEXT = '(. (__import__ "doeff" :fromlist #("WithHandlerType")) WithHandlerType)'

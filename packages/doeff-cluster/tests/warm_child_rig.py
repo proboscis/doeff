@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from doeff_hy_bytecode_guard.code_store import STORE_ENV, store_dir
+from doeff_hy_bytecode_guard._code_store import STORE_ENV, store_dir
 
 WARM = "doeff_cluster.worker.entry.warm_child"
 PACKAGE = Path(__file__).resolve().parent.parent

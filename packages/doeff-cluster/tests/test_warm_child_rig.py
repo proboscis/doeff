@@ -36,7 +36,7 @@ def test_no_test_spawns_the_warm_child_outside_the_shared_rig() -> None:
 
 def test_the_shared_env_names_the_warmed_store(job_child_code_store: None) -> None:
     """共通の env は、温めた置き場(job_child_code_store が満たす所)の名指しを持つ。"""
-    from doeff_hy_bytecode_guard.code_store import STORE_ENV, store_dir
+    from doeff_hy_bytecode_guard._code_store import STORE_ENV, store_dir
 
     env = warm_child_env()
     assert env[STORE_ENV] == store_dir()

@@ -1,4 +1,4 @@
-"""Hy の gensym の名を module の中の順の通し番号にする正準化(doeff_hy_bytecode_guard.records.canonical_gensyms・agora-redesign
+"""Hy の gensym の名を module の中の順の通し番号にする正準化(doeff_hy_bytecode_guard._records.canonical_gensyms・agora-redesign
 #3667)の反例。
 
 Hy の ``hy.gensym`` の数えは process に 1 つで、gensym を呼ぶたびに進む。そのため同じ source でも、先に別の module を compile した
@@ -25,7 +25,9 @@ from pathlib import Path
 from types import CodeType
 
 import pytest
-from doeff_hy_bytecode_guard import code_store, records, source_to_code_as_import
+from doeff_hy_bytecode_guard import _code_store as code_store
+from doeff_hy_bytecode_guard import _records as records
+from doeff_hy_bytecode_guard import source_to_code_as_import
 
 #: 直す前の記録の印(gensym の名を正準化していない code の記録)。
 PREVIOUS_RECORD_TAG = "doeff-hy/macro-dependencies/1"
@@ -152,7 +154,7 @@ root, first, target = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, root)
 import doeff_hy
 from doeff import run
-from doeff_hy_bytecode_guard import records
+from doeff_hy_bytecode_guard import _records as records
 
 package = os.path.join(root, "{PACKAGE}")
 had_pyc = sorted(

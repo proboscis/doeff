@@ -1,8 +1,8 @@
 """macro の記録が、展開で実行された関数の code だけを覆う形の失敗ケース(#3769 の子 — 日次 10-12 04:00 の 1,197 本の作り直し)。
 
 記録の digest は、閉包の歩みが辿った物(関数の名・class の member の名・値・束縛の文)を今までどおり全部入れ、関数の code の
-中身(:attr:`doeff_hy_bytecode_guard.macro_use.CodeFacts.shape`)だけを、その module の展開で実行された関数に絞る
-(:mod:`doeff_hy_bytecode_guard.called_code` が展開の間に実行の始まった code を拾う)。呼ばれない method の code の変更では
+中身(:attr:`doeff_hy_bytecode_guard._macro_use.CodeFacts.shape`)だけを、その module の展開で実行された関数に絞る
+(:mod:`doeff_hy_bytecode_guard._called_code` が展開の間に実行の始まった code を拾う)。呼ばれない method の code の変更では
 古いと判じず、呼ばれる method の変更では今までどおり古いと判じる。展開の外(import の時)に実行されて値を作った関数
 (束縛の文が呼ぶ関数・書き換える関数)と、関数の中身を値として読む code(説明の文・引数の形)の先は絞らない。
 
@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from doeff_hy_bytecode_guard import _records as records
 from doeff_hy_bytecode_guard import (
     loaded_record,
     record_is_current_here,
-    records,
     source_to_code_as_import,
 )
 

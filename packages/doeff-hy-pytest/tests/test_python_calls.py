@@ -41,7 +41,7 @@ from doeff_hy_pytest._python_calls import (
 
 pytest_plugins = ["pytester"]
 
-# doeff-hy の called_code が取る枠の持ち主の名(doeff_hy_bytecode_guard/called_code.py)。
+# doeff-hy の called_code が取る枠の持ち主の名(doeff_hy_bytecode_guard/_called_code.py)。
 DOEFF_HY_TOOL = "doeff-hy-called-code"
 
 # sys.monitoring の枠を取って数える検の印 — sys.monitoring は Python 3.12 から。3.11 の走りは数えずに「測れない」と出す
