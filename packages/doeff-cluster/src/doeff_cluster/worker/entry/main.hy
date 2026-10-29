@@ -56,6 +56,7 @@
 (import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-ends-before-the-kill])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop])
+(import doeff_cluster.worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
 (import doeff_cluster.worker.core.places [worker-places])
 (import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
@@ -296,21 +297,27 @@
   state)
 
 
-(defk worker-watching-memory [policy watch cell]
-  {:pre [(: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell)] :post [(: % WorkerState)]
-   :tags {:context "worker" :role "main"}}
-  "機体の memory の見張り(worker/protocol/memory_watch)を調整ループの外の背景の task として起こしてから、調整ループを回すため
-   (card ki-7b934e2538f9)。見張りは同じ handler の組の下で走る(job の根は process-host・表は os-proc-table-handler が答える)。"
+(defk worker-watching-memory [policy watch cell hold link hold-cell]
+  {:pre [(: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell) (: hold (| SuppliedHoldSettings None)) (: link LinkState)
+         (: hold-cell SuppliedHoldCell)]
+   :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
+  "機体の memory の見張り(worker/protocol/memory_watch)と、値の写しの係(worker/protocol/supplied_hold — hold が在る時だけ・
+   ADR-DOE-CLUSTER-004)を調整ループの外の背景の task として起こしてから、調整ループを回すため(card ki-7b934e2538f9)。どちらも同じ
+   handler の組の下で走る(job の根は process-host・表は os-proc-table-handler・API server への要求は in-cluster-api-routed が答える)。"
   (<- (Spawn (memory-watch-loop watch cell) :daemon True))
+  (when (is-not hold None)
+    (<- (Spawn (supplied-hold-loop hold link hold-cell) :daemon True)))
   (<- state WorkerState (run-worker policy))
   state)
 
 
-(defk worker-on-watching-memory [handlers policy watch cell]
-  {:pre [(: handlers list) (: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell)] :post [(: % WorkerState)]
-   :tags {:context "worker" :role "main"}}
-  "本番の組 handlers の上で、機体の memory の見張りと調整ループを回すため(worker-on の本番の形 — 模擬の環境は見張りを持たない)。"
-  (<- state WorkerState (with-handlers handlers (worker-watching-memory policy watch cell)))
+(defk worker-on-watching-memory [handlers policy watch cell hold link hold-cell]
+  {:pre [(: handlers list) (: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell) (: hold (| SuppliedHoldSettings None))
+         (: link LinkState) (: hold-cell SuppliedHoldCell)]
+   :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
+  "本番の組 handlers の上で、機体の memory の見張りと値の写しの係と調整ループを回すため(worker-on の本番の形 — 模擬の環境は見張りも
+   係も持たない)。"
+  (<- state WorkerState (with-handlers handlers (worker-watching-memory policy watch cell hold link hold-cell)))
   state)
 
 
@@ -496,7 +503,11 @@
         ;; 子の job を置く兄弟の cgroup(card ki-ed9dca403f58 — 機体の配備が名を渡した時だけ)。
         job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
         ;; 置かれた常駐の job を自分の Pod の label に写す(card ki-a66bb71f4152 — Pod の uid と node の名が在る worker だけ)。
-        pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node)))
+        pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node))
+        ;; 値の写しの係(ADR-DOE-CLUSTER-004 — 区画の CA で API server を検める口 in-cluster-api-routed を組む Pod の worker だけ。Pod の外の
+        ;; worker は ServiceAccount を持たず、API server から値を読まない)。
+        hold (if (is pod-labels None) None (SuppliedHoldSettings :worker args.name))
+        hold-cell (SuppliedHoldCell))
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
@@ -513,11 +524,11 @@
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
-    (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell)))
+    (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell hold link hold-cell)))
     (finally
       ;; 名指しの待ちと拍の外の送りと memory の見張りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も読みも送らない)。
       ;; 生存の合図の thread も止める(全 job を回収した worker の lease を延ばさない)。
-      (setv link.watch.closing True link.beating.closing True memory-cell.closing True)
+      (setv link.watch.closing True link.beating.closing True memory-cell.closing True hold-cell.closing True)
       (stop-lifeline)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 

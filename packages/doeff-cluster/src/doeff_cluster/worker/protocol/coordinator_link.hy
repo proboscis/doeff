@@ -124,7 +124,9 @@
    token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
    accountToken で名乗る・card ki-d31166f84ad0)・room-file = 枠の file(None = 読まない — 起動の引数の capacity・task-reserve を
    名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る・card ki-6828eda880ce)・doeff-commit = この process の doeff の
-   版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit・card ki-6e83e03d146d)。"
+   版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit・card ki-6e83e03d146d)。
+   supplied = 最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
+   読む・ADR-DOE-CLUSTER-004)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
@@ -150,6 +152,8 @@
           self.last-ok-ms started-ms self.last-ok-mono-ms started-mono-ms
           ;; 最後に受け取った job と task の宣言(途絶の間も動かす書き手と切り離した task を選ぶ — worker_policy.kept-when-cut-off)。
           self.last-jobs #() self.last-tasks #() self.last-warm #() self.warm-keys {}
+          ;; この worker に置かれうる job の参照の綴り(返事の supplied — 欄の無い返事では前の値のまま。値の写しの係が読む)。
+          self.supplied None
           self.boot boot self.boot-at boot-at self.overlaps-elder overlaps-elder self.doeff-commit doeff-commit
           ;; 切り離した task の id → 置かれた時の返事の行。状態の報告に写して添え、状態を失った coordinator が走っている task を引き取れる
           ;; ようにする(cluster_policy.adopt-running-detached・2026-09-27)。
@@ -309,6 +313,19 @@
         (when (and marked (not-in marked wanted))
           (<- (RemoveTree (os.path.join state.program-dir marked))))
         (<- (RemoveTree mark)))))
+  None)
+
+
+(defk accepted-supplied [state field]
+  {:pre [(: state LinkState) (: field (| list dict str int float bool None))] :post [(: % None)] :tags {:context "worker" :role "protocol" :reads "json"}}
+  "heartbeat の返事の supplied(この worker に置かれうる job の参照の綴りの列 — ADR-DOE-CLUSTER-004)を入れ物に写すため。欄の無い返事
+   (退いた世代への返事・古い coordinator)は前の値のまま。字の列でない欄は返事の形の誤りとして欄と値の型を挙げて落ちる(拍の except が
+   「名乗れない」の 1 行にする — 黙って空に読まない: 空に読むと値の写しを全部消す)。"
+  (when (is field None)
+    (return None))
+  (when (not (and (isinstance field list) (all (gfor item field (isinstance item str)))))
+    (raise (ValueError (.format "heartbeat の返事の supplied が字の列でない: {}" (. (type field) __name__)))))
+  (setv state.supplied (tuple field))
   None)
 
 
@@ -511,6 +528,7 @@
     (<- (fetched-programs state cell options (+ state.last-jobs state.last-tasks)))
     (<- warm tuple (accepted-warm state (.get answered "warm" [])))
     (setv state.last-warm warm)
+    (<- (accepted-supplied state (.get answered "supplied")))
     ;; 返事を読み終えてから出す(返事の読みが毎回落ちる時に、名乗れた・名乗れないの 2 行を拍ごとに繰り返さない)。
     (<- (told-once state "" (.format "worker: coordinator {} に名乗りました" endpoint)))
     ;; 起動の内訳の 1 行(#3676): 最初に返事を読み終えた拍で 1 度だけ — Pod の起動 → boot.sh → exec → import → この答え。

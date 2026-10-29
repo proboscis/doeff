@@ -100,12 +100,13 @@
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]
   {:pre [(: reply HeartbeatReply)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "heartbeat の返事 → JSON の形(superseded は退いた世代への返事の時だけ書く)。"
+  "heartbeat の返事 → JSON の形(superseded は退いた世代への返事の時だけ・supplied は渡す時だけ書く)。"
   (| {"jobs" (! (spelled-each spec-json reply.jobs)) "tasks" (! (spelled-each task-offer-json reply.tasks))
       "warm" (lfor w reply.warm {"key" w.key "runtimeEnv" w.runtime-env}) "timing" (asdict reply.timing)
       "draining" reply.draining "formats" (list reply.formats) "revision" reply.revision}
      (if reply.superseded {"superseded" True} {})
-     (if reply.handover-pending {"handoverPending" True} {})))
+     (if reply.handover-pending {"handoverPending" True} {})
+     (if (is-not reply.supplied None) {"supplied" (list reply.supplied)} {})))
 
 
 (defk state-view-json [#^ StateView view]

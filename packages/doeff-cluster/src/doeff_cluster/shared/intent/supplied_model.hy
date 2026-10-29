@@ -5,8 +5,8 @@
 ;;;   SuppliedRef               値 1 つの参照: 種類・namespace・名・キー
 ;;;   SuppliedObjectRef         物 1 つ丸ごとの参照: 種類・namespace・名
 ;;;   SuppliedValueUnavailable  値を得られなかった・書き出せなかった(参照の綴りと理由を文に持つ — 値と token は載せない)
-;;;   WorkerFactName            job が worker に問える機体の事実の名(NODE_NAME・SYSTEMD_ROOT・WORK_ROOT — 名と環境変数の対応は
-;;;                             protocol の FACT-ENVIRON-NAMES の 1 か所)
+;;;   WorkerFactName            job が worker に問える機体の事実の名(NODE_NAME・SYSTEMD_ROOT・WORK_ROOT・WORKER_NAME — 名と環境変数の
+;;;                             対応は protocol の FACT-ENVIRON-NAMES の 1 か所。WORKER_NAME = job を回す worker の名 — 値の写しの置き場を引く)
 ;;;   WorkerFactMissing         事実に答える環境変数が無い・空(事実の名と環境変数の名を文に持つ — 既定の値で埋めない)
 ;;;
 ;;; 機体の事実を名で問う訳: job の宣言の :environ に worker の中の path を書くと、job が worker の作り(mount の位置)を知る事に成る。機体ごとに
@@ -41,7 +41,7 @@
   "参照の値を得られなかった・書き出せなかった(参照の綴りと理由を文に持つ — 値と token は載せない・既定の値で埋めない)。")
 
 
-(defenum WorkerFactName NODE_NAME SYSTEMD_ROOT WORK_ROOT)
+(defenum WorkerFactName NODE_NAME SYSTEMD_ROOT WORK_ROOT WORKER_NAME)
 
 
 (defclass WorkerFactMissing [RuntimeError]

@@ -1257,8 +1257,10 @@
   "heartbeat の返事(cluster_policy.heartbeat-reply・superseded-reply — #2595): jobs = 動かす job の spec・tasks = 走らせる task・warm =
    温める表の行・timing = 時間の設定・draining = drain 中か・superseded = 退いた世代への返事か・formats = 受け入れる本文の形の版・
    revision = 返事を作った時の coordinator の版・handover-pending = 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない
-   (cluster_policy.handover-pending — worker はこの間 Pod の ready の file を書かない・AL-D2k)。JSON の形は coordinator/protocol/replies が
-   綴る(superseded・handover-pending は真の時だけ書く)。"
+   (cluster_policy.handover-pending — worker はこの間 Pod の ready の file を書かない・AL-D2k)・supplied = この worker に置かれうる常駐の
+   job の宣言の :environ の、ConfigMap・Secret の参照の綴り(cluster_policy.supplied-for — worker は API server が答える間に値の写しを持つ・
+   ADR-DOE-CLUSTER-004。None = 渡さない — 退いた世代への返事。綴りだけで値は載らない)。JSON の形は coordinator/protocol/replies が
+   綴る(superseded・handover-pending は真の時だけ・supplied は None でない時だけ書く)。"
   (#^ (get tuple #(JobSpec ...)) jobs)
   (#^ (get tuple #(TaskOffer ...)) tasks)
   (#^ (get tuple #(WarmOffer ...)) warm)
@@ -1267,7 +1269,8 @@
   (#^ bool superseded)
   (#^ (get tuple #(int ...)) formats)
   (#^ int revision)
-  (setv #^ bool handover-pending False))
+  (setv #^ bool handover-pending False)
+  (setv #^ (| (get tuple #(str ...)) None) supplied None))
 
 
 (defclass [(dataclass :frozen True)] Watcher []
