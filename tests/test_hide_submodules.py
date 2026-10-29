@@ -722,6 +722,20 @@ def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_pat
     assert hy == "(import pkg [_handlers :as handlers structured-llm])\n"
 
 
+def test_a_relative_hy_import_is_left_as_it_is(tmp_path: Path) -> None:
+    """Hy の相対の import(doeff_cluster の ``(import .runtime_env_model [EnvVar])``)を読んでも落ちず、書き換えない。
+
+    頭の点の空の名を ``hy.mangle`` へ渡して hide が AssertionError で止まった(card ki-511a7a8431de)。
+    """
+    root_dir = tmp_path / "pkg"
+    root_dir.mkdir()
+    patterns = tool.Patterns.of([tool.Child("pkg", "handlers", root_dir)])
+    context = tool.FileContext("other/model.hy", None, False)
+    text = "(import .runtime-env-model [EnvVar])\n(import pkg.handlers [h])\n"
+    hy, _ = tool.rewrite_hy(text, patterns, context, lambda _module, _name: True)
+    assert hy == "(import .runtime-env-model [EnvVar])\n(import pkg [h])\n"
+
+
 def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path) -> None:
     """古い path を先に import しても、入口が子と同じ名で出す物(関数)が入口に残る。
 
