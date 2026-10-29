@@ -64,6 +64,16 @@
   `access_secret` and `get_secret_manager_client`; doeff-system-one drops `judge` (yield the effect `Judge`). The
   helpers the other repositories read stay: `structured_llm__openai`, `structured_llm__gemini`, `edit_image__gemini`,
   doeff-openrouter's `structured_llm`, `cut_broker`, `restore_broker` and `judge_many`.
+- **Breaking (doeff-openai):** the import root no longer exports the client class, the pricing table or the token
+  counters (`OpenAIClient`, `ClientHolder`, `MODEL_PRICING`, `ModelPricing`, `calculate_cost`, `estimate_cost`,
+  `estimate_max_cost`, `get_model_pricing`, `count_tokens`, `count_message_tokens`, `count_embedding_tokens`,
+  `get_encoding`, `extract_token_usage`, `extract_request_id`, `is_gpt5_model`, `requires_max_completion_tokens`),
+  since a subpackage's public API is its effects and handlers (ADR-DOE-API-001 R1). The handlers build the OpenAI
+  client from the Reader keys `openai_api_key`, `openai_organization`, `openai_base_url`, `openai_timeout_seconds`
+  and `openai_max_retries`: put the settings in the environment where you built an `OpenAIClient` and gave it as
+  `openai_client`. Ask for the cost of a call with the effect `CalculateCost`, and answer the models the package's
+  pricing table does not know with an outer handler. The old path `doeff_openai.client` still reads `OpenAIClient`
+  until the moved-module layer is removed.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).

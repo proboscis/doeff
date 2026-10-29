@@ -8,15 +8,15 @@ by calling Program -> Program handlers directly.
 
 import pytest
 from doeff_openai import (
-    MODEL_PRICING,
     CalculateCost,
     CostInfo,
     MissingCachedPricingError,
     TokenUsage,
     UnknownModelPricingError,
-    calculate_cost,
     openai_production_handler,
 )
+from doeff_openai._costs import calculate_cost
+from doeff_openai._types import MODEL_PRICING
 
 from doeff import Pass, Resume, do, run
 from doeff import handler as _install_raw_handler

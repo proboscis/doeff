@@ -151,8 +151,25 @@ def _get_state_or_none(key: str) -> EffectGenerator[Any | None]:
 
 
 @do
+def _ask_or_none(key: str) -> EffectGenerator[Any | None]:
+    """Read a Reader key, returning None when the environment does not have it."""
+
+    @do
+    def _read() -> EffectGenerator[Any]:
+        return (yield Ask(key))
+
+    safe_result = yield Try(_read())
+    return safe_result.value if safe_result.is_ok() else None
+
+
+@do
 def get_openai_client() -> EffectGenerator[OpenAIClient]:
-    """Get OpenAI client from environment or create new one."""
+    """Get OpenAI client from environment or create new one.
+
+    The client class is inside the handlers (ADR-DOE-API-001 R1): a caller sets it up through the
+    Reader keys ``openai_api_key``, ``openai_organization``, ``openai_base_url``,
+    ``openai_timeout_seconds`` and ``openai_max_retries`` instead of building the client.
+    """
 
     # Create a program that asks for the client
     @do
@@ -183,8 +200,19 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
     if not api_key:
         api_key = yield _get_state_or_none("openai_api_key")
 
-    # Create client (api_key might be None, which is ok - OpenAI client will use its own defaults)
-    client = OpenAIClient(api_key=api_key)
+    organization = yield _ask_or_none("openai_organization")
+    base_url = yield _ask_or_none("openai_base_url")
+    timeout_seconds = yield _ask_or_none("openai_timeout_seconds")
+    max_retries = yield _ask_or_none("openai_max_retries")
+
+    # Create client (a missing setting is None, which is ok - OpenAI client will use its own defaults)
+    client = OpenAIClient(
+        api_key=api_key,
+        organization=organization,
+        base_url=base_url,
+        timeout=timeout_seconds,
+        max_retries=max_retries,
+    )
 
     # Store in state for reuse
     yield Put("openai_client", client)
