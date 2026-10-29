@@ -6,7 +6,7 @@
 from pydantic import BaseModel
 
 from doeff import do, handler, run
-from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import MockGeminiHandler, gemini_mock_handler
 from doeff_llm.effects import LLMChat, LLMStructuredQuery
 from doeff_openai.handlers.testing import MockOpenAIConfig, MockOpenAIState, openai_mock_handler
 from doeff_openrouter.handlers.testing import MockOpenRouterRuntime, openrouter_mock_handler

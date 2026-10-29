@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from doeff import async_run, default_handlers, do
 from doeff_gemini import structured_llm__gemini
-from doeff_gemini.handlers import default_gemini_cost_handler
+from doeff_gemini import default_gemini_cost_handler
 
 
 class WeatherResponse(BaseModel):
@@ -122,8 +122,8 @@ constructed (API key vs ADC) and which environment keys are read.
 
 `doeff-gemini` now supports provider-agnostic image effects:
 
-- `doeff_image.effects.ImageGenerate`
-- `doeff_image.effects.ImageEdit`
+- `doeff_image.ImageGenerate`
+- `doeff_image.ImageEdit`
 
 Use `gemini_image_handler` for model-routed protocol handling. It handles
 Gemini image models and delegates unsupported models with `Delegate()`, so it

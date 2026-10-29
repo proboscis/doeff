@@ -540,21 +540,21 @@
    "why": "Secret Manager の client"
   },
   {
-   "handler": "doeff_gemini.handlers.production:production_handlers",
+   "handler": "doeff_gemini._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
    "why": "google.genai の SDK を Await"
   },
   {
-   "handler": "doeff_gemini.handlers.production:gemini_production_handler",
+   "handler": "doeff_gemini._handlers.production:gemini_production_handler",
    "touches": [
     "http"
    ],
    "why": "同上"
   },
   {
-   "handler": "doeff_gemini.handlers.production:gemini_image_handler",
+   "handler": "doeff_gemini._handlers.production:gemini_image_handler",
    "touches": [
     "http"
    ],
@@ -589,14 +589,14 @@
    "why": "同上"
   },
   {
-   "handler": "doeff_seedream.handlers.production:seedream_image_handler",
+   "handler": "doeff_seedream._handlers.production:seedream_image_handler",
    "touches": [
     "http"
    ],
    "why": "Seedream の SDK を Await"
   },
   {
-   "handler": "doeff_seedream.handlers.production:production_handlers",
+   "handler": "doeff_seedream._handlers.production:production_handlers",
    "touches": [
     "http"
    ],

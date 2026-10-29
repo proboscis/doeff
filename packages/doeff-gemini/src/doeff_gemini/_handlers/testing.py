@@ -7,8 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin
 
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_image.types import ImageResult
+from doeff_image import ImageEdit, ImageGenerate, ImageResult
 from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,
@@ -19,14 +18,14 @@ from PIL import Image as PILImage
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_gemini.effects import (
+from doeff_gemini._effects import (
     GeminiChat,
     GeminiEmbedding,
     GeminiImageEdit,
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
-from doeff_gemini.handlers.production import _is_gemini_model
+from doeff_gemini._handlers.production import _is_gemini_model
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

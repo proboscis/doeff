@@ -46,7 +46,7 @@ from pydantic import BaseModel
 
 from doeff import do, run
 from doeff_llm.effects import LLMChat, LLMStructuredQuery
-from doeff_gemini.handlers import gemini_production_handler
+from doeff_gemini import gemini_production_handler
 from doeff_openai.handlers import openai_production_handler
 from doeff_openrouter.handlers import openrouter_production_handler
 
@@ -88,7 +88,7 @@ result = run(
 Provider-specific effect classes remain for compatibility:
 
 - `doeff_openai.effects.ChatCompletion`, `StructuredOutput`, `Embedding`
-- `doeff_gemini.effects.GeminiChat`, `GeminiStructuredOutput`, `GeminiEmbedding`
+- `doeff_gemini.GeminiChat`, `GeminiStructuredOutput`, `GeminiEmbedding`
 - `doeff_openrouter.effects.RouterChat`, `RouterStructuredOutput`
 
 They are now deprecated aliases and emit `DeprecationWarning` when instantiated.

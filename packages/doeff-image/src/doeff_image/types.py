@@ -1,32 +1,21 @@
-"""Unified image result types."""
+# moved-submodule-shim: doeff_image.types -> doeff_image._types
+"""Moved: ``doeff_image.types`` is now ``doeff_image._types`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_image.types…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from PIL import Image
+if TYPE_CHECKING:
+    from doeff_image._types import *  # noqa: F403
 
+if __name__ == "__main__":
+    import runpy
 
-@dataclass(frozen=True, kw_only=True)
-class ImageResult:
-    """Provider-agnostic image generation/edit result."""
-
-    images: list[Image.Image]
-    model: str
-    prompt: str
-    generation_id: str | None = None
-    cost_usd: float | None = None
-    raw_response: Any = None
-
-    def to_pil_image(self):  # type: ignore[override]
-        """Return the first image in the result."""
-        if not self.images:
-            raise ValueError("ImageResult has no images")
-        return self.images[0]
-
-    def save(self, path: str, *, format: str | None = None) -> None:  # noqa: A002 - public API parameter name is intentionally stable
-        """Save the first image in the result."""
-        self.to_pil_image().save(path, format=format)
-
-
-__all__ = ["ImageResult"]
+    runpy.run_module("doeff_image._types", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_image._types")

@@ -26,8 +26,11 @@ from _runner import async_run_program  # noqa: E402
 from doeff_core_effects.effects import (  # noqa: E402 - late import follows sys.path fixture setup
     EffectBase as Effect,
 )
-from doeff_gemini import edit_image__gemini, structured_llm__gemini  # noqa: E402
-from doeff_gemini.handlers import default_gemini_cost_handler  # noqa: E402
+from doeff_gemini import (  # noqa: E402
+    default_gemini_cost_handler,
+    edit_image__gemini,
+    structured_llm__gemini,
+)
 
 from doeff import (  # noqa: E402
     AskEffect,

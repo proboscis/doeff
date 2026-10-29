@@ -5,8 +5,8 @@
 import warnings
 
 from doeff import do, handler, run
-from doeff_gemini.effects import GeminiChat
-from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import GeminiChat
+from doeff_gemini import MockGeminiHandler, gemini_mock_handler
 from doeff_llm.effects import LLMChat
 from doeff_openai.effects import ChatCompletion
 from doeff_openai.handlers.testing import MockOpenAIConfig, openai_mock_handler

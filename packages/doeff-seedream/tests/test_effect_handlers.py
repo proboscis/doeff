@@ -17,11 +17,16 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
-from doeff_image.types import ImageResult
-from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
-from doeff_seedream.handlers import mock_handlers, production_handlers
-from doeff_seedream.types import SeedreamImage, SeedreamImageEditResult
+from doeff_image import ImageGenerate as UnifiedImageGenerate
+from doeff_image import ImageResult
+from doeff_seedream import (
+    SeedreamGenerate,
+    SeedreamImage,
+    SeedreamImageEditResult,
+    SeedreamStructuredOutput,
+    mock_handlers,
+    production_handlers,
+)
 
 from doeff import EffectGenerator, do, run
 
@@ -84,8 +89,8 @@ def _domain_program() -> EffectGenerator[dict[str, Any]]:
 
 
 def test_effect_exports() -> None:
-    from doeff_seedream.effects import SeedreamGenerate as ImportedGenerate
-    from doeff_seedream.effects import SeedreamStructuredOutput as ImportedStructured
+    from doeff_seedream import SeedreamGenerate as ImportedGenerate
+    from doeff_seedream import SeedreamStructuredOutput as ImportedStructured
 
     assert ImportedGenerate is SeedreamGenerate
     assert ImportedStructured is SeedreamStructuredOutput
@@ -98,8 +103,8 @@ def test_seedream_generate_is_deprecated_alias() -> None:
 
 
 def test_handler_exports() -> None:
-    from doeff_seedream.handlers import mock_handlers as imported_mock_handlers
-    from doeff_seedream.handlers import production_handlers as imported_production_handlers
+    from doeff_seedream import mock_handlers as imported_mock_handlers
+    from doeff_seedream import production_handlers as imported_production_handlers
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers

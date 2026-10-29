@@ -1,7 +1,7 @@
 """Gemini domain effects."""
 
 
-from doeff_image.effects import ImageEdit, ImageGenerate
+from doeff_image import ImageEdit, ImageGenerate
 
 from .chat import GeminiChat, GeminiStreamingChat
 from .cost import GeminiCalculateCost
