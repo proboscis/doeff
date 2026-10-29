@@ -180,10 +180,31 @@ import pytest
 def doeff_interpreter() -> Any:
     def run_program(program: Any, *, env: dict[Any, Any] | None = None) -> Any:
         from doeff import run
+        from doeff_adr import adr_registry
 
         if env:
             raise ValueError("this ADR test runtime does not use env overrides")
-        return run(program)
+        return run(adr_registry()(program))
 
     return run_program
 ```
+
+An ADR's `deftest` reads a registered ADR with the effect `GetAdr`, answered by
+the handler `adr_registry()` that the fixture installs (it reads the process
+registry `defadr` fills, at the time the effect is answered):
+
+```hy
+(require doeff-hy.macros [deftest <-])
+(import doeff-adr [GetAdr])
+
+(deftest test-every-law-names-a-check
+  (<- spec (GetAdr ADR-ID))
+  (assert (all (gfor law spec.laws (.get law "enforced_by")))))
+```
+
+A test that wants another table installs `adr_registry(specs=[spec ...])`
+around the part of the program that should read it: the inner handler answers
+first, and an id missing from that list is a `KeyError` (it does not fall
+through to the process registry). `specs=[]` is an empty table, not the
+registry. The function `get_adr` remains only as a transition layer until the
+callers outside doeff read `GetAdr`; new code reads `GetAdr`.
