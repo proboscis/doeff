@@ -15,8 +15,7 @@ from tempfile import mkdtemp
 import pytest
 from doeff_agents import AgentType
 from doeff_agents import Capture, LaunchEffect, Monitor, Stop
-from doeff_agents import agent_handler_defhandler
-from doeff_agents._handlers.production import TmuxAgentHandler
+from doeff_agents import tmux_agent_defhandler
 from doeff_agents._tmux import TmuxSessionBackend
 from doeff_core_effects import state
 from doeff_core_effects import scheduled
@@ -64,8 +63,7 @@ class TestMcpLiveE2E:
         work_dir = Path(mkdtemp(prefix="doeff-mcp-e2e-"))
         _tool_call_log.clear()
 
-        handler = TmuxAgentHandler(backend=TmuxSessionBackend())
-        agent_defhandler = agent_handler_defhandler(handler)
+        agent_defhandler = tmux_agent_defhandler(backend=TmuxSessionBackend())
 
         @do
         def program():

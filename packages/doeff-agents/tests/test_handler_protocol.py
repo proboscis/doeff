@@ -96,6 +96,23 @@ def test_testing_handlers_are_defhandlers_not_classes() -> None:
     assert "yield Pass(effect, k)" not in source
 
 
+def test_tmux_handler_is_a_defhandler_not_a_class() -> None:
+    # ADR-DOE-API-001 R4: the production tmux handler is a defhandler whose clauses answer each effect with a
+    # function over the tmux world — no handler class with a method per effect, and no handler base class.
+    import doeff_agents
+
+    handlers_dir = Path(__file__).resolve().parents[1] / "src" / "doeff_agents" / "_handlers"
+    production = (handlers_dir / "production.py").read_text()
+    effectful = (handlers_dir / "effectful.hy").read_text()
+
+    assert "class TmuxAgentHandler" not in production
+    assert "class AgentHandler" not in production
+    assert "(defhandler tmux-agent-defhandler" in effectful
+    assert "AgentHandler" not in effectful
+    for name in ("AgentHandler", "TmuxAgentHandler", "agent_handler_defhandler"):
+        assert not hasattr(doeff_agents, name), name
+
+
 def test_unknown_effect_delegates() -> None:
     result = run(
         _install_raw_handler(_unknown_effect_fallback)(agent_effectful_handler()(_unknown_workflow()))

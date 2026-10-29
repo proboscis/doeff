@@ -31,11 +31,11 @@
      (interpretation
        "スクレイプを『フォールバック』として残すのは無フォールバックより悪い: 短い payload では成功し長い payload で失敗するため、輸送の正しさが payload 長に依存する非決定的な系になる。法(ADR)・機構(コード)・利用者(pin 消費者)は one set で移行する。")]
   :decision
-    [(rule R1 "in-process defhandler(agent-handler-defhandler / tmux-agent-defhandler)経由で launch される result_schema 付き L2 セッションは、必ず in-VM MCP サーバを持つ: domain tools + report_result ツール。spec.mcp_tools が空でも report_result のみのサーバを立てる。sink は launch 前に登録し、結果契約プロンプトは report_result ツールのみを指示する。")
+    [(rule R1 "in-process defhandler(tmux-agent-defhandler — AgentHandler の object を包む agent-handler-defhandler は ADR-DOE-API-001 R4 で消した)経由で launch される result_schema 付き L2 セッションは、必ず in-VM MCP サーバを持つ: domain tools + report_result ツール。spec.mcp_tools が空でも report_result のみのサーバを立てる。sink は launch 前に登録し、結果契約プロンプトは report_result ツールのみを指示する。")
      (rule R2 "in-process AwaitResult が結果を解決する唯一の源は report された sink である(result-first、session 生死に関わらず勝つ)。端末バイト列を結果 payload としてパースすることを禁止する。pane capture は観測(status・ダイアログ・watchdog)専用として残る。")
      (rule R3 "マーカー語彙(DOEFF_AGENT_RESULT_BEGIN/END)とその抽出・修復ヘルパは doeff-agents から削除する。マーカー印字指示・マーカーパースの再導入は本 ADR 違反(semgrep 検出)。")
      (rule R4 "報告なしで terminal を観測したセッションは型付き no-result outcome(EXITED, result=None, validation_error は report_result を名指し, continuable=False)を返す。生存中で未報告なら heartbeat/awaiting-input 観測を返し続ける — solicitation 方針は呼び出し側の所有(ADR-DOE-AGENTS-002 R1 の in-process 対応物)。")
-     (rule R5 "TmuxAgentHandler.handle_launch_session は sink 未登録の schema spec に対して fail-fast する(型付き AgentLaunchError)。in-process 面の L1 agent() タスク経路は同期 await が server loop を饑餓させるためデータチャネルをホストできない — schema セッションは L2 LaunchSession 効果経路を使うこと。Mock/Scenario/Daemon ハンドラは各自の輸送を所有し R5 の対象外。")
+     (rule R5 "tmux-agent-defhandler の LaunchSession の答え(doeff_agents._handlers.production._launch_session — 前の TmuxAgentHandler.handle_launch_session)は sink 未登録の schema spec に対して fail-fast する(型付き AgentLaunchError)。in-process 面の L1 agent() タスク経路は同期 await が server loop を饑餓させるためデータチャネルをホストできない — schema セッションは L2 LaunchSession 効果経路を使うこと。Mock/Scenario/Daemon ハンドラは各自の輸送を所有し R5 の対象外。")
      (rule R6 "移行: doeff-agents を pin する消費者(doeff-agentic, proboscis-ema)は schema セッションを L2 経路へ移す。マーカー依存のテスト・プロンプト主張は本 ADR による意図的な破壊的変更である。")]
   :laws
     [(law results-never-ride-rendered-terminal

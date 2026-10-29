@@ -528,14 +528,6 @@
    "why": "tmux・McpToolServer・time.monotonic"
   },
   {
-   "handler": "doeff_agents._handlers.effectful:agent-handler-defhandler",
-   "touches": [
-    "network",
-    "clock"
-   ],
-   "why": "節の中で McpToolServer を起こす"
-  },
-  {
    "handler": "doeff_agents._handlers:daemon_agent_handler",
    "touches": [
     "network",
