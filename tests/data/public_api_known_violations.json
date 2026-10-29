@@ -13378,14 +13378,6 @@
       "doeff_gemini.types"
      ]
     },
-    "境界 — class の形の handler": {
-     "doeff_gemini.handlers": [
-      "MockGeminiHandler"
-     ],
-     "doeff_gemini.handlers.testing": [
-      "MockGeminiHandler"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_gemini": [
       "APICallMetadata",
@@ -16978,14 +16970,6 @@
       "doeff_seedream.handlers.testing",
       "doeff_seedream.structured_llm",
       "doeff_seedream.types"
-     ]
-    },
-    "境界 — class の形の handler": {
-     "doeff_seedream.handlers": [
-      "MockSeedreamHandler"
-     ],
-     "doeff_seedream.handlers.testing": [
-      "MockSeedreamHandler"
      ]
     },
     "境界 — effect の値の型": {
