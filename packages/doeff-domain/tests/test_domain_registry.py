@@ -1,4 +1,9 @@
-"""Domain データ構造と registry の意味論 (ADR-DOE-DOMAIN-001 D2/D3)。"""
+"""Domain データ構造と表の意味論 (ADR-DOE-DOMAIN-001 D2/D3)。
+
+表は effect RegisterDomain・GetDomain で読み書きし、handler を返す工場 domain_registry が答える(ADR-DOE-API-001 R23・
+card ki-03a7f0af2b64)。domain_registry() は process の表(defdomain が載せる所)、domain_registry(domains=[…]) は渡した
+domain だけの別の表から答える。
+"""
 
 import pytest
 from doeff_domain import (
@@ -8,13 +13,14 @@ from doeff_domain import (
     DomainTerm,
     DuplicateDomainNameError,
     DuplicateEffectIntroductionError,
-    get_domain,
-    introducing_domain,
-    isolated_registry,
-    register_domain,
-    registered_domains,
+    GetDomain,
+    RegisterDomain,
+    domain_registry,
 )
+from doeff_domain._registry import isolated_registry, register_domain
 from domain_test_effects import FixtureAlpha, FixtureBeta, make_effect_class
+
+from doeff import do, run
 
 
 def make_domain(name="d-fixture", **kwargs):
@@ -72,71 +78,181 @@ class TestDomainData:
         assert domain.laws[0].counterexamples == ("ACP core#8",)
 
 
+@do
+def _introducing(table_domains, effect):
+    """effect を導入する domain の名を、表の domain を GetDomain で読んで探す(表の外の関数 introducing_domain の代わり)。"""
+    homes = []
+    for domain in table_domains:
+        read = yield GetDomain(domain.name)
+        if effect in read.effects:
+            homes = [*homes, read.name]
+    return homes
+
+
 class TestRegistration:
     def test_register_and_lookup(self):
-        with isolated_registry():
-            domain = register_domain(make_domain(name="d-reg", effects=[FixtureAlpha]))
-            assert get_domain("d-reg") is domain
-            assert introducing_domain(FixtureAlpha) is domain
-            assert domain in registered_domains()
+        domain = make_domain(name="d-reg", effects=[FixtureAlpha])
+
+        @do
+        def body():
+            registered = yield RegisterDomain(domain)
+            found = yield GetDomain("d-reg")
+            return registered, found
+
+        registered, found = run(domain_registry(domains=[])(body()))
+        assert registered is domain
+        assert found is domain
 
     def test_same_name_reregistration_raises(self):
-        # D2: 同名 domain の再登録は即例外
-        with isolated_registry():
-            register_domain(make_domain(name="d-dup"))
-            with pytest.raises(DuplicateDomainNameError, match="d-dup"):
-                register_domain(make_domain(name="d-dup"))
+        # D2: 同名 domain の再登録は即例外 — RegisterDomain を出した所で受けられる
+        @do
+        def body():
+            yield RegisterDomain(make_domain(name="d-dup"))
+            try:
+                yield RegisterDomain(make_domain(name="d-dup"))
+            except DuplicateDomainNameError as error:
+                return str(error)
+            return "registered twice"
+
+        assert "d-dup" in run(domain_registry(domains=[])(body()))
 
     def test_second_introduction_raises_with_both_domain_names(self):
         # D3: 導入 1 / 包含 ∞ — 2 つ目の導入は両 domain 名入りの例外
-        with isolated_registry():
-            register_domain(make_domain(name="d-first", effects=[FixtureAlpha]))
-            with pytest.raises(DuplicateEffectIntroductionError) as excinfo:
-                register_domain(make_domain(name="d-second", effects=[FixtureAlpha]))
-            message = str(excinfo.value)
-            assert "d-first" in message
-            assert "d-second" in message
-            assert "FixtureAlpha" in message
+        @do
+        def body():
+            yield RegisterDomain(make_domain(name="d-first", effects=[FixtureAlpha]))
+            yield RegisterDomain(make_domain(name="d-second", effects=[FixtureAlpha]))
+
+        with pytest.raises(DuplicateEffectIntroductionError) as excinfo:
+            run(domain_registry(domains=[])(body()))
+        message = str(excinfo.value)
+        assert "d-first" in message
+        assert "d-second" in message
+        assert "FixtureAlpha" in message
 
     def test_includes_do_not_introduce(self):
         # 包含はいくつでも可 — 導入にはならない
-        with isolated_registry():
-            home = register_domain(make_domain(name="d-home", effects=[FixtureAlpha]))
-            register_domain(make_domain(name="d-inc1", includes=[home]))
-            register_domain(make_domain(name="d-inc2", includes=[home]))
-            assert introducing_domain(FixtureAlpha).name == "d-home"
+        home = make_domain(name="d-home", effects=[FixtureAlpha])
+        inc1 = make_domain(name="d-inc1", includes=[home])
+        inc2 = make_domain(name="d-inc2", includes=[home])
+        homes = run(
+            domain_registry(domains=[home, inc1, inc2])(
+                _introducing([home, inc1, inc2], FixtureAlpha)
+            )
+        )
+        assert homes == ["d-home"]
 
     def test_introduction_keyed_by_class_identity_not_name(self):
         # D3: キーはクラス同一性 — 同名の別クラスは両方導入できる
-        with isolated_registry():
-            first = make_effect_class("SameNameEffect")
-            second = make_effect_class("SameNameEffect")
-            register_domain(make_domain(name="d-id1", effects=[first]))
-            register_domain(make_domain(name="d-id2", effects=[second]))
-            assert introducing_domain(first).name == "d-id1"
-            assert introducing_domain(second).name == "d-id2"
+        first = make_effect_class("SameNameEffect")
+        second = make_effect_class("SameNameEffect")
+        id1 = make_domain(name="d-id1", effects=[first])
+        id2 = make_domain(name="d-id2", effects=[second])
+        answer = domain_registry(domains=[id1, id2])
+        assert run(answer(_introducing([id1, id2], first))) == ["d-id1"]
+        assert run(answer(_introducing([id1, id2], second))) == ["d-id2"]
 
     def test_failed_registration_is_atomic(self):
-        with isolated_registry():
-            register_domain(make_domain(name="d-atomic", effects=[FixtureAlpha]))
-            with pytest.raises(DuplicateEffectIntroductionError):
-                register_domain(make_domain(name="d-atomic2", effects=[FixtureBeta, FixtureAlpha]))
-            with pytest.raises(KeyError):
-                get_domain("d-atomic2")
-            with pytest.raises(KeyError):
-                introducing_domain(FixtureBeta)
+        @do
+        def body():
+            yield RegisterDomain(make_domain(name="d-atomic", effects=[FixtureAlpha]))
+            try:
+                yield RegisterDomain(
+                    make_domain(name="d-atomic2", effects=[FixtureBeta, FixtureAlpha])
+                )
+            except DuplicateEffectIntroductionError:
+                refused = True
+            else:
+                refused = False
+            assert refused
+            try:
+                yield GetDomain("d-atomic2")
+            except KeyError:
+                pass
+            else:
+                return "the failed domain was left behind"
+            # FixtureBeta の導入も残らない — もう一度導入できる
+            again = yield RegisterDomain(make_domain(name="d-beta", effects=[FixtureBeta]))
+            return again.name
+
+        assert run(domain_registry(domains=[])(body())) == "d-beta"
 
     def test_get_domain_unknown_name_fails_loud(self):
-        with isolated_registry(), pytest.raises(KeyError, match="no-such-domain"):
-            get_domain("no-such-domain")
+        with pytest.raises(KeyError, match="no-such-domain"):
+            run(domain_registry(domains=[])(GetDomain("no-such-domain")))
 
-    def test_isolated_registry_starts_empty_and_restores(self):
+    def test_a_given_table_with_a_double_introduction_is_refused_when_made(self):
+        with pytest.raises(DuplicateEffectIntroductionError):
+            domain_registry(
+                domains=[
+                    make_domain(name="d-a", effects=[FixtureAlpha]),
+                    make_domain(name="d-b", effects=[FixtureAlpha]),
+                ]
+            )
+
+    def test_domains_must_be_a_list(self):
+        with pytest.raises(TypeError, match="list of Domain"):
+            domain_registry(domains=make_domain())  # type: ignore[arg-type]
+
+
+class TestTableSwap:
+    """test の中で表を差し替えられる(受入の条 cc54652e3 — 別の表を据えると effect がその表から答える)。"""
+
+    def test_the_process_table_answers_by_default(self):
         with isolated_registry():
-            assert registered_domains() == []
-            register_domain(make_domain(name="d-temp", effects=[FixtureBeta]))
-            assert get_domain("d-temp").name == "d-temp"
+            register_domain(make_domain(name="d-process", title="from the process table"))
+            assert run(domain_registry()(GetDomain("d-process"))).title == "from the process table"
+
+    def test_the_process_table_is_read_when_the_effect_is_answered(self):
+        """handler を作った後に載った domain も答える(fixture が handler を作るのは宣言の import の前でもよい)。"""
+        answer = domain_registry()
         with isolated_registry():
-            with pytest.raises(KeyError):
-                get_domain("d-temp")
-            with pytest.raises(KeyError):
-                introducing_domain(FixtureBeta)
+            register_domain(make_domain(name="d-later", title="registered later"))
+            assert run(answer(GetDomain("d-later"))).title == "registered later"
+
+    def test_a_given_table_replaces_the_process_table(self):
+        table = [
+            make_domain(name="d-process", title="from the table"),
+            make_domain(name="d-table-only", title="only in the table"),
+        ]
+        with isolated_registry():
+            register_domain(make_domain(name="d-process", title="from the process table"))
+            answer = domain_registry(domains=table)
+            assert run(answer(GetDomain("d-process"))).title == "from the table"
+            assert run(answer(GetDomain("d-table-only"))).title == "only in the table"
+            assert run(domain_registry()(GetDomain("d-process"))).title == "from the process table"
+
+    def test_an_inner_table_answers_before_the_outer_table(self):
+        """外に既定の domain_registry() を据えたまま、program の一部だけを別の表で走らせられる。"""
+        table = [make_domain(name="d-process", title="from the table")]
+
+        @do
+        def body():
+            outer = yield GetDomain("d-process")
+            inner = yield domain_registry(domains=table)(GetDomain("d-process"))
+            return outer.title, inner.title
+
+        with isolated_registry():
+            register_domain(make_domain(name="d-process", title="from the process table"))
+            assert run(domain_registry()(body())) == ("from the process table", "from the table")
+
+    def test_a_name_outside_the_table_is_a_key_error_not_the_outer_answer(self):
+        @do
+        def body():
+            try:
+                yield GetDomain("d-process")
+            except KeyError as error:
+                return "KeyError", str(error)
+            return "answered", ""
+
+        with isolated_registry():
+            register_domain(make_domain(name="d-process"))
+            kind, message = run(domain_registry()(domain_registry(domains=[])(body())))
+        assert kind == "KeyError"
+        assert "d-process" in message
+
+    def test_register_domain_into_a_given_table_does_not_reach_the_process_table(self):
+        with isolated_registry():
+            run(domain_registry(domains=[])(RegisterDomain(make_domain(name="d-scratch"))))
+            with pytest.raises(KeyError, match="d-scratch"):
+                run(domain_registry()(GetDomain("d-scratch")))

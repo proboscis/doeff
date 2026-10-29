@@ -3,7 +3,7 @@
 (require doeff-domain.macros [defdomain])
 
 (import domain_test_effects [FixtureGamma])
-(import doeff_domain.registry [DomainLaw DomainTerm])
+(import doeff_domain [DomainLaw DomainTerm])
 
 
 (defdomain fixture-macro-domain
