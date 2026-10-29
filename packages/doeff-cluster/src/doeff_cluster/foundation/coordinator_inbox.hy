@@ -18,7 +18,7 @@
 (import time)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
 (import urllib.parse [urlsplit parse-qsl])
-(import doeff_core_effects.scheduler [ExternalPromise])
+(import doeff_core_effects [ExternalPromise])
 
 
 (defclass ReplySlot []

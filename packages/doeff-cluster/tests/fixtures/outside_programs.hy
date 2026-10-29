@@ -7,8 +7,8 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase])
 (import doeff_time [Delay])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [Spawn])
 
 
 (defclass StorePut [EffectBase]

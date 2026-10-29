@@ -20,7 +20,7 @@
 (import httpx)
 (import pytest)
 (import doeff [run with_handlers Program])
-(import doeff_core_effects.scheduler [Spawn Cancel Task])
+(import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import os)
 (import doeff_cluster.foundation.process_versions [process-versions])

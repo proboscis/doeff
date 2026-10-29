@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [MemoryFiles MakeDirectory ReadText RemoveTree FileFailed])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])

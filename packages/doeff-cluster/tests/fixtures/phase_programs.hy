@@ -4,7 +4,7 @@
 (require doeff-hy.macros [defk <- var])
 (require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
-(import doeff_core_effects.effects [Put])
+(import doeff_core_effects [Put])
 (import doeff_time [Delay])
 
 

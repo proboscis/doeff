@@ -54,8 +54,8 @@ from doeff_cluster.coordinator.intent.kube_model import AnnotateDeployment as An
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
 from doeff_cluster.coordinator.intent.kube_model import FollowDeployments as FollowDeployments
 from doeff_cluster.coordinator.intent.kube_model import FollowNodes as FollowNodes
-from doeff_core_effects.effects import slog as slog
-from doeff_core_effects.scheduler import Spawn as Spawn
+from doeff_core_effects import slog as slog
+from doeff_core_effects import Spawn as Spawn
 from doeff_events import Publish as Publish
 from doeff_events import NoticeSent as NoticeSent
 from doeff_events import NoticeGapMarked as NoticeGapMarked

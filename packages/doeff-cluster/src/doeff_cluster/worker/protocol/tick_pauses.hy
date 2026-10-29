@@ -12,7 +12,7 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses [dataclass])
 (import doeff_time [Delay GetMonotonic RaceOutcome RaceWithin])
-(import doeff_core_effects.scheduler [Cancel Future Race Spawn Task])
+(import doeff_core_effects [Cancel Future Race Spawn Task])
 (import doeff_core_effects.stop_signal_effects [StopBell StopRequested])
 (import doeff_core_effects.process_effects [AwaitProcessExit])
 (import doeff_core_effects.warm_effects [AwaitWarmChildExit])

@@ -15,7 +15,7 @@
 (import time)
 (import urllib.request)
 (import doeff [run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [Request NextRequests Reply CoordinatorStopRequested])
@@ -104,7 +104,7 @@
 (val CHILD-STORE
   "import sys, hy
 from doeff import run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects._scheduler import scheduled
 from doeff_cluster.foundation.coordinator_inbox import StopState, stop_on_signals
 from doeff_cluster.foundation.record_inbox import RecordInbox
 from doeff_cluster.record_store.entry.handler_sets import production_handlers

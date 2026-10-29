@@ -13,7 +13,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import doeff [EffectBase Program])
 (import doeff_core_effects.meter_effects [MeterSnapshot ReadMeter])
-(import doeff_core_effects.scheduler [Spawn Cancel Task])
+(import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 

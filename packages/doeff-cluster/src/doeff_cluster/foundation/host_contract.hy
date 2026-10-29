@@ -13,12 +13,12 @@
 ;;;
 ;;; 本番では、入口の側の土台の handler host-reader(shared/entry/host_reader — #2981 でここから移した)が os.environ から 1 と 3 に答え、
 ;;; os-environ-reader が 2 に答える(業務の側が土台の組に並べる)。host-reader は session val を使うので、その外側に状態の handler
-;;; (doeff_core_effects.handlers の state)が要る — 土台の組の中で host-reader より外に置く。
+;;; (doeff_core_effects._handlers の state)が要る — 土台の組の中で host-reader より外に置く。
 ;;; sim の偽の宿は同じ鍵に同じ型で答える。job_entry の文書・host-reader・sim の宿は、この値を参照する(写しを作らない)。
 ;;;
 ;;; environ の読みは答え方の同じ 2 つの答え手で、名で実 I/O の有無が決まる(#1536): 本番の土台 = os-environ-reader(子の process の
 ;;; os.environ — 実 I/O)・sim の偽の宿(local.hy の run-fenced)= environ-table-reader(子の spec.environ の値の表だけ)。2 つが同じ値を
-;;; 返す事は宿の読みの契約テスト(tests/test_host_reads_contract.hy)が保つ。値は字面どおり返す —doeff_core_effects.handlers.env_var_ask は { で始まり
+;;; 返す事は宿の読みの契約テスト(tests/test_host_reads_contract.hy)が保つ。値は字面どおり返す —doeff_core_effects._handlers.env_var_ask は { で始まり
 ;;; } で終わる値を {module.path} の import として解くので、宣言の :environ に JSON の object を置いた設定が本番の子でだけ落ちていた
 ;;; (sim の宿は字面どおり返していた — job API の計画の決定 4 の戻し方「専用の handler を足して置き換える」)。env_var_ask の
 ;;; {module.path} の機能はそのまま(宿の契約の読みとしては使わない)。
@@ -39,9 +39,8 @@
 (import dataclasses [dataclass])
 (import os)
 (import collections.abc [Mapping])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise
-                                      CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise CreateExternalPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_time [DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect])
 
 

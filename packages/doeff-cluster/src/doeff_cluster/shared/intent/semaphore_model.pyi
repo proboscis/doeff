@@ -12,7 +12,7 @@ semaphore_model.hy は Hy の module なので、pyright は中を読めず、�
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_core_effects.scheduler import CreateSemaphore, Semaphore
+from doeff_core_effects import CreateSemaphore, Semaphore
 
 MODULE_TAGS: dict[str, str]
 SEMAPHORE_PREFIX: str

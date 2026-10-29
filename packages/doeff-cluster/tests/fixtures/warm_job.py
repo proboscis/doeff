@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 from doeff import ReadVmLiveCounts, run
-from doeff_core_effects.handlers import vm_probe_handler
+from doeff_core_effects import vm_probe_handler
 from doeff_core_effects.os_warm_process import own_thread_count
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}

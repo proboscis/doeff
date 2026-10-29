@@ -8,8 +8,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import collections.abc [Callable])
 (import doeff [with-handlers])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [reader])
 (import tests.fixtures.envs [plain-foundation])
 
 

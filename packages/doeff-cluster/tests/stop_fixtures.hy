@@ -4,7 +4,7 @@
 ;;; tick-pauses の外側にこれを置く — 合図は来ないので、周の間の眠りは期限まで(止めは次の周の頭で読む)。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_core_effects.scheduler [CreatePromise Promise Wait])
+(import doeff_core_effects [CreatePromise Promise Wait])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopBell])
 
 

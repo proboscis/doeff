@@ -35,7 +35,7 @@
 (import doeff [EffectBase])
 (import typing [ClassVar])
 (import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode HandleKind])
-(import doeff_core_effects.scheduler [CreateSemaphore Semaphore])
+(import doeff_core_effects [CreateSemaphore Semaphore])
 
 (setv SEMAPHORE-PREFIX "semaphore/")
 

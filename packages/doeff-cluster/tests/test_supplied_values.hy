@@ -21,7 +21,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff [UnhandledEffect])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadMemoryFiles])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
@@ -376,6 +376,6 @@
   ;; (merge-queue の閉じの検 6 本 — 古い解析器が入っていた)。外側へ渡し直した要求は外側の代役が答え、CA の client が出す effect だけが残る。
   (<- closure FoundationClosure (foundation-closure api-request-under :foundation routed-foundation))
   (assert (= #(closure.unknown closure.unresolved) #(#() #())) closure)
-  (assert (= (sorted (gfor g closure.gaps (get (.split g " ← ") 0))) ["doeff_core_effects.effects.Await" "doeff_core_effects.effects.SlogEffect"])
+  (assert (= (sorted (gfor g closure.gaps (get (.split g " ← ") 0))) ["doeff_core_effects._effects.Await" "doeff_core_effects._effects.SlogEffect"])
           closure.gaps)
   (assert (all (gfor g closure.gaps (in "verify=cluster_ca" g))) closure.gaps))

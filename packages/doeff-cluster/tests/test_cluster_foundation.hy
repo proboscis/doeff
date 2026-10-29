@@ -1,7 +1,7 @@
 ;;; 本番の土台が並べる coordinator に話す handler の組(cluster_foundation.cluster-handlers)の検。
 (require doeff-hy.macros [deftest <- val])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects [reader])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.run_context [RunContext])

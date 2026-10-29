@@ -12,7 +12,7 @@ from doeff import run as run
 from doeff import with_handlers as with_handlers
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import sync_time_handler as sync_time_handler
-from doeff_core_effects.handlers import slog_handler as slog_handler
+from doeff_core_effects import slog_handler as slog_handler
 from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects.file_effects import ReadText as ReadText
