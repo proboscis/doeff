@@ -61,8 +61,8 @@ from types import ModuleType
 from typing import TYPE_CHECKING
 
 import hy
-from doeff_hy_bytecode_guard import (
-    SharedScope,
+from doeff_hy_bytecode_guard._import_scope import SharedScope
+from doeff_hy_bytecode_guard._loader_hooks import (
     gensym_renaming,
     macro_recording,
     record_is_current_here,

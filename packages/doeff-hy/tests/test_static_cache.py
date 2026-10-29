@@ -635,7 +635,7 @@ def test_candidates_are_looked_up_once_per_directory(tmp_path: Path, monkeypatch
 
 def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None:
     # 照らしごとに覚えを捨てず、SharedScope の間は同じ file の状態を 1 度だけ読む。閉じた後は覚えが残らない。
-    from doeff_hy_bytecode_guard import SharedScope
+    from doeff_hy_bytecode_guard._import_scope import SharedScope
     from doeff_hy_bytecode_guard._import_scope import current_scope
     from doeff_hy_bytecode_guard import _macro_use as macro_use
 
