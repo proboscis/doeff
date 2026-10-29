@@ -170,6 +170,42 @@ mod tests {
         }
     }
 
+    /// 子を _ へ移した handler の行は、移し替えの module(1 行目 `# moved-submodule-shim: <古い path> -> <新しい path>`)が残る間、
+    /// 古い綴りの行も目録に持つ。外の repo の :wraps は古い綴りのまま書いてあり、目録から消すと設定の誤りで全部の commit が止まる
+    /// (42f897000 が aiohttp-http-server の古い綴りを _ の綴りへ置き換え、agora-controllers の commit-msg の hook を止めた・card ki-cd6a513ae4b5)。
+    #[test]
+    fn catalog_keeps_the_old_spelling_of_every_moved_handler() {
+        let packages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut moved_from = BTreeMap::new();
+        for entry in walkdir::WalkDir::new(&packages)
+            .into_iter()
+            .filter_entry(|e| !matches!(e.file_name().to_str(), Some("target" | "node_modules" | ".venv")))
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "py"))
+        {
+            let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
+            let Some(mark) = text.lines().next().and_then(|line| line.strip_prefix("# moved-submodule-shim: ")) else { continue };
+            if let Some((old, new)) = mark.split_once(" -> ") {
+                moved_from.insert(new.trim().to_string(), old.trim().to_string());
+            }
+        }
+        assert!(moved_from.contains_key("doeff_core_effects._aiohttp_http_server"), "移し替えの module を見つけられない(探す根 {})", packages.display());
+        let catalog = WorldCatalog::bundled();
+        let missing: Vec<String> = catalog
+            .handlers
+            .values()
+            .filter_map(|handler| {
+                let spelling = handler.definition.spelling();
+                let (module, name) = spelling.split_once(':')?;
+                let old = moved_from.get(module)?;
+                let old_spelling = format!("{}:{}", old, name);
+                let known = DefinitionRef::parse(&old_spelling).is_some_and(|d| catalog.handlers.contains_key(&d.target()));
+                (!known).then(|| format!("{} の古い綴り {}", spelling, old_spelling))
+            })
+            .collect();
+        assert!(missing.is_empty(), "移し替えの module が残るのに古い綴りの行が目録に無い:\n{}", missing.join("\n"));
+    }
+
     #[test]
     fn misreadings_are_reasons() {
         let bad = r#"{"handlers": [

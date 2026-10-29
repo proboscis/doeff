@@ -83,6 +83,20 @@
    "why": "aiohttp で listen する"
   },
   {
+   "handler": "doeff_core_effects:aiohttp_http_server",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-cd6a513ae4b5)"
+  },
+  {
+   "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp_http_server の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(42f897000 が消して agora-controllers の hook を止めた・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
    "touches": [
     "network"
@@ -452,6 +466,17 @@
    "why": "shutil.which・os.environ・open・socket・subprocess・time"
   },
   {
+   "handler": "doeff_agents.io_handlers:driver-io-handler",
+   "touches": [
+    "file",
+    "process",
+    "env",
+    "clock",
+    "network"
+   ],
+   "why": "driver_io_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_agents._sessionhost.substrate:real-substrate",
    "touches": [
     "process",
@@ -519,6 +544,14 @@
    "why": "agentd の unix socket・daemon を起こす"
   },
   {
+   "handler": "doeff_agents.handlers:daemon_agent_handler",
+   "touches": [
+    "network",
+    "process"
+   ],
+   "why": "daemon_agent_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_agents._handlers:claude_agent_runtime_handlers",
    "touches": [
     "process",
@@ -526,6 +559,15 @@
     "thread"
    ],
    "why": "組み立て — doeff_claude_code の claude-code-handler(子 process の claude)を被せる"
+  },
+  {
+   "handler": "doeff_agents.handlers:claude_agent_runtime_handlers",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "claude_agent_runtime_handlers の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
   },
   {
    "handler": "doeff_agents:claude-agent-runtime-handlers",
@@ -546,6 +588,15 @@
    "why": "層 2 だけ — doeff_claude_code の claude-code-handler(子 process の claude)を作る(agora-redesign #3507)"
   },
   {
+   "handler": "doeff_agents.handlers:claude_process_layer_handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "claude_process_layer_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_agents:claude-process-layer-handler",
    "touches": [
     "process",
@@ -564,6 +615,15 @@
    "why": "subprocess.Popen・stdin/stdout の thread・SIGTERM"
   },
   {
+   "handler": "doeff_claude_code.handler:claude-code-handler",
+   "touches": [
+    "process",
+    "file",
+    "thread"
+   ],
+   "why": "claude_code_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_docker._handlers.shell:shell-run-handler",
    "touches": [
     "process"
@@ -580,6 +640,17 @@
     "clock"
    ],
    "why": "workspace_handler・exec_handler・agentd"
+  },
+  {
+   "handler": "doeff_conductor.handlers:production_handlers",
+   "touches": [
+    "file",
+    "process",
+    "network",
+    "thread",
+    "clock"
+   ],
+   "why": "production_handlers の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
   },
   {
    "handler": "doeff_conductor._handlers.utils:make_offloaded_scheduled_handler",
@@ -646,11 +717,25 @@
    "why": "os.environ"
   },
   {
+   "handler": "doeff_secret.handlers:env_var_handler",
+   "touches": [
+    "env"
+   ],
+   "why": "env_var_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
+  },
+  {
    "handler": "doeff_secret._handlers:env_var_handlers",
    "touches": [
     "env"
    ],
    "why": "os.environ"
+  },
+  {
+   "handler": "doeff_secret.handlers:env_var_handlers",
+   "touches": [
+    "env"
+   ],
+   "why": "env_var_handlers の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
   },
   {
    "handler": "doeff_google_secret_manager._handlers.production:production_handlers",
