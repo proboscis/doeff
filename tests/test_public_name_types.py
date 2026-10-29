@@ -47,14 +47,9 @@ _DOEFF_GAPS: dict[str, str] = {
 
 #: doeff_core_effects の頭の名のうち、型が分からないままの物と訳(今は無い — 足す時は訳と一緒に書く)。
 _CORE_HEAD_GAPS: dict[str, str] = {}
-#: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。
-_CORE_TYPED_MODULES = (
-    "doeff_core_effects._cache_effects",
-    "doeff_core_effects._cache_handlers",
-    "doeff_core_effects._memo_effects",
-    "doeff_core_effects._memo_handlers",
-)
-#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5・card ki-c09b3b527fad)。
+#: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。今は全部を下の隠した module で数える。
+_CORE_TYPED_MODULES: tuple[str, ...] = ()
+#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5・card ki-c09b3b527fad・cache と memo は card ki-375e0a35b7a0)。
 #: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名
 #: (``doeff_core_effects.Task`` とその欄)で数える。
 _CORE_TYPED_HIDDEN_MODULES = (
@@ -62,6 +57,10 @@ _CORE_TYPED_HIDDEN_MODULES = (
     "doeff_core_effects._scheduler",
     "doeff_core_effects._handlers",
     "doeff_core_effects._storage",
+    "doeff_core_effects._cache_effects",
+    "doeff_core_effects._cache_handlers",
+    "doeff_core_effects._memo_effects",
+    "doeff_core_effects._memo_handlers",
 )
 _CORE_ENTRY = (
     Path(__file__).resolve().parents[1]
