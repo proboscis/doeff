@@ -13,8 +13,7 @@ pytest.importorskip("hy")
 
 def test_the_core_carriers_that_run_in_place_are_folded() -> None:
     import hy  # noqa: F401 - .hy import hook for sql_effects
-    from doeff_core_effects.effects import Listen, Local, Try
-    from doeff_core_effects.scheduler import Spawn
+    from doeff_core_effects import Listen, Local, Spawn, Try
     from doeff_core_effects.sql_effects import SqlTransaction
 
     for carrier in (Try, Local, Listen, Spawn, SqlTransaction):

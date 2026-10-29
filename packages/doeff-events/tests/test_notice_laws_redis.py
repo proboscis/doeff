@@ -36,9 +36,9 @@ from typing import TYPE_CHECKING, Final, final
 import pytest
 import redis
 import redis.asyncio
-from doeff_core_effects.effects import Await
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import Await
+from doeff_core_effects import await_handler
+from doeff_core_effects import (
     PRIORITY_HIGH,
     PRIORITY_NORMAL,
     Cancel,

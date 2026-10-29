@@ -2,7 +2,7 @@
 (require doeff-hy.macros [defk defp defhandler <-])
 (import doeff [do :as _doeff-do])
 (import doeff [EffectBase run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import dataclasses [dataclass])
 
 ;; Effects

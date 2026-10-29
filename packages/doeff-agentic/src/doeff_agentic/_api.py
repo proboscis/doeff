@@ -372,16 +372,16 @@ class AgenticAPI:
         """
         from doeff_agents import SessionBackend
         from doeff_agents.session_backend import default_session_backend
-        from doeff_core_effects.handlers import (
+        from doeff_core_effects import (
             await_handler,
             lazy_ask,
             listen_handler,
+            scheduled,
             slog_handler,
             state,
             try_handler,
             writer,
         )
-        from doeff_core_effects.scheduler import scheduled
         from doeff_time import sync_time_handler
 
         from doeff import do, run

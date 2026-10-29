@@ -5,8 +5,8 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from collections.abc import Callable as Callable
 from doeff import run as run
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects import ExternalPromise as ExternalPromise
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import WaitWithin as WaitWithin
 from doeff_codex._values import CodexSessionSpec as CodexSessionSpec

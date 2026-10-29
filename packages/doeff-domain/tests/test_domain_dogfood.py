@@ -10,8 +10,8 @@ green になる。ratchet 自体の発火は test_stale_known_uncovered_declarat
 
 import doeff_domain.core_effects_domains as dogfood  # noqa: F401 — import 時に登録
 import pytest
+from doeff_core_effects import Ask, Get, Local, Put
 from doeff_core_effects.cache_effects import CacheDeleteEffect
-from doeff_core_effects.effects import Ask, Get, Local, Put
 from doeff_core_effects.http_effects import HttpRequest
 from doeff_core_effects.memo_effects import (
     MemoDeleteEffect,
@@ -108,7 +108,7 @@ def test_scope_domain_includes_reader_vocabulary():
 
 def test_raw_handler_annotations_applied_post_hoc():
     # D5: core-effects を編集せず dogfood モジュールから handles() を後付け注釈
-    from doeff_core_effects.handlers import lazy_ask, reader, state
+    from doeff_core_effects import lazy_ask, reader, state
 
     assert handled_effects(reader) == frozenset({Ask})
     assert handled_effects(lazy_ask) == frozenset({Ask, Local})

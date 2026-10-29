@@ -13,7 +13,7 @@ Limitations:
 Usage:
     from doeff import run
     from doeff_agentic._tmux_handler import tmux_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects._scheduler import scheduled
 
     handlers = tmux_handler()
     program = handlers(my_workflow())
@@ -757,7 +757,7 @@ def tmux_handler(
     Usage:
         from doeff import run
         from doeff_agentic import tmux_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects._scheduler import scheduled
 
         program = tmux_handler()(my_workflow())
         result = run(scheduled(program))

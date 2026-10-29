@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff_core_effects.scheduler import Promise
+from doeff_core_effects import Promise
 
 from doeff_time._internals.validation import ensure_aware_datetime
 

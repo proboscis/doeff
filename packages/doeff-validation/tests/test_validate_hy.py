@@ -7,8 +7,8 @@ from pathlib import Path
 
 import hy
 import pytest
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader
+from doeff_core_effects import scheduled
 from doeff_traverse import parallel, sequential
 from doeff_validation import CheckError, CheckFailure, ValidationException
 

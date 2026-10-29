@@ -18,17 +18,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import pytest
-from doeff_core_effects.handlers import (
+from doeff_core_effects import (
     await_handler,
     lazy_ask,
     listen_handler,
     local_handler,
+    scheduled,
     slog_handler,
     state,
     try_handler,
     writer,
 )
-from doeff_core_effects.scheduler import scheduled
 from doeff_time import sim_time_handler
 from doeff_traverse import Inspect, Traverse, fail_handler, parallel
 

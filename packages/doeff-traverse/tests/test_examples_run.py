@@ -958,7 +958,7 @@ _BUILT_VALUE_PREAMBLE = f"""
 (import doeff [do :as _doeff-do])
 (import doeff [run])
 (import doeff_core_effects [try-handler :as try_handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse._handlers [sequential fail-handler :as fail_handler])
 
@@ -1129,7 +1129,7 @@ def test_unplaceable_table_catches_its_samples() -> None:
         "checkout の path": f"{EXAMPLES / 'ex07_proboscis_ema_rewrite.hy'}:129",
         "機体の置き場(venv・Python・home)": f"{Path(sys.base_prefix) / 'lib' / 'traceback.py'}",
         expansion_marks: "raised in: _hy_anon_17:129 -> fetch_price:95",
-        "traceback の frame の行": '        File "/x/doeff_core_effects/handlers.py", line 154, in attempt',
+        "traceback の frame の行": '        File "/x/doeff_core_effects/_handlers.py", line 154, in attempt',
     }
     assert set(samples) == set(UNPLACEABLE), "UNPLACEABLE の行ごとに、拾う文をここに足す"
     assert [name for name, sample in samples.items() if not UNPLACEABLE[name](sample)] == []

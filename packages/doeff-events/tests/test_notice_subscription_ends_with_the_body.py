@@ -17,7 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Final
 
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     Cancel,
     CompletePromise,
     CreatePromise,

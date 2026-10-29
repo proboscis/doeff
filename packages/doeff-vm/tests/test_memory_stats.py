@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import doeff_vm
-from doeff_core_effects.handlers import vm_probe_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, vm_probe_handler
 
 from doeff import Gather, ReadVmLiveCounts, ReadVmWorkCounts, Spawn, do, run
 

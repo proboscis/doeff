@@ -17,7 +17,7 @@ from doeff_claude_code.fake import fake_claude_print_handler
 from doeff_claude_code import AccountLimitHit, Usage
 from doeff_claude_code.print_once import claude_print_handler
 from doeff_core_effects import slog_discard_handler, slog_handler, try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_hy.frozen import freeze_json
 
 from doeff import Pass, Resume, do, run, with_handlers

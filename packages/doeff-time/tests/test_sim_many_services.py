@@ -19,7 +19,7 @@ import warnings
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from doeff_core_effects.scheduler import Gather, Spawn, Wait, scheduled
+from doeff_core_effects import Gather, Spawn, Wait, scheduled
 from doeff_time import (
     Delay,
     GetMonotonic,

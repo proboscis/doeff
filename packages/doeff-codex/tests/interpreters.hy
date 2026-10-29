@@ -13,7 +13,7 @@
 (import pathlib [Path])
 (import sys)
 (import doeff [EffectBase run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
 (import doeff_codex [CodexHome CodexSessionSpec CodexInput])
 (import doeff_codex [ApprovalPolicy SandboxMode])

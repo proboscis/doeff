@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects import lazy_ask, state
 
 from doeff import Pure, do, run
 

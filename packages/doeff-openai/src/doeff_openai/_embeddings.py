@@ -6,7 +6,7 @@ from collections.abc import Generator
 from typing import Any, Literal
 
 from doeff_core_effects import Await, Tell, Try
-from doeff_core_effects.scheduler import Gather
+from doeff_core_effects import Gather
 from doeff_time import Delay
 from openai.types import CreateEmbeddingResponse
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
 from datetime import datetime as datetime
 from doeff import with_handlers as with_handlers
-from doeff_core_effects.effects import slog as slog
+from doeff_core_effects import slog as slog
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed

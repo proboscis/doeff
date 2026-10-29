@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from doeff_core_effects.http_server_effects import HttpAddress
-from doeff_core_effects.scheduler import Promise
+from doeff_core_effects import Promise
 from doeff_hy.static_types import Handler as _Handler
 from doeff_records.request_timing import MarkAt, RequestMark
 from doeff_records._service import HttpAnswer, HttpRequest

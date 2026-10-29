@@ -64,7 +64,7 @@ class Unseen(EffectBase):
 
 HANDLERS_HY = """\
 (require doeff-hy.macros [defhandler <-])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects._effects [Ask])
 (import {pkg}.effects [Ping Raw Tick Nap])
 
 (defhandler translate
@@ -203,8 +203,8 @@ def early_return_handlers(flag):
 ENVS_HY = """\
 (require doeff-hy.macros [defk deff <- val])
 (import doeff [DoExpr with-handlers])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [state])
+(import doeff_core_effects._scheduler [scheduled])
 (import doeff_time [sync-time-handler])
 (import {pkg}.handlers [translate raw-world ticker nap-clock fixed-settings])
 (import {pkg}.runtimes [table-handler])
@@ -264,8 +264,8 @@ PROGRAMS_HY = """\
 (require doeff-hy.handle [with-handler handle])
 (import collections.abc [Callable])
 (import doeff [with-handlers])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects._effects [Ask])
+(import doeff_core_effects._scheduler [Spawn Wait])
 (import doeff_time [Delay])
 (import {pkg}.effects [Ping Tick Nap])
 (import {pkg}.handlers [translate ticker nap-clock pinged-by])
@@ -370,9 +370,9 @@ OUTCOMES_HY = """\
 (require doeff-hy.macros [defk defeffect do! <- absent-as on-raise])
 (import dataclasses [dataclass])
 (import doeff [Ok Err])
-(import doeff_core_effects.effects [Absent])
-(import doeff_core_effects.outcomes [result])
-(import doeff_core_effects.outcomes :as outcomes)
+(import doeff_core_effects._effects [Absent])
+(import doeff_core_effects._outcomes [result])
+(import doeff_core_effects._outcomes :as outcomes)
 (import {pkg}.effects [Tick Ping])
 
 (defclass [(dataclass :frozen True)] Gone [] #^ str key)
@@ -468,7 +468,7 @@ def _spawn(carrier) -> bool:
 
 
 def _scheduler() -> HandlerEffects:
-    return analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    return analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
 
 
 # --------------------------------------------------------------------------- 1. handlers installed inside
@@ -753,7 +753,7 @@ def test_cli_binds_a_foundation(pkg: str, capsys: pytest.CaptureFixture[str]) ->
         "--env",
         f"{pkg}.envs:no_handlers",
         "--outer",
-        "doeff_core_effects.scheduler:scheduled",
+        "doeff_core_effects._scheduler:scheduled",
     ]
     fold = ["--fold-carried", "Spawn"]
 

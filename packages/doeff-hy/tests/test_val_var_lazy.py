@@ -25,7 +25,7 @@ PRELUDE = """
 (require doeff-hy.macros [defk deftest defp <- set! defhandler with-handler])
 (import doeff [run EffectBase Some])
 (import doeff_core_effects [Get Put state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 (import doeff_hy.session [session-key])
 (import dataclasses [dataclass])
 

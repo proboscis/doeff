@@ -7,8 +7,8 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff_core_effects.scheduler import PRIORITY_IDLE, CreateExternalPromise, Race, Spawn
-from doeff_core_effects.scheduler import Wait as WaitTask
+from doeff_core_effects import PRIORITY_IDLE, CreateExternalPromise, Race, Spawn
+from doeff_core_effects import Wait as WaitTask
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler

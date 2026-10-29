@@ -14,7 +14,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_NORMAL,
     CompletePromise,
     CreateExternalPromise,

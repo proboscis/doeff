@@ -19,8 +19,7 @@ from pathlib import Path
 import doeff_hy  # noqa: F401 — registers extensions
 import hy
 import pytest
-from doeff_core_effects import try_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled, try_handler
 from doeff_hy import macros
 from doeff_traverse import fail_handler, sequential
 

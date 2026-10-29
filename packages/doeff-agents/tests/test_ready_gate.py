@@ -29,20 +29,25 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff import Program, Pure
-from doeff_agents import AgentType, LaunchConfig
+from doeff_agents import AgentReadyTimeoutError as EffectsAgentReadyTimeoutError
+from doeff_agents import (
+    AgentType,
+    ClaudeLaunchEffect,
+    ClaudeRuntimePolicy,
+    CodexRuntimePolicy,
+    LaunchConfig,
+    LaunchEffect,
+)
 from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter
-from doeff_agents import AgentReadyTimeoutError as EffectsAgentReadyTimeoutError
-from doeff_agents import ClaudeLaunchEffect
-from doeff_agents import LaunchEffect
-from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
 )
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionConfig, SessionInfo
+
+from doeff import Program, Pure
 
 READY_SCREENS = Path(__file__).parent / "data" / "ready_screens"
 
@@ -467,8 +472,7 @@ class ScriptedHyBackend(ScriptedBackend):
 
 def _run_with_codex_handler(program, backend):
     from doeff_agents import codex_handler
-    from doeff_core_effects.handlers import state
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled, state
 
     from doeff import run
 
@@ -478,8 +482,7 @@ def _run_with_codex_handler(program, backend):
 
 def _run_with_claude_handler(program, backend):
     from doeff_agents import claude_handler
-    from doeff_core_effects.handlers import state
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled, state
 
     from doeff import run
 

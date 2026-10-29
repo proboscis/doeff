@@ -10,8 +10,8 @@ from dataclasses import replace as replace
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
 from doeff_time import WaitWithin as WaitWithin
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects import ExternalPromise as ExternalPromise
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import FrozenJson as FrozenJson
 from doeff_hy.frozen import frozen_json_object as frozen_json_object

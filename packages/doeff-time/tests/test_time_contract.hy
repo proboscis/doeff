@@ -5,7 +5,7 @@
 ;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。本物の時計が壁時計を読むことは test_get_time.py。
 (require doeff-hy.macros [defk deftest <- val])
 (import datetime [datetime timedelta])
-(import doeff_core_effects.scheduler [CompletePromise CreatePromise Promise Spawn Task Wait])
+(import doeff_core_effects [CompletePromise CreatePromise Promise Spawn Task Wait])
 (import doeff_time [Delay GetMonotonic GetTime RaceOutcome RaceWithin ScheduleAt WaitUntil])
 (import time_contract_clocks [ClockTraits ClockUnderTest OuterProbe])
 

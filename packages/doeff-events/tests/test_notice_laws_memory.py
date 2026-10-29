@@ -12,13 +12,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_core_effects.scheduler import (
-    CompletePromise,
-    CreatePromise,
-    SchedulerDeadlockError,
-    Spawn,
-    Wait,
-)
+from doeff_core_effects import CompletePromise, CreatePromise, SchedulerDeadlockError, Spawn, Wait
 from doeff_events import (
     EventBus,
     SourceMissed,
@@ -357,7 +351,7 @@ def test_a_sender_tells_a_gap_on_its_start_channels_when_it_starts() -> None:
 
     @do
     def reader_then_sender() -> "EffectGenerator[object]":
-        from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait
+        from doeff_core_effects import CompletePromise, CreatePromise, Spawn, Wait
 
         ready = yield CreatePromise()
 

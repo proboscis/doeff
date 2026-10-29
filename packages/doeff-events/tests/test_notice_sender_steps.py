@@ -14,7 +14,8 @@ task を起こさない — task を起こすと handler の列を task に被�
 
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import _read_vm_steps, scheduled
+from doeff_core_effects import scheduled
+from doeff_core_effects._scheduler import _read_vm_steps
 from doeff_events import (
     BrokerPatience,
     Drop,

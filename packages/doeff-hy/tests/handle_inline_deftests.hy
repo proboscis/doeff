@@ -92,7 +92,7 @@
   "form を doeff-hy の macro を require した名前空間で展開し、macro が出した SyntaxError の文を返す(出なければ None)。"
   (setv module (types.ModuleType "handle_inline_expansion"))
   (hy.eval '(require doeff-hy.macros [defhandler handle with-handler]) :module module)
-  (hy.eval '(import doeff-core-effects.effects [Raise]) :module module)
+  (hy.eval '(import doeff-core-effects [Raise]) :module module)
   (setv (. module __dict__ ["Greeting"]) Greeting)
   (try
     (hy.eval form :module module)

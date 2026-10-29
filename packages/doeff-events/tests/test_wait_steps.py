@@ -11,7 +11,8 @@ task に 1 つ被せる 1 歩だけ(``event_handler`` は 1 つを全員で共�
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.scheduler import IMPLEMENTATION_ENV_VAR, Spawn, Wait, _read_vm_steps, scheduled
+from doeff_core_effects import Spawn, Wait, scheduled
+from doeff_core_effects._scheduler import IMPLEMENTATION_ENV_VAR, _read_vm_steps
 
 from doeff import do, run, with_handlers
 from doeff_events import (

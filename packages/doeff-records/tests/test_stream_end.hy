@@ -5,8 +5,8 @@
 ;;   - 置き場に届かない時は Unreachable(memory の置き場の不達・一部の断り、HTTP の口の 503)。
 (require doeff-hy.macros [deftest defhandler defk <- val])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [scheduled])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock sim-time-handler])

@@ -7,7 +7,7 @@
 (import app.effects [ReadRow PostRow PlainRead Row Missing Unreachable Conflict Accepted Refused Gone])
 (import app.effects :as effects)
 (import app.other :as other)
-(import doeff-core-effects.outcomes [maybe])
+(import doeff-core-effects [maybe])
 
 
 ;; ---------------------------------------------------------------------------

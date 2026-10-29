@@ -9,7 +9,7 @@ try_handler が無くても答えられる(前は要素ごとの Try が try_han
 from collections.abc import Callable
 from typing import TypeVar
 
-from doeff_core_effects.effects import Try
+from doeff_core_effects import Try
 from doeff_traverse import Collection, Traverse, sequential
 
 from doeff import EffectBase, Err, Ok, Program, UnhandledEffect, do, run

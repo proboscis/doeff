@@ -7,8 +7,8 @@ from enum import Enum
 
 import pytest
 from doeff_core_effects import Ask
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader
+from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 from doeff_validation import (
     CheckError,

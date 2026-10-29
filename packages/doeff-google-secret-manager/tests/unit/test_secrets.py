@@ -16,18 +16,16 @@ SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "sr
 if str(SECRET_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
-from doeff_core_effects.effects import (  # noqa: E402 - late import follows sys.path fixture setup
-    EffectBase as Effect,
-)
-from doeff_core_effects.handlers import (  # noqa: E402
+from doeff_core_effects import (  # noqa: E402
     await_handler,
+    scheduled,  # noqa: E402
     try_handler,
     writer,
 )
-from doeff_core_effects.handlers import (  # noqa: E402
-    state as state_handler,
+from doeff_core_effects import state as state_handler  # noqa: E402
+from doeff_core_effects._effects import (  # noqa: E402 - late import follows sys.path fixture setup
+    EffectBase as Effect,
 )
-from doeff_core_effects.scheduler import scheduled  # noqa: E402
 from doeff_google_secret_manager import (  # noqa: E402
     SecretManagerClient,
     access_secret,

@@ -23,8 +23,8 @@ from functools import partial
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import Spawn, Wait
+from doeff_core_effects import reader
+from doeff_core_effects import Spawn, Wait
 from doeff_events import (
     ArmTimer,
     EventBus,

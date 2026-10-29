@@ -10,7 +10,7 @@ from doeff import EffectBase
 from doeff_time._internals.validation import ensure_aware_datetime
 
 if TYPE_CHECKING:
-    from doeff_core_effects.scheduler import Future, Task
+    from doeff_core_effects import Future, Task
 
 _T = TypeVar("_T")
 

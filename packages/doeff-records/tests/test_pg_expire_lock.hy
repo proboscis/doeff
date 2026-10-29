@@ -19,7 +19,7 @@
 (import json)
 (import re)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows SqlTransaction])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])

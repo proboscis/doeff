@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass
 
-from doeff_core_effects.scheduler import CreatePromise, Promise, Spawn, Wait
+from doeff_core_effects import CreatePromise, Promise, Spawn, Wait
 from doeff_events import Publish, WaitForEvent, event_handler
 from events_test_support import announce_listening, run_scheduled
 

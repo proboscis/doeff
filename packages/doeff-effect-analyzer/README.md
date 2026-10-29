@@ -11,10 +11,10 @@ doeff-effects program  controllers.worker.lab.turns:turn_runner_program
 doeff-effects handler  controllers.transport.clock:clock_handler
 doeff-effects coverage controllers.worker.lab.turns:turn_runner_program \
     --env controllers.worker.lab.envs:board_env \
-    --outer doeff_core_effects.scheduler:scheduled
+    --outer doeff_core_effects._scheduler:scheduled
 # a Program that takes its foundation as a parameter
 doeff-effects coverage lab.jobs:job --env lab.envs:no_handlers \
-    --outer doeff_core_effects.scheduler:scheduled --fold-carried Spawn \
+    --outer doeff_core_effects._scheduler:scheduled --fold-carried Spawn \
     --bind foundation=lab.envs:production_handlers
 ```
 
@@ -25,14 +25,14 @@ from doeff_effect_analyzer.handler_effects import (
 )
 
 program = analyze_program("controllers.worker.lab.turns:turn_runner_program")
-env = [analyze_handler("doeff_core_effects.scheduler:scheduled"),
+env = [analyze_handler("doeff_core_effects._scheduler:scheduled"),
        *analyze_env("controllers.worker.lab.envs:board_env")]
 coverage = check_coverage(program, env)
 assert coverage.complete, coverage.gaps
 
 # (defk job [foundation] (<- base list (foundation)) (<- (with-handlers base (body))))
 job = analyze_program("lab.jobs:job", bindings={"foundation": production_handlers})
-left = residual(job, [analyze_handler("doeff_core_effects.scheduler:scheduled")],
+left = residual(job, [analyze_handler("doeff_core_effects._scheduler:scheduled")],
                 include=lambda carrier: carrier.__name__ == "Spawn")
 assert not left.escapes and not left.unknown_handlers
 ```

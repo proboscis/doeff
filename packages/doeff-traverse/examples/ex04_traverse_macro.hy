@@ -23,7 +23,7 @@
 (import doeff [run])
 
 (import doeff_core_effects [try-handler :as try_handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 
 ;; _doeff_traverse_Traverse: needed by the traverse macro's expansion
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])

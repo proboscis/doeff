@@ -18,7 +18,7 @@ from doeff_core_effects import (
     try_handler,
 )
 from doeff_core_effects.cache_handlers import in_memory_cache_handler, sqlite_cache_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import run, with_handlers
 from doeff.program import ProgramHandler

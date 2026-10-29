@@ -17,18 +17,17 @@ from collections.abc import Callable, Iterator
 from unittest.mock import Mock
 
 import pytest
-from doeff_core_effects import Try
-from doeff_core_effects import scheduler as scheduler_module
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     CompletePromise,
     CreatePromise,
     Spawn,
     StepBudget,
     StepBudgetExceeded,
+    Try,
     Wait,
-    arm_step_budget,
-    disarm_step_budget,
 )
+from doeff_core_effects import _scheduler as scheduler_module
+from doeff_core_effects._scheduler import arm_step_budget, disarm_step_budget
 from doeff_time import GetTime, sim_time_handler
 from time_test_support import run_with_handlers, sim_time
 

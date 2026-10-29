@@ -28,7 +28,7 @@ import os
 import threading
 from typing import TYPE_CHECKING, Final, Protocol, final
 
-from doeff_core_effects.effects import Await
+from doeff_core_effects import Await
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler

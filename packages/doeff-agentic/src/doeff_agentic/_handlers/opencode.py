@@ -6,8 +6,8 @@ This module provides the handler that uses OpenCode's HTTP API for agent session
 Usage:
     from doeff import run
     from doeff_agentic._opencode_handler import opencode_handler
-    from doeff_core_effects.handlers import slog_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects._handlers import slog_handler
+    from doeff_core_effects._scheduler import scheduled
 
     handlers = opencode_handler()
     program = slog_handler(handlers(my_workflow()))
@@ -851,8 +851,8 @@ def opencode_handler(
     Usage:
         from doeff import run
         from doeff_agentic import opencode_handler
-        from doeff_core_effects.handlers import slog_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects._handlers import slog_handler
+        from doeff_core_effects._scheduler import scheduled
 
         program = slog_handler(opencode_handler()(my_workflow()))
         result = run(scheduled(program))

@@ -4,7 +4,7 @@
 ;;; handler)で GetTime を 1 度ずつ解く関数を handler に渡す(OS の時計を直に読まない)。doeff-agents の time_handler_clock と同じ形。
 (import datetime [datetime])
 (import doeff [do run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [GetTime])
 
 

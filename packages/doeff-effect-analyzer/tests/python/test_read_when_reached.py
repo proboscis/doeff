@@ -141,8 +141,8 @@ def job():
 # `(<- x e :absent F)` の形(doeff-hy の bind が書く open_bind)の Program 2 つ。
 ABSENT_PY = """\
 from doeff import do
-from doeff_core_effects.effects import Absent
-from doeff_core_effects.outcomes import open_bind
+from doeff_core_effects._effects import Absent
+from doeff_core_effects._outcomes import open_bind
 
 
 @do
@@ -313,8 +313,8 @@ def test_two_analyses_each_count_the_absent_receiver_they_read(pkg: str) -> None
     second = reading_sources(lambda: closure("second"))
 
     assert first.value == second.value == ["Raise"]
-    assert "doeff_core_effects.outcomes" in first.read
-    assert "doeff_core_effects.outcomes" in second.read
+    assert "doeff_core_effects._outcomes" in first.read
+    assert "doeff_core_effects._outcomes" in second.read
 
 
 def test_an_analysis_answers_and_reads_the_same_after_other_analyses_in_the_process(make_package) -> None:

@@ -129,7 +129,7 @@ def test_legacy_agentic_handler_accepts_injected_agent_runtime(tmp_path: Path) -
 
 def test_legacy_agentic_handler_polls_with_time_delay(tmp_path: Path) -> None:
     """While the agent is still running, RunAgent waits with doeff_time Delay."""
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
     from doeff_time import sync_time_handler
 
     slept: list[float] = []

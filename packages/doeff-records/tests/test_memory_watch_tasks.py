@@ -17,7 +17,7 @@ from typing import Any
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     Cancel,
     ExternalPromise,

@@ -3,7 +3,7 @@
     doeff-effects program  pkg.mod:service_program [--bind foundation=pkg.envs:prod] [--json]
     doeff-effects handler  pkg.handlers:clock_handler [--json]
     doeff-effects coverage pkg.mod:service_program --env pkg.envs:board_env \\
-        [--outer doeff_core_effects.scheduler:scheduled] [--fold-carried Spawn] \\
+        [--outer doeff_core_effects._scheduler:scheduled] [--fold-carried Spawn] \\
         [--bind foundation=pkg.envs:prod] [--json]
 
 ``--bind name=module:attr`` binds a parameter of the Program function (a

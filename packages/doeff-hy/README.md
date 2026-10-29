@@ -58,7 +58,7 @@ versions its tests cover).
 ```python file=main.py
 import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 from doeff import run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from greeting import english, greet
 
@@ -101,8 +101,8 @@ files. Both go in `conftest.py`:
 import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 import pytest
 from doeff import run
-from doeff_core_effects.handlers import reader
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader
+from doeff_core_effects import scheduled
 
 
 @pytest.fixture
@@ -234,11 +234,11 @@ written. The 2- and 3-element forms add no check.
 
 ### Absence and failure
 
-Expected absence and failure are two effects in `doeff_core_effects.effects`:
+Expected absence and failure are two effects in `doeff_core_effects._effects`:
 `Absent(why)` (the Maybe side) and `Raise(reason)` (the Result side). Code writes only
 the success path; the places that want to *do* something about absence or failure
 fold them into values: `maybe` (`Absent` → `Nothing`) and `result` (`Raise` → `Err`)
-from `doeff_core_effects.outcomes`, and the `on-raise` / `absent-as` macros. The
+from `doeff_core_effects._outcomes`, and the `on-raise` / `absent-as` macros. The
 nesting order picks the shape: `(result (maybe b))` is `Ok(Some v)` / `Ok(Nothing)` /
 `Err(e)`.
 
@@ -304,8 +304,8 @@ Run from Python:
 ```python
 import doeff_hy  # noqa: F401  - lets Python import .hy / .hyk / .hyp modules
 from doeff import run
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import state
+from doeff_core_effects import scheduled
 
 from prices import price_of, price_table
 

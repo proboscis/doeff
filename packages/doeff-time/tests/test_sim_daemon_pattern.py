@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from doeff_core_effects.scheduler import Gather, Spawn, Wait
+from doeff_core_effects import Gather, Spawn, Wait
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, WaitUntil, sim_time_handler
 from time_test_support import SIM_TIME_EPOCH, run_with_handlers, sim_time

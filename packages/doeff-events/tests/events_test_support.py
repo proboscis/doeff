@@ -10,8 +10,8 @@ with other suites' helper modules when collected together.
 
 from typing import TYPE_CHECKING, Any, final
 
-from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import CompletePromise, Promise, scheduled
+from doeff_core_effects import await_handler
+from doeff_core_effects import CompletePromise, Promise, scheduled
 from doeff_events import BrokerPatience, NextFileChanges, WaitForEventEffect, WaitForEventsEffect
 from doeff_events import broker_patience_handler, notice_events_handler
 

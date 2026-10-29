@@ -498,7 +498,7 @@ def test_writers_effect_keeps_the_clause_effect_type(tmp_path: Path) -> None:
 # 型引数を Any で解く(`Race[Any]`)ので、欄の型は effect の定義の型のままになる。
 GENERIC_PROBE = """\
 (require doeff-hy.macros [defk defhandler <- val])
-(import doeff_core_effects.scheduler [Spawn Race Wait Task])
+(import doeff_core_effects._scheduler [Spawn Race Wait Task])
 
 (defn takes-int [#^ int n]
   n)

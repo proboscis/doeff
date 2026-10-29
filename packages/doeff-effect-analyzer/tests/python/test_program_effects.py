@@ -70,8 +70,8 @@ SERVICES_HY = """\
 (require doeff-hy.macros [defk <-])
 (require {pkg}.macros [defservice])
 (import {pkg}.effects [ReadBoard WriteBoard :as Put Nap])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn])
+(import doeff_core_effects._effects [Ask])
+(import doeff_core_effects._scheduler [Spawn])
 
 (defk summarize [conv]
   {{:pre [(: conv str)] :post [(: % str)]}}
@@ -99,7 +99,7 @@ PROGRAMS_PY = """\
 from collections.abc import Generator
 
 from doeff import do
-from doeff_core_effects.scheduler import Spawn
+from doeff_core_effects._scheduler import Spawn
 
 from {pkg}.effects import Nap, ReadBoard, WriteAudit, WriteBoard
 
@@ -157,7 +157,7 @@ HANDLERS_HY = """\
 (require doeff-hy.macros [defhandler defk <-])
 (import doeff [EffectBase])
 (import {pkg}.effects [ReadBoard WriteBoard Nap Tick WriteFamily])
-(import doeff_core_effects.effects [Await])
+(import doeff_core_effects._effects [Await])
 
 (defhandler board-memory [store]
   (ReadBoard [prefix] (resume (dict store)))
@@ -252,7 +252,7 @@ def rebound_runtime():
 """
 
 ENVS_HY = """\
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects._handlers [reader])
 (import {pkg}.handlers [board-memory nap-clock ticker audit-sink write-fence])
 
 
@@ -450,7 +450,7 @@ def test_a_factory_returning_a_partial_of_a_dispatch_function(pkg: str) -> None:
 
 def test_env_covers_every_effect_including_what_handlers_perform(pkg: str) -> None:
     program = analyze_program(f"{pkg}.services:runner_program")
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
 
     coverage = check_coverage(program, [scheduler, *analyze_env(f"{pkg}.envs:full_env")])
 
@@ -461,7 +461,7 @@ def test_env_covers_every_effect_including_what_handlers_perform(pkg: str) -> No
 
 def test_a_missing_handler_is_named_before_running(pkg: str) -> None:
     program = analyze_program(f"{pkg}.services:runner_program")
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
 
     coverage = check_coverage(program, [scheduler, *analyze_env(f"{pkg}.envs:no_ticker_env")])
 
@@ -492,7 +492,7 @@ def test_env_handlers_imported_inside_the_builder(pkg: str) -> None:
 def test_cli_coverage_exit_code_names_the_gap(pkg: str, capsys: pytest.CaptureFixture[str]) -> None:
     from doeff_effect_analyzer.cli import main
 
-    outer = ["--outer", "doeff_core_effects.scheduler:scheduled"]
+    outer = ["--outer", "doeff_core_effects._scheduler:scheduled"]
     target = f"{pkg}.services:runner_program"
 
     assert main(["coverage", target, "--env", f"{pkg}.envs:full_env", *outer]) == 0

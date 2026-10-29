@@ -48,7 +48,7 @@ class Carry(EffectBase):
         self.wrappers = wrappers
 """
 
-# The shape of ``doeff_core_effects.handlers._try_handler``.
+# The shape of ``doeff_core_effects._handlers._try_handler``.
 HANDLERS_PY = """\
 from doeff import do
 from doeff.program import handler as _program_handler
