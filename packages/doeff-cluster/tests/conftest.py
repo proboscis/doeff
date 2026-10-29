@@ -22,7 +22,7 @@ if importlib.util.find_spec("doeff_effect_analyzer") is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python"))
 
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import Program, run
 

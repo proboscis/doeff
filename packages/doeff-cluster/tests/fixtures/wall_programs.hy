@@ -13,8 +13,8 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff [with-handlers EffectBase Program])
-(import doeff_core_effects.effects [Await])
-(import doeff_core_effects.handlers [state await-handler])
+(import doeff_core_effects [Await])
+(import doeff_core_effects [state await-handler])
 (import doeff_core_effects.http_server_effects [HttpAddress HttpListen HttpNextRequest HttpRequestArrived HttpServerClosed WsAccept
                                                 WsTextArrived WsSendText HttpShutdown])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])

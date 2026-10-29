@@ -12,7 +12,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import doeff [with-handlers Program])
-(import doeff_core_effects.scheduler [Spawn Task Wait])
+(import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])

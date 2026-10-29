@@ -13,7 +13,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.protocol.task_result [task-result-request delivered-task-result])
 (import tests.transport_http [transport-http TEST-ROUTE])

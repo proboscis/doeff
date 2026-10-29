@@ -13,7 +13,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [await-handler slog-handler])
+(import doeff_core_effects [await-handler slog-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [Declaration])

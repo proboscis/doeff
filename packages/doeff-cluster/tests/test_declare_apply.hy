@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import doeff_cluster.shared.intent.service_model [Declaration])

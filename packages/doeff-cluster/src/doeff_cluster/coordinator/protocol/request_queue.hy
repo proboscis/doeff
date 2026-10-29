@@ -7,7 +7,7 @@
 (import dataclasses [dataclass])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
-(import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
+(import doeff_core_effects [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.intent.protocol [Request Reply])
 (import doeff_cluster.coordinator.intent.cluster_model [CoordinatorFault]
         doeff_cluster.shared.intent.protocol [NextRequests ServiceReached])

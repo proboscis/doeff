@@ -11,7 +11,7 @@
 (import json)
 (import doeff_core_effects.file_effects [PathKind PathStat FileFailed StatPath ReadText WriteText file-done])
 (import doeff [run with-handlers])
-(import doeff_core_effects.handlers [reader state])
+(import doeff_core_effects [reader state])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [sync-time-handler])

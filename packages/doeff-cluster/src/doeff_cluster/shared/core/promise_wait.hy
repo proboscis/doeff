@@ -6,7 +6,7 @@
 ;;; (local.hy が組の module を import する)。期限は doeff-time の WaitWithin(外側の sim-time-handler・async-time-handler・
 ;;; sync-time-handler が答える)。
 (require doeff-hy.macros [defk <-])
-(import doeff_core_effects.scheduler [Wait Future])
+(import doeff_core_effects [Wait Future])
 (import doeff_time [WaitWithin])
 
 

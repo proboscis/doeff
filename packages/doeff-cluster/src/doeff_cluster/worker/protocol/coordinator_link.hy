@@ -33,7 +33,7 @@
 (import doeff_core_effects.file_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
-(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise Promise Wait])
+(import doeff_core_effects [Spawn CreatePromise CompletePromise Promise Wait])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of datetime-of-epoch-ms])
 (import doeff_cluster.shared.core.remote_rules [program-sha])

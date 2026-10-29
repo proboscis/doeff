@@ -14,7 +14,7 @@
 (import json)
 (import urllib.parse [parse-qsl unquote :as url-unquote urlsplit])
 (import doeff [Program with_handlers])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
 (import doeff_cluster.shared.protocol.job_call_handlers [Counterpart JobDestination job-call-handover job-call-sender])

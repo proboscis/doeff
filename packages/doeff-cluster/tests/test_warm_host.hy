@@ -7,7 +7,7 @@
 (import pathlib [Path])
 (import dataclasses [replace])
 (import doeff [run with-handlers])
-(import doeff_core_effects.handlers [state slog-handler])
+(import doeff_core_effects [state slog-handler])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.file_effects [MemoryFiles WriteText ReadText StatPath PathKind])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])

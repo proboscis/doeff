@@ -14,7 +14,7 @@
 (import hashlib)
 (import pytest)
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadBytes])
 (import doeff_core_effects.memory_file [memory-file-handler])
 (import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])

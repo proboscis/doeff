@@ -11,7 +11,7 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [replace])
 (import doeff_time [Delay])
-(import doeff_core_effects.scheduler [CreatePromise Promise])
+(import doeff_core_effects [CreatePromise Promise])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNever])
 (import doeff_cluster.worker.intent.worker_model [WakeSet])

@@ -10,9 +10,9 @@ from urllib.parse import quote as url_quote
 from doeff import with_handlers as with_handlers
 from doeff import Program as Program
 from doeff import EffectBase as EffectBase
-from doeff_core_effects.handlers import await_handler as await_handler
-from doeff_core_effects.handlers import slog_handler as slog_handler
-from doeff_core_effects.scheduler import scheduled as scheduled
+from doeff_core_effects import await_handler as await_handler
+from doeff_core_effects import slog_handler as slog_handler
+from doeff_core_effects import scheduled as scheduled
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed

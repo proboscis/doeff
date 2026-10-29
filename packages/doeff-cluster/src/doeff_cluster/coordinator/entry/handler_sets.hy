@@ -17,7 +17,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
-(import doeff_core_effects.handlers [await-handler slog-handler state])
+(import doeff_core_effects [await-handler slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])

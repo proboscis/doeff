@@ -79,7 +79,7 @@
 (import types [ModuleType])
 (import doeff [EffectBase run with-handlers])
 (import doeff_time [GetMonotonic sync-time-handler])
-(import doeff_core_effects.handlers [slog-handler])
+(import doeff_core_effects [slog-handler])
 (import doeff_core_effects.file_effects [FileFailed PathStat ReadText StatPath file-done])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])

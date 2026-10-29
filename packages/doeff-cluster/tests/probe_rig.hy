@@ -9,7 +9,7 @@
 (import time)
 (import pathlib [Path])
 (import doeff [Program with-handlers])
-(import doeff_core_effects.handlers [slog-handler state])
+(import doeff_core_effects [slog-handler state])
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_core_effects.process_effects [EnvEntry StartProcess])

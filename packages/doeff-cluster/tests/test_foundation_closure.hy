@@ -5,7 +5,7 @@
 ;;; 読めない handler・追えない所は閉じていると数えない。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.foundation.foundation_check [FoundationClosure UnreadDeclaration foundation-closure closed?])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import tests.fixtures.closure_programs [Ping Raw job untranslated-job tried-job untranslated-tried-job production-foundation
                                          clockless-foundation unscheduled-foundation opaque-foundation])
 

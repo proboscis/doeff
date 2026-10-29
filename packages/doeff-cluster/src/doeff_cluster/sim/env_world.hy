@@ -41,7 +41,7 @@
 (import json)
 (import re)
 (import posixpath)
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText
                                          AppendText MakeDirectory WalkTree])

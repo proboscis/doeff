@@ -24,7 +24,7 @@
 (import collections.abc [Mapping])
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_core_effects.effects [slog])
+(import doeff_core_effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs body-of
                                                             group-limit-write RestartPlan restart-read])

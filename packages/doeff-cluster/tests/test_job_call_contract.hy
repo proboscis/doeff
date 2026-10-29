@@ -12,7 +12,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import doeff [run with_handlers])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest])
 (import doeff_cluster.shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
 (import doeff_cluster.shared.protocol.job_call_handlers [JobDestination job-call-sender job-target])

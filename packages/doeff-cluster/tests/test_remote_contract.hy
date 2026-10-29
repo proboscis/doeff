@@ -15,8 +15,8 @@
 ;;; ProcessHost と sim の宿の文脈は test_job_context.hy の検が同じ関数で比べる)。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [reader])
-(import doeff_core_effects.scheduler [Spawn Wait Cancel Task TaskCancelledError])
+(import doeff_core_effects [reader])
+(import doeff_core_effects [Spawn Wait Cancel Task TaskCancelledError])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])

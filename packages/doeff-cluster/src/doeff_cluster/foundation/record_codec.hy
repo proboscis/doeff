@@ -46,9 +46,8 @@
 (import json)
 (import math)
 (import doeff [EffectBase])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise
-                                      CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
 (import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_hy.frozen [FrozenMap])
