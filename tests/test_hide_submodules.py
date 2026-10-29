@@ -580,3 +580,63 @@ def test_hide_points_a_caller_at_the_entry_when_the_child_reads_itself_by_the_ol
     assert f"from {CHAIN_ROOT}._clock.ticks import Tick as Tick" in _text(
         repo, f"packages/{CHAIN_PACKAGE}/src/{CHAIN_ROOT}/_clock/__init__.py"
     )
+
+
+def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_path: Path) -> None:
+    """入口が子と同じ名で別の物を出す時(doeff_openrouter の関数 structured_llm)、``from <根> import <名>`` は入口の物を読む。
+
+    子 ``structured_llm`` と ``handlers`` を隠した後、入口は ``from ._structured_llm import structured_llm``(関数)と
+    ``from . import _handlers as handlers``(子の module)を持つ。呼び手の ``structured_llm`` は関数のまま残し、
+    ``handlers`` だけを ``_handlers as handlers`` へ書き換える(card ki-67445807c406 で README を誤って書き換えた)。
+    """
+    root_dir = tmp_path / "pkg"
+    root_dir.mkdir()
+    (root_dir / "__init__.py").write_text(
+        "from . import _handlers as handlers\nfrom ._structured_llm import structured_llm\n",
+        encoding="utf-8",
+    )
+    patterns = tool.Patterns.of(
+        [tool.Child("pkg", "structured_llm", root_dir), tool.Child("pkg", "handlers", root_dir)]
+    )
+    context = tool.FileContext("caller.py", None, False)
+    python, _ = tool.rewrite_python(
+        "from pkg import handlers, structured_llm\n", patterns, context, lambda _module, _name: True
+    )
+    assert python == "from pkg import _handlers as handlers, structured_llm\n"
+    hy, _ = tool.rewrite_hy(
+        "(import pkg [handlers structured-llm])\n", patterns, context, lambda _module, _name: True
+    )
+    assert hy == "(import pkg [_handlers :as handlers structured-llm])\n"
+
+
+def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path) -> None:
+    """古い path を先に import しても、入口が子と同じ名で出す物(関数)が入口に残る。
+
+    移す前は入口が子を先に読んでから名を束ね直したので、``from <根> import <名>`` はいつも入口の関数だった。移した後は
+    古い path の import が import の仕組みに親の属性を module へ束ねさせるので、移し替えの module が入口の名を守る
+    (doeff_openrouter の structured_llm・card ki-67445807c406)。
+    """
+    root_dir = tmp_path / "kept_pkg"
+    root_dir.mkdir()
+    (root_dir / "__init__.py").write_text("from ._tool import tool\n", encoding="utf-8")
+    (root_dir / "_tool.py").write_text(
+        'VALUE = 1\n\n\ndef tool() -> str:\n    return "entry"\n', encoding="utf-8"
+    )
+    child = tool.Child("kept_pkg", "tool", root_dir)
+    child.shim.write_text(tool.shim_text(child, False), encoding="utf-8")
+    probe = textwrap.dedent(
+        """
+        import sys
+        sys.path.insert(0, sys.argv[1])
+        from kept_pkg.tool import VALUE
+        import kept_pkg.tool
+        from kept_pkg import tool
+        assert sys.modules["kept_pkg.tool"] is sys.modules["kept_pkg._tool"]
+        print(VALUE, tool())
+        """
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", probe, str(tmp_path)], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "1 entry\n"

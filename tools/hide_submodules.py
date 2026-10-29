@@ -48,7 +48,8 @@ finder が ``_<子>.<下>`` の module そのものを返す。古い path の `
 
 書き換え(木の git の追跡する file):
 
-- Python(``.py``・``.pyi``): ``from`` と ``import`` の文・相対 import・``from <根> import <子>``(``_<子> as <子>``)・
+- Python(``.py``・``.pyi``): ``from`` と ``import`` の文・相対 import・``from <根> import <子>``(``_<子> as <子>`` —
+  入口が同じ名で子の module でない物を出す時は入口の物を読むので書き換えない)・
   文字列(``mock.patch`` の的・``-m`` の module)・code の名・comment の module path。
 - Hy(``.hy``): ``(import …)``・``(require …)``・文字列・code の名(``-`` で書いた名も読む)。
 - markdown(``.md``): code の囲み(言語ごとに Python か Hy の書き換え)と行の中の code。地の文は書き換えず「残った古い path」に数える。
@@ -216,6 +217,42 @@ class Child:
     def is_package(self) -> bool:
         return (self.root_dir / f"_{self.name}").is_dir() or (self.root_dir / self.name).is_dir()
 
+    def shadowed_by_entry(self) -> bool:
+        """入口(根の ``__init__.py``)が子と同じ名で、子の module でない物を出すか。
+
+        例: 子 ``structured_llm`` と、入口の ``from ._structured_llm import structured_llm`` の関数。その時
+        ``from <根> import <子>`` は入口の物を読むので、``_<子> as <子>`` へ書き換えない。
+        """
+        return _entry_binds_other(self.root_dir / "__init__.py", self.root, self.name)
+
+
+def _entry_binds_other(entry: Path, root: str, name: str) -> bool:
+    """``entry`` の top level が ``name`` を、子の module(``from . import <名>``・``_<名> as <名>``)でない物に束ねるか。"""
+    if not entry.is_file():
+        return False
+    tree = ast.parse(entry.read_text(encoding="utf-8"))
+    return any(_binds_other(node, root, name) for node in tree.body)
+
+
+def _binds_other(node: ast.stmt, root: str, name: str) -> bool:
+    """入口の文 1 つが ``name`` を子の module でない物に束ねるか(呼び手の ``from <根> import <名>`` を残す為)。"""
+    # match の文で書かない: commit の hook の semgrep が、この file の match の文を構文として読めない。
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+        if "_LAZY_EXPORTS" in names and isinstance(node.value, ast.Dict):
+            return any(isinstance(k, ast.Constant) and k.value == name for k in node.value.keys)
+        return name in names
+    if isinstance(node, ast.ImportFrom):
+        own = (node.level == 1 and node.module is None) or (node.level == 0 and node.module == root)
+        return any(
+            (alias.asname or alias.name) == name and not (own and alias.name in (name, f"_{name}"))
+            for alias in node.names
+        )
+    return False
+
 
 def _check_child_name(name: str) -> None:
     if not name.isidentifier() or name.startswith("_"):
@@ -280,6 +317,10 @@ class Patterns:
             )
 
         return cls(tuple(children), build(False, r"\."), build(True, r"\."), build(False, "/"))
+
+    def hidden_names(self, root: str) -> set[str]:
+        """``from <根> import <子>`` で ``_<子> as <子>`` へ書き換える子の名(入口が同じ名で別の物を出す子を除く)。"""
+        return {c.name for c in self.children if c.root == root and not c.shadowed_by_entry()}
 
     def child_of(self, root_text: str, child_text: str) -> Child | None:
         key = (_mangle_plain(root_text), _mangle_plain(child_text))
@@ -564,7 +605,7 @@ class _PythonImports:
 
     def _child_names(self, node: ast.ImportFrom, root: str) -> list[_Edit]:
         """``from <根> import <子>`` の子を ``_<子> as <子>`` に。"""
-        hidden = {c.name for c in self.patterns.children if c.root == root}
+        hidden = self.patterns.hidden_names(root)
         names = [alias for alias in node.names if alias.name in hidden]
         if not names:
             return []
@@ -864,7 +905,7 @@ class _HyImports:
         return [_Edit(module.start, names.end, replaced)]
 
     def _child_names(self, root: str, names: HyNode) -> list[_Edit]:
-        hidden = {c.name for c in self.patterns.children if c.root == root}
+        hidden = self.patterns.hidden_names(root)
         edits = [
             _Edit(
                 name.start, name.end, f"_{name.text}" if alias else f"_{name.text} :as {name.text}"
@@ -1512,7 +1553,8 @@ def __dir__() -> list[str]:
 
 _LAZY_COMMENT = (
     "# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import\n"
-    "# them while it loads. `X as X` shows each name to type checkers; `__all__` is not used (DOEFF021).\n"
+    "# them while it loads. `X as X` shows each name to type checkers. A root that already has `__all__`\n"
+    "# lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).\n"
 )
 
 
@@ -1844,10 +1886,34 @@ if not any(isinstance(finder, _MovedSubmodules) for finder in sys.meta_path):
     sys.meta_path.insert(0, _MovedSubmodules())
 '''
 
+_SHIM_KEEP = '''
+
+def _keep_entry_name() -> None:
+    """Keeps the package's own ``{name}`` when the import system binds this old path on it.
+
+    The package exports a ``{name}`` that is not this module. Before the move the package
+    imported the child first and then rebound the name, so ``from {root} import {name}``
+    kept giving the package's own object; this keeps it so.
+    """
+    package = sys.modules["{root}"]
+
+    class _KeepEntryName(type(package)):
+        def __setattr__(self, name: str, value: object) -> None:
+            if name == "{name}" and isinstance(value, ModuleType):
+                return
+            super().__setattr__(name, value)
+
+    package.__class__ = _KeepEntryName
+
+
+_keep_entry_name()
+'''
+
 
 def shim_text(child: Child, typed: bool) -> str:
     """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。"""
     package = child.is_package()
+    keep = child.shadowed_by_entry()
     imports = (
         (
             "import importlib.abc",
@@ -1859,7 +1925,11 @@ def shim_text(child: Child, typed: bool) -> str:
             "from types import CodeType, ModuleType",
         )
         if package
-        else ("import sys", "from importlib import import_module")
+        else (
+            "import sys",
+            "from importlib import import_module",
+            *(("from types import ModuleType",) if keep else ()),
+        )
     ) + (("from typing import TYPE_CHECKING",) if typed else ())
     checking = (
         # 型の検だけが古い path で移した module の名を読む為の * (finish が shim ごと消す — 規則の抑えはこの 1 行に閉じる)。
@@ -1868,6 +1938,7 @@ def shim_text(child: Child, typed: bool) -> str:
         else ""
     )
     finder = _SHIM_FINDER.format(old=child.old, new=child.new) if package else ""
+    finder += _SHIM_KEEP.format(root=child.root, name=child.name) if keep else ""
     return (
         f"{SHIM_MARK} {child.old} -> {child.new}\n"
         f'"""Moved: ``{child.old}`` is now ``{child.new}`` (ADR-DOE-API-001 R5).\n'

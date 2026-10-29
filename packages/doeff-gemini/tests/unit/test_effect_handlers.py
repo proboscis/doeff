@@ -70,7 +70,7 @@ from doeff_image.effects import ImageEdit
 from doeff_image.effects import ImageEdit as UnifiedImageEdit
 from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
 from doeff_image.types import ImageResult
-from doeff_llm.effects import LLMChat, LLMEmbedding, LLMStructuredQuery
+from doeff_llm import LLMChat, LLMEmbedding, LLMStructuredQuery
 from doeff_gemini.effects import (
     GeminiChat,
     GeminiEmbedding,

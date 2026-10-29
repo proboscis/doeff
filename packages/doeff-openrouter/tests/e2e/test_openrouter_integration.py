@@ -2,23 +2,23 @@
 
 
 import json
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 from _runner import run_program
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import ReadEnvironment
-from local_dotenv import dotenv_values
-from doeff_openrouter.chat import chat_completion
-from doeff_openrouter.client import OpenRouterClient
-from doeff_openrouter.structured_llm import (
+from doeff_openrouter import OpenRouterClient
+from doeff_openrouter._chat import chat_completion
+from doeff_openrouter._structured_llm import (
     StructuredOutputParsingError,
     build_messages,
     build_response_format_payload,
     process_structured_response,
 )
+from local_dotenv import dotenv_values
 from pydantic import BaseModel
 
 from doeff import (

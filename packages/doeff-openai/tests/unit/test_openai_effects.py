@@ -402,7 +402,7 @@ async def test_track_api_call_accumulates_under_gather():
     import math
     import time
 
-    from doeff_openai.client import track_api_call
+    from doeff_openai import track_api_call
 
     model = "gpt-4"
 

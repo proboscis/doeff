@@ -6,22 +6,17 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, TypeVar, get_args, get_origin
 
-from doeff_llm.effects import (
-    LLMChat,
-    LLMEmbedding,
-    LLMStreamingChat,
-    LLMStructuredQuery,
-)
+from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_openai.effects import (
+from doeff_openai._effects import (
     ChatCompletion,
     Embedding,
     StreamingChatCompletion,
     StructuredOutput,
 )
-from doeff_openai.handlers.production import _is_openai_model
+from doeff_openai._handlers.production import _is_openai_model
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

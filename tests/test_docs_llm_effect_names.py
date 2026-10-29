@@ -1,11 +1,11 @@
 """docs と README が名指す LLM の effect が、今の doeff-llm に在る事の検(取り組み doeff-publish・card ki-d20475e94d87 の見つけた不具合)。
 
 `LLMStructuredOutput` は `LLMStructuredQuery` に改名され(docs/llm_unified_effects.md が記す)、旧い名は今の doeff-llm に無い。
-改名の後も docs/20-why-effects-over-di.md の `from doeff_llm.effects import LLMChat, LLMStructuredOutput` と、3 つの provider の
+改名の後も docs/20-why-effects-over-di.md の `LLMChat, LLMStructuredOutput` を import する行と、3 つの provider の
 README(doeff-openai・doeff-openrouter・doeff-gemini)の対応する effect の一覧が旧い名のまま残り、写して動かすと ImportError になった。
 
 この検は docs/*.md と README(根と各 package の)に出る `LLMChat`・`LLMStreaming*`・`LLMStructured*`・`LLMEmbed*` の名を全部集め、
-`doeff_llm.effects` の `__all__` に在る事を確かめる。改名を言う行(「renamed」を含む行)と、改名の記録の表(documentation-fix-table.md)・
+`doeff_llm._effects` の `__all__` に在る事を確かめる。改名を言う行(「renamed」を含む行)と、改名の記録の表(documentation-fix-table.md)・
 CHANGELOG は、旧い名を書くのが役目なので読まない。
 doeff-llm は核の外の部品なので、入っていない環境(核の 5 個だけを入れる CI の Python Compatibility の venv)では、doeff-llm を読む
 page ごとの検を skip にする(top で import すると集めの段で ModuleNotFoundError になり、main の CI が ERROR で赤になった —
@@ -52,13 +52,13 @@ SAMPLE_KNOWN = frozenset({"LLMChat", "LLMStreamingChat", "LLMStructuredQuery", "
 @pytest.fixture(scope="module")
 def known() -> frozenset[str]:
     effects = pytest.importorskip(
-        "doeff_llm.effects", reason="核の外の部品 doeff-llm がこの環境に入っていない"
+        "doeff_llm._effects", reason="核の外の部品 doeff-llm がこの環境に入っていない"
     )
     return frozenset(effects.__all__)
 
 
 def test_the_check_names_the_old_structured_output_effect() -> None:
-    sample = "from doeff_llm.effects import LLMChat, LLMStructuredOutput\n- `LLMEmbed`\n- `LLMEmbedding`\n"
+    sample = "from doeff_llm._effects import LLMChat, LLMStructuredOutput\n- `LLMEmbed`\n- `LLMEmbedding`\n"
     assert unknown_effect_names(sample, SAMPLE_KNOWN) == {
         "LLMStructuredOutput": [1],
         "LLMEmbed": [2],

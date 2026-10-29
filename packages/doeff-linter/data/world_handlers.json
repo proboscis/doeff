@@ -561,28 +561,28 @@
    "why": "同上"
   },
   {
-   "handler": "doeff_openai.handlers.production:openai_production_handler",
+   "handler": "doeff_openai._handlers.production:openai_production_handler",
    "touches": [
     "http"
    ],
    "why": "OpenAI の SDK を Await"
   },
   {
-   "handler": "doeff_openai.handlers.production:production_handlers",
+   "handler": "doeff_openai._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
    "why": "同上"
   },
   {
-   "handler": "doeff_openrouter.handlers.production:openrouter_production_handler",
+   "handler": "doeff_openrouter._handlers.production:openrouter_production_handler",
    "touches": [
     "http"
    ],
    "why": "OpenRouter の SDK を Await"
   },
   {
-   "handler": "doeff_openrouter.handlers.production:production_handlers",
+   "handler": "doeff_openrouter._handlers.production:production_handlers",
    "touches": [
     "http"
    ],
