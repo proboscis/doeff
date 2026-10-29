@@ -41,15 +41,15 @@ scheduler が要る(時間の handler は要らない)。
 
 借りた資格(`ClaudeSessionSpec.credential` = `LentCredential` — access token・期限・契約の種類と階級)は子の env に置かない。handler は
 その process だけの設定 dir(`<家の設定 dir>/.credential-homes/<乱数>/`・0700 — 家の設定 dir の直下の名への symlink を張る)に
-`.credentials.json`(0600)で置き、子の `CLAUDE_CONFIG_DIR` をそこへ向け、process が降りたら dir を消す(`credential_home.hy`)。
+`.credentials.json`(0600)で置き、子の `CLAUDE_CONFIG_DIR` をそこへ向け、process が降りたら dir を消す(`_credential_home.hy`)。
 起動条件のキーに token と期限は入らないので、資格だけが替わった手番は生きた process を使い回し、その手番の資格を同じ file に書く。
 `credential` の無い宣言は今までどおり家の設定 dir の資格で起こす。
 
-型は `doeff_claude_code.values`(欄の値)・`doeff_claude_code.lines`(行の種類と手番の終わり)・`doeff_claude_code.effects`
-(effect と答え)にある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:
+effect・答え・欄の値・行の種類と手番の終わりの型は、入口 `doeff_claude_code` から読む(`from doeff_claude_code import ClaudeStartTurn, TurnInput`)。
+中の module は名に `_` を付けて隠してある。手番の終わり(`ClaudeTurnEnd`)は手番ごとにちょうど 1 つ:
 `Completed` / `Failed` / `Interrupted` / `BackendLost`(終わりの行を読む前に process が消えた — 次の手番は同じ `ResumeSession` で頼めばよい)。
 手番の途中で process が降りた終わり(`BackendLost` と、注入を待って飲んだ result の `Failed`)は、process の終了 code と stderr の末尾を
-欄 `exit_code`・`stderr_tail` で持つ(stderr の末尾は `lines.STDERR_TAIL_CHARS` 字まで — 越えた分は頭を捨てる・#4207)。fake の
+欄 `exit_code`・`stderr_tail` で持つ(stderr の末尾は `_lines.STDERR_TAIL_CHARS` 字まで — 越えた分は頭を捨てる・#4207)。fake の
 `FakeReply(lose=…)` は `lose_exit_code`・`lose_stderr` で同じ欄に載せる値を名乗る(名乗らなければ欄は None)。
 
 ## handler

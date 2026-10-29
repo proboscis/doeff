@@ -60,7 +60,7 @@ rules:
     message: >
       The Claude CLI started by doeff-claude-code receives a lent credential
       only as the .credentials.json of a config dir of the process's own
-      (doeff_claude_code/credential_home.hy), never as a child env var, so a
+      (doeff_claude_code/_credential_home.hy), never as a child env var, so a
       refreshed token can replace it while the CLI runs
       (ClaudeReplaceSessionCredential / ReplaceSessionCredentialEffect — card
       acp:kanban-issue:ki-4ffdafa021e5). Do not put the turn credential into
@@ -81,7 +81,7 @@ rules:
     severity: ERROR
     message: >
       doeff-claude-judge does not start the Claude CLI itself. Its Judge
-      handler emits the one-shot print effect (doeff_claude_code.effects
+      handler emits the one-shot print effect (doeff_claude_code._effects
       ClaudePrintOnce) and the print handler of doeff-claude-code owns the
       process: the argv, the config dir of its own that carries a lent
       credential, the wait limit and the kill. A subprocess / os.system /

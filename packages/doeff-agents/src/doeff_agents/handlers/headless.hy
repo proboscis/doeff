@@ -122,18 +122,11 @@
   HandlerMadeContextId NamedContextId
   ReplaceSessionCredentialEffect SessionCredentialReplaced SessionProcessNotLive SessionOnHomeCredential
   ReplacementCredentialUnavailable])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt
-                                  BypassAll PermissionPolicy checked-session-id ImageAttachment LentCredential])
-(import doeff_claude_code.lines [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary
-                                 HookNotice HookPhase SubagentTranscript SubagentCall CallClosed
-                                 Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit stderr-tail-within])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession
-                                   TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionWarmed
-                                   SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused
-                                   NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent
-                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
-                                   HomeCredentialSession])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec ClaudeTurn TurnInput FreshSession ResumeSession Rebuilt BypassAll PermissionPolicy ImageAttachment LentCredential]
+        doeff_claude_code._values [checked-session-id])
+(import doeff_claude_code [AssistantMessage PartialMessage ToolResult InputFate DeltaKind StopHookFeedback CompactStarted CompactEnded CompactBoundary HookNotice HookPhase SubagentTranscript SubagentCall CallClosed Completed Failed Interrupted BackendLost Usage AccountRefusalHit ModelRefusalHit]
+        doeff_claude_code._lines [stderr-tail-within])
+(import doeff_claude_code [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession ClaudeWarmSession TurnStarted InterruptRequested InputAlreadyRead TurnEventPage SessionExported SessionWarmed SessionNotFound SessionIdInUse TurnInFlight CarryRefused LaunchFailed AttachmentRefused NoTurnInFlight UnknownTurn ProcessStillAlive TranscriptAbsent ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession])
 
 (setv HANDLER-NAME "headless-claude-handler")
 

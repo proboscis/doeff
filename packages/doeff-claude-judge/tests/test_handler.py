@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import hy  # noqa: F401  # .hy import hook — 1 回きりの print の effect と fake は Hy の module doeff_claude_code に住む
 import pytest
-from doeff_claude_code.argv import print_once_argv
-from doeff_claude_code.effects import (
+from doeff_claude_code._argv import print_once_argv
+from doeff_claude_code import (
     ClaudePrintOnce,
     PrintAnswered,
     PrintFailed,
@@ -16,8 +16,8 @@ from doeff_claude_code.effects import (
     PrintTimedOut,
 )
 from doeff_claude_code.fake import fake_claude_print_handler
-from doeff_claude_code.lines import AccountLimitHit, Usage
-from doeff_claude_code.values import ImageAttachment, LentCredential, PrintContent
+from doeff_claude_code import AccountLimitHit, Usage
+from doeff_claude_code import ImageAttachment, LentCredential, PrintContent
 from doeff_claude_judge import (
     BorrowJudgeCredential,
     ClaudeJudgeTarget,

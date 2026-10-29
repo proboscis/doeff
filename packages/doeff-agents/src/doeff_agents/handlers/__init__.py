@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # activate Hy import hook for handler modules
-from doeff_claude_code.values import BypassAll, PermissionPolicy
+from doeff_claude_code import BypassAll, PermissionPolicy
 from doeff_time import sync_time_handler
 
 from doeff.program import ProgramHandler
 
 if TYPE_CHECKING:
-    from doeff_claude_code.effects import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
+    from doeff_claude_code import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
     from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
     from doeff_claude_code.fake import FakeReply as FakeReply
     from doeff_codex.fake import FakeCodexWorld as FakeCodexWorld
@@ -47,7 +47,7 @@ _DEFAULT_CLAUDE_PERMISSION: PermissionPolicy = BypassAll()
 # doeff-claude-code's and doeff-codex's Hy modules (name → defining module and
 # its name there): read on first use so importing this module does not load them.
 _RUNTIME_VALUES = {
-    "ClaudeLiveLimitExceeded": ("doeff_claude_code.effects", "ClaudeLiveLimitExceeded"),
+    "ClaudeLiveLimitExceeded": ("doeff_claude_code._effects", "ClaudeLiveLimitExceeded"),
     "FakeClaudeWorld": ("doeff_claude_code.fake", "FakeClaudeWorld"),
     "FakeReply": ("doeff_claude_code.fake", "FakeReply"),
     "FakeCodexWorld": ("doeff_codex.fake", "FakeCodexWorld"),

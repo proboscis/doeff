@@ -15,9 +15,9 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects.handlers [slog-discard-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome ClaudeTurn])
-(import doeff_claude_code.lines [ClaudeStreamLine Other])
-(import doeff_claude_code.effects [ClaudeReadTurnEvents])
+(import doeff_claude_code [ClaudeHome ClaudeTurn])
+(import doeff_claude_code [ClaudeStreamLine Other])
+(import doeff_claude_code [ClaudeReadTurnEvents])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [Binding ClaudeCodeHost SessionRuntime claude-code-handler])
 

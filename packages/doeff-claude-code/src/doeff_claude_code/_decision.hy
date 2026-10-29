@@ -7,8 +7,8 @@
 ;;; 上の層に見えるのは TurnStarted か失敗の型だけで、起こし直したか使い回したかは見えない。
 ;;; 入力の前の事前起動(ClaudeWarmSession)も同じ判断を使う — Reuse は「同じ起動条件の process が既に待っているので起動しない」と読む。
 (import dataclasses [dataclass])
-(import doeff_claude_code.values [ClaudeTurn FreshSession ResumeSession ForkSession LentCredential])
-(import doeff_claude_code.effects [SessionIdInUse SessionNotFound TurnInFlight])
+(import doeff_claude_code._values [ClaudeTurn FreshSession ResumeSession ForkSession LentCredential])
+(import doeff_claude_code._effects [SessionIdInUse SessionNotFound TurnInFlight])
 
 
 (defclass [(dataclass :frozen True)] SessionView []

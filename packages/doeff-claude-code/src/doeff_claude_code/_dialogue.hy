@@ -44,13 +44,13 @@
 (import doeff [run])
 (import typing [NamedTuple])
 (import doeff_hy.frozen [thaw-json])
-(import doeff_claude_code.values [TurnInput ImageAttachment PrintContent Allow Deny])
-(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
+(import doeff_claude_code._values [TurnInput ImageAttachment PrintContent Allow Deny])
+(import doeff_claude_code._lines [Completed Failed Interrupted BackendLost Init InputFate ControlResponse PermissionRequested
                                  AssistantMessage TurnResult Usage ModelWindow HookNotice ClaudeLineKind INPUT-FATES
                                  INPUT-FATE-TERMINAL merged-windows RateLimit AccountLimitHit RATE-LIMIT-REJECTED
                                  ASSISTANT-ERROR-RATE-LIMIT AccountRefusalHit ACCOUNT-REFUSAL-ERRORS ModelRefusalHit
                                  STOP-REASON-REFUSAL stderr-tail-within CostMark mark-of-result per-turn-model-usage])
-(import doeff_claude_code.faults [StopReason])
+(import doeff_claude_code._faults [StopReason])
 
 ;; CLI が system/init の capabilities で名乗る能力(実測 2.1.282)。
 (setv LIFECYCLE-CAPABILITY "msg_lifecycle_v1")

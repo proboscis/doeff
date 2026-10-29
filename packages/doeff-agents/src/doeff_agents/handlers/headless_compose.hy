@@ -16,7 +16,7 @@
 (import doeff.program [ProgramHandler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome BypassAll PermissionPolicy])
+(import doeff_claude_code [ClaudeHome BypassAll PermissionPolicy])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
 (import doeff_claude_code.fake [FakeClaudeWorld FakeReply StopHookRejection fake-claude-code-handler])
@@ -28,11 +28,10 @@
 ;; (compactions の CompactEnded)の型も同じ(card acp:kanban-issue:ki-8239be27d5f6)。道具が走らせる subagent の筋書き(subagent-transcript
 ;; の SubagentTranscript とその呼び SubagentCall — card ki-e798888dce4e)の型も同じ。AssistantMessage は前の subagent の筋書きの型で、
 ;; 呼び手の読みのために残す。
-(import doeff_claude_code.lines [Usage AccountRefusalHit ModelRefusalHit CompactBoundary CompactTrigger CompactEnded CompactOutcome
-                                 AssistantMessage HookNotice HookPhase SubagentTranscript SubagentCall])
+(import doeff_claude_code [Usage AccountRefusalHit ModelRefusalHit CompactBoundary CompactTrigger CompactEnded CompactOutcome AssistantMessage HookNotice HookPhase SubagentTranscript SubagentCall])
 ;; 層 2 が生かす CLI の本数の上限を越える起動をホストへ伝える知らせ(ホストが答える — 呼び手が doeff_claude_code を import せずに答え手を
 ;; 書けるように、ここから読ませる・agora-redesign #4072 の E1b)。
-(import doeff_claude_code.effects [ClaudeLiveLimitExceeded])
+(import doeff_claude_code [ClaudeLiveLimitExceeded])
 (import doeff_agents.handlers.headless [HeadlessClaudeConfig HeadlessState headless-claude-handler])
 ;; codex の組(card acp:kanban-issue:ki-534a081e32eb): doeff-codex の handler(層 2)と headless の codex の adapter(層 3)。呼び手が
 ;; doeff_codex を import せずに組めるように、宣言の語(許可の方針・sandbox)と fake の世界の型(筋書きの答え・入力)もここから読ませる。

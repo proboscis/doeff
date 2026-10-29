@@ -32,7 +32,7 @@
 (import shutil)
 (import uuid)
 (import pathlib [Path])
-(import doeff_claude_code.values [LentCredential])
+(import doeff_claude_code._values [LentCredential])
 
 (val CREDENTIAL-HOMES-DIR ".credential-homes")
 (val CREDENTIALS-FILE ".credentials.json")

@@ -17,15 +17,15 @@ from pathlib import Path, PurePath
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code.lines
+import hy  # noqa: F401  # .hy import hook — ToolCall / ToolAnswer live in the Hy module doeff_claude_code._lines
 from doeff import EffectBase
-from doeff_claude_code.lines import ModelUsage as ModelUsage
-from doeff_claude_code.lines import ModelUsageGap as ModelUsageGap
-from doeff_claude_code.lines import ModelWindow as ModelWindow
-from doeff_claude_code.lines import ToolAnswer as ToolAnswer
-from doeff_claude_code.lines import ToolCall as ToolCall
-from doeff_claude_code.values import AutocompactAuto as AutocompactAuto
-from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
+from doeff_claude_code import ModelUsage as ModelUsage
+from doeff_claude_code import ModelUsageGap as ModelUsageGap
+from doeff_claude_code import ModelWindow as ModelWindow
+from doeff_claude_code import ToolAnswer as ToolAnswer
+from doeff_claude_code import ToolCall as ToolCall
+from doeff_claude_code import AutocompactAuto as AutocompactAuto
+from doeff_claude_code import AutocompactTokens as AutocompactTokens
 
 from doeff_agents.effects._ids import deterministic_session_id as _deterministic_session_id
 

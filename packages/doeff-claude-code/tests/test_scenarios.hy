@@ -3,18 +3,10 @@
 (require doeff-hy.macros [deftest <- val var])
 (import dataclasses [replace])
 (import os.path)
-(import doeff_claude_code.values [ClaudeTurn TurnInput FreshSession ResumeSession ForkSession AskHost Allow LinkFromHome Rebuilt
-                                  ImageAttachment LentCredential])
-(import doeff_claude_code.lines [Init InputFate PermissionRequested TurnResult Completed Interrupted BackendLost])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
-                                   ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
-                                   TurnStarted InputQueued InterruptRequested InputAlreadyRead Answered SessionClosed
-                                   SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
-                                   SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight
-                                   UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed
-                                   ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
-                                   HomeCredentialSession])
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
+(import doeff_claude_code [ClaudeTurn TurnInput FreshSession ResumeSession ForkSession AskHost Allow LinkFromHome Rebuilt ImageAttachment LentCredential])
+(import doeff_claude_code [Init InputFate PermissionRequested TurnResult Completed Interrupted BackendLost])
+(import doeff_claude_code [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession TurnStarted InputQueued InterruptRequested InputAlreadyRead Answered SessionClosed SessionExported Idle TurnRunning Closed TranscriptPresent TranscriptAbsent SessionNotFound SessionIdInUse TurnInFlight AttachmentRefused NoTurnInFlight UnknownTurn NoSuchRequest ClaudeWarmSession SessionWarmed ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown HomeCredentialSession])
+(import doeff_claude_code [ClaudeDropProcess ClaudeEmitOutsideTurn ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import tests.scenario_rules [CODEWORD EXTRA-WORD THINK-PHRASE STREAM-PHRASE remember-prompt recall-prompt reply-prompt sleep-prompt
                               touch-prompt extra-prompt])
 (import tests.scenario_steps [settings start read-until read-to-end read-to-tool-start read-until-permission new-id typed kinds-of

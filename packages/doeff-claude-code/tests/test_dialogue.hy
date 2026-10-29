@@ -3,12 +3,13 @@
 (require doeff-hy.macros [deftest val])
 (import json)
 (import dataclasses [replace])
-(import doeff_claude_code.values [TurnInput ImageAttachment Allow Deny])
-(import doeff_claude_code.lines [Completed Failed Interrupted BackendLost Usage CostMark FRESH-MARK ModelUsage ModelUsageGap classify-record])
-(import doeff_claude_code.dialogue :as dialogue)
-(import doeff_claude_code.dialogue [DialogueState StopSignal StopControl NoStop])
-(import doeff_claude_code.faults [StopReason])
-(import doeff_claude_code [lines])
+(import doeff_claude_code [TurnInput ImageAttachment Allow Deny])
+(import doeff_claude_code [Completed Failed Interrupted BackendLost Usage ModelUsage ModelUsageGap]
+        doeff_claude_code._lines [CostMark FRESH-MARK classify-record])
+(import doeff_claude_code._dialogue :as dialogue)
+(import doeff_claude_code._dialogue [DialogueState StopSignal StopControl NoStop])
+(import doeff_claude_code [StopReason])
+(import doeff_claude_code [_lines :as lines])
 
 (setv SID "560828de-2992-4635-ab21-c6e06b0c6eb8")
 (setv INIT {"type" "system" "subtype" "init" "session_id" SID

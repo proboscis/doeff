@@ -13,12 +13,12 @@
 (import doeff_core_effects.effects [Listen SlogEffect])
 (import doeff_core_effects.handlers [listen-handler slog-discard-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
-(import doeff_claude_code.lines [AgentToolResult BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult
-                                 TurnResult classify-record recorded-cost subagent-transcript-of usage-of])
+(import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
+(import doeff_claude_code [AgentToolResult BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult TurnResult]
+        doeff_claude_code._lines [classify-record recorded-cost subagent-transcript-of usage-of])
 (import doeff_hy.json_lines [jsonl-lines whole-lines-end])
-(import doeff_claude_code.effects [ClaudeStartTurn])
-(import doeff_claude_code.faults [ClaudeDropProcess])
+(import doeff_claude_code [ClaudeStartTurn])
+(import doeff_claude_code [ClaudeDropProcess])
 (import doeff_claude_code.clock [clock-of])
 (import doeff_claude_code.handler [SUBAGENT-TRANSCRIPT-LOG ClaudeCodeHost claude-code-handler])
 (import tests.interpreters [STUB-PATH child-env])

@@ -62,13 +62,13 @@
 (import doeff_core_effects.scheduler [CreateExternalPromise ExternalPromise])
 (import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
-(import doeff_claude_code.values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
+(import doeff_claude_code._values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])
-(import doeff_claude_code.lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming tap-lines
+(import doeff_claude_code._lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Init PartialMessage DeltaKind RequestTiming tap-lines
                                  TimedPhase TurnResult TaskEvent ToolResult AgentToolResult SUBAGENT-TASK-TYPE SUBAGENT-ANSWERED-STATUS SubagentTranscript SubagentTranscriptProblem
                                  CallOpened parse-record classify-record recorded-cost subagent-transcript-of call-step CostMark FRESH-MARK])
 (import doeff_hy.json_lines [whole-lines-end])
-(import doeff_claude_code.effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
+(import doeff_claude_code._effects [ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeReadTurnEvents
                                    ClaudeAnswerPermission ClaudeCloseSession ClaudeSessionStatus ClaudeExportSession
                                    TurnStarted InputQueued InterruptRequested InputAlreadyRead TurnEventPage Answered SessionClosed
                                    SessionStatus SessionExported SessionNotFound Idle TurnRunning Closed TranscriptPresent TranscriptAbsent
@@ -77,13 +77,13 @@
                                    ClaudeReplaceSessionCredential CredentialReplaced NoSuchSession SessionProcessDown
                                    HomeCredentialSession])
 (import json)
-(import doeff_claude_code.faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
-(import doeff_claude_code.dialogue :as dialogue)
-(import doeff_claude_code.dialogue [DialogueState])
-(import doeff_claude_code.decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
-(import doeff_claude_code.argv [transcript-dir transcript-path subagent-transcript-path launch-argv launch-key cold-resume-argv process-env])
+(import doeff_claude_code._faults [ClaudeDropProcess ClaudeLiveProcess ClaudeEmitOutsideTurn LiveProcess NoLiveProcess StopReason])
+(import doeff_claude_code._dialogue :as dialogue)
+(import doeff_claude_code._dialogue [DialogueState])
+(import doeff_claude_code._decision [SessionView Refuse Reuse Launch start-decision retire-time credential-due])
+(import doeff_claude_code._argv [transcript-dir transcript-path subagent-transcript-path launch-argv launch-key cold-resume-argv process-env])
 (import doeff_claude_code.process [ClaudeProcess EOF-GRACE-SECONDS TERM-GRACE-SECONDS])
-(import doeff_claude_code.credential_home [open-credential-home replace-credential close-credential-home])
+(import doeff_claude_code._credential_home [open-credential-home replace-credential close-credential-home])
 (import doeff_claude_code.rotation [ROTATE-ABOVE-BYTES TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed
                                     rotate-transcript])
 
