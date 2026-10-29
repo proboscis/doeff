@@ -28,7 +28,7 @@ from doeff_conductor import journaled_workflow_effect_handler
 from doeff import K, Resume, handler, stacked_handlers
 
 SHARED_WORKSPACE_WORKFLOW = """
-(require doeff-conductor.macros [defworkflow agent! workspace! <-])
+(require doeff-conductor._macros [defworkflow agent! workspace! <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"

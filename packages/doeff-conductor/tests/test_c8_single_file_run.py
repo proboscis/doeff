@@ -44,7 +44,7 @@ def _cheap_session_id(run_id: str, node_id: str, *, attempt: int = 0) -> str:
 def _write_single_file_workflow(path: Path) -> None:
     path.write_text(
         """
-(require doeff-conductor.macros [defworkflow agent! workspace! <-])
+(require doeff-conductor._macros [defworkflow agent! workspace! <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
