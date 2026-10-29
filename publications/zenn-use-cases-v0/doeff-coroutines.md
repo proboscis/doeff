@@ -235,7 +235,7 @@ closed today
 ['Hello, Ada', 'Hello, Grace']
 ```
 
-`closed`は、再開しない事で答えます。`twice`は最初の`yield`で止まり、`"closed today"`が実行全体の結果になります。asyncioには、タスクを`await`の所に置いたまま、実行を別の値で終える手がありません。取り消すと、代わりにタスクの中で例外が起きます。
+`closed`は、再開しない事で答えます。`twice`は最初の`yield`で止まり、`"closed today"`が実行全体の結果になります。doeffは止まったgeneratorを閉じるので、`finally`は走ります。ただし、値は受け取りません。asyncioのループには、自分の値で実行を終える手がありません。`task.cancel()`は`await`の所で`CancelledError`を起こし、その後どうするかはタスクが決めます。
 
 `k`を後のために取っておく事が、並行の仕組みです。`Spawn`と`Gather`はエフェクトで、`scheduled`はそれらのハンドラです。`scheduled`は、待つタスクごとに`k`を取っておきます。タスクが進めるようになると、その`k`へ制御を渡します。asyncioのループが、自分のタスクにしている仕事です。`scheduled`も、`ada`と同じく付けます。どちらのタスクも、`together`の周りのハンドラの下で走ります。2つ目のタスクのプログラムは`grace(greet())`なので、Graceに挨拶します。
 
@@ -344,7 +344,7 @@ print(repr(text), len(waits))  # 本文と、見えた待ちの数。
 
 `Listen`も、エフェクトです。`listen_handler`は、`program`の周りにハンドラを1つ付けて答えます。そのハンドラは各`Await`を書き留め、`await_handler`へ渡します。断片ごとに`Await`を出すと、待ちが5回見えます。4つの断片と、終わりの1回です。ループを1つのcoroutineに入れると、見えるのは1回です。`collect_async`の中の待ちはasyncioのループへ行き、そこへはどのハンドラも届きません。
 
-だから、手順は`@do`のコードに置きます。`Await`は、ライブラリが出す1つの操作の所に置きます。そうすれば、プログラムの周りに重ねた物はどれも、一歩ずつを見られます。ログ、時計、予算、そして答えの記録です。テストはその記録を再生し、本物のI/Oを1度もしません。
+だから、手順は`@do`のコードに置きます。`Await`は、ライブラリが出す1つの操作の所に置きます。そうすれば、プログラムの周りに重ねた物はどれも、一歩ずつを見られます。ログ、時計、予算、そして答えの記録です。テストはその記録を再生し、外のサービスを呼び直しません。
 
 `collect`は、`not chunk`ではなく`chunk is None`を見ます。空の文字列も断片で、`anext(chunks, None)`が`None`を返すのは終わりの時だけだからです。
 
@@ -356,7 +356,7 @@ print(repr(text), len(waits))  # 本文と、見えた待ちの数。
 - **asyncioのアプリの中で`run()`を呼ぶと、ループが止まります。** `run()`は、終わるまで戻らないからです。worker threadで呼びます。`await asyncio.to_thread(run, program)`です。
 - **`Await`の橋には、それ自身の約束があります。** プロセスのすべての`Await`は、1つの裏のループで走ります。asyncのコードの中の同期の呼び出しでそのループを止めると、プロセスのすべての`Await`が止まります。待っているdoeffのタスクを取り消すと、coroutineに`CancelledError`が届きます。ただし、頼むだけです。取り消しは、coroutineの`finally`が走り終わるのを待たずに返ります。
 - **ハンドラは、その操作の約束を引き受けます。** 取り消しの時や例外の時に何が起き、どの順で起きるかは、ハンドラの仕事になります。ほかのコードと同じく、テストします。
-- **タスクの費用は高めです。** doeffのRustのスケジューラは、起こしたタスク1つに約17 µsのCPUを使います。asyncioは約11 µsです。
+- **タスクの費用は高めです。** doeffのRustのスケジューラは、起こしたタスク1つに約17 µsのCPUを使います。asyncioは約11 µsです([測り方](https://github.com/proboscis/doeff#performance))。
 
 ## まとめ
 
@@ -382,7 +382,7 @@ python stream.py  # 断片ごとのAwaitと、1つのAwaitを比べる。
 
 この記事の例はどれも、PyPIのdoeff 0.8.0で、載せたとおりに走ります。完全なファイルは、[examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async)にあります。docsの章[Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md)は、`Await`・`Spawn`・`Gather`・`Race`と取り消しを扱います。FAQの[How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio)も、同じ問いに答えています。
 
-[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。時計をハンドラにし、何時間もの待ちを一瞬で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。
+[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。時計をハンドラにし、何日分もの待ちを数ミリ秒で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。
 
 asyncioのコードで、イベントループが邪魔になる所はありますか。素の`await`のほうが明らかに良い場面はありますか。issueは https://github.com/proboscis/doeff/issues で受け付けています。
 
@@ -390,7 +390,7 @@ asyncioのコードで、イベントループが邪魔になる所はありま�
 
 ## 参考
 
-この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.14で試しました。
+この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.13・3.14で試しました。
 
 - [Python公式: Coroutine objects](https://docs.python.org/3/reference/datamodel.html#coroutine-objects)
 - [Python公式: Coroutines and tasks](https://docs.python.org/3/library/asyncio-task.html)
