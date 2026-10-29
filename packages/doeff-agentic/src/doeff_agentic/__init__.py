@@ -58,10 +58,6 @@ CLI Usage:
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-# Types - new spec-compliant types
-# API
-from ._api import AgenticAPI
-
 # Effects - new spec-compliant effects
 from ._effects import (
     AgenticAbortSession,
@@ -119,13 +115,6 @@ from ._effects import (
     WorkflowNotFoundError,
 )
 
-# Event logging (new - JSONL event logs)
-from ._event_log import (
-    EventLogReader,
-    EventLogWriter,
-    WorkflowIndex,
-)
-
 # Exceptions
 from ._exceptions import (
     AgenticAmbiguousPrefixError,
@@ -148,13 +137,6 @@ from ._handlers import (
 
 # OpenCode Handler (new - primary)
 from ._opencode_handler import opencode_handler
-
-# State management
-from ._state import (
-    StateManager,
-    generate_workflow_id,
-    get_default_state_dir,
-)
 
 # Tmux Handler (legacy fallback)
 from ._tmux_handler import tmux_handler
@@ -183,10 +165,7 @@ from ._types import (
 )
 
 # Visual Interceptor (for examples/debugging)
-from ._visual_interceptor import (
-    VisualInterceptorConfig,
-    with_visual_logging,
-)
+from ._visual_interceptor import VisualInterceptorConfig
 
 # Legacy Handler (deprecated - requires doeff-agents)
 try:
@@ -201,8 +180,6 @@ __all__ = [
     "AgentInfo",
     "AgentNotRunningError",
     "AgentStatus",
-    # API
-    "AgenticAPI",
     "AgenticAbortSession",
     "AgenticAmbiguousPrefixError",
     "AgenticAnswerInput",
@@ -256,16 +233,11 @@ __all__ = [
     "AmbiguousPrefixError",
     "CaptureOutput",
     "CaptureOutputEffect",
-    "EventLogReader",
-    # Event logging
-    "EventLogWriter",
     "RunAgent",
     # Effects - legacy
     "RunAgentEffect",
     "SendMessage",
     "SendMessageEffect",
-    # State
-    "StateManager",
     "StopAgent",
     "StopAgentEffect",
     "UserInputTimeoutError",
@@ -276,14 +248,11 @@ __all__ = [
     "WaitForUserInputEffect",
     "WatchEventType",
     "WatchUpdate",
-    "WorkflowIndex",
     "WorkflowInfo",
     # Errors - legacy aliases
     "WorkflowNotFoundError",
     "WorkflowStatus",
     "agentic_effectful_handlers",
-    "generate_workflow_id",
-    "get_default_state_dir",
     "mock_handlers",
     "opencode_handler",
     "production_handlers",
@@ -291,7 +260,6 @@ __all__ = [
     "tmux_handler",
     "with_agentic_effectful_handlers",
     "with_handlers",
-    "with_visual_logging",
 ]
 
 

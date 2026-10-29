@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 from doeff_core_effects import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect, SQLiteStorage
-from doeff_flow import run_workflow
+from doeff_flow._run import run_workflow
 from doeff_time import Delay
 
 from doeff import (

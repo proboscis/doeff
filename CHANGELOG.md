@@ -76,6 +76,17 @@
   `resolved_identity_fingerprint`, `workflow_effect_cache_key`) and `make_scheduled_handler_with_store` /
   `make_blocking_scheduled_handler_with_store` stay in the internal modules `doeff_conductor._templates`,
   `doeff_conductor._effects`, `doeff_conductor._replay_keying` and `doeff_conductor._handlers`.
+- **Breaking (doeff-agentic, doeff-flow, doeff-events, doeff-notify):** the import roots no longer export 15 names
+  that are neither effects nor handlers and that no other repository reads (ADR-DOE-API-001 R1). doeff-agentic drops
+  `AgenticAPI`, `EventLogReader`, `EventLogWriter`, `WorkflowIndex`, `StateManager`, `generate_workflow_id`,
+  `get_default_state_dir` and `with_visual_logging` — read and drive the recorded workflows with the effects
+  `AgenticListWorkflows`, `AgenticFindWorkflow`, `AgenticSendToAgent`, `AgenticStopWorkflow` and the others that
+  `recorded_workflows_handler()` answers. doeff-flow drops `run_workflow`, `run_result`, `trace_observer`,
+  `get_default_trace_dir` and `validate_workflow_id` — a program records its trace by yielding `TracePush`,
+  `TraceAnnotate` and `TraceSnapshot` under `production_handlers(workflow_id, trace_dir)`; the runner the examples use
+  is `doeff_flow._run.run_workflow`, inside the package. doeff-events drops `SubscriberQueue` (the queue
+  `EventBus.subscribe` returns, a part of the handler). doeff-notify drops `collected_notifications` — read
+  `capture.notifications` of the `NotificationCapture` that `build_testing_handler()` returns.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).

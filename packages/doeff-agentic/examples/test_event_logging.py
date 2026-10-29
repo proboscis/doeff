@@ -21,10 +21,8 @@ from doeff_agentic import (
     AgenticEnvironmentType,
     AgenticSessionHandle,
     AgenticSessionStatus,
-    EventLogReader,
-    EventLogWriter,
-    WorkflowIndex,
 )
+from doeff_agentic._event_log import EventLogReader, EventLogWriter, WorkflowIndex
 
 
 def test_event_logging():  # noqa: PLR0912, PLR0915 - baseline cleanup keeps existing control flow unchanged
