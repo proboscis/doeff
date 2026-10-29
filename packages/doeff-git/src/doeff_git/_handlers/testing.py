@@ -9,8 +9,8 @@ from typing import Any
 from doeff import Effect, Pass, Resume, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
-from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
-from doeff_git.types import PRHandle
+from doeff_git._effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
+from doeff_git._types import PRHandle
 
 
 @dataclass

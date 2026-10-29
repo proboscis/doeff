@@ -444,7 +444,7 @@
    "why": "subprocess.Popen・stdin/stdout の thread・SIGTERM"
   },
   {
-   "handler": "doeff_docker.handlers.shell:shell-run-handler",
+   "handler": "doeff_docker._handlers.shell:shell-run-handler",
    "touches": [
     "process"
    ],
@@ -495,7 +495,7 @@
    "why": "tmux・state_dir・time.sleep"
   },
   {
-   "handler": "doeff_git.handlers.production:production_handlers",
+   "handler": "doeff_git._handlers.production:production_handlers",
    "touches": [
     "process"
    ],
@@ -519,21 +519,21 @@
    "why": "open(\"a\")・time.strftime"
   },
   {
-   "handler": "doeff_secret.handlers:env_var_handler",
+   "handler": "doeff_secret._handlers:env_var_handler",
    "touches": [
     "env"
    ],
    "why": "os.environ"
   },
   {
-   "handler": "doeff_secret.handlers:env_var_handlers",
+   "handler": "doeff_secret._handlers:env_var_handlers",
    "touches": [
     "env"
    ],
    "why": "os.environ"
   },
   {
-   "handler": "doeff_google_secret_manager.handlers.production:production_handlers",
+   "handler": "doeff_google_secret_manager._handlers.production:production_handlers",
    "touches": [
     "http"
    ],

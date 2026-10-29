@@ -4,7 +4,7 @@
 from doeff import K, Pass, Resume, handler, stacked_handlers
 from doeff.program import ProgramHandler
 from doeff_git import _commands
-from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
+from doeff_git._effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 
 
 @handler

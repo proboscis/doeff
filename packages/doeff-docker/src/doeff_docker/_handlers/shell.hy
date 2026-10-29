@@ -10,7 +10,7 @@
 
 (import subprocess)
 
-(import doeff_docker.effects [ShellRun ShellRunResult])
+(import doeff_docker._effects [ShellRun ShellRunResult])
 
 
 (defhandler shell-run-handler

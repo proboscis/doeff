@@ -15,15 +15,21 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 import doeff_git
-from doeff_git.effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
-from doeff_git.handlers import (
+from doeff_git import (
+    CreatePR,
+    GitCommit,
+    GitDiff,
+    GitPull,
+    GitPush,
+    MergePR,
+    MergeStrategy,
     MockGitRuntime,
+    PRHandle,
     git_local_handler,
     github_handler,
     mock_handlers,
     production_handlers,
 )
-from doeff_git.types import MergeStrategy, PRHandle
 
 
 @do
@@ -41,14 +47,14 @@ def _mock_flow(work_dir: Path):
 
 
 def test_effect_exports() -> None:
-    effects_module = importlib.import_module("doeff_git.effects")
+    effects_module = importlib.import_module("doeff_git._effects")
     assert effects_module.GitCommit is GitCommit
     assert effects_module.GitPush is GitPush
     assert effects_module.CreatePR is CreatePR
 
 
 def test_handler_exports() -> None:
-    handlers_module = importlib.import_module("doeff_git.handlers")
+    handlers_module = importlib.import_module("doeff_git._handlers")
     assert handlers_module.git_local_handler is git_local_handler
     assert handlers_module.github_handler is github_handler
     assert handlers_module.mock_handlers is mock_handlers
@@ -60,7 +66,7 @@ def test_handlers_are_doeff_handlers_not_classes() -> None:
     # ADR-DOE-API-001 R4: the handlers are (effect, k) handlers; the classes are gone.
     for name in ("GitLocalHandler", "GitHubHandler"):
         assert not hasattr(doeff_git, name)
-        assert not hasattr(importlib.import_module("doeff_git.handlers"), name)
+        assert not hasattr(importlib.import_module("doeff_git._handlers"), name)
     for installer in (git_local_handler, github_handler, production_handlers()):
         assert installer._doeff_is_handler_fn is True
 

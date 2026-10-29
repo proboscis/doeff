@@ -12,7 +12,7 @@
 
 (import shlex)
 
-(import doeff_docker.effects [DockerBuild ImagePush ShellRun])
+(import doeff_docker._effects [DockerBuild ImagePush ShellRun])
 
 
 (defn _build-shell-args [args * [host "localhost"]]

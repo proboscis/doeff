@@ -6,11 +6,11 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from doeff_secret.effects import DeleteSecret, GetSecret, ListSecrets, SetSecret
+from doeff_secret import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
 from doeff import Effect, Pass, Transfer, do
 from doeff import handler as _program_handler
-from doeff_google_secret_manager.client import SecretManagerClient, get_secret_manager_client
+from doeff_google_secret_manager._client import SecretManagerClient, get_secret_manager_client
 
 ProtocolHandler = Callable[[Any, Any], Any]
 

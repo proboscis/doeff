@@ -3,18 +3,9 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from doeff_git.effects import (
-    CreatePR as GitCreatePR,
-)
-from doeff_git.effects import (
-    GitCommit,
-    GitDiff,
-    GitPull,
-    GitPush,
-)
-from doeff_git.effects import (
-    MergePR as GitMergePR,
-)
+from doeff_git import CreatePR as GitCreatePR
+from doeff_git import GitCommit, GitDiff, GitPull, GitPush
+from doeff_git import MergePR as GitMergePR
 
 from doeff_conductor.effects.base import ConductorEffectBase
 

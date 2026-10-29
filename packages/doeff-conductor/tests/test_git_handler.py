@@ -10,8 +10,8 @@ from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.exceptions import GitCommandError
 from doeff_conductor.handlers.git_handler import git_handler
 from doeff_conductor.types import MergeStrategy, PRHandle, Workspace
-from doeff_git.effects import GitCommit
-from doeff_git.handlers import production_handlers as git_production_handlers
+from doeff_git import GitCommit
+from doeff_git import production_handlers as git_production_handlers
 
 from doeff import K, Resume, stacked_handlers
 from doeff import handler as as_handler

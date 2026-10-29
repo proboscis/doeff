@@ -1,60 +1,21 @@
-"""Domain exceptions for doeff-git handlers."""
+# moved-submodule-shim: doeff_git.exceptions -> doeff_git._exceptions
+"""Moved: ``doeff_git.exceptions`` is now ``doeff_git._exceptions`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_git.exceptions…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
-from subprocess import CalledProcessError
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_git._exceptions import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-class GitError(Exception):
-    """Base exception for doeff-git."""
+if __name__ == "__main__":
+    import runpy
 
-
-@dataclass
-class GitCommandError(GitError):
-    """Raised when a git or gh command fails."""
-
-    command: list[str]
-    returncode: int
-    stdout: str = ""
-    stderr: str = ""
-    cwd: str | None = None
-
-    def __post_init__(self) -> None:
-        cmd_str = " ".join(self.command)
-        parts = [f"Command failed: {cmd_str}", f"Exit code: {self.returncode}"]
-        if self.cwd:
-            parts.append(f"Working directory: {self.cwd}")
-        if self.stderr:
-            parts.append(f"stderr: {self.stderr}")
-        if self.stdout:
-            parts.append(f"stdout: {self.stdout}")
-        super().__init__("\n".join(parts))
-
-    @classmethod
-    def from_subprocess_error(
-        cls,
-        error: CalledProcessError,
-        *,
-        cwd: str | None = None,
-    ) -> "GitCommandError":
-        command: list[str]
-        if isinstance(error.cmd, (list, tuple)):
-            command = [str(part) for part in error.cmd]
-        else:
-            command = [str(error.cmd)]
-
-        stdout = error.stdout if isinstance(error.stdout, str) else ""
-        stderr = error.stderr if isinstance(error.stderr, str) else ""
-        return cls(
-            command=command,
-            returncode=error.returncode,
-            stdout=stdout,
-            stderr=stderr,
-            cwd=cwd,
-        )
-
-
-__all__ = [
-    "GitCommandError",
-    "GitError",
-]
+    runpy.run_module("doeff_git._exceptions", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_git._exceptions")
