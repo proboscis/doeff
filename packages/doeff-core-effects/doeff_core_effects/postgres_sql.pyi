@@ -16,7 +16,7 @@ from doeff import Program as Program
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import dump_json as dump_json
 from doeff_hy.wire import parse_json as parse_json
-from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import ReusedThreads as _ReusedThreads
 from doeff_core_effects._offloaded_call import offloaded as offloaded
 from doeff_core_effects._offloaded_call import run_detached as run_detached
 from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
@@ -55,7 +55,7 @@ UNREACHABLE_CLASSES: tuple[str, ...]
 UNREACHABLE_SQLSTATE_CLASS: str
 UNREACHABLE_SQLSTATES: tuple[str, ...]
 DEFAULT_POOL_SIZE: int
-DRIVER_THREADS: ThreadPerCall
+DRIVER_THREADS: _ReusedThreads
 LISTEN_RETRY_SECONDS: int
 NOTICE_PAYLOAD_LIMIT: int
 LARGE_CARRY_BYTES: int
