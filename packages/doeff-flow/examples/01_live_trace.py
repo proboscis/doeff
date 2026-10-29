@@ -17,7 +17,8 @@ You can override with --trace-dir or DOEFF_FLOW_TRACE_DIR env var.
 """
 
 # Import from doeff_flow
-from doeff_flow import run_result, run_workflow, trace_observer
+from doeff_flow._run import run_result, run_workflow
+from doeff_flow._trace import trace_observer
 from doeff_time import Delay
 
 from doeff import do, slog

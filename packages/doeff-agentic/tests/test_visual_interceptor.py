@@ -2,8 +2,8 @@
 
 from io import StringIO
 
-from doeff_agentic import AgenticSupportsCapability, VisualInterceptorConfig, with_visual_logging
-from doeff_agentic._visual_interceptor import visual_logging_console
+from doeff_agentic import AgenticSupportsCapability, VisualInterceptorConfig
+from doeff_agentic._visual_interceptor import visual_logging_console, with_visual_logging
 from doeff_core_effects import slog_handler, state
 from rich.console import Console
 

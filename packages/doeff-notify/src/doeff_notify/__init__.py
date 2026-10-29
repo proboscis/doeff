@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from ._effects import Acknowledge, Notify, NotifyThread
 from ._handlers import (
     NotificationCapture,
-    collected_notifications,
     console_handler,
     log_handler,
     testing_handler,
@@ -22,7 +21,6 @@ __all__ = [
     "NotifyThread",
     "Urgency",
     "build_testing_handler",
-    "collected_notifications",
     "console_handler",
     "log_handler",
     "testing_handler",

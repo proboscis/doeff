@@ -20,7 +20,7 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 
 import random
 
-from doeff_flow import run_workflow
+from doeff_flow._run import run_workflow
 from doeff_time import Delay
 
 from doeff import Ask, do, slog

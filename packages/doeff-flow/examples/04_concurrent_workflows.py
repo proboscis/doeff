@@ -24,7 +24,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from doeff_flow import run_workflow
+from doeff_flow._run import run_workflow
 from doeff_time import Delay, GetTime
 
 from doeff import Ask, do, slog

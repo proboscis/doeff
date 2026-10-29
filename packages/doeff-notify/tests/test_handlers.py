@@ -21,11 +21,11 @@ from doeff_notify import (
     Notify,
     NotifyThread,
     Urgency,
-    collected_notifications,
     console_handler,
     log_handler,
 )
 from doeff_notify import testing_handler as build_testing_handler
+from doeff_notify._handlers.testing import collected_notifications
 
 from doeff import Effect, Pass, Resume, Tell, WriterTellEffect, do, run
 

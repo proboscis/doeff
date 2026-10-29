@@ -29,47 +29,37 @@ uv add doeff-flow
 
 ### Step 1: Create a Workflow
 
+The workflow yields doeff-flow's trace effects (`TracePush`, `TraceAnnotate`, `TraceSnapshot`), and
+`production_handlers(workflow_id, trace_dir=None)` answers them by writing one trace entry per effect to
+`{trace_dir}/{workflow_id}/trace.jsonl` (the XDG default directory when `trace_dir` is None).
+
 ```python
 # my_workflow.py
-from doeff import do
-from doeff.effects import Pure
-from doeff_flow import run_workflow
 from pathlib import Path
 
-@do
-def fetch_data():
-    """Simulate fetching data."""
-    data = yield Pure({"items": [1, 2, 3, 4, 5]})
-    return data
+from doeff import do, run
+from doeff_flow import TraceAnnotate, TracePush, TraceSnapshot, production_handlers
 
 @do
 def process_item(item: int):
     """Process a single item."""
-    result = yield Pure(item * 2)
-    return result
+    yield TracePush(name="process_item", metadata={"item": item})
+    return item * 2
 
 @do
 def my_workflow():
     """Main workflow."""
-    # Step 1: Fetch
-    data = yield fetch_data()
-
-    # Step 2: Process each item
+    yield TracePush(name="my_workflow")
     results = []
-    for item in data["items"]:
-        result = yield process_item(item)
-        results.append(result)
-
-    # Step 3: Return summary
+    for item in [1, 2, 3, 4, 5]:
+        results.append((yield process_item(item)))
+        yield TraceAnnotate(key="done", value=len(results))
+    yield TraceSnapshot(label="processed")
     return {"count": len(results), "sum": sum(results)}
 
 if __name__ == "__main__":
-    result = run_workflow(
-        my_workflow(),
-        workflow_id="my-first-workflow",
-        trace_dir=Path(".doeff-flow"),
-    )
-    print(f"Result: {result.value}")
+    result = run(production_handlers("my-first-workflow", Path(".doeff-flow"))(my_workflow()))
+    print(f"Result: {result}")
 ```
 
 ### Step 2: Run and Watch
@@ -81,10 +71,10 @@ python my_workflow.py
 
 **Terminal 2** - Watch live execution:
 ```bash
-doeff-flow watch my-first-workflow --exit-on-complete
+doeff-flow watch my-first-workflow --trace-dir .doeff-flow
 ```
 
-You'll see the call stack update in real-time:
+You'll see the trace update in real-time:
 
 ```
 ┌─ my-first-workflow [running] step 7 ───────────────┐
@@ -113,7 +103,7 @@ The package includes several examples demonstrating different use cases:
 
 | Example | Description |
 |---------|-------------|
-| `01_live_trace.py` | Basic live tracing with `run_workflow` and `trace_observer` |
+| `01_live_trace.py` | Basic live tracing with the examples' runner and `trace_observer` |
 | `02_data_pipeline.py` | ETL pipeline with multiple stages |
 | `03_error_handling.py` | Error capture and failure tracing |
 | `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
@@ -121,7 +111,9 @@ The package includes several examples demonstrating different use cases:
 | `06_testing_with_mocks.py` | In-memory trace assertions with mock handlers |
 | `07_workflow_status.py` | Workflow status with slog for semantic status updates |
 
-Run examples from the `packages/doeff-flow` directory:
+The examples run their workflows with `doeff_flow._run.run_workflow`, a runner inside the package (not part
+of its public API — ADR-DOE-API-001 R1) that runs the program under the reference handlers and writes one
+terminal trace entry (`completed` or `failed`). Run examples from the `packages/doeff-flow` directory:
 
 ```bash
 cd packages/doeff-flow
@@ -131,22 +123,23 @@ uv run python examples/02_data_pipeline.py
 
 ## API Usage
 
-### Option A: `run_workflow` (Simple)
+### Recording a trace
 
 ```python
-from doeff_flow import run_workflow
+from doeff import run
+from doeff_flow import production_handlers
 
-result = run_workflow(
-    my_workflow(),
-    workflow_id="wf-001",
-    trace_dir=".doeff-flow",  # str or Path
-)
+result = run(production_handlers("wf-001", ".doeff-flow")(my_workflow()))  # trace_dir: str or Path
 ```
+
+In tests, `mock_handlers()` answers the same effects in memory, and `TraceCapture(format=...)` reads back
+what was recorded (`examples/06_testing_with_mocks.py`). `ReadTraces(trace_dir, workflow_id=None)` under
+`trace_files_handler` reads the written entries.
 
 ### Waiting inside a workflow
 
 A workflow waits by yielding doeff-time's `Delay`, not by calling `time.sleep` (the semgrep rule
-`doeff-no-sleep-in-programs` covers `examples/` too). `run_workflow` and `run_result` install
+`doeff-no-sleep-in-programs` covers `examples/` too). The examples' runner installs
 `doeff_time.async_time_handler()` inside `await_handler`, so `Delay`, `GetTime` and the other doeff-time
 effects are answered on the wall clock:
 
@@ -159,31 +152,15 @@ def poll_until_ready():
     yield Delay(0.5)  # waits 0.5 s of wall-clock time
 ```
 
-### Option B: `trace_observer` (Composable)
-
-```python
-from doeff import run
-from doeff_flow import trace_observer
-
-with trace_observer("wf-001", ".doeff-flow") as on_step:
-    _ = on_step
-    result = run(
-        my_workflow(),
-        env={"config": "value"},  # Custom environment
-    )
-```
-
 ### With Durable Storage
 
 ```python
-from doeff import WithHandler
+from doeff import run
 from doeff.storage import SQLiteStorage
+from doeff_flow import production_handlers
 
 storage = SQLiteStorage(".doeff-cache.db")
-result = run_workflow(
-    WithHandler(cache_handler(storage), my_workflow()),
-    workflow_id="durable-wf",
-)
+result = run(production_handlers("durable-wf")(cache_handler(storage)(my_workflow())))
 ```
 
 ## CLI Reference
@@ -267,7 +244,6 @@ human-readable status messages. These are captured in traces and displayed promi
 ```python
 from doeff import do
 from doeff.effects.writer import slog
-from doeff_flow import run_workflow
 
 @do
 def my_workflow():
@@ -335,13 +311,18 @@ See `examples/07_workflow_status.py` for a complete example.
 
 ## API Reference
 
-### Functions
+### Effects and handlers
 
-| Function | Description |
-|----------|-------------|
-| `run_workflow(program, workflow_id, ...)` | Run workflow with live trace |
-| `trace_observer(workflow_id, trace_dir)` | Context manager for `on_step` callback |
-| `validate_workflow_id(workflow_id)` | Validate workflow ID format |
+| Name | Description |
+|------|-------------|
+| `TracePush(name, metadata=None)` | Push a trace span |
+| `TraceAnnotate(key, value)` | Annotate the current span |
+| `TraceSnapshot(label)` | Record a labelled snapshot |
+| `TraceCapture(format="json")` | Read back what the active trace handler recorded |
+| `ReadTraces(trace_dir, workflow_id=None)` | Read the entries written under a trace directory |
+| `production_handlers(workflow_id, trace_dir=None)` | Write each trace effect to `{trace_dir}/{workflow_id}/trace.jsonl` |
+| `mock_handlers()` | Record the trace effects in memory (tests) |
+| `trace_files_handler` | Answer `ReadTraces` from the trace files |
 
 ### Data Types
 

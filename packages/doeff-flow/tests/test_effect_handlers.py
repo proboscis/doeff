@@ -11,8 +11,8 @@ from doeff_flow import (
     TraceSnapshot,
     mock_handlers,
     production_handlers,
-    run_result,
 )
+from doeff_flow._run import run_result
 
 from doeff import do
 

@@ -7,7 +7,7 @@ Generic publish/subscribe effects for doeff.
 - `Publish(event)`
 - `WaitForEvent(*event_types)`
 - `event_handler()`
-- `subscribed_event_handler(bus, subscriber, event_types=())`・`EventBus()`・`SubscriberQueue(event_types)`
+- `subscribed_event_handler(bus, subscriber, event_types=())`・`EventBus()`
 
 ## 購読者ごとの列
 
@@ -21,7 +21,7 @@ Generic publish/subscribe effects for doeff.
 | `subscribed_event_handler(bus, subscriber, event_types=())` | 組み立てた時に `bus` へ購読を始め、その時より後の `event_types` の合図だけを積む。同じ名で組み立て直すと前の列を捨てる。`event_types=()` は発するだけ |
 | `Publish(event)` | `bus` の全購読者(自分を含む)の列へ渡す。待っている購読者は起き、待っていない購読者の列には残る |
 | `WaitForEvent(*types)` | 自分の列の先頭から当たる合図を取り出す。無ければ合図が来るまで待つ。購読の型の外の型を待つと `ValueError` |
-| `SubscriberQueue.offer(event)` | 購読者 1 人の列へ合図を渡す口。別の合図の源を持つ handler も、受けた合図をここへ渡せば同じ待ち方を使える |
+| `EventBus.subscribe(subscriber, event_types)` | 購読者 1 人の列(handler の中の部品 `doeff_events._handlers.memory.SubscriberQueue` — 公開の名でない)を作って返す。別の合図の源を持つ handler も、受けた合図を列の `offer(event)` へ渡せば同じ待ち方を使える |
 
 待ち手の居ない間に列に溜まった同じ型の合図のうち、欄 `keys`(変わった所の tuple)を持つ frozen の dataclass の合図は、
 先に来た方の位置で 1 つにまとめます(`keys` は来た順に重なりを除いて合わせる・`keys` の外の欄が違えばまとめない)。

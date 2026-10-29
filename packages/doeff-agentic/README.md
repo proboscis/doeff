@@ -143,28 +143,38 @@ response = yield WaitForUserInput(
 
 ## Python API
 
+The recorded workflows are read and driven with effects, answered by
+`recorded_workflows_handler(state_dir=None)` (the XDG state directory by default) — the same
+effects the `doeff-agentic` command runs.
+
 ```python
-from doeff_agentic import AgenticAPI
+from doeff import do, run
+from doeff_agentic import (
+    AgenticCaptureAgentOutput,
+    AgenticFindWorkflow,
+    AgenticListWorkflows,
+    AgenticSendToAgent,
+    AgenticStopWorkflow,
+    recorded_workflows_handler,
+)
 
-api = AgenticAPI()
 
-# List workflows
-workflows = api.list_workflows(status=["running", "blocked"])
+@do
+def review_status():
+    # List workflows (the most recently updated first)
+    workflows = yield AgenticListWorkflows()
 
-# Get workflow by ID or prefix
-wf = api.get_workflow("a3f")
+    # Get workflow by ID or prefix (None when no workflow has it)
+    wf = yield AgenticFindWorkflow(workflow_id="a3f")
 
-# Watch for updates
-for update in api.watch("a3f"):
-    print(update.workflow.status, update.event)
+    # Agent operations
+    yield AgenticSendToAgent(workflow_id="a3f", agent="review-agent", message="continue")
+    output = yield AgenticCaptureAgentOutput(workflow_id="a3f", agent="review-agent")
+    stopped = yield AgenticStopWorkflow(workflow_id="a3f")
+    return workflows, wf, output, stopped
 
-# Agent operations
-api.attach("a3f")
-api.send_message("a3f", "continue")
-api.stop("a3f")
 
-# Get agent output
-output = api.get_agent_output("a3f", agent="review-agent")
+result = run(recorded_workflows_handler()(review_status()))
 ```
 
 ## CLI Commands

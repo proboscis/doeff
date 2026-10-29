@@ -18,11 +18,11 @@ from doeff_agentic import (
     AgenticStopWorkflow,
     AgentInfo,
     AgentStatus,
-    StateManager,
     WorkflowInfo,
     WorkflowStatus,
     recorded_workflows_handler,
 )
+from doeff_agentic._state import StateManager
 from doeff_agentic._tui import AgenticTUI
 from doeff_agentic._tui.screens import _workflow_view
 

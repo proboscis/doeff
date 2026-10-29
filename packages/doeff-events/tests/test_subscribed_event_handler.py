@@ -9,13 +9,12 @@ from doeff_core_effects import Promise, SchedulerDeadlockError, Spawn, Wait
 from doeff_events import (
     EventBus,
     Publish,
-    SubscriberQueue,
     TimerFired,
     WaitForEvent,
     event_handler,
     subscribed_event_handler,
 )
-from doeff_events._handlers.memory import EMPTY
+from doeff_events._handlers.memory import EMPTY, SubscriberQueue
 from event_signal_invariants import (
     INVARIANTS,
     Changed,
