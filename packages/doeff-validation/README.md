@@ -5,7 +5,7 @@ doeff-traverse の上の薄い層で、検査の 1 件が traverse の 1 要素�
 最初の失敗で止めるかは、組み立ての根に置く traverse の handler で選ぶ。
 
 Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.macros [defk validate check])`)。
-この package は実行時の部分(`validate`・`check`・失敗の型)を持つ。
+この package は実行時の部分(`validate`・検査の指定の型 `Check`・実行の印の型 `Perform`・失敗の型)を持つ。
 
 設計の記録: [`docs/design/doeff-validation/design.md`](../../docs/design/doeff-validation/design.md)
 
@@ -117,19 +117,20 @@ helper の defk の中に自分の `validate` を持たせ、その呼び出し�
 
 ```python
 import operator
-from doeff_validation import check, perform, validate
+from doeff_validation import Check, Perform, validate
 
 yield validate(
-    check(operator.is_not, perform(LookupConversation(request.conversation)), None,
+    Check(operator.is_not, Perform(LookupConversation(request.conversation)), None,
           reason=PlacementMismatch.CONVERSATION),
-    check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
+    Check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
     job_is_bindable(job),        # 自分の validate を持つ Program
 )
 ```
 
-Python の `check` は `validate` に渡す値(`CheckSpec`)を作るだけで、単独では Program にならない
-(`yield` できない)。これで「check は validate の直下にだけ」を型で表す。`perform(...)` が Hy の
-`(! …)` に当たる。Python の引数は `validate` を呼ぶ時に評価される(Hy のように項目の中へ遅らせない)。
+Python では型 `Check` と `Perform` を直に書く(関数 `check`・`perform` は無い)。`Check(…)` は `validate` に
+渡す値で、単独では Program にならない(`yield` できない)。これで「check は validate の直下にだけ」を型で
+表す。`Perform(…)` が Hy の `(! …)` に当たる。`Check` の第 1 引数が callable でなければ、`Perform` に
+Program でも効果でもない値を渡せば、作る時に `TypeError` になる。Python の引数は `validate` を呼ぶ時に評価される(Hy のように項目の中へ遅らせない)。
 
 ### 走らせ方 — 逐次・並行・fail-fast
 
@@ -170,8 +171,8 @@ traverse の handler は要らない。
 
 | 名前 | 何か |
 | --- | --- |
-| `CheckSpec` | 検査 1 件の指定(`validate` の項目としてだけ意味を持つ) |
+| `Check(predicate, *args, reason=…, expression=…)` | 検査 1 件の指定(`validate` の項目としてだけ意味を持つ) |
 | `CheckFailure` | 判定が偽だった検査の記録(式の字面・評価した引数の値・理由) |
 | `CheckError` | 引数か判定の評価が例外になった検査の記録 |
 | `ValidationException` | 失敗を全部持つ例外(`failures`・`reasons`・`context`) |
-| `perform(program)` | Python の check の引数を効果として実行する印 |
+| `Perform(program)` | Python の `Check` の引数を効果として実行する印 |
