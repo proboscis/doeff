@@ -525,6 +525,22 @@ tests = ["tests/test_docs_article_algebraic_effects.py"]
 prefix = "examples/testing_without_mocks/infra.py"
 tests = ["tests/test_docs_article_algebraic_effects.py"]
 
+# 英語の記事 2 本目(yield と async)と、その例の file の全部(examples/yield_and_async/)を変えた便は、記事の囲みが例の file と
+# 印字のままである事の検を払う(取り組み doeff-publish・card ki-719ec9da0a01)。検は 1 本目の記事も読む(前の回・次の回の link
+# が互いに在る事)ので、1 本目の記事の変更も選ぶ。検は例を path で読むので、import の逆依存では選ばれない。
+# 秒は 4.7 秒(1 本目の検と合わせて 33 本・子 3 本・pytest の計・2026-10-29 会話の Pod)。
+[[tool.doeff.contract-tests]]
+prefix = "docs/articles/yield-and-async.md"
+tests = ["tests/test_docs_article_yield_and_async.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "examples/yield_and_async/"
+tests = ["tests/test_docs_article_yield_and_async.py"]
+
+[[tool.doeff.contract-tests]]
+prefix = "docs/articles/algebraic-effects-in-python.md"
+tests = ["tests/test_docs_article_yield_and_async.py"]
+
 # doeff の説明の軸の定義の page(何が algebraic effects で、何が使い方の例か — 取り組み doeff-publish の区切り 17・
 # card ki-3a3b13c1d16e)の例を走らせる。
 [[tool.doeff.contract-tests]]
