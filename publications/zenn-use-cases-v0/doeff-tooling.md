@@ -11,7 +11,7 @@ published: false
 たとえば、操作と対応ハンドラを宣言すると、対応漏れを検出できます。以下は、このあとに載せる完全な例の抜粋です。
 
 ```python
-assert_domain_covered(document_domain)  # ReadTitleの対応ハンドラがあるので通る。
+run(domain_registry(domains=[document_domain])(AssertDomainCovered(document_domain)))  # 対応ハンドラがあるので通る。
 program = read_title("見出し\n本文")  # 見出しを求めるProgramを作る。
 assert run(handler(title_handler)(program)) == "見出し"  # 実際の戻り値も確認する。
 ```
@@ -24,18 +24,18 @@ assert run(handler(title_handler)(program)) == "見出し"  # 実際の戻り値
 
 `doeff-domain`では、領域を`Domain`という値で宣言します。ここでは文書の先頭行を求める`ReadTitle`と、その操作を扱う`title_handler`を対応させます。
 
-`@handles`は検査用の宣言です。実行時のハンドラ設置は`handler(title_handler)(program)`が担当します。宣言だけでハンドラが自動的に設置されるわけではありません。
+`Handles(title_handler, ReadTitle)`は検査用の宣言です。実行時のハンドラ設置は`handler(title_handler)(program)`が担当します。宣言だけでハンドラが自動的に設置されるわけではありません。
 
 ```python
 from dataclasses import dataclass  # 依頼の引数を変更不能な値としてまとめる。
 
-from doeff_domain import (  # 領域の宣言・対応検査・所属検査を使う。
+from doeff_domain import (  # 領域の宣言と、検査の依頼とその答え手を使う。
+    AssertDomainCovered,  # 宣言した操作が対応ハンドラで網羅されるかを検査する依頼。
+    AssertNoOrphanEffects,  # 指定モジュールの操作に所属先があるかを検査する依頼。
     Domain,  # 操作と対応ハンドラを組にした宣言の型。
     DomainCoverageError,  # 対応ハンドラが足りないときの例外。
-    assert_domain_covered,  # 宣言した操作が対応ハンドラで網羅されるか検査する。
-    assert_no_orphan_effects,  # 指定モジュールの操作に所属先があるか検査する。
-    handles,  # ハンドラが扱う操作を明示するためのデコレータ。
-    register_domain,  # 所属検査で使う登録表へ領域を追加する。
+    Handles,  # ハンドラが扱う操作を領域の側で明示する宣言の型。
+    domain_registry,  # 領域の表から検査の依頼に答えるハンドラを作る。
 )
 
 from doeff import (  # 依頼・合成・実行を使う。
@@ -54,7 +54,6 @@ class ReadTitle(Effect):  # 文書の先頭行を求める操作を表す。
     document: str  # 先頭行と本文を含む文字列をハンドラへ渡す。
 
 
-@handles(ReadTitle)  # このハンドラがReadTitleを扱うことを検査器へ伝える。
 @do  # ハンドラの処理もProgramとして継続操作をyieldする。
 def title_handler(effect, k):  # 依頼と、その結果を待つ続きkを受け取る。
     if isinstance(effect, ReadTitle):  # 見出しの依頼だけをここで解釈する。
@@ -71,12 +70,13 @@ document_domain = Domain(  # 登録表を触らず、領域の宣言を値とし
     name="article-document",  # 領域を識別する名前を付ける。
     title="記事の文書操作",  # 人が読む表示名を付ける。
     effects=(ReadTitle,),  # この領域が導入する操作を1つ指定する。
-    handlers=(title_handler,),  # ReadTitleを扱うハンドラを対応させる。
+    handlers=(Handles(title_handler, ReadTitle),),  # title_handlerがReadTitleを扱うことを検査器へ伝える。
 )
 
 
 def verify() -> None:  # 通る宣言・落ちる宣言・実際の結果をオフラインで確認する。
-    assert_domain_covered(document_domain)  # ReadTitleの対応宣言があるので例外なく通る。
+    covered = domain_registry(domains=[document_domain])  # 正常例だけを載せた表から検査に答えるハンドラを作る。
+    run(covered(AssertDomainCovered(document_domain)))  # ReadTitleの対応宣言があるので例外なく通る。
     program = read_title("見出し\n本文")  # 入力を固定した見出し取得のProgramを作る。
     assert run(handler(title_handler)(program)) == "見出し"  # 設置したハンドラが先頭行を返す。
     incomplete = Domain(  # 同じ操作から対応ハンドラだけを省いた反例を作る。
@@ -86,7 +86,7 @@ def verify() -> None:  # 通る宣言・落ちる宣言・実際の結果をオ�
         handlers=(),  # 対応するハンドラを宣言しない。
     )
     try:  # 宣言の不備が例外になることをテストする。
-        assert_domain_covered(incomplete)  # ReadTitleが未対応なのでDomainCoverageErrorになる。
+        run(domain_registry(domains=[incomplete])(AssertDomainCovered(incomplete)))  # 未対応なのでDomainCoverageErrorになる。
     except DomainCoverageError as error:  # 想定した検査エラーだけを受け取る。
         if "ReadTitle" not in str(error):  # 指定漏れの操作名が診断に含まれない場合を調べる。
             raise AssertionError("診断に操作名がありません") from error  # 説明不足の診断も検査失敗にする。
@@ -96,18 +96,18 @@ def verify() -> None:  # 通る宣言・落ちる宣言・実際の結果をオ�
 verify()  # 正常な宣言・対応漏れ・具体的な戻り値をまとめて確認する。
 ```
 
-[完全な例](examples/domain_check.py)では、宣言を登録せず`Domain`値を直接検査します。この用途に登録表の初期化やテスト用の`isolated_registry()`は要りません。
+[完全な例](examples/domain_check.py)では、検査を依頼(`AssertDomainCovered`)として出し、`domain_registry(domains=[…])`が渡した`Domain`値だけの表から答えます。この用途にプロセスの登録表は要りません。
 
 「どの領域にも属さない操作」まで検出したい場合は、導入する領域を一度登録し、検査するモジュールを指定します。次のコードは、先ほどの定義がある同じPythonモジュールで実行します。
 
 ```python
-register_domain(document_domain)  # ReadTitleの所属先を、このプロセスで1回登録する。
-assert_no_orphan_effects([ReadTitle.__module__])  # 定義元モジュールの操作に所属漏れがないので通る。
+registered = domain_registry(domains=[document_domain])  # ReadTitleの所属先を載せた表で答えるハンドラを作る。
+run(registered(AssertNoOrphanEffects([ReadTitle.__module__])))  # 定義元モジュールの操作に所属漏れがないので通る。
 ```
 
-登録はプロセス内で管理されます。同じ名前や同じエフェクトの重複登録はエラーです。実際のプロジェクトでは、宣言モジュールの読み込み時など、登録箇所を一つにします。
+表は`domain_registry`のハンドラが持ちます。同じ名前や同じエフェクトの重複はエラーです。実際のプロジェクトでは、宣言モジュールの読み込み時に`defdomain`でプロセスの表へ載せ、`domain_registry()`がその表から答えます。
 
-これらは**宣言上の対応と所属を調べる検査**です。`@handles(ReadTitle)`を付けても、ハンドラの実装が正しいかまでは証明できません。具体的な入力への結果は、上の`assert run(...)`のように確認します。
+これらは**宣言上の対応と所属を調べる検査**です。`Handles(title_handler, ReadTitle)`を宣言しても、ハンドラの実装が正しいかまでは証明できません。具体的な入力への結果は、上の`assert run(...)`のように確認します。
 
 ## 処理を見つける — doeff-indexer
 
