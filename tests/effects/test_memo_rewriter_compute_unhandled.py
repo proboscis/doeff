@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects import slog_handler
-from doeff_core_effects.memo_handlers import make_memo_rewriter
+from doeff_core_effects import make_memo_rewriter, slog_handler
 
 from doeff import EffectBase, UnhandledEffect, do, run
 from doeff import handler as _program_handler

@@ -49,7 +49,7 @@ from doeff_gemini._structured_llm import GeminiStructuredOutputError
 
 genai_types = google_genai.types
 from _runner import async_run_program
-from doeff_core_effects.memo_effects import MemoGetEffect, MemoPutEffect
+from doeff_core_effects import MemoGetEffect, MemoPutEffect
 from doeff_time import SimClock
 from pydantic import BaseModel
 

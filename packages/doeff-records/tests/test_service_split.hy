@@ -15,7 +15,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.process_effects [ReadEnvironment EnvEntry])
-(import doeff_core_effects.file_effects [ReadText])
+(import doeff_core_effects [ReadText])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_time [async-time-handler])

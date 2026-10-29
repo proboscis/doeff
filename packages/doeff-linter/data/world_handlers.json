@@ -47,11 +47,25 @@
    "why": "上の再輸出の綴り"
   },
   {
+   "handler": "doeff_core_effects._os_file:os-file-handler",
+   "touches": [
+    "file"
+   ],
+   "why": "os・shutil・tempfile・fcntl で file を読み書き(_os_file.hy:184)"
+  },
+  {
+   "handler": "doeff_core_effects:os_file_handler",
+   "touches": [
+    "file"
+   ],
+   "why": "os_file_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+  },
+  {
    "handler": "doeff_core_effects.os_file:os-file-handler",
    "touches": [
     "file"
    ],
-   "why": "os・shutil・tempfile・fcntl で file を読み書き(os_file.hy:184)"
+   "why": "os_file_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects.os_process:subprocess-handler",
@@ -240,7 +254,7 @@
    "why": "env_var_ask の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-c09b3b527fad の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
-   "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
+   "handler": "doeff_core_effects._cache_handlers:sqlite_cache_handler",
    "touches": [
     "db",
     "file"
@@ -248,12 +262,44 @@
    "why": "sqlite3.connect の file"
   },
   {
-   "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
+   "handler": "doeff_core_effects:sqlite_cache_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite_cache_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+  },
+  {
+   "handler": "doeff_core_effects.cache_handlers:sqlite_cache_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite_cache_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
+  },
+  {
+   "handler": "doeff_core_effects._memo_handlers:sqlite_memo_handler",
    "touches": [
     "db",
     "file"
    ],
    "why": "sqlite3.connect の file"
+  },
+  {
+   "handler": "doeff_core_effects:sqlite_memo_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite_memo_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-375e0a35b7a0)"
+  },
+  {
+   "handler": "doeff_core_effects.memo_handlers:sqlite_memo_handler",
+   "touches": [
+    "db",
+    "file"
+   ],
+   "why": "sqlite_memo_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_time._handlers.async_time:async_time_handler",

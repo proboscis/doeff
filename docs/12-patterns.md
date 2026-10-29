@@ -24,8 +24,8 @@ import sqlite3
 from dataclasses import dataclass, replace
 from doeff import EffectBase, Resume, Try, do, handler, run, with_handlers
 from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects.cache_effects import CachePut
-from doeff_core_effects.cache_handlers import in_memory_cache_handler
+from doeff_core_effects import CachePut
+from doeff_core_effects import in_memory_cache_handler
 from doeff_core_effects import await_handler, state, try_handler, writer
 from doeff_core_effects import scheduled
 

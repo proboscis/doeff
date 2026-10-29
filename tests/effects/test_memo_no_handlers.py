@@ -1,4 +1,4 @@
-from doeff_core_effects.cache import cache
+from doeff_core_effects._cache import cache
 
 from doeff import do, run
 

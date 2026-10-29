@@ -16,8 +16,8 @@ doeff provides a caching system with policy-based cache management via the `doef
 ### Import
 
 ```python excerpt
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
+from doeff_core_effects import CacheGet, CachePut
+from doeff_core_effects import CacheLifecycle, CacheStorage
 ```
 
 ### Manual Cache Control
@@ -25,8 +25,8 @@ from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
 ```python excerpt
 from doeff import do
 from doeff_core_effects import Tell
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_policy import CacheLifecycle, CacheStorage
+from doeff_core_effects import CacheGet, CachePut
+from doeff_core_effects import CacheLifecycle, CacheStorage
 
 @do
 def with_manual_cache():
@@ -79,8 +79,8 @@ from dataclasses import dataclass
 
 import httpx
 from doeff import EffectBase, Pass, Resume, do, handler, run
-from doeff_core_effects.cache_effects import CacheGet, CachePut
-from doeff_core_effects.cache_handlers import in_memory_cache_handler
+from doeff_core_effects import CacheGet, CachePut
+from doeff_core_effects import in_memory_cache_handler
 from doeff_core_effects import await_handler
 from doeff_core_effects import scheduled
 
@@ -131,7 +131,7 @@ print(requested)  # ['/users/1']
 
 ```python excerpt
 from doeff import Try, do
-from doeff_core_effects.cache_effects import CacheGet, CachePut
+from doeff_core_effects import CacheGet, CachePut
 
 @do
 def smart_cache(key, fresh=False):
