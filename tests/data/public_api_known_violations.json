@@ -12654,83 +12654,42 @@
    }
   },
   "doeff-effect-analyzer": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
+    "境界 — CLI": {
      "(console script)": [
       "doeff-effects"
-     ],
-     "(submodule)": [
-      "doeff_effect_analyzer.cli",
-      "doeff_effect_analyzer.env_places",
-      "doeff_effect_analyzer.handler_effects",
-      "doeff_effect_analyzer.hy_expansion",
-      "doeff_effect_analyzer.program_effects",
-      "doeff_effect_analyzer.result_cache"
-     ],
-     "doeff_effect_analyzer.cli": [
-      "main"
-     ],
-     "doeff_effect_analyzer.env_places": [
-      "cache_home",
-      "result_cache_setting",
-      "tree_cache_setting"
-     ],
+     ]
+    },
+    "境界 — effect の結果の型": {
      "doeff_effect_analyzer.handler_effects": [
       "Coverage",
-      "DispatchReading",
-      "Gap",
-      "adopt_dispatch",
-      "analyze_env",
-      "analyze_handler",
-      "check_coverage",
-      "element_of",
-      "raw_handler_of",
-      "read_dispatch",
-      "residual",
-      "stack_of"
+      "Gap"
      ],
      "doeff_effect_analyzer.program_effects": [
-      "AllTest",
-      "AnyTest",
       "Basis",
-      "Binding",
-      "CarriedProgram",
-      "ClassTest",
-      "Clause",
-      "Comprehension",
-      "EffectUse",
-      "Escape",
-      "ExpansionObserver",
-      "FunctionNode",
-      "HandledProgram",
       "HandlerEffects",
-      "Imported",
-      "Location",
-      "NotTest",
-      "PassTest",
-      "ProgramEffects",
-      "ReceivedEffect",
-      "ReceivedField",
-      "Residual",
-      "SourcesRead",
-      "UNBOUND",
-      "UnknownTest",
-      "Unresolved",
-      "analyze_program",
-      "bindings_for",
-      "module_ast",
-      "observe_expansions",
-      "pass_through",
-      "qualified_name",
-      "reading_sources",
-      "resolve_target",
-      "runs_where_performed"
+      "ProgramEffects"
+     ]
+    },
+    "外れ — effect にする": {
+     "doeff_effect_analyzer.handler_effects": [
+      "check_coverage"
      ],
-     "doeff_effect_analyzer.result_cache": [
-      "T",
-      "cached_result",
-      "importable_name"
+     "doeff_effect_analyzer.program_effects": [
+      "analyze_program",
+      "runs_where_performed"
+     ]
+    },
+    "外れ — submodule を _ で隠す": {
+     "(submodule)": [
+      "doeff_effect_analyzer.handler_effects",
+      "doeff_effect_analyzer.program_effects"
+     ]
+    },
+    "外れ — 内側の module へ移す": {
+     "doeff_effect_analyzer.program_effects": [
+      "qualified_name"
      ]
     }
    }
@@ -19661,6 +19620,20 @@
    "name": "ReusedThreads",
    "訳": "塞ぐ呼びを scheduler の外で回す Executor(空いた thread を使い回す — 表に在る ThreadPerCall と同じ土台の資源の係で、effect でも handler でもない)。postgres-sql-handler の DRIVER-THREADS と、取り消しの test の Executor の殻が使う。commit c83155f55(card ki-8fc4f9017572)が表を直さずに足した — 依頼 lt-8QEEZEZDFMDZWA38NTYHR9NERA が doeff main b73544311 の目録で見つけた。submodule offloaded_call は移し替えの module で、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
    "決め": "ki-8fc4f9017572"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer",
+   "name": "SuppliedDeclaration",
+   "訳": "effect CheckCoverage の欄 supplied の値の型(読めない handler について呼び手が知る宣言 — R2 の effect の値の型)。表の後に 2da663d40(card ki-827dc43fa730)が program_effects に足し、入口へ移した(ADR-DOE-API-001 R24)",
+   "決め": "lt-646XDCG0CJXMX7JP6558JD426W"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer",
+   "name": "FoldCarried",
+   "訳": "effect CheckCoverage の欄 fold の値の型(運ばれた Program を出した所で数える運び手 — R2 の effect の値の型)。前の関数 runs_where_performed と、呼び手が渡した述語(include)の代わり(ADR-DOE-API-001 R24)",
+   "決め": "lt-646XDCG0CJXMX7JP6558JD426W"
   }
  ]
 }

@@ -580,7 +580,7 @@ tests = [
 # 事を先に確かめる(Hy を上げて sync していなければ赤)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
 # tests/test_contract_table_follows_packages.py が source から数えて確かめる。
 # Hy の内部の名(module の macro の表・reader macro の表・export の名の表・Hy が一時の名に振る形)の定義元は
-# doeff_hy_bytecode_guard._records の 1 か所で、使い手の 3 か所(doeff_effect_analyzer.result_cache の解析の鍵・doeff_hy.static_baseline
+# doeff_hy_bytecode_guard._records の 1 か所で、使い手の 3 か所(doeff_effect_analyzer._result_cache の解析の鍵・doeff_hy.static_baseline
 # の基点の鍵・macro_use の全部の require の判定)はそれを引く(card ki-ffe72a1fb7d7)。records の読みを実物の Hy の module に当てる検
 # (test_bytecode_guard.py の test_records_reads_… と test_the_temporaries_hy_names_…)と、鍵が両方の表に従う事を測る analyzer の
 # 2 本が、この行で選ばれる(analyzer の 2 本の版の一致は同じ行の test_bytecode_guard.py の先頭の確かめが持つ)。

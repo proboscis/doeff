@@ -5,7 +5,7 @@ Hy が module の名前空間に置く表の名(``_hy_macros``・``_hy_reader_ma
 ``ANON_VAR_NAME``)で、使い手は字を持たず、records の定数と関数(``macro_tables``・``exported_macro_names``・
 ``fold_anon_var_numbers``)で引く。字を他の file へ写すと、Hy が名を替えた時に直す所が 2 つ以上になり、uv.lock の版の Hy に当てる検
 (test_bytecode_guard.py)が測るのは records の読みだけなので、写しは測られないまま古くなる(card ki-eafa369600cd の担い手が見つけた
-3 か所 — doeff_effect_analyzer.result_cache・doeff_hy.static_baseline・macro_use の export の名の表 — の形)。
+3 か所 — doeff_effect_analyzer._result_cache・doeff_hy.static_baseline・macro_use の export の名の表 — の形)。
 
 この検は、repo の production の source(.py と .hy — tests・docs・記録の dir は数えない)から、次の綴りを数え、records の外に 1 つでも在れば
 名指して赤にする。

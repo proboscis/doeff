@@ -797,7 +797,7 @@ def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilatio
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """解析器の Hy の展開(構文木の cache に当たらない時だけ)も数えに乗り、install の外では乗らない(agora-redesign #1534)。"""
-    program_effects = pytest.importorskip("doeff_effect_analyzer.program_effects")
+    program_effects = pytest.importorskip("doeff_effect_analyzer._program_effects")
     monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", str(tmp_path / "trees"))
     source = "(setv answer (+ 1 2))\n"
     counter = CompileCounter()

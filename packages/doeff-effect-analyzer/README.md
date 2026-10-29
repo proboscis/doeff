@@ -18,27 +18,50 @@ doeff-effects coverage lab.jobs:job --env lab.envs:no_handlers \
     --bind foundation=lab.envs:production_handlers
 ```
 
+A Program asks with effects, and the handler made by `effect_analysis()` answers
+them by reading the sources (the CLI command runs the same effects; ADR-DOE-API-001
+R24):
+
 ```python
-from doeff_effect_analyzer.program_effects import analyze_program
-from doeff_effect_analyzer.handler_effects import (
-    analyze_env, analyze_handler, check_coverage, residual,
+from doeff import do, run
+from doeff_effect_analyzer import (
+    AnalyzeEnv, AnalyzeHandler, AnalyzeProgram, CheckCoverage, FoldCarried, effect_analysis,
 )
 
-program = analyze_program("controllers.worker.lab.turns:turn_runner_program")
-env = [analyze_handler("doeff_core_effects._scheduler:scheduled"),
-       *analyze_env("controllers.worker.lab.envs:board_env")]
-coverage = check_coverage(program, env)
-assert coverage.complete, coverage.gaps
+@do
+def board_is_covered():
+    program = yield AnalyzeProgram("controllers.worker.lab.turns:turn_runner_program")
+    scheduler = yield AnalyzeHandler("doeff_core_effects._scheduler:scheduled")
+    env = yield AnalyzeEnv("controllers.worker.lab.envs:board_env")
+    coverage = yield CheckCoverage(program, env=(scheduler, *env))
+    assert coverage.complete, coverage.gaps
 
-# (defk job [foundation] (<- base list (foundation)) (<- (with-handlers base (body))))
-job = analyze_program("lab.jobs:job", bindings={"foundation": production_handlers})
-left = residual(job, [analyze_handler("doeff_core_effects._scheduler:scheduled")],
-                include=lambda carrier: carrier.__name__ == "Spawn")
-assert not left.escapes and not left.unknown_handlers
+    # (defk job [foundation] (<- base list (foundation)) (<- (with-handlers base (body))))
+    # read here with its parameter bound; carried Programs whose carrier says it runs them
+    # where performed (Spawn, Try …) are counted there.
+    job = yield CheckCoverage("lab.jobs:job", env=(scheduler,),
+                              bindings={"foundation": production_handlers},
+                              fold=FoldCarried(declared=True))
+    assert job.complete, job.gaps
+
+run(effect_analysis()(board_is_covered()))
 ```
 
-How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
-`handler_effects.py`):
+| Effect | Answer |
+|---|---|
+| `AnalyzeProgram(target, bindings=None)` | `ProgramEffects` — what a Program function performs |
+| `AnalyzeHandler(target, name=None)` | `HandlerEffects` — what a handler answers and its clauses perform |
+| `AnalyzeEnv(builder, bindings=None)` | `tuple[HandlerEffects, ...]` — an env builder's handlers, outermost first |
+| `CheckCoverage(program, env=(), bindings=None, fold=FoldCarried(), supplied=())` | `Coverage` — the gaps, the handlers that could not be read and the places not followed |
+
+`effect_analysis(result_cache=True)` keeps a `CheckCoverage` answer of a Program
+function read there on disk, reused while every module file it depends on has
+the same content. A target that cannot be analyzed is thrown back where the
+effect was performed. `SuppliedDeclaration` (in `CheckCoverage.supplied`) tells
+the analyzer what a handler it cannot read answers and performs.
+
+How it reads code (`python/doeff_effect_analyzer/_program_effects.py`,
+`_handler_effects.py`):
 
 - **Hy is macro-expanded first** with Hy's own compiler, so `defk`, `<-`,
   `defhandler` and project macros that wrap them (a `defservice` that expands to
@@ -56,9 +79,8 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
   expands to) make a *handled* scope (`ProgramEffects.handled`): the body's
   effects run through those handlers from the innermost out, a handled effect is
   replaced by what its clause performs, and only the residual leaves.
-  `effect_types` is that residual; `residual(program, env)` runs it on through an
-  env.
-- **Parameters are read with what the caller passes.** `analyze_program(f,
+  `effect_types` is that residual; `CheckCoverage` runs it on through an env.
+- **Parameters are read with what the caller passes.** `AnalyzeProgram(f,
   bindings={"foundation": production_handlers})` (or `--bind`, or a
   `functools.partial` target) binds a parameter, and a call `(job
   production-handlers)` found in a body binds `job`'s parameter the same way. A
@@ -69,18 +91,17 @@ How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
   `RemoteJob(task(...))`, `remote_job(task(...))`) are reported as `carried`
   with their own effect sets. Whether they run under the same handlers is the
   carrier's meaning (`Spawn`: yes; `RemoteJob`: elsewhere), so the caller folds
-  them in explicitly (`effect_types_with(...)`, `include=`, `--fold-carried
-  Spawn`). A Program argument the callee installs handlers around itself is read
+  them in explicitly (`CheckCoverage(..., fold=FoldCarried(declared=True))`,
+  `effect_types_with(FoldCarried(names=("Spawn",)))`, `--fold-carried Spawn`). A Program argument the callee installs handlers around itself is read
   there, not carried.
 - A handler clause is a branch on `isinstance(effect, T)` (or `match effect:
   case T(...)`) inside a function or lambda that dispatches on one of its
   parameters — the shape `defhandler` expands to (a lambda when the only clause
   is `(resume v)`) and hand-written handlers use. The effects a clause performs
   (`(<- (Await ...))` in a clock handler) must be handled by an outer handler;
-  `check_coverage` walks the env from the innermost handler out. A clause's body
-  is read the first time its `emits` is asked for — `check_coverage` asks only
-  the clauses an effect reaches — so a caller that keys an answer on
-  `reading_sources` asks for what the answer needs inside it.
+  `CheckCoverage` walks the env from the innermost handler out. A clause's body
+  is read the first time its `emits` is asked for — `CheckCoverage` asks only
+  the clauses an effect reaches.
 - Factories returning `doeff.handler(dispatch)`, `functools.partial(dispatch,
   ...)`, a method of an object they build (`handler(runtime.handle)`, or an
   attribute `__init__` sets to one — doeff-time's clocks), dispatchers that
@@ -116,11 +137,11 @@ not installed).
 ## The Rust core (`seda`, `doeff_effect_analyzer._native`)
 
 The crate in `src/` is the earlier engine: `seda analyze` / `seda hy` and the
-`analyze` / `analyze_symbol` functions (loaded lazily from the `_native`
-extension). It recognises effects by a fixed vocabulary of doeff constructor names
+`analyze` / `analyze_symbol` functions of the `_native` extension (inside the
+package — not shown from its root). It recognises effects by a fixed vocabulary of doeff constructor names
 (`Ask(`, `Tell(`, `Get(`, `Put(`, `slog(`; `src/effect_registry.rs`) and reads Hy with its own reader, so it does not see project-defined
 effect classes or code produced by user macros. Use the Python front end above
-for effect sets and coverage.
+(the effects) for effect sets and coverage.
 
 ## Building
 
