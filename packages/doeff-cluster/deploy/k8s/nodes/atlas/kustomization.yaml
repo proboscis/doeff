@@ -12,3 +12,5 @@ labels:
     includeSelectors: true
 patches:
   - path: node.yaml
+  # disk の分け前から導いた worker の env(空きの最低・roots の上限 — ../../disk-share/derive.py が書く)。
+  - path: disk-share.yaml

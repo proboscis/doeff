@@ -13,8 +13,10 @@ Longhorn の disk の予約がその宣言から導かれている事の検(card
   (4) worker の分の空き(最低 + near の幅 + 戻りの幅)は、worker が near から ok へ戻る線と同じ — 幅は worker の code から読む。
   (5) Flux が当てる Longhorn の Node は置き方の欄(Node と disk の allowScheduling・evictionRequested・tags)を全部書き、値は宣言の通り
       (card ki-c37ae82751bf — 予約の欄だけを書いた Node から、Flux が手で入れた allowScheduling と札 warm を引き取って消した)。
+  (6) 書いてある kubelet の image GC の drop-in の線で、kubelet は worker が near を名乗る前に消し始め、worker が ok へ戻る線の上まで
+      消す(card ki-57ff91db1411 — atlas の手で置いた high 85・low 80 は worker の near の帯の中で止まり、near が続いた)。
 失敗ケース(赤になる事の検): 分け前の合計が disk を越える宣言・Longhorn の既定の予約(30%)のままの Node・綴りの誤った鍵・予約の欄だけを
-書く Node・文字で書いた longhornScheduling。
+書く Node・文字で書いた longhornScheduling・Longhorn の欄の欠けた機体・atlas の手で置いた image GC の線。
 """
 
 from __future__ import annotations
@@ -150,6 +152,41 @@ def _applied_on(applied: tuple[Applied, ...], node: str) -> Applied:
     return found[0]
 
 
+def _with_longhorn(declaration: object) -> tuple[object, ...]:
+    """Longhorn の disk を宣言した機体(Longhorn の Node を導く機体)。"""
+    return tuple(share for share in declaration.nodes if share.longhorn is not None)
+
+
+def _written_image_gc(node: str) -> object:
+    """機体の dir に書いてある kubelet の drop-in の image GC の線 — 手で直した file も読む(導き直した物でなく、置く物を確かめるため)。"""
+    doc = yaml.safe_load((K8S / "nodes" / node / derive.KUBELET_DROPIN).read_text(encoding="utf-8"))
+    assert (doc["apiVersion"], doc["kind"]) == (
+        "kubelet.config.k8s.io/v1beta1",
+        "KubeletConfiguration",
+    ), node
+    return derive.ImageGc(
+        high_percent=doc["imageGCHighThresholdPercent"],
+        low_percent=doc["imageGCLowThresholdPercent"],
+    )
+
+
+def _worker_after_gc(
+    share: object, gc: object, interpret: Callable[[object], object]
+) -> tuple[object, object]:
+    """image GC の線の 2 点で worker が名乗る語: 消し始める空き(high)で ok を名乗っていた worker と、消し終えた空き(low)で near を
+    名乗っていた worker。"""
+    import hy  # noqa: F401  — Hy の module を import できるようにする
+    from doeff_cluster.worker.core.env_upkeep import env_capacity
+
+    min_free = share.worker.min_free_gib * derive.GIB
+    start = derive.free_at_usage(share.disk_bytes, gc.high_percent)
+    end = derive.free_at_usage(share.disk_bytes, gc.low_percent)
+    return (
+        interpret(env_capacity(start, min_free, "ok")),
+        interpret(env_capacity(end, min_free, "near")),
+    )
+
+
 def _over_share(share: object, reserved: int, percent: int, margins: object) -> int:
     """予約 reserved の下で Longhorn が受ける名目の上限が、宣言の Longhorn の分を越える量(0 以下なら分の内)。"""
     return derive.longhorn_admits(share.disk_bytes, reserved, percent) - derive.longhorn_bytes(
@@ -178,9 +215,12 @@ def applied(built: list[dict[str, object]]) -> tuple[Applied, ...]:
 
 
 def test_each_declared_share_fits_its_disk(declaration: object, margins: object) -> None:
-    """機体ごとに、OS ほか・別の系・worker の分を引いた Longhorn の分が正で、導いた予約の下で Longhorn が受ける名目の上限がその分の内。"""
+    """機体ごとに、OS ほか・別の系・worker の分を引いた残りが負でなく(Longhorn の disk を宣言した機体は正)、導いた予約の下で Longhorn が
+    受ける名目の上限がその分の内。"""
     assert derive.faults(declaration, margins) == ()
     for share in declaration.nodes:
+        assert derive.longhorn_bytes(share, margins) >= 0, share.node
+    for share in _with_longhorn(declaration):
         assert derive.longhorn_bytes(share, margins) > 0, share.node
 
 
@@ -190,13 +230,19 @@ def test_derived_files_are_the_declaration(declaration: object, margins: object)
 
 
 def test_flux_applies_the_worker_amounts_of_the_declaration(
-    declaration: object, applied: tuple[Applied, ...]
+    declaration: object, built: list[dict[str, object]], applied: tuple[Applied, ...]
 ) -> None:
-    """Flux が当てる組み立ての worker の空きの最低と roots の上限が、宣言の値(Longhorn の Node を持つ機体は宣言の機体と同じ)。"""
-    assert sorted(a.node for a in applied) == sorted(share.node for share in declaration.nodes)
+    """Flux が当てる組み立ての worker の空きの最低と roots の上限が、宣言の値(Longhorn の Node を持つ機体は、Longhorn の disk を宣言した
+    機体と同じ)。"""
+    assert sorted(a.node for a in applied) == sorted(
+        share.node for share in _with_longhorn(declaration)
+    )
     for share in declaration.nodes:
-        got = _applied_on(applied, share.node)
-        assert (got.min_free_gib, got.roots_gib) == (
+        got = (
+            _worker_env(built, share.node, "WORKER_ENV_MIN_FREE_GIB"),
+            _worker_env(built, share.node, "WORKER_ENV_ROOTS_GIB"),
+        )
+        assert got == (
             str(share.worker.min_free_gib),
             str(share.worker.roots_gib),
         ), share.node
@@ -207,9 +253,9 @@ def test_longhorn_admits_no_more_than_its_share_as_applied(
 ) -> None:
     """Flux が当てる Longhorn の予約の下で、Longhorn が受ける写しの名目の合計の上限(over-provisioning を掛けた後)が宣言の Longhorn の
     分の内。Node は Flux が消さない印(prune: disabled)を持ち、予約は宣言の disk の名の欄に在る。"""
-    for share in declaration.nodes:
+    for share in _with_longhorn(declaration):
         got = _applied_on(applied, share.node)
-        assert got.longhorn_disk == share.longhorn_disk, share.node
+        assert got.longhorn_disk == share.longhorn.disk, share.node
         assert got.prune == "disabled", share.node
         assert (
             _over_share(share, got.storage_reserved, declaration.over_provisioning_percent, margins)
@@ -224,14 +270,14 @@ def test_flux_writes_every_placement_field_of_the_longhorn_nodes(
     k3s-3 の allowScheduling と札 warm が消えた)、値は宣言の通り: 写しを受ける機体は置き・退かせず、Longhorn を外した機体は置かず・
     退かせる。disk の札は宣言の札。"""
     nodes = _longhorn_nodes(built)
-    for share in declaration.nodes:
+    for share in _with_longhorn(declaration):
         spec = nodes[share.node]
         assert _unwritten(spec) == (), share.node
         assert set(spec) == derive.FLUX_NODE_FIELDS, share.node
-        assert list(spec["disks"]) == [share.longhorn_disk], share.node
-        disk = spec["disks"][share.longhorn_disk]
+        assert list(spec["disks"]) == [share.longhorn.disk], share.node
+        disk = spec["disks"][share.longhorn.disk]
         assert set(disk) == derive.FLUX_DISK_FIELDS, share.node
-        placed = share.longhorn_scheduling
+        placed = share.longhorn.scheduling
         assert (spec["allowScheduling"], spec["evictionRequested"]) == (placed, not placed), (
             share.node
         )
@@ -239,7 +285,7 @@ def test_flux_writes_every_placement_field_of_the_longhorn_nodes(
             share.node
         )
         assert spec["tags"] == [], share.node
-        assert disk["tags"] == list(share.longhorn_disk_tags), share.node
+        assert disk["tags"] == list(share.longhorn.tags), share.node
 
 
 def test_worker_free_share_is_the_line_where_the_worker_returns_to_ok(
@@ -255,6 +301,20 @@ def test_worker_free_share_is_the_line_where_the_worker_returns_to_ok(
         kept = min_free + margins.near_bytes + margins.return_bytes
         assert doeff_interpreter(env_capacity(kept, min_free, "near")) == "ok", share.node
         assert doeff_interpreter(env_capacity(kept - 1, min_free, "near")) == "near", share.node
+
+
+def test_written_image_gc_starts_before_near_and_ends_above_ok(
+    declaration: object, margins: object, doeff_interpreter: Callable[[object], object]
+) -> None:
+    """書いてある kubelet の drop-in の線で、消し始める空き(high)では worker はまだ ok を名乗り(near の線の上)、消し終えた空き(low)では
+    near を名乗っていた worker も ok へ戻る(ok へ戻る線 = 最低 + near の幅 + 戻りの幅の上)。線は宣言から導いた物と同じ。"""
+    for share in declaration.nodes:
+        gc = _written_image_gc(share.node)
+        assert gc == derive.image_gc(share, margins), share.node
+        assert derive.free_at_usage(share.disk_bytes, gc.low_percent) > derive.ok_return_bytes(
+            share, margins
+        ), share.node
+        assert _worker_after_gc(share, gc, doeff_interpreter) == ("ok", "ok"), share.node
 
 
 # --- 失敗ケース(赤になる事の検)---------------------------------------------------------------------------------------------------------
@@ -278,7 +338,7 @@ def test_the_default_reserve_lets_longhorn_take_more_than_its_share(
 ) -> None:
     """Longhorn の既定の予約(30%)のままの Node は、over-provisioning 200% の下で名目を宣言の分の 4 倍ほど受ける — 当てる値の検
     (test_longhorn_admits_no_more_than_its_share_as_applied)はこの予約を赤にする。"""
-    for share in declaration.nodes:
+    for share in _with_longhorn(declaration):
         assert (
             _over_share(
                 share, LONGHORN_DEFAULT_RESERVED, declaration.over_provisioning_percent, margins
@@ -314,3 +374,36 @@ def test_a_scheduling_flag_that_is_not_a_bool_is_refused() -> None:
     )
     with pytest.raises(ValueError, match="longhornScheduling は true か false"):
         derive.parse(text)
+
+
+def test_atlas_hand_placed_image_gc_leaves_the_worker_near(
+    declaration: object, margins: object, doeff_interpreter: Callable[[object], object]
+) -> None:
+    """atlas に手で置かれていた high 85・low 80 は、消し始める空き 31.5 GB で worker が既に near を名乗り、消し終えた空き 42 GB でも near の
+    まま(ok へ戻る線 48.8 GB の下)— 書いてある線の検(test_written_image_gc_starts_before_near_and_ends_above_ok)はこの線を赤にする。"""
+    (atlas,) = [share for share in declaration.nodes if share.node == "atlas"]
+    hand = derive.ImageGc(high_percent=85, low_percent=80)
+    assert _worker_after_gc(atlas, hand, doeff_interpreter) == ("near", "near")
+    assert derive.free_at_usage(atlas.disk_bytes, hand.low_percent) < derive.ok_return_bytes(
+        atlas, margins
+    )
+
+
+def test_a_node_with_part_of_the_longhorn_keys_is_refused() -> None:
+    """Longhorn の 3 つの欄の一部だけを持つ機体(longhornDiskTags を欠く)は、Longhorn の disk を持たない機体と推し量らずに読む所で断る。"""
+    text = derive.SHARES.read_text(encoding="utf-8").replace("    longhornDiskTags: [warm]\n", "")
+    with pytest.raises(ValueError, match="揃って在るか揃って無い"):
+        derive.parse(text)
+
+
+def test_a_node_without_longhorn_over_its_disk_is_refused(
+    declaration: object, margins: object
+) -> None:
+    """Longhorn の disk を持たない機体(atlas)でも、OS ほかを 10 GB 足して残りが負になる宣言は導かない。"""
+    (atlas,) = [share for share in declaration.nodes if share.node == "atlas"]
+    room = derive.longhorn_bytes(atlas, margins)
+    swollen = dataclasses.replace(atlas, system_bytes=atlas.system_bytes + room + 1)
+    over = dataclasses.replace(declaration, nodes=(swollen,))
+    found = derive.faults(over, margins)
+    assert len(found) == 1, found
+    assert found[0].startswith("atlas: 分け前の合計が disk を越える"), found
