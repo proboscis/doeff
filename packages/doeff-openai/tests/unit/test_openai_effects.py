@@ -6,15 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from _runner import run_program
-from doeff_openai import (
-    OpenAIClient,
-    TokenUsage,
-    calculate_cost,
-    count_message_tokens,
-    count_tokens,
-)
+from doeff_openai import TokenUsage
 from doeff_openai._chat import chat_completion
-from doeff_openai._client import get_api_calls, get_model_cost, get_total_cost, reset_cost_tracking
+from doeff_openai._client import (
+    OpenAIClient,
+    get_api_calls,
+    get_model_cost,
+    get_total_cost,
+    reset_cost_tracking,
+)
+from doeff_openai._costs import calculate_cost, count_message_tokens, count_tokens
 from doeff_openai._embeddings import create_embedding, get_single_embedding
 
 from doeff import (

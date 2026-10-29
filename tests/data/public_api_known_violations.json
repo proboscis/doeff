@@ -14148,10 +14148,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — effect にする": {
-     "doeff_openai": [
-      "get_encoding",
-      "get_model_pricing"
-     ],
      "doeff_openai.chat": [
       "chat_completion",
       "chat_completion_async",
@@ -14184,10 +14180,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_openai": [
-      "ClientHolder",
-      "OpenAIClient"
-     ],
      "doeff_openai.client": [
       "ClientHolder",
       "OpenAIClient"
@@ -14202,20 +14194,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_openai": [
-      "MODEL_PRICING",
-      "ModelPricing",
-      "calculate_cost",
-      "count_embedding_tokens",
-      "count_message_tokens",
-      "count_tokens",
-      "estimate_cost",
-      "estimate_max_cost",
-      "extract_request_id",
-      "extract_token_usage",
-      "is_gpt5_model",
-      "requires_max_completion_tokens"
-     ],
      "doeff_openai.chat": [
       "calculate_cost",
       "count_message_tokens",
