@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_core_effects.meter_effects [MeterSnapshot SecondsTotal])
+(import doeff_core_effects [MeterSnapshot SecondsTotal])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_cluster.shared.intent.protocol [PlainText])
 (import doeff_cluster.sim.local [sim-cluster ReadCoordinator])

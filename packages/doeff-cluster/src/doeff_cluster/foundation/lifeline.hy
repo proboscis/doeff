@@ -22,7 +22,7 @@
 (import typing [Callable])
 (import httpx)
 (import doeff [Program with-handlers])
-(import doeff_core_effects.offloaded_call [run-detached])
+(import doeff_core_effects._offloaded_call [run-detached])
 
 
 (defrecord LifelineSettings
