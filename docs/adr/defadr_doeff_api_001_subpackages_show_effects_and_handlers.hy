@@ -15,7 +15,8 @@
 ;;; 許す事は R25(答え [id]・card [id])。解析の見本 doeff-test-target を packages の下から
 ;;; doeff-effect-analyzer の test の dir へ移す事は R26(答え [id]・card [id])。doeff-indexer の索引を引く口は
 ;;; R27(答え [id]・card [id])。workflow の Rust の CLI の package を消して Python の CLI に
-;;; 寄せる事は R28(答え [id]・card [id])。答えの無い物は R13 の「未決」に並べ、答えが来たら
+;;; 寄せる事は R28(答え [id]・card [id])。doeff-vm を doeff の中の部品として目録の範囲の外に
+;;; 置く事は R10 の答えに合わせて R11 で決めた(card [id])。答えの無い物は R13 の「未決」に並べ、答えが来たら
 ;;; 持ち主がこの ADR に条を足す。
 ;;;
 ;;; 強制は card [id] の test(tests/test_public_api_known_violations.py)が持つ。公開 API を数える 1 か所
@@ -33,6 +34,7 @@
 (require doeff-hy.macros [defk deftest val <-])
 (import importlib.util)
 (import pathlib [Path])
+(import sys)
 (import tempfile)
 (import types [ModuleType])
 
@@ -43,9 +45,11 @@
 
 (defk guard-module []
   {:pre [] :post [(: % ModuleType)] :tags {:context "doeff-api-adr" :role "foundation"}}
-  "card [id] の test の module を読む(tests/ は package でない — pytest が集める物と混ぜないよう別の名で読む)。"
+  "card [id] の test の module を読む(tests/ は package でない — pytest が集める物と混ぜないよう別の名で読む)。
+   読む前に sys.modules へ載せる — module の中の dataclass は、欄の註を読む時に自分の module を sys.modules から引く。"
   (val spec (importlib.util.spec-from-file-location "_adr_doe_api_001_guard" (/ ROOT GUARD-TEST)))
   (val module (importlib.util.module-from-spec spec))
+  (setv (get sys.modules spec.name) module)
   (.exec-module spec.loader module)
   module)
 
@@ -54,6 +58,7 @@
   :title "doeff の subpackage が利用者に見せる公開 API は effect と handler と handler を返す工場と、それらの値・結果・例外・設定の型と、名ごとに許した program の helper(effect を出すだけの program を返す関数)だけ。handler は印の付いた callable の値(ProgramHandler)で、program には h1(h2(p)) で当て、class で書かず、公開の名は subpackage の入口からだけ出す。強制は公開 API の目録と減るだけの既知の表を突き合わせる 1 つの test が持ち、工場は呼んで handler が返る事を、helper は中を読んで handler を被せず effect に答えない事を見る"
   :status "accepted"
   :scope ["packages/*/ (subpackage の import の根・submodule・[project.scripts]・entry point)"
+          "packages/doeff-vm/ (doeff の中の部品 — 目録が数えず、doeff の外が import しない事を表の test が見る・R11)"
           "tools/public_api_inventory.py (公開 API を数える 1 か所)"
           "tests/test_public_api_known_violations.py (強制 — card [id])"
           "tests/data/public_api_known_violations.json (既知の表 — 違反の表・減るだけ)"
@@ -112,7 +117,7 @@
      (interpretation
        "型は effect と handler の一部: 値の型が無いと effect を作れず、結果の型が無いと答えを読めず、例外の型が無いと失敗を受けられず、設定の型が無いと handler を作れない。")
      (interpretation
-       "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名と、その submodule そのもの(R5)・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。")]
+       "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名と、その submodule そのもの(R5)・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。doeff だけが import する doeff の中の部品(doeff-vm — R11)も同じ。")]
   :decision
     [(rule R1 "subpackage の公開 API は effect(EffectBase の型と、effect を作る関数)と handler(@handler・defhandler・stacked_handlers の、印の付いた値)と handler を返す工場(呼ぶと handler か handler の組を返す関数 — R3)と、名ごとに許した program の helper(R18)だけ(2026-10-26 の決まりを、2026-10-28 の決定 [id]〜[id] が工場まで、2026-10-29 の答え [id] が helper まで書き表した)。ほかの名(手続き型の関数・R18 で許していない program 関数・client や API の class・設定を読む関数・定数)は、名か module の path に _ を付けた内側に置くか、effect か handler か工場に作り直す。")
      (rule R2 "effect の値の型・effect の結果の型・effect と handler が投げる例外の型・handler の設定の型は、effect と handler の一部として公開してよい(2026-10-27・依頼書 [id] の問い types の答え [id])。")
@@ -124,9 +129,9 @@
      (rule R8 "code は CLI コマンドのサブコマンドで process を起こさない。常駐の process は役ごとの Python の module の入口に分け、起動は effect にして、handler が sys.executable -m <module> で起こす(PATH を見ない)。doeff-agents の CLI コマンド doeff-sessionhost は消した(2026-10-27・書 [id] の問い sessionhost-launch の答え [id]・card [id])。")
      (rule R9 "subpackage は __version__ を持たない。版は importlib.metadata.version で読む(2026-10-27・書 [id] の問い version の答え [id]・card [id])。")
      [removed]
-     (rule R11 "範囲は packages/ の下の package の全部。既知の表の範囲「決まりの範囲」の 27 package には今から当てる。「範囲の答え待ち」の 12 package は、R10 の答えが出た物(doeff-vm・doeff-hy・doeff-hy-pytest)から表の範囲と組を答えに合わせて改める(改める card は持ち主が切る)。doeff-hy は R14 で、doeff-cluster は R15 で、doeff-vm-core と doeff-linter は R23 で、doeff-effect-analyzer は R24 で、doeff-indexer は R27 で「決まりの範囲」へ移した。")
      [removed]
-     (rule R13 "未決(答えが来たら持ち主がこの ADR に条を足し、既知の表の範囲と組を改める card を切る): (a) なし — combinator の残りだった doeff-validation の check・perform は R19 で決めた(closing_links・sequence・try_call・validate は R18)。(b) 道具の package 2 個 — doeff-adr(書 [id] は差し戻され、1 通 1 問で問い直している。get_adr は R20・adr_ids は R21・register_semgrep_enforcement と assert_semgrep_enforcement は R22 で決めた)と、まだ問うていない doeff-domain(doeff-cluster は R15・doeff-hy-pytest は R10・doeff-vm-core と doeff-linter は R23・doeff-effect-analyzer は R24・doeff-test-target は R26(答え [id])・doeff-indexer は R27(答え [id])で決めた。workflow の Rust の CLI の package は R28(答え [id])で消した)。doeff-test-target を含めた 4 個の名ごとの分け — 答えの出た条で決まる名と問いの要る名、用途・使い方・呼び手の数 — は card [id] の発言に在る。(c) 問いのまだ無い境界 — doeff-conductor の workflow の DSL の言葉(doeff_conductor._dsl の 66 行)・doeff-hy の外の Hy の macro 2 個・doeff-hy の CLI doeff-hy-check と pytest の plugin の module・未分けの 16 行。(d) なし — 外れの組に在る、helper の形の program 関数(2026-10-29 の目録で 3,278 行 — 内側の module へ移す 2,163・handler の中へ入れる 1,024・effect にする 91)は、2026-10-29 22:08 JST の答え [id](依頼書 [id] の問い helper-155 — 使う名だけ許す)で R25 に決めた: 外の repo か doeff の別 package が使う 155 名は R18 で名ごとに許し、使わない 2,305 名は R1・R5 のとおり内側へ移す。")
+     [removed]
+     (rule R13 "未決(答えが来たら持ち主がこの ADR に条を足し、既知の表の範囲と組を改める card を切る): (a) なし — combinator の残りだった doeff-validation の check・perform は R19 で決めた(closing_links・sequence・try_call・validate は R18)。(b) 道具の package 2 個 — doeff-adr(書 [id] は差し戻され、1 通 1 問で問い直している。get_adr は R20・adr_ids は R21・register_semgrep_enforcement と assert_semgrep_enforcement は R22 で決めた)と、まだ問うていない doeff-domain(doeff-vm は R11 で doeff の中の部品として範囲の外に置いた・doeff-cluster は R15・doeff-hy-pytest は R10・doeff-vm-core と doeff-linter は R23・doeff-effect-analyzer は R24・doeff-test-target は R26(答え [id])・doeff-indexer は R27(答え [id])で決めた。workflow の Rust の CLI の package は R28(答え [id])で消した)。doeff-test-target を含めた 4 個の名ごとの分け — 答えの出た条で決まる名と問いの要る名、用途・使い方・呼び手の数 — は card [id] の発言に在る。(c) 問いのまだ無い境界 — doeff-conductor の workflow の DSL の言葉(doeff_conductor._dsl の 66 行)・doeff-hy の外の Hy の macro 2 個・doeff-hy の CLI doeff-hy-check と pytest の plugin の module・未分けの 16 行。(d) なし — 外れの組に在る、helper の形の program 関数(2026-10-29 の目録で 3,278 行 — 内側の module へ移す 2,163・handler の中へ入れる 1,024・effect にする 91)は、2026-10-29 22:08 JST の答え [id](依頼書 [id] の問い helper-155 — 使う名だけ許す)で R25 に決めた: 外の repo か doeff の別 package が使う 155 名は R18 で名ごとに許し、使わない 2,305 名は R1・R5 のとおり内側へ移す。")
      [removed]
      (rule R15 "doeff-cluster は範囲「決まりの範囲」に入れる(2026-10-29・書 [id] の問い cluster-scope の答え [id] — hide・card [id]・[id])。名は R1・R2・R5 のとおり: 外の repo が使う名(書の数え — 公開の名 3,443 個のうち 423 個)だけを入口から見せ、そのうち effect にする名と handler の中へ入れる名は後の card で直す。外が使わない名は内側の module へ移す。入口は R5 のとおり import の根 doeff_cluster に置く — 今の doeff_cluster は根の __init__ を持たない Hy の namespace package なので、card [id] の道具が根に遅延の import の入口を作り、根のすぐ下の区画(coordinator・foundation・record_store・shared・sim・worker)を _<区画> へ移して、下の submodule(2026-10-29 の目録で 217 個)をまとめて隠す。書の「選んだ後の code」は区画の path(doeff_cluster.sim)から読む形を見せたが、R5 と目録の道具と表の test は import の根から出す名で数えるので、使い手の import は (import doeff_cluster [sim-cluster StartWorker]) になる。macro defsystem(R10)は根のすぐ下の公開の module doeff_cluster.macros から見せ、R5 の外の境界に置く — Hy の require が module の path で macro を読むので(R14 と同じ訳)。今の doeff_cluster.shared.entry.macros から移すのは shared の区画の段 1。隠した後は、submodule に足した名が既定で公開にならない。直しの分けは card [id] の子(区画ごとの段 1・使い手の repo の段 2・移し替えの module と表の行を消す段 3)。")
      (rule R16 "handler を program に当てる公式の形は h1(h2(p)) — handler の値を呼んで包む(2026-10-28 の決定 [id]〜[id])。中核の WithHandler(handler, program)は VM へ渡す生の形で、利用者向けの docs と例には出さない。今の docs の WithHandler の書き替えは持ち主が card を切る。")
@@ -210,7 +215,20 @@
                      "tests/test_public_api_inventory.py::test_names_are_typed_by_marker_return_type_and_return_shape"
                      "tests/test_public_api_inventory.py::test_a_program_function_says_whether_it_is_a_helper"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-program-helper-can-be-allowed-as-one"]
-       :wiring "配線済み(2026-10-29・card [id])— 目録は program を返す関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、handler の制御か handler を被せる物を読めば形「handler を被せる program を返す関数」か「effect に答える program を返す関数」、読まなければ形「program の helper」と数える(種類はどれも それ以外)。表の test は許した物の表の組「許した物 — program の helper」の名の形が helper でなければ赤にし、許した物の表の組は形を確かめる組だけを置け、行は決めの id を持つ(2026-10-30・card [id] が許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分けた — tools/hide_submodules.py も 2 つの表を読む)。読みが見ない形(引数で受けた handler・別の package の関数が被せる)は、今の限りとして目録の test に固定した(構成のレビュー 2026-10-29 の所見)。この file の deftest はその関数を呼ぶだけ")]
+       :wiring "配線済み(2026-10-29・card [id])— 目録は program を返す関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、handler の制御か handler を被せる物を読めば形「handler を被せる program を返す関数」か「effect に答える program を返す関数」、読まなければ形「program の helper」と数える(種類はどれも それ以外)。表の test は許した物の表の組「許した物 — program の helper」の名の形が helper でなければ赤にし、許した物の表の組は形を確かめる組だけを置け、行は決めの id を持つ(2026-10-30・card [id] が許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分けた — tools/hide_submodules.py も 2 つの表を読む)。読みが見ない形(引数で受けた handler・別の package の関数が被せる)は、今の限りとして目録の test に固定した(構成のレビュー 2026-10-29 の所見)。この file の deftest はその関数を呼ぶだけ")
+     (law a-doeff-part-is-imported-only-by-doeff
+       :statement "for_all part q in DOEFF_PARTS (doeff-vm -> doeff_vm): q not in package_dirs(inventory) and q not in table; for_all file f under packages/ (outside q's dir), examples/ or docs/adr/: not imports(f, root(q)) — imports(f, r) = f's import or from statement, a module of Hy's import or require form, or a module-name string passed to import_module, importorskip, __import__ or find_spec, whose root is r"
+       :counterexamples
+         [(counterexample "doeff-vm を目録の範囲の外に置いた後、doeff の subpackage が from doeff_vm import K で VM を直に読み、目録が数えない名が利用者の使う口になる")
+          (counterexample "pytest.importorskip(\"doeff_vm\") や importlib.import_module(\"doeff_vm\") のように名の文字列で読み、import の文だけを見る検を抜ける(card [id] の前の doeff-effect-analyzer の検の形)")
+          (counterexample "Hy の (import pytest doeff_vm [Pass]) のように 1 つの形に module を並べ、形の頭の module だけを見る検を抜ける")
+          (counterexample "doeff-vm を目録から外したのに、既知の表に doeff-vm の項を残す")]
+       :enforced-by ["tests/test_public_api_known_violations.py::test_only_doeff_imports_its_parts"
+                     "tests/test_public_api_known_violations.py::test_a_doeff_part_imported_outside_doeff_turns_red"
+                     "tests/test_public_api_known_violations.py::test_the_known_table_has_one_well_formed_entry_per_package_dir"
+                     "tests/test_public_api_inventory.py::test_every_package_dir_is_listed"
+                     "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-a-doeff-part-imported-outside-doeff-turns-the-guard-red"]
+       :wiring "配線済み(2026-10-30・card [id])— 目録の道具は DOEFF_PARTS の dir を package に数えず、表の形の検は目録の package の外の項を「表に在るのに packages/ の下に無い」で赤にする。表の test は doeff の外の file を Python は構文木で、Hy は字句で読み、部品の import の根を読む所を file と行と module で名指す。doeff の外の repo は見えない — 書き換えと repo ごとの見張りは card [id]。semgrep の規則 doeff-vm-imported-only-by-doeff(card [id])は書く時に同じ所の import の文を止め、この test は名の文字列で読む形と Hy の並べた形も見る。この file の deftest はその関数を呼ぶだけ")]
   :enforcement
     [(deftest test-adr-doe-api-001-an-added-outlier-turns-the-guard-red
        ;; R12: 強制は card [id] の test が持ち、ここではその関数を呼ぶだけ — 使い捨ての package に effect と handler の外の
@@ -252,11 +270,19 @@
        (with [scratch (tempfile.TemporaryDirectory)]
          (guard.test-only-a-program-helper-can-be-put-into-the-helper-group (/ (Path scratch) "helper")))
        (guard.test-an-allowed-group-without-a-check-is-not-well-formed)
-       (guard.test-an-allowed-row-without-a-decision-id-is-not-well-formed))]
+       (guard.test-an-allowed-row-without-a-decision-id-is-not-well-formed))
+     (deftest test-adr-doe-api-001-a-doeff-part-imported-outside-doeff-turns-the-guard-red
+       ;; R11・R12: 同じ test の関数を呼ぶだけ — 使い捨ての repo で、doeff の外の file が doeff の中の部品(doeff_vm)を import すると
+       ;; 赤(import の文・Hy の形・名の文字列の行を名指す)・doeff の根と doeff._vm から読む形に直すと緑。部品そのもの・doeff の根の
+       ;; package・doeff の検の import は数えない。
+       (<- guard ModuleType (guard-module))
+       (with [scratch (tempfile.TemporaryDirectory)]
+         (guard.test-a-doeff-part-imported-outside-doeff-turns-red (Path scratch))))]
   :plans ["tests/test_public_api_known_violations.py・tests/data/public_api_known_violations.json (card [id])"
           "tools/public_api_inventory.py (card [id])"
           "取り組み doeff-subpackages-effects-only の区切り 2〜4 の card (直し — doeff-agents・CLI コマンド・doeff-vm・doeff-hy の macro・writer_log・__version__・class の handler・submodule)"
           "R11・R13 の答えが来た後: 既知の表の範囲と組を答えに合わせる card、この ADR に条を足す card (持ち主が切る)"
+          "R11: doeff-vm を doeff の中の部品として目録と既知の表から外し、doeff の外の file の import を表の test が見る card (card [id] — 済み)。doeff の外の repo の import doeff_vm を doeff の根へ書き換え、repo ごとに見張りを置く card (card [id])"
           "R6: maybe・result・on_raise・absent_as を handler を返す工場の形に直す card (card [id])、外の repo の呼び手を書き換える card (card [id])、4 つの旧い形を消して既知の表から 4 名を消す card (card [id]) — 3 つとも済み。scheduled の旧い形を消して既知の表の組「外れ — handler を返す工場の形に直す」を空にする card (card [id])。maybe・result を handler の値に戻す card (card [id])"
           "R16: 利用者向けの docs と例の WithHandler を h1(h2(p)) に書き替える card (持ち主が切る)"
           "R18・R13 (d)・R25: 外れの組の helper の形の program 関数を許すかを問う依頼書 ([id] の問い helper-155) と、答えに合わせて 155 名の組を移す card (card [id]) — どちらも済み。段 1 で既に _ に残した 36 名を入口へ出し直す card と、入口でぶつかる同じ名の 4 組を直す card (持ち主が切る)"

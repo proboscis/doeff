@@ -350,14 +350,18 @@ def test_names_made_on_demand_are_exported(sample: ModuleType) -> None:
 
 
 def test_every_package_dir_is_listed() -> None:
-    """packages/ の下の pyproject.toml か Cargo.toml を持つ dir は、全部が目録の package に入る。"""
+    """packages/ の下の pyproject.toml か Cargo.toml を持つ dir は、doeff の中の部品(doeff_vm — doeff だけが import する)の外の
+    全部が目録の package に入る。部品は doeff の根と同じく数えない(ADR-DOE-API-001 R11)。"""
     listed = {path.name for path in tool.package_dirs(ROOT)}
+    parts = {part.dir for part in tool.DOEFF_PARTS}
     expected = {
         path.name
         for path in (ROOT / "packages").iterdir()
         if (path / "pyproject.toml").is_file() or (path / "Cargo.toml").is_file()
     }
-    assert expected <= listed
+    assert parts <= expected
+    assert expected - parts <= listed
+    assert not listed & parts
 
 
 def test_markdown_has_one_section_per_package() -> None:
