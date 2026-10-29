@@ -383,7 +383,7 @@
   (tuple statements))
 
 
-(defk clickhouse-transaction-refusal [database]
+(defk _clickhouse-transaction-refusal [database]
   {:pre [(: database str)] :post [(: % SqlFailed)]
    :tags {:context "sql" :role "foundation"}}
   "SqlTransaction への断り(頭の註 — 本物の答え手と模擬 clickhouse_mock_sql が同じ値を返す 1 か所)。"
@@ -655,5 +655,5 @@
     (<- answer (off-scheduler (clickhouse-ensure-tables declared tables)))
     (resume answer))
   (SqlTransaction [database program lock-key] :when (any (gfor d databases (= d.name database)))
-    (<- refusal (clickhouse-transaction-refusal database))
+    (<- refusal (_clickhouse-transaction-refusal database))
     (resume refusal)))

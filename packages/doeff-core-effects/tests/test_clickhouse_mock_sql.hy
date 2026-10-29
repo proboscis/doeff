@@ -1,4 +1,4 @@
-;;; ClickHouse の約束を持つ模擬の SQL の答え手(clickhouse_mock_sql.hy — card ki-1c9c7903dfc4)の約束ごとの検。
+;;; ClickHouse の約束を持つ模擬の SQL の答え手(_clickhouse_mock_sql.hy — card ki-1c9c7903dfc4)の約束ごとの検。
 ;;;   - SqlTransaction は本物(clickhouse-http-sql-handler)と同じ SqlFailed(0A000)で断り、program は走らない。
 ;;;   - SqlQuery の rowcount は None(sqlite の答え手は数える)・行は読める。
 ;;;   - SqlInsertRows は書いた行の数を返す・空は 0・bytes は ValueError。
@@ -10,8 +10,8 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
                                         SqlUnreachable SqlSchemaApplied SqlTable SqlColumn SqlColumnType SqlIndex])
-(import doeff_core_effects.clickhouse_mock_sql [clickhouse-mock-sql-handler])
-(import doeff_core_effects.clickhouse_http_sql [clickhouse-transaction-refusal])
+(import doeff_core_effects._clickhouse_mock_sql [clickhouse-mock-sql-handler])
+(import doeff_core_effects.clickhouse_http_sql [_clickhouse-transaction-refusal])
 (import doeff_core_effects.sqlite_sql [sqlite-sql-handler])
 
 (val DB "ledger")
@@ -52,7 +52,7 @@
   (<- got (with-handler [(state) (clickhouse-mock-sql-handler #(DB))] (transaction-attempt)))
   (val answer (get got 0))
   (val rows (get got 1))
-  (<- real (clickhouse-transaction-refusal DB))
+  (<- real (_clickhouse-transaction-refusal DB))
   (assert (= answer real) answer)
   (assert (= answer.sqlstate "0A000") answer)
   ;; program は走っていない(行は書かれていない)。

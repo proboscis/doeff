@@ -236,6 +236,9 @@ if TYPE_CHECKING:
     from doeff_core_effects._scheduler_channel import CreateChannel as CreateChannel
     from doeff_core_effects._scheduler_channel import PutChannel as PutChannel
     from doeff_core_effects._scheduler_channel import TakeChannel as TakeChannel
+    from doeff_core_effects._clickhouse_mock_sql import (
+        clickhouse_mock_sql_handler as clickhouse_mock_sql_handler,
+    )
     from doeff_core_effects._scheduler_channel import (
         scheduler_channel_handler as scheduler_channel_handler,
     )
@@ -284,6 +287,7 @@ _LAZY_EXPORTS = {
     "PutChannel": "doeff_core_effects._scheduler_channel",
     "TakeChannel": "doeff_core_effects._scheduler_channel",
     "scheduler_channel_handler": "doeff_core_effects._scheduler_channel",
+    "clickhouse_mock_sql_handler": "doeff_core_effects._clickhouse_mock_sql",
     "CloseStepTally": "doeff_core_effects._scheduler_step_tally",
     "CloseTaskTally": "doeff_core_effects._scheduler_step_tally",
     "OpenStepTally": "doeff_core_effects._scheduler_step_tally",

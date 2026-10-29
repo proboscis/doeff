@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = clickhouse_mock_sql.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _clickhouse_mock_sql.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
@@ -16,7 +16,7 @@ from doeff_core_effects.sql_effects import SqlTable as SqlTable
 from doeff_core_effects.sql_effects import checked_rows as checked_rows
 from doeff_core_effects.sql_effects import checked_identifier as checked_identifier
 from doeff_core_effects.clickhouse_http_sql import clickhouse_schema_statements as clickhouse_schema_statements
-from doeff_core_effects.clickhouse_http_sql import clickhouse_transaction_refusal as clickhouse_transaction_refusal
+from doeff_core_effects.clickhouse_http_sql import _clickhouse_transaction_refusal as _clickhouse_transaction_refusal
 from doeff_core_effects.sqlite_sql import with_connection as with_connection
 from doeff_core_effects.sqlite_sql import connection_of as connection_of
 from doeff_core_effects.sqlite_sql import outage_marked as outage_marked

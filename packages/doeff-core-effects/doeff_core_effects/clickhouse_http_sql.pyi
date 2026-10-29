@@ -170,7 +170,7 @@ def clickhouse_failure(response: ClickHouseResponse) -> _Program[SqlFailed | Sql
 def clickhouse_schema_statements(tables: tuple) -> _Program[tuple | SqlFailed, object]:
     ...
 
-def clickhouse_transaction_refusal(database: str) -> _Program[SqlFailed, object]:
+def _clickhouse_transaction_refusal(database: str) -> _Program[SqlFailed, object]:
     ...
 
 def clickhouse_connection(url: str, seconds: float) -> _Program[http.client.HTTPConnection, object]:

@@ -1,7 +1,7 @@
 ;;; ClickHouse の約束を持つ模擬の SQL の答え手 clickhouse-mock-sql-handler(card ki-1c9c7903dfc4 — moneta の帳簿を ClickHouse へ移す
 ;;; 書き直しを、模擬の test で確かめるための前提)。sqlite の答え手(sqlite_sql.hy)の道を包み、本物の clickhouse-http-sql-handler
 ;;; (clickhouse_http_sql.hy)と同じ約束だけを足す。sqlite と同じく I/O なし・実 process なし。
-;;;   - SqlTransaction は本物と同じ値(clickhouse-transaction-refusal — SqlFailed(0A000))で断る。program は走らせない。
+;;;   - SqlTransaction は本物と同じ値(_clickhouse-transaction-refusal — SqlFailed(0A000))で断る。program は走らせない。
 ;;;   - SqlQuery の SqlRows.rowcount は None(HTTP が数えない)。SqlInsertRows は本物と同じく書いた行の数(空の rows は 0・bytes の値は
 ;;;     ValueError)。
 ;;;   - SqlEnsureTables は本物と同じく一意の索引を SqlFailed(0A000)で断る(clickhouse-schema-statements の検めを通す)。
@@ -13,7 +13,7 @@
 (import sqlite3)
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlTable checked-rows checked-identifier])
-(import doeff_core_effects.clickhouse_http_sql [clickhouse-schema-statements clickhouse-transaction-refusal])
+(import doeff_core_effects.clickhouse_http_sql [clickhouse-schema-statements _clickhouse-transaction-refusal])
 (import doeff_core_effects.sqlite_sql [with-connection connection-of outage-marked sqlite-answer-query sqlite-answer-insert
                                        sqlite-answer-tables])
 
@@ -82,5 +82,5 @@
     (<- answer (clickhouse-mock-tables connection unreachable database tables))
     (resume answer))
   (SqlTransaction [database program lock-key] :when (in database databases)
-    (<- refusal (clickhouse-transaction-refusal database))
+    (<- refusal (_clickhouse-transaction-refusal database))
     (resume refusal)))
