@@ -1273,7 +1273,7 @@ isinstance)は決して通らず、黙って次の枝(多くは成功の枝)に�
 - **鍵と位置**: `<path>::DOEFF175::<定義>::<束ねた名>::<型の綴り>`(`(! (E …))` を直に分ける形は束ねた名の代わりに E の綴り)。同じ定義の同じ名・型は 1 件。位置 = match の腕の pattern か isinstance の型の記号。
 - **重さ**: critical・**登録簿で下げない**(`lowered_by_registry` が偽)・`exemptible_by_layer` でない。門が空かないよう、既知の一覧にも `:exempt` にも載せない。
 - **指摘の文**: 「E は T を不在(失敗)と宣言した。<- は x に T を束ねないので、この枝(match の腕 / isinstance)は通らない — maybe / on-raise / :absent へ」。直し方(R14 (3)):
-  枝を消して成功の道だけにする。不在で何かしたい所は `(<- x (E …) :absent <失敗>)` か `absent-as`、失敗で何かしたい所は `on-raise`、不在や失敗を値として持ち回る所は `((maybe) (E …))` / `((result) (E …))` で包んで Nothing / Err を受ける。
+  枝を消して成功の道だけにする。不在で何かしたい所は `(<- x (E …) :absent <失敗>)` か `absent-as`、失敗で何かしたい所は `on-raise`、不在や失敗を値として持ち回る所は `(maybe (E …))` / `(result (E …))` で包んで Nothing / Err を受ける。
 - **検**: 単体 `src/project/stale_outcome_branches.rs`(形・鳴らさない形・束ね直した名)、binary を走らせる `tests/stale_outcome_branch.rs` と検体 `tests/fixtures/stale_outcome_branch/`
   (`branches.hy` の「; 鳴る」の行 17 行と当たりの行の集合が一致・鳴らさない定義 12 個・宣言を消すと 0 件・宣言の無い effect に足すと当たる・1 file の実行が全体の実行と同じ鍵・登録簿で下がらない・
   母集団・doeff 自身の本番の code に 0 件)。
