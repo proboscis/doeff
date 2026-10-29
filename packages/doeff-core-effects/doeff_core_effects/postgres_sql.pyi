@@ -244,13 +244,22 @@ class PipelineConnection(Protocol):
     execute: Callable[[str, dict | None], StatementCursor]
     cursor: Callable[[], StatementCursor]
 
-def pipelined(connection: PipelineConnection, step: PostgresStep | None) -> _Program[StatementCursor | None, object]:
+def step_queries(transformer: Incomplete, step: PostgresStep | None) -> _Program[tuple, object]:
     ...
 
-def step_answer(step: PostgresStep | None, cursor: StatementCursor | None) -> _Program[SqlRows, object]:
+def socket_ready(pgconn: Incomplete, events: int) -> _Program[int, object]:
     ...
 
-def first_failure(error: Exception) -> _Program[Exception, object]:
+def libpq_sent(pgconn: Incomplete) -> _Program[None, object]:
+    ...
+
+def libpq_results(pgconn: Incomplete) -> _Program[tuple, object]:
+    ...
+
+def result_failure(connection: Incomplete, results: tuple) -> _Program[Exception | None, object]:
+    ...
+
+def results_answer(transformer: Incomplete, step: PostgresStep | None, results: tuple) -> _Program[SqlRows, object]:
     ...
 
 def postgres_flush(connection: PipelineConnection, locks: tuple, origin: str | None, flush: TransactionFlush) -> _Program[tuple | SqlFailed | SqlUnreachable, object]:
