@@ -190,6 +190,8 @@ to write when a macro was brought in with `import`.
 | `fnk` | Anonymous effectful function |
 | `deff` | Define a pure function with `:pre` / `:post` contracts |
 | `defhandler` | Define a handler installer from one clause per effect type |
+| `handle` | Apply an unnamed handler to a program in place: `(handle prog (Effect [field] (resume …)) …)` |
+| `with-handler` | Apply a stack of handlers to a program: `(with-handler [outer inner] prog)` |
 | `defp` | Define a program constant (`:post` required) |
 | `defpp` | Define a `Program[Program[T]]` constant |
 | `deftest` | Define an effectful pytest test |
@@ -208,6 +210,14 @@ A `defhandler` clause names an effect type and its fields, and must end every pa
 with one of `resume`, `transfer`, `finish`, `reperform` or `raise`. `(finish value)`
 ends the handler's scope without resuming; finishing an ordinary effect needs
 `:finish-reason "…"`. Clauses for `Raise` and `Absent` never resume.
+
+Use `handle` for a handler you need once and `defhandler` for one you reuse. Both take
+the same clauses: `(handle prog (Greeting [lang] (resume "hello")))` returns the same
+answer as `(with-handler [greeting] prog)` after `(defhandler greeting (Greeting [lang]
+(resume "hello")))`, and a clause that may not resume is the same `SyntaxError` in both.
+To reuse an inline handler, move its clauses into a `defhandler` and give it a name.
+`(session val …)` and `(session var …)` belong to `defhandler` only: session values are
+keyed by the handler's name, so `handle` refuses them.
 
 ### Typed binding
 
