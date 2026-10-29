@@ -397,8 +397,8 @@ def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, P
                 yield from _modules_below(moved_to, name, depth + 1)
 
 
-def _shim_package(name: str, path: Path) -> Path | None:
-    """The package dir a moved-submodule shim stands for (``None`` for any other module).
+def _shim_target(name: str, path: Path) -> Path | None:
+    """The package dir or module file a moved-submodule shim stands for (``None`` for any other module).
 
     A shim's first line is ``# moved-submodule-shim: <old> -> <new>``, its old name is its own and
     the new one is a sibling (the shims the rewriting tool of card ki-299be2ea4a13 writes).
@@ -413,7 +413,30 @@ def _shim_package(name: str, path: Path) -> Path | None:
     if parent != name.rpartition(".")[0]:
         return None
     moved_to = path.parent / last
-    return moved_to if _init_of(moved_to) is not None else None
+    if _init_of(moved_to) is not None:
+        return moved_to
+    return next(
+        (
+            path.parent / f"{last}{suffix}"
+            for suffix in (".py", ".hy")
+            if (path.parent / f"{last}{suffix}").is_file()
+        ),
+        None,
+    )
+
+
+def _shim_package(name: str, path: Path) -> Path | None:
+    """The package dir a moved-submodule shim stands for (``None`` for any other module)."""
+    moved_to = _shim_target(name, path)
+    return moved_to if moved_to is not None and moved_to.is_dir() else None
+
+
+def _shim_source(name: str, path: Path) -> Path:
+    """The file whose text stands for the module ``name`` at ``path``: the moved module's for a shim."""
+    moved_to = _shim_target(name, path)
+    if moved_to is None:
+        return path
+    return (_init_of(moved_to) or path) if moved_to.is_dir() else moved_to
 
 
 def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
@@ -1339,7 +1362,11 @@ class _ModuleResult:
 def _read_module(
     module_name: str, path: Path, classifier: _Classifier, sources: _Sources
 ) -> _ModuleResult:
-    """Import one public module and type its names; a module that cannot be imported is read as text."""
+    """Import one public module and type its names; a module that cannot be imported is read as text.
+
+    A moved-submodule shim that cannot be imported (the module it moved to fails) is read from the
+    moved module's text: the shim's own text defines nothing.
+    """
     try:
         with contextlib.redirect_stdout(sys.stderr):
             module = importlib.import_module(module_name)
@@ -1348,6 +1375,7 @@ def _read_module(
         SystemExit,
     ) as error:  # the failure is written into the inventory, not dropped
         message = f"{type(error).__name__}: {error}".splitlines()[0][:300]
+        path = _shim_source(module_name, path)
         location = _place_text(Place(module_name, str(path)))
         return _ModuleResult(
             ModuleRead(name=module_name, read="text", error=message),

@@ -691,3 +691,37 @@ def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_name
         check_package(_read_fixture(without_mark), table)
     assert f"{below}(公開の submodule)" in str(failure.value)
     assert f"{below}.sub_helper" in str(failure.value)
+
+
+#: import すると落ちる子の module(目録は名を text から読む — doeff-ml-nexus の import できない Hy の module の様に)。
+UNIMPORTABLE = '''
+raise RuntimeError("this module cannot be imported")
+
+
+def helper(x: int) -> int:
+    """An outlier, read from the text of a module that cannot be imported."""
+    return x + 1
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_the_moved_text(
+    tmp_path: Path,
+) -> None:
+    """import できない子を _ へ移し、印のある移し替えの module を残す間も、名を移した先の text から古い名で数えて緑。
+
+    移し替えの module の text は名を定義しないので、移した先を読まないと名が目録から消え、表に在るのに目録に無い名で赤になる
+    (doeff-ml-nexus の import できない Hy の module で起きた — card ki-460c44bf9b79)。
+    """
+    child = f"{FIXTURE_ROOT}.types"
+    table = _fixture_table({SUBMODULE: [child], child: ["helper"]})
+    before = _fixture_tree(
+        tmp_path / "before", {"__init__.py": EFFECTS_AND_HANDLERS, "types.py": UNIMPORTABLE}
+    )
+    check_package(_read_fixture(before), table)
+
+    stage_1 = _fixture_tree(
+        tmp_path / "stage-1",
+        {"__init__.py": EFFECTS_AND_HANDLERS, "_types.py": UNIMPORTABLE, "types.py": MARKED_SHIM},
+    )
+    check_package(_read_fixture(stage_1), table)

@@ -10,8 +10,8 @@
 (import doeff [run Program])
 
 
-(setv RUNNER-INPUT-PATH-KEY "doeff_ml_nexus.runner.input_path")
-(setv RUNNER-OUTPUT-PATH-KEY "doeff_ml_nexus.runner.output_path")
+(setv RUNNER-INPUT-PATH-KEY "doeff_ml_nexus._runner.input_path")
+(setv RUNNER-OUTPUT-PATH-KEY "doeff_ml_nexus._runner.output_path")
 (setv DEFAULT-RUNNER-INPUT-PATH "/tmp/doeff-exchange/program.pkl")
 (setv DEFAULT-RUNNER-OUTPUT-PATH "/tmp/doeff-exchange/result.pkl")
 

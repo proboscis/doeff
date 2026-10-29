@@ -25,8 +25,8 @@ from doeff_system_one import Judge, JudgeError, Verdict
 
 from doeff import Err, Ok, Pass, Transfer, TransferThrow, Try, do
 from doeff import handler as _program_handler
-from doeff_jev.target import JevTarget, key_required
-from doeff_jev.wire import Prepared, cache_key, parse, prepare, proxy_outcome
+from doeff_jev._target import JevTarget, key_required
+from doeff_jev._wire import Prepared, cache_key, parse, prepare, proxy_outcome
 
 #: 1 回の HTTP の再試行(5xx / 通信の失敗)。判定は短い問いなので 1 度だけ。
 HTTP_RETRIES = 1

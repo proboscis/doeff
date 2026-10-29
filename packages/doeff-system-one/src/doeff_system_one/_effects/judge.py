@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from doeff import EffectBase
-from doeff_system_one.types import Image, Question
+from doeff_system_one._types import Image, Question
 
 
 class Judge(EffectBase):

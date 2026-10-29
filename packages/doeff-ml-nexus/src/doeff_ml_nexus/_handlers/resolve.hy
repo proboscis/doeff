@@ -7,7 +7,7 @@
 
 (import pathlib [Path])
 
-(import doeff_ml_nexus.effects [Resolve])
+(import doeff_ml_nexus._effects [Resolve])
 
 
 (defhandler resolve-handler

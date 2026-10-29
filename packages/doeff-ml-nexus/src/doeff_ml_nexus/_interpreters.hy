@@ -10,12 +10,12 @@
 
 (import doeff_docker.effects [DockerBuild DockerRun])
 (import doeff_docker.handlers.dockerfile [collect-dockerfile])
-(import doeff_ml_nexus.effects [Resolve RsyncTo])
-(import doeff_ml_nexus.docker [uv-image uv-gpu-image])
-(import doeff_ml_nexus.uv-deps [
+(import doeff_ml_nexus._effects [Resolve RsyncTo])
+(import doeff_ml_nexus._docker [uv-image uv-gpu-image])
+(import doeff_ml_nexus._uv-deps [
   find-local-deps _find-top-level-deps
   rewrite-pyproject-for-container rewrite-uv-lock-for-container])
-(import doeff_ml_nexus.context [prepare-build-context])
+(import doeff_ml_nexus._context [prepare-build-context])
 
 
 ;; ===========================================================================
