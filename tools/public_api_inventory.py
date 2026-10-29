@@ -404,7 +404,9 @@ def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, P
     """The public modules below the package dir ``base`` (named ``prefix``).
 
     A moved-submodule shim (``SHIM_MARK``) also stands for the modules below the package it moved
-    to, by their old names: they stay importable at the old path until the shim is removed.
+    to, by their old names: they stay importable at the old path until the shim is removed. A shim
+    for a namespace dir (no ``__init__`` — doeff-cluster's areas) is walked through like the dir it
+    stands for, and is not a module itself.
     """
     for path in sorted(base.rglob("*")):
         relative = path.relative_to(base)
@@ -415,8 +417,9 @@ def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, P
             yield _module_name(prefix, relative), init
         elif path.is_file() and path.name.endswith(_MODULE_SUFFIXES + _EXTENSION_SUFFIXES):
             name = _module_name(prefix, relative)
-            yield name, path
             moved_to = _shim_package(name, path)
+            if moved_to is None or _init_of(moved_to) is not None:
+                yield name, path
             if moved_to is not None and depth < _FOLLOW_DEPTH:
                 yield from _modules_below(moved_to, name, depth + 1)
 
@@ -437,7 +440,7 @@ def _shim_target(name: str, path: Path) -> Path | None:
     if parent != name.rpartition(".")[0]:
         return None
     moved_to = path.parent / last
-    if _init_of(moved_to) is not None:
+    if moved_to.is_dir():  # a package, or a namespace dir walked through
         return moved_to
     return next(
         (
