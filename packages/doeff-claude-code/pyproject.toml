@@ -17,9 +17,9 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# import 名 doeff_claude_code は Hy の module だけの namespace package(__init__ を持たない — hy を読み込んだ process が import する)。
+# import 名 doeff_claude_code の入口(__init__.py)は、`_` で隠した Hy の module の名を遅延で出す(名を読む時に hy を読み込む)。
 packages = ["src/doeff_claude_code"]
-# editable の install は .py の無い dir を sys.path に載せない — src を明示して載せる。
+# editable の install は src を明示して sys.path に載せる。
 dev-mode-dirs = ["src"]
 
 [tool.uv.sources]

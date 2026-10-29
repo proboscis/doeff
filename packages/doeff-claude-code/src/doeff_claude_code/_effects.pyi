@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _effects.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
 from doeff import EffectBase as _doeff_effect_base
@@ -8,25 +8,25 @@ from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
 from doeff_hy.frozen import FrozenJson as FrozenJson
 from doeff_hy.frozen import freeze_json as freeze_json
-from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
-from doeff_claude_code.values import ClaudeHome as ClaudeHome
-from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
-from doeff_claude_code.values import TurnInput as TurnInput
-from doeff_claude_code.values import Allow as Allow
-from doeff_claude_code.values import Deny as Deny
-from doeff_claude_code.values import checked_session_id as checked_session_id
-from doeff_claude_code.values import FreshSession as FreshSession
-from doeff_claude_code.values import ResumeSession as ResumeSession
-from doeff_claude_code.values import ForkSession as ForkSession
-from doeff_claude_code.values import LentCredential as LentCredential
-from doeff_claude_code.values import PrintContent as PrintContent
-from doeff_claude_code.lines import ClaudeStreamLine as ClaudeStreamLine
-from doeff_claude_code.lines import Completed as Completed
-from doeff_claude_code.lines import Failed as Failed
-from doeff_claude_code.lines import Interrupted as Interrupted
-from doeff_claude_code.lines import BackendLost as BackendLost
-from doeff_claude_code.lines import Usage as Usage
-from doeff_claude_code.lines import AccountLimitHit as AccountLimitHit
+from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
+from doeff_claude_code._values import ClaudeHome as ClaudeHome
+from doeff_claude_code._values import ClaudeTurn as ClaudeTurn
+from doeff_claude_code._values import TurnInput as TurnInput
+from doeff_claude_code._values import Allow as Allow
+from doeff_claude_code._values import Deny as Deny
+from doeff_claude_code._values import checked_session_id as checked_session_id
+from doeff_claude_code._values import FreshSession as FreshSession
+from doeff_claude_code._values import ResumeSession as ResumeSession
+from doeff_claude_code._values import ForkSession as ForkSession
+from doeff_claude_code._values import LentCredential as LentCredential
+from doeff_claude_code._values import PrintContent as PrintContent
+from doeff_claude_code._lines import ClaudeStreamLine as ClaudeStreamLine
+from doeff_claude_code._lines import Completed as Completed
+from doeff_claude_code._lines import Failed as Failed
+from doeff_claude_code._lines import Interrupted as Interrupted
+from doeff_claude_code._lines import BackendLost as BackendLost
+from doeff_claude_code._lines import Usage as Usage
+from doeff_claude_code._lines import AccountLimitHit as AccountLimitHit
 
 @dataclass(frozen=True)
 class TurnStarted:

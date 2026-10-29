@@ -12,9 +12,9 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import hy  # noqa: F401  # .hy import hook — print の handler と fake は Hy の module doeff_claude_code に住む
-from doeff_claude_code.effects import ClaudePrintOnce, PrintAnswered, PrintLimited
+from doeff_claude_code import ClaudePrintOnce, PrintAnswered, PrintLimited
 from doeff_claude_code.fake import fake_claude_print_handler
-from doeff_claude_code.lines import AccountLimitHit, Usage
+from doeff_claude_code import AccountLimitHit, Usage
 from doeff_claude_code.print_once import claude_print_handler
 from doeff_core_effects import slog_discard_handler, slog_handler, try_handler
 from doeff_core_effects.scheduler import scheduled

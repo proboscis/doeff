@@ -1,4 +1,4 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = lines.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _lines.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
 from _typeshed import Incomplete
@@ -17,7 +17,7 @@ from doeff_hy.frozen import freeze_json as freeze_json
 from doeff_hy.frozen import frozen_json_object as frozen_json_object
 from doeff_hy.json_lines import jsonl_lines as jsonl_lines
 from doeff_hy.json_lines import whole_lines_end as whole_lines_end
-from doeff_claude_code.values import ClaudeTurn as ClaudeTurn
+from doeff_claude_code._values import ClaudeTurn as ClaudeTurn
 
 @dataclass(frozen=True)
 class Usage:

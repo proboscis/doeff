@@ -1,26 +1,26 @@
-# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = argv.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy.static_stub が作った型の宣言 — 手で直さない(元 = _argv.hy・作り直し = python -m doeff_hy.static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from collections.abc import Mapping as Mapping
 from doeff_hy.frozen import FrozenMap as FrozenMap
 from doeff_hy.frozen import thaw_json as thaw_json
-from doeff_claude_code.values import ClaudeSessionSpec as ClaudeSessionSpec
-from doeff_claude_code.values import ClaudeHome as ClaudeHome
-from doeff_claude_code.values import LentCredential as LentCredential
-from doeff_claude_code.values import BypassAll as BypassAll
-from doeff_claude_code.values import AskHost as AskHost
-from doeff_claude_code.values import DenyUnlisted as DenyUnlisted
-from doeff_claude_code.values import HomeSettings as HomeSettings
-from doeff_claude_code.values import McpSse as McpSse
-from doeff_claude_code.values import McpStdio as McpStdio
-from doeff_claude_code.values import PrintContent as PrintContent
-from doeff_claude_code.values import AutocompactAuto as AutocompactAuto
-from doeff_claude_code.values import AutocompactTokens as AutocompactTokens
-from doeff_claude_code.values import FreshSession as FreshSession
-from doeff_claude_code.values import ResumeSession as ResumeSession
-from doeff_claude_code.values import ForkSession as ForkSession
-from doeff_claude_code.effects import ClaudePrintOnce as ClaudePrintOnce
+from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
+from doeff_claude_code._values import ClaudeHome as ClaudeHome
+from doeff_claude_code._values import LentCredential as LentCredential
+from doeff_claude_code._values import BypassAll as BypassAll
+from doeff_claude_code._values import AskHost as AskHost
+from doeff_claude_code._values import DenyUnlisted as DenyUnlisted
+from doeff_claude_code._values import HomeSettings as HomeSettings
+from doeff_claude_code._values import McpSse as McpSse
+from doeff_claude_code._values import McpStdio as McpStdio
+from doeff_claude_code._values import PrintContent as PrintContent
+from doeff_claude_code._values import AutocompactAuto as AutocompactAuto
+from doeff_claude_code._values import AutocompactTokens as AutocompactTokens
+from doeff_claude_code._values import FreshSession as FreshSession
+from doeff_claude_code._values import ResumeSession as ResumeSession
+from doeff_claude_code._values import ForkSession as ForkSession
+from doeff_claude_code._effects import ClaudePrintOnce as ClaudePrintOnce
 STREAM_FLAGS: list[str]
 PER_TURN_SETTINGS_ENV: FrozenMap
 OUTSIDE_TURN_TOOLS: tuple[str, ...]
