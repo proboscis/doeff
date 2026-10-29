@@ -15,8 +15,10 @@ make them effects, show the answer types — card ki-593f9f44c501).  The functio
 (``_program_effects.analyze_program``, ``_handler_effects.check_coverage`` …) are inside the package.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import FunctionType
+from typing import assert_never
 
 from doeff import EffectBase, K, Transfer, TransferThrow, handler
 from doeff.program import ProgramHandler
@@ -82,7 +84,8 @@ class FoldCarried:
 
     ``declared`` = the carriers that declare their handler runs the carried Program there
     (``__doeff_runs_carried__``: ``Try`` / ``Local`` / ``Listen`` / ``Spawn`` / ``SqlTransaction``);
-    ``names`` = carriers named by their class name or qualified name as well.  ``FoldCarried()``
+    ``names`` = carriers named by their name or qualified name as well — an effect class, or a
+    helper Program function the Program is handed to (``CarriedProgram``).  ``FoldCarried()``
     folds none in (a carried Program runs elsewhere).  It is also the predicate
     ``ProgramEffects.residual_with`` takes: ``report.residual_with(FoldCarried(declared=True))``."""
 
@@ -93,7 +96,7 @@ class FoldCarried:
         """Whether ``carrier``'s carried Program is counted where it is performed (the fold's rule)."""
         if self.declared and runs_where_performed(carrier):
             return True
-        return isinstance(carrier, type) and (
+        return isinstance(carrier, type | FunctionType) and (
             carrier.__name__ in self.names or qualified_name(carrier) in self.names
         )
 
@@ -105,12 +108,14 @@ class CheckCoverage(EffectBase[Coverage]):
     handler on the way read and every place followed).
 
     ``program`` = a ``ProgramEffects`` read before (``AnalyzeProgram``), or a Program function /
-    ``functools.partial`` / ``"module:attr"`` read here with ``bindings``.  ``env`` = handlers read
-    before (``AnalyzeHandler`` / ``AnalyzeEnv``).  ``fold`` = the carried Programs counted where they
-    are performed.  ``supplied`` = declarations for handlers that cannot be read: such a handler is
-    read from its declaration where it is placed, and is not named in ``unknown_handlers``."""
+    ``functools.partial`` / ``"module:attr"`` read here with ``bindings`` — only this form can be
+    kept by the result cache (a ``ProgramEffects`` names its Program by a label only).  ``env`` =
+    handlers read before (``AnalyzeHandler`` / ``AnalyzeEnv``).  ``fold`` = the carried Programs
+    counted where they are performed.  ``supplied`` = declarations for handlers that cannot be read:
+    such a handler is read from its declaration where it is placed, and is not named in
+    ``unknown_handlers``."""
 
-    program: object
+    program: ProgramEffects | Callable[..., object] | str
     env: tuple[HandlerEffects, ...] = ()
     #: ``program``'s keyword arguments when it is read here — as ``AnalyzeProgram.bindings``.
     bindings: Mapping[str, object] | None = None
@@ -138,37 +143,38 @@ def effect_analysis(*, result_cache: bool = False) -> ProgramHandler:
     cannot be analyzed is thrown back where the effect was performed.
 
     ``result_cache=True`` keeps the answer of a ``CheckCoverage`` of a Program function read here
-    (no ``env``; the function, its binding values and the supplied declarations found again by
-    their import names) on disk, reused while every module file it depends on has the same content
-    (``DOEFF_EFFECT_ANALYZER_RESULT_CACHE=off`` turns it off).  Any other effect is read every time.
+    (no ``env``; the function and its binding values found again by their import names — the key
+    also names the fold and the supplied declarations) on disk, reused while every module file it
+    depends on has the same content (``DOEFF_EFFECT_ANALYZER_RESULT_CACHE=off`` turns it off).  Any
+    other effect is read every time.  An answer that cannot be stored is answered all the same.
 
     Use: ``effect_analysis()(program)`` / ``effect_analysis(result_cache=True)(program)``.
     """
 
+    # One clause per effect, written in the body itself: the analyzer reads a handler by its
+    # clauses, this one included (a closure check of a Program that installs it reads it).
     @handler
     def answer_effect_analysis(
         effect: AnalyzeProgram | AnalyzeHandler | AnalyzeEnv | CheckCoverage, k: K
     ):
+        answer: object
         try:
-            answer = _answer(effect, result_cache=result_cache)
+            match effect:
+                case AnalyzeProgram(target=target, bindings=bindings):
+                    answer = analyze_program(target, bindings=bindings)
+                case AnalyzeHandler(target=target, name=name):
+                    answer = analyze_handler(target, name=name)
+                case AnalyzeEnv(builder=builder, bindings=bindings):
+                    answer = tuple(analyze_env(builder, bindings=bindings))
+                case CheckCoverage():
+                    answer = _coverage(effect, result_cache=result_cache)
+                case _:
+                    assert_never(effect)
         except _REFUSALS as refused:
             return (yield TransferThrow(k, refused))
         return (yield Transfer(k, answer))
 
     return answer_effect_analysis
-
-
-def _answer(
-    effect: AnalyzeProgram | AnalyzeHandler | AnalyzeEnv | CheckCoverage, *, result_cache: bool
-) -> object:
-    """The answer to one analysis effect (what the handler resumes the performing site with)."""
-    if isinstance(effect, AnalyzeProgram):
-        return analyze_program(effect.target, bindings=effect.bindings)
-    if isinstance(effect, AnalyzeHandler):
-        return analyze_handler(effect.target, name=effect.name)
-    if isinstance(effect, AnalyzeEnv):
-        return tuple(analyze_env(effect.builder, bindings=effect.bindings))
-    return _coverage(effect, result_cache=result_cache)
 
 
 def _coverage(effect: CheckCoverage, *, result_cache: bool) -> Coverage:
@@ -208,7 +214,7 @@ def _identity(
         return None
     return (
         "doeff-effect-analyzer.check-coverage",
-        *(str(name) for name in names[:1]),
+        str(names[0]),
         *(f"{parameter}={name}" for parameter, name in zip(bound, names[1:], strict=True)),
         f"fold={'declared' if fold.declared else '-'}:{','.join(fold.names)}",
         *(
