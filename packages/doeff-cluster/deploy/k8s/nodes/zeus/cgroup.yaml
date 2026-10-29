@@ -26,6 +26,16 @@
 # ポーリングの訳: containerd が container の cgroup を作った事を、同じ Pod の別の container へ知らせる道が無い(cgroupfs の dir の
 # 作成は inotify に出ない)。2 秒ごとに持ち主を見るだけで、渡し済みなら何もしない。
 #
+# CPU の重み(card ki-b40c5c399455): 子に cpu を掛け、遅れに敏感な層(worker・services)の cpu.weight を一括の仕事の層(clis・jobs・
+# commands)の 10 倍に置く。訳: 子に cpu を掛けないと、zeus の CPU が埋まった時(Pod 26〜29 core・走れる thread 103 本 / 36 core)に
+# 起きた常駐の service の thread が一括の仕事の thread と同じ重みで実行待ちに並び、画面の ws の ping の往復が最大 53〜140 ms に跳ねた。
+# 層 clis = 常駐の job が起こす会話の CLI とその子(上に載る系が DOEFF_WORKER_CGROUP_DIR の下の clis へ自分を移す)。services に居た
+# CLI を外へ出し、services の memory.min 24G を、測った PSS(10-29 23:1x JST — 常駐の job 14.5GiB・CLI とその子 14.9GiB)で
+# services 13G と clis 11G に分けた(守る層の和は変えない)。値の出どころ(10-29 23:2x JST の zeus で手で掛けた試し — 同じ Pod から
+# 画面の socket へ 20 ms おきの ws の ping、Pod 25 core 超の秒): 重み無し p99 9.4 ms・最大 53 ms → services と worker 1000 で
+# p99 5.0 ms・最大 34 ms。cpu.idle は使わない(命令の層を何にでも譲らせると、会話の手番の命令が CPU の埋まった間ずっと止まる —
+# CLI を SCHED_IDLE にした時に手番が 25〜32% 伸びた card ki-3e7dd460e932 と同じ形)。
+#
 # 雛形の env の並び(WORK_DIR が 1 番・DRAIN_DEADLINE が 9 番)を動かさないよう、足す物は全部末尾へ足す。
 - op: add
   path: /spec/template/spec/initContainers/-
@@ -61,6 +71,6 @@
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: WORKER_CGROUP_HOST, value: /host/cgroup } }
 - op: add
   path: /spec/template/spec/containers/0/env/-
-  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G commands:memory.max=28G" }
+  value: { name: WORKER_CGROUP_LAYOUT, value: "worker:memory.min=2G,cpu.weight=1000 services:memory.min=13G,cpu.weight=1000 clis:memory.min=11G,cpu.weight=100 jobs:memory.max=36G,cpu.weight=100 commands:memory.max=28G,cpu.weight=100" }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_SERVICE_CGROUP, value: services } }
 - { op: add, path: /spec/template/spec/containers/0/env/-, value: { name: DOEFF_WORKER_JOB_CGROUP, value: jobs } }
