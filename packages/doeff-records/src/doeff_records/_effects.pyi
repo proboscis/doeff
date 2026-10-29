@@ -23,6 +23,8 @@ from doeff_records._values import (
     EventsMoved,
     EventsQuiet,
     Expectation,
+    Count,
+    CountRowsAnswer,
     ListCursor,
     ListRowsAnswer,
     PutRowAnswer,
@@ -73,6 +75,14 @@ class ListRows(EffectBase[ListRowsAnswer]):
     limit: int = ...
     descending_by: str | None = None
     where_any: FrozenMap = ...
+    ascending_by: str | None = None
+
+@dataclass(frozen=True)
+class CountRows(EffectBase[CountRowsAnswer]):
+    table: str
+    where: FrozenMap = ...
+    where_any: FrozenMap = ...
+    at_least: tuple[str, int] | None = None
 
 @dataclass(frozen=True)
 class ReadBatch(EffectBase[ReadBatchAnswer]):

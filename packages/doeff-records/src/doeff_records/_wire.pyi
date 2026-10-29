@@ -35,6 +35,7 @@ from doeff_records._values import NotIndexed as NotIndexed
 from doeff_records._values import Reset as Reset
 from doeff_records._values import RowsConflict as RowsConflict
 from doeff_records._values import RowsRefused as RowsRefused
+from doeff_records._values import Count as Count
 from doeff_records._values import StreamEnd as StreamEnd
 from doeff_records._values import StreamEmpty as StreamEmpty
 from doeff_records._values import StreamTail as StreamTail
@@ -60,6 +61,7 @@ from doeff_records._effects import ReadEvents as ReadEvents
 from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
+from doeff_records._effects import CountRows as CountRows
 PATH_PREFIX: str
 WRITER_HEADER: str
 OP_READ_ROW: str
@@ -74,6 +76,7 @@ OP_WATCH_EVENTS: str
 OP_READ_EVENT_BY_KEY: str
 OP_APPEND_EVENTS: str
 OP_READ_BATCH: str
+OP_COUNT_ROWS: str
 OPERATIONS: tuple[str, ...]
 BATCH_READ_OPERATIONS: tuple[str, ...]
 WATCH_MAX_SECONDS: float
@@ -121,8 +124,8 @@ CALLER_UNNAMED: str
 CALLER_UNDECLARED: str
 METRIC_WORD_UNSAFE: Incomplete
 ANSWER_KINDS: dict[str, tuple[str, ...]]
-PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey | AppendEvents | ReadBatch
-WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired | AppendedEvents | BatchRead
+PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey | AppendEvents | ReadBatch | CountRows
+WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired | AppendedEvents | BatchRead | Count
 
 class WireMalformed(ValueError):
     ...

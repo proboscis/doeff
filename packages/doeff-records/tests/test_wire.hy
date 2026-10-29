@@ -4,8 +4,8 @@
 (import json)
 (import doeff [run])
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead])
-(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch]
+(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count])
+(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows]
         doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])
 (import doeff_records [encode-request decode-request decode-answer]
         doeff_records._wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-answer answer-for-request])
@@ -25,6 +25,12 @@
    (ListRows "parts" :where {"label" "a"} :where-any {"color" ["red" 1 2.5 True None {"x" [1]}] "id" ["p1"]}
              :fields #("color") :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
    (ListRows "parts" :where-any {"color" ["red" "blue"]} :limit 3 :descending-by "note")
+   ;; 昇順の読み(ascending-by — 鍵 ascendingBy は付けた時だけ送る)と、その続き。
+   (ListRows "parts" :where {"color" "red"} :limit 3 :ascending-by "note")
+   (ListRows "parts" :limit 3 :ascending-by "note" :cursor (ListCursor 2 "[\"p1\"]" (** 10 30)))
+   ;; 件数(鍵 where・whereAny・atLeast は使う時だけ送る)。
+   (CountRows "parts")
+   (CountRows "parts" :where {"color" "red"} :where-any {"label" ["a" "b"]} :at-least #("note" -5))
    (PutRow "parts" #("p1") {"label" "a" "color" None} (ExpectAbsent))
    (PutRow "parts" #("p1") {"grant" "yes"} (ExpectVersion 4))
    (PutRow "parts" #("p1") {} (ExpectAny))
@@ -78,6 +84,9 @@
    #("append-event" (Refused "別の本文"))
    #("read-events" (Events #((Event "journal" 1 "k1" {"n" 1} "maker" 1000)) 1))
    #("read-events" (NotIndexed #("idempotencyKey")))
+   #("count-rows" (Count 0))
+   #("count-rows" (Count 12))
+   #("count-rows" (NotIndexed #("note")))
    #("read-stream-end" (StreamEnd 7))
    #("read-stream-end" (StreamEmpty))
    #("watch-events" (EventsMoved))

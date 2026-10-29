@@ -6,7 +6,7 @@
                             law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
                             law-append-events-answer-like-appends-in-order law-read-batch-answers-like-each-read
-                            law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan
+                            law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan law-ascending-list-and-count-follow-the-scan
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append law-concurrent-writes-appear-in-number-order
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -107,6 +107,14 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-descending-pages-follow-the-sorted-scan harness))
+  (assert transcript))
+
+(deftest test-ascending-list-and-count-follow-the-scan
+  ;; 昇順の ListRows(ascending-by)と CountRows: 昇順の上から limit 件・続きを辿った頁・件数(下限つきを含む)は全件を読んで並べた・数えた物と
+  ;; 同じ(4 つの組で同じ)。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-ascending-list-and-count-follow-the-scan harness))
   (assert transcript))
 
 (deftest test-any-of-list-equals-the-union-of-equal-lists

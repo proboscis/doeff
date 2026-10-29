@@ -1096,44 +1096,92 @@
          (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "上から読む ListRows(descending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
-   descending-by の値が JSON の整数の行(memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、
-   (値, 鍵の綴り) の大きい順に。cursor = 前の頁の位置(None = 上から): (値, 鍵の綴り) が位置の (after-value, after-key) より小さい行
-   だけ(keyset)。位置の値は文字列で渡して numeric に読む(JSON の整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any
-   (row-filter・scoped)と保持の期限の条件は list-rows-statement と同じ。並べる欄の条件は行ごとに照らす(索引の欄でなくてよい — 表の行に
-   限る条件は絞りが持つ)。ordered = 欄が表の上から読む欄(TableDecl.descending — 頭の註の上から読む欄の索引)か: 真なら並べる式
-   ordered-expression で並べ、続きの位置を行の比べで照らし、条件 ledger = :ledger を置かない(索引の順に辿る形)。偽なら前の形。"
+  "上から読む ListRows(descending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行を読む文を作るため(向きを持つ文 ordered-rows-statement の
+   下向き)。"
+  (<- statement Statement (ordered-rows-statement prefix table key-fields scoped descending-by ordered False cursor where-json where-any-json limit expiry))
+  statement)
+
+
+(defk ordered-rows-statement [prefix table key-fields scoped field-name ordered ascending cursor where-json where-any-json limit expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: field-name str) (.match FIELD-NAME-PATTERN field-name)
+         (: ordered bool) (: ascending bool) (: cursor (| ListCursor None)) (or (is cursor None) (is-not cursor.after-value None))
+         (: where-json dict) (: where-any-json dict) (: limit int) (: expiry (| RowExpiry None))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "並べて読む ListRows(descending-by・ascending-by — _effects.hy の ListRows の註)の 1 頁 + 1 行(続きの有無を知るため)を読む文を作るため: 欄
+   field-name の値が JSON の整数の行(memory の置き場の descending-value? と同じ行 — 小数・真偽・文字列・欄の無い行を除く)を、
+   (値, 鍵の綴り) の順に — ascending 偽なら大きい順・真なら小さい順。cursor = 前の頁の位置(None = 端から): (値, 鍵の綴り) が位置の
+   (after-value, after-key) を越えた行(下向きは小さい行・上向きは大きい行)だけ(keyset)。位置の値は文字列で渡して numeric に読む(JSON の
+   整数は int8 を越え得る — 並べる式と同じ型で比べる)。where・where-any(row-filter・scoped)と保持の期限の条件は list-rows-statement と
+   同じ。並べる欄の条件は行ごとに照らす(索引の欄でなくてよい — 表の行に限る条件は絞りが持つ)。ordered = 欄が表の上から読む欄
+   (TableDecl.descending — 頭の註の上から読む欄の索引)か: 真なら並べる式 ordered-expression で並べ、続きの位置を行の比べで照らし、条件
+   ledger = :ledger を置かない(索引の順に辿る形 — 上向きは同じ索引を逆に辿る: ASC NULLS FIRST, key ASC)。偽なら前の形。"
   (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (val beyond (if ascending ">" "<"))
+  (val sort-order (if ascending "ASC" "DESC"))
+  (val nulls (if ascending "NULLS FIRST" "NULLS LAST"))
   (val below-pairs (if (is cursor None) #() #(#("after_value" (str cursor.after-value)) #("after" cursor.after-key))))
   (val pairs-tail (+ below-pairs #(#("limit" (+ limit 1)))))
   (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
   (when ordered
-    (<- sorted-value (ordered-expression table descending-by))
+    (<- sorted-value (ordered-expression table field-name))
     (val ordered-below (if (is cursor None)
                            #()
-                           #((.format "({o}, key COLLATE \"C\") < (CAST(:after_value AS numeric), :after)" :o sorted-value))))
+                           #((.format "({o}, key COLLATE \"C\") {b} (CAST(:after_value AS numeric), :after)" :o sorted-value :b beyond))))
     (val ordered-clauses (+ filter.clauses #((.format "{o} IS NOT NULL" :o sorted-value)) ordered-below))
     (return (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
-                       ORDER BY {o} DESC NULLS LAST, key COLLATE \"C\" DESC LIMIT :limit"
-                                      :p prefix :w (.join " AND " ordered-clauses) :u unexpired.text :o sorted-value)
+                       ORDER BY {o} {d} {n}, key COLLATE \"C\" {d} LIMIT :limit"
+                                      :p prefix :w (.join " AND " ordered-clauses) :u unexpired.text :o sorted-value :d sort-order :n nulls)
                        :params (+ (! (params-of pairs-tail)) filter.params unexpired.params))))
   (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
   (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
-  (<- ordered-field (field-expression "payload" descending-by))
+  (<- ordered-field (field-expression "payload" field-name))
   (val below-clauses
     (if (is cursor None)
         #()
-        #((.format "(({o})::text::numeric < CAST(:after_value AS numeric) OR (({o})::text::numeric = CAST(:after_value AS numeric) AND key COLLATE \"C\" < :after))"
-                   :o ordered-field))))
+        #((.format "(({o})::text::numeric {b} CAST(:after_value AS numeric) OR (({o})::text::numeric = CAST(:after_value AS numeric) AND key COLLATE \"C\" {b} :after))"
+                   :o ordered-field :b beyond))))
   (val clauses (+ ledger-clauses
                   filter.clauses
                   #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$'" :o ordered-field))
                   below-clauses))
   (val pairs (+ ledger-pairs pairs-tail))
   (Statement :text (.format "SELECT key, payload, version FROM {p}state_rows AS r WHERE {w}{u}
-                       ORDER BY ({o})::text::numeric DESC, key COLLATE \"C\" DESC LIMIT :limit"
-                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered-field)
+                       ORDER BY ({o})::text::numeric {d}, key COLLATE \"C\" {d} LIMIT :limit"
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text :o ordered-field :d sort-order)
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
+
+
+(defk count-rows-statement [prefix table key-fields scoped at-least ordered where-json where-any-json expiry]
+  {:pre [(: prefix str) (: table str) (: key-fields tuple) (: scoped frozenset) (: at-least (| tuple None))
+         (or (is at-least None) (.match FIELD-NAME-PATTERN (get at-least 0))) (: ordered bool)
+         (: where-json dict) (: where-any-json dict) (: expiry (| RowExpiry None))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "CountRows(_effects.hy の CountRows の註)の件数を 1 文で読む文を作るため: where・where-any(row-filter・scoped)と保持の期限の条件は
+   list-rows-statement と同じ。at-least = (欄の名, 下限) があれば、欄の値が JSON の整数で下限以上の行だけ(ordered-rows-statement と同じ
+   行 — 下限は文字列で渡して numeric に読む)。ordered = 欄が表の上から読む欄か: 真なら並べる式 ordered-expression で照らし(索引の範囲で
+   数える)、条件 ledger = :ledger を置かない。偽なら欄の式で行ごとに照らす。答えの行は 1 つ(列 n)。"
+  (<- filter (row-filter table key-fields scoped where-json where-any-json))
+  (<- unexpired (unexpired-rows-filter "r" (if (is expiry None) #() #(expiry))))
+  (val floor-pairs (if (is at-least None) #() #(#("floor" (str (get at-least 1))))))
+  (when (and ordered (is-not at-least None))
+    (<- sorted-value (ordered-expression table (get at-least 0)))
+    (val ordered-clauses (+ filter.clauses #((.format "{o} >= CAST(:floor AS numeric)" :o sorted-value))))
+    (return (Statement :text (.format "SELECT count(*) AS n FROM {p}state_rows AS r WHERE {w}{u}"
+                                      :p prefix :w (.join " AND " ordered-clauses) :u unexpired.text)
+                       :params (+ (! (params-of floor-pairs)) filter.params unexpired.params))))
+  (val ledger-clauses (if filter.ledger-free #() #("ledger = :ledger")))
+  (val ledger-pairs (if filter.ledger-free #() #(#("ledger" table))))
+  (var floor-clauses #())
+  (when (is-not at-least None)
+    (<- ordered-field (field-expression "payload" (get at-least 0)))
+    (:= floor-clauses #((.format "jsonb_typeof({o}) = 'number' AND ({o})::text ~ '^-?[0-9]+$' AND (({o})::text::numeric >= CAST(:floor AS numeric))"
+                                 :o ordered-field))))
+  (val clauses (+ ledger-clauses filter.clauses floor-clauses))
+  (Statement :text (.format "SELECT count(*) AS n FROM {p}state_rows AS r WHERE {w}{u}"
+                            :p prefix :w (.join " AND " clauses) :u unexpired.text)
+             :params (+ (! (params-of (+ ledger-pairs floor-pairs))) filter.params unexpired.params)))
 
 
 (defk terminal-rows-statement [prefix table state-field terminal scoped before-at]

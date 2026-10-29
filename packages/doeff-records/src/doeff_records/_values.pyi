@@ -273,6 +273,10 @@ class EventsQuiet:
     ...
 
 @dataclass(frozen=True)
+class Count:
+    count: int
+
+@dataclass(frozen=True)
 class StreamEnd:
     sequence: int
 
@@ -340,6 +344,7 @@ WatchChangesAnswer: TypeAlias = Changes | Reset | Unreachable
 AppendEventAnswer: TypeAlias = Appended | Refused | Unreachable
 ReadEventsAnswer: TypeAlias = Events | NotIndexed | Unreachable
 WatchEventsAnswer: TypeAlias = EventsMoved | EventsQuiet | Unreachable
+CountRowsAnswer: TypeAlias = Count | Unreachable | NotIndexed
 ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
 ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable
 PutRowsAnswer: TypeAlias = WrittenRows | RowsConflict | RowsRefused | Unreachable
