@@ -303,6 +303,63 @@
     (assert (in word (str raised.value)) (str raised.value))))
 
 
+(defk handoff-job [readiness environ]
+  {:pre [(: readiness dict) (: environ dict)] :post [(: % Job)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "入れ替え(handoff)の tally の job(readiness と environ だけを変える)。"
+  (job "tally" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :needs #{"cluster-net"} :update "handoff"
+       :readiness readiness :environ environ))
+
+
+(val NAMED-READINESS {"windowSeconds" 30 "handoffTimeoutSeconds" "HANDOFF_SECONDS" "retiredSeconds" "RETIRED_SECONDS"})
+
+
+(deftest test-a-readiness-field-named-by-the-environ-is-read-after-the-overlay
+  ;; readiness の欄を :environ の名で書くと(readiness_model の註)、job は名のまま持ち、宣言の行は上書きを重ねた後のその名の値を数で
+  ;; 載せる — 既定は :environ の値・上書きは宣言し直しの environ。coordinator の宣言の読み(job-from-json)は数の readiness を受け、
+  ;; 上書きで変わった readiness と environ は spec-hash に入る。
+  (<- named Job (handoff-job NAMED-READINESS {"HANDOFF_SECONDS" "900" "RETIRED_SECONDS" "21600"}))
+  (assert (= named.readiness NAMED-READINESS) named.readiness)
+  (val system (system-of "lab" #(named)))
+  (<- plain dict (only-row system))
+  (assert (= (get plain "readiness") {"windowSeconds" 30 "handoffTimeoutSeconds" 900 "retiredSeconds" 21600}) plain)
+  (val overlaid (get (. (system-declaration system "rev1" :versions (! (process-versions os.environ))
+                                            :environ {"tally" {"HANDOFF_SECONDS" "5" "RETIRED_SECONDS" "2.5"}})
+                        rows) 0))
+  (assert (= (get overlaid "readiness") {"windowSeconds" 30 "handoffTimeoutSeconds" 5 "retiredSeconds" 2.5}) overlaid)
+  (assert (= (get overlaid "environ") {"HANDOFF_SECONDS" "5" "RETIRED_SECONDS" "2.5"}) overlaid)
+  (assert (= (. (job-from-json overlaid) readiness) (get overlaid "readiness")) (job-from-json overlaid))
+  (assert (!= (spec-hash (. (job-from-json plain) spec)) (spec-hash (. (job-from-json overlaid) spec))))
+  ;; 名で書いた readiness の行は、同じ数を literal で書いた readiness の行と readiness が等しい(coordinator には違いが無い)。
+  (<- literal Job (handoff-job {"windowSeconds" 30 "handoffTimeoutSeconds" 900 "retiredSeconds" 21600} {}))
+  (<- literal-row dict (only-row (system-of "lab" #(literal))))
+  (assert (= (get literal-row "readiness") (get plain "readiness")) literal-row))
+
+
+(deftest test-a-readiness-field-named-by-the-environ-must-read-as-a-number
+  ;; 反例: :environ に無い名・数の綴りでない値・形の規則(正の数)を破る値は、job を作る時(宣言の既定)と宣言の組み立ての時(上書きを
+  ;; 重ねた後)のどちらでも job を名指して断る。
+  (for [#(environ word) [#({"HANDOFF_SECONDS" "900"} "RETIRED_SECONDS") #({"HANDOFF_SECONDS" "900" "RETIRED_SECONDS" "soon"} "soon")
+                         #({"HANDOFF_SECONDS" "900" "RETIRED_SECONDS" "0"} "retiredSeconds")
+                         #({"HANDOFF_SECONDS" "900" "RETIRED_SECONDS" "NaN"} "NaN")]]
+    (with [raised (pytest.raises ValueError)]
+      (<- (handoff-job NAMED-READINESS environ)))
+    (assert (in "tally" (str raised.value)) (str raised.value))
+    (assert (in word (str raised.value)) (str raised.value)))
+  (<- named Job (handoff-job NAMED-READINESS {"HANDOFF_SECONDS" "900" "RETIRED_SECONDS" "21600"}))
+  (val system (system-of "lab" #(named)))
+  (for [#(overlay word) [#({"tally" {"RETIRED_SECONDS" "-1"}} "retiredSeconds") #({"tally" {"HANDOFF_SECONDS" "1e400"}} "1e400")
+                         #({"tally" {"HANDOFF_SECONDS" " 900"}} "HANDOFF_SECONDS")]]
+    (with [raised (pytest.raises ValueError)]
+      (system-declaration system "rev1" :versions (! (process-versions os.environ)) :environ overlay))
+    (assert (in "tally" (str raised.value)) (str raised.value))
+    (assert (in word (str raised.value)) (str raised.value)))
+  ;; 名で書けるのは handoff の Service だけが持つ欄にも同じ形の規則が効く(recreate の job の handoffTimeoutSeconds は名でも断る)。
+  (with [raised (pytest.raises ValueError)]
+    (job "plain" (tally-program plain-foundation 2) :call TALLY-CALL :replicas 1 :needs #{"cluster-net"}
+         :readiness {"windowSeconds" 30 "handoffTimeoutSeconds" "HANDOFF_SECONDS"} :environ {"HANDOFF_SECONDS" "900"}))
+  (assert (in "handoff の Service だけ" (str raised.value)) (str raised.value)))
+
+
 ;; --- 宣言の行を JSON の object の読み口(Mapping)で読む(型の境界)-------------------------------------------------
 ;; 行は dict に限らず Mapping[str, object] で受ける(行の型の TypedDict も渡せる)。欄の値は検めを通った所で型を絞って取り出す。
 

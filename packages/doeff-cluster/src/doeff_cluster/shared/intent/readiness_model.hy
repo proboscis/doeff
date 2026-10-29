@@ -31,6 +31,10 @@
 ;; retiredLimit = 退いた process を同時に残す数の上限 R(正の整数・handoff の Service だけ・既定なし = worker の WorkerPolicy.retired-limit)。
 ;; 退いた process が R に達している間の宣言し直しは、退いた process を止めず、今の process も退かせずに待つ(#4072 の D-3 の改め —
 ;; 退いた process は自分で終わるか寿命の上限でだけ止まる)。長い仕事を持つ退いた process が並ぶ Service は大きい R を書いて待ちを減らす。
+;; 欄の値は数の代わりに、同じ job の :environ に宣言した名(文字列)で書ける(例 {"windowSeconds" 30 "retiredSeconds" "RETIRED_SECONDS"} と
+;; :environ {"RETIRED_SECONDS" "21600"})。宣言の組み立て(service_build.system-declaration)が、environ の上書きを重ねた後のその名の値を
+;; JSON の数として読んで行に載せる — coordinator が受ける行の readiness はいつも数。宣言の既定の値は :environ の 1 か所に在り、宣言し直しの
+;; environ の上書き(declare の --environ・sim-cluster の Redeclare)で変えられる(上書きは spec-hash に入るので入れ替わる)。
 (val HANDOFF-TIMEOUT-SECONDS 300)
 (val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds" "retiredLimit"))
 

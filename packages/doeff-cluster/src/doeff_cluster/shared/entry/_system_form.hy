@@ -10,7 +10,8 @@
 ;;;
 ;;; 形は静的に決まる物だけを受ける(doeff-linter が実行せずに読めるように — ADR-DOE-CLUSTER-001 R4b):
 ;;;   job の行 = (名の記号 (関数の記号 引数…) :鍵 値 …)。引数は系の引数の記号か literal(文字列・数・keyword・True/False/None と、
-;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数の dict、:environ は
+;;;   それを入れた list と dict)。:needs は文字列の集合の literal、:readiness は文字列の鍵と数(か同じ job の :environ の名の文字列 —
+;;;   宣言の組み立てがその値を数として読む・readiness_model の註)の dict、:environ は
 ;;;   文字列の鍵と文字列の値の dict、:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
 ;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
 ;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
@@ -138,7 +139,8 @@
               (raise (SyntaxError (.format "{}: :update は {} のどれか: {}" where (.join " / " UPDATE-FORMS) (hy.repr v)))))
             (setv (get values key) v (get static "update") (str v)))
       ":readiness"
-        (do (setv pairs (string-dict v where key #(Integer Float) "数"))
+        ;; 値は数か、同じ job の :environ に宣言した名の文字列(readiness_model の註 — 名の在りかは job の構成子が検める)。
+        (do (setv pairs (string-dict v where key #(Integer Float String) "数か :environ の名の文字列"))
             (setv (get values key) v (get static "readiness") (dfor #(a b) pairs (str a) (static-value b))))
       _
         (do (setv pairs (string-dict v where key String "文字列"))
