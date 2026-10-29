@@ -498,7 +498,11 @@ WRAPPED_FILES = {
 
         from .handlers import PingEffect, mock_ping_handler, ping_handler
 
-        __all__ = ["PingEffect", "mock_ping_handler", "ping_handler"]
+        __all__ = [
+            "PingEffect",
+            "mock_ping_handler",
+            "ping_handler",
+        ]
     ''',
     f"packages/{WRAPPED_PACKAGE}/src/{WRAPPED_ROOT}/handlers/__init__.py": """
         from .production import PingEffect, ping_handler
