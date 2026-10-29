@@ -22,40 +22,11 @@
 (import doeff [EffectBase run])
 (import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate])
 
-(import doeff_agents.sessionhost.effects [
-  fs-canonical-path
-  fs-file-mtime
-  fs-read-text
-  fs-write-text-atomic
-  fs-ensure-symlink
-  fs-make-dirs
-  fs-link-artifact
-  FsSymlinkOutcome
-  FS-ENSURE-SYMLINK-STATES
-  FS-LINK-ARTIFACT-STATES
-  FS-SYMLINK-LINKED
-  FS-SYMLINK-OCCUPIED
-  FS-SYMLINK-REFUSED
-  FS-SYMLINK-SAME-ENTITY
-  FS-SYMLINK-SOURCE-MISSING
-  FS-SYMLINK-TARGET-CONFLICT
-  FS-SYMLINK-UNCHANGED
-  env-get
-  clock-now
-  tmux-new-session
-  tmux-has-session
-  tmux-capture
-  tmux-send-keys
-  tmux-kill-session])
-(import doeff_agents.sessionhost.substrate :as substrate)
-(import doeff_agents.sessionhost.substrate [
-  real-substrate
-  ensure-symlink-outcome
-  normalized-env-key
-  ensure-no-forbidden-agent-env
-  unsubmitted-paste-input?
-  compose-home-view
-  compose-home-view-name])
+(import doeff_agents [fs-canonical-path fs-file-mtime fs-read-text fs-write-text-atomic fs-make-dirs fs-link-artifact FsSymlinkOutcome env-get clock-now tmux-new-session tmux-has-session tmux-capture tmux-send-keys tmux-kill-session]
+        doeff_agents._sessionhost.effects [fs-ensure-symlink FS-ENSURE-SYMLINK-STATES FS-LINK-ARTIFACT-STATES FS-SYMLINK-LINKED FS-SYMLINK-OCCUPIED FS-SYMLINK-REFUSED FS-SYMLINK-SAME-ENTITY FS-SYMLINK-SOURCE-MISSING FS-SYMLINK-TARGET-CONFLICT FS-SYMLINK-UNCHANGED])
+(import doeff_agents._sessionhost.substrate :as substrate)
+(import doeff_agents [real-substrate]
+        doeff_agents._sessionhost.substrate [ensure-symlink-outcome normalized-env-key ensure-no-forbidden-agent-env unsubmitted-paste-input? compose-home-view compose-home-view-name])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
 ;; 検の眠りの規則(doeff-linter の DOEFF211)は当てない。

@@ -21,7 +21,7 @@ doeff の Hy コードには、契約(`:pre` / `:post`)つきの関数を定義�
 
 ```
 AssertionError: 新しい deff の定義は禁止(ADR-DOE-HY-004 R1 — defk で書く。既存の変換は R3 の一括出荷で台帳を同便で削る):
-  ['packages/doeff-agents/src/doeff_agents/sessionhost/host.hy: 36 > 台帳 35']
+  ['packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy: 36 > 台帳 35']
 ```
 
 原因は特定済み。断面が `c994a86de718` から 1 commit 進んだその 1 つ、
@@ -63,7 +63,7 @@ AssertionError: 新しい deff の定義は禁止(ADR-DOE-HY-004 R1 — defk で
 
 ### 2. 直し方 = 新設された 1 定義を `defk` へ書き直す
 
-`packages/doeff-agents/src/doeff_agents/sessionhost/host.hy:622` の
+`packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy:622` の
 
 ```hy
 (deff admit-launch-attribution [params method] ...)
@@ -191,7 +191,7 @@ AssertionError: 新しい deff の定義は禁止(ADR-DOE-HY-004 R1 — defk で
 この書は 2 例目(host.hy / land 台帳 L47)の処方として書かれたが、**同じ処方を 3 例目に
 そのまま適用した**記録をここに残す(この書が「同型の赤の共通処方」として再利用されているため)。
 
-- 患部: `packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy: 30 > 上限表 29`
+- 患部: `packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy: 30 > 上限表 29`
 - 原因 commit: `7c55afa6`(従量課金 credential を launch 関所で締め出す・land 台帳 L51)が
   `metered-credential-env-offenders` を 1 つ新設しながら `DEFF-ROSTER` を据え置いた。
 - 直し: 新設された 1 定義を `defk` へ書き直し、実数を 29 へ戻した。上限表と

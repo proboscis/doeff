@@ -10,7 +10,7 @@
 
 (setv REPORT-RESULT-MCP-SERVER "doeff_result")
 ;; 結果の MCP server の入口(python -m の的)。host の入口(sessionhost.host)とは別の module。
-(setv _RESULT-MCP-MODULE "doeff_agents.sessionhost.result_mcp")
+(setv _RESULT-MCP-MODULE "doeff_agents._sessionhost.result_mcp")
 
 
 (deff result-channel-spec [python session-id socket-path]

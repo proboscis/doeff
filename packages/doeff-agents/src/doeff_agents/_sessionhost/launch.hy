@@ -26,7 +26,7 @@
 (import os)
 (import re)
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   REPL-IDLE-MAX-WAIT-SECONDS
   RESUME-ERR-IDENTITY-UNKNOWN
   RESUME-ERR-KIND-NOT-SUPPORTED
@@ -72,7 +72,7 @@
 (import dataclasses [replace])
 (import doeff_time [Delay])
 
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents._sessionhost.policy [
   BILLING-METERED
   BINDING-OWNED-ENV-KEYS
   CARRIED-INSTRUCTION-SOURCES

@@ -452,7 +452,7 @@
    "why": "shutil.which・os.environ・open・socket・subprocess・time"
   },
   {
-   "handler": "doeff_agents.sessionhost.substrate:real-substrate",
+   "handler": "doeff_agents._sessionhost.substrate:real-substrate",
    "touches": [
     "process",
     "clock",
@@ -462,14 +462,14 @@
    "why": "subprocess.run で tmux・time.sleep"
   },
   {
-   "handler": "doeff_agents.sessionhost.substrate_herdr:herdr-substrate",
+   "handler": "doeff_agents._sessionhost.substrate_herdr:herdr-substrate",
    "touches": [
     "network"
    ],
    "why": "unix socket に connect"
   },
   {
-   "handler": "doeff_agents.sessionhost.store:sqlite-session-store",
+   "handler": "doeff_agents._sessionhost.store:sqlite-session-store",
    "touches": [
     "db",
     "thread"

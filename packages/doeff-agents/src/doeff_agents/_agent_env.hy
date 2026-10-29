@@ -5,7 +5,7 @@
 ;;; 名指すだけで、literal の名簿を持たない — 2026-09-19 の実測では 3 つの写しが
 ;;; すべて違う中身で、個人鍵の別名 3 綴りは受理を素通りしていた。
 ;;;
-;;; ⚠ この module は session host(doeff_agents.sessionhost.*)を import しない。
+;;; ⚠ この module は session host(doeff_agents._sessionhost.*)を import しない。
 ;;; agent の手番の headless の経路(shell → ここ)が session host の語彙を引きずらないため
 ;;; (#624 の静的な検査で shell → sessionhost/policy → sessionhost/effects の鎖が見つかった)。
 ;;; sessionhost/policy.hy はここから読んで再輸出する(既存の読み手の名指しは変わらない)。

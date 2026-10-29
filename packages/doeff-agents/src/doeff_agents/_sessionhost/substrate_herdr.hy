@@ -65,7 +65,7 @@
 (import time)
 (import types [NoneType])
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   TmuxNewSession
   TmuxHasSession
   TmuxPaneCurrentCommand
@@ -76,7 +76,7 @@
 ;; TUI 物理(paste-settle / confirm ループ / 禁止 env)は Claude・Codex の
 ;; REPL 物理であって tmux の物理ではない — substrate.hy から import して
 ;; 再利用する(コピーしない)。
-(import doeff_agents.sessionhost.substrate [
+(import doeff_agents._sessionhost.substrate [
   CONFIRM-INITIAL-SECONDS
   CONFIRM-MAX-RETRIES
   CONFIRM-RETRY-SECONDS

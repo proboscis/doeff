@@ -75,7 +75,7 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_agents._adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents._effects.agent [SessionStatus])
-(import doeff_agents.shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
+(import doeff_agents._shell [assert-no-forbidden-agent-env assert-session-env-is-non-auth-overlay])
 (import doeff_agents._effects.agent [
   LaunchEffect SendEffect FollowUpEffect InterruptEffect EventsEffect AwaitResultEffect MonitorEffect CaptureEffect
   StopEffect StopSessionEffect ReleaseSessionEffect AttachAgentSessionEffect ExportContextEffect WarmSessionEffect

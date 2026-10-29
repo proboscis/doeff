@@ -196,7 +196,7 @@ def test_api_limit_possessive_verbatim_rule_detects_reenumeration() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/impls/"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/"
         "api_limit_possessive_verbatim_forbidden.hy",
         cwd=fixture_root,
     )
@@ -215,7 +215,7 @@ def test_herdr_agent_name_identity_rule_detects_agent_get_resolution() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/"
         "herdr_agent_name_identity_forbidden.hy",
         cwd=fixture_root,
     )
@@ -238,7 +238,7 @@ def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> Non
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/"
         "herdr_label_holders_indexed_forbidden.hy",
         cwd=fixture_root,
     )
@@ -384,7 +384,7 @@ def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/"
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/"
         "idle_shell_vocabulary_outside_policy_forbidden.hy",
         cwd=fixture_root,
     )
@@ -476,7 +476,7 @@ def test_koine_session_surface_rules_detect_forbidden_shapes() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost",
         cwd=fixture_root,
     )
 
@@ -494,7 +494,7 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
     rotting into an always-on false positive."""
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy",
+        "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy",
         cwd=REPO_ROOT,
     )
     assert (

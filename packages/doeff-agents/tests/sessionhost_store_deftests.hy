@@ -17,42 +17,15 @@
 (import sqlite3)
 (import tempfile)
 
-(import doeff_agents.sessionhost.policy [parse-iso])
+(import doeff_agents._sessionhost.policy [parse-iso])
 
 (import doeff [EffectBase run])
 (import types [NoneType])
 
-(import doeff_agents.sessionhost.effects [
-  SessionRow
-  TerminalCause
-  session-store-list-active
-  session-store-get
-  session-store-upsert
-  session-store-result-payload
-  session-store-record-event])
-(import doeff_agents.sessionhost.store [
-  StoreActor
-  sqlite-session-store
-  open-conn
-  db-migrate
-  db-upsert-snapshot
-  db-session-get
-  db-session-list
-  db-session-by-conversation
-  db-count-active
-  db-current-result-payload
-  db-known-conversation-ids
-  db-report-result-guarded-update
-  db-clear-awaiting-latches
-  db-prune-history
-  db-vacuum-if-bloated
-  actor-prune-history
-  db-read-lease
-  db-upsert-lease
-  db-acquire-lease
-  db-heartbeat-once
-  snapshot-to-policy-row
-  snapshot-to-wire-dict])
+(import doeff_agents [SessionRow session-store-list-active session-store-get session-store-upsert session-store-result-payload session-store-record-event]
+        doeff_agents._sessionhost.effects [TerminalCause])
+(import doeff_agents [sqlite-session-store]
+        doeff_agents._sessionhost.store [StoreActor open-conn db-migrate db-upsert-snapshot db-session-get db-session-list db-session-by-conversation db-count-active db-current-result-payload db-known-conversation-ids db-report-result-guarded-update db-clear-awaiting-latches db-prune-history db-vacuum-if-bloated actor-prune-history db-read-lease db-upsert-lease db-acquire-lease db-heartbeat-once snapshot-to-policy-row snapshot-to-wire-dict])
 
 
 ;; ---------------------------------------------------------------------------
@@ -449,7 +422,7 @@
   ;; 実弾 2026-09-25(k3s agentd-pool-0 / -1 の agentd-state が 100%): lease の 3 関数は except で無条件に
   ;; ROLLBACK し、SQLite が自分で巻き戻した後の `cannot rollback - no transaction is active` が元の
   ;; `database or disk is full` を隠していた。出る例外は disk full で、接続は transaction の外に戻っている。
-  (import doeff_agents.sessionhost.store [db-immediate-transaction])
+  (import doeff_agents._sessionhost.store [db-immediate-transaction])
   (defn check [conn]
     (fill-lease-table-until-full conn)
     (setv raised None)
@@ -490,7 +463,7 @@
   ;; issue #565: graceful shutdown は自 lease を釈放し、後継は TTL 待ちなしで
   ;; 即 acquire できる。fail-loud acquire(未失効他人名義の拒否)は不変。
   ;; import はテスト内(red commit が module import ごと他 test を巻き込まない)。
-  (import doeff_agents.sessionhost.store [db-release-lease])
+  (import doeff_agents._sessionhost.store [db-release-lease])
   (defn check [conn]
     ;; 自分名義 → 削除される
     (db-acquire-lease conn 111)
@@ -527,7 +500,7 @@
   ;; 確定する(原子性が無い)。成功の路は COMMIT の失敗(`cannot commit - no transaction is active`)に化け、
   ;; 失敗の路は元の例外だけが出て確定した書き込みが黙って残っていた。transaction を閉じるのは
   ;; db-immediate-transaction だけなので、閉じた本体を名指して落とす(失敗の路は元の例外に note を添える)。
-  (import doeff_agents.sessionhost.store [db-immediate-transaction])
+  (import doeff_agents._sessionhost.store [db-immediate-transaction])
   (defn check [conn]
     (setv raised None)
     (try
@@ -550,7 +523,7 @@
   ;; 盲検 B の反例: op が transaction の Program を実行せずに返すと、Program は actor の thread の外で
   ;; actor の connection を使って走り、単一 connection の直列化・書き込みの健康の数え・journal の合図を
   ;; 素通りする。actor は op の戻りが Program / effect なら型の誤りとして断り、何も書かない。
-  (import doeff_agents.sessionhost.store [db-immediate-transaction db-acquire-lease-body])
+  (import doeff_agents._sessionhost.store [db-immediate-transaction db-acquire-lease-body])
   (setv d (tempfile.mkdtemp))
   (try
     (setv actor (StoreActor (os.path.join d "agentd.sqlite")))

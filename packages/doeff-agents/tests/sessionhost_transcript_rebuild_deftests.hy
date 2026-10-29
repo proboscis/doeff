@@ -8,7 +8,7 @@
 (require doeff-hy.macros [deftest])
 
 (import doeff [run])
-(import doeff_agents.sessionhost.policy [launch-conversation-plan-of])
+(import doeff_agents._sessionhost.policy [launch-conversation-plan-of])
 
 
 (deftest test-an-adopted-transcript-is-resumed-so-the-cold-compaction-runs-first

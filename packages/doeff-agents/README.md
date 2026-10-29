@@ -34,7 +34,7 @@ To check the install without touching any daemon:
 ```bash
 doeff-agents --help
 doeff-agents agentd --help
-python -m doeff_agents.sessionhost.host --help
+python -m doeff_agents._sessionhost.host --help
 ```
 
 Those three need no host and no agent. To go further you need a running session
@@ -188,12 +188,12 @@ whose database differs from the canonical one.
 ## Session host and the agentd socket
 
 The session host ships with this package as the entry module
-**`doeff_agents.sessionhost.host`**, run with `python -m`. It has no console
+**`doeff_agents._sessionhost.host`**, run with `python -m`. It has no console
 script and no subcommands: doeff-agents starts it through the
 `StartSessionHost` effect, whose handler runs the entry module on the running
 interpreter (no PATH lookup decides which host starts; `$DOEFF_AGENTD_BIN`
 names another executable to start instead, for tests). The agent-facing result
-channel is a separate entry module, `doeff_agents.sessionhost.result_mcp`,
+channel is a separate entry module, `doeff_agents._sessionhost.result_mcp`,
 which the agents start themselves from the MCP configuration the host writes.
 The Rust `doeff-agentd` binary the host replaced is retired and is no longer a
 spawn target (ADR-DOE-AGENTS-004, law `retired-impl-lives-only-in-git-history`);
@@ -214,14 +214,14 @@ if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
 else
   AGENTD_SOCKET="/tmp/doeff-agentd-${USER:-unknown}.sock"
 fi
-python -m doeff_agents.sessionhost.host --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10
+python -m doeff_agents._sessionhost.host --db "$AGENTD_DB" --socket "$AGENTD_SOCKET" --max-running 10
 ```
 
 Unknown arguments are rejected. Run
-`python -m doeff_agents.sessionhost.host --help` for the flags, the environment
+`python -m doeff_agents._sessionhost.host --help` for the flags, the environment
 variables that shadow them, and the env-only knob. That listing is
 generated from the flag vocabulary of record — `parse-args` in
-`src/doeff_agents/sessionhost/host.hy` — so it cannot drift from what the host
+`src/doeff_agents/_sessionhost/host.hy` — so it cannot drift from what the host
 accepts. Two flags are easy to get wrong: `--max-running none` (or `unlimited`)
 means no limit, and `--max-running 0` is refused at startup because it would
 reject every launch.

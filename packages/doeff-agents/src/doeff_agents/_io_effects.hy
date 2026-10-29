@@ -11,7 +11,7 @@
 ;;; I/O の 1 行だけをこの語彙の要求へ置き換える。
 ;;;
 ;;; agentd(sessionhost)の substrate 語彙
-;;; (`doeff_agents.sessionhost.effects` の Fs* / Proc* / Env*)とは別の
+;;; (`doeff_agents._sessionhost.effects` の Fs* / Proc* / Env*)とは別の
 ;;; 語彙。あちらは ADR-DOE-AGENTS-004 で Rust の oracle に対して凍結された
 ;;; 契約面で、driver 層の要求(実行ファイルの探索・home の複製・unix socket
 ;;; の 1 往復)を持たない。2 つの語彙を 1 つへ畳む便は未着手(lane 7c の
@@ -119,7 +119,7 @@
 (defclass [(dataclass :frozen True :kw-only True)] StartSessionHost [EffectBase]
   "session host を常駐として起こして待たない。答えは pid。stdout / stderr は log へ。
    起こす argv は handler が `_session-host-argv` で組む: 既定は今の python で入口の module を
-   起こす `[sys.executable -m doeff_agents.sessionhost.host --db … --socket … --max-running …]`
+   起こす `[sys.executable -m doeff_agents._sessionhost.host --db … --socket … --max-running …]`
    (PATH を見ない・サブコマンドを持たない)。host-bin は起こす実行 file の差し替えの口
    ($DOEFF_AGENTD_BIN か呼び手の daemon_bin — 検・別の実装の host)で、同じ旗を受け取る。"
   #^ str db-path
@@ -131,7 +131,7 @@
 
 ;; session host の入口の module(python -m の的)。結果の MCP server の入口は
 ;; sessionhost/impls/channel.hy が持つ — 役ごとに 1 つの module で、サブコマンドで振り分けない。
-(setv _SESSION-HOST-MODULE "doeff_agents.sessionhost.host")
+(setv _SESSION-HOST-MODULE "doeff_agents._sessionhost.host")
 
 (defk _session-host-argv [host-bin db-path socket-path max-running]
   {:pre [(: host-bin (| str None)) (: db-path str) (: socket-path str) (: max-running int)]

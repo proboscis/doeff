@@ -8,7 +8,7 @@ the readiness / idle-detection instance of that law:
 
 1. Gate-form text physics (ready pattern strings, the screen-reader trust
    prompt predicate) are DEFINED in the doeff-free physics leaf
-   ``doeff_agents/ready_physics.hy`` and only IMPORTED by
+   ``doeff_agents/_ready_physics.hy`` and only IMPORTED by
    the adapters / ``session.py`` consumers. The leaf stays free of doeff
    imports so the package root's documented property — the imperative
    session transport API runs without importing the doeff VM — survives.
@@ -40,8 +40,8 @@ import hy  # noqa: F401  # .hy import hook — the physics home is a Hy module
 import pytest
 from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter
-from doeff_agents import ready_physics
-from doeff_agents.sessionhost.impls import markers
+from doeff_agents import _ready_physics as ready_physics
+from doeff_agents._sessionhost.impls import markers
 
 PKG_ROOT = Path(__file__).resolve().parents[1] / "src" / "doeff_agents"
 READY_SCREENS = Path(__file__).parent / "data" / "ready_screens"
@@ -69,7 +69,7 @@ def test_adapters_do_not_define_ready_pattern_literals(module: str) -> None:
     source = (PKG_ROOT / "_adapters" / module).read_text(encoding="utf-8")
     assert not re.search(r"READY_PATTERN\s*=\s*r?[\"']", source), (
         f"_adapters/{module} defines a ready-pattern literal — the physics home "
-        "is doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008 R1)"
+        "is doeff_agents/_ready_physics.hy (ADR-DOE-AGENTS-008 R1)"
     )
 
 
@@ -77,7 +77,7 @@ def test_physics_leaf_is_doeff_free() -> None:
     # The leaf must not pull the doeff VM into the imperative transport's
     # import graph (package-root lazy-import property).
     source = (
-        PKG_ROOT / "ready_physics.hy"
+        PKG_ROOT / "_ready_physics.hy"
     ).read_text(encoding="utf-8")
     assert "(import doeff" not in source, (
         "ready_physics.hy must stay a doeff-free leaf: adapters import it "
@@ -123,7 +123,7 @@ def test_session_py_does_not_redefine_trust_prompt_physics() -> None:
     source = (PKG_ROOT / "_session.py").read_text(encoding="utf-8")
     assert "def _screen_reader_trust_prompt_visible" not in source, (
         "session.py re-defines the screen-reader trust prompt physics — the "
-        "home is doeff_agents/ready_physics.hy (ADR-DOE-AGENTS-008 R1)"
+        "home is doeff_agents/_ready_physics.hy (ADR-DOE-AGENTS-008 R1)"
     )
     assert "has_claude_screen_reader_trust_prompt" in source
 
@@ -167,7 +167,7 @@ def test_codex_gate_regex_and_predicates_agree(fixture: str, expected: bool) -> 
 
 
 def test_repl_idle_budget_is_not_redefined_in_launch_hy() -> None:
-    source = (PKG_ROOT / "sessionhost" / "launch.hy").read_text(encoding="utf-8")
+    source = (PKG_ROOT / "_sessionhost" / "launch.hy").read_text(encoding="utf-8")
     assert not re.search(r"\(setv\s+REPL-IDLE-MAX-WAIT-SECONDS\s", source), (
         "launch.hy re-defines the repl-idle budget literal — the home is "
         "sessionhost/effects.hy (ADR-DOE-AGENTS-008 R2)"
@@ -175,9 +175,9 @@ def test_repl_idle_budget_is_not_redefined_in_launch_hy() -> None:
 
 
 def test_host_hy_takes_budget_from_effects_not_launch() -> None:
-    source = (PKG_ROOT / "sessionhost" / "host.hy").read_text(encoding="utf-8")
+    source = (PKG_ROOT / "_sessionhost" / "host.hy").read_text(encoding="utf-8")
     launch_import = re.search(
-        r"\(import doeff_agents\.sessionhost\.launch \[[^]]*\]", source
+        r"\(import doeff_agents\._sessionhost\.launch \[[^]]*\]", source
     )
     assert launch_import is not None
     assert "REPL-IDLE-MAX-WAIT-SECONDS" not in launch_import.group(0), (
@@ -187,7 +187,7 @@ def test_host_hy_takes_budget_from_effects_not_launch() -> None:
 
 
 def test_repl_idle_budget_values_cohere() -> None:
-    from doeff_agents.sessionhost import effects, launch
+    from doeff_agents._sessionhost import effects, launch
 
     assert effects.REPL_IDLE_MAX_WAIT_SECONDS == 120
     assert launch.REPL_IDLE_MAX_WAIT_SECONDS == 120

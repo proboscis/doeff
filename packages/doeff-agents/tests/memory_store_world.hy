@@ -5,8 +5,9 @@
 (require doeff-hy.macros [defk <- var])
 (import dataclasses [replace])
 (import doeff [Program])
-(import doeff_agents.sessionhost.effects [SessionRow])
-(import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows stored-row stored-rows with-row])
+(import doeff_agents [SessionRow])
+(import doeff_agents [MemorySessionRows ReadMemorySessionRows]
+        doeff_agents._sessionhost.store_memory [stored-row stored-rows with-row])
 
 
 (defclass StoreWorld []

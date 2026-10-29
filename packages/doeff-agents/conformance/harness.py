@@ -6,9 +6,9 @@ pytest, and stdlib. SQLite access is READ-ONLY and reserved for obligations
 that do not appear on the wire (payload persistence, counter durability).
 
 Absorbed from tests/agentd_result_retry_e2e_support.py — the proven physics:
-the host's entry module (`python -m doeff_agents.sessionhost.host`), 100ms
+the host's entry module (`python -m doeff_agents._sessionhost.host`), 100ms
 monitor tick, fake CLI in a real tmux pane, result channel spoken via the
-result MCP server's entry module (`python -m doeff_agents.sessionhost.result_mcp`).
+result MCP server's entry module (`python -m doeff_agents._sessionhost.result_mcp`).
 issue #575 M1: the retired Rust build path is gone — the daemon under test
 defaults to the entry module on the running interpreter (no console script, no
 PATH lookup — card ki-bb337cfd0336), with `CONFORMANCE_AGENTD_BIN` as the
@@ -308,7 +308,7 @@ def create_externally_named_seat_out_of_band(name: str, *, cwd: str | None = Non
 
 
 #: The host's entry module (the target of `python -m`).
-SESSIONHOST_MODULE = "doeff_agents.sessionhost.host"
+SESSIONHOST_MODULE = "doeff_agents._sessionhost.host"
 
 
 def resolve_agentd_command() -> tuple[str, ...]:
@@ -385,7 +385,7 @@ def _argv_flag_value(argv: list[str], flag: str) -> str | None:
 
 def classify_conformance_daemon(command: str) -> ConformanceDaemonTarget | None:
     """The safety discriminator: a target IFF the command line is the host's
-    entry module (`python -m doeff_agents.sessionhost.host`) whose --db lives
+    entry module (`python -m doeff_agents._sessionhost.host`) whose --db lives
     under /tmp/agentd-conf-*.
     Everything else — production hosts (~/.local/state/doeff/agentd.sqlite),
     other tools mentioning the dir — is None, regardless of ppid."""

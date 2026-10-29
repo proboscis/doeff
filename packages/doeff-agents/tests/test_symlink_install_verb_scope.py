@@ -40,7 +40,7 @@ import hy  # noqa: F401  # registers the Hy import hooks / reader
 from hy import models
 from hy.reader import read_many
 
-SOURCE = Path(__file__).resolve().parents[1] / "src/doeff_agents/sessionhost/substrate.hy"
+SOURCE = Path(__file__).resolve().parents[1] / "src/doeff_agents/_sessionhost/substrate.hy"
 
 # 許す 2 点(head, name)。name=None は「名前は問わない」。
 ALLOWED: tuple[tuple[str, str | None], ...] = (

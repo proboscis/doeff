@@ -12,7 +12,7 @@ from pathlib import Path
 
 import hy  # noqa: F401 -- installs the .hy import hook (ready_physics.hy)
 
-from doeff_agents import tmux
+from doeff_agents import _tmux as tmux
 from doeff_agents._adapters.base import (
     AgentAdapter,
     AgentType,
@@ -34,9 +34,9 @@ from doeff_agents._monitor import (
     hash_content,
     is_waiting_for_input,
 )
-from doeff_agents.ready_physics import has_claude_screen_reader_trust_prompt
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.shell import (
+from doeff_agents._ready_physics import has_claude_screen_reader_trust_prompt
+from doeff_agents._session_backend import SessionBackend
+from doeff_agents._shell import (
     assert_no_forbidden_agent_env,
     assert_session_env_is_non_auth_overlay,
     wrap_with_shell_exports,

@@ -479,7 +479,7 @@
 (defclass [(dataclass :frozen True :kw-only True)] WireResultChannel [EffectBase]
   "kind の result 報告チャネル(結果の MCP server)を session に配線する。
    handler が答える channel spec は、host を走らせている python で入口の module を起こす
-   `<python> -m doeff_agents.sessionhost.result_mcp --session $DOEFF_RESULT_SESSION_ID
+   `<python> -m doeff_agents._sessionhost.result_mcp --session $DOEFF_RESULT_SESSION_ID
    --socket $DOEFF_AGENTD_SOCKET`(S1/S13 / main.rs:1306 mcp_command_args の --session /
    --socket の形・サブコマンドは無い)。結果は常にこのデータチャネル経由 —
    pane を result として parse することは禁止(result-first、ADR 0035)。"

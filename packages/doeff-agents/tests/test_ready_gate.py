@@ -37,6 +37,9 @@ from doeff_agents import (
     CodexRuntimePolicy,
     LaunchConfig,
     LaunchEffect,
+    SessionBackend,
+    SessionConfig,
+    SessionInfo,
 )
 from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter
@@ -44,8 +47,6 @@ from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
 )
-from doeff_agents.session_backend import SessionBackend
-from doeff_agents.tmux import SessionConfig, SessionInfo
 
 from doeff import Program, Pure
 
@@ -606,7 +607,7 @@ MULTILINE_PROMPT = "line one\nline two\n\nline four"
 
 
 def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste() -> None:
-    from doeff_agents.tmux import TmuxSessionBackend
+    from doeff_agents._tmux import TmuxSessionBackend
     from fake_io_support import FakeIoWorld, ProcessOutcome, fake_io_root
 
     def script(argv):
@@ -641,7 +642,7 @@ def test_tmux_paste_streams_buffer_via_stdin_and_bracketed_paste() -> None:
 def test_sessionhost_paste_uses_bracketed_paste(monkeypatch) -> None:
     import subprocess as _subprocess
 
-    from doeff_agents.sessionhost import substrate
+    from doeff_agents._sessionhost import substrate
 
     calls: list[list[str]] = []
 

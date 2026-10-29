@@ -27,7 +27,7 @@ pytestmark = pytest.mark.semgrep
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = REPO_ROOT / "tests/semgrep/fixtures/python"
-FIXTURE_DIR = "packages/doeff-agents/src/doeff_agents/sessionhost"
+FIXTURE_DIR = "packages/doeff-agents/src/doeff_agents/_sessionhost"
 
 D10 = "host-checkout-layout-is-never-spelled-here"
 D11 = "seat-home-instruction-names-have-one-home"

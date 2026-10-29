@@ -2,7 +2,7 @@
 
 ensure_agentd の起動(effect StartSessionHost の handler)をミラーする:
 DOEFF_AGENTD_BIN(明示 seam、契約語彙)→ 無ければ実行中 interpreter で host の入口の module
-(`python -m doeff_agents.sessionhost.host`)。CLI コマンドも PATH の探索も無い — 検の
+(`python -m doeff_agents._sessionhost.host`)。CLI コマンドも PATH の探索も無い — 検の
 interpreter がそのまま host を起こすので、PATH の古い道具(#556)が紛れ込む道が無い。
 
 退役 Rust crate のビルド(cargo)経路は存在しない
@@ -17,7 +17,7 @@ import sys
 from runner_env import agentd_bin_setting
 
 #: host の入口の module(python -m の的)。
-SESSIONHOST_MODULE = "doeff_agents.sessionhost.host"
+SESSIONHOST_MODULE = "doeff_agents._sessionhost.host"
 
 
 def sessionhost_command() -> tuple[str, ...]:

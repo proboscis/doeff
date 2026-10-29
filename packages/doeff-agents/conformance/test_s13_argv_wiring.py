@@ -15,7 +15,7 @@ codex/claude would have received:
     --strict-mcp-config
   codex (build_codex_argv, main.rs:1345-1403):
     --yolo, -c mcp_servers."doeff_result".command="<agentd bin>",
-    -c mcp_servers."doeff_result".args=["-m", "doeff_agents.sessionhost.result_mcp", ...]
+    -c mcp_servers."doeff_result".args=["-m", "doeff_agents._sessionhost.result_mcp", ...]
 
 The shim passes "$@", so the journal argv[1:] equals build_*_argv()[1:]
 (argv[0] is the shim's python script, standing in for the binary name).
@@ -81,7 +81,7 @@ def test_s13_claude_argv_wiring_and_m1_golden_path(tmp_path) -> None:
         assert server["command"] == sys.executable, server
         assert server["args"] == [
             "-m",
-            "doeff_agents.sessionhost.result_mcp",
+            "doeff_agents._sessionhost.result_mcp",
             "--session",
             scenario.session_id,
             "--socket",
@@ -182,7 +182,7 @@ def test_s13_codex_argv_wiring(tmp_path) -> None:
 
         expected_args_entry = (
             'mcp_servers."doeff_result".args='
-            '["-m","doeff_agents.sessionhost.result_mcp",'
+            '["-m","doeff_agents._sessionhost.result_mcp",'
             f'"--session","{scenario.session_id}",'
             f'"--socket","{harness.socket_path}"]'
         )

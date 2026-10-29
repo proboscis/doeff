@@ -57,29 +57,29 @@
 (setv DEFF-ROSTER
   {"docs/adr/defadr_doeff_agents_007_koine_session_surface.hy" 4
    "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1
-   "packages/doeff-agents/src/doeff_agents/sessionhost/adopt.hy" 1
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy" 1
    ;; 38 → 37(card ki-3c3d85253c2c): 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
-   "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy" 37
-   "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy" 34
-   "packages/doeff-agents/src/doeff_agents/sessionhost/impls/channel.hy" 1
-   "packages/doeff-agents/src/doeff_agents/sessionhost/impls/claude_code.hy" 2
-   "packages/doeff-agents/src/doeff_agents/sessionhost/impls/codex.hy" 5
-   "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy" 30
-   "packages/doeff-agents/src/doeff_agents/sessionhost/launch.hy" 5
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy" 37
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 34
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/channel.hy" 1
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy" 2
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy" 5
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy" 30
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy" 5
    ;; 29 → 25(agora-redesign #708): 境界の env の語彙の 4 本を agent_env.hy へ defn で出した(R1 の Python との境界 — deff の焼却ではない)。
-   "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy" 25
-   "packages/doeff-agents/src/doeff_agents/sessionhost/schema.hy" 3
-   "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy" 34
-   "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy" 15
-   "packages/doeff-agents/src/doeff_agents/sessionhost/substrate_herdr.hy" 13
-   "packages/doeff-agents/src/doeff_agents/sessionhost/turn.hy" 3
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy" 25
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/schema.hy" 3
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy" 34
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy" 15
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate_herdr.hy" 13
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/turn.hy" 3
    "packages/doeff-agents/tests/sessionhost_policy_deftests.hy" 1
    "packages/doeff-agents/tests/sessionhost_resume_cross_binding_deftests.hy" 1
    "packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" 1
    "packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/sessionhost/impls/provider_failure_verbatim_forbidden.hy" 1
-   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/sessionhost/turn_touches_substrate_forbidden.hy" 1})
+   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/impls/api_limit_possessive_verbatim_forbidden.hy" 1
+   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/impls/provider_failure_verbatim_forbidden.hy" 1
+   "tests/semgrep/fixtures/python/packages/doeff-agents/src/doeff_agents/_sessionhost/turn_touches_substrate_forbidden.hy" 1})
 
 ;; 走査から除く木: 一時複製(worktree/scratchpad)・生成物・環境・
 ;; packages/doeff-hy(macro の所有者 — deff の定義と、その意味論を検証する

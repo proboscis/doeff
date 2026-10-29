@@ -1,4 +1,4 @@
-"""結果の MCP server の入口(`python -m doeff_agents.sessionhost.result_mcp --session <id> --socket <path>`・
+"""結果の MCP server の入口(`python -m doeff_agents._sessionhost.result_mcp --session <id> --socket <path>`・
 oracle main.rs:761-959)。
 
 agent が自分で起こす stdio MCP server(initialize / ping / tools/list / tools/call)として振る舞い、

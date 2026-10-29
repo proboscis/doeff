@@ -34,46 +34,16 @@
 (import doeff [Program run with_handlers])
 (import doeff_core_effects [state])
 (import doeff_time [DelayEffect])
-(import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows memory-session-store stored-rows])
+(import doeff_agents [MemorySessionRows ReadMemorySessionRows memory-session-store]
+        doeff_agents._sessionhost.store_memory [stored-rows])
 (import memory_store_world [StoreWorld kept-in seeded])
 
-(import doeff_agents.sessionhost.effects [
-  SessionRow
-  SessionStoreUpsert
-  TmuxHasSession
-  TmuxNewSession
-  TmuxCapture
-  TmuxSendKeys
-  TmuxKillSession
-  ClockNow
-  ClassifyPane
-  DeliverMessage
-  FsCanonicalPath
-  FsComposeHomeView
-  FsReadText
-  FsRemoveFile
-  FsWriteTextAtomic
-  GitRun
-  FsMakeDirs
-  FsLinkArtifact
-  FsEnsureSymlink
-  FsSymlinkOutcome
-  FS-SYMLINK-LINKED
-  FS-SYMLINK-OCCUPIED
-  FS-SYMLINK-REFUSED
-  FS-SYMLINK-SAME-ENTITY
-  FS-SYMLINK-SOURCE-MISSING
-  FS-SYMLINK-TARGET-CONFLICT
-  FS-SYMLINK-UNCHANGED
-  FsListDir
-  FsDirExists
-  FsFileExists
-  EnvGet
-  LogLine])
-(import doeff_agents.sessionhost.effects [READY-PROBE-TEXT])
-(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
-(import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.launch [
+(import doeff_agents [SessionRow SessionStoreUpsert TmuxHasSession TmuxNewSession TmuxCapture TmuxSendKeys TmuxKillSession ClockNow ClassifyPane DeliverMessage FsCanonicalPath FsComposeHomeView FsReadText FsRemoveFile FsWriteTextAtomic GitRun FsMakeDirs FsLinkArtifact FsEnsureSymlink FsSymlinkOutcome FsListDir FsDirExists FsFileExists EnvGet LogLine]
+        doeff_agents._sessionhost.effects [FS-SYMLINK-LINKED FS-SYMLINK-OCCUPIED FS-SYMLINK-REFUSED FS-SYMLINK-SAME-ENTITY FS-SYMLINK-SOURCE-MISSING FS-SYMLINK-TARGET-CONFLICT FS-SYMLINK-UNCHANGED])
+(import doeff_agents._sessionhost.effects [READY-PROBE-TEXT])
+(import doeff_agents [claude-code-impl])
+(import doeff_agents [codex-impl])
+(import doeff_agents._sessionhost.launch [
   DIALOG-REDRAW-SECONDS
   REPL-IDLE-POLL-SECONDS
   RESULT-PROTOCOL-INSTRUCTION
@@ -446,7 +416,7 @@
   (assert submit)
   (assert (.startswith cmd "codex --yolo"))
   (assert (in "doeff_result" cmd))
-  (assert (in "doeff_agents.sessionhost.result_mcp" cmd))
+  (assert (in "doeff_agents._sessionhost.result_mcp" cmd))
   ;; prompt は ready gate(idle 観測 + 貼り付け可能性 probe)の後に
   ;; DeliverMessage → impl → TmuxSendKeys(literal+submit)で配送され、
   ;; result-protocol instruction が追記されている。

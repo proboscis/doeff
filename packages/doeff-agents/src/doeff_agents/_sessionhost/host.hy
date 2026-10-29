@@ -11,7 +11,7 @@
 ;;; monitor / heartbeat thread + result 経路(await_result の blocking poll /
 ;;; report_result の first-write-wins)。全 10 契約 method 実装済み。
 ;;;
-;;; 入口: `python -m doeff_agents.sessionhost.host [<flags>]`(下の main・サブコマンドは無い)。
+;;; 入口: `python -m doeff_agents._sessionhost.host [<flags>]`(下の main・サブコマンドは無い)。
 ;;; 起こすのは effect StartSessionHost の handler(io_handlers.hy・PATH を見ない)。
 ;;; 結果の MCP server は別の入口 result_mcp.py(stdlib-only 純 Python)に
 ;;; 住む: relay の boot レイテンシは report-vs-turn-end race の凍結物理で、
@@ -30,13 +30,13 @@
 (import sys)
 (import textwrap)
 (import threading)
-(import doeff_agents.sessionhost.attachment [TurnAttachment attachment-of-wire])
+(import doeff_agents._sessionhost.attachment [TurnAttachment attachment-of-wire])
 (import time)
 
 (import doeff [run])
 (import doeff_time [sync-time-handler])
 
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   AWAITING-RESPONSE-TIMEOUT-SECONDS
   CONVERSATION-QUIESCENCE-SECONDS
   MonitorKnobs
@@ -52,16 +52,16 @@
   tmux-kill-session
   tmux-send-keys
   tmux-session-pane-ids])
-(import doeff_agents.sessionhost.adopt [AdoptTargetNotFound adopt-program])
-(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
-(import doeff_agents.sessionhost.impls.codex [codex-impl])
-(import doeff_agents.sessionhost.turn [TURN-HOLDER-AGENT
+(import doeff_agents._sessionhost.adopt [AdoptTargetNotFound adopt-program])
+(import doeff_agents._sessionhost.impls.claude_code [claude-code-impl])
+(import doeff_agents._sessionhost.impls.codex [codex-impl])
+(import doeff_agents._sessionhost.turn [TURN-HOLDER-AGENT
                                        db-turn-stamp
                                        turn-close-holder])
-(import doeff_agents.sessionhost.launch [launch-session
+(import doeff_agents._sessionhost.launch [launch-session
                                          resume-session
                                          ResumeRejected])
-(import doeff_agents.sessionhost.policy [
+(import doeff_agents._sessionhost.policy [
   ACTIVE-STATUSES
   binding-kind-advertisement
   carry-charter-fields
@@ -74,11 +74,11 @@
   tail-chars
   TURN-CARRIED-KEYS
   turn-stalled])
-(import doeff_agents.sessionhost.schema [validate-against-schema schema-admission-error])
-(import doeff_agents.sessionhost.substrate [real-substrate])
-(import doeff_agents.sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
-(import doeff_agents.sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
-(import doeff_agents.sessionhost.store [
+(import doeff_agents._sessionhost.schema [validate-against-schema schema-admission-error])
+(import doeff_agents._sessionhost.substrate [real-substrate])
+(import doeff_agents._sessionhost.substrate_herdr [DEFAULT-HERDR-SOCKET herdr-substrate])
+(import doeff_agents._sessionhost.store_health [DEFAULT-STORE-WRITE-FAILURE-LIMIT readiness-of])
+(import doeff_agents._sessionhost.store [
   HISTORY-PRUNE-BATCH-ROWS
   LEASE-TTL-SECONDS
   StoreActor
@@ -376,7 +376,7 @@
               line (entry env-name help-text)
               line))
   (+ (.join "\n"
-            ["usage: python -m doeff_agents.sessionhost.host [<flags>]"
+            ["usage: python -m doeff_agents._sessionhost.host [<flags>]"
              ""
              #* (paragraph
                   (+ "The agent session host: it owns the RPC socket, the session ledger, and"
@@ -385,7 +385,7 @@
              #* (paragraph
                   (+ "doeff-agents starts it through the StartSessionHost effect; the"
                      " agent-facing result channel is a separate module"
-                     " (doeff_agents.sessionhost.result_mcp) that agents start themselves."))
+                     " (doeff_agents._sessionhost.result_mcp) that agents start themselves."))
              ""
              "flags:"
              #* flag-lines
@@ -595,7 +595,7 @@
    には、最も外側の sync-time-handler が壁の時計で答える(card ki-3c3d85253c2c・
    ADR-DOE-TIME-001 R2)。
    agent が起こす結果の MCP server は、host を走らせている python で入口の module を起こす
-   (WireResultChannel の handler が `python -m doeff_agents.sessionhost.result_mcp` の argv を書く)。"
+   (WireResultChannel の handler が `python -m doeff_agents._sessionhost.result_mcp` の argv を書く)。"
   (setv inner ((codex-impl sys.executable)
                ((claude-code-impl sys.executable)
                 program)))
@@ -1871,7 +1871,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn main []
-  "host の入口(`python -m doeff_agents.sessionhost.host [<flags>]` — 下の __main__ の guard が呼ぶ。
+  "host の入口(`python -m doeff_agents._sessionhost.host [<flags>]` — 下の __main__ の guard が呼ぶ。
    doeff-agents は effect StartSessionHost の handler でこれを起こす)。SIGTERM(launchctl bootout の
    標準経路)は SystemExit(0) に変換し、finally の lease 釈放へ落とす(issue #565)。"
   (setv raw (list (cut sys.argv 1 None)))
@@ -1923,7 +1923,7 @@
   None)
 
 
-;; `python -m doeff_agents.sessionhost.host` の入口(包みの __init__ が Hy の import hook を先に入れるので、
+;; `python -m doeff_agents._sessionhost.host` の入口(包みの __init__ が Hy の import hook を先に入れるので、
 ;; .hy の module を -m で直に起こせる)。
 (when (= __name__ "__main__")
   (main))

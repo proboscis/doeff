@@ -7,7 +7,7 @@
 **位置づけ**: `conformance/README.md` は tmux-oracle の凍結契約であり編集しない。
 herdr backend で観測した物理・tmux との差分・fixture の backend 対応はすべて
 このファイルに記録する。実装は
-`src/doeff_agents/sessionhost/substrate_herdr.hy`(Tmux* 6 effect の束縛)。
+`src/doeff_agents/_sessionhost/substrate_herdr.hy`(Tmux* 6 effect の束縛)。
 
 ## transport(newline-JSON over unix socket)
 

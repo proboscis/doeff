@@ -10,13 +10,13 @@
 (defadr ADR-DOE-AGENTS-010
   :title "未送信 prompt は composer 領域全体で検知し、補償は有界 budget + 超過で loud typed terminal(無限 blocked の構造的禁止)。awaiting_response latch は期限つき(観測断で窓再スタート)。monitor の送出は pane の session 帰属を毎 cycle 検証した宛先にのみ行う。substrate cleanup(tmux kill + cleaned_at)は終端行全体を拾う単一の掃き取りが所有し、終端経路ごとの片付け命令は禁止する"
   :status "accepted"
-  :scope ["packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy"
-          "packages/doeff-agents/src/doeff_agents/tmux.py"
+  :scope ["packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy"
+          "packages/doeff-agents/src/doeff_agents/_tmux.py"
           "packages/doeff-agents/conformance/README.md"]
   :problem
     [(fact
@@ -88,7 +88,8 @@
   :enforcement
     [(deftest test-adr-doe-agents-010-knobs-and-fields-frozen
        ;; R2/R3 の機械面: budget knob と durable field が凍結既定値で実在する。
-       (import doeff_agents.sessionhost.effects [MonitorKnobs SessionRow])
+       (import doeff_agents [SessionRow]
+               doeff_agents._sessionhost.effects [MonitorKnobs])
        (setv knobs (MonitorKnobs))
        (assert (= knobs.paste-resubmit-limit 5))
        (assert (= knobs.awaiting-response-timeout-seconds 600))
@@ -103,7 +104,7 @@
        ;; 関数(sweep)内の 1 箇所のみ — finalize / 終端 arm への回帰を禁止する。
        (import pathlib [Path])
        (import re)
-       (import doeff_agents.sessionhost.policy :as policy-mod)
+       (import doeff_agents._sessionhost.policy :as policy-mod)
        (setv source (.read-text (Path (. policy-mod __file__)) :encoding "UTF-8"))
        (setv call-sites (.count source "(tmux-kill-session"))
        (assert (= call-sites 1)
@@ -123,9 +124,9 @@
      (deftest test-adr-doe-agents-010-composer-region-vocabulary
        ;; R1 の機械面: 実 wedge の pane 形([Image #N] チップが prompt 行の外)を
        ;; 3 実装(markers.hy / substrate.hy / tmux.py)すべてが unsubmitted と読む。
-       (import doeff_agents.sessionhost.impls.markers [has-unsubmitted-paste])
-       (import doeff_agents.sessionhost.substrate [unsubmitted-paste-input?])
-       (import doeff_agents.tmux [_output-has-unsubmitted-paste-input])
+       (import doeff_agents._sessionhost.impls.markers [has-unsubmitted-paste])
+       (import doeff_agents._sessionhost.substrate [unsubmitted-paste-input?])
+       (import doeff_agents._tmux [_output-has-unsubmitted-paste-input])
        (setv wedge "❯\n  [Image #150]\n\n  ⏵⏵ bypass permissions on (shift+tab to cycle)")
        (assert (has-unsubmitted-paste wedge))
        (assert (unsubmitted-paste-input? wedge None))
@@ -142,8 +143,8 @@
        ;; (test-classify-claude-working-pane-carries-both-marker-facts)が
        ;; 逐語で固定し、cycle 込みの挙動は policy 側 deftest
        ;; (test-working-pane-with-waiting-footer-stays-running)が固定する。
-       (import doeff_agents.sessionhost.effects [PaneObservation])
-       (import doeff_agents.sessionhost.policy [observed-status-from-markers])
+       (import doeff_agents [PaneObservation])
+       (import doeff_agents._sessionhost.policy [observed-status-from-markers])
        ;; 常設フッター(waiting)だけ = 従来どおり blocked。
        (assert (= "blocked"
                   (! (observed-status-from-markers
@@ -169,17 +170,17 @@
                                         :has-active-marker True))))))
      (defsemgrep per-arm-cleanup-is-banned
        "doeff-agents-terminal-cleanup-single-sweep"
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(when (and (is-run-to-completion row.lifecycle)\n           (in observed-status #{\"done\" \"failed\"}))\n  (<- still-alive (tmux-has-session row.session-name))\n  (when still-alive\n    (<- _ (tmux-kill-session row.session-name))\n    (setv row (replace row :cleaned-at (or row.cleaned-at observed-at)))))\n"}]
-       [{"relative-path" "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy"
+       [{"relative-path" "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy"
          "source" "(defk cleanup-terminal-session-once [row active-names]\n  (<- alive (tmux-has-session row.session-name))\n  (when (and alive (not-in row.session-name active-names))\n    (<- _ (tmux-kill-session row.session-name)))\n  (setv row (replace row :cleaned-at (or row.cleaned-at observed-at)))\n  row)\n"}])]
   :plans ["docs/adr/defadr_doeff_agents_010_unsubmitted_prompt_terminal_sweep.hy"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/impls/markers.hy(R1 composer 領域)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/substrate.hy(R1 confirm ループ面 + TmuxPaneSessionName 実 IO)"
-          "packages/doeff-agents/src/doeff_agents/tmux.py(R1 legacy transport 面)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/effects.hy(R2/R3 knob・field + TmuxPaneSessionName / SessionStoreListCleanupPending)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/policy.hy(R2 有界再送 + R3 期限 arm + R4 帰属検証 arm + R5 sweep・finalize inline cleanup 撤去)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/store.hy(additive 列 2 本 + cleanup-pending 一覧 + latch clear の since 同時 clear)"
-          "packages/doeff-agents/src/doeff_agents/sessionhost/host.hy(env knob 2 本)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy(R1 composer 領域)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/substrate.hy(R1 confirm ループ面 + TmuxPaneSessionName 実 IO)"
+          "packages/doeff-agents/src/doeff_agents/_tmux.py(R1 legacy transport 面)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy(R2/R3 knob・field + TmuxPaneSessionName / SessionStoreListCleanupPending)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy(R2 有界再送 + R3 期限 arm + R4 帰属検証 arm + R5 sweep・finalize inline cleanup 撤去)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy(additive 列 2 本 + cleanup-pending 一覧 + latch clear の since 同時 clear)"
+          "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy(env knob 2 本)"
           ".semgrep.yaml(doeff-agents-terminal-cleanup-single-sweep)"
           "packages/doeff-agents/conformance/README.md(knob 表・cleanup 契約の改訂)"])

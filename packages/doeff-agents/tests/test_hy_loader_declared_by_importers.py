@@ -142,7 +142,7 @@ def _fresh_import(
 def test_the_scan_finds_the_importers() -> None:
     # Guard against a scan that silently finds nothing (a wrong SRC path would pass every case).
     assert "doeff_agents._adapters.base" in IMPORTERS
-    assert "doeff_agents.claude_home" in IMPORTERS
+    assert "doeff_agents._claude_home" in IMPORTERS
 
 
 @pytest.mark.timeout(_COLD_IMPORT_DEADLINE_SECONDS)

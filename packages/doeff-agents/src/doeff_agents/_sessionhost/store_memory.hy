@@ -12,7 +12,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace :as with-fields])
 (import doeff [EffectBase])
-(import doeff_agents.sessionhost.effects [
+(import doeff_agents._sessionhost.effects [
   SessionRow
   SessionStoreListActive
   SessionStoreListCleanupPending
@@ -21,8 +21,8 @@
   SessionStoreResultPayload
   SessionStoreRecordEvent
   SessionStoreKnownConversationIds])
-(import doeff_agents.sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES])
-(import doeff_agents.sessionhost.store [
+(import doeff_agents._sessionhost.policy [ACTIVE-STATUSES TERMINAL-STATUSES])
+(import doeff_agents._sessionhost.store [
   event-payload
   merged-snapshot
   overlaid-values

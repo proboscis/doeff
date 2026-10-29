@@ -28,14 +28,11 @@
 
 (import sessionhost_launch_deftests [LaunchWorld fake-launch-substrate under-world])
 (import sessionhost_resume_deftests [seed-source resume-params run-resume])
-(import doeff_agents.sessionhost.effects [
-  FsLinkArtifact
-  FsSymlinkOutcome
-  FS-SYMLINK-REFUSED
-  FS-SYMLINK-SOURCE-MISSING])
-(import doeff_agents.sessionhost.launch [resume-session])
-(import doeff_agents.sessionhost.impls.claude_code [claude-code-impl])
-(import doeff_agents.sessionhost.impls.codex [codex-impl])
+(import doeff_agents [FsLinkArtifact FsSymlinkOutcome]
+        doeff_agents._sessionhost.effects [FS-SYMLINK-REFUSED FS-SYMLINK-SOURCE-MISSING])
+(import doeff_agents._sessionhost.launch [resume-session])
+(import doeff_agents [claude-code-impl])
+(import doeff_agents [codex-impl])
 
 
 ;; ---------------------------------------------------------------------------
