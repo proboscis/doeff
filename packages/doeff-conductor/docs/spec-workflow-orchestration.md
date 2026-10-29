@@ -377,7 +377,7 @@ handlers interact with the scheduler:
   blocking, sibling branches' launches and awaits can interleave.
 
 The `agent!` handler bridges its `AwaitResult` RPC through
-`make_offloaded_scheduled_handler` (a `CreateExternalPromise` + daemon
+`offloaded_call` (a `CreateExternalPromise` + daemon
 thread pattern), while `Launch`, `FollowUp`, and `Release` remain
 synchronous (all are bounded fast RPCs).
 

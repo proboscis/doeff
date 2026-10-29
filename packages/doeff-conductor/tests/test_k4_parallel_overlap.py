@@ -1,6 +1,6 @@
 """K4 integration tests — parallel agent branches must overlap (L-K4-2).
 
-These tests verify that the ``make_offloaded_scheduled_handler`` bridge
+These tests verify that the ``_offloaded_scheduled_body`` bridge
 enables true concurrency for ``parallel`` branches by asserting:
 
 1. Session lifetimes of sibling branches **intersect** (overlap).
@@ -22,7 +22,7 @@ import pytest
 from doeff_conductor import AgentEffect, AgentTask
 from doeff_conductor import CreateWorkspace
 from doeff_conductor import MockConductorRuntime
-from doeff_conductor import make_offloaded_scheduled_handler, make_scheduled_handler
+from doeff_conductor._handlers.utils import _offloaded_scheduled_body, _scheduled_body
 from doeff_core_effects import Gather, scheduled
 
 from doeff import Effect, Pass, Resume, Spawn, do, run, stacked_handlers
@@ -95,8 +95,8 @@ def _build_handler_with_real_scheduler(
 ) -> Any:
     """Build a handler-protocol callable using the real scheduler.
 
-    Uses ``make_offloaded_scheduled_handler`` for ``AgentEffect`` (the
-    bridge under test) and ``make_scheduled_handler`` for all other
+    Uses ``_offloaded_scheduled_body`` for ``AgentEffect`` (the
+    bridge under test) and ``_scheduled_body`` for all other
     conductor effects.
     """
     from doeff_conductor import Commit, CreatePR, MergePR, Push
@@ -105,19 +105,19 @@ def _build_handler_with_real_scheduler(
     from doeff_conductor import journaled_workflow_effect_handler
 
     handlers: tuple[tuple[type[Any], Any], ...] = (
-        (CreateWorkspace, make_scheduled_handler(runtime.handle_create_workspace)),
-        (MergeWorkspaces, make_scheduled_handler(runtime.handle_merge_workspaces)),
-        (DeleteWorkspace, make_scheduled_handler(runtime.handle_delete_workspace)),
-        (CreateIssue, make_scheduled_handler(runtime.handle_create_issue)),
-        (ListIssues, make_scheduled_handler(runtime.handle_list_issues)),
-        (GetIssue, make_scheduled_handler(runtime.handle_get_issue)),
-        (ResolveIssue, make_scheduled_handler(runtime.handle_resolve_issue)),
+        (CreateWorkspace, _scheduled_body(runtime.handle_create_workspace)),
+        (MergeWorkspaces, _scheduled_body(runtime.handle_merge_workspaces)),
+        (DeleteWorkspace, _scheduled_body(runtime.handle_delete_workspace)),
+        (CreateIssue, _scheduled_body(runtime.handle_create_issue)),
+        (ListIssues, _scheduled_body(runtime.handle_list_issues)),
+        (GetIssue, _scheduled_body(runtime.handle_get_issue)),
+        (ResolveIssue, _scheduled_body(runtime.handle_resolve_issue)),
         # --- THE BRIDGE UNDER TEST ---
-        (AgentEffect, make_offloaded_scheduled_handler(timed_handler.handle_agent)),
-        (Commit, make_scheduled_handler(runtime.handle_commit)),
-        (Push, make_scheduled_handler(runtime.handle_push)),
-        (CreatePR, make_scheduled_handler(runtime.handle_create_pr)),
-        (MergePR, make_scheduled_handler(runtime.handle_merge_pr)),
+        (AgentEffect, _offloaded_scheduled_body(timed_handler.handle_agent)),
+        (Commit, _scheduled_body(runtime.handle_commit)),
+        (Push, _scheduled_body(runtime.handle_push)),
+        (CreatePR, _scheduled_body(runtime.handle_create_pr)),
+        (MergePR, _scheduled_body(runtime.handle_merge_pr)),
     )
 
     @do
@@ -249,7 +249,7 @@ class TestK4ParallelOverlap:
     def test_serial_handler_is_slower(self, tmp_path: Path) -> None:
         """Prove the old blocking handler serialises branches.
 
-        Uses ``make_scheduled_handler`` (the blocking path) and verifies
+        Uses ``_scheduled_body`` (the blocking path) and verifies
         that wall time is at least the sum of branch delays — confirming
         the fix is necessary.
         """

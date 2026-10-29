@@ -19430,48 +19430,6 @@
    "name": "retry_after_ms",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor",
-   "name": "make_offloaded_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor",
-   "name": "make_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.handlers",
-   "name": "make_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.handlers.testing",
-   "name": "make_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.handlers.utils",
-   "name": "make_offloaded_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
-  },
-  {
-   "package": "doeff-conductor",
-   "module": "doeff_conductor.handlers.utils",
-   "name": "make_scheduled_handler",
-   "訳": "目録は return の形で handler を返す工場と読んでいたが、工場を呼んで印を確かめる道具(ADR-DOE-API-001 R3)が、呼ぶと印 _doeff_is_handler_fn の無い (effect, k) の @do 関数(handler の body)を返すと分けた — handler を返す工場に直すか内側へ移すまで残す",
-   "決め": "ki-25eecd63bc57"
   }
  ]
 }

@@ -556,14 +556,10 @@ inside the handlers they perform the effect to. `production_handlers(...)` build
 
 ```python
 from doeff_conductor import (
-    make_scheduled_handler,
     make_async_scheduled_handler,
     make_blocking_scheduled_handler,
     default_scheduled_handlers,
 )
-
-# Wrap sync handler for scheduled_handlers API
-handler = make_scheduled_handler(sync_function)
 
 # Get default handlers
 handlers = default_scheduled_handlers()

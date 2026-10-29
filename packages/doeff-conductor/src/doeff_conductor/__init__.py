@@ -294,9 +294,6 @@ from doeff_conductor._handlers import (
     make_blocking_scheduled_handler_with_store as make_blocking_scheduled_handler_with_store,
 )
 from doeff_conductor._handlers import (
-    make_scheduled_handler as make_scheduled_handler,
-)
-from doeff_conductor._handlers import (
     make_scheduled_handler_with_store as make_scheduled_handler_with_store,
 )
 from doeff_conductor._handlers import (
@@ -461,9 +458,6 @@ if TYPE_CHECKING:
     from doeff_conductor._handlers.workspace_handler import (
         WorkspaceStateError as WorkspaceStateError,
     )
-    from doeff_conductor._handlers.utils import (
-        make_offloaded_scheduled_handler as make_offloaded_scheduled_handler,
-    )
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AgentSpec": "doeff_conductor._dsl",
@@ -532,7 +526,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Tier2ReviewRequest": "doeff_conductor._effects.review",
     "PreCoverageRunError": "doeff_conductor._handlers.journaled_workspace",
     "WorkspaceStateError": "doeff_conductor._handlers.workspace_handler",
-    "make_offloaded_scheduled_handler": "doeff_conductor._handlers.utils",
 }
 
 
