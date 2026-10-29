@@ -68,7 +68,7 @@ def _install_mock_production_handlers(
 def _write_parallel_gate_workflow(path: Path) -> None:
     path.write_text(
         """
-(require doeff-conductor.macros [defworkflow agent! parallel <-])
+(require doeff-conductor._macros [defworkflow agent! parallel <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
@@ -102,7 +102,7 @@ def _write_parallel_gate_workflow(path: Path) -> None:
 def _write_random_parallel_gate_workflow(path: Path) -> None:
     path.write_text(
         """
-(require doeff-conductor.macros [defworkflow agent! parallel random! <-])
+(require doeff-conductor._macros [defworkflow agent! parallel random! <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
@@ -137,7 +137,7 @@ def _write_random_parallel_gate_workflow(path: Path) -> None:
 def _write_checkpoint_workflow(path: Path) -> None:
     path.write_text(
         """
-(require doeff-conductor.macros [defworkflow defphase <-])
+(require doeff-conductor._macros [defworkflow defphase <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (defworkflow checkpoint-live
