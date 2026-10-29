@@ -12,7 +12,7 @@
 (import os)
 (import subprocess)
 (import doeff [EffectBase Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.proc_table_effects [ProcRow])
 (import doeff_core_effects.os_proc_table [os-proc-table-handler])
 (import doeff_core_effects.scripted_proc_table [scripted-proc-table-handler])

@@ -10,7 +10,7 @@
 (import gc)
 (import weakref)
 (import httpx)
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_core_effects.http_handlers [http-production-handler])
 
@@ -35,7 +35,7 @@
 
 
 ;; 1 つの run の中で出す要求の数 — 最初の応答が消えたかは、後の要求を出した後の run の中で見る(run の終わりの後は scheduler の状態そのものが
-;; GC を待つ)。Await の答え手は待った値を約束の表に残さない(doeff_core_effects.handlers の _AwaitedValue)ので、表の掃除
+;; GC を待つ)。Await の答え手は待った値を約束の表に残さない(doeff_core_effects._handlers の _AwaitedValue)ので、表の掃除
 ;; (scheduler.py の HANDLE_SWEEP_INTERVAL ごと)を待つ数は要らない。
 (val REQUESTS 3)
 

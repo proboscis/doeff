@@ -6,7 +6,7 @@
 ;;;   * offloaded-subprocess-handler の子は並んで走る(Spawn した 2 本の sleep が 1 本ぶんの時間で終わる)— subprocess-handler は順に走る
 (require doeff-hy.macros [defk deftest <- val var])
 (import time)
-(import doeff_core_effects.scheduler [Spawn Gather])
+(import doeff_core_effects [Spawn Gather])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess])
 (import process_contract_handlers [ContractRoot])
 

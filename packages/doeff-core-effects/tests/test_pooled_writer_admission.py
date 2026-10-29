@@ -11,10 +11,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from disposable_postgres import session_dsn
-from doeff_core_effects.handlers import state
-from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
-from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     AcquireSemaphore,
     Cancel,
     CreateExternalPromise,
@@ -24,7 +21,10 @@ from doeff_core_effects.scheduler import (
     TaskCancelledError,
     Wait,
     scheduled,
+    state,
 )
+from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
+from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase
 from doeff_core_effects.sql_effects import SqlQuery, SqlTransaction
 
 from doeff import do, run, with_handlers
@@ -426,7 +426,7 @@ class AcquireObserver:
 
 @do
 def admission_handle(key):
-    from doeff_core_effects.effects import Get
+    from doeff_core_effects import Get
     from doeff_hy.session import session_key
 
     stored = yield Get(
@@ -467,7 +467,7 @@ def test_cancel_is_confirmed_while_waiting_for_admission(batched, gate):
 
 @do
 def confirmed_pool_cancel(batched, gate, observer):
-    from doeff_core_effects.effects import Get
+    from doeff_core_effects import Get
     from doeff_hy.session import session_key
 
     first = yield Spawn(transaction(None, gate.program(), batched))

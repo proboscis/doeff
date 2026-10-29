@@ -19,7 +19,7 @@ from doeff_core_effects.cache_effects import (
     CachePut,
     CachePutEffect,
 )
-from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
+from doeff_core_effects._storage import DurableStorage, InMemoryStorage, SQLiteStorage
 
 MemoKeyFn: TypeAlias = Callable[[object], str]
 
@@ -172,7 +172,7 @@ def make_memo_rewriter(
     On cache hit: Resume with cached value (outer handler not called).
     On cache miss: re-perform effect → outer handler handles it → store result in cache.
     """
-    from doeff_core_effects.effects import Slog
+    from doeff_core_effects._effects import Slog
 
     @do
     def handler(effect, k):

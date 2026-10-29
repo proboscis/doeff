@@ -1,5 +1,5 @@
-;;; 不在と失敗の effect と境目の handler(ADR-DOE-CORE-EFFECTS-003 段 1 — doeff_core_effects.effects の Absent / Raise と
-;;; doeff_core_effects.outcomes の maybe・result・on-raise・absent-as)。
+;;; 不在と失敗の effect と境目の handler(ADR-DOE-CORE-EFFECTS-003 段 1 — doeff_core_effects._effects の Absent / Raise と
+;;; doeff_core_effects._outcomes の maybe・result・on-raise・absent-as)。
 ;;;
 ;;;   * Absent は説明の文だけ・Raise は理由を持つ・互いに継承しない・Raise の理由に Python の例外は置けない
 ;;;   * maybe は Absent を Nothing に、result は Raise を Err に畳み、続きを再開しない(後ろの行は走らない)
@@ -16,8 +16,9 @@
 (import doeff [run])
 (import doeff.result [Nothing Some])
 (import doeff [Err Ok UnhandledEffect])
-(import doeff_core_effects.effects [Absent Raise Resumption resumption-of Ask])
-(import doeff_core_effects.outcomes [maybe result absent-as :as absent-as-fn RaiseCase])
+(import doeff_core_effects [Absent Raise Resumption Ask]
+        doeff_core_effects._effects [resumption-of])
+(import doeff_core_effects [maybe result absent-as :as absent-as-fn RaiseCase])
 
 
 (defclass [(dataclass :frozen True)] Conflict []

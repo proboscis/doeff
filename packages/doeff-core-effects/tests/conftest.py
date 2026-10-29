@@ -20,7 +20,7 @@ from pathlib import Path
 
 import hy  # noqa: F401  - lets the Hy composition modules (*_contract_handlers.hy) be imported
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import Program, run
 

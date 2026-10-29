@@ -11,7 +11,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from doeff_core_effects.extra_hints import MissingExtraError
+from doeff_core_effects._extra_hints import MissingExtraError
 from doeff_vm._not_a_program import uncalled_do_function_call
 
 from doeff.cli.profiling import profile
@@ -290,7 +290,7 @@ def resolve_context(ctx: RunContext) -> ResolvedRunContext:
 
 def default_interpreter(program: object) -> object:
     """Fallback interpreter: run with reference handlers + the reference scheduler."""
-    from doeff_core_effects.handlers import (
+    from doeff_core_effects._handlers import (
         await_handler,
         lazy_ask,
         listen_handler,
@@ -299,7 +299,7 @@ def default_interpreter(program: object) -> object:
         try_handler,
         writer,
     )
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects._scheduler import scheduled
 
     from doeff import run
 

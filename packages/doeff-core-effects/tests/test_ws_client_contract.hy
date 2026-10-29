@@ -11,7 +11,7 @@
 ;;;   * 答え手の範囲が終わると、開いたままの接続は WS-LINK-CLOSE-GOING-AWAY と SCOPE-ENDED-REASON で閉じられる(相手にも届く)
 ;;; 答え手だけの性質は test_ws_client.hy(fake: 台本が尽きた時・then-close・replies の重なり・繋ぎ先の最長の一致。本物: handshake を断った status)。
 (require doeff-hy.macros [defk deftest <- val var with-handler])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects [Spawn Wait])
 (import doeff_core_effects.http_server_effects [HttpHeader])
 (import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsConnectOutcome
                                               WsText WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome UNKNOWN-LINK-REASON

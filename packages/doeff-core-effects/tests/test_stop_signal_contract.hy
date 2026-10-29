@@ -14,7 +14,7 @@
 (import doeff [run with_handlers])
 (import doeff [UnhandledEffect])
 (import doeff_core_effects.stop_signal_effects [AwaitStop StopBell StopRequested])
-(import doeff_core_effects.scheduler [Cancel Race Spawn Wait])
+(import doeff_core_effects [Cancel Race Spawn Wait])
 (import stop_contract_handlers [SendStop StopHandlerUnderTest signal-reason])
 
 

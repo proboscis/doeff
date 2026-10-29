@@ -18,7 +18,7 @@ import sys
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
-from doeff_core_effects.extra_hints import MissingExtraError
+from doeff_core_effects._extra_hints import MissingExtraError
 
 from doeff import MissingEnvKeyError
 from doeff.cli.hy_runner import HyRunnerError

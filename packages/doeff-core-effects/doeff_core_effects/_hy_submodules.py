@@ -13,7 +13,7 @@ submodule fails with the line that installs the extra (extra_hints.py).
 import os
 import sys
 
-from doeff_core_effects.extra_hints import extra_needed
+from doeff_core_effects._extra_hints import extra_needed
 
 _PACKAGE = __name__.rpartition(".")[0]
 _PACKAGE_DIR = os.path.dirname(__file__)

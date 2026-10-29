@@ -372,7 +372,7 @@ def _async_function_message(fn: Callable[..., Any], *, async_generator: bool) ->
         "value = yield Await(coro) instead of value = await coro (Await from doeff). Await is "
         "handled by await_handler(), which needs scheduled outside it: "
         f"run(scheduled(await_handler()({call}))) (await_handler from "
-        "doeff_core_effects.handlers, scheduled from doeff_core_effects.scheduler)."
+        "doeff_core_effects._handlers, scheduled from doeff_core_effects._scheduler)."
     )
 
 

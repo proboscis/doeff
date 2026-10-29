@@ -53,8 +53,8 @@ outermost one:
 ```python
 from doeff import do, run
 from doeff_core_effects import Ask, Get, Put, ReadWriterLog, Tell
-from doeff_core_effects.handlers import reader, state, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import reader, state, writer
+from doeff_core_effects import scheduled
 
 
 @do
@@ -101,10 +101,10 @@ from pathlib import Path
 
 from doeff import do, run
 from doeff_core_effects.file_effects import FileFailed, MemoryFile, MemoryFiles, ReadText
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 from doeff_core_effects.memory_file import memory_file_handler
 from doeff_core_effects.os_file import os_file_handler
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 @do
@@ -134,8 +134,8 @@ several:
 ```python
 from doeff import do, run
 from doeff_core_effects import Tell
-from doeff_core_effects.handlers import state, writer
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import state, writer
+from doeff_core_effects import Gather, Spawn, scheduled
 
 
 @do
@@ -168,8 +168,8 @@ A program writes only its success path. `Absent(why)` says "there is no value" a
 ```python
 from doeff import do, run
 from doeff_core_effects import Absent
-from doeff_core_effects.outcomes import maybe, result
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import maybe, result
+from doeff_core_effects import scheduled
 
 USERS = {"ada": 36}
 
@@ -200,7 +200,7 @@ program:
 from dataclasses import dataclass
 
 from doeff import EffectBase, Pass, Resume, do, handler, run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 
 @dataclass(frozen=True)

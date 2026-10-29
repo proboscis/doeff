@@ -10,9 +10,9 @@
 (import typing [TYPE_CHECKING])
 (import functools [partial])
 (import queue [Queue])
-(import doeff_core_effects.effects [Await])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [Spawn Cancel])
+(import doeff_core_effects [Await])
+(import doeff_core_effects [state])
+(import doeff_core_effects [Spawn Cancel])
 (import doeff_core_effects.http_server_effects [HttpHeader])
 (import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect ReadWsSent WsLink WsConnectFailed WsConnectOutcome WsText
                                               WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome WsScript ScriptedWsEndpoint ScriptedWsReply

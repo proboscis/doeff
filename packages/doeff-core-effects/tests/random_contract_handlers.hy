@@ -8,7 +8,7 @@
 (require doeff-hy.macros [defk <- val])
 (import functools [partial])
 (import doeff [Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.os_random [os-random-handler])
 (import doeff_core_effects.seeded_random [seeded-random-handler])
 

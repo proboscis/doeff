@@ -37,7 +37,7 @@ VM_INVARIANT_CHECKS_INI = "vm_invariant_checks"
 
 def _turn_vm_oracle_on(enabled: bool) -> None:
     """Make every VM run in this test session check its invariants after each step (R4)."""
-    from doeff_core_effects.handlers import vm_probe_handler
+    from doeff_core_effects import vm_probe_handler
 
     from doeff import SetInvariantChecks, run
 

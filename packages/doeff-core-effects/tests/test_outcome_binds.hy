@@ -1,5 +1,5 @@
 ;;; 答えの宣言と <- の変換(ADR-DOE-CORE-EFFECTS-003 段 2 — defeffect の :absent / :failure / :value と
-;;; doeff_core_effects.outcomes.open-bind)。
+;;; doeff_core_effects._outcomes.open-bind)。
 ;;;
 ;;;   * 宣言を持つ effect の <- は、成功と値を束ね、不在を Absent に、失敗を Raise(答え) に変えて呼び手のスコープで出す
 ;;;   * 同じ束ねの行は、呼び手が置いた境目の handler で意味を変えない(x はいつも成功の型)
@@ -18,9 +18,10 @@
 (import doeff.program [Resume Pass])
 (import doeff.result [Nothing Some])
 (import doeff [Call Err Ok WithHandlerType])
-(import doeff_core_effects.effects [Absent Raise])
-(import doeff_core_effects.outcomes [maybe result open-bind Outcomes])
-(import doeff_core_effects [outcomes])
+(import doeff_core_effects [Absent Raise])
+(import doeff_core_effects [maybe result]
+        doeff_core_effects._outcomes [open-bind Outcomes])
+(import doeff_core_effects [_outcomes :as outcomes])
 (import unittest [mock])
 
 

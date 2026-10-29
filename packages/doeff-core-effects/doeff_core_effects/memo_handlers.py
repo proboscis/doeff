@@ -23,7 +23,7 @@ from doeff_core_effects.memo_effects import (
     MemoPutEffect,
 )
 from doeff_core_effects.memo_policy import RecomputeCost
-from doeff_core_effects.storage import DurableStorage, InMemoryStorage, SQLiteStorage
+from doeff_core_effects._storage import DurableStorage, InMemoryStorage, SQLiteStorage
 
 MemoKeyFn: TypeAlias = Callable[[object], str]
 
@@ -194,7 +194,7 @@ def make_memo_rewriter(
         key_fn: Function to compute storage key from effect.
         recompute_cost: Cost tier for routing (CHEAP -> ephemeral, EXPENSIVE -> durable).
     """
-    from doeff_core_effects.effects import Slog
+    from doeff_core_effects._effects import Slog
     from doeff_core_effects.memo_policy import MemoPolicy
 
     if isinstance(recompute_cost, str):

@@ -8,7 +8,7 @@ from aiohttp import WSMsgType as WSMsgType
 from aiohttp import ClientWSTimeout as ClientWSTimeout
 from doeff import EffectBase as EffectBase
 from doeff import Program as Program
-from doeff_core_effects.effects import Await as Await
+from doeff_core_effects._effects import Await as Await
 from doeff_core_effects.http_server_effects import HttpHeader as HttpHeader
 from doeff_core_effects.ws_client_effects import WsConnect as WsConnect
 from doeff_core_effects.ws_client_effects import WsReceive as WsReceive

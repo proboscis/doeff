@@ -10,13 +10,13 @@ from urllib.request import Request, urlopen
 
 import psycopg
 import pytest
+from doeff_core_effects import scheduled
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
 from doeff_core_effects.postgres_sql import (
     PostgresConnections,
     PostgresDatabase,
     postgres_sql_handler,
 )
-from doeff_core_effects.scheduler import scheduled
 from doeff_time import SimClock, sim_time_handler
 from test_pooled_writer_admission import DSN, AcquireObserver
 

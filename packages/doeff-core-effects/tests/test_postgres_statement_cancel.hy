@@ -17,7 +17,7 @@
 (import doeff_core_effects.offloaded_call [ThreadPerCall])
 (import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase offloaded-statement])
 (import doeff_core_effects.sql_effects [SqlRows])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn Cancel TaskCancelledError])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn Cancel TaskCancelledError])
 
 (val DB "store")
 ;; database ごとの許可の数(record の要求用の名と同じ 4 本)と、同時に来る読みの数。

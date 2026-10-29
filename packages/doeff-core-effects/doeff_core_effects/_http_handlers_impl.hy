@@ -34,9 +34,9 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
 (import doeff.program [ProgramHandler])
-(import doeff_core_effects.effects [Await HttpRequest HttpResponse SlogEffect slog])
+(import doeff_core_effects._effects [Await HttpRequest HttpResponse SlogEffect slog])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpPhases])
-(import doeff_core_effects.scheduler [AcquireSemaphore CreateSemaphore ReleaseSemaphore Semaphore])
+(import doeff_core_effects._scheduler [AcquireSemaphore CreateSemaphore ReleaseSemaphore Semaphore])
 
 
 (defn _failure-detail [error]

@@ -11,9 +11,9 @@
 (import time)
 (import dataclasses [dataclass])
 (import doeff [with_handlers EffectBase Program])
-(import doeff_core_effects.scheduler [Spawn Wait Cancel TaskCancelledError])
-(import doeff_core_effects.effects [Try])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [Spawn Wait Cancel TaskCancelledError])
+(import doeff_core_effects [Try])
+(import doeff_core_effects [await-handler])
 (import doeff_time [Delay async-time-handler])
 (import doeff_core_effects.apart_call [ApartClosed run-apart])
 

@@ -32,8 +32,8 @@
 (import dataclasses [dataclass replace])
 (import decimal [Decimal])
 (import doeff [Program])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.effects [Get Put])
+(import doeff_core_effects [state])
+(import doeff_core_effects [Get Put])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SetSqlOutage SqlParam SqlRows
                                         SqlFailed SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex
                                         normalized-value normalized-rows split-statement])
@@ -42,7 +42,7 @@
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
                                          postgres-schema-statements PostgresDatabase PostgresConnections PostgresTimeouts])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
-(import doeff_core_effects.scheduler [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
 (import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
                                                 clickhouse-insert-request clickhouse-kill-request clickhouse-waits clickhouse-answer
                                                 clickhouse-rows clickhouse-written-rows clickhouse-failure clickhouse-schema-statements
@@ -1411,7 +1411,7 @@
   "transaction の途中の task を残して終わる run を 1 つ走らせ切り、その後の接続の貸し出しを返すため。answerer-of = 接続の貸し出し → 答え手の組。"
   (import warnings)
   (import doeff [run with_handlers])
-  (import doeff_core_effects.scheduler [scheduled])
+  (import doeff_core_effects [scheduled])
   (setv connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
   (defn #^ str ask []  ; defk にできない: 別の thread で走らせ切る run の本体
     (with [_ (warnings.catch-warnings)]
@@ -1451,7 +1451,7 @@
   (import psycopg)
   (import uuid)
   (import doeff [run with_handlers])
-  (import doeff_core_effects.scheduler [scheduled])
+  (import doeff_core_effects [scheduled])
   (setv marker (.format "doeff_terminate_{}" (. (uuid.uuid4) hex))
         connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1)
         answers [])

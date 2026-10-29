@@ -11,11 +11,11 @@ from doeff import with_handlers as with_handlers
 from doeff.program import handler as raw_handler
 from doeff import PyVM as PyVM
 from collections.abc import Callable as Callable
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
-from doeff_core_effects.scheduler import TaskCancelledError as TaskCancelledError
-from doeff_core_effects.handlers import try_handler as try_handler
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import Wait as Wait
+from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._handlers import try_handler as try_handler
 
 class ApartClosed(Exception):
     ...

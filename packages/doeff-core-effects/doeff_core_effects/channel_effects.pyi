@@ -4,7 +4,7 @@ from collections import deque as deque
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import EffectBase as EffectBase
-from doeff_core_effects.scheduler import Promise as Promise
+from doeff_core_effects._scheduler import Promise as Promise
 
 @dataclass(eq=False)
 class Channel:

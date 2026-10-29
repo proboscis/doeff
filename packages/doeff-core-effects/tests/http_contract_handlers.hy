@@ -17,7 +17,7 @@
 (import tempfile)
 (import httpx)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-fixture-handler http-production-handler])
 
 (val PRODUCTION "http-production")

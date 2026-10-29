@@ -10,7 +10,7 @@
 (import functools [partial])
 (import itertools [count])
 (import doeff [Program with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.process_latest [process-latest-handler])
 (import doeff_core_effects.memory_latest [memory-latest-handler])
 

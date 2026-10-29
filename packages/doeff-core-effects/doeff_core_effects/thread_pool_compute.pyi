@@ -6,9 +6,9 @@ from concurrent.futures import Executor as Executor
 from concurrent.futures import Future as Future
 from doeff import Program as Program
 from doeff import PyVM as PyVM
-from doeff_core_effects.scheduler import CreateExternalPromise as CreateExternalPromise
-from doeff_core_effects.scheduler import ExternalPromise as ExternalPromise
-from doeff_core_effects.scheduler import Wait as Wait
+from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
+from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
+from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects.compute_effects import Compute as Compute
 from doeff_core_effects.compute_effects import ComputeLoad as ComputeLoad
 from doeff_core_effects.compute_effects import ReadComputeLoad as ReadComputeLoad

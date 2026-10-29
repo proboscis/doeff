@@ -8,7 +8,7 @@
 (import sqlite3)
 (import pathlib [Path])
 (import pytest)
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
                                         SqlUnreachable SqlTable SqlColumn SqlColumnType])
 (import doeff_core_effects.sqlite_file_sql [SqliteFile open-sqlite-files close-sqlite-files sqlite-file-sql-handler])

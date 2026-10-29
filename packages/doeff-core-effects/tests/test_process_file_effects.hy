@@ -19,8 +19,8 @@
 (import typing [TypeVar])
 (import doeff [run with_handlers Program])
 (import doeff [UnhandledEffect])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled Spawn Wait])
 (import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess WorkingDirectory ReadMachineName ReadEnvironment])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadDiskFree
                                          ReadText ReadBytes WriteText WriteBytes AppendText MakeDirectory ListDirectory WalkTree StatTree CopyFile

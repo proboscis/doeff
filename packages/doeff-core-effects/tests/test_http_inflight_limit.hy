@@ -15,12 +15,12 @@
 (import random)
 (import httpx)
 (import pytest)
-(import doeff_core_effects.effects [Await])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [Await])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects._http_handlers_impl [CLIENT-MAX-CONNECTIONS CLIENT-ORIGIN-MAX-IN-FLIGHT http-client-factory _sent-or-reaped])
-(import doeff_core_effects.scheduler [Cancel Gather Spawn])
+(import doeff_core_effects [Cancel Gather Spawn])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)。
 (val pytestmark pytest.mark.realtime)
