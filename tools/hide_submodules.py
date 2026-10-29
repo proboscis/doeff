@@ -787,9 +787,9 @@ def _hy_head(node: HyNode) -> str | None:
 
 
 def _hy_mangle(text: str) -> str:
-    """Hy で書いた名を Python の名へ(``a-b.c?`` -> ``a_b.hyx_cXquestion_markX``)。"""
+    """Hy で書いた名を Python の名へ(``a-b.c?`` -> ``a_b.hyx_cXquestion_markX``)。相対の import の頭の ``.`` は残す。"""
     hy = importlib.import_module("hy")
-    return ".".join(str(hy.mangle(part)) for part in text.split("."))
+    return ".".join(str(hy.mangle(part)) if part else "" for part in text.split("."))
 
 
 def _hy_spans(parsed: HyText) -> Spans:
