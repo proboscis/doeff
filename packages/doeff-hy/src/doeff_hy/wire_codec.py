@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy.wire_codec -> doeff_hy._wire_codec
+# moved-submodule-shim-names doeff_hy.wire_codec:
+#   Codec codec_of row_codec_of
 """Moved: ``doeff_hy.wire_codec`` is now ``doeff_hy._wire_codec`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

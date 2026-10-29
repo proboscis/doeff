@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_flow.handlers -> doeff_flow._handlers
+# moved-submodule-shim-names doeff_flow.handlers:
+#   MockTraceRecorder ProductionTraceRecorder mock_handlers production_handlers trace_files_handler
+# moved-submodule-shim-names doeff_flow.handlers.files:
+#   trace_files_handler
+# moved-submodule-shim-names doeff_flow.handlers.production:
+#   ProductionTraceRecorder ProtocolHandler production_handlers
+# moved-submodule-shim-names doeff_flow.handlers.testing:
+#   MockTraceRecorder ProtocolHandler mock_handlers
 """Moved: ``doeff_flow.handlers`` is now ``doeff_flow._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,17 @@
 # moved-submodule-shim: doeff_gemini.effects -> doeff_gemini._effects
+# moved-submodule-shim-names doeff_gemini.effects:
+#   GeminiCalculateCost GeminiChat GeminiEmbedding GeminiImageEdit GeminiStreamingChat
+#   GeminiStructuredOutput ImageEdit ImageGenerate
+# moved-submodule-shim-names doeff_gemini.effects.chat:
+#   GeminiChat GeminiStreamingChat
+# moved-submodule-shim-names doeff_gemini.effects.cost:
+#   GeminiCalculateCost
+# moved-submodule-shim-names doeff_gemini.effects.embedding:
+#   GeminiEmbedding
+# moved-submodule-shim-names doeff_gemini.effects.image:
+#   GeminiImageEdit
+# moved-submodule-shim-names doeff_gemini.effects.structured:
+#   GeminiStructuredOutput
 """Moved: ``doeff_gemini.effects`` is now ``doeff_gemini._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

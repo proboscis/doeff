@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_agents.io_effects -> doeff_agents._io_effects
+# moved-submodule-shim-names doeff_agents.io_effects:
+#   AppendText CopyFile EnvValue HomePath ListDir MakeDirs MonotonicTime PathExists ProcessId
+#   ReadText SpawnDetached StartSessionHost TempRoot TouchFile UnixConnectProbe UnixLineRequest
+#   WhichExecutable WriteText append_text copy_file env_value executable_at home_path list_dir
+#   make_dirs monotonic_time path_exists process_id read_text run_process spawn_detached temp_root
+#   touch_file unix_connect_probe unix_line_request which_executable write_text
 """Moved: ``doeff_agents.io_effects`` is now ``doeff_agents._io_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

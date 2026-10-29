@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_agentic.cli -> doeff_agentic._cli
+# moved-submodule-shim-names doeff_agentic.cli:
+#   AgentStatus AgenticAPI WorkflowStatus attach cli console env env_cleanup env_list logs ps send
+#   show stop tui watch
 """Moved: ``doeff_agentic.cli`` is now ``doeff_agentic._cli`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

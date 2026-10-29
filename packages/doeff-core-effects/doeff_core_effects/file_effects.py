@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_core_effects.file_effects -> doeff_core_effects._file_effects
+# moved-submodule-shim-names doeff_core_effects.file_effects:
+#   AcquireLock AppendBytes AppendText Appended CompilePythonSources CopyFile CopyTree DirEntry
+#   DiskUsage EntryStat FileFailed LinkFile ListDirectory LockHeld MakeDirectory MakeSymlink
+#   MeasureTree MemoryFile MemoryFiles MemoryLink PathKind PathStat ReadBytes ReadDiskFree
+#   ReadDiskUsage ReadMemoryFiles ReadText ReleaseLock RemoveTree RenamePath SourceNotCompiled
+#   StatPath StatTree SyncDirectory TruncateFile WalkTree WriteBytes WriteText file_done
 """Moved: ``doeff_core_effects.file_effects`` is now ``doeff_core_effects._file_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_openai.embeddings -> doeff_openai._embeddings
+# moved-submodule-shim-names doeff_openai.embeddings:
+#   batch_embeddings cosine_similarity count_embedding_tokens create_embedding
+#   create_embedding_async get_openai_client get_single_embedding semantic_search track_api_call
 """Moved: ``doeff_openai.embeddings`` is now ``doeff_openai._embeddings`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

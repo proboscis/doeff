@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_agentic.exceptions -> doeff_agentic._exceptions
+# moved-submodule-shim-names doeff_agentic.exceptions:
+#   AgenticAmbiguousPrefixError AgenticDuplicateNameError AgenticEnvironmentInUseError
+#   AgenticEnvironmentNotFoundError AgenticError AgenticServerError AgenticSessionNotFoundError
+#   AgenticSessionNotRunningError AgenticTimeoutError AgenticUnsupportedOperationError
+#   AgenticWorkflowNotFoundError
 """Moved: ``doeff_agentic.exceptions`` is now ``doeff_agentic._exceptions`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

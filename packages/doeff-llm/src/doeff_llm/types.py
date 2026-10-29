@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_llm.types -> doeff_llm._types
+# moved-submodule-shim-names doeff_llm.types:
+#   CostInfo Message TokenUsage
 """Moved: ``doeff_llm.types`` is now ``doeff_llm._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

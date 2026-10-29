@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_core_effects.scripted_freeze -> doeff_core_effects._scripted_freeze
+# moved-submodule-shim-names doeff_core_effects.scripted_freeze:
+#   CollectAndFreeze MODULE_TAGS scripted_freeze_handler
 """Moved: ``doeff_core_effects.scripted_freeze`` is now ``doeff_core_effects._scripted_freeze`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

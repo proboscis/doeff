@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_notify.effects -> doeff_notify._effects
+# moved-submodule-shim-names doeff_notify.effects:
+#   Acknowledge NotificationEffectBase Notify NotifyThread
+# moved-submodule-shim-names doeff_notify.effects.notify:
+#   Acknowledge NotificationEffectBase Notify NotifyThread
 """Moved: ``doeff_notify.effects`` is now ``doeff_notify._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

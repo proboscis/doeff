@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_agentic.handler -> doeff_agentic._handler
+# moved-submodule-shim-names doeff_agentic.handler:
+#   agentic_effectful_handlers with_agentic_effectful_handlers
 """Moved: ``doeff_agentic.handler`` is now ``doeff_agentic._handler`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

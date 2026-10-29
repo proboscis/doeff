@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.memo_effects -> doeff_core_effects._memo_effects
+# moved-submodule-shim-names doeff_core_effects.memo_effects:
+#   Lifecycle MemoDelete MemoDeleteEffect MemoExists MemoExistsEffect MemoGet MemoGetEffect
+#   MemoPolicy MemoPut MemoPutEffect RecomputeCost ensure_memo_policy
 """Moved: ``doeff_core_effects.memo_effects`` is now ``doeff_core_effects._memo_effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

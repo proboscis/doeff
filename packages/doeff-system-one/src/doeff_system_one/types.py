@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_system_one.types -> doeff_system_one._types
+# moved-submodule-shim-names doeff_system_one.types:
+#   Answer IMAGE_FORMATS Image JudgeError JudgeUsageLimited KINDS Kind Question Verdict
+#   answer_choice answer_noul answer_score choice noul score
 """Moved: ``doeff_system_one.types`` is now ``doeff_system_one._types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
