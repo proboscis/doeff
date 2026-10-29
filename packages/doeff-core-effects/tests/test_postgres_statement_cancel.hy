@@ -14,8 +14,8 @@
 (import threading)
 (import queue [Queue])
 (import concurrent.futures [Future])
-(import doeff_core_effects._offloaded_call [ThreadPerCall])
-(import doeff_core_effects.postgres_sql [PostgresConnections PostgresDatabase offloaded-statement])
+(import doeff_core_effects._offloaded_call [ReusedThreads])
+(import doeff_core_effects.postgres_sql [DRIVER-THREADS PostgresConnections PostgresDatabase offloaded-statement])
 (import doeff_core_effects.sql_effects [SqlRows])
 (import doeff_core_effects [CreateExternalPromise Wait Spawn Cancel TaskCancelledError])
 
@@ -77,21 +77,21 @@
     (.tick self.returned)))
 
 
-(defclass HoldingFirstCall [ThreadPerCall]
-  "渡された仕事を ThreadPerCall と同じく thread で回し、1 つ目の仕事(文 1 つの借りと文と返却の仕事)だけは始めずに持つ Executor(検の殻 —
+(defclass HoldingFirstCall [ReusedThreads]
+  "渡された仕事を ReusedThreads と同じく thread で回し、1 つ目の仕事(文 1 つの借りと文と返却の仕事)だけは始めずに持つ Executor(検の殻 —
    資源なので値の型ではない)。持った時に、持った Future で holding を完了させる。持った仕事は走らない。"
 
   (deff __init__ [self holding]  ; defk にできない: 検の殻の資源の初期化
     {:pre [(: self HoldingFirstCall) (: holding "scheduler の ExternalPromise")] :post [(: % None)]}
-    "持った事を知らせる promise を受け、他の仕事を回す ThreadPerCall の欄(on-start)も置くため。"
-    (ThreadPerCall.__init__ self)
+    "持った事を知らせる promise を受け、他の仕事を回す ReusedThreads の欄も置くため。"
+    (ReusedThreads.__init__ self)
     (setv self.holding holding
           self.lock (threading.Lock)
           self.calls 0))
 
   (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
     {:pre [(: self HoldingFirstCall) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "1 つ目の仕事だけを始めない Future にして持ち、他は ThreadPerCall と同じく回すため。"
+    "1 つ目の仕事だけを始めない Future にして持ち、他は ReusedThreads と同じく回すため。"
     (with [_ self.lock]
       (setv self.calls (+ self.calls 1)
             nth self.calls))
@@ -99,25 +99,25 @@
       1 (do (setv held (Future))
             (.complete self.holding held)
             held)
-      _ (ThreadPerCall.submit self call #* args))))
+      _ (ReusedThreads.submit self call #* args))))
 
 
-(defclass CountingPool [ThreadPerCall]
-  "渡された仕事を ThreadPerCall と同じく thread で回し、渡された仕事の数を数える Executor(検の殻 — 資源なので値の型ではない)。"
+(defclass CountingPool [ReusedThreads]
+  "渡された仕事を ReusedThreads と同じく thread で回し、渡された仕事の数を数える Executor(検の殻 — 資源なので値の型ではない)。"
 
   (deff __init__ [self]  ; defk にできない: 検の殻の資源の初期化
     {:pre [(: self CountingPool)] :post [(: % None)]}
-    "数える欄と、他の仕事を回す ThreadPerCall の欄(on-start)を置くため。"
-    (ThreadPerCall.__init__ self)
+    "数える欄と、他の仕事を回す ReusedThreads の欄を置くため。"
+    (ReusedThreads.__init__ self)
     (setv self.lock (threading.Lock)
           self.calls 0))
 
   (deff submit [self call #* args]  ; defk にできない: Executor の口(concurrent.futures の約束 — VM の外)
     {:pre [(: self CountingPool) (: call "(引数) → 値 の callable") (: args tuple)] :post [(: % Future)]}
-    "渡された仕事を数えてから ThreadPerCall と同じく回すため。"
+    "渡された仕事を数えてから ReusedThreads と同じく回すため。"
     (with [_ self.lock]
       (setv self.calls (+ self.calls 1)))
-    (ThreadPerCall.submit self call #* args)))
+    (ReusedThreads.submit self call #* args)))
 
 
 (defk read-on [lease stalls stall ran]
@@ -133,7 +133,7 @@
 
 
 (defk spawned-reads [connections pool work count]
-  {:pre [(: connections PostgresConnections) (: pool ThreadPerCall) (: work "(札) → Program の callable") (: count int)]
+  {:pre [(: connections PostgresConnections) (: pool ReusedThreads) (: work "(札) → Program の callable") (: count int)]
    :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
   "読みの要求を count 件、それぞれ別の task で offloaded-statement に渡すため(答え = task の並び)。"
@@ -176,7 +176,7 @@
   ;; 揃う = 12 件が借りに来て、最初の 4 件の文が止まった(残り 8 件は許可を待っている)。
   (val arrivals (Countdown (+ READS PERMITS) (fn [] (.complete ready None))))
   (val connections (StalledConnections arrivals cancelled (Countdown READS (fn [] (.complete settled None)))))
-  (<- tasks (spawned-reads connections (ThreadPerCall) (fn [lease] (read-on lease arrivals stall ran)) READS))
+  (<- tasks (spawned-reads connections (ReusedThreads) (fn [lease] (read-on lease arrivals stall ran)) READS))
   (<- (within ready "12 件の借りと 4 件の止まった文"))
   ;; t=10: 要求の上限で 12 件とも取り消す。
   (.set cancelled)
@@ -233,3 +233,19 @@
   (<- (within settled "借りた接続の返却"))
   (assert (= pool.calls 1) (.format "文 1 つの pool の仕事が {} 個" pool.calls))
   (assert (= (len (tuple ran.queue)) 1) (tuple ran.queue)))
+
+
+(deftest test-statements-in-a-row-reuse-one-thread
+  ;; 続けて流す文は、前の文の仕事を回した thread を使い回し、文ごとに thread を起こさない(agora card ki-8fc4f9017572 — 起こす待ちが
+  ;; 預かり所の普段の CPU の 2 割だった)。postgres-sql-handler の Executor もこの形。
+  (val statements 20)
+  (val stall (threading.Event))
+  (.set stall)
+  (val ran (Queue))
+  (val connections (StalledConnections (Countdown statements (fn [] None)) (threading.Event) (Countdown statements (fn [] None))))
+  (val pool (ReusedThreads))
+  (for [_ (range statements)]
+    (<- (offloaded-statement connections pool DB (fn [lease] (read-on lease (Countdown 1 (fn [] None)) stall ran)))))
+  (assert (= (len (tuple ran.queue)) statements) (tuple ran.queue))
+  (assert (= pool.started 1) (.format "文 {} 個に thread を {} 本起こした" statements pool.started))
+  (assert (isinstance DRIVER-THREADS ReusedThreads) DRIVER-THREADS))
