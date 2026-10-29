@@ -48,4 +48,4 @@
 | VM / VM core / test-target / 旧agentd | [tooling](doeff-tooling.md)（本文にコード） | 内部基盤・検証用・廃止済みを区別。利用者向け機能や未対応APIとして宣伝しない |
 | Rust VM・Python generator・Resume / Transfer / Pass | [VM](doeff-vm.md)・[完全な例](examples/vm_walkthrough.py) | PythonとRustの境界、1回だけの継続、ハンドラ探索と再開を検証 |
 | ハンドラ合成・順序・下位effectへの翻訳 | [ハンドラ合成](doeff-handlers.md)・[完全な例](examples/handler_composition.py) | 順序による88/90の違い、Pass、局所適用、状態と時間への翻訳を検証 |
-| coroutine・awaitable・TaskとProgramの違い | [coroutine比較](doeff-coroutines.md)・[完全な例](examples/coroutine_comparison.py) | 同じ挨拶、ハンドラの差し替え、子Program、coroutineの再利用の失敗、Listenで数えた1断片ずつ5回と丸ごと1回のAwaitを検証 |
+| coroutine・awaitable・TaskとProgramの違い | [coroutine比較](doeff-coroutines.md)・[完全な例](../../examples/yield_and_async/README.md) | 同じ挨拶、awaitの要求の行き先(Task got bad yield)、部分ごとのハンドラと出し直し、kを再開しない答え、SpawnとGather、coroutineの再利用の失敗とProgramの再実行、Listenで数えた1断片ずつ5回と丸ごと1回のAwaitを検証 |

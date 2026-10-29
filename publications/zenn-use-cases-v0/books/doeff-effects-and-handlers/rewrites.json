@@ -41,8 +41,8 @@
   ],
   "doeff-coroutines.md": [
     {
-      "from": "次の10本目では、設計で決めた約束を、doeffのテストとして走らせます。",
-      "to": "設計で決めた約束を、doeffのテストとして走らせる話は、[章](doeff-adr.md)で書きます。"
+      "from": "[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを",
+      "to": "[章](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを"
     }
   ],
   "doeff-adr.md": [

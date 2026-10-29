@@ -44,7 +44,6 @@ OFFLINE = (
     "scheduler_coordination",
     "vm_walkthrough",
     "handler_composition",
-    "coroutine_comparison",
     "color_comparison",
     "rule_hook",
     "backtest",

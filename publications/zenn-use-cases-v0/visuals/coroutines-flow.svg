@@ -1,87 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 950" width="1200" height="1900">
-  <style>
-    text { font-family: "IPAPGothic", "IPAGothic", "Noto Sans CJK JP", sans-serif; fill: #1b2a4a; }
-    .title { font-size: 25px; font-weight: bold; }
-    .sub { font-size: 19px; fill: #4a5878; }
-    .head { font-size: 21px; font-weight: bold; }
-    .body { font-size: 19px; }
-    .muted { font-size: 18px; fill: #4a5878; }
-    .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 17px; }
-    .name { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; font-size: 18px; font-weight: bold; }
-    .flow { stroke: #0e7c86; stroke-width: 3.5; fill: none; }
-    .answer { stroke: #0e7c86; stroke-width: 3.5; fill: none; stroke-dasharray: 9 7; }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1140" viewBox="0 0 1080 1140">
+  <!-- run(ada(titled(twice())))で、1つ目のReadNameが進む道(英語の記事の2枚目のsequenceDiagramの訳)。 -->
   <defs>
-    <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#0e7c86"/>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
     </marker>
+    <style>
+      .ja { font-family: "IPAGothic", sans-serif; fill: #1f2d4d; }
+      .code { font-family: "DejaVu Sans Mono", "IPAGothic", monospace; fill: #1f2d4d; }
+      .life { stroke: #9aa7c0; stroke-width: 4; stroke-dasharray: 14 12; }
+      .call { stroke: #0f8b8d; stroke-width: 7; fill: none; }
+      .back { stroke: #0f8b8d; stroke-width: 7; fill: none; stroke-dasharray: 18 12; }
+    </style>
   </defs>
-  <rect width="600" height="950" fill="#ffffff"/>
+  <rect width="1080" height="1140" fill="#ffffff"/>
 
-  <text class="title" x="300" y="44" text-anchor="middle">ストリームは、1断片ずつdoeffへ戻す</text>
-  <text class="sub" x="300" y="76" text-anchor="middle">収集のループは@doに残し、待つ1操作だけをAwaitにする</text>
+  <text class="ja" x="540" y="76" font-size="42" font-weight="bold" text-anchor="middle">titledが、ReadNameを外のadaへ出し直す</text>
 
-  <!-- 外側: 待ちに答える役と、非同期の入力 -->
-  <rect x="30" y="96" width="255" height="80" rx="12" fill="#efeafb" stroke="#b6a6e6" stroke-width="2"/>
-  <text class="name" x="46" y="128">await_handler()</text>
-  <text class="body" x="46" y="158">裏のasyncioのループ</text>
-  <rect x="315" y="96" width="255" height="80" rx="12" fill="#efeafb" stroke="#b6a6e6" stroke-width="2"/>
-  <text class="head" x="331" y="128">非同期イテレータ</text>
-  <text class="body" x="331" y="158">SDKの代わり(4断片)</text>
-  <path class="flow" d="M287,136 H311" marker-end="url(#tip)"/>
+  <!-- 3つの参加者(内から外へ) -->
+  <rect x="40" y="130" width="300" height="130" rx="22" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
+  <text class="code" x="190" y="190" font-size="38" font-weight="bold" text-anchor="middle">greet</text>
+  <text class="ja" x="190" y="238" font-size="30" text-anchor="middle">(1回目の呼び出し)</text>
+  <rect x="390" y="130" width="300" height="130" rx="22" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="code" x="540" y="190" font-size="38" font-weight="bold" text-anchor="middle">titled</text>
+  <text class="ja" x="540" y="238" font-size="30" text-anchor="middle">(間のハンドラ)</text>
+  <rect x="740" y="130" width="300" height="130" rx="22" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
+  <text class="code" x="890" y="190" font-size="38" font-weight="bold" text-anchor="middle">ada</text>
+  <text class="ja" x="890" y="238" font-size="30" text-anchor="middle">(外のハンドラ)</text>
 
-  <!-- @do collect_chunks のループ(見出しは枠の下に置き、矢印と重ねない) -->
-  <rect x="30" y="216" width="540" height="368" rx="14" fill="#e9f1fc" stroke="#9db8e0" stroke-width="2"/>
+  <line class="life" x1="190" y1="260" x2="190" y2="900"/>
+  <line class="life" x1="540" y1="260" x2="540" y2="900"/>
+  <line class="life" x1="890" y1="260" x2="890" y2="900"/>
 
-  <path class="flow" d="M150,262 V180" marker-end="url(#tip)"/>
-  <text class="code" x="160" y="204">Await</text>
-  <path class="answer" d="M440,180 V260" marker-end="url(#tip)"/>
-  <text class="body" x="428" y="204" text-anchor="end">1断片か、終わりのNone</text>
+  <!-- ① greetが止まり、ReadNameがいちばん内側のtitledへ -->
+  <text class="code" x="365" y="338" font-size="30" text-anchor="middle">① yield ReadName()</text>
+  <line class="call" x1="200" y1="362" x2="526" y2="362" marker-end="url(#arrow)"/>
+  <text class="ja" x="365" y="412" font-size="32" text-anchor="middle">kとして止まる</text>
 
-  <rect x="50" y="264" width="500" height="56" rx="10" fill="#ffffff" stroke="#9db8e0" stroke-width="2"/>
-  <text class="code" x="66" y="298">chunk = yield Await(anext(iterator, None))</text>
+  <!-- ② titledが同じエフェクトを出し直す -->
+  <text class="code" x="715" y="488" font-size="32" text-anchor="middle">② yield effect</text>
+  <line class="call" x1="550" y1="512" x2="876" y2="512" marker-end="url(#arrow)"/>
+  <text class="ja" x="715" y="562" font-size="32" text-anchor="middle">1つ外へ出し直す</text>
 
-  <path class="flow" d="M300,322 V352" marker-end="url(#tip)"/>
-  <rect x="180" y="356" width="240" height="56" rx="10" fill="#fff7e6" stroke="#e0b25a" stroke-width="2"/>
-  <text class="code" x="300" y="390" text-anchor="middle">chunk is None ?</text>
+  <!-- ③ adaが答える -->
+  <text class="code" x="715" y="638" font-size="32" text-anchor="middle">③ "Ada"</text>
+  <line class="back" x1="880" y1="662" x2="554" y2="662" marker-end="url(#arrow)"/>
+  <text class="ja" x="715" y="712" font-size="32" text-anchor="middle">titledが受け取る</text>
 
-  <path class="flow" d="M180,384 H110 V446" marker-end="url(#tip)"/>
-  <text class="body" x="118" y="432">いいえ</text>
-  <path class="flow" d="M420,384 H490 V446" marker-end="url(#tip)"/>
-  <text class="body" x="498" y="432">はい</text>
+  <!-- ④ titledがkを再開する -->
+  <text class="code" x="362" y="788" font-size="26" text-anchor="middle">④ Resume(k, "Dr. Ada")</text>
+  <line class="back" x1="530" y1="812" x2="204" y2="812" marker-end="url(#arrow)"/>
+  <text class="ja" x="365" y="862" font-size="32" text-anchor="middle">greetの続きが進む</text>
 
-  <rect x="50" y="450" width="230" height="80" rx="10" fill="#ffffff" stroke="#9db8e0" stroke-width="2"/>
-  <text class="code" x="66" y="480">text += chunk</text>
-  <text class="muted" x="66" y="510">空の文字列も断片</text>
-  <path class="flow" d="M50,500 H40 V292 H46" marker-end="url(#tip)"/>
-
-  <rect x="320" y="450" width="230" height="80" rx="10" fill="#ffffff" stroke="#9db8e0" stroke-width="2"/>
-  <text class="code" x="336" y="480">return text</text>
-  <text class="muted" x="336" y="510">つないだ本文を返す</text>
-
-  <text class="head" x="50" y="568">@do collect_chunks のループ</text>
-
-  <!-- 呼び出し元と結果 -->
-  <path class="answer" d="M435,532 V618" marker-end="url(#tip)"/>
-  <rect x="320" y="622" width="250" height="80" rx="12" fill="#ffffff" stroke="#9db8e0" stroke-width="2"/>
-  <text class="name" x="336" y="652">introduction</text>
-  <text class="body" x="336" y="682">前後の空白を除く</text>
-  <path class="answer" d="M318,662 H306" marker-end="url(#tip)"/>
-  <rect x="30" y="622" width="272" height="80" rx="12" fill="#fff7e6" stroke="#e0b25a" stroke-width="2"/>
-  <text class="head" x="46" y="652">結果</text>
-  <text class="code" x="46" y="682">"はじめに、doeff"</text>
-
-  <!-- Listenで数えた待ち -->
-  <rect x="30" y="726" width="540" height="160" rx="14" fill="#e4f5ee" stroke="#8fcfb3" stroke-width="2"/>
-  <text class="head" x="50" y="758">Listenで数えた、届いた待ちの依頼</text>
-  <text class="body" x="50" y="794">1断片ずつ待つ形:4断片+終わり=5回</text>
-  <text class="body" x="50" y="828">丸ごとasync defを包む形:1回</text>
-  <text class="muted" x="50" y="864">どちらも本文は同じ。数えても処理は変えない</text>
-
-  <!-- 凡例 -->
-  <text class="head" x="40" y="928" style="font-size:18px">凡例</text>
-  <path class="flow" d="M92,922 H140" marker-end="url(#tip)"/>
-  <text class="muted" x="148" y="928">進む・依頼する</text>
-  <path class="answer" d="M290,922 H338" marker-end="url(#tip)"/>
-  <text class="muted" x="346" y="928">値が戻る</text>
+  <rect x="40" y="930" width="1000" height="160" rx="24" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
+  <text class="ja" x="80" y="990" font-size="34" font-weight="bold">2回目の呼び出しは、近いgraceが答える</text>
+  <text class="code" x="80" y="1056" font-size="34">('Hello, Dr. Ada', 'Hello, Grace')</text>
 </svg>

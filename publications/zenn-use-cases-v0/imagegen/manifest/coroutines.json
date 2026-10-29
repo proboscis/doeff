@@ -5,11 +5,11 @@
     "generation_prompt": "coroutines-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "643ac6bc4c858dcb4c4b87779171cc7d877ab8637c42ccac3a33b08d606ad34f",
-    "width": 1200,
-    "height": 1760,
-    "bytes": 241623,
-    "review": "2026-10-17：9本目の改稿のコード（greet_async・read_name_async・greet・ReadName・hanako・taro・Resume(k, 値)）と名前・値・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+    "sha256": "026ee2194411dc3b76f333906e14a90ae53c4e82967a31238858d79e96941615",
+    "width": 1080,
+    "height": 1200,
+    "bytes": 105849,
+    "review": "2026-10-29：英語の2本目「Yield and async」の版に書き直した時に、英語の記事の1枚目のsequenceDiagramをSVGで描き直した。send(None)・await greet_async()・要求のyield・twice_asyncの素通りの順を、本文のdrive.pyの抜粋とRuntimeError: Task got bad yieldの印字に照合。携帯の幅でも字が読める大きさにした。"
   },
   {
     "id": "coroutines-flow",
@@ -17,10 +17,10 @@
     "generation_prompt": "coroutines-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "ab38f8a7b5e2614e7eff96814340c4c86e7237826289b1b33cd46f2301f61c26",
-    "width": 1200,
-    "height": 1900,
-    "bytes": 216006,
-    "review": "2026-10-17：9本目の改稿のコード（collect_chunks・Await(anext(iterator, None))・introduction・await_handler()・Listen）と値（はじめに、doeff・5回・1回）・矢印、携帯の幅で読める字の大きさを目視確認。白背景の平面図として採用。"
+    "sha256": "1a3cbe119f110fc8b8fb6e9801cfc8408fb29bb989d890afdbe5778f696f01cc",
+    "width": 1080,
+    "height": 1140,
+    "bytes": 96794,
+    "review": "2026-10-29：英語の2本目「Yield and async」の版に書き直した時に、英語の記事の2枚目のsequenceDiagramをSVGで描き直した。yield ReadName()・yield effect・\"Ada\"・Resume(k, \"Dr. Ada\")の順と、結果('Hello, Dr. Ada', 'Hello, Grace')を、本文のgreet.pyの抜粋と印字に照合。携帯の幅でも字が読める大きさにした。"
   }
 ]

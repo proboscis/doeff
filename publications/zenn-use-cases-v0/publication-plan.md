@@ -26,7 +26,7 @@
 | 6 | [外部APIのテストで通信するのをやめる](doeff-replay.md) | `doeff-offline-api-tests` | 遅く落ちる外部APIのテストを、保存した応答で通信せずに回す | 公開予定 |
 | 7 | [バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md) | `doeff-backtest-design` | 時刻と相場の入力をハンドラで差し替え、過去のデータと本番で同じ処理を動かす | 公開予定 |
 | 8 | [公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md) | `doeff-public-api-types` | 型の分からない公開の名を表にし、増えても減ってもテストを赤にする | 公開予定 |
-| 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | `async def`・`await`と`@do`・`yield`で、依頼の渡し先と再開の仕方を比べる | 公開予定 |
+| 9 | [async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md) | `doeff-yield-vs-async-await` | 英語の2本目「Yield and async」の版。`async def`・`await`と`@do`・`yield`で、要求の行き先と再開の仕方を比べる | 公開予定 |
 | 10 | [ADRを書いて終わりにするのをやめる](doeff-adr.md) | `doeff-executable-adr` | 設計の決まりが崩れないよう、例と規則を書いた設計の記録をテストとして走らせる | 公開予定 |
 
 ### AIエージェントの連載
