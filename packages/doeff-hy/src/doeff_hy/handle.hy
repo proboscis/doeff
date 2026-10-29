@@ -811,6 +811,17 @@
     True [`(annotate ~(effect-symbol) ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
 
 
+(defn _refuse-session-clauses [clauses]
+  "handle の節に session val / session var / 旧い lazy の宣言が在れば SyntaxError。defhandler の節として読ませると、
+   宣言の形が欄の並びの検めに当たり「handle clause fields must be [field1 ...]」の AssertionError になって、何を直すかが読めなかった。"
+  (for [c clauses]
+    (setv decl (parse-declaration c))
+    (when (or (and (is-not decl None) (= (. decl timing) Timing.SESSION)) (_is-lazy-clause c))
+      (raise (SyntaxError (+ "\nhandle: " (cut (hy.repr c) 1 None) " — handle は session val / session var を持たない。"
+                             "セッションの値は handler の名でキーを作るので、節を defhandler へ移して名を付け、"
+                             "(with-handler [名] body) で当てる。\n"))))))
+
+
 ;; ---------------------------------------------------------------------------
 ;; Public macros
 ;; ---------------------------------------------------------------------------
@@ -841,8 +852,14 @@
    被せる関数は、本文より前の文で一意の名(gensym)に束ねてから本文に当てる。Hy は本文の文の部分(`(do (f) prog)` の
    `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
    文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W
-   の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。"
+   の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。
+
+   節の文法は defhandler と同じ 1 つ(_build-handler-expr)で、出来る program は `((defhandler 名 節…) body)` と同じ答えを返す
+   (一度きりは handle・再利用は defhandler — 節を defhandler へ移して名を付けるだけ・card ki-fb1c0fb41ff5)。handler の直下の
+   session val / session var(と旧い lazy)は受けない: セッションの値は handler の名でキーを作る(doeff_hy.session.session_key)ので、
+   名を持つ defhandler に置く。"
   (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
+  (_refuse-session-clauses clauses)
   (setv specs [])
   (setv h-expr (_build-handler-expr clauses :module-names (_module-names _hy-compiler) :specs specs))
   (setv prelude [(_do-import)
