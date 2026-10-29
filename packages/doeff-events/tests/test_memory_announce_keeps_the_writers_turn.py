@@ -32,7 +32,7 @@ from doeff_core_effects.scheduler import (
     Wait,
     scheduled,
 )
-from doeff_events.effects.notices import (
+from doeff_events import (
     Announce,
     Announcement,
     BrokerUnreachable,
@@ -40,7 +40,7 @@ from doeff_events.effects.notices import (
     NextAnnouncement,
     SubscribeChannels,
 )
-from doeff_events.handlers.memory_notices import MemoryBroker, memory_notice_handler
+from doeff_events import MemoryBroker, memory_notice_handler
 
 from doeff import Program, Pure, do, run
 

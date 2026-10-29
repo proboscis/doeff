@@ -45,7 +45,7 @@
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
 (import doeff_core_effects.scheduler [Cancel CompletePromise CreateExternalPromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
-(import doeff_events.effects [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
+(import doeff_events [Publish PublishEffect SourceFailed SourceResumed SourceStalled WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [GetTime WaitWithin])
 (import doeff_time.effects.time [GetTimeEffect WaitWithinEffect])
 (import doeff_records.admission [key-text])

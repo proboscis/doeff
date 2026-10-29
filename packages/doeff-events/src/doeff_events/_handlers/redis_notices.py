@@ -1,4 +1,4 @@
-"""The notice broker on Redis: the lower layer of ``doeff_events.effects.notices`` answered by a Redis server's
+"""The notice broker on Redis: the lower layer of ``doeff_events._effects.notices`` answered by a Redis server's
 Pub/Sub (agora-redesign #3850).
 
 ``redis_notice_handler(url, timeout_seconds, silence_seconds)`` needs the optional dependency ``doeff-events[redis]``
@@ -82,7 +82,7 @@ from doeff_time.effects.time import DelayEffect, GetTimeEffect
 
 from doeff import K, Pass, Program, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.notices import (
+from doeff_events._effects.notices import (
     KEPT_REDELIVERY_SECONDS,
     AckAnnouncement,
     Announce,
@@ -95,7 +95,7 @@ from doeff_events.effects.notices import (
     ProbeBroker,
     SubscribeChannels,
 )
-from doeff_events.handlers._kept_readers import KeptReaders
+from doeff_events._handlers._kept_readers import KeptReaders
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Generator

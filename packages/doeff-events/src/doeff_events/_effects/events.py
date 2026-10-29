@@ -11,7 +11,7 @@ from doeff import EffectBase
 class StopArrived:
     """The stop signal came: ``reason`` is the stop reason ``AwaitStop`` answered.
 
-    A loop's one stop watcher (``doeff_events.event_loop.begin_watch``) publishes it on the loop's bus, so the loop
+    A loop's one stop watcher (``doeff_events._event_loop.begin_watch``) publishes it on the loop's bus, so the loop
     waits for its events and for the stop with one ``WaitForEvent`` (agora-redesign #3080's follow-up). A bus is
     shared only inside the reach of one stop signal (one job), so every loop on it stops on the same signal.
     ``subscribed_event_handler`` always subscribes it.

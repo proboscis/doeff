@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from doeff_events import EventBus, SourceStarted, subscribed_event_handler
-from doeff_events.effects.events import Publish, WaitForEvent
-from doeff_events.effects.notices import (
-    KEPT_REDELIVERY_SECONDS,
+from doeff_events import Publish, WaitForEvent
+from doeff_events import (
     AckAnnouncement,
     Announce,
     Announcement,
@@ -24,18 +23,10 @@ from doeff_events.effects.notices import (
     NextAnnouncement,
     SubscribeChannels,
 )
-from doeff_events.handlers.memory_notices import (
-    MemoryBroker,
-    cut_broker,
-    memory_notice_handler,
-    restore_broker,
-)
-from doeff_events.handlers.notice_events import (
-    MarkGap,
-    NoticeRoute,
-    NoticeSent,
-)
-from doeff_events.notice_laws import LawNote
+from doeff_events._effects.notices import KEPT_REDELIVERY_SECONDS
+from doeff_events import MemoryBroker, cut_broker, memory_notice_handler, restore_broker
+from doeff_events import MarkGap, NoticeRoute, NoticeSent
+from doeff_events._notice_laws import LawNote
 from doeff_time import GetTime
 from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, run_on_virtual_clock

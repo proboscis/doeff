@@ -45,7 +45,7 @@ from doeff_time import GetTime, WaitWithin
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
-from doeff_events.effects import (
+from doeff_events._effects import (
     ArmedTimer,
     ArmedTimersEffect,
     ArmTimerEffect,

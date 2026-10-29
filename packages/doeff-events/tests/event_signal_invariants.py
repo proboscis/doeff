@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Spawn, Wait
-from doeff_events.effects import Publish, WaitForEvent
+from doeff_events import Publish, WaitForEvent
 
 from doeff import do
 

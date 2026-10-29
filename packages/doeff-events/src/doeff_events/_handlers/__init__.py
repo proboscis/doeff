@@ -1,7 +1,7 @@
 """Event handler implementations."""
 
-from doeff_events.handlers.memory_files import MemoryFiles, announce_file_change, memory_file_watch_handler
-from doeff_events.handlers.memory_notices import (
+from doeff_events._handlers.memory_files import MemoryFiles, announce_file_change, memory_file_watch_handler
+from doeff_events._handlers.memory_notices import (
     MemoryBroker,
     cut_broker,
     hold_broker,
@@ -9,7 +9,7 @@ from doeff_events.handlers.memory_notices import (
     release_broker,
     restore_broker,
 )
-from doeff_events.handlers.notice_events import (
+from doeff_events._handlers.notice_events import (
     GAP_NOTICE,
     Drop,
     GapAnswer,
@@ -26,13 +26,13 @@ from doeff_events.handlers.notice_events import (
     broker_patience_handler,
     notice_events_handler,
 )
-from doeff_events.handlers.os_files import os_file_watch_handler
-from doeff_events.handlers.redis_notices import (
+from doeff_events._handlers.os_files import os_file_watch_handler
+from doeff_events._handlers.redis_notices import (
     BrokerConnectionsExhausted,
     broker_back_by_retry,
     redis_notice_handler,
 )
-from doeff_events.handlers.timer import timer_handler
+from doeff_events._handlers.timer import timer_handler
 
 from .memory import EventBus, SubscriberQueue, event_handler, subscribed_event_handler
 

@@ -58,7 +58,7 @@ from doeff_events import (
     subscribed_event_handler,
     timer_handler,
 )
-from doeff_events.effects import PublishEffect, WaitForEvent
+from doeff_events import PublishEffect, WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.admission import key_from_text, key_text
 from doeff_records.effects import AppendEvent, PutRow, ReadRow

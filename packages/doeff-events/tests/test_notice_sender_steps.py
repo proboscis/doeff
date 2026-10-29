@@ -28,8 +28,8 @@ from doeff_events import (
     notice_events_handler,
     subscribed_event_handler,
 )
-from doeff_events.effects import PublishEffect
-from doeff_events.handlers.memory_notices import MemoryBroker, memory_notice_handler
+from doeff_events import PublishEffect
+from doeff_events import MemoryBroker, memory_notice_handler
 
 from doeff import EffectGenerator, Program, do, run, with_handlers
 from doeff.program import ProgramHandler

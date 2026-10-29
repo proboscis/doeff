@@ -12,15 +12,15 @@ dependencies = [
     "doeff>=0.1.0",
     # The timer handler waits for its deadlines with doeff-time's WaitWithin (agora-redesign #3076).
     "doeff-time>=0.1.0",
-    # The event-loop macro (doeff_events/macros.hy) expands to doeff-hy's <- and do! (agora-redesign #3080).
+    # The event-loop macro (doeff_events/_macros.hy) expands to doeff-hy's <- and do! (agora-redesign #3080).
     "doeff-hy",
 ]
 
 [project.optional-dependencies]
-# The Redis handler (doeff_events.handlers.redis_streams) is the only user of the client; a process that uses the
+# The Redis handler (doeff_events._handlers.redis_streams) is the only user of the client; a process that uses the
 # in-memory broker does not need it (agora-redesign #3850).
 redis = ["redis>=5.0"]
-# The operating-system file watch (doeff_events.handlers.os_files) is the only user of watchfiles; a process that uses
+# The operating-system file watch (doeff_events._handlers.os_files) is the only user of watchfiles; a process that uses
 # the in-memory file watch does not need it (#3977).
 files = ["watchfiles>=1.0"]
 
