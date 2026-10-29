@@ -14,9 +14,9 @@
 ;;;     thread の中で別の資源(接続の許可)を待っても、その資源を持つ側の次の呼びが thread の空きを待って詰まらないため。同時の数の上限は
 ;;;     呼びが待つ資源の側(PostgresConnections の許可)が持つ。thread は daemon — 止まらない呼び(長い文)が process の終わりを止めない。
 ;;;   - ReusedThreads = 呼びを空いた thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor(agora card ki-8fc4f9017572)。ThreadPerCall
-;;;     と同じく上限を置かず daemon で、違いは呼びの後の thread を IDLE-SECONDS の間待たせて次の呼びに使う事だけ。呼びごとに thread を起こすと
+;;;     と同じく上限を置かず daemon で、違いは呼びの後の thread を _IDLE-SECONDS の間待たせて次の呼びに使う事だけ。呼びごとに thread を起こすと
 ;;;     起こす待ち(呼び手の thread で数 ms)が文の数に比例し、預かり所の普段の CPU の 2 割を占めた。同時に走る thread の数は ThreadPerCall と
-;;;     同じ(呼びの数の山)で、空きのまま IDLE-SECONDS を過ぎた thread は終わる。thread は呼びを回し終えたら呼びと答えへの参照を捨ててから
+;;;     同じ(呼びの数の山)で、空きのまま _IDLE-SECONDS を過ぎた thread は終わる。thread は呼びを回し終えたら呼びと答えへの参照を捨ててから
 ;;;     次を待つ(待つ間の thread が答えを持ち続けない — 上の Delivered と同じ訳)。
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "sql" :role "foundation"})
@@ -30,7 +30,7 @@
 ;; まだ答えを渡していない印(答えが None の仕事と見分ける)。
 (val NOT-DELIVERED (object))
 ;; ReusedThreads の空いた thread が次の呼びを待つ秒(過ぎたら終わる — 頭の註)。
-(val IDLE-SECONDS 60.0)
+(val _IDLE-SECONDS 60.0)
 
 
 (defclass Delivered []
@@ -98,7 +98,7 @@
   "呼びを空いた daemon の thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor(頭の註)。資源の係なので値の型ではない。
    idle = 呼びを待っている thread のうち、まだ呼びを割り当てていない数。started = 起こした thread の数(検が読む)。"
 
-  (deff __init__ [self [idle-seconds IDLE-SECONDS]]  ; defk にできない: 資源の class の初期化
+  (deff __init__ [self [idle-seconds _IDLE-SECONDS]]  ; defk にできない: 資源の class の初期化
     {:pre [(: self ReusedThreads) (: idle-seconds float)] :post [(: % "None")]}
     "空いた thread が次の呼びを待つ秒を持ち、呼びの列と数えを空で始めるため。"
     (setv self.idle-seconds idle-seconds
