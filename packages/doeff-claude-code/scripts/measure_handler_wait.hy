@@ -34,9 +34,9 @@
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code [Init PartialMessage])
 (import doeff_claude_code [ClaudeStartTurn ClaudeReadTurnEvents ClaudeCloseSession TurnStarted TurnEventPage])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code [handler :as handler-module])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code [_handler :as handler-module])
 
 (val STUB-PATH (str (/ (. (Path __file__) (resolve) parent parent) "tests" "stub_cli" "claude.hy")))
 ;; 替え玉は init の後に hook の知らせを出して 0.2 秒、message_start を出して 0.2 秒待ってから本文を 3 片の差分で出す(頁の読みが待って

@@ -86,7 +86,7 @@
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
 (val CALL-MODEL "claude-stub")
 (val SUBAGENT-MODEL "claude-stub-sub")
-;; fake の道具の呼びの id(doeff_claude_code.fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
+;; fake の道具の呼びの id(doeff_claude_code._fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val SUBAGENT-CALL-ID "msg_fake_sub")
 ;; fake の subagent の呼びの要求の id(transcript の行の requestId — agora card ki-b99ace070bf0)。
@@ -1335,7 +1335,7 @@
   ;; 書きかけの本文の出来事(AgentTextDeltaEvent)を片の数だけ、確定の本文の出来事(AgentTextEvent — 1 つ)より前に読む。片の連結は
   ;; 確定の本文と同じ。既定の返事(deltas 0)は差分の出来事を 1 つも出さない(agora-redesign #3628 — 上の層の模擬が「文の途中を画面へ
   ;; 流す」を確かめる材料)。
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (val world (FakeClaudeWorld :respond streamed-reply))
@@ -1370,7 +1370,9 @@
                    stripped))
   (setv text (.join "\n" code))
   (for [needle ["subprocess" "socket" "Popen" "signal" "os.kill" "doeff_agents.sessionhost" "--resume" "--session-id"
-                "stream-json" "\"-p\"" ".pid" "doeff_claude_code.handler" "doeff_claude_code.fake" "ClaudeCodeHost"]]
+                "stream-json" "\"-p\"" ".pid" "doeff_claude_code._handler" "doeff_claude_code._fake" "ClaudeCodeHost"
+                ;; 本番と fake の handler は入口からも読めるので、名でも見る(fake-claude-code-handler も同じ綴りを含む)
+                "claude-code-handler"]]
     (assert (not-in needle text) (.format "adapter の code に {!r} が在る" needle))))
 
 
@@ -1691,7 +1693,7 @@
   ;; 同じ文脈で次の session を起こすと、手番の終わった前の session を adapter は忘れる(出来事ごと表から外す)— 前の session の Events は
   ;; adapter が答えずに外へ回る(片づけた session と同じ)。層 2 の CLI には触らない: 次の session が同じ process を使い回して答え、
   ;; 次の session を片づけた時に降りる。
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (setv work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (val seen (run (scheduled (with_handlers (+ [(sim-time-handler :clock (SimClock)) outward-events]
@@ -1736,7 +1738,7 @@
   (import doeff_agents [LaunchEffect TurnCredential HomeTurnCredential RedeemTurnCredentialEffect])
   (import doeff_agents._handlers.headless [HeadlessClaudeConfig spec-of])
   (import doeff_agents.sessionhost.policy [TURN-AUTH-ENV-KEYS])
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (import doeff_claude_code [ClaudeHome])
   (setv token "sk-ant-oat01-never-printed" work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
@@ -1814,7 +1816,7 @@
   (import doeff_agents._agent_env [GITHUB-TOKEN-ENV])
   (import doeff_agents [LaunchEffect TurnCredential HomeTurnCredential])
   (import doeff_agents._handlers.headless [HeadlessClaudeConfig spec-of])
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (import doeff_claude_code [ClaudeHome])
   (val oauth "sk-ant-oat01-never-printed-3753")
   (val github "ghs-never-printed-3753")
@@ -1848,7 +1850,7 @@
   (import doeff_agents._agent_env [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV TURN-AUTH-ENV-KEYS])
   (import doeff_agents [LaunchEffect TurnCredential HomeTurnCredential])
   (import doeff_agents._handlers.headless [HeadlessClaudeConfig spec-of])
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (import doeff_claude_code [ClaudeHome])
   (val oauth "sk-ant-oat01-never-printed-policy")
   (val work (/ tmp-path "work"))
@@ -1923,7 +1925,7 @@
   ;; 参照・家の資格を名指す参照は ReplacementCredentialUnavailable(資格は替えない)。家の資格で起こした session は引き換えずに
   ;; SessionOnHomeCredential。
   (import doeff_agents [TurnCredential HomeTurnCredential TurnCredentialUnavailable SessionCredentialReplaced SessionOnHomeCredential ReplacementCredentialUnavailable])
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (val world (FakeClaudeWorld fake-responder))
@@ -1955,7 +1957,7 @@
   ;; #979 の反例: 引き換えられない参照(知らない・もう返した lease)の起動は TurnCredentialUnavailableError(AgentLaunchError の 1 つ)で
   ;; 断り、CLI の会話を 1 つも始めない(家の資格で黙って走らせない)。断りの理由は答えの文のまま運ぶ。
   (import doeff_agents [TurnCredentialUnavailable TurnCredentialUnavailableError])
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (setv work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (setv world (FakeClaudeWorld fake-responder) asked [])
@@ -2530,7 +2532,7 @@
   ;; 層 2 の ToolResult の parent-tool-use-id(subagent の中の道具の答えなら親の本体の呼びの id)は、AgentToolResultEvent の
   ;; parent_tool_use_id へそのまま運ばれ、本体の会話の答えと本体の道具の呼び(AgentToolUseEvent)は None。運ばない adapter では
   ;; 上の層が subagent の中の Bash の答えを本体の手番の答えと取り違え、本体の手番を切る(agora card ki-b25d579bf48b)。
-  (import doeff_claude_code.fake [FakeClaudeWorld])
+  (import doeff_claude_code [FakeClaudeWorld])
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
   (val world (FakeClaudeWorld :respond inner-reply))

@@ -19,8 +19,9 @@
 (import doeff_hy.json_lines [jsonl-lines whole-lines-end])
 (import doeff_claude_code [ClaudeStartTurn])
 (import doeff_claude_code [ClaudeDropProcess])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [SUBAGENT-TRANSCRIPT-LOG ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler]
+        doeff_claude_code._handler [SUBAGENT-TRANSCRIPT-LOG])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [sleep-prompt])
 (import tests.scenario_steps [TurnRecord read-to-end read-to-tool-start])

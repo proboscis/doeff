@@ -47,7 +47,7 @@ USED = (
             "HomeCredentialSession",
         ),
     ),
-    UsedModule("fake", ("FakeReply", "FakeClaudeWorld", "StopHookRejection")),
+    UsedModule("", ("FakeReply", "FakeClaudeWorld", "StopHookRejection")),  # fake
     UsedModule(
         "",  # faults
         ("ClaudeDropProcess", "ClaudeForgetSession", "ClaudeLiveProcess", "LiveProcess", "NoLiveProcess", "StopReason"),

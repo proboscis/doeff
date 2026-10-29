@@ -25,15 +25,15 @@
 (import doeff_claude_code [ClaudeReplaceSessionCredential CredentialReplaced ClaudeStartTurn ClaudeInjectInput ClaudeInterruptTurn ClaudeExportSession ClaudeCloseSession ClaudeSessionStatus ClaudeWarmSession TurnStarted LaunchFailed SessionExported SessionNotFound SessionClosed SessionWarmed ProcessStillAlive ClaudeReadTurnEvents TurnEventPage UnknownTurn Closed])
 (import doeff_claude_code [ClaudeDropProcess ClaudeLiveProcess LiveProcess NoLiveProcess StopReason])
 (import doeff_claude_code._argv [launch-key transcript-path])
-(import doeff_claude_code.process [ClaudeProcess])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [CLI-TIMING-LOG COST-TAIL-BYTES KEPT-TURNS ClaudeCodeHost Doorbell SessionRuntime claude-code-handler elapsed-ms note-reused
-                                   recorded-cost-mark wait-until wall-elapsed-ms])
+(import doeff_claude_code._process [ClaudeProcess])
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler]
+        doeff_claude_code._handler [CLI-TIMING-LOG COST-TAIL-BYTES KEPT-TURNS Doorbell SessionRuntime elapsed-ms note-reused recorded-cost-mark wait-until wall-elapsed-ms])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [HOOK-PHRASE STREAM-PHRASE THINK-PHRASE THINKING-PIECES-PHRASE TOOL-INPUT-PIECES-PHRASE
                               reply-prompt sleep-prompt])
 (import doeff_claude_code [_lines :as lines])
-(import doeff_claude_code [handler :as handler-module])
+(import doeff_claude_code [_handler :as handler-module])
 (import tests.scenario_steps [TurnRecord live-process-until read-to-end read-to-tool-start read-until])
 
 

@@ -13,7 +13,7 @@
 (import dataclasses [replace])
 (import doeff_claude_code [ClaudeStartTurn ClaudeReadTurnEvents ClaudeSessionStatus ClaudeExportSession TurnStarted SessionNotFound SessionExported SessionStatus TranscriptAbsent TranscriptPresent TurnRunning ClaudeInjectInput ClaudeInterruptTurn InputQueued InterruptRequested])
 (import doeff_claude_code [ClaudeForgetSession])
-(import doeff_claude_code.fake [FakeClaudeWorld FakeReply fake-claude-code-handler])
+(import doeff_claude_code [FakeClaudeWorld FakeReply fake-claude-code-handler])
 (import tests.scenario_steps [TurnRecord read-until read-to-end read-to-tool-start new-id typed kinds-of])
 (import doeff_claude_code [_lines :as lines])
 (import doeff_claude_code._dialogue :as dialogue)

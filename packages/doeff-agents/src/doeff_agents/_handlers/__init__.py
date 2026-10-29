@@ -20,8 +20,8 @@ from doeff.program import ProgramHandler, stacked_handlers
 
 if TYPE_CHECKING:
     from doeff_claude_code import ClaudeLiveLimitExceeded as ClaudeLiveLimitExceeded
-    from doeff_claude_code.fake import FakeClaudeWorld as FakeClaudeWorld
-    from doeff_claude_code.fake import FakeReply as FakeReply
+    from doeff_claude_code import FakeClaudeWorld as FakeClaudeWorld
+    from doeff_claude_code import FakeReply as FakeReply
     from doeff_codex import ApprovalPolicy as CodexApprovalPolicy
     from doeff_codex import FakeCodexWorld as FakeCodexWorld
     from doeff_codex import SandboxMode as CodexSandboxMode
@@ -49,8 +49,8 @@ _DEFAULT_CLAUDE_PERMISSION: PermissionPolicy = BypassAll()
 # its name there): read on first use so importing this module does not load them.
 _RUNTIME_VALUES = {
     "ClaudeLiveLimitExceeded": ("doeff_claude_code._effects", "ClaudeLiveLimitExceeded"),
-    "FakeClaudeWorld": ("doeff_claude_code.fake", "FakeClaudeWorld"),
-    "FakeReply": ("doeff_claude_code.fake", "FakeReply"),
+    "FakeClaudeWorld": ("doeff_claude_code", "FakeClaudeWorld"),
+    "FakeReply": ("doeff_claude_code", "FakeReply"),
     "FakeCodexWorld": ("doeff_codex", "FakeCodexWorld"),
     "CodexApprovalPolicy": ("doeff_codex", "ApprovalPolicy"),
     "CodexSandboxMode": ("doeff_codex", "SandboxMode"),

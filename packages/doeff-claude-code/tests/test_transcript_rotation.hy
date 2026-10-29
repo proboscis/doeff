@@ -17,9 +17,9 @@
 (import doeff_claude_code [BackendLost Completed Failed Interrupted])
 (import doeff_claude_code [ClaudeCloseSession ClaudeStartTurn LaunchFailed SessionClosed TurnStarted])
 (import doeff_claude_code._argv [transcript-path])
-(import doeff_claude_code.clock [clock-of])
-(import doeff_claude_code.handler [ClaudeCodeHost claude-code-handler])
-(import doeff_claude_code.rotation [ARCHIVE-SUFFIX TranscriptKept TranscriptRotated TranscriptUnrotatable rotate-transcript
+(import doeff_claude_code._clock [clock-of])
+(import doeff_claude_code [ClaudeCodeHost claude-code-handler])
+(import doeff_claude_code._rotation [ARCHIVE-SUFFIX TranscriptKept TranscriptRotated TranscriptUnrotatable rotate-transcript
                                     rotation-cut])
 (import tests.interpreters [STUB-PATH child-env])
 (import tests.scenario_rules [reply-prompt])
