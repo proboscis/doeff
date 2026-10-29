@@ -41,7 +41,7 @@ def _secs(value: datetime) -> float:
 
 
 def _run(program, implementation: str):
-    return run(scheduled(sim_time_handler(start_time=START)(program), implementation=implementation))
+    return run(scheduled(implementation=implementation)(sim_time_handler(start_time=START)(program)))
 
 
 @do
@@ -173,12 +173,12 @@ def test_caller_owned_clock_is_observable_and_shared(implementation: str) -> Non
             tasks.append((yield Spawn(service(period))))
         yield Gather(*tasks)
 
-    run(scheduled(sim_time_handler(clock=clock)(root()), implementation=implementation))
+    run(scheduled(implementation=implementation)(sim_time_handler(clock=clock)(root())))
     assert seen == [1.0, 2.0, 3.0]
     assert clock.current_time == START + timedelta(seconds=3)
     # The caller may move the clock between runs; the next run starts there.
     clock.set_time(START + timedelta(hours=1))
-    run(scheduled(sim_time_handler(clock=clock)(service(0.5)), implementation=implementation))
+    run(scheduled(implementation=implementation)(sim_time_handler(clock=clock)(service(0.5))))
     assert clock.current_time == START + timedelta(hours=1, seconds=0.5)
 
 
@@ -208,5 +208,5 @@ def test_wall_clock_handlers_answer_injected_monotonic() -> None:
     def root():
         return ((yield GetMonotonic()), (yield GetMonotonic()))
 
-    assert run(scheduled(sync_time_handler(monotonic=lambda: next(readings))(root()))) == (10.0, 10.75)
-    assert run(scheduled(async_time_handler(monotonic=lambda: 5.0)(root()))) == (5.0, 5.0)
+    assert run(scheduled()(sync_time_handler(monotonic=lambda: next(readings))(root()))) == (10.0, 10.75)
+    assert run(scheduled()(async_time_handler(monotonic=lambda: 5.0)(root()))) == (5.0, 5.0)
