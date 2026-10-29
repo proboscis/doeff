@@ -7,27 +7,39 @@ import sys
 from pathlib import Path
 
 import doeff_adr
+import doeff_adr._effects
 import doeff_adr.registry
 
 INIT = Path(doeff_adr.__file__)
+#: 公開の名を定義する module(registry と、effect と handler の内側の module — card ki-24a2bca4339f)。
+DEFINING_MODULES = {
+    "doeff_adr.registry": doeff_adr.registry,
+    "doeff_adr._effects": doeff_adr._effects,
+}
 
 
-def _type_checking_imports() -> set[str]:
-    """``__init__.py`` の ``if TYPE_CHECKING:`` の下で registry から import する名(型の検査器が見る公開の名)。"""
+def _type_checking_import_modules() -> dict[str, str]:
+    """``__init__.py`` の ``if TYPE_CHECKING:`` の下で import する名(型の検査器が見る公開の名)から、定義の module の名へ。"""
     tree = ast.parse(INIT.read_text())
-    names: set[str] = set()
+    names: dict[str, str] = {}
     for node in tree.body:
         match node:
             case ast.If(test=ast.Name(id="TYPE_CHECKING"), body=body):
                 for statement in body:
                     match statement:
-                        case ast.ImportFrom(module="doeff_adr.registry", names=aliases):
-                            names.update(alias.asname or alias.name for alias in aliases)
+                        case ast.ImportFrom(module=str(module), names=aliases) if (
+                            module in DEFINING_MODULES
+                        ):
+                            names.update((alias.asname or alias.name, module) for alias in aliases)
                         case _:
                             pass
             case _:
                 pass
     return names
+
+
+def _type_checking_imports() -> set[str]:
+    return set(_type_checking_import_modules())
 
 
 def _run_python(code: str) -> subprocess.CompletedProcess[str]:
@@ -43,13 +55,13 @@ def test_the_type_checked_names_are_the_runtime_names() -> None:
     assert set(dir(doeff_adr)) >= _type_checking_imports()
 
 
-def test_every_public_name_is_the_registry_value() -> None:
-    """公開の名の値は registry の物そのもの(写しや包みではない)。"""
-    registry_names = vars(doeff_adr.registry)
-    for name in _type_checking_imports():
-        assert getattr(doeff_adr, name) is registry_names[name]
+def test_every_public_name_is_the_defining_module_value() -> None:
+    """公開の名の値は定義の module(registry か _effects)の物そのもの(写しや包みではない)。"""
+    for name, module in _type_checking_import_modules().items():
+        defined = vars(DEFINING_MODULES[module])[name]
+        assert getattr(doeff_adr, name) is defined
         # 1 度引いた名は package の普通の属性になる(2 回目から __getattr__ を通らない)
-        assert vars(doeff_adr)[name] is registry_names[name]
+        assert vars(doeff_adr)[name] is defined
 
 
 def test_unknown_names_fail_as_before() -> None:
@@ -66,7 +78,7 @@ def test_loading_the_pytest_plugin_reads_neither_the_registry_nor_yaml() -> None
         "import sys, doeff_adr.pytest_plugin\n"
         "print('before', 'doeff_adr.registry' in sys.modules, 'yaml' in sys.modules)\n"
         "import doeff_adr\n"
-        "doeff_adr.get_adr\n"
+        "doeff_adr.GetAdr\n"
         "print('after', 'doeff_adr.registry' in sys.modules)\n"
     )
     assert result.returncode == 0, result.stderr
@@ -85,7 +97,7 @@ def test_a_broken_registry_import_raises_its_own_error_at_first_use() -> None:
         "sys.meta_path.insert(0, NoYaml())\n"
         "import doeff_adr\n"
         "print('imported')\n"
-        "doeff_adr.get_adr\n"
+        "doeff_adr.GetAdr\n"
     )
     assert "imported" in result.stdout
     assert result.returncode != 0

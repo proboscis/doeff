@@ -16,7 +16,7 @@
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
-(import doeff-adr.registry [get-adr])
+(import doeff-adr [GetAdr])
 (require doeff-hy.macros [deftest defk val var <-])
 (import doeff [run])
 (import ast)
@@ -272,7 +272,8 @@
      (deftest test-adr-doe-time-001-every-law-names-living-checks
        ;; 法の :enforced-by の項は、どれも今の木に在る規則・検を指す(規則を消す・検の名を変えると赤 — 法が名だけ残らない)。
        (val repo-root (. (Path __file__) parent parent parent))
-       (val laws (. (get-adr ADR-ID) laws))
+       (<- spec (GetAdr ADR-ID))
+       (val laws (. spec laws))
        (val unbound (lfor l laws :if (not (.get l "enforced_by")) (get l "id")))
        (assert (= unbound []) (+ "規則・検に結ばれていない法(ADR-DOE-TIME-001): " (str unbound)))
        (val entries (lfor l laws entry (get l "enforced_by") entry))
