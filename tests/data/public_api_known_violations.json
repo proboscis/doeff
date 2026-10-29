@@ -13189,28 +13189,6 @@
       "hyx_deeply_frozenXquestion_markX",
       "thaw_json"
      ],
-     "doeff_hy.handle": [
-      "BodyKind",
-      "DECLARATION_KEYS",
-      "Mutability",
-      "SessionName",
-      "Timing",
-      "WRITER_VISIBLE",
-      "alias_symbol",
-      "clause_op",
-      "continuation_symbol",
-      "declaration_setters",
-      "effect_symbol",
-      "import_form",
-      "legacy_session_finding",
-      "legacy_session_message",
-      "locate_synthesized",
-      "node_names",
-      "parse_declaration",
-      "refuse_unknown_keys",
-      "report_findings",
-      "static_view_enabled"
-     ],
      "doeff_hy.http": [
       "MODULE_TAGS",
       "http_delete",
@@ -13237,30 +13215,6 @@
      "doeff_hy.light_stack": [
       "install",
       "uninstall"
-     ],
-     "doeff_hy.macros": [
-      "BodyKind",
-      "CONTRACT_KEYS",
-      "FUNCTION_CONTRACT_KEYS",
-      "HELPERS_NAME",
-      "ModuleBindings",
-      "ModuleNames",
-      "RuntimeDo",
-      "alias_symbol",
-      "declaration_setters",
-      "declared_value",
-      "defeffect_form",
-      "deftest_fixture_annotation",
-      "locate_synthesized",
-      "mangle_match_fields",
-      "module_declaration",
-      "record_names",
-      "refuse_unknown_keys",
-      "report_findings",
-      "rewrite_body",
-      "runtime_type_form",
-      "static_view_enabled",
-      "type_param_symbols"
      ],
      "doeff_hy.match_fields": [
       "mangle_match_fields"
@@ -13309,9 +13263,6 @@
      ],
      "doeff_hy.quoted_forms": [
       "QuotedForms"
-     ],
-     "doeff_hy.record": [
-      "require_check"
      ],
      "doeff_hy.record_runtime": [
       "EFFECT_PARAMS",

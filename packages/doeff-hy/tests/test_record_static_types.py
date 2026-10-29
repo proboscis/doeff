@@ -1,7 +1,8 @@
 """defrecord の :check の展開と doeff_hy.record の型(record.pyi)の失敗ケース(agora-redesign #2252)。
 
-:check つきの defrecord は `(import doeff_hy.declarations doeff_hy.record)` を出し、`doeff_hy.record.DoExpr`・
-`doeff_hy.record.EffectBase`・`doeff_hy.record.require_check` を名指す。前は使う側の defrecord の行に strict の赤が 5 件出ていた:
+:check つきの defrecord は `(import doeff_hy.declarations doeff_hy.record doeff_hy._record_check)` を出し、`doeff_hy.record.DoExpr`・
+`doeff_hy.record.EffectBase`・`doeff_hy._record_check.require_check` を名指す(require_check は前は `doeff_hy.record` に在った —
+macro の module は macro だけを見せる・ADR-DOE-API-001 R14・card ki-a28c20b93638)。前は使う側の defrecord の行に strict の赤が 5 件出ていた:
 
 - record.hy は Hy の module で型の宣言が無く、名指す 4 つの名(record・DoExpr・EffectBase・require_check)が Unknown。
   → record.pyi で宣言する。
@@ -11,7 +12,6 @@
 
 import ast
 import contextlib
-import inspect
 import io
 import json
 import shutil
@@ -104,15 +104,17 @@ def test_only_the_runtime_expansion_refuses_a_program_verdict() -> None:
     assert "doeff_hy.record.DoExpr" in runtime, runtime
     assert "doeff_hy.record.DoExpr" not in static, static
     assert "doeff_hy.record.EffectBase" not in static, static
-    # 偽の答えを断る require_check は両方の展開に残る
-    assert "doeff_hy.record.require_check" in static, static
+    # 偽の答えを断る require_check は両方の展開に残り、macro の module(doeff_hy.record)でなく内側の module から読む
+    assert "doeff_hy._record_check.require_check" in static, static
+    assert "doeff_hy._record_check.require_check" in runtime, runtime
+    assert "doeff_hy.record.require_check" not in runtime + static
 
 
 def test_an_unread_bookkeeping_name_leaves_a_shared_import_alone() -> None:
     # 1 つの文に並んだ記帳の module の名のうち、読まれない declarations だけを外し、読まれる record は残す。
     tree = ast.parse(
         "import doeff_hy.declarations, doeff_hy.record\n"
-        "doeff_hy.record.require_check('A', ('x',), '(f x)', True, {'x': 1})\n"
+        "isinstance(v, (doeff_hy.record.DoExpr, doeff_hy.record.EffectBase))\n"
         "setattr(A, '__doeff_tags__', doeff_hy.declarations.DefinitionTags(context='c', role='type'))\n"
     )
     projected = ast.unparse(without_bookkeeping(tree))
@@ -128,7 +130,8 @@ def test_a_bookkeeping_import_with_no_reader_is_dropped() -> None:
 
 
 def test_the_stub_matches_record_hy() -> None:
-    # record.pyi が宣言する名は record.hy に在り、require_check の引数の名と順は実装と同じ(宣言だけが先へ行かない)。
+    # record.pyi が宣言する名は record.hy に在り(宣言だけが先へ行かない)、関数を宣言しない — record.hy は macro のほかに
+    # 関数を見せない(require_check は内側の doeff_hy._record_check・card ki-a28c20b93638)。
     stub = ast.parse(Path(record.__file__).with_suffix(".pyi").read_text(encoding="utf-8"))
     declared = [
         alias.asname or alias.name
@@ -137,7 +140,7 @@ def test_the_stub_matches_record_hy() -> None:
         for alias in node.names
     ] + [node.name for node in stub.body if isinstance(node, ast.FunctionDef)]
     assert [name for name in declared if not hasattr(record, name)] == []
-    (function,) = [node for node in stub.body if isinstance(node, ast.FunctionDef)]
-    assert [a.arg for a in function.args.args] == list(inspect.signature(record.require_check).parameters)
+    assert [node for node in stub.body if isinstance(node, ast.FunctionDef)] == []
+    assert not hasattr(record, "require_check")
     assert record.DoExpr is doeff.DoExpr
     assert record.EffectBase is doeff.EffectBase

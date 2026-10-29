@@ -43,21 +43,34 @@
 ;;;   - defhandler stores __doeff_body__ for introspection (like defk)
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
-(import doeff-hy.positions [locate-synthesized])
-(import doeff-hy.declarations [DECLARATION-KEYS refuse-unknown-keys declaration-setters])
+;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
+;; (ADR-DOE-API-001 R14・card ki-a28c20b93638)。素の名で束ねると、目録が doeff_hy.handle の公開の名と数える。
+(import doeff-hy.positions [locate-synthesized :as _locate-synthesized])
+(import doeff-hy.declarations [DECLARATION-KEYS :as _DECLARATION-KEYS
+                               refuse-unknown-keys :as _refuse-unknown-keys
+                               declaration-setters :as _declaration-setters])
 (import hy.models [Dict])
-(import doeff-hy._static-view [static-view-enabled report-findings])
-(import doeff-hy.clause-ops [clause-op node-names])
-(import doeff-hy.expansion-names [alias-symbol import-form effect-symbol continuation-symbol WRITER-VISIBLE])
-(import doeff-hy.binding-forms [parse-declaration Timing Mutability SessionName BodyKind
-                                legacy-session-finding legacy-session-message])
+(import doeff-hy._static-view [static-view-enabled :as _static-view-enabled report-findings :as _report-findings])
+(import doeff-hy.clause-ops [clause-op :as _clause-op node-names :as _node-names])
+(import doeff-hy.expansion-names [alias-symbol :as _alias-symbol
+                                  import-form :as _import-form
+                                  effect-symbol :as _effect-symbol
+                                  continuation-symbol :as _continuation-symbol
+                                  WRITER-VISIBLE :as _WRITER-VISIBLE])
+(import doeff-hy.binding-forms [parse-declaration :as _parse-declaration
+                                Timing :as _Timing
+                                Mutability :as _Mutability
+                                SessionName :as _SessionName
+                                BodyKind :as _BodyKind
+                                legacy-session-finding :as _legacy-session-finding
+                                legacy-session-message :as _legacy-session-message])
 
 (defn _do-import []
   "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/_static_view.py)
    では型付きの doeff_hy._static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
    型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
    (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`(card ki-973b4e44d7bc)。"
-  (if (static-view-enabled)
+  (if (_static-view-enabled)
       ;; 型付きの do は doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の STATIC_HELPER_IMPORTS —
       ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする・agora-redesign #1686)。
       '(do)
@@ -70,7 +83,7 @@
   "節の終わり方の検め(clause_endings.hy の name)を alias で引く import。型検査のための展開では、型付きの
    doeff_hy._static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
    HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない・agora-redesign #2279)。"
-  (if (static-view-enabled)
+  (if (_static-view-enabled)
       '(do)
       `(import doeff-hy.clause-endings [~name :as ~alias])))
 
@@ -84,21 +97,21 @@
    名は `_doeff_<名>` の別名で束ねる(doeff_hy/expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
    (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
    名が上書きされた(card ki-16180480129e)。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
-  (import-form (+ (node-names (static-view-enabled)) ["Pass" "WithHandlerType"])))
+  (_import-form (+ (_node-names (_static-view-enabled)) ["Pass" "WithHandlerType"])))
 
 
 (defn _handler-fn-form [endings-check]
   "handler を本文に被せる関数 __doeff-handler-fn__ の定義。型検査のための展開では、本文を
    `HandlerBody[HandledAnswer]`、答えを `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ)と注記する
    (doeff_hy/_static_types.pyi・agora-redesign #2279)。実行時の展開は注記を付けない。"
-  (if (static-view-enabled)
+  (if (_static-view-enabled)
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
          ~endings-check
-         (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))
+         (~(_alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))
       `(defn __doeff-handler-fn__ [__doeff-body__]
          ~endings-check
-         (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))))
+         (~(_alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -130,11 +143,11 @@
   (setv lazys []
         effects [])
   (for [c clauses]
-    (setv decl (parse-declaration c))
+    (setv decl (_parse-declaration c))
     (cond
-      (and (is-not decl None) (= (. decl timing) Timing.SESSION))
+      (and (is-not decl None) (= (. decl timing) _Timing.SESSION))
         (.append lazys #((. decl symbol) [(. decl init)]
-                         (if (= (. decl mutability) Mutability.VAR) :var :val)
+                         (if (= (. decl mutability) _Mutability.VAR) :var :val)
                          False))
       (is-not decl None)
         (raise (SyntaxError (+ "\ndefhandler " (str handler-name) ": (" (. decl spelled) " "
@@ -145,9 +158,9 @@
       (_is-lazy-clause c)
         (do
           (import warnings)
-          (warnings.warn (legacy-session-message c (str handler-name)) DeprecationWarning
+          (warnings.warn (_legacy-session-message c (str handler-name)) DeprecationWarning
                          :stacklevel 3)
-          (report-findings [(legacy-session-finding c (str handler-name))])
+          (_report-findings [(_legacy-session-finding c (str handler-name))])
           (.append lazys (_parse-lazy c)))
       True
         (.append effects c)))
@@ -156,7 +169,7 @@
 (defn _session-names [lazy-defs]
   "節の本体の書き換え(binding_forms)へ渡す、セッションに持つ名前の一覧。"
   (lfor #(lname _ mut legacy?) lazy-defs
-    (SessionName (str lname) (if (= mut :var) Mutability.VAR Mutability.VAL) legacy?)))
+    (_SessionName (str lname) (if (= mut :var) _Mutability.VAR _Mutability.VAL) legacy?)))
 
 (defn _is-set-bang [form]
   "Check if form is (set! name expr)."
@@ -222,7 +235,7 @@
   (setv taken (+ (lfor f (get clause 1) (str f))
                  (lfor #(lname _ _mut _legacy) (or lazy-defs []) (str lname))))
   (setv written-forms (+ (if (is (. options guard) None) [] [(. options guard)]) (. options body)))
-  (lfor row WRITER-VISIBLE
+  (lfor row _WRITER-VISIBLE
         :if (and (not-in row.written taken)
                  (any (gfor form written-forms (_names-symbol form row.written))))
         row))
@@ -234,7 +247,7 @@
    (`_narrowed-alias-bindings`)、節の判定が絞って読む(`_clause-test`)。"
   (setv written (Symbol row.written))
   (cond
-    (not (static-view-enabled)) [`(setv ~written ~(Symbol row.internal))]
+    (not (_static-view-enabled)) [`(setv ~written ~(Symbol row.internal))]
     row.narrowed []
     True [`(setv (annotate ~written ~(Symbol row.declared)) ~(Symbol row.internal))
           `(setv _ ~written)]))
@@ -248,7 +261,7 @@
    (`_clause-test`)。判定の中で束ねる形(`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`)は採らない:
    walrus の右辺を絞るかは pyright の版で変わり(1.1.411 は左辺だけ・1.1.414 は右辺も)、右辺も絞る版では 2 つ目が「いつも真」
    (reportUnnecessaryIsInstance)になる — 書いた節ごとに 1 件で、書き手は直せない(card ki-a06b0fbce50d)。"
-  (lfor row WRITER-VISIBLE
+  (lfor row _WRITER-VISIBLE
         :if (and row.narrowed
                  (any (gfor clause clauses (in row (_clause-aliases clause lazy-defs)))))
         `(setv ~(Symbol row.written) ~(Symbol row.internal))))
@@ -269,11 +282,11 @@
    束ね直すのは節が effect を読む時だけ: 欄を束ねるか、書き換えた本体が `_doeff_effect` を読む(typed_resume / typed_transfer・
    `(pass)`)。何も読まない節(`(Spawn [] (reperform effect))`)には何も足さない。head が名でない節(`#(A B)`・`(| A B)`)は構成子として
    呼べないので束ね直さない。"
-  (if (and (static-view-enabled)
+  (if (and (_static-view-enabled)
            (isinstance etype Symbol)
            (or (> (len fields) 0)
-               (any (gfor form rewritten (_references-symbol form (str (effect-symbol)))))))
-      [`(setv ~(effect-symbol) (_doeff_any_specialized ~etype #* _doeff_any_args #** _doeff_any_kwargs))]
+               (any (gfor form rewritten (_references-symbol form (str (_effect-symbol)))))))
+      [`(setv ~(_effect-symbol) (_doeff_any_specialized ~etype #* _doeff_any_args #** _doeff_any_kwargs))]
       []))
 
 (defn _clause-test [etype aliases]
@@ -282,10 +295,10 @@
    (`_narrowed-alias-bindings`)ので、判定は別の名を 1 度ずつ絞る — 絞るのは代入でないので絞った型が一部 Unknown でも赤が出ず、
    どの名も 2 度は絞らないので「いつも真」の isinstance にならない。`_doeff_effect` は続く `typed_resume` と欄の束ねが読む。"
   (setv narrowed (lfor row aliases :if row.narrowed row))
-  (if (and (static-view-enabled) narrowed)
-      `(and (isinstance ~(effect-symbol) ~etype)
+  (if (and (_static-view-enabled) narrowed)
+      `(and (isinstance ~(_effect-symbol) ~etype)
             ~@(lfor row narrowed `(isinstance ~(Symbol row.written) ~etype)))
-      `(isinstance ~(effect-symbol) ~etype)))
+      `(isinstance ~(_effect-symbol) ~etype)))
 
 (defn _build-lazy-init-forms [handler-name lazy-name lazy-body [legacy? True]]
   "Build the yield-based lazy init code for one lazy def.
@@ -330,7 +343,7 @@
   (setv else-body
     (+ init-forms
        [`(setv ~val-var ~value-expr)
-        `(yield (~(alias-symbol "Put") ~key-var (~(alias-symbol "Some") ~val-var)))
+        `(yield (~(_alias-symbol "Put") ~key-var (~(_alias-symbol "Some") ~val-var)))
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
@@ -338,14 +351,14 @@
   ;; 束ねる。実行時は Get の答え(Some の中身)か初期化の値のどちらかだが、状態に置くのは同じ初期化の値なので型は同じ —
   ;; Get の答えは型を持たないので、そのまま写すと名とそれを使う式が全部 Unknown になり、書き手に直せない赤が出ていた。
   ;; キーの名は := の Put が引くので残す。
-  (if (static-view-enabled)
+  (if (_static-view-enabled)
       (+ [`(setv ~key-var ~key-expr)]
          init-forms
          [`(setv ~val-var ~value-expr)
           `(setv ~(Symbol (str lazy-name)) ~val-var)])
       [`(setv ~key-var ~key-expr)
-       `(setv ~cached-var (yield (~(alias-symbol "Get") ~key-var)))
-       `(if (isinstance ~cached-var ~(alias-symbol "Some"))
+       `(setv ~cached-var (yield (~(_alias-symbol "Get") ~key-var)))
+       `(if (isinstance ~cached-var ~(_alias-symbol "Some"))
             (setv ~(Symbol (str lazy-name)) (. ~cached-var value))
             (do ~@else-body))]))
 
@@ -371,7 +384,7 @@
     (is head None) False
 
     ;; Direct terminals — every clause operation ends the clause
-    (is-not (clause-op form) None) True
+    (is-not (_clause-op form) None) True
 
     ;; (if test then else) — both branches must terminate
     (= head "if")
@@ -461,7 +474,7 @@
     (= (len form) 0) form
     True
       (let [hname (_sym-name (get form 0))
-            op (clause-op form)]
+            op (_clause-op form)]
         (cond
           ;; (resume expr) → (transfer expr) — the row's tail
           (and (is-not op None) (is-not op.tail None) (= (len form) (+ 1 op.arity)))
@@ -537,7 +550,7 @@
     (not (isinstance form Expression)) form
     (= (len form) 0) form
     True
-      (let [op (clause-op form)
+      (let [op (_clause-op form)
             args (list (cut form 1 None))]
         (cond
           (or (is op None) (is op.rewrite None) (!= (len args) op.arity))
@@ -636,7 +649,7 @@
                        (if (is handler-name None)
                            (+ "handle clause " (str etype))
                            (+ "defhandler " (str handler-name) " clause " (str etype)))
-                       BodyKind.CLAUSE
+                       _BodyKind.CLAUSE
                        (+ (lfor f fields (str f)) ["effect" "k"])
                        (_session-names (or lazy-defs []))
                        :module module-names))
@@ -685,10 +698,10 @@
              form (_alias-forms row)
          form)
        (lfor f fields
-             form (if (static-view-enabled)
-                      [`(setv ~f (. ~(effect-symbol) ~(Symbol (str f))))
+             form (if (_static-view-enabled)
+                      [`(setv ~f (. ~(_effect-symbol) ~(Symbol (str f))))
                        `(setv _ ~f)]
-                      [`(setv ~f (. ~(effect-symbol) ~(Symbol (str f))))])
+                      [`(setv ~f (. ~(_effect-symbol) ~(Symbol (str f))))])
          form)))
 
   ;; Rewrite resume/transfer/finish/pass (lazy-prefix is already in yield IR,
@@ -717,7 +730,7 @@
         `(do ~@bindings
              ~@guard-prefix
              (if (not ~guard)
-                 (yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol)))
+                 (yield (~(_alias-symbol "Pass") ~(_effect-symbol) ~(_continuation-symbol)))
                  ~checked))))
 
   #(etype full-body))
@@ -742,19 +755,19 @@
 
   ;; Default: pass unmatched
   (.append cond-forms 'True)
-  (.append cond-forms `(yield (~(alias-symbol "Pass") ~(effect-symbol) ~(continuation-symbol))))
+  (.append cond-forms `(yield (~(_alias-symbol "Pass") ~(_effect-symbol) ~(_continuation-symbol))))
 
   ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
   ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/_static_types.pyi)。
   ;; 書き手が `effect` を書いた節の在る handler は、節の判定より前に `effect` を絞る前の値に束ねる(_narrowed-alias-bindings)。
   ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
   (setv dispatcher
-    (if (static-view-enabled)
-        `(_doeff-do (fn #^ _doeff_ClauseRun [(annotate ~(effect-symbol) object)
-                                             (annotate ~(continuation-symbol) _doeff_Continuation)]
+    (if (_static-view-enabled)
+        `(_doeff-do (fn #^ _doeff_ClauseRun [(annotate ~(_effect-symbol) object)
+                                             (annotate ~(_continuation-symbol) _doeff_Continuation)]
                       ~@(_narrowed-alias-bindings clauses lazy-defs)
                       (cond ~@cond-forms)))
-        `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) ~(continuation-symbol)]
+        `(_doeff-do (fn [~@(_effect-parameter (lfor clause clauses (get clause 0))) ~(_continuation-symbol)]
                       (cond ~@cond-forms)))))
   (setv passed (_passed-effects-source clauses (_session-names (or lazy-defs []))))
   (if (is passed None)
@@ -806,17 +819,17 @@
    never an import error. No clauses → no annotation."
   (import sys)
   (cond
-    (not etypes) [(effect-symbol)]
-    (>= sys.version-info #(3 14)) [`(annotate ~(effect-symbol) ~(if (= (len etypes) 1) (get etypes 0) `(| ~@etypes)))]
-    True [`(annotate ~(effect-symbol) ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
+    (not etypes) [(_effect-symbol)]
+    (>= sys.version-info #(3 14)) [`(annotate ~(_effect-symbol) ~(if (= (len etypes) 1) (get etypes 0) `(| ~@etypes)))]
+    True [`(annotate ~(_effect-symbol) ~(.join " | " (lfor t etypes (.join "." (map hy.mangle (.split (str t) "."))))))]))
 
 
 (defn _refuse-session-clauses [clauses]
   "handle の節に session val / session var / 旧い lazy の宣言が在れば SyntaxError。defhandler の節として読ませると、
    宣言の形が欄の並びの検めに当たり「handle clause fields must be [field1 ...]」の AssertionError になって、何を直すかが読めなかった。"
   (for [c clauses]
-    (setv decl (parse-declaration c))
-    (when (or (and (is-not decl None) (= (. decl timing) Timing.SESSION)) (_is-lazy-clause c))
+    (setv decl (_parse-declaration c))
+    (when (or (and (is-not decl None) (= (. decl timing) _Timing.SESSION)) (_is-lazy-clause c))
       (raise (SyntaxError (+ "\nhandle: " (cut (hy.repr c) 1 None) " — handle は session val / session var を持たない。"
                              "セッションの値は handler の名でキーを作るので、節を defhandler へ移して名を付け、"
                              "(with-handler [名] body) で当てる。\n"))))))
@@ -866,18 +879,18 @@
                  (_vm-imports)
                  (_clause-endings-import 'check-clause-endings '_doeff-check-clause-endings)
                  `(_doeff-check-clause-endings "handle" [~@specs])])
-  (locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
+  (_locate-synthesized (if (or (_in-function-body? _hy-compiler) (_in-class-body? _hy-compiler))
       ;; gensym はこの枝だけで引く — module の段の展開の一意の名の番号を前と同じに保つ
       (let [install (hy.gensym "handle_install")]
         `(do
            (setv ~install ((fn []
                              ~@prelude
                              (setv __doeff-handler-data__ ~h-expr)
-                             (fn [__doeff-body__] (~(alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__)))))
+                             (fn [__doeff-body__] (~(_alias-symbol "WithHandlerType") __doeff-handler-data__ __doeff-body__)))))
            (~install ~body)))
       `(do
          ~@prelude
-         (~(alias-symbol "WithHandlerType") ~h-expr ~body)))))
+         (~(_alias-symbol "WithHandlerType") ~h-expr ~body)))))
 
 
 (defmacro with-handler [handlers body]
@@ -971,8 +984,8 @@
   (when (and (> (len clauses) 0) (isinstance (get clauses 0) Dict))
     (setv declarations (get clauses 0))
     (setv clauses (cut clauses 1 None))
-    (refuse-unknown-keys declarations DECLARATION-KEYS (+ "defhandler " (str name))))
-  (setv declared (declaration-setters name declarations (+ "defhandler " (str name))))
+    (_refuse-unknown-keys declarations _DECLARATION-KEYS (+ "defhandler " (str name))))
+  (setv declared (_declaration-setters name declarations (+ "defhandler " (str name))))
 
   ;; Separate lazy defs from effect clauses
   (setv #(lazy-defs effect-clauses) (_extract-lazy-clauses clauses name))
@@ -1006,9 +1019,9 @@
   ;; Get・Put・Some は `_doeff_<名>` の別名で束ねる(書き手の KV の Put・Get などの effect を隠さない — expansion_names.py)。
   (setv lazy-imports
     (cond
-      (or (not lazy-defs) (static-view-enabled)) `(do)
+      (or (not lazy-defs) (_static-view-enabled)) `(do)
       True
-        `(do ~(import-form ["Some" "Get" "Put"])
+        `(do ~(_import-form ["Some" "Get" "Put"])
              (import doeff-hy._session [session-key :as _doeff-session-key]))))
 
   ;; defhandler produces a Program -> Program function instead of exposing a
@@ -1030,10 +1043,10 @@
   ;; 無いと「戻りの型が無い関数」で未分類になった・card ki-01270742001e)。class の本体では注記しない(import が組む関数の中へ移り、
   ;; 定義の段から名が見えない)。型検査のための展開も注記しない(pyright は本文に被せる関数の型を推し、型の宣言の生成 static_stub.py は
   ;; 工場の答えを Handler と書く)。
-  (setv factory-annotated (and (is-not params None) (not (static-view-enabled)) (not (_in-class-body? _hy-compiler)))
-        factory-head (if factory-annotated `(annotate ~name ~(alias-symbol "ProgramHandler")) name)
-        factory-imports (if factory-annotated [(import-form ["ProgramHandler"])] []))
-  (locate-synthesized (_scoped-definition _hy-compiler name (if (is params None)
+  (setv factory-annotated (and (is-not params None) (not (_static-view-enabled)) (not (_in-class-body? _hy-compiler)))
+        factory-head (if factory-annotated `(annotate ~name ~(_alias-symbol "ProgramHandler")) name)
+        factory-imports (if factory-annotated [(_import-form ["ProgramHandler"])] []))
+  (_locate-synthesized (_scoped-definition _hy-compiler name (if (is params None)
       [#* outer-imports
        `(setv ~name
          ((fn []

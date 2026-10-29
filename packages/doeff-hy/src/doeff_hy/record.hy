@@ -87,7 +87,7 @@
 ;;; (`; defk にできない: defrecord の :check が作る時に呼ぶ`)と :tags {… :role "judgment"} を付ける。
 ;;;
 ;;; 展開(頭の辞書つき):
-;;;   (do (import doeff_hy.declarations doeff_hy.record)
+;;;   (do (import doeff_hy.declarations doeff_hy.record doeff_hy._record_check)
 ;;;       (defclass [(dataclass :frozen True :kw-only True)] ChatId []
 ;;;         "chat の id"
 ;;;         ((annotate value str))
@@ -97,8 +97,8 @@
 ;;;           (when (is-not _verdict True)   ; 答えが True そのものなら残りは要らない(#2421)
 ;;;             (when (isinstance _verdict #(DoExpr EffectBase)) (raise (TypeError "… Program を返した …")))  ; 実行時の展開だけ
 ;;;             (when (not _verdict)
-;;;               (doeff_hy.record.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
-;;;                                              (bool _verdict) {"value" value})))
+;;;               (doeff_hy._record_check.require-check "ChatId" #("value") "(CHAT-ID-PATTERN.fullmatch value)"
+;;;                                                     (bool _verdict) {"value" value})))
 ;;;           None))
 ;;;       (setattr ChatId "__doeff_tags__" (doeff_hy.declarations.DefinitionTags :context "chat" :role "type"))
 ;;;       (setattr ChatId "__doeff_checks__" #("(CHAT-ID-PATTERN.fullmatch value)")))
@@ -188,7 +188,6 @@
 ;;; 展開の基底の `StrEnum` は、defrecord の `dataclass` と同じく使う側の
 ;;; scope の名前を指す(Python 3.11 以上は `enum.StrEnum`)。
 
-(require doeff-hy.macros [deff])
 (import dataclasses [dataclass])
 (import doeff [DoExpr EffectBase])
 
@@ -414,7 +413,7 @@
                 [`(when (isinstance ~verdict #(doeff_hy.record.DoExpr doeff_hy.record.EffectBase))
                     (raise (TypeError ~(.format "{} の :check の {} が Program を返した — :check は純粋な式で書く(defk は作る時に呼べない)" name text))))])
           (when (not ~verdict)
-            (doeff_hy.record.require-check
+            (doeff_hy._record_check.require-check
               ~(str name) #(~@(lfor n used (String (hy.unmangle n)))) ~text
               (bool ~verdict) {~@(sum (lfor n used [(String (hy.unmangle n)) (Symbol n)]) [])})))]))
   (setv post-init (if statements
@@ -426,7 +425,8 @@
   (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
   (_scoped-definition _hy-compiler name
     [`(do
-        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]))
+        ;; :check の require-check は内側の doeff_hy._record_check に在る(実行時と型検査の両方の展開が読む・card ki-a28c20b93638)。
+        (import doeff_hy.declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]) ~@(if statements ['doeff_hy._record_check] []))
         ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
               [`(defclass [(dataclass :frozen True :kw-only True)] ~name []
@@ -439,19 +439,6 @@
         (setattr ~name "__doeff_checks__" #(~@(lfor c (or checks []) (String (.lstrip (hy.repr c) "'")))))
         (setattr ~name "__doeff_failure__" ~(if (and (is-not failure None) (= (str failure) "True")) 'True 'False)))]
     :nested-reads True))
-
-
-(deff require-check [#^ str record #^ tuple fields #^ str check #^ bool passed #^ dict values]  ; defk にできない: defrecord の展開が dataclass の __post_init__ から呼ぶ(Program を実行できない所)
-  {:pre [(: record str) (: fields tuple) (: check str) (: passed bool) (: values dict)]
-   :post [(: % None)]
-   :tags {:context "doeff-hy" :role "judgment"}}
-  "defrecord の :check の 1 式の結果を検める。偽なら ValueError で「どの型のどの欄がどの検めで落ちたか」と欄の値を名指す
-   (Program を返した式は展開の中で先に TypeError にしてある)。"
-  (when (not passed)
-    (raise (ValueError (.format "{} の欄 {} が検め {} で落ちた: {}"
-                                record (.join "・" fields) check
-                                (.join " " (gfor #(k v) (.items values) (.format "{}={!r}" k v)))))))
-  None)
 
 
 ;; JSON の境目の型(頭注の「defwire」)。欄の読み方は defrecord と同じ(展開は defrecord をそのまま使う)。

@@ -29,7 +29,7 @@ def _helper_names() -> frozenset[str]:
 
     表を写さず `_helper-imports` から読む — 補助を足した時に、この検が新しい名も見るように。
     """
-    names: set[str] = {hy.mangle(macros.HELPERS_NAME)}
+    names: set[str] = {hy.mangle(macros._HELPERS_NAME)}
     for statement in macros._helper_imports()[1:]:
         assert str(statement[0]) == "import", statement
         imported = list(statement[2])

@@ -33,10 +33,18 @@
 ;; 実行時の guard(_guard-performed・_guard-statement-value)が defk の呼びごと・文ごとに引く型(#844)
 (import doeff [DoExpr EffectBase])
 (import doeff.mcp [mcp-param-annotation mcp-json-type-names])
-(import doeff-hy.declarations [CONTRACT-KEYS FUNCTION-CONTRACT-KEYS refuse-unknown-keys declaration-setters defeffect-form declared-value
-                               type-param-symbols record-names])
-(import doeff-hy.positions [locate-synthesized])
-(import doeff-hy.expansion-names [alias-symbol])
+;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
+;; (ADR-DOE-API-001 R14・card ki-a28c20b93638)。素の名で束ねると、目録が doeff_hy.macros の公開の名と数える。
+(import doeff-hy.declarations [CONTRACT-KEYS :as _CONTRACT-KEYS
+                               FUNCTION-CONTRACT-KEYS :as _FUNCTION-CONTRACT-KEYS
+                               refuse-unknown-keys :as _refuse-unknown-keys
+                               declaration-setters :as _declaration-setters
+                               defeffect-form :as _defeffect-form
+                               declared-value :as _declared-value
+                               type-param-symbols :as _type-param-symbols
+                               record-names :as _record-names])
+(import doeff-hy.positions [locate-synthesized :as _locate-synthesized])
+(import doeff-hy.expansion-names [alias-symbol :as _alias-symbol])
 ;; 定義の macro が関数の本体の中に書かれたかを、展開の時の Hy の compiler の scope から読む(_scoped-definition)
 (import hy.scoping [nearest-python-scope is-function-scope ScopeFn])
 ;; macro の引数の型 — 展開の時に macro が受けるのは、Hy の compiler(`_hy-compiler`)と、書かれた form(`hy.models.Object`)。
@@ -101,7 +109,7 @@
       #(None body)
       #((get body contract-idx) (+ (cut body 0 contract-idx) (cut body (+ contract-idx 1) None)))))
 
-(defn _extract-contracts [body [allowed CONTRACT-KEYS] [where "contract"]]
+(defn _extract-contracts [body [allowed _CONTRACT-KEYS] [where "contract"]]
   "Parse optional {:pre [...] :post [...]} from front of body forms.
    Skips leading docstring if present.
    Returns #(pre-checks post-checks real-body).
@@ -112,7 +120,7 @@
         post-checks None)
   (setv #(contract real-body) (_find-contract body))
   (when (is-not contract None)
-    (refuse-unknown-keys contract allowed where)
+    (_refuse-unknown-keys contract allowed where)
     (for [#(k v) (zip (cut contract None None 2) (cut contract 1 None 2))]
       (when (= (str k) ":pre")
         (setv pre-checks (list v)))
@@ -120,7 +128,7 @@
         (setv post-checks (list v)))
       ;; :writes は形だけを検め、展開に何も残さない(linter が source の綴りを読む — doeff_hy/declarations.hy の FUNCTION-CONTRACT-KEYS)。
       (when (= (str k) ":writes")
-        (record-names v where ":writes"))))
+        (_record-names v where ":writes"))))
   #(pre-checks post-checks real-body))
 
 (defn _is-type-check [form]
@@ -295,7 +303,7 @@ defk {name}: :post must include a return type check (: % Type).
 
 ;; 型の式を isinstance の第 2 引数に置ける形へ写す 1 点は doeff_hy/type_forms.py の runtime-type-form(契約の `(: x T)` と
 ;; `(<- x T e)` が呼ぶ・外の道具〔品質検査の Hy の投影〕も同じ関数を呼ぶ — #3366 の根 2 で純 Python の公開の関数へ移した)。
-(import doeff-hy.type-forms [runtime-type-form])
+(import doeff-hy.type-forms [runtime-type-form :as _runtime-type-form])
 
 (defn _runtime-type-check [target rt message]
   "契約の `(: x T)` と束縛 `(<- x T e)` が実行時に型を確かめる form の 1 点(card ki-8673c7bb5b0c)。rt = runtime-type-form で写した型の式。
@@ -319,11 +327,11 @@ defk {name}: :post must include a return type check (: % Type).
 ;; 注記は文字列で書く(Python 3.13 以前でも定義の時に評価しない — 後で定義する名前の型を
 ;; 契約に書いても定義が落ちない)。文字列の型 `(: x "説明")` は注記にしない。
 
-(import doeff-hy._static-view [static-view-enabled])
+(import doeff-hy._static-view [static-view-enabled :as _static-view-enabled])
 
 (defn _static-view? []
   "doeff-hy-check が型検査のための展開をしている間だけ真(doeff_hy/_static_view.py)。"
-  (static-view-enabled))
+  (_static-view-enabled))
 
 (defn _type-source [tp]
   "契約の型の式を Python の source の文字列にする。文字列の型(説明だけ)は None。
@@ -381,7 +389,7 @@ defk {name}: :post must include a return type check (: % Type).
    実行時に確かめられない総称のまま型検査と .pyi へ渡すため(agora-redesign #2893)。名の並びでない値・重なる名は SyntaxError。"
   (setv contract (get (_find-contract body) 0))
   ;; 形の検めは defeffect の :tp と分け合う(declarations.hy の type-param-symbols)。
-  (type-param-symbols (when (is-not contract None) (declared-value contract ":tp")) where))
+  (_type-param-symbols (when (is-not contract None) (_declared-value contract ":tp")) where))
 
 (defn _object-for [names form]
   "型の式 form の中の names(型の引数の名)を object に写す(入れ子の式・組・和の中も)— 実行時の isinstance に型の引数を渡さないため。"
@@ -443,7 +451,7 @@ defk {name}: :post type annotation cannot be an empty string.
             '(do)
           True
             (let [target-label (if (= (str target) "%") "return value" (str target))
-                  rt (runtime-type-form (_object-for (sfor p type-params (str p)) tp))
+                  rt (_runtime-type-form (_object-for (sfor p type-params (str p)) tp))
                   message `(+ ~(+ (str fn-name) ": " phase " type error: `" target-label "` expected " (str tp) ", got ")
                               (. (type ~target) __name__))]
               ;; 型検査のための展開は素の isinstance(絞りの形 — 注記と同じ読み)・実行時は名の値が総称型でも落ちない 1 点。
@@ -551,7 +559,7 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; model ではなく名の文字列で持つ — Symbol は open-form が差し込むたびに作る。1 つの Symbol を展開のあいだで
 ;; 使い回すと、locate-synthesized が最初の展開でそれに付けた位置が残り、後のすべての束ねの式の行がその行へ
 ;; ずれる(agora-redesign #1004)。
-(setv HELPERS-NAME "_doeff_outcomes")
+(setv _HELPERS-NAME "_doeff_outcomes")
 
 (defn _install-guard-globals [wrapped [runtime-globals None]]
   "Install generated-function runtime helpers in the defining module globals.
@@ -571,8 +579,8 @@ defk {name}: :post type annotation cannot be an empty string.
   (.setdefault globals-dict "_doeff_effect_base" EffectBase)
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
-  ;; defk の本体の束ねが名で引く outcomes の module(HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
-  (.setdefault globals-dict HELPERS-NAME (importlib.import-module "doeff_core_effects._outcomes"))
+  ;; defk の本体の束ねが名で引く outcomes の module(_HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
+  (.setdefault globals-dict _HELPERS-NAME (importlib.import-module "doeff_core_effects._outcomes"))
   (for [#(name value) (.items (or runtime-globals {}))]
     (.setdefault globals-dict name value))
   wrapped)
@@ -602,7 +610,7 @@ defk {name}: :post type annotation cannot be an empty string.
       form))
 
 
-(defclass [(dataclass :frozen True)] RuntimeDo []
+(defclass [(dataclass :frozen True)] _RuntimeDo []
   "実行時の展開が引く `do` の置き場(`_runtime-do`)— module と、その module の中の名(どちらも Python の綴り)。
 
    Hy の記号で持たないのは、Hy が点を含む記号 `doeff.do` を式 `(. doeff do)` に読むから — `__import__` に渡す文字を
@@ -618,7 +626,7 @@ defk {name}: :post type annotation cannot be an empty string.
    `_doeff_validation_do`(`_validation-imports`)。別名と引き方は書いた場所の scope の都合で違うが、置き場は 1 つ —
    置き場を macro ごとに綴っていた頃は、表を替えても写しを持つ macro だけが古い `do` で包み続けた(card ki-973b4e44d7bc・
    tests/test_helper_imports_table.py)。型検査のための展開の `do` は static_view.py の STATIC_HELPER_IMPORTS が持つ。"
-  (RuntimeDo "doeff.do" "do"))
+  (_RuntimeDo "doeff.do" "do"))
 
 (defn _runtime-do-import [alias]
   "`_runtime-do` の `do` を alias に束ねる実行時の import。"
@@ -939,10 +947,14 @@ defk {name}: :post type annotation cannot be an empty string.
 ;; 節(handle.hy)がここを通す。展開を止める誤りは SyntaxError、止めない所見(setv の使用・束縛し直し・
 ;; 旧い lazy)は doeff-hy-check が集める(static_view.report-findings)。
 
-(import doeff-hy.binding-forms [rewrite-body BodyKind ModuleBindings ModuleNames module-declaration])
+(import doeff-hy.binding-forms [rewrite-body :as _rewrite-body
+                                BodyKind :as _BodyKind
+                                ModuleBindings :as _ModuleBindings
+                                ModuleNames :as _ModuleNames
+                                module-declaration :as _module-declaration])
 ;; match の class pattern の欄の名を Python の属性の名へ直す(Hy 1.3.1 の欠陥の回避・defk が使う — agora-redesign #2036)
-(import doeff-hy.match-fields [mangle-match-fields])
-(import doeff-hy._static-view [report-findings])
+(import doeff-hy.match-fields [mangle-match-fields :as _mangle-match-fields])
+(import doeff-hy._static-view [report-findings :as _report-findings])
 ;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function
                                record-module-binding :as _record-module-binding])
@@ -952,30 +964,30 @@ defk {name}: :post type annotation cannot be an empty string.
   "この file の compile の間だけ生きる、module の直下の val / var / lazy val の名簿(Hy の compiler に付ける)。
    compiler が無い展開(hy.macroexpand など)では、その場かぎりの空の名簿。"
   (if (is compiler None)
-      (ModuleBindings)
+      (_ModuleBindings)
       (do
         (setv found (getattr compiler "_doeff_module_bindings" None))
         (when (is found None)
-          (setv found (ModuleBindings))
+          (setv found (_ModuleBindings))
           (setattr compiler "_doeff_module_bindings" found))
         found)))
 
 (defn _module-names [compiler]
   "defk・deftest・defhandler の本体へ渡す、同じ file で前に宣言した module の lazy val / var の名前。"
-  (if (is compiler None) (ModuleNames) (.names (_module-bindings compiler))))
+  (if (is compiler None) (_ModuleNames) (.names (_module-bindings compiler))))
 
 (defn _rewrite-bindings [forms owner kind params [sessions #()] [module None]]
   "本体の宣言・:=・lazy の参照を書き換え、所見を doeff-hy-check へ渡して、書き換えた本体を返す。
    展開の時に呼ぶ helper なので defn(defk にできない)。"
-  (setv rewritten (rewrite-body forms
+  (setv rewritten (_rewrite-body forms
                                 :owner owner
                                 :kind kind
                                 :params params
                                 :sessions sessions
-                                :module (if (is module None) (ModuleNames) module)
+                                :module (if (is module None) (_ModuleNames) module)
                                 :static (_static-view?)
                                 :expand-bangs _expand-bangs))
-  (report-findings (. rewritten findings))
+  (_report-findings (. rewritten findings))
   (list (. rewritten forms)))
 
 (defn _module-level [compiler head args]
@@ -990,7 +1002,7 @@ defk {name}: :post type annotation cannot be an empty string.
                            "defk・deftest・defhandler の節の本体か、module の直下にだけ書けます"
                            "(defn・fn・class・let の中には書けません — 関数は defk で書きます)。"
                            " [ADR-DOE-HY-006]\n"))))
-  (setv declaration (module-declaration (_module-bindings compiler) form (_static-view?)))
+  (setv declaration (_module-declaration (_module-bindings compiler) form (_static-view?)))
   ;; module の直下の pytestmark を pytest の item の記録に載せる(agora-redesign #1211 / #1291 — 記録の式を展開に足す)
   (setv item-record (when (is-not compiler None) (_record-module-binding head args)))
   (if (is item-record None)
@@ -1064,18 +1076,18 @@ defk {name}: :post type annotation cannot be an empty string.
   (when (or (is contract None) forms)
     (raise (SyntaxError (.format "defeffect {}: 名前・(docstring)・頭の辞書 {{:fields [...] :answer 型 :tags {{...}}}} の形で書く" (str name)))))
   (setv where (+ "defeffect " (str name))
-        pre (declared-value contract ":pre"))
+        pre (_declared-value contract ":pre"))
   (when (and (is-not pre None) (not (isinstance pre hy.models.List)))
     (raise (SyntaxError (.format "{}: :pre は条件の list: {}" where (hy.repr pre)))))
   ;; 型の (: 名 型) が指せるのは欄だけ(戻り値の % は effect に無い)。
-  (setv field-names (lfor item (or (declared-value contract ":fields") [])
+  (setv field-names (lfor item (or (_declared-value contract ":fields") [])
                           :if (and (isinstance item hy.models.Expression) (> (len item) 1))
                           (str (get item 1))))
   (for [check (or pre [])]
     (when (and (_is-type-check check) (not-in (str (get check 1)) field-names))
       (raise (SyntaxError (.format "{}: :pre の {} は欄ではない(欄 = {})" where (hy.repr check) (.join " " field-names))))))
-  (locate-synthesized (_scoped-definition _hy-compiler name
-    [(defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))]
+  (_locate-synthesized (_scoped-definition _hy-compiler name
+    [(_defeffect-form name docstring contract where (_contract-code pre (str name) ":pre" False))]
     :nested-reads True)))
 
 
@@ -1098,7 +1110,7 @@ defk {name}: :post type annotation cannot be an empty string.
    関数の本体の中に書くと、宣言の import(doeff_hy)と定義をすぐ呼ぶ関数に入れて name だけを束ねる
    (_scoped-definition — card ki-93395c51de1e)。"
   (_warn-defk-in-hyp _hy-compiler "deff" name)
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body _FUNCTION-CONTRACT-KEYS (+ "deff " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 deff {name}: {{:pre [...]}} is required.
@@ -1130,9 +1142,9 @@ deff {name}: {{:post [...]}} is required.
 " :name name))))
   (_validate-pre-type-checks name params pre-checks)
   (_validate-post-type-check name post-checks)
-  (locate-synthesized (_scoped-definition _hy-compiler name [
+  (_locate-synthesized (_scoped-definition _hy-compiler name [
     (_build-fn-with-contracts [] name params pre-checks post-checks real-body (_type-params body (+ "deff " (str name))))
-    #* (declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name)))])))
+    #* (_declaration-setters name (get (_find-contract body) 0) (+ "deff " (str name)))])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1173,9 +1185,9 @@ deff {name}: {{:post [...]}} is required.
   ;; (agora-redesign #2036・Hy は直さない = ADR-DOE-HY-008)。defk の外の match は doeff-linter の DOEFF169 が止める
   ;; (規則は defk の form の中を当てない)。__doeff_body__ には書いたままの本体を残す(written-forms)。
   (setv written-forms body
-        body (lfor form body (mangle-match-fields form))
-        params (mangle-match-fields params))
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body FUNCTION-CONTRACT-KEYS (+ "defk " (str name))))
+        body (lfor form body (_mangle-match-fields form))
+        params (_mangle-match-fields params))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body _FUNCTION-CONTRACT-KEYS (+ "defk " (str name))))
   (when (is pre-checks None)
     (raise (SyntaxError (.format "
 defk {name}: {{:pre [...]}} is required.
@@ -1213,22 +1225,22 @@ defk {name}: {{:post [...]}} is required.
   ;; val / var / lazy val / lazy var / := の書き換えと、旧い lazy / lazy-val / lazy-var / set! の拒否
   ;; (ADR-DOE-HY-006)。__doeff_body__ には書いたままの本体を残す。
   (setv written-body (get (_find-contract written-forms) 1))
-  (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) BodyKind.DEFK
+  (setv real-body (_rewrite-bindings real-body (+ "defk " (str name)) _BodyKind.DEFK
                                      (_extract-param-names params)
                                      :module (_module-names _hy-compiler)))
   ;; Expand bangs in the real body — in-place (yield ...) rewrite [ADR-DOE-HY-003]
   (setv expanded-forms
-    (lfor form real-body (_expand-bangs form (+ "defk " (str name)) HELPERS-NAME)))
+    (lfor form real-body (_expand-bangs form (+ "defk " (str name)) _HELPERS-NAME)))
   (setv fn-form (_build-fn-with-contracts ['_doeff_do] name params pre-checks post-checks expanded-forms
                                           (_type-params body (+ "defk " (str name)))))
-  (locate-synthesized (_scoped-definition _hy-compiler name [
+  (_locate-synthesized (_scoped-definition _hy-compiler name [
      (_helper-imports)
      fn-form
      `(_install-guard-globals ~name)
      `(setattr ~name "__doeff_body__" ~(_quoted-forms written-body))
      `(setattr ~name "__doeff_args__" ~(_quoted-forms params))
      `(setattr ~name "__doeff_name__" ~(str name))
-     #* (declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name)))])))
+     #* (_declaration-setters name (get (_find-contract body) 0) (+ "defk " (str name)))])))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1254,7 +1266,7 @@ defk {name}: {{:post [...]}} is required.
   ;; lambda は書いた場所で作り(既定値はその scope で評価する)、`do` は名を束ねずに引く(`_do-reference`)。
   ;; 型検査のための展開は前と同じ形(`_helper-imports` は何も出さない)。
   (setv kleisli `(fn [~@params] ((~(_do-reference) (fn [] (do ~@expanded-forms))))))
-  (locate-synthesized
+  (_locate-synthesized
     (if (_static-view?)
         `(do ~(_helper-imports) ~kleisli)
         kleisli)))
@@ -1299,7 +1311,7 @@ defk {name}: {{:post [...]}} is required.
                        (_wrap-statement-guard (get bind 1) "do!")
                        ;; Effect binding — yield (typed bind keeps its isinstance)
                        (_bind-form bind))))
-  (locate-synthesized (_with-scoped-helpers (if post-checks
+  (_locate-synthesized (_with-scoped-helpers (if post-checks
       (let [post-asserts (_contract-code post-checks "do!" "post-condition" True)]
         `((_install-guard-globals
             (_doeff-do (fn []
@@ -1332,7 +1344,7 @@ defk {name}: {{:post [...]}} is required.
    expanders (do! / defp / deftest / for/do / defhandler) use, so a typed bind
    carries the isinstance guarantee wherever it is written."
   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
-  (locate-synthesized (_bind-form (hy.models.Expression ['<- #* args]))))
+  (_locate-synthesized (_bind-form (hy.models.Expression ['<- #* args]))))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1355,7 +1367,7 @@ defk {name}: {{:post [...]}} is required.
    パターンは (型 欄 …) か (| (A …) (B …)) だけ — 何でも受ける形(_・名前 1 つ・object・Exception)は展開の時に断る。
    Python の例外は受けない(Raise だけを見る)。番と写し先は値の式。 [ADR-DOE-CORE-EFFECTS-003 R7]"
   (import doeff-hy.outcome-forms [on-raise-form])
-  (locate-synthesized (on-raise-form program clauses)))
+  (_locate-synthesized (on-raise-form program clauses)))
 
 (defmacro absent-as [#^ Object default #^ Object program]
   "(absent-as 既定値 本文) — 本文の中の Absent を既定値に畳む。
@@ -1366,7 +1378,7 @@ defk {name}: {{:post [...]}} is required.
 
    (<- n (absent-as 0 (do! (<- row (ReadCount \"k\")) (+ row 1))))   ; 不在なら row = 0 で続き、n = 1"
   (import doeff-hy.outcome-forms [absent-as-form])
-  (locate-synthesized (absent-as-form default program)))
+  (_locate-synthesized (absent-as-form default program)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1456,7 +1468,7 @@ defk {name}: {{:post [...]}} is required.
     True `(do
             (setv ~name ~performed)
             (del ~bound)
-            ~(_runtime-type-check name (runtime-type-form tp)
+            ~(_runtime-type-check name (_runtime-type-form tp)
                                   `(+ ~(+ "expected " (str tp) ", got ") (. (type ~name) __name__))))))
 
 
@@ -1627,7 +1639,7 @@ defk {name}: {{:post [...]}} is required.
      (import doeff [do :as _doeff-do])
      (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])"
   (setv #(bindings body-expr) (_parse-do-body forms "traverse"))
-  (locate-synthesized (_gen-traverse-body bindings body-expr)))
+  (_locate-synthesized (_gen-traverse-body bindings body-expr)))
 
 
 (defmacro for/do [#^ Object #* forms]
@@ -1666,7 +1678,7 @@ defk {name}: {{:post [...]}} is required.
    reads the module's defk (agora-redesign #2321). Without a When guard the expansion never names
    Skip, and pyright strict reports its import as unused — leave it out then."
   (setv #(bindings body-expr) (_parse-do-body forms "for/do"))
-  (locate-synthesized (_gen-traverse-body bindings body-expr)))
+  (_locate-synthesized (_gen-traverse-body bindings body-expr)))
 
 
 ;; ---------------------------------------------------------------------------
@@ -1780,7 +1792,7 @@ the effect in the enclosing do-context.
    nested defk/deff/defp/deftest/..., defmacro, quote/quasiquote) are opaque —
    their own macro expands their bangs (R4).
 
-   helpers = the module-global name of doeff_core_effects._outcomes (defk passes HELPERS-NAME,
+   helpers = the module-global name of doeff_core_effects._outcomes (defk passes _HELPERS-NAME,
    which it installs in its module's globals): the binds of this body — every (! e) and every
    (<- …) outside a nested function — reach open_bind by that name instead of `__import__`
    (agora-redesign #844 — about 0.2µs a bind). Other callers pass None and keep their (<- …)
@@ -1930,7 +1942,7 @@ the effect in the enclosing do-context.
    program-return-mode: 'reject' (defp) | 'require' (defpp)"
   (_enforce-no-defp-in-hyk compiler macro-name name)
   (import doeff-hy.outcome-forms [bind-form :as _bind-form])
-  (setv #(pre-checks post-checks real-body) (_extract-contracts body CONTRACT-KEYS (+ macro-name " " (str name))))
+  (setv #(pre-checks post-checks real-body) (_extract-contracts body _CONTRACT-KEYS (+ macro-name " " (str name))))
   (when (is-not pre-checks None)
     (raise (SyntaxError (.format "
 {macro} {name}: :pre is not allowed — {macro} has no parameters.
@@ -1992,7 +2004,7 @@ the effect in the enclosing do-context.
      `(setattr ~name "__doeff_body__" ~(_quoted-forms real-body))
      `(setattr ~name "__doeff_name__" ~(str name))
      `(setattr ~name "__doeff_module__" __name__)
-     #* (declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))]))
+     #* (_declaration-setters name (get (_find-contract body) 0) (+ macro-name " " (str name)))]))
 
 (defmacro defp [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* body]
   "Define a Program[T] constant. Errors if the return value is itself a Program.
@@ -2003,7 +2015,7 @@ the effect in the enclosing do-context.
      (<- data (load-data))
      (<- result (process data))
      result)"
-  (locate-synthesized (_build-defp _hy-compiler "defp" name body)))
+  (_locate-synthesized (_build-defp _hy-compiler "defp" name body)))
 
 (defmacro defpp [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* body]
   "Define a Program[Program[T]] constant. Errors if return is NOT a Program.
@@ -2013,7 +2025,7 @@ the effect in the enclosing do-context.
      {:post [(inspect.isgenerator %)]}
      (<- config (load-config))
      (build-pipeline config))"
-  (locate-synthesized (_build-defp _hy-compiler "defpp" name body :program-return-mode "require")))
+  (_locate-synthesized (_build-defp _hy-compiler "defpp" name body :program-return-mode "require")))
 
 
 ;; ---------------------------------------------------------------------------
@@ -2078,7 +2090,7 @@ the effect in the enclosing do-context.
         (setv scans (_test-scans v)))))
   #(interpreters params-dict env-dict marks skip-if-expr skip-reason scans real-body))
 
-(import doeff-hy._static-view [deftest-fixture-annotation])
+(import doeff-hy._static-view [deftest-fixture-annotation :as _deftest-fixture-annotation])
 
 (defn _deftest-param [param]
   "deftest の引数 1 つを #(名 書き手の注記か None) にする。Hy の reader は `#^ T 名` を `(annotate 名 T)` に読む。
@@ -2094,7 +2106,7 @@ the effect in the enclosing do-context.
    fixture・:params の引数)は `object` を付ける — Unknown のまま strict の赤にせず、型も逃がさない。"
   (if (is-not written None)
       written
-      (hy.models.Symbol (deftest-fixture-annotation (hy.mangle (str param-name))))))
+      (hy.models.Symbol (_deftest-fixture-annotation (hy.mangle (str param-name))))))
 
 (defmacro deftest [#^ HyASTCompiler _hy-compiler #^ Object name #^ Object #* args]
   "Define an effectful test that expands to a pytest-compatible function.
@@ -2166,7 +2178,7 @@ the effect in the enclosing do-context.
     (_extract-test-meta body))
 
   ;; val / var / lazy val / lazy var / := の書き換え(ADR-DOE-HY-006)
-  (setv real-body (_rewrite-bindings real-body (+ "deftest " (str name)) BodyKind.DEFTEST
+  (setv real-body (_rewrite-bindings real-body (+ "deftest " (str name)) _BodyKind.DEFTEST
                                      (sfor p fixture-params (str p))
                                      :module (_module-names _hy-compiler)))
 
@@ -2257,7 +2269,7 @@ the effect in the enclosing do-context.
   (setv item-record (_record-test-function name fn-params item-decorators))
 
   ;; Assemble the function definition with decorators
-  (locate-synthesized (_scoped-definition _hy-compiler name
+  (_locate-synthesized (_scoped-definition _hy-compiler name
     (if decorators
       [pytest-import
        (_helper-imports)
@@ -2614,8 +2626,8 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   ;; どちらの展開も `_doeff_` の頭の別名で引く(書き手の KV の Put などの effect を隠さない — doeff_hy/expansion_names.py)。
   ;; 別名の束ねは、型検査のための展開では doeff-hy-check が module の頭で読む時だけ置く(doeff_hy/_static_view.py の
   ;; SESSION_STATIC_IMPORTS)、実行時は defhandler が出す import。
-  (setv put (alias-symbol "Put")
-        some (alias-symbol "Some"))
+  (setv put (_alias-symbol "Put")
+        some (_alias-symbol "Some"))
   `(do
      (setv ~name ~val)
      (<- (~put ~key-var (~some ~name)))))
