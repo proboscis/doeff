@@ -98,8 +98,8 @@ def default_scheduled_handlers(
     Args:
         workspace_handler: Custom workspace handler, or None for ``workspace_handler()``
         issue_handler: Custom issue handler, or None for ``issue_handler()``
-        agent_handler: Custom agent handler, or None for ``agent_handler()``
-        git_handler: Custom git handler, or None for ``git_handler()``
+        agent_handler: Custom agent handler, or None for ``agent_handler``
+        git_handler: Custom git handler, or None for ``git_handler``
         exec_handler: Custom exec handler, or None for ``exec_handler()``
         workflow_effect_handler: Custom time!/random! handler, or None for
             ``journaled_workflow_effect_handler()``
@@ -108,11 +108,11 @@ def default_scheduled_handlers(
         One handler for all conductor effects; other effects pass to the outer handlers.
     """
     return stacked_handlers(
-        _git_production_handlers(),
+        _git_production_handlers,
         workspace_handler or _workspace_handler(),
         issue_handler or _issue_handler(),
-        agent_handler or _agent_handler(),
-        git_handler or _git_handler(),
+        agent_handler or _agent_handler,
+        git_handler or _git_handler,
         exec_handler or _exec_handler(),
         workflow_effect_handler or _journaled_workflow_effect_handler(),
     )

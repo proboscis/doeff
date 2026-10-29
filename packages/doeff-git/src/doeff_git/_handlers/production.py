@@ -1,8 +1,8 @@
 """Production handlers for doeff-git effects."""
 
 
-from doeff import K, Pass, Resume, handler, stacked_handlers
-from doeff.program import ProgramHandler
+from doeff import K, Pass, Resume, handler
+from doeff.program import FormerFactoryHandler, _former_factory_stack
 from doeff_git import _commands
 from doeff_git._effects import CreatePR, GitCommit, GitDiff, GitPull, GitPush, MergePR
 
@@ -39,14 +39,17 @@ def github_handler(effect: CreatePR | MergePR, k: K):
     return (yield Pass(effect, k))
 
 
-def production_handlers() -> ProgramHandler:
-    """Install ``git_local_handler`` and ``github_handler`` as one handler: git CLI for the
-    local effects, GitHub CLI for the hosting effects.
+production_handlers: FormerFactoryHandler = _former_factory_stack(
+    "production_handlers", github_handler, git_local_handler
+)
+"""``git_local_handler`` and ``github_handler`` installed as one handler: git CLI for the local
+effects, GitHub CLI for the hosting effects. A handler value — ``production_handlers(program)`` or
+``[production_handlers, ...]`` (ADR-DOE-API-002); the former ``production_handlers()`` answers it
+with a DeprecationWarning for one release.
 
-    To answer some effects another way, install that handler inside this one (nearer the
-    program); the effects it passes on reach these.
-    """
-    return stacked_handlers(github_handler, git_local_handler)
+To answer some effects another way, install that handler inside this one (nearer the program); the
+effects it passes on reach these.
+"""
 
 
 __all__ = [

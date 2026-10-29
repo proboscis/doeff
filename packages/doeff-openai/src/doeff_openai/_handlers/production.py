@@ -1,13 +1,13 @@
 """Production handlers for doeff-openai domain effects."""
 
 
-from collections.abc import Callable
 from typing import Any
 
 from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 
 from doeff import Pass, Resume, do
 from doeff import handler as _program_handler
+from doeff.program import FormerFactoryHandler, _former_factory_handler
 from doeff_openai._chat import chat_completion
 from doeff_openai._costs import (
     MissingCachedPricingError,
@@ -23,8 +23,6 @@ from doeff_openai._effects import (
 )
 from doeff_openai._embeddings import create_embedding
 from doeff_openai._structured_llm import build_api_parameters, process_structured_response
-
-ProtocolHandler = Callable[[Any], Any]
 
 DEFAULT_STRUCTURED_MAX_TOKENS = 8192
 DEFAULT_STRUCTURED_TEMPERATURE = 0.7
@@ -147,9 +145,14 @@ Compose by calling it on the program: ``openai_production_handler(program)``.
 """
 
 
-def production_handlers() -> ProtocolHandler:
-    """Program -> Program handler for real OpenAI API execution."""
-    return openai_production_handler
+production_handlers: FormerFactoryHandler = _former_factory_handler(
+    _openai_production_dispatch, "production_handlers"
+)
+"""The same handler as :data:`openai_production_handler`, under the name the handler packages share. A
+handler value — ``production_handlers(program)`` or ``[production_handlers, ...]``
+(ADR-DOE-API-002); the former ``production_handlers()`` answers it with a DeprecationWarning for
+one release.
+"""
 
 
 calculate_cost_handler = _program_handler(_handle_calculate_cost)

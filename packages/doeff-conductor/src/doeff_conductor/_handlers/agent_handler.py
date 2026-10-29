@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from doeff import K, Perform, Resume, handler, run
-from doeff.program import ProgramHandler
+from doeff import K, Perform, Resume, run
+from doeff.program import FormerFactoryHandler, _former_factory_handler
 from doeff_conductor._effects.agent import AgentEffect
 from doeff_conductor._handlers._offload import offloaded_call
 from doeff_conductor._handlers._workspace_path import WorkspacePath
@@ -52,21 +52,22 @@ def _run_on_agentd(effect: AgentEffect, work_dir: Path) -> object:
     return run(on_agentd(Perform(AgentsAgentEffect(task=task))))
 
 
-def agent_handler() -> ProgramHandler:
-    """Build the handler that runs schema-validated conductor agent tasks on doeff-agentd.
+def _answer_agent(effect: AgentEffect, k: K):
+    """Run one agent task and answer its validated result artifact."""
+    work_dir: Path = yield WorkspacePath(workspace=effect.task.env)
+    result = yield offloaded_call(lambda: _run_on_agentd(effect, work_dir))
+    return (yield Resume(k, result))
 
-    The agent runs in the worktree of its task's workspace, so the handler is installed inside
-    the workspace handler (``WorkspacePath``). The blocking wait for the agent's result runs off
-    the scheduler thread (``offloaded_call``), so a program using it runs under ``scheduled``
-    and sibling agents run in parallel. Each task talks to the daemon through its own client,
-    connected on first use.
-    """
 
-    @handler
-    def answer_agent(effect: AgentEffect, k: K):
-        """Run one agent task and answer its validated result artifact."""
-        work_dir: Path = yield WorkspacePath(workspace=effect.task.env)
-        result = yield offloaded_call(lambda: _run_on_agentd(effect, work_dir))
-        return (yield Resume(k, result))
+agent_handler: FormerFactoryHandler = _former_factory_handler(_answer_agent, "agent_handler")
+"""The handler that runs schema-validated conductor agent tasks on doeff-agentd.
 
-    return answer_agent
+A handler value — ``agent_handler(program)`` or ``[..., agent_handler]`` (ADR-DOE-API-002); the
+former ``agent_handler()`` answers it with a DeprecationWarning for one release.
+
+The agent runs in the worktree of its task's workspace, so the handler is installed inside the
+workspace handler (``WorkspacePath``). The blocking wait for the agent's result runs off the
+scheduler thread (``offloaded_call``), so a program using it runs under ``scheduled`` and sibling
+agents run in parallel. Each task talks to the daemon through its own client, connected on first
+use.
+"""

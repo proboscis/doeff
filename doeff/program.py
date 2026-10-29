@@ -534,6 +534,30 @@ def stacked_handlers(*handlers: Callable[..., object]) -> ProgramHandler:
     return install
 
 
+def _former_factory_stack(name: str, *handlers: Callable[..., object]) -> FormerFactoryHandler:
+    """``stacked_handlers`` for a bundle without settings that used to be a factory called with no
+    arguments (doeff-git's ``production_handlers``): ``name()`` answers the bundle itself with a
+    DeprecationWarning for one release (ADR-DOE-API-002 R3), and ``name(program)`` is the
+    bundle's."""
+    bundle = stacked_handlers(*handlers)
+
+    def install(program: object = _NO_PROGRAM) -> object:
+        if program is _NO_PROGRAM:
+            warnings.warn(_called_as_former_factory(name), DeprecationWarning, stacklevel=2)
+            return install
+        return bundle(cast("Program[Any]", program))
+
+    install.__name__ = name
+    install.__qualname__ = name
+    install.__doc__ = bundle.__doc__
+    install_meta = cast(Any, install)
+    install_meta._doeff_is_handler_fn = True
+    for mark in ("__doeff_handles__", "__doeff_effects__"):
+        if hasattr(bundle, mark):
+            setattr(install_meta, mark, getattr(bundle, mark))
+    return cast(FormerFactoryHandler, install)
+
+
 @dataclass(frozen=True)
 class _DeclaredMarks:
     """The declared marks of one handler or one bundle: the effects it answers

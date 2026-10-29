@@ -25,6 +25,13 @@
   where you wrote `sequential()(prog)` and `(sequential)`. The former call `sequential()` still answers the same
   handler for one release, with a `DeprecationWarning`. `tools/former_factory_call_rewrite.py` rewrites the former
   calls of a repository (`census` counts them, `rewrite` edits the working tree).
+- **doeff-git, doeff-openai, doeff-openrouter, doeff-conductor:** `production_handlers` (of the first three) and
+  doeff-conductor's `agent_handler` and `git_handler` are handlers, not handler factories (ADR-DOE-API-002): write
+  `production_handlers(prog)` and `[production_handlers, …, agent_handler, git_handler]` where you wrote
+  `production_handlers()(prog)` and `[production_handlers(), …, agent_handler(), git_handler()]`. The former calls
+  still answer the same handler for one release, with a `DeprecationWarning`. doeff-git's `production_handlers` is
+  still `github_handler` outside `git_local_handler`, as one handler (`doeff.program._former_factory_stack`).
+  `publications/zenn-use-cases-v0` keeps the calls, since it runs against the packages on PyPI.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export

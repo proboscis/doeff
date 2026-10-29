@@ -1,7 +1,7 @@
 """The git and gh commands the production handlers run, one function per effect.
 
 Inside the package: users install ``git_local_handler`` and ``github_handler`` (or
-``production_handlers()``), which call these.
+``production_handlers``), which call these.
 """
 
 

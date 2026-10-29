@@ -48,6 +48,7 @@ _BUILDERS = frozenset(
         "_program_handler",
         "_named_handler",
         "_former_factory_handler",
+        "_former_factory_stack",
         "stacked_handlers",
         "_rust_handler_installer",
         "_boundary",

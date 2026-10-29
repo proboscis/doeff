@@ -87,7 +87,7 @@ def test_deprecated_effect_aliases_emit_warnings() -> None:
 
 def test_handler_exports() -> None:
     """Public handlers module should expose callable protocol handlers."""
-    assert callable(production_handlers())
+    assert callable(production_handlers)
     assert callable(mock_handlers)
 
 
