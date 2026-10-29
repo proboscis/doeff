@@ -1124,7 +1124,13 @@ def rewrite_tree(
     *,
     write: bool,
 ) -> TreeResult:
-    """木の候補の file を 2 回読む: 1 回目で入口と比べる名を集め、子の process で確かめてから 2 回目で書く。"""
+    """木の候補の file を 2 回読む: 1 回目で入口と比べる名を集め、子の process で確かめてから 2 回目で書く。
+
+    ``_`` の path だけを読む file(import の根の中と ``--underscore-only``)は入口と比べずに決まるので、書く時は子の
+    process より前に書く。根の中に古い path が残ると、子の process が根を読む時に、子の package の中から子を古い path で
+    読む import(``_<子>/__init__`` の ``from <根>.<子>.<下> import …``)が、まだ package でない移し替えの module に
+    当たって落ち、どの名も入口と同じと確かめられずに ``_`` の path へ向く。
+    """
     files = tree.candidates(patterns)
     texts = {relative: (tree.path / relative).read_text(encoding="utf-8") for relative, _ in files}
     asked: set[tuple[str, str]] = set()
@@ -1135,7 +1141,10 @@ def rewrite_tree(
         return False
 
     for relative, kind in files:
-        rewrite_text(kind, texts[relative], patterns, tree.context(relative), collect)
+        context = tree.context(relative)
+        text, _counts = rewrite_text(kind, texts[relative], patterns, context, collect)
+        if write and context.underscore_only and text != texts[relative]:
+            (tree.path / relative).write_text(text, encoding="utf-8")
     entry = same_as_entry(asked)
 
     def one(relative: str, kind: FileKind) -> FileResult:
