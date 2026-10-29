@@ -8,8 +8,8 @@
 (require doeff-hy.macros [defk <- val])
 (require doeff-cluster.shared.entry.macros [defsystem])
 (import collections.abc [Callable])
-(import doeff_core_effects.effects [Ask])
-(import doeff_core_effects.scheduler [Spawn Task])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [Spawn Task])
 (import doeff_time [Delay])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
@@ -100,7 +100,7 @@
 ;; RETIREMENT-HOLD)を取り、仕事の終わりを待って保ちを返し、退いた刻を書いて自分で終わる(上に載る系が、受付を渡した後に走っている仕事を
 ;; 終わりまで回す形)。保ちを取らない版(hold = 偽)は、寿命の上限で止められる対照。土台は名前付きの lease の担い手を並べた物
 ;; (tests/fixtures/lease_programs.hy の lease-sim-foundation)。
-(import doeff_core_effects.scheduler [AcquireSemaphore ReleaseSemaphore Semaphore Wait])
+(import doeff_core_effects [AcquireSemaphore ReleaseSemaphore Semaphore Wait])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
 (import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
 

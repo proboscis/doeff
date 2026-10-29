@@ -7,7 +7,7 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_core_effects.file_effects [PathKind PathStat StatPath WriteText ReadText RemoveTree])
 (import doeff_core_effects.process_effects [StartProcess PollProcess ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])

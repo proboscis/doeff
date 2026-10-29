@@ -2,7 +2,7 @@
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
-from doeff_core_effects.effects import slog as slog
+from doeff_core_effects import slog as slog
 from doeff_core_effects.file_effects import Appended as Appended
 from doeff_core_effects.file_effects import AppendBytes as AppendBytes
 from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory

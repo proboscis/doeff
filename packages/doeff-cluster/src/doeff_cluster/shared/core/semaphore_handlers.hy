@@ -18,7 +18,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
 (import collections.abc [Callable])
 (import doeff [EffectBase])
-(import doeff_core_effects.scheduler [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel TaskCancelledError])
+(import doeff_core_effects [CreateSemaphore AcquireSemaphore ReleaseSemaphore Spawn Cancel TaskCancelledError])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost HeldLease WriteFenced

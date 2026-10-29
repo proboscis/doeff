@@ -21,8 +21,8 @@
 (import doeff_core_effects.os_file [os-file-handler])
 (import doeff_cluster.worker.protocol.env_translation [editable-dirs hy-dist-version])
 (import doeff_core_effects.file_effects [ListDirectory WriteText RemoveTree])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [Spawn Task Gather])
+(import doeff_core_effects [state])
+(import doeff_core_effects [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])

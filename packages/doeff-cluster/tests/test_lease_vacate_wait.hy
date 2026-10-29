@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import dataclasses [replace])
 (import doeff_events [MemoryBroker])
-(import doeff_core_effects.scheduler [Spawn Wait Task])
+(import doeff_core_effects [Spawn Wait Task])
 (import doeff_time [Delay])
 (import doeff_hy.table [TableWrite table-of])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

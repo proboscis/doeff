@@ -10,7 +10,7 @@
 ;;; waiters = 名前 → 待っている呼び鈴の列(偽物の handler の session の dict)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_core_effects.scheduler [CreatePromise CompletePromise Promise])
+(import doeff_core_effects [CreatePromise CompletePromise Promise])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 
 (val LEASE-FREED-REPLY {"revision" 0 "changed" True})

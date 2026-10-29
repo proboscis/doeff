@@ -17,7 +17,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_core_effects.scheduler [Spawn Cancel Task])
+(import doeff_core_effects [Spawn Cancel Task])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo KeepMark])
 (import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive sweep-keep-marks])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])

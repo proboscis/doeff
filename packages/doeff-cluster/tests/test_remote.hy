@@ -12,7 +12,7 @@
 (import threading)
 (import pytest)
 (import doeff [run Program with-handlers])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects [reader])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram VersionMismatch RemoteJobFailed TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-program decode-outcome])

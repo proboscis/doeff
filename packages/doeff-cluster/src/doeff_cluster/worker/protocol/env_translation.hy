@@ -44,7 +44,7 @@
 (import datetime [datetime])
 (import doeff [Program])
 (import doeff_time [GetTime Delay])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess StartProcess PollProcess StopProcess
                                            ProcessStarted ProcessNotStarted ProcessRunning ProcessExited NOT_STARTED_CODE])
 (import doeff_core_effects.file_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText

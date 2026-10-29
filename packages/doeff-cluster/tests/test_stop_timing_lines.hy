@@ -12,9 +12,9 @@
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import pathlib [Path])
 (import doeff [Program run with-handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import doeff_core_effects.memory_file [memory-file-handler])

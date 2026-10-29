@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import types [SimpleNamespace])
 (import doeff [with-handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_cluster.coordinator.intent.cluster_model [DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
 (import doeff_cluster.coordinator.intent.kube_model [FollowDeployments FollowNodes ScaleDeployment KubeUnavailable])

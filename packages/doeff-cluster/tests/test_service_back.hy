@@ -12,7 +12,7 @@
 (import pytest)
 (import sys)
 (import doeff_time [Delay])
-(import doeff_core_effects.scheduler [Spawn Wait Cancel Discard])
+(import doeff_core_effects [Spawn Wait Cancel Discard])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.service_back [SERVICE-BACK-CHANGE-SECONDS service-back service-back-within])

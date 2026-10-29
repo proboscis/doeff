@@ -35,7 +35,7 @@
 (import posixpath)
 (import re)
 (import doeff_core_effects [slog])
-(import doeff_core_effects.scheduler [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
 (import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree
                                          ReadDiskUsage MeasureTree file-done])

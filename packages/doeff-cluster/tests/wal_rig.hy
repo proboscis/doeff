@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [sync-time-handler])
-(import doeff_core_effects.handlers [slog-handler])
+(import doeff_core_effects [slog-handler])
 (import doeff_core_effects.os_file [os-file-handler])
 
 

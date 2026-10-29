@@ -17,9 +17,9 @@
 (import datetime [datetime timedelta])
 (import httpx)
 (import doeff [run with-handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState DesiredJobs DesiredUnreadable HeartbeatSent

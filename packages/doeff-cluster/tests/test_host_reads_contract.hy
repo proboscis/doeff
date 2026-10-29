@@ -8,7 +8,7 @@
 ;;; 本物だけの性質(置き場 = process の os.environ なので宣言の外の名 — PATH など — にも答える・子の process での読み)は
 ;;; test_environ_reader.hy と test_job_context.hy。
 (require doeff-hy.macros [deftest <-])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects [Ask])
 (import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
 (import os)
 (import doeff_cluster.foundation.process_versions [process-versions])

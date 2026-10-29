@@ -6,9 +6,9 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase DoExpr do :as doeff-do with-handlers])
 (import doeff.program [handler :as program-handler])
-(import doeff_core_effects.effects [Ask Try])
-(import doeff_core_effects.handlers [state try-handler])
-(import doeff_core_effects.scheduler [scheduled Spawn Task Wait])
+(import doeff_core_effects [Ask Try])
+(import doeff_core_effects [state try-handler])
+(import doeff_core_effects [scheduled Spawn Task Wait])
 (import doeff_time [Delay sync-time-handler])
 
 

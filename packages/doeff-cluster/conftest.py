@@ -11,7 +11,7 @@
 from collections.abc import Callable
 
 import pytest
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import Program, run
 

@@ -6,7 +6,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_events [MemoryBroker])
 (import httpx)
-(import doeff_core_effects.scheduler [Spawn Task Wait])
+(import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff [with-handlers])

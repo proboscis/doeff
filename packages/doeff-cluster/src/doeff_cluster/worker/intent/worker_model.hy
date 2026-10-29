@@ -13,7 +13,7 @@
 (import dataclasses [dataclass field])
 (import enum [Enum StrEnum])  ; StrEnum = defenum の展開が名指す
 (import doeff [EffectBase])
-(import doeff_core_effects.scheduler [Future])
+(import doeff_core_effects [Future])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])

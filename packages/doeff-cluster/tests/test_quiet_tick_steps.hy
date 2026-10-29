@@ -14,7 +14,7 @@
 (import doeff._vm [native])
 (import doeff_time [SimClock])
 (import doeff_time [sim-time-handler])
-(import doeff_core_effects.scheduler [CreatePromise Promise])
+(import doeff_core_effects [CreatePromise Promise])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.test_worker_wakes [quiet-host TickLog do-ticks])

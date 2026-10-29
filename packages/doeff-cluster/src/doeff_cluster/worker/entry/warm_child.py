@@ -61,7 +61,7 @@ from typing import NoReturn
 
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
 from doeff import ReadVmLiveCounts, run
-from doeff_core_effects.handlers import vm_probe_handler
+from doeff_core_effects import vm_probe_handler
 from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
 from doeff_core_effects.process_stat import ProcStat
 from doeff_core_effects.warm_effects import WarmForked, WarmRefused

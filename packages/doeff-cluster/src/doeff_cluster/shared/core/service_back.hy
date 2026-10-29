@@ -10,10 +10,10 @@
 ;;;                        — 時間で撃ち直さず、上限は約束の待ち 1 つ(promise-or-timeout)が持つ。
 ;;;
 ;;; 使い手 = 依る service への追記の書き手・読み手と、記録の合図の源の戻りの訳。外側に要る物: process の
-;;; 状態の答え手(doeff_core_effects.handlers の state)・AwaitRunnersChange と AwaitServiceReady の答え手(本番の detached-cluster・sim の宿)。
+;;; 状態の答え手(doeff_core_effects._handlers の state)・AwaitRunnersChange と AwaitServiceReady の答え手(本番の detached-cluster・sim の宿)。
 (require doeff-hy.macros [defk <- val var])
-(import doeff_core_effects.effects [Get Put])
-(import doeff_core_effects.scheduler [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
+(import doeff_core_effects [Get Put])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Promise Spawn Task TaskCancelledError Wait])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange AwaitServiceReady RunnersChange RunnersUnreachable RunnersWatchMissing
                                                    ServiceReady])
