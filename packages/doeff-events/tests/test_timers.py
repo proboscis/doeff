@@ -22,8 +22,8 @@ out of arming order — fail the checks below (each check names the timer the br
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff_core_effects.handlers import await_handler, vm_probe_handler
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, scheduled
+from doeff_core_effects import await_handler, vm_probe_handler
+from doeff_core_effects import CompletePromise, CreatePromise, Spawn, scheduled
 from doeff_events import (
     ArmedTimer,
     ArmedTimers,

@@ -38,7 +38,7 @@ RECORD_MODULE = """\
 (require doeff-hy.record [defrecord])
 (require doeff-events.macros [event-loop])
 (import dataclasses [dataclass])
-(import doeff_core_effects.effects [slog])
+(import doeff_core_effects._effects [slog])
 (import doeff_events [TimerFired])
 
 (defrecord Lap

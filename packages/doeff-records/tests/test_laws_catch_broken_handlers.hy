@@ -6,7 +6,7 @@
 (import uuid)
 (import doeff_hy.frozen [FrozenMap])
 (import doeff [Perform run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records.values [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused
                               StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents BatchRead])

@@ -2,9 +2,16 @@
 
 import doeff_vm
 import pytest
-from doeff_core_effects.effects import ReadWriterLog
-from doeff_core_effects.handlers import reader, state, vm_probe_handler, writer
-from doeff_core_effects.scheduler import Gather, Spawn, scheduled
+from doeff_core_effects import (
+    Gather,
+    ReadWriterLog,
+    Spawn,
+    reader,
+    scheduled,
+    state,
+    vm_probe_handler,
+    writer,
+)
 
 from doeff import Ask, Get, Put, ReadVmLiveCounts, Tell, do, run
 

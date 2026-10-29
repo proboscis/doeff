@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from doeff_core_effects.scheduler import Promise
+from doeff_core_effects import Promise
 from doeff_time._internals import TimeQueue
 
 

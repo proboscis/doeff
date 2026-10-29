@@ -385,7 +385,7 @@ def runs_where_performed(carrier: Any) -> bool:
     #1456); a carrier that declares nothing (a remote job) runs its Program elsewhere."""
     if not _is_effect_class(carrier):
         return False
-    effects = importlib.import_module("doeff_core_effects.effects")
+    effects = importlib.import_module("doeff_core_effects._effects")
     return bool(effects.runs_carried_of(carrier))
 
 
@@ -2560,7 +2560,7 @@ def _builds_carried(value: Imported) -> bool:
     nothing (agora-redesign #2973)."""
     if not isinstance(value, ReceivedField):
         return False
-    effects = importlib.import_module("doeff_core_effects.effects")
+    effects = importlib.import_module("doeff_core_effects._effects")
     return value.attr in effects.runs_carried_of(value.cls)
 
 
@@ -2569,7 +2569,7 @@ def _declared_builders(carrier: Imported, call: ast.Call) -> tuple[ast.expr, ...
     ``__doeff_runs_carried__`` — matched to the parameter names of its constructor."""
     if not _is_effect_class(carrier):
         return ()
-    effects = importlib.import_module("doeff_core_effects.effects")
+    effects = importlib.import_module("doeff_core_effects._effects")
     declared = effects.runs_carried_of(carrier)
     if not declared:
         return ()
@@ -2901,7 +2901,7 @@ def _bind_wrappers() -> dict[Any, _BindWrapper]:
     """The wrappers doeff-hy's binds put around what runs: ``open_bind(e[, absent])``
     (every ``<-`` / ``!``) and ``direct_bind(token, e)`` (``absent-as`` marks its body and
     the binds written in it)."""
-    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    outcomes = importlib.import_module("doeff_core_effects._outcomes")
     return {
         outcomes.open_bind: _BindWrapper(operand=0, absent=1),
         outcomes.direct_bind: _BindWrapper(operand=1, absent=None),
@@ -2997,11 +2997,11 @@ def _bound_operand(expr: ast.expr, scope: _Scope) -> ast.expr:
 def _opened_answers(effect: Imported) -> list[type]:
     """What ``<-`` performs in the binder's scope when it opens ``effect``'s answer:
     Absent for a declared ``:absent`` answer, Raise for a ``:failure`` one (R5・R6)."""
-    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    outcomes = importlib.import_module("doeff_core_effects._outcomes")
     declared = outcomes.outcomes_of(effect)
     if declared is None:
         return []
-    effects = importlib.import_module("doeff_core_effects.effects")
+    effects = importlib.import_module("doeff_core_effects._effects")
     return [
         *([effects.Absent] if declared.absent else []),
         *([effects.Raise] if declared.failure else []),
@@ -3013,7 +3013,7 @@ def _absent_receiver() -> HandlerEffects:
     Absent → Raise), read from its clauses (once per reader — ``_Reader.absent_receiver``)."""
     from doeff_effect_analyzer import handler_effects
 
-    outcomes = importlib.import_module("doeff_core_effects.outcomes")
+    outcomes = importlib.import_module("doeff_core_effects._outcomes")
     return handler_effects.analyze_handler(outcomes.absent_raises, name=":absent")
 
 

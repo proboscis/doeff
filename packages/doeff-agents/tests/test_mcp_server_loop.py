@@ -20,7 +20,7 @@ import hy  # noqa: F401  (enable .hy imports)
 import pytest
 from doeff_agents.handlers.mcp_server_loop import mcp_server_loop
 from doeff_agents.mcp_server import McpToolRequest, McpToolServer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import EffectBase, Pass, Perform, Pure, Resume, do, run
 from doeff.mcp import McpParamSchema, McpToolDef
@@ -289,7 +289,7 @@ class TestMcpServerLoopDaemonSpawn:
         RuntimeWarning may be emitted."""
         import warnings
 
-        from doeff_core_effects.scheduler import Spawn
+        from doeff_core_effects import Spawn
 
         server = McpToolServer(tools=(_echo_tool(),))
 

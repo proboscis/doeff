@@ -21,7 +21,7 @@ from doeff_agentic import (
     AgenticSendMessage,
     mock_handlers,
 )
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 
 from doeff import do, run
 

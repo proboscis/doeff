@@ -15,7 +15,7 @@
 (import pytest)
 (import doeff [run with_handlers])
 (import doeff_core_effects.inline_compute [inline-compute-handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_time [SimClock sim-time-handler])

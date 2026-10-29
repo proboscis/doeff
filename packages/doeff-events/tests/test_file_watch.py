@@ -40,7 +40,7 @@ from doeff import do
 if TYPE_CHECKING:
     import threading
 
-    from doeff_core_effects.scheduler import Promise
+    from doeff_core_effects import Promise
 
     from doeff import EffectGenerator
 
@@ -69,7 +69,7 @@ def test_memory_watch_keeps_changes_made_before_the_wait_and_names_each_path_onc
 
 
 def test_memory_watch_wakes_a_waiting_program() -> None:
-    from doeff_core_effects.scheduler import Spawn, Wait
+    from doeff_core_effects import Spawn, Wait
 
     files = MemoryFiles()
 
@@ -93,7 +93,7 @@ def test_memory_watch_wakes_a_waiting_program() -> None:
 def test_memory_watch_close_wakes_a_waiting_program_with_no_changes() -> None:
     """A wait in progress ends when another task closes the watch (the same as the operating-system answerer, whose
     close sets the notifier's stop flag): the waiter gets ``FilesChanged(())`` instead of waiting forever."""
-    from doeff_core_effects.scheduler import CreatePromise, Spawn, Wait
+    from doeff_core_effects import CreatePromise, Spawn, Wait
 
     files = MemoryFiles()
 
@@ -234,8 +234,7 @@ def test_os_watch_never_closes_the_library_while_a_wait_is_inside_it(
     import asyncio
 
     import watchfiles._rust_notify
-    from doeff_core_effects.effects import Await
-    from doeff_core_effects.scheduler import Spawn, Wait
+    from doeff_core_effects import Await, Spawn, Wait
 
     monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _OverlapNotifier)
     monkeypatch.setattr(_OverlapNotifier, "instances", ())
@@ -292,8 +291,7 @@ def test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_p
     an event."""
     import asyncio
 
-    from doeff_core_effects.effects import Await
-    from doeff_core_effects.scheduler import Spawn, Wait
+    from doeff_core_effects import Await, Spawn, Wait
 
     directory = tmp_path / "tool-stream"
     directory.mkdir()
@@ -328,8 +326,7 @@ def test_os_watch_waits_leave_the_default_executor_free(
     from concurrent.futures import ThreadPoolExecutor
 
     import watchfiles._rust_notify
-    from doeff_core_effects.effects import Await
-    from doeff_core_effects.scheduler import Spawn, Wait
+    from doeff_core_effects import Await, Spawn, Wait
 
     monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _OverlapNotifier)
     monkeypatch.setattr(_OverlapNotifier, "instances", ())
@@ -431,8 +428,7 @@ def test_os_watch_cancelled_wait_leaves_no_thread_behind(
     import contextlib
 
     import watchfiles._rust_notify
-    from doeff_core_effects.effects import Await
-    from doeff_core_effects.scheduler import Cancel, Spawn, TaskCancelledError, Wait
+    from doeff_core_effects import Await, Cancel, Spawn, TaskCancelledError, Wait
 
     monkeypatch.setattr(watchfiles._rust_notify, "RustNotify", _QuietNotifier)
     monkeypatch.setattr(_QuietNotifier, "instances", ())

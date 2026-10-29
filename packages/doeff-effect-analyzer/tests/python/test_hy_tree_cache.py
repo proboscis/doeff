@@ -175,7 +175,7 @@ def test_one_changed_character_in_another_directory_is_expanded_again(
 
 ASKING = """
 (require doeff-hy.macros [defk <-])
-(import doeff_core_effects.effects [Ask])
+(import doeff_core_effects._effects [Ask])
 
 (defk asks [conv]
   {:pre [(: conv str)] :post [(: % str)]}

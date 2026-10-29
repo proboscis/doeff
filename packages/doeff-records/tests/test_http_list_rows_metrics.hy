@@ -10,7 +10,7 @@
 (import dataclasses [dataclass])
 (import pytest)
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [await-handler])
+(import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock])

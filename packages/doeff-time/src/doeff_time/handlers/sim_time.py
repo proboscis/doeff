@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from doeff_core_effects import WriterTellEffect
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import (
     PRIORITY_IDLE,
     CompletePromise,
     CreatePromise,

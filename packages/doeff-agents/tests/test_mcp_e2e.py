@@ -24,8 +24,8 @@ from doeff_agents.effects import (
 )
 from doeff_agents.handlers.effectful import agent_handler_defhandler
 from doeff_agents.handlers.testing import MockAgentHandler
-from doeff_core_effects.handlers import state
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
+from doeff_core_effects import state
+from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 
 from doeff import (
     EffectBase,

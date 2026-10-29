@@ -5,7 +5,7 @@
 (import doeff [run])
 
 (import doeff_core_effects [try-handler :as try_handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse.collection [Collection])

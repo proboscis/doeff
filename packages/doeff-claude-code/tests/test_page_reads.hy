@@ -13,7 +13,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import datetime [datetime timezone])
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeTurn])
 (import doeff_claude_code.lines [ClaudeStreamLine Other])

@@ -18,8 +18,8 @@ import warnings
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_core_effects.effects import Await
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Await
+from doeff_core_effects import scheduled
 from doeff_events.effects.notices import Announce, ProbeBroker
 from doeff_events.handlers.redis_notices import redis_notice_handler
 

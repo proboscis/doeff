@@ -26,7 +26,7 @@ from doeff_conductor.handlers.utils import (
     make_offloaded_scheduled_handler,
     make_scheduled_handler,
 )
-from doeff_core_effects.scheduler import Gather, scheduled
+from doeff_core_effects import Gather, scheduled
 
 from doeff import Effect, Pass, Resume, Spawn, do, run, stacked_handlers
 from doeff import handler as _install_raw_handler

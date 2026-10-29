@@ -5,7 +5,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.scheduler import Promise, SchedulerDeadlockError, Spawn, Wait
+from doeff_core_effects import Promise, SchedulerDeadlockError, Spawn, Wait
 from doeff_events import (
     EventBus,
     Publish,

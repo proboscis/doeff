@@ -12,8 +12,8 @@ Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doe
 
 ```python
 from doeff import do, run, with_handlers
-from doeff_core_effects.handlers import await_handler, lazy_ask, state, try_handler, writer
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import await_handler, lazy_ask, state, try_handler, writer
+from doeff_core_effects import scheduled
 from doeff_seedream import edit_image__seedream4
 from doeff_time import async_time_handler
 

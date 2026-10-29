@@ -4,9 +4,9 @@
 ;;; この file の中で組む(3 つの解釈器で同じ筋書きを走らせる test_scenarios.hy とは別)。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [with_handlers Program EffectBase Ask])
-(import doeff_core_effects.handlers [reader])
+(import doeff_core_effects [reader])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
-(import doeff_core_effects.scheduler [Spawn])
+(import doeff_core_effects [Spawn])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession ResumeSession Rebuilt])
 (import doeff_claude_code.lines [FRESH-MARK AssistantMessage PartialMessage ToolResult TurnResult Completed Failed BackendLost Interrupted Init
                                  InputFate Usage RateLimit AccountLimitHit RATE-LIMIT-REJECTED ASSISTANT-ERROR-RATE-LIMIT ModelUsageGap])

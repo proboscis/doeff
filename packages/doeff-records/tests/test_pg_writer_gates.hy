@@ -5,9 +5,9 @@
 ;; 同じ単位に 2 つ目の並びを作って 1 本ずつの約束も破れた。PostgreSQL は使わない(並びは接続を借りる前の scheduler の semaphore だけ)。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run with_handlers])
-(import doeff_core_effects.effects [Get Put])
-(import doeff_core_effects.handlers [state])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait CreatePromise CompletePromise Promise])
+(import doeff_core_effects [Get Put])
+(import doeff_core_effects [state])
+(import doeff_core_effects [scheduled Spawn Wait CreatePromise CompletePromise Promise])
 (import doeff_records.pg [AdmitWriters ReleaseWriters writer-gates])
 
 

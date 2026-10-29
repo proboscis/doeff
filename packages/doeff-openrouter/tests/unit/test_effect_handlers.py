@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from _runner import run_program
-from doeff_core_effects.effects import EffectBase as Effect
+from doeff_core_effects._effects import EffectBase as Effect
 from doeff_llm.effects import (
     LLMChat,
     LLMEmbedding,

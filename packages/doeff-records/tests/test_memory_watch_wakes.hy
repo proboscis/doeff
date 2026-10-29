@@ -10,7 +10,7 @@
 (import time)
 (import datetime [datetime timezone])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise PRIORITY-IDLE])
+(import doeff_core_effects [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise PRIORITY-IDLE])
 (import doeff_time [SimClock sim-time-handler sync-time-handler Delay GetTime])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written EventsMoved EventsQuiet])

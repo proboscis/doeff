@@ -11,8 +11,8 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defeffect の展開が名指す
 (import doeff [EffectBase Program run with_handlers])
-(import doeff_core_effects.effects [SlogEffect])
-(import doeff_core_effects.handlers [await-handler state])
+(import doeff_core_effects [SlogEffect])
+(import doeff_core_effects [await-handler state])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records.effects [ReadRow WatchChanges])

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol, TypeVar
 
-from doeff_core_effects.scheduler import ExternalPromise
+from doeff_core_effects import ExternalPromise
 from doeff import WithHandlerType
 
 from doeff import Program

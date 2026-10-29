@@ -11,7 +11,7 @@
 (import dataclasses [dataclass])
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
-(import doeff_core_effects.handlers [await-handler state])
+(import doeff_core_effects [await-handler state])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ReadMeter counted])

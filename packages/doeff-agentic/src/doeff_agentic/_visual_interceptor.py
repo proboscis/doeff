@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from doeff_core_effects.effects import SlogEffect
+from doeff_core_effects import SlogEffect
 from rich.console import Console
 
 from doeff import Pass, Program, Resume, do

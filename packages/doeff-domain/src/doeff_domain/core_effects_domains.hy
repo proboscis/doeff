@@ -1,6 +1,6 @@
 ;;; Dogfood: doeff-core-effects の effect 語彙を domain 宣言する (ADR-DOE-DOMAIN-001 D8)。
 ;;;
-;;; 分割は doeff_core_effects.handlers / scheduler / http / memo / cache の
+;;; 分割は doeff_core_effects._handlers / scheduler / http / memo / cache の
 ;;; handler 構造に沿った提案であり、妥当性は maintainer が PR レビューで判断する。
 ;;; 土台の語彙(file / http-server / sql / process / channel / compute /
 ;;; stop-signal)は effect の module ごとに 1 domain、Absent / Raise は束ねの
@@ -18,22 +18,14 @@
 (import doeff_domain.registry [DomainLaw DomainTerm])
 (import doeff_domain.introspect [handles])
 
-(import doeff_core_effects.effects [Ask Get Put Local Listen Await Try
-                                    WriterTellEffect ReadWriterLog SlogEffect])
+(import doeff_core_effects [Ask Get Put Local Listen Await Try WriterTellEffect ReadWriterLog SlogEffect])
 (import doeff_core_effects.http-effects [HttpRequest])
 (import doeff_core_effects.memo-effects [MemoGetEffect MemoPutEffect
                                          MemoDeleteEffect MemoExistsEffect])
 (import doeff_core_effects.cache-effects [CacheGetEffect CachePutEffect
                                           CacheDeleteEffect CacheExistsEffect])
-(import doeff_core_effects.scheduler [Spawn TaskCompleted Gather Wait Cancel Discard Race
-                                      CreatePromise CompletePromise FailPromise
-                                      CreateSemaphore AcquireSemaphore
-                                      ReleaseSemaphore CreateExternalPromise
-                                      SchedulerIntrospection scheduled])
-(import doeff_core_effects.handlers [reader state writer slog-handler
-                                     slog-discard-handler try-handler
-                                     local-handler listen-handler await-handler
-                                     lazy-ask env-var-ask])
+(import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection scheduled])
+(import doeff_core_effects [reader state writer slog-handler slog-discard-handler try-handler local-handler listen-handler await-handler lazy-ask env-var-ask])
 (import doeff_core_effects.cache-handlers [cache-handler])
 ;; defhandler 製 factory は実装モジュールから直接列挙する(__doeff_body__ を持つ
 ;; 実物)。公開 wrapper(http_handlers / memo_handlers)は素の関数で構造情報を
@@ -44,9 +36,8 @@
 (import doeff_core_effects._memo-handlers-impl [_memo-layer-handler])
 
 ;; 想定内の不在(Absent・BoundAbsent)と失敗(Raise)— 受け手は束ねの境目の生 Python 関数。
-(import doeff_core_effects.effects [Absent Raise])
-(import doeff_core_effects.outcomes [BoundAbsent maybe result on-raise absent-as
-                                     absent-raises])
+(import doeff_core_effects [Absent Raise])
+(import doeff_core_effects [BoundAbsent maybe result on-raise absent-as absent-raises])
 
 ;; 土台の語彙と、その defhandler 製の答え手(注釈せず __doeff_body__ から導出 — D6)。
 (import doeff_core_effects.file-effects [StatPath ReadText ReadBytes WriteText
@@ -98,7 +89,7 @@
 (import doeff_core_effects.warm-effects [AwaitWarmChildExit])
 (import doeff_core_effects.process-exit [process-exit-handler])
 (import doeff_core_effects.channel-effects [CreateChannel PutChannel TakeChannel])
-(import doeff_core_effects.scheduler-channel [scheduler-channel-handler])
+(import doeff_core_effects [scheduler-channel-handler])
 (import doeff_core_effects.compute-effects [Compute ReadComputeLoad])
 (import doeff_core_effects.thread-pool-compute [thread-pool-compute-handler])
 (import doeff_core_effects.inline-compute [inline-compute-handler])
@@ -118,7 +109,7 @@
 (import doeff_core_effects.process-meter [process-meter-handler])
 (import doeff_core_effects.memory-meter [memory-meter-handler])
 (import doeff_core_effects.step-tally-effects [OpenStepTally CloseStepTally OpenTaskTally ReadTaskTally CloseTaskTally])
-(import doeff_core_effects.scheduler-step-tally [step-tally-handler])
+(import doeff_core_effects [step-tally-handler])
 (import doeff_core_effects.random-effects [RandomBytes])
 (import doeff_core_effects.os-random [os-random-handler])
 (import doeff_core_effects.seeded-random [seeded-random-handler])
@@ -155,7 +146,7 @@
   :title "Reader 語彙 — 環境からの値の照会"
   :effects [Ask]
   :terms [(DomainTerm :name "Ask"
-                      :home "doeff_core_effects.effects"
+                      :home "doeff_core_effects._effects"
                       :description "環境キー照会の正典 effect")]
   :handlers [reader lazy-ask env-var-ask]
   :adrs ["ADR-DOE-DOMAIN-001"]
@@ -173,7 +164,7 @@
   :title "Writer 語彙 — Tell の静かな蓄積"
   :effects [WriterTellEffect ReadWriterLog]
   :terms [(DomainTerm :name "Tell"
-                      :home "doeff_core_effects.effects"
+                      :home "doeff_core_effects._effects"
                       :description "WriterTellEffect の正典コンストラクタ")]
   :handlers [writer]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-001"])
@@ -183,7 +174,7 @@
   :title "Slog 語彙 — 見えてこそ正しい observability"
   :effects [SlogEffect]
   :terms [(DomainTerm :name "slog"
-                      :home "doeff_core_effects.effects"
+                      :home "doeff_core_effects._effects"
                       :description "SlogEffect の正典コンストラクタ")]
   :handlers [slog-handler slog-discard-handler]
   :laws [(DomainLaw :name "slog-tell-types-disjoint"
@@ -263,7 +254,7 @@
   :title "Outcome 語彙 — 想定内の不在(Absent)と失敗(Raise)"
   :effects [Absent BoundAbsent Raise]
   :terms [(DomainTerm :name "open_bind"
-                      :home "doeff_core_effects.outcomes"
+                      :home "doeff_core_effects._outcomes"
                       :description "<- と ! が宣言に従って答えを開き、不在を Absent・失敗を Raise にして出す 1 点")]
   :handlers [maybe absent-raises absent-as result on-raise]
   :adrs ["ADR-DOE-DOMAIN-001" "ADR-DOE-CORE-EFFECTS-003"]

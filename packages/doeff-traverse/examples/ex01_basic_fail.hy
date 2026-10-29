@@ -8,7 +8,7 @@
 (import doeff [run])
 
 (import doeff_core_effects [try-handler :as try_handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 
 (import doeff_traverse.effects [Fail])
 (import doeff_traverse.handlers [fail-handler :as fail_handler

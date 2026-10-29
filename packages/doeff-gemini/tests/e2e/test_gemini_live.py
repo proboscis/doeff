@@ -23,7 +23,7 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from _runner import async_run_program  # noqa: E402
-from doeff_core_effects.effects import (  # noqa: E402 - late import follows sys.path fixture setup
+from doeff_core_effects._effects import (  # noqa: E402 - late import follows sys.path fixture setup
     EffectBase as Effect,
 )
 from doeff_gemini import edit_image__gemini, structured_llm__gemini  # noqa: E402

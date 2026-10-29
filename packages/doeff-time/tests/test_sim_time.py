@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff_core_effects import Tell
-from doeff_core_effects.scheduler import PRIORITY_HIGH, Gather, Spawn, Wait
-from doeff_core_effects.scheduler import Gather as GatherEffect
-from doeff_core_effects.scheduler import Spawn as SpawnEffect
+from doeff_core_effects import PRIORITY_HIGH, Gather, Spawn, Tell, Wait
+from doeff_core_effects import Gather as GatherEffect
+from doeff_core_effects import Spawn as SpawnEffect
 from doeff_events import Publish, WaitForEvent, event_handler
 from doeff_time import Delay, GetTime, ScheduleAt, SetTime, WaitUntil, sim_time_handler
 from time_test_support import SIM_TIME_EPOCH, listen, run_with_handlers, sim_seconds, sim_time

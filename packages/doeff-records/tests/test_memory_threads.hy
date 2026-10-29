@@ -8,7 +8,7 @@
 (import copy)
 (import pickle)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])
 (import doeff_records.values [StreamDecl KeepFor ExpectAbsent ExpectAny])

@@ -18,7 +18,7 @@
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
 (import doeff_agents)
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_time [GetMonotonic SimClock sim-time-handler sync-time-handler])
 (import doeff_agents.adapters.base [AgentType AgentSessionLifecycle])
 (import doeff_agents.effects [

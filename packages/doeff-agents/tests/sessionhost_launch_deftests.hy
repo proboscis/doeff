@@ -32,7 +32,7 @@
 (import json)
 (import pytest)
 (import doeff [Program run with_handlers])
-(import doeff_core_effects.handlers [state])
+(import doeff_core_effects [state])
 (import doeff_time [DelayEffect])
 (import doeff_agents.sessionhost.store_memory [MemorySessionRows ReadMemorySessionRows memory-session-store stored-rows])
 (import memory_store_world [StoreWorld kept-in seeded])

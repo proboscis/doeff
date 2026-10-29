@@ -1014,7 +1014,7 @@ def test_a_test_that_takes_no_vm_steps_is_within_the_steps_budget(pytester: pyte
 # 数の口を偽の関数へ差し替えたまま残すので、ここの検は別の process で走らせる。
 
 SPIN_SCHEDULER = """\
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Spawn, Wait, scheduled
+from doeff_core_effects._scheduler import CompletePromise, CreatePromise, Spawn, Wait, scheduled
 
 from doeff import do, run
 
@@ -1209,7 +1209,7 @@ def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
 
 
 # ── 模擬の世界の走りの歩数だけで判じる(card ki-a27b195a3f92)────────────────────────────────────────
-# 世界の印(doeff_core_effects.world_phases — doeff-cluster の sim-main が残す)を、検の中から偽の歩数と並べて残す。
+# 世界の印(doeff_core_effects._world_phases — doeff-cluster の sim-main が残す)を、検の中から偽の歩数と並べて残す。
 
 
 def test_world_steps_splits_the_call_by_the_world_marks() -> None:
@@ -1229,7 +1229,7 @@ def test_world_steps_splits_the_call_by_the_world_marks() -> None:
 WORLD_RUNS = """\
 (require doeff-hy.macros [deftest])
 (import fake_work)
-(import doeff_core_effects.world_phases [mark-world-phase])
+(import doeff_core_effects._world_phases [mark-world-phase])
 (defn world [starting running stopping]
   (mark-world-phase "begun")
   (fake_work.add starting)

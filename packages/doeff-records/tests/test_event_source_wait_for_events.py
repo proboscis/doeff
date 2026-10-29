@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_core_effects.scheduler import Spawn, Wait, scheduled
+from doeff_core_effects import Spawn, Wait, scheduled
 from doeff_events import EventBus, Publish, SourceFailed, WaitForEvents, subscribed_event_handler
 from doeff_records.event_source import waits_beside_sources
 

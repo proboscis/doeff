@@ -29,22 +29,23 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff import Program, Pure
-from doeff_agents.adapters.base import AgentType, LaunchConfig
-from doeff_agents.adapters.claude import ClaudeAdapter
-from doeff_agents.adapters.codex import CodexAdapter
-from doeff_agents.effects.agent import (
-    AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
-)
-from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
-from doeff_agents.effects.agent import LaunchEffect
-from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents._session import (
     AgentReadyTimeoutError,
     launch_session,
 )
+from doeff_agents.adapters.base import AgentType, LaunchConfig
+from doeff_agents.adapters.claude import ClaudeAdapter
+from doeff_agents.adapters.codex import CodexAdapter
+from doeff_agents.effects._handler_effects import ClaudeLaunchEffect
+from doeff_agents.effects.agent import (
+    AgentReadyTimeoutError as EffectsAgentReadyTimeoutError,
+)
+from doeff_agents.effects.agent import LaunchEffect
+from doeff_agents.runtime import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents.session_backend import SessionBackend
 from doeff_agents.tmux import SessionConfig, SessionInfo
+
+from doeff import Program, Pure
 
 READY_SCREENS = Path(__file__).parent / "data" / "ready_screens"
 
@@ -469,8 +470,7 @@ class ScriptedHyBackend(ScriptedBackend):
 
 def _run_with_codex_handler(program, backend):
     from doeff_agents.handlers.codex import codex_handler
-    from doeff_core_effects.handlers import state
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled, state
 
     from doeff import run
 
@@ -480,8 +480,7 @@ def _run_with_codex_handler(program, backend):
 
 def _run_with_claude_handler(program, backend):
     from doeff_agents.handlers.claude import claude_handler
-    from doeff_core_effects.handlers import state
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled, state
 
     from doeff import run
 

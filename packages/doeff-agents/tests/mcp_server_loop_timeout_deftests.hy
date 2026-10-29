@@ -4,7 +4,7 @@
 (import doeff.mcp [McpParamSchema McpToolDef])
 (import doeff-agents.handlers.mcp-server-loop [mcp-server-loop])
 (import doeff-agents.mcp-server [McpToolRequest McpToolServer])
-(import doeff_core_effects.scheduler [CreateExternalPromise PRIORITY_IDLE Wait])
+(import doeff_core_effects [CreateExternalPromise PRIORITY_IDLE Wait])
 
 
 (defk _echo-tool-handler [msg]

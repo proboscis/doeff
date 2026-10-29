@@ -135,7 +135,7 @@ Python の `check` は `validate` に渡す値(`CheckSpec`)を作るだけで、
 
 ```python
 from doeff import run
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 
 run(sequential()(program))                    # 逐次に全部走らせて集める

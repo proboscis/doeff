@@ -572,7 +572,7 @@ defk {name}: :post type annotation cannot be an empty string.
   (.setdefault globals-dict "_guard_statement_value" _guard-statement-value)
   (.setdefault globals-dict "_doeff_check_program_return" _doeff-check-program-return)
   ;; defk の本体の束ねが名で引く outcomes の module(HELPERS-NAME — _expand-bangs の helpers・#844 の案 a)。
-  (.setdefault globals-dict HELPERS-NAME (importlib.import-module "doeff_core_effects.outcomes"))
+  (.setdefault globals-dict HELPERS-NAME (importlib.import-module "doeff_core_effects._outcomes"))
   (for [#(name value) (.items (or runtime-globals {}))]
     (.setdefault globals-dict name value))
   wrapped)
@@ -1042,11 +1042,11 @@ defk {name}: :post type annotation cannot be an empty string.
 
    :value [Conflict] marks an answer handled as an ordinary value (not a failure); members
    in none of the lists are the success. Writing any of them sets __doeff_outcomes__
-   (doeff_core_effects.outcomes.Outcomes); an effect without them binds its answer as-is.
+   (doeff_core_effects._outcomes.Outcomes); an effect without them binds its answer as-is.
 
    :runs-carried [program] names the fields holding a Program the handler runs where the
    effect was performed (under the handlers there — SqlTransaction's program). It sets
-   __doeff_runs_carried__ (read by doeff_core_effects.effects.runs_carried_of; a closure
+   __doeff_runs_carried__ (read by doeff_core_effects._effects.runs_carried_of; a closure
    check reads those Programs as run at the performing site — agora-redesign #1456).
 
    :tp [T] names the type parameters the answer and the fields read (the same form as defk / deff's :tp). The type-check
@@ -1339,7 +1339,7 @@ defk {name}: {{:post [...]}} is required.
 ;; on-raise / absent-as — 失敗と不在を値へ畳む境目(ADR-DOE-CORE-EFFECTS-003 R7・R8)
 ;; ---------------------------------------------------------------------------
 ;;
-;; maybe / result は関数(doeff_core_effects.outcomes)— パターンも字面も要らないので macro にしない。
+;; maybe / result は関数(doeff_core_effects._outcomes)— パターンも字面も要らないので macro にしない。
 
 (defmacro on-raise [#^ Object program #^ Object #* clauses]
   "(on-raise 本文 パターン [:if 番] 写し先 …) — 本文の中の Raise のうち、パターン(失敗の型の形)に合う物だけを写し先の
@@ -1419,7 +1419,7 @@ defk {name}: {{:post [...]}} is required.
      (<- name Type expr) → (do (setv name B)
                                (assert (isinstance name Type) \"expected Type, got <actual>\"))
      (<- … :absent F)    → open-bind の受け手が、その束ねの中で出た Absent を Raise(F) に変える
-   open-bind(doeff_core_effects.outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
+   open-bind(doeff_core_effects._outcomes)は宣言を持つ effect の不在・失敗の答えを Absent / Raise に変えて呼び手の
    スコープで出し、Result / Maybe の値を開く。宣言の無い effect と Program は受け取った物をそのまま返す
    (ADR-DOE-CORE-EFFECTS-003 R5・R6)。
    束ねた後は b を del する(`(del b)` を setv の次に置く・名の無い (<- expr) は答えを一時の名 a で受けて a も外す):
@@ -1779,7 +1779,7 @@ the effect in the enclosing do-context.
    nested defk/deff/defp/deftest/..., defmacro, quote/quasiquote) are opaque —
    their own macro expands their bangs (R4).
 
-   helpers = the module-global name of doeff_core_effects.outcomes (defk passes HELPERS-NAME,
+   helpers = the module-global name of doeff_core_effects._outcomes (defk passes HELPERS-NAME,
    which it installs in its module's globals): the binds of this body — every (! e) and every
    (<- …) outside a nested function — reach open_bind by that name instead of `__import__`
    (agora-redesign #844 — about 0.2µs a bind). Other callers pass None and keep their (<- …)

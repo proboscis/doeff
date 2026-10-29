@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import count
 from typing import Any
 
-from doeff_core_effects.scheduler import CreateExternalPromise, Wait, scheduled
+from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 from doeff_events import (
     ArmTimer,
     EventBus,

@@ -6,7 +6,7 @@
 ;;   /readyz の問い(memory の置き場の選びの readiness): 置き場全体の止まりの間だけ届かない
 (require doeff-hy.macros [deftest defk <- val on-raise])
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled Spawn Wait])
+(import doeff_core_effects [scheduled Spawn Wait])
 (import doeff_time [Delay GetTime])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy.frozen [FrozenMap])

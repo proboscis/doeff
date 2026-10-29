@@ -13,7 +13,7 @@
 (require doeff-hy.macros [deftest defhandler defk <- val var])
 (import json)
 (import doeff [with_handlers])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects [Spawn Wait])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
 (import doeff_hy.frozen [FrozenMap])

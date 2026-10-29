@@ -17,7 +17,7 @@ from doeff_agents.effects.agent import (
     StopEffect,
 )
 from doeff_agents.session_backend import SessionBackend
-from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects import lazy_ask, state
 
 from doeff import EffectBase, Pass, Perform, Resume, do, run
 from doeff import handler as _install_raw_handler
@@ -81,7 +81,7 @@ def _run_full_stack(program, backend):
     GetHandlers(k) captures greet_handler so MCP tool calls can use GreetEffect.
     """
     from doeff_agents.handlers import claude_agent_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
 
     ch = claude_agent_handler(backend=backend)
     wrapped = state()(ch(_install_raw_handler(greet_handler)(program)))
@@ -117,7 +117,7 @@ class TestFullIntegration:
     def test_claude_agent_handler_asks_for_backend(self, tmp_path):
         """claude_agent_handler() resolves tmux backend through Ask."""
         from doeff_agents.handlers import claude_agent_handler
-        from doeff_core_effects.scheduler import scheduled
+        from doeff_core_effects import scheduled
 
         backend = FakeTmuxBackend()
 

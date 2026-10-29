@@ -30,7 +30,7 @@ from doeff_traverse.effects import (
 )
 
 if TYPE_CHECKING:
-    from doeff_core_effects.scheduler import Task
+    from doeff_core_effects import Task
 
     from doeff import EffectGenerator
 
@@ -93,7 +93,7 @@ def _report(handler, boundaries, report: ItemOutcome):
     the Traverse handler itself, which answers _PASSED_ON — and fail the Traverse with
     ItemOutcomeNotPassedError when a consumer answered it or threw into it instead. A cancelled
     parallel task stays cancelled (TaskCancelledError is the scheduler's, not a consumer's)."""
-    from doeff_core_effects.scheduler import TaskCancelledError
+    from doeff_core_effects import TaskCancelledError
 
     try:
         answer = yield WithHandlerType(handler, WithBoundaries(boundaries, report))
@@ -177,9 +177,9 @@ def _stop_items(
     cancelled. No item task outlives the Traverse, and every item gets one outcome. An item a
     task finishes after its item was taken here is not reported again (_ItemTasks.take).
     ``boundaries`` None reports nothing (no consumer, or one broke the ItemOutcome contract)."""
-    from doeff_core_effects.effects import Try
-    from doeff_core_effects.handlers import try_handler
-    from doeff_core_effects.scheduler import Cancel, Wait
+    from doeff_core_effects import Try
+    from doeff_core_effects import try_handler
+    from doeff_core_effects import Cancel, Wait
 
     stopped = tasks.take_the_rest()
     for task in tasks.tasks:
@@ -227,8 +227,8 @@ def sequential():  # noqa: PLR0915 - baseline cleanup keeps existing control flo
     (or the item let one out), so the Traverse stops there — it reports that item and the
     ones it has not reached as cancelled and throws it on.
     """
-    from doeff_core_effects.handlers import try_handler
-    from doeff_core_effects.scheduler import TaskCancelledError
+    from doeff_core_effects import try_handler
+    from doeff_core_effects import TaskCancelledError
 
     from doeff.handler_utils import get_inner_handlers, inner_of
     @do
@@ -432,8 +432,8 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
     the item tasks left, waits for them to finish unwinding, reports their items cancelled
     (not after a broken contract) and throws it on: no item task outlives the Traverse.
     """
-    from doeff_core_effects.effects import Try
-    from doeff_core_effects.scheduler import (
+    from doeff_core_effects import Try
+    from doeff_core_effects import (
         AcquireSemaphore,
         CreateSemaphore,
         Gather,
@@ -500,7 +500,7 @@ def parallel(concurrency=10):  # noqa: PLR0915 - baseline cleanup keeps existing
 
                 @do
                 def attempt():
-                    from doeff_core_effects.handlers import try_handler
+                    from doeff_core_effects import try_handler
                     value = yield try_handler(Try(prog))
                     return value
 
@@ -644,7 +644,7 @@ def parallel_fail_fast(concurrency=10):  # noqa: PLR0915 - baseline cleanup keep
     however it ends. A Traverse that receives a failed item raises before running anything
     and reports nothing.
     """
-    from doeff_core_effects.scheduler import (
+    from doeff_core_effects import (
         AcquireSemaphore,
         CreateSemaphore,
         Gather,

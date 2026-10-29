@@ -10,7 +10,7 @@ the user could neither await away nor legitimately suppress.
 import warnings
 from datetime import datetime, timezone
 
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import scheduled
 from doeff_time.effects import Delay, GetTime
 from doeff_time.handlers.sim_time import sim_time_handler
 

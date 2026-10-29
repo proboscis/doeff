@@ -72,17 +72,17 @@ def run_result(
     raised by the program is returned as ``Err(error)`` instead of propagating,
     so the value can be handed to ``write_terminal_trace``.
     """
-    from doeff_core_effects import Try
-    from doeff_core_effects.handlers import (
+    from doeff_core_effects import (
+        Try,
         await_handler,
         lazy_ask,
         listen_handler,
+        scheduled,
         slog_handler,
         state,
         try_handler,
         writer,
     )
-    from doeff_core_effects.scheduler import scheduled
     from doeff_time import async_time_handler
 
     from doeff import do, run

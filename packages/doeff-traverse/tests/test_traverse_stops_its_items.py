@@ -21,9 +21,9 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
-from doeff_core_effects.effects import Try
-from doeff_core_effects.handlers import try_handler
-from doeff_core_effects.scheduler import (
+from doeff_core_effects import Try
+from doeff_core_effects import try_handler
+from doeff_core_effects import (
     Cancel,
     CompletePromise,
     CreatePromise,

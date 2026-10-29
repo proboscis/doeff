@@ -11,7 +11,7 @@ import inspect
 from dataclasses import fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Final, Protocol, TypeGuard, final
 
-from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait
+from doeff_core_effects import CompletePromise, CreatePromise, Promise, Wait
 
 from doeff import K, Pass, Resume, ResumeThrow, do
 from doeff import handler as _program_handler

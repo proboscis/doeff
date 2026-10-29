@@ -8,9 +8,7 @@ Tests:
 from dataclasses import dataclass
 
 import pytest
-from doeff_core_effects.effects import Get, Put
-from doeff_core_effects.handlers import lazy_ask, state
-from doeff_core_effects.scheduler import scheduled
+from doeff_core_effects import Get, Put, lazy_ask, scheduled, state
 
 from doeff import EffectBase, Some, do
 from doeff import handler as _install_raw_handler
@@ -62,8 +60,8 @@ class TestLazyHandlerMacro:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase Some Nothing run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [lazy-ask])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] MyFetch [EffectBase]
@@ -200,8 +198,8 @@ class TestLazyHandlerHyIntegration:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [lazy-ask])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] Greet [EffectBase]
@@ -264,8 +262,8 @@ class TestLazyHandlerHyIntegration:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [lazy-ask])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] Ping2 [EffectBase])
@@ -352,8 +350,8 @@ class TestThreadingMacro:
 (require doeff-hy.macros [defk defp <- <->])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [lazy-ask])
+(import doeff_core_effects._scheduler [scheduled])
 
 (defk step-a [x]
   {:pre [(: x str)] :post [(: % dict)]}
@@ -401,7 +399,7 @@ class TestThreadingMacro:
         code = """
 (require doeff-hy.macros [defk defp <- <->])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 
 (defk identity-k [x]
   {:pre [(: x int)] :post [(: % int)]}
@@ -433,7 +431,7 @@ class TestThreadingMacro:
         code = """
 (require doeff-hy.macros [defk defp <- <->])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 
 (defk make-list [x]
   {:pre [(: x int)] :post [(: % list)]}
@@ -492,7 +490,7 @@ class TestLazyValVar:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Get Put state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] Ping3 [EffectBase])
@@ -525,7 +523,7 @@ class TestLazyValVar:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Get Put state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] GetCounter [EffectBase])
@@ -565,7 +563,7 @@ class TestLazyValVar:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run Some])
 (import doeff_core_effects [Get Put state])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] AddItem [EffectBase]
@@ -649,8 +647,8 @@ class TestLazyValVar:
 (require doeff-hy.handle [defhandler])
 (import doeff [do :as _doeff-do EffectBase run :as doeff-run])
 (import doeff_core_effects [Ask Get Put state])
-(import doeff_core_effects.handlers [lazy-ask])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects._handlers [lazy-ask])
+(import doeff_core_effects._scheduler [scheduled])
 (import dataclasses [dataclass])
 
 (defclass [(dataclass :frozen True)] Pair [EffectBase]

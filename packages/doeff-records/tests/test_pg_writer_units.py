@@ -26,12 +26,12 @@ import hy  # noqa: F401  Hy の module を読むため
 import psycopg
 import pytest
 from disposable_postgres import session_dsn, session_postgres_skip_reason
-from doeff_core_effects.handlers import state
+from doeff_core_effects import state
 from doeff_core_effects.memory_meter import memory_meter_handler
 from doeff_core_effects.meter_effects import MeterSettings, ReadMeter
 from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
 from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase, postgres_sql_handler
-from doeff_core_effects.scheduler import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
+from doeff_core_effects import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
 from doeff_core_effects.thread_pool_compute import thread_pool_compute_handler
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import AppendEvent, AppendEvents, EventAppend, PutRow, ReadEvents, ReadRow

@@ -15,7 +15,7 @@
 (import pytest)
 (import time)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records.laws [LAW-SCHEMA])

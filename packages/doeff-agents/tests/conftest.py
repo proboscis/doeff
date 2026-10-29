@@ -64,7 +64,7 @@ def doeff_interpreter(doeff_interpreter_name: str) -> Callable[..., object]:
         from doeff import run
 
         if env:
-            from doeff_core_effects.handlers import reader
+            from doeff_core_effects import reader
 
             program = reader(dict(env))(program)
         return run(compose(program))

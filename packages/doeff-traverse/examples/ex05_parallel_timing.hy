@@ -13,8 +13,8 @@
 (import doeff [run EffectBase])
 
 (import doeff_core_effects [try-handler :as try_handler Await])
-(import doeff_core_effects.handlers [await-handler :as await_handler])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [await-handler :as await_handler])
+(import doeff_core_effects [scheduled])
 
 (import doeff_traverse [Traverse :as _doeff_traverse_Traverse])
 (import doeff_traverse.effects [Reduce])

@@ -10,8 +10,8 @@
 (import sys)
 (import uuid)
 (import doeff [run with_handlers])
-(import doeff_core_effects.effects [Listen SlogEffect])
-(import doeff_core_effects.handlers [listen-handler slog-discard-handler])
+(import doeff_core_effects [Listen SlogEffect])
+(import doeff_core_effects [listen-handler slog-discard-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec FreshSession TurnInput])
 (import doeff_claude_code.lines [AgentToolResult BackendLost Completed SubagentTranscript SubagentTranscriptProblem TaskEvent ToolResult

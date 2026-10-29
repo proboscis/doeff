@@ -12,7 +12,7 @@ from doeff_agents.effects.agent import (
     WarmSessionEffect,
 )
 from doeff_agents.session_backend import SessionBackend
-from doeff_core_effects.handlers import lazy_ask, state
+from doeff_core_effects import lazy_ask, state
 
 from doeff import Perform, do, run
 
@@ -60,7 +60,7 @@ class FakeTmuxBackend:
 
 def _run(program, backend):
     from doeff_agents.handlers.codex import codex_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
 
     handler = codex_handler(backend=backend)
     wrapped = state()(handler(program))
@@ -89,7 +89,7 @@ def test_launch_creates_tmux_session(tmp_path: Path) -> None:
 
 def test_codex_handler_asks_for_backend(tmp_path: Path) -> None:
     from doeff_agents.handlers.codex import codex_handler
-    from doeff_core_effects.scheduler import scheduled
+    from doeff_core_effects import scheduled
 
     backend = FakeTmuxBackend()
 

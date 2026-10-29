@@ -11,7 +11,7 @@
 (import sys)
 (import uuid)
 (import doeff [with_handlers])
-(import doeff_core_effects.handlers [slog-discard-handler])
+(import doeff_core_effects [slog-discard-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_claude_code.values [ClaudeHome ClaudeSessionSpec ResumeSession TurnInput])
 (import doeff_claude_code.lines [BackendLost Completed Failed Interrupted])

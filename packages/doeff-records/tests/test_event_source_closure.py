@@ -96,7 +96,7 @@ def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() ->
 
 
 def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     assert {gap.effect for gap in coverage.gaps} == {
@@ -141,7 +141,7 @@ def test_read_signal_effects_cover_both_sources_and_the_question() -> None:
 def test_a_job_placing_read_signal_handler_leaves_no_unreadable_handler() -> None:
     """使い手の形の job を読むと、読めない handler が残らない。残るのは源の工場の問い(ReadSignalSource — 本番の土台の記録の handler が
     答える)と、記録と時計の effect だけ。"""
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_read_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     assert ReadSignalSource in {gap.effect for gap in coverage.gaps}, coverage.gaps

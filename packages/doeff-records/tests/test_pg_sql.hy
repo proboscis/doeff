@@ -26,7 +26,7 @@
 (import threading)
 (import time)
 (import doeff [run with_handlers])
-(import doeff_core_effects.scheduler [scheduled])
+(import doeff_core_effects [scheduled])
 (import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
 (import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement])
 (import doeff_time [SimClock sim-time-handler])

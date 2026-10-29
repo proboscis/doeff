@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable, Generator, Iterator
 
 import pytest
-from doeff_core_effects.handlers import reader
+from doeff_core_effects import reader
 from doeff_traverse import sequence
 from doeff_traverse.collection import ItemResult
 from doeff_traverse.effects import Inspect, Traverse

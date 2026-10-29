@@ -76,7 +76,7 @@ from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Final, Generic, TypeAlias, TypeVar, final, get_args
 
-from doeff_core_effects.effects import Await
+from doeff_core_effects import Await
 from doeff_time import Delay, GetTime
 from doeff_time.effects.time import DelayEffect, GetTimeEffect
 

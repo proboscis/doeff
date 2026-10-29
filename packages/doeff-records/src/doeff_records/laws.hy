@@ -18,7 +18,7 @@
 (import collections.abc [Callable])
 (import doeff [EffectBase Program])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_core_effects.scheduler [Spawn Wait])
+(import doeff_core_effects [Spawn Wait])
 (import doeff_time [Delay GetTime])
 (import doeff_records.values [FieldDecl TableDecl DescendingWithin StreamDecl RecordsSchema KeepFor KeepForever ByKeySuffix ByKeyHead ExpectAbsent ExpectVersion ExpectAny
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset

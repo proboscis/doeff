@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from doeff_core_effects.effects import Await
+from doeff_core_effects import Await
 from doeff_events import (
     BrokerPatience,
     MarkGap,
@@ -187,7 +187,7 @@ def test_the_retry_handler_answers_and_performs_what_it_declares() -> None:
 def test_a_job_placing_the_notice_factories_leaves_no_unreadable_handler_and_no_notice_gap() -> (
     None
 ):
-    scheduler = analyze_handler("doeff_core_effects.scheduler:scheduled", name="scheduled")
+    scheduler = analyze_handler("doeff_core_effects._scheduler:scheduled", name="scheduled")
     coverage = check_coverage(analyze_program(_job), [scheduler], include=runs_where_performed)
     assert coverage.unknown_handlers == (), coverage.unknown_handlers
     unanswered = tuple(gap for gap in coverage.gaps if gap.effect.__module__ == NOTICES_MODULE)

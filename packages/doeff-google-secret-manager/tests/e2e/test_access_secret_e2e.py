@@ -13,16 +13,16 @@ SECRET_PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "doeff-secret" / "sr
 if str(SECRET_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(SECRET_PACKAGE_ROOT))
 
-from doeff_core_effects.handlers import (  # noqa: E402
+from doeff_core_effects import (  # noqa: E402
     await_handler,
     lazy_ask,
+    scheduled,  # noqa: E402
     state,
     try_handler,
     writer,
 )
 from doeff_core_effects.os_process import subprocess_handler  # noqa: E402
 from doeff_core_effects.process_effects import ReadEnvironment  # noqa: E402
-from doeff_core_effects.scheduler import scheduled  # noqa: E402
 from doeff_google_secret_manager import access_secret  # noqa: E402
 
 from doeff import do, run, with_handlers  # noqa: E402
