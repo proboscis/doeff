@@ -13332,12 +13332,9 @@
    }
   },
   "doeff-hy": {
-   "範囲": "範囲の答え待ち",
+   "範囲": "決まりの範囲",
    "名": {
-    "境界 — 基盤・道具の package": {
-     "(console script)": [
-      "doeff-hy-check"
-     ],
+    "外れ — submodule を _ で隠す": {
      "(submodule)": [
       "doeff_hy.ast_unparse",
       "doeff_hy.binding_forms",
@@ -13354,7 +13351,6 @@
       "doeff_hy.json_value",
       "doeff_hy.lazy",
       "doeff_hy.light_stack",
-      "doeff_hy.macros",
       "doeff_hy.match_fields",
       "doeff_hy.outcome_forms",
       "doeff_hy.positions",
@@ -13392,7 +13388,9 @@
       "doeff_hy_bytecode_guard.macro_hints",
       "doeff_hy_bytecode_guard.macro_use",
       "doeff_hy_bytecode_guard.records"
-     ],
+     ]
+    },
+    "外れ — 内側の module へ移す": {
      "doeff_hy.ast_unparse": [
       "install",
       "unparse_without_copying_constants"
@@ -13446,7 +13444,6 @@
      ],
      "doeff_hy.clause_endings": [
       "CHECKED_DEFINITIONS",
-      "ClauseEndingError",
       "ClauseOptions",
       "Ending",
       "MatchArm",
@@ -13558,9 +13555,7 @@
       "clause_op",
       "continuation_symbol",
       "declaration_setters",
-      "defhandler",
       "effect_symbol",
-      "handle",
       "import_form",
       "legacy_session_finding",
       "legacy_session_message",
@@ -13569,8 +13564,7 @@
       "parse_declaration",
       "refuse_unknown_keys",
       "report_findings",
-      "static_view_enabled",
-      "with_handler"
+      "static_view_enabled"
      ],
      "doeff_hy.http": [
       "MODULE_TAGS",
@@ -13587,8 +13581,7 @@
      ],
      "doeff_hy.json_value": [
       "JsonValue",
-      "OpaqueJson",
-      "OpaqueSplice"
+      "OpaqueJson"
      ],
      "doeff_hy.lazy": [
       "LazyCell",
@@ -13604,8 +13597,6 @@
       "uninstall"
      ],
      "doeff_hy.macros": [
-      "<-",
-      "<->",
       "BodyKind",
       "CONTRACT_KEYS",
       "FUNCTION_CONTRACT_KEYS",
@@ -13613,42 +13604,21 @@
       "ModuleBindings",
       "ModuleNames",
       "RuntimeDo",
-      "absent_as",
       "alias_symbol",
-      "check",
       "declaration_setters",
       "declared_value",
-      "defeffect",
       "defeffect_form",
-      "deff",
-      "defk",
-      "defmcp_tool",
-      "defp",
-      "defpipeline",
-      "defpp",
-      "deftest",
       "deftest_fixture_annotation",
-      "do!",
-      "fnk",
-      "for/do",
-      "lazy",
       "locate_synthesized",
       "mangle_match_fields",
       "module_declaration",
-      "on_raise",
       "record_names",
       "refuse_unknown_keys",
       "report_findings",
       "rewrite_body",
       "runtime_type_form",
-      "session",
-      "set!",
       "static_view_enabled",
-      "traverse",
-      "type_param_symbols",
-      "val",
-      "validate",
-      "var"
+      "type_param_symbols"
      ],
      "doeff_hy.match_fields": [
       "mangle_match_fields"
@@ -13681,7 +13651,6 @@
       "ITEMS_ATTR",
       "JsonValue",
       "LiteralValue",
-      "MalformedRecord",
       "Mark",
       "ModuleMarks",
       "OpaqueValue",
@@ -13696,16 +13665,10 @@
       "record_function",
       "record_module_binding"
      ],
-     "doeff_hy.pytest_plugin": [
-      "install"
-     ],
      "doeff_hy.quoted_forms": [
       "QuotedForms"
      ],
      "doeff_hy.record": [
-      "defenum",
-      "defrecord",
-      "defwire",
       "require_check"
      ],
      "doeff_hy.record_runtime": [
@@ -13737,7 +13700,6 @@
      "doeff_hy.static_baseline": [
       "BASELINE_VERSION",
       "Baseline",
-      "BaselineUnreadable",
       "Identity",
       "Reported",
       "Split",
@@ -13782,7 +13744,6 @@
       "CarriedFile",
       "CarriedRow",
       "CarryRecord",
-      "CarryUnreadableError",
       "Checking",
       "DEFAULT_REFRESH_RUNS",
       "Environment",
@@ -13814,7 +13775,6 @@
      ],
      "doeff_hy.static_check": [
       "BOOKKEEPING_MODULES",
-      "BaselineUnreadable",
       "BundleRow",
       "CARRY_SEMANTICS",
       "CacheMiss",
@@ -13823,7 +13783,6 @@
       "CachedSpan",
       "CarriedRow",
       "CarryRecord",
-      "CarryUnreadableError",
       "Checked",
       "Closure",
       "CompileFailure",
@@ -13831,7 +13790,6 @@
       "DEFEFFECT_OUTCOMES_MODULE",
       "Diagnostic",
       "EXPANDER_LIMIT",
-      "ExpansionWorkerLostError",
       "FileInputs",
       "FileRows",
       "FileStat",
@@ -13914,7 +13872,6 @@
       "MARK",
       "Stale",
       "StubText",
-      "StubUnmade",
       "UsedModule",
       "generated",
       "hidden_name",
@@ -13969,12 +13926,10 @@
       "runtime_type_form"
      ],
      "doeff_hy.typecheck": [
-      "TypeCheckError",
       "type_check_verdict"
      ],
      "doeff_hy.typecheck_handlers": [
       "MODULE_TAGS",
-      "TypeCheckError",
       "run_with_type_checks",
       "run_without_type_checks",
       "type_check_verdict"
@@ -13985,17 +13940,14 @@
       "Malformed",
       "MalformedField",
       "OpaqueJson",
-      "OpaqueSplice",
       "UNKNOWN_FIELDS",
       "WireShape",
       "WireValue",
       "dump",
       "dump_json",
       "json_schema",
-      "malformed_of",
       "parse",
       "parse_json",
-      "thaw_json",
       "wire_config",
       "wire_shape"
      ],
@@ -14135,7 +14087,6 @@
      ],
      "doeff_hy_bytecode_guard.macro_hints": [
       "Hint",
-      "HyMacroUseWarning",
       "MACRO_HOMES",
       "MacroName",
       "MacroRecord",
@@ -14226,6 +14177,87 @@
       "timestamp_header_matches",
       "unread_gensym_texts",
       "with_record"
+     ]
+    },
+    "境界 — Hy の macro": {
+     "(submodule)": [
+      "doeff_hy.macros"
+     ],
+     "doeff_hy.handle": [
+      "defhandler",
+      "handle",
+      "with_handler"
+     ],
+     "doeff_hy.macros": [
+      "<-",
+      "<->",
+      "absent_as",
+      "check",
+      "defeffect",
+      "deff",
+      "defk",
+      "defmcp_tool",
+      "defp",
+      "defpipeline",
+      "defpp",
+      "deftest",
+      "do!",
+      "fnk",
+      "for/do",
+      "lazy",
+      "on_raise",
+      "session",
+      "set!",
+      "traverse",
+      "val",
+      "validate",
+      "var"
+     ],
+     "doeff_hy.record": [
+      "defenum",
+      "defrecord",
+      "defwire"
+     ]
+    },
+    "境界 — CLI": {
+     "(console script)": [
+      "doeff-hy-check"
+     ]
+    },
+    "境界 — pytest の plugin の登録": {
+     "doeff_hy.pytest_plugin": [
+      "install"
+     ]
+    },
+    "境界 — 例外の型": {
+     "doeff_hy.clause_endings": [
+      "ClauseEndingError"
+     ],
+     "doeff_hy.pytest_items": [
+      "MalformedRecord"
+     ],
+     "doeff_hy.static_baseline": [
+      "BaselineUnreadable"
+     ],
+     "doeff_hy.static_carry": [
+      "CarryUnreadableError"
+     ],
+     "doeff_hy.static_check": [
+      "BaselineUnreadable",
+      "CarryUnreadableError",
+      "ExpansionWorkerLostError"
+     ],
+     "doeff_hy.static_stub": [
+      "StubUnmade"
+     ],
+     "doeff_hy.typecheck": [
+      "TypeCheckError"
+     ],
+     "doeff_hy.typecheck_handlers": [
+      "TypeCheckError"
+     ],
+     "doeff_hy_bytecode_guard.macro_hints": [
+      "HyMacroUseWarning"
      ]
     }
    }
@@ -17486,43 +17518,502 @@
    "訳": "fake の metrics-memory を metrics_handlers から分けた module の、どの module も持つ tag の表(metrics_handlers の MODULE_TAGS と同じ物)。fake が coordinator の型を読むので、本物の module を読む全部の job の起動からその閉包を外すために分けた",
    "決め": "ki-aa24ec10dae8"
   },
-  {"package": "doeff-cluster", "module": "doeff_cluster.shared.core.launch_rules", "name": "worker_commit_env_name", "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-6e83e03d146d"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.main", "name": "worker_commit_env_name", "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-6e83e03d146d"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "READ_THREADS", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "imports_entry_path", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_all", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_entry_or_none", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.entry.code_prepare", "name": "read_source", "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち", "決め": "ki-d3e585481618"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.launch", "name": "project_venv", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "project_hy", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.worker.core.probe_rules", "name": "uv_run_environ", "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち", "決め": "ki-869cdf21ec85"},
-  {"package": "doeff-hy", "module": "doeff_hy.wire_codec", "name": "Codec", "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち", "決め": "ki-923c16d33551"},
-  {"package": "doeff-hy", "module": "doeff_hy.wire_codec", "name": "codec_of", "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち", "決め": "ki-923c16d33551"},
-  {"package": "doeff-hy", "module": "doeff_hy.wire_malformed", "name": "Malformed", "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)", "決め": "ki-923c16d33551"},
-  {"package": "doeff-hy", "module": "doeff_hy.wire_malformed", "name": "MalformedField", "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)", "決め": "ki-923c16d33551"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "<-", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "agent!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "defphase", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "defworkflow", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "gate!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "loop", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "merge!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "parallel", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "parallel_for", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "pipeline", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "random!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "time!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-conductor", "module": "doeff_conductor.macros", "name": "workspace!", "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-cluster", "module": "doeff_cluster.shared.entry.macros", "name": "defsystem", "訳": "系を宣言する Hy の macro defsystem を doeff-hy の doeff_hy.macros から持ち主の doeff-cluster へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-hy", "module": "doeff_hy.declarations", "name": "record_names", "訳": "defsystem の形の読み(旧 doeff_hy.system_form)を doeff-cluster へ移した時、defk・deff の :writes も読む置き場の綴りの検め record-names を、同じ形の :needs の検め needs-names の隣へ移した(名の数は同じ — card ki-f2107259b141)", "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"},
-  {"package": "doeff-hy-pytest", "module": "doeff_hy_pytest", "name": "declare_process_tree_cpu", "訳": "検ごとの宣言 declare_process_tree_cpu は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)", "決め": "ki-ad38495b7c15"},
-  {"package": "doeff-hy-pytest", "module": "doeff_hy_pytest", "name": "declare_step_budget", "訳": "検ごとの宣言 declare_step_budget は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)", "決め": "ki-ad38495b7c15"},
-  {"package": "doeff-agents", "module": "doeff_agents", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
-  {"package": "doeff-agents", "module": "doeff_agents", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
-  {"package": "doeff-agents", "module": "doeff_agents.effects", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
-  {"package": "doeff-agents", "module": "doeff_agents.effects", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
-  {"package": "doeff-agents", "module": "doeff_agents.effects.agent", "name": "EventRecord", "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"},
-  {"package": "doeff-agents", "module": "doeff_agents.effects.agent", "name": "RecordStep", "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)", "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"}
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.launch_rules",
+   "name": "worker_commit_env_name",
+   "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-6e83e03d146d"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.main",
+   "name": "worker_commit_env_name",
+   "訳": "表を足した land と同じ時に入った keeper の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-6e83e03d146d"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.code_prepare",
+   "name": "READ_THREADS",
+   "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-d3e585481618"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.code_prepare",
+   "name": "imports_entry_path",
+   "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-d3e585481618"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.code_prepare",
+   "name": "read_all",
+   "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-d3e585481618"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.code_prepare",
+   "name": "read_entry_or_none",
+   "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-d3e585481618"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.entry.code_prepare",
+   "name": "read_source",
+   "訳": "表の後に入った bytecode の道具の変更が足した名(表より前に切った branch)— 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-d3e585481618"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.launch",
+   "name": "project_hy",
+   "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-869cdf21ec85"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.launch",
+   "name": "project_venv",
+   "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-869cdf21ec85"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.probe_rules",
+   "name": "project_hy",
+   "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-869cdf21ec85"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.probe_rules",
+   "name": "uv_run_environ",
+   "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-869cdf21ec85"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_codec",
+   "name": "Codec",
+   "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-923c16d33551"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_codec",
+   "name": "codec_of",
+   "訳": "defwire の自前の解き手(読む側)の入口。wire.hy が pydantic の TypeAdapter の代わりに呼ぶ(切り替えは照らしの card)— doeff-hy は基盤・道具の package で範囲の答え待ち",
+   "決め": "ki-923c16d33551"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_malformed",
+   "name": "Malformed",
+   "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)",
+   "決め": "ki-923c16d33551"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_malformed",
+   "name": "MalformedField",
+   "訳": "Malformed と MalformedField を pydantic を読まない module へ移した(wire.hy は同じ型を名で出し直す — 名は既知の doeff_hy.wire の行と同じ型)",
+   "決め": "ki-923c16d33551"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "<-",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "agent!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "defphase",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "defworkflow",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "gate!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "loop",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "merge!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "parallel",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "parallel_for",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "pipeline",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "random!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "time!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor.macros",
+   "name": "workspace!",
+   "訳": "conductor の workflow を書く Hy の macro を doeff-hy の doeff_hy.conductor から持ち主の doeff-conductor へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.macros",
+   "name": "defsystem",
+   "訳": "系を宣言する Hy の macro defsystem を doeff-hy の doeff_hy.macros から持ち主の doeff-cluster へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.declarations",
+   "name": "record_names",
+   "訳": "defsystem の形の読み(旧 doeff_hy.system_form)を doeff-cluster へ移した時、defk・deff の :writes も読む置き場の綴りの検め record-names を、同じ形の :needs の検め needs-names の隣へ移した(名の数は同じ — card ki-f2107259b141)",
+   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
+  },
+  {
+   "package": "doeff-hy-pytest",
+   "module": "doeff_hy_pytest",
+   "name": "declare_process_tree_cpu",
+   "訳": "検ごとの宣言 declare_process_tree_cpu は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)",
+   "決め": "ki-ad38495b7c15"
+  },
+  {
+   "package": "doeff-hy-pytest",
+   "module": "doeff_hy_pytest",
+   "name": "declare_step_budget",
+   "訳": "検ごとの宣言 declare_step_budget は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)",
+   "決め": "ki-ad38495b7c15"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "EventRecord",
+   "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "RecordStep",
+   "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "EventRecord",
+   "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "RecordStep",
+   "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "EventRecord",
+   "訳": "effect LaunchEffect の欄 event_record の値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "RecordStep",
+   "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record_runtime",
+   "name": "RECORD_DOC",
+   "訳": "defrecord の展開が呼ぶ実行の部品(doeff-hy の範囲が答え待ちの間に足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record_runtime",
+   "name": "record_delattr",
+   "訳": "defrecord の展開が呼ぶ実行の部品(doeff-hy の範囲が答え待ちの間に足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record_runtime",
+   "name": "record_repr",
+   "訳": "defrecord の展開が呼ぶ実行の部品(doeff-hy の範囲が答え待ちの間に足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record_runtime",
+   "name": "record_setattr",
+   "訳": "defrecord の展開が呼ぶ実行の部品(doeff-hy の範囲が答え待ちの間に足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "SHAPE_FORMS",
+   "訳": "wire の解き手が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "codec_of",
+   "訳": "wire の解き手が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "parse_as",
+   "訳": "wire の解き手が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire",
+   "name": "parse_json_as",
+   "訳": "wire の解き手が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_codec",
+   "name": "row_codec_of",
+   "訳": "wire の解き手が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "Codec",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "InputVerdict",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "Malformed",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "MalformedField",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "Mismatch",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "OpaqueJson",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "Report",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "adapter_of",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "codec_of",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "compare_input",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "compare_types",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "inputs_for",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "main",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "mixed_catch_all_unions",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_config",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_dump",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_dump_json",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_json_schema",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_parse",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "pydantic_parse_json",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "summary",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "thaw_json",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "typed",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.wire_parity",
+   "name": "wire_types_in",
+   "訳": "wire と pydantic を照らす道具 wire_parity が出す名(card ki-b7701d5fc0dd が足した)。ADR-DOE-API-001 R14 で doeff-hy を決まりの範囲へ入れた時に表へ書いた — submodule を _ へ隠す子 card が内側へ移して消す",
+   "決め": "ki-2526a4b4f561"
+  }
  ]
 }
