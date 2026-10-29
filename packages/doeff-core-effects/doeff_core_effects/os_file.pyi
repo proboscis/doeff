@@ -38,12 +38,12 @@ from doeff_core_effects.file_effects import MeasureTree as MeasureTree
 from doeff_core_effects.file_effects import LinkFile as LinkFile
 from doeff_core_effects.file_effects import CompilePythonSources as CompilePythonSources
 from doeff_core_effects.file_effects import MakeSymlink as MakeSymlink
-from doeff_core_effects.python_bytecode import compile_python_sources as compile_python_sources
+from doeff_core_effects._python_bytecode import compile_python_sources as compile_python_sources
 from doeff_core_effects.darwin_volume import darwin_volume_free as darwin_volume_free
-from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
-from doeff_core_effects.offloaded_call import offloaded as offloaded
-from doeff_core_effects.offloaded_call import run_detached as run_detached
-from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 LOCK_THREADS: ThreadPerCall
 IOPRIO_CLASS_SHIFT: int
 IOPRIO_CLASS_IDLE: int

@@ -6,8 +6,8 @@
 (require doeff-hy.macros [deftest defk <-])
 (import doeff [run with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.random_effects [RandomBytes])
-(import doeff_core_effects.seeded_random [seeded-random-handler])
+(import doeff_core_effects [RandomBytes])
+(import doeff_core_effects [seeded-random-handler])
 
 
 (deftest test-a-random-bytes-answer-the-asked-length-and-differ-per-call

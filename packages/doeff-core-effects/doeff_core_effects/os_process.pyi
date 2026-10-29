@@ -12,12 +12,12 @@ from doeff_core_effects.file_effects import FileFailed as FileFailed
 from doeff_core_effects.file_effects import PathKind as PathKind
 from doeff_core_effects.file_effects import PathStat as PathStat
 from doeff_core_effects._handlers import state as state
-from doeff_core_effects.meter_effects import CountMetric as CountMetric
+from doeff_core_effects._meter_effects import CountMetric as CountMetric
 from doeff_core_effects.os_file import stat_path as stat_path
-from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
-from doeff_core_effects.offloaded_call import offloaded as offloaded
-from doeff_core_effects.offloaded_call import run_detached as run_detached
-from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 from doeff_lifeline import Lifeline as Lifeline
 from doeff_core_effects.process_effects import ChildLifetime as ChildLifetime
 from doeff_core_effects.process_effects import EnvEntry as EnvEntry

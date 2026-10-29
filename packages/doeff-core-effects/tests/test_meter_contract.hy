@@ -14,9 +14,8 @@
 ;;; 本物だけの性質(別の run・別の thread との共有・同じ名前で違う設定を断る・GC の停止)は test_process_meter.hy。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_hy.frozen [FrozenMap])
-(import doeff_core_effects.meter_effects [CountMetric MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter SetGauge SecondsObservation
-                                         SecondsTotal])
-(import doeff_core_effects.meter_prometheus [render-prometheus])
+(import doeff_core_effects [CountMetric MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter SetGauge SecondsObservation SecondsTotal])
+(import doeff_core_effects._meter_prometheus [render-prometheus])
 (import meter_contract_handlers [MEMORY-METER PROCESS-METER under-meter])
 
 ;; 束ねた積み方と 1 つずつの積み方を比べる観測: 前から在る名 answer へ足す・同じ名が列に 2 度出る・桁の当たりと外れ・足す順で丸めが

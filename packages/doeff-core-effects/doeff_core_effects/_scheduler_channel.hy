@@ -6,7 +6,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "scheduler" :role "foundation"})
 (import doeff_core_effects._scheduler [CreatePromise CompletePromise Wait])
-(import doeff_core_effects.channel_effects [Channel CreateChannel PutChannel TakeChannel])
+(import doeff_core_effects._channel_effects [Channel CreateChannel PutChannel TakeChannel])
 
 
 (defk woken [promises]

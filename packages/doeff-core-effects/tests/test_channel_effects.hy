@@ -6,11 +6,11 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled Spawn Wait Cancel])
-(import doeff_core_effects.channel_effects [Channel CreateChannel PutChannel TakeChannel])
+(import doeff_core_effects [Channel CreateChannel PutChannel TakeChannel])
 (import doeff_core_effects [scheduler-channel-handler])
-(import doeff_core_effects.compute_effects [Compute Computed])
-(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
-(import doeff_core_effects.inline_compute [inline-compute-handler])
+(import doeff_core_effects [Compute Computed])
+(import doeff_core_effects [thread-pool-compute-handler])
+(import doeff_core_effects [inline-compute-handler])
 
 
 (defn on [handlers program]

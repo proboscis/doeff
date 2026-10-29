@@ -16,10 +16,10 @@ from doeff import Program as Program
 from doeff_hy.wire import Malformed as Malformed
 from doeff_hy.wire import dump_json as dump_json
 from doeff_hy.wire import parse_json as parse_json
-from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
-from doeff_core_effects.offloaded_call import offloaded as offloaded
-from doeff_core_effects.offloaded_call import run_detached as run_detached
-from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError

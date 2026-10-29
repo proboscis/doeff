@@ -18,8 +18,8 @@
 (import datetime [datetime timezone])
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.faulthandler_stack_dump [faulthandler-stack-dump-handler])
-(import doeff_core_effects.memory_stack_dump [memory-stack-dump-handler])
+(import doeff_core_effects [faulthandler-stack-dump-handler])
+(import doeff_core_effects [memory-stack-dump-handler])
 (import doeff_time [sim-time-handler sync-time-handler])
 
 (val FAULTHANDLER-STACK-DUMP "faulthandler-stack-dump")

@@ -5,7 +5,7 @@
 (import threading)
 (import pathlib [Path])
 (import doeff [Program with_handlers])
-(import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
+(import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.file_effects [WriteText ReadText StatPath ListDirectory MakeDirectory RenamePath ReadDiskFree FileFailed PathKind
                                          ReadBytes WriteBytes AppendText CopyFile CopyTree WalkTree LinkFile MakeSymlink ReadDiskUsage])
 (import doeff_core_effects.os_file [os-file-handler offloaded-file-handler])

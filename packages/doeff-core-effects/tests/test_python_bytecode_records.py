@@ -27,7 +27,7 @@ _ENV_NOT_PASSED = ("PYTHONPYCACHEPREFIX",)
 _PREPARE = """\
 import sys
 import hy
-from doeff_core_effects.python_bytecode import compile_python_sources, prepare_compile_path
+from doeff_core_effects._python_bytecode import compile_python_sources, prepare_compile_path
 
 tree = sys.argv[1]
 prepare_compile_path(tree, (".",))

@@ -8,7 +8,7 @@
 ;;; 本物だけの性質(本当に sys.stderr へ全 thread の stack を書く)は test_faulthandler_stack_dump.hy。
 ;;; 本物は実時間で待つ(1 本 0.5 秒前後)。期限の前の張り直しは、機体の負荷で待ちが延びても期限を跨がない幅(期限 1 秒・待ち 0.1 秒)。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_core_effects.stack_dump_effects [ArmStackDump DisarmStackDump ReadStackDumps])
+(import doeff_core_effects [ArmStackDump DisarmStackDump ReadStackDumps])
 (import doeff_time [Delay GetMonotonic])
 
 ;; 張り直さない見張りの期限の秒と、期限を跨ぐ待ちの秒。

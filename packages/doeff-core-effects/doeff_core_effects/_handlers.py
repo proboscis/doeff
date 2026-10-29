@@ -49,7 +49,7 @@ from doeff_core_effects._effects import (
     Try,
     WriterTellEffect,
 )
-from doeff_core_effects.vm_probe_effects import (
+from doeff_core_effects._vm_probe_effects import (
     ReadInvariantChecks,
     ReadVmLiveCounts,
     ReadVmScanCounts,
@@ -293,7 +293,7 @@ def _asked_vm(effect: _VmProbe) -> object:
 
 def _vm_probe_handler(effect: _VmProbe, k):
     """VM probe handler: answers the effects that read the doeff-vm's counts and set its
-    switches (``doeff_core_effects.vm_probe_effects``) by asking the VM of this process.
+    switches (``doeff_core_effects._vm_probe_effects``) by asking the VM of this process.
 
     Stateless and needs no other handler: ``run(vm_probe_handler(ReadVmWorkCounts()))``.
     The installer makes the def a ``@do`` function, as ``@handler`` does (ADR-DOE-CORE-003).

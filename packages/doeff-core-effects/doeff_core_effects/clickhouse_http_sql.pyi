@@ -28,10 +28,10 @@ from doeff_core_effects.sql_effects import checked_identifier as checked_identif
 from doeff_core_effects.sql_effects import checked_identifiers as checked_identifiers
 from doeff_core_effects.sql_effects import checked_rows as checked_rows
 from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
-from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
-from doeff_core_effects.offloaded_call import offloaded as offloaded
-from doeff_core_effects.offloaded_call import run_detached as run_detached
-from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 CLICKHOUSE_TYPES: Incomplete
 CLICKHOUSE_COLUMN_TYPES: dict[SqlColumnType, str]
 ANSWER_FORMAT: str

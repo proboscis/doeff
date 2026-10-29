@@ -34,12 +34,12 @@
 (import pytest)
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.meter_effects [MeterSettings MeterSnapshot ReadMeter])
+(import doeff_core_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects.process_meter [process-meter-handler])
 (import doeff_core_effects.os_process :as process-module)
 (import doeff_core_effects.os_process [offloaded-subprocess-handler metered-offloaded-subprocess-handler
                                        CANCEL-TERMINATED-METRIC CANCEL-KILLED-METRIC])
-(import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
+(import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.process_effects [ProcessAlive ProcessOutcome RunProcess])
 (import doeff_core_effects [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 

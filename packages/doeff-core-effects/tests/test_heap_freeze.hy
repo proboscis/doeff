@@ -8,9 +8,9 @@
 (require doeff-hy.macros [deftest <- val])
 (import gc)
 (import doeff [run with_handlers])
-(import doeff_core_effects.heap_effects [CollectAndFreeze])
-(import doeff_core_effects.gc_freeze [gc-freeze-handler])
-(import doeff_core_effects.scripted_freeze [scripted-freeze-handler])
+(import doeff_core_effects [CollectAndFreeze])
+(import doeff_core_effects [gc-freeze-handler])
+(import doeff_core_effects [scripted-freeze-handler])
 
 
 (deftest test-a-freeze-answers-a-count

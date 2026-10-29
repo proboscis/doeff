@@ -11,7 +11,7 @@
 (require doeff-hy.macros [defk deftest <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff_core_effects.latest_effects [PublishLatest ReadLatest AwaitLatest])
+(import doeff_core_effects [PublishLatest ReadLatest AwaitLatest])
 (import doeff_core_effects [Spawn Wait Cancel CreatePromise CompletePromise])
 
 

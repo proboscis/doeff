@@ -5,10 +5,10 @@ from doeff_hy.static_types import Handler as _Handler
 from doeff_core_effects._scheduler import CreatePromise as CreatePromise
 from doeff_core_effects._scheduler import CompletePromise as CompletePromise
 from doeff_core_effects._scheduler import Wait as Wait
-from doeff_core_effects.channel_effects import Channel as Channel
-from doeff_core_effects.channel_effects import CreateChannel as CreateChannel
-from doeff_core_effects.channel_effects import PutChannel as PutChannel
-from doeff_core_effects.channel_effects import TakeChannel as TakeChannel
+from doeff_core_effects._channel_effects import Channel as Channel
+from doeff_core_effects._channel_effects import CreateChannel as CreateChannel
+from doeff_core_effects._channel_effects import PutChannel as PutChannel
+from doeff_core_effects._channel_effects import TakeChannel as TakeChannel
 
 def woken(promises: tuple) -> _Program[None, object]:
     ...

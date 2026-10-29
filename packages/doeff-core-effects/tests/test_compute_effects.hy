@@ -15,9 +15,9 @@
 (import typing [TypeVar])
 (import doeff [run with_handlers EffectBase Program])
 (import doeff_core_effects [scheduled Spawn Gather Cancel])
-(import doeff_core_effects.compute_effects [Compute Computed ComputeFailed ComputeLoad ReadComputeLoad])
-(import doeff_core_effects.inline_compute [inline-compute-handler])
-(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
+(import doeff_core_effects [Compute Computed ComputeFailed ComputeLoad ReadComputeLoad])
+(import doeff_core_effects [inline-compute-handler])
+(import doeff_core_effects [thread-pool-compute-handler])
 (import pytest)
 
 

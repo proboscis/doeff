@@ -15,7 +15,7 @@
 (import doeff_core_effects [Try])
 (import doeff_core_effects [await-handler])
 (import doeff_time [Delay async-time-handler])
-(import doeff_core_effects.apart_call [ApartClosed run-apart])
+(import doeff_core_effects [ApartClosed run-apart])
 
 ;; program が effect を出さずに計算する秒・撃った run の他の task の拍の秒・計算の間に進むべき拍の下限・取り消しの後に program の後始末を
 ;; 待つ上限の秒。
