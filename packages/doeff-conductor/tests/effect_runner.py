@@ -4,8 +4,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from doeff_conductor.handlers._workspace_path import WorkspacePath
-from doeff_conductor.types import Workspace
+from doeff_conductor._handlers._workspace_path import WorkspacePath
+from doeff_conductor import Workspace
 from doeff_core_effects.scheduler import scheduled
 
 from doeff import EffectBase, K, Resume, do, handler, run

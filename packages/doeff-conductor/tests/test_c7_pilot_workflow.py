@@ -5,10 +5,10 @@ import sys
 from pathlib import Path
 
 from doeff import run, with_handlers
-from doeff_conductor.verbs import plan_workflow, validate_workflow
+from doeff_conductor._verbs import plan_workflow, validate_workflow
 from doeff_core_effects.os_process import subprocess_handler
 from doeff_core_effects.process_effects import environment_mapping
-from doeff_conductor.workflow_loader import load_workflow_spec
+from doeff_conductor._workflow_loader import load_workflow_spec
 
 
 def _workflow_path() -> Path:

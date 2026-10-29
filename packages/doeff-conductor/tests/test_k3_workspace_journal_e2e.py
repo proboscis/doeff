@@ -13,25 +13,23 @@ from typing import Any, cast
 
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.effects import CreateWorkspace
-from doeff_conductor.handlers.journaled_agent import journaled_agent_handler
-from doeff_conductor.handlers.journaled_workspace import (
-    journaled_workspace_handler,
-)
-from doeff_conductor.handlers.testing import MockConductorRuntime, mock_handlers
-from doeff_conductor.journal import (
+from doeff_conductor import CreateWorkspace
+from doeff_conductor import journaled_agent_handler
+from doeff_conductor import journaled_workspace_handler
+from doeff_conductor import MockConductorRuntime, mock_handlers
+from doeff_conductor._journal import (
     AGENT_JOURNAL_FILENAME,
     WORKSPACE_JOURNAL_FILENAME,
     WorkspaceJournal,
 )
-from doeff_conductor.types import WorkflowStatus, Workspace
-from doeff_conductor.workflow_effect_journal import journaled_workflow_effect_handler
+from doeff_conductor import WorkflowStatus, Workspace
+from doeff_conductor import journaled_workflow_effect_handler
 
 from doeff import K, Resume, handler, stacked_handlers
 
 SHARED_WORKSPACE_WORKFLOW = """
 (require doeff-conductor.macros [defworkflow agent! workspace! <-])
-(import doeff_conductor.dsl [artifact prompt ref])
+(import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {"type" "object"
                      "required" ["summary"]
@@ -63,7 +61,7 @@ def _install_mock_production_handlers_with_workspace_journal(
     creation_tracker: list[str],
 ) -> None:
     """Wire mock production handlers that journal both agent and workspace effects."""
-    import doeff_conductor.handlers as handlers_module
+    import doeff_conductor._handlers as handlers_module
 
     def production_handlers(**kwargs: object) -> Any:
         state_dir: str | Path | None = cast(str | Path | None, kwargs["journal_state_dir"])

@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 import pytest
 from doeff_conductor._api import ConductorAPI
-from doeff_conductor.journal import (
+from doeff_conductor._journal import (
     PROGRESS_STATUS_RUNNING,
     TERMINAL_KIND_SUCCEEDED,
     AgentJournal,
@@ -16,8 +16,8 @@ from doeff_conductor.journal import (
     ProgressJournal,
     ProgressJournalEntry,
 )
-from doeff_conductor.monitor_app import MonitorApp
-from doeff_conductor.types import WorkflowHandle, WorkflowStatus
+from doeff_conductor._monitor_app import MonitorApp
+from doeff_conductor import WorkflowHandle, WorkflowStatus
 from textual.widgets import DataTable, Tree
 
 

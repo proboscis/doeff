@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from doeff_conductor.types import (
+from doeff_conductor import (
     AgentRef,
     ExecResult,
     Issue,

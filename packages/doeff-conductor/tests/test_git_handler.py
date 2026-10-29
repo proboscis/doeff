@@ -6,10 +6,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
-from doeff_conductor.exceptions import GitCommandError
-from doeff_conductor.handlers.git_handler import git_handler
-from doeff_conductor.types import MergeStrategy, PRHandle, Workspace
+from doeff_conductor import Commit, CreatePR, MergePR, Push
+from doeff_conductor import GitCommandError
+from doeff_conductor import git_handler
+from doeff_conductor import MergeStrategy, PRHandle, Workspace
 from doeff_git.effects import GitCommit
 from doeff_git.handlers import production_handlers as git_production_handlers
 
