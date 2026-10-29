@@ -30,8 +30,7 @@
                                       RunnerFact RunnersUnreachable])
 (import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
-(import doeff_cluster.sim.local [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf
-                             ReadCoordinator])
+(import doeff_cluster [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])

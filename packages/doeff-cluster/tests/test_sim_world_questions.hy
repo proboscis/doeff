@@ -20,14 +20,14 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.coordinator.protocol.store [Persist])
 (import doeff_cluster.worker.intent.worker_model [PublishStatus ReadDesired])
-(import doeff_cluster.sim.local [SimPlan SimParts SimWorker HostTruth HostTruthOf PartsOf sim-plan sim-world sim-host StopCoordinator CrashCoordinator TakeHeldRequests
-                                 observe-requests StepBook])
+(import doeff_cluster [SimWorker HostTruthOf PartsOf sim-world sim-host StopCoordinator CrashCoordinator TakeHeldRequests observe-requests]
+        doeff_cluster._sim.local [SimPlan SimParts HostTruth sim-plan StepBook])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 (import tests.clock_fixtures [clock-at])
 
 
-(val SIM-LOCAL "doeff_cluster.sim.local")
+(val SIM-LOCAL "doeff_cluster._sim.local")
 
 
 (defeffect WorldQuestions

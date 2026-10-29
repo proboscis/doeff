@@ -23,7 +23,8 @@
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout RuntimeEnv RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.intent.env_marker_model [FileSha256])
-(import doeff_cluster.sim.checkout_git_script [GitCheckout GitRemote GitRev GitUrlRewrite git-command])
+(import doeff_cluster [GitCheckout GitRemote GitRev git-command]
+        doeff_cluster._sim.checkout_git_script [GitUrlRewrite])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 
 (val LOCK "httpx==0.28.1\n")

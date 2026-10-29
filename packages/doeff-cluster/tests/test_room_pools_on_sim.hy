@@ -17,7 +17,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf ReadCoordinator WriteRoomFile])
+(import doeff_cluster [sim-cluster SimWorker ProcessesOf ReadCoordinator WriteRoomFile])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulse-program])
 

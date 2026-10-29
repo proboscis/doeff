@@ -11,7 +11,7 @@
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.sim.local [sim-cluster SimWorker SimProcess Redeclare ReportsOf ProcessesOf SharedRows])
+(import doeff_cluster [sim-cluster SimWorker SimProcess Redeclare ReportsOf ProcessesOf SharedRows])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [ProcessView WorldView NoticeJob Retired HandoffAbandoned])

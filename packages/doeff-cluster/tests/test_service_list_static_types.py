@@ -74,7 +74,7 @@ EXPECTED_RETURNS = {
         "service_facts_of_view": "_Program[tuple[ServiceFact, ...], object]",
         "services_read": "_Program[tuple[ServiceFact, ...] | ServicesUnreachable, object]",
     },
-    "sim/local": {
+    "_sim/local": {
         "read_services": "_Program[tuple[ServiceFact, ...] | ServicesUnreachable, object]",
     },
 }

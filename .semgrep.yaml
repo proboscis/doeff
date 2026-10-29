@@ -412,7 +412,7 @@ rules:
       include:
         - "**/doeff_cluster/**/*.hy"
       exclude:
-        - "**/doeff_cluster/sim/local.hy"
+        - "**/doeff_cluster/_sim/local.hy"
 
   - id: doeff-packages-have-no-application-vocabulary
     languages:

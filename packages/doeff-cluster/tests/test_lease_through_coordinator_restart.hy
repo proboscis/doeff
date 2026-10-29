@@ -17,7 +17,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
-(import doeff_cluster.sim.local [sim-cluster ProcessesOf SharedRows])
+(import doeff_cluster [sim-cluster ProcessesOf SharedRows])
 (import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
