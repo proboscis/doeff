@@ -13,8 +13,9 @@
 (import doeff_records [Missing])
 (import doeff_records [ReadRow])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.pg [pg-records-handler drop-records-tables prepare-records-store RecordsSqlFailed])
-(import doeff_records.pg_sql [schema-statements])
+(import doeff_records [pg-records-handler RecordsSqlFailed]
+        doeff_records._pg [drop-records-tables prepare-records-store])
+(import doeff_records._pg_sql [schema-statements])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST postgres-connections fresh-prefix run-sql])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])
 

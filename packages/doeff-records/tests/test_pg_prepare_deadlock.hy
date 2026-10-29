@@ -19,8 +19,8 @@
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.pg [drop-records-tables prepare-records-store PreparedStore])
-(import doeff_records.pg_sql [writer-lock-key migrate-lock-key schema-statements])
+(import doeff_records._pg [drop-records-tables prepare-records-store PreparedStore])
+(import doeff_records._pg_sql [writer-lock-key migrate-lock-key schema-statements])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE open-postgres postgres-connections fresh-prefix run-sql
                             prepared-store])
 (import tests.sql_probes [QueryProbe StatementCounts probe-sql-handler])

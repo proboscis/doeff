@@ -32,7 +32,7 @@ pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")
 
 from doeff_effect_analyzer import handler_effects, hy_expansion  # noqa: E402
-from doeff_effect_analyzer import program_effects as pe  # noqa: E402
+from doeff_effect_analyzer import _program_effects as pe  # noqa: E402
 
 SOURCE = """
 (require doeff-hy.macros [defk <-])
@@ -993,8 +993,8 @@ def test_the_expansion_module_imports_no_other_module_of_the_analyzer() -> None:
     trees without being in their key."""
     assert analyzer_imports(analyzer_sources()["hy_expansion.py"]) == frozenset()
     assert analyzer_imports(
-        "def _expand_hy(source):\n    from doeff_effect_analyzer.program_effects import _canonical_gensyms\n"
-    ) == {"doeff_effect_analyzer.program_effects"}  # the negative case
+        "def _expand_hy(source):\n    from doeff_effect_analyzer._program_effects import _canonical_gensyms\n"
+    ) == {"doeff_effect_analyzer._program_effects"}  # the negative case
 
 
 def test_a_type_check_expansion_is_neither_read_from_nor_written_to_a_store(

@@ -27,9 +27,10 @@ from doeff_core_effects import (
     Wait,
     scheduled,
 )
-from doeff_records import Changes, ListRows, WatchChanges, WatchCursor, memory
+from doeff_records import Changes, ListRows, WatchChanges, WatchCursor, _memory as memory
 from doeff_records._laws import LAW_SCHEMA, MAKER
-from doeff_records.memory import MemoryStore, memory_records_handler
+from doeff_records import memory_records_handler
+from doeff_records._memory import MemoryStore
 from doeff_time import GetTime, ScheduleAt, ScheduleAtEffect, SimClock, sim_time_handler
 
 from doeff import Effect, Pass, do, run, with_handlers

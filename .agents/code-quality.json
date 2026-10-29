@@ -24,11 +24,11 @@
     "docs/adr/defadr_doeff_hy_005_typecheck_and_record_fences.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.hy",
     "packages/doeff-hy/src/doeff_hy/typecheck_handlers.pyi",
-    "packages/doeff-records/src/doeff_records/wire.hy",
+    "packages/doeff-records/src/doeff_records/_wire.hy",
     "packages/doeff-records/src/doeff_records/_principals.hy",
     "packages/doeff-records/src/doeff_records/_service.hy",
     "packages/doeff-records/src/doeff_records/http_client.hy",
-    "packages/doeff-records/src/doeff_records/http_server.hy",
+    "packages/doeff-records/src/doeff_records/_http_server.hy",
     "packages/doeff-records/src/doeff_records/_schema_digest.hy",
     "packages/doeff-records/src/doeff_records/maintenance.hy",
     "packages/doeff-records/src/doeff_records/_store_choice.hy",
@@ -541,12 +541,12 @@
     {
       "name": "records-wire",
       "paths": [
-        "packages/doeff-records/src/doeff_records/wire.hy"
+        "packages/doeff-records/src/doeff_records/_wire.hy"
       ],
       "responsibility": "記録の service の wire の綴りの唯一の置き場: 公開 effect 7 つの要求と答えを JSON の値へ写し、JSON の値から契約の形で読む(知らない鍵・足りない鍵・型の違いは WireMalformed)。I/O なし",
       "layer": "pure",
       "public": [
-        "packages/doeff-records/src/doeff_records/wire.hy"
+        "packages/doeff-records/src/doeff_records/_wire.hy"
       ],
       "allow": [
         "records-values",
@@ -621,12 +621,12 @@
     {
       "name": "records-http-server",
       "paths": [
-        "packages/doeff-records/src/doeff_records/http_server.hy"
+        "packages/doeff-records/src/doeff_records/_http_server.hy"
       ],
       "responsibility": "記録の service の待ち受けの入口の Program(doeff の汎用の HTTP の effect を出し、要求ごとに Spawn した task が respond で答える・表の用意と手入れの task・止めの見張り)と、それを別の thread の run で回す検の殻(start-records-server)",
       "layer": "io",
       "public": [
-        "packages/doeff-records/src/doeff_records/http_server.hy"
+        "packages/doeff-records/src/doeff_records/_http_server.hy"
       ],
       "allow": [
         "records-service",
@@ -771,12 +771,12 @@
     {
       "name": "records-pg-sql",
       "paths": [
-        "packages/doeff-records/src/doeff_records/pg_sql.hy"
+        "packages/doeff-records/src/doeff_records/_pg_sql.hy"
       ],
       "responsibility": "PostgreSQL の handler の文(純粋 — 接続に触らない)と表の形",
       "layer": "pure",
       "public": [
-        "packages/doeff-records/src/doeff_records/pg_sql.hy"
+        "packages/doeff-records/src/doeff_records/_pg_sql.hy"
       ],
       "allow": [
         "records-values",
@@ -787,12 +787,12 @@
     {
       "name": "records-pg",
       "paths": [
-        "packages/doeff-records/src/doeff_records/pg.hy"
+        "packages/doeff-records/src/doeff_records/_pg.hy"
       ],
       "responsibility": "公開 effect と手入れの effect に PostgreSQL の表で答える handler(接続の失敗は Unreachable の答え)",
       "layer": "io",
       "public": [
-        "packages/doeff-records/src/doeff_records/pg.hy"
+        "packages/doeff-records/src/doeff_records/_pg.hy"
       ],
       "allow": [
         "records-values",
@@ -809,12 +809,12 @@
     {
       "name": "records-memory",
       "paths": [
-        "packages/doeff-records/src/doeff_records/memory.hy"
+        "packages/doeff-records/src/doeff_records/_memory.hy"
       ],
       "responsibility": "公開 effect と手入れの effect に手元の表と番号の列で答える handler(模擬・手元の 1 process・単体の検)",
       "layer": "io",
       "public": [
-        "packages/doeff-records/src/doeff_records/memory.hy"
+        "packages/doeff-records/src/doeff_records/_memory.hy"
       ],
       "allow": [
         "records-values",

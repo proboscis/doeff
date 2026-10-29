@@ -18,11 +18,12 @@
 (import doeff_records [ReadRow WatchChanges])
 (import doeff_records [WatchCursor])
 (import doeff_records.http_client [EXCHANGE-LOG RecordsEndpoint http-records-handler records-unwaited])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records._http_server [records-server-config start-records-server])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records.request_timing [RequestStage StageSeconds server-timing-of])
-(import doeff_records.wire [ServerSpan server-timing-spans])
+(import doeff_records._wire [ServerSpan server-timing-spans])
 
 ;; 行の欄のうち、計時を頼んだ往復で必ず値を持つ物(内訳の全部 — http_client.hy の logged-exchange)。
 (val BREAKDOWN-FIELDS #("conn" "connect_ms" "acquire_ms" "send_ms" "service_queue_ms" "service_ms" "return_ms" "wait_ms" "receive_ms"

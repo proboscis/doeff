@@ -20,8 +20,9 @@
 (import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault])
 (import doeff_records._laws [LAW-SCHEMA MAKER PULSE-KEEP-SECONDS law-event-by-key-reads-the-same-event])
 (import doeff_records.http_client [records-unwaited])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
+(import doeff_records._http_server [records-server-config start-records-server])
 (import doeff_records.http_client [RecordsEndpoint http-records-handler])
 (import tests.interpreters [LawSetup sim-request-handlers])
 

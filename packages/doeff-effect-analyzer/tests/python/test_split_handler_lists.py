@@ -18,7 +18,7 @@ builder passed in as a parameter) stays unread, named.
 
 import pytest
 from doeff_effect_analyzer.handler_effects import Basis, analyze_env, check_coverage
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._program_effects import analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

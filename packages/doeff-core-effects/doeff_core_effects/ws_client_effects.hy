@@ -31,7 +31,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff [EffectBase Program])
-(import doeff_core_effects.http_server_effects [HttpHeader])
+(import doeff_core_effects._http_server_effects [HttpHeader])
 
 ;; ws の閉じの状態符(RFC 6455 7.4.1)— 答え手が決める値。
 (val WS-LINK-CLOSE-NORMAL 1000)

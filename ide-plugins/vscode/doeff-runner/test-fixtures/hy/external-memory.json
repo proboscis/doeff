@@ -3,13 +3,13 @@
  "root": "/deps/src",
  "files": [
   {
-   "path": "/deps/src/doeff_records/memory.hy",
-   "module": "doeff_records.memory",
+   "path": "/deps/src/doeff_records/_memory.hy",
+   "module": "doeff_records._memory",
    "definitions": [
     {
      "name": "MemoryStore",
      "mangled": "MemoryStore",
-     "qualified_name": "doeff_records.memory.MemoryStore",
+     "qualified_name": "doeff_records._memory.MemoryStore",
      "kind": "defclass",
      "range": {
       "start": {
@@ -49,7 +49,7 @@
     {
      "name": "put-row",
      "mangled": "put_row",
-     "qualified_name": "doeff_records.memory.MemoryStore.put_row",
+     "qualified_name": "doeff_records._memory.MemoryStore.put_row",
      "kind": "method",
      "range": {
       "start": {
@@ -92,7 +92,7 @@
     {
      "name": "make-store",
      "mangled": "make_store",
-     "qualified_name": "doeff_records.memory.make_store",
+     "qualified_name": "doeff_records._memory.make_store",
      "kind": "defn",
      "range": {
       "start": {

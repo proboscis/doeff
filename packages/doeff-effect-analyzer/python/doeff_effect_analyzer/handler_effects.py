@@ -1,7 +1,7 @@
 """Which effects a handler handles, which effects its clauses perform, and whether an
 env (an ordered handler stack) covers every effect a Program performs.
 
-Read from source like :mod:`doeff_effect_analyzer.program_effects` (Hy is
+Read from source like :mod:`doeff_effect_analyzer._program_effects` (Hy is
 macro-expanded first, names resolve by importing the defining module; nothing is
 run).
 
@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from types import FunctionType
 from typing import Any
 
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer._program_effects import (
     UNBOUND,
     AllTest,
     AnyTest,
@@ -82,7 +82,6 @@ from doeff_effect_analyzer.program_effects import (
     UnknownTest,
     Unresolved,
     _bind_expression,
-    declared_builders,
     _body_nodes,
     _Bound,
     _bound_operand,
@@ -109,6 +108,7 @@ from doeff_effect_analyzer.program_effects import (
     _scope_of,
     _WrittenArgument,
     bindings_for,
+    declared_builders,
     pass_through,
     qualified_name,
     resolve_target,

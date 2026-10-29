@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Generic, TypeVar, cast
 
 from doeff_effect_analyzer import env_places
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer._program_effects import (
     _EXPANSION_OBSERVERS,
     _hy_cache_dir,
     reading_sources,

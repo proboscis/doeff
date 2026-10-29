@@ -15,9 +15,10 @@
 (import doeff_core_effects.http_effects [HttpRequest])
 (import doeff_time [SimClock])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.wire [CALLER-HEADER WRITER-HEADER list-rows-metrics])
-(import doeff_records.http_server [records-server-config start-records-server])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
+(import doeff_records._wire [CALLER-HEADER WRITER-HEADER list-rows-metrics])
+(import doeff_records._http_server [records-server-config start-records-server])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 宣言する呼び手の名(語に畳むと reader_job)と、宣言に無い名乗り。

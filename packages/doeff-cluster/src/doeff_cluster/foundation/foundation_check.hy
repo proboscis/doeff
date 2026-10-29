@@ -52,7 +52,7 @@
    「答え手が出した所の handler の下で走らせる」と宣言していれば(__doeff_runs_carried__ — Spawn・Try・Local・Listen・SqlTransaction)、
    出した所で同じ handler の下で数える(以前の既定は名 Spawn だけで、Try と SqlTransaction の中の effect が検の外にあった)。fold = 宣言の外で同じく数える運び手の名(既定なし)。
    unread = 読めない handler について呼び手が知る宣言(UnreadDeclaration — 合う handler は unknown に出さず、置いた所で宣言から読む)。"
-  (import doeff_effect_analyzer.program_effects [analyze_program qualified-name runs-where-performed SuppliedDeclaration])
+  (import doeff_effect_analyzer._program_effects [analyze_program qualified-name runs-where-performed SuppliedDeclaration])
   (import doeff_effect_analyzer.handler_effects [check_coverage])
   (import doeff_effect_analyzer.result_cache [cached-result importable-name])
   (val supplied (tuple (gfor d unread (SuppliedDeclaration d.part d.handles d.effects))))

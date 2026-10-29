@@ -27,7 +27,7 @@
   :title "閉じの解析の答えの置き場の鍵は、答えの依る module の組だけ — 解析が source を読んだ module・解析そのものの module・そこから値を作った module(親の package・名前空間の値の定義元・Hy の macro・関数の本体の import・点つきの名)を辿った組。読み込んだ全部の module ではない"
   :status "accepted"
   :scope ["packages/doeff-effect-analyzer/python/doeff_effect_analyzer/result_cache.py"
-          "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/program_effects.py"
+          "packages/doeff-effect-analyzer/python/doeff_effect_analyzer/_program_effects.py"
           "docs/adr/defadr_doeff_analyzer_001_result_key.hy"]
   :problem
     [(fact
@@ -70,7 +70,7 @@
               _modules (patch.dict sys.modules)
               _path (patch.object sys "path" [scratch ANALYZER-PYTHON #* sys.path])]
          (os.environ.pop "DOEFF_EFFECT_ANALYZER_RESULT_CACHE" None)
-         (val program-effects (importlib.import-module "doeff_effect_analyzer.program_effects"))
+         (val program-effects (importlib.import-module "doeff_effect_analyzer._program_effects"))
          (val result-cache (importlib.import-module "doeff_effect_analyzer.result_cache"))
          (.write-text (/ (Path scratch) "result_key_adr_job.py") f"def job(config):\n    return config.{other-name}\n" :encoding "utf-8")
          (val other (/ (Path scratch) f"{other-name}.py"))
@@ -93,7 +93,7 @@
               _modules (patch.dict sys.modules)
               _path (patch.object sys "path" [scratch ANALYZER-PYTHON #* sys.path])]
          (os.environ.pop "DOEFF_EFFECT_ANALYZER_RESULT_CACHE" None)
-         (val program-effects (importlib.import-module "doeff_effect_analyzer.program_effects"))
+         (val program-effects (importlib.import-module "doeff_effect_analyzer._program_effects"))
          (val result-cache (importlib.import-module "doeff_effect_analyzer.result_cache"))
          (val factory (/ (Path scratch) "result_key_adr_factory.py"))
          (.write-text factory "def make():\n    def handler():\n        return 1\n    return handler\n" :encoding "utf-8")

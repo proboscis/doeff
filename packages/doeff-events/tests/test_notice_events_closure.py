@@ -36,7 +36,7 @@ if importlib.util.find_spec("doeff_effect_analyzer") is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python"))
 
 from doeff_effect_analyzer.handler_effects import Basis, analyze_handler, check_coverage  # noqa: E402 - after sys.path
-from doeff_effect_analyzer.program_effects import analyze_program, runs_where_performed  # noqa: E402 - after sys.path
+from doeff_effect_analyzer._program_effects import analyze_program, runs_where_performed  # noqa: E402 - after sys.path
 
 
 @dataclass(frozen=True)

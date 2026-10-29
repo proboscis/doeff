@@ -38,7 +38,7 @@ from doeff_records.event_source import (
     records_signal_handler,
     run_signal_source,
 )
-from doeff_records.memory import MEMORY_SOURCE_EFFECTS
+from doeff_records._memory import MEMORY_SOURCE_EFFECTS
 from doeff_time import GetTimeEffect, WaitWithinEffect
 
 from doeff import EffectGenerator, do, with_handlers
@@ -49,7 +49,7 @@ if importlib.util.find_spec("doeff_effect_analyzer") is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "doeff-effect-analyzer" / "python"))
 
 from doeff_effect_analyzer.handler_effects import Basis, analyze_handler, check_coverage  # noqa: E402 - sys.path の後
-from doeff_effect_analyzer.program_effects import analyze_program, runs_where_performed  # noqa: E402 - sys.path の後
+from doeff_effect_analyzer._program_effects import analyze_program, runs_where_performed  # noqa: E402 - sys.path の後
 
 
 @dataclass(frozen=True)

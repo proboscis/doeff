@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from doeff_effect_analyzer.handler_effects import analyze_handler, check_coverage
-from doeff_effect_analyzer.program_effects import analyze_program, reading_sources
+from doeff_effect_analyzer._program_effects import analyze_program, reading_sources
 
 EFFECTS_PY = """\
 from doeff import EffectBase

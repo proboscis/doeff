@@ -12,7 +12,7 @@ outside every closure check) and the handler's yield was reported as not followe
 
 import pytest
 from doeff_effect_analyzer.handler_effects import analyze_handler
-from doeff_effect_analyzer.program_effects import analyze_program, runs_where_performed
+from doeff_effect_analyzer._program_effects import analyze_program, runs_where_performed
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_traverse")

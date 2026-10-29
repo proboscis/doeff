@@ -29,7 +29,7 @@ from doeff_effect_analyzer.handler_effects import (
     check_coverage,
     residual,
 )
-from doeff_effect_analyzer.program_effects import SuppliedDeclaration, analyze_program
+from doeff_effect_analyzer._program_effects import SuppliedDeclaration, analyze_program
 
 pytest.importorskip("hy")
 pytest.importorskip("doeff_hy")

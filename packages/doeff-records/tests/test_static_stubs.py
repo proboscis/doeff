@@ -47,8 +47,8 @@ from doeff_records import _store_choice as store_choice
 from doeff_records import _typed as typed
 from doeff_records import _values as values
 from doeff_records import (
-    http_server,
-    memory,
+    _http_server as http_server,
+    _memory as memory,
 )
 
 from doeff import EffectBase
@@ -75,7 +75,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <- val])
 (import doeff_records._values [RecordsSchema Row RowChanged Changes])
 (import doeff_records._effects [ReadRow WatchChanges])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records._memory [MemoryStore memory-records-handler])
 
 (val SCHEMA (RecordsSchema))
 (val HANDLER (memory-records-handler (MemoryStore SCHEMA) "writer"))
@@ -188,7 +188,7 @@ SERVICE_UNKNOWN_NAMES: tuple[str, ...] = (
 #: 走っている木(http_server.pyi の ServedBuild・RepoCommit)と表の要約(_schema_digest.pyi の schema-digests)を使う検体(#2742 —
 #: 使い手の記録の service の入口が ServedBuild を作り、表の要約の data の script が schema-digests を呼ぶ形)。
 SERVED_MODULE = """(require doeff-hy.macros [defk <- val])
-(import doeff_records.http_server [ServedBuild RepoCommit])
+(import doeff_records._http_server [ServedBuild RepoCommit])
 (import doeff_records._schema_digest [schema-digests])
 (import doeff_records._values [RecordsSchema])
 

@@ -112,6 +112,27 @@ if TYPE_CHECKING:
     from doeff_records._values import WatchEventsAnswer as WatchEventsAnswer
     from doeff_records._values import Written as Written
     from doeff_records._values import WrittenRows as WrittenRows
+    from doeff_records._memory import ExpiredCursor as ExpiredCursor
+    from doeff_records._memory import SignalSourceFactory as SignalSourceFactory
+    from doeff_records._memory import memory_records_handler as memory_records_handler
+    from doeff_records._memory import memory_signal_handler as memory_signal_handler
+    from doeff_records._memory import waits_beside_sources as waits_beside_sources
+    from doeff_records._http_server import BodyWrapper as BodyWrapper
+    from doeff_records._http_server import CloseWaits as CloseWaits
+    from doeff_records._http_server import ClosingWaits as ClosingWaits
+    from doeff_records._http_server import KeepPreparedHandlers as KeepPreparedHandlers
+    from doeff_records._http_server import MarkBook as MarkBook
+    from doeff_records._http_server import PreparedHandlers as PreparedHandlers
+    from doeff_records._http_server import RequestMark as RequestMark
+    from doeff_records._http_server import StampRequest as StampRequest
+    from doeff_records._http_server import closing_cuts_waits as closing_cuts_waits
+    from doeff_records._http_server import prepared_slot as prepared_slot
+    from doeff_records._http_server import ready_handlers as ready_handlers
+    from doeff_records._http_server import request_stamps as request_stamps
+    from doeff_records._http_server import shell_control as shell_control
+    from doeff_records._http_server import store_not_prepared as store_not_prepared
+    from doeff_records._http_server import wait_stamps as wait_stamps
+    from doeff_records._http_server import waits_closing as waits_closing
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AppendEventAnswer": "doeff_records._values",
@@ -220,6 +241,31 @@ _LAZY_EXPORTS: dict[str, str] = {
     "pg_records_handler": "doeff_records._main",
     "printed_listening": "doeff_records._main",
     "writer_gates": "doeff_records._main",
+    "ExpiredCursor": "doeff_records._memory",
+    "SignalSourceFactory": "doeff_records._memory",
+    "memory_records_handler": "doeff_records._memory",
+    "memory_signal_handler": "doeff_records._memory",
+    "waits_beside_sources": "doeff_records._memory",
+    "AdmitWriters": "doeff_records._pg",
+    "RecordsSqlFailed": "doeff_records._pg",
+    "ReleaseWriters": "doeff_records._pg",
+    "StoreUnreachable": "doeff_records._pg",
+    "BodyWrapper": "doeff_records._http_server",
+    "CloseWaits": "doeff_records._http_server",
+    "ClosingWaits": "doeff_records._http_server",
+    "KeepPreparedHandlers": "doeff_records._http_server",
+    "MarkBook": "doeff_records._http_server",
+    "PreparedHandlers": "doeff_records._http_server",
+    "RequestMark": "doeff_records._http_server",
+    "StampRequest": "doeff_records._http_server",
+    "closing_cuts_waits": "doeff_records._http_server",
+    "prepared_slot": "doeff_records._http_server",
+    "ready_handlers": "doeff_records._http_server",
+    "request_stamps": "doeff_records._http_server",
+    "shell_control": "doeff_records._http_server",
+    "store_not_prepared": "doeff_records._http_server",
+    "wait_stamps": "doeff_records._http_server",
+    "waits_closing": "doeff_records._http_server",
 }
 
 

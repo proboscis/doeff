@@ -12,7 +12,7 @@
 (import pathlib [Path])
 (import doeff [run])
 (import doeff_hy._json_value [JsonValue])
-(import doeff_records.wire [ANSWER-KINDS encode-answer decode-answer])
+(import doeff_records._wire [ANSWER-KINDS encode-answer decode-answer])
 (import tests.test_wire [ANSWERS])
 
 (val FROZEN-DIR (/ (. (Path __file__) parent) "wire-answers"))

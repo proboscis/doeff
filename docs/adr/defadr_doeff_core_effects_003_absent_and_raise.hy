@@ -429,7 +429,7 @@
        :evidence "packages/doeff-hy/src/doeff_hy/declarations.hy:1-13・:26(CONTRACT-KEYS)・:59-70(effects-form)・git grep '__doeff_effects__'(当たりは declarations.hy と packages/doeff-hy/tests/test_declarations.py だけ)")
      (fact
        "doeff-effect-analyzer の Python の入口は、Program の関数が出す effect を、呼び先を推移的にたどって集める。Hy は macro を展開してから読み、defhandler の節(isinstance の分かれ道)から handler が受ける effect を読み、追えない物は unresolved と報告して黙って落とさない。引数で渡された Program(Spawn の子など)は carried として別に報告し、畳むかどうかは呼び手が決める。module の cache は process の中だけ。Rust の Hy の読み(hy_analyzer.rs の extract_effect_from_bind)は <- の形を 2〜4 要素でだけ読み、末尾の :absent <失敗> を知らない(段階 4 で直す)。"
-       :evidence "packages/doeff-effect-analyzer/README.md:7-58・python/doeff_effect_analyzer/program_effects.py:159-180(_MODULE_CACHE)・:590(analyze_program)・src/hy_analyzer.rs:418-438")
+       :evidence "packages/doeff-effect-analyzer/README.md:7-58・python/doeff_effect_analyzer/_program_effects.py:159-180(_MODULE_CACHE)・:590(analyze_program)・src/hy_analyzer.rs:418-438")
      (fact
        "ADR-DOE-CLUSTER-001 は、job の runner が handler を 1 つも足さないこと(R2)と、記録と再生の handler を Program の中の翻訳の handler と土台の handler の間に置き、境目の答えを書き留めること(R5・R5b)を決めている。"
        :evidence "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy:102・:108-109")

@@ -22,16 +22,16 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from doeff_effect_analyzer.handler_effects import (
-    analyze_env,
-    analyze_handler,
-    check_coverage,
-)
-from doeff_effect_analyzer.program_effects import (
+from doeff_effect_analyzer._program_effects import (
     ProgramEffects,
     analyze_program,
     qualified_name,
     resolve_target,
+)
+from doeff_effect_analyzer.handler_effects import (
+    analyze_env,
+    analyze_handler,
+    check_coverage,
 )
 
 _DESCRIPTION = "Effect sets of doeff Programs and env coverage, read without running."

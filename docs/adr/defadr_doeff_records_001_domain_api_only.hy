@@ -14,7 +14,7 @@
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest val])
-(import doeff_records.wire [OPERATIONS PATH-PREFIX])
+(import doeff_records._wire [OPERATIONS PATH-PREFIX])
 
 
 ;; wire が /v1/records/ の下に出す生の操作の一覧(2026-10-07 の doeff の main で 10)。足す変更はこの一覧に無い物として赤になる。
@@ -29,7 +29,7 @@
 (defadr ADR-DOE-RECORDS-001
   :title "記録の service の生の操作(表と列を直に読み書きする操作)は cluster の外へ提供しない。外の呼び手はドメインの API だけを使う。cluster の中の形は利用者に確かめている最中で未定"
   :status "accepted"
-  :scope ["packages/doeff-records/src/doeff_records/wire.hy"
+  :scope ["packages/doeff-records/src/doeff_records/_wire.hy"
           "packages/doeff-records/src/doeff_records/_service.hy"
           "docs/adr/defadr_doeff_records_001_domain_api_only.hy"]
   :problem
@@ -38,7 +38,7 @@
        :evidence "agora-redesign #3883 の本文。Mac の調整役が受け、配り手の会話 cisco-c8 の連絡で届いた")
      (fact
        "2026-10-07 の doeff の main で、doeff-records の wire は /v1/records/ の下に 10 の生の操作を出している: read-row・list-rows・put-row・put-rows・watch-changes・append-event・read-events・read-event-by-key・read-stream-end・watch-events(wire.hy の OPERATIONS)。HTTP で受けるのは service.hy。"
-       :evidence "packages/doeff-records/src/doeff_records/wire.hy:26-42")]
+       :evidence "packages/doeff-records/src/doeff_records/_wire.hy:26-42")]
   :context
     [(interpretation
        "生の操作は、表と列の名と鍵を呼び手に選ばせる汎用の読み書きで、ドメインの意味(誰が何をしてよいか・どの形の値か)を持たない。外の呼び手がこれを直に使うと、ドメインの決まりを通らずに記録を読み書きできる。")

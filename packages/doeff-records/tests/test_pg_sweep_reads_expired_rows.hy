@@ -19,7 +19,8 @@
 (import doeff_records [PutRow ReadRow])
 (import doeff_records.maintenance [SweepExpired Swept])
 (import doeff_records._laws [MAKER TICKET-KEEP-SECONDS])
-(import doeff_records.pg [pg-records-handler drop-records-tables])
+(import doeff_records [pg-records-handler]
+        doeff_records._pg [drop-records-tables])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql
                             prepared-store])
 

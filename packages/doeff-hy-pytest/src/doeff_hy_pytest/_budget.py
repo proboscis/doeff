@@ -1088,7 +1088,7 @@ def observe_analyzer_expansions(
 ) -> Callable[[], None] | None:
     """doeff-effect-analyzer の Hy の展開も数えに乗せるため(解析器が入っていない環境では何もしない — None)。"""
     try:
-        from doeff_effect_analyzer.program_effects import observe_expansions
+        from doeff_effect_analyzer._program_effects import observe_expansions
     except ImportError:
         return None
     return observe_expansions(converting)

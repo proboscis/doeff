@@ -429,7 +429,7 @@ doeff-indexer hy-index --root <dir> --stdin --path <path>  # 保存前の内容�
       "handles": null,                                                   // effect 節だけ: 解く effect {"name", "target"}(版 5)
       "decorators": ["dataclass :frozen True"]                           // 定義の decorator の綴り(版 6)。無ければ []
     }],
-    "imports": [{"module": "doeff_records.memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
+    "imports": [{"module": "doeff_records._memory", "name": "MemoryStore", "alias": null, "range": {…}, "is_require": false}],
     "references": [{"name": "c", "mangled": "c", "qualifier": "a.b", "range": {…}}],
     "calls": [{"callee": "PutRow", "mangled": "PutRow", "qualifier": null, "range": {…}, "caller": 12, "performed": true,
                "target": "pkg.effects.PutRow"}],  // target(版 4)= 呼び先の完全修飾名。解決できなければ null

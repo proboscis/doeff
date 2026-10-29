@@ -19,7 +19,7 @@ doeff-effects coverage lab.jobs:job --env lab.envs:no_handlers \
 ```
 
 ```python
-from doeff_effect_analyzer.program_effects import analyze_program
+from doeff_effect_analyzer._program_effects import analyze_program
 from doeff_effect_analyzer.handler_effects import (
     analyze_env, analyze_handler, check_coverage, residual,
 )
@@ -37,7 +37,7 @@ left = residual(job, [analyze_handler("doeff_core_effects._scheduler:scheduled")
 assert not left.escapes and not left.unknown_handlers
 ```
 
-How it reads code (`python/doeff_effect_analyzer/program_effects.py`,
+How it reads code (`python/doeff_effect_analyzer/_program_effects.py`,
 `handler_effects.py`):
 
 - **Hy is macro-expanded first** with Hy's own compiler, so `defk`, `<-`,

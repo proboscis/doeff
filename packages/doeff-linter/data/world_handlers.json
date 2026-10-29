@@ -6,7 +6,7 @@
   "doeff_cluster.record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",
   "doeff_cluster.worker.protocol.tree_files:tree-files": "木の effect を file system の effect と slog へ出し直すだけ — 本番は os-file-handler・模擬の世界は memory-file-handler が答える(#2468 で本物の答え手を退役)",
   "doeff_cluster.foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)",
-  "doeff_records.pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
+  "doeff_records._pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
   "doeff_core_effects._scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない",
   "doeff_cluster.worker.protocol.world:local-host": "ObserveWorld に各言い換えの観測を問うてまとめるだけ(#2469)",
   "doeff_cluster.worker.protocol.code_store:code-host": "版ごとのコードの木を子 process と file system の effect へ出し直すだけ — 実 I/O は subprocess-handler・os-file-handler(#2466)",
@@ -76,7 +76,7 @@
    "why": "subprocess.run・os.environ・socket.gethostname(os_process.hy:73)"
   },
   {
-   "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
+   "handler": "doeff_core_effects._aiohttp_http_server:aiohttp-http-server",
    "touches": [
     "network"
    ],

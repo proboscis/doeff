@@ -10,22 +10,22 @@ from doeff_records._principals import Principal as Principal
 from doeff_records._principals import writer_of as writer_of
 from doeff_records.loop_work import off_loop as off_loop
 from doeff_records.loop_work import hyx_off_loop_answerXquestion_markX as hyx_off_loop_answerXquestion_markX
-from doeff_records.wire import PATH_PREFIX as PATH_PREFIX
-from doeff_records.wire import OPERATIONS as OPERATIONS
-from doeff_records.wire import PublicEffect as PublicEffect
-from doeff_records.wire import WireAnswer as WireAnswer
-from doeff_records.wire import WireRequest as WireRequest
-from doeff_records.wire import WireRefusal as WireRefusal
-from doeff_records.wire import WireMalformed as WireMalformed
-from doeff_records.wire import STATUS_OF_ERROR as STATUS_OF_ERROR
-from doeff_records.wire import ERROR_MALFORMED as ERROR_MALFORMED
-from doeff_records.wire import ERROR_NOT_FOUND as ERROR_NOT_FOUND
-from doeff_records.wire import ERROR_STORE_UNAVAILABLE as ERROR_STORE_UNAVAILABLE
-from doeff_records.wire import decode_request as decode_request
-from doeff_records.wire import answer_text as answer_text
-from doeff_records.wire import refusal_json as refusal_json
-from doeff_records.wire import undeclared_reason as undeclared_reason
-from doeff_records.wire import keyed_request as keyed_request
+from doeff_records._wire import PATH_PREFIX as PATH_PREFIX
+from doeff_records._wire import OPERATIONS as OPERATIONS
+from doeff_records._wire import PublicEffect as PublicEffect
+from doeff_records._wire import WireAnswer as WireAnswer
+from doeff_records._wire import WireRequest as WireRequest
+from doeff_records._wire import WireRefusal as WireRefusal
+from doeff_records._wire import WireMalformed as WireMalformed
+from doeff_records._wire import STATUS_OF_ERROR as STATUS_OF_ERROR
+from doeff_records._wire import ERROR_MALFORMED as ERROR_MALFORMED
+from doeff_records._wire import ERROR_NOT_FOUND as ERROR_NOT_FOUND
+from doeff_records._wire import ERROR_STORE_UNAVAILABLE as ERROR_STORE_UNAVAILABLE
+from doeff_records._wire import decode_request as decode_request
+from doeff_records._wire import answer_text as answer_text
+from doeff_records._wire import refusal_json as refusal_json
+from doeff_records._wire import undeclared_reason as undeclared_reason
+from doeff_records._wire import keyed_request as keyed_request
 METHOD_GET: str
 METHOD_POST: str
 PATH_HEALTHZ: str

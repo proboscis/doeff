@@ -26,15 +26,15 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
-(import doeff_core_effects.scripted_http_server [scripted-http-server])
-(import doeff_core_effects.http_server_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived
-                                                HttpRespond HttpScript ReadHttpServed ScriptedBody])
+(import doeff_core_effects [scripted-http-server])
+(import doeff_core_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
-(import doeff_records.memory [MemoryStore memory-records-handler])
-(import doeff_records.http_server [RecordsServing RecordsListening RecordsPrepared StoreReach StoreReachable StoreSilent StoreUnreachable
-                                   serve-records store-reach])
-(import doeff_records.wire [ANSWER-METRICS list-rows-metrics])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
+(import doeff_records [RecordsListening RecordsPrepared]
+        doeff_records._http_server [RecordsServing StoreReach StoreReachable StoreSilent StoreUnreachable serve-records store-reach])
+(import doeff_records._wire [ANSWER-METRICS list-rows-metrics])
 (import doeff_core_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects [memory-meter-handler])
 (import doeff_hy._frozen [FrozenMap])
