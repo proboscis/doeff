@@ -30,7 +30,8 @@
 (import os)
 (import pathlib [Path])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree file-done])
+(import doeff_core_effects [FileFailed PathKind ReadText WriteText MakeDirectory ListDirectory RemoveTree]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects.http_effects [HttpResponse HttpFailed])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise Promise Wait])

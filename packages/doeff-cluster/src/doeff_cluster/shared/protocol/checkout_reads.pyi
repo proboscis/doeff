@@ -4,11 +4,11 @@ from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
 from doeff_core_effects.process_effects import RunProcess as RunProcess
-from doeff_core_effects.file_effects import PathKind as PathKind
-from doeff_core_effects.file_effects import PathStat as PathStat
-from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff_core_effects.file_effects import StatPath as StatPath
-from doeff_core_effects.file_effects import ReadBytes as ReadBytes
+from doeff_core_effects import PathKind as PathKind
+from doeff_core_effects import PathStat as PathStat
+from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import StatPath as StatPath
+from doeff_core_effects import ReadBytes as ReadBytes
 from doeff_cluster.shared.intent.checkout_model import CheckoutState as CheckoutState
 from doeff_cluster.shared.intent.checkout_model import ReadCheckout as ReadCheckout
 from doeff_cluster.shared.intent.checkout_model import CheckoutRoot as CheckoutRoot

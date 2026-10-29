@@ -37,8 +37,8 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects.file_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree
-                                         ReadDiskUsage MeasureTree file-done])
+(import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
                                             ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

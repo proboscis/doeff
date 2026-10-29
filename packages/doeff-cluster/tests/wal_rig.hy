@@ -6,7 +6,7 @@
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [sync-time-handler])
 (import doeff_core_effects [slog-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 
 
 (defk on-wal-files [body]

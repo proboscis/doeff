@@ -15,7 +15,7 @@
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])

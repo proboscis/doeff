@@ -10,8 +10,8 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import os)
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadText WriteText MakeDirectory WalkTree LinkFile CompilePythonSources
-                                         file-done])
+(import doeff_core_effects [PathKind PathStat StatPath ReadText WriteText MakeDirectory WalkTree LinkFile CompilePythonSources]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_cluster.worker.core.code_plan [MARKER])
 (import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources ImportClosure WriteMarker Note])
 (import doeff_cluster.worker.core.code_prepare [tree-listing marker-text closure-of])

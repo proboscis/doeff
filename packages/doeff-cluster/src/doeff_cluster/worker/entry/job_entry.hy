@@ -34,8 +34,9 @@
 (import os)
 (import sys)
 (import doeff [run with_handlers])
-(import doeff_core_effects.file_effects [FileFailed ReadText WriteText file-done])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [FileFailed ReadText WriteText]
+        doeff_core_effects._file_effects [file-done])
+(import doeff_core_effects [os-file-handler])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed VersionMismatch RemoteJobFailed])
 (import doeff_cluster.shared.core.remote_rules [version-diffs diffs-text failed-from])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])

@@ -3,7 +3,7 @@
 ;;; 置き場と仮想の時計)。/proc を読めない機体(macOS 等)は None。1 秒の clock tick の数は呼び手(入口)が foundation から読んで渡す。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_core_effects.file_effects [FileFailed ReadText])
+(import doeff_core_effects [FileFailed ReadText])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [ProcessStartedMs])
 (import doeff_cluster.worker.core.boot_timing [process-start-ms])

@@ -18,7 +18,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "main"})
 (import copy)
 (import doeff_core_effects [await-handler slog-handler state])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
 (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])

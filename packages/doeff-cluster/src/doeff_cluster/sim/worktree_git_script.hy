@@ -29,7 +29,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import hashlib)
 (import posixpath)
-(import doeff_core_effects.file_effects [StatPath PathStat PathKind FileFailed ReadText WriteText MakeDirectory ListDirectory DirEntry RemoveTree])
+(import doeff_core_effects [StatPath PathStat PathKind FileFailed ReadText WriteText MakeDirectory ListDirectory DirEntry RemoveTree])
 (import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects.scripted_process [ScriptedCommand])
 (import doeff_traverse [sequence])

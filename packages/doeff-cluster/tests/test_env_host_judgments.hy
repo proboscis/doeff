@@ -26,9 +26,10 @@
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.file_effects [ReadText WriteText MakeDirectory file-done])
+(import doeff_core_effects [ReadText WriteText MakeDirectory]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects.process_effects [StartProcess PollProcess StopProcess ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [Delay SetTime SimClock sim-time-handler sync-time-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])

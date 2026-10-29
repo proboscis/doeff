@@ -20,10 +20,10 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff [EffectBase Program with_handlers])
 (import doeff [UnhandledEffect])
-(import doeff_core_effects.file_effects [MemoryFile MemoryFiles ReadMemoryFiles])
+(import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_core_effects.memory_file [memory-file-handler])
+(import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.foundation.host_contract [environ-table-reader])
 (import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure])

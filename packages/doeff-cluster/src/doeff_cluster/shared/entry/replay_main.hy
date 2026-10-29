@@ -17,9 +17,10 @@
 (import json)
 (import sys)
 (import doeff [Program run with_handlers])
-(import doeff_core_effects.file_effects [ReadText WriteText file-done])
+(import doeff_core_effects [ReadText WriteText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [reader])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 (import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_cluster.foundation.record_log [Recording read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster.foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])

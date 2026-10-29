@@ -15,7 +15,8 @@
 (import json)
 (import os)
 (import importlib.util)
-(import doeff_core_effects.file_effects [ReadText ReadBytes WriteText MakeDirectory file-done])
+(import doeff_core_effects [ReadText ReadBytes WriteText MakeDirectory]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_cluster.worker.intent.code_model [ScanTree ImportClosure] doeff_cluster.worker.core.code_plan [MARKER marker-problem cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree])
 (import tests.file_contract_handlers [FilesRoot])
 

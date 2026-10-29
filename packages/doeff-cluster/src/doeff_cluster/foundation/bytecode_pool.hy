@@ -44,7 +44,7 @@
 (import hy)
 (import doeff [run])
 (import doeff_hy_bytecode_guard [bytecode-is-current])
-(import doeff_core_effects.file_effects [SourceNotCompiled])
+(import doeff_core_effects [SourceNotCompiled])
 (import doeff_core_effects._python_bytecode [compiled-pyc checked-hash-pyc pyc-path])
 
 ;; PEP 552 の .pyc の頭の長さ(magic・flags・source の hash)— 頭の後ろが marshal した code(保存先の code の entry の中身)。

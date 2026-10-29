@@ -17,10 +17,10 @@ from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
-from doeff_core_effects.file_effects import MakeDirectory as MakeDirectory
-from doeff_core_effects.file_effects import WriteText as WriteText
-from doeff_core_effects.file_effects import FileFailed as FileFailed
-from doeff_core_effects.os_file import os_file_handler as os_file_handler
+from doeff_core_effects import MakeDirectory as MakeDirectory
+from doeff_core_effects import WriteText as WriteText
+from doeff_core_effects import FileFailed as FileFailed
+from doeff_core_effects import os_file_handler as os_file_handler
 from doeff_core_effects.process_effects import StartProcess as StartProcess
 from doeff_core_effects.process_effects import StopProcess as StopProcess
 from doeff_core_effects.process_effects import PollProcess as PollProcess

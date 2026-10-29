@@ -21,7 +21,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
-(import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler])
+(import doeff_core_effects [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects [scheduled CreatePromise CreateExternalPromise Spawn Wait Task])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings RemovedRoots removing-leftovers])

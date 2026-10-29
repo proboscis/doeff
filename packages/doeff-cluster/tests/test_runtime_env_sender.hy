@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_file [os-file-handler])
+(import doeff_core_effects [os-file-handler])
 
 (setv LOCK "httpx==0.28.1\n")
 

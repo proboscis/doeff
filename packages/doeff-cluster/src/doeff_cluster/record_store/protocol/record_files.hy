@@ -4,7 +4,7 @@
 ;;; 追記され、読みは .jsonl.gz → .jsonl の順につなぐ(同じ区切りの中の順は行の番号 e が持つ — 読む側が並べ直す)。
 ;;;
 ;;; record-files は自分で os を呼ばない: 置き場の判断(区切りの並び・圧縮と保持の選び・一覧の形)だけを持ち、file の I/O は汎用の file system の
-;;; effect(doeff_core_effects.file_effects)で出す。答え手は外側に被せる — 本番 = os-file-handler(record_store.entry.main)・検 = memory-file-handler。
+;;; effect(doeff_core_effects._file_effects)で出す。答え手は外側に被せる — 本番 = os-file-handler(record_store.entry.main)・検 = memory-file-handler。
 ;;; 本物と fake が同じ判断の関数を通るので、同じ契約テスト(tests/test_record_files_contract.hy)を両方で回せる。
 ;;; file の effect の断り(FileFailed)は OSError で上げる(前の形の os の呼び出しと同じ — store-loop が 500 で答える)。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -14,8 +14,8 @@
 (import json)
 (import os)
 (import zlib)
-(import doeff_core_effects.file_effects [PathKind PathStat StatPath ReadBytes AppendText WriteBytes MakeDirectory ListDirectory
-                                         RemoveTree file-done])
+(import doeff_core_effects [PathKind PathStat StatPath ReadBytes AppendText WriteBytes MakeDirectory ListDirectory RemoveTree]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 
 ;; 区切りの頭の 1 行を探す読みの初めの byte 数(行の終わりが見つからなければ倍にして読み直す — 区切りを丸ごと読まない)。

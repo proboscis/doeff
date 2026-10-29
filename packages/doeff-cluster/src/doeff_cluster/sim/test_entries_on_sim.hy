@@ -14,7 +14,7 @@
 (import json)
 (import doeff [with-handlers])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_core_effects.file_effects [MemoryFiles])
+(import doeff_core_effects [MemoryFiles])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.foundation.coordinator_inbox [StopState ReplySlot RawRequest])

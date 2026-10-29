@@ -25,8 +25,8 @@
 (import pathlib [Path])
 (import posixpath)
 (import doeff_core_effects [slog])
-(import doeff_core_effects.file_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat RemoveTree RenamePath StatPath WriteText
-                                         file-done])
+(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat RemoveTree RenamePath StatPath WriteText]
+        doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
 (import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
