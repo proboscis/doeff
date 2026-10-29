@@ -103,7 +103,7 @@
 (import doeff_records._values [BatchRead NotIndexed Page RecordsSchema Reset Unreachable WaitsClosed])
 (import doeff_records._schema_digest [schema-digests])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey ReadBatch])
+                               ReadEventByKey ReadBatch CountRows])
 (import doeff_records.event_source [BodyWrapper])
 (import doeff_records.maintenance [maintenance-loop])
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
@@ -413,6 +413,7 @@
   (ReadEvents [stream after limit] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadStreamEnd [stream] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadEventByKey [stream idempotency-key] (resume (Unreachable NOT-PREPARED-REASON)))
+  (CountRows [table where where-any at-least] (resume (Unreachable NOT-PREPARED-REASON)))
   (ReadBatch [reads] (resume (Unreachable NOT-PREPARED-REASON))))
 
 

@@ -57,6 +57,7 @@ from doeff_records._values import RememberKeysFor as RememberKeysFor
 from doeff_records._values import RememberNoKeys as RememberNoKeys
 from doeff_records._values import WRITE_KEY_MEMORY_SECONDS as WRITE_KEY_MEMORY_SECONDS
 from doeff_records._values import BatchRead as BatchRead
+from doeff_records._values import Count as Count
 from doeff_records._effects import ReadRow as ReadRow
 from doeff_records._effects import ListRows as ListRows
 from doeff_records._effects import PutRow as PutRow
@@ -71,6 +72,7 @@ from doeff_records._effects import ReadEvents as ReadEvents
 from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
+from doeff_records._effects import CountRows as CountRows
 from doeff_records._faults import AdvanceStoreEpoch as AdvanceStoreEpoch
 from doeff_records.maintenance import SweepExpired as SweepExpired
 from doeff_records.maintenance import PruneChanges as PruneChanges
@@ -330,6 +332,12 @@ def law_another_key_is_judged_by_its_expectation(harness: LawHarness) -> _Progra
     ...
 
 def law_write_keys_are_forgotten_after_their_memory(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def ascending_pages(harness: LawHarness, where: FrozenMap, limit: int) -> _Program[list[object], object]:
+    ...
+
+def law_ascending_list_and_count_follow_the_scan(harness: LawHarness) -> _Program[list[object], object]:
     ...
 LAWS: Incomplete
 SHARED_LAWS: tuple[str, ...]

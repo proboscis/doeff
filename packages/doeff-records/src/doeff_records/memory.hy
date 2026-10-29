@@ -66,10 +66,10 @@
 (import doeff_records._values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
-                              EventAbsent EventRetired BatchRead key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
+                              EventAbsent EventRetired BatchRead Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
 (import doeff_records._watching [closing-wake?])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
-                               ReadStreamEnd ReadEventByKey ReadBatch AwaitRecordsBack ReadSourcePatience write-parts])
+                               ReadStreamEnd ReadEventByKey ReadBatch CountRows AwaitRecordsBack ReadSourcePatience write-parts])
 (import doeff_records._faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
@@ -496,6 +496,17 @@
   (if (or (is stored None) (stored-row-expired? decl stored now-ms)) (Missing) stored.row))
 
 
+(defn #^ list memory-matching-texts [#^ MemoryStore store #^ TableDecl decl #^ str table-name #^ FrozenMap where #^ FrozenMap where-any #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "表 table-name の行のうち、絞り(where・where-any)に合い、刻 now-ms で保持の期限を過ぎていない行の鍵の綴りを、綴りの順に返すため
+   (ListRows と CountRows が同じ行を数える 1 点)。"
+  (setv table (get store.rows table-name))
+  (lfor text (sorted table)
+        :if (and (row-matches? where (. (get table text) row value))
+                 (row-matches-any? where-any (. (get table text) row value))
+                 (not (stored-row-expired? decl (get table text) now-ms)))
+        text))
+
+
 (defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ListRows に答えるため: 刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 続きの位置がずれない)。"
   (setv decl (store.schema.table ask.table))
@@ -504,19 +515,19 @@
   (setv refusal (where-refusal decl ask.where ask.where-any))
   (when refusal (return refusal))
   (setv table (get store.rows ask.table)
-        matching (lfor text (sorted table)
-                       :if (and (row-matches? ask.where (. (get table text) row value))
-                                (row-matches-any? ask.where-any (. (get table text) row value))
-                                (not (stored-row-expired? decl (get table text) now-ms)))
-                       text))
-  (when (is-not ask.descending-by None)
-    ;; 上から読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の大きい順に、cursor の位置の組より小さい行から limit 件。
-    (setv below (if (is ask.cursor None) None #(ask.cursor.after-value ask.cursor.after-key))
+        matching (memory-matching-texts store decl ask.table ask.where ask.where-any now-ms)
+        ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
+  (when (is-not ordered-by None)
+    ;; 並べて読む読み(ListRows の註): 値が整数の行だけを (値, 鍵の綴り) の順に、cursor の位置の組を越えた行から limit 件。descending-by は
+    ;; 大きい順で位置より小さい行から・ascending-by は小さい順で位置より大きい行から。
+    (setv descending (is-not ask.descending-by None)
+          past (if (is ask.cursor None) None #(ask.cursor.after-value ask.cursor.after-key))
           ordered (sorted (gfor text matching
-                                :setv value (.get (. (get table text) row value) ask.descending-by)
-                                :if (and (descending-value? value) (or (is below None) (< #(value text) below)))
+                                :setv value (.get (. (get table text) row value) ordered-by)
+                                :if (and (descending-value? value)
+                                         (or (is past None) (if descending (< #(value text) past) (> #(value text) past))))
                                 #(value text))
-                          :reverse True)
+                          :reverse descending)
           top (cut ordered ask.limit))
     (return (Page (tuple (gfor #(_ text) top (listed-row decl ask.fields (. (get table text) row))))
                   (if (> (len ordered) ask.limit) (ListCursor store.epoch (get top -1 1) (get top -1 0)) None)
@@ -530,6 +541,23 @@
         (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)
         store.epoch
         store.head))
+
+
+(defn #^ (| Count NotIndexed) memory-count-rows [#^ MemoryStore store #^ CountRows ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "CountRows に答えるため: 絞りに合い、刻 now-ms で保持の期限を過ぎていない行のうち、下限 at-least があれば欄の値が整数で下限以上の行を
+   数える(索引の無い欄の絞りは NotIndexed)。"
+  (setv decl (store.schema.table ask.table))
+  (setv refusal (where-refusal decl ask.where ask.where-any))
+  (when refusal (return refusal))
+  (setv table (get store.rows ask.table)
+        matching (memory-matching-texts store decl ask.table ask.where ask.where-any now-ms))
+  (when (is ask.at-least None)
+    (return (Count (len matching))))
+  (setv #(field floor) ask.at-least)
+  (Count (sum (gfor text matching
+                    :setv value (.get (. (get table text) row value) field)
+                    :if (and (descending-value? value) (>= value floor))
+                    1))))
 
 
 (defn #^ BatchRead memory-read-batch [#^ MemoryStore store #^ ReadBatch ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み(memory-read-row と同じ作法)
@@ -1059,7 +1087,7 @@
   {:pre [(: store MemoryStore) (: operation StoreOperation) (: names tuple) (: ask EffectBase) (: program Program)]
    ;; 答え = 公開 effect 10 個と WatchEvents の答えの型のどれか(program の答えか、故障の答え Refused / Unreachable)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty Event EventAbsent EventRetired))]
+                  Changes Appended Events EventsMoved EventsQuiet StreamEnd StreamEmpty Event EventAbsent EventRetired Count BatchRead))]
    :tags {:context "records" :role "foundation"}}
   "公開 effect ask の答え: 届かない状態(SetStoreOutage)が先・次に当たる故障(lands でなければ置き場に触らずに故障の答え・lands なら
    program で置き場に着けてから故障の答え)・どちらも無ければ program の答え。"
@@ -1159,7 +1187,7 @@
 (defk read-at-now [store operation]
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の読みの答え(読みの公開 effect の答えの型のどれか)。
-   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired BatchRead))]
+   :post [(: % (| Row Missing Page Reset NotIndexed Unreachable Events StreamEnd StreamEmpty Event EventAbsent EventRetired BatchRead Count))]
    :tags {:context "records" :role "foundation"}}
   "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(読みの節 ReadRow・ListRows・ReadEvents・
    ReadStreamEnd・ReadEventByKey の置き場の操作の形)。回収は走らせない — 読みの関数が刻を受けて期限を過ぎた行と出来事を自分で除く(頭の註・#3561)。"
@@ -1214,6 +1242,9 @@
     (resume answer))
   (ListRows [table where fields cursor limit]
     (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-list-rows store effect now-ms)))))
+    (resume answer))
+  (CountRows [table where where-any at-least]
+    (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-count-rows store effect now-ms)))))
     (resume answer))
   (PutRow [table key value expect]
     (<- answer (answered store WRITE #(table) effect (at-now store (fn [now-ms] (memory-put-row store writer effect now-ms)))))

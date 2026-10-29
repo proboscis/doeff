@@ -407,8 +407,8 @@
 
 (defclass [(dataclass :frozen True)] ListCursor []
   "ListRows の次の頁の位置: epoch = 置き場の版 / after-key = 前の頁の最後の行の鍵の綴り /
-   after-value = 上から読む読み(ListRows の descending-by)の前の頁の最後の行の並べる欄の値(整数 — 次の頁は (値, 鍵の綴り) がこの組より
-   小さい行から読む。鍵の順の読みの位置は None)。"
+   after-value = 並べて読む読み(ListRows の descending-by・ascending-by)の前の頁の最後の行の並べる欄の値(整数 — 次の頁は
+   (値, 鍵の綴り) がこの組より、descending-by なら小さい行から・ascending-by なら大きい行から読む。鍵の順の読みの位置は None)。"
   (#^ int epoch)
   (#^ str after-key)
   (setv #^ (| int None) after-value None)
@@ -645,6 +645,13 @@
 (defclass [(dataclass :frozen True)] StreamEmpty []
   "ReadStreamEnd の答え: 列に出来事が 1 つも無い(まだ積んでいない・全部が保持の期限を過ぎた)— 番号 0 と混ぜずに型で分ける。")
 
+(defclass [(dataclass :frozen True)] Count []
+  "CountRows の答え: count = 条件に合う行の数(0 以上 — 保持の期限を過ぎた終端の行は回収の前でも数えない)。"
+  (#^ int count)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.count bool) (not (isinstance self.count int)) (< self.count 0))
+      (raise (ValueError (.format "Count.count は 0 以上の整数: {!r}" self.count))))))
+
 (defclass [(dataclass :frozen True)] EventAbsent []
   "ReadEventByKey の答え: 列にその冪等キーで積んだ出来事が無い(まだ積んでいない — 消えた出来事とは EventRetired で分ける)。")
 
@@ -722,6 +729,7 @@
 (setv ReadEventsAnswer (| Events NotIndexed Unreachable))
 (val WatchEventsAnswer (| EventsMoved EventsQuiet Unreachable))
 (val ReadStreamEndAnswer (| StreamEnd StreamEmpty Unreachable))
+(val CountRowsAnswer (| Count Unreachable NotIndexed))
 (val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))
 (val AppendEventsAnswer (| AppendedEvents Unreachable))
