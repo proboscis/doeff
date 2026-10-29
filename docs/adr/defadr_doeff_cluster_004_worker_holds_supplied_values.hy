@@ -25,7 +25,7 @@
           "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
           "packages/doeff-cluster/src/doeff_cluster/worker/protocol/supplied_hold.hy"
           "packages/doeff-cluster/src/doeff_cluster/worker/entry/main.hy"
-          "packages/doeff-cluster/src/doeff_cluster/sim/k8s_supplied.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_sim/k8s_supplied.hy"
           "packages/doeff-cluster/tests/test_supplied_held.hy"
           "docs/adr/defadr_doeff_cluster_004_worker_holds_supplied_values.hy"]
   :problem
@@ -46,7 +46,7 @@
     [(rule R1 "coordinator は heartbeat の返事に supplied を載せる: その worker に置かれうる job(置く対象の宣言のうち pin と効く needs が合う物 — 生死・drain・空きは見ない)の宣言の :environ の、参照の綴り(shared/core/supplied_spelling の綴りの値)を重ねずに並べた列。名乗っていない worker・退いた世代への返事には欄を書かない(空の列は「何も持たない」の意味で、写しを全部消すので、知らない時に渡さない)。")
      (rule R2 "Pod の worker(区画の CA で API server を検める口を組む worker)は値の写しの係を背景の task として回す。係は返事の綴りが変わった時・前に全部を読めてから 5 分を過ぎた時・前の回に届かない物が在った時に、綴りを物ごとに束ねて API server に 1 本ずつ問い、写しを <作業の根>/supplied-held/<worker の名>/<種類>/<namespace>/<名>.json に置き換えで書く(file 0600・作業の根から下の dir の全部の段 0700)。値 1 つの参照は宣言が名指したキーだけ、物 1 つ丸ごとの参照は全部のキーを持つ。届かない・token が読めない・401・5xx は前の写しを残し、403・404 は写しを消し、綴りから外れた写しは消す。")
      (rule R3 "job の読み(held-entries)は、API server に届かない(HttpFailed)時だけ、job を回す worker の写し(機体の事実 WORK_ROOT と WORKER_NAME で引く)で答え、参照の綴りと写しを読んだ刻を warning の 1 行に出す。届いて断られた時(403・404 ほか)は写しを読まず今と同じく断る。写しも無ければ、届かない理由に写しの無い訳を添えて SuppliedValueUnavailable で断る。")
-     (rule R4 "値は log・coordinator の返事と task の行・記録の店に出さない。出すのは参照の綴り・数え・刻だけ。本番と模擬で同じ関数(hold-supplied・held-entries)が動き、模擬は doeff_cluster.sim.k8s_supplied の down の世界で試す。")]
+     (rule R4 "値は log・coordinator の返事と task の行・記録の店に出さない。出すのは参照の綴り・数え・刻だけ。本番と模擬で同じ関数(hold-supplied・held-entries)が動き、模擬は doeff_cluster._sim.k8s_supplied の down の世界で試す。")]
   :laws
     [(law a-job-placed-while-the-api-server-is-down-starts-from-the-copy
        :statement "for_all 参照 r ∈ supplied(w) で、API server が答えていた間に w の係が r の写しを持った worker w: API server に届かない間に w に置かれた job の r の読みは、写しの値で答える"
