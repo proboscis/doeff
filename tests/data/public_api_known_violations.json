@@ -13345,7 +13345,6 @@
       "doeff_hy.env_places",
       "doeff_hy.expansion_names",
       "doeff_hy.frozen",
-      "doeff_hy.handle",
       "doeff_hy.http",
       "doeff_hy.json_lines",
       "doeff_hy.json_value",
@@ -13357,7 +13356,6 @@
       "doeff_hy.pytest_items",
       "doeff_hy.pytest_plugin",
       "doeff_hy.quoted_forms",
-      "doeff_hy.record",
       "doeff_hy.record_runtime",
       "doeff_hy.session",
       "doeff_hy.sexpr",
@@ -14181,7 +14179,9 @@
     },
     "境界 — Hy の macro": {
      "(submodule)": [
-      "doeff_hy.macros"
+      "doeff_hy.handle",
+      "doeff_hy.macros",
+      "doeff_hy.record"
      ],
      "doeff_hy.handle": [
       "defhandler",
