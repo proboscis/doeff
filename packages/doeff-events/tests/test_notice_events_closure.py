@@ -24,9 +24,9 @@ from doeff_events import (
     notice_events_handler,
     subscribed_event_handler,
 )
-from doeff_events.effects import Publish, WaitForEvent
-from doeff_events.effects.notices import Announce
-from doeff_events.handlers.notice_events import NOTICE_EVENTS_EFFECTS, _checked_plan, _run
+from doeff_events import Publish, WaitForEvent
+from doeff_events import Announce
+from doeff_events._handlers.notice_events import NOTICE_EVENTS_EFFECTS, _checked_plan, _run
 
 from doeff import EffectGenerator, do, with_handlers
 
@@ -126,7 +126,7 @@ def _job() -> EffectGenerator[Rang]:
 
 
 def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
-    handler = analyze_handler("doeff_events.handlers.notice_events:notice_events_handler")
+    handler = analyze_handler("doeff_events._handlers.notice_events:notice_events_handler")
     assert handler.basis is Basis.DECLARED, handler.unresolved
     assert handler.handled == frozenset()
     assert handler.performs is not None
@@ -134,7 +134,7 @@ def test_the_analyzer_reads_the_factory_from_its_declaration() -> None:
 
 
 def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() -> None:
-    declared = analyze_handler("doeff_events.handlers.notice_events:notice_events_handler").performs
+    declared = analyze_handler("doeff_events._handlers.notice_events:notice_events_handler").performs
     assert declared is not None
     around = analyze_program(_wrapped).residual_with(runs_where_performed).effect_types
     body = analyze_program(_waits).residual_with(runs_where_performed).effect_types
@@ -152,7 +152,7 @@ def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
 def test_the_declared_effects_are_what_a_wrapper_that_only_sends_performs_around_the_body() -> None:
     # A wrapper with no channel to read has no source task, but tells a gap when it starts and waits for the
     # broker's return while it holds one: what it performs around the body is still inside the declaration.
-    declared = analyze_handler("doeff_events.handlers.notice_events:notice_events_handler").performs
+    declared = analyze_handler("doeff_events._handlers.notice_events:notice_events_handler").performs
     assert declared is not None
     around = analyze_program(_wrapped_sender).residual_with(runs_where_performed).effect_types
     body = analyze_program(_publishes).residual_with(runs_where_performed).effect_types

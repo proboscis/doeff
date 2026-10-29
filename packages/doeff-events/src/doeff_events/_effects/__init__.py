@@ -1,7 +1,7 @@
 """Event effects for generic publish/subscribe workflows."""
 
-from doeff_events.effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
-from doeff_events.effects.notices import (
+from doeff_events._effects.files import CloseFileWatch, FilesChanged, FileWatch, NextFileChanges, WatchFiles, WatchRefused
+from doeff_events._effects.notices import (
     AckAnnouncement,
     Announce,
     Announcement,
@@ -15,7 +15,7 @@ from doeff_events.effects.notices import (
     ReadBrokerPatience,
     SubscribeChannels,
 )
-from doeff_events.effects.timers import (
+from doeff_events._effects.timers import (
     ArmedTimer,
     ArmedTimers,
     ArmedTimersEffect,

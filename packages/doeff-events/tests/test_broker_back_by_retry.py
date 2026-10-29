@@ -19,22 +19,23 @@ from datetime import datetime
 from typing import TYPE_CHECKING, final
 
 import pytest
-from doeff_events import EventBus, subscribed_event_handler
-from doeff_events.effects.events import Publish
-from doeff_events.effects.notices import Announce, BrokerUnreachable, ProbeBroker
-from doeff_events.handlers.memory_notices import (
+from doeff_events import (
+    Announce,
+    BrokerUnreachable,
+    EventBus,
+    MarkGap,
     MemoryBroker,
+    NoticeRoute,
+    ProbeBroker,
+    Publish,
+    broker_back_by_retry,
     cut_broker,
     memory_notice_handler,
     restore_broker,
+    subscribed_event_handler,
 )
-from doeff_events.handlers.notice_events import (
-    GAP_NOTICE,
-    MarkGap,
-    NoticeRoute,
-)
-from doeff_events.handlers.redis_notices import broker_back_by_retry
-from doeff_events.notice_laws import LawNote, law_routes
+from doeff_events._handlers.notice_events import GAP_NOTICE
+from doeff_events._notice_laws import LawNote, law_routes
 from doeff_time import Delay, GetTime
 from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, T0, run_on_virtual_clock

@@ -58,8 +58,8 @@ from doeff_events import (
     SourceStarted,
     subscribed_event_handler,
 )
-from doeff_events.effects.events import Publish, WaitForEvent
-from doeff_events.effects.notices import (
+from doeff_events import Publish, WaitForEvent
+from doeff_events import (
     AckAnnouncement,
     Announce,
     Announcement,
@@ -71,20 +71,11 @@ from doeff_events.effects.notices import (
     ProbeBroker,
     SubscribeChannels,
 )
-from doeff_events.handlers.notice_events import (
-    GAP_NOTICE,
-    NoticeGapMarked,
-    NoticeRoute,
-    NoticeSent,
-    notice_events_handler,
-)
-from doeff_events.handlers.redis_notices import (
-    SUBSCRIPTION_SILENCE_SECONDS,
-    BrokerConnectionsExhausted,
-    broker_back_by_retry,
-    redis_notice_handler,
-)
-from doeff_events.notice_laws import (
+from doeff_events import NoticeGapMarked, NoticeRoute, NoticeSent, notice_events_handler
+from doeff_events._handlers.notice_events import GAP_NOTICE
+from doeff_events import BrokerConnectionsExhausted, broker_back_by_retry, redis_notice_handler
+from doeff_events._handlers.redis_notices import SUBSCRIPTION_SILENCE_SECONDS
+from doeff_events._notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
     GAP_LAWS,
@@ -398,9 +389,9 @@ def test_a_cancel_before_the_reader_holds_its_source_leaves_no_source_and_no_sta
             return (yield subscriptions_left())
         raise AssertionError("the reader ended by itself, not by the cancel")
 
-    with caplog.at_level(logging.WARNING, logger="doeff_events.handlers.notice_events"):
+    with caplog.at_level(logging.WARNING, logger="doeff_events._handlers.notice_events"):
         left = _run_on_wall_clock(redis_notice_handler(redis_url, TIMEOUT_SECONDS)(cancelled_early()))
-    stalls = [record.getMessage() for record in caplog.records if record.name == "doeff_events.handlers.notice_events"]
+    stalls = [record.getMessage() for record in caplog.records if record.name == "doeff_events._handlers.notice_events"]
     assert left == 0, f"{left} subscription(s) still open after the reader was gone"
     assert stalls == [], stalls
 

@@ -12,23 +12,23 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, final
 
 from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise, Wait, scheduled
-from doeff_events import EventBus, subscribed_event_handler
-from doeff_events.effects.events import PublishEffect, WaitForEventEffect
-from doeff_events.effects.notices import (
+from doeff_events import (
     Announce,
     AwaitBrokerBack,
     BrokerUnreachable,
     ChannelSubscription,
-    NextAnnouncement,
-    SubscribeChannels,
-)
-from doeff_events.handlers.memory_notices import (
+    EventBus,
     MemoryBroker,
+    NextAnnouncement,
+    PublishEffect,
+    SubscribeChannels,
+    WaitForEventEffect,
     cut_broker,
     memory_notice_handler,
     restore_broker,
+    subscribed_event_handler,
 )
-from doeff_events.notice_laws import EventLawHarness, GapLawHarness, law_routes
+from doeff_events._notice_laws import EventLawHarness, GapLawHarness, law_routes
 from doeff_time import sim_time_handler
 from events_test_support import patient_notice_events
 

@@ -27,11 +27,10 @@ from doeff_events import (
     SourceStarted,
     subscribed_event_handler,
 )
-from doeff_events.effects.events import Publish, PublishGap, PublishGapEffect, WaitForEvent
-from doeff_events.effects.notices import Announce, AwaitBrokerBack, BrokerUnreachable
-from doeff_events.handlers.memory_notices import MemoryBroker, cut_broker, memory_notice_handler
-from doeff_events.handlers.notice_events import (
-    GAP_NOTICE,
+from doeff_events import Publish, PublishGap, PublishGapEffect, WaitForEvent
+from doeff_events import Announce, AwaitBrokerBack, BrokerUnreachable
+from doeff_events import MemoryBroker, cut_broker, memory_notice_handler
+from doeff_events import (
     Drop,
     MarkGap,
     NoticeDropped,
@@ -42,7 +41,8 @@ from doeff_events.handlers.notice_events import (
     UnroutedNotice,
     notice_events_handler,
 )
-from doeff_events.notice_laws import (
+from doeff_events._handlers.notice_events import GAP_NOTICE
+from doeff_events._notice_laws import (
     BROKER_LAWS,
     EVENT_LAWS,
     GAP_LAWS,
@@ -503,7 +503,7 @@ def test_notice_without_a_route_fails_the_source_by_name() -> None:
 
     @do
     def hears_a_stranger() -> "EffectGenerator[object]":
-        from doeff_events.effects.notices import Announce
+        from doeff_events import Announce
 
         yield Announce(f"{PREFIX}:note", "stranger", "?")
         return (yield WaitForEvent(LawNote))

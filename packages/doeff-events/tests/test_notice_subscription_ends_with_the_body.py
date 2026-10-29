@@ -27,21 +27,23 @@ from doeff_core_effects.scheduler import (
     TaskCancelledError,
     Wait,
 )
-from doeff_events import EventBus, SourceResumed, SourceStarted, subscribed_event_handler
-from doeff_events.effects.events import WaitForEvent
-from doeff_events.effects.notices import Announce, AwaitBrokerBack
-from doeff_events.handlers.memory_notices import (
+from doeff_events import (
+    Announce,
+    AwaitBrokerBack,
+    EventBus,
+    MarkGap,
     MemoryBroker,
+    NoticeRoute,
+    SourceResumed,
+    SourceStarted,
+    WaitForEvent,
     hold_broker,
     memory_notice_handler,
     release_broker,
+    subscribed_event_handler,
 )
-from doeff_events.handlers.notice_events import (
-    GAP_NOTICE,
-    MarkGap,
-    NoticeRoute,
-)
-from doeff_events.notice_laws import LawNote, law_routes
+from doeff_events._handlers.notice_events import GAP_NOTICE
+from doeff_events._notice_laws import LawNote, law_routes
 from events_test_support import patient_notice_events
 from notice_law_support import PATIENCE_SECONDS, PREFIX, memory_harness, run_on_virtual_clock
 
@@ -312,12 +314,12 @@ def test_the_start_of_a_stall_is_logged_once(caplog: pytest.LogCaptureFixture) -
         yield harness.restore()
         yield WaitForEvent(SourceResumed)
 
-    with caplog.at_level(logging.WARNING, logger="doeff_events.handlers.notice_events"):
+    with caplog.at_level(logging.WARNING, logger="doeff_events._handlers.notice_events"):
         run_on_virtual_clock(
             harness.as_party("law-logged", (SourceStarted, SourceResumed), rides_an_outage())
         )
     stalls = [
-        record for record in caplog.records if record.name == "doeff_events.handlers.notice_events"
+        record for record in caplog.records if record.name == "doeff_events._handlers.notice_events"
     ]
     assert len(stalls) == 1, [record.getMessage() for record in stalls]
     message = stalls[0].getMessage()

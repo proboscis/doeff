@@ -1,5 +1,5 @@
 ;;; Executable ADR: process をまたぐ出来事の backend(doeff-events の notice_events_handler と、その下の知らせの操作の handler =
-;;; memory / Redis の Pub/Sub)の配達の法。法の筋書き(Program)は packages/doeff-events/src/doeff_events/notice_laws.py の 1 か所に
+;;; memory / Redis の Pub/Sub)の配達の法。法の筋書き(Program)は packages/doeff-events/src/doeff_events/_notice_laws.py の 1 か所に
 ;;; 在り、memory の handler と本物の redis-server の両方が同じ筋書きを通る。上の層を 1 つ壊すと、対応する法が赤になる
 ;;; (packages/doeff-events/tests/test_notice_laws_memory.py)。
 ;;;
@@ -21,11 +21,11 @@
 (defadr ADR-DOE-EVENTS-002
   :title "process をまたぐ知らせの backend の配達の法: 購読は Program の最初の effect より前に始まる・購読が成ってから起動と繋ぎ直しを 1 度 知らせる・知らせは出された時に繋がっている読み手にだけ届く(繋がっていない間の分は届かない)"
   :status "accepted"
-  :scope ["packages/doeff-events/src/doeff_events/notice_laws.py"
-          "packages/doeff-events/src/doeff_events/handlers/notice_events.py"
-          "packages/doeff-events/src/doeff_events/handlers/memory_notices.py"
-          "packages/doeff-events/src/doeff_events/handlers/redis_notices.py"
-          "packages/doeff-events/src/doeff_events/effects/notices.py"
+  :scope ["packages/doeff-events/src/doeff_events/_notice_laws.py"
+          "packages/doeff-events/src/doeff_events/_handlers/notice_events.py"
+          "packages/doeff-events/src/doeff_events/_handlers/memory_notices.py"
+          "packages/doeff-events/src/doeff_events/_handlers/redis_notices.py"
+          "packages/doeff-events/src/doeff_events/_effects/notices.py"
           "docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy"]
   :problem
     [(fact
@@ -37,7 +37,7 @@
      (interpretation
        "保存しない知らせは、受け手が繋がっていない間の分を後から届けない。だから backend が約束するのは「いつから届くか」(購読が成った後)と「届かなくなった事を知らせる」(接続の切れ → SourceStalled → SourceResumed)の 2 つで、失った分を埋めるのは、受けた Program が SourceStarted と SourceResumed で 1 度 記録から追いつく事。PUBLISH の受け手の数は「その時に購読していた数」で、受け手が読んだ事の証にはならない。")]
   :decision
-    [(rule R1 "配達の法の筋書きは doeff_events.notice_laws の 1 か所に置く。下の層の handler(memory・Redis)と上の層(notice_events_handler)を変える変更は、同じ筋書きを memory と本物の redis-server の両方で通す。")
+    [(rule R1 "配達の法の筋書きは doeff_events._notice_laws の 1 か所に置く。下の層の handler(memory・Redis)と上の層(notice_events_handler)を変える変更は、同じ筋書きを memory と本物の redis-server の両方で通す。")
      (rule R2 "業務の Program には channel の名を出さない。出すのは Publish・WaitForEvent と、出来事の値だけ。")
      (rule R3 "待ちは blocking の取り(期限なし — 止めるのは task の Cancel)と、broker の戻りを待つ期限つきの待ち 1 つ(WaitWithin)だけ。間隔で起きて確かめる形を足さない(例外は R6 と R8 の 2 か所だけ)。")
      (rule R4 "backend は受けた知らせを黙って捨てない: 受けた知らせは全部 process の中の購読者の列へ Publish し、道の表で読めない知らせは源を名指しで落とす。出した知らせの受け手の数(PUBLISH の答え)は Publish の答え NoticeSent に載せて出し手へ返す。")
@@ -141,7 +141,7 @@
        ;; 針: 法の筋書きが notice_laws.py の 1 か所に在り、法の組 EVENT_LAWS・GAP_LAWS・BROKER_LAWS に載っている。
        ;; doeff-events は repo の根の環境に入っていないので、import せず file を読む(ADR-DOE-EVENTS-001 と同じ)。
        (val repo-root (. (Path __file__) parent parent parent))
-       (val text (.read-text (/ repo-root "packages/doeff-events/src/doeff_events/notice_laws.py") :encoding "utf-8"))
+       (val text (.read-text (/ repo-root "packages/doeff-events/src/doeff_events/_notice_laws.py") :encoding "utf-8"))
        (for [name ["law_subscription_precedes_the_body" "law_start_is_told_after_the_subscription"
                    "law_start_and_return_are_told_once" "law_notice_reaches_only_current_subscribers"
                    "law_missed_notice_is_told_once_the_broker_is_back" "law_gap_is_told_before_the_next_notice"

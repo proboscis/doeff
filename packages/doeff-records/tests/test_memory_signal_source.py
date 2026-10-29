@@ -34,7 +34,7 @@ from doeff_events import (
     subscribed_event_handler,
     timer_handler,
 )
-from doeff_events.effects import WaitForEvent
+from doeff_events import WaitForEvent
 from doeff_hy.frozen import FrozenMap
 from doeff_records.effects import PutRows, RowWrite, WatchChanges, WatchEvents
 from doeff_records.event_source import (

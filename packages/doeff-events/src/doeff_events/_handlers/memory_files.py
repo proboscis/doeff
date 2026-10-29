@@ -1,4 +1,4 @@
-"""In-memory file watch: the effects of ``doeff_events.effects.files`` inside one process, for tests and emulated
+"""In-memory file watch: the effects of ``doeff_events._effects.files`` inside one process, for tests and emulated
 environments (#3977).
 
 ``MemoryFiles`` holds the watches; nothing touches a disk. Whoever stands for a writer (a test, an emulated agent
@@ -18,7 +18,7 @@ from doeff_core_effects.scheduler import CompletePromise, CreatePromise, Promise
 
 from doeff import K, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_events.effects.files import (
+from doeff_events._effects.files import (
     CloseFileWatch,
     FilesChanged,
     FileWatch,
