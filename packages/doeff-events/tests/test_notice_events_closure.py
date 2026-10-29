@@ -25,7 +25,7 @@ from doeff_events import (
     subscribed_event_handler,
 )
 from doeff_events import Publish, WaitForEvent
-from doeff_events import Announce
+from doeff_events import Announce, SubscribeChannels
 from doeff_events._handlers.notice_events import NOTICE_EVENTS_EFFECTS, _checked_plan, _run
 
 from doeff import EffectGenerator, do, with_handlers
@@ -140,7 +140,9 @@ def test_the_declared_effects_are_what_the_wrapper_performs_around_the_body() ->
     body = analyze_program(_waits).residual_with(runs_where_performed).effect_types
     # ``Announce`` is performed around the body (the start gaps) and inside the clause that sends a routed
     # ``Publish`` (``_sent``), which the reading of the run around the body does not enter — it is declared.
-    assert declared.effect_types == (around - body) | {Announce}
+    # ``SubscribeChannels`` is yielded as ``plan.subscribing()`` (a method that builds the effect), which the
+    # reading does not follow — the wrapper does perform it before the body, so it is declared too.
+    assert declared.effect_types == (around - body) | {Announce, SubscribeChannels}
 
 
 def test_a_job_placing_the_factory_leaves_no_unreadable_handler() -> None:
