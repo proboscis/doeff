@@ -78,6 +78,23 @@
   (assert (is (get land.__annotations__ "return") System) land.__annotations__))
 
 
+(deftest test-defsystem-keeps-a-readiness-field-named-by-the-environ
+  ;; readiness の欄は数の代わりに同じ job の :environ の名の文字列で書ける(readiness_model の註)— 記述には名のまま残り、数への読みは
+  ;; 宣言の組み立て(system-declaration)がする。数でも文字列でもない値は今どおり展開の時に断る。
+  (<- ns (evaluate "
+(defk notice [foundation poll] {:pre [(: foundation Callable) (: poll float)] :post [(: % int)]} 1)
+(defsystem land [foundation]
+  (land-notice (notice foundation 5.0)
+    :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30 \"retiredSeconds\" \"RETIRED_SECONDS\"} :update \"handoff\"
+    :environ {\"RETIRED_SECONDS\" \"600\"}))
+"))
+  (val job (get (. (get ns "land") __doeff_system__) "jobs" 0))
+  (assert (= (get job "readiness") {"windowSeconds" 30 "retiredSeconds" "RETIRED_SECONDS"}) job)
+  (assert (= (get job "environ") {"RETIRED_SECONDS" "600"}) job)
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :readiness {\"windowSeconds\" soon}))"))
+  (assert (in ":readiness の値は数か :environ の名の文字列" a) a))
+
+
 (deftest test-defsystem-keeps-the-type-of-a-typed-foundation
   ;; 型の注記つきの引数 [#^ T foundation] は展開でき(前は SyntaxError)、記述の params は名の列のまま・型は param_types(名 →
   ;; module:qualname)に残り、系の関数の引数にも注記が付く — 汎用の模擬の検が系を呼ばずに土台の型を読むため。

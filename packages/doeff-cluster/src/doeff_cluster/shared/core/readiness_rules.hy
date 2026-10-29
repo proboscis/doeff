@@ -4,7 +4,46 @@
 ;;; resource_policy)と報告の handler(readiness_handlers)が同じ規則を使う(定義点はここ 1 つ)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
+(import json)
+(import math)
+(import re)
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS READINESS-KEYS])
+
+;; 環境変数の値のうち数として読む綴り(JSON の数の文法 — 空白・下線・NaN・Infinity は数にしない)。
+(val ENVIRON-NUMBER (re.compile r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"))
+
+
+;; text は環境変数の値そのもの。
+(defn #^ (| int float None) environ-number [#^ str text]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+  "環境変数の値 → JSON の数(整数の綴りは int・小数か指数の綴りは float)。数の綴りでない・有限でなければ None。"
+  (if (not (re.fullmatch ENVIRON-NUMBER text))
+      None
+      (do (setv number (json.loads text))
+          (if (math.isfinite number) number None))))
+
+
+;; readiness は宣言の値そのもの・environ は job の environ(名 → 値 — 上書きを重ねた後)。
+(defn #^ (| str None) readiness-environ-refusal [#^ object readiness #^ dict environ]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+  "宣言の readiness のうち :environ の名で書いた欄(値が文字列 — readiness_model の註)を environ で読めるか検め、読めなければ理由の文、
+   読めれば None。dict でない readiness は readiness-refusal が断るので見ない。"
+  (when (not (isinstance readiness dict))
+    (return None))
+  (for [#(key value) (.items readiness)]
+    (when (isinstance value str)
+      (when (not-in value environ)
+        (return (.format "readiness の {} が名指す {} は job の :environ に無い(在るのは {})" key value (sorted environ))))
+      (when (is (environ-number (get environ value)) None)
+        (return (.format "readiness の {} が名指す environ {} の値は JSON の数の綴り: {!r}" key value (get environ value))))))
+  None)
+
+
+;; readiness は宣言の値そのもの(readiness-environ-refusal を通った物)・environ は job の environ(名 → 値 — 上書きを重ねた後)。
+(defn #^ object readiness-from-environ [#^ object readiness #^ dict environ]  ; defk にできない: 宣言の組み立て(module の読み込みの時と system-declaration)が呼ぶ純粋な判断
+  "宣言の readiness → :environ の名で書いた欄を environ のその名の値の数に置き換えた readiness(coordinator が受ける行の形 — 欄はいつも数)。
+   dict でない readiness はそのまま返す(readiness-refusal が断る)。"
+  (if (isinstance readiness dict)
+      (dfor #(key value) (.items readiness) key (if (isinstance value str) (environ-number (get environ value)) value))
+      readiness))
 
 
 ;; value は宣言の欄の値そのもの(数かどうかを確かめる)。
