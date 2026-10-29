@@ -12,6 +12,8 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 使い方(doeff の作業木で)::
 
     uv run python tools/hide_submodules.py hide --package packages/doeff-agents --child tmux --child adapters
+    uv run python tools/hide_submodules.py hide --package packages/doeff-cluster --child sim \\
+        --used-by ~/repos/agora-controllers --used-by ~/repos/merge-queue
     uv run python tools/hide_submodules.py rewrite --package packages/doeff-agents --child tmux \\
         --tree ~/.worktrees/agora-controllers-wt-x
     uv run python tools/hide_submodules.py finish --package packages/doeff-agents --child tmux
@@ -26,12 +28,18 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 - ``--table``(``hide``): 既知の表(既定 ``tests/data/public_api_known_violations.json``)。名の行き先を決める。
 - ``--underscore-only``(何度でも): import の根の外で、入口でなく ``_`` の path だけを読む file か dir(木からの相対)。
   読み込みの順の固い所(例: doeff-core-effects を隠す時の ``doeff``)に使う。
+- ``--used-by``(``hide``・何度でも): 外の repo の木。その木が子の古い path から読む名を「外が使う名」として名の行き先に
+  使う(木は書かない — doeff の木を渡すと package の dir の下は数えない)。doeff-cluster の様に、外が使う名だけを入口から
+  見せる package(ADR-DOE-API-001 R15)に使う。
 - ``--json``: 結果を JSON で書く file(``-`` は stdout)。``--dry-run``(``rewrite``): 書かずに数だけ出す。
 
 名の行き先(``hide``): 目録(``public_api_inventory``)が子とその下の module から読む名を、種類と既知の表の組で分ける。
 
 - 入口へ出す: 種類 effect・handler、表の組「境界 — …」(R2 の型と答えの出ていない境界の名)と「未分け — …」、「足した名」。
 - ``_`` の中に残す: 表の組「外れ — …」の名(R1 の「内側の module へ移す」)と、表に無いそれ以外の名(注に出す)。
+- ``--used-by`` を渡した時: 外の木が読む名は表の組が「外れ」でも入口へ出し、外の木が読まない「足した名」は ``_`` に
+  残す(注に出す)。effect・handler・「境界 — …」・「未分け — …」は渡さない時と同じ。
+- 入口が読む module は、名の定義の在る公開の module(子が別の区画の名を import して出し直す時は、子の外の module)。
 - Hy の macro は入口の遅延の名にできないので ``_`` に残し、``require`` は ``_`` の path を読む(注に出す)。
 - 同じ名で定義の違う物が 2 つ在る(子どうし・入口に在る名と)時は足さずに「ぶつかり」に出す。入口に同じ定義が在れば足さない。
   子が別の子の名を import して出し直す(定義が 1 つ)時は、定義の在る子から 1 度だけ足す。
@@ -1405,32 +1413,64 @@ def _table_groups(
     return named, added
 
 
+#: 「足した名」を ``--used-by`` の木が読まない時の注の頭(``_name_notes`` が集める)。
+UNUSED_ADDED_NOTE = "外の木が読まない「足した名」"
+
+
 def _row_destination(
-    row: ExportRow, groups: dict[tuple[str, str], str], added: set[tuple[str, str]]
+    row: ExportRow,
+    groups: dict[tuple[str, str], str],
+    added: set[tuple[str, str]],
+    used: frozenset[tuple[str, str]] | None = None,
 ) -> tuple[Fate, str | None, str]:
+    """行 1 つの行き先。``used``(``--used-by`` の木が子の古い path から読む名)を渡すと、外の呼び手の在る名は
+    表の組が「外れ」でも入口へ出し、外が読まない「足した名」は ``_`` に残す(ADR-DOE-API-001 R15 — 外の repo が
+    使う名だけを入口から見せる)。"""
     if row["form"] == "Hy の macro":
         return "macro", None, ""
-    group = groups.get((row["module"], row["name"]))
-    if row["kind"] in ("effect", "handler"):
+    key = (row["module"], row["name"])
+    group = groups.get(key) or ("足した名" if key in added else None)
+    if row["kind"] in ("effect", "handler") or (used is not None and key in used):
         return "entry", group, ""
+    if group == "足した名":
+        return ("entry", group, "") if used is None else ("underscore", group, UNUSED_ADDED_NOTE)
     if group is not None:
         return ("underscore" if group.startswith("外れ") else "entry"), group, ""
-    if (row["module"], row["name"]) in added:
-        return "entry", "足した名", ""
     return "underscore", None, "既知の表に無い effect と handler の外の名"
+
+
+def _defined_here(row: ExportRow) -> bool:
+    """行の名の定義が、行の module の file の中に在るか(出し直しでないか)。"""
+    defined = row["defined_at"].split(":")[0]
+    return defined == row["module"] or defined.endswith(
+        row["module"].replace(".", "/") + Path(defined).suffix
+    )
 
 
 def _preferred_module(rows: Sequence[ExportRow]) -> str:
     """同じ定義を出す module のうち、定義の在る module(無ければ浅い module)。"""
 
     def key(row: ExportRow) -> tuple[bool, int, str]:
-        defined = row["defined_at"].split(":")[0]
-        here = defined == row["module"] or defined.endswith(
-            row["module"].replace(".", "/") + Path(defined).suffix
-        )
-        return (not here, row["module"].count("."), row["module"])
+        return (not _defined_here(row), row["module"].count("."), row["module"])
 
     return min(rows, key=key)["module"]
+
+
+def _defining_module(name: str, definition: str, rows: Sequence[ExportRow]) -> str | None:
+    """名の定義の在る公開の module(子の外の module も — 目録の行に無ければ None)。
+
+    子が別の区画の名を import して出し直す時(sim の local が shared の effect を出す)、入口がその名を子から読むと、
+    名を 1 つ読むだけで子の module の全部を読み込み、入口が子に縛られる。定義の在る module から読めば、その区画を後で
+    隠す時も入口の同じ定義の行(「入口に既に在る」)と読む。
+    """
+    here = [
+        row
+        for row in rows
+        if row["name"] == name and row["defined_at"] == definition and _defined_here(row)
+    ]
+    return (
+        min(here, key=lambda r: (r["module"].count("."), r["module"]))["module"] if here else None
+    )
 
 
 def decide_names(
@@ -1438,10 +1478,11 @@ def decide_names(
     children: Sequence[Child],
     groups: dict[tuple[str, str], str],
     added: set[tuple[str, str]],
+    used: frozenset[tuple[str, str]] | None = None,
 ) -> list[NameFate]:
     """子とその下の module が出す名を、入口へ出す・既に在る・``_`` に残す・macro・ぶつかりに分ける。"""
     fates = [
-        _name_fate(child, name, named, rows, groups, added)
+        _name_fate(child, name, named, rows, groups, added, children, used)
         for child in children
         for name, named in _rows_by_name(rows, child)
     ]
@@ -1463,9 +1504,11 @@ def _name_fate(
     rows: Sequence[ExportRow],
     groups: dict[tuple[str, str], str],
     added: set[tuple[str, str]],
+    children: Sequence[Child] = (),
+    used: frozenset[tuple[str, str]] | None = None,
 ) -> NameFate:
     """子の名 1 つの行き先: 入口へ出す名が無ければ表の分けのまま、在れば定義を入口の名と比べる。"""
-    destinations = [(row, *_row_destination(row, groups, added)) for row in named]
+    destinations = [(row, *_row_destination(row, groups, added, used)) for row in named]
     entry_rows = [row for row, fate, _g, _n in destinations if fate == "entry"]
     modules = tuple(sorted(row["module"] for row in named))
     kind = named[0]["kind"]
@@ -1482,8 +1525,10 @@ def _name_fate(
             return NameFate(name, modules, kind, group, "already")
         note = f"入口の {name} は別の定義({', '.join(sorted(existing))})"
         return NameFate(name, modules, kind, group, "conflict", note=note)
-    source = _renamed(_preferred_module(entry_rows), child)
     [definition] = definitions
+    module = _defining_module(name, definition, rows) or _preferred_module(entry_rows)
+    target = _hidden_target(module, [child, *children])
+    source = _renamed(module, target) if target is not None else module
     return NameFate(name, modules, kind, group, "entry", source=source, definition=definition)
 
 
@@ -2086,16 +2131,24 @@ def _load_table(path: Path) -> dict[str, object] | None:
     return cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
 
 
+def _old_pairs(
+    pairs: Iterable[tuple[str, str]], children: Sequence[Child]
+) -> Iterator[tuple[str, str]]:
+    """書き換えが数えた (新しい module, 名) を、子の古い path の (module, 名) へ。"""
+    return (
+        (child.old + module[len(child.new) :], name)
+        for module, name in pairs
+        for child in children
+        if module == child.new or module.startswith(child.new + ".")
+    )
+
+
 def _outliers(
     result: TreeResult, children: Sequence[Child], groups: dict[tuple[str, str], str]
 ) -> tuple[str, ...]:
     """呼び手が ``_`` の path から読む名のうち、既知の表の組「外れ」の名(card が 1 名ずつ読み分ける為)。"""
-    olds = (
-        (child.old + module[len(child.new) :], name)
-        for (module, name), count in result.counts.to_underscore.items()
-        if count > 0
-        for child in children
-        if module == child.new or module.startswith(child.new + ".")
+    olds = _old_pairs(
+        (pair for pair, count in result.counts.to_underscore.items() if count > 0), children
     )
     return tuple(
         sorted(
@@ -2144,6 +2197,26 @@ def _tree_of(
     return Tree(tree, tuple(underscore_only), frozenset(kept), roots)
 
 
+def used_names(
+    package_dir: Path, layout: _Layout, children: Sequence[Child], trees: Sequence[Path]
+) -> frozenset[tuple[str, str]]:
+    """``--used-by`` の木の file が子の古い path から読む名(古い path の (module, 名))— 外の repo が使う名。
+
+    木は書かずに読むだけ(``rewrite --dry-run`` と同じ読み)。木が package を持てば(doeff の木)、package の dir の
+    下の file(package 自身の検)は外の呼び手に数えない。
+    """
+    patterns = Patterns.of(children)
+    pairs: set[tuple[str, str]] = set()
+    for tree in (t.resolve() for t in trees):
+        own = [package_dir.relative_to(tree).as_posix()] if package_dir.is_relative_to(tree) else []
+        result = rewrite_tree(
+            _tree_of(tree, layout, own, ()), patterns, lambda _asked: set(), write=False
+        )
+        read = (pair for pair, count in result.counts.to_underscore.items() if count > 0)
+        pairs.update(_old_pairs(read, children))
+    return frozenset(pairs)
+
+
 def _module_count(child: Child, stem: str) -> int:
     """子の module の数(報告の為)。"""
     return sum(
@@ -2177,6 +2250,7 @@ def _move_one(tree: Path, source: Path) -> str:
 
 def _name_notes(fates: Sequence[NameFate]) -> tuple[str, ...]:
     unlisted = [f"{f.modules[0]}.{f.name}" for f in fates if f.note.startswith("既知の表に無い")]
+    unused = [f"{f.modules[0]}.{f.name}" for f in fates if f.note == UNUSED_ADDED_NOTE]
     macros = [f"{f.modules[0]}.{f.name}" for f in fates if f.fate == "macro"]
     return (
         *(
@@ -2184,6 +2258,7 @@ def _name_notes(fates: Sequence[NameFate]) -> tuple[str, ...]:
             if unlisted
             else []
         ),
+        *([f"{UNUSED_ADDED_NOTE}を _ に残した: {', '.join(unused)}"] if unused else []),
         *(
             [f"Hy の macro は入口から出せない(require は _ の path を読む): {', '.join(macros)}"]
             if macros
@@ -2198,8 +2273,13 @@ def hide(
     tree_path: Path | None,
     table_path: Path | None,
     underscore_only: Sequence[str],
+    used_by: Sequence[Path] = (),
 ) -> Report:
-    """stage 1: 子を ``_`` へ移し、移し替えの module を置き、入口へ名を足し、木の import を書き換える。"""
+    """stage 1: 子を ``_`` へ移し、移し替えの module を置き、入口へ名を足し、木の import を書き換える。
+
+    ``used_by``(外の repo の木)を渡すと、その木が子の古い path から読む名を、表の組が「外れ」でも入口へ出し、
+    読まない「足した名」を ``_`` に残す(ADR-DOE-API-001 R15 — 外の repo が使う名だけを入口から見せる)。
+    """
     tool = _inventory_tool()
     package_dir = package_dir.resolve()
     tree = (tree_path or git_toplevel(package_dir)).resolve()
@@ -2220,7 +2300,8 @@ def hide(
         raise SystemExit(f"目録が {package_dir.name} を読めなかった: {package['error']}")
     table = _load_table(table_path or tree / DEFAULT_TABLE)
     groups, added = _table_groups(table, package_dir.name)
-    fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added)
+    used = used_names(package_dir, layout, children, used_by) if used_by else None
+    fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added, used)
     counted = tuple(
         {"old": c.old, "new": c.new, "modules": _module_count(c, c.name)} for c in children
     )
@@ -2276,6 +2357,13 @@ def hide(
             ),
         ),
         notes=(
+            *(
+                [
+                    f"外の木({', '.join(str(t) for t in used_by)})が子の古い path から読む名: {len(used)} 個"
+                ]
+                if used is not None
+                else []
+            ),
             *_name_notes(fates),
             *moved,
             *(f"入口の無い名前空間 package に入口を作った: {path}" for path in created),
@@ -2490,6 +2578,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         command.add_argument("--json")
         if stage != "finish":
             command.add_argument("--underscore-only", action="append", default=[])
+        if stage == "hide":
+            command.add_argument("--used-by", type=Path, action="append", default=[])
         if stage == "rewrite":
             command.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args(argv)
@@ -2504,6 +2594,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.tree,
             arguments.table,
             arguments.underscore_only,
+            arguments.used_by,
         )
     elif arguments.stage == "rewrite":
         report = rewrite(
