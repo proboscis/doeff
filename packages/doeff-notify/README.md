@@ -13,7 +13,7 @@ Provider-agnostic notification effects for `doeff`.
 ## Reference Handlers
 
 - `console_handler`: prints notifications to stdout.
-- `testing_handler(capture=…)`: a handler factory that answers notifications in memory and records them in the `NotificationCapture` it is given, for assertions.
+- `testing_handler`: captures notifications in-memory for assertions.
 - `log_handler`: emits notification payloads through `Tell` for logging pipelines.
 
 ## Usage

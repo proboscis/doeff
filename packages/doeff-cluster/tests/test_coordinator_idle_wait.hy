@@ -22,8 +22,7 @@
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
-(import doeff_cluster [wall-sim-cluster ClientLink SimWorker]
-        doeff_cluster._sim.local [SimLink])
+(import doeff_cluster.sim.local [wall-sim-cluster ClientLink SimLink SimWorker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import tests.clock_fixtures [clock-ms])
 (import tests.fixtures.envs [sim-foundation])

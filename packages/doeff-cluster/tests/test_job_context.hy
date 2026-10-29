@@ -58,8 +58,7 @@
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [worker-context-environ context-of-environ])
-(import doeff_cluster [SIM-URL]
-        doeff_cluster._sim.local [run-context-of])
+(import doeff_cluster.sim.local [run-context-of SIM-URL])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 
 (val WORKER "w1")

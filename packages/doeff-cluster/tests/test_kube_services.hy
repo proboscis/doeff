@@ -1,5 +1,5 @@
 ;;; job が自分へ届く網の宛先(k8s の Service)を宣言どおりに在らせる effect EnsureKubeService(doeff_cluster.shared.intent.kube_service_model)
-;;; の検 — 本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api)と模擬の答え手(doeff_cluster._sim.k8s_services の
+;;; の検 — 本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api)と模擬の答え手(doeff_cluster.sim.k8s_services の
 ;;; held-kube-services)が同じ筋書きに同じ結末で答え、同じ Service の一覧を残す事を確かめる。
 ;;;
 ;;;   綴り              宣言 → server-side apply の本文(宣言が持つ欄だけ・LOAD-BALANCER は node の口を開けない・class は書いた時だけ)
@@ -24,8 +24,7 @@
                                                         KubeServiceType])
 (import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER kube-services-api service-apply-text service-path])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
-(import doeff_cluster [held-kube-services]
-        doeff_cluster._sim.k8s_services [KubeServiceLog])
+(import doeff_cluster.sim.k8s_services [KubeServiceLog held-kube-services])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 

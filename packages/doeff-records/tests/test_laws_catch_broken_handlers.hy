@@ -10,8 +10,9 @@
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
 (import doeff_records [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents BatchRead])
 (import doeff_records [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
-(import doeff_records.memory :as memory)
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records._memory :as memory)
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records._laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
                             law-epoch-change-resets law-undeclared-writes-are-refused law-transient-rows-expire
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan

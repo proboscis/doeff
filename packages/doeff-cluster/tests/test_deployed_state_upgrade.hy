@@ -19,7 +19,7 @@
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster [SIM-START-MS])
+(import doeff_cluster.sim.local [SIM-START-MS])
 
 (val FIXTURE (/ (. (Path __file__) (resolve) parent) "fixtures" "coordinator_state_ec727f20" "wal"))
 ;; 読み直す時刻: 置き場を作った模擬の時計(SIM-START-MS から数十秒)の 1 時間後 — 止まっていた間の時計のずらしも通る。

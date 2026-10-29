@@ -21,6 +21,8 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    残すと赤・訳と決めつきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
    (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
    移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
+   印の下に名の固定の列を持つ移し替えの module は、移した先の _ の module に helper を足しても目録の行が増えず緑・列が
+   無ければ赤・入口に名を足すと列が在っても赤(card ki-4fbed45b5863)。移し替えの module の全部が列を持つ事も確かめる。
    戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
    直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
 6. 許した物の表は決めの id つきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めが card・依頼・
@@ -1165,31 +1167,6 @@ def test_a_marked_shim_keeps_the_modules_below_a_moved_package_at_their_old_name
     assert f"{below}.sub_helper" in str(failure.value)
 
 
-@pytest.mark.timeout(_PROBE_SECONDS + 20)
-def test_a_marked_shim_of_a_namespace_dir_keeps_the_modules_below_at_their_old_names(
-    tmp_path: Path,
-) -> None:
-    """__init__ の無い子の dir を _ へ移し、印のある移し替えの module を残す間も、下の module を古い名で数えて緑。
-
-    移す前の namespace の dir は module でなく(submodule の行が無い)、目録は dir を通り抜けて下の module を数える。
-    移し替えの module はその dir の代わりなので、自分は submodule と数えずに、移した先の dir を同じに通り抜ける
-    (doeff-cluster の区画 sim を _sim へ移した時、移した先を辿らずに下の 603 行が消え、移し替えの module が表に無い
-    submodule になった — card ki-9b8308f2c7c3)。
-    """
-    below = f"{FIXTURE_ROOT}.types.sub"
-    table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
-    before = _fixture_tree(
-        tmp_path / "before", {"__init__.py": EFFECTS_AND_HANDLERS, "types/sub.py": BELOW}
-    )
-    check_package(_read_fixture(before), table)
-
-    stage_1 = _fixture_tree(
-        tmp_path / "stage-1",
-        {"__init__.py": EFFECTS_AND_HANDLERS, "_types/sub.py": BELOW, "types.py": MARKED_SHIM},
-    )
-    check_package(_read_fixture(stage_1), table)
-
-
 #: import すると落ちる子の module(目録は名を text から読む — doeff-ml-nexus の import できない Hy の module の様に)。
 UNIMPORTABLE = '''
 raise RuntimeError("this module cannot be imported")
@@ -1465,3 +1442,89 @@ def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
         },
     )
     assert part_imports(tmp_path) == []
+
+
+#: 隠した時の名の固定の列を印の下に持つ移し替えの module(tools/hide_submodules.py の書く形 — card ki-4fbed45b5863)。
+PINNED_SHIM = MARKED_SHIM.replace(
+    "\n",
+    f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types:\n#   LIMIT PingResult\n#   helper\n",
+    1,
+)
+#: 隠した後に、移した先の _ の module へ書き手が足した内側の helper。
+ADDED_INSIDE = '''
+
+def added_helper(x: int) -> int:
+    """A helper added inside the hidden module after it was hidden."""
+    return x * 2
+'''
+#: 入口に書き手が足した名(意図して見せる名)。
+ADDED_AT_ROOT = '''
+
+def root_helper(x: int) -> int:
+    """A helper the writer adds to the root on purpose."""
+    return x - 2
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path: Path) -> None:
+    """移し替えの module が名の固定の列を持てば、移した先の _ の module に helper を足しても目録の行は増えず緑。
+
+    列の無い移し替えの module では、古い path が移した先の module そのものを返すので、足した helper が古い path の
+    公開名に加わって赤になる(card ki-4fbed45b5863 — 内側の helper を足すだけで公開 API が増えた)。入口に足した名は
+    書き手が意図して見せる名なので、列が在っても赤(表に足すか直す)。
+    """
+    child = f"{FIXTURE_ROOT}.types"
+    table = _fixture_table({SUBMODULE: [child], child: ["LIMIT", "PingResult", "helper"]})
+    pinned = _fixture_tree(
+        tmp_path / "pinned",
+        {
+            "__init__.py": EFFECTS_AND_HANDLERS,
+            "_types.py": TYPES + ADDED_INSIDE,
+            "types.py": PINNED_SHIM,
+        },
+    )
+    package = _read_fixture(pinned)
+    check_package(package, table)
+    assert {row["name"] for row in package["exports"] if row["module"] == child} == {
+        "LIMIT",
+        "PingResult",
+        "helper",
+    }
+
+    unpinned = _fixture_tree(
+        tmp_path / "unpinned",
+        {
+            "__init__.py": EFFECTS_AND_HANDLERS,
+            "_types.py": TYPES + ADDED_INSIDE,
+            "types.py": MARKED_SHIM,
+        },
+    )
+    with pytest.raises(AssertionError, match=rf"許した物の表に無い[\s\S]*{child}\.added_helper"):
+        check_package(_read_fixture(unpinned), table)
+
+    at_root = _fixture_tree(
+        tmp_path / "at-root",
+        {
+            "__init__.py": EFFECTS_AND_HANDLERS + ADDED_AT_ROOT,
+            "_types.py": TYPES + ADDED_INSIDE,
+            "types.py": PINNED_SHIM,
+        },
+    )
+    with pytest.raises(
+        AssertionError, match=rf"許した物の表に無い[\s\S]*{FIXTURE_ROOT}\.root_helper"
+    ) as failure:
+        check_package(_read_fixture(at_root), table)
+    assert "added_helper" not in str(failure.value)
+
+
+@pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
+def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir: str) -> None:
+    """移し替えの module の全部が、自分と下の module の古い path ごとに名の固定の列を持つ(列の無い古い path は、
+    移した先の _ の module に足した名を全部公開名に数えてしまう — tools/hide_submodules.py pin で列を書く)。"""
+    layout = tool.read_layout(ROOT / "packages" / package_dir)
+    assert not tool.unpinned_shim_modules(layout), (
+        f"{package_dir}: 名の固定の列の無い移し替えの古い path が在る — "
+        f"`uv run python tools/hide_submodules.py pin --package packages/{package_dir}` で書く: "
+        + ", ".join(tool.unpinned_shim_modules(layout))
+    )

@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession acquire-lease])
 (import doeff_cluster.shared.intent.semaphore_model [ClusterSemaphore LeaseOp LeaseAnswer])
-(import doeff_cluster [sim-cluster])
+(import doeff_cluster.sim.local [sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 

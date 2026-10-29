@@ -464,92 +464,6 @@ def test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row(
     assert json.loads(path.read_text(encoding="utf-8"))["許した物"] == []
 
 
-def test_a_name_a_child_imports_from_outside_the_children_is_read_from_its_definition(
-    tmp_path: Path,
-) -> None:
-    """子が隠さない区画の名を出し直す時、入口はその名を定義の在る module から読む。
-
-    失敗ケース: doeff-cluster の sim を隠すと、sim の local が shared の effect 75 個を import して出し直していて、
-    入口が ``_sim.local`` から読んだ — effect を 1 つ読むだけで模擬の cluster の全部を読み込む(card ki-9b8308f2c7c3)。
-    """
-    children = [tool.Child(ROOT_NAME, "sim", tmp_path)]
-    rows = [
-        _row("sim.local", "AckOutbox", "effect", "shared/intent/model.hy:5"),
-        _row("shared.intent.model", "AckOutbox", "effect", "shared/intent/model.hy:5"),
-        _row("sim.local", "SimWorker", "effect", "sim/local.hy:9"),
-    ]
-    fates = {(f.modules[0], f.name): f for f in tool.decide_names(rows, children, {}, set())}
-    ack = fates[(f"{ROOT_NAME}.sim.local", "AckOutbox")]
-    assert (ack.fate, ack.source) == ("entry", f"{ROOT_NAME}.shared.intent.model")
-    worker = fates[(f"{ROOT_NAME}.sim.local", "SimWorker")]
-    assert (worker.fate, worker.source) == ("entry", f"{ROOT_NAME}._sim.local")
-
-
-def test_used_by_shows_the_outliers_an_outside_tree_reads_and_keeps_unread_added_names_hidden(
-    tmp_path: Path,
-) -> None:
-    """``--used-by`` の木が読む名は表の組が「外れ」でも入口へ、読まない「足した名」は ``_`` に残す。
-
-    失敗ケース: doeff-cluster は外の repo が使う名だけを入口から見せる(ADR-DOE-API-001 R15)。表の組だけで分けると、
-    使い手の書く ``(import doeff_cluster [sim-cluster])`` の sim-cluster が「外れ — 内側の module へ移す」で入口に出ず、
-    表の「足した名」の MODULE_TAGS が入口に出た(card ki-9b8308f2c7c3)。
-    """
-    children = [tool.Child(ROOT_NAME, "sim", tmp_path)]
-    inside = "外れ — 内側の module へ移す"
-    groups = {
-        (f"{ROOT_NAME}.sim.local", "sim_cluster"): inside,
-        (f"{ROOT_NAME}.sim.local", "step_book"): inside,
-    }
-    added = {(f"{ROOT_NAME}.sim.local", "MODULE_TAGS"), (f"{ROOT_NAME}.sim.local", "room_of")}
-    rows = [
-        _row("sim.local", name, "other", f"sim/local.hy:{line}")
-        for line, name in enumerate(("sim_cluster", "step_book", "MODULE_TAGS", "room_of"))
-    ]
-    used = frozenset(
-        {(f"{ROOT_NAME}.sim.local", "sim_cluster"), (f"{ROOT_NAME}.sim.local", "room_of")}
-    )
-
-    def fate_of(chosen: frozenset[tuple[str, str]] | None) -> dict[str, str]:
-        return {f.name: f.fate for f in tool.decide_names(rows, children, groups, added, chosen)}
-
-    assert fate_of(used) == {
-        "sim_cluster": "entry",
-        "step_book": "underscore",
-        "MODULE_TAGS": "underscore",
-        "room_of": "entry",
-    }
-    # 渡さなければ今までどおり: 表の組の「外れ」は _ に、「足した名」は入口へ。
-    assert fate_of(None) == {
-        "sim_cluster": "underscore",
-        "step_book": "underscore",
-        "MODULE_TAGS": "entry",
-        "room_of": "entry",
-    }
-
-
-def test_used_names_reads_an_outside_tree_and_skips_the_package_itself(tmp_path: Path) -> None:
-    """外の木が子の古い path から読む名を集め、package の dir の下(package 自身の検)は数えない。"""
-    repo = _write_repo(
-        tmp_path / "repo",
-        {
-            f"packages/{PACKAGE}/pyproject.toml": FILES[f"packages/{PACKAGE}/pyproject.toml"],
-            f"packages/{PACKAGE}/src/{ROOT_NAME}/__init__.py": "",
-            f"packages/{PACKAGE}/src/{ROOT_NAME}/sim/__init__.py": "",
-            f"packages/{PACKAGE}/src/{ROOT_NAME}/sim/local.py": "def run():\n    return 1\n",
-            f"packages/{PACKAGE}/tests/test_local.py": f"from {ROOT_NAME}.sim.local import own\n",
-            "callers/caller.py": f"from {ROOT_NAME}.sim.local import run\n",
-            "callers/caller.hy": f"(import {ROOT_NAME}.sim.local [step-book])\n",
-        },
-    )
-    package_dir = repo / "packages" / PACKAGE
-    layout = tool._inventory_tool().read_layout(package_dir)
-    children = tool.find_children(layout, ["sim"], hidden=False)
-    assert tool.used_names(package_dir, layout, children, [repo]) == {
-        (f"{ROOT_NAME}.sim.local", "run"),
-        (f"{ROOT_NAME}.sim.local", "step_book"),
-    }
-
-
 def test_a_name_added_to_an_entry_with_all_is_listed_in_all_too(tmp_path: Path) -> None:
     """``__all__`` の在る入口へ名を足すと、``__all__`` にも ruff の RUF022 の並びで足す。1 行に 1 つの名でない
     ``__all__`` には足さず、子を移す前に止める。
@@ -746,6 +660,10 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _assert_moved_and_entry(repo, report)
     _assert_rewritten(repo, report, record_before)
     _check_table(repo)  # 移し替えの module が古い名で出す間は、表を書き換えずに緑
+    # 移し替えの module は印の下に、古い path が出す名の固定の列を持つ(card ki-4fbed45b5863)。
+    assert f"{tool.SHIM_NAMES_MARK} {ROOT_NAME}.effects:" in _text(
+        repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py"
+    )
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)  # 外の repo は古い path のまま移し替えの module を通る
 
@@ -888,7 +806,7 @@ def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path
         'VALUE = 1\n\n\ndef tool() -> str:\n    return "entry"\n', encoding="utf-8"
     )
     child = tool.Child("kept_pkg", "tool", root_dir)
-    child.shim.write_text(tool.shim_text(child, False), encoding="utf-8")
+    child.shim.write_text(tool.shim_text(child, False, {}), encoding="utf-8")
     probe = textwrap.dedent(
         """
         import sys

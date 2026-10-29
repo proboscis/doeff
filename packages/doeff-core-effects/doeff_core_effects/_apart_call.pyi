@@ -3,7 +3,6 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from functools import partial as partial
 from concurrent.futures import Future as Future
 from doeff import Program as Program
 from doeff import Transfer as Transfer
@@ -64,9 +63,5 @@ def answered_here(asked: ApartAsked) -> _Program[None, object]:
 def next_message(lane: ApartLane) -> _Program[ApartAsked | ApartDone | ApartFailed, object]:
     ...
 
-def _apart[T](program: Program[T, object]) -> _Program[T, object]:
+def run_apart[T](program: Program[T, object]) -> _Program[T, object]:
     ...
-
-class _ApartHandler(partial):
-    ...
-run_apart: _ApartHandler

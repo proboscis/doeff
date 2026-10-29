@@ -15,7 +15,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster [sim-cluster SimWorker NodeReads RelabelNode ReadCoordinator])
+(import doeff_cluster.sim.local [sim-cluster SimWorker NodeReads RelabelNode ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 

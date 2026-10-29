@@ -4,7 +4,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import hashlib)
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv])
-(import doeff_cluster._sim.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
+(import doeff_cluster.sim.env_world [EnvWorld WorldRemote WorldCommit WorldFile])
 
 (val LOCK "httpx==0.28.1 top=httpx\nhy==1.1.0 top=hy\nclick==8.1.8 top=click\n")
 ;; LOCK の hy の行だけ版を上げた lock(venv の Hy の compiler の版が違う root — bytecode を引き継がない・#3706)。

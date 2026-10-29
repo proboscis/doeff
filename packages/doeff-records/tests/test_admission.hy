@@ -10,7 +10,8 @@
         doeff_records._effects [WHERE-ANY-LIMIT])
 (import doeff_records.admission [json-equal? key-text judge-expect judge-put judge-put-rows where-refusal row-expired?
                                  Admitted])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 

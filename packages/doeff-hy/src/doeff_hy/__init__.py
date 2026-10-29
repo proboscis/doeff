@@ -54,9 +54,6 @@ _install_light_stack()
 # defrecord の展開が呼ぶ doeff_hy._record_runtime の部品(RECORD_DOC・record_repr ほか)と、doeff_hy._pytest_plugin の
 # install(doeff_hy.ast_unparse の install と同じ物)は入口から出さない — 展開と plugin は `_` の path を読む(card ki-797d1e7b122b)。
 if TYPE_CHECKING:
-    from doeff_hy._http import http_get as http_get
-    from doeff_hy._json_lines import jsonl_lines as jsonl_lines
-    from doeff_hy._json_lines import whole_lines_end as whole_lines_end
     from doeff_hy._pytest_items import MalformedRecord as MalformedRecord
     from doeff_hy._static_baseline import BaselineUnreadable as BaselineUnreadable
     from doeff_hy._static_carry import CarryUnreadableError as CarryUnreadableError
@@ -64,11 +61,6 @@ if TYPE_CHECKING:
     from doeff_hy._static_stub import StubUnmade as StubUnmade
     from doeff_hy._typecheck_handlers import type_checks_off as type_checks_off
     from doeff_hy._typecheck_handlers import type_checks_on as type_checks_on
-    from doeff_hy._wire import dump as dump
-    from doeff_hy._wire import dump_json as dump_json
-    from doeff_hy._wire import json_schema as json_schema
-    from doeff_hy._wire import parse as parse
-    from doeff_hy._wire import parse_json as parse_json
 
 _LAZY_EXPORTS: dict[str, str] = {
     "MalformedRecord": "doeff_hy._pytest_items",
@@ -81,15 +73,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "type_check": "doeff_hy._typecheck",
     "type_checks_off": "doeff_hy._typecheck_handlers",
     "type_checks_on": "doeff_hy._typecheck_handlers",
-    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
-    "http_get": "doeff_hy._http",
-    "jsonl_lines": "doeff_hy._json_lines",
-    "whole_lines_end": "doeff_hy._json_lines",
-    "dump": "doeff_hy._wire",
-    "dump_json": "doeff_hy._wire",
-    "json_schema": "doeff_hy._wire",
-    "parse": "doeff_hy._wire",
-    "parse_json": "doeff_hy._wire",
 }
 
 

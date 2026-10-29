@@ -16,7 +16,7 @@
 (import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.worker.core.heartbeat_rules [desired-after-silence])
-(import doeff_cluster [sim-cluster SimWorker ProcessesOf StallWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf StallWorker])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 

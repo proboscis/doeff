@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
 (import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
-(import doeff_cluster [sim-cluster Redeclare ProcessesOf SharedRows KillWorker StartWorker])
+(import doeff_cluster.sim.local [sim-cluster Redeclare ProcessesOf SharedRows KillWorker StartWorker])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writers lease-writers-v2 HOLDER-ROW])
 

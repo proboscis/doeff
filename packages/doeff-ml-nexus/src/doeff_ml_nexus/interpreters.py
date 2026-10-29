@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_ml_nexus.interpreters -> doeff_ml_nexus._interpreters
+# moved-submodule-shim-names doeff_ml_nexus.interpreters:
+#   make-local-uv-interpreter make-remote-uv-interpreter
 """Moved: ``doeff_ml_nexus.interpreters`` is now ``doeff_ml_nexus._interpreters`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

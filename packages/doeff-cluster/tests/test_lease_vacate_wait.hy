@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged watch-answer-body])
 (import doeff_cluster.coordinator.core.wake_policy [watchers-due])
-(import doeff_cluster [sim-cluster])
+(import doeff_cluster.sim.local [sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 

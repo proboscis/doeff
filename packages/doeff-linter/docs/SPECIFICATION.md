@@ -581,7 +581,7 @@ module が、その層の `:forbid-modules` の module を import すると DOEF
   :wire-modules ["controllers.foundation.records_client"]  ; JSON の送受信そのものを行う foundation の module(DOEFF120・13 節)
   :edge-mark "real_world"                  ; 縁のテストの pytest の印の名(DOEFF133 — :world-handlers が要る)
   :static-readers ["controllers.shared.core.foundation_closure:ClosureCase"]  ; 渡された値を実行せずに読むだけの定義 — この呼び出しの引数の中の参照は DOEFF133・136 の「届く」の辺にしない(module の印は行頭から始まる pytestmark の宣言だけを読む)
-  :systems {:carriers ["scripts.declare_system:SystemPart"] :runners ["doeff_cluster._sim.local:sim-cluster"]}  ; 系の値と系を回す入口 — defsystem の定義(本体と呼び出しの引数)と :carriers の呼び出しの引数の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(DOEFF133・書かなければ今までどおり)
+  :systems {:carriers ["scripts.declare_system:SystemPart"] :runners ["doeff_cluster.sim.local:sim-cluster"]}  ; 系の値と系を回す入口 — defsystem の定義(本体と呼び出しの引数)と :carriers の呼び出しの引数の中から外の世界に届く検は、:runners のどれかにも届く時だけ縁(DOEFF133・書かなければ今までどおり)
   :edge-touches [http db process clock cluster network thread]  ; 縁と数える触れる先(DOEFF133 — 書かなければ全部)
   :test-forms {:tests ["test_*.hy" "test_*.py"] :check-scripts ["scripts/check_*.hy"] :runners ["*_deftest_runner.hy"]}  ; テストの形の決まり(DOEFF135)
   :retired-words [(retired-words "vocabulary" :words ["mail"] :files ["controllers/**/*.hy" "scripts/**/*.sh"]   ; 使わないと決めた綴り(DOEFF150)
@@ -895,7 +895,7 @@ agora-redesign #840・operator の決定 2026-09-28(JsonValue を直に使わせ
   tuple の中・quote の中)。文字列・註・docstring・`#_` の form は数えない。Python は字句の名(名前・属性の名・import の名)と、注釈(引数・
   戻り値・`x: T`)と型の別名(`X: TypeAlias = …` の値・`type X = …`)の文字列の中の語(前後が識別子の文字でない物)。docstring・註・f 文字列は数えない。
 - **許す module**(`json_value_allowance` — 方針はこの関数 1 つだけにあり、差し替えられる):
-  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy._wire`・`doeff_records.wire` か、`.` + それで終わる。
+  1. module の綴り(repo の根からの path の拡張子を外し `/` を `.` にした物)が `doeff_hy._wire`・`doeff_records._wire` か、`.` + それで終わる。
   2. architecture.hy の `:wire-modules` の pattern(`.` 区切り・`*` は段の中の任意の綴り・`**` は 0 個以上の段)に当たり、かつ層の置き場で
      `:foundation` の層に入る。当たっても foundation の外なら許さない(説明に訳)。
 - **違反**: module ごとに 1 件・error。鍵 `<path>::DOEFF120`(細目なし)。位置は最初の使用の名。説明の主体に使った名・数・最初の行・ほかの行
@@ -961,7 +961,7 @@ coordinator の決定 2026-09-28(戻せる・agora-redesign #798 に記録)。�
   名指す欄(`(#^ (| Program EffectBase) prepare)`・`#^ Program later`・`doeff.Program` — 註の語の最後の段で比べる)は Program を運ぶ宣言
   なので、型を作る呼びの `:欄 値` の値は答えとして使う所ではない。拾うまま: 型の註の無い欄・`object` / `Any` の欄・別名で隠れた欄
   (別名は Program と綴られない)・位置で渡した値・repo の外(Python の dataclass など)で定義した型。事実: doeff-records の
-  `start-records-server` が `(RecordsServing … :prepare (_ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
+  `start-records-server` が `(RecordsServing … :prepare (ready-handlers …))` — `serve-records` が用意の task として走らせる Program の欄。
 - **拾わない所**: `(<- …)` の右辺・`(! …)`・`(return …)`、Program を受ける呼びの引数(repo の関数へ渡す形も — Program を受けて走らせる
   関数かもしれず追えない)、名への束ね、関数の答えとして返す形。初版は「Program として渡す所の外は全部」だったが、agora の本線で 239 件
   (Program を受けて走らせる run-on・in-record・run-wired などへ渡す形が大半)になり、error の重さでは外れが重いので、答えとして使う所に

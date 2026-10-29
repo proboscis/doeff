@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.import_scope -> doeff_hy_bytecode_guard._import_scope
+# moved-submodule-shim-names doeff_hy_bytecode_guard.import_scope:
+#   IMPORT_SCOPE ImportScope SharedScope current_scope
 """Moved: ``doeff_hy_bytecode_guard.import_scope`` is now ``doeff_hy_bytecode_guard._import_scope`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

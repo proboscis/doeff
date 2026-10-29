@@ -1,4 +1,8 @@
 # moved-submodule-shim: doeff_system_one.effects -> doeff_system_one._effects
+# moved-submodule-shim-names doeff_system_one.effects:
+#   Judge
+# moved-submodule-shim-names doeff_system_one.effects.judge:
+#   Image Judge Question
 """Moved: ``doeff_system_one.effects`` is now ``doeff_system_one._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

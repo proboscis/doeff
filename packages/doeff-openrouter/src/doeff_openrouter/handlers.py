@@ -1,4 +1,13 @@
 # moved-submodule-shim: doeff_openrouter.handlers -> doeff_openrouter._handlers
+# moved-submodule-shim-names doeff_openrouter.handlers:
+#   MockOpenRouterRuntime ProtocolHandler mock_handlers openrouter_mock_handler
+#   openrouter_production_handler production_handlers
+# moved-submodule-shim-names doeff_openrouter.handlers.production:
+#   ProtocolHandler RouterChat RouterStreamingChat RouterStructuredOutput
+#   build_response_format_payload chat_completion openrouter_production_handler
+#   process_structured_response production_handlers
+# moved-submodule-shim-names doeff_openrouter.handlers.testing:
+#   MockOpenRouterRuntime ProtocolHandler mock_handlers openrouter_mock_handler
 """Moved: ``doeff_openrouter.handlers`` is now ``doeff_openrouter._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_flow.env_places -> doeff_flow._env_places
+# moved-submodule-shim-names doeff_flow.env_places:
+#   state_home trace_dir_setting
 """Moved: ``doeff_flow.env_places`` is now ``doeff_flow._env_places`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

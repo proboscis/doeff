@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.core [cluster_policy])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json group-limit-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster [sim-cluster SimWorker ReadCoordinator Redeclare])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator Redeclare])
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.shared.entry._system_form :as system_form)
 (import tests.detached_rig [slow-add RIG-PROVIDES])

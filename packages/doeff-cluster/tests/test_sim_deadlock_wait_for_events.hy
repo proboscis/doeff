@@ -8,7 +8,7 @@
 (import collections.abc [Callable])
 (import doeff_events [WaitForEvents WaitForEventsEffect PublishEffect event-handler])
 (import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded])
-(import doeff_cluster [sim-cluster SimOutside SimDeadlockError])
+(import doeff_cluster.sim.local [sim-cluster SimOutside SimDeadlockError])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.event_programs [Ping])
 

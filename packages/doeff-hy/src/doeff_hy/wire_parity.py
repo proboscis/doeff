@@ -1,4 +1,9 @@
 # moved-submodule-shim: doeff_hy.wire_parity -> doeff_hy._wire_parity
+# moved-submodule-shim-names doeff_hy.wire_parity:
+#   Codec InputVerdict Malformed MalformedField Mismatch OpaqueJson Report adapter_of codec_of
+#   compare_input compare_types inputs_for main mixed_catch_all_unions pydantic_config pydantic_dump
+#   pydantic_dump_json pydantic_json_schema pydantic_parse pydantic_parse_json summary thaw_json
+#   typed wire_types_in
 """Moved: ``doeff_hy.wire_parity`` is now ``doeff_hy._wire_parity`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

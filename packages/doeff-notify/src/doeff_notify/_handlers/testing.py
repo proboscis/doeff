@@ -6,8 +6,7 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Any, overload
 
-from doeff import Effect, Pass, Resume, handler
-from doeff.program import ProgramHandler
+from doeff import Effect, Pass, Resume, do
 from doeff_notify._effects import Acknowledge, Notify, NotifyThread
 from doeff_notify._types import Channel, NotificationResult
 
@@ -46,26 +45,19 @@ def collected_notifications(capture: NotificationCapture) -> list[Notify]:
 
 def build_testing_handler(
     *,
-    capture: NotificationCapture | None = None,
     auto_acknowledge: bool = False,
     default_channel: str = Channel.TESTING,
-) -> ProgramHandler:
-    """The handler that answers notification effects in memory and records them in ``capture``.
+) -> tuple[ProtocolHandler, NotificationCapture]:
+    """Create a handler that captures notifications in memory."""
 
-    A handler factory (ADR-DOE-API-001 R3), applied like every handler:
-    ``testing_handler(capture=capture)(program)``. Make the ``NotificationCapture`` first and read it
-    after the run; without one the handler records into a capture of its own that nothing reads.
-    Effects other than ``Notify``, ``NotifyThread`` and ``Acknowledge`` pass outward.
-    """
-
-    recorded = NotificationCapture() if capture is None else capture
+    capture = NotificationCapture()
     seen_ids: set[str] = set()
     next_id = count(1)
 
-    @handler
-    def testing_notifications(effect: Effect, k: Any):
+    @do
+    def _handler(effect: Effect, k: Any):
         if isinstance(effect, Notify):
-            recorded.notifications.append(effect)
+            capture.notifications.append(effect)
             notification_id = f"{default_channel}-{next(next_id)}"
             seen_ids.add(notification_id)
             return (
@@ -80,17 +72,17 @@ def build_testing_handler(
             )
 
         if isinstance(effect, NotifyThread):
-            recorded.thread_updates.append(effect)
+            capture.thread_updates.append(effect)
             return (yield Resume(k, None))
 
         if isinstance(effect, Acknowledge):
-            recorded.acknowledgements.append(effect)
+            capture.acknowledgements.append(effect)
             acknowledged = auto_acknowledge and effect.notification_id in seen_ids
             return (yield Resume(k, acknowledged))
 
         return (yield Pass(effect, k))
 
-    return testing_notifications
+    return _handler, capture
 
 
 testing_handler = build_testing_handler

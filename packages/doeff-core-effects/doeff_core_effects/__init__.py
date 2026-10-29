@@ -265,14 +265,63 @@ if TYPE_CHECKING:
     from doeff_core_effects._thread_pool_compute import (
         thread_pool_compute_handler as thread_pool_compute_handler,
     )
-    from doeff_core_effects._file_effects import file_done as file_done
-    from doeff_core_effects._inline_compute import computed as computed
-    from doeff_core_effects._meter_prometheus import render_prometheus as render_prometheus
-    from doeff_core_effects._offloaded_call import offloaded as offloaded
-    from doeff_core_effects._python_bytecode import checked_hash_pyc as checked_hash_pyc
-    from doeff_core_effects._python_bytecode import compiled_pyc as compiled_pyc
-    from doeff_core_effects._seeded_random import seeded_bytes as seeded_bytes
-    from doeff_core_effects._stack_dump_effects import stack_dumps_at as stack_dumps_at
+    from doeff_core_effects._http_server_effects import AppendHttpScript as AppendHttpScript
+    from doeff_core_effects._http_server_effects import HttpAddress as HttpAddress
+    from doeff_core_effects._http_server_effects import HttpBody as HttpBody
+    from doeff_core_effects._http_server_effects import HttpBodyBytes as HttpBodyBytes
+    from doeff_core_effects._http_server_effects import HttpBodyFailed as HttpBodyFailed
+    from doeff_core_effects._http_server_effects import HttpBodyFileRange as HttpBodyFileRange
+    from doeff_core_effects._http_server_effects import HttpBodyOutcome as HttpBodyOutcome
+    from doeff_core_effects._http_server_effects import HttpBodyRead as HttpBodyRead
+    from doeff_core_effects._http_server_effects import HttpBodyTooLarge as HttpBodyTooLarge
+    from doeff_core_effects._http_server_effects import HttpCommand as HttpCommand
+    from doeff_core_effects._http_server_effects import HttpEvent as HttpEvent
+    from doeff_core_effects._http_server_effects import HttpForward as HttpForward
+    from doeff_core_effects._http_server_effects import HttpHeader as HttpHeader
+    from doeff_core_effects._http_server_effects import HttpListen as HttpListen
+    from doeff_core_effects._http_server_effects import HttpNextRequest as HttpNextRequest
+    from doeff_core_effects._http_server_effects import HttpNoBody as HttpNoBody
+    from doeff_core_effects._http_server_effects import HttpProbe as HttpProbe
+    from doeff_core_effects._http_server_effects import HttpProbeAnswer as HttpProbeAnswer
+    from doeff_core_effects._http_server_effects import HttpReadBody as HttpReadBody
+    from doeff_core_effects._http_server_effects import HttpRequestArrived as HttpRequestArrived
+    from doeff_core_effects._http_server_effects import HttpRespond as HttpRespond
+    from doeff_core_effects._http_server_effects import HttpScript as HttpScript
+    from doeff_core_effects._http_server_effects import HttpServed as HttpServed
+    from doeff_core_effects._http_server_effects import HttpServerClosed as HttpServerClosed
+    from doeff_core_effects._http_server_effects import HttpShutdown as HttpShutdown
+    from doeff_core_effects._http_server_effects import HttpStopListening as HttpStopListening
+    from doeff_core_effects._http_server_effects import HttpTakeQueued as HttpTakeQueued
+    from doeff_core_effects._http_server_effects import ReadHttpServed as ReadHttpServed
+    from doeff_core_effects._http_server_effects import ScriptedBody as ScriptedBody
+    from doeff_core_effects._http_server_effects import ScriptedUpstream as ScriptedUpstream
+    from doeff_core_effects._http_server_effects import TakeWsSendReport as TakeWsSendReport
+    from doeff_core_effects._http_server_effects import WsAccept as WsAccept
+    from doeff_core_effects._http_server_effects import WsBinaryArrived as WsBinaryArrived
+    from doeff_core_effects._http_server_effects import WsClose as WsClose
+    from doeff_core_effects._http_server_effects import WsCloseFrame as WsCloseFrame
+    from doeff_core_effects._http_server_effects import WsCloseSent as WsCloseSent
+    from doeff_core_effects._http_server_effects import WsClosed as WsClosed
+    from doeff_core_effects._http_server_effects import WsEvent as WsEvent
+    from doeff_core_effects._http_server_effects import WsForward as WsForward
+    from doeff_core_effects._http_server_effects import WsOpened as WsOpened
+    from doeff_core_effects._http_server_effects import WsSendReport as WsSendReport
+    from doeff_core_effects._http_server_effects import WsSendText as WsSendText
+    from doeff_core_effects._http_server_effects import WsSendTextEach as WsSendTextEach
+    from doeff_core_effects._http_server_effects import WsShortcut as WsShortcut
+    from doeff_core_effects._http_server_effects import WsShortcutAnswered as WsShortcutAnswered
+    from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortcutFailed
+    from doeff_core_effects._http_server_effects import WsTextArrived as WsTextArrived
+    from doeff_core_effects._http_server_effects import WsTextSent as WsTextSent
+    from doeff_core_effects._http_server_effects import ws_shortcut_for as ws_shortcut_for
+    from doeff_core_effects._http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
+    from doeff_core_effects._aiohttp_http_server import WebEdge as WebEdge
+    from doeff_core_effects._aiohttp_http_server import aiohttp_http_server as aiohttp_http_server
+    from doeff_core_effects._scripted_http_server import ScriptSend as ScriptSend
+    from doeff_core_effects._scripted_http_server import script_sent as script_sent
+    from doeff_core_effects._scripted_http_server import (
+        scripted_http_server as scripted_http_server,
+    )
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -427,15 +476,61 @@ _LAZY_EXPORTS = {
     "CacheLifecycle": "doeff_core_effects._cache_policy",
     "CachePolicy": "doeff_core_effects._cache_policy",
     "CacheStorage": "doeff_core_effects._cache_policy",
-    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
-    "file_done": "doeff_core_effects._file_effects",
-    "computed": "doeff_core_effects._inline_compute",
-    "render_prometheus": "doeff_core_effects._meter_prometheus",
-    "offloaded": "doeff_core_effects._offloaded_call",
-    "checked_hash_pyc": "doeff_core_effects._python_bytecode",
-    "compiled_pyc": "doeff_core_effects._python_bytecode",
-    "seeded_bytes": "doeff_core_effects._seeded_random",
-    "stack_dumps_at": "doeff_core_effects._stack_dump_effects",
+    "AppendHttpScript": "doeff_core_effects._http_server_effects",
+    "HttpAddress": "doeff_core_effects._http_server_effects",
+    "HttpBody": "doeff_core_effects._http_server_effects",
+    "HttpBodyBytes": "doeff_core_effects._http_server_effects",
+    "HttpBodyFailed": "doeff_core_effects._http_server_effects",
+    "HttpBodyFileRange": "doeff_core_effects._http_server_effects",
+    "HttpBodyOutcome": "doeff_core_effects._http_server_effects",
+    "HttpBodyRead": "doeff_core_effects._http_server_effects",
+    "HttpBodyTooLarge": "doeff_core_effects._http_server_effects",
+    "HttpCommand": "doeff_core_effects._http_server_effects",
+    "HttpEvent": "doeff_core_effects._http_server_effects",
+    "HttpForward": "doeff_core_effects._http_server_effects",
+    "HttpHeader": "doeff_core_effects._http_server_effects",
+    "HttpListen": "doeff_core_effects._http_server_effects",
+    "HttpNextRequest": "doeff_core_effects._http_server_effects",
+    "HttpNoBody": "doeff_core_effects._http_server_effects",
+    "HttpProbe": "doeff_core_effects._http_server_effects",
+    "HttpProbeAnswer": "doeff_core_effects._http_server_effects",
+    "HttpReadBody": "doeff_core_effects._http_server_effects",
+    "HttpRequestArrived": "doeff_core_effects._http_server_effects",
+    "HttpRespond": "doeff_core_effects._http_server_effects",
+    "HttpScript": "doeff_core_effects._http_server_effects",
+    "HttpServed": "doeff_core_effects._http_server_effects",
+    "HttpServerClosed": "doeff_core_effects._http_server_effects",
+    "HttpShutdown": "doeff_core_effects._http_server_effects",
+    "HttpStopListening": "doeff_core_effects._http_server_effects",
+    "HttpTakeQueued": "doeff_core_effects._http_server_effects",
+    "ReadHttpServed": "doeff_core_effects._http_server_effects",
+    "ScriptedBody": "doeff_core_effects._http_server_effects",
+    "ScriptedUpstream": "doeff_core_effects._http_server_effects",
+    "TakeWsSendReport": "doeff_core_effects._http_server_effects",
+    "WsAccept": "doeff_core_effects._http_server_effects",
+    "WsBinaryArrived": "doeff_core_effects._http_server_effects",
+    "WsClose": "doeff_core_effects._http_server_effects",
+    "WsCloseFrame": "doeff_core_effects._http_server_effects",
+    "WsCloseSent": "doeff_core_effects._http_server_effects",
+    "WsClosed": "doeff_core_effects._http_server_effects",
+    "WsEvent": "doeff_core_effects._http_server_effects",
+    "WsForward": "doeff_core_effects._http_server_effects",
+    "WsOpened": "doeff_core_effects._http_server_effects",
+    "WsSendReport": "doeff_core_effects._http_server_effects",
+    "WsSendText": "doeff_core_effects._http_server_effects",
+    "WsSendTextEach": "doeff_core_effects._http_server_effects",
+    "WsShortcut": "doeff_core_effects._http_server_effects",
+    "WsShortcutAnswered": "doeff_core_effects._http_server_effects",
+    "WsShortcutFailed": "doeff_core_effects._http_server_effects",
+    "WsTextArrived": "doeff_core_effects._http_server_effects",
+    "WsTextSent": "doeff_core_effects._http_server_effects",
+    "ws_shortcut_for": "doeff_core_effects._http_server_effects",
+    "ws_shortcut_outcome": "doeff_core_effects._http_server_effects",
+    "WebEdge": "doeff_core_effects._aiohttp_http_server",
+    "aiohttp_http_server": "doeff_core_effects._aiohttp_http_server",
+    "ScriptSend": "doeff_core_effects._scripted_http_server",
+    "script_sent": "doeff_core_effects._scripted_http_server",
+    "scripted_http_server": "doeff_core_effects._scripted_http_server",
 }
 
 

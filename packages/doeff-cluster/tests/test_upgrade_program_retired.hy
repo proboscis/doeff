@@ -9,7 +9,7 @@
 (import pathlib [Path])
 
 (val RETIRED-MODULES #("doeff_cluster.shared.core.upgrade_program" "doeff_cluster.shared.intent.upgrade_model"
-                       "doeff_cluster._sim.flux" "doeff_cluster.coordinator.core.upgrade_invariants"))
+                       "doeff_cluster.sim.flux" "doeff_cluster.coordinator.core.upgrade_invariants"))
 (val ARCHITECTURE (/ (. (.resolve (Path __file__)) parent parent) "architecture.hy"))
 
 

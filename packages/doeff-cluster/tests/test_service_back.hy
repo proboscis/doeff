@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.service_back [SERVICE-BACK-CHANGE-SECONDS service-back service-back-within])
 (import doeff_cluster.shared.intent.detached_model [ServiceReady])
-(import doeff_cluster [sim-cluster SimWorker ReadCoordinator KillWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator KillWorker])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])
 

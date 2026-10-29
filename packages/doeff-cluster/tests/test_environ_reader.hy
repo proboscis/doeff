@@ -33,7 +33,7 @@
 (import doeff_cluster.foundation.process_versions [process-versions])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
-(import doeff_cluster [sim-cluster SimWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import doeff_cluster.shared.core.remote_rules [remote-job])
 (import tests.detached_rig [MemoryCoordinator RIG-PROVIDES])
 (import tests.fixtures.entry_programs [environ-read environ-resolved-read])

@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_traverse.effects -> doeff_traverse._effects
+# moved-submodule-shim-names doeff_traverse.effects:
+#   Collection Fail Inspect ItemOutcome ItemOutcomeKind ItemOutcomeNotPassedError ItemResult Reduce
+#   Skip SortBy Take Traverse Zip
 """Moved: ``doeff_traverse.effects`` is now ``doeff_traverse._effects`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

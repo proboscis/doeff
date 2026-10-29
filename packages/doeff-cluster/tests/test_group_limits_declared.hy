@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.protocol.detached [detached-queue-of-state])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster [sim-cluster SimWorker ReadCoordinator])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator])
 (import tests.program_rows [program-placed task-body-of])
 (import tests.detached_rig [slow-add RIG-PROVIDES])
 (import tests.state_rows [table-from-rows])

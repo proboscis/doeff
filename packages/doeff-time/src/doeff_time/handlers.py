@@ -1,4 +1,19 @@
 # moved-submodule-shim: doeff_time.handlers -> doeff_time._handlers
+# moved-submodule-shim-names doeff_time.handlers:
+#   ProtocolHandler async_time_handler sim_time_handler sync_time_handler
+# moved-submodule-shim-names doeff_time.handlers.async_time:
+#   AsyncTimeEffect AsyncTimeRuntime DEADLINE_PASSED DelayEffect GetMonotonicEffect GetTimeEffect
+#   ProtocolHandler RaceWithinEffect ScheduleAtEffect WaitTicksEffect WaitUntilEffect
+#   WaitWithinEffect async_time_handler timed_wait_answer timed_wait_futures timed_wait_seconds
+# moved-submodule-shim-names doeff_time.handlers.sim_time:
+#   CLOCK_TICK DEADLINE_PASSED DelayEffect EPOCH_UTC GetMonotonicEffect GetTimeEffect LogFormatter
+#   ProtocolHandler RaceOutcome RaceWithinEffect ScheduleAtEffect SetTimeEffect SimClock
+#   SimTimeRuntime TicksOutcome TimeQueue WaitTicksEffect WaitUntilEffect WaitWithinEffect
+#   sim_time_handler
+# moved-submodule-shim-names doeff_time.handlers.sync_time:
+#   DEADLINE_PASSED DelayEffect GetMonotonicEffect GetTimeEffect ProtocolHandler RaceWithinEffect
+#   ScheduleAtEffect SyncTimeRuntime WaitTicksEffect WaitUntilEffect WaitWithinEffect
+#   sync_time_handler timed_wait_answer timed_wait_futures timed_wait_seconds
 """Moved: ``doeff_time.handlers`` is now ``doeff_time._handlers`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

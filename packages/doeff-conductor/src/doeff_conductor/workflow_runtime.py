@@ -1,4 +1,12 @@
 # moved-submodule-shim: doeff_conductor.workflow_runtime -> doeff_conductor._workflow_runtime
+# moved-submodule-shim-names doeff_conductor.workflow_runtime:
+#   Agent AgentSpec AgentTask ArtifactSpec BindSpec Commit CreateWorkspace ErrValue Exec ExecResult
+#   FieldRef GateOption GateSpec Issue LoopSpec MergeConflict MergeSpec MergeStrategy
+#   MergeWorkspaces MergeWorkspacesResult OkValue OksProjection OpenGateView ParallelForSpec
+#   ParallelSpec ParkedValue PhaseSpec ProfileBinding ProfileRegistry PromptExpr QuorumResult
+#   RandomCall RandomSpec Ref ResolvedIdentity TimeCall TimeSpec ToleratedLoss WorkflowRuntimeResult
+#   WorkflowSpec Workspace WorkspaceSpec load_profile_registry_from_env resolve_agent_profile
+#   workflow_spec_to_program
 """Moved: ``doeff_conductor.workflow_runtime`` is now ``doeff_conductor._workflow_runtime`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

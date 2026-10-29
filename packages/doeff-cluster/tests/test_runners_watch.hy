@@ -15,7 +15,7 @@
 (import tests.transport_http [transport-http route-cell TEST-ROUTE])
 (import collections.abc [Callable])
 (import doeff_cluster.shared.intent.detached_model [AwaitRunnersChange RunnersChange RunnersWatchMissing RunnersUnreachable RunnersChangeAnswer])
-(import doeff_cluster [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator DrainWorker FailRoute KillWorker StartWorker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])

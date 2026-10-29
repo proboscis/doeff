@@ -6,7 +6,7 @@
 ;;;   records-settings       設定の読み: 呼び手が渡す DSN の Program と env(ReadEnvironment)から、設定の値 RecordsSettings にする
 ;;;   pg-url-file-dsn        単独の入口の DSN の得方: env RECORDS_PG_URL_FILE の path の file を ReadText で読み、呼び手の dsn-of で DSN にする
 ;;;   records-serving        本体の設定: 表の宣言 schema と設定の値と置き場の選び(StoreChoice — PostgreSQL = PG-STORE・memory =
-;;;                          doeff_records.memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
+;;;                          doeff_records._memory の memory-store-choice)から、入口の Program の設定(RecordsServing)を作る(#1608)
 ;;;   records-process        本体の組み立て — 土台 foundation を引数で受け、serve-records を土台の下で走らせる(#834 の形・会話の記録の
 ;;;                          service の record-process と同じ)。本番と検が同じ 1 つを通る
 ;;;   records-connected      土台の口(待ち受けと置き場): PostgreSQL の接続の貸し出しと pool を開き、待ち受け(aiohttp-http-server)・名乗りの
@@ -64,17 +64,17 @@
 (import doeff_core_effects.process_effects [ReadEnvironment])
 (import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler])
-(import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [aiohttp-http-server])
+(import doeff_core_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
 (import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records._values [RecordsSchema])
-(import doeff_records.pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
-(import doeff_records.pg_sql [DEFAULT-PREFIX])
-(import doeff_records.http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
+(import doeff_records._pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
+(import doeff_records._pg_sql [DEFAULT-PREFIX])
+(import doeff_records._http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records._store_choice [StoreChoice StorePressure PressureUnread])
 
 (val MODULE-TAGS {:context "records" :role "entry"})
@@ -339,7 +339,7 @@
   {:pre [(: schema RecordsSchema) (: settings RecordsSettings) (: choice StoreChoice)] :post [(: % RecordsServing)]
    :tags {:context "records" :role "entry"}}
   "本体(serve-records)の設定を、表の宣言 schema と設定の値と置き場の選び choice から作るため。表の用意(prepare)と /readyz の問い
-   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records.memory の memory-store-choice。
+   (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records._memory の memory-store-choice。
    以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
   (RecordsServing :address settings.address :schema schema
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()

@@ -1,6 +1,6 @@
 """Effects on the workflows a run recorded in the state directory.
 
-A workflow run under ``agentic_effectful_handlers()`` records itself and its agents
+A workflow run under ``with_agentic_effectful_handlers`` records itself and its agents
 under the state directory (``~/.local/state/doeff-agentic``). A monitor — the
 ``doeff-agentic`` CLI and the ``doeff-agentic-tui`` screens — reads and acts on those
 records with these effects; ``recorded_workflows_handler`` answers them.

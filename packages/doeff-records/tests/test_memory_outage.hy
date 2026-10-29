@@ -13,7 +13,8 @@
 (import doeff_records [ExpectAbsent Written Missing Unreachable Appended WatchCursor Changes EventsQuiet])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd])
 (import doeff_records [SetStoreOutage])
-(import doeff_records.memory [MemoryStore memory-records-handler memory-store-choice])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore memory-store-choice])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 
 (val DETAIL "記録の service が落ちている(筋書き)")

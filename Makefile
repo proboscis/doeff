@@ -199,10 +199,10 @@ PACKAGE_UV_RUN ?= uv run
 #   root の段の pytest の命令(.agents/land-queue.toml)も同じ 2 つを持つ(card acp:kanban-issue:ki-b8a436264866)。
 PACKAGE_PYTEST_DURATIONS ?= --durations=0 --durations-min=10
 # package の tests/ の外に在る検の根(package ごとの tests/ と同じく、根ごとに別の session で走らせる)。
-# - packages/doeff-cluster/src/doeff_cluster/_sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
+# - packages/doeff-cluster/src/doeff_cluster/sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・fixture は package の根の conftest.py(source は pytest を
 #   import しない — src の外で検の dir の祖先に当たる置き場・agora-redesign #2681)・agora-redesign #2542)。
-PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/_sim
+PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/sim
 # 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)と、登記の前の入口の session の境目
 # (scripts/run_changed_tests.py の read_session_roots・agora-redesign #2682)は下の target で読む
 # (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる・agora-redesign #2577)。

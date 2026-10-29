@@ -17,7 +17,8 @@
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
-(import doeff_cluster [sim-cluster SimWorker DrainWorker StopWorker StartWorker StopCoordinator ReplaceWorker WorkerOf ReadCoordinator])
+(import doeff_cluster.sim.local [sim-cluster SimWorker DrainWorker StopWorker StartWorker StopCoordinator ReplaceWorker WorkerOf
+                                 ReadCoordinator])
 (import tests.detached_rig [slow-add])
 
 (val OLD "d563ab95a0000000000000000000000000000000")

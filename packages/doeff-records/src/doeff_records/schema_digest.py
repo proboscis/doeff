@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_records.schema_digest -> doeff_records._schema_digest
+# moved-submodule-shim-names doeff_records.schema_digest:
+#   MODULE_TAGS RecordsSchema schema_digests
 """Moved: ``doeff_records.schema_digest`` is now ``doeff_records._schema_digest`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

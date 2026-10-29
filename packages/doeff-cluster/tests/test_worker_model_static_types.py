@@ -31,7 +31,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster._sim.local [sim-cluster])
+(import doeff_cluster.sim.local [sim-cluster])
 (import doeff_events [MemoryBroker])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView CodeView CodeState ProcessView JobStatus
                                                   ObserveWorld ReadDesired DesiredJobs DesiredUnreadable])

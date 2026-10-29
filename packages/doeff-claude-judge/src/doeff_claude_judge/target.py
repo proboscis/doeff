@@ -1,4 +1,6 @@
 # moved-submodule-shim: doeff_claude_judge.target -> doeff_claude_judge._target
+# moved-submodule-shim-names doeff_claude_judge.target:
+#   BorrowJudgeCredential ClaudeJudgeTarget FORBIDDEN_CHARS JudgeCredential NoJudgeCredential
 """Moved: ``doeff_claude_judge.target`` is now ``doeff_claude_judge._target`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

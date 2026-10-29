@@ -19,7 +19,7 @@
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
 (import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers liveness-due note-liveness])
-(import doeff_cluster._sim.local [SimPlan SIM-TIMING-RATIO sim-plan])
+(import doeff_cluster.sim.local [SimPlan SIM-TIMING-RATIO sim-plan])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 

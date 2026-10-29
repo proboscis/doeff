@@ -334,6 +334,7 @@
       "doeff_agentic.handlers.testing",
       "doeff_agentic.handlers.tmux",
       "doeff_agentic.opencode_handler",
+      "doeff_agentic.runtime",
       "doeff_agentic.state",
       "doeff_agentic.tmux_handler",
       "doeff_agentic.types",
@@ -398,6 +399,20 @@
       "AgenticWorkflowStatus",
       "WorkflowInfo",
       "WorkflowStatus"
+     ]
+    },
+    "境界 — handler と読める名(道具が読めない)": {
+     "doeff_agentic.handler": [
+      "with_agentic_effectful_handlers"
+     ],
+     "doeff_agentic.handlers": [
+      "with_agentic_effectful_handlers"
+     ],
+     "doeff_agentic.handlers.production": [
+      "with_agentic_effectful_handlers"
+     ],
+     "doeff_agentic.runtime": [
+      "with_handlers"
      ]
     },
     "境界 — handler の設定の型": {
@@ -10267,6 +10282,20 @@
       "MergeWorkspacesResult"
      ]
     },
+    "境界 — handler と読める名(道具が読めない)": {
+     "doeff_conductor": [
+      "make_async_scheduled_handler",
+      "make_blocking_scheduled_handler"
+     ],
+     "doeff_conductor.handlers": [
+      "make_async_scheduled_handler",
+      "make_blocking_scheduled_handler"
+     ],
+     "doeff_conductor.handlers.utils": [
+      "make_async_scheduled_handler",
+      "make_blocking_scheduled_handler"
+     ]
+    },
     "境界 — handler の設定の型": {
      "doeff_conductor": [
       "DefaultReviewRouter",
@@ -11505,6 +11534,11 @@
      ],
      "doeff_core_effects.scheduler": [
       "scheduled"
+     ]
+    },
+    "境界 — combinator(program を包む関数)": {
+     "doeff_core_effects.apart_call": [
+      "run_apart"
      ]
     },
     "境界 — effect の値の型": {
@@ -14094,6 +14128,18 @@
      "doeff_notify.types": [
       "NotificationResult"
      ]
+    },
+    "境界 — handler と読める名(道具が読めない)": {
+     "doeff_notify": [
+      "testing_handler"
+     ],
+     "doeff_notify.handlers": [
+      "testing_handler"
+     ],
+     "doeff_notify.handlers.testing": [
+      "build_testing_handler",
+      "testing_handler"
+     ]
     }
    }
   },
@@ -15458,7 +15504,6 @@
       "WireRefusal",
       "WireRequest",
       "answer_reply",
-      "encode_answer",
       "hyx_off_loop_answerXquestion_markX",
       "keyed_request",
       "refusal_json",
@@ -16001,6 +16046,11 @@
       "Refused",
       "Row",
       "RowsRefused"
+     ]
+    },
+    "境界 — handler と読める名(道具が読めない)": {
+     "doeff_records.http_server": [
+      "ready_handlers"
      ]
     },
     "境界 — 例外の型": {
@@ -18671,461 +18721,6 @@
    "name": "SymbolInfo",
    "訳": "effect FindSymbols の答えの 1 行の型(R2 の effect の結果の型)。前は Rust の拡張の class で、目録は doeff-indexer を環境に持たず字面で読んだので数えていなかった。索引を引く口を effect FindSymbols と handler rust_indexer にし(class Indexer は内側の拡張 doeff_indexer._native へ)、doeff-indexer を make sync の環境に入れて目録が import で読むようにした時に、Python の frozen dataclass として入口から見せた。R2 の型を目録の道具が許す物と数えるまで、R12 のとおりここに置く",
    "決め": "lt-ZDN45RSNPV16BKSM997GGZ9CVB"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.api_policy",
-   "name": "OUTBOX_ENDED",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "background_reserve_of",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main a227592e6・card ki-66ebb596d7d6 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.detached_policy",
-   "name": "OUTBOX_ENDED",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.detached_policy",
-   "name": "OUTBOX_QUEUED_OVERDUE",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.detached_policy",
-   "name": "QUEUED_OVERDUE_SUFFIX",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.detached_policy",
-   "name": "overdue_of",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.detached_policy",
-   "name": "queued_noticed",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.program",
-   "name": "queued_noticed",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.protocol.cluster_json",
-   "name": "OUTBOX_ENDED",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.readiness_rules",
-   "name": "ENVIRON_NUMBER",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.readiness_rules",
-   "name": "environ_number",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.readiness_rules",
-   "name": "readiness_environ_refusal",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.readiness_rules",
-   "name": "readiness_from_environ",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.service_build",
-   "name": "readiness_environ_refusal",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.service_build",
-   "name": "readiness_from_environ",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main 6a255fd32・card ki-c769c85559bf — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.intent.detached_model",
-   "name": "OUTBOX_ENDED",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.intent.detached_model",
-   "name": "OUTBOX_KINDS",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.intent.detached_model",
-   "name": "OUTBOX_QUEUED_OVERDUE",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.detached",
-   "name": "outbox_query",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.sim.local",
-   "name": "outbox_query",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main eafa71f80・card ki-4b6613f39c80 — doeff main f064198f8 の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "(submodule)",
-   "name": "doeff_cluster.shared.core.supplied_spelling",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "(submodule)",
-   "name": "doeff_cluster.worker.protocol.supplied_hold",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "supplied_for",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "supplied_spellings",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.supplied_spelling",
-   "name": "MODULE_TAGS",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.supplied_spelling",
-   "name": "OBJECT_SPELLING",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.supplied_spelling",
-   "name": "REF_SPELLING",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.supplied_spelling",
-   "name": "supplied_spellings",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "CopyPlace",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "HELD_DIR_NAME",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "HeldCopy",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "HeldWant",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "HoldDone",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "HoldTally",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "NoCopy",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "REFUSED_STATUSES",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "WORKER_SPELLING",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "copy_place",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "copy_text",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "datetime_of_epoch_ms",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "held_copy_entries",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "held_copy_path",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "held_wants",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "hold_one",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "hold_supplied",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "hyx_worker_spelledXquestion_markX",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "listed_names",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "now_epoch_ms",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "object_answer",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "object_text",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "private_dirs",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "pruned_copies",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.entry.main",
-   "name": "SuppliedHoldCell",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.entry.main",
-   "name": "SuppliedHoldSettings",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.entry.main",
-   "name": "supplied_hold_loop",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.coordinator_link",
-   "name": "accepted_supplied",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "HoldTally",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "LinkState",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "MODULE_TAGS",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "SuppliedHoldCell",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "SuppliedHoldSettings",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "hold_supplied",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "now_epoch_ms",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "supplied_hold_loop",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.supplied_hold",
-   "name": "supplied_hold_step",
-   "訳": "R15 で表を組に分け直した後(06df12fc0)に普通の開発が足した名(doeff main d4fe279f3・ADR-DOE-CLUSTER-004 — doeff main 5b57bdc8a の目録で表に無い・card ki-9b8308f2c7c3)。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠し、段 3 で移し替えの module を消すと目録から消える",
-   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
   }
  ]
 }

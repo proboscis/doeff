@@ -1,4 +1,7 @@
 # moved-submodule-shim: doeff_hy_bytecode_guard.expansion_trees -> doeff_hy_bytecode_guard._expansion_trees
+# moved-submodule-shim-names doeff_hy_bytecode_guard.expansion_trees:
+#   COMPRESSION_LEVEL ImportTree MacroRecord RECORD_TAG TREE_TAG add_import_tree read_import_tree
+#   record_fingerprint record_is_current_here tree_store
 """Moved: ``doeff_hy_bytecode_guard.expansion_trees`` is now ``doeff_hy_bytecode_guard._expansion_trees`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

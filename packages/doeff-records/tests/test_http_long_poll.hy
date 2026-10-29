@@ -21,7 +21,7 @@
 (import doeff_records [Changes EventsQuiet Unreachable WatchCursor ExpectAbsent])
 (import doeff_records [ListRows PutRow WatchChanges WatchEvents AppendEvent])
 (import doeff_records._laws [LawHarness MAKER as-writer late-write])
-(import doeff_records.wire [WATCH-MAX-SECONDS])
+(import doeff_records._wire [WATCH-MAX-SECONDS])
 (import doeff_records.http_client [RecordsEndpoint])
 (import tests.interpreters [LawSetup])
 

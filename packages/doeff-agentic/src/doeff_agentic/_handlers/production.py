@@ -415,6 +415,23 @@ def agentic_effectful_handlers(
     return stacked_handlers(agent_runtime, answer_agentic)
 
 
+def with_agentic_effectful_handlers(
+    program: Any,
+    workflow_id: str | None = None,
+    workflow_name: str | None = None,
+    state_dir: Path | str | None = None,
+    agent_runtime: ProgramHandler | None = None,
+) -> Any:
+    """Wrap a program with the legacy agentic effect handler."""
+    return agentic_effectful_handlers(
+        workflow_id=workflow_id,
+        workflow_name=workflow_name,
+        state_dir=state_dir,
+        agent_runtime=agent_runtime,
+    )(program)
+
+
 __all__ = [
     "agentic_effectful_handlers",
+    "with_agentic_effectful_handlers",
 ]

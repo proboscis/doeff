@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_records.typed -> doeff_records._typed
+# moved-submodule-shim-names doeff_records.typed:
+#   Conflict DEFAULT_LIST_LIMIT ExpectAbsent ExpectAny ExpectVersion ListCursor ListRows M
+#   MODULE_TAGS Missing Page PutRow ReadRow Row RowChanged RowRemoved RowType TypedConflict
+#   TypedPage TypedRow TypedRowChanged TypedWritten WatchCursor Written checked_table_name
+#   fields_of_value list_typed model_field_names put_typed read_typed typed_change typed_current
+#   typed_row value_of_fields
 """Moved: ``doeff_records.typed`` is now ``doeff_records._typed`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

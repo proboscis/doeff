@@ -17,7 +17,6 @@ if str(PACKAGE_ROOT) not in sys.path:
 from doeff_notify import (
     Acknowledge,
     Channel,
-    NotificationCapture,
     NotificationResult,
     Notify,
     NotifyThread,
@@ -83,10 +82,9 @@ def _testing_program():
 
 
 def test_testing_handler_collects_notifications_in_memory() -> None:
-    notifications = NotificationCapture()
-    testing = build_testing_handler(capture=notifications, auto_acknowledge=True)
+    handler, notifications = build_testing_handler(auto_acknowledge=True)
 
-    first, acknowledged = run(testing(_testing_program()))
+    first, acknowledged = run(_install_raw_handler(handler)(_testing_program()))
 
     assert isinstance(first, NotificationResult)
     assert first.channel == Channel.TESTING
@@ -162,22 +160,10 @@ def _outer_tell_handler(effect: Effect, k: Any) -> Generator[Any, Any, Any]:
     return (yield Pass(effect, k))
 
 
-def test_testing_handler_is_a_factory_of_a_marked_handler() -> None:
-    """``testing_handler`` is a handler factory: called, it returns a marked handler that records
-    into the capture it is given (ADR-DOE-API-001 R3)."""
-    capture = NotificationCapture()
-    testing = build_testing_handler(capture=capture)
-
-    assert vars(testing)["_doeff_is_handler_fn"] is True
-    assert vars(build_testing_handler())["_doeff_is_handler_fn"] is True
-    run(testing(_testing_program()))
-    assert [each.message for each in capture] == ["Deploy started"]
-
-
 def test_handlers_pass_non_notification_effects_outward() -> None:
     """Unhandled effects must reach the outer handler through ``Pass(effect, k)``."""
 
-    for raw in (console_handler, log_handler, build_testing_handler()):
+    for raw in (console_handler, log_handler, build_testing_handler()[0]):
         result = run(
             _install_raw_handler(_outer_tell_handler)(
                 _install_raw_handler(raw)(_tell_only_program())

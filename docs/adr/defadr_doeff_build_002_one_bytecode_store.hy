@@ -46,7 +46,7 @@
                            "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
                            "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
                            "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/_sim/env_world.hy"})
+                           "packages/doeff-cluster/src/doeff_cluster/sim/env_world.hy"})
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
 (val SCAN-SKIP-PREFIXES #("docs/" ".github/"))

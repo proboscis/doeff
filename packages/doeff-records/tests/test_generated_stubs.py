@@ -152,7 +152,7 @@ def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> Non
 # 使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(card ki-a87c5f8a3b11)。BOUND = 受ける型。
 PREPARED = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_records.pg_sql [Statement schema-statements])
+(import doeff_records._pg_sql [Statement schema-statements])
 (import doeff_records._values [RecordsSchema])
 
 (defk texts-of [schema]

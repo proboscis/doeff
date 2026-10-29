@@ -10,7 +10,7 @@
 (require doeff-hy.record [defrecord])
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
-(import doeff_cluster [sim-cluster SimWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired Crash])
 (import doeff_cluster.shared.intent.job_model [JobPhase])

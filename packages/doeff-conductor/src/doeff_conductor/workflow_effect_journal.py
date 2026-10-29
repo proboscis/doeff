@@ -1,4 +1,10 @@
 # moved-submodule-shim: doeff_conductor.workflow_effect_journal -> doeff_conductor._workflow_effect_journal
+# moved-submodule-shim-names doeff_conductor.workflow_effect_journal:
+#   EFFECT_KIND_RANDOM EFFECT_KIND_TIME JournalCorruptionError RandomCall TERMINAL_KIND_SUCCEEDED
+#   TimeCall WORKFLOW_EFFECT_JOURNAL_FILENAME WORKFLOW_EFFECT_JOURNAL_VERSION WorkflowEffectJournal
+#   WorkflowEffectJournalEntry WorkflowEffectReplayDecision WorkflowEffectReplaySession
+#   evaluate_random_spec journaled_workflow_effect_handler longest_valid_prefix
+#   workflow_effect_cache_key workflow_effect_replay_decision xdg_state_home
 """Moved: ``doeff_conductor.workflow_effect_journal`` is now ``doeff_conductor._workflow_effect_journal`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on

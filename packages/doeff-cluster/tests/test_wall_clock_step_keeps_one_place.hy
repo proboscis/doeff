@@ -18,7 +18,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
-(import doeff_cluster [sim-cluster SimWorker ProcessesOf CutWorker StepWorkerWall])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ProcessesOf CutWorker StepWorkerWall])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 

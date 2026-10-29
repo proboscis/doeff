@@ -26,8 +26,7 @@
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedEnvUnavailable
                                                     DetachedVersionMismatch])
 (import doeff_cluster.shared.protocol.detached [outcome-of-view])
-(import doeff_cluster [sim-cluster SimWorker ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf]
-        doeff_cluster._sim.local [SimLink])
+(import doeff_cluster.sim.local [sim-cluster SimWorker SimLink ClientLink coordinator-answers ReadCoordinator ProcessesOf PreparationsOf])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.remote_model [VersionDiff VersionMismatch])
 (import doeff_cluster.shared.core.remote_rules [version-diffs failed-from])

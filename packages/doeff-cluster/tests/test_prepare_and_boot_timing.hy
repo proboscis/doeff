@@ -34,7 +34,7 @@
 (import doeff_cluster.worker.intent.worker_model [BootMarks])
 (import doeff_cluster.worker.core.boot_timing [read-boot-marks boot-stamps stamps-out-of-order BOOT-STARTED-VAR BOOT-EXEC-VAR])
 (import doeff_cluster.worker.protocol.process_clock [process-clock])
-(import doeff_cluster._sim.env_world [env-world EnvWorld WorldCommit read-world-log world-files])
+(import doeff_cluster.sim.env_world [env-world EnvWorld WorldCommit read-world-log world-files])
 (import tests.env_fixtures [LOCK env-of base-world app-commit lib-commit])
 (import tests.link_rig [LinkRig])
 

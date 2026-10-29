@@ -13,7 +13,7 @@
 (import doeff_core_effects [step-tally-handler])
 (import doeff_core_effects [OpenTaskTally CloseTaskTally TaskTally])
 (import doeff_time [Delay])
-(import doeff_cluster [sim-cluster ProcessesOf SimProcess AwaitProcessStarted])
+(import doeff_cluster.sim.local [sim-cluster ProcessesOf SimProcess AwaitProcessStarted])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulse-program])

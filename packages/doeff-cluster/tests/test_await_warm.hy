@@ -12,7 +12,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
-(import doeff_cluster [sim-cluster SimWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [AwaitWarm WarmState WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.intent.detached_model [ReadRunners AwaitRunnersChange RunnersChange])

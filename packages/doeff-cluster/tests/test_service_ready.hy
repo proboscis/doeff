@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.detached_model [AwaitServiceReady ServiceReady])
 (import doeff_cluster.shared.protocol.detached [DetachedSender service-ready-awaited])
-(import doeff_cluster [sim-cluster SimWorker ReadCoordinator KillWorker])
+(import doeff_cluster.sim.local [sim-cluster SimWorker ReadCoordinator KillWorker])
 (import tests.transport_http [transport-http route-cell TEST-ROUTE])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons NET])

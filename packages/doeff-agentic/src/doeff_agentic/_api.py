@@ -403,7 +403,7 @@ class AgenticAPI:
         from doeff import do, run
         from doeff import handler as _program_handler
 
-        from ._handler import agentic_effectful_handlers
+        from ._handler import with_agentic_effectful_handlers
 
         @do
         def local_session_backend():
@@ -413,11 +413,12 @@ class AgenticAPI:
         wf_name = name or "unnamed"
         wf_id = workflow_id or generate_workflow_id(wf_name)
 
-        wrapped = agentic_effectful_handlers(
+        wrapped = with_agentic_effectful_handlers(
+            program=workflow,
             workflow_id=wf_id,
             workflow_name=wf_name,
             state_dir=self.state_dir,
-        )(workflow)
+        )
         # Entry-point stack, mirroring doeff.cli.run_services.default_interpreter —
         # there is deliberately no public bundled default stack (ADR-DOE-PRESET-001).
         entry_handlers = [

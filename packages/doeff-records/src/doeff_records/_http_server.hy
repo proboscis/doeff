@@ -93,10 +93,8 @@
 (import doeff_core_effects [run-apart])
 (import doeff_core_effects [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
-(import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
-(import doeff_core_effects.http_server_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader
-                                                HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed
-                                                HttpShutdown])
+(import doeff_core_effects [aiohttp-http-server])
+(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown])
 (import doeff_time [Delay GetMonotonic WaitWithin async-time-handler])
 (import doeff_time [WaitWithinEffect])
 (import doeff_hy._frozen [FrozenMap])
@@ -109,9 +107,9 @@
 (import doeff_records.request_timing [RequestMark MarkAt StageSeconds STAGE-METRIC-HELPS STAGE-METRIC-NAMES request-stages sent-stages waited server-timing-spans-of
                                       lock-metric-helps])
 (import doeff_records._service [HttpRequest HttpAnswer RecordsService records-service respond refusal-answer json-answer])
-(import doeff_records.wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
+(import doeff_records._wire [ERROR-INTERNAL ERROR-MALFORMED ERROR-STORE-UNAVAILABLE ANSWER-METRICS ANSWER-METRIC-HELPS answer-metric operation-kind
                             operation-of server-timing-spelled])
-(import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
+(import doeff_records._wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records._store_choice [StorePressure PressureUnread])
 (import doeff_core_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation SecondsTotal])
@@ -970,7 +968,7 @@
     (resume (stopping))))
 
 
-(defk _ready-handlers [handler-for]
+(defk ready-handlers [handler-for]
   {:pre [(: handler-for Callable)] :post [(: % Callable)] :tags {:context "records" :role "entry"}}
   "検の殻の用意: 呼び手が用意し終えた置き場の 書き手の名 → handler をそのまま返すため(用意の I/O は無い)。"
   handler-for)
@@ -996,7 +994,7 @@
         ;; 束の読みの読み解きと綴り(Compute)を回す pool — 殻が開いて、殻の止めで閉じる(頭の註の scheduler の thread の仕事の分け)。
         compute-pool (ThreadPoolExecutor :max-workers SHELL-COMPUTE-WORKERS :thread-name-prefix "doeff-records-compute"))
   (setv serving (RecordsServing :address (HttpAddress :host config.host :port config.port) :schema config.schema
-                                :prepare (_ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
+                                :prepare (ready-handlers config.handler-for) :request-handlers (tuple config.request-handlers)
                                 :max-bytes REQUEST-MAX-BYTES :maintenance config.maintenance :stop-poll-seconds SHELL-STOP-POLL-SECONDS
                                 :drain-seconds 0.0 :meter config.meter :served config.served :callers (tuple config.callers)
                                 :compute-workers SHELL-COMPUTE-WORKERS))

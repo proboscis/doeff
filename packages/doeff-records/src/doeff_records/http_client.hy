@@ -72,7 +72,7 @@
 (import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch ReadRequestPatience])
-(import doeff_records.wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
+(import doeff_records._wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
                             server-timing-spans IDEMPOTENCY-HEADER request-key])

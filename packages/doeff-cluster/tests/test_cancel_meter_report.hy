@@ -10,7 +10,7 @@
 (import dataclasses [dataclass])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster [wall-sim-cluster ReadCoordinator])
+(import doeff_cluster.sim.local [wall-sim-cluster ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.wall_programs [rows-when-present])
 (import tests.fixtures.cancel_meter_programs [cancel-reporters uncounted-cancel-reporters CANCELLED-KEY])

@@ -16,8 +16,7 @@
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster.shared.intent.cluster_control [KillWorker])
-(import doeff_cluster [sim-cluster PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps CutWorker]
-        doeff_cluster._sim.local [SimParts])
+(import doeff_cluster.sim.local [sim-cluster SimParts PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps CutWorker])
 (import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])

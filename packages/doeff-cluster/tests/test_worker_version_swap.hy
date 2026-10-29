@@ -34,9 +34,8 @@
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
 (import doeff_cluster.shared.protocol.detached [detached-cluster DetachedSender])
 (import doeff_cluster.shared.entry.cluster_foundation [coordinator-route-options])
-(import doeff_cluster [SimWorker ReadCoordinator])
-(import doeff_cluster [LocalMachine local-machine-cluster]
-        doeff_cluster._sim.machine [BOOT-SCRIPT coordinator-url])
+(import doeff_cluster.sim.local [SimWorker ReadCoordinator])
+(import doeff_cluster.sim.machine [LocalMachine BOOT-SCRIPT local-machine-cluster coordinator-url])
 (import tests.fixtures.machine_app [generation-work machine-foundation SWAP-PREFIX])
 (import tests.test_local_machine [AppRepo app-repo free-port git leftover])
 

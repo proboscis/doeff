@@ -62,11 +62,11 @@ from doeff_cluster.shared.intent.cluster_control import ReadinessWaitExpired as 
 from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
 from doeff_cluster.shared.intent.cluster_control import JobProcessSeen as JobProcessSeen
 from doeff_cluster.shared.intent.cluster_control import JobProcessWaitExpired as JobProcessWaitExpired
-from doeff_cluster._sim.local import SimWorker as SimWorker
-from doeff_cluster._sim.local import ReadCoordinator as ReadCoordinator
-from doeff_cluster._sim.local import CutWorker as CutWorker
-from doeff_cluster._sim.local import StallWorker as StallWorker
-from doeff_cluster._sim.local import FailRoute as FailRoute
+from doeff_cluster.sim.local import SimWorker as SimWorker
+from doeff_cluster.sim.local import ReadCoordinator as ReadCoordinator
+from doeff_cluster.sim.local import CutWorker as CutWorker
+from doeff_cluster.sim.local import StallWorker as StallWorker
+from doeff_cluster.sim.local import FailRoute as FailRoute
 from doeff_cluster.shared.protocol.coordinator_reads import WAIT_PROBE_SECONDS as WAIT_PROBE_SECONDS
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_read as readiness_read
 from doeff_cluster.shared.protocol.coordinator_reads import readiness_awaited as readiness_awaited

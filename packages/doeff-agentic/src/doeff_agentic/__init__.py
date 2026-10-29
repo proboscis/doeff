@@ -55,6 +55,8 @@ CLI Usage:
     $ doeff-agentic logs <id>                    # View logs
     $ doeff-agentic stop <id>                    # Stop workflow
 """
+from importlib import import_module
+from typing import TYPE_CHECKING
 
 # Effects - new spec-compliant effects
 from ._effects import (
@@ -256,5 +258,33 @@ __all__ = [
     "production_handlers",
     "recorded_workflows_handler",
     "tmux_handler",
+    "with_agentic_effectful_handlers",
+    "with_handlers",
 ]
 
+
+# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
+# them while it loads. `X as X` shows each name to type checkers; `__all__` is not used (DOEFF021).
+if TYPE_CHECKING:
+    from doeff_agentic._handlers.production import (
+        with_agentic_effectful_handlers as with_agentic_effectful_handlers,
+    )
+    from doeff_agentic._runtime import with_handlers as with_handlers
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "with_agentic_effectful_handlers": "doeff_agentic._handlers.production",
+    "with_handlers": "doeff_agentic._runtime",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_LAZY_EXPORTS})

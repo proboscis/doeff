@@ -13,14 +13,15 @@
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest])
-(import doeff_core_effects.http_server_effects [HttpAddress])
+(import doeff_core_effects [HttpAddress])
 (import doeff_time [SimClock])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
-(import doeff_records.memory [MemoryStore memory-records-handler])
+(import doeff_records [memory-records-handler]
+        doeff_records._memory [MemoryStore])
 (import doeff_records._service [HttpRequest :as ServiceRequest])
-(import doeff_records.http_server [records-server-config MarkBook RecordsServing ServedBuild RepoCommit PreparedHandlers REQUEST-MAX-BYTES
-                                   answer-with _ready-handlers start-records-server])
+(import doeff_records [records-server-config MarkBook PreparedHandlers ready-handlers]
+        doeff_records._http_server [RecordsServing ServedBuild RepoCommit REQUEST-MAX-BYTES answer-with start-records-server])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 単体の GET /served の実物(下の BUILD を渡した口が LAW-SCHEMA で答えた本文 — 表の宣言の形が変われば要約も変わる)。
@@ -99,7 +100,7 @@
 (deftest test-served-does-not-ask-whether-the-store-is-prepared
   ;; /served は表の用意を問わない — 用意の読みで落ちる世界でも 200。同じ世界で /readyz は用意を読むので落ちる(反例が効いていることを見る)。
   (val serving (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA
-                               :prepare (_ready-handlers (fn [writer] None)) :request-handlers #() :max-bytes REQUEST-MAX-BYTES
+                               :prepare (ready-handlers (fn [writer] None)) :request-handlers #() :max-bytes REQUEST-MAX-BYTES
                                :maintenance None :stop-poll-seconds 0.1 :drain-seconds 0.0 :served BUILD))
   (<- answer (with_handlers [prepared-handlers-fail] (answer-with serving (MarkBook) (ServiceRequest "GET" "/served" b""))))
   (assert (= answer.status 200) answer)

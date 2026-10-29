@@ -15,7 +15,7 @@
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (val REPLY-SECONDS (/ (. (ClusterTiming) client-reply-ms) 1000.0))  ; 本番の client の返事の打ち切りの既定(ClusterTiming)
-(import doeff_cluster._sim.local [SimLink send-request])
+(import doeff_cluster.sim.local [SimLink send-request])
 (import tests.clock_fixtures [clock-at])
 
 

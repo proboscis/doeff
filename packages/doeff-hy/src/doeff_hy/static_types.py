@@ -1,4 +1,5 @@
 # moved-submodule-shim: doeff_hy.static_types -> doeff_hy._static_types
+# moved-submodule-shim-names doeff_hy.static_types:
 """Moved: ``doeff_hy.static_types`` is now ``doeff_hy._static_types`` (ADR-DOE-API-001 R5).
 
 Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
