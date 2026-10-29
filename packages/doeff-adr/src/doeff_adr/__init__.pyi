@@ -5,6 +5,9 @@ import doeff_hy as doeff_hy
 __all__: tuple[str, ...]
 
 from doeff_adr._effects import (
+    AdrIds as AdrIds,
+)
+from doeff_adr._effects import (
     GetAdr as GetAdr,
 )
 from doeff_adr._effects import (

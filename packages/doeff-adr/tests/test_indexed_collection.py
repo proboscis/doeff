@@ -75,12 +75,13 @@ import doeff_adr
 namespace = {}
 exec('from doeff_adr import *', namespace)
 assert {'AdrSpec', 'register_adr', 'doeff_hy'} <= namespace.keys()
-from doeff_adr import AdrSpec, register_adr, adr_ids, clear_registry
+from doeff_adr import AdrIds, AdrSpec, adr_registry, register_adr, clear_registry
 from doeff_adr.registry import AdrSpec as ActualSpec
+from doeff import run
 assert AdrSpec is ActualSpec
 clear_registry()
 register_adr('lazy', title='lazy', status='accepted')
-assert adr_ids() == ['lazy']
+assert run(adr_registry()(AdrIds())) == ['lazy']
 assert doeff_adr.register_adr is register_adr
 try:
     doeff_adr.unknown_api
