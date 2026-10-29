@@ -154,6 +154,18 @@ FILES = {
         ensure_ascii=False,
         indent=2,
     ),
+    "packages/doeff-linter/data/world_handlers.json": json.dumps(
+        {
+            "_not_listed": {f"{ROOT_NAME}.effects:call_helper": "値を返すだけ"},
+            "handlers": [
+                {"handler": f"{ROOT_NAME}.effects:ping-handler", "touches": ["network"], "why": "ping"},
+                {"handler": f"{ROOT_NAME}.tools.text:shout", "touches": ["file"], "why": "shout"},
+                {"handler": "elsewhere.io:real-handler", "touches": ["file"], "why": "外の package"},
+            ],
+        },
+        ensure_ascii=False,
+        indent=1,
+    ),
     "docs/guide.md": f"""
         # Guide
 
@@ -290,6 +302,41 @@ def _check_table(repo: Path) -> None:
     [package] = tool._inventory_tool().inventory(repo, [PACKAGE], 1, 100)
     table = json.loads(_text(repo, "tests/data/public_api_known_violations.json"))
     tool._table_guard().check_package(package, table)
+
+
+CATALOG = "packages/doeff-linter/data/world_handlers.json"
+
+
+def _catalog_spellings(repo: Path) -> list[str]:
+    return [row["handler"] for row in json.loads(_text(repo, CATALOG))["handlers"]]
+
+
+def _catalog_missing_old_spellings(repo: Path) -> list[str]:
+    """doeff-linter の検 catalog_keeps_the_old_spelling_of_every_moved_handler と同じ条件の抜け。
+
+    1 行目に移し替えの印を持つ module が残る間、移した先の _ の綴り(子が package ならその下の module も)の行には、
+    古い綴りの行も目録に要る(linter は :wraps の綴りを目録の鍵と完全一致で照らす — card ki-1bea6cc16446)。
+    """
+    marks = (
+        path.read_text(encoding="utf-8").split("\n", 1)[0] for path in (repo / "packages").rglob("*.py")
+    )
+    moved_from = {
+        new.strip(): old.strip()
+        for first in marks
+        if first.startswith(tool.SHIM_MARK)
+        for old, new in [first[len(tool.SHIM_MARK) :].split(" -> ")]
+    }
+    spellings = _catalog_spellings(repo)
+    known = {tool._catalog_target(s) for s in spellings}
+    return [
+        f"{spelling} の古い綴り {old_spelling}"
+        for spelling in spellings
+        for module, name in [spelling.split(":", 1)]
+        for new, old in moved_from.items()
+        if module == new or module.startswith(new + ".")
+        for old_spelling in [f"{old}{module[len(new) :]}:{name}"]
+        if tool._catalog_target(old_spelling) not in known
+    ]
 
 
 #: 道具の Report(tools/ は package でなく、型を import できない — 道具を spec から読む所の 1 か所の型)。
@@ -750,6 +797,21 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     assert f"{tool.SHIM_NAMES_MARK} {ROOT_NAME}.effects:" in _text(
         repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py"
     )
+    # 目録の古い綴りの行は書き換えずに残り、前に _ の綴りの行(入口が出す名は入口の綴りの行も)が足る(card ki-1bea6cc16446)。
+    assert _catalog_spellings(repo) == [
+        f"{ROOT_NAME}._effects:ping-handler",
+        f"{ROOT_NAME}:ping_handler",
+        f"{ROOT_NAME}.effects:ping-handler",
+        f"{ROOT_NAME}._tools.text:shout",
+        f"{ROOT_NAME}.tools.text:shout",
+        "elsewhere.io:real-handler",
+    ]
+    assert report.catalog_added == (
+        f"{ROOT_NAME}._effects:ping-handler",
+        f"{ROOT_NAME}:ping_handler",
+        f"{ROOT_NAME}._tools.text:shout",
+    )
+    assert _catalog_missing_old_spellings(repo) == []
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)  # 外の repo は古い path のまま移し替えの module を通る
 
@@ -776,9 +838,48 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
         "境界 — Hy の macro": 1,
     }
     assert finished.table_rows_left == {"境界 — handler の設定の型": 1}
+    # 移し替えの module を消したので、目録の古い綴りの行も消える(載せない物の注の鍵は _ の綴りへ)。
+    assert _catalog_spellings(repo) == [
+        f"{ROOT_NAME}._effects:ping-handler",
+        f"{ROOT_NAME}:ping_handler",
+        f"{ROOT_NAME}._tools.text:shout",
+        "elsewhere.io:real-handler",
+    ]
+    assert finished.catalog_removed == (
+        f"{ROOT_NAME}.effects:ping-handler",
+        f"{ROOT_NAME}.tools.text:shout",
+    )
+    assert list(json.loads(_text(repo, CATALOG))["_not_listed"]) == [
+        f"{ROOT_NAME}._effects:call_helper"
+    ]
     _check_table(repo)
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)
+
+
+def test_finish_renames_an_old_catalog_row_without_its_underscore_row(tmp_path: Path) -> None:
+    """_ の綴りの行が無い古い綴りの行(道具の外で足した行)を、finish は消さずに _ の綴りへ書き換える。"""
+    path = tmp_path / "world_handlers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "handlers": [
+                    {"handler": f"{ROOT_NAME}.effects:ping-handler", "touches": ["file"], "why": "a"},
+                    {"handler": f"{ROOT_NAME}.effects:pong-handler", "touches": ["file"], "why": "b"},
+                    {"handler": f"{ROOT_NAME}._effects:pong-handler", "touches": ["file"], "why": "b"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    removed, notes = tool.finish_catalog(path, [tool.Child(ROOT_NAME, "effects", tmp_path)])
+    assert removed == (f"{ROOT_NAME}.effects:pong-handler",)
+    assert [row["handler"] for row in json.loads(path.read_text(encoding="utf-8"))["handlers"]] == [
+        f"{ROOT_NAME}._effects:ping-handler",
+        f"{ROOT_NAME}._effects:pong-handler",
+    ]
+    assert len(notes) == 1
+    assert f"{ROOT_NAME}.effects:ping-handler → {ROOT_NAME}._effects:ping-handler" in notes[0]
 
 
 CHAIN_PACKAGE = "doeff-fixture-hide-chain"
