@@ -40,11 +40,26 @@ if TYPE_CHECKING:
     from doeff_records._laws import RetiredEvents as RetiredEvents
     from doeff_records._laws import SweepExpired as SweepExpired
     from doeff_records._laws import Swept as Swept
+    from doeff_records._laws import (
+        law_committed_changes_appear_once_in_order as law_committed_changes_appear_once_in_order,
+    )
+    from doeff_records._laws import law_put_rows_is_all_or_nothing as law_put_rows_is_all_or_nothing
+    from doeff_records._laws import law_stale_put_conflicts as law_stale_put_conflicts
+    from doeff_records._laws import (
+        law_undeclared_writes_are_refused as law_undeclared_writes_are_refused,
+    )
     from doeff_records._main import RecordsListening as RecordsListening
     from doeff_records._main import RecordsPrepared as RecordsPrepared
     from doeff_records._main import pg_records_handler as pg_records_handler
     from doeff_records._main import printed_listening as printed_listening
+    from doeff_records._main import records_serving as records_serving
+    from doeff_records._main import records_settings as records_settings
     from doeff_records._main import writer_gates as writer_gates
+    from doeff_records._schema_digest import schema_digests as schema_digests
+    from doeff_records._service import records_service as records_service
+    from doeff_records._typed import list_typed as list_typed
+    from doeff_records._typed import put_typed as put_typed
+    from doeff_records._typed import read_typed as read_typed
     from doeff_records._values import Appended as Appended
     from doeff_records._values import AppendedEvents as AppendedEvents
     from doeff_records._values import AppendEventAnswer as AppendEventAnswer
@@ -220,6 +235,18 @@ _LAZY_EXPORTS: dict[str, str] = {
     "pg_records_handler": "doeff_records._main",
     "printed_listening": "doeff_records._main",
     "writer_gates": "doeff_records._main",
+    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    "law_committed_changes_appear_once_in_order": "doeff_records._laws",
+    "law_put_rows_is_all_or_nothing": "doeff_records._laws",
+    "law_stale_put_conflicts": "doeff_records._laws",
+    "law_undeclared_writes_are_refused": "doeff_records._laws",
+    "records_serving": "doeff_records._main",
+    "records_settings": "doeff_records._main",
+    "schema_digests": "doeff_records._schema_digest",
+    "records_service": "doeff_records._service",
+    "list_typed": "doeff_records._typed",
+    "put_typed": "doeff_records._typed",
+    "read_typed": "doeff_records._typed",
 }
 
 

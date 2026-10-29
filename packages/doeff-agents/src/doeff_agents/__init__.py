@@ -298,6 +298,9 @@ _LAZY_EXPORTS = {
     "default_session_backend": "._session_backend",
     "SessionConfig": "._session_backend",
     "SessionInfo": "._session_backend",
+    # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
+    "account_limit_of": "._handlers.headless_codex",
+    "mcp_server_loop": "._handlers.mcp_server_loop",
 }
 
 if TYPE_CHECKING:
