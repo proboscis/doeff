@@ -415,3 +415,59 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _check_table(repo)
     _run_callers(repo / "callers", src)
     _run_callers(outside / "ext", src)
+
+
+CHAIN_PACKAGE = "doeff-fixture-hide-chain"
+CHAIN_ROOT = "doeff_fixture_hide_chain"
+
+#: 子の package の __init__ と根の __init__ が、子の下の module を古い絶対の path で読む package(doeff_time の形)。
+CHAIN_FILES = {
+    f"packages/{CHAIN_PACKAGE}/pyproject.toml": f"""
+        [project]
+        name = "{CHAIN_PACKAGE}"
+        version = "0"
+
+        [build-system]
+        requires = ["hatchling"]
+        build-backend = "hatchling.build"
+
+        [tool.hatch.build.targets.wheel]
+        packages = ["src/{CHAIN_ROOT}"]
+    """,
+    f"packages/{CHAIN_PACKAGE}/src/{CHAIN_ROOT}/__init__.py": f'''
+        """The fixture package whose child package reads its own module by the old path."""
+
+        from {CHAIN_ROOT}.clock.ticks import Tick as Tick
+    ''',
+    f"packages/{CHAIN_PACKAGE}/src/{CHAIN_ROOT}/clock/__init__.py": f"""
+        from {CHAIN_ROOT}.clock.ticks import Tick as Tick
+    """,
+    f"packages/{CHAIN_PACKAGE}/src/{CHAIN_ROOT}/clock/ticks.py": '''
+        from doeff import EffectBase
+
+
+        class Tick(EffectBase):
+            """The one effect."""
+    ''',
+    "callers/caller.py": f"""
+        from {CHAIN_ROOT}.clock.ticks import Tick
+    """,
+}
+
+
+@pytest.mark.timeout(600)
+def test_hide_points_a_caller_at_the_entry_when_the_child_reads_itself_by_the_old_path(
+    tmp_path: Path,
+) -> None:
+    """子の package の中が子を古い path で読んでも、入口と同じ名を読む呼び手は入口から読む形へ書き換わる。
+
+    入口と比べる子の process が根を読む前に根の中の import を書き換えないと、``_clock/__init__`` の古い path の
+    import が package でない移し替えの module に当たって落ち、呼び手が ``_`` の path へ向いた(card ki-99e6a0ab379b)。
+    """
+    repo = _write_repo(tmp_path / "repo", CHAIN_FILES)
+    report = tool.hide(repo / "packages" / CHAIN_PACKAGE, ["clock"], None, None, [])
+    assert _text(repo, "callers/caller.py") == f"from {CHAIN_ROOT} import Tick\n"
+    assert (report.rewrite.names_to_entry, report.rewrite.names_to_underscore) == (1, 0)
+    assert f"from {CHAIN_ROOT}._clock.ticks import Tick as Tick" in _text(
+        repo, f"packages/{CHAIN_PACKAGE}/src/{CHAIN_ROOT}/_clock/__init__.py"
+    )
