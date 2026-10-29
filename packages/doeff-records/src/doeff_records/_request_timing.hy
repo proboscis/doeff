@@ -1,5 +1,5 @@
 ;;; 記録の service の要求ごとの計時(純粋 — #3688)。要求 1 つに打った刻(単調時計の秒)を区間の秒に割り、計器の秒の観測
-;;; (doeff の ObserveSecondsBatch の列の 1 項 SecondsObservation)の名を綴る。刻を打つのは入口(http_server.hy の要求の task と、記録の
+;;; (doeff の ObserveSecondsBatch の列の 1 項 SecondsObservation)の名を綴る。刻を打つのは入口(_http_server.hy の要求の task と、記録の
 ;;; handler の包み)で、観測の列を計器へ 1 回で積むのも入口。ここは計算と綴りだけ。
 ;;;
 ;;; 何のためか: 書き 1 回が本番で 0.05〜0.11 秒かかるのに、service の側に要求ごとの秒が無く、どの区間が遅いかを読めなかった。区間ごとの
@@ -41,8 +41,8 @@
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [SecondsObservation])
-(import doeff_records.wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
-(import doeff_records.pg_sql [ROWS-UNIT stream-unit table-unit])
+(import doeff_records._wire [OPERATIONS SERVER-TIMING-NAMES ServerSpan server-timing-spelled])
+(import doeff_records._pg_sql [ROWS-UNIT stream-unit table-unit])
 
 (val MODULE-TAGS {:context "records" :role "judgment"})
 
@@ -142,7 +142,7 @@
 
 
 ;; --- 答えに載せる区間の秒(ki-ca4b41612e2e)------------------------------------------------------------------------------------------
-;; 記録の操作の答えは、答えが決まった所までの区間の秒を見出し Server-Timing に載せる(綴りと読みは wire.hy の SERVER-TIMING-HEADER の註 —
+;; 記録の操作の答えは、答えが決まった所までの区間の秒を見出し Server-Timing に載せる(綴りと読みは _wire.hy の SERVER-TIMING-HEADER の註 —
 ;; client と同じ 1 か所)。計器の和と数(GET /metrics)は平均しか言えず、p95 の要求の内訳を言えないので、呼び手が要求ごとに名指せるように
 ;; する。載せる区間の名の並びは wire の SERVER-TIMING-NAMES(区間の名と同じ綴り)。
 (val SERVER-TIMING-STAGES (tuple (gfor name SERVER-TIMING-NAMES (RequestStage name))))
@@ -209,14 +209,14 @@
 
 
 ;; --- 書きの錠の秒(card ki-0306f5a614b4)-------------------------------------------------------------------------------------------
-;; 記録の service の書き 1 回が、錠の単位(pg_sql.hy の頭の註の「書きの錠」— 表の単位 table:<表>・番号の単位 rows・列の単位 stream:<列>)ごとの同じ process の
+;; 記録の service の書き 1 回が、錠の単位(_pg_sql.hy の頭の註の「書きの錠」— 表の単位 table:<表>・番号の単位 rows・列の単位 stream:<列>)ごとの同じ process の
 ;; 並びを待った秒(wait)と、並びを通ってから transaction の答えまで錠を持った秒(hold — 接続の許可の待ち・DB の錠の待ち・文の往復・COMMIT)。
-;; 積むのは pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を
+;; 積むのは _pg.hy の locked-transaction(本番の組み立てだけ)。計器の名: records_lock_<操作>_<単位>_<相>(名の - と : は _)。どの書きが錠を
 ;; 長く持ち、どの単位の書きが待ったかを、2 回読んだ差を数の差で割って読む。系列は宣言の表と列の数で閉じる(LOCK-OPERATIONS × 単位 × 相)。
 ;; 行の書きの持った秒は、2 往復目の中で番号の錠を DB で待った秒も含む(番号の錠は同じ process の並びを通らない)。
 (defenum LockPhase WAIT HOLD)
 (val LOCK-METRIC "records_lock_{}_{}_{}")
-;; 錠の単位ごとの書きの操作の名(pg.hy の handler と回収が名乗る — 単位の名は pg_sql の table-unit・ROWS-UNIT・stream-unit)。
+;; 錠の単位ごとの書きの操作の名(_pg.hy の handler と回収が名乗る — 単位の名は pg_sql の table-unit・ROWS-UNIT・stream-unit)。
 (val TABLE-LOCK-OPERATIONS #("put-row" "put-rows" "sweep-rows"))
 (val ROWS-LOCK-OPERATIONS #("prune-changes" "forget-write-keys"))
 (val STREAM-LOCK-OPERATIONS #("append-event" "append-events" "sweep-stream"))

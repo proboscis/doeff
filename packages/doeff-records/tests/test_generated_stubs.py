@@ -19,17 +19,17 @@ SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 # 使い手の repo の main が import する名(module ごと・2026-10-02 の数え)。
 USED = (
-    UsedModule("http_client", ("RecordsEndpoint", "http-records-handler", "http-table-records-handler")),
+    UsedModule("_http_client", ("RecordsEndpoint", "http-records-handler", "http-table-records-handler")),
     UsedModule(
         "_main",
         ("RecordsSettings", "MaintenancePlan", "records-settings", "pg-url-file-dsn", "records-connected", "pg-handlers-of", "records-serving",
          "PG-STORE"),
     ),
-    UsedModule("admission", ("key-text", "row-matches?", "retention-group-of", "key-from-text")),
+    UsedModule("_admission", ("key-text", "row-matches?", "retention-group-of", "key-from-text")),
     # PostgreSQL の表の用意の検が import する名(使い手の repo の表の用意の検・card ki-a87c5f8a3b11)。
-    UsedModule("pg_sql", ("schema-statements", "writer-lock-key", "migrate-lock-key")),
+    UsedModule("_pg_sql", ("schema-statements", "writer-lock-key", "migrate-lock-key")),
     # 手入れの回収を effect で出す使い手(使い手の repo の写しの検 — 期限の後に SweepExpired を名で出す・2026-10-05)。
-    UsedModule("maintenance", ("SweepExpired", "Swept", "PruneChanges", "Pruned", "ReadChangeLog", "ChangeLog")),
+    UsedModule("_maintenance", ("SweepExpired", "Swept", "PruneChanges", "Pruned", "ReadChangeLog", "ChangeLog")),
     UsedModule(
         "_laws",
         (
@@ -42,7 +42,7 @@ USED = (
         ),
     ),
     UsedModule(
-        "wire",
+        "_wire",
         (
             "PATH-PREFIX",
             "ANSWER-KINDS",
@@ -95,7 +95,7 @@ SIGNAL_SOURCES = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Pure with-handlers])
 (import doeff_events [EventBus subscribed-event-handler])
-(import doeff_records.event_source [ChangedRow SignalTables records-signal-handler])
+(import doeff_records._event_source [ChangedRow SignalTables records-signal-handler])
 
 (defclass Moved []
   "合図の型(検の的)。"
@@ -128,7 +128,7 @@ def test_bindings_of_another_type_are_red_at_the_factory(tmp_path: Path) -> None
 # .pyi が tuple[Unknown, ...] になり、使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(#2892)。
 # unknown_in_users は「全く分からない」だけを数えるので、ここでは一部が分からない赤を別に数える。
 KEY_CODEC = """\
-(import doeff_records.admission [key-text key-from-text])
+(import doeff_records._admission [key-text key-from-text])
 
 (setv #^ str spelled (key-text #("jobs" "j-1")))
 (setv #^ (get tuple #(str ...)) restored (key-from-text spelled))
@@ -152,7 +152,7 @@ def test_a_key_of_another_element_type_is_red_at_key_text(tmp_path: Path) -> Non
 # 使い手の strict の門に「型の一部が分からない」の赤(partially unknown)が出た(card ki-a87c5f8a3b11)。BOUND = 受ける型。
 PREPARED = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_records.pg_sql [Statement schema-statements])
+(import doeff_records._pg_sql [Statement schema-statements])
 (import doeff_records._values [RecordsSchema])
 
 (defk texts-of [schema]

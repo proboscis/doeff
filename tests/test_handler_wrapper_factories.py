@@ -177,7 +177,7 @@ def test_agentic_wraps_through_its_factory_and_doeff_stacked_handlers(tmp_path: 
 
 
 def test_ready_handlers_is_inside_records_http_server() -> None:
-    http_server = importlib.import_module("doeff_records.http_server")
+    http_server = importlib.import_module("doeff_records._http_server")
 
     assert not hasattr(http_server, "ready_handlers")
     assert hasattr(http_server, "_ready_handlers")

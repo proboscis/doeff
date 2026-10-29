@@ -28,19 +28,19 @@
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
 (import doeff_records._faults [AdvanceStoreEpoch])
-(import doeff_records.maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
+(import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
                                    RetireArchivedEvents RetiredEvents EventsArchived archive-expired-events])
 (import functools [partial])
-(import doeff_records.admission [row-matches? epoch-ms key-text])
+(import doeff_records._admission [row-matches? epoch-ms key-text])
 
 ;; OVERSEER = 宣言の operators に入る書き手(宣言の形の例 — 置き場は書き手の名では断らない・#2994)。
 (setv MAKER "maker" PAINTER "painter" CLOSER "closer" STRANGER "stranger" OVERSEER "overseer")
 (setv TICKET-KEEP-SECONDS 60 PAIR-KEEP-SECONDS 60)
 ;; pulses = 出来事ごとに数える期限つきの列(法 15 — 組で数える列 pairs と並べて、出来事ごとの境も読みが見ることを確かめる)。
 (val PULSE-KEEP-SECONDS 60)
-;; relays・relay-pairs = 送ってから外す列(法 19〜21 — maintenance.hy の頭の註の「出来事を送ってから外す」)。
+;; relays・relay-pairs = 送ってから外す列(法 19〜21 — _maintenance.hy の頭の註の「出来事を送ってから外す」)。
 (val RELAY-KEEP-SECONDS 60)
-;; beats・ticks・relay-beats・relay-ticks = 鍵の覚え方を限った列(法 22・23 — maintenance.hy の頭の註の「鍵の覚えを外す」)。
+;; beats・ticks・relay-beats・relay-ticks = 鍵の覚え方を限った列(法 22・23 — _maintenance.hy の頭の註の「鍵の覚えを外す」)。
 ;; 出来事の保持の秒と、長さを限った覚えの秒(RememberKeysFor)。
 (val BEAT-KEEP-SECONDS 60)
 (val BEAT-MEMORY-SECONDS 30)
@@ -877,7 +877,7 @@
 (defk law-concurrent-writes-appear-in-number-order [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "番号の読みの約束の法(pg_sql.hy の頭の註の「書きの錠」): 並んで走る追記(2 つの列)と行の書き(2 つの表)の間に、位置を進めながら追う
+  "番号の読みの約束の法(_pg_sql.hy の頭の註の「書きの錠」): 並んで走る追記(2 つの列)と行の書き(2 つの表)の間に、位置を進めながら追う
    読み手は、列の出来事も表の変更も番号の順に 1 回ずつ見て、どれも取りこぼさない — 書きが終わった後の追いつきの読みと合わせた並びが、
    列の全部の読み・変更の全部の読みと同じ。PostgreSQL の置き場は書きの錠を列ごとと行の単位に分けており、番号(bigserial)を取ってから
    commit するまでを、同じ読みが 1 つの位置で読む範囲(列 1 つ・表の全部)ごとに 1 本にしている事を確かめる。どの置き場の組も同じ。"
@@ -984,7 +984,7 @@
 
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
 
-;; 消す前に送る(maintenance.hy の頭の註・card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
+;; 消す前に送る(_maintenance.hy の頭の註・card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
 ;; それを越えて消せば送っていない変更が失われる。
 (defk law-prune-stops-at-the-archived-seq [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
@@ -1010,7 +1010,7 @@
   [w1 w2 bounded kept again rest])
 
 
-;; 送りの読みは絞らない(maintenance.hy の頭の註・card ki-e4ca6fc87109): 刈りは表を問わず番号で消すので、送りの読みが表や保持の期限で
+;; 送りの読みは絞らない(_maintenance.hy の頭の註・card ki-e4ca6fc87109): 刈りは表を問わず番号で消すので、送りの読みが表や保持の期限で
 ;; 絞れば、絞られた変更は送られずに刈られる。
 (defk law-change-log-reads-every-change [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
@@ -1505,7 +1505,7 @@
   (+ appended [full short whole] full-checked short-checked whole-checked))
 
 
-;; --- 法 19〜21: 送ってから外す列(maintenance.hy の頭の註の「出来事を送ってから外す」— card ki-707aad0f88e8)--------------------------
+;; --- 法 19〜21: 送ってから外す列(_maintenance.hy の頭の註の「出来事を送ってから外す」— card ki-707aad0f88e8)--------------------------
 
 (defk expired-keys [harness at]
   {:pre [(: harness LawHarness) (: at datetime)] :post [(: % tuple)]
@@ -1679,7 +1679,7 @@
   (+ [beat ask side] (list before) [done read by-key end kept archived] (list after) [side-again end-after]))
 
 
-;; --- 法 22・23: 鍵の覚え方を限った列(maintenance.hy の頭の註の「鍵の覚えを外す」— card ki-4ebaefac6668)---------------------------
+;; --- 法 22・23: 鍵の覚え方を限った列(_maintenance.hy の頭の註の「鍵の覚えを外す」— card ki-4ebaefac6668)---------------------------
 
 (defk fresh-append? [answer earlier]
   {:pre [(: answer (| Appended Refused Unreachable)) (: earlier (| Appended Refused Unreachable))] :post [(: % bool)]}
