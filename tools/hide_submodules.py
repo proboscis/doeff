@@ -87,12 +87,18 @@ import の根の中の file と ``--underscore-only`` は ``_`` の path だけ�
 入口の名と同じ行と読む)。
 ``hide`` の間は表を書き換えない(移し替えの module が古い名で名を出し、目録が古い名で数える)。
 
+doeff-linter の目録 ``packages/doeff-linter/data/world_handlers.json`` の handler の行(綴り ``<module>:<名>``)は、
+木の書き換えに当てない(linter は外の repo の ``:wraps`` の綴りを目録の鍵と完全一致で照らすので、古い綴りの行を
+書き換えると、古い綴りを書く外の repo の commit の hook が設定の誤りで止まる — card ki-1bea6cc16446)。``hide`` は
+移した子とその下の module の行ごとに、古い綴りの行を残したまま、その前に ``_`` の綴りの行と、入口が出す名なら入口の
+綴り(``<根>:<名>``)の行を足す。``finish`` は古い綴りの行を消す(``_`` の綴りの行が無ければ ``_`` の綴りへ書き換える)。
+
 stage ごとに数える物(card の発言に写す):
 
 - ``hide``: 子の数と module の数・名(行き先ごと)・入口へ足した名・古い path を読む場所(前)・書き換えた場所(後)・
-  入口へ向けた名と ``_`` の path へ向けた名(うち外れ)・残った古い path・ぶつかり・注。
+  入口へ向けた名と ``_`` の path へ向けた名(うち外れ)・残った古い path・目録に足した行・ぶつかり・注。
 - ``rewrite``: 子・古い path を読む場所(前)・書き換えた場所(後)・入口と ``_`` の path へ向けた名・残った古い path。
-- ``finish``: 消した移し替えの module・残った古い path・表から消した行と残した行(組ごと)。
+- ``finish``: 消した移し替えの module・残った古い path・表から消した行と残した行(組ごと)・目録から消した行。
 """
 
 from __future__ import annotations
@@ -125,6 +131,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TABLE = Path("tests/data/public_api_known_violations.json")
 DEFAULT_ALLOWED = Path("tests/data/public_api_allowed.json")
+#: doeff-linter の実 I/O の handler の目録(:wraps の綴りを鍵と完全一致で照らす)。
+DEFAULT_CATALOG = Path("packages/doeff-linter/data/world_handlers.json")
 SHIM_MARK = "# moved-submodule-shim:"
 #: 印の下の、古い path が出す名の固定の列の行の頭(目録の ``SHIM_NAMES_MARK`` が読む)。
 SHIM_NAMES_MARK = "# moved-submodule-shim-names"
@@ -2141,6 +2149,8 @@ class Report:
     removed: tuple[str, ...] = ()
     table_rows_removed: dict[str, int] = field(default_factory=dict)
     table_rows_left: dict[str, int] = field(default_factory=dict)
+    catalog_added: tuple[str, ...] = ()
+    catalog_removed: tuple[str, ...] = ()
 
     def as_json(self) -> dict[str, object]:
         """--json に書く形(欄の名のまま)。"""
@@ -2157,6 +2167,7 @@ class Report:
                 f"残った古い path: {sum(self.remaining.values())} か所({len(self.remaining)} file)"
                 + "".join(f"\n  {path} {count}" for path, count in sorted(self.remaining.items())),
                 *self._table_lines(),
+                *self._catalog_lines(),
                 *(f"ぶつかり: {c}" for c in self.conflicts),
                 *(f"注: {n}" for n in self.notes),
             )
@@ -2191,6 +2202,23 @@ class Report:
             f"({summary.files_changed} file)— {parts}",
             f"入口へ向けた名: {summary.names_to_entry}・_ の path へ向けた名: {summary.names_to_underscore}"
             f"(うち既知の表の外れの名 {len(outliers)}{listed})",
+        )
+
+    def _catalog_lines(self) -> tuple[str, ...]:
+        return (
+            *(
+                [f"目録 world_handlers.json に足した行: {len(self.catalog_added)} 個 — {', '.join(self.catalog_added)}"]
+                if self.catalog_added
+                else []
+            ),
+            *(
+                [
+                    f"目録 world_handlers.json から消した古い綴りの行: {len(self.catalog_removed)} 個 — "
+                    f"{', '.join(self.catalog_removed)}"
+                ]
+                if self.catalog_removed
+                else []
+            ),
         )
 
     def _table_lines(self) -> tuple[str, ...]:
@@ -2431,6 +2459,7 @@ def hide(
     kept = {
         DEFAULT_TABLE.as_posix(),
         DEFAULT_ALLOWED.as_posix(),
+        DEFAULT_CATALOG.as_posix(),
         *(c.shim.resolve().relative_to(tree).as_posix() for c in children),
     }
     result = rewrite_tree(
@@ -2439,6 +2468,7 @@ def hide(
         same_as_entry(layout, children),
         write=True,
     )
+    catalog_added = hide_catalog(tree / DEFAULT_CATALOG, children, _entry_names(fates))
     return Report(
         "hide",
         package_dir.name,
@@ -2474,6 +2504,7 @@ def hide(
         ),
         rewrite=_summary(result, children, groups),
         remaining=result.remaining,
+        catalog_added=catalog_added,
     )
 
 
@@ -2499,7 +2530,11 @@ def rewrite(
         package_dir.name,
     )
     kept = {
-        *({DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix()} if tree == doeff_tree else set()),
+        *(
+            {DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix(), DEFAULT_CATALOG.as_posix()}
+            if tree == doeff_tree
+            else set()
+        ),
         *(
             c.shim.resolve().relative_to(tree).as_posix()
             for c in children
@@ -2548,8 +2583,12 @@ def finish(
         # 1 行目の印で道具が置いた file と確かめた — commit 前の(index にだけ在る)移し替えの module も消す。
         _git(tree, "rm", "-q", "-f", str(child.shim))
     patterns = Patterns.of(children)
+    catalog_removed, catalog_notes = finish_catalog(tree / DEFAULT_CATALOG, children)
     candidates = _tree_of(
-        tree, layout, (), {DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix()}
+        tree,
+        layout,
+        (),
+        {DEFAULT_TABLE.as_posix(), DEFAULT_ALLOWED.as_posix(), DEFAULT_CATALOG.as_posix()},
     ).candidates(patterns)
     remaining = {
         relative: left
@@ -2575,7 +2614,8 @@ def finish(
         remaining=remaining,
         table_rows_removed=table.removed,
         table_rows_left=table.left,
-        notes=table.notes,
+        notes=(*table.notes, *catalog_notes),
+        catalog_removed=catalog_removed,
     )
 
 
@@ -2762,6 +2802,147 @@ def drop_allowed_rows(
         allowed["許した物"] = kept
         path.write_text(json.dumps(allowed, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return dict(removed)
+
+
+# --- doeff-linter の実 I/O の handler の目録 ---
+
+
+def _entry_names(fates: Sequence[NameFate]) -> set[tuple[str, str]]:
+    """入口が出す子の名(古い path の (module, 名) — 入口へ足す名と入口に既に在る名)。"""
+    return {
+        (module, fate.name)
+        for fate in fates
+        if fate.fate in ("entry", "already")
+        for module in fate.modules
+    }
+
+
+def _catalog_target(spelling: str) -> str:
+    """目録の綴り ``<module>:<名>`` の完全修飾名(linter の目録の鍵 — module と名を mangle した綴り)。"""
+    module, _colon, name = spelling.partition(":")
+    return f"{_hy_mangle(module)}.{_hy_mangle(name)}"
+
+
+def _moved_module(module: str, children: Sequence[Child]) -> tuple[Child, str] | None:
+    """目録の行の module が子かその下の module(古い path)なら、その子と ``_`` へ移した後の module。"""
+    for child in children:
+        if module == child.old or module.startswith(child.old + "."):
+            return child, child.new + module[len(child.old) :]
+    return None
+
+
+def _write_catalog(path: Path, catalog: dict[str, object]) -> None:
+    path.write_text(json.dumps(catalog, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def _not_listed_moved(catalog: dict[str, object], children: Sequence[Child]) -> bool:
+    """載せない物の注(``_not_listed``)の鍵の module を移した先へ書き換える(人の読む注 — linter は読まない)。"""
+    notes = cast(dict[str, str], catalog.get("_not_listed", {}))
+    renamed = {}
+    for spelling, why in notes.items():
+        module, colon, name = spelling.partition(":")
+        moved = _moved_module(module, children)
+        renamed[f"{moved[1]}{colon}{name}" if moved else spelling] = why
+    if list(renamed) == list(notes):
+        return False
+    catalog["_not_listed"] = renamed
+    return True
+
+
+def _moved_rows(
+    row: dict[str, object], children: Sequence[Child], entry: set[tuple[str, str]]
+) -> tuple[dict[str, object], ...]:
+    """目録の行 1 つが移した子の行なら、その前に足す ``_`` の綴りの行と、入口が出す名なら入口の綴りの行。"""
+    module, _colon, name = cast(str, row["handler"]).partition(":")
+    moved = _moved_module(module, children)
+    if moved is None:
+        return ()
+    child, new_module = moved
+    mangled = _hy_mangle(name)
+    entry_why = f"{mangled} の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+    return (
+        {**row, "handler": f"{new_module}:{name}"},
+        *([{**row, "handler": f"{child.root}:{mangled}", "why": entry_why}] if (module, mangled) in entry else []),
+    )
+
+
+def hide_catalog(
+    path: Path, children: Sequence[Child], entry: set[tuple[str, str]]
+) -> tuple[str, ...]:
+    """stage 1: 移した子の handler の行ごとに、古い綴りの行を残したまま ``_`` の綴りと入口の綴りの行を前に足す。
+
+    移し替えの module が残る間、外の repo の ``:wraps`` は古い綴りのまま書くので、古い綴りの行は消さない(finish で消す)。
+    入口の綴りは、入口が出す名(``entry`` — 古い path の (module, 名))の時だけ足す。既に在る綴り(鍵)は足さない。
+    目録の無い木(外の repo・使い捨ての木)は何もしない。足した綴りを返す。
+    """
+    if not path.is_file():
+        return ()
+    catalog = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+    rows = cast(list[dict[str, object]], catalog["handlers"])  # JSON の境界 — 行は書き戻すまで JSON の形のまま
+    known = {_catalog_target(cast(str, row["handler"])) for row in rows}
+    rebuilt = [
+        pair
+        for row in rows
+        for pair in (*((new, True) for new in _moved_rows(row, children, entry)), (row, False))
+    ]
+    targets = [_catalog_target(cast(str, row["handler"])) for row, _added in rebuilt]
+    first = {target: index for index, target in reversed(list(enumerate(targets)))}
+    kept = [
+        (row, is_added)
+        for index, (row, is_added) in enumerate(rebuilt)
+        if not is_added or (targets[index] not in known and first[targets[index]] == index)
+    ]
+    catalog["handlers"] = [row for row, _added in kept]
+    added = tuple(cast(str, row["handler"]) for row, is_added in kept if is_added)
+    if _not_listed_moved(catalog, children) or added:
+        _write_catalog(path, catalog)
+    return added
+
+
+def finish_catalog(path: Path, children: Sequence[Child]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """stage 3: 移し替えの module を消した子の古い綴りの行を目録から消す(消した綴りと注を返す)。
+
+    ``_`` の綴りの行が無い古い綴りの行(道具の外で足した行)は、消さずに ``_`` の綴りへ書き換えて注に出す — handler を
+    目録から落とさない。
+    """
+    if not path.is_file():
+        return (), ()
+    catalog = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+    rows = cast(list[dict[str, object]], catalog["handlers"])  # JSON の境界 — 行は書き戻すまで JSON の形のまま
+    known = {_catalog_target(cast(str, row["handler"])) for row in rows}
+    moved = [(row, _finish_spelling(cast(str, row["handler"]), children)) for row in rows]
+    removed = tuple(
+        cast(str, row["handler"])
+        for row, new in moved
+        if new is not None and _catalog_target(new) in known
+    )
+    renamed = tuple(
+        f"{row['handler']} → {new}"
+        for row, new in moved
+        if new is not None and _catalog_target(new) not in known
+    )
+    catalog["handlers"] = [
+        row if new is None else {**row, "handler": new}
+        for row, new in moved
+        if new is None or _catalog_target(new) not in known
+    ]
+    if _not_listed_moved(catalog, children) or removed or renamed:
+        _write_catalog(path, catalog)
+    notes = (
+        (
+            f"目録 world_handlers.json の古い綴りの行に _ の綴りの行が無く、_ の綴りへ書き換えた: {', '.join(renamed)}",
+        )
+        if renamed
+        else ()
+    )
+    return removed, notes
+
+
+def _finish_spelling(spelling: str, children: Sequence[Child]) -> str | None:
+    """目録の綴りが移した子の古い綴りなら、``_`` の綴り。"""
+    module, colon, name = spelling.partition(":")
+    moved = _moved_module(module, children)
+    return None if moved is None else f"{moved[1]}{colon}{name}"
 
 
 # --- 命令 ---
