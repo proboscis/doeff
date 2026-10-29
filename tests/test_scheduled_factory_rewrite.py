@@ -5,6 +5,8 @@
 2. 道具は Python・Hy・Python の文字列の Hy・markdown の囲みの旧い形を書き換え、工場そのものを名指す所(値として渡す)・
    新しい形・名を定義し直す file は書き換えない。書き換えた text をもう一度書き換えても変わらない。
 3. 書き換えた Hy は旧い形と同じ答えを返す。
+
+scheduled-factory-rewrite: keep — 入力の文字列と移し替えの層の確かめは旧い形をわざと書く(層を消す時に一緒に消す)。
 """
 
 from __future__ import annotations
@@ -206,6 +208,14 @@ def test_history_is_counted_but_not_rewritten() -> None:
     assert not tool.is_history("docs/25-rust-scheduler.md")
     assert tool.section_of("packages/doeff-time/tests/t.py") == "packages/doeff-time"
     assert tool.section_of("controllers/agora_sim/core/x.hy") == "controllers/agora_sim"
+
+
+def test_the_tool_and_this_test_keep_their_old_forms_out_of_the_count() -> None:
+    """道具と、旧い形をわざと書いたこの test は印で残り、旧い形の数に入らない(書き換えで入力を壊さない)。"""
+    paths = ["tools/scheduled_factory_rewrite.py", "tests/test_scheduled_factory_rewrite.py"]
+    reports = tool.census(ROOT, paths)
+    assert sorted(r.path for r in reports if r.kept) == sorted(paths)
+    assert tool.summary(reports)["sections"] == {}
 
 
 # --- 3. 書き換えた Hy は同じ答え ---

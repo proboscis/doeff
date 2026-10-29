@@ -19,6 +19,8 @@
 見る file(git の追跡する file): Python(``.py``・``.pyi``)・Hy(``.hy``・``.hyk``・``.hyp``)・markdown(``.md`` の code
 の囲み)。Python の文字列の literal に書いた Hy(test の中の Hy の text)も Hy として読む。歴史の記録(``docs/design``・
 ``docs/design-checks``・``docs/history``・``publications``・``evidence`` の dir・``CHANGELOG.md``)は数えるだけで書き換えない。
+印 ``scheduled-factory-rewrite: keep`` を書いた file(この道具と、その test — 旧い形をわざと書いた入力と移し替えの層の確かめ)は
+旧い形の数に入れず書き換えない。移し替えの層を消す時に、印の file の旧い形も一緒に消す。
 
 どの名が doeff の ``scheduled`` か: file の import が読む名(``from doeff_core_effects import scheduled as s``・
 ``(import doeff_core_effects.scheduler [scheduled])``・module の別名の ``m.scheduled``)。同じ名を定義し直す file
@@ -69,6 +71,8 @@ NAME = "scheduled"
 HISTORY_PREFIXES = ("docs/design/", "docs/design-checks/", "docs/history/", "publications/")
 HISTORY_DIR_NAMES = frozenset({"evidence"})
 HISTORY_FILE_NAMES = frozenset({"CHANGELOG.md"})
+#: 旧い形をわざと書いた file の印(この file 自身も持つ)。
+KEEP_MARK = "scheduled-factory-rewrite: keep"
 #: 区画を 2 段目の dir で分ける根の dir。
 SECTION_ROOTS = frozenset({"packages", "controllers", "services"})
 
@@ -134,11 +138,17 @@ class Site:
 
 @dataclass(frozen=True)
 class FileReport:
-    """file 1 つの読み: 言語つきの所の列と、歴史の記録か。"""
+    """file 1 つの読み: 言語つきの所の列と、歴史の記録か・残す印の file か(どちらも書き換えない)。"""
 
     path: str
     history: bool
+    kept: bool
     sites: tuple[tuple[Language, Site], ...]
+
+    @property
+    def left(self) -> bool:
+        """書き換えず、旧い形の数にも入れない file か。"""
+        return self.history or self.kept
 
 
 # --- 字の範囲 ---
@@ -841,18 +851,18 @@ def tree_texts(tree: Path, prefixes: Sequence[str], rev: str | None) -> Iterator
 def census(tree: Path, prefixes: Sequence[str], rev: str | None = None) -> list[FileReport]:
     """木の file ごとの所(所の無い file は出さない)。"""
     reports = (
-        FileReport(path, is_history(path), tuple(read_file(path, text)))
+        FileReport(path, is_history(path), KEEP_MARK in text, tuple(read_file(path, text)))
         for path, text in tree_texts(tree, prefixes, rev)
     )
     return [report for report in reports if report.sites]
 
 
 def summary(reports: Sequence[FileReport]) -> dict[str, object]:
-    """区画・言語・形ごとの数(歴史の記録は別に数える)と、手で直す所と値として渡す所の場所。"""
+    """区画・言語・形ごとの数(歴史の記録と残す印の file は別に数える)と、手で直す所と値として渡す所の場所。"""
     live = [
         (report, language, site)
         for report in reports
-        if not report.history
+        if not report.left
         for language, site in report.sites
     ]
     by_section: dict[str, Counter[str]] = {}
@@ -877,6 +887,7 @@ def summary(reports: Sequence[FileReport]) -> dict[str, object]:
         "history": dict(
             Counter(site.form for report in reports if report.history for _, site in report.sites)
         ),
+        "kept": {report.path: len(report.sites) for report in reports if report.kept},
         "manual": [
             {"path": r.path, "line": s.line, "reason": s.reason}
             for r, _, s in live
@@ -908,6 +919,7 @@ def _print_summary(
     print("\n言語 / 形\t数")
     print("\n".join(f"{key}\t{count}" for key, count in languages.items()))
     print(f"\n歴史の記録(書き換えない): {found['history']}")
+    print(f"残す印の file(書き換えない・所の数): {found['kept']}")
     manual = found["manual"]
     assert isinstance(manual, list)
     if manual:
@@ -921,7 +933,7 @@ def _print_summary(
     if args.files:
         print("\nfile ごと:")
         for report in reports:
-            mark = "(歴史)" if report.history else ""
+            mark = "(歴史)" if report.history else "(残す印)" if report.kept else ""
             print(f"  {report.path}{mark}: {dict(Counter(site.form for _, site in report.sites))}")
 
 
@@ -940,7 +952,7 @@ def _rewrite(tree: Path, prefixes: Sequence[str], dry_run: bool) -> dict[str, ob
     changed = [
         (report.path, before, *rewrite_text(report.path, before))
         for report in census(tree, prefixes)
-        if not report.history
+        if not report.left
         for before in ((tree / report.path).read_text(encoding="utf-8"),)
     ]
     rewritten = {path: dict(done) for path, before, after, done in changed if after != before}
