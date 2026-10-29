@@ -18,9 +18,16 @@ from __future__ import annotations
 import time
 
 import pytest
-from doeff_core_effects import Spawn, Wait, scheduled, step_tally_handler
+from doeff_core_effects import (
+    CloseStepTally,
+    OpenStepTally,
+    Spawn,
+    StepTally,
+    Wait,
+    scheduled,
+    step_tally_handler,
+)
 from doeff_core_effects._scheduler import scheduler_trace_sink
-from doeff_core_effects.step_tally_effects import CloseStepTally, OpenStepTally, StepTally
 
 from doeff import do, run, with_handlers
 

@@ -25,7 +25,7 @@
 (import doeff [EffectBase run with_handlers Program])
 (import doeff_core_effects [Await])
 (import doeff_core_effects [state await-handler])
-(import doeff_core_effects.latest_effects [PublishLatest ReadLatest])
+(import doeff_core_effects [PublishLatest ReadLatest])
 (import doeff_core_effects.process_latest [process-latest-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects.file_effects [MemoryFiles])

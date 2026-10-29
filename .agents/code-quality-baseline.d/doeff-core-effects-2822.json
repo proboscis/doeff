@@ -23,7 +23,7 @@
     },
     {
       "count": 7,
-      "path": "packages/doeff-core-effects/doeff_core_effects/offloaded_call.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_offloaded_call.hy",
       "reason": "registered-with-legacy",
       "rule": "hy-string-contract",
       "subject": "hy:string-contract"
@@ -191,14 +191,14 @@
     },
     {
       "count": 3,
-      "path": "packages/doeff-core-effects/doeff_core_effects/meter_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_meter_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/meter_prometheus.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_meter_prometheus.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -240,7 +240,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/seeded_random.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_seeded_random.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -268,7 +268,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/stack_dump_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_stack_dump_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -1038,14 +1038,14 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_thread_pool_compute.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "run_computed"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/thread_pool_compute.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_thread_pool_compute.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "settle"

@@ -11431,6 +11431,17 @@
      "doeff_core_effects.aiohttp_ws_client": [
       "link_name"
      ],
+     "doeff_core_effects.apart_call": [
+      "ApartAsked",
+      "ApartDone",
+      "ApartFailed",
+      "ApartLane",
+      "MODULE_TAGS",
+      "answered_here",
+      "apart_thread",
+      "forwarding_handler",
+      "next_message"
+     ],
      "doeff_core_effects.cache": [
       "CACHE_PATH_ENV_KEY",
       "FrozenDict",
@@ -11855,6 +11866,9 @@
     "境界 — combinator(program を包む関数)": {
      "doeff_core_effects.aiohttp_ws_client": [
       "closing_links"
+     ],
+     "doeff_core_effects.apart_call": [
+      "run_apart"
      ],
      "doeff_core_effects.scripted_ws_client": [
       "closing_links"
@@ -12459,6 +12473,7 @@
       "TaskCancelledError"
      ],
      "doeff_core_effects.apart_call": [
+      "ApartClosed",
       "TaskCancelledError"
      ],
      "doeff_core_effects.effects": [
@@ -12502,21 +12517,6 @@
      ],
      "doeff_core_effects.sql_transaction": [
       "SqlTransactionMisuse"
-     ]
-    },
-    "未分け — 資料の分けの後に現れた名": {
-     "doeff_core_effects.apart_call": [
-      "ApartAsked",
-      "ApartClosed",
-      "ApartDone",
-      "ApartFailed",
-      "ApartLane",
-      "MODULE_TAGS",
-      "answered_here",
-      "apart_thread",
-      "forwarding_handler",
-      "next_message",
-      "run_apart"
      ]
     }
    }

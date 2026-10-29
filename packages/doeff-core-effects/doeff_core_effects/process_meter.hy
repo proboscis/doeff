@@ -26,7 +26,7 @@
 (import gc)
 (import threading)
 (import time)
-(import doeff_core_effects.meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter
+(import doeff_core_effects._meter_effects [CountMetric EMPTY-METER MeterSettings MeterSnapshot ObserveSeconds ObserveSecondsBatch ReadMeter
                                          SetGauge counted gauged observed observed-batch])
 
 

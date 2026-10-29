@@ -83,15 +83,15 @@ from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._scheduler import scheduled as scheduled
 
 # the doeff-vm's counts and switches, answered by vm_probe_handler (agora card ki-27e8ea225b62)
-from doeff_core_effects.vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
-from doeff_core_effects.vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts
-from doeff_core_effects.vm_probe_effects import ReadVmScanCounts as ReadVmScanCounts
-from doeff_core_effects.vm_probe_effects import ReadVmWorkCounts as ReadVmWorkCounts
-from doeff_core_effects.vm_probe_effects import SetInvariantChecks as SetInvariantChecks
-from doeff_core_effects.vm_probe_effects import (
+from doeff_core_effects._vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
+from doeff_core_effects._vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts
+from doeff_core_effects._vm_probe_effects import ReadVmScanCounts as ReadVmScanCounts
+from doeff_core_effects._vm_probe_effects import ReadVmWorkCounts as ReadVmWorkCounts
+from doeff_core_effects._vm_probe_effects import SetInvariantChecks as SetInvariantChecks
+from doeff_core_effects._vm_probe_effects import (
     SetSchedulerStepBudgetArmed as SetSchedulerStepBudgetArmed,
 )
-from doeff_core_effects.vm_probe_effects import (
+from doeff_core_effects._vm_probe_effects import (
     SetSchedulerTraceInstalled as SetSchedulerTraceInstalled,
 )
 
@@ -104,9 +104,44 @@ from doeff_core_effects import _unhandled_hints  # noqa: F401 - registers the hi
 # Type checkers see them as `X as X` in the `if TYPE_CHECKING:` block. HTTP effects and handlers live in Hy and pull
 # in httpx; they are left out of the block (that would read the Hy modules), so type checkers see them as `object`.
 if TYPE_CHECKING:
+    from doeff_core_effects._apart_call import ApartClosed as ApartClosed
+    from doeff_core_effects._apart_call import run_apart as run_apart
+    from doeff_core_effects._compute_effects import Compute as Compute
+    from doeff_core_effects._compute_effects import Computed as Computed
+    from doeff_core_effects._compute_effects import ComputeFailed as ComputeFailed
+    from doeff_core_effects._compute_effects import ComputeLoad as ComputeLoad
+    from doeff_core_effects._compute_effects import ReadComputeLoad as ReadComputeLoad
+    from doeff_core_effects._faulthandler_stack_dump import (
+        faulthandler_stack_dump_handler as faulthandler_stack_dump_handler,
+    )
+    from doeff_core_effects._gc_freeze import gc_freeze_handler as gc_freeze_handler
+    from doeff_core_effects._heap_effects import CollectAndFreeze as CollectAndFreeze
+    from doeff_core_effects._inline_compute import inline_compute_handler as inline_compute_handler
+    from doeff_core_effects._latest_effects import AwaitLatest as AwaitLatest
+    from doeff_core_effects._latest_effects import PublishLatest as PublishLatest
+    from doeff_core_effects._latest_effects import ReadLatest as ReadLatest
+    from doeff_core_effects._memory_latest import MemoryLatestStore as MemoryLatestStore
+    from doeff_core_effects._memory_latest import memory_latest_handler as memory_latest_handler
+    from doeff_core_effects._memory_meter import memory_meter_handler as memory_meter_handler
+    from doeff_core_effects._memory_stack_dump import (
+        memory_stack_dump_handler as memory_stack_dump_handler,
+    )
+    from doeff_core_effects._meter_effects import CountMetric as CountMetric
+    from doeff_core_effects._meter_effects import MeterBucket as MeterBucket
+    from doeff_core_effects._meter_effects import MeterSettings as MeterSettings
+    from doeff_core_effects._meter_effects import MeterSnapshot as MeterSnapshot
+    from doeff_core_effects._meter_effects import ObserveSeconds as ObserveSeconds
+    from doeff_core_effects._meter_effects import ObserveSecondsBatch as ObserveSecondsBatch
+    from doeff_core_effects._meter_effects import ReadMeter as ReadMeter
+    from doeff_core_effects._meter_effects import SecondsObservation as SecondsObservation
+    from doeff_core_effects._meter_effects import SecondsTotal as SecondsTotal
+    from doeff_core_effects._meter_effects import SetGauge as SetGauge
+    from doeff_core_effects._os_random import os_random_handler as os_random_handler
     from doeff_core_effects._outcomes import AbsentAsToken as AbsentAsToken
     from doeff_core_effects._outcomes import BoundAbsent as BoundAbsent
     from doeff_core_effects._outcomes import absent_raises as absent_raises
+    from doeff_core_effects._python_bytecode import SourceNotCompiled as SourceNotCompiled
+    from doeff_core_effects._random_effects import RandomBytes as RandomBytes
     from doeff_core_effects._scheduler import ProcessStepBudget as ProcessStepBudget
     from doeff_core_effects._scheduler import SchedulerImplementation as SchedulerImplementation
     from doeff_core_effects._scheduler import SchedulerIndexDriftError as SchedulerIndexDriftError
@@ -133,9 +168,20 @@ if TYPE_CHECKING:
     from doeff_core_effects._scheduler_step_tally import StepTally as StepTally
     from doeff_core_effects._scheduler_step_tally import TaskTally as TaskTally
     from doeff_core_effects._scheduler_step_tally import step_tally_handler as step_tally_handler
+    from doeff_core_effects._scripted_freeze import (
+        scripted_freeze_handler as scripted_freeze_handler,
+    )
+    from doeff_core_effects._seeded_random import seeded_random_handler as seeded_random_handler
+    from doeff_core_effects._stack_dump_effects import ArmStackDump as ArmStackDump
+    from doeff_core_effects._stack_dump_effects import DisarmStackDump as DisarmStackDump
+    from doeff_core_effects._stack_dump_effects import ReadStackDumps as ReadStackDumps
+    from doeff_core_effects._stack_dump_effects import StackDumpLedger as StackDumpLedger
     from doeff_core_effects._storage import DurableStorage as DurableStorage
     from doeff_core_effects._storage.memory import InMemoryStorage as InMemoryStorage
     from doeff_core_effects._storage.sqlite import SQLiteStorage as SQLiteStorage
+    from doeff_core_effects._thread_pool_compute import (
+        thread_pool_compute_handler as thread_pool_compute_handler,
+    )
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -173,6 +219,44 @@ _LAZY_EXPORTS = {
     "DurableStorage": "doeff_core_effects._storage",
     "InMemoryStorage": "doeff_core_effects._storage.memory",
     "SQLiteStorage": "doeff_core_effects._storage.sqlite",
+    "SourceNotCompiled": "doeff_core_effects._python_bytecode",
+    "ArmStackDump": "doeff_core_effects._stack_dump_effects",
+    "DisarmStackDump": "doeff_core_effects._stack_dump_effects",
+    "ReadStackDumps": "doeff_core_effects._stack_dump_effects",
+    "StackDumpLedger": "doeff_core_effects._stack_dump_effects",
+    "memory_stack_dump_handler": "doeff_core_effects._memory_stack_dump",
+    "faulthandler_stack_dump_handler": "doeff_core_effects._faulthandler_stack_dump",
+    "gc_freeze_handler": "doeff_core_effects._gc_freeze",
+    "scripted_freeze_handler": "doeff_core_effects._scripted_freeze",
+    "CollectAndFreeze": "doeff_core_effects._heap_effects",
+    "ApartClosed": "doeff_core_effects._apart_call",
+    "run_apart": "doeff_core_effects._apart_call",
+    "inline_compute_handler": "doeff_core_effects._inline_compute",
+    "Compute": "doeff_core_effects._compute_effects",
+    "ComputeFailed": "doeff_core_effects._compute_effects",
+    "ComputeLoad": "doeff_core_effects._compute_effects",
+    "Computed": "doeff_core_effects._compute_effects",
+    "ReadComputeLoad": "doeff_core_effects._compute_effects",
+    "thread_pool_compute_handler": "doeff_core_effects._thread_pool_compute",
+    "RandomBytes": "doeff_core_effects._random_effects",
+    "os_random_handler": "doeff_core_effects._os_random",
+    "seeded_random_handler": "doeff_core_effects._seeded_random",
+    "AwaitLatest": "doeff_core_effects._latest_effects",
+    "PublishLatest": "doeff_core_effects._latest_effects",
+    "ReadLatest": "doeff_core_effects._latest_effects",
+    "MemoryLatestStore": "doeff_core_effects._memory_latest",
+    "memory_latest_handler": "doeff_core_effects._memory_latest",
+    "CountMetric": "doeff_core_effects._meter_effects",
+    "MeterBucket": "doeff_core_effects._meter_effects",
+    "MeterSettings": "doeff_core_effects._meter_effects",
+    "MeterSnapshot": "doeff_core_effects._meter_effects",
+    "ObserveSeconds": "doeff_core_effects._meter_effects",
+    "ObserveSecondsBatch": "doeff_core_effects._meter_effects",
+    "ReadMeter": "doeff_core_effects._meter_effects",
+    "SecondsObservation": "doeff_core_effects._meter_effects",
+    "SecondsTotal": "doeff_core_effects._meter_effects",
+    "SetGauge": "doeff_core_effects._meter_effects",
+    "memory_meter_handler": "doeff_core_effects._memory_meter",
 }
 
 

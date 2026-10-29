@@ -4,9 +4,9 @@ from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy.static_types import Handler as _Handler
 from functools import partial as partial
-from doeff_core_effects.latest_effects import PublishLatest as PublishLatest
-from doeff_core_effects.latest_effects import ReadLatest as ReadLatest
-from doeff_core_effects.latest_effects import AwaitLatest as AwaitLatest
+from doeff_core_effects._latest_effects import PublishLatest as PublishLatest
+from doeff_core_effects._latest_effects import ReadLatest as ReadLatest
+from doeff_core_effects._latest_effects import AwaitLatest as AwaitLatest
 from doeff_core_effects._scheduler import CreateExternalPromise as CreateExternalPromise
 from doeff_core_effects._scheduler import ExternalPromise as ExternalPromise
 from doeff_core_effects._scheduler import Wait as Wait

@@ -6,18 +6,18 @@ from doeff_hy.static_types import Handler as _Handler
 from collections import deque as deque
 from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
-from doeff_core_effects.meter_effects import CountMetric as CountMetric
-from doeff_core_effects.meter_effects import EMPTY_METER as EMPTY_METER
-from doeff_core_effects.meter_effects import MeterSettings as MeterSettings
-from doeff_core_effects.meter_effects import MeterSnapshot as MeterSnapshot
-from doeff_core_effects.meter_effects import ObserveSeconds as ObserveSeconds
-from doeff_core_effects.meter_effects import ObserveSecondsBatch as ObserveSecondsBatch
-from doeff_core_effects.meter_effects import ReadMeter as ReadMeter
-from doeff_core_effects.meter_effects import SetGauge as SetGauge
-from doeff_core_effects.meter_effects import counted as counted
-from doeff_core_effects.meter_effects import gauged as gauged
-from doeff_core_effects.meter_effects import observed as observed
-from doeff_core_effects.meter_effects import observed_batch as observed_batch
+from doeff_core_effects._meter_effects import CountMetric as CountMetric
+from doeff_core_effects._meter_effects import EMPTY_METER as EMPTY_METER
+from doeff_core_effects._meter_effects import MeterSettings as MeterSettings
+from doeff_core_effects._meter_effects import MeterSnapshot as MeterSnapshot
+from doeff_core_effects._meter_effects import ObserveSeconds as ObserveSeconds
+from doeff_core_effects._meter_effects import ObserveSecondsBatch as ObserveSecondsBatch
+from doeff_core_effects._meter_effects import ReadMeter as ReadMeter
+from doeff_core_effects._meter_effects import SetGauge as SetGauge
+from doeff_core_effects._meter_effects import counted as counted
+from doeff_core_effects._meter_effects import gauged as gauged
+from doeff_core_effects._meter_effects import observed as observed
+from doeff_core_effects._meter_effects import observed_batch as observed_batch
 
 @dataclass(frozen=True, kw_only=True)
 class MeterPlace:

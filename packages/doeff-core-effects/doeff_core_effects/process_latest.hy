@@ -19,7 +19,7 @@
 (val MODULE-TAGS {:context "latest" :role "foundation"})
 (import threading)
 (import functools [partial])
-(import doeff_core_effects.latest_effects [PublishLatest ReadLatest AwaitLatest])
+(import doeff_core_effects._latest_effects [PublishLatest ReadLatest AwaitLatest])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
 
 

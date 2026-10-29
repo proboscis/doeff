@@ -14,7 +14,8 @@ import sys
 
 import pytest
 
-#: 子の古い path と新しい path(この card で移した 10 個 — storage は下の module も)。
+#: 子の古い path と新しい path(card ki-c09b3b527fad で移した中核の 10 個 — storage は下の module も・card ki-32623e1651c6 で
+#: 移した計算・VM・乱数・測りの 23 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -28,6 +29,29 @@ MOVED = {
     "doeff_core_effects.storage": "doeff_core_effects._storage",
     "doeff_core_effects.storage.sqlite": "doeff_core_effects._storage.sqlite",
     "doeff_core_effects.storage.memory": "doeff_core_effects._storage.memory",
+    "doeff_core_effects.python_bytecode": "doeff_core_effects._python_bytecode",
+    "doeff_core_effects.vm_probe_effects": "doeff_core_effects._vm_probe_effects",
+    "doeff_core_effects.step_tally_effects": "doeff_core_effects._step_tally_effects",
+    "doeff_core_effects.stack_dump_effects": "doeff_core_effects._stack_dump_effects",
+    "doeff_core_effects.memory_stack_dump": "doeff_core_effects._memory_stack_dump",
+    "doeff_core_effects.faulthandler_stack_dump": "doeff_core_effects._faulthandler_stack_dump",
+    "doeff_core_effects.gc_freeze": "doeff_core_effects._gc_freeze",
+    "doeff_core_effects.scripted_freeze": "doeff_core_effects._scripted_freeze",
+    "doeff_core_effects.heap_effects": "doeff_core_effects._heap_effects",
+    "doeff_core_effects.apart_call": "doeff_core_effects._apart_call",
+    "doeff_core_effects.offloaded_call": "doeff_core_effects._offloaded_call",
+    "doeff_core_effects.inline_compute": "doeff_core_effects._inline_compute",
+    "doeff_core_effects.compute_effects": "doeff_core_effects._compute_effects",
+    "doeff_core_effects.thread_pool_compute": "doeff_core_effects._thread_pool_compute",
+    "doeff_core_effects.random_effects": "doeff_core_effects._random_effects",
+    "doeff_core_effects.os_random": "doeff_core_effects._os_random",
+    "doeff_core_effects.seeded_random": "doeff_core_effects._seeded_random",
+    "doeff_core_effects.channel_effects": "doeff_core_effects._channel_effects",
+    "doeff_core_effects.latest_effects": "doeff_core_effects._latest_effects",
+    "doeff_core_effects.memory_latest": "doeff_core_effects._memory_latest",
+    "doeff_core_effects.meter_effects": "doeff_core_effects._meter_effects",
+    "doeff_core_effects.memory_meter": "doeff_core_effects._memory_meter",
+    "doeff_core_effects.meter_prometheus": "doeff_core_effects._meter_prometheus",
 }
 
 #: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
@@ -39,6 +63,12 @@ LAZY_NAMES = {
     "DurableStorage": "doeff_core_effects._storage",
     "SQLiteStorage": "doeff_core_effects._storage.sqlite",
     "AbsentAsToken": "doeff_core_effects._outcomes",
+    "RandomBytes": "doeff_core_effects._random_effects",
+    "Compute": "doeff_core_effects._compute_effects",
+    "MeterSnapshot": "doeff_core_effects._meter_effects",
+    "ArmStackDump": "doeff_core_effects._stack_dump_effects",
+    "run_apart": "doeff_core_effects._apart_call",
+    "thread_pool_compute_handler": "doeff_core_effects._thread_pool_compute",
 }
 
 #: `import doeff` が読まない module(入口の遅延の名だけが読む)。
@@ -47,6 +77,28 @@ NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._scheduler_channel",
     "doeff_core_effects._scheduler_step_tally",
     "doeff_core_effects._world_phases",
+    "doeff_core_effects._python_bytecode",
+    "doeff_core_effects._step_tally_effects",
+    "doeff_core_effects._stack_dump_effects",
+    "doeff_core_effects._memory_stack_dump",
+    "doeff_core_effects._faulthandler_stack_dump",
+    "doeff_core_effects._gc_freeze",
+    "doeff_core_effects._scripted_freeze",
+    "doeff_core_effects._heap_effects",
+    "doeff_core_effects._apart_call",
+    "doeff_core_effects._offloaded_call",
+    "doeff_core_effects._inline_compute",
+    "doeff_core_effects._compute_effects",
+    "doeff_core_effects._thread_pool_compute",
+    "doeff_core_effects._random_effects",
+    "doeff_core_effects._os_random",
+    "doeff_core_effects._seeded_random",
+    "doeff_core_effects._channel_effects",
+    "doeff_core_effects._latest_effects",
+    "doeff_core_effects._memory_latest",
+    "doeff_core_effects._meter_effects",
+    "doeff_core_effects._memory_meter",
+    "doeff_core_effects._meter_prometheus",
 )
 
 

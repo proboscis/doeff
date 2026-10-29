@@ -14,7 +14,7 @@
 (import pathlib [Path])
 (import pytest)
 (import doeff [Program with_handlers])
-(import doeff_core_effects.offloaded_call [ThreadPerCall run-detached])
+(import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects.file_effects [MeasureTree RemoveTree StatTree FileFailed PathKind])
 (import doeff_core_effects.os_file [os-file-handler offloaded-tree-handler TREE-THREADS])
 (import doeff_core_effects [scheduled CreateExternalPromise Spawn Wait Task])
