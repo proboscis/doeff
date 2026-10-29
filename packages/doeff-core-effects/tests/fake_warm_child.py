@@ -102,11 +102,11 @@ def answer(listener: socket.socket, connection: socket.socket, mode: str) -> Non
             pass
         return
     if mode.startswith("refuse:"):
-        connection.sendall(run(scheduled()(warm_answer_line(WarmRefused(detail=mode.removeprefix("refuse:"))))))
+        connection.sendall(run(scheduled(warm_answer_line(WarmRefused(detail=mode.removeprefix("refuse:"))))))
         return
-    request = run(scheduled()(warm_request_of(line)))
+    request = run(scheduled(warm_request_of(line)))
     if isinstance(request, Malformed):
-        connection.sendall(run(scheduled()(warm_answer_line(WarmRefused(detail="頼みの形が約束と違う")))))
+        connection.sendall(run(scheduled(warm_answer_line(WarmRefused(detail="頼みの形が約束と違う")))))
         return
     ready_read, ready_write = os.pipe()
     a = os.fork()
@@ -116,7 +116,7 @@ def answer(listener: socket.socket, connection: socket.socket, mode: str) -> Non
     os.close(ready_write)
     os.read(ready_read, 1)
     os.close(ready_read)
-    connection.sendall(run(scheduled()(warm_answer_line(WarmForked(pid=a, start_ticks=start_ticks(a))))))
+    connection.sendall(run(scheduled(warm_answer_line(WarmForked(pid=a, start_ticks=start_ticks(a))))))
 
 
 def main() -> None:

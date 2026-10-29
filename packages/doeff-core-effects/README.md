@@ -77,7 +77,7 @@ def main():
 prog = writer(main())                       # Tell     (keeps its log in state)
 prog = state(initial={"count": 0})(prog)    # Get, Put
 prog = reader(env={"name": "doeff"})(prog)  # Ask
-print(run(scheduled()(prog)))  # ('hello, doeff (#1)', 'hello, doeff (#2)', ['greeted doeff', 'greeted doeff'])
+print(run(scheduled(prog)))  # ('hello, doeff (#1)', 'hello, doeff (#2)', ['greeted doeff', 'greeted doeff'])
 ```
 
 How the handlers wrap the program in this example (an effect travels outward until a
@@ -119,16 +119,16 @@ def word_count(path):
 with tempfile.TemporaryDirectory() as tmp:
     path = str(Path(tmp) / "notes.txt")
     Path(path).write_text("effects are just data")
-    print(run(scheduled()(os_file_handler(word_count(path)))))  # 4
+    print(run(scheduled(os_file_handler(word_count(path)))))  # 4
 
 # Tests: an in-memory file system. It keeps its files in state, so install state() outside it.
 files = MemoryFiles(files=(MemoryFile(path="/notes.txt", content=b"hello effects"),))
-print(run(scheduled()(state()(memory_file_handler(files)(word_count("/notes.txt"))))))  # 2
+print(run(scheduled(state()(memory_file_handler(files)(word_count("/notes.txt"))))))  # 2
 ```
 
 ## Concurrency
 
-`scheduled()` runs the scheduler. `Spawn` starts a task and `Gather` waits for
+`scheduled(...)` runs the scheduler. `Spawn` starts a task and `Gather` waits for
 several:
 
 ```python
@@ -152,7 +152,7 @@ def main():
     return (yield Gather(*tasks))
 
 
-print(run(scheduled()(state()(writer(main())))))  # ['A', 'B', 'C']
+print(run(scheduled(state()(writer(main())))))  # ['A', 'B', 'C']
 ```
 
 ## Absence and failure
@@ -183,9 +183,9 @@ def age_of(name):
     return USERS[name]
 
 
-print(run(scheduled()(maybe(age_of("ada")))))   # Some(36)
-print(run(scheduled()(maybe(age_of("bob")))))   # Nothing
-print(run(scheduled()(result(age_of("ada")))))  # Ok(36)
+print(run(scheduled(maybe(age_of("ada")))))   # Some(36)
+print(run(scheduled(maybe(age_of("bob")))))   # Nothing
+print(run(scheduled(result(age_of("ada")))))  # Ok(36)
 ```
 
 Nest them to get both: `result(maybe(program))` gives `Ok(Some(v))`, `Ok(Nothing)` or
@@ -223,7 +223,7 @@ def stamp(message):
     return f"[{now}] {message}"
 
 
-print(run(scheduled()(fixed_clock(stamp("started")))))  # [2026-01-01T00:00:00Z] started
+print(run(scheduled(fixed_clock(stamp("started")))))  # [2026-01-01T00:00:00Z] started
 ```
 
 ## Effect families
@@ -237,7 +237,7 @@ named in the handler columns (all under `doeff_core_effects`).
 | Errors | `doeff_core_effects`: `Try` | `handlers.try_handler` | same | — |
 | Absence and failure | `doeff_core_effects`: `Absent`, `Raise` | `outcomes`: `maybe`, `result`, `on_raise`, `absent_as` | same | — |
 | asyncio bridge | `doeff_core_effects`: `Await` | `handlers.await_handler` | — | — |
-| Concurrency | `scheduler`: `Spawn`, `Wait`, `Gather`, `Race`, `Cancel`, `CreatePromise`, `CreateExternalPromise`, `CreateSemaphore` | `scheduler.scheduled()(program)` | same | — |
+| Concurrency | `scheduler`: `Spawn`, `Wait`, `Gather`, `Race`, `Cancel`, `CreatePromise`, `CreateExternalPromise`, `CreateSemaphore` | `scheduler.scheduled(program)` | same | — |
 | Channels | `channel_effects`: `CreateChannel`, `PutChannel`, `TakeChannel` | `scheduler_channel.scheduler_channel_handler` | same | `hy` |
 | HTTP client | `http_effects`: `HttpRequest`, `HttpResponse`, `HttpError` | `http_handlers.http_production_handler` | `http_handlers.http_fixture_handler(path, mode="record" or "replay")` | `http` |
 | HTTP server | `http_server_effects`: `HttpListen`, `HttpNextRequest`, `HttpRespond` | `aiohttp_http_server.aiohttp_http_server` | `scripted_http_server.scripted_http_server(script)` | `http-server` |
@@ -254,7 +254,7 @@ named in the handler columns (all under `doeff_core_effects`).
 
 Notes on installing handlers:
 
-- `scheduled()` goes outermost.
+- `scheduled(...)` goes outermost.
 - `writer` keeps its log in state, so install `state()` outside it.
 - Handlers that keep data between effects (the in-memory files, the in-memory SQLite
   databases, and others written with doeff-hy's `session` values) keep it in state,

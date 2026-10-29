@@ -182,7 +182,7 @@ def with_sample_env(program: Program) -> Program:  # doeff: transform
     program = writer(program)
     program = state()(program)
     program = reader(env=SAMPLE_ENV)(program)
-    return scheduled()(program)
+    return scheduled(program)
 
 
 def sample_interpreter(program: Program):  # doeff: interpreter, default

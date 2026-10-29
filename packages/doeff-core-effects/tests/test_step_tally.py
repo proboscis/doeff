@@ -71,7 +71,7 @@ def scheduler_implementation(request: pytest.FixtureRequest, monkeypatch: pytest
 
 
 def _tallied(body, implementation=None):
-    return run(scheduled(implementation=implementation)(with_handlers([step_tally_handler], body)))
+    return run(scheduled(with_handlers([step_tally_handler], body), implementation=implementation))
 
 
 def test_computing_task_raises_the_window_cpu() -> None:
@@ -191,7 +191,7 @@ def test_window_under_the_default_scheduler_counts(monkeypatch: pytest.MonkeyPat
     """The default (Rust) scheduler emits the steps: a window opened inside a plain ``scheduled``
     counts its tasks' work (until 2026-10-18 it closed with none)."""
     monkeypatch.delenv("DOEFF_SCHEDULER", raising=False)
-    busy = run(scheduled()(with_handlers([step_tally_handler], _busy_window())))
+    busy = run(scheduled(with_handlers([step_tally_handler], _busy_window())))
     assert busy.steps > STEPS, busy
     assert busy.cpu_ns >= STEPS * BUSY_CPU_MS * 1_000_000, busy
     assert scheduler_trace_sink() is None
