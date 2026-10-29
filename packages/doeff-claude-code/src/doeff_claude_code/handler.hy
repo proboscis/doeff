@@ -60,7 +60,7 @@
 (import doeff [Pure run])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [CreateExternalPromise ExternalPromise])
-(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
+(import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_time [GetMonotonic GetTime WaitWithin epoch-ms-of])
 (import doeff_claude_code._values [ClaudeTurn ClaudeHome ClaudeSessionSpec TurnInput FreshSession ResumeSession ForkSession
                                   LinkFromHome Rebuilt IMAGE-MIMES LentCredential])

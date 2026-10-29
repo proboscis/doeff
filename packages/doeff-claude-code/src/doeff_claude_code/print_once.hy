@@ -24,7 +24,7 @@
 (import tempfile)
 (import threading)
 (import time)
-(import doeff_core_effects.offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
+(import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 (import doeff_claude_code._effects [ClaudePrintOnce PrintAnswered PrintFailed PrintLimited PrintTimedOut])
 (import doeff_claude_code._lines [AccountLimitHit TurnResult parse-record classify-record stderr-tail-within])
 (import doeff_hy.json_lines [jsonl-lines])

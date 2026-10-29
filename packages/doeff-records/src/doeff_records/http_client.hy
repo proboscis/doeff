@@ -66,7 +66,7 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [slog])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpPhases])
-(import doeff_core_effects.meter_effects [CountMetric])
+(import doeff_core_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records.event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
@@ -76,8 +76,8 @@
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
                             WRITER-HEADER CALLER-HEADER WATCH-MAX-SECONDS SERVER-TIMING-HEADER SERVER-TIMING-QUEUE
                             server-timing-spans IDEMPOTENCY-HEADER request-key])
-(import doeff_core_effects.random_effects [RandomBytes])
-(import doeff_core_effects.os_random [os-random-handler])
+(import doeff_core_effects [RandomBytes])
+(import doeff_core_effects [os-random-handler])
 
 (setv DEFAULT-REQUEST-TIMEOUT 30.0)
 ;; 往復の計時の行の名(file の頭の註)。

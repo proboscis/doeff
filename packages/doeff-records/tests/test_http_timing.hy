@@ -22,7 +22,7 @@
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_core_effects.meter_effects [CountMetric ObserveSeconds ObserveSecondsBatch])
+(import doeff_core_effects [CountMetric ObserveSeconds ObserveSecondsBatch])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
 (import doeff_core_effects [Spawn Task Wait])

@@ -7,10 +7,10 @@ from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 import subprocess as subprocess
 import threading as threading
-from doeff_core_effects.offloaded_call import ThreadPerCall as ThreadPerCall
-from doeff_core_effects.offloaded_call import offloaded as offloaded
-from doeff_core_effects.offloaded_call import run_detached as run_detached
-from doeff_core_effects.offloaded_call import keep_nothing as keep_nothing
+from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
+from doeff_core_effects._offloaded_call import offloaded as offloaded
+from doeff_core_effects._offloaded_call import run_detached as run_detached
+from doeff_core_effects._offloaded_call import keep_nothing as keep_nothing
 from doeff_claude_code._effects import ClaudePrintOnce as ClaudePrintOnce
 from doeff_claude_code._effects import PrintAnswered as PrintAnswered
 from doeff_claude_code._effects import PrintFailed as PrintFailed

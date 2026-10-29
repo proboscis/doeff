@@ -88,9 +88,9 @@
 (import dataclasses [dataclass])
 (import doeff [Program EffectBase run with-handlers])
 (import doeff_core_effects [await-handler state])
-(import doeff_core_effects.thread_pool_compute [thread-pool-compute-handler])
-(import doeff_core_effects.compute_effects [ComputeLoad ReadComputeLoad])
-(import doeff_core_effects.apart_call [run-apart])
+(import doeff_core_effects [thread-pool-compute-handler])
+(import doeff_core_effects [ComputeLoad ReadComputeLoad])
+(import doeff_core_effects [run-apart])
 (import doeff_core_effects [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError Wait scheduled])
 (import doeff_core_effects.stop_signal_effects [StopRequested])
 (import doeff_core_effects.aiohttp_http_server [aiohttp-http-server])
@@ -114,10 +114,9 @@
 (import doeff_records.wire [WRITER-HEADER CALLER-HEADER IDEMPOTENCY-HEADER SERVER-TIMING-HEADER list-rows-caller list-rows-counts list-rows-metrics
                             list-rows-metric-helps])
 (import doeff_records._store_choice [StorePressure PressureUnread])
-(import doeff_core_effects.meter_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation
-                                         SecondsTotal])
-(import doeff_core_effects.memory_meter [memory-meter-handler])
-(import doeff_core_effects.meter_prometheus [render-prometheus CONTENT-TYPE :as METRICS-CONTENT-TYPE])
+(import doeff_core_effects [CountMetric MeterSettings MeterSnapshot ObserveSecondsBatch ReadMeter SecondsObservation SecondsTotal])
+(import doeff_core_effects [memory-meter-handler])
+(import doeff_core_effects._meter_prometheus [render-prometheus CONTENT-TYPE :as METRICS-CONTENT-TYPE])
 
 ;; 置き場に届くかを問う口。/healthz は process の生存だけを答え(liveness — 置き場が落ちている間に再起動を
 ;; 繰り返さない)、/readyz は置き場を問う(readiness)。問いの答えを待つ上限の秒 — 超えたら 503(固まった置き場で口を固めない)。

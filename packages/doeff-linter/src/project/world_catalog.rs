@@ -150,6 +150,20 @@ mod tests {
         ] {
             assert!(catalog.handlers.contains_key(name), "{} が目録に無い", name);
         }
+        // 計算・VM・測りの子も同じく、_ の綴り・入口の綴り・古い綴りの 3 つで在る(card ki-32623e1651c6)。
+        for (child, handler) in [
+            ("thread_pool_compute", "thread_pool_compute_handler"),
+            ("gc_freeze", "gc_freeze_handler"),
+            ("faulthandler_stack_dump", "faulthandler_stack_dump_handler"),
+        ] {
+            for name in [
+                format!("doeff_core_effects._{child}.{handler}"),
+                format!("doeff_core_effects.{handler}"),
+                format!("doeff_core_effects.{child}.{handler}"),
+            ] {
+                assert!(catalog.handlers.contains_key(&name), "{} が目録に無い", name);
+            }
+        }
     }
 
     #[test]
