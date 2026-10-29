@@ -17,6 +17,7 @@ from doeff_conductor._effects.runs import (
     CleanupWorkspaces,
     ConductorStateDir,
     DescribeEnvironment,
+    GetTemplate,
     GetTemplateSource,
     GetWorkflow,
     ListGates,
@@ -186,7 +187,11 @@ def _answer_run(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911, PL
 
 def _answer_tooling(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911 - one case per effect
     """Answer a planning, monitor, environment or template effect."""
-    from doeff_conductor._templates import get_available_templates, get_template_source
+    from doeff_conductor._templates import (
+        get_available_templates,
+        get_template,
+        get_template_source,
+    )
     from doeff_conductor._verbs import describe_environment
 
     match effect:
@@ -202,6 +207,8 @@ def _answer_tooling(stores: _Stores, effect: Effect) -> object:  # noqa: PLR0911
             return describe_environment()
         case ListTemplates():
             return get_available_templates()
+        case GetTemplate():
+            return get_template(effect.name)
         case GetTemplateSource():
             return get_template_source(effect.name)
         case _:

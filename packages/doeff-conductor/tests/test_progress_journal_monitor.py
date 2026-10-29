@@ -29,7 +29,7 @@ from doeff_conductor._journal import (
     ProgressJournalEntry,
 )
 from doeff_conductor._monitor import STATUS_DONE, node_status_map, render_run
-from doeff_conductor import ResolvedIdentity
+from doeff_conductor._replay_keying import ResolvedIdentity
 
 from doeff.do import do
 

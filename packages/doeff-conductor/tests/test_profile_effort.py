@@ -126,7 +126,7 @@ def test_session_id_carries_resolved_identity_fingerprint() -> None:
     returned its old payload (observed live), defeating D7 end to end.
     """
     from doeff_conductor import AgentTask
-    from doeff_conductor import ResolvedIdentity
+    from doeff_conductor._replay_keying import ResolvedIdentity
 
     def task(effort: str) -> AgentTask:
         return AgentTask(

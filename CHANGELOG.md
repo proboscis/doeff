@@ -58,12 +58,24 @@
   `process_image_edit_response`, `image_edit__gemini` (the alias of `edit_image__gemini`, which stays),
   `gemini_cost_calculator__default`, `get_gemini_client` and `track_api_call`; doeff-openrouter drops
   `chat_completion`, `get_openrouter_client`, `get_model_cost`, `get_total_cost` and `reset_cost_tracking`;
-  doeff-conductor drops the templates `basic_pr`, `enforced_pr`, `multi_agent` and `reviewed_pr` (run them by name
-  with `get_template`); doeff-events drops `hold_broker` and `release_broker`; doeff-seedream drops
+  doeff-conductor drops the templates `basic_pr`, `enforced_pr`, `multi_agent` and `reviewed_pr` (run one by name
+  with `RunWorkflow`, or read its function with the effect `GetTemplate`); doeff-events drops `hold_broker` and `release_broker`; doeff-seedream drops
   `edit_image__seedream4`, `get_seedream_client` and `track_api_call`; doeff-google-secret-manager drops
   `access_secret` and `get_secret_manager_client`; doeff-system-one drops `judge` (yield the effect `Judge`). The
   helpers the other repositories read stay: `structured_llm__openai`, `structured_llm__gemini`, `edit_image__gemini`,
   doeff-openrouter's `structured_llm`, `cut_broker`, `restore_broker` and `judge_many`.
+- **Breaking (doeff-conductor):** the import root no longer exports 20 names that are neither effects nor handlers
+  (ADR-DOE-API-001 R1), and no other repository reads them. The template functions became effects answered by
+  `conductor_state_handler`: yield `ListTemplates()` where you called `get_available_templates()`,
+  `GetTemplate(name=…)` (new — it answers the template's function, and raises `KeyError` for an unknown name) where you
+  called `get_template(name)`, and `GetTemplateSource(name=…)` where you called `get_template_source(name)`.
+  `is_template`, the review routing constants and functions (`BLOCKER_FINDING`, `CALIBRATION_SAMPLE_BUDGET_KEY`,
+  `DEFAULT_REVIEW_ROUTE_TABLE`, `REVIEW_VERDICT_RESULT_SCHEMA`, `TIER1_REVIEW_BUDGET_KEY`,
+  `TIER2_ESCALATION_BUDGET_KEY`, `route_review_item`, `run_review_routing_demo`), the replay keying helpers
+  (`ResolvedIdentity`, `agent_cache_key`, `longest_valid_prefix`, `node_identity_fingerprint`,
+  `resolved_identity_fingerprint`, `workflow_effect_cache_key`) and `make_scheduled_handler_with_store` /
+  `make_blocking_scheduled_handler_with_store` stay in the internal modules `doeff_conductor._templates`,
+  `doeff_conductor._effects`, `doeff_conductor._replay_keying` and `doeff_conductor._handlers`.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).

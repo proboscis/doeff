@@ -41,7 +41,7 @@ from doeff_conductor._journal import (
     GateAnswerJournal,
 )
 from doeff_conductor._overseer import list_open_gates
-from doeff_conductor import ResolvedIdentity
+from doeff_conductor._replay_keying import ResolvedIdentity
 from doeff_conductor import WorkflowStatus
 
 from doeff import K, Perform, Resume, handler, stacked_handlers

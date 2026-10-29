@@ -19,7 +19,7 @@ from doeff_conductor._overseer import (
     list_open_gates,
     progress_since,
 )
-from doeff_conductor import ResolvedIdentity
+from doeff_conductor._replay_keying import ResolvedIdentity
 from doeff_conductor import WorkflowStatus
 from doeff_conductor import journaled_workflow_effect_handler
 from doeff_conductor._workflow_effect_journal import WORKFLOW_EFFECT_JOURNAL_FILENAME

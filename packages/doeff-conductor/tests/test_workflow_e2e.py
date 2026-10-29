@@ -207,19 +207,23 @@ class TestWorkflowE2E:
 class TestTemplateE2E:
     """Template loading tests."""
 
-    def test_template_imports(self):
-        from doeff_conductor import get_available_templates, get_template, is_template
+    def test_template_effects(self, tmp_path):
+        from doeff_conductor import GetTemplate, ListTemplates, conductor_state_handler
 
-        templates = get_available_templates()
+        from doeff import do, run
+
+        @do
+        def read_templates():
+            templates = yield ListTemplates()
+            func = yield GetTemplate(name="basic_pr")
+            return templates, func
+
+        templates, func = run(conductor_state_handler(tmp_path)(read_templates()))
+
         assert "basic_pr" in templates
         assert "enforced_pr" in templates
         assert "reviewed_pr" in templates
         assert "multi_agent" in templates
-
-        assert is_template("basic_pr")
-        assert not is_template("nonexistent")
-
-        func = get_template("basic_pr")
         assert callable(func)
 
     def test_basic_pr_template_structure(self):
