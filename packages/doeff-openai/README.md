@@ -297,51 +297,38 @@ def parallel_example():
 
 ## Cost Management
 
-### Token Counting
+The pricing table and the token counters are inside the package (ADR-DOE-API-001 R1). A program
+asks for the cost of a call with the `CalculateCost` effect, and a handler answers it. This
+package's handlers `openai_production_handler` and `calculate_cost_handler` answer from the
+package's pricing table and pass on the models the table does not know, so an outer handler of
+yours can answer those (or replace the table altogether).
 
 ```python
-from doeff_openai import count_tokens, count_message_tokens
+from doeff import Pass, Resume, do, handler
+from doeff_openai import CalculateCost, CostInfo, TokenUsage, calculate_cost_handler
 
-# Count tokens in text
-tokens = count_tokens("Hello, world!", "gpt-3.5-turbo")
+@do
+def price_call():
+    usage = TokenUsage(prompt_tokens=100, completion_tokens=200, total_tokens=300)
+    cost_info = yield CalculateCost(model="gpt-4", token_usage=usage)
+    return cost_info.total_cost
 
-# Count tokens in messages
-messages = [
-    {"role": "system", "content": "You are helpful"},
-    {"role": "user", "content": "Hello!"}
-]
-tokens = count_message_tokens(messages, "gpt-4")
-```
+@do
+def in_house_prices(effect, k):
+    if isinstance(effect, CalculateCost) and effect.model == "my-finetune":
+        usage = effect.token_usage
+        cost = usage.total_tokens / 1000 * 0.002
+        cost_info = CostInfo(
+            input_cost=cost,
+            output_cost=0.0,
+            total_cost=cost,
+            model=effect.model,
+            token_usage=usage,
+        )
+        return (yield Resume(k, cost_info))
+    return (yield Pass(effect, k))
 
-### Cost Estimation
-
-```python
-from doeff_openai import estimate_cost, estimate_max_cost
-
-# Estimate cost for known tokens
-cost_info = estimate_cost(
-    model="gpt-4",
-    input_tokens=100,
-    output_tokens=200
-)
-
-# Estimate maximum cost
-max_cost = estimate_max_cost(
-    model="gpt-4",
-    max_tokens=1000,
-    messages=messages
-)
-```
-
-### Model Pricing
-
-```python
-from doeff_openai import MODEL_PRICING, get_model_pricing
-
-# Get pricing for a model
-pricing = get_model_pricing("gpt-4")
-print(f"Input: ${pricing.input_price_per_1k}/1K tokens")
-print(f"Output: ${pricing.output_price_per_1k}/1K tokens")
+program = handler(in_house_prices)(calculate_cost_handler(price_call()))
 ```
 
 ## Complete Example
@@ -463,49 +450,45 @@ The API key can be provided in multiple ways (in order of precedence):
 
 1. Reader environment: `env={"openai_api_key": "sk-..."}`
 2. State: Set via `Put("openai_api_key", "sk-...")`
-3. Direct client creation with key
 
 ### Client Configuration
 
+The OpenAI client class is inside the handlers (ADR-DOE-API-001 R1): the handler builds the client
+the first time a call needs it, from these Reader keys, and keeps it in State for the later calls.
+A missing key leaves the OpenAI SDK's default.
+
+| Reader key | Client setting |
+|---|---|
+| `openai_api_key` | API key |
+| `openai_organization` | organization |
+| `openai_base_url` | base URL |
+| `openai_timeout_seconds` | request timeout in seconds |
+| `openai_max_retries` | retries inside the OpenAI SDK |
+
 ```python
-@do
-def custom_client():
-    # Create custom client
-    client = OpenAIClient(
-        api_key="sk-...",
-        organization="org-...",
-        base_url="https://custom.openai.com",
-        timeout=30.0,
-        max_retries=3
-    )
-    
-    # Store in state for reuse
-    yield Put("openai_client", client)
-    
-    # Now all API calls will use this client
-    response = yield chat_completion(messages, model="gpt-4")
+from doeff import run
+from doeff_core_effects import lazy_ask, scheduled, state
+from doeff_openai import openai_production_handler
+
+env = {
+    "openai_api_key": "sk-...",
+    "openai_timeout_seconds": 30.0,
+    "openai_max_retries": 3,
+}
+result = run(scheduled(lazy_ask(env=env)(state()(openai_production_handler(ai_workflow())))))
 ```
 
 ## Testing
 
-The package includes comprehensive tests showing mocking patterns:
+Tests answer the effects with this package's mock handler instead of calling OpenAI:
 
 ```python
-import pytest
-from unittest.mock import Mock, MagicMock
-from doeff_openai import OpenAIClient
+from doeff_openai import MockOpenAIConfig, MockOpenAIState, mock_handlers
 
-@pytest.fixture
-def mock_openai_client():
-    client = Mock(spec=OpenAIClient)
-    # ... configure mock
-    return client
-
-@do
-def test_workflow():
-    # Mock client will be injected
-    response = yield chat_completion(messages, model="gpt-4")
-    # ... test assertions
+config = MockOpenAIConfig(chat_responses=["hello"])
+calls = MockOpenAIState()
+program = mock_handlers(config=config, state=calls)(ai_workflow())
+# run it like the production stack; calls.chat_calls counts the chat effects answered
 ```
 
 ## License

@@ -13,7 +13,10 @@ The public API is the effects (``ChatCompletion``, ``Embedding``, ``StructuredOu
 provider-agnostic effects of doeff-llm they extend) and the handlers that answer them
 (``production_handlers``, ``openai_production_handler``, ``mock_handlers``). The program helpers
 the handlers are built from (``chat_completion``, ``create_embedding``, ``get_total_cost`` ...)
-live in the modules behind ``_`` and are not part of it (ADR-DOE-API-001).
+live in the modules behind ``_`` and are not part of it (ADR-DOE-API-001). So do the OpenAI client
+class, the pricing table and the token counters: the handlers build the client from the Reader
+keys ``openai_api_key``, ``openai_organization``, ``openai_base_url``, ``openai_timeout_seconds`` and
+``openai_max_retries``, and price a call through the ``CalculateCost`` effect.
 
 Example:
     >>> from doeff import do
@@ -32,27 +35,11 @@ Example:
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-# Client exports
-from doeff_openai._client import (
-    ClientHolder,
-    OpenAIClient,
-    extract_request_id,
-    extract_token_usage,
-)
-
-# Cost calculation exports
+# Exception types the cost handler raises (ADR-DOE-API-001 R2)
 from doeff_openai._costs import (
     MissingCachedPricingError,
     PricingError,
     UnknownModelPricingError,
-    calculate_cost,
-    count_embedding_tokens,
-    count_message_tokens,
-    count_tokens,
-    estimate_cost,
-    estimate_max_cost,
-    get_encoding,
-    get_model_pricing,
 )
 
 # Effect exports (includes CalculateCost)
@@ -65,21 +52,14 @@ from doeff_openai._effects import (
 )
 
 # Structured LLM exports
-from doeff_openai._structured_llm import (
-    is_gpt5_model,
-    requires_max_completion_tokens,
-    structured_llm__openai,
-)
+from doeff_openai._structured_llm import structured_llm__openai
 
 # Type exports
 from doeff_openai._types import (
-    # Constants
-    MODEL_PRICING,
     APICallMetadata,
     CompletionRequest,
     CostInfo,
     EmbeddingRequest,
-    ModelPricing,
     # Enums
     OpenAIModel,
     StreamChunk,
@@ -88,11 +68,9 @@ from doeff_openai._types import (
 )
 
 __all__ = [
-    "MODEL_PRICING",
     "APICallMetadata",
     "CalculateCost",
     "ChatCompletion",
-    "ClientHolder",
     "CompletionRequest",
     "CostInfo",
     "Embedding",
@@ -100,9 +78,6 @@ __all__ = [
     "MissingCachedPricingError",
     "MockOpenAIConfig",
     "MockOpenAIState",
-    "ModelPricing",
-    # Client
-    "OpenAIClient",
     # Types
     "OpenAIModel",
     "PricingError",
@@ -111,24 +86,11 @@ __all__ = [
     "StructuredOutput",
     "TokenUsage",
     "UnknownModelPricingError",
-    "calculate_cost",
     "calculate_cost_handler",
-    "count_embedding_tokens",
-    "count_message_tokens",
-    "count_tokens",
-    "estimate_cost",
-    "estimate_max_cost",
-    "extract_request_id",
-    "extract_token_usage",
-    # Cost calculation
-    "get_encoding",
-    "get_model_pricing",
-    "is_gpt5_model",
     "mock_handlers",
     "openai_mock_handler",
     "openai_production_handler",
     "production_handlers",
-    "requires_max_completion_tokens",
     # Structured LLM
     "structured_llm__openai",
 ]
