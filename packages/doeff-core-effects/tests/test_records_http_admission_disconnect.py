@@ -105,7 +105,7 @@ def records_config(connections, pool, observer, prefix, enabled):
 
     key = run(writer_lock_key(prefix))
     store = run(
-        scheduled()(
+        scheduled(
             with_handlers(
                 [sim_time_handler(clock=SimClock()), postgres_sql_handler(connections)],
                 prepare_records_store("probe", "probe", LAW_SCHEMA, prefix),

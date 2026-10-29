@@ -77,7 +77,7 @@
   (.start timer)
   (val seen [])
   (val waiter (threading.Thread
-                 :target (fn [] (.append seen (run ((scheduled) (with_handlers [(state) (process-latest-handler name)] (awaited first))))))
+                 :target (fn [] (.append seen (run (scheduled (with_handlers [(state) (process-latest-handler name)] (awaited first))))))
                  :daemon True))
   (.start waiter)
   (.join waiter 10.0)
@@ -110,5 +110,5 @@
   (val name "process-latest-await-cancel")
   (val first (Progress :waiting "一覧"))
   (run (with_handlers [(state) (process-latest-handler name)] (publish first)))
-  (run ((scheduled) (with_handlers [(state) (process-latest-handler name)] (cancelled-then-published name first))))
+  (run (scheduled (with_handlers [(state) (process-latest-handler name)] (cancelled-then-published name first))))
   (assert (= (.get (get BELLS name) Progress #()) #()) (.format "取り消した後の呼び鈴が {!r}" (get BELLS name))))

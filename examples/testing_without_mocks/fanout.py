@@ -46,7 +46,7 @@ def http_web(effect: FetchPage, k):  # production: real async I/O
 URLS = ["a.example", "b.example", "c.example"]
 
 if __name__ == "__main__":
-    print(run(scheduled()(fake_web(titles(URLS)))))
+    print(run(scheduled(fake_web(titles(URLS)))))
     started = time.perf_counter()
-    print(run(scheduled()(await_handler(http_web(titles(URLS))))))
+    print(run(scheduled(await_handler()(http_web(titles(URLS))))))
     print(f"{time.perf_counter() - started:.2f} s")

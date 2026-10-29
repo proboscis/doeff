@@ -42,7 +42,7 @@ def profiling_config_from_environment() -> ProfilingConfig:
     may read the process environment) and not through Hy's process effects, so ``doeff run`` starts
     in an environment that has only the four core packages and no Hy (agora-redesign #3012).
     """
-    setting = run(scheduled()(reader(env={_PROFILE_KEY: ""})(env_var_ask()(Ask(_PROFILE_KEY)))))
+    setting = run(scheduled(reader(env={_PROFILE_KEY: ""})(env_var_ask()(Ask(_PROFILE_KEY)))))
     return ProfilingConfig(enabled=setting not in _PROFILE_OFF_VALUES)
 
 

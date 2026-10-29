@@ -63,6 +63,6 @@
 
 (deftest test-counterexample-a-stop-that-does-not-wake-the-wait-stalls-the-run
   (with [(pytest.raises SchedulerDeadlockError)]
-    (run ((scheduled) (with_handlers [(state) forgetful-stop-handler] (stop-while-waiting)))))
+    (run (scheduled (with_handlers [(state) forgetful-stop-handler] (stop-while-waiting)))))
   ;; 正しい fake では同じ Program が止めの理由で起きる。
-  (assert (= (run ((scheduled) (with_handlers [(state) scripted-stop-handler] (stop-while-waiting)))) "scenario")))
+  (assert (= (run (scheduled (with_handlers [(state) scripted-stop-handler] (stop-while-waiting)))) "scenario")))

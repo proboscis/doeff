@@ -45,7 +45,7 @@ def start_of(mode: str, child_out: str) -> StartProcess:
 
 
 def main(mode: str, out_path: str, child_out: str) -> None:
-    started = run(scheduled()(with_handlers([subprocess_handler], start_of(mode, child_out))))
+    started = run(scheduled(with_handlers([subprocess_handler], start_of(mode, child_out))))
     if not isinstance(started, ProcessStarted):
         raise SystemExit(f"子を起こせなかった: {started}")
     with open(out_path, "w", encoding="utf-8") as f:

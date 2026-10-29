@@ -64,7 +64,7 @@
 
 (defn #^ T on [#^ list handlers #^ (get Program T) program]
   "handler の列の下で program を scheduler つきで 1 回回すため。"
-  (run ((scheduled) (with_handlers handlers program))))
+  (run (scheduled (with_handlers handlers program))))
 
 
 (defn #^ None check-three [#^ tuple answers]

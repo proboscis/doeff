@@ -209,7 +209,7 @@
 
 
 (defn #^ None test-an-appended-script-is-served-after-the-script-ran-dry []
-  (assert (= (run ((scheduled) (with_handlers [(state) (scripted-http-server (HttpScript :arrivals #()))] (append-then-drain))))
+  (assert (= (run (scheduled (with_handlers [(state) (scripted-http-server (HttpScript :arrivals #()))] (append-then-drain))))
              #("HttpServerClosed" "z" "HttpServerClosed"))))
 
 
@@ -318,8 +318,8 @@
   (defn :async #^ None scenario []
     "相手役を開き、本物の答え手を別の thread で回して、HTTP の中継と ws の中継を確かめるため。"
     (setv #(runner up) (await (upstream-app)))
-    (.start (threading.Thread :target (fn [] (try (run ((scheduled) (with_handlers [await-handler (state) aiohttp-http-server]
-                                                                                   (serve-on-port (.format "http://127.0.0.1:{}" up)))))
+    (.start (threading.Thread :target (fn [] (try (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
+                                                                                 (serve-on-port (.format "http://127.0.0.1:{}" up)))))
                                                   (except [asyncio.CancelledError] None)))
                               :daemon True))
     (setv base (.format "http://127.0.0.1:{}" port))
@@ -346,8 +346,8 @@
   (import queue)
   (import doeff_core_effects [aiohttp-http-server])
   (setv result (queue.Queue) bound (queue.Queue))
-  (.start (threading.Thread :target (fn [] (.put result (run ((scheduled) (with_handlers [await-handler (state) aiohttp-http-server]
-                                                                                         (ws-echo 64 bound.put))))))
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
+                                                                                       (ws-echo 64 bound.put))))))
                             :daemon True))
   (defn :async #^ WSMessage scenario [#^ str base]
     "ws に上げて 1 往復し、stop で待ち受けを閉じさせて、最後に受けた frame を返すため。"
@@ -380,8 +380,8 @@
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
     "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
-    (.start (threading.Thread :target (fn [] (.put result (run ((scheduled) (with_handlers [await-handler (state) aiohttp-http-server]
-                                                                                           (named-echo name address bound.put))))))
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
+                                                                                         (named-echo name address bound.put))))))
                               :daemon True)))
   (open-listener "A" bound-a result-a)
   (.get bound-a :timeout 10)
@@ -427,8 +427,8 @@
         bound-a (queue.Queue) bound-b (queue.Queue) result-a (queue.Queue) result-b (queue.Queue))
   (defn #^ None open-listener [#^ str name #^ queue.Queue bound #^ queue.Queue result]
     "待ち受けの Program を別の thread で回すため(答えの数を result へ)。"
-    (.start (threading.Thread :target (fn [] (.put result (run ((scheduled) (with_handlers [await-handler (state) aiohttp-http-server]
-                                                                                           (named-echo name address bound.put))))))
+    (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
+                                                                                         (named-echo name address bound.put))))))
                               :daemon True)))
   (open-listener "A" bound-a result-a)
   (.get bound-a :timeout 10)
@@ -482,8 +482,8 @@
     (<- (HttpShutdown :reason "検が閉じた" :drain-seconds 1.0))
     (<- (HttpNextRequest))
     2)
-  (.start (threading.Thread :target (fn [] (.put result (run ((scheduled) (with_handlers [await-handler (state) aiohttp-http-server]
-                                                                                         (answer-after-the-peer-left))))))
+  (.start (threading.Thread :target (fn [] (.put result (run (scheduled (with_handlers [await-handler (state) aiohttp-http-server]
+                                                                                       (answer-after-the-peer-left))))))
                             :daemon True))
   (setv port (. (.get bound :timeout 30) port))
   ;; 1 つ目: 送ってすぐ RST で切る(答えが遅れ、相手の上限が先に来た形 — 本番の curl -m 2)。aiohttp が切りを受け取ってから答えさせる。
