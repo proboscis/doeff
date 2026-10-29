@@ -75,7 +75,7 @@
                                                 WS-CLOSE-ABNORMAL HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed HttpBodyOutcome
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
                                                 send-overflows closing-of HttpProbe probe-for probe-answer
-                                                WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome])
+                                                WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -479,17 +479,27 @@
       (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))
       (return None))
     (setv outcome (await (asyncio.to-thread ws-shortcut-outcome shortcut ticket text)))
-    (match outcome
-      ;; 答えの文が無ければ何も積まず、当たらなかった 1 通と同じ形で並べる(answered-at は積んだ時だけ — 頭の註)。
-      (WsShortcutAnswered :texts #()) (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))
-      (WsShortcutAnswered :texts texts)
-        (do (for [one texts]
-              (self.send-text ticket one))
-            (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at :answered texts
-                                               :answered-at (time.monotonic))))
-      (WsShortcutFailed :reason reason)
-        (do (relay-failed (.format "札 {} の ws の 1 通にその場で答えられなかった(本体へ渡す): {}" ticket reason))
-            (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at))))
+    ;; 段ごとに積む(頭の註の 2 段の答え): 続き rest の在る段は積んでから rest を同じく loop の外の thread で走らせる。
+    (setv sent #()
+          carried None
+          answered-at None)
+    (while (is-not outcome None)
+      (match outcome
+        (WsShortcutAnswered :texts texts :rest rest :carried value)
+          (do (for [one texts]
+                (self.send-text ticket one))
+              (when texts
+                (setv sent (+ sent texts)
+                      answered-at (time.monotonic)))
+              (setv carried value
+                    outcome (if (is rest None) None (await (asyncio.to-thread ws-shortcut-stage rest)))))
+        (WsShortcutFailed :reason reason)
+          (do (relay-failed (.format "札 {} の ws の 1 通にその場で答えられなかった(本体へ渡す): {}" ticket reason))
+              (setv carried None
+                    outcome None))))
+    ;; 答えの文が無ければ何も積まず、当たらなかった 1 通と同じ形で並べる(answered-at は積んだ時だけ — 頭の註)。
+    (.put self.arrivals (WsTextArrived :ticket ticket :text text :received-at received-at :answered sent
+                                       :answered-at answered-at :carried carried))
     None)
 
   (defn :async #^ None finish-peer [self #^ WsPeer peer]

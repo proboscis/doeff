@@ -24,7 +24,8 @@
                                                 HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
                                                 HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
                                                 WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach
-                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer WsShortcut])
+                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer WsShortcut
+                                                WsShortcutAhead WsShortcutCarried])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
 (val SHUTDOWN-REASON "検が閉じた")
@@ -461,7 +462,7 @@
 (defk serve-shortcut [requests shortcuts]
   {:pre [(: requests tuple) (: shortcuts tuple)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
   "ws の口つきの契約の Program: 待ち受けを開き、相手に requests を送らせ、ws の 1 通には、答え手が先に答えた 1 通なら \"late:\"、他は
-   \"echo:\" で答え(\"bye\" は 4001 で閉じる)、全部の要求が決着したら閉じる。出来事の形には積んだ文の列 answered を足す。"
+   \"echo:\" で答え(\"bye\" は 4001 で閉じる)、全部の要求が決着したら閉じる。出来事の形には積んだ文の列 answered と運んだ値 carried を足す。"
   (<- world World (ContractWorld))
   (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes SEND-LIMIT :ws-shortcuts shortcuts))
   (<- (PeerSend :address bound :requests requests))
@@ -472,7 +473,7 @@
   (while open
     (<- event HttpEvent (HttpNextRequest))
     (<- shape tuple (event-shape event))
-    (:= events (+ events #((if (isinstance event WsTextArrived) (+ shape #(event.answered)) shape))))
+    (:= events (+ events #((if (isinstance event WsTextArrived) (+ shape #(event.answered event.carried)) shape))))
     (match event
       (HttpServerClosed) (:= open False)
       (HttpRequestArrived) (do (<- answered Answered (answer-request event world))
@@ -501,11 +502,55 @@
   (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("fast1" "hi" "boom1" "quiet1" "bye")))
                                     shortcuts))
   (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
-                                #("text" "1" "fast1" #("early:fast1")) #("text" "1" "hi" #())
-                                #("text" "1" "boom1" #()) #("text" "1" "quiet1" #()) #("text" "1" "bye" #())
+                                #("text" "1" "fast1" #("early:fast1") None) #("text" "1" "hi" #() None)
+                                #("text" "1" "boom1" #() None) #("text" "1" "quiet1" #() None) #("text" "1" "bye" #() None)
                                 #("closed" "1" 4001 "さようなら"))
                               CLOSED))
           served.events)
   (val answer (get served.answers 0))
   (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1" "echo:quiet1") #(4001 "さようなら")])
+          answer))
+
+
+(defk staged-rest [text]
+  {:pre [(: text str)] :post [(: % WsShortcutCarried)] :tags {:context "http-server-test" :role "program"}}
+  "2 段の ws の口の続きの段(閉じている): \"second:\" の 1 通を積み、値 \"kept:\" を本体へ運ぶ。"
+  (WsShortcutCarried :texts #((+ "second:" text)) :carried (+ "kept:" text)))
+
+
+(defk staged-texts [ticket text]
+  {:pre [(: ticket str) (: text str)] :post [(: % WsShortcutAhead)] :tags {:context "http-server-test" :role "program"}}
+  "2 段の ws の口の answer(agora card ki-d5887d5edbd5): 先に \"first:\" の 1 通を積み、続きの段 staged-rest を走らせる。"
+  (WsShortcutAhead :texts #((+ "first:" text)) :rest (staged-rest text)))
+
+
+(defk broken-rest []
+  {:pre [] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
+  "落ちる続きの段 — 本体の run の handler(契約の世界)を読もうとする。"
+  (<- world World (ContractWorld))
+  #(world.site))
+
+
+(defk staged-broken [ticket text]
+  {:pre [(: ticket str) (: text str)] :post [(: % WsShortcutAhead)] :tags {:context "http-server-test" :role "program"}}
+  "1 段目は積み、続きの段が落ちる ws の口の answer。"
+  (WsShortcutAhead :texts #((+ "first:" text)) :rest (broken-rest)))
+
+
+(deftest test-a-staged-ws-shortcut-sends-each-stage-before-the-next-and-carries-a-value-to-the-program
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  ;; 2 段の答え(agora card ki-d5887d5edbd5): 1 段目の文を積んでから続きの段を走らせ、続きの段の文も積んでから、全部の段の文と終わりの段が
+  ;; 運ぶ値 carried を載せた 1 通が本体へ届く。続きの段が落ちた 1 通は、1 段目に積んだ文を載せ、値は運ばずに届く。同じ接続の 1 通の順は変わらない。
+  (val shortcuts #((WsShortcut :marker "stage" :answer staged-texts) (WsShortcut :marker "split" :answer staged-broken)))
+  (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("stage1" "hi" "split1" "bye")))
+                                    shortcuts))
+  (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
+                                #("text" "1" "stage1" #("first:stage1" "second:stage1") "kept:stage1") #("text" "1" "hi" #() None)
+                                #("text" "1" "split1" #("first:split1") None) #("text" "1" "bye" #() None)
+                                #("closed" "1" 4001 "さようなら"))
+                              CLOSED))
+          served.events)
+  (val answer (get served.answers 0))
+  (assert (= [answer.status answer.texts answer.closed]
+             [101 #("first:stage1" "second:stage1" "late:stage1" "echo:hi" "first:split1" "late:split1") #(4001 "さようなら")])
           answer))

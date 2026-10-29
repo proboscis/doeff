@@ -55,8 +55,10 @@ from doeff_core_effects.http_server_effects import WsBinaryArrived as WsBinaryAr
 from doeff_core_effects.http_server_effects import HttpHeader as HttpHeader
 from doeff_core_effects.http_server_effects import WsShortcut as WsShortcut
 from doeff_core_effects.http_server_effects import WsShortcutAnswered as WsShortcutAnswered
+from doeff_core_effects.http_server_effects import WsShortcutFailed as WsShortcutFailed
 from doeff_core_effects.http_server_effects import ws_shortcut_for as ws_shortcut_for
 from doeff_core_effects.http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
+from doeff_core_effects.http_server_effects import ws_shortcut_stage as ws_shortcut_stage
 from doeff_core_effects._file_effects import ReadBytes as ReadBytes
 from doeff_core_effects._file_effects import FileFailed as FileFailed
 CLOSED_REASON: str
