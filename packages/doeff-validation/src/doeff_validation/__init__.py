@@ -4,9 +4,9 @@
 Python:
 
     yield validate(
-        check(operator.is_not, perform(LookupConversation(request.conversation)), None,
+        Check(operator.is_not, Perform(LookupConversation(request.conversation)), None,
               reason=PlacementMismatch.CONVERSATION),
-        check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
+        Check(operator.eq, job.phase, Phase.PENDING, reason=PlacementMismatch.PHASE),
     )   # 失敗が 1 つでもあれば ValidationException(全部の失敗を持つ)
 
     run(sequential()(program))   # 逐次。並行は parallel(n)、fail-fast は parallel_fail_fast(n)
@@ -16,13 +16,10 @@ Hy: ``(require doeff-hy.macros [defk validate check])`` → ``(! (validate (chec
 """
 
 from doeff_validation._api import (
-    check as check,
-)
-from doeff_validation._api import (
-    perform as perform,
-)
-from doeff_validation._api import (
     validate as validate,
+)
+from doeff_validation._failures import (
+    Check as Check,
 )
 from doeff_validation._failures import (
     CheckArgument as CheckArgument,
@@ -34,13 +31,10 @@ from doeff_validation._failures import (
     CheckFailure as CheckFailure,
 )
 from doeff_validation._failures import (
-    CheckSpec as CheckSpec,
-)
-from doeff_validation._failures import (
     EvaluatedArgument as EvaluatedArgument,
 )
 from doeff_validation._failures import (
-    Performed as Performed,
+    Perform as Perform,
 )
 from doeff_validation._failures import (
     ValidationException as ValidationException,
