@@ -205,6 +205,10 @@ struct Spec {
     /// `_describe_unretrieved_exception`: a failed task's entry in the
     /// never-retrieved warning (card ki-84667a89b47a).
     describe_unretrieved_exception: Py<PyAny>,
+    /// `_drop_waiter_frames`: gives a failed entry's error back the traceback
+    /// it had when it failed, once its waiters' frames are finished (card
+    /// ki-6ebcb9c44749).
+    drop_waiter_frames: Py<PyAny>,
     logger: Py<PyAny>,
     /// `_external_wake_of`: the wake a new external promise carries.
     external_wake_of: Py<PyAny>,
@@ -274,6 +278,7 @@ impl Spec {
             not_a_waitable: get("not_a_waitable")?.unbind(),
             enrich_traceback: get("enrich_exception_traceback")?.unbind(),
             describe_unretrieved_exception: get("describe_unretrieved_exception")?.unbind(),
+            drop_waiter_frames: get("drop_waiter_frames")?.unbind(),
             logger: get("logger")?.unbind(),
             external_wake_of: get("external_wake_of")?.unbind(),
             external_wait_is_stall: get("external_wait_is_stall")?.unbind(),
@@ -383,11 +388,17 @@ struct TaskEntry {
     /// had claimed its outcome (the Python version's `unretrieved`); cleared
     /// when something claims it later.
     unretrieved: Option<String>,
+    /// The traceback the error had when the task failed (the Python version's
+    /// `frames_kept_from`): the frames before it in the error's traceback are
+    /// the waiters' (`queue_waiter_frames`).
+    frames_kept_from: Option<Py<PyAny>>,
 }
 
 struct PromiseEntry {
     status: Status,
     result: Option<Py<PyAny>>,
+    /// The traceback the error had when the promise failed (see `TaskEntry`).
+    frames_kept_from: Option<Py<PyAny>>,
     external: bool,
     /// How an external promise is known to wake the scheduler — the Python
     /// `_ClockWake` / `_WatchedWake` that `external_wake_of` made from the
@@ -726,6 +737,10 @@ struct State {
     /// while the lock is held; they are dropped after it is released.
     graveyard_conts: Vec<Continuation>,
     graveyard_objs: Vec<Py<PyAny>>,
+    /// Failed entries' errors, each with the traceback it failed with, whose
+    /// waiter frames `drop_waiter_frames` lets go of after the lock is
+    /// released (`queue_waiter_frames`).
+    graveyard_waiter_frames: Vec<(Py<PyAny>, Py<PyAny>)>,
     /// Never-retrieved task exceptions of entries the #502 sweep deleted (the
     /// Python version's `unretrieved_swept`): at most
     /// `unretrieved_exceptions_named` descriptions, and how many there were.
@@ -770,6 +785,7 @@ impl State {
             next_group: 0,
             graveyard_conts: Vec::new(),
             graveyard_objs: Vec::new(),
+            graveyard_waiter_frames: Vec::new(),
             unretrieved_swept: Vec::new(),
             unretrieved_swept_count: 0,
             wake_of_seq: HashMap::default(),
@@ -998,6 +1014,44 @@ enum Outcome {
 struct Locked<'a> {
     core: &'a Arc<Core>,
     guard: MutexGuard<'a, State>,
+}
+
+/// What the scheduler let go of while it held its lock (`take_graveyard`),
+/// let go of when this is dropped — after the lock is released.
+struct Graveyard {
+    conts: Vec<Continuation>,
+    objs: Vec<Py<PyAny>>,
+    /// Failed entries' errors and the traceback each failed with
+    /// (`queue_waiter_frames`): `drop_waiter_frames` (set when there are
+    /// any) is called on each when this is dropped.
+    waiter_frames: Vec<(Py<PyAny>, Py<PyAny>)>,
+    drop_waiter_frames: Option<Py<PyAny>>,
+}
+
+impl Drop for Graveyard {
+    fn drop(&mut self) {
+        if let Some(drop_waiter_frames) = self.drop_waiter_frames.take() {
+            let waiter_frames = std::mem::take(&mut self.waiter_frames);
+            Python::attach(|py| {
+                let drop_waiter_frames = drop_waiter_frames.bind(py);
+                for (error, kept_from) in waiter_frames {
+                    if let Err(err) = drop_waiter_frames.call1((error, kept_from)) {
+                        err.write_unraisable(py, None);
+                    }
+                }
+            });
+        }
+        drop(std::mem::take(&mut self.conts));
+        drop(std::mem::take(&mut self.objs));
+    }
+}
+
+/// The traceback `error` has as it fails, kept as the entry's
+/// `frames_kept_from`: the Python version's `getattr(error, "__traceback__",
+/// None)` — None for a failure value that is no exception.
+fn traceback_at_failure(py: Python<'_>, error: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let traceback = error.getattr_opt(pyo3::intern!(py, "__traceback__"))?;
+    Ok(traceback.map_or_else(|| py.None(), Bound::unbind))
 }
 
 impl Drop for Locked<'_> {
@@ -1323,11 +1377,50 @@ impl Locked<'_> {
         self.graveyard_objs.push(obj);
     }
 
-    fn take_graveyard(&mut self) -> (Vec<Continuation>, Vec<Py<PyAny>>) {
-        (
-            std::mem::take(&mut self.graveyard_conts),
-            std::mem::take(&mut self.graveyard_objs),
-        )
+    fn take_graveyard(&mut self) -> Graveyard {
+        let waiter_frames = std::mem::take(&mut self.graveyard_waiter_frames);
+        let drop_waiter_frames = (!waiter_frames.is_empty())
+            .then(|| self.core.spec.drop_waiter_frames.clone());
+        Graveyard {
+            conts: std::mem::take(&mut self.graveyard_conts),
+            objs: std::mem::take(&mut self.graveyard_objs),
+            waiter_frames,
+            drop_waiter_frames,
+        }
+    }
+
+    /// Queues a failed entry whose handle is alive for `drop_waiter_frames`:
+    /// the finished waiter frames its error's traceback gathered — every
+    /// throw into a waiter prepends the waiter's frames, and they hold the
+    /// waiter's Wait/Try effects and the handle those name — may be what keeps
+    /// that handle alive, so the sweep never deleted the entry (card
+    /// ki-6ebcb9c44749). Letting go of those frames can finalize what they
+    /// held, so it runs when the graveyard is dropped, after the lock is
+    /// released; the next sweep then finds the handle dead. An entry whose
+    /// error still has the traceback it failed with has no waiter frames.
+    fn queue_waiter_frames(&mut self, py: Python<'_>, key: WKey) {
+        let (status, error, kept_from) = match key.kind {
+            WKind::Task => match self.tasks.get(&key.id) {
+                Some(t) => (t.status, t.result.as_ref(), t.frames_kept_from.as_ref()),
+                None => return,
+            },
+            WKind::Promise => match self.promises.get(&key.id) {
+                Some(p) => (p.status, p.result.as_ref(), p.frames_kept_from.as_ref()),
+                None => return,
+            },
+        };
+        let (Status::Failed, Some(error), Some(kept_from)) = (status, error, kept_from) else {
+            return;
+        };
+        let error = error.bind(py);
+        let Ok(traceback) = error.getattr(pyo3::intern!(py, "__traceback__")) else {
+            return;
+        };
+        if traceback.is(kept_from.bind(py)) {
+            return;
+        }
+        let queued = (error.clone().unbind(), kept_from.clone_ref(py));
+        self.graveyard_waiter_frames.push(queued);
     }
 
     // --- handles (#502) -------------------------------------------------
@@ -1404,6 +1497,7 @@ impl Locked<'_> {
                 continue;
             };
             if refs.iter().any(|r| r.bind(py).upgrade().is_some()) {
+                self.queue_waiter_frames(py, key);
                 continue;
             }
             match key.kind {
@@ -1417,6 +1511,9 @@ impl Locked<'_> {
                     if let Some(entry) = self.promises.remove(&key.id) {
                         if let Some(result) = entry.result {
                             self.bury(result);
+                        }
+                        if let Some(kept_from) = entry.frames_kept_from {
+                            self.bury(kept_from);
                         }
                     }
                 }
@@ -1460,6 +1557,9 @@ impl Locked<'_> {
         }
         if let Some(definition) = entry.definition {
             self.bury(definition);
+        }
+        if let Some(kept_from) = entry.frames_kept_from {
+            self.bury(kept_from);
         }
     }
 
@@ -2132,6 +2232,7 @@ impl Locked<'_> {
             PromiseEntry {
                 status: Status::Pending,
                 result: None,
+                frames_kept_from: None,
                 external,
                 wake: None,
                 cancel_callbacks: None,
@@ -2160,6 +2261,9 @@ impl Locked<'_> {
             Settle::Complete => Status::Completed,
             Settle::Fail => Status::Failed,
         };
+        if matches!(settle, Settle::Fail) {
+            promise.frames_kept_from = Some(traceback_at_failure(py, value.bind(py))?);
+        }
         promise.result = Some(value);
         let callbacks = promise.cancel_callbacks.take();
         if let Some(callbacks) = callbacks {
@@ -3236,6 +3340,7 @@ impl Locked<'_> {
                 definition: Some(definition),
                 retrieved: false,
                 unretrieved: None,
+                frames_kept_from: None,
             },
         );
         if traced() {
@@ -3362,10 +3467,17 @@ impl Locked<'_> {
                             tb.call_method1("insert", (0, entry))?;
                         }
                     }
+                    // The failure site's frames; the sweep lets go only of the
+                    // waiter frames prepended to them (`queue_waiter_frames`).
+                    let kept_from = traceback_at_failure(py, &error)?;
                     let task = self.tasks.get_mut(&tid).expect("checked above");
                     task.status = Status::Failed;
                     task.unretrieved = unretrieved;
+                    let old_kept_from = task.frames_kept_from.replace(kept_from);
                     if let Some(old) = task.result.replace(error.unbind()) {
+                        self.bury(old);
+                    }
+                    if let Some(old) = old_kept_from {
                         self.bury(old);
                     }
                 }
@@ -3712,6 +3824,9 @@ impl Locked<'_> {
         } else {
             Status::Failed
         };
+        if !complete {
+            promise.frames_kept_from = Some(traceback_at_failure(py, value.bind(py))?);
+        }
         promise.result = Some(value);
         let woken_min = self.wake_waiters(
             py,
@@ -3847,10 +3962,18 @@ impl TaskWrapStream {
                     .get(&tid)
                     .map_or(true, |t| t.status.is_terminal());
                 if !terminal {
+                    let kept_from = traceback_at_failure(py, &error).unwrap_or_else(|err| {
+                        err.write_unraisable(py, None);
+                        py.None()
+                    });
                     let task = locked.tasks.get_mut(&tid).expect("present");
                     task.status = Status::Failed;
                     let old = task.result.replace(error.clone().unbind());
+                    let old_kept_from = task.frames_kept_from.replace(kept_from);
                     if let Some(old) = old {
+                        locked.bury(old);
+                    }
+                    if let Some(old) = old_kept_from {
                         locked.bury(old);
                     }
                     let _ = locked.wake_waiters(

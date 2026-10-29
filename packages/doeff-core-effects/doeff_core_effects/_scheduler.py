@@ -358,6 +358,44 @@ def _enrich_exception_traceback(exc, task_meta=None, vm_ctx=None):
         exc.__doeff_traceback__ = entries + existing
 
 
+# frame.clear() refuses a suspended frame only from 3.13 on; before that it
+# finalizes the suspended generator, which would close a waiter still running.
+_CLEARS_SUSPENDED_FRAMES_SAFELY = sys.version_info >= (3, 13)
+
+
+def _drop_waiter_frames(error, kept_from) -> bool:
+    """Give a failed row's error back the traceback it had when it failed, once
+    the waiters it was thrown into are done with theirs.
+
+    A failed row keeps its error for later waiters, and every throw into a
+    waiter prepends the waiter's frames to the error's traceback. Those frames
+    hold the waiter's Wait/Try effects and the Task handle they name — in their
+    locals and in the closures of their functions — so the row kept its own
+    handle alive and the #502 sweep never deleted it: a job that waited on many
+    failing tasks kept every row, error, traceback and frame (agora card
+    ki-6ebcb9c44749).
+
+    Walks the traceback from its head to ``kept_from`` (the traceback the error
+    had when it failed) and clears each waiter frame. When every one was
+    finished, the error's traceback is set back to ``kept_from`` and True is
+    returned. An executing or suspended frame (a waiter still handling the
+    error) refuses the clear (RuntimeError): the traceback is left as it is
+    for a later sweep and False is returned. A waiter that keeps the error
+    afterwards sees the failure site's frames, not its own.
+    """
+    if not _CLEARS_SUSPENDED_FRAMES_SAFELY or not isinstance(error, BaseException):
+        return False
+    tb = error.__traceback__
+    while tb is not None and tb is not kept_from:
+        try:
+            tb.tb_frame.clear()
+        except RuntimeError:
+            return False
+        tb = tb.tb_next
+    error.__traceback__ = kept_from
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Effects
 # ---------------------------------------------------------------------------
@@ -1330,6 +1368,7 @@ def _rust_spec() -> dict[str, object]:
         "not_a_waitable": _not_a_waitable,
         "enrich_exception_traceback": _enrich_exception_traceback,
         "describe_unretrieved_exception": _describe_unretrieved_exception,
+        "drop_waiter_frames": _drop_waiter_frames,
         "logger": _logger,
         "module": sys.modules[__name__],
         "external_wake_of": _external_wake_of,
@@ -1729,7 +1768,15 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 # no new registration for this key can happen (a Future is
                 # only minted from a live parent handle).
                 if any(ref() is not None for ref in refs):
-                    continue
+                    # The finished waiter frames in a failed row's traceback
+                    # may be what keeps the handle alive (_drop_waiter_frames).
+                    if (
+                        meta["status"] != "failed"
+                        or "frames_kept_from" not in meta
+                        or not _drop_waiter_frames(meta["result"], meta["frames_kept_from"])
+                        or any(ref() is not None for ref in refs)
+                    ):
+                        continue
                 dead.append(wid)
             for wid in dead:
                 if kind == "task":
@@ -2119,6 +2166,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 if tasks[tid]["status"] not in terminal_statuses:
                     tasks[tid]["status"] = "failed"
                     tasks[tid]["result"] = e
+                    tasks[tid]["frames_kept_from"] = e.__traceback__
                     wake_waiters(("task", tid))
                 _release_task_refs(tid)
                 raise
@@ -2178,6 +2226,8 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
             return
         promise["status"] = "completed" if action == "complete" else "failed"
         promise["result"] = value
+        if action != "complete":
+            promise["frames_kept_from"] = getattr(value, "__traceback__", None)
         # Settled: nothing left to cancel; drop the callbacks' references.
         promise.pop("cancel_callbacks", None)
         if _trace_sink is None:
@@ -3089,6 +3139,9 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                             "spawn_site": tasks[tid].get("spawn_site", ""),
                         })
                     tasks[tid]["result"] = error
+                    # The failure site's frames; the sweep clears only the
+                    # waiter frames prepended to them (_drop_waiter_frames).
+                    tasks[tid]["frames_kept_from"] = getattr(error, "__traceback__", None)
                     if not tasks[tid]["retrieved"] and not isinstance(error, TaskCancelledError):
                         # Nothing has claimed the outcome yet: describe the
                         # exception now, while the program and spawn site are
@@ -3408,6 +3461,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 )))
             promise["status"] = "failed"
             promise["result"] = effect.error
+            promise["frames_kept_from"] = getattr(effect.error, "__traceback__", None)
             woken_min = wake_waiters(("promise", pid))
             # Same as CompletePromise: the completer resumes only after the
             # tasks its resolution woke (#493 + pub/sub ordering guarantee).
