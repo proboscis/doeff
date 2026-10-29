@@ -1,12 +1,19 @@
 # monitor.py
 import asyncio
+import heapq
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from itertools import count
 
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
-from doeff_time import Delay, GetTime, async_time_handler, sim_time_handler
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
+)
 
 
 # The program: two tasks check a page every 30 minutes.
@@ -23,6 +30,16 @@ class Spend(EffectBase):  # "the next step costs this much"
 @dataclass(frozen=True)
 class Log(EffectBase):  # "write this line"
     line: str
+
+
+@dataclass(frozen=True)
+class Delay(EffectBase):  # "wait this many seconds"
+    seconds: float
+
+
+@dataclass(frozen=True)
+class GetTime(EffectBase):  # "what time is it?"
+    pass
 
 
 @do
@@ -65,6 +82,37 @@ def printed(effect: Log, k):  # log lines go to stdout
 @handler
 def free(effect: Spend, k):  # spending costs nothing
     yield Transfer(k, None)
+
+
+def virtual_clock(start: datetime):  # waits take no time
+    now = start
+    sleepers = []  # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():  # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @handler
+    def clock(effect: Delay | GetTime, k):
+        nonlocal advancing
+        if isinstance(effect, GetTime):
+            return (yield Resume(k, now))
+        promise = yield CreatePromise()
+        wake_up = now + timedelta(seconds=effect.seconds)
+        heapq.heappush(sleepers, (wake_up, next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return clock
 
 
 def budget(limit: int):  # a task that finds the budget spent stops there
@@ -140,11 +188,19 @@ URLS = ["a.example", "b.example"]
 
 
 def simulated(program):  # a virtual clock: 30-minute waits take no time
-    return scheduled(sim_time_handler(start_time=START)(program))
+    return scheduled(virtual_clock(START)(program))
 
 
-def real(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+@handler
+def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio
+    if isinstance(effect, GetTime):
+        return (yield Resume(k, datetime.now(timezone.utc)))
+    yield Await(asyncio.sleep(effect.seconds))
+    return (yield Resume(k, None))
+
+
+def real(program):  # the wall clock and an async client
+    return scheduled(await_handler()(wall_clock(program)))
 
 
 if __name__ == "__main__":

@@ -58,10 +58,10 @@ print(run(budget(2)(fake_web(crawl(URLS)))))   # over budget
 `crawl` has no HTTP and no budget check of its own. `fake_web` answers each `Fetch`. `budget(2)` lets two `Spend`s through, then returns without resuming `k`, so the third page is never fetched. Swap `fake_web` for a handler over a real client and `crawl` does not change.
 
 - More layers stack the same way. The intro article runs one program, which checks two pages every half hour, under five stacks: a test run with fake pages and a virtual clock, a budget, retries, a handler that records every effect, and production on the wall clock with an async client.
-- Concurrency is effects too: `Spawn`, `Wait`, `Gather` and `Race`. Their reference handler, `scheduled`, is written like `budget` and keeps each waiting task's continuation for later, so the clock can be a handler too: doeff-time's virtual clock runs half-hour waits in no time, and its asyncio clock runs the same program on the wall clock.
+- Concurrency is effects too: `Spawn`, `Wait`, `Gather` and `Race`. Their reference handler, `scheduled`, is written like `budget` and keeps each waiting task's continuation for later, so the clock can be a handler too: the article writes a virtual clock of about 20 lines that runs half-hour waits in no time, and a wall clock on `asyncio` runs the same program for real.
 - Effects are dispatched by a VM written in Rust, with one-shot continuations as in OCaml 5: no backtracking or nondeterministic choice. Prebuilt wheels cover Linux, macOS and Windows.
 - Tests are one of the stacks: answer effects with fake handlers and nothing is patched. If a test forgets a fake, the run stops with `UnhandledEffect` instead of calling the real thing.
-- `pip install doeff` installs 0.8.0 (Python 3.11–3.14, MIT), and `pip install doeff-time` adds the clocks. `python -m doeff demo` runs a small program under a fake handler, then over real HTTP.
+- `pip install doeff` installs 0.8.0 (Python 3.11–3.14, MIT), and every example in the article runs with it alone. `python -m doeff demo` runs a small program under a fake handler, then over real HTTP.
 
 ## Target Audience
 

@@ -109,18 +109,25 @@ over budget
 
 ## 1つのプログラムに、層を1枚ずつ
 
-`monitor`は、2つのページを30分ごとに確かめます。ページ1つに、タスクが1つです。`yield`するエフェクトは7種類あります。自分で定義したのは`Fetch`・`Spend`・`Log`です。`Spawn`と`Gather`はdoeffのパッケージの物です。`Delay`と`GetTime`は[doeff-time](https://github.com/proboscis/doeff/tree/main/packages/doeff-time)の物です。doeff-timeは、時間のエフェクトとそのハンドラを集めたパッケージです。ページをどこから取るのか、お金を使うとは何かは、どこにも書いていません。30分にどれだけかかるのか、ログの行がどこへ行くのかも書いていません。
+`monitor`は、2つのページを30分ごとに確かめます。ページ1つに、タスクが1つです。`yield`するエフェクトは7種類あります。自分で定義したのは`Fetch`・`Spend`・`Log`・`Delay`・`GetTime`です。`Spawn`と`Gather`はdoeffのパッケージの物です。ページをどこから取るのか、お金を使うとは何かは、どこにも書いていません。30分にどれだけかかるのか、ログの行がどこへ行くのかも書いていません。
 
 ```python
 # monitor.py(抜粋)
-import asyncio  # 実時間の層で、非同期のHTTPの代わりに使う。
+import asyncio  # 実時間の層で、待ちと非同期のHTTPの代わりに使う。
+import heapq  # 仮想の時計が、起きる刻の早い順に待ちを並べる。
 from dataclasses import dataclass  # エフェクトを、値を持つクラスとして書く。
-from datetime import datetime, timezone  # 仮想の時計の始まりの刻を作る。
+from datetime import datetime, timedelta, timezone  # 時計の刻と、待つ長さを表す。
+from itertools import count  # 同じ刻に起きる待ちを、頼んだ順に並べる番号。
 
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run  # doeffの中核の名前を使う。
 from doeff_core_effects.handlers import await_handler  # Awaitに答える参考のハンドラ。
-from doeff_core_effects.scheduler import scheduled  # SpawnとGatherに答える参考のハンドラ。
-from doeff_time import Delay, GetTime, async_time_handler, sim_time_handler  # 時間のエフェクトと、実時間・仮想時間のハンドラ。
+from doeff_core_effects.scheduler import (  # タスクの参考のハンドラと、タスクを待たせる道具。
+    PRIORITY_IDLE,  # 他のタスクが全部待っている時だけ走る優先度。
+    CompletePromise,  # 約束を果たし、待つタスクを起こすエフェクト。
+    CreatePromise,  # 約束を1つ作るエフェクト。
+    Wait,  # 約束が果たされるまでタスクを待たせるエフェクト。
+    scheduled,  # SpawnとGatherに答える参考のハンドラ。
+)
 
 
 # プログラム:2つのタスクが、30分ごとにページを1つ確かめる。
@@ -137,6 +144,16 @@ class Spend(EffectBase):  # 「次の一歩にこれだけかかる」。
 @dataclass(frozen=True)  # 変わらない値にする。
 class Log(EffectBase):  # 「この行を書いて」。
     line: str  # 書く行。
+
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class Delay(EffectBase):  # 「これだけ待って」。
+    seconds: float  # 待つ秒。
+
+
+@dataclass(frozen=True)  # 変わらない値にする。
+class GetTime(EffectBase):  # 「今は何時?」。
+    pass  # 値は持たない。
 
 
 @do  # checkを、yieldのたびに止まるプログラムにする。
@@ -186,13 +203,43 @@ def printed(effect: Log, k):  # ログの行を標準出力へ出す。
 def free(effect: Spend, k):  # お金はかからない。
     yield Transfer(k, None)  # 続きkへ制御を渡し、ハンドラには戻らない。
 
+def virtual_clock(start: datetime):  # 待ちに時間がかからない時計。
+    now = start  # 今の刻。
+    sleepers = []  # (起きる刻, 順, 約束)を、早い順に並べる。
+    order = count()  # 同じ刻なら、頼んだ順に起こす。
+    advancing = False  # 時計を進めるタスクが走っているか。
+
+    @do  # advanceを、yieldのたびに止まるプログラムにする。
+    def advance():  # 優先度が低い。ほかのタスクが全部待っている間だけ走る。
+        nonlocal now, advancing  # 外側の刻と印を書き替える。
+        while sleepers:  # 待つタスクがあるうちは、
+            now, _, promise = heapq.heappop(sleepers)  # いちばん早い刻へ時計を進め、
+            yield CompletePromise(promise, None)  # その約束を果たして、タスクを起こす。
+        advancing = False  # 待つタスクが尽きたら止まる。
+
+    @handler  # DelayとGetTimeを受けるハンドラにする。
+    def clock(effect: Delay | GetTime, k):  # 時計そのもの。
+        nonlocal advancing  # 外側の印を書き替える。
+        if isinstance(effect, GetTime):  # 今の刻を聞かれたら、
+            return (yield Resume(k, now))  # 仮想の刻を渡して再開する。
+        promise = yield CreatePromise()  # 起こす時に果たす約束を作る。
+        wake_up = now + timedelta(seconds=effect.seconds)  # 起きる刻。
+        heapq.heappush(sleepers, (wake_up, next(order), promise))  # 待つ列に入れる。
+        if not advancing:  # 時計を進めるタスクが無ければ、
+            advancing = True  # 走っている印を付け、
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)  # 低い優先度で起こす。
+        yield Wait(promise.future)  # 約束が果たされるまで、このタスクを待たせる。
+        return (yield Resume(k, None))  # 起きたら再開する。
+
+    return clock  # 時計のハンドラを返す。
+
 
 START = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)  # 仮想の時計の始まりは9:00。
 URLS = ["a.example", "b.example"]  # 確かめるページは2つ。
 
 
 def simulated(program):  # 仮想の時計。30分の待ちに時間がかからない。
-    return scheduled(sim_time_handler(start_time=START)(program))  # 仮想時間とタスクのハンドラを付ける。
+    return scheduled(virtual_clock(START)(program))  # 仮想の時計とタスクのハンドラを付ける。
 ```
 
 ```python
@@ -207,7 +254,7 @@ print(run(simulated(printed(free(fake_web(monitor(URLS, 2)))))))  # テストの
 [[9, 9], [15, 15]]
 ```
 
-重ねたハンドラは、内側から読みます。`fake_web`が`Fetch`に辞書から答え、`free`が`Spend`に、`printed`が`Log`に答えます。`simulated`はハンドラを2つ付けます。1つは`Spawn`と`Gather`に答える`scheduled`です。もう1つは、`Delay`と`GetTime`に答えるdoeff-timeの`sim_time_handler`です。確かめる間の30分には時間がかからず、2つのタスクの行は刻の順に出ます。何度走らせても同じ順です。
+重ねたハンドラは、内側から読みます。`fake_web`が`Fetch`に辞書から答え、`free`が`Spend`に、`printed`が`Log`に答えます。`simulated`はハンドラを2つ付けます。1つは`Spawn`と`Gather`に答える`scheduled`です。もう1つは、`Delay`と`GetTime`に答える`virtual_clock`です。`virtual_clock`は上の20行ほどのハンドラです。どのタスクを次に起こすかの決め方は、[すべての下にある1つの仕組み](#すべての下にある1つの仕組み)に書きました。確かめる間の30分には時間がかからず、2つのタスクの行は刻の順に出ます。何度走らせても同じ順です。
 
 ### 2枚目:予算
 
@@ -320,7 +367,7 @@ print(tape)  # 書き留めたエフェクトの名を、順に表示する。
 ```text
 09:00 a.example 9 bytes
 09:00 b.example 15 bytes
-['Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Gather']
+['Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Gather']
 ```
 
 `record`には型ヒントが無いので、届いたエフェクトを全部受け取ります。型の名を書き留め、`Pass`で外へ渡します。最初の`Fetch`は、次のように進みます。
@@ -344,15 +391,23 @@ def http_web(effect: Fetch, k):  # I/Oを、非同期のクライアントで行
     return (yield Resume(k, page))  # 取れたページを渡して再開する。
 
 
-def real(program):  # 実時間の時計。asyncioで待つ。
-    return scheduled(await_handler()(async_time_handler()(program)))  # 実時間・Await・タスクのハンドラを付ける。
+@handler  # DelayとGetTimeを受けるハンドラにする。
+def wall_clock(effect: Delay | GetTime, k):  # 実時間の時計。asyncioで待つ。
+    if isinstance(effect, GetTime):  # 今の刻を聞かれたら、
+        return (yield Resume(k, datetime.now(timezone.utc)))  # 実時間の刻を渡して再開する。
+    yield Await(asyncio.sleep(effect.seconds))  # 待つ長さだけ、asyncioで本当に眠る。
+    return (yield Resume(k, None))  # 眠り終えたら再開する。
+
+
+def real(program):  # 実時間の時計と、非同期のクライアント。
+    return scheduled(await_handler()(wall_clock(program)))  # 実時間・Await・タスクのハンドラを付ける。
 ```
 
 ```python
 run(real(printed(free(http_web(retrying(3)(monitor(URLS, 2)))))))  # 本番の層を重ねる。実際に30分かかる。
 ```
 
-実時間の時計で動く、同じ`monitor`です。だからこの実行には本当に30分かかります。doeff-timeの`async_time_handler`は`asyncio`で待ちます。`http_web`は、非同期のクライアントのcoroutineを`Await`で`yield`します。それに答えるのは`await_handler`です。`async`なのは`slow_get`だけなので、`async`が`check`や`monitor`へ広がりません。
+実時間の時計で動く、同じ`monitor`です。だからこの実行には本当に30分かかります。`wall_clock`は`asyncio.sleep`で待ち、`http_web`は非同期のクライアントを呼びます。どちらもcoroutineを`Await`で`yield`し、それに答えるのは`await_handler`です。`async`なのは`slow_get`だけなので、`async`が`check`や`monitor`へ広がりません。
 
 ### 重ねた層を並べる
 
@@ -368,7 +423,9 @@ run(real(printed(free(http_web(retrying(3)(monitor(URLS, 2)))))))  # 本番の�
 
 ## すべての下にある1つの仕組み
 
-doeffのパッケージは、`Spawn`・`Gather`・`Wait`・`Race`・`Cancel`をエフェクトとして定義しています。`scheduled`はそれらに答える参考のハンドラで、`budget`と同じように書かれています。上の表のとおり、待っているタスクごとに`k`を取っておき、タスクが進めるようになったら、その`k`へ`Transfer`します。どのハンドラも、`scheduled`の代わりにこれらのエフェクトに答えられます。時計をハンドラにできるのは、このためです。`sim_time_handler`は、すべてのタスクが待っている時だけ時計を進めます。いちばん早く起きる刻へ飛び、そのタスクを再開します。スケジューラには、どのプログラムでも`yield`できるエフェクトを通してしか触れません。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)では、同じような時計を約30行で作っています。
+doeffのパッケージは、`Spawn`・`Gather`・`Wait`・`Race`・`Cancel`をエフェクトとして定義しています。`scheduled`はそれらに答える参考のハンドラで、`budget`と同じように書かれています。上の表のとおり、待っているタスクごとに`k`を取っておき、タスクが進めるようになったら、その`k`へ`Transfer`します。どのハンドラも、`scheduled`の代わりにこれらのエフェクトに答えられます。時計をハンドラにできるのは、このためです。1枚目の時計`virtual_clock`は、待つタスクを約束(promise)に預け、約束が果たされるまでその`k`を持っておきます。中の`advance`は優先度の低いタスクで、ほかのタスクが全部待っている時だけ走ります。`advance`が、時計をいちばん早く起きる刻へ進め、そのタスクを起こします。
+
+時計がスケジューラに触れるのは、どのプログラムでも`yield`できるエフェクトだけです。`CreatePromise`・`Spawn`・`Wait`・`CompletePromise`の4つです。スケジューラは時刻を何も知りません。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant)(英語)は、同じ時計を1歩ずつ説明しています。
 
 doeffのパッケージが定義するエフェクトも、`Fetch`や`Spend`と同じように動きます。どれにも参考のハンドラがあり、代わりに自分のハンドラを付けられます。
 
@@ -512,11 +569,11 @@ Pythonの外でいちばん近いのはOCaml 5です。ハンドラが継続を�
 ## 試す
 
 ```bash
-pip install doeff doeff-time   # CPython 3.11〜3.14。Linux・macOS・Windows向けのビルド済みのwheelがある。
+pip install doeff   # CPython 3.11〜3.14。Linux・macOS・Windows向けのビルド済みのwheelがある。
 python -m doeff demo           # doeffのデモを走らせる。
 ```
 
-[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)(英語)が、仕組み・使い道・限界を定めています。ここに載せた例はどれも、doeff 0.8.0とdoeff-timeで、載せたとおりに走ります。完全なファイルは[examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour)にあります。テストの分は[examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks)です。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)(英語)は、エフェクトを依存性の注入や素の`async`と、もっと詳しく比べています。
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)(英語)が、仕組み・使い道・限界を定めています。ここに載せた例はどれも、doeff 0.8.0だけで、載せたとおりに走ります。完全なファイルは[examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour)にあります。テストの分は[examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks)です。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md)(英語)は、エフェクトを依存性の注入や素の`async`と、もっと詳しく比べています。
 
 どこで使いにくいと感じましたか。`yield`の書き方が邪魔になるコードや、素の引数のほうが簡単だった場合があれば教えてください。Issueは https://github.com/proboscis/doeff/issues で受け付けています。
 

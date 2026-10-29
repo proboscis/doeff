@@ -25,22 +25,22 @@ as it is. Numbers were re-read on 2026-10-27 (JST) unless a row says otherwise.
 2. A budget: the handler drops `k` when the budget is spent, so that task stops at its `Spend` and the other task finishes. The program has no `if` for it.
 3. Failures and retries: a retry handler performs the effect again (`yield effect`) and logs each failure with an effect of its own.
 4. Watching every effect: a handler without an annotation sees every effect and passes it on with `Pass`. The same shape records and replays LLM calls (`examples/testing_without_mocks/record_replay.py`).
-5. The wall clock and real I/O: doeff-time's `async_time_handler` waits on `asyncio`, and an async client goes through `Await`, which `await_handler` answers. Only the client is `async`; the program stays a plain generator function.
+5. The wall clock and real I/O: a clock handler of a few lines waits with `asyncio.sleep`, and an async client goes through `Await`, which `await_handler` answers. Only the client is `async`; the program stays a plain generator function.
 
 - Underneath all of them: `Spawn`, `Wait`, `Gather`, `Race` and `Cancel` are effects, and their reference handler `scheduled` is written like any other handler: it keeps each waiting task's `k` and transfers to it when the task can go on. That is why the clock can be a handler.
 - Each layer alone has a familiar tool: a mock, a fake clock, a retry decorator, a custom event loop. What effects add is one mechanism for all of them, so they stack and swap without touching the program.
 - What it suits: trading programs, simulations and backtests. The same program can run over recorded market events with a simulated clock and paper orders, and live with the wall clock and an exchange, by swapping the handlers for time, market data and orders.
 - Where it does not pay off (the FAQ says so): code that only ever runs one way, and CPU-bound hot loops. For swapping one implementation alone, dependency injection is simpler.
 
-## doeff-time
+## The clocks in the article
 
 | Item | Value | Source |
 |---|---|---|
-| What | time effects `Delay` and `GetTime`, and three handlers: `sim_time_handler(start_time=...)` (a virtual clock), `async_time_handler()` (the wall clock on `asyncio`), `sync_time_handler()` (the wall clock, blocking the thread) | packages/doeff-time |
-| Version | 0.1.0; depends only on doeff (`doeff>=0.8.0,<0.9`) | packages/doeff-time/pyproject.toml |
-| PyPI | 0.1.0, uploaded 2026-10-27 04:03 JST; needs doeff 0.8.x | PyPI, packages/doeff-time/pyproject.toml |
-| Virtual clock | moves only when every task is waiting, then jumps to the earliest wake-up | packages/doeff-time, docs/20-why-effects-over-di.md |
-| Concurrency | `sim_time_handler` and `async_time_handler` wake concurrent tasks in the same order; `sync_time_handler` blocks the thread during each wait, so in a concurrent example the order differs | runs on doeff 0.7.0, 2026-10-19 (not re-run on 0.8.0) |
+| What | the article's own effects `Delay` and `GetTime`, and two handlers in `examples/effects_tour/monitor.py`: `virtual_clock(start)` (about 20 lines) and `wall_clock` (waits with `asyncio.sleep` through `Await`) | examples/effects_tour/monitor.py |
+| Needs | doeff 0.8.0 only; the virtual clock uses `CreatePromise`, `Spawn` at `PRIORITY_IDLE`, `Wait` and `CompletePromise` from `doeff_core_effects.scheduler` | examples/effects_tour/monitor.py |
+| Virtual clock | moves only when every task is waiting, then jumps to the earliest wake-up; waits at the same instant wake in the order they were asked | examples/effects_tour/monitor.py, docs/20-why-effects-over-di.md |
+| Concurrency | under `wall_clock`, three tasks waiting 1 s, 1 s and 0.5 s at once finished in 1.04 s | run on doeff 0.8.0 from PyPI, 2026-10-30 |
+| Not in the post | doeff-time, the package of time effects in the repo, is not used or named in the launch week | — |
 
 ## Not to claim
 
@@ -56,7 +56,7 @@ as it is. Numbers were re-read on 2026-10-27 (JST) unless a row says otherwise.
 | Python | 3.11–3.14; CI also runs 3.14t (free-threaded) as experimental | pyproject.toml, CI workflows |
 | License | MIT | LICENSE |
 | Default install | 4 distributions (doeff, doeff-vm, doeff-core-effects, frozendict), about 3.6 MB | a fresh Python 3.12 venv on Linux, 2026-10-27 |
-| Packages in the repo | 39; doeff, doeff-vm, doeff-core-effects and doeff-hy are on PyPI at 0.8.0, and doeff-time at 0.1.0 | packages/, PyPI |
+| Packages in the repo | 39; the launch is about `doeff` only (`pip install doeff` brings doeff-vm and doeff-core-effects); the other packages are not announced in the launch week | packages/, PyPI |
 | Rust VM | about 15,400 lines (doeff-vm 7,664 + doeff-vm-core 7,783) | packages/doeff-vm (counted for the 2026-10-20 draft, not re-counted) |
 | Tests (grep counts) | about 5,262 Python, 3,131 Hy, 1,246 Rust | repo (counted for the 2026-10-20 draft, not re-counted) |
 | History | first commit 2025-09-16; 5,978 commits up to the v0.8.0 tag; one author (the name in two spellings) | git log |

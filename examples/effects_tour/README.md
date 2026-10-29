@@ -8,7 +8,7 @@ The complete files of the post [Algebraic effects for Python](../../docs/article
 | `monitor.py` | One program, `monitor`, with layers of handlers stacked around it: fake pages, a budget, retries, a recording, and the wall clock |
 
 ```bash
-pip install doeff doeff-time
+pip install doeff
 python spend.py
 python monitor.py
 ```

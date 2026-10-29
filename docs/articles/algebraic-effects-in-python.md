@@ -116,18 +116,25 @@ That is one layer. The rest of this post stacks several around one program.
 
 ## One program, layer by layer
 
-`monitor` checks two pages every half hour, one task per page. It yields five kinds of effect: its own `Fetch`, `Spend` and `Log`, `Spawn` and `Gather` from doeff's packages, and `Delay` and `GetTime` from [doeff-time](https://github.com/proboscis/doeff/tree/main/packages/doeff-time), a package of time effects and their handlers. Nothing in it says where a page comes from, what spending means, how long half an hour takes, or where a log line goes:
+`monitor` checks two pages every half hour, one task per page. It yields seven kinds of effect: its own `Fetch`, `Spend`, `Log`, `Delay` and `GetTime`, and `Spawn` and `Gather` from doeff's packages. Nothing in it says where a page comes from, what spending means, how long half an hour takes, or where a log line goes:
 
 ~~~python
 # monitor.py (excerpt)
 import asyncio
+import heapq
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from itertools import count
 
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
-from doeff_time import Delay, GetTime, async_time_handler, sim_time_handler
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
+)
 
 
 # The program: two tasks check a page every 30 minutes.
@@ -144,6 +151,16 @@ class Spend(EffectBase):  # "the next step costs this much"
 @dataclass(frozen=True)
 class Log(EffectBase):  # "write this line"
     line: str
+
+
+@dataclass(frozen=True)
+class Delay(EffectBase):  # "wait this many seconds"
+    seconds: float
+
+
+@dataclass(frozen=True)
+class GetTime(EffectBase):  # "what time is it?"
+    pass
 
 
 @do
@@ -193,13 +210,43 @@ def printed(effect: Log, k):  # log lines go to stdout
 def free(effect: Spend, k):  # spending costs nothing
     yield Transfer(k, None)
 
+def virtual_clock(start: datetime):  # waits take no time
+    now = start
+    sleepers = []  # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():  # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @handler
+    def clock(effect: Delay | GetTime, k):
+        nonlocal advancing
+        if isinstance(effect, GetTime):
+            return (yield Resume(k, now))
+        promise = yield CreatePromise()
+        wake_up = now + timedelta(seconds=effect.seconds)
+        heapq.heappush(sleepers, (wake_up, next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return clock
+
 
 START = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
 URLS = ["a.example", "b.example"]
 
 
 def simulated(program):  # a virtual clock: 30-minute waits take no time
-    return scheduled(sim_time_handler(start_time=START)(program))
+    return scheduled(virtual_clock(START)(program))
 ~~~
 
 ~~~python
@@ -214,7 +261,7 @@ print(run(simulated(printed(free(fake_web(monitor(URLS, 2)))))))
 [[9, 9], [15, 15]]
 ~~~
 
-Read the stack from the inside out. `fake_web` answers `Fetch` from a dict, `free` answers `Spend`, `printed` answers `Log`, and `simulated` installs two more handlers: `scheduled` for `Spawn` and `Gather`, and doeff-time's `sim_time_handler` for `Delay` and `GetTime`. The half hour between checks takes no time, and the lines of the two tasks come out in time order, the same order on every run.
+Read the stack from the inside out. `fake_web` answers `Fetch` from a dict, `free` answers `Spend`, `printed` answers `Log`, and `simulated` installs two more handlers: `scheduled` for `Spawn` and `Gather`, and `virtual_clock` for `Delay` and `GetTime`. `virtual_clock` is the handler of about 20 lines above, and [One mechanism under all of it](#one-mechanism-under-all-of-it) shows how it picks the task that wakes next. The half hour between checks takes no time, and the lines of the two tasks come out in time order, the same order on every run.
 
 ### Layer 2: a budget
 
@@ -327,7 +374,7 @@ print(tape)
 ~~~text
 09:00 a.example 9 bytes
 09:00 b.example 15 bytes
-['Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTimeEffect', 'Log', 'Gather']
+['Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Spawn', 'Spend', 'Fetch', 'GetTime', 'Log', 'Gather']
 ~~~
 
 `record` has no annotation, so it receives every effect that reaches it, writes down its type, and passes it out with `Pass`. The first `Fetch` travels like this:
@@ -360,15 +407,23 @@ def http_web(effect: Fetch, k):  # I/O over an async client
     return (yield Resume(k, page))
 
 
-def real(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+@handler
+def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio
+    if isinstance(effect, GetTime):
+        return (yield Resume(k, datetime.now(timezone.utc)))
+    yield Await(asyncio.sleep(effect.seconds))
+    return (yield Resume(k, None))
+
+
+def real(program):  # the wall clock and an async client
+    return scheduled(await_handler()(wall_clock(program)))
 ~~~
 
 ~~~python
 run(real(printed(free(http_web(retrying(3)(monitor(URLS, 2)))))))
 ~~~
 
-This is the same `monitor` on the wall clock, so this run really takes half an hour. doeff-time's `async_time_handler` waits on `asyncio`, and `http_web` yields `Await` with the coroutine of an async client, which `await_handler` answers. Only `slow_get` is `async`, so `async` does not spread up into `check` or `monitor`.
+This is the same `monitor` on the wall clock, so this run really takes half an hour. `wall_clock` waits with `asyncio.sleep`, and `http_web` calls an async client. Both yield `Await` with a coroutine, and `await_handler` answers it. Only `slow_get` is `async`, so `async` does not spread up into `check` or `monitor`.
 
 ### The stacks side by side
 
@@ -384,7 +439,9 @@ This is the same `monitor` on the wall clock, so this run really takes half an h
 
 ## One mechanism under all of it
 
-doeff's packages define `Spawn`, `Gather`, `Wait`, `Race` and `Cancel` as effects, and `scheduled` is a reference handler for them, written like `budget`. It keeps the `k` of each waiting task, as in the table above, and transfers to it when the task can go on. Any handler can answer these effects instead. That is why the clock can be a handler: `sim_time_handler` moves its clock only when every task is waiting, jumps to the earliest wake-up and resumes that task. It reaches the scheduler only through effects any program can yield, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) builds a clock like it in about 30 lines.
+doeff's packages define `Spawn`, `Gather`, `Wait`, `Race` and `Cancel` as effects, and `scheduled` is a reference handler for them, written like `budget`. It keeps the `k` of each waiting task, as in the table above, and transfers to it when the task can go on. Any handler can answer these effects instead. That is why the clock can be a handler. `virtual_clock`, the clock in Layer 1, parks each waiting task on a promise and holds its `k` until the promise completes. Its `advance` task has idle priority, so it runs only while every other task waits. It moves the clock to the earliest wake-up and wakes that task.
+
+The clock reaches the scheduler only through effects any program can yield: `CreatePromise`, `Spawn`, `Wait` and `CompletePromise`. The scheduler knows nothing about time. The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) walks through the same clock step by step.
 
 The effects that doeff's packages define work the same way as `Fetch` and `Spend`. Each has a reference handler, and you can install your own instead:
 
@@ -528,10 +585,10 @@ The script is `benchmarks/compare_libraries.py` in the repository, and the READM
 ## Try it
 
 ~~~bash
-pip install doeff doeff-time   # CPython 3.11 to 3.14; prebuilt wheels for Linux, macOS and Windows
+pip install doeff   # CPython 3.11 to 3.14; prebuilt wheels for Linux, macOS and Windows
 python -m doeff demo
 ~~~
 
-[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and doeff-time. The complete files are in [examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour) and, for the tests, [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks). The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md) defines the mechanism, its uses and its limits. Every example in this post runs as shown with doeff 0.8.0 and nothing else. The complete files are in [examples/effects_tour](https://github.com/proboscis/doeff/tree/main/examples/effects_tour) and, for the tests, [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks). The docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md) compares effects with dependency injection and plain `async` at more length.
 
 Where does this break down for you: code where the `yield` style gets in the way, or a case where a plain argument would have been simpler? Issues are open at https://github.com/proboscis/doeff/issues.

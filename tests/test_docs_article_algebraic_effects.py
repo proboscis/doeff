@@ -1,5 +1,6 @@
-"""英語の記事 1 本目「Algebraic effects for Python」(docs/articles/algebraic-effects-in-python.md)の例が、今の doeff と
-doeff-time でそのまま走り、記事が見せる通りに印字する事の検(取り組み doeff-publish・card ki-6f2a58632d02)。
+"""英語の記事 1 本目「Algebraic effects for Python」(docs/articles/algebraic-effects-in-python.md)の例が、今の doeff
+だけで(subpackage を入れずに)そのまま走り、記事が見せる通りに印字する事の検(取り組み doeff-publish・card ki-6f2a58632d02・
+本体だけで出す形は card ki-94440df13953)。
 
 記事は審査で ok になった版のまま置く(本文を検の約束に合わせて書き換えない)。そこで囲みは README の約束
 (tools/readme_examples.py)でなく、記事の書き方のまま読む:

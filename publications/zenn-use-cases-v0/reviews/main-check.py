@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #     "doeff",
-#     "doeff-time",
 # ]
 # ///
 """メイン記事(英語の1本目「Algebraic effects for Python」の訳)の例が、英語の版と同じコードで、載せたとおりに走る事を確かめる。
