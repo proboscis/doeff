@@ -466,9 +466,9 @@ def test_the_module_of_the_analysis_is_in_the_key(cache_dir: Path, modules: Path
         modules,
         "result_key_analysis",
         "import sys\nRUNS = []\n\ndef analyze():\n"
-        "    from doeff_effect_analyzer import program_effects\n"
+        "    from doeff_effect_analyzer import _program_effects\n"
         "    RUNS.append(1)\n"
-        "    program_effects.module_ast(sys.modules['result_key_job'])\n"
+        "    _program_effects.module_ast(sys.modules['result_key_job'])\n"
         "    return ('answer',)\n",
     )
     importlib.import_module("result_key_job")
