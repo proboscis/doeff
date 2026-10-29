@@ -168,7 +168,7 @@ def start_step(now: int, spec: JobSpec, world: WorldView, record: JobRecord, pol
 def hyx_recreatingXquestion_markX(want: JobSpec | None, process: ProcessView | None, record: JobRecord) -> _Program[bool, object]:
     ...
 
-def replace_step(now: int, want: JobSpec, process: ProcessView, world: WorldView, record: JobRecord, policy: WorkerPolicy) -> _Program[StartStep, object]:
+def replace_step(now: int, want: JobSpec, process: ProcessView, world: WorldView, record: JobRecord, policy: WorkerPolicy, warm_keys: frozenset) -> _Program[StartStep, object]:
     ...
 
 def handoff_actions(now: int, want: JobSpec, process: ProcessView, world: WorldView, policy: WorkerPolicy) -> tuple:

@@ -375,3 +375,83 @@
   (assert (= (tuple (gfor s waiting s.phase)) #(JobPhase.PREPARING JobPhase.PREPARING)) waiting)
   (<- cold tuple (statuses NOW #(s1 s2) starting {} POLICY))
   (assert (= (tuple (gfor s cold s.phase)) #(JobPhase.STARTING JobPhase.STARTING)) cold))
+
+
+;; --- 判断の表 2c: 分ける root の recreate の service の入れ替え(card ki-d8cc8191472e)------------------------------------------
+;; 失敗ケース: 新しい版の木が揃い入口の検めも通った所で旧を止めると、止め終えた後の新は新しい root の待ちの子の準備(本番 zeus の 10-28〜29 の
+;; 30 回のうち 23 回・回収から起動まで 5.8〜23.3 秒)を待ち、その間 job の仕事が止まった。待ちの子が準備済みになるまで旧を動かしたままにし、
+;; 準備済みになった周期に旧を止め、止め終えた次の周期に待ちの子から分けて起こす。直す前は検めの後すぐ旧を止めていた。
+
+(import doeff_cluster.worker.intent.worker_model [ProbeView ProbeState StartHold SpecChanged Outcome ReapJob]
+        doeff_cluster.shared.core.job_rules [spec-hash]
+        doeff_cluster.worker.core.policy [start-holds JobHold])
+
+(defk service-on [name key revision]
+  {:pre [(: name str) (: key str) (: revision str)] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "root のキー key の実行環境で走る service(入口の検めの対象 — args の頭が service)の宣言を組むため。"
+  (<- spec JobSpec (task-on name key :once False))
+  (replace spec :args #("service") :revision revision))
+
+
+(deftest test-a-recreate-service-on-a-forking-root-keeps-the-old-process-until-the-new-warm-child-is-ready
+  (val on (replace POLICY :warm-services True :warm-services-min 2))
+  (val serving (WarmChildMark :threads 1 :vm-live #(0 0 0) :services True))
+  ;; 旧い版は root B の上で走り、宣言は root A の新しい版(2 本 — 分ける root)。新しい版の入口の検めはどちらも通っている。
+  (<- old1 JobSpec (service-on "s1" KEY-B "rev1"))
+  (<- old2 JobSpec (service-on "s2" KEY-B "rev1"))
+  (<- new1 JobSpec (service-on "s1" KEY-A "rev2"))
+  (<- new2 JobSpec (service-on "s2" KEY-A "rev2"))
+  (val desired #(new1 new2))
+  (val running #((ProcessView "s1" old1 1 50 0) (ProcessView "s2" old2 1 51 0)))
+  (val probes #((ProbeView (spec-hash new1) ProbeState.PASSED) (ProbeView (spec-hash new2) ProbeState.PASSED)))
+  (val codes #((CodeView KEY-A CodeState.READY ROOT-A) (CodeView KEY-B CodeState.READY ROOT-B)))
+  (defn observed [children [processes running]]
+    "旧の process と新しい root の待ちの子の観測を、plan に渡す形で組むため。"
+    (WorldView codes processes :probes probes :warm-children children))
+  (val records {"s1" (JobRecord "s1" :attempts 1) "s2" (JobRecord "s2" :attempts 1)})
+  ;; 新しい root の待ちの子が無い → 待ちの子を起こすだけ・旧は止めない。起こし中(印なし)→ 何もしない。
+  (<- bare tuple (plan NOW desired (observed #()) records on))
+  (assert (= bare #((StartWarmChild KEY-A LAUNCH-A))) bare)
+  (<- starting tuple (plan NOW desired (observed #((! (child KEY-A :mark None)))) records on))
+  (assert (= starting #()) starting)
+  ;; 待っている間の見送りの訳は WARM-CHILD・状態は旧い版が走っている事と待ちの子の準備中。
+  (<- holds tuple (start-holds NOW desired (observed #((! (child KEY-A :mark None)))) records on))
+  (assert (= holds #((JobHold :name "s1" :hold StartHold.WARM-CHILD) (JobHold :name "s2" :hold StartHold.WARM-CHILD))) holds)
+  (<- report tuple (statuses NOW desired (observed #((! (child KEY-A :mark None)))) records on))
+  (assert (= (tuple (gfor s report #(s.phase s.running-revision s.detail)))
+             (* #(#(JobPhase.RUNNING "rev1" "旧い版を動かしたまま — 新しい版の待ちの子の準備中")) 2))
+          report)
+  ;; 待ちの子が準備済み → 旧を止める。
+  (val ready-child #((! (child KEY-A :mark serving))))
+  (<- stop tuple (plan NOW desired (observed ready-child) records on))
+  (assert (= stop #((SignalJob "s1" 50 StopStage.TERM (SpecChanged)) (SignalJob "s2" 51 StopStage.TERM (SpecChanged)))) stop)
+  ;; 止め終えて回収した次の周期に、待たずに待ちの子から分けて起こす。
+  (<- stopping dict (records-after NOW records stop on))
+  (val exited (tuple (gfor p running (replace p :exit-code -15))))
+  (<- reap tuple (plan (+ NOW 10) desired (observed ready-child exited) stopping on))
+  (assert (= reap #((ReapJob "s1" 50 Outcome.STOPPED -15 None) (ReapJob "s2" 51 Outcome.STOPPED -15 None))) reap)
+  (<- reaped dict (records-after (+ NOW 10) stopping reap on))
+  (<- start tuple (plan (+ NOW 11) desired (observed ready-child #()) reaped on))
+  (assert (= start #((StartJob new1 2 ROOT-A :warm-key KEY-A) (StartJob new2 2 ROOT-A :warm-key KEY-A))) start))
+
+
+(deftest test-a-recreate-service-on-a-shim-root-does-not-wait-for-a-warm-child
+  ;; 分けない root(方策が偽・印が service を名乗らない古い版の待ちの子・断りの上限に届いた待ちの子)の service は、今までどおり検めの後に
+  ;; 旧を止める(待ちの子を待つと、来ない準備を待って旧い版に留まる)。
+  (val on (replace POLICY :warm-services True :warm-services-min 2))
+  (<- old1 JobSpec (service-on "s1" KEY-B "rev1"))
+  (<- old2 JobSpec (service-on "s2" KEY-B "rev1"))
+  (<- new1 JobSpec (service-on "s1" KEY-A "rev2"))
+  (<- new2 JobSpec (service-on "s2" KEY-A "rev2"))
+  (val running #((ProcessView "s1" old1 1 50 0) (ProcessView "s2" old2 1 51 0)))
+  (val probes #((ProbeView (spec-hash new1) ProbeState.PASSED) (ProbeView (spec-hash new2) ProbeState.PASSED)))
+  (val codes #((CodeView KEY-A CodeState.READY ROOT-A) (CodeView KEY-B CodeState.READY ROOT-B)))
+  (<- refused-child WarmChildView (child KEY-A :mark None :exit-code 3 :ended-ms (- NOW 1)))
+  (val stop #((SignalJob "s1" 50 StopStage.TERM (SpecChanged)) (SignalJob "s2" 51 StopStage.TERM (SpecChanged))))
+  (val rows
+    #(#("方策が偽 → 待ちの子を待たない" POLICY #())
+      #("印が service を名乗らない待ちの子 → 待たない" on #((! (child KEY-A))))
+      #("断りの上限に届いた待ちの子 → 待たない" on #((replace refused-child :refusals (- on.warm-refusal-limit 1))))))
+  (for [#(label policy children) rows]
+    (<- got tuple (plan NOW #(new1 new2) (WorldView codes running :probes probes :warm-children children) {} policy))
+    (assert (= got stop) (.format "{}: {}" label got))))

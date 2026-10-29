@@ -13,6 +13,9 @@
 ;; import だけで本体を走らせない — worker_rules.probe-args)。以前は先に旧を止めてから準備と検めをしたので、本番の Pod 1 つの記録の service が
 ;; 新しい版の環境の準備の約 107 秒を含む約 130 秒書けなかった(02:45:30 に止め → 02:47:24 に起動)。判断は replace-step の 1 か所
 ;; (plan-job の止めの枝と、見送りの行の start-holds が読む)。宣言から消えた job・drain 中の版の据え置き・task は今までどおり。
+;; 待ちの子から分ける root の service(card ki-de44efdb9aa4)は、新しい版の root の待ちの子が準備済みになるまでも旧を止めない(2026-10-29・
+;; card ki-d8cc8191472e): 以前は検めが通った所で旧を止め、止め終えた後に新が待ちの子の準備(本番 zeus の 10-28〜29 の 30 回のうち 23 回・
+;; 回収から起動まで 5.8〜23.3 秒)を待ったので、その間 job の仕事が止まった。待ちの子が準備済みなら、止め終えた次の周期に分けて起こす。
 ;;
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に「worker の実行環境でその木の入口(factory と env)を読み込めるか」を
 ;; 先に試し(ProbeEntry)、PASSED になるまで起こさない(StartJob)・旧を名から外さない(RetireJob)。業務コード・定義・実行環境の組が崩れた
@@ -314,15 +317,18 @@
        (!= want process.spec) (is record.stopping None)))
 
 
-(defk replace-step [now want process world record policy]
-  {:pre [(: now int) (: want JobSpec) (: process ProcessView) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)]
+(defk replace-step [now want process world record policy warm-keys]
+  {:pre [(: now int) (: want JobSpec) (: process ProcessView) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy)
+         (: warm-keys frozenset)]
    :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
   "recreate の job の旧い版を宣言の新しい版へ移す action と、新しい版をまだ起動しない訳を 1 か所で決めるため(plan-job の止めの枝と、
    周期の終わりの見送りの行 start-holds が同じ判断を読む — 2026-10-08): 新しい版の木が READY でなければ準備だけ(準備中・失敗の後の
    作り直しの間を含む — 訳は prepare-hold)、木が揃っても入口の検めが通っていなければ検めだけ(走っている・落ちた間は待つ — 訳は
-   probe-hold)。どちらの間も旧は動かしたまま。揃って通ったら旧を止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに
-   起動する。準備の action は方策の並べる数(compile-jobs-while-replacing)を載せる — 旧い service と焼きが同じ Pod の memory の上限を
-   分け合うので、道具の既定の並べる数で焼かない。"
+   probe-hold)、新しい版を待ちの子から分ける service(warm-keys の root — warm_rules の warm-start が WAIT)は待ちの子が準備済みになるまで
+   待つ(訳は WARM-CHILD — 待ちの子を起こすのは warm-child-actions・card ki-d8cc8191472e)。どの間も旧は動かしたまま。揃ったら旧を
+   止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに起動する(warm-start は旧の有無を読まないので、ここで WAIT でなければ
+   start-step でも WAIT でない)。準備の action は方策の並べる数(compile-jobs-while-replacing)を載せる — 旧い service と焼きが同じ Pod の
+   memory の上限を分け合うので、道具の既定の並べる数で焼かない。"
   (val code (code-of world (code-key want)))
   (val tree (ready-path code))
   (val gate (if (is tree None) None (probe-actions now want tree world policy)))
@@ -330,6 +336,7 @@
     (is tree None) (StartStep :actions (prepare-actions now want world policy policy.compile-jobs-while-replacing)
                               :hold (! (prepare-hold code record)))
     (is-not gate None) (StartStep :actions gate :hold (! (probe-hold (probe-of world want))))
+    (= (warm-start want world policy warm-keys) WarmStart.WAIT) (StartStep :actions #() :hold StartHold.WARM-CHILD)
     True (StartStep :actions (stop-actions now process record policy (SpecChanged)) :hold None)))
 
 (defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
@@ -442,7 +449,7 @@
     ;; spec が変わった recreate の job: 旧を動かしたまま新しい版の準備と入口の検めを進め、両方が済んでから旧を止める(2026-10-08 —
     ;; 新旧の本体を同時に動かさない・判断は replace-step)。
     (and (is-not want None) (! (recreating? want process record)))
-      (. (! (replace-step now want process world record policy)) actions)
+      (. (! (replace-step now want process world record policy (service-warm-keys desired policy))) actions)
     ;; 宣言から消えた job・止め始めた process・宣言の変わった task → すぐ止める(止め始めた process は止め終える)。
     True (stop-actions now process record policy (if (is want None) absent (SpecChanged)))))
 
@@ -773,7 +780,7 @@
     (val hold (cond
                 (and (is process None) spec.handoff spec.handoff-abandoned) StartHold.HANDOFF-ABANDONED
                 (is process None) (. (! (start-step now spec world record policy warm-keys)) hold)
-                replacing (. (! (replace-step now spec process world record policy)) hold)
+                replacing (. (! (replace-step now spec process world record policy warm-keys)) hold)
                 True None))
     (:= holds (+ holds #((JobHold :name spec.name :hold hold)))))
   holds)
@@ -901,6 +908,9 @@
           (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)
         (and replacing (is-not probe None)) (.format "旧い版を動かしたまま — 新の入口を読み込めない: {}" probe.detail)
         (and replacing (is-not probing None)) (.format "旧い版を動かしたまま — {}" (probing-detail probing))
+        ;; 検めの後、新しい版の待ちの子の準備を待っている間(replace-step の WARM-CHILD — card ki-d8cc8191472e)。
+        (and replacing (is-not (ready-path code) None) (= (warm-start want world policy warm-keys) WarmStart.WAIT))
+          "旧い版を動かしたまま — 新しい版の待ちの子の準備中"
         replacing (.format "旧い版を動かしたまま — 新しい版の準備中(新のコード {})" (if (is code None) "未準備" code.state.value))
         (and (is-not code None) (= code.state CodeState.FAILED)) code.detail
         ;; 新の入口を読み込めない(入口の検めの理由)。入れ替えの途中なら旧が動いていることも示す。
