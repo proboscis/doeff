@@ -61,7 +61,7 @@ SUBSCRIBED: tuple[type, ...] = (Added, Done, Unrelated, Moved, TimerFired)
 
 PRELUDE = """
 (require doeff-hy.macros [defk <-])
-(require doeff-events._macros [event-loop])
+(require doeff-events.macros [event-loop])
 (import doeff_core_effects.stop_signal_effects [RaiseStop])
 (import doeff_events [ArmTimer TimerFired])
 (import datetime [datetime])

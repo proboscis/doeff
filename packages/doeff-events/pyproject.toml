@@ -12,7 +12,7 @@ dependencies = [
     "doeff>=0.1.0",
     # The timer handler waits for its deadlines with doeff-time's WaitWithin ([issue]).
     "doeff-time>=0.1.0",
-    # The event-loop macro (doeff_events/_macros.hy) expands to doeff-hy's <- and do! ([issue]).
+    # The event-loop macro (doeff_events/macros.hy) expands to doeff-hy's <- and do! ([issue]).
     "doeff-hy",
 ]
 

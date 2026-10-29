@@ -6,7 +6,7 @@
 (require doeff-hy.macros [defk <- val])
 (require doeff-cluster.shared.entry.macros [defsystem])
 (require doeff-hy.record [defrecord])
-(require doeff-events._macros [event-loop])
+(require doeff-events.macros [event-loop])
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])  ; defrecord の展開が名指す
 (import datetime [datetime timedelta])

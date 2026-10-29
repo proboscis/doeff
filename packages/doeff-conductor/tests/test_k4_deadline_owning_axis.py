@@ -137,7 +137,7 @@ def _install_scenario_production_handlers(
 def _write_deadline_workflow(path: Path, *, deadline_seconds: float) -> None:
     path.write_text(
         f"""
-(require doeff-conductor._macros [defworkflow agent! <-])
+(require doeff-conductor.macros [defworkflow agent! <-])
 (import doeff_conductor._dsl [artifact prompt ref])
 
 (setv RESULT-SCHEMA {{"type" "object"
