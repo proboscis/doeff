@@ -1,8 +1,5 @@
 """doeff-gemini: Google Gemini integration with doeff effects."""
 
-from importlib import import_module
-from typing import TYPE_CHECKING
-
 from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
 from ._client import GeminiClient
@@ -60,7 +57,6 @@ __all__ = [
     "ImageGenerate",
     "ImageResult",
     "LocalFileContentPart",
-    "MockGeminiHandler",
     "TextContentPart",
     "TokenUsage",
     "UriContentPart",
@@ -74,26 +70,3 @@ __all__ = [
     "production_handlers",
     "structured_llm__gemini",
 ]
-
-
-# Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
-# them while it loads. `X as X` shows each name to type checkers; `__all__` is not used (DOEFF021).
-if TYPE_CHECKING:
-    from doeff_gemini._handlers.testing import MockGeminiHandler as MockGeminiHandler
-
-_LAZY_EXPORTS: dict[str, str] = {
-    "MockGeminiHandler": "doeff_gemini._handlers.testing",
-}
-
-
-def __getattr__(name: str) -> object:
-    module_name = _LAZY_EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module_name), name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *_LAZY_EXPORTS})

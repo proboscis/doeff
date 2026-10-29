@@ -7,10 +7,9 @@ from .production import (
     gemini_production_handler,
     production_handlers,
 )
-from .testing import MockGeminiHandler, gemini_mock_handler, mock_handlers
+from .testing import gemini_mock_handler, mock_handlers
 
 __all__ = [
-    "MockGeminiHandler",
     "default_gemini_cost_handler",
     "gemini_image_handler",
     "gemini_mock_handler",

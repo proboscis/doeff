@@ -2,7 +2,7 @@
 # handler supports every chat and structured query, so it belongs outermost, as the catch-all; installed
 # innermost, it answers all three effects and the OpenAI and Gemini handlers never see one. Prints which
 # handler saw each effect and which models each mock answered.
-from doeff_gemini import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import gemini_mock_handler
 from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_openai import MockOpenAIConfig, MockOpenAIState, openai_mock_handler
 from doeff_openrouter import MockOpenRouterRuntime, openrouter_mock_handler
@@ -36,7 +36,6 @@ def workflow():
 
 openai_state = MockOpenAIState()
 openai_config = MockOpenAIConfig(structured_responses=[{"verdict": "clean", "score": 8}])
-gemini = MockGeminiHandler(chat_responses={"gemini-1.5-pro": "The code is clean."})
 router = MockOpenRouterRuntime(
     chat_response={"choices": [{"message": {"role": "assistant", "content": "Hello!"}}]},
     structured_response={"verdict": "from openrouter", "score": 5},
@@ -54,7 +53,7 @@ def traced(name, mock, **options):
 
 
 openai = traced("openai", openai_mock_handler, config=openai_config, state=openai_state)
-gemini_h = traced("gemini", gemini_mock_handler, handler=gemini)
+gemini_h = traced("gemini", gemini_mock_handler, chat_responses={"gemini-1.5-pro": "The code is clean."})
 openrouter = traced("openrouter", openrouter_mock_handler, runtime=router)
 
 analysis, summary, fallback = run(openai(gemini_h(openrouter(workflow()))))
