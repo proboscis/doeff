@@ -2,7 +2,7 @@
 ;;; #811 変更 3a)。本物の socket を開かず、台本(HttpScript — 届く出来事の列と中継先ごとの答えと読まない相手の札)で答える。業務を知らない:
 ;;; 台本の中身は呼び手が渡す。
 ;;;
-;;;   HttpListen       何もしない(開いた扱い)。答え = 渡された宛先のまま(port 0 は 0 のまま — 台本は port を結ばない)。送りの上限と
+;;;   HttpListen       何もしない(開いた扱い)。答え = 渡された宛先のまま(port 0 は 0 のまま — 台本は port を結ばない)。送りの上限と ws の口と
 ;;;                    probe の口を控える。port の共有(share-port)は台本に port が無いので何もしない
 ;;;   HttpStopListening 以後、台本の新しい要求(HttpRequestArrived — probe の口に当たる物も)を本体へ渡さず捨てる(本物の待ち受けが口を閉じた後に
 ;;;                    新しい接続を受けないのと同じ)。開いた札の出来事は渡し続ける
@@ -10,7 +10,10 @@
 ;;;                    終わった札の WsClosed は、その拍に列の頭へ差す(本物の待ち受けが直ぐに出す出来事と同じ並び)。HttpShutdown の後は
 ;;;                    列に何が残っていても HttpServerClosed(その理由)。probe の口に当たる要求(probe-for)は渡さず、ここで本物と同じ
 ;;;                    probe-answer(answer を自分の run で — 本体の run の handler と状態に触れない)で答えて記録し、次の出来事へ進む。
-;;;                    台本に thread は無いので、本体の流れが probe を待たせない形は「本体へ届かず、本体の命令を待たずに答える」で表す
+;;;                    台本に thread は無いので、本体の流れが probe を待たせない形は「本体へ届かず、本体の命令を待たずに答える」で表す。
+;;;                    開いた札の文字の 1 通がその場で答える口(HttpListen の ws-shortcuts — ws-shortcut-for)に当たれば、本物と同じ
+;;;                    ws-shortcut-outcome で答えの文をその札へ送った扱いにして(WsSendText と同じ決め — script-sent)、積んだ文を載せた
+;;;                    1 通を渡す(answered-at は台本の received-at のまま)。answer が落ちた 1 通は何も送らずにそのまま渡す
 ;;;   HttpTakeQueued   台本の列に今ある出来事(AppendHttpScript で足された物を含む)を、HttpNextRequest と同じ取り方(script-take — 捨て・
 ;;;                    probe の答え・帳簿)で全部取る。列が尽きても閉じを名乗らない(次の HttpNextRequest が名乗る)。HttpShutdown の後は
 ;;;                    閉じの理由の HttpServerClosed 1 つ
@@ -46,7 +49,8 @@
                                                 HttpReadBody HttpBodyRead HttpBodyTooLarge HttpBodyFailed
                                                 HttpBodyOutcome HttpRequestArrived ScriptedBody WS-CUT-REASON WS-REFUSAL-TEXT WsCloseFrame
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
-                                                probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader])
+                                                probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader
+                                                WsShortcut WsShortcutAnswered ws-shortcut-for ws-shortcut-outcome])
 (import doeff_core_effects.file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "台本の要求の列が尽きた")
@@ -147,6 +151,43 @@
     True (HttpBodyRead :data data)))
 
 
+(defrecord ScriptSend
+  "台本の札 1 つへ文字の 1 通を送った後の session の値: 記録・開いた札・箱の溜まり・送りの勘定・まだ届けていない出来事の列。"
+  (#^ (get tuple #(object ...)) served)
+  (#^ frozenset opened)
+  (#^ dict backlog)
+  (#^ WsSendReport tally)
+  (#^ (get tuple #(object ...)) pending))
+
+
+(defk script-sent [ticket text limit stalled served opened backlog tally pending]
+  {:pre [(: ticket str) (: text str) (: limit int) (: stalled frozenset) (: served tuple) (: opened frozenset) (: backlog dict)
+         (: tally WsSendReport) (: pending tuple)]
+   :post [(: % ScriptSend)] :tags {:context "http-server" :role "foundation"}}
+  "台本の札へ文字の 1 通を送った扱いにするため(WsSendText・WsSendTextEach の札ごとと、ws の口の答えの 1 通の同じ決め — 頭の註の WsSendText):
+   閉じた・知らない札は捨てる・上限を超える 1 通は積まずに切る(箱の溜まりを捨て、WsClosed を列の頭へ差す)・読まない相手は箱に溜める・
+   他は記録する(相手は直ぐに読む)。"
+  (val size (len (.encode text "utf-8")))
+  (val held (.get backlog ticket 0))
+  (<- overflows bool (send-overflows held size limit))
+  (cond
+    (not-in ticket opened) (ScriptSend :served served :opened opened :backlog backlog :tally tally :pending pending)
+    overflows
+      (do (<- cut-tally WsSendReport (tally-dropped tally held True))
+          (<- rest dict (without-ticket backlog ticket))
+          (<- frame WsCloseFrame (closing-of WS-CUT-REASON None None None))
+          (ScriptSend :served served :opened (- opened #{ticket}) :backlog rest :tally cut-tally
+                      :pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending)))
+    (in ticket stalled)
+      (do (<- queued WsSendReport (tally-queued tally size))
+          (ScriptSend :served served :opened opened :backlog (| backlog {ticket (+ held size)}) :tally queued :pending pending))
+    True
+      (do (<- queued WsSendReport (tally-queued tally size))
+          (<- flushed WsSendReport (tally-flushed queued size))
+          (ScriptSend :served (+ served #((WsTextSent :ticket ticket :text text))) :opened opened :backlog backlog :tally flushed
+                      :pending pending))))
+
+
 (defk bodies-by-ticket [bodies]
   {:pre [(: bodies (of tuple ScriptedBody ...))] :post [(: % (of dict str ScriptedBody))]}
   "本文の台本を札で引ける表にするため。"
@@ -193,13 +234,15 @@
   (#^ dict arrived))
 
 
-(defk script-take [mouths listening pending served opened tally backlog readable arrived]
-  {:pre [(: mouths (of tuple HttpProbe ...)) (: listening bool) (: pending tuple) (: served tuple) (: opened frozenset) (: tally WsSendReport)
-         (: backlog dict) (: readable dict) (: arrived dict)]
+(defk script-take [mouths shortcuts limit stalled listening pending served opened tally backlog readable arrived]
+  {:pre [(: mouths (of tuple HttpProbe ...)) (: shortcuts (of tuple WsShortcut ...)) (: limit int) (: stalled frozenset) (: listening bool)
+         (: pending tuple) (: served tuple) (: opened frozenset) (: tally WsSendReport) (: backlog dict) (: readable dict) (: arrived dict)]
    :post [(: % ScriptTake)] :tags {:context "http-server" :role "foundation"}}
   "台本の列の頭の出来事を 1 つ取るため(HttpNextRequest と HttpTakeQueued の 1 つの取り方): 待ち受けだけを閉じた後は新しい要求を捨て、
    probe の口に当たる要求は本体へ渡さずにここで答えて記録し、頭の出来事の帳簿(閉じた札の箱の溜まりを捨てる・本文を読める札と届けた要求を
-   控える)を付ける。列が尽きていれば出来事は None。"
+   控える)を付ける。開いた札の文字の 1 通がその場で答える口(shortcuts)に当たれば、本物と同じ ws-shortcut-outcome で答えの文を札へ送り
+   (script-sent — 送りの上限 limit・読まない相手 stalled)、積んだ文を載せた 1 通を渡す(answered-at は台本の received-at のまま — 台本に時計は
+   無い)。列が尽きていれば出来事は None。"
   (var rest (if listening pending (tuple (gfor e pending :if (not (isinstance e HttpRequestArrived)) e))))
   (var record served)
   (var answering True)
@@ -213,24 +256,39 @@
   (when (not rest)
     (return (ScriptTake :event None :pending rest :served record :opened opened :tally tally :backlog backlog :readable readable
                         :arrived arrived)))
-  (val head (get rest 0))
+  (var head (get rest 0))
+  (var later (cut rest 1 None))
   (var still-open opened)
   (var counted tally)
   (var boxes backlog)
   (var reading readable)
   (var handed arrived)
+  (when (and (isinstance head WsTextArrived) (in head.ticket opened))
+    (<- shortcut (| WsShortcut None) (ws-shortcut-for shortcuts head.text))
+    (when (is-not shortcut None)
+      (val outcome (ws-shortcut-outcome shortcut head.ticket head.text))
+      (when (isinstance outcome WsShortcutAnswered)
+        (for [one outcome.texts]
+          (<- sent ScriptSend (script-sent head.ticket one limit stalled record still-open boxes counted later))
+          (:= record sent.served)
+          (:= still-open sent.opened)
+          (:= boxes sent.backlog)
+          (:= counted sent.tally)
+          (:= later sent.pending))
+        (:= head (WsTextArrived :ticket head.ticket :text head.text :received-at head.received-at :answered outcome.texts
+                                :answered-at head.received-at)))))
   (when (isinstance head WsClosed)
     ;; 相手が閉じた札: 以後の送りは捨てる・箱の溜まりは捨てた勘定へ。
-    (:= still-open (- opened #{head.ticket}))
-    (<- dropped WsSendReport (tally-dropped tally (.get backlog head.ticket 0) False))
+    (:= still-open (- still-open #{head.ticket}))
+    (<- dropped WsSendReport (tally-dropped counted (.get boxes head.ticket 0) False))
     (:= counted dropped)
-    (<- kept dict (without-ticket backlog head.ticket))
+    (<- kept dict (without-ticket boxes head.ticket))
     (:= boxes kept))
   (when (isinstance head HttpRequestArrived)
     (<- declared (| int None) (declared-length head.headers))
     (:= reading (| readable {head.ticket declared}))
     (:= handed (| arrived {head.ticket head})))
-  (ScriptTake :event head :pending (cut rest 1 None) :served record :opened still-open :tally counted :backlog boxes :readable reading
+  (ScriptTake :event head :pending later :served record :opened still-open :tally counted :backlog boxes :readable reading
               :arrived handed))
 
 
@@ -252,11 +310,14 @@
   (session var tally EMPTY-REPORT)
   (session var closed None)
   (session var mouths #())
+  ;; その場で答える ws の 1 通の口(HttpListen が控える)。
+  (session var shortcuts #())
   ;; 新しい要求を受けるか(HttpStopListening で偽)。
   (session var listening True)
-  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port]
+  (HttpListen [address ws-max-bytes ws-send-max-bytes probes share-port ws-shortcuts]
     (:= limit ws-send-max-bytes)
     (:= mouths probes)
+    (:= shortcuts ws-shortcuts)
     (resume address))
   (HttpStopListening []
     (:= listening False)
@@ -266,7 +327,7 @@
     ;; 口の答えを含む・頭の註)。
     (if (is-not closed None)
         (resume (HttpServerClosed :reason closed))
-        (do (<- took ScriptTake (script-take mouths listening pending served opened tally backlog readable arrived))
+        (do (<- took ScriptTake (script-take mouths shortcuts limit script.stalled listening pending served opened tally backlog readable arrived))
             (:= pending took.pending)
             (:= served took.served)
             (:= opened took.opened)
@@ -280,7 +341,7 @@
     (var taken #())
     (var more (is closed None))
     (while more
-      (<- took ScriptTake (script-take mouths listening pending served opened tally backlog readable arrived))
+      (<- took ScriptTake (script-take mouths shortcuts limit script.stalled listening pending served opened tally backlog readable arrived))
       (:= pending took.pending)
       (:= served took.served)
       (:= opened took.opened)
@@ -328,57 +389,23 @@
       (:= pending (+ #((WsOpened :ticket ticket)) pending)))
     (resume None))
   (WsSendText [ticket text]
-    (val size (len (.encode text "utf-8")))
-    (val held (.get backlog ticket 0))
-    (<- overflows bool (send-overflows held size limit))
-    (cond
-      (not-in ticket opened) (resume None)
-      ;; 上限を超える 1 通は積まずに切る(本物と同じ send-overflows)— 箱の溜まりを捨て、WsClosed(closing-of — 1006 と切りの理由)。
-      overflows
-        (do (<- cut-tally WsSendReport (tally-dropped tally held True))
-            (:= tally cut-tally)
-            (<- rest dict (without-ticket backlog ticket))
-            (:= backlog rest)
-            (:= opened (- opened #{ticket}))
-            (<- frame WsCloseFrame (closing-of WS-CUT-REASON None None None))
-            (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending))
-            (resume None))
-      (in ticket script.stalled)
-        (do (<- queued WsSendReport (tally-queued tally size))
-            (:= tally queued)
-            (:= backlog (| backlog {ticket (+ held size)}))
-            (resume None))
-      True
-        (do (<- queued WsSendReport (tally-queued tally size))
-            (<- flushed WsSendReport (tally-flushed queued size))
-            (:= tally flushed)
-            (:= served (+ served #((WsTextSent :ticket ticket :text text))))
-            (resume None))))
+    ;; 札への 1 通の決めは script-sent の 1 つ(ws の口の答えと同じ — 頭の註)。
+    (<- sent ScriptSend (script-sent ticket text limit script.stalled served opened backlog tally pending))
+    (:= served sent.served)
+    (:= opened sent.opened)
+    (:= backlog sent.backlog)
+    (:= tally sent.tally)
+    (:= pending sent.pending)
+    (resume None))
   (WsSendTextEach [tickets text]
     ;; 札の順に WsSendText と同じ決め(契約テストが両方の答え手で同じ列を比べる)。
-    (val size (len (.encode text "utf-8")))
     (for [ticket tickets]
-      (val held (.get backlog ticket 0))
-      (<- overflows bool (send-overflows held size limit))
-      (cond
-        (not-in ticket opened) None
-        overflows
-          (do (<- cut-tally WsSendReport (tally-dropped tally held True))
-              (:= tally cut-tally)
-              (<- rest dict (without-ticket backlog ticket))
-              (:= backlog rest)
-              (:= opened (- opened #{ticket}))
-              (<- frame WsCloseFrame (closing-of WS-CUT-REASON None None None))
-              (:= pending (+ #((WsClosed :ticket ticket :code frame.code :reason frame.reason)) pending)))
-        (in ticket script.stalled)
-          (do (<- queued WsSendReport (tally-queued tally size))
-              (:= tally queued)
-              (:= backlog (| backlog {ticket (+ held size)})))
-        True
-          (do (<- queued WsSendReport (tally-queued tally size))
-              (<- flushed WsSendReport (tally-flushed queued size))
-              (:= tally flushed)
-              (:= served (+ served #((WsTextSent :ticket ticket :text text)))))))
+      (<- sent ScriptSend (script-sent ticket text limit script.stalled served opened backlog tally pending))
+      (:= served sent.served)
+      (:= opened sent.opened)
+      (:= backlog sent.backlog)
+      (:= tally sent.tally)
+      (:= pending sent.pending))
     (resume None))
   (WsClose [ticket code reason]
     (when (in ticket opened)

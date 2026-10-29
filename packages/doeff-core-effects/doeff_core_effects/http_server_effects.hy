@@ -68,10 +68,21 @@
 ;;;   走らせて答え、記録(HttpServed)に残す。
 ;;;   何を答えるか(生存 = process が居る・仕事ができる = 本体の流れが動いている、の分け方や閾値)は呼び手が answer に書く — ここは業務の語を
 ;;;   持たない。
+;;; 答え手がその場で答える ws の 1 通の口(agora card ki-f4cd863959c8 — 消費者の処理ループが 1 項目を数百 ms 持つ間も、急ぐ 1 通の答えを
+;;; 待たせない):
+;;;   HttpListen の ws-shortcuts = WsShortcut の列。ws に上げた接続の文字の 1 通が、ある WsShortcut の marker(文字列)を含めば(ws-shortcut-for —
+;;;   先頭の 1 つ)、答え手は answer(札と 1 通の文を受けて、送る文の tuple を答える閉じた Program を返す関数)を自分の run で走らせ
+;;;   (ws-shortcut-outcome — probe-answer と同じく本体の run の handler と状態に触れない)、答えの文を順にその接続の送りの箱へ積む。その後で
+;;;   1 通を今までどおり出来事 WsTextArrived として列へ並べ、欄 answered に積んだ文の列・answered-at に積み終えた拍の単調時計を載せる
+;;;   (当たらなかった 1 通は answered が空・answered-at が None)。本体は同じ 1 通を受け、自分の状態を変える(答えを積み直すかは本体が決める)。
+;;;   接続ごとの 1 通の順は変わらない: 答え手は当たった 1 通の答えを積み終えるまで、その接続の次の 1 通を読まない。answer が落ちた・答えの型が
+;;;   違う時は何も積まず(WsShortcutFailed の理由を答え手が 1 行名乗る)、1 通は answered が空のまま並ぶ — 本体がいつもどおり答える。
+;;;   本物の答え手は answer を待ち受けの loop の外の thread で走らせる(本体の scheduler が止まっていても答える)。台本の答え手は、列の頭が当たる
+;;;   1 通の時に answer を走らせ、送った文を記録(WsTextSent)に残してから出来事を渡す。
 ;;; 2 つの答え手が同じに決める物は、ここの判断の defk を両方が呼ぶ: carries-content(本文を運ぶ答えか — HEAD・1xx・204・304 は送らない)・
 ;;; ws-refusal-status(WsAccept の断りの status)・send-overflows(送りの上限で切るか)・closing-of(WsClosed で名乗る状態符と理由)・
-;;; probe-for(要求が probe の口に当たるか)・probe-failure(answer が落ちた probe の答え)。probe の answer を走らせるのも両方が同じ
-;;; probe-answer(Program の外から呼ぶ入口)。
+;;; probe-for(要求が probe の口に当たるか)・probe-failure(answer が落ちた probe の答え)・ws-shortcut-for(1 通がその場で答える口に当たるか)。
+;;; probe の answer を走らせるのも両方が同じ probe-answer、ws の口の answer は同じ ws-shortcut-outcome(どちらも Program の外から呼ぶ入口)。
 ;;; 2 つが同じ性質を持つことは tests/test_http_server_contract.hy の契約テストが両方の答え手で確かめる。
 ;;;
 ;;; 台本の語彙(本物の待ち受けには無い): HttpScript・ScriptedUpstream・ScriptedBody = 台本・HttpServed = 受けた命令と端末が受け取る答え・
@@ -80,6 +91,7 @@
 (require doeff-hy.macros [defk deff val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
+(import collections.abc [Callable])
 (import doeff [EffectBase Program run])
 
 ;; ws の 1 通(中継では 1 frame)の上限の既定(byte)。
@@ -129,10 +141,14 @@
 
 
 (defrecord WsTextArrived
-  "ws に上げた札の接続に文字の 1 通が届いた(分割は組み立て済み・UTF-8 は検め済み)。"
+  "ws に上げた札の接続に文字の 1 通が届いた(分割は組み立て済み・UTF-8 は検め済み)。answered = 答え手がその場で答える口(ws-shortcuts)で
+   この 1 通の前にその接続の送りの箱へ積んだ文の列(当たらなければ空)・answered-at = 積み終えた拍の単調時計の秒(当たらなければ None —
+   頭の註)。"
   (#^ str ticket)
   (#^ str text)
-  (setv #^ (| float None) received-at None))
+  (setv #^ (| float None) received-at None
+        #^ (get tuple #(str ...)) answered #()
+        #^ (| float None) answered-at None))
 
 
 (defrecord WsBinaryArrived
@@ -229,13 +245,32 @@
   (#^ (get Program #(HttpProbeAnswer object)) answer))
 
 
+(defrecord WsShortcut
+  "答え手がその場で答える ws の 1 通の口 1 つ(頭の註): marker = 1 通の文がこれを含めば当たる・answer = 札と 1 通の文を受けて、送る文の
+   tuple を答える閉じた Program を返す関数(1 通ごとに答え手が自分の run で走らせる)。"
+  (#^ str marker)
+  (#^ (get Callable #([str str] Program)) answer))
+
+
+(defrecord WsShortcutAnswered
+  "ws の口の answer の答え: その接続へ順に積む文の列(空なら何も積まない)。"
+  (#^ (get tuple #(str ...)) texts))
+
+
+(defrecord WsShortcutFailed
+  "ws の口の answer が落ちたか、答えの型が違った(reason = 理由の文 — 答え手が 1 行名乗り、何も積まない)。"
+  (#^ str reason))
+
+
 (defclass [(dataclass :frozen True)] HttpListen [(get EffectBase HttpAddress)]
-  "待ち受けを開く(頭の註)。probes = 答え手が自分で答える probe の口の列。答え = 結んだ宛先 HttpAddress。"
+  "待ち受けを開く(頭の註)。probes = 答え手が自分で答える probe の口の列・ws-shortcuts = 答え手がその場で答える ws の 1 通の口の列。答え =
+   結んだ宛先 HttpAddress。"
   (#^ HttpAddress address)
   (setv #^ int ws-max-bytes DEFAULT-WS-MAX-BYTES
         #^ int ws-send-max-bytes DEFAULT-WS-SEND-MAX-BYTES
         #^ (get tuple #(HttpProbe ...)) probes #()
-        #^ bool share-port False))
+        #^ bool share-port False
+        #^ (get tuple #(WsShortcut ...)) ws-shortcuts #()))
 
 
 (defclass [(dataclass :frozen True)] HttpNextRequest [(get EffectBase HttpEvent)]
@@ -388,6 +423,28 @@
   (if (isinstance answer HttpProbeAnswer)
       answer
       (run (probe-failure probe.path (repr answer)))))
+
+
+(defk ws-shortcut-for [shortcuts text]
+  {:pre [(: shortcuts (of tuple WsShortcut ...)) (: text str)] :post [(: % (| WsShortcut None))] :tags {:context "http-server" :role "judgment"}}
+  "ws の文字の 1 通を答え手がその場で答えるか決めるため(頭の註の ws の口): 文が marker を含む最初の WsShortcut、どれも含まなければ None
+   (出来事として本体へ渡すだけ)。"
+  (next (gfor shortcut shortcuts :if (in shortcut.marker text) shortcut) None))
+
+
+(deff ws-shortcut-outcome [shortcut ticket text]  ; defk にできない: 答え手が本体の Program の外(本物 = 待ち受けの loop の外の thread・台本 = handler の節)で呼び、閉じた answer を自分の run で走らせる入口
+  {:pre [(: shortcut WsShortcut) (: ticket str) (: text str)] :post [(: % (| WsShortcutAnswered WsShortcutFailed))]
+   :tags {:context "http-server" :role "foundation"}}
+  "ws の口に当たった 1 通の答えの文を、本体の run(scheduler・session の値・Await の共有の event loop)に触れずに出すため(頭の註): answer の
+   Program を自分の run で走らせ、答えが文の tuple なら WsShortcutAnswered、落ちた・型が違えば WsShortcutFailed。2 つの答え手が同じこの関数で
+   答える。"
+  (try
+    (setv texts (run (shortcut.answer ticket text)))
+    (except [error Exception]
+      (return (WsShortcutFailed :reason (+ (. (type error) __name__) ": " (str error))))))
+  (if (and (isinstance texts tuple) (all (gfor one texts (isinstance one str))))
+      (WsShortcutAnswered :texts texts)
+      (WsShortcutFailed :reason (+ "answer の答えが文の tuple でない: " (repr texts)))))
 
 
 ;; --- 台本の語彙(scripted-http-server) -----------------------------------------------------------------------------------

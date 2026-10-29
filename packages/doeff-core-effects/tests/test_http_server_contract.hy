@@ -24,7 +24,7 @@
                                                 HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody
                                                 HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport
                                                 WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach
-                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer])
+                                                WsTextArrived WS-CUT-REASON WS-REFUSAL-TEXT HttpProbe HttpProbeAnswer WsShortcut])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
 (val SHUTDOWN-REASON "検が閉じた")
@@ -435,3 +435,69 @@
   (assert (= peeked.status 500) peeked)
   (assert (.startswith (.decode peeked.body "utf-8") PROBE-FAILED) peeked)
   (assert (= (lfor a (cut served.answers 4 None) #(a.status a.body)) [#(200 b"program") #(200 b"program")]) served.answers))
+
+
+;; --- 答え手がその場で答える ws の 1 通の口(agora card ki-f4cd863959c8)-------------------------------------------------------
+
+(defk early-texts [ticket text]
+  {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
+  "ws の口の answer(閉じている — 何の effect も使わない): 当たった 1 通に、本体より先に \"early:\" の 1 通で答える。"
+  #((+ "early:" text)))
+
+
+(defk broken-texts [ticket text]
+  {:pre [(: ticket str) (: text str)] :post [(: % (get tuple #(str ...)))] :tags {:context "http-server-test" :role "program"}}
+  "落ちる ws の口の answer — 本体の run の handler(契約の世界)を読もうとする(answer は答え手の自分の run で走るので届かない)。"
+  (<- world World (ContractWorld))
+  #(world.site))
+
+
+(defk serve-shortcut [requests shortcuts]
+  {:pre [(: requests tuple) (: shortcuts tuple)] :post [(: % Served)] :tags {:context "http-server-test" :role "program"}}
+  "ws の口つきの契約の Program: 待ち受けを開き、相手に requests を送らせ、ws の 1 通には、答え手が先に答えた 1 通なら \"late:\"、他は
+   \"echo:\" で答え(\"bye\" は 4001 で閉じる)、全部の要求が決着したら閉じる。出来事の形には積んだ文の列 answered を足す。"
+  (<- world World (ContractWorld))
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :ws-send-max-bytes SEND-LIMIT :ws-shortcuts shortcuts))
+  (<- (PeerSend :address bound :requests requests))
+  (var events #())
+  (var settled 0)
+  (var shut False)
+  (var open True)
+  (while open
+    (<- event HttpEvent (HttpNextRequest))
+    (<- shape tuple (event-shape event))
+    (:= events (+ events #((if (isinstance event WsTextArrived) (+ shape #(event.answered)) shape))))
+    (match event
+      (HttpServerClosed) (:= open False)
+      (HttpRequestArrived) (do (<- answered Answered (answer-request event world))
+                               (:= settled (+ settled (if answered.settled 1 0))))
+      (WsClosed) (:= settled (+ settled 1))
+      (WsTextArrived :ticket t :text "bye") (<- (WsClose :ticket t :code 4001 :reason "さようなら"))
+      (WsTextArrived :ticket t :text text :answered answered)
+        (<- (WsSendText :ticket t :text (+ (if answered "late:" "echo:") text)))
+      _ None)
+    (when (and open (not shut) (= settled (len requests)))
+      (:= shut True)
+      (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 0.5))))
+  (<- answers tuple (PeerAnswers))
+  (<- report WsSendReport (TakeWsSendReport))
+  (Served :events events :again #() :answers answers :reads #() :report report))
+
+
+(deftest test-a-ws-shortcut-answers-before-the-program-and-keeps-the-order-of-the-connection
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  ;; marker を含む 1 通は答え手が answer で先に答え、同じ 1 通が積んだ文の列 answered と積み終えた拍を載せて本体へ届く(本体の答えは
+  ;; その後ろ)。answer が落ちた 1 通は何も積まずに answered が空のまま届き、本体がいつもどおり答える。当たらない 1 通は今のまま。
+  ;; 同じ接続の 1 通の順は変わらない。
+  (val shortcuts #((WsShortcut :marker "fast" :answer early-texts) (WsShortcut :marker "boom" :answer broken-texts)))
+  (<- served Served (serve-shortcut #((PeerRequest :method "GET" :target "/ws" :ws True :sends #("fast1" "hi" "boom1" "bye")))
+                                    shortcuts))
+  (assert (= served.events (+ #(#("request" "1" "GET" "/ws" "/ws" True) #("opened" "1")
+                                #("text" "1" "fast1" #("early:fast1")) #("text" "1" "hi" #())
+                                #("text" "1" "boom1" #()) #("text" "1" "bye" #())
+                                #("closed" "1" 4001 "さようなら"))
+                              CLOSED))
+          served.events)
+  (val answer (get served.answers 0))
+  (assert (= [answer.status answer.texts answer.closed] [101 #("early:fast1" "late:fast1" "echo:hi" "echo:boom1") #(4001 "さようなら")])
+          answer))
