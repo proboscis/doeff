@@ -17,9 +17,8 @@ dependencies = [
     "doeff-hy",
     "doeff-time",
     "hy>=1.3",
-    # どの module も pydantic を import しない(_typed.hy は doeff_hy.wire_codec の行の解き手 — tests/test_imports_no_pydantic.py)。
-    # 依存から外すのは、pydantic を test の依存へ移す card ki-5ddadb736f62(消費者の uv.lock と一緒に)。
-    "pydantic>=2.6",
+    # pydantic は依存に置かない(card ki-5ddadb736f62)— どの module も pydantic を import しない(_typed.hy は doeff_hy.wire_codec の
+    # 行の解き手 — tests/test_imports_no_pydantic.py)。
 ]
 
 [project.optional-dependencies]

@@ -156,6 +156,8 @@
     "doeff-hy-defhandler-must-be-top-level",
     "doeff-hy-no-bang-in-native-comprehension",
     "doeff-hy-no-bang-in-plain-nested-function",
+    "doeff-job-path-imports-no-pydantic",
+    "doeff-job-path-imports-no-pydantic-hy",
     "doeff-ml-nexus-runner-no-process-env",
     "doeff-no-async-in-do-function",
     "doeff-no-bare-return-in-generator",
