@@ -1,7 +1,7 @@
 """Provider-agnostic image effects and result types for doeff."""
 
-from .effects import ImageEdit, ImageGenerate
-from .types import ImageResult
+from ._effects import ImageEdit, ImageGenerate
+from ._types import ImageResult
 
 __all__ = [
     "ImageEdit",

@@ -9,16 +9,15 @@ from io import BytesIO
 from typing import Any, cast
 
 from doeff_core_effects import Await, Try
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_image.types import ImageResult
+from doeff_image import ImageEdit, ImageGenerate, ImageResult
 from doeff_llm import LLMChat, LLMEmbedding, LLMStreamingChat, LLMStructuredQuery
 from PIL import Image
 
 from doeff import EffectBase, Pass, Resume, do
 from doeff import handler as _program_handler
-from doeff_gemini.client import get_gemini_client, track_api_call
-from doeff_gemini.costs import calculate_known_model_cost
-from doeff_gemini.effects import (
+from doeff_gemini._client import get_gemini_client, track_api_call
+from doeff_gemini._costs import calculate_known_model_cost
+from doeff_gemini._effects import (
     GeminiCalculateCost,
     GeminiChat,
     GeminiEmbedding,
@@ -26,7 +25,7 @@ from doeff_gemini.effects import (
     GeminiStreamingChat,
     GeminiStructuredOutput,
 )
-from doeff_gemini.structured_llm import (
+from doeff_gemini._structured_llm import (
     GeminiContentPart,
     edit_image__gemini,
     structured_llm__gemini,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any
 
-from doeff_gemini.handlers import gemini_mock_handler
+from doeff_gemini import gemini_mock_handler
 from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_openai import MockOpenAIConfig, MockOpenAIState, openai_mock_handler
 from doeff_openrouter import MockOpenRouterRuntime, openrouter_mock_handler

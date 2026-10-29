@@ -3,7 +3,7 @@
 # so no API is called. Each mock is wrapped to print every effect that reaches it; a mock that does not support
 # the effect's model yields Pass, so the next handler out sees the same effect. Prints, in order, which
 # handler saw each effect, which one answered (from the mocks' own call records), and workflow()'s value.
-from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import MockGeminiHandler, gemini_mock_handler
 from doeff_llm import LLMChat, LLMStructuredQuery
 from doeff_openai import MockOpenAIConfig, MockOpenAIState, openai_mock_handler
 from doeff_openrouter import MockOpenRouterRuntime, openrouter_mock_handler

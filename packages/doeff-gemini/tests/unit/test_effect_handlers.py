@@ -66,18 +66,13 @@ from doeff import (
     do,
 )
 from _runner import run_program
-from doeff_image.effects import ImageEdit
-from doeff_image.effects import ImageEdit as UnifiedImageEdit
-from doeff_image.effects import ImageGenerate as UnifiedImageGenerate
-from doeff_image.types import ImageResult
+from doeff_image import ImageEdit
+from doeff_image import ImageEdit as UnifiedImageEdit
+from doeff_image import ImageGenerate as UnifiedImageGenerate
+from doeff_image import ImageResult
 from doeff_llm import LLMChat, LLMEmbedding, LLMStructuredQuery
-from doeff_gemini.effects import (
-    GeminiChat,
-    GeminiEmbedding,
-    GeminiImageEdit,
-    GeminiStructuredOutput,
-)
-from doeff_gemini.handlers import (
+from doeff_gemini import GeminiChat, GeminiEmbedding, GeminiImageEdit, GeminiStructuredOutput
+from doeff_gemini import (
     gemini_mock_handler,
     gemini_production_handler,
     mock_handlers,
@@ -118,9 +113,9 @@ def _domain_program() -> EffectGenerator[dict[str, Any]]:
 
 
 def test_effect_exports() -> None:
-    from doeff_gemini.effects import GeminiChat as ImportedChat
-    from doeff_gemini.effects import GeminiImageEdit as ImportedImageEdit
-    from doeff_gemini.effects import GeminiStructuredOutput as ImportedStructured
+    from doeff_gemini import GeminiChat as ImportedChat
+    from doeff_gemini import GeminiImageEdit as ImportedImageEdit
+    from doeff_gemini import GeminiStructuredOutput as ImportedStructured
 
     assert ImportedChat is GeminiChat
     assert ImportedImageEdit is GeminiImageEdit
@@ -158,8 +153,8 @@ def test_gemini_image_edit_is_deprecated_alias() -> None:
 
 
 def test_handler_exports() -> None:
-    from doeff_gemini.handlers import mock_handlers as imported_mock_handlers
-    from doeff_gemini.handlers import production_handlers as imported_production_handlers
+    from doeff_gemini import mock_handlers as imported_mock_handlers
+    from doeff_gemini import production_handlers as imported_production_handlers
 
     assert imported_production_handlers is production_handlers
     assert imported_mock_handlers is mock_handlers
@@ -252,7 +247,7 @@ def test_gemini_handler_delegates_unsupported_models() -> None:
 
 
 def test_message_parser_extracts_local_file_parts() -> None:
-    from doeff_gemini.handlers import production as production_module
+    from doeff_gemini._handlers import production as production_module
 
     messages = [
         {
@@ -281,7 +276,7 @@ def test_message_parser_extracts_local_file_parts() -> None:
 
 
 def test_message_parser_does_not_treat_bare_uri_as_media() -> None:
-    from doeff_gemini.handlers import production as production_module
+    from doeff_gemini._handlers import production as production_module
 
     messages = [
         {
@@ -302,7 +297,7 @@ def test_message_parser_does_not_treat_bare_uri_as_media() -> None:
 
 
 def test_message_parser_accepts_typed_uri_media_part() -> None:
-    from doeff_gemini.handlers import production as production_module
+    from doeff_gemini._handlers import production as production_module
 
     messages = [
         {

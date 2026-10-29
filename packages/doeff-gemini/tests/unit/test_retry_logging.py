@@ -44,12 +44,12 @@ if "pydantic" not in sys.modules and importlib.util.find_spec("pydantic") is Non
     sys.modules["pydantic"] = pydantic_stub
 
 from _runner import async_run_program
-from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
+from doeff_gemini import edit_image__gemini, structured_llm__gemini
 from doeff_time import SimClock
 
 from doeff import EffectGenerator, do
 
-structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
+structured_llm_module = importlib.import_module("doeff_gemini._structured_llm")
 
 # A fixed backoff, so a test can read the wait on the virtual clock.
 _BACKOFF_SECONDS = 3.0

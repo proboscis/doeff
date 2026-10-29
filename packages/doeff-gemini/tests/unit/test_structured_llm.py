@@ -31,21 +31,21 @@ from PIL import Image
 
 google_genai = pytest.importorskip("google.genai")
 from doeff_gemini import (
+    APICallMetadata,
     GeminiImageEditResult,
     build_contents,
     build_generation_config,
+    calculate_cost,
+    default_gemini_cost_handler,
     edit_image__gemini,
     image_edit__gemini,
     process_image_edit_response,
     process_structured_response,
     process_unstructured_response,
     structured_llm__gemini,
+    track_api_call,
 )
-from doeff_gemini.client import track_api_call
-from doeff_gemini.costs import calculate_cost
-from doeff_gemini.handlers import default_gemini_cost_handler
-from doeff_gemini.structured_llm import GeminiStructuredOutputError
-from doeff_gemini.types import APICallMetadata
+from doeff_gemini._structured_llm import GeminiStructuredOutputError
 
 genai_types = google_genai.types
 from _runner import async_run_program
@@ -55,7 +55,7 @@ from pydantic import BaseModel
 
 from doeff import EffectGenerator, do
 
-structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
+structured_llm_module = importlib.import_module("doeff_gemini._structured_llm")
 
 
 async def _run_with_default_cost(

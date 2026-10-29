@@ -4,8 +4,7 @@
 # and warn when built. Prints the provider that answered each model, and what the old names are.
 import warnings
 
-from doeff_gemini.effects import GeminiChat
-from doeff_gemini.handlers.testing import MockGeminiHandler, gemini_mock_handler
+from doeff_gemini import GeminiChat, MockGeminiHandler, gemini_mock_handler
 from doeff_llm import LLMChat
 from doeff_openai import ChatCompletion, MockOpenAIConfig, openai_mock_handler
 from doeff_openrouter import RouterChat

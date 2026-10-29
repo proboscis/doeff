@@ -5,15 +5,14 @@ from collections.abc import Callable
 from typing import Any
 
 from doeff_core_effects.effects import EffectBase as Effect
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_image.types import ImageResult
+from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
 from doeff import EffectGenerator, Pass, Resume, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
-from doeff_seedream.effects import SeedreamGenerate, SeedreamStructuredOutput
-from doeff_seedream.structured_llm import _edit_image__seedream4_impl
-from doeff_seedream.types import SeedreamImageEditResult
+from doeff_seedream._effects import SeedreamGenerate, SeedreamStructuredOutput
+from doeff_seedream._structured_llm import _edit_image__seedream4_impl
+from doeff_seedream._types import SeedreamImageEditResult
 
 ProtocolHandler = Callable[[Effect, Any], Any]
 

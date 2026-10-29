@@ -23,7 +23,7 @@ The effect is handled via the normal handler stack.
 
 ## Reference handler
 
-Use the reference handler `doeff_gemini.handlers.default_gemini_cost_handler` for the
+Use the reference handler `doeff_gemini.default_gemini_cost_handler` for the
 pricing of known models that ships with it.
 
 - Known model: resume with `GeminiCostEstimate`.
@@ -51,7 +51,7 @@ To fully replace default pricing, omit `default_gemini_cost_handler`.
 ## Built-in pricing table
 
 From `https://ai.google.dev/pricing` (checked 2026-02-28), plus legacy 1.5
-rates retained for compatibility in `doeff_gemini.costs`.
+rates retained for compatibility in `doeff_gemini._costs`.
 
 - `gemini-2.5-pro`: input $1.25 / output $10.00 per 1M tokens (<=200K input),
   input $2.50 / output $15.00 (>200K input)

@@ -9,16 +9,16 @@
 
 ## Result Type
 
-- `ImageResult` — provider-agnostic result dataclass in `doeff_image.types` containing generated/edited images, model name, prompt, and optional metadata (`generation_id`, `cost_usd`, `raw_response`). This is a **data type**, not an effect — it is the return value from handlers that process `ImageGenerate` and `ImageEdit` effects.
+- `ImageResult` — provider-agnostic result dataclass exported from `doeff_image` containing generated/edited images, model name, prompt, and optional metadata (`generation_id`, `cost_usd`, `raw_response`). This is a **data type**, not an effect — it is the return value from handlers that process `ImageGenerate` and `ImageEdit` effects.
 
 Provider packages implement protocol handlers and route by model prefix.
 
 ## Model-routed handlers
 
-- `doeff_seedream.handlers.seedream_image_handler`
+- `doeff_seedream.seedream_image_handler`
   - Handles models starting with `seedream-` (and `doubao-seedream-` for compatibility)
   - Passes unsupported models through via `yield Pass()`
-- `doeff_gemini.handlers.gemini_image_handler`
+- `doeff_gemini.gemini_image_handler`
   - Handles Gemini image models (`gemini-...image...`)
   - Passes unsupported models through via `yield Pass()`
 
@@ -26,9 +26,9 @@ Provider packages implement protocol handlers and route by model prefix.
 
 ```python
 from doeff import do, run
-from doeff_image.effects import ImageEdit, ImageGenerate
-from doeff_gemini.handlers import gemini_image_handler
-from doeff_seedream.handlers import seedream_image_handler
+from doeff_image import ImageEdit, ImageGenerate
+from doeff_gemini import gemini_image_handler
+from doeff_seedream import seedream_image_handler
 
 
 @do
@@ -57,5 +57,5 @@ result = run(
 
 ## Deprecation aliases
 
-- `doeff_seedream.effects.SeedreamGenerate` is a deprecated alias; use `doeff_image.effects.ImageEdit` instead. Instantiation emits a `DeprecationWarning`.
-- `doeff_gemini.effects.GeminiImageEdit` is a deprecated alias of `doeff_image.effects.ImageEdit`.
+- `doeff_seedream.SeedreamGenerate` is a deprecated alias; use `doeff_image.ImageEdit` instead. Instantiation emits a `DeprecationWarning`.
+- `doeff_gemini.GeminiImageEdit` is a deprecated alias of `doeff_image.ImageEdit`.

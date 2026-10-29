@@ -1,70 +1,21 @@
-"""Typed results exposed by the Seedream integration."""
+# moved-submodule-shim: doeff_seedream.types -> doeff_seedream._types
+"""Moved: ``doeff_seedream.types`` is now ``doeff_seedream._types`` (ADR-DOE-API-001 R5).
 
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_seedream.types…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
+"""
 
-from dataclasses import dataclass
-from typing import Any
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from doeff_seedream._types import *  # noqa: F403
 
-@dataclass(frozen=True)
-class SeedreamImage:
-    """Container for an image produced by Seedream."""
+if __name__ == "__main__":
+    import runpy
 
-    image_bytes: bytes | None
-    mime_type: str = "image/jpeg"
-    url: str | None = None
-    size: str | None = None
-
-    def to_pil_image(self):  # type: ignore[override]
-        """Decode the image into a :class:`PIL.Image.Image`."""
-        if self.image_bytes is None:
-            raise ValueError(
-                "Seedream response did not include inline image bytes. "
-                "Set generation_config_overrides['response_format'] = 'b64_json' to enable inline decoding."
-            )
-        from io import BytesIO
-
-        from PIL import Image
-
-        with BytesIO(self.image_bytes) as buffer:
-            image = Image.open(buffer)
-            return image.copy()
-
-    def save(self, path: str, *, format: str | None = None) -> None:  # noqa: A002 - public API parameter name is intentionally stable
-        """Persist the image to disk."""
-
-        image = self.to_pil_image()
-        image.save(path, format=format)
-
-
-@dataclass(frozen=True)
-class SeedreamImageEditResult:
-    """Result returned by :func:`doeff_seedream.structured_llm.edit_image__seedream4`."""
-
-    images: list[SeedreamImage]
-    prompt: str
-    model: str
-    raw_response: dict[str, Any]
-
-    def to_pil_image(self):  # type: ignore[override]
-        """Return the first generated image as a :class:`PIL.Image.Image`."""
-
-        if not self.images:
-            raise ValueError("Seedream response did not include any images")
-        return self.images[0].to_pil_image()
-
-    @property
-    def image_bytes(self) -> bytes | None:
-        """Convenience access to the primary image bytes."""
-
-        if not self.images:
-            return None
-        return self.images[0].image_bytes
-
-    def save(self, path: str, *, format: str | None = None) -> None:  # noqa: A002 - public API parameter name is intentionally stable
-        """Persist the primary image to disk."""
-
-        image = self.to_pil_image()
-        image.save(path, format=format)
-
-
-__all__ = ["SeedreamImage", "SeedreamImageEditResult"]
+    runpy.run_module("doeff_seedream._types", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_seedream._types")

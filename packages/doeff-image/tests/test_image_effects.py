@@ -15,9 +15,9 @@ from doeff_image import ImageEdit, ImageGenerate, ImageResult
 
 
 def test_public_exports() -> None:
-    from doeff_image.effects import ImageEdit as ImportedEdit
-    from doeff_image.effects import ImageGenerate as ImportedGenerate
-    from doeff_image.types import ImageResult as ImportedResult
+    from doeff_image import ImageEdit as ImportedEdit
+    from doeff_image import ImageGenerate as ImportedGenerate
+    from doeff_image import ImageResult as ImportedResult
 
     assert ImportedGenerate is ImageGenerate
     assert ImportedEdit is ImageEdit
