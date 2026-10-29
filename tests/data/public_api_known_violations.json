@@ -11139,7 +11139,6 @@
       "abandoned_now",
       "drive_leased",
       "driven",
-      "first_failure",
       "flush_steps",
       "flushed_here",
       "heard_notice",
@@ -11157,7 +11156,6 @@
       "offloaded_batched_transaction",
       "offloaded_statement",
       "offloaded_transaction",
-      "pipelined",
       "postgres_begin",
       "postgres_control",
       "postgres_ensure_tables",
@@ -11180,7 +11178,6 @@
       "run_detached",
       "run_in_batched_transaction",
       "run_in_transaction",
-      "step_answer",
       "stray_batch",
       "transaction_locks"
      ],
@@ -19459,6 +19456,279 @@
    "name": "retry_after_ms",
    "訳": "表(96a47fa85)の後、doeff-cluster を範囲の答え待ちのまま 1 名ずつ凍らせていた間に普通の開発が足した名(doeff main 19e345109 の目録で表に無い — card ki-362df4037544)。ADR-DOE-API-001 R15 で doeff-cluster を決まりの範囲に入れ、submodule を _ で隠す段 1 の子 card が隠すと目録から消える",
    "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "CARRIED_LARGE",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "LARGE_CARRY_BYTES",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "cell_bytes",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "largest_message_bytes",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "noted_carry",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "step_sent_bytes",
+   "訳": "PostgreSQL の答え手の中の名(大きな値を通した接続を返す時に閉じるための、送った bytes の測り)。commit d38bbb991(card ki-1368e0d6b801)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-1368e0d6b801"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "libpq_results",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "libpq_sent",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "result_failure",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "results_answer",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "socket_ready",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "step_queries",
+   "訳": "PostgreSQL の答え手の中の関数(束ねた transaction の往復を libpq の口で 1 度に送る)。commit ee090bb72(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PREPARED",
+   "訳": "PostgreSQL の答え手の中の名(接続ごとの prepared statement の帳)。commit f1cbbb56c(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PREPARED_LOCK",
+   "訳": "PostgreSQL の答え手の中の名(接続ごとの prepared statement の帳)。commit f1cbbb56c(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PREPARED_MAX",
+   "訳": "PostgreSQL の答え手の中の名(接続ごとの prepared statement の帳)。commit f1cbbb56c(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PreparedBook",
+   "訳": "PostgreSQL の答え手の中の名(接続ごとの prepared statement の帳)。commit f1cbbb56c(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "prepared_book",
+   "訳": "PostgreSQL の答え手の中の名(接続ごとの prepared statement の帳)。commit f1cbbb56c(card ki-f7a1ef77251f)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule postgres_sql はまだ公開で、submodule を _ で隠す段 1 の card ki-4e56dc4a0ecd(6/6: sql)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f7a1ef77251f"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "WsShortcut",
+   "訳": "effect HttpListen の欄 ws-shortcuts の値の型(R2 の effect の値の型)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule http_server_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "WsShortcutAnswered",
+   "訳": "本物と台本の 2 つの答え手が共に読む、ws の口の当たりと答えを決める関数とその答えの型(答え手の中の名)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule http_server_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "WsShortcutFailed",
+   "訳": "本物と台本の 2 つの答え手が共に読む、ws の口の当たりと答えを決める関数とその答えの型(答え手の中の名)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule http_server_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "ws_shortcut_for",
+   "訳": "本物と台本の 2 つの答え手が共に読む、ws の口の当たりと答えを決める関数とその答えの型(答え手の中の名)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule http_server_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "ws_shortcut_outcome",
+   "訳": "本物と台本の 2 つの答え手が共に読む、ws の口の当たりと答えを決める関数とその答えの型(答え手の中の名)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule http_server_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "WsShortcutAnswered",
+   "訳": "本物の答え手の module が http_server_effects から読んだ、ws の口の答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule aiohttp_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "WsShortcutFailed",
+   "訳": "本物の答え手の module が http_server_effects から読んだ、ws の口の答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule aiohttp_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "ws_shortcut_for",
+   "訳": "本物の答え手の module が http_server_effects から読んだ、ws の口の答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule aiohttp_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "ws_shortcut_outcome",
+   "訳": "本物の答え手の module が http_server_effects から読んだ、ws の口の答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule aiohttp_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsShortcut",
+   "訳": "台本の答え手の module が http_server_effects から読んだ、ws の口の型と答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsShortcutAnswered",
+   "訳": "台本の答え手の module が http_server_effects から読んだ、ws の口の型と答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "ws_shortcut_for",
+   "訳": "台本の答え手の module が http_server_effects から読んだ、ws の口の型と答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "ws_shortcut_outcome",
+   "訳": "台本の答え手の module が http_server_effects から読んだ、ws の口の型と答え手の中の名(定義は http_server_effects)。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "ScriptSend",
+   "訳": "台本の答え手の中の、札へ文字の 1 通を送った後の session の値とその関数。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "script_sent",
+   "訳": "台本の答え手の中の、札へ文字の 1 通を送った後の session の値とその関数。commit 7977d349c(card ki-f4cd863959c8)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_http_server はまだ公開で、submodule を _ で隠す段 1 の card ki-d4ba562a1367(5/6: http・ws)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f4cd863959c8"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.offloaded_call",
+   "name": "Delivered",
+   "訳": "offloaded の答えを待ち手へ渡す 1 枠の箱(答え手の中の型)。commit 6258cd728(card ki-8d1e57d431c1)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule offloaded_call は card ki-32623e1651c6 が _offloaded_call へ隠したが、移し替えの module が古い名で出す — 移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-8d1e57d431c1"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler",
+   "name": "IDLE_SWEEP_ROWS_PER_ID",
+   "訳": "scheduler の中の定数(暇な時に終わった行を掃く 1 回の数)。commit 19e345109(card ki-f9aa5fce26e3)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scheduler は card ki-c09b3b527fad が _scheduler へ隠したが、移し替えの module が古い名で出す — 移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-f9aa5fce26e3"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "HeldInput",
+   "訳": "待ちの子の答え手の中の名(頼み手が握る子の入力の pipe の書き口とその書き)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule os_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "input_written",
+   "訳": "待ちの子の答え手の中の名(頼み手が握る子の入力の pipe の書き口とその書き)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule os_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
+   "name": "WarmInputWritten",
+   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型 — 定義は warm_effects)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule os_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_warm_process",
+   "name": "WarmInputWritten",
+   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型 — 定義は warm_effects)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-de44efdb9aa4"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.warm_effects",
+   "name": "WarmInputWritten",
+   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule warm_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
+   "決め": "ki-de44efdb9aa4"
   }
  ]
 }
