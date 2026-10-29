@@ -47,7 +47,6 @@
       "assert_all_adr_contracts",
       "clear_registry",
       "enforcement_ids",
-      "get_adr",
       "get_enforcement",
       "register_adr",
       "register_deftest_enforcement"
@@ -219,7 +218,6 @@
       "enforcement_ids",
       "enforcement_ref",
       "fixture_set_key",
-      "get_adr",
       "get_enforcement",
       "isolated_registry",
       "make_counterexample",

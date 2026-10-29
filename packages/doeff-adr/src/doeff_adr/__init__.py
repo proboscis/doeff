@@ -49,9 +49,6 @@ if TYPE_CHECKING:
         enforcement_ids as enforcement_ids,
     )
     from doeff_adr.registry import (
-        get_adr as get_adr,
-    )
-    from doeff_adr.registry import (
         get_enforcement as get_enforcement,
     )
     from doeff_adr.registry import (
@@ -76,7 +73,6 @@ _PUBLIC_API_NAMES = (
     "clear_registry",
     "doeff_hy",
     "enforcement_ids",
-    "get_adr",
     "get_enforcement",
     "register_adr",
     "register_deftest_enforcement",
