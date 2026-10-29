@@ -9,6 +9,8 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 2. ``rewrite``(外の repo の作業木): 隠した後の package に合わせて、その木の import を書き換える。
 3. ``finish``(doeff の木): 移し替えの module を消す。
 
+``pin``(doeff の木): 名の固定の列の無い移し替えの module に列を書く(列を書く前に置いた移し替えの module を揃える)。
+
 使い方(doeff の作業木で)::
 
     uv run python tools/hide_submodules.py hide --package packages/doeff-agents --child tmux --child adapters
@@ -46,7 +48,9 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 移し替えの module(``<根>/<子>.py`` の 1 file・1 行目に ``# moved-submodule-shim: <古い path> -> <新しい path>``)は、
 import すると ``_<子>`` の module そのものを返し(``sys.modules`` を差し替える)、子が package なら下の module も meta path の
 finder が ``_<子>.<下>`` の module そのものを返す。古い path の ``mock.patch`` の的・isinstance・``python -m <古い path>`` は
-移す前と同じに効く。
+移す前と同じに効く。印の行の下には、古い path が出す名の固定の列(``# moved-submodule-shim-names <古い module>: <名> …``
+の行・子とその下の module ごと)を書く: 隠した時の目録の名のうち、effect・handler と既知の表の名。目録は古い path の名を
+この列だけで数えるので、移した先の ``_`` の module に helper を足しても公開名は増えない(card ki-4fbed45b5863)。
 
 書き換え(木の git の追跡する file):
 
@@ -89,6 +93,7 @@ import argparse
 import ast
 import collections
 import dataclasses
+import functools
 import importlib
 import importlib.util
 import inspect
@@ -113,6 +118,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TABLE = Path("tests/data/public_api_known_violations.json")
 DEFAULT_ALLOWED = Path("tests/data/public_api_allowed.json")
 SHIM_MARK = "# moved-submodule-shim:"
+#: 印の下の、古い path が出す名の固定の列の行の頭(目録の ``SHIM_NAMES_MARK`` が読む)。
+SHIM_NAMES_MARK = "# moved-submodule-shim-names"
+#: 名の列の続きの行の頭(頭の行の module の名を続ける)。
+SHIM_NAMES_MORE = "#  "
 LINE_LIMIT = 100
 
 #: 歴史として書き換えない所(木の根からの相対の頭・dir の名・file の名)。
@@ -157,6 +166,10 @@ class _Inventory(Protocol):
     def inventory(
         self, repo: Path, packages: Sequence[str] | None, jobs: int, timeout: float
     ) -> list[dict[str, object]]: ...
+
+    def shim_modules(self, layout: _Layout) -> list[tuple[str, Path]]: ...
+
+    def shim_pins(self, name: str, path: Path) -> dict[str, tuple[str, ...]]: ...
 
     @property
     def SUBMODULE(self) -> str: ...  # noqa: N802 - the inventory's constant
@@ -1365,6 +1378,12 @@ def _same_in_root(module_name: str, name: str, root_name: str) -> bool:
 # --- 名の行き先(hide) ---
 
 
+class ModuleRead(TypedDict):
+    """目録の module 1 つの読み(この道具は名だけを読む — 古い path の名の列を module ごとに書く為)。"""
+
+    name: str
+
+
 class ExportRow(TypedDict):
     module: str
     name: str
@@ -1932,8 +1951,65 @@ _keep_entry_name()
 '''
 
 
-def shim_text(child: Child, typed: bool) -> str:
-    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。"""
+def shown_at_hiding(
+    package: dict[str, object],
+    child: Child,
+    groups: dict[tuple[str, str], str],
+    added: set[tuple[str, str]],
+) -> dict[str, tuple[str, ...]]:
+    """古い path が出す名の固定の列: 子とその下の module ごとに、目録の名のうち effect・handler と既知の表の名。
+
+    表に無い effect と handler の外の名(書き手が内側に足しただけの helper)は列に入れない — 列に無い名は、移した先の
+    ``_`` の module に在っても古い path の公開名に数えない(目録の ``shim_pins``)。
+    """
+    known = set(groups) | added
+    modules = [
+        read["name"]
+        for read in cast(list[ModuleRead], package["modules"])  # the inventory's ModuleRead rows
+        if read["name"] == child.old or read["name"].startswith(child.old + ".")
+    ]
+    rows = cast(list[ExportRow], package["exports"])  # the inventory's ExportRow rows
+    return {
+        module: tuple(
+            sorted(
+                {
+                    row["name"]
+                    for row in rows
+                    if row["module"] == module
+                    and (row["kind"] in ("effect", "handler") or (module, row["name"]) in known)
+                }
+            )
+        )
+        for module in modules
+    }
+
+
+def pin_lines(pins: dict[str, tuple[str, ...]]) -> str:
+    """名の固定の列の comment の行(module ごとに頭の行 1 つと続きの行・行の幅は LINE_LIMIT まで)。"""
+    return "".join(
+        f"{line}\n"
+        for module, names in sorted(pins.items())
+        for line in (f"{SHIM_NAMES_MARK} {module}:", *_wrapped(SHIM_NAMES_MORE, names))
+    )
+
+
+def _wrapped(head: str, names: Sequence[str]) -> tuple[str, ...]:
+    """``head`` に名を空白で続けた行の列(幅が LINE_LIMIT を越える所で、同じ頭の次の行へ・名が無ければ行も無い)。"""
+
+    def step(lines: tuple[str, ...], name: str) -> tuple[str, ...]:
+        *done, last = lines if lines else (head,)
+        if last != head and len(last) + 1 + len(name) > LINE_LIMIT:
+            return (*done, last, f"{head} {name}")
+        return (*done, f"{last} {name}")
+
+    return functools.reduce(step, names, ())
+
+
+def shim_text(child: Child, typed: bool, pins: dict[str, tuple[str, ...]]) -> str:
+    """移し替えの module の text: 古い path の import・mock.patch・python -m を、移した module へ渡す為の 1 file。
+
+    印の行の下に、隠した時に古い path が出した名の固定の列(``pins`` — ``shown_at_hiding``)を書く。
+    """
     package = child.is_package()
     keep = child.shadowed_by_entry()
     imports = (
@@ -1963,7 +2039,8 @@ def shim_text(child: Child, typed: bool) -> str:
     finder += _SHIM_KEEP.format(root=child.root, name=child.name) if keep else ""
     return (
         f"{SHIM_MARK} {child.old} -> {child.new}\n"
-        f'"""Moved: ``{child.old}`` is now ``{child.new}`` (ADR-DOE-API-001 R5).\n'
+        + pin_lines(pins)
+        + f'"""Moved:``{child.old}`` is now ``{child.new}`` (ADR-DOE-API-001 R5).\n'
         "\n"
         "Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on\n"
         f"the old path act on the same objects, and ``python -m {child.old}…`` runs the moved module. Deleted by\n"
@@ -2247,7 +2324,12 @@ def hide(
     moved = tuple(note for child in children for note in _move(tree, child))
     for child in children:
         child.shim.write_text(
-            shim_text(child, _typed(child.root_dir, child.root, child.new)), encoding="utf-8"
+            shim_text(
+                child,
+                _typed(child.root_dir, child.root, child.new),
+                shown_at_hiding(package, child, groups, added),
+            ),
+            encoding="utf-8",
         )
         _git(tree, "add", str(child.shim))
     entries = {
@@ -2409,6 +2491,63 @@ def finish(
     )
 
 
+def pin(package_dir: Path, table_path: Path | None, allowed_path: Path | None) -> Report:
+    """名の固定の列の無い移し替えの module に、今の目録の名のうち effect・handler と既知の表の名を列として書く。
+
+    列を書く道具より前に置いた移し替えの module を、表が認めた名だけを古い path の名とする形に揃える為の直し(card
+    ki-4fbed45b5863)。列を既に持つ移し替えの module は触らない(列は隠した時に固めた物)。
+    """
+    tool = _inventory_tool()
+    package_dir = package_dir.resolve()
+    tree = git_toplevel(package_dir).resolve()
+    layout = tool.read_layout(package_dir)
+    shims = [
+        (name, path) for name, path in tool.shim_modules(layout) if not tool.shim_pins(name, path)
+    ]
+    if not shims:
+        return Report("pin", package_dir.name, str(tree))
+    [package] = tool.inventory(package_dir.parent.parent, [package_dir.name], 1, 1800)
+    if package["error"] is not None:
+        raise SystemExit(f"目録が {package_dir.name} を読めなかった: {package['error']}")
+    groups, added = _table_groups(
+        _load_table(table_path or tree / DEFAULT_TABLE),
+        _load_table(allowed_path or tree / DEFAULT_ALLOWED),
+        package_dir.name,
+    )
+    rows = cast(list[ExportRow], package["exports"])  # the inventory's ExportRow rows
+    pinned = {
+        name: shown_at_hiding(
+            package,
+            Child(name.rpartition(".")[0], name.rpartition(".")[2], path.parent),
+            groups,
+            added,
+        )
+        for name, path in shims
+    }
+    for name, path in shims:
+        first, rest = path.read_text(encoding="utf-8").split("\n", 1)
+        path.write_text(f"{first}\n{pin_lines(pinned[name])}{rest}", encoding="utf-8")
+    modules = {module for pins in pinned.values() for module in pins}
+    kept = {
+        f"{module}.{name}"
+        for pins in pinned.values()
+        for module, names in pins.items()
+        for name in names
+    }
+    dropped = sorted({f"{r['module']}.{r['name']}" for r in rows if r["module"] in modules} - kept)
+    return Report(
+        "pin",
+        package_dir.name,
+        str(tree),
+        names={"列に書いた名": sorted(kept), "列から外した名": dropped},
+        notes=(
+            (f"列から外した(既知の表に無い effect と handler の外の名): {', '.join(dropped)}",)
+            if dropped
+            else ()
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class _TableResult:
     """stage 3 の既知の表と許した物の表の直し: 組ごとに消した行・残した隠した module の行・注。"""
@@ -2545,6 +2684,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--identity", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--identity-out", type=Path, help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="stage")
+    pinning = commands.add_parser("pin")
+    pinning.add_argument("--package", type=Path, required=True)
+    pinning.add_argument("--table", type=Path)
+    pinning.add_argument("--allowed", type=Path)
+    pinning.add_argument("--json")
     for stage in ("hide", "rewrite", "finish"):
         command = commands.add_parser(stage)
         command.add_argument("--package", type=Path, required=True)
@@ -2589,6 +2733,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.table,
             arguments.allowed,
         )
+    elif arguments.stage == "pin":
+        report = pin(arguments.package, arguments.table, arguments.allowed)
     else:
         parser.print_help()
         return 2
