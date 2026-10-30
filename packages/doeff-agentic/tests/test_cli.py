@@ -31,11 +31,11 @@ from doeff_agentic import (
     AgenticStopWorkflow,
     AgentInfo,
     AgentStatus,
-    StateManager,
     WorkflowInfo,
     WorkflowStatus,
 )
 from doeff_agentic._cli import cli
+from doeff_agentic._state import StateManager
 from doeff_time import DelayEffect, GetTimeEffect
 
 from doeff import Effect, Pass, Resume, handler

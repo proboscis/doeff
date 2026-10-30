@@ -95,7 +95,7 @@ def run_workflow(
     Example:
         from doeff import do
         from doeff import Pure
-        from doeff_flow import run_workflow
+        from doeff_flow._run import run_workflow
 
         @do
         def my_workflow():
