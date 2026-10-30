@@ -285,6 +285,19 @@ class AnswerType(TypedDict):
     answers: list[str]
 
 
+class SettingType(TypedDict):
+    """One name a package shows that a handler it shows is built with (a handler's setting type).
+
+    ``parameters`` is where the type is written: ``<handler or factory>(<parameter>)`` (a parameter of a handler,
+    a handler class's ``__init__`` or a factory) or ``<class>.<field>`` (a field of a setting class the package
+    defines — ADR-DOE-API-001 R2 — ``setting_types``).
+    """
+
+    module: str
+    name: str
+    parameters: list[str]
+
+
 class PackageInventory(TypedDict):
     """The public API of one package dir (the JSON the child process hands the parent)."""
 
@@ -296,6 +309,7 @@ class PackageInventory(TypedDict):
     exports: list[ExportRow]
     value_types: list[ValueType]
     answer_types: list[AnswerType]
+    settings: list[SettingType]
     error: str | None
 
 
@@ -2426,6 +2440,76 @@ def answer_types(
     ]
 
 
+def _parameter_annotations(function: types.FunctionType) -> dict[str, object]:
+    """A function's parameter annotations as written, so a handler's settings can be read without calling it.
+
+    Python 3.14 keeps them in ``__annotate__`` (``_own_annotations``); before, the function's ``__annotations__``
+    holds them as written (text under ``from __future__ import annotations``).
+    """
+    written = (
+        _own_annotations(function)
+        if sys.version_info >= (3, 14)
+        else dict(function.__annotations__)
+    )
+    return {name: annotation for name, annotation in written.items() if name != "return"}
+
+
+def _parameter_types(value: object, label: str) -> Iterator[_FieldType]:
+    """Each type a handler's or factory's parameters are written with (a handler class: its ``__init__``'s), so the
+    types a handler is built with can be told from other classes (``label`` names the handler in the places)."""
+    target = _definition(value)
+    if isinstance(target, type):
+        target = _static(target, "__init__")
+    if not isinstance(target, types.FunctionType):
+        return
+    for parameter, annotation in _parameter_annotations(target).items():
+        for found in _annotation_types(annotation, target.__globals__):
+            yield _FieldType(found, f"{label}({parameter})")
+
+
+def setting_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[SettingType]:
+    """The names a package shows that its handlers are built with (ADR-DOE-API-001 R2 — handler の設定の型).
+
+    The types are read from the parameter annotations of every handler, handler class and factory the package
+    shows (the rows of kind handler), type arguments included (``Sequence[ScriptedCommand]``, ``Mode | None``),
+    and followed through the fields of the setting classes the package defines itself (a ``PingSettings``
+    parameter whose field is typed ``PingLevel`` makes ``PingLevel`` a setting type too). A name the package
+    shows is a setting type when its value is one of those types (the same object). Run in the child process,
+    after the package's modules are imported.
+    """
+    values = {
+        (row["module"], row["name"]): _module_value(sys.modules[row["module"]], row["name"])
+        for row in exports
+        if row["module"] in sys.modules
+    }
+    taken = tuple(
+        found
+        for row in exports
+        if row["kind"] == "handler"
+        for found in _parameter_types(
+            values.get((row["module"], row["name"]), _MISSING), row["name"]
+        )
+    )
+    own = _own_classes(taken, roots)
+    reached = taken + _reached_field_types(
+        sorted(((cls, cls.__name__) for cls in own.values()), key=lambda pair: pair[1]),
+        roots,
+        frozenset(own),
+    )
+    places = {
+        key: sorted({each.place for each in group})
+        for key, group in itertools.groupby(
+            sorted(reached, key=lambda each: id(each.found)), key=lambda each: id(each.found)
+        )
+    }
+    return [
+        SettingType(module=row["module"], name=row["name"], parameters=places[id(value)])
+        for row in exports
+        if row["kind"] in ("other", "unclassified")
+        and id(value := values.get((row["module"], row["name"]), _MISSING)) in places
+    ]
+
+
 def probe_package(package_dir: Path) -> PackageInventory:
     """Import one package's public modules and type every exported name (run in a child process)."""
     layout = read_layout(package_dir)
@@ -2449,6 +2533,7 @@ def probe_package(package_dir: Path) -> PackageInventory:
         exports=[*rows, *submodule_rows(layout), *_metadata_rows(layout)],
         value_types=value_types(rows, roots),
         answer_types=answer_types(rows, roots, classifier.effect_base),
+        settings=setting_types(rows, roots),
         error=None,
     )
 
@@ -2497,6 +2582,7 @@ def _failed(package_dir: Path, message: str) -> PackageInventory:
         exports=[],
         value_types=[],
         answer_types=[],
+        settings=[],
         error=message,
     )
 
