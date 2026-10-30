@@ -128,3 +128,24 @@ uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff
 uv run --no-project python publications/zenn-use-cases-v0/verify_pypi.py --doeff 0.8.0 --python 3.12 time  # OK(実時間の行は[20.062792, 10.059815])。
 uv run --no-project python publications/zenn-use-cases-v0/render_release.py doeff-time.md  # 60字を越える文0個・です・ます以外で終わる文0個。
 ```
+
+## 2026-10-30 doeffだけで例が動く形に(英語の版と組で)
+
+英語の版(`docs/articles/time-as-an-effect.md`)と同じく、例からdoeff-timeを外し、doeffだけ(`pip install doeff`)で動く形にした。
+
+- 軸は同じ: 時間をエフェクトで頼み、`k`を受け取るハンドラが、続きをいつ動かすかを決める。
+- エフェクト: `Delay`・`WaitUntil`・`GetTime`を、clock.pyで`EffectBase`のデータのクラスとして定義した。
+- 時計: 仮想の時計は、記事の中で書く`virtual_clock`にした(入門の時計に`WaitUntil`を足した物)。実時間の時計は、`asyncio.sleep`を`Await`で頼む`wall_clock`にし、`await_handler`は()で呼ばずに付ける。
+- タイムアウト: `within`は、`RaceWithin`の代わりに、待つだけの`alarm`のタスクと`Race`・`Cancel`で作った。そのため`timeline`の印字に、`alarm`の`wait 600 s`の2行が増えた。
+- テスト: `SimClock`を読む代わりに、テストのプログラムが走り終えた後で`GetTime`を問う。
+- 限界と試す: `ScheduleAt`とdoeff-timeの版の行を外し、取り消された待ちが`sleepers`に残る事を書いた。install の行は`pip install doeff pytest`、版はdoeff 0.8.1(次の版の案)にした。
+- 図: 2枚の時計の名を`virtual_clock`に替えて描き直した(制作記録は`imagegen/records/time.md`)。
+
+```sh
+/tmp/a3-py.sh -W error publications/zenn-use-cases-v0/reviews/time-check.py  # mainのwheelだけの環境(doeff-timeは無い)で全部OK。
+/tmp/a3-py.sh -W error publications/zenn-use-cases-v0/reviews/time-check.py --real-time  # 実時間の行は[20.064193, 10.072707]。
+uv run --no-project python publications/zenn-use-cases-v0/render_release.py doeff-time.md  # 60字を越える文0個・です・ます以外で終わる文0個。
+```
+
+- `/tmp/a3-py.sh`は、doeffのmain(a2e13c527)から`uv build --wheel`で組んだdoeff・doeff-core-effects・doeff-vmの3つとpytestだけを入れて、CPython 3.14で走らせる命令。
+- PyPIのdoeff 0.8.0では、`await_handler`を()無しで付ける形が無いので走らない。`verify_pypi.py`で確かめるのは、次の版が出てから。

@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #     "doeff",
-#     "doeff-time",
 # ]
 #
 # [tool.verify_pypi]
@@ -12,9 +11,10 @@
 
 - 例は英語の版と同じ: 記事のPython・bashの枠は、コメントを除くと英語の記事(docs/articles/time-as-an-effect.md)の
   枠と1つずつ同じ。textの枠(印字)は、英語の版の枠と同じ。
-- 載せたとおりに走る: clock.pyとreport.pyの抜粋を、それぞれのファイルの名前空間で掲載の順に走らせる。頭の行の無い実行の
-  行の印字を、直後のtextの枠と照らす(仮想の時間の行は3回走らせ、3回とも同じ)。test_report.pyは、report.pyの抜粋を
-  モジュールreportとして読ませて走らせる。実時間の行(20秒かかる)は、--real-timeの時だけそのまま走らせ、既定では
+- doeffだけで走る: 例は時間のエフェクトと時計を自分で定義し、doeffのほかのパッケージを入れない。
+- 載せたとおりに走る: clock.pyとreport.pyの抜粋を、それぞれのモジュール(clock・report)の名前空間で掲載の順に走らせる。頭の行の無い実行の
+  行の印字を、直後のtextの枠と照らす(仮想の時間の行は3回走らせ、3回とも同じ)。report.pyとtest_report.pyのfrom clock・
+  from reportは、その2つのモジュールを読む。実時間の行(20秒かかる)は、--real-timeの時だけそのまま走らせ、既定では
   短い待ち(0.2秒と0.1秒)の同じ組に替える。
 - 本文の主張: ハンドラ無しのnapはDelayでUnhandledEffectになる・仮想の時間の3日分は1秒かからない・実時間の時計でも
   withinの期限が作成を打ち切る。
@@ -24,10 +24,10 @@
 import contextlib  # 例の印字を受け取る。
 import io  # 例の印字をためる。
 import re  # 記事の枠を抜き出す。
-import sys  # 実時間の行を走らせるかを引数で選び、reportをモジュールとして読ませる。
+import sys  # 実時間の行を走らせるかを引数で選び、clockとreportをモジュールとして読ませる。
 import time  # 仮想の時間の実行にかかった実時間を測る。
 import tokenize  # Pythonの枠からコメントを除く。
-import types  # report.pyの抜粋を、モジュールreportにする。
+import types  # clock.pyとreport.pyの抜粋を、モジュールclockとreportにする。
 from dataclasses import dataclass  # 走らせた抜粋の組を、欄の名で持つ。
 from pathlib import Path  # リポジトリの中の原稿を読む。
 
@@ -39,7 +39,7 @@ english = (ROOT / "docs/articles/time-as-an-effect.md").read_text()  # 揃える
 FENCE = re.compile(r"^```(python|text|bash)\n(.*?)^```$", re.S | re.M)  # 記事の枠(mermaidの図は英語の版だけに在る)。
 ENGLISH_FENCE = re.compile(r"^~~~(python|text|bash)\n(.*?)^~~~$", re.S | re.M)  # 英語の記事の枠。
 HEADER = re.compile(r"# (\w+\.py)(?:\(抜粋\))?")  # Pythonの枠の頭の行(# clock.py(抜粋)ならclock.py)。
-WALL = "print(run(wall_clock(two_naps())))"  # 実時間で20秒かかる行。
+WALL = "print(run(real(two_naps())))"  # 実時間で20秒かかる行。
 # report.pyの抜粋が読む名のうち、ファイルの頭(抜粋の外)で読み込む物。完全なreport.pyの2行目と同じ。
 REPORT_HEAD = "from datetime import datetime, timedelta, timezone\n"
 
@@ -89,8 +89,11 @@ class Excerpts:
 
 
 def run_fences(fences: list[tuple[str, str]], real_time: bool) -> Excerpts:
-    """抜粋をファイルごとの名前空間で走らせ、実行の行の印字を直後のtextの枠と照らす。"""
-    spaces = {"clock.py": {"__name__": "clock"}, "report.py": {"__name__": "report"}}  # ファイルごとの名前空間。
+    """抜粋をファイルごとのモジュールの名前空間で走らせ、実行の行の印字を直後のtextの枠と照らす。"""
+    modules = {"clock.py": types.ModuleType("clock"), "report.py": types.ModuleType("report")}  # ファイルごとのモジュール。
+    for module in modules.values():  # report.pyのfrom clock …と、test_report.pyのfrom report …が読む。
+        sys.modules[module.__name__] = module  # 後の抜粋で足した名も、読む時に見える。
+    spaces = {name: module.__dict__ for name, module in modules.items()}  # ファイルごとの名前空間。
     exec(REPORT_HEAD, spaces["report.py"])  # report.pyの頭の読み込み(抜粋の外)。
     current = ""  # 頭の行の無い実行の行を走らせる、直前の抜粋のファイル。
     test_report = ""  # test_report.pyの枠。
@@ -111,7 +114,7 @@ def run_fences(fences: list[tuple[str, str]], real_time: bool) -> Excerpts:
             line = body if real_time else body.replace("two_naps()", "two_naps(0.2, 0.1)")  # 既定は短い待ち。
             slow, fast = map(float, printed(line, spaces[current]).strip().strip("[]").split(", "))  # 2つの起床の秒数。
             wait = 20 if real_time else 0.2  # 遅いタスクの待ち。
-            assert wait <= slow < wait + 5, (slow, fast)  # 遅いタスクは、待ちの少し後に起きる(本文「[20.05, 10.05]ほど」)。
+            assert wait <= slow < wait + 5, (slow, fast)  # 遅いタスクは、待ちの少し後に起きる(本文「[20.0, 10.0]より少し大きい数」)。
             assert wait / 2 <= fast < slow, (slow, fast)  # 速いタスクは、その半分の待ちの後、遅いタスクより先に起きる。
             print(f"OK: 実時間の時計({'20秒と10秒' if real_time else '0.2秒と0.1秒'}): [{slow}, {fast}]")
             ran += 1  # 照らした。
@@ -124,10 +127,7 @@ def run_fences(fences: list[tuple[str, str]], real_time: bool) -> Excerpts:
 
 
 def run_test_report(excerpts: Excerpts) -> None:
-    """test_report.pyを、report.pyの抜粋をモジュールreportとして読ませて走らせる。"""
-    report = types.ModuleType("report")  # 抜粋から作るモジュール。
-    report.__dict__.update(excerpts.report)  # 抜粋の定義を移す。
-    sys.modules["report"] = report  # test_report.pyのfrom report import …が読む。
+    """test_report.pyを、clock.pyとreport.pyの抜粋のモジュール(run_fencesが置いた物)を読ませて走らせる。"""
     namespace = {"__name__": "test_report"}  # テストの名前空間。
     exec(compile(excerpts.test_report, "doeff-time.md:test_report.py", "exec"), namespace)  # 定義する。
     tests = [name for name in namespace if name.startswith("test_")]  # pytestが集める関数。
@@ -147,13 +147,13 @@ def check_claims(excerpts: Excerpts) -> None:
     except Exception as error:  # doeffのUnhandledEffectは、Pythonの例外として外へ出る。
         stopped = f"{type(error).__name__}: {error}"  # 止まった訳。
     assert stopped.startswith("UnhandledEffect"), stopped  # 受け手のいないエフェクトで止まった。
-    assert "DelayEffect" in stopped, stopped  # 止まったのはDelayの所。
+    assert "Delay(seconds=20)" in stopped, stopped  # 止まったのはDelayの所。
     began = time.perf_counter()  # 仮想の時間の3日分の、実時間を測る。
     report["run"](report["simulated"](report["daily_report"]([3, 12, 5])))  # 金曜の夕方から水曜の朝まで。
     seconds = time.perf_counter() - began  # かかった実時間(本文「数ミリ秒」— 混んだ機械でも落ちない上限で見る)。
     assert seconds < 5.0, seconds  # 待たずに終わる。
     print(f"OK: 仮想の時間の3日分の実時間 {seconds * 1000:.1f}ミリ秒")
-    wall = clock["wall_clock"]  # 実時間の時計。
+    wall = clock["real"]  # 実時間の時計で走らせる組。
     began = time.perf_counter()  # 期限で打ち切る実行の実時間を測る。
     cut = report["run"](wall(report["within"](0.2, report["build"](1))))  # 60秒の作成に、0.2秒の期限。
     seconds = time.perf_counter() - began  # かかった実時間。

@@ -5,11 +5,11 @@
     "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "3b657be2e1283c31cf713f925e20e96c5515906b41ff71f142ce50c6339ccb1a",
+    "sha256": "0da025f8dda8da5081294c503017aa09470fb46cfa7e83c9ca82cca98797e80b",
     "width": 1080,
     "height": 1440,
-    "bytes": 163369,
-    "review": "2026-10-29：英語の3本目「Time as an effect」の版への書き直しで描き直した。two_napsの2行、tickingの[20.0, 30.0](待ちが足し算)とsim_time_handlerの[20.0, 10.0](待ちが重なる)の帯(1秒 = 28px)、目盛り0・10・20・30秒を目視確認。白背景の平面図として採用。"
+    "bytes": 166951,
+    "review": "2026-10-30：記事の例をdoeffだけで動く形(時計を自分で書く形)にした時、下の枠の名を「virtual_clock(仮想の時計)」に替えて描き直した。帯・目盛り・[20.0, 30.0]と[20.0, 10.0]は前の版のまま。目視確認して採用。"
   },
   {
     "id": "time-flow",
@@ -17,10 +17,10 @@
     "generation_prompt": "time-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "5ad88118124f67377b1b2f0ca72f3746cddee78655e08499728aaa13d5911c08",
+    "sha256": "ab8c5e52c9be58faee3050f7c80eae8dd005e8d2973c7a48410987b5a54d30c8",
     "width": 1080,
     "height": 1760,
-    "bytes": 238104,
-    "review": "2026-10-29：英語の3本目のsequenceDiagram(nap(20)・nap(10)・sim_time_handler)を、①〜⑥のやりとりの図にした。k1・k2の預け、09:00:10と09:00:20への進み、Resumeの値、結果[20.0, 10.0]を目視確認。白背景の平面図として採用。"
+    "bytes": 242303,
+    "review": "2026-10-30：記事の例をdoeffだけで動く形にした時、見出しを「virtual_clockが、待つkを持って時計を進める」に、③と⑤の枠の名を「virtual_clock(advance)」に替えて描き直した。①〜⑥のやりとりと値は前の版のまま。目視確認して採用。"
   }
 ]

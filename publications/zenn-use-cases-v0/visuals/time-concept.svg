@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440" viewBox="0 0 1080 1440">
-  <!-- 同じtwo_napsを、自作の時計tickingとdoeff-timeのsim_time_handlerで走らせた時の、2つのnapの待ちの並び(英語の3本目の記事の[20.0, 30.0]と[20.0, 10.0])。帯の長さは秒数に比例する(1秒 = 28px)。 -->
+  <!-- 同じtwo_napsを、自作の時計tickingとvirtual_clockで走らせた時の、2つのnapの待ちの並び(英語の3本目の記事の[20.0, 30.0]と[20.0, 10.0])。帯の長さは秒数に比例する(1秒 = 28px)。 -->
   <defs>
     <style>
       .ja { font-family: "IPAGothic", sans-serif; fill: #1f2d4d; }
@@ -32,7 +32,7 @@
   <text class="ja" x="450" y="728" font-size="36">待ちが足し算になる</text>
 
   <rect x="60" y="790" width="960" height="430" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
-  <text class="ja" x="95" y="850" font-size="40" font-weight="bold">sim_time_handler(doeff-time)</text>
+  <text class="ja" x="95" y="850" font-size="40" font-weight="bold">virtual_clock(仮想の時計)</text>
   <text class="ja" x="95" y="906" font-size="36">どのタスクも動けなくなるまでkを持つ</text>
   <rect x="120" y="936" width="560" height="54" rx="10" fill="#0f8b8d"/>
   <text class="bar" x="140" y="976" font-size="36">nap(20)</text>

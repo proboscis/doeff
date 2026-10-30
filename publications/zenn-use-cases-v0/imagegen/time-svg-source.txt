@@ -1,7 +1,7 @@
 時間の記事（doeff-time.md）の2枚は、imagegenではなく手で書いたSVGから作る（2026-10-16）。
 
 - 正本：../visuals/time-concept.svg と ../visuals/time-flow.svg。
-- 図の内容：2026-10-29に記事を英語の3本目「Time as an effect」の版に書き直した時、描き直した。time-conceptは、同じtwo_napsをtickingとsim_time_handlerで走らせた時の待ちの並び([20.0, 30.0]と[20.0, 10.0])。time-flowは、英語の記事のsequenceDiagram(nap(20)・nap(10)・sim_time_handlerのやりとり)を日本語の図にした物。
+- 図の内容：2026-10-29に記事を英語の3本目「Time as an effect」の版に書き直した時、描き直した。time-conceptは、同じtwo_napsをtickingとvirtual_clockで走らせた時の待ちの並び([20.0, 30.0]と[20.0, 10.0])。time-flowは、英語の記事のsequenceDiagram(nap(20)・nap(10)・virtual_clockのやりとり)を日本語の図にした物。2026-10-30に、例をdoeffだけで動く形にした時、時計の名をsim_time_handlerからvirtual_clockに替えて描き直した。
 - 図の仕様：../reviews/time-visuals.json。
 - PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る）。
   - time-concept：幅1080・高さ1440。

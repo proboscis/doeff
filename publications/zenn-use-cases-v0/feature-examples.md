@@ -13,8 +13,8 @@
 | LLM chat / streaming / structured / embedding | [llm](doeff-llm.md)・[完全な例](examples/llm_pipeline.py) | 4段階を@doで合成。実SDKのSSE解析器へ固定データを渡し、各チャンクのAwaitとエラー伝播を確認 |
 | OpenAI / Gemini / OpenRouterの本番ハンドラ | [llm](doeff-llm.md)（本文にコード） | 接続関数を掲載。生のハンドラと取り付け関数の差、応答形式の差を明記。実APIは未実行 |
 | 画像生成・編集 / Gemini / Seedream | [image](doeff-image.md)・[完全な例](examples/image_pipeline.py) | 生成結果→編集を両テスト用ハンドラで確認。本番の接続コードは未実行 |
-| Delay / GetTime / 実時間・仮想時間・同期待機 | [time](doeff-time.md)（本文にコード）・[完全な例](examples/scheduling.py) | 本文で自作の時計ticking・仮想時間・asyncioの実時間を確認。同期の実時間は完全な例で確認 |
-| WaitUntil / ScheduleAt / SetTime / 優先度 | [time](doeff-time.md)（本文にコード）・[完全な例](examples/scheduling.py) | 本文でWaitUntil・RaceWithin・SimClockを確認し、ScheduleAtの本体のハンドラスコープの条件を限界に明記。時計設定・予約・優先度指定は完全な例で確認 |
+| Delay / GetTime / 実時間・仮想時間・同期待機 | [time](doeff-time.md)（本文にコード）・[完全な例](examples/scheduling.py) | 本文はdoeffだけで、エフェクトと時計(ticking・virtual_clock・asyncioのwall_clock)を自分で書いて確認。doeff-timeの同期の実時間は完全な例で確認 |
+| WaitUntil / ScheduleAt / SetTime / 優先度 | [time](doeff-time.md)（本文にコード）・[完全な例](examples/scheduling.py) | 本文で自作のWaitUntilと、RaceとCancelで作るタイムアウトと、テストから時計に問うGetTimeを確認。doeff-timeのScheduleAt・時計設定・優先度指定は完全な例で確認 |
 | 関数の色 / yieldの歴史 / Await | [color](doeff-color.md)（本文にコード） | Programとハンドラの例、新旧構文。初期asyncioは歴史用コードとして区別 |
 | Ask / DI / Local / lazy_ask / env_var_ask | [di](doeff-di.md)・[完全な例](examples/dependencies.py) | 局所変更・復元・依存の取得4回・作成2回と環境変数の供給を確認 |
 | Reader / State / Writer / Try | [composition](doeff-composition.md)・[完全な例](examples/composition.py) | 成功と失敗を確認。この構成で状態とログが自動では戻らないこともassert |

@@ -12,3 +12,7 @@
 ## 英語の3本目の版に合わせて2枚を描き直す（2026-10-29追記）
 
 記事を英語の3本目「Time as an effect」の版に書き直した。time-conceptは、同じtwo_napsを自作の時計tickingとdoeff-timeのsim_time_handlerで走らせた時の待ちの並びを、帯の図にした。time-flowは、英語の記事のsequenceDiagramを、やりとり1つずつの縦の図にした。どちらも手で書いたSVG(../../visuals/time-concept.svg・time-flow.svg)で、render_svg.mjsで幅1080のPNGにした(作り方は[time-svg-source.txt](../time-svg-source.txt))。
+
+## 例をdoeffだけで動く形にして、2枚の時計の名を替える（2026-10-30追記）
+
+記事の例を、doeff-timeを使わずdoeffだけで動く形にした。時計は記事の中で書く`virtual_clock`になったので、time-conceptの下の枠の名を「virtual_clock(仮想の時計)」に、time-flowの見出しと③⑤の枠の名を`virtual_clock`(③⑤は時計を進めるタスクの名を添えて「virtual_clock(advance)」)に替えた。帯・やりとり・値は前の版のまま。SVGを直し、render_svg.mjs(playwright 1.62.1のchromium)で幅1080のPNGにして、目で確かめた。

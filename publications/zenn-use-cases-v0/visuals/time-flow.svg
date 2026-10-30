@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1760" viewBox="0 0 1080 1760">
-  <!-- scheduled(sim_time_handler(start_time=START)(two_naps()))の実行を、やりとり1つずつ示す(英語の3本目の記事のsequenceDiagramの訳)。 -->
+  <!-- scheduled(virtual_clock(START)(two_naps()))の実行を、やりとり1つずつ示す(英語の3本目の記事のsequenceDiagramの訳)。 -->
   <defs>
     <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="5" markerHeight="5" orient="auto">
       <path d="M0,0 L12,6 L0,12 z" fill="#0f8b8d"/>
@@ -11,7 +11,7 @@
   </defs>
   <rect width="1080" height="1760" fill="#ffffff"/>
 
-  <text class="ja" x="540" y="76" font-size="42" font-weight="bold" text-anchor="middle">sim_time_handlerが、待つkを持って時計を進める</text>
+  <text class="ja" x="540" y="76" font-size="42" font-weight="bold" text-anchor="middle">virtual_clockが、待つkを持って時計を進める</text>
 
   <rect x="60" y="120" width="960" height="190" rx="24" fill="#e0f5ef" stroke="#8fd3bf" stroke-width="3"/>
   <text class="ja" x="95" y="176" font-size="40" font-weight="bold">① nap(20)</text>
@@ -30,7 +30,7 @@
   <text class="ja" x="230" y="648" font-size="38">どのタスクも動けない</text>
 
   <rect x="60" y="680" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
-  <text class="ja" x="95" y="736" font-size="40" font-weight="bold">③ sim_time_handler</text>
+  <text class="ja" x="95" y="736" font-size="40" font-weight="bold">③ virtual_clock(advance)</text>
   <text class="ja" x="95" y="792" font-size="36">時刻をいちばん早い起床の09:00:10へ進める</text>
   <text class="code" x="95" y="852" font-size="44" xml:space="preserve">Resume(k2, None)</text>
 
@@ -47,7 +47,7 @@
   <text class="ja" x="230" y="1268" font-size="38">また、どのタスクも動けない</text>
 
   <rect x="60" y="1300" width="960" height="190" rx="24" fill="#eee8f8" stroke="#b9a6e0" stroke-width="3"/>
-  <text class="ja" x="95" y="1356" font-size="40" font-weight="bold">⑤ sim_time_handler</text>
+  <text class="ja" x="95" y="1356" font-size="40" font-weight="bold">⑤ virtual_clock(advance)</text>
   <text class="ja" x="95" y="1412" font-size="36">時刻を次の起床の09:00:20へ進める</text>
   <text class="code" x="95" y="1472" font-size="44" xml:space="preserve">Resume(k1, None)</text>
 

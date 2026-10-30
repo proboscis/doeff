@@ -1,6 +1,6 @@
 {
   "concept_title": "同じtwo_napsでも、kをいつ動かすかで答えが変わる",
-  "concept_caption": "tickingは待ちのたびにすぐkを再開するので、2つの待ちが足し算になります。sim_time_handlerは、どのタスクも動けなくなるまでkを持つので、2つの待ちが重なります。",
-  "flow_title": "sim_time_handlerが、待つkを持って時計を進める",
-  "flow_caption": "2つのnapが待ちで止まると、時計はそれぞれのkを持ちます。どのタスクも動けない時にだけ、時刻を次の起床まで進めて、そのkを再開します。"
+  "concept_caption": "tickingは待ちのたびにすぐkを再開するので、2つの待ちが足し算になります。virtual_clockは、どのタスクも動けなくなるまでkを持つので、2つの待ちが重なります。",
+  "flow_title": "virtual_clockが、待つkを持って時計を進める",
+  "flow_caption": "2つのnapが待ちで止まると、時計はそれぞれのkを持ちます。どのタスクも動けない時にだけ、advanceが時刻を次の起床まで進めて、そのkを再開します。"
 }
