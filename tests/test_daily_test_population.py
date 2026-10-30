@@ -142,10 +142,10 @@ EXCLUDED: dict[str, str] = {
         "根の下に置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
     ),
     "examples/testing_without_mocks/": (
-        "紹介の記事の例の dir の README が書く `pytest` で利用者が走らせる、mock.patch と doeff の handler の検の例。母集団の根の"
-        "下の tests/test_examples_run.py::test_article_example_tests_run_with_pytest_alone が、例の dir で pytest の外の plugin "
-        "無しの子で日次に走らせる(例の dir の pytest.ini が rootdir を例の dir に留める)— 上の github_repo と同じく、根の下に"
-        "置くと根の conftest.py の下でも走り、pytest だけで通る事を確かめなくなる"
+        "紹介の記事の例の dir の README が書く `pytest` で利用者が走らせる、mock.patch と doeff の handler の検の例。例は PyPI の"
+        "版に留めて書く(ADR-DOE-API-002 R3)ので、repo の版では走らせず、毎日の CI(.github/workflows/core-install-from-pypi.yml)"
+        "の tools/verify_core_install.py --pypi が、PyPI の doeff と pytest だけの venv で例の dir を写した所で走らせる"
+        "(card ki-5ea7c639b693)— 根の下に置くと repo の版と根の conftest.py の下で走る"
     ),
     "tools/test_python_versions.py": "Python の版を回す道具の script",
 }
