@@ -31,7 +31,7 @@ class ProcessOutcome:
     start_error: str = ''
 
 @dataclass(frozen=True, kw_only=True)
-class RunProcess(EffectBase):
+class RunProcess(EffectBase[ProcessOutcome]):
     argv: tuple[str, ...]
     stdin: str | None = None
     timeout: float | None = None
@@ -45,11 +45,11 @@ class RunProcess(EffectBase):
     stream_output: bool = False
 
 @dataclass(frozen=True, kw_only=True)
-class ExecutableAt(EffectBase):
+class ExecutableAt(EffectBase[bool]):
     path: str
 
 @dataclass(frozen=True)
-class ReadEnvironment(EffectBase):
+class ReadEnvironment(EffectBase[tuple[EnvEntry, ...]]):
     names: tuple[str, ...]
     prefixes: tuple[str, ...] = ...
 
@@ -60,29 +60,25 @@ def environment_mapping() -> _Program[dict[str, str], object]:
     ...
 
 @dataclass(frozen=True)
-class WorkingDirectory(EffectBase):
+class WorkingDirectory(EffectBase[str]):
     ...
 
 @dataclass(frozen=True)
-class ProcessAlive(EffectBase):
+class ProcessAlive(EffectBase[bool]):
     pid: int
-
-@dataclass(frozen=True)
-class ReadInterpreter(EffectBase):
-    ...
-
-@dataclass(frozen=True)
-class ReadMachineName(EffectBase):
-    ...
-
-@dataclass(frozen=True)
-class ResolveModule(EffectBase):
-    name: str
 
 @dataclass(frozen=True, kw_only=True)
 class InterpreterFacts:
     prefix: str
     pid: int
+
+@dataclass(frozen=True)
+class ReadInterpreter(EffectBase[InterpreterFacts]):
+    ...
+
+@dataclass(frozen=True)
+class ReadMachineName(EffectBase[str]):
+    ...
 
 @dataclass(frozen=True, kw_only=True)
 class ModuleFound:
@@ -94,8 +90,20 @@ class ModuleFound:
 class ModuleNotFound:
     name: str
 
+@dataclass(frozen=True)
+class ResolveModule(EffectBase[ModuleFound | ModuleNotFound]):
+    name: str
+
 @dataclass(frozen=True, kw_only=True)
-class StartProcess(EffectBase):
+class ProcessStarted:
+    pid: int
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessNotStarted:
+    detail: str
+
+@dataclass(frozen=True, kw_only=True)
+class StartProcess(EffectBase[ProcessStarted | ProcessNotStarted]):
     argv: tuple[str, ...]
     cwd: str | None = None
     env: tuple[EnvEntry, ...] | None = None
@@ -108,51 +116,6 @@ class StartProcess(EffectBase):
     reap_group: bool = False
     lifetime: ChildLifetime = ...
 
-@dataclass(frozen=True)
-class PollProcess(EffectBase):
-    pid: int
-
-@dataclass(frozen=True, kw_only=True)
-class StopProcess(EffectBase):
-    pid: int
-    stop_grace: float = 10.0
-
-@dataclass(frozen=True)
-class AwaitProcessExit(EffectBase):
-    pid: int
-
-class ProcessSignal(StrEnum):
-    TERM = 'term'
-    KILL = 'kill'
-
-@dataclass(frozen=True, kw_only=True)
-class SignalProcess(EffectBase):
-    pid: int
-    signal: ProcessSignal
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessSignalled:
-    pid: int
-    delivered: bool
-
-@dataclass(frozen=True, kw_only=True)
-class WriteProcessInput(EffectBase):
-    pid: int
-    text: str
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessInputWritten:
-    pid: int
-    delivered: bool
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessStarted:
-    pid: int
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessNotStarted:
-    detail: str
-
 @dataclass(frozen=True, kw_only=True)
 class ProcessRunning:
     pid: int
@@ -163,12 +126,49 @@ class ProcessExited:
     exit_code: int
 
 @dataclass(frozen=True, kw_only=True)
-class ProcessEnded:
+class ProcessNotChild:
+    pid: int
+
+@dataclass(frozen=True)
+class PollProcess(EffectBase[ProcessRunning | ProcessExited | ProcessNotChild]):
     pid: int
 
 @dataclass(frozen=True, kw_only=True)
-class ProcessNotChild:
+class StopProcess(EffectBase[ProcessExited | ProcessNotChild]):
     pid: int
+    stop_grace: float = 10.0
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessEnded:
+    pid: int
+
+@dataclass(frozen=True)
+class AwaitProcessExit(EffectBase[ProcessEnded | ProcessNotChild]):
+    pid: int
+
+class ProcessSignal(StrEnum):
+    TERM = 'term'
+    KILL = 'kill'
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessSignalled:
+    pid: int
+    delivered: bool
+
+@dataclass(frozen=True, kw_only=True)
+class SignalProcess(EffectBase[ProcessSignalled | ProcessNotChild]):
+    pid: int
+    signal: ProcessSignal
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessInputWritten:
+    pid: int
+    delivered: bool
+
+@dataclass(frozen=True, kw_only=True)
+class WriteProcessInput(EffectBase[ProcessInputWritten | ProcessNotChild]):
+    pid: int
+    text: str
 
 def timed_out_outcome(stdout: str, stderr: str) -> _Program[ProcessOutcome, object]:
     ...
