@@ -208,9 +208,31 @@ PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/_sim
 # (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる・agora-redesign #2577)。
 print-package-extra-test-roots:
 	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
+# - PACKAGE_JOBS: 2 以上なら package の session を最大その本数だけ同時に走らせる(scripts/run_package_sessions.sh・出力は package ごとに
+#   溜めて元の順に出す)。既定 1 は下の直列の loop のまま。日次の門は .agents/land-queue.toml の packages の行で渡す(card acp:kanban-issue:ki-dde4fe85a5ed)。
+#   package の session は package ごとに独立で、同じ repo の根の cache を共有するだけ。重い package(PACKAGE_HEAVY_FIRST)を先に撃ち、
+#   最後に残る長い 1 本で全体が決まる形を避ける。
+PACKAGE_JOBS ?= 1
+PACKAGE_HEAVY_FIRST = doeff-cluster doeff-adr doeff-hy-pytest doeff-hy
 test-packages:
 	@echo "Running tests in subpackages..."
-	@failed=""; \
+	@if [ "$(PACKAGE_JOBS)" -gt 1 ]; then \
+		specs=""; \
+		for name in $(PACKAGE_HEAVY_FIRST) $$(ls packages); do \
+			case " $$seen " in *" $$name "*) continue;; esac; seen="$$seen $$name"; \
+			dir="packages/$$name/"; \
+			[ -d "$$dir/tests" ] || continue; \
+			if [ -z "$$(find "$$dir/tests" \( -name 'test_*.py' -o -name 'test_*.hy' \) -not -path '*/fixtures/*' | head -1)" ]; then continue; fi; \
+			specs="$$specs $$name=$${dir}tests"; \
+		done; \
+		for root in $(PACKAGE_EXTRA_TEST_ROOTS); do \
+			if [ -d "$$root" ]; then specs="$$specs $$root=$$root"; fi; \
+		done; \
+		PACKAGE_SESSION_CMD='$(PACKAGE_UV_RUN) pytest' PACKAGE_SESSION_ARGS='-m "not e2e" $(PACKAGE_PYTEST_DURATIONS)' \
+			sh scripts/run_package_sessions.sh $(PACKAGE_JOBS) $$specs; \
+		exit $$?; \
+	fi; \
+	failed=""; \
 	for dir in packages/*/; do \
 		if [ -d "$$dir/tests" ]; then \
 			if [ -z "$$(find "$$dir/tests" \( -name 'test_*.py' -o -name 'test_*.hy' \) -not -path '*/fixtures/*' | head -1)" ]; then \
