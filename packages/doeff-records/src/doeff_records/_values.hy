@@ -725,7 +725,7 @@
   (#^ str reason))
 
 (defclass [(dataclass :frozen True)] Unreachable []
-  "置き場に届かない(結末は不明 — 読みは撃ち直してよい。書きは期待つきなら撃ち直してよい)。"
+  "置き場に届かない・記録の service が答える前に落ちた(結末は不明 — 読みは撃ち直してよい。書きは期待つきなら撃ち直してよい)。"
   (#^ str detail))
 
 (defclass [(dataclass :frozen True)] NotIndexed []

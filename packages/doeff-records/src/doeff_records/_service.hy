@@ -10,6 +10,7 @@
 ;;;
 ;;;   POST /v1/records/<操作>   200 = effect の答え(kind で判別)/ 400 malformed / 404 not-found(宣言に無い表・
 ;;;                             知らない route)/ 503 store-unavailable(置き場に届かない = Unreachable)/ 500 internal
+;;;                             (要求の task が答える前か送る途中で落ちた — client も Unreachable に読む)
 ;;;   GET  /healthz             200(process が生きている)
 ;;; 綴りの正本 = _wire.hy。
 (require doeff-hy.macros [defk <- val])
