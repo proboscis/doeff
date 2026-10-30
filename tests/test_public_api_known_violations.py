@@ -709,7 +709,7 @@ def written_entry_name_clashes(package_dir: Path) -> list[str]:
         f" {path.relative_to(repo)} が在る"
         for root, init in entries
         for bound in [_entry_bindings(init, root.name)]
-        for name, path in _child_names(root.path).items()
+        for name, path in sorted(_child_names(root.path).items())
         if name in bound
     ]
 
