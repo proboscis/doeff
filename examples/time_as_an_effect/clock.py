@@ -1,17 +1,35 @@
 # clock.py
+import asyncio
+import heapq
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import count
 
-from doeff import Gather, Resume, Spawn, do, handler, run
+from doeff import Await, EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
-from doeff_time import (
-    Delay,
-    DelayEffect,
-    GetTime,
-    GetTimeEffect,
-    async_time_handler,
-    sim_time_handler,
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
 )
+
+
+@dataclass(frozen=True)
+class Delay(EffectBase):  # "wait this many seconds"
+    seconds: float
+
+
+@dataclass(frozen=True)
+class WaitUntil(EffectBase):  # "wait until this time"
+    target: datetime
+
+
+@dataclass(frozen=True)
+class GetTime(EffectBase):  # "what time is it?"
+    pass
+
 
 START = datetime(2026, 11, 30, 9, 0, tzinfo=timezone.utc)
 
@@ -35,9 +53,9 @@ def ticking(start: datetime):  # a clock of our own: resume k at once, move the 
     now = start
 
     @handler
-    def clock(effect: DelayEffect | GetTimeEffect, k):
+    def clock(effect: Delay | GetTime, k):
         nonlocal now
-        if isinstance(effect, DelayEffect):
+        if isinstance(effect, Delay):
             now += timedelta(seconds=effect.seconds)
             return (yield Resume(k, None))
         return (yield Resume(k, now))
@@ -45,8 +63,55 @@ def ticking(start: datetime):  # a clock of our own: resume k at once, move the 
     return clock
 
 
-def wall_clock(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+def virtual_clock(start: datetime):  # waits take no time, and end in time order
+    now = start
+    sleepers = []  # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():  # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @handler
+    def clock(effect: Delay | WaitUntil | GetTime, k):
+        nonlocal advancing
+        if isinstance(effect, GetTime):
+            return (yield Resume(k, now))
+        if isinstance(effect, Delay):
+            wake_up = now + timedelta(seconds=effect.seconds)
+        else:
+            wake_up = max(now, effect.target)
+        promise = yield CreatePromise()
+        heapq.heappush(sleepers, (wake_up, next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return clock
+
+
+@handler
+def wall_clock(effect: Delay | WaitUntil | GetTime, k):  # waits on asyncio
+    now = datetime.now(timezone.utc)
+    if isinstance(effect, GetTime):
+        return (yield Resume(k, now))
+    if isinstance(effect, Delay):
+        seconds = effect.seconds
+    else:
+        seconds = (effect.target - now).total_seconds()
+    yield Await(asyncio.sleep(max(seconds, 0)))
+    return (yield Resume(k, None))
+
+
+def real(program):  # the wall clock, with asyncio under the scheduler
+    return scheduled(await_handler(wall_clock(program)))
 
 
 if __name__ == "__main__":
@@ -55,4 +120,4 @@ if __name__ == "__main__":
     print("-- two tasks on our clock:")
     print(run(scheduled(ticking(START)(two_naps()))))
     print("-- two tasks on the virtual clock:")
-    print(run(scheduled(sim_time_handler(start_time=START)(two_naps()))))
+    print(run(scheduled(virtual_clock(START)(two_naps()))))

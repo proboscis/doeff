@@ -527,7 +527,7 @@ tests = ["tests/test_docs_article_algebraic_effects.py"]
 
 # 英語の記事 3 本目(時刻 — time as an effect)と、その例の file の全部(examples/time_as_an_effect/)を変えた便は、記事の囲みが
 # 例の file と印字のままである事の検を払う(取り組み doeff-publish の区切り 27・card ki-440ef7b9f600)。検は例を path で読むので、
-# import の逆依存では選ばれない。秒は約 10 秒(23 本・子 4 本・実時間の待ちは計 0.5 秒・2026-10-29 会話の Pod)。
+# import の逆依存では選ばれない。秒は約 17 秒(28 本・子 4 本・実時間の待ちは計 0.5 秒・main の wheel・2026-10-30 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/articles/time-as-an-effect.md"
 tests = ["tests/test_docs_article_time.py"]

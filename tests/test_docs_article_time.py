@@ -1,5 +1,6 @@
-"""英語の記事 3 本目「Time as an effect」(docs/articles/time-as-an-effect.md)の例が、今の doeff と doeff-time でそのまま
-走り、記事が見せる通りに印字する事の検(取り組み doeff-publish・card ki-440ef7b9f600)。
+"""英語の記事 3 本目「Time as an effect」(docs/articles/time-as-an-effect.md)の例が、doeff 本体だけで(subpackage を
+入れずに)そのまま走り、記事が見せる通りに印字する事の検(取り組み doeff-publish・card ki-440ef7b9f600・本体だけで出す形は
+card ki-c34897b9eede)。時刻の effect(Delay・WaitUntil・GetTime)と時計の handler は例の clock.py が自分で書く。
 
 囲みは 1 本目の記事(tests/test_docs_article_algebraic_effects.py)と同じ書き方のまま読む:
 
@@ -13,8 +14,9 @@
 毎回同じで 1 秒かからない・実時間の組でも同じ program が待つ順のまま起き、期限で build を打ち切る。記事の test_report.py は、
 例の file と並べて pytest だけで通る事を見る。
 
-例は既定で repo の環境の Python で走らせる。PyPI の doeff で確かめる時は、子の Python の命令を DOEFF_ARTICLE_PYTHON に置く
-(例: `uv run --no-project --with doeff==0.8.0 --with doeff-time==0.1.0 --with pytest python` — 空白で区切る)。
+例は既定で repo の環境の Python で走らせる。例は await_handler を値として使う(doeff main b8d242689 からの形・0.8.0 の wheel には
+無い)。組んだ wheel で確かめる時は、子の Python の命令を DOEFF_ARTICLE_PYTHON に置く(例: `uv run --no-project --with
+<doeff の wheel> --with <doeff-core-effects の wheel> --with <doeff-vm の wheel> --with pytest python` — 空白で区切る)。
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ EXAMPLES = ROOT / "examples" / "time_as_an_effect"
 # 初めの 1 本が入れる時間を含む。
 CHILD_DEADLINE_SECONDS = 120
 # 記事の実時間の行(20 秒かかる — 記事に在る事だけを見て、走らせない。同じ組を短い待ちで走らせる検が下に在る)。
-WALL_LINE = "print(run(wall_clock(two_naps())))"
+WALL_LINE = "print(run(real(two_naps())))"
 # 記事の test_report.py を例の file と並べて走らせる時に写す、例の dir の file。
 PYTEST_FILES = ("clock.py", "report.py", "test_report.py", "pytest.ini")
 
@@ -210,10 +212,10 @@ started = time.perf_counter()
 runs = {repr(run(simulated(daily_report([3, 12, 5])))) for _ in range(3)}
 print("simulated:", len(runs), time.perf_counter() - started)
 
-print("wall:", run(wall_clock(two_naps(0.2, 0.1))))
+print("wall:", run(real(two_naps(0.2, 0.1))))
 started = time.perf_counter()
-print("timeout:", run(wall_clock(within(0.2, build(1)))), time.perf_counter() - started)
-print("in time:", run(wall_clock(within(0.2, build(0)))))
+print("timeout:", run(real(within(0.2, build(1)))), time.perf_counter() - started)
+print("in time:", run(real(within(0.2, build(0)))))
 """
 
 
@@ -223,13 +225,13 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
     bare, simulated, wall, timeout, in_time = done.stdout.splitlines()
     # handler 無しの nap は、最初の Delay で止まる(本文「it stops at its Delay with UnhandledEffect」)
     assert bare.startswith("bare: UnhandledEffect"), bare
-    assert "DelayEffect" in bare, bare
+    assert "Delay(seconds=20)" in bare, bare
     # 仮想の時刻の組は毎回同じ行を印字し、Friday から Wednesday までを待たずに終える(本文「a few milliseconds」 —
     # 負荷の下でも落ちない枠として、3 回で 1 秒を上限に見る)
     count, seconds = simulated.removeprefix("simulated: ").split()
     assert count == "1", simulated
     assert float(seconds) < 1.0 * deadline_scale_factor, simulated
-    # 実時間の組でも同じ two_naps が待ちの順に起きる(本文「prints about [20.05, 10.05]」を短い待ちで)
+    # 実時間の組でも同じ two_naps が待ちの順に起きる(本文「a little above [20.0, 10.0]」を短い待ちで)
     slow, fast = (float(value) for value in wall.removeprefix("wall: ").strip("[]").split(", "))
     assert 0.2 <= slow < 0.2 + 1.0 * deadline_scale_factor, wall
     assert 0.1 <= fast < slow, wall
@@ -238,6 +240,58 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
     assert result == "timed out", timeout
     assert float(seconds) < 0.2 + 5.0 * deadline_scale_factor, timeout
     assert in_time == "in time: built in 0 min", in_time
+
+
+# 記事と例は doeff 本体だけで走る: import してよいのは標準の library と、`pip install doeff` が入れる doeff・doeff_core_effects と、
+# 例の file どうしだけ。install の行は doeff と pytest だけを入れる。await_handler は値のまま付け、() で呼ばない(card ki-c34897b9eede)。
+_CORE_MODULES = frozenset({"doeff", "doeff_core_effects"})
+_EXAMPLE_MODULES = frozenset({"clock", "report"})
+_IMPORT = re.compile(r"^\s*(?:from\s+(?P<source>[\w.]+)\s+import\b|import\s+(?P<module>[\w.]+))", re.MULTILINE)
+_INSTALL = re.compile(r"^\s*pip install\b.*$", re.MULTILINE)
+_README = EXAMPLES / "README.md"
+
+
+def _python_texts() -> dict[str, str]:
+    """例の .py の file と、記事の python の囲み(どこに在るかの名 → 中身)。"""
+    texts = {name: _source(name) for name in PYTEST_FILES if name.endswith(".py")}
+    texts.update(
+        (f"記事の {line} 行目", body) for language, body, line in _fences() if language == "python"
+    )
+    return texts
+
+
+def imported_outside_core(text: str) -> list[str]:
+    """標準の library・doeff 本体・例の file のどれでもない、import された頭の module の名。"""
+    found = {(match["source"] or match["module"]).split(".")[0] for match in _IMPORT.finditer(text)}
+    allowed = set(sys.stdlib_module_names) | _CORE_MODULES | _EXAMPLE_MODULES
+    return sorted(found - allowed)
+
+
+def test_the_examples_import_nothing_but_doeff_itself() -> None:
+    outside = {where: names for where, text in _python_texts().items() if (names := imported_outside_core(text))}
+    assert outside == {}, f"doeff 本体の外の module を import している: {outside}"
+
+
+def test_the_install_lines_install_doeff_alone() -> None:
+    lines = [
+        line.split("#")[0].split()
+        for path in (ARTICLE, _README)
+        for line in _INSTALL.findall(path.read_text(encoding="utf-8"))
+    ]
+    assert lines, "記事と例の README に install の行が無い"
+    assert all(words == ["pip", "install", "doeff", "pytest"] for words in lines), lines
+
+
+def test_await_handler_is_installed_without_a_call() -> None:
+    texts = {**_python_texts(), "記事": ARTICLE.read_text(encoding="utf-8")}
+    called = [where for where, text in texts.items() if "await_handler()" in text]
+    assert called == [], f"await_handler() と呼んでいる: {called}"
+
+
+def test_the_import_check_finds_a_subpackage() -> None:
+    assert imported_outside_core("from doeff_time import Delay\nimport heapq\n") == ["doeff_time"]
+    assert imported_outside_core("import doeff_records.store\n") == ["doeff_records"]
+    assert imported_outside_core("from doeff_core_effects.scheduler import scheduled\nfrom clock import nap\n") == []
 
 
 def test_the_excerpt_check_finds_a_shortened_excerpt() -> None:

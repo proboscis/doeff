@@ -1,17 +1,10 @@
 # report.py
 from datetime import datetime, timedelta, timezone
 
-from doeff import Cancel, Pass, Spawn, TaskCancelledError, Wait, do, handler, run
+from doeff import Cancel, Pass, Race, Spawn, TaskCancelledError, Wait, do, handler, run
 from doeff_core_effects.scheduler import scheduled
-from doeff_time import (
-    Delay,
-    DelayEffect,
-    GetTime,
-    RaceWithin,
-    WaitUntil,
-    WaitUntilEffect,
-    sim_time_handler,
-)
+
+from clock import Delay, GetTime, WaitUntil, virtual_clock
 
 
 # The program: every weekday at 09:00, build the report; give a build 10 minutes.
@@ -31,16 +24,26 @@ def build(minutes: int):  # a step that takes as long as we say
 
 
 @do
-def within(seconds: float, program):  # the value of program, or "timed out"
-    task = yield Spawn(program)
-    outcome = yield RaceWithin((task,), seconds)
-    if not outcome.timed_out:
-        return outcome.value
-    yield Cancel(task)
+def alarm(seconds: float):  # a task that only waits
+    yield Delay(seconds)
+
+
+@do
+def end(task):  # the value of task, or "timed out" if it had to be cancelled
+    yield Cancel(task)  # Cancel does nothing to a task that has ended
     try:
         return (yield Wait(task))  # raises once the cancelled task has unwound
     except TaskCancelledError:
         return "timed out"
+
+
+@do
+def within(seconds: float, program):  # the value of program, or "timed out"
+    task = yield Spawn(program)
+    timer = yield Spawn(alarm(seconds))
+    yield Race(task, timer)  # goes on when the first of the two ends
+    yield end(timer)
+    return (yield end(task))
 
 
 @do
@@ -66,13 +69,13 @@ FRIDAY_EVENING = datetime(2026, 11, 27, 17, 0, tzinfo=timezone.utc)
 
 
 def simulated(program):  # virtual time from Friday 17:00
-    return scheduled(sim_time_handler(start_time=FRIDAY_EVENING)(program))
+    return scheduled(virtual_clock(FRIDAY_EVENING)(program))
 
 
 @handler
-def timeline(effect: DelayEffect | WaitUntilEffect, k):  # print every wait as it starts
+def timeline(effect: Delay | WaitUntil, k):  # print every wait as it starts
     now = yield GetTime()
-    if isinstance(effect, DelayEffect):
+    if isinstance(effect, Delay):
         print(f"{now:%a %H:%M} wait {effect.seconds:g} s")
     else:
         print(f"{now:%a %H:%M} wait until {effect.target:%a %H:%M}")
