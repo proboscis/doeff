@@ -1563,34 +1563,6 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
-   "package": "doeff-gemini",
-   "module": "doeff_gemini.handlers.production",
-   "name": "edit_image__gemini",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-gemini",
-   "module": "doeff_gemini.handlers.production",
-   "name": "structured_llm__gemini",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-gemini",
-   "module": "doeff_gemini.structured_llm",
-   "name": "edit_image__gemini",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-gemini",
-   "module": "doeff_gemini.structured_llm",
-   "name": "structured_llm__gemini",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
    "package": "doeff-hy",
    "module": "(console script)",
    "name": "doeff-hy-check",
@@ -1661,22 +1633,8 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
-   "package": "doeff-openai",
-   "module": "doeff_openai.structured_llm",
-   "name": "structured_llm__openai",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
    "package": "doeff-openrouter",
    "module": "doeff_openrouter",
-   "name": "structured_llm",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-openrouter",
-   "module": "doeff_openrouter.structured_llm",
    "name": "structured_llm",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -2053,13 +2011,6 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
-   "package": "doeff-system-one",
-   "module": "doeff_system_one.programs",
-   "name": "judge_many",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
    "package": "doeff-traverse",
    "module": "doeff_traverse",
    "name": "sequence",
@@ -2069,20 +2020,6 @@
   {
    "package": "doeff-traverse",
    "module": "doeff_traverse",
-   "name": "try_call",
-   "組": "許した物 — program の helper",
-   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
-  },
-  {
-   "package": "doeff-traverse",
-   "module": "doeff_traverse.helpers",
-   "name": "sequence",
-   "組": "許した物 — program の helper",
-   "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
-  },
-  {
-   "package": "doeff-traverse",
-   "module": "doeff_traverse.helpers",
    "name": "try_call",
    "組": "許した物 — program の helper",
    "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
@@ -2090,13 +2027,6 @@
   {
    "package": "doeff-validation",
    "module": "doeff_validation",
-   "name": "validate",
-   "組": "許した物 — program の helper",
-   "決め": "ki-f20b18c2aad9"
-  },
-  {
-   "package": "doeff-validation",
-   "module": "doeff_validation.api",
    "name": "validate",
    "組": "許した物 — program の helper",
    "決め": "ki-f20b18c2aad9"

@@ -634,17 +634,6 @@
    "why": "workspace_handler・exec_handler・agentd"
   },
   {
-   "handler": "doeff_conductor.handlers:production_handlers",
-   "touches": [
-    "file",
-    "process",
-    "network",
-    "thread",
-    "clock"
-   ],
-   "why": "production_handlers の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
-  },
-  {
    "handler": "doeff_conductor._handlers.utils:make_offloaded_scheduled_handler",
    "touches": [
     "thread"
@@ -709,25 +698,11 @@
    "why": "os.environ"
   },
   {
-   "handler": "doeff_secret.handlers:env_var_handler",
-   "touches": [
-    "env"
-   ],
-   "why": "env_var_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
-  },
-  {
    "handler": "doeff_secret._handlers:env_var_handlers",
    "touches": [
     "env"
    ],
    "why": "os.environ"
-  },
-  {
-   "handler": "doeff_secret.handlers:env_var_handlers",
-   "touches": [
-    "env"
-   ],
-   "why": "env_var_handlers の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(検 catalog_keeps_the_old_spelling_of_every_moved_handler が求める・card ki-cd6a513ae4b5)"
   },
   {
    "handler": "doeff_google_secret_manager._handlers.production:production_handlers",
