@@ -11,10 +11,10 @@
 ;; 周の頭で壁の時計と単調な時計を続けて読む)が周ごとの時計の読みを足した: 114 歩 → 129 歩(正しさのための読みで、task は増えない)。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff._vm [native])
+(import doeff [ReadVmWorkCounts])
 (import doeff_time [SimClock])
 (import doeff_time [sim-time-handler])
-(import doeff_core_effects [CreatePromise Promise])
+(import doeff_core_effects [CreatePromise Promise vm-probe-handler])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.test_worker_wakes [quiet-host TickLog do-ticks])
@@ -26,19 +26,21 @@
 
 (defk quiet-ticks-and-steps []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "鳴らない呼び鈴を 1 つ持つ偽の宿で、本物の run-worker と本番の待ちの答え手を仮想の QUIET-MS 回し、#(周の数 歩) を返すため。"
+  "鳴らない呼び鈴を 1 つ持つ偽の宿で、本物の run-worker と本番の待ちの答え手を仮想の QUIET-MS 回し、#(周の数 歩) を返すため。
+  歩は前後の ReadVmWorkCounts(vm-probe-handler が答える)の差で、後の読みの分の決まった数歩を含む(周の数で割るので上限には効かない)。"
   (val log (TickLog (SimClock)))
   (<- bell Promise (CreatePromise))
-  (val before (get (native.vm-work-counts) 0))
+  (<- before tuple (ReadVmWorkCounts))
   (<- ((sim-time-handler :clock log.clock)
        ((quiet-host log bell QUIET-MS)
         (stop-signal-never-comes
           (tick-pauses (do-ticks None None))))))
-  #((len log.reads) (- (get (native.vm-work-counts) 0) before)))
+  (<- after tuple (ReadVmWorkCounts))
+  #((len log.reads) (- (get after 0) (get before 0))))
 
 
 (deftest test-a-quiet-heartbeat-tick-stays-light
-  (<- seen tuple (quiet-ticks-and-steps))
+  (<- seen tuple (vm-probe-handler (quiet-ticks-and-steps)))
   (val ticks (get seen 0))
   (val steps (get seen 1))
   (assert (> ticks 20) seen)
