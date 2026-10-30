@@ -1,7 +1,7 @@
 # moved-submodule-shim: doeff_records.admission -> doeff_records._admission
 # moved-submodule-shim-names doeff_records.admission:
 #   Admitted AppendNew AppendReplay ByKeySuffix Conflict Event ExpectAbsent ExpectAny ExpectVersion
-#   KeepFor Missing NotIndexed RecordsSchema Refused RememberedWrite RetiredKey Row RowsConflict
+#   KeepFor Missing NotIndexed RecordsSchema Refused Row RowsConflict
 #   RowsRefused StreamDecl TableDecl Written WrittenRows body_digest canonical_json epoch_ms
 #   expect_form hyx_descending_valueXquestion_markX hyx_event_expiredXquestion_markX
 #   hyx_json_equalXquestion_markX hyx_row_expiredXquestion_markX hyx_row_matchesXquestion_markX

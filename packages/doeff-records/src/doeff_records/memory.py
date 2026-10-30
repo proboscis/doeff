@@ -7,7 +7,7 @@
 #   MEMORY_SOURCE_EFFECTS MODULE_TAGS MemoryMark MemorySignals MemoryStore Missing NotIndexed Page
 #   PruneChanges Pruned PutRow PutRows READ ReadBatch ReadChangeLog ReadEventByKey ReadEvents
 #   ReadExpiredEvents ReadRow ReadSignalSource ReadSourcePatience ReadStreamEnd RecordsSchema
-#   Refused RememberedWrite Reset RetireArchivedEvents RetiredEvents RetiredKey Row RowChanged
+#   Refused Reset RetireArchivedEvents RetiredEvents Row RowChanged
 #   RowDue RowRemoved RowsConflict RowsRefused SetStoreOutage SignalSourceFactory SignalTables
 #   StoreChoice StoreFault StoreOperation StoredGroup StoredRow StreamDecl StreamEmpty StreamEnd
 #   StreamTail StreamTailEmpty SweepExpired Swept TableDecl Unreachable WRITE

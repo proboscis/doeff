@@ -77,7 +77,7 @@
 (import doeff_core_effects [CountMetric])
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
-(import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
+(import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable RequestPatience])
 (import doeff_records._effects [PutRowsAppendEvents ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch CountRows ReadRequestPatience])
 (import doeff_records._wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
@@ -308,16 +308,6 @@
   (<- read-at float (GetMonotonic))
   (<- (logged-exchange ask request.operation reply asked answered read-at))
   answer)
-
-
-(defrecord RequestPatience
-  "HTTP の client が、要求 1 つが置き場に届かない時に置き場の戻りを待つ時間(ReadRequestPatience の答え — #3557): seconds = 最初に届かなかった
-   時から数えて待つ秒。過ぎても戻らなければ client は待った秒を名指した Unreachable を返す。0 = 待たない(最初の Unreachable をそのまま返す —
-   名のある答え手 records-unwaited)。値は組み立てが 1 か所で選ぶ(この module は既定を持たない)。合図の源が止まりに耐える時間は別の値
-   SignalSourcePatience。"
-  {:tags {:context "records" :role "type"}
-   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
-  (#^ float seconds))
 
 
 (defhandler request-patience-handler [#^ RequestPatience patience]

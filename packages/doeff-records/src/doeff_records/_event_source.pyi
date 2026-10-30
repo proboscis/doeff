@@ -3,10 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
-from collections.abc import Callable as Callable
 from dataclasses import dataclass as dataclass
-from dataclasses import fields as fields
-from dataclasses import is_dataclass as is_dataclass
 from dataclasses import replace as replace
 from functools import partial as partial
 from doeff import EffectBase as EffectBase
@@ -52,14 +49,10 @@ from doeff_records._values import StreamEnd as StreamEnd
 from doeff_records._values import Unreachable as Unreachable
 from doeff_records._values import WatchCursor as WatchCursor
 from doeff_records._values import checked_table_name as checked_table_name
+from doeff_records._values import SignalTables as SignalTables
+from doeff_records._values import SignalSourceFactory as SignalSourceFactory
+from doeff_records._values import SignalSourcePatience as SignalSourcePatience
 WATCH_SECONDS: float
-
-@dataclass(frozen=True, kw_only=True)
-class SignalSourcePatience:
-    seconds: float
-
-    def __post_init__(self) -> None:
-        ...
 
 def source_patience_handler(patience: SignalSourcePatience) -> _Handler:
     ...
@@ -68,15 +61,6 @@ def source_patience_handler(patience: SignalSourcePatience) -> _Handler:
 class ChangedRow:
     table: str
     key: str
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True, kw_only=True)
-class SignalTables:
-    signal: type
-    tables: tuple[str, ...] = ...
-    streams: tuple[str, ...] = ...
 
     def __post_init__(self) -> None:
         ...
@@ -167,13 +151,6 @@ SOURCE_EFFECTS: tuple[type, ...]
 
 def records_signal_handler(bindings: tuple[SignalTables, ...], subscriber: str) -> BodyWrapper:
     ...
-
-@dataclass(frozen=True, kw_only=True)
-class SignalSourceFactory:
-    make: Callable[[tuple[SignalTables, ...], str], Callable[[object], Program]]
-
-    def __post_init__(self) -> None:
-        ...
 RECORDS_SIGNAL_SOURCE: SignalSourceFactory
 
 def run_read_signal[T](bindings: tuple[SignalTables, ...], subscriber: str, body: Program[T, object] | EffectBase[T]) -> _Program[T, object]:
