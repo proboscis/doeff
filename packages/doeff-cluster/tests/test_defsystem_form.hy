@@ -62,13 +62,13 @@
 (defsystem land [foundation]
   \"着地の系\"
   (land-notice (notice foundation 5.0)
-    :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
+    :needs #{\"pg-network\"} :replicas 1 :peak-mib 200 :settle-mib 100 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
 "))
   (val land (get ns "land"))
   (assert (= land.__doc__ "着地の系"))
   (assert (= land.__doeff_system__
              {"name" "land" "params" ["foundation"]
-              "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "replicas" 1
+              "jobs" [{"name" "land-notice" "function" "notice" "needs" ["pg-network"] "replicas" 1 "peakMiB" 200 "settleMiB" 100
                        "readiness" {"windowSeconds" 30} "update" "handoff" "environ" {"POLL" "5.0"}}]})
           land.__doeff_system__)
   (assert (= land.__doeff_tags__.role "entry"))
@@ -85,13 +85,13 @@
 (defk notice [foundation poll] {:pre [(: foundation Callable) (: poll float)] :post [(: % int)]} 1)
 (defsystem land [foundation]
   (land-notice (notice foundation 5.0)
-    :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30 \"retiredSeconds\" \"RETIRED_SECONDS\"} :update \"handoff\"
+    :needs #{\"pg-network\"} :replicas 1 :peak-mib 200 :settle-mib 100 :readiness {\"windowSeconds\" 30 \"retiredSeconds\" \"RETIRED_SECONDS\"} :update \"handoff\"
     :environ {\"RETIRED_SECONDS\" \"600\"}))
 "))
   (val job (get (. (get ns "land") __doeff_system__) "jobs" 0))
   (assert (= (get job "readiness") {"windowSeconds" 30 "retiredSeconds" "RETIRED_SECONDS"}) job)
   (assert (= (get job "environ") {"RETIRED_SECONDS" "600"}) job)
-  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :readiness {\"windowSeconds\" soon}))"))
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :readiness {\"windowSeconds\" soon}))"))
   (assert (in ":readiness の値は数か :environ の名の文字列" a) a))
 
 
@@ -102,7 +102,7 @@
   (<- ns (evaluate "
 (defk notice [foundation poll] {:pre [(: foundation Ping) (: poll float)] :post [(: % int)]} 1)
 (defsystem land [#^ Ping foundation extra]
-  (land-notice (notice foundation 5.0) :replicas 1))
+  (land-notice (notice foundation 5.0) :replicas 1 :peak-mib 200 :settle-mib 100))
 "))
   (val land (get ns "land"))
   (assert (= (get land.__doeff_system__ "params") ["foundation" "extra"]) land.__doeff_system__)
@@ -127,7 +127,7 @@
   (assert (in ":update は" c) c)
   (<- d (refusal "(defsystem s [foundation] (job (make foundation) :environ {\"POLL\" 5}))"))
   (assert (in ":environ の値は文字列" d) d)
-  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1) (job (make foundation) :replicas 1))"))
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100) (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100))"))
   (assert (in "job の名 job が 2 回ある" e) e)
   (<- f (refusal "(defsystem s [foundation] (job make))"))
   (assert (in "Program は (関数の記号 引数…) の呼び出し" f) f)
@@ -139,10 +139,49 @@
   ;; job の望む台数(:replicas)は必ず書く — 省くと宣言し直しの時に Service へ書く台数が決まらない(#3487)。0 / 1 の外の値・文字列も断る。
   (<- a (refusal "(defsystem s [foundation] (job (make foundation) :needs #{\"net\"}))"))
   (assert (in ":replicas が無い" a) a)
-  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 2))"))
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 2 :peak-mib 200 :settle-mib 100))"))
   (assert (in ":replicas は 0 / 1 のどれか" b) b)
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas \"1\"))"))
   (assert (in ":replicas は 0 / 1 のどれか" c) c))
+
+
+(deftest test-defsystem-requires-the-memory-of-every-job
+  ;; job の memory(:peak-mib・:settle-mib — card ki-2acb63aec0fd)は必ず書く。既定の値で埋めない: 省いた鍵・負の数・真偽・文字列・
+  ;; 山を越える落ち着きは、系と job を名指して展開の時に断る。:single-host の空の訳も断る。
+  ;; 失敗ケース = 省いた job に既定の値を入れて通す・片方だけの job を通す・True を 1 と読む。
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :settle-mib 100))"))
+  (assert (in "defsystem s の job job" a) a)
+  (assert (in ":peak-mib が無い" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200))"))
+  (assert (in "defsystem s の job job" b) b)
+  (assert (in ":settle-mib が無い" b) b)
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 100 :settle-mib 200))"))
+  (assert (in ":settle-mib 200 が :peak-mib 100 を越える" c) c)
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib -1 :settle-mib 0))"))
+  (assert (in ":peak-mib は 0 以上の整数の literal" d) d)
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib True :settle-mib 0))"))
+  (assert (in ":peak-mib は 0 以上の整数の literal" e) e)
+  (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib \"200\" :settle-mib 100))"))
+  (assert (in ":peak-mib は 0 以上の整数の literal" f) f)
+  (<- g (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :single-host \"\"))"))
+  (assert (in ":single-host は 1 台の worker に縛ってよい訳の空でない文字列" g) g)
+  (<- h (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :peak-mib 300))"))
+  (assert (in "鍵 :peak-mib が 2 回ある" h) h))
+
+
+(deftest test-defsystem-keeps-the-memory-and-the-single-host-reason-in-the-static-description
+  ;; memory は静的な記述に peakMiB・settleMiB(どの job にも)で、1 台に縛る訳は singleHost(書いた job にだけ)で載る。
+  (<- ns (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem store [foundation]
+  (keeper (notice foundation) :replicas 1 :peak-mib 900 :settle-mib 400 :single-host \"機体の disk の data を持つ\")
+  (plain (notice foundation) :replicas 1 :peak-mib 0 :settle-mib 0))
+"))
+  (val jobs (get (. (get ns "store") __doeff_system__) "jobs"))
+  (assert (= (get jobs 0) {"name" "keeper" "function" "notice" "replicas" 1 "peakMiB" 900 "settleMiB" 400
+                           "singleHost" "機体の disk の data を持つ"})
+          jobs)
+  (assert (= (get jobs 1) {"name" "plain" "function" "notice" "replicas" 1 "peakMiB" 0 "settleMiB" 0}) jobs))
 
 
 (deftest test-defsystem-keeps-the-store-reads-and-writes-in-the-static-description
@@ -151,30 +190,30 @@
   (<- ns (evaluate "
 (defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
 (defsystem shop [foundation]
-  (reader (notice foundation) :replicas 1 :reads #{\"store:orders\" \"events:audit\"} :writes #{})
-  (quiet (notice foundation) :replicas 0))
+  (reader (notice foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{\"store:orders\" \"events:audit\"} :writes #{})
+  (quiet (notice foundation) :replicas 0 :peak-mib 200 :settle-mib 100))
 "))
   (val jobs (get (. (get ns "shop") __doeff_system__) "jobs"))
-  (assert (= (get jobs 0) {"name" "reader" "function" "notice" "replicas" 1
+  (assert (= (get jobs 0) {"name" "reader" "function" "notice" "replicas" 1 "peakMiB" 200 "settleMiB" 100
                            "reads" ["events:audit" "store:orders"] "writes" []})
           jobs)
-  (assert (= (get jobs 1) {"name" "quiet" "function" "notice" "replicas" 0}) jobs))
+  (assert (= (get jobs 1) {"name" "quiet" "function" "notice" "replicas" 0 "peakMiB" 200 "settleMiB" 100}) jobs))
 
 
 (deftest test-defsystem-refuses-store-names-that-are-not-store-colon-name
   ;; 反例: `:` の無い綴り・2 つある綴り・片側が空の綴り・集合でない値・文字列でない要素・同じ鍵の 2 回目は展開で断る — linter が
   ;; 実行せずに読める綴りだけを通すため(#3495)。置き場の名そのものは照らさない(使い手の語彙)。
-  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{\"orders\"}))"))
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{\"orders\"}))"))
   (assert (in ":reads の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
-  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :writes #{\"store:\"}))"))
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :writes #{\"store:\"}))"))
   (assert (in ":writes の綴りは <置き場>:<名>" b) b)
-  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :writes #{\"store:orders:x\"}))"))
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :writes #{\"store:orders:x\"}))"))
   (assert (in ":writes の綴りは <置き場>:<名>" c) c)
-  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads [\"store:orders\"]))"))
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads [\"store:orders\"]))"))
   (assert (in ":reads は置き場の名の文字列の集合" d) d)
-  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{orders}))"))
+  (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{orders}))"))
   (assert (in ":reads の要素は文字列の literal" e) e)
-  (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :reads #{} :reads #{}))"))
+  (<- f (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{} :reads #{}))"))
   (assert (in "鍵 :reads が 2 回ある" f) f))
 
 
@@ -184,24 +223,24 @@
   (<- ns (evaluate "
 (defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
 (defsystem shop [foundation]
-  (front (notice foundation) :replicas 1 :serves #{\"shop:http\" \"shop:admin\"} :reads #{\"store:orders\"})
-  (sweeper (notice foundation) :replicas 1 :reads #{\"store:orders\"}))
+  (front (notice foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves #{\"shop:http\" \"shop:admin\"} :reads #{\"store:orders\"})
+  (sweeper (notice foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :reads #{\"store:orders\"}))
 "))
   (val jobs (get (. (get ns "shop") __doeff_system__) "jobs"))
-  (assert (= (get jobs 0) {"name" "front" "function" "notice" "replicas" 1
+  (assert (= (get jobs 0) {"name" "front" "function" "notice" "replicas" 1 "peakMiB" 200 "settleMiB" 100
                            "serves" ["shop:admin" "shop:http"] "reads" ["store:orders"]})
           jobs)
-  (assert (= (get jobs 1) {"name" "sweeper" "function" "notice" "replicas" 1 "reads" ["store:orders"]}) jobs)
+  (assert (= (get jobs 1) {"name" "sweeper" "function" "notice" "replicas" 1 "peakMiB" 200 "settleMiB" 100 "reads" ["store:orders"]}) jobs)
   (assert (not-in "serves" (get jobs 1)) jobs))
 
 
 (deftest test-defsystem-refuses-served-entries-that-are-not-store-colon-entry
   ;; 反例: :serves も :reads と同じ綴りの検めを通る — `:` の無い綴り・集合でない値・同じ鍵の 2 回目は展開で断る。
-  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves #{\"http\"}))"))
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves #{\"http\"}))"))
   (assert (in ":serves の綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)" a) a)
-  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves [\"shop:http\"]))"))
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves [\"shop:http\"]))"))
   (assert (in ":serves は置き場の名の文字列の集合" b) b)
-  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :serves #{\"shop:http\"} :serves #{\"shop:http\"}))"))
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :serves #{\"shop:http\"} :serves #{\"shop:http\"}))"))
   (assert (in "鍵 :serves が 2 回ある" c) c))
 
 
@@ -214,7 +253,7 @@
   \"着地の系\"
   :task-limits {\"heavy\" {\"scope\" \"worker\" \"limit\" 6}
                 \"heavy-caller\" {\"scope\" \"cluster\" \"limit\" 2 \"perPart\" True}}
-  (land-notice (notice foundation) :needs #{\"net\"} :replicas 1))
+  (land-notice (notice foundation) :needs #{\"net\"} :replicas 1 :peak-mib 200 :settle-mib 100))
 "))
   (val land (get ns "land"))
   (assert (= (get land.__doeff_system__ "task_limits")
@@ -237,7 +276,7 @@
 (deftest test-defsystem-refuses-task-limits-that-are-not-static-or-not-valid
   ;; 反例: 範囲の名・0 の上限・整数でない上限・知らない欄・「/」を含む組の名・dict でない値・知らない頭の鍵・2 回目の鍵は展開で断る —
   ;; linter が実行せずに読める形だけを通し、値の規則は coordinator の受け口と同じにするため。
-  (val job-row "(job (make foundation) :replicas 1)")
+  (val job-row "(job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100)")
   (for [#(limits word) [#("{\"g\" {\"scope\" \"node\" \"limit\" 1}}" "\"scope\" は worker / cluster のどれか")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" 0}}" "\"limit\" は 1 以上の整数の literal")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" \"6\"}}" "\"limit\" は 1 以上の整数の literal")

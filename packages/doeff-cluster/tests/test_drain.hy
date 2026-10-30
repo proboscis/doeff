@@ -37,7 +37,7 @@
   {:pre [(: extra (| dict None))] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "入れ替え(handoff)の Service の宣言の spec(extra の欄で上書きする)を作るため。"
   (| {"revision" "r1" "needs" K3S "readiness" {"windowSeconds" 10} "update" "handoff"
-      "run" SAMPLE-RUN}
+      "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}
      (or extra {})))
 
 

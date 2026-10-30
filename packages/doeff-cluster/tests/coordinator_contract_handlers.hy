@@ -84,7 +84,7 @@
 (val COORDINATOR "http://coordinator")
 ;; 報告の送り手が名乗る Service(本物の側では coordinator に宣言してある — 無い Service の報告は coordinator が 404 で断る)。
 (val SERVICE "contract-service")
-(val SERVICE-SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val SERVICE-SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100})
 (val REFUSED "[Errno 111] Connection refused")
 (val METRICS "metrics")
 (val READINESS "readiness")

@@ -23,7 +23,7 @@
 
 (val T (ClusterTiming))
 (val PACKAGE-ROOT (. (Path __file__) (resolve) parent parent))
-(val ROW {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val ROW {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100})
 ;; 2026-09-27 より前の coordinator が書いた Service の行(関数の参照 + handler の組の import path + 設定)。
 (val OLD-RUN {"kind" "service" "factory" "m:f" "env" "m:e" "config" {"step" 1}})
 ;; run の無い生の entry と args の job(worker に module と引数を直に起こさせる — Program でない job)。

@@ -26,7 +26,7 @@
                                 :worker-forget-ms 3000000000))
 (val WINDOW-OVER-DEADLINE (| HANDOFF {"readiness" {"windowSeconds" 100 "handoffTimeoutSeconds" 30}}))
 ;; worker の居ない世界の Service 2 つの間の Rollout(新は置けず Ready にならないので、WaitingNewReady の時間切れだけが効く — k8s を読まない)。
-(val SERVICE {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1})
+(val SERVICE {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "replicas" 1})
 (val SERVICE-ROLLOUT {"from" {"kind" "Service" "name" "writer-a"} "to" {"kind" "Service" "name" "writer-b"}
                       "readyTimeoutSeconds" 60 "stopTimeoutSeconds" 90 "observeSeconds" 120 "failAfterSeconds" 15})
 (val ROLLOUT-START 1000000)

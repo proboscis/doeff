@@ -302,154 +302,154 @@
 
 (defsystem beacons [#^ Callable foundation]
   "見本の系: 拍ごとに盤へ書く service 1 つ(版 1 — STEP 1)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "1"}))
 
 
 (defsystem beacons-v2 [#^ Callable foundation]
   "beacons の版 2(environ の STEP を変えた — 入れ替わる)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "2"}))
 
 
 (defsystem beacons-plus [#^ Callable foundation]
   "beacons に service beacon-b を足した系(宣言し直すと新しい job の置き先が要る — 条 L1 の検)"
-  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/a" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :environ {"STEP" "1"})
-  (beacon-b (beacon-program foundation "beacon/b" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon-b (beacon-program foundation "beacon/b" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
             :environ {"STEP" "1"}))
 
 
 (defsystem thirteen-beacons [#^ Callable foundation]
   "2026-10-26 の形の系: 同じ能力 cluster-net を要る service 13 本(置き先の一時の上書きの検 — card ki-1523bc0aba4f)"
-  (b01 (beacon-program foundation "beacon/01" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b02 (beacon-program foundation "beacon/02" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b03 (beacon-program foundation "beacon/03" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b04 (beacon-program foundation "beacon/04" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b05 (beacon-program foundation "beacon/05" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b06 (beacon-program foundation "beacon/06" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b07 (beacon-program foundation "beacon/07" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b08 (beacon-program foundation "beacon/08" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b09 (beacon-program foundation "beacon/09" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b10 (beacon-program foundation "beacon/10" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b11 (beacon-program foundation "beacon/11" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b12 (beacon-program foundation "beacon/12" 1.0) :replicas 1 :needs #{"cluster-net"})
-  (b13 (beacon-program foundation "beacon/13" 1.0) :replicas 1 :needs #{"cluster-net"}))
+  (b01 (beacon-program foundation "beacon/01" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b02 (beacon-program foundation "beacon/02" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b03 (beacon-program foundation "beacon/03" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b04 (beacon-program foundation "beacon/04" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b05 (beacon-program foundation "beacon/05" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b06 (beacon-program foundation "beacon/06" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b07 (beacon-program foundation "beacon/07" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b08 (beacon-program foundation "beacon/08" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b09 (beacon-program foundation "beacon/09" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b10 (beacon-program foundation "beacon/10" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b11 (beacon-program foundation "beacon/11" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b12 (beacon-program foundation "beacon/12" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (b13 (beacon-program foundation "beacon/13" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem handoff-beacons [#^ Callable foundation]
   "見本の系: handoff で入れ替える beacon(版 1)"
-  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem handoff-beacons-v2 [#^ Callable foundation]
   "handoff-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
-  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem late-handoff-beacons-v2 [#^ Callable foundation]
   "handoff-beacons の版 2 で、起き上がりに 1 秒かかる物(入れ替えの間の Ready の書き手の空白の反例 — 条 W1)"
-  (beacon (late-beacon-program foundation "beacon/h" 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (late-beacon-program foundation "beacon/h" 2.0 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem handoff-beacons-v3 [#^ Callable foundation]
   "handoff-beacons の版 3(本体の引数 every を版 2 からも変えた — 入れ替えを 2 度通す条 C14 の検)"
-  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
+  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem lingering-handoff-beacons [#^ Callable foundation]
   "handoff-beacons と同じ beacon で、退いた旧の寿命の上限 retiredSeconds を 600 秒と宣言した物(#4072 の D-2・D-3 — 新の Ready で旧を
    止めないので、宣言し直しが重なると退いた process が並ぶ)"
-  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+  (beacon (beacon-program foundation "beacon/h" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem lingering-handoff-beacons-v2 [#^ Callable foundation]
   "lingering-handoff-beacons の版 2(本体の引数 every を変えた — 入れ替わる)"
-  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+  (beacon (beacon-program foundation "beacon/h" 2.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem lingering-handoff-beacons-v3 [#^ Callable foundation]
   "lingering-handoff-beacons の版 3(本体の引数 every を版 2 からも変えた — 退いた旧が居る間に 2 度目の入れ替えを通す)"
-  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
+  (beacon (beacon-program foundation "beacon/h" 3.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5 "retiredSeconds" 600}
           :update "handoff" :environ {"STEP" "1"}))
 
 
 (defsystem relay [#^ Callable foundation]
   "見本の系: 盤に書く beacon と、それを読んで写す copier"
-  (beacon (beacon-program foundation "relay/source" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "9"})
-  (copier (copy-program foundation "relay/source" "relay/copy") :replicas 1 :needs #{"cluster-net"}))
+  (beacon (beacon-program foundation "relay/source" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "9"})
+  (copier (copy-program foundation "relay/source" "relay/copy") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem flavors [#^ Callable foundation]
   "見本の系: 同じ Flavor に別の答えを持つ 2 つの service と、答えを持たない 1 つ"
-  (sweet (scoped-program foundation "sweet" "flavor/sweet") :replicas 1 :needs #{"cluster-net"})
-  (sour (scoped-program foundation "sour" "flavor/sour") :replicas 1 :needs #{"cluster-net"})
-  (plain (unscoped-program foundation "flavor/plain") :replicas 1 :needs #{"cluster-net"}))
+  (sweet (scoped-program foundation "sweet" "flavor/sweet") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (sour (scoped-program foundation "sour" "flavor/sour") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (plain (unscoped-program foundation "flavor/plain") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem fenced [#^ Callable foundation]
   "見本の系: 柵を通る物だけを使う service と、sim の世界の effect を覗く service"
-  (passer (passable-program foundation "fence/passer") :replicas 1 :needs #{"cluster-net"})
-  (peeker (peeking-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (passer (passable-program foundation "fence/passer") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (peeker (peeking-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem delegating [#^ Callable foundation]
   "見本の系: RemoteJob で task を出す service 1 つ"
-  (delegator (delegate-program foundation 3 "remote/result") :replicas 1 :needs #{"cluster-net"}))
+  (delegator (delegate-program foundation 3 "remote/result") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem gpu-only [#^ Callable foundation]
   "見本の系: どの worker も提供しない能力を要る service"
-  (trainer (beacon-program foundation "gpu/beat" 1.0) :replicas 1 :needs #{"gpu"} :environ {"STEP" "1"}))
+  (trainer (beacon-program foundation "gpu/beat" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"gpu"} :environ {"STEP" "1"}))
 
 (defsystem spawners [#^ Callable foundation]
   "見本の系: 子の task に盤へ書き続けさせる service 1 つ(止まらない)"
-  (spawner (spawning-program foundation "spawn/" 0) :replicas 1 :needs #{"cluster-net"}))
+  (spawner (spawning-program foundation "spawn/" 0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 (defsystem quitters [#^ Callable foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 3 拍で値を返して抜ける service 1 つ"
-  (quitter (spawning-program foundation "quit/" 3) :replicas 1 :needs #{"cluster-net"}))
+  (quitter (spawning-program foundation "quit/" 3) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 (defsystem quitters-v2 [#^ Callable foundation]
   "quitters の版 2(抜けるまでの拍の数を変えた — 宣言し直すと入れ替わる・静かな区間の同値の検 tests/test_idle_skip.hy)"
-  (quitter (spawning-program foundation "quit/" 4) :replicas 1 :needs #{"cluster-net"}))
+  (quitter (spawning-program foundation "quit/" 4) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 (defsystem pulses [#^ Callable foundation]
   "見本の系: 準備できたと報告し続けるだけの service 1 つ"
-  (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (pulse (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem solo-pulses [#^ Callable foundation]
   "見本の系: 置ける worker が 1 台ずつの service 4 つ(能力 solo-a〜solo-d — 1 台ずつの worker だけが持つ)と、能力 cluster-net を持つ
    worker ならどれにも置ける service 1 つ(#2805 — 置ける worker が 1 台の service が並ぶ形の途絶の筋書き・tests/test_outage_timelines.hy)"
-  (pulse-a (pulse-program foundation) :replicas 1 :needs #{"solo-a"} :readiness {"windowSeconds" 5})
-  (pulse-b (pulse-program foundation) :replicas 1 :needs #{"solo-b"} :readiness {"windowSeconds" 5})
-  (pulse-c (pulse-program foundation) :replicas 1 :needs #{"solo-c"} :readiness {"windowSeconds" 5})
-  (pulse-d (pulse-program foundation) :replicas 1 :needs #{"solo-d"} :readiness {"windowSeconds" 5})
-  (roamer (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (pulse-a (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"solo-a"} :readiness {"windowSeconds" 5})
+  (pulse-b (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"solo-b"} :readiness {"windowSeconds" 5})
+  (pulse-c (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"solo-c"} :readiness {"windowSeconds" 5})
+  (pulse-d (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"solo-d"} :readiness {"windowSeconds" 5})
+  (roamer (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem lone-pulses [#^ Callable foundation]
   "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 置き先の上書きで効く needs を広げて置ける worker が増える筋書きの前の宣言・
    tests/test_keep_when_cut_off.hy)"
-  (pulse (pulse-program foundation) :replicas 1 :needs #{"lone"} :readiness {"windowSeconds" 5}))
+  (pulse (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"lone"} :readiness {"windowSeconds" 5}))
 
 
 (defsystem reserved-trio [#^ Callable foundation]
   "見本の系: task を出す service 1 つと、拍ごとに盤へ書く service 2 つ(#3489 — capacity 3・task のために 1 つ空けておく worker に常駐を
    3 つ宣言すると、名の順に delegator と echo-a が置かれ echo-b は空きが無く、delegator の出す task は空けておいた分で走る・条 C17 の検
    tests/test_local.hy)"
-  (delegator (delegate-program foundation 3 "trio/result") :replicas 1 :needs #{"cluster-net"})
-  (echo-a (beacon-program foundation "trio/a" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "1"})
-  (echo-b (beacon-program foundation "trio/b" 1.0) :replicas 1 :needs #{"cluster-net"} :environ {"STEP" "1"}))
+  (delegator (delegate-program foundation 3 "trio/result") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (echo-a (beacon-program foundation "trio/a" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"})
+  (echo-b (beacon-program foundation "trio/b" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"}))
 
 (defsystem detaching [#^ Callable foundation]
   "見本の系: 切り離した task を出して待つ service 1 つ"
-  (detacher (detaching-program foundation 3 "detached/result") :replicas 1 :needs #{"cluster-net"}))
+  (detacher (detaching-program foundation 3 "detached/result") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 ;; --- 終わりの待ちの検(test_local_wakes.hy — proboscis/doeff#631)------------------------------------------------
@@ -462,7 +462,7 @@
 
 (defsystem long-quitters [#^ Callable foundation]
   "見本の系: 子の task に盤へ書かせ、自分は 120 拍で値を返して抜ける service 1 つ(process の終わりを待つ検)"
-  (long-quitter (spawning-program foundation "long/" 120) :replicas 1 :needs #{"cluster-net"}))
+  (long-quitter (spawning-program foundation "long/" 120) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 ;; --- 宣言の実行環境が子の run-context に届く検(test_local.hy)-------------------------------------------------------
@@ -481,4 +481,4 @@
 
 (defsystem context-env-readers [#^ Callable foundation]
   "見本の系: 自分の run-context の実行環境の宣言を値にして抜ける service 1 つ"
-  (context-env-reader (context-env-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (context-env-reader (context-env-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))

@@ -48,7 +48,13 @@
   ;; 数えられてから旧を止める — worker_model.JobSpec)。
   ;; 版は宣言の revision ただ 1 つ(Program を詰めた commit — 以前の image の版を追う baseFrom と、定義だけを別の commit で重ねる
   ;; overlay は消した。持つ行は宣言の口と読み直しで断る — cluster_policy.program-row-refusal)。
-  (setv #^ str update "recreate"))
+  (setv #^ str update "recreate")
+  ;; --- memory と 1 台に縛る訳(card ki-2acb63aec0fd) ---
+  ;; 起動の memory の山と落ち着いた値(MiB)。宣言の口は必ず受け取る(cluster_policy.declared-job-from-json)が、旧い coordinator が
+  ;; 欄の無いまま保存した行は None で読む(次の宣言し直しで知る)。process の形ではない — JobSpec に入れず、指紋 spec-hash に入らない。
+  (setv #^ (| int None) peak-mib None)
+  (setv #^ (| int None) settle-mib None)
+  (setv #^ (| str None) single-host None))  ; job を 1 台の worker に縛ってよい訳(無ければ None)
 
 
 (defenum GenerationOrder CURRENT OLDER NEWER)

@@ -93,7 +93,7 @@
   (<- loose tuple (call s "PUT" (+ "/programs/" loose-sha) {"blob" "bG9vc2U=" "versions" VERSIONS} 1000))
   ;; kept は Service の行が参照する。loose はどれも参照しない。
   (<- declared tuple (call (get loose 0) "POST" "/resources/Service"
-                           {"name" "svc" "spec" {"revision" "r1" "needs" ["net"] "run" (| SAMPLE-RUN {"program" kept-sha})}}
+                           {"name" "svc" "spec" {"revision" "r1" "needs" ["net"] "run" (| SAMPLE-RUN {"program" kept-sha}) "peakMiB" 200 "settleMiB" 100}}
                            2000))
   (assert (= (get declared 1) 201) declared)
   (val both (get declared 0))

@@ -1,7 +1,7 @@
 ;;; 系(System)の宣言の値と、coordinator へ渡す宣言の行(ADR-DOE-CLUSTER-001 の段 3)。
 ;;;
 ;;; job(常駐の service)は Program の値 1 つ(defk の関数を呼んだ結果 — R1)と、置き場所と台数と入れ替えの約束(needs・replicas・
-;;; readiness・update・environ)を持つ。handler は Program の中(defk の本体の with-handlers)で作り、宣言には入れない(R3b)。系は doeff-hy の defsystem で
+;;; readiness・update・environ)と memory(peak-mib・settle-mib)と 1 台に縛る訳(single-host)を持つ。handler は Program の中(defk の本体の with-handlers)で作り、宣言には入れない(R3b)。系は doeff-hy の defsystem で
 ;;; 書き、土台を引数に受けて System の値を返す。土台 = 本体の Program を受け、自分の handler(と scheduler・時計)の下で走らせて答えを
 ;;; 返す module の最上位の defk(計画 10.1 — job は自分で scheduled を包まない。本番の土台は scheduler を含み、sim の土台は含まない):
 ;;;
@@ -53,7 +53,9 @@
 (defrecord Job
   "系の job 1 つ(常駐の service)。program = Program の値(R1)・call = それを作った呼び出しの形・needs = 要る能力の名(空でない
    frozenset — R4b)・replicas = 望む台数(0 = 取り下げ・1 = 動かす — 宣言し直しが Service に書く値)・readiness = {\"windowSeconds\" n …}
-   か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)。"
+   か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・peak-mib = 起動の memory の山(MiB)・
+   settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する・card ki-2acb63aec0fd)・single-host = 1 台の worker に縛ってよい訳
+   (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)。"
   (#^ str name)
   (#^ object program)
   (#^ CallShape call)
@@ -61,7 +63,10 @@
   (#^ int replicas)
   (#^ (| dict None) readiness)
   (#^ str update)
-  (#^ tuple environ))
+  (#^ tuple environ)
+  (#^ int peak-mib)
+  (#^ int settle-mib)
+  (setv #^ (| str None) single-host None))
 
 
 (defrecord System

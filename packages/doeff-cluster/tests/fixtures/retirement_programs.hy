@@ -84,23 +84,23 @@
 
 (defsystem retiring-beacons [#^ Callable foundation]
   "見本の系: handoff で入れ替える、退きの知らせを書く service(版 1)"
-  (beacon (retiring-program foundation "retire" True 1.0 0.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" True 1.0 0.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-v2 [#^ Callable foundation]
   "retiring-beacons の版 2(本体の引数 every を変えた — 入れ替わる)。起き上がりに 1 秒かかる(旧の「退く」と新の Ready の前後を刻で読める)"
-  (beacon (retiring-program foundation "retire" True 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" True 2.0 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-stuck [#^ Callable foundation]
   "retiring-beacons の版 2'(Ready にならない — 入れ替えは期限で諦められる)"
-  (beacon (retiring-program foundation "retire" False 2.0 0.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" False 2.0 0.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))
 
 
 (defsystem retiring-beacons-v3 [#^ Callable foundation]
   "retiring-beacons の版 3(本体の引数 every を版 2 からも変えた — 諦めの後の宣言し直し)。起き上がりに 1 秒かかる(版 2 と同じ訳)"
-  (beacon (retiring-program foundation "retire" True 3.0 1.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (beacon (retiring-program foundation "retire" True 3.0 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "handoffTimeoutSeconds" 20}))

@@ -26,9 +26,12 @@
    (defsystem land-notices [foundation]
      \"着地の報せの系\"
      (land-notice (land-notice foundation)
-       :needs #{\"pg-network\"} :replicas 1 :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
+       :needs #{\"pg-network\"} :replicas 1 :peak-mib 300 :settle-mib 120
+       :readiness {\"windowSeconds\" 30} :update \"handoff\" :environ {\"POLL\" \"5.0\"}))
 
    :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)で、必ず書く。
+   :peak-mib・:settle-mib は起動の memory の山と落ち着いた値(MiB の整数・落ち着きは山以下)で、必ず書く(既定の値は無い)。
+   :single-host \"<訳>\" は job を 1 台の worker に縛ってよい訳(任意 — 書いた job は置き先が 2 台以上の照らしの外になる)。
    説明の文の後・job の行の前に :task-limits {\"<組>\" {\"scope\" \"worker\" \"limit\" 6}} を置くと、系が組の同時数の上限を宣言する
    (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
    形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。

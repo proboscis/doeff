@@ -23,15 +23,18 @@
 (defrecord ResidentJob
   "照らす常駐の job 1 つ: name = job の名・needs = 要る能力・replicas = 置く数(0 = 宣言だけ残して置かない — 照らさない)・update =
    入れ替えの形(recreate・handoff — handoff は並べた置き先 surge を使う)・peak-mib = 起動の memory の山(MiB)・settle-mib = 落ち着いた
-   memory(MiB・山以下)。"
+   memory(MiB・山以下)・single-host = 1 台の worker に縛ってよい訳(job の宣言の :single-host — 在れば規則 1(置き先が 2 台以上)だけを
+   当てない。枠と memory には数える。無ければ None)。"
   {:tags {:context "coordinator" :role "type"}
-   :check [(>= replicas 0) (in update UPDATE-FORMS) (>= settle-mib 0) (>= peak-mib settle-mib)]}
+   :check [(>= replicas 0) (in update UPDATE-FORMS) (>= settle-mib 0) (>= peak-mib settle-mib)
+           (or (is single-host None) (.strip single-host))]}
   (#^ str name)
   (#^ (get tuple #(str ...)) needs)
   (#^ int replicas)
   (#^ str update)
   (#^ int peak-mib)
-  (#^ int settle-mib))
+  (#^ int settle-mib)
+  (setv #^ (| str None) single-host None))
 
 
 (defrecord ExtraProvides
@@ -41,15 +44,6 @@
    :check [(.strip name)]}
   (#^ str name)
   (#^ (get tuple #(str ...)) provides))
-
-
-(defrecord ExemptJob
-  "例外の表の 1 行: job = 置き先が 1 台でよい job の名・reason = 1 台に縛る訳(機体の disk の data を持つ・移す途中 など)。規則 1(置き先が
-   2 台以上)だけを当てない — 枠と memory には数える。"
-  {:tags {:context "coordinator" :role "type"}
-   :check [(.strip job) (.strip reason)]}
-  (#^ str job)
-  (#^ str reason))
 
 
 (defrecord KeptApart

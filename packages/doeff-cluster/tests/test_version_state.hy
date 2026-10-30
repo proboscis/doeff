@@ -27,7 +27,7 @@
 (import tests.test_drain [Coord service running-writer])
 
 (val T (ClusterTiming))
-(val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100})
 (val START 1000000)             ; 状態を読んだ時刻(0)から lease を十分に過ぎた時刻 — 起動直後の Unknown に入らない
 
 

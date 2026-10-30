@@ -15,7 +15,7 @@
 (import typing [TypeGuard])
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.core.job_rules [content-refusal])
+(import doeff_cluster.shared.core.job_rules [content-refusal memory-refusal single-host-refusal])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request BodyInvalid])
 (import doeff_cluster.shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster.shared.core.supplied_spelling [supplied-spellings])
@@ -204,7 +204,25 @@
     True (raise (BodyInvalid (.format "{} は文字列か null: {!r}" field value)))))
 
 
+(defn #^ ClusterJob declared-job-from-json [#^ (get Mapping #(str object)) item]
+  "送り手が書く宣言の行(Service の資源の POST・PUT と旧い PUT /jobs)を、memory の欄 peakMiB・settleMiB を必ず求めて読むため
+   (card ki-2acb63aec0fd — 欄の無い宣言は断り、既定の値で埋めない)。保存の読み直しは job-from-json を直に呼び、欄の無い行も受ける。"
+  ;; 行の形の誤り(旧い宣言の形など)は先に job-from-json が今までどおりの理由で断る。欄の無さはその後に言う。
+  (setv job (job-from-json item) problem (memory-refusal (.get item "peakMiB") (.get item "settleMiB")))
+  (when (is-not problem None)
+    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") problem))))
+  job)
+
+
 (defn #^ ClusterJob job-from-json [#^ (get Mapping #(str object)) item]
+  "宣言の行(送られた行と保存の行)→ ClusterJob。memory の欄は在れば検め、無ければ None で読む — 旧い coordinator は memory を持たずに
+   job を保存したので、新しい coordinator が置き場を読み直す時に欄の無い行を断らない(断ると RefusedJob になり job が止まる)。
+   欄を必ず求めるのは送り手の書く口(declared-job-from-json)だけ。"
+  (setv peak (.get item "peakMiB") settle (.get item "settleMiB") single-host (.get item "singleHost"))
+  (setv memory-problem (or (if (and (is peak None) (is settle None)) None (memory-refusal peak settle))
+                           (single-host-refusal single-host)))
+  (when (is-not memory-problem None)
+    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") memory-problem))))
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
     (raise (BodyInvalid (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
@@ -227,7 +245,11 @@
               replicas
               (if (json-object? readiness) readiness None)
               (optional-text-field (.get item "owner") "owner")
-              update))
+              update
+              ;; memory-refusal が整数と確かめた後なので、ここは型を絞るだけ。
+              :peak-mib (if (isinstance peak int) peak None)
+              :settle-mib (if (isinstance settle int) settle None)
+              :single-host (if (isinstance single-host str) single-host None)))
 
 
 (defn #^ dict job-to-json [#^ ClusterJob job]
@@ -239,7 +261,10 @@
                  (if (is job.spec.runtime-env None) {} {"runtimeEnv" (json.loads job.spec.runtime-env)})
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})
                  ;; 中身の鍵は送られた宣言にだけ書く(鍵の無い宣言の spec の形は以前と同じ — card ki-81bf84ac6590)。
-                 (if (is job.spec.content None) {} {"content" job.spec.content})))
+                 (if (is job.spec.content None) {} {"content" job.spec.content})
+                 ;; memory は知っている時だけ書く(旧い coordinator の保存から読んだ job は次の宣言し直しまで知らない)・訳は在る時だけ。
+                 (if (is job.peak-mib None) {} {"peakMiB" job.peak-mib "settleMiB" job.settle-mib})
+                 (if (is job.single-host None) {} {"singleHost" job.single-host})))
   ;; 受け付けた job は Program の job だけ(run を持つ — spec-of-declaration)。行は run を運ぶ(entry と args は worker の内部の形)。
   (| base extra {"run" job.run}))
 

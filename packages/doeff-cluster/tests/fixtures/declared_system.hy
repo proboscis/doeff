@@ -44,5 +44,5 @@
 
 (defsystem pair [#^ Callable foundation]
   "見本の系: tally と greeter"
-  (tally (tally-program foundation 2) :replicas 1 :needs #{"cluster-net"})
-  (greeter (greeter-program foundation 3) :replicas 1 :needs #{"cluster-net"}))
+  (tally (tally-program foundation 2) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (greeter (greeter-program foundation 3) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))

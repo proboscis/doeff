@@ -3,9 +3,10 @@
 ;;;   (defsystem land-notices [foundation]
 ;;;     "着地の報せの系"
 ;;;     (land-notice (land-notice foundation)
-;;;       :needs #{"pg-network"} :replicas 1 :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
+;;;       :needs #{"pg-network"} :replicas 1 :peak-mib 300 :settle-mib 120
+;;;       :readiness {"windowSeconds" 30} :update "handoff" :environ {"POLL" "5.0"}))
 ;;;
-;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・replicas・readiness・update・environ)の組を
+;;; 系 = 土台(handler の組を返す module の最上位の関数)を引数に受け、名前 → Program と約束(needs・replicas・memory・readiness・update・environ)の組を
 ;;; 返す関数(baseFrom・overlay は Program の job に無い — 詰めた commit と別の commit で解くことになるため)。job の Program は doeff-cluster の job API が受ける値 1 つ(ADR-DOE-CLUSTER-001 R1)。
 ;;;
 ;;; 形は静的に決まる物だけを受ける(doeff-linter が実行せずに読めるように — ADR-DOE-CLUSTER-001 R4b):
@@ -16,6 +17,11 @@
 ;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
 ;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
 ;;;   宣言し直した時に job が起きない取り違えが起きる)。
+;;;   :peak-mib / :settle-mib は job の起動の memory の山と落ち着いた値(MiB)の 0 以上の整数の literal で、**必ず書く**(落ち着きは山以下・
+;;;   既定の値で埋めない — card ki-2acb63aec0fd)。値の持ち主は job の宣言 1 つで、静的な記述と宣言の行に peakMiB・settleMiB で載る
+;;;   (置き方の照らしの材料 — process の形ではないので、数を直しても job は入れ替わらない)。
+;;;   :single-host は job を 1 台の worker に縛ってよい訳の空でない文字列の literal で、任意の欄 — 書いた job は置ける worker が 2 台以上を
+;;;   求める照らし(failover_policy の規則 1)の外になる。静的な記述と宣言の行に singleHost で載る(書かない job には鍵が無い)。
 ;;;   :reads / :writes は job が外の置き場(記録の service など)から読む・書く物の集合で、任意の欄 — 文字列の literal の集合で、綴りは
 ;;;   <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。置き場の名の集合は使い手の repo の語彙なので doeff は持たない。静的な記述の
 ;;;   job の dict にだけ載り、job の値(doeff-cluster の Job)と宣言の行には載らない(実行時に読む物が無い)。使い手の系の job に欄を
@@ -48,8 +54,7 @@
 (setv DEFSYSTEM-BUILD #("doeff_cluster.shared.entry.service_build" "_doeff_cluster_service_build"))
 (setv DEFSYSTEM-IMPORTS #(DEFSYSTEM-MODEL DEFSYSTEM-BUILD))
 
-(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves"))
-;; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d)。
+(setv JOB-KEYS #(":needs" ":replicas" ":readiness" ":update" ":environ" ":reads" ":writes" ":serves" ":peak-mib" ":settle-mib" ":single-host"));; 系の頭(説明の文の後・job の行の前)に置ける鍵。:task-limits = 系が宣言する組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d)。
 (setv SYSTEM-KEYS #(":task-limits"))
 ;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
 ;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。
@@ -119,10 +124,21 @@
     (setv key (str k))
     (when (not (and (isinstance k Keyword) (in key JOB-KEYS)))
       (raise (SyntaxError (.format "{}: 鍵 {} は受けない — 受ける鍵は {}" where (hy.repr k) (.join " " JOB-KEYS)))))
-    ;; 2 回目の鍵は静的な記述で見る(どの鍵も記述に載り、:reads / :writes / :serves は job の値に載らない)。
-    (when (in (cut key 1 None) static)
+    ;; 2 回目の鍵は静的な記述と job の値で見る(:reads / :writes / :serves は job の値に載らず、memory の鍵は記述に別の綴りで載る)。
+    (when (or (in (cut key 1 None) static) (in key values))
       (raise (SyntaxError (.format "{}: 鍵 {} が 2 回ある" where key))))
     (match key
+      (| ":peak-mib" ":settle-mib")
+        ;; memory は 0 以上の整数の literal(真偽は整数と読まない)。山と落ち着きの比べは両方を読んだ後。
+        (do (when (not (and (isinstance v Integer) (>= (int v) 0)))
+              (raise (SyntaxError (.format "{}: {} は 0 以上の整数の literal(MiB): {}" where key (hy.repr v)))))
+            (setv (get values key) v
+                  (get static (if (= key ":peak-mib") "peakMiB" "settleMiB")) (int v)))
+      ":single-host"
+        (do (when (not (and (isinstance v String) (.strip (str v))))
+              (raise (SyntaxError (.format "{}: :single-host は 1 台の worker に縛ってよい訳の空でない文字列の literal: {}"
+                                           where (hy.repr v)))))
+            (setv (get values key) v (get static "singleHost") (str v)))
       (| ":reads" ":writes" ":serves")
         (setv (get static (cut key 1 None)) (record-names v where key))
       ":needs"
@@ -148,6 +164,13 @@
                   (get static (cut key 1 None)) (dfor #(a b) pairs (str a) (str b))))))
   (when (not-in ":replicas" values)
     (raise (SyntaxError (.format "{}: :replicas が無い — job の望む台数(0 = 取り下げ・1 = 動かす)を必ず書く" where))))
+  (for [key #(":peak-mib" ":settle-mib")]
+    (when (not-in key values)
+      (raise (SyntaxError (.format "{}: {} が無い — 起動の memory の山 :peak-mib と落ち着いた値 :settle-mib(MiB)を必ず書く(既定の値は無い)"
+                                   where key)))))
+  (when (> (int (get values ":settle-mib")) (int (get values ":peak-mib")))
+    (raise (SyntaxError (.format "{}: :settle-mib {} が :peak-mib {} を越える — 落ち着いた値は起動の山以下"
+                                 where (int (get values ":settle-mib")) (int (get values ":peak-mib"))))))
   #(name program values static))
 
 

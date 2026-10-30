@@ -92,7 +92,7 @@ USED = (
                     "read-grant-of", "service-account-token-file", "k8s-supplied-peer")),
     # 1 台が止まっても常駐の job が残りの worker の枠と memory に入るか(N+1)の判断(card ki-4689c7008147 — 使い手の枠の検と宣言の前の
     # 照らしが値を作って呼ぶ)。
-    UsedModule("coordinator.intent.failover_model", ("FailoverWorker", "ResidentJob", "ExemptJob", "KeptApart")),
+    UsedModule("coordinator.intent.failover_model", ("FailoverWorker", "ResidentJob", "KeptApart")),
     UsedModule("coordinator.core.failover_policy", ("failover-refusals", "per-machine?")),
     # 雛形の能力(使い手の照らしと、止まった worker が移せない機体ごとの job を分ける数えが per-machine? へ渡す — card ki-51a4b5c04832)。
     UsedModule("worker.core.room_rules", ("TEMPLATE-PROVIDES",)),

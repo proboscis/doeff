@@ -76,7 +76,7 @@
 (deftest test-the-content-key-travels-from-the-declaration-to-the-worker
   ;; 宣言の組み立て(system-declaration の :contents)→ coordinator の宣言の読み・保存の形 → heartbeat の返事 → worker の宣言。両側の指紋が同じ。
   (val program-job (job "quiet" (spec-at "r1" None None) :call (CallShape :function spec-at :args ["r1" None None] :kwargs {})
-                        :replicas 1 :needs #{"net"}))
+                        :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"net"}))
   (val system (system-of "lab" #(program-job)))
   (val versions (! (process-versions os.environ)))
   (val row (get (. (system-declaration system "r1" :versions versions :contents {"quiet" "sha256:k1"}) rows) 0))
