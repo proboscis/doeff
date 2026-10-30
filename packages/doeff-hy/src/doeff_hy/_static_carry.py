@@ -43,6 +43,12 @@ star import は、その module の全部の名に依る(_Node の name = None)�
 "rows": [[行, 列, severity, 規則, 文言], …]}}}。run = 回の番号(運びの無い回が 1)・checked = その file を pyright に当てた回の番号・
 rows = その回の pyright の診断(.hy の位置・pyright の答えの順 — 整える前の物。整え(static_check.settle)は毎回、運んだ物と当てた物を合わせてかける)。
 summary は使い手(agora-controllers の scripts/hy_type_trend.hy)が読む欄: run・checked・carried・reasons・refresh_mismatches・mismatched。
+
+組ごとの書き直し(--carry-group・agora-redesign card ki-5ea68e47b927): 当てる file を組に分けて pyright に当て、組を当て終えるたびに
+途中の文書(next_record の done = 当て終えた file)を書く。途中の文書は、当て終えた file の今回の診断・運んだ file・まだ当てていない
+見直しの file の前の回の記録だけを持ち、まだ当てていない新しい・変わった file を持たない(次の回は new として当てる)。使い手が時間で
+道具を切っても、当て終えた組の診断は次の回へ残る — 以前は切られた回が文書を書かず、全部を当てる回(環境の指紋が替わった回)が上限を
+越えると、次の回も同じ全部を当て直して二度と測れなかった(2026-10-27〜29 の日次 13 回)。
 """
 
 import ast
@@ -374,35 +380,50 @@ def plan_carry(
 
 
 def next_record(  # noqa: DOEFF006 — 内部の小さな組の戻り
-    plan: Plan, fingerprint: str, inputs: Sequence[FileInputs], fresh: Sequence[FileRows]
+    plan: Plan,
+    fingerprint: str,
+    inputs: Sequence[FileInputs],
+    fresh: Sequence[FileRows],
+    done: frozenset[str] | None = None,
 ) -> tuple[CarryRecord, Summary]:
-    """純粋: この回の運びの文書と数を作るため(当てた file は今回の診断 fresh と今回の番号、運んだ file は前の回の記録のまま)。"""
+    """純粋: この回の運びの文書と数を作るため(当てた file は今回の診断 fresh と今回の番号、運んだ file は前の回の記録のまま)。done =
+    組ごとの途中の文書で当て終えた file(None = 全部を当て終えた)— まだ当てていない見直しの file は前の回の記録のまま持ち、まだ
+    当てていない新しい・変わった file は持たない(頭の註「組ごとの書き直し」)。数も当て終えた file だけを数える。"""
     answered = {
         rows.path: rows.rows for rows in fresh
     }  # path からこの回の診断を引く索引(この関数の中だけ)
     carried = {
         kept.path: kept for kept in plan.carried
     }  # path から運ぶ記録を引く索引(この関数の中だけ)
-    checked = plan.checked_paths
+    checked = plan.checked_paths if done is None else plan.checked_paths & done
+    waiting = {
+        checking.path: checking.before
+        for checking in plan.checking
+        if checking.path not in checked and checking.before is not None
+    }  # まだ当てていない見直しの file の前の回の記録(この関数の中だけ)
     files = tuple(
         CarriedFile(file.path, file.inputs, plan.run, answered.get(file.path, ()))
         if file.path in checked
         else carried[file.path]
+        if file.path in carried
+        else waiting[file.path]
         for file in inputs
+        if file.path in checked or file.path in carried or file.path in waiting
     )
+    finished = tuple(checking for checking in plan.checking if checking.path in checked)
     mismatched = tuple(
         sorted(
             checking.path
-            for checking in plan.checking
+            for checking in finished
             if checking.before is not None
             and sorted(checking.before.rows) != sorted(answered.get(checking.path, ()))
         )
     )
     reasons = tuple(
-        ReasonCount(reason, sum(1 for checking in plan.checking if checking.reason == reason))
+        ReasonCount(reason, sum(1 for checking in finished if checking.reason == reason))
         for reason in REASONS
     )
-    summary = Summary(plan.run, len(plan.checking), len(plan.carried), reasons, mismatched)
+    summary = Summary(plan.run, len(finished), len(plan.carried), reasons, mismatched)
     return CarryRecord(fingerprint, plan.run, files), summary
 
 

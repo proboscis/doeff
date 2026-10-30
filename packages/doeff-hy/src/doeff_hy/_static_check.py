@@ -1312,6 +1312,21 @@ def _rows_by_path(diagnostics: Iterable[Diagnostic]) -> tuple[FileRows, ...]:
     )
 
 
+def carry_groups(sources: list[Path], group_size: int) -> list[list[Path]]:
+    """純粋: pyright に当てる file を group_size 本ずつの組にするため(0 以下 = 1 組・当てる file が無くても 1 組 — 同じ名の .py の註を出す)。"""
+    if group_size <= 0 or len(sources) <= group_size:
+        return [sources]
+    return [sources[start : start + group_size] for start in range(0, len(sources), group_size)]
+
+
+def _keep_carry(carry: Path, text: str) -> None:
+    """運びの文書を書くため(書けなければ名乗って続ける — 次の回は前の運びと比べる)。"""
+    try:
+        write_carry(carry, text)
+    except OSError as error:
+        print(f"doeff-hy-check: 運びの file {carry} を書けない({error})— 次の回は前の運びと比べる", file=sys.stderr)
+
+
 def run_carried(
     root: Path,
     roots: list[Path],
@@ -1323,10 +1338,12 @@ def run_carried(
     threads: int,
     carry: Path,
     refresh_runs: int,
+    group_size: int = 0,
 ) -> Checked:
     """運び(doeff_hy/_static_carry.py)の下で pyright を撃つため: 前の回から入力の変わらない .hy は当てず、運びの file の前の回の診断を
     運ぶ。この回の運びで file を置き換え(書けなければ名乗って続ける — 次の回は前の運びと比べる)、当てた数と運んだ数を標準エラーに
-    1 行出す。運びの file が読めない時は名乗って全部を当てる(運びは測りの近道で、測りを止める訳にしない)。"""
+    1 行出す。運びの file が読めない時は名乗って全部を当てる(運びは測りの近道で、測りを止める訳にしない)。group_size = 当てる file を
+    この本数の組に分けて pyright に当て、組ごとに途中の文書を書く(0 = 分けない — _static_carry の頭の註「組ごとの書き直し」)。"""
     try:
         previous: CarryRecord | CarryUnreadableError | None = read_carry(carry)
     except CarryUnreadableError as error:
@@ -1353,20 +1370,26 @@ def run_carried(
     )
     plan = plan_carry(previous, environment.fingerprint, inputs, refresh_runs)
     chosen = plan.checked_paths
-    checked = run_pyright(
-        root,
-        settings,
-        closure.projections,
-        [source for source in targets if str(source.relative_to(root)) in chosen],
-        pyright,
-        python,
-        threads,
+    groups = carry_groups(
+        [source for source in targets if str(source.relative_to(root)) in chosen], group_size
     )
+    diagnostics: list[Diagnostic] = []
+    notes: list[str] = []
+    done: set[str] = set()
+    for index, group in enumerate(groups):
+        part = run_pyright(root, settings, closure.projections, group, pyright, python, threads)
+        diagnostics.extend(part.diagnostics)
+        notes.extend(note for note in part.notes if note not in notes)  # 同じ名の .py の註は組ごとに同じ物が出る
+        done.update(str(source.relative_to(root)) for source in group)
+        if index < len(groups) - 1:
+            # 組ごとの途中の文書(_static_carry の頭の註「組ごとの書き直し」)— 使い手が時間で切っても、当て終えた組は次の回へ残る。
+            partial, partial_summary = next_record(
+                plan, environment.fingerprint, inputs, _rows_by_path(diagnostics), frozenset(done)
+            )
+            _keep_carry(carry, carry_text(partial, partial_summary))
+    checked = Checked(diagnostics, notes)
     record, summary = next_record(plan, environment.fingerprint, inputs, _rows_by_path(checked.diagnostics))
-    try:
-        write_carry(carry, carry_text(record, summary))
-    except OSError as error:
-        print(f"doeff-hy-check: 運びの file {carry} を書けない({error})— 次の回は前の運びと比べる", file=sys.stderr)
+    _keep_carry(carry, carry_text(record, summary))
     print(f"doeff-hy-check: {summary.line()}", file=sys.stderr)
     carried = [
         Diagnostic(kept.path, row.line, row.column, row.severity, row.rule, row.message)
@@ -1390,7 +1413,17 @@ def _checked(
     if carry is None:
         return run_pyright(root, settings, closure.projections, report, args.pyright, args.python, threads)
     return run_carried(
-        root, roots, settings, closure, report, args.pyright, args.python, threads, carry, args.carry_refresh_runs
+        root,
+        roots,
+        settings,
+        closure,
+        report,
+        args.pyright,
+        args.python,
+        threads,
+        carry,
+        args.carry_refresh_runs,
+        args.carry_group,
     )
 
 
@@ -1529,6 +1562,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=DEFAULT_REFRESH_RUNS,
         help="入力の変わらない .hy も、この回数のうちに 1 度は当て直す(0 = 当て直さない)",
+    )
+    parser.add_argument(
+        "--carry-group",
+        type=int,
+        default=0,
+        help="当てる .hy をこの本数の組に分けて pyright に当て、組ごとに運びの file を書き直す(切られても当て終えた組が残る・0 = 分けない)",
     )
     args = parser.parse_args(argv)
     try:
