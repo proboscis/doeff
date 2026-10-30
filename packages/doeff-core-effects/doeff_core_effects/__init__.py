@@ -230,8 +230,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._scheduler import StepBudget as StepBudget
     from doeff_core_effects._scheduler import StepBudgetExceeded as StepBudgetExceeded
     from doeff_core_effects._scheduler import TaskCompleted as TaskCompleted
-    from doeff_core_effects._scheduler import TraceSink as TraceSink
-    from doeff_core_effects._scheduler import VmWork as VmWork
     from doeff_core_effects._scheduler_channel import Channel as Channel
     from doeff_core_effects._scheduler_channel import CreateChannel as CreateChannel
     from doeff_core_effects._scheduler_channel import PutChannel as PutChannel
@@ -307,7 +305,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._http_server_effects import WsAccept as WsAccept
     from doeff_core_effects._http_server_effects import WsBinaryArrived as WsBinaryArrived
     from doeff_core_effects._http_server_effects import WsClose as WsClose
-    from doeff_core_effects._http_server_effects import WsCloseFrame as WsCloseFrame
     from doeff_core_effects._http_server_effects import WsCloseSent as WsCloseSent
     from doeff_core_effects._http_server_effects import WsClosed as WsClosed
     from doeff_core_effects._http_server_effects import WsEvent as WsEvent
@@ -472,7 +469,6 @@ if TYPE_CHECKING:
     )
     from doeff_core_effects._http_host_gate import HostNotAllowed as HostNotAllowed
     from doeff_core_effects._http_host_gate import http_host_gate as http_host_gate
-    from doeff_core_effects._sql_effects import DriverValue as DriverValue
     from doeff_core_effects._sql_effects import SetSqlOutage as SetSqlOutage
     from doeff_core_effects._sql_effects import SqlBatch as SqlBatch
     from doeff_core_effects._sql_effects import SqlColumn as SqlColumn
@@ -486,12 +482,10 @@ if TYPE_CHECKING:
     from doeff_core_effects._sql_effects import SqlLock as SqlLock
     from doeff_core_effects._sql_effects import SqlNotify as SqlNotify
     from doeff_core_effects._sql_effects import SqlParam as SqlParam
-    from doeff_core_effects._sql_effects import SqlPlaceholder as SqlPlaceholder
     from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
     from doeff_core_effects._sql_effects import SqlRows as SqlRows
     from doeff_core_effects._sql_effects import SqlSchemaApplied as SqlSchemaApplied
     from doeff_core_effects._sql_effects import SqlTable as SqlTable
-    from doeff_core_effects._sql_effects import SqlText as SqlText
     from doeff_core_effects._sql_effects import SqlTransaction as SqlTransaction
     from doeff_core_effects._sql_effects import SqlTransactionMisuse as SqlTransactionMisuse
     from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
@@ -542,8 +536,6 @@ _LAZY_EXPORTS = {
     "StepBudget": "doeff_core_effects._scheduler",
     "StepBudgetExceeded": "doeff_core_effects._scheduler",
     "TaskCompleted": "doeff_core_effects._scheduler",
-    "TraceSink": "doeff_core_effects._scheduler",
-    "VmWork": "doeff_core_effects._scheduler",
     "Channel": "doeff_core_effects._scheduler_channel",
     "CreateChannel": "doeff_core_effects._scheduler_channel",
     "PutChannel": "doeff_core_effects._scheduler_channel",
@@ -724,7 +716,6 @@ _LAZY_EXPORTS = {
     "WsAccept": "doeff_core_effects._http_server_effects",
     "WsBinaryArrived": "doeff_core_effects._http_server_effects",
     "WsClose": "doeff_core_effects._http_server_effects",
-    "WsCloseFrame": "doeff_core_effects._http_server_effects",
     "WsCloseSent": "doeff_core_effects._http_server_effects",
     "WsClosed": "doeff_core_effects._http_server_effects",
     "WsEvent": "doeff_core_effects._http_server_effects",
@@ -867,7 +858,6 @@ _LAZY_EXPORTS = {
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
     "HostNotAllowed": "doeff_core_effects._http_host_gate",
     "http_host_gate": "doeff_core_effects._http_host_gate",
-    "DriverValue": "doeff_core_effects._sql_effects",
     "SetSqlOutage": "doeff_core_effects._sql_effects",
     "SqlBatch": "doeff_core_effects._sql_effects",
     "SqlColumn": "doeff_core_effects._sql_effects",
@@ -881,12 +871,10 @@ _LAZY_EXPORTS = {
     "SqlLock": "doeff_core_effects._sql_effects",
     "SqlNotify": "doeff_core_effects._sql_effects",
     "SqlParam": "doeff_core_effects._sql_effects",
-    "SqlPlaceholder": "doeff_core_effects._sql_effects",
     "SqlQuery": "doeff_core_effects._sql_effects",
     "SqlRows": "doeff_core_effects._sql_effects",
     "SqlSchemaApplied": "doeff_core_effects._sql_effects",
     "SqlTable": "doeff_core_effects._sql_effects",
-    "SqlText": "doeff_core_effects._sql_effects",
     "SqlTransaction": "doeff_core_effects._sql_effects",
     "SqlTransactionMisuse": "doeff_core_effects._sql_effects",
     "SqlUnreachable": "doeff_core_effects._sql_effects",

@@ -6332,6 +6332,27 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpBodyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpBodyTooLarge",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpCommand",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
    "name": "HttpEvent",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -6424,6 +6445,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_ws_client",
    "name": "WsConnectFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_ws_client",
+   "name": "WsFrame",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -6647,6 +6675,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.file_effects",
+   "name": "EntryStat",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
    "name": "FileFailed",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -6656,6 +6691,41 @@
    "module": "doeff_core_effects.file_effects",
    "name": "LockHeld",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "MemoryFile",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "MemoryFiles",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "MemoryLink",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
+   "name": "PathStat",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -6738,6 +6808,27 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpBodyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpBodyTooLarge",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpCommand",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
    "name": "HttpEvent",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -6801,6 +6892,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.http_server_effects",
+   "name": "WsCloseSent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
    "name": "WsClosed",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -6837,6 +6935,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.http_server_effects",
    "name": "WsTextArrived",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "WsTextSent",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -6920,6 +7025,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.memory_file",
+   "name": "EntryStat",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
    "name": "FileFailed",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -6929,6 +7041,41 @@
    "module": "doeff_core_effects.memory_file",
    "name": "LockHeld",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "MemoryFile",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "MemoryFiles",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "MemoryLink",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "PathStat",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -6970,6 +7117,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.meter_effects",
    "name": "MeterSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.meter_effects",
+   "name": "SecondsTotal",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -7025,6 +7179,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.os_file",
+   "name": "EntryStat",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_file",
    "name": "FileFailed",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -7034,6 +7195,20 @@
    "module": "doeff_core_effects.os_file",
    "name": "LockHeld",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_file",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_file",
+   "name": "PathStat",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -7075,6 +7250,20 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.os_process",
    "name": "FileFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "PathStat",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -7284,6 +7473,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.process_effects",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
    "name": "ProcessSignal",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -7409,6 +7605,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.rooted_file",
+   "name": "PathStat",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler",
    "name": "ExternalPromise",
    "組": "許した物 — effect の値の型",
@@ -7487,6 +7690,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler_step_tally",
+   "name": "SiteTally",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler_step_tally",
    "name": "StepTally",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -7530,6 +7740,20 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_http_server",
    "name": "HttpBodyOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpBodyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpBodyTooLarge",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -7592,6 +7816,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsCloseSent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
    "name": "WsClosed",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -7626,6 +7857,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsTextSent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_process",
    "name": "EnvMode",
    "組": "許した物 — effect の値の型",
@@ -7635,6 +7873,20 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_process",
    "name": "FileFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "PathKind",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "PathStat",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -7698,6 +7950,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_ws_client",
    "name": "WsConnectFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_ws_client",
+   "name": "WsFrame",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -7984,6 +8243,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.step_tally_effects",
+   "name": "SiteTally",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.step_tally_effects",
    "name": "StepTally",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -8048,6 +8314,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.ws_client_effects",
    "name": "WsConnectOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.ws_client_effects",
+   "name": "WsFrame",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
