@@ -13,7 +13,8 @@
   "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
   "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。",
   "組「境界 — effect の値の型」の 757 行(278 名)は、目録が形(同じ package が見せる effect の class の欄の注釈に出る型 — 目録の value_types)を確かめる許す組「許した物 — effect の値の型」を足したので、形に合う 95 名 298 行と「足した名」の 25 行を許した物の表へ同じ答えの決めつきで移し、組は消えた(card ki-5401da404e8e)。合わない名のうち、同じ package の effect の答えの型(__doeff_answer__)に出る 25 名 107 行は組「境界 — effect の結果の型」へ、残りの 158 名 352 行は組「外れ — effect の欄に型を書くか内側へ移す」へ移した — effect の欄の注釈が object・素の tuple や dict・Any で型を言わない値の型と、どの effect の欄にも出ない名。effect の値の型なら欄の注釈に型を書いて許した物の表へ移し、そうでなければ内側へ移す。",
-  "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 1,034 行のうち、目録が答えの型と読む 603 行を許した物の表へ移し、残る 431 行をこの組へ移した。子 card ki-1c401af6d5d3・ki-91aeae4fa810・ki-bf9fdba32e04・ki-63db980652ad・ki-d976fdee464d・ki-4ccdcc97032c が package ごとに直す)。"
+  "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 1,034 行のうち、目録が答えの型と読む 603 行を許した物の表へ移し、残る 431 行をこの組へ移した。子 card ki-1c401af6d5d3・ki-91aeae4fa810・ki-bf9fdba32e04・ki-63db980652ad・ki-d976fdee464d・ki-4ccdcc97032c が package ごとに直す)。",
+  "組「境界 — bus の event の型」は、package の handler が bus に Publish し、本体が WaitForEvent・WaitForEvents で名指して受ける event の class(doeff-events の StopArrived・SourceFailed・SourceStalled・SourceResumed・SourceMissed・SourceStarted・TimerFired の 7 名 31 行)。待ちの答えは本体が名指した型で決まり、EffectBase[T] の T に 1 つの型を書けないので、目録が答えの型と読めず、組「外れ — effect に答えの型を書く」から分けた。許す形は card ki-d94ee9f9f6ce が決める。同じ組の Publish・PublishGap の答え 13 行は effect に答えの型を書いて許した物の表へ移し、MarkGap 4 行(NoticeRoute の when_unsent の値 — どの effect の答えでもない)は同じ選びの Drop・WhenUnsent と同じ組「外れ — effect の欄に型を書くか内側へ移す」へ移した(card ki-bf9fdba32e04)。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -10041,74 +10042,6 @@
       "doeff_events.notice_laws"
      ]
     },
-    "外れ — effect に答えの型を書く": {
-     "doeff_events": [
-      "GapAnswer",
-      "MarkGap",
-      "NoticeDropped",
-      "NoticeGapMarked",
-      "PublishAnswer",
-      "SourceFailed",
-      "SourceMissed",
-      "SourceResumed",
-      "SourceStalled",
-      "SourceStarted",
-      "StopArrived",
-      "TimerFired"
-     ],
-     "doeff_events.effects": [
-      "SourceFailed",
-      "SourceMissed",
-      "SourceResumed",
-      "SourceStalled",
-      "SourceStarted",
-      "StopArrived",
-      "TimerFired"
-     ],
-     "doeff_events.effects.events": [
-      "SourceFailed",
-      "SourceResumed",
-      "SourceStalled",
-      "SourceStarted",
-      "StopArrived"
-     ],
-     "doeff_events.effects.timers": [
-      "TimerFired"
-     ],
-     "doeff_events.event_loop": [
-      "StopArrived"
-     ],
-     "doeff_events.handlers": [
-      "GapAnswer",
-      "MarkGap",
-      "NoticeDropped",
-      "NoticeGapMarked",
-      "PublishAnswer"
-     ],
-     "doeff_events.handlers.notice_events": [
-      "GapAnswer",
-      "MarkGap",
-      "NoticeDropped",
-      "NoticeGapMarked",
-      "PublishAnswer",
-      "SourceFailed",
-      "SourceMissed",
-      "SourceResumed",
-      "SourceStalled",
-      "SourceStarted"
-     ],
-     "doeff_events.handlers.timer": [
-      "TimerFired"
-     ],
-     "doeff_events.notice_laws": [
-      "MarkGap",
-      "NoticeGapMarked",
-      "SourceMissed",
-      "SourceResumed",
-      "SourceStalled",
-      "SourceStarted"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_events": [
       "EventBus",
@@ -10146,6 +10079,7 @@
       "ArmedTimer",
       "BrokerPatience",
       "Drop",
+      "MarkGap",
       "NoticeGapTold",
       "NoticeSent",
       "WhenUnsent"
@@ -10162,6 +10096,7 @@
      ],
      "doeff_events.handlers": [
       "Drop",
+      "MarkGap",
       "NoticeGapTold",
       "NoticeSent",
       "WhenUnsent"
@@ -10169,6 +10104,7 @@
      "doeff_events.handlers.notice_events": [
       "BrokerPatience",
       "Drop",
+      "MarkGap",
       "NoticeGapTold",
       "NoticeSent",
       "WhenUnsent"
@@ -10177,8 +10113,58 @@
       "ArmedTimer"
      ],
      "doeff_events.notice_laws": [
+      "MarkGap",
       "NoticeGapTold",
       "NoticeSent"
+     ]
+    },
+    "境界 — bus の event の型": {
+     "doeff_events": [
+      "SourceFailed",
+      "SourceMissed",
+      "SourceResumed",
+      "SourceStalled",
+      "SourceStarted",
+      "StopArrived",
+      "TimerFired"
+     ],
+     "doeff_events.effects": [
+      "SourceFailed",
+      "SourceMissed",
+      "SourceResumed",
+      "SourceStalled",
+      "SourceStarted",
+      "StopArrived",
+      "TimerFired"
+     ],
+     "doeff_events.effects.events": [
+      "SourceFailed",
+      "SourceResumed",
+      "SourceStalled",
+      "SourceStarted",
+      "StopArrived"
+     ],
+     "doeff_events.effects.timers": [
+      "TimerFired"
+     ],
+     "doeff_events.event_loop": [
+      "StopArrived"
+     ],
+     "doeff_events.handlers.notice_events": [
+      "SourceFailed",
+      "SourceMissed",
+      "SourceResumed",
+      "SourceStalled",
+      "SourceStarted"
+     ],
+     "doeff_events.handlers.timer": [
+      "TimerFired"
+     ],
+     "doeff_events.notice_laws": [
+      "SourceMissed",
+      "SourceResumed",
+      "SourceStalled",
+      "SourceStarted"
      ]
     }
    }
