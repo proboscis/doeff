@@ -13,10 +13,10 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-from doeff_conductor._templates.basic_pr import basic_pr
-from doeff_conductor._templates.enforced_pr import enforced_pr
-from doeff_conductor._templates.multi_agent import multi_agent
-from doeff_conductor._templates.reviewed_pr import reviewed_pr
+from doeff_conductor._templates._basic_pr import basic_pr
+from doeff_conductor._templates._enforced_pr import enforced_pr
+from doeff_conductor._templates._multi_agent import multi_agent
+from doeff_conductor._templates._reviewed_pr import reviewed_pr
 
 # Template registry
 TEMPLATES: dict[str, tuple[Callable[..., Any], str]] = {

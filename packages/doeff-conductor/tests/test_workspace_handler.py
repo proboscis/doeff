@@ -266,8 +266,8 @@ class TestWorkspaceHandler:
             return GitCommandResult(returncode=0, stdout="", stderr="")
 
         with (
-            patch("doeff_conductor._handlers.workspace_handler.run_git", side_effect=fake_run_git),
-            patch("doeff_conductor._handlers.workspace_handler.shutil.rmtree", return_value=None),
+            patch("doeff_conductor._handlers._workspace_handler.run_git", side_effect=fake_run_git),
+            patch("doeff_conductor._handlers._workspace_handler.shutil.rmtree", return_value=None),
             pytest.raises(WorkspaceStateError, match="still exists"),
         ):
             handler(DeleteWorkspace(workspace=workspace, force=True))
@@ -310,7 +310,7 @@ class TestWorkspaceHandler:
             return GitCommandResult(returncode=0, stdout="", stderr="")
 
         with (
-            patch("doeff_conductor._handlers.workspace_handler.run_git", side_effect=fake_run_git),
+            patch("doeff_conductor._handlers._workspace_handler.run_git", side_effect=fake_run_git),
             pytest.raises(GitCommandError, match="git command failed"),
         ):
             handler(DeleteWorkspace(workspace=workspace, force=True))

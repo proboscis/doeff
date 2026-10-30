@@ -593,7 +593,7 @@ class TestListWorkspaces:
     def test_list_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns empty list when no workspaces exist."""
         with patch(
-            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers._workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             workspaces = api.list_workspaces()
@@ -602,7 +602,7 @@ class TestListWorkspaces:
     def test_list_workspaces_with_mock(self, api: ConductorAPI, tmp_path: Path):
         """list_workspaces returns workspace objects."""
         with patch(
-            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers._workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             workspace_base.mkdir()
@@ -618,7 +618,7 @@ class TestListWorkspaces:
     ):
         """list_workspaces reports unreadable worktrees without dropping good ones."""
         with patch(
-            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers._workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             repo_base = workspace_base / "default"
@@ -666,7 +666,7 @@ class TestCleanupWorkspaces:
     def test_cleanup_workspaces_empty(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces returns empty list when no workspaces exist."""
         with patch(
-            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers._workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             mock_base.return_value = tmp_path / "empty-workspaces"
             cleaned = api.cleanup_workspaces()
@@ -675,7 +675,7 @@ class TestCleanupWorkspaces:
     def test_cleanup_workspaces_dry_run(self, api: ConductorAPI, tmp_path: Path):
         """cleanup_workspaces dry_run doesn't delete."""
         with patch(
-            "doeff_conductor._handlers.workspace_handler._get_workspace_base_dir"
+            "doeff_conductor._handlers._workspace_handler._get_workspace_base_dir"
         ) as mock_base:
             workspace_base = tmp_path / "workspaces"
             repo_base = workspace_base / "default"

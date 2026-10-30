@@ -383,11 +383,11 @@ if TYPE_CHECKING:
     from doeff_conductor._effects.review import Tier1ReviewResult as Tier1ReviewResult
     from doeff_conductor._effects.review import Tier2Callback as Tier2Callback
     from doeff_conductor._effects.review import Tier2ReviewRequest as Tier2ReviewRequest
+    from doeff_conductor._handlers._workspace_handler import (
+        WorkspaceStateError as WorkspaceStateError,
+    )
     from doeff_conductor._handlers.journaled_workspace import (
         PreCoverageRunError as PreCoverageRunError,
-    )
-    from doeff_conductor._handlers.workspace_handler import (
-        WorkspaceStateError as WorkspaceStateError,
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -456,7 +456,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Tier2Callback": "doeff_conductor._effects.review",
     "Tier2ReviewRequest": "doeff_conductor._effects.review",
     "PreCoverageRunError": "doeff_conductor._handlers.journaled_workspace",
-    "WorkspaceStateError": "doeff_conductor._handlers.workspace_handler",
+    "WorkspaceStateError": "doeff_conductor._handlers._workspace_handler",
 }
 
 

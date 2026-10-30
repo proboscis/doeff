@@ -8,12 +8,12 @@ from doeff_git import production_handlers as _git_production_handlers
 from doeff import Effect, Resume, do, stacked_handlers
 from doeff import handler as _as_handler
 from doeff.program import ProgramHandler
+from doeff_conductor._handlers._agent_handler import agent_handler as _agent_handler
+from doeff_conductor._handlers._exec_handler import exec_handler as _exec_handler
+from doeff_conductor._handlers._git_handler import git_handler as _git_handler
+from doeff_conductor._handlers._issue_handler import issue_handler as _issue_handler
 from doeff_conductor._handlers._offload import offloaded_call as _offloaded_call
-from doeff_conductor._handlers.agent_handler import agent_handler as _agent_handler
-from doeff_conductor._handlers.exec_handler import exec_handler as _exec_handler
-from doeff_conductor._handlers.git_handler import git_handler as _git_handler
-from doeff_conductor._handlers.issue_handler import issue_handler as _issue_handler
-from doeff_conductor._handlers.workspace_handler import workspace_handler as _workspace_handler
+from doeff_conductor._handlers._workspace_handler import workspace_handler as _workspace_handler
 from doeff_conductor._workflow_effect_journal import (
     journaled_workflow_effect_handler as _journaled_workflow_effect_handler,
 )

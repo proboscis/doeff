@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING, Any
 from doeff import handler as _program_handler
 from doeff import run, stacked_handlers
 from doeff.program import ProgramHandler
-from doeff_conductor._handlers.agent_handler import agent_handler as agent_handler
-from doeff_conductor._handlers.exec_handler import exec_handler as exec_handler
-from doeff_conductor._handlers.git_handler import git_handler as git_handler
-from doeff_conductor._handlers.issue_handler import issue_handler as issue_handler
+from doeff_conductor._handlers._agent_handler import agent_handler as agent_handler
+from doeff_conductor._handlers._exec_handler import exec_handler as exec_handler
+from doeff_conductor._handlers._git_handler import git_handler as git_handler
+from doeff_conductor._handlers._issue_handler import issue_handler as issue_handler
+from doeff_conductor._handlers._workspace_handler import workspace_handler as workspace_handler
 from doeff_conductor._handlers.journaled_agent import (
     journaled_agent_handler as journaled_agent_handler,
 )
@@ -39,7 +40,6 @@ from doeff_conductor._handlers.utils import (
 from doeff_conductor._handlers.utils import (
     make_scheduled_handler_with_store as make_scheduled_handler_with_store,
 )
-from doeff_conductor._handlers.workspace_handler import workspace_handler as workspace_handler
 from doeff_conductor._workflow_effect_journal import (
     journaled_workflow_effect_handler as journaled_workflow_effect_handler,
 )

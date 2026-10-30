@@ -26,7 +26,7 @@ from doeff_conductor._effects.issue import CreateIssue, GetIssue, ListIssues, Re
 from doeff_conductor._effects.workspace import CreateWorkspace, DeleteWorkspace, MergeWorkspaces
 from doeff_conductor._exceptions import IssueNotFoundError
 from doeff_conductor._handlers import _workspace_path
-from doeff_conductor._handlers.exec_handler import exec_handler
+from doeff_conductor._handlers._exec_handler import exec_handler
 from doeff_conductor._handlers.utils import _scheduled_body
 from doeff_conductor._types import (
     Issue,

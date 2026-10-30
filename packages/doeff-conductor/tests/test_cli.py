@@ -450,7 +450,7 @@ def _issue_vault_stub() -> Iterator[MagicMock]:
     and so on, and does not find or create a vault directory.
     """
     stub = MagicMock()
-    module = "doeff_conductor._handlers.issue_handler"
+    module = "doeff_conductor._handlers._issue_handler"
     with (
         patch(f"{module}._open_issues_dir", lambda _issues_dir: Path("unused-issue-vault")),
         patch(f"{module}._create_issue", lambda _vault, effect: stub.handle_create_issue(effect)),
