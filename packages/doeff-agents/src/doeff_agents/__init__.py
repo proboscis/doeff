@@ -70,8 +70,8 @@ _LAZY_EXPORTS = {
     "StopEffect": "._effects",
     "StopSession": "._effects",
     "StopSessionEffect": "._effects",
-    # 関数 agent は定義の module から読む: _effects の属性 agent は、古い path doeff_agents.effects.agent の import が
-    # 同じ名の子の module で上書きする(ADR-DOE-API-001 R34・card ki-db44e4d3efe4)。
+    # 関数 agent は定義の module から読む: package _effects は同じ名の子の module agent を持つので、名 agent を出さない
+    # (ADR-DOE-API-001 R34・card ki-db44e4d3efe4・ki-d3a096ce3eaa)。
     "agent": "._effects.agent",
     "AgentCapabilityUnsupportedError": "._effects",
     "AgentEvent": "._effects",
@@ -367,7 +367,6 @@ if TYPE_CHECKING:
         StopEffect as StopEffect,
         StopSession as StopSession,
         StopSessionEffect as StopSessionEffect,
-        agent as agent,
         AgentCapabilityUnsupportedError as AgentCapabilityUnsupportedError,
         AgentEvent as AgentEvent,
         AgentEventPage as AgentEventPage,
@@ -468,6 +467,7 @@ if TYPE_CHECKING:
     from doeff_agents._session_backend import (
         SessionBackend as SessionBackend,
     )
+    from doeff_agents._effects.agent import agent as agent
     from doeff_agents._effects.agent import AgentEffectBase as AgentEffectBase
     from doeff_agents._effects.agent import CodexTurnCredential as CodexTurnCredential
     from doeff_agents._effects.agent import InputImage as InputImage

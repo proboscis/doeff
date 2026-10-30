@@ -578,7 +578,7 @@ class ConductorAPI:
         workflow_id: str | None = None,
     ) -> "list[Workspace]":
         """List materialized workspaces."""
-        from doeff_conductor._handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor._handlers._workspace_handler import _get_workspace_base_dir
         from doeff_conductor._types import Workspace
 
         workspaces = []
@@ -645,7 +645,7 @@ class ConductorAPI:
         """
         import shutil
 
-        from doeff_conductor._handlers.workspace_handler import _get_workspace_base_dir
+        from doeff_conductor._handlers._workspace_handler import _get_workspace_base_dir
 
         cleaned = []
         workspace_base = _get_workspace_base_dir()

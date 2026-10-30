@@ -46,6 +46,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    落ちた)。package ごとに 2 つで照らす: 字面の照合(入口の file が束ねる名と子の名)と、新しい process で根と全部の公開の
    module(古い path を含む)を 1 つずつ import した後も入口の名が module に替わらない確かめ。失敗ケース: 使い捨ての package
    の入口が関数 serve(遅延)・tool(すぐ)を出す所に同じ名の移し替えの module を置くと両方が赤・殻を消すと緑。
+   根の下の package(_ の package を含む)の入口にも同じく当てる(card ki-d3a096ce3eaa — 移した package の古い path
+   doeff_agents.effects.agent の import が doeff_agents._effects の関数 agent を module で上書きした)。失敗ケース: 根の下の
+   package _inner の入口が同じ名の子 tool から関数 tool を束ね、移した package の古い path inner を殻が答えると両方が赤・
+   子を _tool へ移すと緑。
 """
 
 from __future__ import annotations
@@ -676,7 +680,7 @@ def _bound_by_entry(node: ast.stmt, root: str) -> Iterator[tuple[str, int]]:
 
 
 def _is_child(path: Path) -> bool:
-    """import の根のすぐ下の、_ で始まらない子(module の file・package の dir・名前空間の dir)か。"""
+    """package のすぐ下の、_ で始まらない子(module の file・package の dir・名前空間の dir)か。"""
     if path.name.startswith(("_", ".")):
         return False
     if path.is_dir():
@@ -684,32 +688,56 @@ def _is_child(path: Path) -> bool:
     return path.name.endswith(_CHILD_SUFFIXES + _EXTENSION_SUFFIXES)
 
 
-def _child_names(root_dir: Path) -> dict[str, Path]:
-    """import の根のすぐ下の子の名から path へ(同じ名の .py と .pyi は名の順で先の file)。"""
+def _child_names(package: Path) -> dict[str, Path]:
+    """package のすぐ下の子の名から path へ(同じ名の .py と .pyi は名の順で先の file)。"""
     return {
         path.name.split(".")[0]: path
-        for path in sorted(root_dir.iterdir(), reverse=True)
+        for path in sorted(package.iterdir(), reverse=True)
         if _is_child(path)
     }
 
 
+#: package の dir にする入口の file(Hy の入口も import できる — 新しい process の確かめが import する)。
+_ENTRY_FILES = ("__init__.py", "__init__.hy")
+
+
+def entry_packages(root_dir: Path, root: str) -> list[tuple[str, Path]]:
+    """import の根と、その下の package(_ の package を含む)の名と dir — 入口の file を持つ dir(名の順)。
+
+    根の下の package の入口も根と同じく名を出し、移した package の古い path の import がその package の属性を同じ名の子の
+    module で上書きする(doeff_agents.effects.agent の import が doeff_agents._effects の agent を — card ki-d3a096ce3eaa)。
+    """
+    if not root_dir.is_dir():
+        return []
+    dirs = [root_dir, *(path for path in root_dir.rglob("*") if path.is_dir())]
+    return sorted(
+        (".".join([root, *relative.parts]), path)
+        for path in dirs
+        for relative in [path.relative_to(root_dir)]
+        if all(part.isidentifier() and part != "__pycache__" for part in relative.parts)
+        and any((path / name).is_file() for name in _ENTRY_FILES)
+    )
+
+
 def written_entry_name_clashes(package_dir: Path) -> list[str]:
-    """字面の照合: import の根の ``__init__.py`` が束ねる公開の名と同じ名の子(移し替えの module を含む)。
+    """字面の照合: import の根と、その下の package(_ の package を含む)の ``__init__.py`` が束ねる公開の名と同じ名の子
+    (移し替えの module を含む)。
 
     import の順に依らない — 移し替えの module が package の class を差し替えて束ねを捨てても(前の hide の手当て)赤。
     """
     repo = package_dir.parent.parent
     entries = [
-        (root, root.path / "__init__.py")
+        (name, path, path / "__init__.py")
         for root in tool.read_layout(package_dir).roots
-        if (root.path / "__init__.py").is_file()
+        for name, path in entry_packages(root.path, root.name)
+        if (path / "__init__.py").is_file()
     ]
     return [
-        f"{root.name}.{name}: 入口 {init.relative_to(repo)} の {bound[name]} 行が出す名と同じ名の子"
-        f" {path.relative_to(repo)} が在る"
-        for root, init in entries
-        for bound in [_entry_bindings(init, root.name)]
-        for name, path in sorted(_child_names(root.path).items())
+        f"{package}.{name}: 入口 {init.relative_to(repo)} の {bound[name]} 行が出す名と同じ名の子"
+        f" {child.relative_to(repo)} が在る"
+        for package, path, init in entries
+        for bound in [_entry_bindings(init, package)]
+        for name, child in sorted(_child_names(path).items())
         if name in bound
     ]
 
@@ -721,10 +749,11 @@ def _entry_bindings(init: Path, root: str) -> dict[str, int]:
     return {name: line for name, line in reversed(pairs) if not name.startswith("_")}
 
 
-#: 新しい process の確かめ: 根を import して入口の公開の名(dir — 遅延の名を含む)のうち module でない物を控え、公開の
-#: module(移し替えの module の古い path と、移した package の下の古い名を含む)を 1 つずつ import し、そのたびに入口の
-#: 名が module に替わったかを見る。最後に入口の名を全部読み(遅延の名を作らせ)、module が返れば同じく数える。
-#: import に落ちた module は名を束ねないので数えず、結末に並べる(赤の文に出す)。
+#: 新しい process の確かめ: 根を import して入口の公開の名(dir — 遅延の名を含む)のうち module でない物を控え、根の下の
+#: package(_ の package を含む)を 1 つずつ import して同じく入口の名を控え、公開の module(移し替えの module の古い path
+#: と、移した package の下の古い名を含む)を 1 つずつ import し、そのたびに控えた入口の名が module に替わったかを見る。
+#: 最後に入口の名を全部読み(遅延の名を作らせ)、module が返れば同じく数える。import に落ちた module は名を束ねないので
+#: 数えず、結末に並べる(赤の文に出す)。
 _IMPORTED_PROBE = r"""
 import importlib
 import importlib.util
@@ -738,12 +767,18 @@ sys.path.extend(place for place in payload["last"] if place not in sys.path)
 if importlib.util.find_spec("hy") is not None:
     importlib.import_module("hy")
 entries = {root: importlib.import_module(root) for root in payload["roots"]}
-names = [
-    (root, name)
-    for root, module in entries.items()
-    for name in dir(module)
-    if not name.startswith("_") and not isinstance(module.__dict__.get(name), types.ModuleType)
-]
+
+
+def public_names(package):
+    module = entries[package]
+    return [
+        (package, name)
+        for name in dir(module)
+        if not name.startswith("_") and not isinstance(module.__dict__.get(name), types.ModuleType)
+    ]
+
+
+root_names = [pair for root in payload["roots"] for pair in public_names(root)]
 
 
 def failure(label, error):
@@ -758,7 +793,7 @@ def imported(name):
     return None
 
 
-def bound_modules():
+def bound_modules(names):
     return {
         (root, name): entries[root].__dict__[name].__name__
         for root, name in names
@@ -773,7 +808,13 @@ def read(root, name):
         return None, failure(f"{root}.{name}", error)
 
 
-steps = [(name, imported(name), bound_modules()) for name in payload["modules"]]
+# The packages below the roots are imported first (the roots' names are watched meanwhile); their names are
+# watched from then on, while the public modules and old paths are imported one by one.
+package_steps = [(package, imported(package), bound_modules(root_names)) for package in payload["packages"]]
+loaded = [package for package in payload["packages"] if package in sys.modules]
+entries = {**entries, **{package: sys.modules[package] for package in loaded}}
+names = [*root_names, *(pair for package in loaded for pair in public_names(package))]
+steps = [*package_steps, *((name, imported(name), bound_modules(names)) for name in payload["modules"])]
 values = {(root, name): read(root, name) for root, name in names}
 last = {
     key: value.__name__
@@ -793,7 +834,8 @@ print(json.dumps({
 
 
 def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]]:
-    """新しい process の確かめ: 全部の公開の module と古い path を import した後に module になった入口の名と、import に落ちた物。"""
+    """新しい process の確かめ: 根の下の package と、全部の公開の module と古い path を import した後に module になった
+    入口(根と根の下の package の入口)の名と、import に落ちた物。"""
     layout = tool.read_layout(package_dir)
     roots = [root for root in layout.roots if root.path.is_dir()]
     if not roots:
@@ -803,6 +845,9 @@ def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]
         "first": [] if layout.maturin else places,
         "last": places if layout.maturin else [],
         "roots": [root.name for root in roots],
+        "packages": [
+            name for root in roots for name, _path in entry_packages(root.path, root.name) if name != root.name
+        ],
         "modules": [name for name, _path in tool.public_modules(layout) if "." in name],
     }
     done = subprocess.run(
@@ -2100,4 +2145,66 @@ def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_gr
 
     for child in ("serve", "tool"):
         (package_dir / "src" / FIXTURE_ROOT / f"{child}.py").unlink()
+    check_entry_names(package_dir)
+
+
+def _moved_package_shim(child: str, names: Mapping[str, str]) -> str:
+    """古い path の子 package ``child`` の移し替えの module: 古い path も、その下の古い名も(meta path の finder が)移した先の
+    module そのもので答える(tools/hide_submodules.py の package の殻と同じ形)。``names`` は古い module の名から固定の列へ。"""
+    old, new = f"{FIXTURE_ROOT}.{child}", f"{FIXTURE_ROOT}._{child}"
+    pins = "".join(f"# moved-submodule-shim-names {module}:\n#   {pinned}\n" for module, pinned in names.items())
+    return (
+        f"# moved-submodule-shim: {old} -> {new}\n{pins}"
+        "import importlib.abc\n"
+        "import importlib.util\n"
+        "import sys\n"
+        "from importlib import import_module\n\n\n"
+        "class _MovedSubmodules(importlib.abc.MetaPathFinder, importlib.abc.Loader):\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        f'        moved = "{new}" + fullname[len("{old}"):]\n'
+        f'        if not fullname.startswith("{old}.") or importlib.util.find_spec(moved) is None:\n'
+        "            return None\n"
+        "        return importlib.util.spec_from_loader(fullname, self)\n\n"
+        "    def create_module(self, spec):\n"
+        "        return None\n\n"
+        "    def exec_module(self, module):\n"
+        f'        sys.modules[module.__name__] = import_module("{new}" + module.__name__[len("{old}"):])\n\n\n'
+        "sys.meta_path.insert(0, _MovedSubmodules())\n"
+        f'sys.modules[__name__] = import_module("{new}")\n'
+    )
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_child_turns_green(
+    tmp_path: Path,
+) -> None:
+    """根の下の package _inner の入口が、同じ名の子 tool から関数 tool を束ね、移した package の古い path inner を殻が答えると、
+    字面の照合も新しい process の確かめも赤(古い path inner.tool の import が _inner の属性 tool を module で上書きする)・
+    子を _ の名 _tool へ移すと緑(ADR-DOE-API-001 R34)。
+
+    doeff_agents._effects の子 agent と、移した package の古い path doeff_agents.effects.agent と同じ形(card ki-d3a096ce3eaa)。
+    """
+    files = {
+        "__init__.py": "",
+        "_inner/__init__.py": f"from {FIXTURE_ROOT}._inner.tool import tool as tool\n",
+        "_inner/tool.py": 'def tool() -> str:\n    return "tool"\n',
+        "inner.py": _moved_package_shim(
+            "inner", {f"{FIXTURE_ROOT}.inner": "tool", f"{FIXTURE_ROOT}.inner.tool": "tool"}
+        ),
+    }
+    package_dir = _fixture_tree(tmp_path, files) / "packages" / FIXTURE_DIR
+    written = written_entry_name_clashes(package_dir)
+    imported, failed = imported_entry_name_clashes(package_dir)
+    assert [line.split(":")[0] for line in written] == [f"{FIXTURE_ROOT}._inner.tool"]
+    assert imported == [
+        f"{FIXTURE_ROOT}._inner.tool: {FIXTURE_ROOT}.inner.tool を import した後、入口の名が module"
+        f" {FIXTURE_ROOT}._inner.tool に替わった",
+    ]
+    assert failed == []
+    with pytest.raises(AssertionError, match=r"ADR-DOE-API-001 R34"):
+        check_entry_names(package_dir)
+
+    inner = package_dir / "src" / FIXTURE_ROOT / "_inner"
+    (inner / "tool.py").rename(inner / "_tool.py")
+    (inner / "__init__.py").write_text(f"from {FIXTURE_ROOT}._inner._tool import tool as tool\n", encoding="utf-8")
     check_entry_names(package_dir)
