@@ -130,23 +130,16 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "unplaced_memory",
+   "name": "runtime_env_of_json",
    "組": "許した物 — program の helper",
-   "決め": "ki-2acb63aec0fd"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.resource_policy",
-   "name": "unplaced_memory",
-   "組": "許した物 — program の helper",
-   "決め": "ki-2acb63aec0fd"
+   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "runtime_env_of_json",
+   "name": "unplaced_memory",
    "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+   "決め": "ki-2acb63aec0fd"
   },
   {
    "package": "doeff-cluster",
@@ -168,6 +161,13 @@
    "name": "tick",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.resource_policy",
+   "name": "unplaced_memory",
+   "組": "許した物 — program の helper",
+   "決め": "ki-2acb63aec0fd"
   },
   {
    "package": "doeff-cluster",
