@@ -155,7 +155,7 @@ assert child.returncode != 0, child
 assert child.stderr.lstrip("\n").startswith(forgot_output), (child.stderr, forgot_output)
 ran += 2
 
-# 目次: 困りごとの表の回は、連載の回の全部(AIエージェントの連載の回は、その1本目へのリンク1行で案内する)。
+# 目次: 困りごとの表の回は、doeffの連載の回の全部(本文は別の連載へ案内しない — doeffだけの記事にする)。
 expected_slugs = {
     "agents",
     "llm",
@@ -185,7 +185,7 @@ expected_slugs = {
     "types",  # 2026-10-18に足した候補7で、2026-10-20に8本目にした「公開APIの型の穴をテストで塞ぎ、黙って開かせない」。
 }
 all_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", article))
-linked_slugs = expected_slugs | {"fleet"}
+linked_slugs = expected_slugs
 assert all_slugs == linked_slugs, (linked_slugs - all_slugs, all_slugs - linked_slugs)
 table_text = "\n".join(line for line in article.splitlines() if line.startswith("|"))
 table_slugs = set(re.findall(r"\(doeff-([a-z]+)\.md\)", table_text))
