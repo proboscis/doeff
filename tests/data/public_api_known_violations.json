@@ -75,66 +75,6 @@
   "doeff-agentic": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_agentic.event_log": [
-      "EventLogReader",
-      "EventLogWriter",
-      "get_default_state_dir"
-     ],
-     "doeff_agentic.state": [
-      "StateManager",
-      "get_default_state_dir"
-     ],
-     "doeff_agentic.visual_interceptor": [
-      "with_visual_logging"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_agentic.api": [
-      "AgenticAPI"
-     ],
-     "doeff_agentic.cli": [
-      "cli"
-     ],
-     "doeff_agentic.event_log": [
-      "EventLogEntry",
-      "WorkflowIndex"
-     ],
-     "doeff_agentic.state": [
-      "generate_workflow_id"
-     ],
-     "doeff_agentic.visual_interceptor": [
-      "create_visual_interceptor",
-      "visual_logging_console"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_agentic.api",
-      "doeff_agentic.cli",
-      "doeff_agentic.effects",
-      "doeff_agentic.effects.environment",
-      "doeff_agentic.effects.messaging",
-      "doeff_agentic.effects.recorded",
-      "doeff_agentic.effects.session",
-      "doeff_agentic.effects.status",
-      "doeff_agentic.effects.workflow",
-      "doeff_agentic.event_log",
-      "doeff_agentic.exceptions",
-      "doeff_agentic.handler",
-      "doeff_agentic.handlers",
-      "doeff_agentic.handlers.opencode",
-      "doeff_agentic.handlers.production",
-      "doeff_agentic.handlers.recorded",
-      "doeff_agentic.handlers.testing",
-      "doeff_agentic.handlers.tmux",
-      "doeff_agentic.opencode_handler",
-      "doeff_agentic.state",
-      "doeff_agentic.tmux_handler",
-      "doeff_agentic.types",
-      "doeff_agentic.visual_interceptor"
-     ]
-    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-agentic-tui"
@@ -142,16 +82,6 @@
     },
     "境界 — effect の値の型": {
      "doeff_agentic": [
-      "AgentConfig",
-      "AgenticEnvironmentType",
-      "AgenticMessage",
-      "WatchEventType",
-      "WatchUpdate"
-     ],
-     "doeff_agentic.effects.environment": [
-      "AgenticEnvironmentType"
-     ],
-     "doeff_agentic.types": [
       "AgentConfig",
       "AgenticEnvironmentType",
       "AgenticMessage",
@@ -173,33 +103,10 @@
       "AgenticWorkflowStatus",
       "WorkflowInfo",
       "WorkflowStatus"
-     ],
-     "doeff_agentic.state": [
-      "AgentInfo",
-      "AgentStatus",
-      "WorkflowInfo",
-      "WorkflowStatus"
-     ],
-     "doeff_agentic.types": [
-      "AgentInfo",
-      "AgentStatus",
-      "AgenticEndOfEvents",
-      "AgenticEnvironmentHandle",
-      "AgenticEvent",
-      "AgenticMessageHandle",
-      "AgenticSessionHandle",
-      "AgenticSessionStatus",
-      "AgenticWorkflowHandle",
-      "AgenticWorkflowStatus",
-      "WorkflowInfo",
-      "WorkflowStatus"
      ]
     },
     "境界 — handler の設定の型": {
      "doeff_agentic": [
-      "VisualInterceptorConfig"
-     ],
-     "doeff_agentic.visual_interceptor": [
       "VisualInterceptorConfig"
      ]
     },
@@ -220,36 +127,6 @@
       "AmbiguousPrefixError",
       "UserInputTimeoutError",
       "WorkflowNotFoundError"
-     ],
-     "doeff_agentic.effects": [
-      "AgentNotRunningError",
-      "AgenticAmbiguousPrefixError",
-      "AgenticDuplicateNameError",
-      "AgenticEnvironmentInUseError",
-      "AgenticEnvironmentNotFoundError",
-      "AgenticError",
-      "AgenticServerError",
-      "AgenticSessionNotFoundError",
-      "AgenticSessionNotRunningError",
-      "AgenticTimeoutError",
-      "AgenticUnsupportedOperationError",
-      "AgenticWorkflowNotFoundError",
-      "AmbiguousPrefixError",
-      "UserInputTimeoutError",
-      "WorkflowNotFoundError"
-     ],
-     "doeff_agentic.exceptions": [
-      "AgenticAmbiguousPrefixError",
-      "AgenticDuplicateNameError",
-      "AgenticEnvironmentInUseError",
-      "AgenticEnvironmentNotFoundError",
-      "AgenticError",
-      "AgenticServerError",
-      "AgenticSessionNotFoundError",
-      "AgenticSessionNotRunningError",
-      "AgenticTimeoutError",
-      "AgenticUnsupportedOperationError",
-      "AgenticWorkflowNotFoundError"
      ]
     }
    }
@@ -3191,54 +3068,6 @@
   "doeff-claude-judge": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_claude_judge.handler": [
-      "LOG",
-      "UserPart",
-      "lent_credential",
-      "print_input",
-      "query_user"
-     ],
-     "doeff_claude_judge.wire": [
-      "UserPart"
-     ],
-     "doeff_claude_judge.wiring": [
-      "query_user"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_claude_judge.handler": [
-      "parse",
-      "prepare"
-     ],
-     "doeff_claude_judge.target": [
-      "FORBIDDEN_CHARS"
-     ],
-     "doeff_claude_judge.wire": [
-      "BLOCK_SEPARATOR",
-      "CHOICE_HEAD",
-      "MEDIA_TYPES",
-      "NOUL_HEAD",
-      "STATE_TAG",
-      "SUPPORTED_KINDS",
-      "SYSTEM",
-      "TAG_NAME",
-      "parse",
-      "prepare",
-      "state_text"
-     ],
-     "doeff_claude_judge.wiring": [
-      "DEFAULT_COMMAND"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_claude_judge.handler",
-      "doeff_claude_judge.target",
-      "doeff_claude_judge.wire",
-      "doeff_claude_judge.wiring"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_claude_judge": [
       "ClaudeJudgeTarget",
@@ -3246,37 +3075,10 @@
       "JudgeCredential",
       "NoJudgeCredential",
       "QueryImage"
-     ],
-     "doeff_claude_judge.handler": [
-      "ClaudeJudgeTarget",
-      "ClaudeQuery",
-      "JudgeCredential",
-      "NoJudgeCredential",
-      "QueryImage"
-     ],
-     "doeff_claude_judge.target": [
-      "ClaudeJudgeTarget",
-      "JudgeCredential",
-      "NoJudgeCredential"
-     ],
-     "doeff_claude_judge.wire": [
-      "ClaudeQuery",
-      "QueryImage"
-     ],
-     "doeff_claude_judge.wiring": [
-      "ClaudeJudgeTarget",
-      "ClaudeQuery",
-      "JudgeCredential"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_claude_judge": [
-      "MalformedAnswer"
-     ],
-     "doeff_claude_judge.handler": [
-      "MalformedAnswer"
-     ],
-     "doeff_claude_judge.wire": [
       "MalformedAnswer"
      ]
     }
@@ -9519,351 +9321,12 @@
   "doeff-conductor": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_conductor.templates": [
-      "get_available_templates",
-      "get_template",
-      "get_template_source"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_conductor.git_workspace": [
-      "append_git_output",
-      "conflicted_files",
-      "get_current_commit",
-      "get_default_branch",
-      "get_repo_root",
-      "run_git"
-     ],
-     "doeff_conductor.handlers": [
-      "HandlerProtocol",
-      "RunSyncResult",
-      "run_sync"
-     ],
-     "doeff_conductor.journal": [
-      "AGENT_JOURNAL_FILENAME",
-      "AgentJournal",
-      "AgentReplaySession",
-      "CreateWorkspaceJournalEntry",
-      "WorkspaceJournal"
-     ],
-     "doeff_conductor.monitor": [
-      "AgentJournal"
-     ]
-    },
     "外れ — 内側の module へ移す": {
-     "doeff_conductor.dsl": [
-      "BindingInfo",
-      "ExpandedNode",
-      "ExpandedWorkflow",
-      "reset_workspace_occurrences"
-     ],
-     "doeff_conductor.effects": [
-      "BLOCKER_FINDING",
-      "CALIBRATION_SAMPLE_BUDGET_KEY",
-      "DEFAULT_REVIEW_ROUTE_TABLE",
-      "REVIEW_VERDICT_RESULT_SCHEMA",
-      "ReviewRouter",
-      "TIER1_REVIEW_BUDGET_KEY",
-      "TIER2_ESCALATION_BUDGET_KEY",
-      "is_closure_terminal",
-      "route_review_item",
-      "run_review_routing_demo"
-     ],
-     "doeff_conductor.effects.agent": [
-      "ResolvedIdentity",
-      "resolved_identity_fingerprint"
-     ],
-     "doeff_conductor.effects.review": [
-      "BLOCKER_FINDING",
-      "CALIBRATION_SAMPLE_BUDGET_KEY",
-      "DEFAULT_REVIEW_ROUTE_TABLE",
-      "REVIEW_VERDICT_RESULT_SCHEMA",
-      "ReviewRouter",
-      "TIER1_REVIEW_BUDGET_KEY",
-      "TIER2_ESCALATION_BUDGET_KEY",
-      "is_closure_terminal",
-      "route_review_item",
-      "run_review_routing_demo"
-     ],
-     "doeff_conductor.env_places": [
-      "default_profile_name",
-      "profile_config_path",
-      "profiles_json",
-      "xdg_state_home"
-     ],
-     "doeff_conductor.environment": [
-      "DEFAULT_PROFILE_DATA",
-      "DEFAULT_ROLE_CONVENTIONS",
-      "DEFAULT_ROUTER_POLICY",
-      "DEFAULT_SITE_CAPABILITIES",
-      "ProfileBinding",
-      "ProfileRegistry",
-      "ResolvedIdentity",
-      "default_profile_name",
-      "describe_author_environment",
-      "load_profile_registry_from_env",
-      "profile_config_path",
-      "profiles_json",
-      "resolved_identity_fingerprint"
-     ],
-     "doeff_conductor.git_workspace": [
-      "GitCommandResult"
-     ],
-     "doeff_conductor.handlers": [
-      "make_blocking_scheduled_handler_with_store",
-      "make_scheduled_handler_with_store"
-     ],
-     "doeff_conductor.handlers.testing": [
-      "ScheduledHandler"
-     ],
-     "doeff_conductor.handlers.utils": [
-      "SimpleHandler",
-      "make_blocking_scheduled_handler_with_store",
-      "make_scheduled_handler_with_store"
-     ],
-     "doeff_conductor.interpreters": [
-      "InterpreterConstant",
-      "plan_interpreter",
-      "production_interpreter",
-      "validation_interpreter"
-     ],
-     "doeff_conductor.journal": [
-      "AgentJournalEntry",
-      "AgentReplayDecision",
-      "GATE_ANSWER_JOURNAL_FILENAME",
-      "GateAnswerJournal",
-      "GateAnswerJournalEntry",
-      "JOURNAL_VERSION",
-      "PROGRESS_JOURNAL_FILENAME",
-      "PROGRESS_STATUS_FAILED",
-      "PROGRESS_STATUS_PARKED",
-      "PROGRESS_STATUS_RUNNING",
-      "PROGRESS_STATUS_SUCCEEDED",
-      "ProgressJournal",
-      "ProgressJournalEntry",
-      "ResolvedIdentity",
-      "TERMINAL_KIND_GATE_ANSWER",
-      "TERMINAL_KIND_OPEN_GATE",
-      "TERMINAL_KIND_SUCCEEDED",
-      "TERMINAL_KIND_WORKSPACE_CREATED",
-      "WORKSPACE_JOURNAL_FILENAME",
-      "agent_cache_key",
-      "agent_replay_decision",
-      "logger",
-      "longest_valid_prefix",
-      "node_identity_fingerprint",
-      "resolve_agent_task_identity",
-      "resolved_identity_fingerprint",
-      "xdg_state_home"
-     ],
-     "doeff_conductor.monitor": [
-      "NodeView",
-      "PROGRESS_STATUS_FAILED",
-      "PROGRESS_STATUS_PARKED",
-      "PROGRESS_STATUS_RUNNING",
-      "PROGRESS_STATUS_SUCCEEDED",
-      "ProgressJournal",
-      "RunRow",
-      "STATUS_DONE",
-      "STATUS_PENDING",
-      "TERMINAL_KIND_SUCCEEDED",
-      "VIEWS",
-      "capture_agent_output",
-      "list_open_gates",
-      "node_identity_fingerprint",
-      "node_situation",
-      "node_status_map",
-      "render_dashboard",
-      "render_overview",
-      "render_run",
-      "render_run_tree",
-      "run_rows"
-     ],
-     "doeff_conductor.monitor_app": [
-      "MonitorApp",
-      "NodeView",
-      "STATUS_PENDING",
-      "capture_agent_output",
-      "node_situation",
-      "node_status_map",
-      "run_rows"
-     ],
      "doeff_conductor.overseer": [
-      "GateOption",
-      "OpenGateView",
-      "ProgressEvent",
-      "RUN_STATE_FILENAME",
-      "RunStateView",
-      "VALID_GATE_OUTCOMES",
-      "answered_gate_options",
-      "answered_gate_stakes",
-      "answered_retry_agent_counts",
-      "clear_open_gates",
-      "list_gates_with_status",
-      "list_open_gates",
-      "load_run_state",
-      "make_progress_event",
-      "progress_since",
-      "record_gate_answer",
-      "record_open_gates",
-      "run_state_path",
-      "save_run_state"
-     ],
-     "doeff_conductor.replay_keying": [
-      "ResolvedIdentity",
-      "agent_cache_key",
-      "longest_valid_prefix",
-      "node_identity_fingerprint",
-      "resolved_identity_fingerprint",
-      "workflow_effect_cache_key"
-     ],
-     "doeff_conductor.templates": [
-      "TEMPLATES",
-      "basic_pr",
-      "enforced_pr",
-      "is_template",
-      "multi_agent",
-      "reviewed_pr"
-     ],
-     "doeff_conductor.templates.basic_pr": [
-      "IMPLEMENT_SCHEMA",
-      "basic_pr"
-     ],
-     "doeff_conductor.templates.enforced_pr": [
-      "IMPLEMENT_SCHEMA",
-      "TEST_SCHEMA",
-      "enforced_pr"
-     ],
-     "doeff_conductor.templates.multi_agent": [
-      "ARTIFACT_SCHEMA",
-      "multi_agent"
-     ],
-     "doeff_conductor.templates.reviewed_pr": [
-      "IMPLEMENT_SCHEMA",
-      "REVIEW_SCHEMA",
-      "REVIEW_VERDICT_RESULT_SCHEMA",
-      "reviewed_pr"
-     ],
-     "doeff_conductor.verbs": [
-      "ALLOWED_TERMINAL_KINDS",
-      "BUILT_IN_VALIDATION_SCENARIOS",
-      "BindingPlan",
-      "BindingPlanRow",
-      "DEFAULT_ROUTER_POLICY",
-      "DEFAULT_SITE_CAPABILITIES",
-      "ExpandedWorkflow",
-      "OpenGateView",
-      "ProfileBinding",
-      "ProfileRegistry",
-      "ProgressEvent",
-      "ResolvedAgentProfile",
-      "RunStateView",
-      "SUPPORTED_SUPERVISION_POLICIES",
-      "ScenarioValidationReport",
-      "TerminalState",
-      "ValidationSuiteReport",
-      "agent_cache_key",
-      "assert_validation_closure",
-      "describe_author_environment",
-      "describe_environment",
-      "load_profile_registry_from_env",
-      "make_progress_event",
-      "plan_interpreter",
-      "plan_workflow",
-      "resolve_agent_profile",
-      "save_run_state",
-      "validate_workflow",
-      "validation_interpreter"
-     ],
-     "doeff_conductor.workflow_effect_journal": [
-      "EFFECT_KIND_RANDOM",
-      "EFFECT_KIND_TIME",
-      "TERMINAL_KIND_SUCCEEDED",
-      "WORKFLOW_EFFECT_JOURNAL_FILENAME",
-      "WORKFLOW_EFFECT_JOURNAL_VERSION",
-      "WorkflowEffectJournal",
-      "WorkflowEffectJournalEntry",
-      "WorkflowEffectReplayDecision",
-      "WorkflowEffectReplaySession",
-      "evaluate_random_spec",
-      "longest_valid_prefix",
-      "workflow_effect_cache_key",
-      "workflow_effect_replay_decision",
-      "xdg_state_home"
-     ],
-     "doeff_conductor.workflow_loader": [
-      "WORKFLOW_SNAPSHOT_FILENAME",
-      "WorkflowNondeterminismDiagnostic",
-      "WorkflowNondeterminismError",
-      "check_workflow_source_determinism",
-      "load_workflow_spec",
-      "prepare_workflow_source_for_run",
-      "reset_workspace_occurrences",
-      "snapshot_workflow_source",
-      "workflow_snapshot_path"
+      "GateOption"
      ],
      "doeff_conductor.workflow_runtime": [
-      "ErrValue",
-      "GateOption",
-      "OkValue",
-      "OpenGateView",
-      "ParkedValue",
-      "ProfileBinding",
-      "ProfileRegistry",
-      "QuorumResult",
-      "ResolvedIdentity",
-      "ToleratedLoss",
-      "WorkflowRuntimeResult",
-      "load_profile_registry_from_env",
-      "resolve_agent_profile",
-      "workflow_spec_to_program"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_conductor.dsl",
-      "doeff_conductor.effects",
-      "doeff_conductor.effects.agent",
-      "doeff_conductor.effects.base",
-      "doeff_conductor.effects.dsl",
-      "doeff_conductor.effects.exec",
-      "doeff_conductor.effects.git",
-      "doeff_conductor.effects.issue",
-      "doeff_conductor.effects.review",
-      "doeff_conductor.effects.runs",
-      "doeff_conductor.effects.workspace",
-      "doeff_conductor.env_places",
-      "doeff_conductor.environment",
-      "doeff_conductor.exceptions",
-      "doeff_conductor.git_workspace",
-      "doeff_conductor.handlers",
-      "doeff_conductor.handlers.agent_handler",
-      "doeff_conductor.handlers.exec_handler",
-      "doeff_conductor.handlers.git_handler",
-      "doeff_conductor.handlers.issue_handler",
-      "doeff_conductor.handlers.journaled_agent",
-      "doeff_conductor.handlers.journaled_workspace",
-      "doeff_conductor.handlers.state_handler",
-      "doeff_conductor.handlers.testing",
-      "doeff_conductor.handlers.utils",
-      "doeff_conductor.handlers.workspace_handler",
-      "doeff_conductor.interpreters",
-      "doeff_conductor.journal",
-      "doeff_conductor.monitor",
-      "doeff_conductor.monitor_app",
-      "doeff_conductor.overseer",
-      "doeff_conductor.replay_keying",
-      "doeff_conductor.templates",
-      "doeff_conductor.templates.basic_pr",
-      "doeff_conductor.templates.enforced_pr",
-      "doeff_conductor.templates.multi_agent",
-      "doeff_conductor.templates.reviewed_pr",
-      "doeff_conductor.types",
-      "doeff_conductor.verbs",
-      "doeff_conductor.workflow_effect_journal",
-      "doeff_conductor.workflow_loader",
-      "doeff_conductor.workflow_runtime"
+      "GateOption"
      ]
     },
     "境界 — CLI": {
@@ -9890,30 +9353,16 @@
       "Workspace"
      ],
      "doeff_conductor.effects": [
-      "AgentTask",
       "BudgetConsumption",
       "BudgetCounterKey",
       "CalibrationLaneRate",
       "CalibrationLedger",
       "ClosureTerminal",
       "GateOption",
-      "OpenGate",
-      "OpenGateReason",
-      "ReviewEscalationReason",
-      "ReviewEscalationTerminal",
-      "ReviewFinding",
       "ReviewRouteRule",
-      "ReviewSeverity",
-      "ReviewStakes",
-      "ReviewStakesLevel",
       "ReviewTier",
-      "ReviewVerdictArtifact",
-      "ReviewVerdictTerminal",
       "Tier2Callback",
       "Tier2ReviewRequest"
-     ],
-     "doeff_conductor.effects.agent": [
-      "AgentTask"
      ],
      "doeff_conductor.effects.base": [
       "E"
@@ -9925,54 +9374,10 @@
       "CalibrationLedger",
       "ClosureTerminal",
       "GateOption",
-      "OpenGate",
-      "OpenGateReason",
-      "ReviewEscalationReason",
-      "ReviewEscalationTerminal",
-      "ReviewFinding",
       "ReviewRouteRule",
-      "ReviewSeverity",
-      "ReviewStakes",
-      "ReviewStakesLevel",
       "ReviewTier",
-      "ReviewVerdictArtifact",
-      "ReviewVerdictTerminal",
       "Tier2Callback",
       "Tier2ReviewRequest"
-     ],
-     "doeff_conductor.handlers.testing": [
-      "Issue",
-      "Workspace"
-     ],
-     "doeff_conductor.journal": [
-      "AgentTask"
-     ],
-     "doeff_conductor.templates.basic_pr": [
-      "Issue"
-     ],
-     "doeff_conductor.templates.enforced_pr": [
-      "Issue"
-     ],
-     "doeff_conductor.templates.multi_agent": [
-      "Issue",
-      "Workspace"
-     ],
-     "doeff_conductor.templates.reviewed_pr": [
-      "AgentTask",
-      "Issue"
-     ],
-     "doeff_conductor.types": [
-      "Issue",
-      "MergeConflict",
-      "MergeStrategy",
-      "Workspace"
-     ],
-     "doeff_conductor.workflow_runtime": [
-      "AgentTask",
-      "Issue",
-      "MergeConflict",
-      "MergeStrategy",
-      "Workspace"
      ]
     },
     "境界 — effect の結果の型": {
@@ -9994,56 +9399,14 @@
      "doeff_conductor.effects": [
       "BudgetCounterEntry",
       "CalibrationEscapeRecord",
-      "RemainingReviewBudget",
       "ReviewBudgetStatus",
-      "ReviewItem",
-      "ReviewRoutingResult",
-      "ReviewVerdict",
-      "ReviewerAgentLost",
       "Tier1ReviewResult"
      ],
      "doeff_conductor.effects.review": [
       "BudgetCounterEntry",
       "CalibrationEscapeRecord",
-      "RemainingReviewBudget",
       "ReviewBudgetStatus",
-      "ReviewItem",
-      "ReviewRoutingResult",
-      "ReviewVerdict",
-      "ReviewerAgentLost",
       "Tier1ReviewResult"
-     ],
-     "doeff_conductor.handlers.testing": [
-      "IssueStatus",
-      "MergeStatus",
-      "MergeWorkspacesResult",
-      "PRHandle"
-     ],
-     "doeff_conductor.templates.basic_pr": [
-      "PRHandle"
-     ],
-     "doeff_conductor.templates.enforced_pr": [
-      "PRHandle"
-     ],
-     "doeff_conductor.templates.multi_agent": [
-      "PRHandle"
-     ],
-     "doeff_conductor.templates.reviewed_pr": [
-      "PRHandle"
-     ],
-     "doeff_conductor.types": [
-      "AgentRef",
-      "ExecResult",
-      "IssueStatus",
-      "MergeStatus",
-      "MergeWorkspacesResult",
-      "PRHandle",
-      "WorkflowHandle",
-      "WorkflowStatus"
-     ],
-     "doeff_conductor.workflow_runtime": [
-      "ExecResult",
-      "MergeWorkspacesResult"
      ]
     },
     "境界 — handler の設定の型": {
@@ -10053,20 +9416,10 @@
       "MockConductorRuntime"
      ],
      "doeff_conductor.effects": [
-      "CalibrationPolicy",
-      "DefaultReviewRouter",
-      "DurableReviewBudget"
+      "CalibrationPolicy"
      ],
      "doeff_conductor.effects.review": [
-      "CalibrationPolicy",
-      "DefaultReviewRouter",
-      "DurableReviewBudget"
-     ],
-     "doeff_conductor.handlers": [
-      "MockConductorRuntime"
-     ],
-     "doeff_conductor.handlers.testing": [
-      "MockConductorRuntime"
+      "CalibrationPolicy"
      ]
     },
     "境界 — workflow の DSL の言葉": {
@@ -10162,37 +9515,11 @@
      "doeff_conductor.dsl": [
       "WorkflowExpansionError"
      ],
-     "doeff_conductor.exceptions": [
-      "AgentError",
-      "AgentTimeoutError",
-      "ConductorError",
-      "ConductorStateWarning",
-      "GitCommandError",
-      "IssueAlreadyExistsError",
-      "IssueFileCorruptError",
-      "IssueNotFoundError",
-      "JournalCorruptionError",
-      "PRError",
-      "WorkspaceError"
-     ],
-     "doeff_conductor.git_workspace": [
-      "GitCommandError"
-     ],
      "doeff_conductor.handlers.journaled_workspace": [
       "PreCoverageRunError"
      ],
-     "doeff_conductor.handlers.testing": [
-      "IssueNotFoundError"
-     ],
      "doeff_conductor.handlers.workspace_handler": [
       "WorkspaceStateError"
-     ],
-     "doeff_conductor.journal": [
-      "AgentError",
-      "JournalCorruptionError"
-     ],
-     "doeff_conductor.workflow_effect_journal": [
-      "JournalCorruptionError"
      ]
     }
    }
@@ -11937,21 +11264,6 @@
   "doeff-docker": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_docker.handlers.dockerfile": [
-      "collect_dockerfile",
-      "render_dockerfile"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_docker.effects",
-      "doeff_docker.handlers",
-      "doeff_docker.handlers.docker",
-      "doeff_docker.handlers.dockerfile",
-      "doeff_docker.handlers.shell"
-     ]
-    },
     "境界 — effect の結果の型": {
      "doeff_docker.effects": [
       "ShellRunResult"
@@ -12335,41 +11647,6 @@
   "doeff-flow": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_flow.trace": [
-      "get_default_trace_dir",
-      "trace_observer"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_flow.env_places": [
-      "state_home",
-      "trace_dir_setting"
-     ],
-     "doeff_flow.handlers.production": [
-      "ProtocolHandler"
-     ],
-     "doeff_flow.handlers.testing": [
-      "ProtocolHandler"
-     ],
-     "doeff_flow.trace": [
-      "GatherState",
-      "validate_workflow_id",
-      "write_terminal_trace"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_flow.effects",
-      "doeff_flow.effects.trace",
-      "doeff_flow.env_places",
-      "doeff_flow.handlers",
-      "doeff_flow.handlers.files",
-      "doeff_flow.handlers.production",
-      "doeff_flow.handlers.testing",
-      "doeff_flow.trace"
-     ]
-    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-flow"
@@ -12377,10 +11654,6 @@
     },
     "境界 — effect の値の型": {
      "doeff_flow": [
-      "LiveTrace",
-      "TraceFrame"
-     ],
-     "doeff_flow.trace": [
       "LiveTrace",
       "TraceFrame"
      ]
@@ -12402,76 +11675,6 @@
   "doeff-gemini": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_gemini.client": [
-      "get_gemini_client"
-     ],
-     "doeff_gemini.handlers.production": [
-      "get_gemini_client"
-     ],
-     "doeff_gemini.structured_llm": [
-      "build_contents"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_gemini.client": [
-      "GeminiClient"
-     ],
-     "doeff_gemini.costs": [
-      "calculate_known_model_cost"
-     ],
-     "doeff_gemini.handlers.production": [
-      "GEMINI_IMAGE_MODEL_PREFIXES",
-      "GEMINI_MODEL_EXACT",
-      "GEMINI_MODEL_PREFIXES",
-      "calculate_known_model_cost"
-     ],
-     "doeff_gemini.structured_llm": [
-      "build_generation_config"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_gemini.client": [
-      "track_api_call"
-     ],
-     "doeff_gemini.costs": [
-      "ModelPricing",
-      "UnknownModelPricingError",
-      "calculate_cost",
-      "gemini_cost_calculator__default",
-      "get_model_pricing"
-     ],
-     "doeff_gemini.handlers.production": [
-      "ProtocolHandler",
-      "track_api_call"
-     ],
-     "doeff_gemini.handlers.testing": [
-      "ProtocolHandler"
-     ],
-     "doeff_gemini.structured_llm": [
-      "image_edit__gemini",
-      "process_image_edit_response",
-      "process_structured_response",
-      "process_unstructured_response"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_gemini.client",
-      "doeff_gemini.costs",
-      "doeff_gemini.effects",
-      "doeff_gemini.effects.chat",
-      "doeff_gemini.effects.cost",
-      "doeff_gemini.effects.embedding",
-      "doeff_gemini.effects.image",
-      "doeff_gemini.effects.structured",
-      "doeff_gemini.handlers",
-      "doeff_gemini.handlers.production",
-      "doeff_gemini.handlers.testing",
-      "doeff_gemini.structured_llm",
-      "doeff_gemini.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_gemini": [
       "APICallMetadata",
@@ -12481,20 +11684,6 @@
       "LocalFileContentPart",
       "TextContentPart",
       "UriContentPart"
-     ],
-     "doeff_gemini.handlers.production": [
-      "GeminiContentPart"
-     ],
-     "doeff_gemini.structured_llm": [
-      "FileUriContentPart",
-      "GeminiContentPart",
-      "LocalFileContentPart",
-      "TextContentPart",
-      "UriContentPart"
-     ],
-     "doeff_gemini.types": [
-      "APICallMetadata",
-      "GeminiCostEstimate"
      ]
     },
     "境界 — effect の結果の型": {
@@ -12504,12 +11693,6 @@
       "GeminiImageEditResult",
       "ImageResult",
       "TokenUsage"
-     ],
-     "doeff_gemini.types": [
-      "CostInfo",
-      "GeminiCallResult",
-      "GeminiImageEditResult",
-      "TokenUsage"
      ]
     }
    }
@@ -12517,24 +11700,8 @@
   "doeff-git": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_git.effects",
-      "doeff_git.effects.hosting",
-      "doeff_git.effects.local",
-      "doeff_git.effects.remote",
-      "doeff_git.exceptions",
-      "doeff_git.handlers",
-      "doeff_git.handlers.production",
-      "doeff_git.handlers.testing",
-      "doeff_git.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_git": [
-      "MergeStrategy"
-     ],
-     "doeff_git.types": [
       "MergeStrategy"
      ]
     },
@@ -12542,20 +11709,10 @@
      "doeff_git": [
       "BranchRef",
       "PRHandle"
-     ],
-     "doeff_git.types": [
-      "BranchRef",
-      "PRHandle"
      ]
     },
     "境界 — handler の設定の型": {
      "doeff_git": [
-      "MockGitRuntime"
-     ],
-     "doeff_git.handlers": [
-      "MockGitRuntime"
-     ],
-     "doeff_git.handlers.testing": [
       "MockGitRuntime"
      ]
     },
@@ -12564,7 +11721,6 @@
       "GitCommandError"
      ],
      "doeff_git.exceptions": [
-      "GitCommandError",
       "GitError"
      ]
     }
@@ -12573,34 +11729,9 @@
   "doeff-google-secret-manager": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_google_secret_manager.secrets": [
-      "access_secret"
-     ]
-    },
     "外れ — handler の中へ入れる": {
      "doeff_google_secret_manager.client": [
-      "SecretManagerClient",
-      "get_secret_manager_client"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_google_secret_manager.client": [
-      "DEFAULT_SECRET_MANAGER_SCOPES"
-     ],
-     "doeff_google_secret_manager.handlers.production": [
-      "ProtocolHandler"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_google_secret_manager.client",
-      "doeff_google_secret_manager.effects",
-      "doeff_google_secret_manager.effects.secrets",
-      "doeff_google_secret_manager.handlers",
-      "doeff_google_secret_manager.handlers.production",
-      "doeff_google_secret_manager.handlers.testing",
-      "doeff_google_secret_manager.secrets"
+      "SecretManagerClient"
      ]
     }
    }
@@ -12713,19 +11844,8 @@
   "doeff-image": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_image.effects",
-      "doeff_image.effects.edit",
-      "doeff_image.effects.generate",
-      "doeff_image.types"
-     ]
-    },
     "境界 — effect の結果の型": {
      "doeff_image": [
-      "ImageResult"
-     ],
-     "doeff_image.types": [
       "ImageResult"
      ]
     }
@@ -12744,94 +11864,8 @@
   "doeff-jev": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_jev.handlers": [
-      "HTTP_RETRIES"
-     ],
-     "doeff_jev.handlers.journal": [
-      "JOURNAL_EVENT"
-     ],
-     "doeff_jev.handlers.production": [
-      "HTTP_RETRIES",
-      "Prepared",
-      "proxy_outcome"
-     ],
-     "doeff_jev.target": [
-      "read_text_from_disk",
-      "resolve_target",
-      "target_from_process_environment"
-     ],
-     "doeff_jev.wire": [
-      "Prepared",
-      "proxy_outcome"
-     ],
-     "doeff_jev.wiring": [
-      "target_from_process_environment"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_jev.handlers": [
-      "verdict_fields"
-     ],
-     "doeff_jev.handlers.production": [
-      "cache_key",
-      "key_required",
-      "parse",
-      "prepare",
-      "verdict_fields"
-     ],
-     "doeff_jev.target": [
-      "CONFIG_FILE",
-      "DIRECT_KEY_FILE",
-      "DIRECT_MODEL",
-      "DIRECT_URL",
-      "GATEWAY_HOST",
-      "GATEWAY_KEY_FILE",
-      "GATEWAY_MODEL",
-      "GATEWAY_URL",
-      "ReadText",
-      "TYPESAFE_HOST",
-      "Wire",
-      "key_required"
-     ],
-     "doeff_jev.wire": [
-      "CALLER_HEADER",
-      "IMAGES_HEADER",
-      "PROXY_HEADER",
-      "cache_key",
-      "caller_header_value",
-      "parse",
-      "prepare"
-     ],
-     "doeff_jev.wiring": [
-      "DEFAULT_CACHE_DB",
-      "DEFAULT_JOURNAL"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_jev.handlers",
-      "doeff_jev.handlers.journal",
-      "doeff_jev.handlers.production",
-      "doeff_jev.target",
-      "doeff_jev.wire",
-      "doeff_jev.wiring"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_jev": [
-      "JevTarget"
-     ],
-     "doeff_jev.handlers.production": [
-      "JevTarget"
-     ],
-     "doeff_jev.target": [
-      "JevTarget"
-     ],
-     "doeff_jev.wire": [
-      "JevTarget"
-     ],
-     "doeff_jev.wiring": [
       "JevTarget"
      ]
     }
@@ -12850,29 +11884,13 @@
   "doeff-llm": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_llm.effects",
-      "doeff_llm.effects.chat",
-      "doeff_llm.effects.embedding",
-      "doeff_llm.effects.structured",
-      "doeff_llm.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_llm": [
-      "Message"
-     ],
-     "doeff_llm.types": [
       "Message"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_llm": [
-      "CostInfo",
-      "TokenUsage"
-     ],
-     "doeff_llm.types": [
       "CostInfo",
       "TokenUsage"
      ]
@@ -12881,128 +11899,20 @@
   },
   "doeff-ml-nexus": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_ml_nexus.context": [
-      "prepare-build-context"
-     ],
-     "doeff_ml_nexus.docker": [
-      "apt_install",
-      "copy_from",
-      "copy_local_deps",
-      "copy_resolved",
-      "find_local_deps",
-      "has_rust_extension",
-      "install_rust",
-      "install_uv",
-      "uv_gpu_image",
-      "uv_image",
-      "uv_image_core"
-     ],
-     "doeff_ml_nexus.interpreters": [
-      "make-local-uv-interpreter",
-      "make-remote-uv-interpreter"
-     ],
-     "doeff_ml_nexus.runner": [
-      "RUNNER_INPUT_PATH_KEY",
-      "RUNNER_OUTPUT_PATH_KEY",
-      "default_serializer",
-      "get_exchange_paths",
-      "p_run",
-      "resolve_runner_env",
-      "run_from_file",
-      "runner_interpreter"
-     ],
-     "doeff_ml_nexus.runner_env": [
-      "DEFAULT_RUNNER_INPUT_PATH",
-      "DEFAULT_RUNNER_OUTPUT_PATH",
-      "RUNNER_INPUT_PATH_KEY",
-      "RUNNER_OUTPUT_PATH_KEY",
-      "default_runner_env",
-      "resolve_runner_env",
-      "runner_env_from_process"
-     ],
-     "doeff_ml_nexus.serializer": [
-      "CloudpickleSerializer",
-      "Serializer",
-      "default_serializer"
-     ],
-     "doeff_ml_nexus.stack": [
-      "default_serializer",
-      "ml_nexus_interpreter"
-     ],
-     "doeff_ml_nexus.uv_deps": [
-      "LocalDep",
-      "find_local_deps",
-      "rewrite_pyproject_for_container",
-      "rewrite_uv_lock_for_container"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_ml_nexus.context",
-      "doeff_ml_nexus.docker",
-      "doeff_ml_nexus.effects",
-      "doeff_ml_nexus.handlers",
-      "doeff_ml_nexus.handlers.docker",
-      "doeff_ml_nexus.handlers.file",
-      "doeff_ml_nexus.handlers.resolve",
-      "doeff_ml_nexus.handlers.rsync",
-      "doeff_ml_nexus.interpreters",
-      "doeff_ml_nexus.runner",
-      "doeff_ml_nexus.runner_env",
-      "doeff_ml_nexus.serializer",
-      "doeff_ml_nexus.stack",
-      "doeff_ml_nexus.uv_deps"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-notify": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_notify.handlers": [
-      "collected_notifications"
-     ],
-     "doeff_notify.handlers.testing": [
-      "ProtocolHandler",
-      "collected_notifications"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_notify.effects",
-      "doeff_notify.effects.notify",
-      "doeff_notify.handlers",
-      "doeff_notify.handlers.log",
-      "doeff_notify.handlers.stdout",
-      "doeff_notify.handlers.testing",
-      "doeff_notify.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_notify": [
       "Channel",
       "NotificationCapture",
       "Urgency"
-     ],
-     "doeff_notify.handlers": [
-      "NotificationCapture"
-     ],
-     "doeff_notify.handlers.testing": [
-      "NotificationCapture"
-     ],
-     "doeff_notify.types": [
-      "Channel",
-      "Urgency"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_notify": [
-      "NotificationResult"
-     ],
-     "doeff_notify.types": [
       "NotificationResult"
      ]
     }
@@ -13011,138 +11921,8 @@
   "doeff-openai": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_openai.chat": [
-      "chat_completion",
-      "chat_completion_async",
-      "get_openai_client"
-     ],
-     "doeff_openai.client": [
-      "get_api_calls",
-      "get_model_cost",
-      "get_openai_client",
-      "get_total_cost"
-     ],
-     "doeff_openai.costs": [
-      "get_encoding",
-      "get_model_pricing"
-     ],
-     "doeff_openai.embeddings": [
-      "create_embedding",
-      "create_embedding_async",
-      "get_openai_client",
-      "get_single_embedding"
-     ],
-     "doeff_openai.handlers.production": [
-      "chat_completion",
-      "create_embedding"
-     ],
-     "doeff_openai.streaming": [
-      "stream_to_chunks",
-      "stream_with_accumulator",
-      "stream_with_metadata"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_openai.client": [
-      "ClientHolder",
-      "OpenAIClient"
-     ],
-     "doeff_openai.handlers.production": [
-      "DEFAULT_STRUCTURED_MAX_TOKENS",
-      "DEFAULT_STRUCTURED_TEMPERATURE",
-      "OPENAI_MODEL_EXCLUSIONS",
-      "OPENAI_MODEL_PREFIXES",
-      "build_api_parameters",
-      "process_structured_response"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_openai.chat": [
-      "calculate_cost",
-      "count_message_tokens",
-      "count_tokens",
-      "process_stream_chunks",
-      "simple_chat",
-      "track_api_call"
-     ],
-     "doeff_openai.client": [
-      "extract_request_id",
-      "extract_token_usage",
-      "reset_cost_tracking",
-      "track_api_call"
-     ],
-     "doeff_openai.costs": [
-      "MODEL_PRICING",
-      "ModelPricing",
-      "calculate_cost",
-      "count_embedding_tokens",
-      "count_message_tokens",
-      "count_tokens",
-      "estimate_cost",
-      "estimate_max_cost"
-     ],
-     "doeff_openai.embeddings": [
-      "batch_embeddings",
-      "cosine_similarity",
-      "count_embedding_tokens",
-      "semantic_search",
-      "track_api_call"
-     ],
-     "doeff_openai.handlers.production": [
-      "calculate_cost"
-     ],
-     "doeff_openai.handlers.testing": [
-      "ProtocolHandler"
-     ],
-     "doeff_openai.streaming": [
-      "buffered_stream",
-      "calculate_cost",
-      "count_tokens",
-      "process_stream"
-     ],
-     "doeff_openai.structured_llm": [
-      "gpt4o_structured",
-      "gpt5_nano_structured",
-      "gpt5_structured",
-      "is_gpt5_model",
-      "requires_max_completion_tokens"
-     ],
-     "doeff_openai.types": [
-      "MODEL_PRICING",
-      "ModelPricing"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_openai.chat",
-      "doeff_openai.client",
-      "doeff_openai.costs",
-      "doeff_openai.effects",
-      "doeff_openai.effects.chat",
-      "doeff_openai.effects.cost",
-      "doeff_openai.effects.embedding",
-      "doeff_openai.effects.structured",
-      "doeff_openai.embeddings",
-      "doeff_openai.handlers",
-      "doeff_openai.handlers.production",
-      "doeff_openai.handlers.testing",
-      "doeff_openai.streaming",
-      "doeff_openai.structured_llm",
-      "doeff_openai.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_openai": [
-      "APICallMetadata",
-      "CompletionRequest",
-      "EmbeddingRequest",
-      "OpenAIModel"
-     ],
-     "doeff_openai.client": [
-      "APICallMetadata"
-     ],
-     "doeff_openai.types": [
       "APICallMetadata",
       "CompletionRequest",
       "EmbeddingRequest",
@@ -13151,26 +11931,6 @@
     },
     "境界 — effect の結果の型": {
      "doeff_openai": [
-      "CostInfo",
-      "StreamChunk",
-      "TokenUsage"
-     ],
-     "doeff_openai.chat": [
-      "StreamChunk",
-      "TokenUsage"
-     ],
-     "doeff_openai.client": [
-      "TokenUsage"
-     ],
-     "doeff_openai.costs": [
-      "CostInfo",
-      "TokenUsage"
-     ],
-     "doeff_openai.streaming": [
-      "StreamChunk",
-      "TokenUsage"
-     ],
-     "doeff_openai.types": [
       "CostInfo",
       "StreamChunk",
       "TokenUsage"
@@ -13191,15 +11951,6 @@
       "MissingCachedPricingError",
       "PricingError",
       "UnknownModelPricingError"
-     ],
-     "doeff_openai.costs": [
-      "MissingCachedPricingError",
-      "PricingError",
-      "UnknownModelPricingError"
-     ],
-     "doeff_openai.handlers.production": [
-      "MissingCachedPricingError",
-      "UnknownModelPricingError"
      ]
     }
    }
@@ -13207,68 +11958,6 @@
   "doeff-openrouter": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_openrouter.chat": [
-      "chat_completion"
-     ],
-     "doeff_openrouter.client": [
-      "get_model_cost",
-      "get_openrouter_client",
-      "get_total_cost"
-     ],
-     "doeff_openrouter.handlers.production": [
-      "chat_completion"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_openrouter.client": [
-      "OpenRouterClient"
-     ],
-     "doeff_openrouter.handlers.production": [
-      "build_response_format_payload",
-      "process_structured_response"
-     ],
-     "doeff_openrouter.structured_llm": [
-      "build_response_format_payload",
-      "process_structured_response"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_openrouter.client": [
-      "extract_cost_info",
-      "extract_token_usage",
-      "reset_cost_tracking",
-      "track_api_call"
-     ],
-     "doeff_openrouter.handlers": [
-      "ProtocolHandler"
-     ],
-     "doeff_openrouter.handlers.production": [
-      "ProtocolHandler"
-     ],
-     "doeff_openrouter.handlers.testing": [
-      "ProtocolHandler"
-     ],
-     "doeff_openrouter.structured_llm": [
-      "build_messages",
-      "ensure_strict_schema",
-      "process_unstructured_response"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_openrouter.chat",
-      "doeff_openrouter.client",
-      "doeff_openrouter.effects",
-      "doeff_openrouter.effects.chat",
-      "doeff_openrouter.effects.structured",
-      "doeff_openrouter.handlers",
-      "doeff_openrouter.handlers.production",
-      "doeff_openrouter.handlers.testing",
-      "doeff_openrouter.structured_llm",
-      "doeff_openrouter.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_openrouter.types": [
       "APICallMetadata"
@@ -13290,9 +11979,6 @@
     },
     "境界 — 例外の型": {
      "doeff_openrouter": [
-      "OpenRouterResponseError"
-     ],
-     "doeff_openrouter.chat": [
       "OpenRouterResponseError"
      ]
     }
@@ -14957,28 +13643,8 @@
   "doeff-secret": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_secret.handlers": [
-      "ProtocolHandler"
-     ],
-     "doeff_secret.testing": [
-      "ProtocolHandler"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_secret.effects",
-      "doeff_secret.effects.secrets",
-      "doeff_secret.handlers",
-      "doeff_secret.testing"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_secret": [
-      "InMemorySecretStore",
-      "SeedValue"
-     ],
-     "doeff_secret.testing": [
       "InMemorySecretStore",
       "SeedValue"
      ]
@@ -14988,85 +13654,15 @@
   "doeff-seedream": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_seedream.client": [
-      "get_seedream_client"
-     ],
-     "doeff_seedream.structured_llm": [
-      "edit_image__seedream4"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_seedream.client": [
-      "SeedreamClient"
-     ],
-     "doeff_seedream.handlers.production": [
-      "SEEDREAM_IMAGE_MODEL_PREFIXES"
-     ]
-    },
-    "外れ — 内側の module へ移す": {
-     "doeff_seedream.client": [
-      "DEFAULT_BASE_URL",
-      "DEFAULT_TIMEOUT",
-      "track_api_call"
-     ],
-     "doeff_seedream.costs": [
-      "DEFAULT_COST_PER_IMAGE",
-      "DEFAULT_SIZE_PRICING",
-      "calculate_cost"
-     ],
-     "doeff_seedream.handlers.production": [
-      "ProtocolHandler"
-     ],
-     "doeff_seedream.handlers.testing": [
-      "ProtocolHandler"
-     ],
-     "doeff_seedream.structured_llm": [
-      "DEFAULT_MODEL",
-      "DEFAULT_RESPONSE_FORMAT"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_seedream.client",
-      "doeff_seedream.costs",
-      "doeff_seedream.effects",
-      "doeff_seedream.effects.generate",
-      "doeff_seedream.effects.structured",
-      "doeff_seedream.handlers",
-      "doeff_seedream.handlers.production",
-      "doeff_seedream.handlers.testing",
-      "doeff_seedream.structured_llm",
-      "doeff_seedream.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_seedream": [
       "CostEstimate",
-      "SeedreamImage"
-     ],
-     "doeff_seedream.costs": [
-      "CostEstimate"
-     ],
-     "doeff_seedream.handlers.testing": [
-      "SeedreamImage"
-     ],
-     "doeff_seedream.types": [
       "SeedreamImage"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_seedream": [
       "ImageResult",
-      "SeedreamImageEditResult"
-     ],
-     "doeff_seedream.handlers.production": [
-      "SeedreamImageEditResult"
-     ],
-     "doeff_seedream.handlers.testing": [
-      "SeedreamImageEditResult"
-     ],
-     "doeff_seedream.types": [
       "SeedreamImageEditResult"
      ]
     }
@@ -15075,34 +13671,6 @@
   "doeff-system-one": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_system_one.judgment": [
-      "STATE_CHARS_ADVISED",
-      "answered",
-      "calibration_ok",
-      "chosen",
-      "clip",
-      "crosses"
-     ],
-     "doeff_system_one.programs": [
-      "judge"
-     ],
-     "doeff_system_one.types": [
-      "IMAGE_FORMATS",
-      "KINDS"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_system_one.effects",
-      "doeff_system_one.effects.judge",
-      "doeff_system_one.handlers",
-      "doeff_system_one.handlers.testing",
-      "doeff_system_one.judgment",
-      "doeff_system_one.programs",
-      "doeff_system_one.types"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_system_one": [
       "Image",
@@ -15111,38 +13679,12 @@
       "noul",
       "score"
      ],
-     "doeff_system_one.effects.judge": [
-      "Image",
-      "Question"
-     ],
-     "doeff_system_one.programs": [
-      "Question"
-     ],
      "doeff_system_one.types": [
-      "Image",
-      "Kind",
-      "Question",
-      "choice",
-      "noul",
-      "score"
+      "Kind"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_system_one": [
-      "Answer",
-      "Verdict",
-      "answer_choice",
-      "answer_noul",
-      "answer_score"
-     ],
-     "doeff_system_one.handlers.testing": [
-      "Answer",
-      "Verdict"
-     ],
-     "doeff_system_one.judgment": [
-      "Answer"
-     ],
-     "doeff_system_one.types": [
       "Answer",
       "Verdict",
       "answer_choice",
@@ -15155,23 +13697,14 @@
       "ScriptedJudgeState"
      ],
      "doeff_system_one.handlers": [
-      "Script",
-      "ScriptedJudgeState"
+      "Script"
      ],
      "doeff_system_one.handlers.testing": [
-      "Script",
-      "ScriptedJudgeState"
+      "Script"
      ]
     },
     "境界 — 例外の型": {
      "doeff_system_one": [
-      "JudgeError",
-      "JudgeUsageLimited"
-     ],
-     "doeff_system_one.handlers.testing": [
-      "JudgeError"
-     ],
-     "doeff_system_one.types": [
       "JudgeError",
       "JudgeUsageLimited"
      ]
@@ -15181,81 +13714,13 @@
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect にする": {
-     "doeff_time.effects.time": [
-      "ensure_aware_datetime"
-     ],
-     "doeff_time.epoch_ms": [
-      "ensure_aware_datetime"
-     ]
-    },
-    "外れ — handler の中へ入れる": {
-     "doeff_time.handlers.async_time": [
-      "AsyncTimeEffect",
-      "DEADLINE_PASSED",
-      "timed_wait_answer",
-      "timed_wait_futures",
-      "timed_wait_seconds"
-     ],
-     "doeff_time.handlers.sim_time": [
-      "CLOCK_TICK",
-      "DEADLINE_PASSED",
-      "EPOCH_UTC",
-      "SimTimeRuntime",
-      "TimeQueue"
-     ],
-     "doeff_time.handlers.sync_time": [
-      "DEADLINE_PASSED",
-      "timed_wait_answer",
-      "timed_wait_futures",
-      "timed_wait_seconds"
-     ]
-    },
     "外れ — 内側の module へ移す": {
      "doeff_time": [
       "epoch_ms_of"
-     ],
-     "doeff_time.epoch_ms": [
-      "epoch_ms_of"
-     ],
-     "doeff_time.handlers": [
-      "ProtocolHandler"
-     ],
-     "doeff_time.handlers.async_time": [
-      "ProtocolHandler"
-     ],
-     "doeff_time.handlers.sim_time": [
-      "ProtocolHandler"
-     ],
-     "doeff_time.handlers.sync_time": [
-      "ProtocolHandler"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_time.effects",
-      "doeff_time.effects.time",
-      "doeff_time.epoch_ms",
-      "doeff_time.handlers",
-      "doeff_time.handlers.async_time",
-      "doeff_time.handlers.sim_time",
-      "doeff_time.handlers.sync_time"
      ]
     },
     "境界 — effect の結果の型": {
      "doeff_time": [
-      "RaceOutcome",
-      "TicksOutcome"
-     ],
-     "doeff_time.effects": [
-      "RaceOutcome",
-      "TicksOutcome"
-     ],
-     "doeff_time.effects.time": [
-      "RaceOutcome",
-      "TicksOutcome"
-     ],
-     "doeff_time.handlers.sim_time": [
       "RaceOutcome",
       "TicksOutcome"
      ]
@@ -15268,8 +13733,7 @@
       "AsyncTimeRuntime"
      ],
      "doeff_time.handlers.sim_time": [
-      "LogFormatter",
-      "SimClock"
+      "LogFormatter"
      ],
      "doeff_time.handlers.sync_time": [
       "SyncTimeRuntime"
@@ -15280,37 +13744,12 @@
   "doeff-traverse": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — handler の中へ入れる": {
-     "doeff_traverse.collection": [
-      "HistoryEntry"
-     ],
-     "doeff_traverse.handlers": [
-      "CollectionEffect",
-      "HistoryEntry",
-      "ProgressBar"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_traverse.collection",
-      "doeff_traverse.effects",
-      "doeff_traverse.handlers",
-      "doeff_traverse.helpers"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_traverse": [
       "Collection"
      ],
-     "doeff_traverse.collection": [
-      "Collection"
-     ],
      "doeff_traverse.effects": [
-      "Collection",
       "ItemOutcomeKind"
-     ],
-     "doeff_traverse.handlers": [
-      "Collection"
      ]
     },
     "境界 — effect の結果の型": {
@@ -15332,12 +13771,6 @@
     "境界 — 例外の型": {
      "doeff_traverse": [
       "ItemOutcomeNotPassedError"
-     ],
-     "doeff_traverse.effects": [
-      "ItemOutcomeNotPassedError"
-     ],
-     "doeff_traverse.handlers": [
-      "ItemOutcomeNotPassedError"
      ]
     }
    }
@@ -15345,35 +13778,8 @@
   "doeff-validation": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_validation.api": [
-      "ItemFailedError",
-      "judge"
-     ],
-     "doeff_validation.failures": [
-      "ItemFailedError"
-     ]
-    },
-    "外れ — submodule を _ で隠す": {
-     "(submodule)": [
-      "doeff_validation.api",
-      "doeff_validation.failures"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_validation": [
-      "CheckArgument",
-      "CheckError",
-      "CheckFailure",
-      "EvaluatedArgument"
-     ],
-     "doeff_validation.api": [
-      "CheckArgument",
-      "CheckError",
-      "CheckFailure",
-      "EvaluatedArgument"
-     ],
-     "doeff_validation.failures": [
       "CheckArgument",
       "CheckError",
       "CheckFailure",
@@ -15382,12 +13788,6 @@
     },
     "境界 — 例外の型": {
      "doeff_validation": [
-      "ValidationException"
-     ],
-     "doeff_validation.api": [
-      "ValidationException"
-     ],
-     "doeff_validation.failures": [
       "ValidationException"
      ]
     }
@@ -15604,30 +14004,9 @@
   },
   {
    "package": "doeff-validation",
-   "module": "doeff_validation.api",
-   "name": "Check",
-   "訳": "validate の項目の値の型(R2 — ADR-DOE-API-001 R19)を、移し替えの module doeff_validation.api(_api)が import して出す。submodule を _ で隠し終えて移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
-   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
-  },
-  {
-   "package": "doeff-validation",
-   "module": "doeff_validation.failures",
-   "name": "Check",
-   "訳": "validate の項目の値の型(R2 — ADR-DOE-API-001 R19)の定義の場所 _failures を、移し替えの module doeff_validation.failures が出す。移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
-   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
-  },
-  {
-   "package": "doeff-validation",
    "module": "doeff_validation",
    "name": "Perform",
    "訳": "Check の引数を効果として項目の中で実行する印の値の型(R2 の effect の値の型 — ADR-DOE-API-001 R19)。関数 perform を消し、型 Performed を Perform の名にして、program か効果かの確かめを型の作り方へ移した(card ki-2750cc5e5209)",
-   "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
-  },
-  {
-   "package": "doeff-validation",
-   "module": "doeff_validation.failures",
-   "name": "Perform",
-   "訳": "Check の引数の実行の印の値の型(R2 — ADR-DOE-API-001 R19)の定義の場所 _failures を、移し替えの module doeff_validation.failures が出す。移し替えの module を消すと目録から消える(card ki-2750cc5e5209)",
    "決め": "lt-MHFWEYBQYCC2PQYR84VKXBAET8"
   },
   {
