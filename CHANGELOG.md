@@ -19,6 +19,12 @@
   allowed one is a `BaseException` subclass its own package defines (an exception re-exported from another package or
   the standard library, or a class that is not an exception, is refused). Before, the known-violations table listed
   them as a boundary. Callers need no change.
+- **doeff-conductor:** the workflow builders (`agent`, `gate`, `loop`, `parallel`, `prompt`, `ref` and the rest — 28
+  names) and the types they return (`AgentSpec`, `WorkflowSpec` and the rest — 19 names) stay exported from the import
+  root: ADR-DOE-API-001 R36 allows a builder — a function that builds a value of a program's shape, returns a class its
+  own package shows, and emits no effect and reads no clock, environment, file or process — and the class it returns.
+  The public API inventory now reads such a function as a builder and checks both. Before, the known-violations table
+  listed them as a boundary. Workflows keep their current form.
 
 ### Changed
 

@@ -51,7 +51,11 @@ Kinds:
   through — installs a handler (``WithHandler``, a handler value, a handler builder or factory) or
   answers an effect (``Resume``, ``Pass``, ``Transfer`` ...) (ADR-DOE-API-001 R18): a helper stays
   ``other``, and the allowed table (``tests/data/public_api_allowed.json``) allows it by name in
-  the group ``許した物 — program の helper``;
+  the group ``許した物 — program の helper``. A plain function with a value's return type is a
+  conversion (form ``換算の関数`` — R35) when nothing its body reads, followed the same way, makes an
+  effect, a handler or a program or reads the world (a clock, the environment, a file ...), and a
+  builder (form ``作り手`` — R36) when such a function returns a class its own package defines (the
+  row's ``returns`` names that class);
 - ``unclassified``: what the machine cannot decide — a function with no return type, or one that
   says nothing (``Any``, ``object``, a bare ``Callable``, a list of them), whose ``return``
   statements do not decide it either; a class named like an effect or a handler without being
@@ -89,7 +93,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Literal, NotRequired, TypedDict, cast
 
 import tomllib
 
@@ -131,6 +135,9 @@ HELPER_ANSWERS = "effect に答える program を返す関数"
 #: The form of a plain function that turns a value into a value (ADR-DOE-API-001 R35): its body makes no
 #: effect, handler or program and reads no clock, environment, file, process or randomness.
 CONVERSION = "換算の関数"
+#: The form of a plain function that builds a value of a program's shape (ADR-DOE-API-001 R36): a conversion's
+#: body whose return type is a class its own package defines (the row's ``returns`` names that class).
+BUILDER = "作り手"
 #: The form of a plain function with a value's return type whose body goes past a conversion's.
 PLAIN_FUNCTION = "関数"
 #: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14・R15・R31).
@@ -222,7 +229,10 @@ _TYPE_ALIAS_TYPES: tuple[type, ...] = (typing.TypeAliasType,) if sys.version_inf
 
 
 class ExportRow(TypedDict):
-    """One name a module (or the package's metadata) shows, with its kind and where it is defined."""
+    """One name a module (or the package's metadata) shows, with its kind and where it is defined.
+
+    A builder's row (form ``BUILDER``) also names the class it returns (``built_class`` — its name and place).
+    """
 
     module: str
     name: str
@@ -230,6 +240,7 @@ class ExportRow(TypedDict):
     form: str
     defined_at: str
     reason: str
+    returns: NotRequired[str]
 
 
 class MergedRow(ExportRow):
@@ -260,11 +271,15 @@ class PackageInventory(TypedDict):
 
 @dataclass(frozen=True)
 class Verdict:
-    """The verdict on one name: its kind, its form (what it is) and the reason (what decided it)."""
+    """The verdict on one name: its kind, its form (what it is) and the reason (what decided it).
+
+    ``returns`` is set for a builder only: the class it returns (``built_class``).
+    """
 
     kind: Kind
     form: str
     reason: str
+    returns: str | None = None
 
 
 @dataclass(frozen=True)
@@ -871,7 +886,9 @@ class _Classifier:
             )
             return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
         return self._conversion_verdict(
-            function, Verdict("other", PLAIN_FUNCTION, f"戻りの型 {_annotation_text(annotation)}")
+            function,
+            Verdict("other", PLAIN_FUNCTION, f"戻りの型 {_annotation_text(annotation)}"),
+            annotation,
         )
 
     def _called_factory(self, obj: object, read: Verdict) -> Verdict:
@@ -933,14 +950,18 @@ class _Classifier:
             "other", breach.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
         )
 
-    def _conversion_verdict(self, function: object, read: Verdict) -> Verdict:
-        """The verdict on a plain function with a value's return type: a conversion or not (ADR-DOE-API-001 R35).
+    def _conversion_verdict(self, function: object, read: Verdict, annotation: object) -> Verdict:
+        """The verdict on a plain function with a value's return type: a conversion, a builder or neither
+        (ADR-DOE-API-001 R35・R36).
 
         A conversion turns a value into a value: it is no generator or coroutine, and nothing its body
         reads — and the bodies of the functions of its own package it reads, followed through — makes
         an effect, a handler or a program, or reads a clock, the environment, a file, a process,
-        randomness or the console by name. A body that cannot be read (not a Python function) keeps
-        the verdict ``read`` gave.
+        randomness or the console by name. A builder is such a function whose return type
+        (``annotation``) is a class its own package defines — it builds a value of a program's shape,
+        as doeff-conductor's ``agent_bang`` builds an ``AgentSpec``; its row names the class
+        (``built_class``), so the table's test can check that the package shows it. A body that cannot
+        be read (not a Python function) keeps the verdict ``read`` gave.
         """
         if not isinstance(function, types.FunctionType):
             return read
@@ -950,15 +971,18 @@ class _Classifier:
             if (found := self._conversion_breach(current)) is not None
         )
         breach = next(breaches, None)
-        if breach is None:
+        if breach is not None:
             return Verdict(
-                "other",
-                CONVERSION,
-                f"{read.reason}・中で effect も handler も program も作らず、"
-                "時計・環境・file・process・乱数を読まない",
+                read.kind, read.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
             )
+        clean = (
+            "中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない"
+        )
+        built = _own_class(function, annotation)
+        if built is None:
+            return Verdict("other", CONVERSION, f"{read.reason}・{clean}")
         return Verdict(
-            read.kind, read.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
+            "other", BUILDER, f"{read.reason}・同じ package の class {built}・{clean}", built
         )
 
     def _conversion_breach(self, function: types.FunctionType) -> _Breach | None:
@@ -1256,6 +1280,24 @@ def _return_annotation(function: object) -> object:
         except (NameError, AttributeError, SyntaxError, TypeError):
             return annotation
     return annotation
+
+
+def built_class(name: str, place: str) -> str:
+    """How a builder's row names the class it returns (``returns``), and how a class row is matched to it:
+    the class's name at its place (the place alone is the module's name outside the repo, so the name tells
+    two classes of one module apart)."""
+    return f"{name}({place})"
+
+
+def _own_class(function: types.FunctionType, annotation: object) -> str | None:
+    """The class a return type names (``built_class``) when it is a class of the function's own package
+    (the top-level import name) — ``None`` for any other type."""
+    if not isinstance(annotation, type) or issubclass(annotation, BaseException):
+        return None
+    if annotation.__module__.split(".")[0] != (function.__module__ or "").split(".")[0]:
+        return None
+    place = _code_place(annotation)
+    return None if place is None else built_class(annotation.__name__, _place_text(place))
 
 
 def _annotation_text(annotation: object) -> str:
@@ -1917,7 +1959,7 @@ def _name_row(
                 "unclassified", "値", f"種類を決める途中で {type(error).__name__}: {error}"
             )
             defined_at = module.__name__
-    return ExportRow(
+    row = ExportRow(
         module=door,
         name=name,
         kind=verdict.kind,
@@ -1925,6 +1967,9 @@ def _name_row(
         defined_at=defined_at,
         reason=verdict.reason,
     )
+    if verdict.returns is not None:
+        row["returns"] = verdict.returns
+    return row
 
 
 def _macro_row(

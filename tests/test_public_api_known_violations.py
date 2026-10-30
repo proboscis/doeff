@@ -35,7 +35,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
    program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「許した物 — 例外の型」(R2 — effect と handler が
    投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
-   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。
+   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「許した物 — program の形を組む作り手と型」
+   (R36 — doeff-conductor の workflow を書く agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の
+   本体で、同じ package の class の値を返す関数)で返す class をその package が見せる名と、組の作り手が返す class だけ:
+   effect を出す・作る・I/O を読む関数・見せない class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -98,6 +101,9 @@ ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
 ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
 #: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
 EXCEPTION_GROUP = "許した物 — 例外の型"
+#: 決まりが許した、program の形を表す値を組む作り手と、その返す値の型の組(ADR-DOE-API-001 R36 — doeff-conductor の
+#: workflow の言葉)。目録の形が作り手の名と、組の作り手が返す class だけを置ける。
+BUILDER_GROUP = "許した物 — program の形を組む作り手と型"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
@@ -110,6 +116,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
     EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
     "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
+    BUILDER_GROUP: "その package が見せる class の値を返し、中で effect も handler も program も作らず、時計・環境・file・"
+    "process・乱数を読まない関数(作り手)と、組の作り手が返す class だけを置ける(program の形を表す値の作り手とその型 — "
+    "ADR-DOE-API-001 R36)",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -268,29 +277,59 @@ def defined_by(row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
     )
 
 
+def _is_plain_class(row: Mapping[str, Any]) -> bool:
+    """目録の行が、effect でも handler でも例外でもない素の class(作り手が値を返せる型)。"""
+    return row["kind"] == "other" and row["form"] == "class"
+
+
+def shown_classes(package: Mapping[str, Any]) -> frozenset[str]:
+    """package が見せる素の class の全部(目録の道具の built_class の形 — 名と定義の場所)。"""
+    return frozenset(
+        tool.built_class(row["name"], row["defined_at"])
+        for row in package["exports"]
+        if _is_plain_class(row)
+    )
+
+
+#: 許した物の組のうち、目録の行の形だけで確かめる組と、その組に置ける形。
+FORMS_OF_GROUP: dict[str, tuple[str, ...]] = {
+    HELPER_GROUP: (tool.PROGRAM_HELPER,),
+    CONVERSION_GROUP: (tool.CONVERSION,),
+    ANSWER_TYPE_GROUP: ("class", "型"),
+    COMMAND_GROUP: (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE),
+}
+
+
+def fits_builder_group(
+    row: Mapping[str, Any], package: Mapping[str, Any], built: frozenset[str]
+) -> bool:
+    """目録の行 1 つが組「program の形を組む作り手と型」の形に合う(ADR-DOE-API-001 R36): 形が作り手で、返す class を package が
+    見せるか、素の class で、組に置いた作り手のどれかが返す(built)。"""
+    if row["form"] == tool.BUILDER:
+        return row.get("returns") in shown_classes(package)
+    return _is_plain_class(row) and tool.built_class(row["name"], row["defined_at"]) in built
+
+
 def fits_allowed_group(
     group: str,
     row: Mapping[str, Any],
     package: Mapping[str, Any],
     writers: frozenset[Key] = frozenset(),
+    built: frozenset[str] = frozenset(),
 ) -> bool:
     """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。writers = 許した物の表で組「ADR を書く関数」に
-    置いた (module, 名)。"""
-    if group == HELPER_GROUP:
-        return row["form"] == tool.PROGRAM_HELPER
-    if group == CONVERSION_GROUP:
-        return row["form"] == tool.CONVERSION
+    置いた (module, 名)。built = 組「program の形を組む作り手と型」に置いた作り手が返す class(built_class の形)。"""
+    if group in FORMS_OF_GROUP:
+        return row["form"] in FORMS_OF_GROUP[group]
     if group == MACRO_GROUP:
         return row["form"] == tool.MACRO_FORM or (
             row["module"] == SUBMODULE and _is_macro_module(package, row["name"], writers)
         )
     if group == ADR_WRITER_GROUP:
         return row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
-    if group == ANSWER_TYPE_GROUP:
-        return row["form"] in ("class", "型")
     if group == EXCEPTION_GROUP:
         return row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package)
-    return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
+    return group == BUILDER_GROUP and fits_builder_group(row, package, built)
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
@@ -444,11 +483,17 @@ def check_package(
         root: groups[old] for root, old in moved if old in groups
     }
     writers = frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP)
+    built = frozenset(
+        found[key]["returns"]
+        for key, group in shown.items()
+        if group == BUILDER_GROUP and found[key]["form"] == tool.BUILDER
+    )
     misshapen = {
         group: [
             found[key]
             for key in sorted(shown)
-            if shown[key] == group and not fits_allowed_group(group, found[key], package, writers)
+            if shown[key] == group
+            and not fits_allowed_group(group, found[key], package, writers, built)
         ]
         for group in ALLOWED_GROUPS
     }
@@ -1379,6 +1424,143 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
             check_package(package, *tables([defined, key]))
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
+
+
+#: program の形を表す値の型と作り手(doeff-conductor の AgentSpec と agent! の形)と、作り手の形を越える物: effect を出す・
+#: 作る・中の同じ package の関数が環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、作り手の無い class。
+BUILDERS = '''
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class StepSpec:
+    """A value of a program's shape: what one step of a workflow does."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class _DraftSpec:
+    name: str
+
+
+@dataclass(frozen=True)
+class TraceNote:
+    """A class no builder returns."""
+
+    text: str
+
+
+def _normalized(name: str) -> str:
+    return name.strip().lower()
+
+
+def step(name: str) -> StepSpec:
+    """A builder: a value of its package's shown type in, nothing outside read (its package's function too)."""
+    return StepSpec(name=_normalized(name))
+
+
+def step_yielding(name: str) -> StepSpec:
+    """Past a builder: emits an effect."""
+    yield PingEffect()
+    return StepSpec(name=name)
+
+
+def step_pinged(name: str) -> StepSpec:
+    """Past a builder: makes an effect."""
+    PingEffect()
+    return StepSpec(name=name)
+
+
+def _home() -> str:
+    return os.environ["HOME"]
+
+
+def step_at_home() -> StepSpec:
+    """Past a builder: the function of its package it calls reads the environment."""
+    return StepSpec(name=_home())
+
+
+def step_from(path: str) -> StepSpec:
+    """Past a builder: reads a file."""
+    return StepSpec(name=Path(path).read_text())
+
+
+def draft(name: str) -> _DraftSpec:
+    """Past a builder: its package does not show the class it returns."""
+    return _DraftSpec(name=name)
+
+
+def step_count(name: str) -> int:
+    """Past a builder: a conversion — it returns no class of its package."""
+    return len(_normalized(name))
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_group(
+    tmp_path: Path,
+) -> None:
+    """許した物の表の組「許した物 — program の形を組む作り手と型」に置けるのは、目録の形が作り手で返す class をその package が
+    見せる名と、組の作り手が返す class だけ(ADR-DOE-API-001 R36)。
+
+    作り手(値を受けて同じ package の見せる class の値を返し、中で読む同じ package の関数も effect も I/O も読まない)とその型は、
+    許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。effect を出す(yield)・effect を作る・中の同じ package の関数が
+    環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、組の作り手が返さない class(作り手の無い
+    class・作り手を組に置かずに型だけ置いた class)を置くと赤(組と名と形と読む名か返す class を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUILDERS)
+    package = _read_fixture(repo)
+    rows = {row["name"]: row for row in package["exports"]}
+    step_spec = tool.built_class("StepSpec", rows["StepSpec"]["defined_at"])
+    assert (rows["step"]["form"], rows["step"].get("returns")) == (tool.BUILDER, step_spec)
+    assert rows["draft"]["form"] == tool.BUILDER
+    assert rows["step_count"]["form"] == tool.CONVERSION
+    shapes = ["StepSpec", "step"]
+    rest = (
+        "TraceNote",
+        "draft",
+        "step_at_home",
+        "step_count",
+        "step_from",
+        "step_pinged",
+        "step_yielding",
+    )
+
+    def tables(names: list[str], known: Iterable[str] = ()) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted((set(rest) | set(known)) - set(names))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): BUILDER_GROUP for name in names},
+            "lt-D4KB5PAECAE921VNAFHQHX4W3G",
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(shapes))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.step\("):
+        check_package(package, *tables([]))
+
+    past_a_builder = [
+        ("step_yielding", f"{tool.PLAIN_FUNCTION}・", "step_yielding が yield を読む"),
+        ("step_pinged", f"{tool.PLAIN_FUNCTION}・", "step_pinged が PingEffect を読む"),
+        ("step_at_home", f"{tool.PLAIN_FUNCTION}・", "_home が environ を読む"),
+        ("step_from", f"{tool.PLAIN_FUNCTION}・", "step_from が read_text を読む"),
+        ("draft", f"{tool.BUILDER}・", "同じ package の class _DraftSpec("),
+        ("step_count", f"{tool.CONVERSION}・", "戻りの型 int"),
+        ("TraceNote", "class・class・", "class・class・"),
+    ]
+    for name, form, said in past_a_builder:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+            check_package(package, *tables([*shapes, name]))
+        assert f"{FIXTURE_ROOT}.{name}({form}" in str(failure.value)
+        assert said in str(failure.value)
+        assert ALLOWED_SHAPES[BUILDER_GROUP] in str(failure.value)
+
+    with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+        check_package(package, *tables(["StepSpec"], known=["step"]))
+    assert f"{FIXTURE_ROOT}.StepSpec(class・class・" in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。
