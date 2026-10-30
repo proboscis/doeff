@@ -19,6 +19,8 @@ import pytest
 
 from doeff_cluster.shared.entry import client_foundation
 
+from tests.stub_names import name_mismatches
+
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
@@ -34,9 +36,6 @@ MODULE = """\
   (<- outcome DetachedAwaited (with-detached-client coordinator revision env (AwaitDetached key)))
   outcome)
 """
-
-# 宣言の名の全部。宣言に名を足したら、ここにも足す(実装に在るかは _mismatch が検める)。
-DECLARED = {"with_detached_client"}
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
@@ -99,20 +98,11 @@ def _mismatches(module: ModuleType, stub: ast.Module) -> list[str]:
     return [found for node in stub.body if (found := _mismatch(module, node)) is not None]
 
 
-def _declared_names(stub: ast.Module) -> set[str]:
-    """宣言の公開の名の全部(_ で始まる型の補助は除く)。"""
-    return {
-        node.target.id
-        for node in stub.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and not node.target.id.startswith("_")
-    } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-
-
 def test_the_stub_matches_the_hy_module() -> None:
-    # 宣言の名は .hy に在り、関数の引数の名と順は実装と同じ(宣言だけが先へ行かない)。
+    # 宣言の公開の名は .hy が定めた公開の名と同じで、関数の引数の名と順は実装と同じ(宣言だけが先へ行かない)。
     stub = _stub(client_foundation)
     assert _mismatches(client_foundation, stub) == []
-    assert _declared_names(stub) == DECLARED
+    assert name_mismatches(client_foundation, stub) == []
 
 
 def test_a_dropped_identity_parameter_is_found() -> None:

@@ -13,6 +13,8 @@ from collections.abc import Mapping
 
 from doeff import Program
 
+class SourceUnidentified(RuntimeError): ...
+
 RUNTIME_ENV_KEY_VAR: str
 
 def process_versions(environ: Mapping[str, str]) -> Program[dict[str, str], object]: ...

@@ -23,6 +23,8 @@ import pytest
 from doeff_cluster.shared.intent import metrics_model, protocol
 from doeff_cluster.shared.protocol import meter_report
 
+from tests.stub_names import name_mismatches
+
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
@@ -51,23 +53,6 @@ MODULE = """\
   "GET /metrics の答えの本文の行の数(答えの欄の型が読める)。"
   (len (.splitlines answer.text)))
 """
-
-# 宣言の名の全部(module ごと)。宣言に名を足したら、ここにも足す(実装に在るかは _mismatch が検める)。
-DECLARED = {
-    meter_report: {"DEFAULT_REPORT_SECONDS", "report_metrics_of", "report_meter_once", "report_meter_every", "with_meter_report"},
-    metrics_model: {"ReportMetrics", "ReadProcessGauges"},
-    protocol: {
-        "PROTOCOL_FORMAT",
-        "ClusterTiming",
-        "Request",
-        "BodyInvalid",
-        "PlainText",
-        "NextRequests",
-        "Reply",
-        "CoordinatorStopRequested",
-        "ServiceReached",
-    },
-}
 
 
 def _errors(root: Path) -> list[tuple[str, int, str]]:
@@ -146,21 +131,12 @@ def _mismatches(module: ModuleType, stub: ast.Module) -> list[str]:
     return [found for node in stub.body if (found := _mismatch(module, node)) is not None]
 
 
-def _declared_names(stub: ast.Module) -> set[str]:
-    """宣言の公開の名の全部(_ で始まる型の補助は除く)。"""
-    return {
-        node.target.id
-        for node in stub.body
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    } | {node.name for node in stub.body if isinstance(node, ast.FunctionDef | ast.ClassDef) and not node.name.startswith("_")}
-
-
 @pytest.mark.parametrize("module", [meter_report, metrics_model, protocol], ids=["meter_report", "metrics_model", "protocol"])
 def test_the_stub_matches_the_hy_module(module: ModuleType) -> None:
-    # 宣言の名は .hy に在り、関数の引数の名と順・record の欄の名と順・例外の親は実装と同じ(宣言だけが先へ行かない)。
+    # 宣言の公開の名は .hy が定めた公開の名と同じで、関数の引数の名と順・record の欄の名と順・例外の親は実装と同じ(宣言だけが先へ行かない)。
     stub = _stub(module)
     assert _mismatches(module, stub) == []
-    assert _declared_names(stub) == DECLARED[module]
+    assert name_mismatches(module, stub) == []
 
 
 def test_a_dropped_argument_and_a_wrong_parent_are_found() -> None:
@@ -176,3 +152,13 @@ def test_a_dropped_argument_and_a_wrong_parent_are_found() -> None:
         if isinstance(node, ast.ClassDef) and node.name == "BodyInvalid":
             node.bases = [ast.Name(id="RuntimeError")]
     assert _mismatches(protocol, stub) == ["class BodyInvalid の親 ['RuntimeError'] が実装 ['ValueError'] と違う"]
+
+
+def test_a_name_dropped_from_one_side_is_found() -> None:
+    # 失敗ケース: 宣言から effect ServiceReached を消す(.hy には残る)と宣言に無い名、.hy に無い class を宣言に足すと実装に無い名として
+    # 名指される(名の表を手で持たない — 両側とも source から引く)。
+    stub = _stub(protocol)
+    stub.body = [node for node in stub.body if not (isinstance(node, ast.ClassDef) and node.name == "ServiceReached")]
+    assert name_mismatches(protocol, stub) == ["宣言に無い公開の名: ServiceReached"]
+    stub.body.extend(ast.parse("class ServiceLost: ...").body)
+    assert name_mismatches(protocol, stub) == ["宣言に無い公開の名: ServiceReached", "実装に無い宣言の名: ServiceLost"]
