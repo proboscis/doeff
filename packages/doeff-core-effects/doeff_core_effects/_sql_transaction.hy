@@ -36,7 +36,7 @@
 (import collections.abc [Callable Generator])
 (import dataclasses [dataclass])
 (import doeff [do :as program-handler Resume Program EffectBase K WithHandlerType])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlNotify SqlRows SqlFailed SqlUnreachable SqlTransactionMisuse T])
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlNotify SqlRows SqlFailed SqlUnreachable SqlTransactionMisuse T])
 
 
 (defrecord TransactionAborted

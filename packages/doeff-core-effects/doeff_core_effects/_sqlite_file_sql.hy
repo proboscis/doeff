@@ -17,9 +17,9 @@
 (import sqlite3)
 (import pathlib [Path])
 (import dataclasses [dataclass])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage])
-(import doeff_core_effects.sql_transaction [stray-batch])
-(import doeff_core_effects.sqlite_sql [SqliteConnection sqlite-connection connection-of outage-marked
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage])
+(import doeff_core_effects._sql_transaction [stray-batch])
+(import doeff_core_effects._sqlite_sql [SqliteConnection sqlite-connection connection-of outage-marked
                                        sqlite-answer-query sqlite-answer-insert sqlite-answer-tables sqlite-answer-transaction])
 
 ;; 開いた接続の journal_mode に求める答え(本体の StoreSqlite.hs と同じ)。

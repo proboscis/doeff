@@ -168,6 +168,10 @@ mod tests {
             ("http_handlers", "http_production_handler"),
             ("http_handlers", "http_fixture_handler"),
             ("aiohttp_ws_client", "aiohttp_ws_link_handler"),
+            // sql の子も同じ(card ki-4e56dc4a0ecd)。
+            ("postgres_sql", "postgres_sql_handler"),
+            ("pooled_postgres_sql", "pooled_postgres_sql_handler"),
+            ("clickhouse_http_sql", "clickhouse_http_sql_handler"),
         ] {
             for name in [
                 format!("doeff_core_effects._{child}.{handler}"),

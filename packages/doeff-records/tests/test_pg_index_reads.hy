@@ -9,8 +9,8 @@
 ;; 文の答え(どの行を返し・消すか)は変えない — 答えの同じは法の検(test_laws・test_parity_memory_pg)が確かめる。
 (require doeff-hy.macros [deftest defk <- val var])
 (import json)
-(import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
-(import doeff_core_effects.postgres_sql [PostgresConnections])
+(import doeff_core_effects [SqlQuery SqlParam SqlRows])
+(import doeff_core_effects [PostgresConnections])
 (import doeff_records._pg [drop-records-tables EXPIRE-BATCH PRUNE-BATCH])
 (import doeff_records._admission [canonical-json])
 (import doeff_records [ListCursor])

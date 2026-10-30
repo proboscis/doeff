@@ -8,11 +8,10 @@
 (require doeff-hy.macros [deftest defk defhandler <- val var with-handler])
 (import pytest)
 (import doeff_core_effects [state])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed
-                                        SqlUnreachable SqlSchemaApplied SqlTable SqlColumn SqlColumnType SqlIndex])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlParam SqlRows SqlFailed SqlUnreachable SqlSchemaApplied SqlTable SqlColumn SqlColumnType SqlIndex])
 (import doeff_core_effects._clickhouse_mock_sql [clickhouse-mock-sql-handler])
-(import doeff_core_effects.clickhouse_http_sql [_clickhouse-transaction-refusal])
-(import doeff_core_effects.sqlite_sql [sqlite-sql-handler])
+(import doeff_core_effects._clickhouse_http_sql [_clickhouse-transaction-refusal])
+(import doeff_core_effects [sqlite-sql-handler])
 
 (val DB "ledger")
 

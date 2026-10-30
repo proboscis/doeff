@@ -16,7 +16,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler])
+(import doeff_core_effects [postgres-sql-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._admission [key-text])

@@ -44,7 +44,7 @@ all = ["doeff-hy>=0.8.0,<0.9", "httpx>=0.27.0"]
 # 汎用の WebSocket の client の本物の答え手 aiohttp-ws-client(doeff_core_effects/_aiohttp_ws_client.hy — agora-redesign #4007 U0)。
 # どちらも Hy で書いてあるので doeff-hy も入れる。
 http-server = ["doeff-hy>=0.8.0,<0.9", "aiohttp>=3.14"]
-# 汎用の SQL の本物の PostgreSQL の答え手 postgres-sql-handler(doeff_core_effects/postgres_sql.hy — agora-redesign #802 便 3)。
+# 汎用の SQL の本物の PostgreSQL の答え手 postgres-sql-handler(doeff_core_effects/_postgres_sql.hy — agora-redesign #802 便 3)。
 # Hy で書いてあるので doeff-hy も入れる。ClickHouse の答え手は stdlib の urllib だけで、sqlite の答え手は stdlib の sqlite3 だけを
 # 使う(どちらも Hy で書いてあるので extra hy で入れる)。
 postgres = ["doeff-hy>=0.8.0,<0.9", "psycopg>=3.1"]

@@ -1,5 +1,5 @@
 ;;; PostgreSQL の handler の文(純粋 — 接続に触らない)。流すのは _pg.hy の Program ちょうど 1 つで、doeff の汎用の SQL の effect
-;;; (SqlQuery・SqlTransaction — doeff_core_effects.sql_effects)に載せる。文は中立の記法(引数 = `:name`・値 = SqlParam)で書き、
+;;; (SqlQuery・SqlTransaction — doeff_core_effects._sql_effects)に載せる。文は中立の記法(引数 = `:name`・値 = SqlParam)で書き、
 ;;; PostgreSQL の方言への書き換えは答え手(postgres-sql-handler / pooled-postgres-sql-handler)が持つ(#880 U5)。
 ;;;
 ;;; 表の形(列の名と型)は別の置き場(状態の行の表 state_rows・追記の表 append_rows)と同じ形:
@@ -183,7 +183,7 @@
 (import hashlib)
 (import json)
 (import re)
-(import doeff_core_effects.sql_effects [SqlParam])
+(import doeff_core_effects [SqlParam])
 (import doeff_records._admission [key-text])
 (import doeff_records._values [RecordsSchema RetiredKey KeepFor ByKeySuffix ListCursor FIELD-NAME-PATTERN SEPARATOR-PATTERN TABLE-NAME-PATTERN])
 

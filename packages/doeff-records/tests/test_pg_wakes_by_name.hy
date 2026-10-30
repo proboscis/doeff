@@ -18,8 +18,8 @@
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [scheduled Spawn Wait])
-(import doeff_core_effects.sql_effects [SqlQuery])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler])
+(import doeff_core_effects [SqlQuery])
+(import doeff_core_effects [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAny ExpectAbsent WatchCursor Changes Reset Unreachable Written Appended EventsMoved EventsQuiet Events])

@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from doeff import Program
-from doeff_core_effects.postgres_sql import PostgresConnections
+from doeff_core_effects import PostgresConnections
 
 class BuiltInterpreter:
     run: Callable[[Program], object]

@@ -29,8 +29,8 @@ from disposable_postgres import session_dsn, session_postgres_skip_reason
 from doeff_core_effects import state
 from doeff_core_effects import memory_meter_handler
 from doeff_core_effects import MeterSettings, ReadMeter
-from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
-from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase, postgres_sql_handler
+from doeff_core_effects import pooled_postgres_sql_handler
+from doeff_core_effects import PostgresConnections, PostgresDatabase, postgres_sql_handler
 from doeff_core_effects import Cancel, CreateExternalPromise, Spawn, Wait, scheduled
 from doeff_core_effects import thread_pool_compute_handler
 from doeff_hy._frozen import FrozenMap

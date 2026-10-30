@@ -18,7 +18,7 @@ import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
 
 from doeff_core_effects import HttpRequest
-from doeff_core_effects.sql_effects import is_driver_value, is_plain_rows
+from doeff_core_effects._sql_effects import is_driver_value, is_plain_rows
 from doeff_hy._static_stub import strict_errors
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
@@ -73,7 +73,7 @@ def test_http_request_refuses_a_params_that_is_not_a_mapping(tmp_path: Path) -> 
 SQL_FLOW = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Pure])
-(import doeff_core_effects.sql_effects [SqlTransaction SqlFailed SqlUnreachable])
+(import doeff_core_effects._sql_effects [SqlTransaction SqlFailed SqlUnreachable])
 
 (defk answer-of []
   {:pre [] :post [(: % ANSWER)]}

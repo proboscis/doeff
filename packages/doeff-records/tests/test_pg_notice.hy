@@ -13,8 +13,9 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled ExternalPromise Spawn Wait]
         doeff_core_effects._scheduler [HANDLE-SWEEP-INTERVAL _SchedulerIntrospection])
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlParam SqlRows SqlFailed])
-(import doeff_core_effects.postgres_sql [NOTICE-STATEMENT postgres-sql-handler notice-payload])
+(import doeff_core_effects [SqlQuery SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlParam SqlRows SqlFailed])
+(import doeff_core_effects [postgres-sql-handler]
+        doeff_core_effects._postgres_sql [NOTICE-STATEMENT notice-payload])
 (import doeff_time [Delay GetMonotonic WaitWithin SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ListRows PutRow WatchChanges])

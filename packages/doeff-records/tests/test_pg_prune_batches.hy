@@ -18,8 +18,9 @@
 (import json)
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler DEFAULT-TIMEOUTS])
+(import doeff_core_effects [SqlQuery SqlParam SqlRows])
+(import doeff_core_effects [postgres-sql-handler]
+        doeff_core_effects._postgres_sql [DEFAULT-TIMEOUTS])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [PruneChanges Pruned])
 (import doeff_records._laws [MAKER])

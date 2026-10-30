@@ -3,7 +3,7 @@
 from _typeshed import Incomplete
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
-from doeff_core_effects.sql_effects import SqlParam as SqlParam
+from doeff_core_effects import SqlParam as SqlParam
 from doeff_records._admission import key_text as key_text
 from doeff_records._values import RecordsSchema as RecordsSchema
 from doeff_records._values import RetiredKey as RetiredKey

@@ -470,6 +470,61 @@ if TYPE_CHECKING:
     from doeff_core_effects._scripted_ws_client import (
         scripted_ws_link_handler as scripted_ws_link_handler,
     )
+    from doeff_core_effects._sql_effects import DriverValue as DriverValue
+    from doeff_core_effects._sql_effects import SetSqlOutage as SetSqlOutage
+    from doeff_core_effects._sql_effects import SqlBatch as SqlBatch
+    from doeff_core_effects._sql_effects import SqlColumn as SqlColumn
+    from doeff_core_effects._sql_effects import SqlColumnType as SqlColumnType
+    from doeff_core_effects._sql_effects import SqlDropNotice as SqlDropNotice
+    from doeff_core_effects._sql_effects import SqlEnsureTables as SqlEnsureTables
+    from doeff_core_effects._sql_effects import SqlFailed as SqlFailed
+    from doeff_core_effects._sql_effects import SqlHangNotice as SqlHangNotice
+    from doeff_core_effects._sql_effects import SqlIndex as SqlIndex
+    from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
+    from doeff_core_effects._sql_effects import SqlLock as SqlLock
+    from doeff_core_effects._sql_effects import SqlNotify as SqlNotify
+    from doeff_core_effects._sql_effects import SqlParam as SqlParam
+    from doeff_core_effects._sql_effects import SqlPlaceholder as SqlPlaceholder
+    from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
+    from doeff_core_effects._sql_effects import SqlRows as SqlRows
+    from doeff_core_effects._sql_effects import SqlSchemaApplied as SqlSchemaApplied
+    from doeff_core_effects._sql_effects import SqlTable as SqlTable
+    from doeff_core_effects._sql_effects import SqlText as SqlText
+    from doeff_core_effects._sql_effects import SqlTransaction as SqlTransaction
+    from doeff_core_effects._sql_effects import SqlTransactionMisuse as SqlTransactionMisuse
+    from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
+    from doeff_core_effects._sql_effects import SqlValue as SqlValue
+    from doeff_core_effects._postgres_sql import PostgresConnections as PostgresConnections
+    from doeff_core_effects._postgres_sql import PostgresDatabase as PostgresDatabase
+    from doeff_core_effects._postgres_sql import PostgresTimeouts as PostgresTimeouts
+    from doeff_core_effects._postgres_sql import TransactionAbandoned as TransactionAbandoned
+    from doeff_core_effects._postgres_sql import postgres_sql_handler as postgres_sql_handler
+    from doeff_core_effects._pooled_postgres_sql import (
+        pooled_postgres_sql_handler as pooled_postgres_sql_handler,
+    )
+    from doeff_core_effects._sqlite_sql import SqliteConnection as SqliteConnection
+    from doeff_core_effects._sqlite_sql import sqlite_connection as sqlite_connection
+    from doeff_core_effects._sqlite_sql import sqlite_insert as sqlite_insert
+    from doeff_core_effects._sqlite_sql import sqlite_query as sqlite_query
+    from doeff_core_effects._sqlite_sql import sqlite_sql_handler as sqlite_sql_handler
+    from doeff_core_effects._sqlite_file_sql import SqliteFile as SqliteFile
+    from doeff_core_effects._sqlite_file_sql import SqliteFiles as SqliteFiles
+    from doeff_core_effects._sqlite_file_sql import close_sqlite_files as close_sqlite_files
+    from doeff_core_effects._sqlite_file_sql import open_sqlite_files as open_sqlite_files
+    from doeff_core_effects._sqlite_file_sql import (
+        sqlite_file_sql_handler as sqlite_file_sql_handler,
+    )
+    from doeff_core_effects._clickhouse_http_sql import ClickHouseDatabase as ClickHouseDatabase
+    from doeff_core_effects._clickhouse_http_sql import clickhouse_answer as clickhouse_answer
+    from doeff_core_effects._clickhouse_http_sql import (
+        clickhouse_http_sql_handler as clickhouse_http_sql_handler,
+    )
+    from doeff_core_effects._clickhouse_http_sql import (
+        clickhouse_query_request as clickhouse_query_request,
+    )
+    from doeff_core_effects._clickhouse_http_sql import (
+        clickhouse_schema_statements as clickhouse_schema_statements,
+    )
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -808,6 +863,51 @@ _LAZY_EXPORTS = {
     "closing_links": "doeff_core_effects._ws_client_effects",
     "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
+    "DriverValue": "doeff_core_effects._sql_effects",
+    "SetSqlOutage": "doeff_core_effects._sql_effects",
+    "SqlBatch": "doeff_core_effects._sql_effects",
+    "SqlColumn": "doeff_core_effects._sql_effects",
+    "SqlColumnType": "doeff_core_effects._sql_effects",
+    "SqlDropNotice": "doeff_core_effects._sql_effects",
+    "SqlEnsureTables": "doeff_core_effects._sql_effects",
+    "SqlFailed": "doeff_core_effects._sql_effects",
+    "SqlHangNotice": "doeff_core_effects._sql_effects",
+    "SqlIndex": "doeff_core_effects._sql_effects",
+    "SqlInsertRows": "doeff_core_effects._sql_effects",
+    "SqlLock": "doeff_core_effects._sql_effects",
+    "SqlNotify": "doeff_core_effects._sql_effects",
+    "SqlParam": "doeff_core_effects._sql_effects",
+    "SqlPlaceholder": "doeff_core_effects._sql_effects",
+    "SqlQuery": "doeff_core_effects._sql_effects",
+    "SqlRows": "doeff_core_effects._sql_effects",
+    "SqlSchemaApplied": "doeff_core_effects._sql_effects",
+    "SqlTable": "doeff_core_effects._sql_effects",
+    "SqlText": "doeff_core_effects._sql_effects",
+    "SqlTransaction": "doeff_core_effects._sql_effects",
+    "SqlTransactionMisuse": "doeff_core_effects._sql_effects",
+    "SqlUnreachable": "doeff_core_effects._sql_effects",
+    "SqlValue": "doeff_core_effects._sql_effects",
+    "PostgresConnections": "doeff_core_effects._postgres_sql",
+    "PostgresDatabase": "doeff_core_effects._postgres_sql",
+    "PostgresTimeouts": "doeff_core_effects._postgres_sql",
+    "TransactionAbandoned": "doeff_core_effects._postgres_sql",
+    "postgres_sql_handler": "doeff_core_effects._postgres_sql",
+    "pooled_postgres_sql_handler": "doeff_core_effects._pooled_postgres_sql",
+    "SqliteConnection": "doeff_core_effects._sqlite_sql",
+    "sqlite_connection": "doeff_core_effects._sqlite_sql",
+    "sqlite_insert": "doeff_core_effects._sqlite_sql",
+    "sqlite_query": "doeff_core_effects._sqlite_sql",
+    "sqlite_sql_handler": "doeff_core_effects._sqlite_sql",
+    "SqliteFile": "doeff_core_effects._sqlite_file_sql",
+    "SqliteFiles": "doeff_core_effects._sqlite_file_sql",
+    "close_sqlite_files": "doeff_core_effects._sqlite_file_sql",
+    "open_sqlite_files": "doeff_core_effects._sqlite_file_sql",
+    "sqlite_file_sql_handler": "doeff_core_effects._sqlite_file_sql",
+    "ClickHouseDatabase": "doeff_core_effects._clickhouse_http_sql",
+    "clickhouse_answer": "doeff_core_effects._clickhouse_http_sql",
+    "clickhouse_http_sql_handler": "doeff_core_effects._clickhouse_http_sql",
+    "clickhouse_query_request": "doeff_core_effects._clickhouse_http_sql",
+    "clickhouse_schema_statements": "doeff_core_effects._clickhouse_http_sql",
 }
 
 

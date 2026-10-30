@@ -151,6 +151,8 @@
 ;; --- DDL の宣言 ------------------------------------------------------------------------------------------------------------
 
 (defenum SqlColumnType INTEGER FLOAT TEXT BYTES BOOLEAN JSON)
+(setv SqlColumnType.__doc__ "欄の閉じた型(SqlColumn.type): INTEGER = 64 bit の整数・FLOAT = 浮動小数・TEXT = 文字列・BYTES = バイト列・
+   BOOLEAN = 真偽・JSON = text で出し入れする JSON。答え手が方言の型へ描く。")
 
 
 (defrecord SqlColumn
