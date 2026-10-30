@@ -145,7 +145,7 @@ def _job_walks(rows: tuple, roots: tuple) -> _Program[tuple, object]:
 def _uses_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
-def job_uses(rows: tuple, roots: tuple) -> _Program[tuple, object]:
+def _job_uses(rows: tuple, roots: tuple) -> _Program[tuple, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
@@ -162,7 +162,7 @@ def units_of_job(walk: _TreeWalk, root: JobRoot) -> _Program[tuple, object]:
 def _units_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
-def kill_units(rows: tuple, roots: tuple) -> _Program[tuple, object]:
+def _kill_units(rows: tuple, roots: tuple) -> _Program[tuple, object]:
     ...
 
 def victim_of(units: tuple, uses: tuple, steadies: tuple, limits: MemoryLimits) -> _Program[KillUnit | None, object]:
