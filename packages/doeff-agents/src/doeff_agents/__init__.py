@@ -163,8 +163,6 @@ _LAZY_EXPORTS = {
     "FakeClaudeWorld": "._handlers",
     "ClaudeLiveLimitExceeded": "._handlers",
     "AgentSessionRepository": "._session_store",
-    "InMemoryAgentSessionRepository": "._session_store",
-    "JsonlAgentSessionRepository": "._session_store",
     "SessionBackend": "._session_backend",
     "AgentEffectBase": "._effects.agent",
     "CodexTurnCredential": "._effects.agent",
@@ -292,9 +290,6 @@ _LAZY_EXPORTS = {
     "tmux_session_pane_ids": "._sessionhost.effects",
     "transplant_conversation": "._sessionhost.effects",
     "wire_result_channel": "._sessionhost.effects",
-    "default_session_backend": "._session_backend",
-    "SessionConfig": "._session_backend",
-    "SessionInfo": "._session_backend",
     # 外の repo が使う program の helper(ADR-DOE-API-001 R18・R25)
     "account_limit_of": "._handlers.headless_codex",
     "mcp_server_loop": "._handlers.mcp_server_loop",
@@ -456,8 +451,6 @@ if TYPE_CHECKING:
     )
     from doeff_agents._session_store import (
         AgentSessionRepository as AgentSessionRepository,
-        InMemoryAgentSessionRepository as InMemoryAgentSessionRepository,
-        JsonlAgentSessionRepository as JsonlAgentSessionRepository,
     )
     from doeff_agents._session_backend import (
         SessionBackend as SessionBackend,
@@ -496,9 +489,6 @@ if TYPE_CHECKING:
     from doeff_agents._io_fake import fake_driver_io_handler as fake_driver_io_handler
     from doeff_agents._io_fake import recorded_spawn_handler as recorded_spawn_handler
     from doeff_agents._sessionhost.store import sqlite_session_store as sqlite_session_store
-    from doeff_agents._session_backend import default_session_backend as default_session_backend
-    from doeff_agents._session_backend import SessionConfig as SessionConfig
-    from doeff_agents._session_backend import SessionInfo as SessionInfo
 
 
 def __getattr__(name: str) -> Any:

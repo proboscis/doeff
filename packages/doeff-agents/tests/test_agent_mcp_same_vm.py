@@ -22,7 +22,7 @@ from doeff_agents import (
 )
 from doeff_agents import agent_effectful_handler
 from doeff_agents import SessionBackend
-from doeff_agents import SessionInfo
+from doeff_agents._session_backend import SessionInfo
 from doeff_core_effects import lazy_ask, state
 from doeff_core_effects import (
     AcquireSemaphore,

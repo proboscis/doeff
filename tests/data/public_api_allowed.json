@@ -739,6 +739,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "InputFateState",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "InputImage",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -825,6 +832,13 @@
    "module": "doeff_agents",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "SessionBackend",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {

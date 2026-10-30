@@ -22,7 +22,7 @@
 (import doeff [run])
 (import doeff_agents [AgentSessionQuery GetAgentSession PutAgentSession])
 (import doeff_agents._io_fake [FakeIoWorld with-fake-io])
-(import doeff_agents [InMemoryAgentSessionRepository JsonlAgentSessionRepository])
+(import doeff_agents._session_store [InMemoryAgentSessionRepository JsonlAgentSessionRepository])
 (import doeff_agents._session_store_sql [
   COLUMN-NAMES
   POSTGRES

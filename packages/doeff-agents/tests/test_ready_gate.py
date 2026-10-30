@@ -38,9 +38,8 @@ from doeff_agents import (
     CodexRuntimePolicy,
     LaunchEffect,
     SessionBackend,
-    SessionConfig,
-    SessionInfo,
 )
+from doeff_agents._session_backend import SessionConfig, SessionInfo
 from doeff_agents._adapters.claude import ClaudeAdapter
 from doeff_agents._adapters.codex import CodexAdapter
 from doeff_agents._handlers import production

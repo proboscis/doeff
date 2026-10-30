@@ -71,13 +71,16 @@ def __getattr__(name: str) -> Any:
 # New handler composition — claude_resolver + claude_handler (Hy-based)
 # ---------------------------------------------------------------------------
 
-def claude_agent_handler(*, backend=None) -> ProgramHandler:
+def claude_agent_handler(*, backend: SessionBackend | None = None) -> ProgramHandler:
     """Claude agent handler (new Hy-based architecture).
 
     Catches LaunchEffect(agent_type=CLAUDE) directly — no resolver indirection.
     The resolver pattern was removed because GetHandlers(k) captures handlers
     from k's segment upward, and a resolver puts k inside itself, breaking the
     capture of domain handlers.
+
+    ``backend`` is the terminal session backend the handler drives; ``None``
+    reads one through ``Ask(SessionBackend)`` on first use.
 
     Usage:
         handler = claude_agent_handler()
@@ -90,8 +93,11 @@ def claude_agent_handler(*, backend=None) -> ProgramHandler:
     return claude_handler(backend=backend)
 
 
-def codex_agent_handler(*, backend=None) -> ProgramHandler:
-    """Codex agent handler (Hy-based architecture)."""
+def codex_agent_handler(*, backend: SessionBackend | None = None) -> ProgramHandler:
+    """Codex agent handler (Hy-based architecture).
+
+    ``backend`` as for ``claude_agent_handler``.
+    """
     import hy  # noqa: F401, F811  # activate Hy import hook (intentionally re-imported per call site)
 
     codex_handler = import_module("doeff_agents._handlers.codex").codex_handler

@@ -30,7 +30,7 @@ class FakeTmuxBackend:
     def new_session(self, cfg):
         from datetime import datetime, timezone
 
-        from doeff_agents import SessionInfo
+        from doeff_agents._session_backend import SessionInfo
 
         pane_id = f"%fake{self._mut_next_pane}"
         self._mut_next_pane += 1

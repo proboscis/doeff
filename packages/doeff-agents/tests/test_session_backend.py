@@ -43,8 +43,8 @@ from doeff_agents import AwaitResultEffect, AwaitStatus, LaunchSession
 from doeff_agents._result_validation import validate_result_payload
 from doeff_agents import ClaudeRuntimePolicy, CodexRuntimePolicy
 from doeff_agents import SessionBackend
-from doeff_agents import SessionConfig, SessionInfo
-from doeff_agents import InMemoryAgentSessionRepository
+from doeff_agents._session_backend import SessionConfig, SessionInfo
+from doeff_agents._session_store import InMemoryAgentSessionRepository
 from doeff_agents._tmux import TmuxSessionBackend, _output_has_unsubmitted_paste_input, strip_ansi
 from fake_io_support import FakeIoWorld, completed_process_script, fake_io_root
 

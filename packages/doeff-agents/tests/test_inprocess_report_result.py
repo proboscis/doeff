@@ -46,7 +46,7 @@ from doeff_agents._handlers.production import (
 from doeff_agents._handlers import production
 from doeff_agents._mcp_server import McpToolServer
 from doeff_agents import SessionBackend
-from doeff_agents import SessionInfo
+from doeff_agents._session_backend import SessionInfo
 from doeff_core_effects import lazy_ask, state
 from doeff_core_effects import CreateExternalPromise, Wait, scheduled
 
