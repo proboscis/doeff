@@ -6,11 +6,10 @@ from doeff_agentic import (
     AgentConfig,
     AgentInfo,
     AgentStatus,
-    WatchEventType,
-    WatchUpdate,
     WorkflowInfo,
     WorkflowStatus,
 )
+from doeff_agentic._types import WatchEventType, WatchUpdate
 
 
 class TestAgentInfo:

@@ -13,7 +13,8 @@
   "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
   "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。",
   "組「境界 — effect の値の型」の 757 行(278 名)は、目録が形(同じ package が見せる effect の class の欄の注釈に出る型 — 目録の value_types)を確かめる許す組「許した物 — effect の値の型」を足したので、形に合う 95 名 298 行と「足した名」の 25 行を許した物の表へ同じ答えの決めつきで移し、組は消えた(card ki-5401da404e8e)。合わない名のうち、同じ package の effect の答えの型(__doeff_answer__)に出る 25 名 107 行は組「境界 — effect の結果の型」へ、残りの 158 名 352 行は組「外れ — effect の欄に型を書くか内側へ移す」へ移した — effect の欄の注釈が object・素の tuple や dict・Any で型を言わない値の型と、どの effect の欄にも出ない名。effect の値の型なら欄の注釈に型を書いて許した物の表へ移し、そうでなければ内側へ移す。",
-  "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 1,034 行のうち、目録が答えの型と読む 603 行を許した物の表へ移し、残る 431 行をこの組へ移した。子 card ki-1c401af6d5d3・ki-91aeae4fa810・ki-bf9fdba32e04・ki-63db980652ad・ki-d976fdee464d・ki-4ccdcc97032c が package ごとに直す)。"
+  "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 1,034 行のうち、目録が答えの型と読む 603 行を許した物の表へ移し、残る 431 行をこの組へ移した。子 card ki-1c401af6d5d3・ki-91aeae4fa810・ki-bf9fdba32e04・ki-63db980652ad・ki-d976fdee464d・ki-4ccdcc97032c が package ごとに直す)。",
+  "card ki-80380210ad7a が小さい 14 package の組「外れ — effect の欄に型を書くか内側へ移す」の 62 行を分けた: effect の答えと値の型 24 行は許した物の表へ、handler に渡す設定と引数の型(doeff-claude-judge の ClaudeJudgeTarget・ClaudeQuery・QueryImage、doeff-events の Drop・WhenUnsent、doeff-notify の NotificationCapture)10 行は組「境界 — handler の設定の型」へ、答えの型の別名を書く兄弟の card が答えに出す名(doeff-events の NoticeSent・NoticeGapTold は ki-bf9fdba32e04、doeff-seedream の SeedreamImage は ki-4ccdcc97032c)9 行は組「外れ — effect に答えの型を書く」へ移し、どの effect にも出ない 19 名 19 行は内側へ移して消した。doeff-system-one の choice・noul・score の 3 行は外の repo の呼び手が多いので残し、子 card ki-8a8fd1ef6ac5 が直す。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -50,13 +51,6 @@
     "境界 — handler の設定の型": {
      "doeff_agentic": [
       "VisualInterceptorConfig"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_agentic": [
-      "AgenticMessage",
-      "WatchEventType",
-      "WatchUpdate"
      ]
     }
    }
@@ -2519,12 +2513,10 @@
       "MalformedAnswer"
      ]
     },
-    "外れ — effect の欄に型を書くか内側へ移す": {
+    "境界 — handler の設定の型": {
      "doeff_claude_judge": [
       "ClaudeJudgeTarget",
       "ClaudeQuery",
-      "JudgeCredential",
-      "NoJudgeCredential",
       "QueryImage"
      ]
     }
@@ -8441,25 +8433,6 @@
      "doeff_codex.values": [
       "ApprovalPolicy"
      ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_codex.effects": [
-      "CodexTurnEnd",
-      "ToolsUnavailable"
-     ],
-     "doeff_codex.fake": [
-      "ToolsUnavailable"
-     ],
-     "doeff_codex.handler": [
-      "ToolsUnavailable"
-     ],
-     "doeff_codex.lines": [
-      "CodexLine",
-      "ServerRequest"
-     ],
-     "doeff_codex.values": [
-      "CodexLine"
-     ]
     }
    }
   },
@@ -10047,6 +10020,8 @@
       "MarkGap",
       "NoticeDropped",
       "NoticeGapMarked",
+      "NoticeGapTold",
+      "NoticeSent",
       "PublishAnswer",
       "SourceFailed",
       "SourceMissed",
@@ -10083,6 +10058,8 @@
       "MarkGap",
       "NoticeDropped",
       "NoticeGapMarked",
+      "NoticeGapTold",
+      "NoticeSent",
       "PublishAnswer"
      ],
      "doeff_events.handlers.notice_events": [
@@ -10090,6 +10067,8 @@
       "MarkGap",
       "NoticeDropped",
       "NoticeGapMarked",
+      "NoticeGapTold",
+      "NoticeSent",
       "PublishAnswer",
       "SourceFailed",
       "SourceMissed",
@@ -10103,6 +10082,8 @@
      "doeff_events.notice_laws": [
       "MarkGap",
       "NoticeGapMarked",
+      "NoticeGapTold",
+      "NoticeSent",
       "SourceMissed",
       "SourceResumed",
       "SourceStalled",
@@ -10111,15 +10092,19 @@
     },
     "境界 — handler の設定の型": {
      "doeff_events": [
+      "Drop",
       "EventBus",
       "MemoryBroker",
-      "NoticeRoute"
+      "NoticeRoute",
+      "WhenUnsent"
      ],
      "doeff_events.handlers": [
+      "Drop",
       "EventBus",
       "MemoryBroker",
       "MemoryFiles",
-      "NoticeRoute"
+      "NoticeRoute",
+      "WhenUnsent"
      ],
      "doeff_events.handlers.memory": [
       "EventBus"
@@ -10132,53 +10117,15 @@
       "MemoryBroker"
      ],
      "doeff_events.handlers.notice_events": [
-      "NoticeRoute"
+      "Drop",
+      "NoticeRoute",
+      "WhenUnsent"
      ],
      "doeff_events.handlers.redis_notices": [
       "KeptReaders"
      ],
      "doeff_events.notice_laws": [
       "NoticeRoute"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_events": [
-      "ArmedTimer",
-      "BrokerPatience",
-      "Drop",
-      "NoticeGapTold",
-      "NoticeSent",
-      "WhenUnsent"
-     ],
-     "doeff_events.effects": [
-      "ArmedTimer",
-      "BrokerPatience"
-     ],
-     "doeff_events.effects.notices": [
-      "BrokerPatience"
-     ],
-     "doeff_events.effects.timers": [
-      "ArmedTimer"
-     ],
-     "doeff_events.handlers": [
-      "Drop",
-      "NoticeGapTold",
-      "NoticeSent",
-      "WhenUnsent"
-     ],
-     "doeff_events.handlers.notice_events": [
-      "BrokerPatience",
-      "Drop",
-      "NoticeGapTold",
-      "NoticeSent",
-      "WhenUnsent"
-     ],
-     "doeff_events.handlers.timer": [
-      "ArmedTimer"
-     ],
-     "doeff_events.notice_laws": [
-      "NoticeGapTold",
-      "NoticeSent"
      ]
     }
    }
@@ -10197,12 +10144,6 @@
      "doeff_flow.handlers.testing": [
       "MockTraceRecorder"
      ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_flow": [
-      "LiveTrace",
-      "TraceFrame"
-     ]
     }
    }
   },
@@ -10216,17 +10157,6 @@
       "GeminiImageEditResult",
       "ImageResult",
       "TokenUsage"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_gemini": [
-      "APICallMetadata",
-      "FileUriContentPart",
-      "GeminiContentPart",
-      "GeminiCostEstimate",
-      "LocalFileContentPart",
-      "TextContentPart",
-      "UriContentPart"
      ]
     }
    }
@@ -10316,11 +10246,6 @@
       "CostInfo",
       "TokenUsage"
      ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_llm": [
-      "Message"
-     ]
     }
    }
   },
@@ -10336,11 +10261,9 @@
       "NotificationResult"
      ]
     },
-    "外れ — effect の欄に型を書くか内側へ移す": {
+    "境界 — handler の設定の型": {
      "doeff_notify": [
-      "Channel",
-      "NotificationCapture",
-      "Urgency"
+      "NotificationCapture"
      ]
     }
    }
@@ -10364,14 +10287,6 @@
       "MockOpenAIConfig",
       "MockOpenAIState"
      ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_openai": [
-      "APICallMetadata",
-      "CompletionRequest",
-      "EmbeddingRequest",
-      "OpenAIModel"
-     ]
     }
    }
   },
@@ -10390,11 +10305,6 @@
      ],
      "doeff_openrouter.handlers.testing": [
       "MockOpenRouterRuntime"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_openrouter.types": [
-      "APICallMetadata"
      ]
     }
    }
@@ -11826,13 +11736,8 @@
     "外れ — effect に答えの型を書く": {
      "doeff_seedream": [
       "ImageResult",
+      "SeedreamImage",
       "SeedreamImageEditResult"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_seedream": [
-      "CostEstimate",
-      "SeedreamImage"
      ]
     }
    }
@@ -11901,26 +11806,12 @@
      "doeff_traverse.handlers": [
       "BarFactory"
      ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_traverse": [
-      "Collection"
-     ]
     }
    }
   },
   "doeff-validation": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_validation": [
-      "CheckArgument",
-      "CheckError",
-      "CheckFailure",
-      "EvaluatedArgument"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-vm-core": {
    "範囲": "決まりの範囲",

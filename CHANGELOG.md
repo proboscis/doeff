@@ -34,6 +34,18 @@
 
 ### Changed
 
+- Effects of the smaller packages declare the types their values and answers carry (ADR-DOE-API-001 R2):
+  `AgenticGetMessages` answers `list[AgenticMessage]`, `BorrowJudgeCredential` answers `JudgeCredential |
+  NoJudgeCredential`, `ArmedTimers` answers `tuple[ArmedTimer, ...]`, `GeminiCalculateCost` answers
+  `GeminiCostEstimate`, the `messages` of the doeff-llm effects are `list[Message]`, and `Notify.urgency` is an
+  `Urgency` (now a `StrEnum` — each level still equals its lower-case string; `Urgency.ALL` is gone, use
+  `list(Urgency)`).
+- **Breaking:** names that no effect carries are no longer exported by their import roots (ADR-DOE-API-001 R1):
+  doeff-agentic `WatchEventType`, `WatchUpdate`; doeff-gemini `APICallMetadata` and the `*ContentPart` types
+  (`structured_llm__gemini` still takes the same dicts); doeff-notify `Channel`; doeff-openai `APICallMetadata`,
+  `CompletionRequest`, `EmbeddingRequest`, `OpenAIModel`; doeff-openrouter `APICallMetadata`; doeff-seedream
+  `CostEstimate`; doeff-validation `CheckArgument`, `CheckError`, `CheckFailure`, `EvaluatedArgument` (the
+  failures a `ValidationException` holds — the Hy `check` expansion reads them from `doeff_validation._failures`).
 - **Breaking (doeff-events):** the import root no longer exports `GAP_NOTICE`, the wire name of the gap notice
   (ADR-DOE-API-001 R1 — a constant is not an effect or a handler). Write `Announce.gap(channel, source)` where you
   passed it to `Announce`, and `notice.is_gap` (or `effect.is_gap` on an `Announce`) where you compared a name with

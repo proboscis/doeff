@@ -3,6 +3,9 @@
 
 from dataclasses import dataclass
 
+from doeff import EffectBase
+from doeff_agentic._types import AgenticMessage
+
 from .workflow import AgenticEffectBase
 
 
@@ -18,8 +21,8 @@ class AgenticSendMessage(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticGetMessages(AgenticEffectBase):
-    """Get messages from a session."""
+class AgenticGetMessages(AgenticEffectBase, EffectBase[list[AgenticMessage]]):
+    """Get messages from a session: answers the session's messages."""
 
     session_id: str
     limit: int | None = None
