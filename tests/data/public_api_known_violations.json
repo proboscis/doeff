@@ -11004,12 +11004,10 @@
      ],
      "doeff_core_effects.scripted_process": [
       "MODULE_TAGS",
-      "ProcessScript",
       "SCRIPTED_COMMAND_EFFECTS",
       "SCRIPTED_FIRST_PID",
       "SCRIPTED_RUNNING",
       "SCRIPTED_STOPPED_CODE",
-      "ScriptedCommand",
       "scripted_answer",
       "scripted_append_outputs",
       "scripted_child_env",
@@ -11021,10 +11019,6 @@
       "SCRIPTED_WARM_FIRST_PID",
       "SCRIPTED_WARM_FIRST_TICKS",
       "WarmChildState",
-      "WarmRun",
-      "WarmScript",
-      "WarmSocket",
-      "WarmSocketAnswer",
       "ended_answer",
       "scripted_fork"
      ],
@@ -12073,6 +12067,16 @@
      ],
      "doeff_core_effects.scripted_http_server": [
       "HttpScript"
+     ],
+     "doeff_core_effects.scripted_process": [
+      "ProcessScript",
+      "ScriptedCommand"
+     ],
+     "doeff_core_effects.scripted_warm_process": [
+      "WarmRun",
+      "WarmScript",
+      "WarmSocket",
+      "WarmSocketAnswer"
      ],
      "doeff_core_effects.scripted_ws_client": [
       "WsScript"

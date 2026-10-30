@@ -6,7 +6,7 @@
 (import dataclasses [dataclass])
 (import enum [Enum StrEnum])
 (import json)
-(import doeff_core_effects.process_effects [EnvEntry EnvMode])
+(import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout])
 (import doeff_cluster.worker.core.launch [JobLaunch child-environment env-project-dir project-hy uv-run-environ])

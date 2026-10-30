@@ -25,7 +25,7 @@
 (import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
+(import doeff_core_effects [scripted-stop-handler])
 (import doeff_core_effects [scripted-http-server])
 (import doeff_core_effects [AppendHttpScript HttpAddress HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpScript ReadHttpServed ScriptedBody])
 (import doeff_time [Delay SimClock sim-time-handler])

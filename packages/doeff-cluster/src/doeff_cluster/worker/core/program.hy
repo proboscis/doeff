@@ -9,7 +9,7 @@
 (import dataclasses [replace])
 (import doeff_time [GetMonotonic])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable

@@ -39,8 +39,7 @@
 (import doeff_time [WaitWithin])
 (import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree]
         doeff_core_effects._file_effects [file-done])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning
-                                            ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
+(import doeff_core_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.native_wheel [wheels-root])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])

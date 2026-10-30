@@ -28,12 +28,7 @@
 (import signal)
 (import sys)
 (import doeff_core_effects [MakeDirectory PathKind PathStat ReadText StatPath WriteText])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess
-                                            WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled
-                                            WriteProcessInput ProcessInputWritten
-                                            ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound
-                                            ModuleNotFound environment-mapping])
+(import doeff_core_effects [EnvEntry EnvMode ExecutableAt ProcessAlive ProcessOutcome ReadEnvironment RunProcess WorkingDirectory StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled WriteProcessInput ProcessInputWritten ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound environment-mapping])
 (import process_contract_handlers [BIG-OUTPUT BIG-OUTPUT-TEXT CAT ContractRoot ENV-PROBE FIRST-THEN-WAIT KILLED LEFT-BEHIND LEFT-BEHIND-THEN-WAIT NOT-UTF-8
                                    NOT-UTF-8-BYTES OUT-ERR OUT-ERR-EXIT OWN-PID PWD TWO-LINES
                                    PROBE-MODULE NAMESPACE-MODULE MISSING-MODULE])

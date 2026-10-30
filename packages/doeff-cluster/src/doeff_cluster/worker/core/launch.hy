@@ -10,7 +10,7 @@
 (import json)
 (import posixpath)
 (import pathlib [Path])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode])
+(import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.core.run_context_rules [process-context-environ])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])

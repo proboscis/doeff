@@ -38,7 +38,7 @@ import pytest
 from doeff import do, run, with_handlers
 from doeff_core_effects import reader, state
 from doeff_core_effects import os_file_handler
-from doeff_core_effects.os_process import subprocess_handler
+from doeff_core_effects import subprocess_handler
 from doeff_time import sync_time_handler
 
 from doeff_cluster.worker.intent.env_prepare_model import TREE_COPY, TREE_EXPAND, MaterializeTree, TreePlaced, TreeSource

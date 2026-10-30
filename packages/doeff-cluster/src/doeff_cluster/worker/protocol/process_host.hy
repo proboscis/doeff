@@ -29,9 +29,7 @@
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess
-                                            ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild
-                                            WriteProcessInput ProcessInputWritten])
+(import doeff_core_effects [EnvEntry ReadEnvironment ReadInterpreter StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild WriteProcessInput ProcessInputWritten])
 (import doeff_cluster.worker.intent.worker_model [NoticeJob])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout ProcessView StartJob JobStarted JobNotStarted SignalJob ReapJob RetireJob StopStage
@@ -43,12 +41,11 @@
 (import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
 (import doeff_cluster.worker.core.worker_due [wakes-with])
 (import doeff_cluster.shared.intent.due_model [DueNever])
-(import doeff_core_effects.process_effects [AwaitProcessExit])
-(import doeff_core_effects.warm_effects [AwaitWarmChildExit])
+(import doeff_core_effects [AwaitProcessExit])
+(import doeff_core_effects [AwaitWarmChildExit])
 (import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.shim_timing [ShimSpans shim-deadline-ms])
-(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited
-                                         WarmLost])
+(import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
 
 

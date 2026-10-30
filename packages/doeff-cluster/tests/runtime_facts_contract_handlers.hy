@@ -34,7 +34,7 @@
 (import doeff_cluster.worker.core.env_prepare [env-marker->json] doeff_cluster.worker.intent.env_prepare_model [EnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.runtime_identity_model [ModuleOrigin ProcessFacts ReadRuntimeFacts])
 (import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts process-runtime-facts])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [os-file-handler])
 
 (val PROCESS-RUNTIME-FACTS "process-runtime-facts")

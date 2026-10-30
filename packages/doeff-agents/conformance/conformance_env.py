@@ -11,8 +11,8 @@ module was exempted from the rule before, #2954).
 """
 
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry, ReadEnvironment, environment_mapping
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import EnvEntry, ReadEnvironment, environment_mapping
 
 
 def process_environment() -> dict[str, str]:

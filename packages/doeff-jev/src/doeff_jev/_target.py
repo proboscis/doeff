@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import environment_mapping
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import environment_mapping
 
 Wire = Literal["direct", "gateway"]
 

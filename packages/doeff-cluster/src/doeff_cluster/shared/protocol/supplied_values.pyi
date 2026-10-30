@@ -26,8 +26,8 @@ from doeff_core_effects import WriteBytes as WriteBytes
 from doeff_core_effects.http_effects import HttpFailed as HttpFailed
 from doeff_core_effects.http_effects import HttpRequest as HttpRequest
 from doeff_core_effects.http_effects import HttpResponse as HttpResponse
-from doeff_core_effects.process_effects import EnvEntry as EnvEntry
-from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
+from doeff_core_effects import EnvEntry as EnvEntry
+from doeff_core_effects import ReadEnvironment as ReadEnvironment
 from doeff_cluster.shared.intent.supplied_model import SuppliedKind as SuppliedKind
 from doeff_cluster.shared.intent.supplied_model import SuppliedObjectRef as SuppliedObjectRef
 from doeff_cluster.shared.intent.supplied_model import SuppliedRef as SuppliedRef

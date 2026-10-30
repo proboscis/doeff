@@ -36,7 +36,7 @@
 (import operator [attrgetter])
 (import itertools [accumulate chain groupby islice repeat takewhile])
 (import doeff_traverse [sequence])
-(import doeff_core_effects.proc_table_effects [ProcRow])
+(import doeff_core_effects [ProcRow])
 
 ;; byte の単位(log の値は MiB)。
 (val MIB (* 1024 1024))

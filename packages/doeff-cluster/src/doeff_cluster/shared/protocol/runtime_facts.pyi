@@ -2,12 +2,12 @@
 
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
-from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
-from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
-from doeff_core_effects.process_effects import ResolveModule as ResolveModule
-from doeff_core_effects.process_effects import InterpreterFacts as InterpreterFacts
-from doeff_core_effects.process_effects import ModuleFound as ModuleFound
-from doeff_core_effects.process_effects import ModuleNotFound as ModuleNotFound
+from doeff_core_effects import ReadEnvironment as ReadEnvironment
+from doeff_core_effects import ReadInterpreter as ReadInterpreter
+from doeff_core_effects import ResolveModule as ResolveModule
+from doeff_core_effects import InterpreterFacts as InterpreterFacts
+from doeff_core_effects import ModuleFound as ModuleFound
+from doeff_core_effects import ModuleNotFound as ModuleNotFound
 from doeff_core_effects import StatPath as StatPath
 from doeff_core_effects import ReadText as ReadText
 from doeff_core_effects import PathKind as PathKind

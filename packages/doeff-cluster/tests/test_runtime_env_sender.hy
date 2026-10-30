@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout SenderSourceRoot])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [os-file-handler])
 
 (setv LOCK "httpx==0.28.1\n")

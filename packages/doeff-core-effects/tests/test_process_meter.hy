@@ -13,7 +13,7 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [CountMetric MeterBucket MeterSettings MeterSnapshot ObserveSeconds ReadMeter])
-(import doeff_core_effects.process_meter [process-meter-handler])
+(import doeff_core_effects [process-meter-handler])
 
 (val SETTINGS (MeterSettings :buckets #((MeterBucket :label "le_1s" :ceiling 1.0)) :inf-label "le_inf"))
 

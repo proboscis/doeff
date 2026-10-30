@@ -33,8 +33,8 @@ from pathlib import Path
 
 import pytest
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import ReadEnvironment
 from doeff_core_effects import scheduled
 
 SUPPORT_DIR = Path(__file__).resolve().parent

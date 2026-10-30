@@ -209,7 +209,7 @@ def _python_use(name: str, statement: str, extra: str) -> ExtraUse:
 # 文と extra の表は doeff_core_effects/_extra_hints.py。開発の環境で同じ場面を読む検は tests/test_missing_extra_hints.py と
 # tests/cli/test_cli_without_hy.py(Hy は在り httpx だけが無い場面は、核の 4 個だけの venv には無い)。
 EXTRA_USES = (
-    _python_use("Hy で書いた module", "import doeff_core_effects.os_process", "hy"),
+    _python_use("Hy で書いた module", "import doeff_core_effects._os_process", "hy"),
     _python_use("cache", "from doeff_core_effects._cache import cache", "hy"),
     _python_use(
         "HTTP の handler", "from doeff_core_effects import http_production_handler", "http"
@@ -230,7 +230,7 @@ EXTRA_USES = (
     ExtraUse(
         "doeff run -c で Hy の module を読む",
         "doeff",
-        ("run", "-c", "import doeff_core_effects.os_process\nPure(42)"),
+        ("run", "-c", "import doeff_core_effects._os_process\nPure(42)"),
         "hy",
     ),
 )

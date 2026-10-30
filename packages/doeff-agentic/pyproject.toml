@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    # extra hy — state が Hy で書いた process の effect(doeff_core_effects.os_process)を読む(card ki-006338b48f4b)。
+    # extra hy — state が Hy で書いた process の effect(doeff_core_effects._os_process)を読む(card ki-006338b48f4b)。
     "doeff[hy]>=0.1.9",
     "doeff-flow>=0.1.0",
     "doeff-time",
