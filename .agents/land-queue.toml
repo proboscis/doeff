@@ -314,8 +314,17 @@ full_sessions = 1
 #   行にする。日次の task が agora-controllers の AfterReport(controllers/daily_verify/protocol/schedule.hy)として集めて赤の card に載せ、
 #   担い手の会話が行の card か会話へ返す(日次の worker は書き込みの資格を持たない)。後段は結末を変えない。commit の時には回さない。
 #   戻し方 = 下の [verify] を外す。
+# 2026-10-30(card ki-93ba968bbafe・道の決定 = card ki-2c94e109b3f1): 後段 consumer-follow = doeff を読む repo(消費者)の追従の測り。
+#   消費者の検証は消費者が固定した doeff の版で回るので、公開名を消す・移す doeff の変更が消費者を壊した事は、消費者が版を上げるまで
+#   見えない。この後段が、消費者の針 docs/adr/test_doeff_adr_api_follows.py(今は dotfiles — 日次の task が $HOME/dotfiles に隣の
+#   checkout として置く)を、測った断面の環境で tools/consumer_follow.py が回し、赤の検を
+#   `consumer_follow: 赤 <消費者> <消費者の頭> <検の id> — <訳>` の行にする。消費者は表に書かず、pyproject.toml の doeff の依存から導く。
+#   集め方と card は public-api-blame と同じ口(AfterReport)。後段は結末を変えない。戻し方 = 下の after の consumer-follow の要素を外す。
 [verify]
-after = [{ name = "public-api-blame", run = "PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=\"${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/land-doeff}\" uv run --no-sync python tools/public_api_blame.py" }]
+after = [
+  { name = "public-api-blame", run = "PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=\"${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/land-doeff}\" uv run --no-sync python tools/public_api_blame.py" },
+  { name = "consumer-follow", run = "PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=\"${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/land-doeff}\" uv run --no-sync python tools/consumer_follow.py" },
+]
 
 [follow]
 install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen"
