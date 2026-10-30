@@ -22,20 +22,6 @@
       "doeff-adr"
      ]
     },
-    "境界 — Hy の macro": {
-     "(submodule)": [
-      "doeff_adr.macros"
-     ],
-     "doeff_adr.macros": [
-      "counterexample",
-      "defadr",
-      "defsemgrep",
-      "fact",
-      "interpretation",
-      "law",
-      "rule"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_adr.registry": [
       "EnforcementMode",
@@ -8706,11 +8692,6 @@
       "WorldView"
      ]
     },
-    "境界 — Hy の macro": {
-     "(submodule)": [
-      "doeff_cluster.shared.entry.macros"
-     ]
-    },
     "境界 — 例外の型": {
      "doeff_cluster.coordinator.core.api_policy": [
       "BodyInvalid",
@@ -11756,48 +11737,6 @@
       "MacroRecord"
      ]
     },
-    "境界 — Hy の macro": {
-     "(submodule)": [
-      "doeff_hy.handle",
-      "doeff_hy.macros",
-      "doeff_hy.record"
-     ],
-     "doeff_hy.handle": [
-      "defhandler",
-      "handle",
-      "with_handler"
-     ],
-     "doeff_hy.macros": [
-      "<-",
-      "<->",
-      "absent_as",
-      "check",
-      "defeffect",
-      "deff",
-      "defk",
-      "defmcp_tool",
-      "defp",
-      "defpipeline",
-      "defpp",
-      "deftest",
-      "do!",
-      "fnk",
-      "for/do",
-      "lazy",
-      "on_raise",
-      "session",
-      "set!",
-      "traverse",
-      "val",
-      "validate",
-      "var"
-     ],
-     "doeff_hy.record": [
-      "defenum",
-      "defrecord",
-      "defwire"
-     ]
-    },
     "境界 — 例外の型": {
      "doeff_hy.clause_endings": [
       "ClauseEndingError"
@@ -13882,13 +13821,6 @@
    "name": "uv_run_environ",
    "訳": "表の後に入った shim の起こし方の変更が足した名 — 基盤・道具の package で範囲の答え待ち",
    "決め": "ki-869cdf21ec85"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.macros",
-   "name": "defsystem",
-   "訳": "系を宣言する Hy の macro defsystem を doeff-hy の doeff_hy.macros から持ち主の doeff-cluster へ移した(利用者の答え by-group の群 E — card ki-f2107259b141)",
-   "決め": "lt-GXXY5TVWBHJW4ZCBDTCRN68XZS"
   },
   {
    "package": "doeff-hy-pytest",
