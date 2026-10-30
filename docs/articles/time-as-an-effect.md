@@ -20,23 +20,41 @@ If you skipped part 1, three words are enough for this post:
 
 ## Asking for time
 
-[doeff-time](https://github.com/proboscis/doeff/tree/main/packages/doeff-time) is a package of time effects, and of handlers that answer them, for doeff. `nap` asks for time twice and never says which clock:
+The time effects in this post are our own: three small classes, each a request for time. `nap` asks for time twice and never says which clock:
 
 ~~~python
 # clock.py (excerpt)
+import asyncio
+import heapq
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import count
 
-from doeff import Gather, Resume, Spawn, do, handler, run
+from doeff import Await, EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects.handlers import await_handler
-from doeff_core_effects.scheduler import scheduled
-from doeff_time import (
-    Delay,
-    DelayEffect,
-    GetTime,
-    GetTimeEffect,
-    async_time_handler,
-    sim_time_handler,
+from doeff_core_effects.scheduler import (
+    PRIORITY_IDLE,
+    CompletePromise,
+    CreatePromise,
+    Wait,
+    scheduled,
 )
+
+
+@dataclass(frozen=True)
+class Delay(EffectBase):  # "wait this many seconds"
+    seconds: float
+
+
+@dataclass(frozen=True)
+class WaitUntil(EffectBase):  # "wait until this time"
+    target: datetime
+
+
+@dataclass(frozen=True)
+class GetTime(EffectBase):  # "what time is it?"
+    pass
+
 
 START = datetime(2026, 11, 30, 9, 0, tzinfo=timezone.utc)
 
@@ -47,15 +65,15 @@ def nap(seconds: float):  # asks for time twice, and never says which clock
     return (yield GetTime())
 ~~~
 
-- `yield Delay(seconds)` asks to wait for `seconds`.
-- `yield GetTime()` asks what time it is now. The answer is a timezone-aware `datetime`.
-- `Delay(...)` builds a `DelayEffect` and `GetTime()` a `GetTimeEffect`. A handler names these classes in its annotation to say which effects it takes.
+- `yield Delay(seconds)` asks to wait for `seconds`, and `yield WaitUntil(target)` asks to wait until the `datetime` `target`. The report below uses `WaitUntil`.
+- `yield GetTime()` asks what time it is now. The clocks in this post answer with a timezone-aware `datetime`.
+- Each effect is a frozen dataclass on `EffectBase` and holds only what the request needs. A handler names these classes in its annotation to say which effects it takes.
 
 Run `nap(20)` with no handler, and it stops at its `Delay` with `UnhandledEffect`: the effect has no meaning until a handler gives it one.
 
 ## A clock is a handler that decides when `k` runs
 
-Here is a clock of our own. It keeps the time in a variable. On `Delay`, it moves the time forward and resumes `k` at once. On `GetTime`, it resumes `k` with the time it keeps:
+Here is a first clock. It keeps the time in a variable. On `Delay`, it moves the time forward and resumes `k` at once. On `GetTime`, it resumes `k` with the time it keeps:
 
 ~~~python
 # clock.py (excerpt)
@@ -63,9 +81,9 @@ def ticking(start: datetime):  # a clock of our own: resume k at once, move the 
     now = start
 
     @handler
-    def clock(effect: DelayEffect | GetTimeEffect, k):
+    def clock(effect: Delay | GetTime, k):
         nonlocal now
-        if isinstance(effect, DelayEffect):
+        if isinstance(effect, Delay):
             now += timedelta(seconds=effect.seconds)
             return (yield Resume(k, None))
         return (yield Resume(k, now))
@@ -106,10 +124,51 @@ print(run(scheduled(ticking(START)(two_naps()))))
 
 The 10-second nap woke 30 seconds after the start. `ticking` resumed the slow task's `k` at once, so the slow task's 20 seconds were on the clock before the fast task began its wait, and the fast task added 10 more. A clock for several tasks cannot answer each wait as it comes. It has to hold the `k` of every waiting task until no task can run, then move the time to the earliest wake-up and resume that task first.
 
-doeff-time's `sim_time_handler` is a clock that does this:
+`virtual_clock` is a clock that does this:
 
 ~~~python
-print(run(scheduled(sim_time_handler(start_time=START)(two_naps()))))
+# clock.py (excerpt)
+def virtual_clock(start: datetime):  # waits take no time, and end in time order
+    now = start
+    sleepers = []  # (wake-up time, order, promise), earliest first
+    order = count()
+    advancing = False
+
+    @do
+    def advance():  # idle priority: runs while every other task waits
+        nonlocal now, advancing
+        while sleepers:
+            now, _, promise = heapq.heappop(sleepers)
+            yield CompletePromise(promise, None)
+        advancing = False
+
+    @handler
+    def clock(effect: Delay | WaitUntil | GetTime, k):
+        nonlocal advancing
+        if isinstance(effect, GetTime):
+            return (yield Resume(k, now))
+        if isinstance(effect, Delay):
+            wake_up = now + timedelta(seconds=effect.seconds)
+        else:
+            wake_up = max(now, effect.target)
+        promise = yield CreatePromise()
+        heapq.heappush(sleepers, (wake_up, next(order), promise))
+        if not advancing:
+            advancing = True
+            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+        yield Wait(promise.future)
+        return (yield Resume(k, None))
+
+    return clock
+~~~
+
+- On `Delay` or `WaitUntil`, `clock` creates a promise, puts it in `sleepers` with the wake-up time, and yields `Wait` on it. The task stops at that `yield`, and the handler holds its `k` until the promise completes.
+- `sleepers` is a heap, so the earliest wake-up comes out first, and `order` keeps two waits for the same time in the order they came.
+- `advance` is a task of idle priority, which the scheduler runs only while every other task waits. It moves `now` to the earliest wake-up and completes that promise. The woken task runs before `advance` goes on, so the time moves only when no task can run.
+- `GetTime` is answered at once with `now`.
+
+~~~python
+print(run(scheduled(virtual_clock(START)(two_naps()))))
 ~~~
 
 ~~~text
@@ -122,18 +181,18 @@ The slow task woke 20 seconds after the start and the fast one after 10, and the
 sequenceDiagram
     participant slow as nap(20)
     participant fast as nap(10)
-    participant clock as sim_time_handler
+    participant clock as virtual_clock
     slow->>clock: yield Delay(20), paused as k1
     fast->>clock: yield Delay(10), paused as k2
-    Note over clock: no task can run: move to 09:00:10
+    Note over clock: no task can run: advance moves to 09:00:10
     clock->>fast: Resume(k2, None)
     fast->>clock: yield GetTime()
     clock->>fast: Resume(k2, 09:00:10)
-    Note over clock: no task can run: move to 09:00:20
+    Note over clock: no task can run: advance moves to 09:00:20
     clock->>slow: Resume(k1, None)
 ```
 
-`sim_time_handler` keeps each waiting `k` until its wake-up time. The diagram writes each resume as `Resume`; in its code, `sim_time_handler` resumes with `Transfer(k, value)`, which part 1 introduced: the task goes on, and the handler does not get control back. It moves the clock from a task of idle priority, which the scheduler runs only when every other task is waiting, so the time moves only when no task can run. It reaches the scheduler only through effects that any program can yield, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) builds a clock like it in about 30 lines.
+The clock reaches the scheduler only through effects that any program can yield: `CreatePromise`, `Spawn`, `Wait` and `CompletePromise`. The scheduler knows nothing about time, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#virtual-time-hours-of-waiting-in-an-instant) walks through the same clock with plain seconds.
 
 That is what makes time an effect rather than a function you call. A handler decides what a `yield` returns, and because it holds `k`, it also decides when the rest of the program runs.
 
@@ -143,17 +202,10 @@ Now a program with more time in it. Every weekday at 09:00 it builds a report, a
 
 ~~~python
 # report.py (excerpt)
-from doeff import Cancel, Pass, Spawn, TaskCancelledError, Wait, do, handler, run
+from doeff import Cancel, Pass, Race, Spawn, TaskCancelledError, Wait, do, handler, run
 from doeff_core_effects.scheduler import scheduled
-from doeff_time import (
-    Delay,
-    DelayEffect,
-    GetTime,
-    RaceWithin,
-    WaitUntil,
-    WaitUntilEffect,
-    sim_time_handler,
-)
+
+from clock import Delay, GetTime, WaitUntil, virtual_clock
 
 
 # The program: every weekday at 09:00, build the report; give a build 10 minutes.
@@ -173,16 +225,26 @@ def build(minutes: int):  # a step that takes as long as we say
 
 
 @do
-def within(seconds: float, program):  # the value of program, or "timed out"
-    task = yield Spawn(program)
-    outcome = yield RaceWithin((task,), seconds)
-    if not outcome.timed_out:
-        return outcome.value
-    yield Cancel(task)
+def alarm(seconds: float):  # a task that only waits
+    yield Delay(seconds)
+
+
+@do
+def end(task):  # the value of task, or "timed out" if it had to be cancelled
+    yield Cancel(task)  # Cancel does nothing to a task that has ended
     try:
         return (yield Wait(task))  # raises once the cancelled task has unwound
     except TaskCancelledError:
         return "timed out"
+
+
+@do
+def within(seconds: float, program):  # the value of program, or "timed out"
+    task = yield Spawn(program)
+    timer = yield Spawn(alarm(seconds))
+    yield Race(task, timer)  # goes on when the first of the two ends
+    yield end(timer)
+    return (yield end(task))
 
 
 @do
@@ -205,7 +267,7 @@ def daily_report(build_minutes: list[int]):  # one line per day
 
 - `next_weekday_at` is plain Python. It takes `now` as an argument, so it never reads a clock.
 - `build` takes as long as we tell it to, so that one build can be too slow.
-- `within` is a timeout. It starts `program` as a task and yields `RaceWithin((task,), seconds)`: wait for the task for at most `seconds`. If the deadline comes first, it cancels the task and waits for it to unwind, and `Wait` raises `TaskCancelledError` at that `yield`.
+- `within` is a timeout made of two tasks: `program`, and an `alarm` that only waits for `seconds`. `Race` goes on when the first of them ends, and `end` cancels whichever is still running and waits for it to unwind. If the alarm ended first, the build is the one cancelled: `Wait` raises `TaskCancelledError` at that `yield`, and `end` returns "timed out".
 - `report_day` asks for the time with `GetTime` and waits with `WaitUntil`. It reads no clock of its own, so what it does depends on which clock answers, not on when it runs.
 - `daily_report` runs one `report_day` per build. Yielding a program from a `@do` function runs it and gives back its result.
 
@@ -217,7 +279,7 @@ FRIDAY_EVENING = datetime(2026, 11, 27, 17, 0, tzinfo=timezone.utc)
 
 
 def simulated(program):  # virtual time from Friday 17:00
-    return scheduled(sim_time_handler(start_time=FRIDAY_EVENING)(program))
+    return scheduled(virtual_clock(FRIDAY_EVENING)(program))
 ~~~
 
 ~~~python
@@ -239,22 +301,26 @@ The weekend went by, the 12-minute build ran into its 10-minute deadline, and th
 # test_report.py
 from datetime import datetime, timezone
 
-from doeff import run
-from doeff_core_effects.scheduler import scheduled
-from doeff_time import SimClock, sim_time_handler
+from doeff import do, run
 
-from report import FRIDAY_EVENING, daily_report
+from clock import GetTime
+from report import daily_report, simulated
+
+
+@do
+def report_and_the_time_after(build_minutes: list[int]):  # the test asks the same clock
+    lines = yield daily_report(build_minutes)
+    return lines, (yield GetTime())
 
 
 def test_a_slow_build_times_out_and_the_next_day_still_runs():
-    clock = SimClock(FRIDAY_EVENING)
-    lines = run(scheduled(sim_time_handler(clock=clock)(daily_report([3, 12, 5]))))
+    lines, stopped_at = run(simulated(report_and_the_time_after([3, 12, 5])))
     assert lines[1] == "Tue 01 09:00-09:10 timed out"
     assert lines[2] == "Wed 02 09:00-09:05 built in 5 min"
-    assert clock.current_time == datetime(2026, 12, 2, 9, 5, tzinfo=timezone.utc)
+    assert stopped_at == datetime(2026, 12, 2, 9, 5, tzinfo=timezone.utc)
 ~~~
 
-`SimClock` is the virtual clock itself. Hand one to `sim_time_handler`, and the test can read where the time stopped: Wednesday 09:05, when the last build finished. The test asserts exact times, because nothing in the run depends on how fast the machine is.
+The test is a program too. `report_and_the_time_after` runs `daily_report` and then asks the clock what time it is, so the test reads where the virtual time stopped: Wednesday 09:05, when the last build finished. The test asserts exact times, because nothing in the run depends on how fast the machine is.
 
 ### A layer of your own around any clock
 
@@ -263,9 +329,9 @@ A handler can also sit between the program and the clock. `timeline` prints ever
 ~~~python
 # report.py (excerpt)
 @handler
-def timeline(effect: DelayEffect | WaitUntilEffect, k):  # print every wait as it starts
+def timeline(effect: Delay | WaitUntil, k):  # print every wait as it starts
     now = yield GetTime()
-    if isinstance(effect, DelayEffect):
+    if isinstance(effect, Delay):
         print(f"{now:%a %H:%M} wait {effect.seconds:g} s")
     else:
         print(f"{now:%a %H:%M} wait until {effect.target:%a %H:%M}")
@@ -279,34 +345,49 @@ run(simulated(timeline(daily_report([3, 12]))))
 ~~~text
 Fri 17:00 wait until Mon 09:00
 Mon 09:00 wait 180 s
+Mon 09:00 wait 600 s
 Mon 09:03 wait until Tue 09:00
 Tue 09:00 wait 720 s
+Tue 09:00 wait 600 s
 ~~~
 
-`timeline` yields an effect of its own: its `GetTime` travels out to the clock like any other. Then `Pass(effect, k)` hands the wait and `k` on to the clock, which decides when `k` runs. `timeline` takes only `Delay` and `WaitUntil`, so the program's `GetTime` and the deadline of `RaceWithin` go past it to the clock. With it, you see the whole schedule a run makes, not only its result, and the program has no logging for it. Installed around the wall clock below, the same layer prints the waits as they happen.
+`timeline` yields an effect of its own: its `GetTime` travels out to the clock like any other. Then `Pass(effect, k)` hands the wait and `k` on to the clock, which decides when `k` runs. The `wait 600 s` lines are the alarms of `within`: a task that `daily_report` starts runs under the same handlers, so its waits pass through `timeline` too. `timeline` takes only `Delay` and `WaitUntil`, so the program's `GetTime` goes past it to the clock. With it, you see the whole schedule a run makes, not only its result, and the program has no logging for it. Installed around the wall clock below, the same layer prints the waits as they happen.
 
 ## The same code on the wall clock
 
 ~~~python
 # clock.py (excerpt)
-def wall_clock(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+@handler
+def wall_clock(effect: Delay | WaitUntil | GetTime, k):  # waits on asyncio
+    now = datetime.now(timezone.utc)
+    if isinstance(effect, GetTime):
+        return (yield Resume(k, now))
+    if isinstance(effect, Delay):
+        seconds = effect.seconds
+    else:
+        seconds = (effect.target - now).total_seconds()
+    yield Await(asyncio.sleep(max(seconds, 0)))
+    return (yield Resume(k, None))
+
+
+def real(program):  # the wall clock, with asyncio under the scheduler
+    return scheduled(await_handler(wall_clock(program)))
 ~~~
 
 ~~~python
-print(run(wall_clock(two_naps())))
+print(run(real(two_naps())))
 ~~~
 
-This run takes 20 seconds and prints about `[20.05, 10.05]`, because a timer on the wall clock wakes a little late. `async_time_handler` answers `Delay` by awaiting `asyncio.sleep` and `GetTime` with the system clock, and `await_handler` runs those awaits on an `asyncio` event loop under the scheduler. In the same way, `run(wall_clock(daily_report([3, 12, 5])))` waits until the next weekday at 09:00, and the timeout in `within` cancels a build after 10 real minutes.
+This run takes 20 seconds and prints numbers a little above `[20.0, 10.0]`, such as `[20.07, 10.13]`, because a timer on the wall clock wakes a little late. `wall_clock` answers `GetTime` with the system clock, and a wait by yielding `Await` with the coroutine `asyncio.sleep(...)`. `await_handler` runs that coroutine on an `asyncio` event loop under the scheduler. In the same way, `run(real(daily_report([3, 12, 5])))` waits until the next weekday at 09:00, and the timeout in `within` cancels a build after 10 real minutes.
 
-Neither `nap` nor `daily_report` is `async def`. The program does not choose `asyncio`; the handler does. For code that blocks instead, `sync_time_handler` waits with `time.sleep`.
+Neither `nap` nor `daily_report` is `async def`. The program does not choose `asyncio`; the handler does.
 
 | Run | The clock | What the same `daily_report` does |
 |---|---|---|
-| test | `sim_time_handler(start_time=FRIDAY_EVENING)` | Friday evening to Wednesday morning in a few milliseconds, the same lines every run |
-| test that reads the clock | `sim_time_handler(clock=SimClock(FRIDAY_EVENING))` | the same, and the test reads where the time stopped |
+| test | `virtual_clock(FRIDAY_EVENING)` | Friday evening to Wednesday morning in a few milliseconds, the same lines every run |
+| test that reads the clock | the same, and a `GetTime` after the program | the same, and the test reads where the time stopped |
 | test of the schedule | `timeline` inside `simulated` | every wait is printed with its virtual time |
-| production | `async_time_handler()` under `await_handler()` | waits on `asyncio`; the timeout cancels after 10 real minutes |
+| production | `wall_clock` under `await_handler` | waits on `asyncio`; the timeout cancels after 10 real minutes |
 
 ## How this compares
 
@@ -318,26 +399,26 @@ Python already has ways to make waits fast in tests. We ran each with two tasks 
 | freezegun `freeze_time()` | never returns: the loop's clock is frozen too (with `real_asyncio=True`, it waits for real) | — | No: `datetime.now()` stays where it was frozen | unchanged |
 | time-machine `travel(..., tick=False)` | waits for real | Yes, in real time | No | unchanged |
 | trio's test clock with `autojump_threshold=0`, or looptime for `asyncio` | returns at once | Yes | Partly: `trio.current_time()` or `loop.time()` moves, `datetime.now()` does not | unchanged; trio's clock needs code written for trio |
-| doeff-time `sim_time_handler` | returns at once | Yes | Yes: `GetTime` and the waits are answered by one handler | written with `yield` and doeff-time's effects |
+| doeff with `virtual_clock` | returns at once | Yes | Yes: `GetTime` and the waits are answered by one handler | written with `yield` and effects of your own |
 
-If your code is already `async` and you only need its waits to be fast, trio's autojump clock and looptime do that without touching the code, and they are the simpler choice. What doeff adds is that the clock is a handler in your own stack rather than part of the event loop. The date comes from the same clock as the waits, so a schedule like "the next weekday at 09:00" runs on virtual time. You can write the clock yourself, as `ticking` above shows, and you can put layers such as `timeline` around it. The price is the one from part 1: `yield` and `@do` in your code.
+If your code is already `async` and you only need its waits to be fast, trio's autojump clock and looptime do that without touching the code, and they are the simpler choice. What doeff adds is that the clock is a handler in your own stack rather than part of the event loop. The date comes from the same clock as the waits, so a schedule like "the next weekday at 09:00" runs on virtual time. The clock is a handler you can read and write yourself, as `virtual_clock` above shows, and you can put layers such as `timeline` around it. The price is the one from part 1: `yield` and `@do` in your code.
 
 ## Limits
 
 - Virtual time moves only when every task is waiting on an effect. A task that computes in a loop holds the clock still until it yields, and a blocking call such as `time.sleep` or a socket read stops every task, on any clock.
 - Only time asked for through effects is virtual. `datetime.now()` and `time.time()`, in your code or in a library it calls, still read the system clock. Pass the time in, as `next_weekday_at` does, or ask for it with `GetTime`.
-- `sim_time_handler` goes inside `scheduled(...)` and outside every `Spawn` whose tasks wait on it, so that the tasks share one clock.
-- A program given to doeff-time's `ScheduleAt` runs under the handlers outside the time handler, so it cannot ask for time itself.
+- `virtual_clock` yields `Spawn`, `CreatePromise` and `Wait`, so it goes inside `scheduled(...)`, and it goes outside every `Spawn` whose tasks wait on it, so that the tasks share one clock.
+- The clocks are as small as this post needs. A wait that is cancelled stays in `sleepers` until its time comes, and `advance` then completes a promise that no task waits for.
 - A timer on the wall clock wakes a little late, as the run above shows. A test that asserts exact times belongs on the virtual clock.
-- doeff is 0.x and doeff-time is 0.1, so names can still change between versions.
+- doeff is 0.x, so names can still change between versions.
 
 ## Try it
 
 ~~~bash
-pip install doeff doeff-time pytest   # CPython 3.11 to 3.14
+pip install doeff pytest   # CPython 3.11 to 3.14
 ~~~
 
-Every example in this post runs as shown with doeff 0.8.0 and doeff-time 0.1.0. The complete files are in [examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect), and the [doeff-time README](https://github.com/proboscis/doeff/blob/main/packages/doeff-time/README.md) gives the contract each clock keeps.
+Every example in this post runs as shown with doeff 0.8.1 and nothing else. The complete files are in [examples/time_as_an_effect](https://github.com/proboscis/doeff/tree/main/examples/time_as_an_effect).
 
 Where does time make your tests slow or flaky today: a retry with backoff, a cron-like schedule, a timeout? Issues are open at https://github.com/proboscis/doeff/issues.
 
