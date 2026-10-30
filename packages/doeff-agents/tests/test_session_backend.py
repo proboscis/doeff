@@ -35,7 +35,7 @@ from doeff_agents import _session_backend as session_backend_module
 # doeff-agents;
 # these tests exercise them directly.
 from doeff_agents._session import capture_output, launch_session, monitor_session, send_message, stop_session
-from doeff_agents import LaunchConfig
+from doeff_agents._adapters.base import LaunchConfig
 from doeff_agents._adapters.base import InjectionMethod, LaunchParams
 from doeff_agents._handlers import production
 from doeff_agents._adapters.codex import CodexAdapter

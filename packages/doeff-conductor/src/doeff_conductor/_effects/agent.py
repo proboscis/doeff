@@ -12,8 +12,9 @@ from doeff_agents import (  # re-exported for conductor callers
     AgentAttemptExhaustedError as AgentAttemptExhaustedError,
 )
 from doeff_agents import AgentDeadlineExceededError as AgentDeadlineExceededError
-from doeff_agents import AgentValidationErrorKind as AgentValidationErrorKind
-from doeff_agents import AgentValidationFailure as AgentValidationFailure
+# AgentAttemptExhaustedError.last_error の型 — doeff-agents の内側の module に在る(公開の effect の値でない・card ki-b3ea18004cce)。
+from doeff_agents._effects.agent import AgentValidationErrorKind as AgentValidationErrorKind
+from doeff_agents._effects.agent import AgentValidationFailure as AgentValidationFailure
 # The replay-stable session id rule doeff-agents' AgentSpec.session_id uses — conductor's effects name their
 # sessions by the same rule (doeff-agents keeps it in an inner module; it is not part of its public effects).
 from doeff_agents._effects._ids import deterministic_session_id

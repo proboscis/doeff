@@ -23,8 +23,6 @@ _LAZY_EXPORTS = {
     "AgentSessionQuery": "._effects",
     "AgentSessionSnapshot": "._effects",
     "AgentTask": "._effects",
-    "AgentValidationErrorKind": "._effects",
-    "AgentValidationFailure": "._effects",
     "AttachAgentSession": "._effects",
     "AttachAgentSessionEffect": "._effects",
     "AwaitOutcome": "._effects",
@@ -181,7 +179,6 @@ _LAZY_EXPORTS = {
     "headless_claude_handlers": "._handlers.headless_compose",
     "headless_codex_handler": "._handlers.headless_codex",
     "tmux_agent_defhandler": "._handlers.effectful",
-    "LaunchConfig": "._adapters.base",
     "AppendText": "._io_effects",
     "CopyFile": "._io_effects",
     "EnvValue": "._io_effects",
@@ -320,8 +317,6 @@ if TYPE_CHECKING:
         AgentSessionQuery as AgentSessionQuery,
         AgentSessionSnapshot as AgentSessionSnapshot,
         AgentTask as AgentTask,
-        AgentValidationErrorKind as AgentValidationErrorKind,
-        AgentValidationFailure as AgentValidationFailure,
         AttachAgentSession as AttachAgentSession,
         AttachAgentSessionEffect as AttachAgentSessionEffect,
         AwaitOutcome as AwaitOutcome,
@@ -479,7 +474,6 @@ if TYPE_CHECKING:
     from doeff_agents._handlers.headless_compose import (
         headless_claude_handlers as headless_claude_handlers,
     )
-    from doeff_agents._adapters.base import LaunchConfig as LaunchConfig
     from doeff_agents._io_effects import AppendText as AppendText
     from doeff_agents._io_effects import CopyFile as CopyFile
     from doeff_agents._io_effects import EnvValue as EnvValue

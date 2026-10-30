@@ -114,7 +114,7 @@ class TestDeprecatedTypesRemoved:
         assert not hasattr(agent, "ExpectedArtifact"), "ExpectedArtifact removed from effects"
 
     def test_launch_config_kept_for_imperative_api(self):
-        from doeff_agents import LaunchConfig
+        from doeff_agents._adapters.base import LaunchConfig
         from doeff_agents._adapters.base import LaunchParams
         # LaunchConfig is separate (has agent_type), LaunchParams is adapter-only
         assert LaunchConfig is not LaunchParams

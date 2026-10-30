@@ -443,5 +443,5 @@ wrapper inside `LaunchEffect`) is **removed**. New code should:
 - Place the handler outermost relative to domain handlers, as on this page (it captures the
   handlers on both sides, so the other order also works)
 
-The legacy `LaunchConfig` dataclass (in `adapters.base`) is retained only for the
+The legacy `LaunchConfig` dataclass (in the inner module `_adapters.base`, not a public name) is retained only for the
 imperative `session.py` / CLI API. The effects API uses flat fields on `LaunchEffect`.

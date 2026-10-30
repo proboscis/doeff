@@ -74,10 +74,10 @@ def _python_importers_of_hy_modules() -> list[str]:
 IMPORTERS = _python_importers_of_hy_modules()
 
 # The public names are resolved lazily by doeff_agents.__getattr__; they reach
-# adapters.base, which imports the Hy I/O effect vocabulary.
+# the Hy I/O effect vocabulary.
 PUBLIC_STATEMENTS = [
     "from doeff_agents import AgentType",
-    "from doeff_agents import LaunchConfig",
+    "from doeff_agents import AppendText",
 ]
 
 

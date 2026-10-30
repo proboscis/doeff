@@ -10,7 +10,7 @@
 #   AgentThinkingStartedEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
 #   AgentToolResultEvent AgentToolUseEvent AgentTurnCompleted AgentTurnEnd AgentTurnEndEvent
 #   AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentType
-#   AgentValidationErrorKind AgentValidationFailure AttachAgentSession AttachAgentSessionEffect
+#   AttachAgentSession AttachAgentSessionEffect
 #   AwaitOutcome AwaitResult AwaitResultEffect AwaitStatus CancelAgentSession
 #   CancelAgentSessionEffect Capture CaptureEffect CleanupAgentSession CleanupAgentSessionEffect
 #   CodexTurnCredential CompactionOutcome CompactionTrigger EventRecord Events EventsEffect
@@ -37,7 +37,7 @@
 #   AgentThinkingStartedEvent AgentToolCallStartedEvent AgentToolInputDeltaEvent
 #   AgentToolResultEvent AgentToolUseEvent AgentTurnCompleted AgentTurnEnd AgentTurnEndEvent
 #   AgentTurnFailed AgentTurnInterrupted AgentTurnLost AgentTurnUsage AgentType
-#   AgentValidationErrorKind AgentValidationFailure AttachAgentSession AttachAgentSessionEffect
+#   AttachAgentSession AttachAgentSessionEffect
 #   AwaitOutcome AwaitResult AwaitResultEffect AwaitStatus CancelAgentSession
 #   CancelAgentSessionEffect Capture CaptureEffect CleanupAgentSession CleanupAgentSessionEffect
 #   CodexTurnCredential CompactionOutcome CompactionTrigger EventRecord Events EventsEffect

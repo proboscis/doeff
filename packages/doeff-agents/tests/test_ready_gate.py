@@ -30,12 +30,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from doeff_agents import AgentReadyTimeoutError as EffectsAgentReadyTimeoutError
+from doeff_agents._adapters.base import LaunchConfig
 from doeff_agents import (
     AgentType,
     ClaudeLaunchEffect,
     ClaudeRuntimePolicy,
     CodexRuntimePolicy,
-    LaunchConfig,
     LaunchEffect,
     SessionBackend,
     SessionConfig,
