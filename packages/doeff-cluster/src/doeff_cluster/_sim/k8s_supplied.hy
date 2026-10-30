@@ -27,7 +27,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import httpx [ConnectError])
 (import doeff_core_effects [ReadText])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.supplied_spelling [OBJECT-SPELLING REF-SPELLING])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE text-field])
 

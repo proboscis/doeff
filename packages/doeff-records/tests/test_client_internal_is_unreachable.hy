@@ -14,7 +14,7 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase run with-handlers])
 (import doeff_core_effects [Get Put scheduled state])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectAny Unreachable Written WatchCursor])

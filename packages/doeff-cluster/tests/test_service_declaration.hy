@@ -32,7 +32,7 @@
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.shared.entry [declare :as declare-module])
 (import doeff_core_effects [Listen])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.protocol.declaration_requests [spec-for-update])
 (import doeff_cluster.shared.core.declaring [declaring-refusal])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])

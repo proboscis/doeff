@@ -12,7 +12,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import json)
 (import urllib.parse [quote :as url-quote])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ServiceFailed ReadinessWaitExpired FAILED-PHASES
                                                      JobProcessSeen JobProcessWaitExpired])

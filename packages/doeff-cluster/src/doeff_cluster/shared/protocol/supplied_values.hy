@@ -63,7 +63,7 @@
 (import doeff_core_effects [Ask slog])
 (import doeff_core_effects [AcquireLock DirEntry FileFailed ListDirectory LockHeld MakeDirectory PathKind PathStat ReadText ReleaseLock
                             RemoveTree StatPath WriteBytes])
-(import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing
                                                    WorkerFactName])

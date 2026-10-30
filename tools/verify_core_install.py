@@ -216,7 +216,7 @@ EXTRA_USES = (
     ),
     _python_use(
         "HTTP の handler の module",
-        "from doeff_core_effects.http_handlers import http_fixture_handler",
+        "from doeff_core_effects._http_handlers import http_fixture_handler",
         "http",
     ),
     _python_use("HTTP の effect", "from doeff_core_effects import HttpRequest", "http"),

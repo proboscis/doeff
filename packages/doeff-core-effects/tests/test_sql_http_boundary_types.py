@@ -17,7 +17,7 @@ from types import MappingProxyType
 import doeff_hy  # noqa: F401  # Hy の import hook を有効にする
 import pytest
 
-from doeff_core_effects.http_effects import HttpRequest
+from doeff_core_effects import HttpRequest
 from doeff_core_effects.sql_effects import is_driver_value, is_plain_rows
 from doeff_hy._static_stub import strict_errors
 
@@ -49,7 +49,7 @@ def test_the_predicates_carry_the_runtime_check_to_the_type() -> None:
 
 
 HTTP_FLOW = """\
-(import doeff_core_effects.http_effects [HttpRequest])
+(import doeff_core_effects._http_effects [HttpRequest])
 
 (val #^ (get dict #(str str)) strings {"a" "b"})
 (val #^ (get dict #(str int)) numbers {"a" 1})
@@ -66,7 +66,7 @@ def test_http_request_accepts_a_callers_dict_with_any_value_type(tmp_path: Path)
 @needs_pyright
 def test_http_request_refuses_a_params_that_is_not_a_mapping(tmp_path: Path) -> None:
     # 失敗ケース: 境目の型が Mapping でなくなる(object や Any)と、この呼びが赤にならない。
-    bad = "(require doeff-hy.macros [val])\n(import doeff_core_effects.http_effects [HttpRequest])\n(val request (HttpRequest \"GET\" \"http://x\" :params 3))\n"
+    bad = "(require doeff-hy.macros [val])\n(import doeff_core_effects._http_effects [HttpRequest])\n(val request (HttpRequest \"GET\" \"http://x\" :params 3))\n"
     assert [e for e in strict_errors(tmp_path, bad) if "reportArgumentType" in e]
 
 

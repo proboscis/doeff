@@ -24,7 +24,7 @@
 (import doeff_hy._wire [Malformed parse-json])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [FileFailed ReadText])
-(import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-labels-wanted job-labels-patch labels-sync-due
                                                    retry-after-ms labels-line])

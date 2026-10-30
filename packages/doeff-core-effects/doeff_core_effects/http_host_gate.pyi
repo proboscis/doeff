@@ -2,9 +2,9 @@
 
 from doeff_hy._static_types import Handler as _Handler
 from urllib.parse import urlsplit as urlsplit
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
+from doeff_core_effects._http_effects import HttpFailed as HttpFailed
+from doeff_core_effects._http_effects import HttpFailureKind as HttpFailureKind
+from doeff_core_effects._http_effects import HttpRequest as HttpRequest
 
 class HostNotAllowed(ConnectionError):
     url: str

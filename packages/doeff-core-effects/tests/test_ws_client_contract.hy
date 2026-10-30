@@ -13,9 +13,8 @@
 (require doeff-hy.macros [defk deftest <- val var with-handler])
 (import doeff_core_effects [Spawn Wait])
 (import doeff_core_effects [HttpHeader])
-(import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsConnectOutcome
-                                              WsText WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome UNKNOWN-LINK-REASON
-                                              WS-LINK-CLOSE-GOING-AWAY SCOPE-ENDED-REASON])
+(import doeff_core_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsConnectOutcome WsText WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome]
+        doeff_core_effects._ws_client_effects [UNKNOWN-LINK-REASON WS-LINK-CLOSE-GOING-AWAY SCOPE-ENDED-REASON])
 (import ws_client_contract_handlers [ContractWsWorld PeerClosures PeerClose WsWorld HEADER-NAME GREETING PEER-BINARY PEER-BYE-CODE
                                      PEER-BYE-REASON])
 

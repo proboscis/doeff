@@ -11,7 +11,7 @@ API answers; a request for a URL the dict does not have fails the test.
 import json
 
 import pytest
-from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse
+from doeff_core_effects import HttpError, HttpRequest, HttpResponse
 from repo_summary import GITHUB_API, RepoNotFoundError, RepoSummary, repo_summary
 
 from doeff import Resume, handler, run

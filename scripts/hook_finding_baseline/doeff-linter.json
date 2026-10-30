@@ -147,7 +147,7 @@
       "packages/doeff-core-effects/doeff_core_effects/_cache_effects.py": 1,
       "packages/doeff-core-effects/doeff_core_effects/_cache_handlers.py": 1,
       "packages/doeff-core-effects/doeff_core_effects/_cache_policy.py": 1,
-      "packages/doeff-core-effects/doeff_core_effects/http_handlers.py": 1,
+      "packages/doeff-core-effects/doeff_core_effects/_http_handlers.py": 1,
       "packages/doeff-core-effects/doeff_core_effects/_storage/__init__.py": 1,
       "packages/doeff-events/src/doeff_events/__init__.py": 1,
       "packages/doeff-events/src/doeff_events/_effects/__init__.py": 1,

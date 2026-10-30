@@ -18,7 +18,7 @@
 (import collections.abc [Callable])
 (import urllib.parse [quote :as url-quote urlencode])
 (import doeff_core_effects [Ask])
-(import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
 
 ;; path の綴りで %-encode しない字(区切りの / と、鍵によく使う : — 鍵の綴りを読める形のまま送る)。

@@ -131,6 +131,8 @@
 ;; it elsewhere; agora-redesign #2337) · OTHER = the rest (the connection dropped
 ;; mid-exchange, a protocol error …).
 (defenum HttpFailureKind TIMED-OUT CONNECT-FAILED OTHER)
+(setv HttpFailureKind.__doc__ "Why an HTTP request got no response (HttpFailed.kind): TIMED-OUT = a time limit ran out after
+   the connection was made · CONNECT-FAILED = no connection was made, so the request never reached the server · OTHER = the rest.")
 
 
 (defrecord HttpFailed

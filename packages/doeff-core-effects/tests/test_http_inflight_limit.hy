@@ -17,8 +17,8 @@
 (import pytest)
 (import doeff_core_effects [Await])
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects._http_handlers_impl [CLIENT-MAX-CONNECTIONS CLIENT-ORIGIN-MAX-IN-FLIGHT http-client-factory _sent-or-reaped])
 (import doeff_core_effects [Cancel Gather Spawn])
 

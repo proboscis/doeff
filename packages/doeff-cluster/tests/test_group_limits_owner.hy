@@ -13,7 +13,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff_core_effects [slog-discard-handler])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit SubmitDetached TASK-LIMIT-SCOPES])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task group-limit-spec GROUP-LIMIT-KEYS])

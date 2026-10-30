@@ -25,7 +25,7 @@
 (import json)
 (import collections.abc [Mapping])
 (import doeff_time [Delay])
-(import doeff_core_effects.http_effects [HttpResponse HttpFailed])
+(import doeff_core_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request resent-request
                                                          answer-json])
 (import doeff_cluster.shared.protocol.remote [program-put])

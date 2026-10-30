@@ -32,7 +32,7 @@
 (import doeff [with-handlers Program EffectBase])
 (import doeff_core_effects [await-handler slog-handler])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.entry.declare [apply-declaration restart-service])
