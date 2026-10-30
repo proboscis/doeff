@@ -10,42 +10,12 @@ doeff brings algebraic effects and their handlers to Python. A function `yield`s
 plain value that names an operation such as `Spend(3)`, `Get("count")` or `Spawn(task)`, and pauses
 there. The nearest handler for that effect receives it together with `k`, the *continuation*: the
 rest of the function from that `yield` on. What the handler does with `k` decides what the effect
-means:
-
-| The handler | Written as | The function |
-| --- | --- | --- |
-| answers and runs the rest | `Resume(k, value)` | goes on with `value`; when it finishes, the handler gets its result and returns that or another value |
-| answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
-| throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
-| passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
-| holds it while other tasks run | a scheduler handler, such as the reference `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
-| drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
-
-State, early exit, retries, concurrency and I/O are all handlers built from these, and a function
-stays the same when you change the handlers around it.
-
-**Continuations are one-shot**, as in OCaml 5: a handler resumes each `k` at most once. Effects that
-resume one continuation several times, such as backtracking search or nondeterministic choice,
-cannot be written as doeff handlers.
-[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)
-defines the mechanism, what it covers and where it stops.
-
-In the recording, one program runs under four handlers. The first answers its effects with
-made-up values, the second traces every effect, the third stops the program midway by dropping
-`k`, and the fourth fetches the page over real HTTP. Swapping real I/O for fakes is one of these
-uses:
-
-![A terminal session: pip install doeff, then the same digest program runs under four handlers: one answers with made-up values, one traces every effect, one stops it midway by dropping k, and one fetches the page over real HTTP](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
+means: it resumes `k` with an answer, throws an error into it, passes the effect on, holds it while
+other tasks run, or drops it.
 
 ```bash
-pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
-pip install "doeff[hy]"    # + Hy and the handlers written in Hy (files, SQL, processes, cache, …)
-pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
-pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
+pip install doeff   # Python 3.11+
 ```
-
-Then run `python -m doeff demo` to watch that program run under the same four handlers, each
-giving its effects another meaning.
 
 **Documentation:** [start here](https://github.com/proboscis/doeff/blob/main/docs/index.md), with
 install, a first program, the FAQ, why effects, examples and the API, in that order.
@@ -92,6 +62,46 @@ The fourth `Spend` finds 1 left, so the handler returns without resuming `k`: th
 never researched, and `"over budget"` is the result. `research` has no check of its own. Another
 handler gives `Spend` another meaning without changing `research`: one that only counts the cost,
 or one that throws an error into `research` with `ResumeThrow(k, error)`.
+
+## What a handler does with `k`
+
+`budget` above resumes `k` or drops it. These are all the things a handler can do with `k`:
+
+| The handler | Written as | The function |
+| --- | --- | --- |
+| answers and runs the rest | `Resume(k, value)` | goes on with `value`; when it finishes, the handler gets its result and returns that or another value |
+| answers and is done | `Transfer(k, value)` | goes on with `value`; the handler does not get control back |
+| throws into it | `ResumeThrow(k, error)` | sees `error` raised at the `yield`, where its own `try` can catch it |
+| passes the effect on | `Pass(effect, k)` | gets the answer of the next handler out |
+| holds it while other tasks run | a scheduler handler, such as the reference `scheduled(...)` | waits; `Spawn`, `Gather`, `Race`, promises and semaphores are effects of this handler |
+| drops it | `return value`, without resuming `k` | stops at the `yield`; `value` is the result of everything under the handler |
+
+State, early exit, retries, concurrency and I/O are all handlers built from these, and a function
+stays the same when you change the handlers around it.
+
+**Continuations are one-shot**, as in OCaml 5: a handler resumes each `k` at most once. Effects that
+resume one continuation several times, such as backtracking search or nondeterministic choice,
+cannot be written as doeff handlers.
+[What doeff Is](https://github.com/proboscis/doeff/blob/main/docs/positioning/what-doeff-is.md)
+defines the mechanism, what it covers and where it stops.
+
+In the recording, one program runs under four handlers. The first answers its effects with
+made-up values, the second traces every effect, the third stops the program midway by dropping
+`k`, and the fourth fetches the page over real HTTP. Swapping real I/O for fakes is one of these
+uses:
+
+![A terminal session: pip install doeff, then the same digest program runs under four handlers: one answers with made-up values, one traces every effect, one stops it midway by dropping k, and one fetches the page over real HTTP](https://raw.githubusercontent.com/proboscis/doeff/main/images/readme-demo.gif)
+
+Run `python -m doeff demo` after `pip install doeff` to watch that program run under the same four
+handlers, each giving its effects another meaning. The extras of `doeff` add Hy and more reference
+handlers:
+
+```bash
+pip install doeff          # Python 3.11+: the core (doeff, doeff-vm, doeff-core-effects)
+pip install "doeff[hy]"    # + Hy and the handlers written in Hy (files, SQL, processes, cache, …)
+pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
+pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
+```
 
 ## Why doeff?
 
@@ -563,15 +573,16 @@ See `docs/14-cli-auto-discovery.md` for marker syntax and hierarchy rules.
 
 ## Related packages
 
-The add-on packages (LLM clients, agents, workflows and more) live in
-[`packages/`](https://github.com/proboscis/doeff/tree/main/packages).
+This README covers `doeff` and its extras. The add-on packages (LLM clients, agents, workflows and
+more) live in [`packages/`](https://github.com/proboscis/doeff/tree/main/packages); `pip install doeff`
+does not install them, and the guides that use one say so and
+[how to install it](https://github.com/proboscis/doeff/blob/main/docs/index.md#pages-that-need-other-components).
 
 `doeff-agents` on PyPI (0.1.1 and 0.1.2) was built for doeff 0.4 and does not work with doeff 0.5 or
-later — importing its handlers fails with `ImportError: cannot import name 'WithHandler' from 'doeff'`.
-0.1.2 is the same code as 0.1.1 and declares `doeff<0.5`, so `pip install doeff-agents` installs it
-together with the doeff 0.4 line; it cannot share an environment with doeff 0.5 or later. The
-`doeff-agents` in this repository ([`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md),
-with its CLI) is not published to PyPI.
+later (`ImportError: cannot import name 'WithHandler' from 'doeff'`); 0.1.2 declares `doeff<0.5`, so
+pip installs it with the doeff 0.4 line. The `doeff-agents` in
+[`packages/doeff-agents`](https://github.com/proboscis/doeff/blob/main/packages/doeff-agents/README.md)
+is not published to PyPI.
 
 ## Repository map
 
