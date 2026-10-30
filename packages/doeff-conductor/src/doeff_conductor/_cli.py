@@ -392,7 +392,7 @@ def run(
         if issue:
             issue_path = Path(issue)
             if issue_path.exists():
-                from doeff_conductor._handlers.issue_handler import _parse_frontmatter
+                from doeff_conductor._handlers._issue_handler import _parse_frontmatter
 
                 frontmatter, _body = _parse_frontmatter(issue_path.read_text())
                 issue_id = frontmatter.get("id") or None

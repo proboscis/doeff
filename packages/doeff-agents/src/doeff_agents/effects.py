@@ -25,7 +25,7 @@
 #   SessionHandle SessionNotFoundError SessionOnHomeCredential SessionProcessNotLive SessionStatus
 #   Stop StopEffect StopSession StopSessionEffect TranscriptRef TurnCredential
 #   TurnCredentialUnavailable TurnCredentialUnavailableError TurnInFlightError TurnInputMode TurnRef
-#   WarmSession WarmSessionEffect agent
+#   WarmSession WarmSessionEffect
 # moved-submodule-shim-names doeff_agents.effects.agent:
 #   AgentAccountLimit AgentAccountRefusal AgentAttemptExhaustedError AgentCallUsageEvent
 #   AgentCapabilityUnsupportedError AgentCompactionEndedEvent AgentCompactionEvent

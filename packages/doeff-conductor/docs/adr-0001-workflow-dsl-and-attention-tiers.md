@@ -666,7 +666,7 @@ by `CreatePR`'s typed result and are NOT part of this list.)
 | Where | What |
 |---|---|
 | `doeff-conductor/src/doeff_conductor/_effects/agent.py` legacy text-result agent effect | contract "Yields: str (agent output)" — a rendered text blob as the workflow result; superseded by `agent!` |
-| `doeff-conductor/src/doeff_conductor/_handlers/agent_handler.py:201-221` | `handle_capture_output` joining `[role] content` as the result |
+| `doeff-conductor/src/doeff_conductor/_handlers/_agent_handler.py:201-221` | `handle_capture_output` joining `[role] content` as the result |
 | `doeff-conductor` templates consuming legacy text agent output (`basic_pr`, `enforced_pr`, `reviewed_pr`, `multi_agent`) | rewrite onto `agent!` (schema-validated artifact) |
 | `doeff-agentic` legacy text-result agent effect contract | same text-blob shape; superseded by `agent!` |
 | `doeff-conductor/src/doeff_conductor/_effects/agent.py` legacy transcript capture effect | as a data channel: condemned. Survives only as the ops/human transcript capability, never yielded by workflow code |

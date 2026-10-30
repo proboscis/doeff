@@ -283,7 +283,7 @@ def test_agent_handler_has_no_subprocess_or_os_environ_imports() -> None:
         / "src"
         / "doeff_conductor"
         / "_handlers"
-        / "agent_handler.py"
+        / "_agent_handler.py"
     )
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
     imported_names: set[str] = set()

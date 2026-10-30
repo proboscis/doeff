@@ -1107,7 +1107,7 @@ rules:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/_handlers/**
       exclude:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/exec_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_exec_handler.py
 
   - id: doeff-agents-cli-monitoring-uses-agentd
     languages: [python]
@@ -1181,7 +1181,7 @@ rules:
     pattern-regex: '\.agent-home/?'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/git_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_git_handler.py
         - /packages/doeff-conductor/src/doeff_conductor/_effects/git.py
 
   - id: conductor-workspace-runtime-exclude-not-gitignore
@@ -1194,7 +1194,7 @@ rules:
     pattern-regex: '\.gitignore'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_workspace_handler.py
 
   - id: http-request-handlers-use-defhandler
     languages: [python]
@@ -2570,7 +2570,7 @@ rules:
     pattern-regex: 'except yaml\.YAMLError:\s*\n\s*frontmatter = \{\}'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2646,7 +2646,7 @@ rules:
     pattern-regex: 'except \(OSError, KeyError, TypeError, ValueError\):\s*\n\s*# Skip malformed files\s*\n\s*continue'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2660,7 +2660,7 @@ rules:
     pattern-regex: 'with contextlib\.suppress\(ValueError, TypeError\):'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/issue_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_issue_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2674,7 +2674,7 @@ rules:
     pattern-regex: 'shutil\.rmtree\(materialization\.path,\s*ignore_errors=True\)'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_workspace_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
@@ -2688,7 +2688,7 @@ rules:
     pattern-regex: 'run_git\(\s*\n\s*\["git", "worktree", "prune"\],[\s\S]*?check=False'
     paths:
       include:
-        - /packages/doeff-conductor/src/doeff_conductor/_handlers/workspace_handler.py
+        - /packages/doeff-conductor/src/doeff_conductor/_handlers/_workspace_handler.py
     metadata:
       issue: conductor-fail-fast-swallows
       category: fail-fast
