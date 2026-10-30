@@ -1,6 +1,6 @@
 (require doeff-hy.macros [deftest defhandler defk <- val with-handler])
 
-;;; http-host-gate(doeff_core_effects/http_host_gate.hy — agora-redesign #3412):
+;;; http-host-gate(doeff_core_effects/_http_host_gate.hy — agora-redesign #3412):
 ;;;   * 通す集合に在る host への要求は答えず、外側の答え手へそのまま流れる(port は見ない)
 ;;;   * 通す集合に無い host への要求は外へ出ない: 失敗を値で受ける要求には HttpFailed(CONNECT-FAILED)、それ以外には HostNotAllowed
 ;;;   * host は URL の hostname ちょうどで照らす(手元の名を前に付けただけの外の名は通らない)
@@ -9,7 +9,8 @@
 ;;; HostNotAllowed を受ける — HttpResponse を作るのは相手役だけなので、答えの型が「外へ出たか」をそのまま名指す。
 
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_core_effects.http_host_gate [HostNotAllowed http-host-gate])
+(import doeff_core_effects [HostNotAllowed]
+        doeff_core_effects._http_host_gate [http-host-gate])
 
 ;; 手元の構成の通す集合(この機体の中だけ)。
 (val LOOPBACK (frozenset ["127.0.0.1" "localhost" "::1"]))
