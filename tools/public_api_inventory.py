@@ -135,6 +135,8 @@ CONVERSION = "換算の関数"
 PLAIN_FUNCTION = "関数"
 #: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14・R15・R31).
 MACRO_FORM = "Hy の macro"
+#: The form of a class that subclasses ``BaseException`` (an exception type an effect or handler raises — R2).
+EXCEPTION_CLASS = "例外の class"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
 RUST_EXECUTABLE = "Rust の実行 file"
@@ -816,7 +818,7 @@ class _Classifier:
             ),
             (
                 issubclass(cls, BaseException),
-                Verdict("other", "例外の class", "BaseException の子"),
+                Verdict("other", EXCEPTION_CLASS, "BaseException の子"),
             ),
             (
                 any(each.endswith("Effect") for each in names),

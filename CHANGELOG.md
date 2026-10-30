@@ -14,6 +14,11 @@
   conversion function — one that turns an effect's answer into another scale and makes no effect, handler or program
   and reads no clock, environment, file or process — and the public API inventory checks that shape. Before, the
   known-violations table listed it to move inward. Callers need no change.
+- The exception types the subpackages export (129 names in 16 packages) are counted as allowed: ADR-DOE-API-001 R2
+  lets an effect or a handler show the exception classes it raises, and the public API inventory now checks that each
+  allowed one is a `BaseException` subclass its own package defines (an exception re-exported from another package or
+  the standard library, or a class that is not an exception, is refused). Before, the known-violations table listed
+  them as a boundary. Callers need no change.
 
 ### Changed
 
