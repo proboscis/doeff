@@ -18,7 +18,9 @@
                             law-a-write-keeps-the-unarchived-event-it-touches
                             law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired
                             law-a-write-names-its-change-position law-a-keyed-write-replays-its-answer
-                            law-another-key-is-judged-by-its-expectation law-write-keys-are-forgotten-after-their-memory])
+                            law-another-key-is-judged-by-its-expectation law-write-keys-are-forgotten-after-their-memory
+                            law-rows-and-events-are-written-together-or-not-at-all law-a-keyed-rows-and-events-write-replays-its-answer
+                            law-events-written-with-rows-name-the-rows-position])
 (import tests.interpreters [LawSetup])
 
 
@@ -268,4 +270,26 @@
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-write-keys-are-forgotten-after-their-memory harness))
+  (assert transcript))
+
+
+(deftest test-rows-and-events-are-written-together-or-not-at-all
+  ;; card ki-e17ba3b32dea: PutRowsAppendEvents は PutRows → AppendEvents と同じ答えで、全部か 0 で積む — 4 つの組で。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-rows-and-events-are-written-together-or-not-at-all harness))
+  (assert transcript))
+
+(deftest test-a-keyed-rows-and-events-write-replays-its-answer
+  ;; card ki-e17ba3b32dea: 冪等キーつきの PutRowsAppendEvents の送り直しは前の答えを返し、置き場を変えない。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-a-keyed-rows-and-events-write-replays-its-answer harness))
+  (assert transcript))
+
+(deftest test-events-written-with-rows-name-the-rows-position
+  ;; card ki-e17ba3b32dea: 行と一緒に積んだ出来事は、読み戻しで同じ書きの行の最後の変更の位置を名乗る。
+  {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-events-written-with-rows-name-the-rows-position harness))
   (assert transcript))

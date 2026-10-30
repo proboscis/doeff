@@ -4,8 +4,8 @@
 (import json)
 (import doeff [run])
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count])
-(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows]
+(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count WrittenAndAppended AppendRefused])
+(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows PutRowsAppendEvents]
         doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])
 (import doeff_records [encode-request decode-request decode-answer]
         doeff_records._wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-answer answer-for-request])
@@ -55,7 +55,12 @@
                 (ListRows "tickets" :where-any {"owner" ["o1" "o2"]} :fields #("owner") :limit 50)
                 (ReadRow "tickets" #("g1" "t1"))
                 (ListRows "parts" :where {"color" "red"} :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
-                (ListRows "parts" :limit 3 :descending-by "note")))])
+                (ListRows "parts" :limit 3 :descending-by "note")))
+   ;; 行と追記の束(card ki-e17ba3b32dea)— 束の項は put-rows・append-events と同じ綴り(冪等キーは見出しで運ぶので本文に無い)。
+   (PutRowsAppendEvents #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
+                          (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent)))
+                        #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
+                          (EventAppend "journal" "k1" "a string body")))])
 
 ;; 答え → それを答えてよい操作。
 (setv ANSWERS
@@ -94,6 +99,9 @@
    #("read-event-by-key" (Event "journal" 4 "k1" {"n" [1 {"m" None}]} "maker" 1000))
    #("read-event-by-key" (EventAbsent))
    #("read-event-by-key" (EventRetired 3))
+   ;; 行と一緒に積んだ出来事(鍵 position — 位置を持つ時だけ載る省ける鍵・card ki-e17ba3b32dea)。
+   #("read-events" (Events #((Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43))) 2))
+   #("read-event-by-key" (Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43)))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"} (WatchCursor 3 42)) (Written 1 {"group" "g1" "id" "t1"} (WatchCursor 3 43)))))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"} (WatchCursor 3 42) :replayed True)
@@ -103,6 +111,14 @@
    #("put-rows" (RowsConflict 0 "parts" #("p1") (Missing)))
    #("put-rows" (RowsRefused 2 "parts" #("p2") "書き手でない"))
    #("append-events" (AppendedEvents #((Appended 7 False) (Refused "別の本文") (Appended 3 True))))
+   #("put-rows-append-events" (WrittenAndAppended (WrittenRows #((Written 2 {"id" "p1"} (WatchCursor 3 42))
+                                                                 (Written 1 {"group" "g1" "id" "t1"} (WatchCursor 3 43))))
+                                                  #((Appended 7 False) (Appended 3 True))))
+   #("put-rows-append-events" (WrittenAndAppended (WrittenRows #((Written 2 {"id" "p1"} (WatchCursor 3 42) :replayed True)) :replayed True)
+                                                  #((Appended 7 True)) :replayed True))
+   #("put-rows-append-events" (RowsConflict 0 "parts" #("p1") (Missing)))
+   #("put-rows-append-events" (RowsRefused 0 "parts" #("p1") "行の書きの冪等キー 'k' は別の本文の書きで既に使われた"))
+   #("put-rows-append-events" (AppendRefused 1 "journal" "k1" "別の本文"))
    #("read-batch" (BatchRead #(ROW (Missing) (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9) (Reset 3 0) (NotIndexed #("note")))))])
 
 
@@ -222,6 +238,20 @@
                            #("read-batch" {"reads" (lfor n (range (+ READ-BATCH-MAX 1)) {"operation" "read-row" "body" {"table" "parts" "key" [(str n)]}})})
                            #("read-batch" {"reads" (lfor n (range 2) {"operation" "list-rows" "body" {"table" "parts" "limit" LIST-LIMIT-MAX}})})
                            #("read-batch" {"reads" [] "extra" 1})
+                           ;; 行と追記の束(card ki-e17ba3b32dea): 2 つの鍵が必須・空の束・同じ行や同じ追記が 2 度・冪等キーを本文に置く・知らない鍵は断る。
+                           #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}]})
+                           #("put-rows-append-events" {"appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]})
+                           #("put-rows-append-events" {"writes" [] "appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]})
+                           #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}] "appends" []})
+                           #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}
+                                                                 {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}]
+                                                       "appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]})
+                           #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}]
+                                                       "appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}
+                                                                  {"stream" "journal" "idempotencyKey" "k1" "body" 2}]})
+                           #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}]
+                                                       "appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]
+                                                       "idempotencyKey" "w1"})
                            #("drop-table" {})
                            #("read-row" ["not" "an" "object"])]]
     (try
@@ -241,6 +271,13 @@
                            #("append-events" {"kind" "appended" "sequence" 1 "replayed" False})
                            #("append-events" {"kind" "appendedEvents" "items" [{"kind" "missing"}]})
                            #("append-events" {"kind" "appendedEvents" "items" {"kind" "appended"}})
+                           ;; 行と追記の束の答え: rows は writtenRows・appends は appended の列だけ(refused は載らない — 断りは appendRefused)。
+                           #("put-rows-append-events" {"kind" "writtenRows" "items" []})
+                           #("put-rows-append-events" {"kind" "writtenAndAppended" "rows" {"kind" "missing"}
+                                                       "appends" [{"kind" "appended" "sequence" 1 "replayed" False}]})
+                           #("put-rows-append-events" {"kind" "writtenAndAppended" "rows" {"kind" "writtenRows" "items" []}
+                                                       "appends" [{"kind" "refused" "reason" "x"}]})
+                           #("put-rows-append-events" {"kind" "appendRefused" "index" 0 "stream" "journal" "reason" "x"})
                            ;; 確定の刻 at の無い変更は、刻を黙って既定に倒さず断る。
                            #("watch-changes" {"kind" "changes" "cursor" {"epoch" 1 "sequence" 5}
                                               "items" [{"kind" "rowChanged" "table" "parts" "key" ["p1"] "version" 1
@@ -359,3 +396,17 @@
     (assert False "空の束を作った")
     (except [refused TypeError]
       None)))
+
+
+(deftest test-an-event-names-its-rows-position-only-when-it-has-one
+  ;; card ki-e17ba3b32dea: 出来事の鍵 position は行と一緒に積んだ出来事の時だけ載る(省ける鍵 — 位置の無い出来事は前の版と同じ綴り)。
+  ;; 形の違う position は既定へ倒さず断る。
+  (setv plain (run (encode-answer (Event "journal" 1 "k1" {"n" 1} "maker" 1000)))
+        placed (run (encode-answer (Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43)))))
+  (assert (= (get plain "event") {"stream" "journal" "sequence" 1 "idempotencyKey" "k1" "body" {"n" 1} "writer" "maker" "at" 1000}) plain)
+  (assert (= (get placed "event" "position") {"epoch" 3 "sequence" 43}) placed)
+  (for [position [{"epoch" 3} {"epoch" "3" "sequence" 43} None]]
+    (try
+      (run (decode-answer "read-event-by-key" {"kind" "event" "event" (| (get plain "event") {"position" position})}))
+      (assert False (.format "形の違う出来事の位置を読んだ: {!r}" position))
+      (except [WireMalformed] None))))

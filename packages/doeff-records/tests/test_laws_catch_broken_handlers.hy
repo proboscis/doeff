@@ -8,8 +8,9 @@
 (import doeff [Perform run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler GetTime GetTimeEffect])
-(import doeff_records [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents BatchRead])
-(import doeff_records [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch])
+(import doeff_records [EachEvent ExpectAny Changes Reset Page ListCursor WatchCursor Written WrittenRows Conflict Refused RowsConflict RowsRefused StreamEnd StreamEmpty Unreachable Event EventAbsent EventRetired AppendedEvents BatchRead WrittenAndAppended AppendRefused Events NotIndexed])
+(import doeff_records [PutRow PutRows WatchChanges ListRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch
+                        PutRowsAppendEvents])
 (import doeff_records._memory :as memory)
 (import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._laws [LAW-SCHEMA LawHarness LawBroken law-stale-put-conflicts law-committed-changes-appear-once-in-order
@@ -27,7 +28,9 @@
                             law-short-page-ends-the-stream law-only-confirmed-events-are-retired law-retirement-keeps-the-read-boundary
                             law-a-write-keeps-the-unarchived-event-it-touches
                             law-keys-are-forgotten-after-their-memory law-unarchived-keys-are-kept-until-retired
-                            law-a-write-names-its-change-position])
+                            law-a-write-names-its-change-position
+                            law-rows-and-events-are-written-together-or-not-at-all law-a-keyed-rows-and-events-write-replays-its-answer
+                            law-events-written-with-rows-name-the-rows-position])
 (import doeff_records [PruneChanges Pruned ReadChangeLog ChangeLog ReadExpiredEvents ExpiredCursor RetireArchivedEvents])
 
 
@@ -233,6 +236,53 @@
     (<- answer (appended-in-reverse appends))
     (resume answer)))
 
+(defk rows-then-appends [writes appends idempotency-key]
+  {:pre [(: writes tuple) (: appends tuple) (: idempotency-key (| str None))]
+   :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Unreachable))]}
+  "行の束を PutRows で書いてから追記の束を AppendEvents で積む — 1 つの書きでない handler の顔の答え(card ki-e17ba3b32dea): 追記が断られても
+   行は書いたまま残り、今積んだ出来事は行の位置を持たない。"
+  (<- rows (Perform (PutRows writes :idempotency-key idempotency-key)))
+  (when (not (isinstance rows WrittenRows))
+    (return rows))
+  (<- appended (Perform (AppendEvents appends)))
+  (val refused (next (gfor #(index item) (enumerate appended.items) :if (isinstance item Refused) #(index item)) None))
+  (when (is-not refused None)
+    (val one (get appends (get refused 0)))
+    (return (AppendRefused (get refused 0) one.stream one.idempotency-key (. (get refused 1) reason))))
+  (WrittenAndAppended rows appended.items))
+
+(defhandler rows-and-appends-apart []
+  ;; 行と出来事を別の書きで積む handler の顔: 追記の断りの時に行を書いてしまい、出来事に行の位置が載らない。
+  (PutRowsAppendEvents [writes appends idempotency-key]
+    (<- answer (rows-then-appends writes appends idempotency-key))
+    (resume answer)))
+
+(defhandler forget-rows-events-key []
+  ;; 冪等キーを捨てる handler の顔: 送り直しを新しい書きとして判じる(期待の ExpectAbsent に負ける)。
+  (PutRowsAppendEvents [writes appends idempotency-key]
+    (<- answer (Perform (PutRowsAppendEvents writes appends)))
+    (resume answer)))
+
+(defk unplaced-events [answer]
+  {:pre [(: answer (| Events Event EventAbsent EventRetired NotIndexed Unreachable))]
+   :post [(: % (| Events Event EventAbsent EventRetired NotIndexed Unreachable))]}
+  "出来事の読みの答えから出来事の位置を外す — 位置を運ばない handler の顔の答え。"
+  (match answer
+    (Events :items items :last_sequence last) (Events (tuple (gfor e items (dataclasses.replace e :position None))) last)
+    (Event) (dataclasses.replace answer :position None)
+    _ answer))
+
+(defhandler drop-event-positions []
+  ;; 出来事の位置を読みに載せない handler の顔(読み戻しの出来事が行の位置を名乗らない)。
+  (ReadEvents [stream after limit key-head]
+    (<- answer (Perform (ReadEvents stream :after after :limit limit :key-head key-head)))
+    (<- plain (unplaced-events answer))
+    (resume plain))
+  (ReadEventByKey [stream idempotency-key]
+    (<- answer (Perform (ReadEventByKey stream idempotency-key)))
+    (<- plain (unplaced-events answer))
+    (resume plain)))
+
 (defk end-over-every-stream []
   {:pre [] :post [(: % (| StreamEnd StreamEmpty))]}
   "置き場の全部の列(journal・pairs)の末尾の最大 — 列を問わない handler の顔の答え。handler の節で走らせる Program なので、失敗と宣言した
@@ -364,7 +414,11 @@
                       #(law-watch-tails-match-last-events tails-in-name-order)
                       #(law-short-page-ends-the-stream (cap-below-limit))
                       #(law-a-write-names-its-change-position drop-write-positions)
-                      #(law-a-write-names-its-change-position write-positions-one-behind)]]
+                      #(law-a-write-names-its-change-position write-positions-one-behind)
+                      #(law-rows-and-events-are-written-together-or-not-at-all (rows-and-appends-apart))
+                      #(law-events-written-with-rows-name-the-rows-position (rows-and-appends-apart))
+                      #(law-a-keyed-rows-and-events-write-replays-its-answer (forget-rows-events-key))
+                      #(law-events-written-with-rows-name-the-rows-position (drop-event-positions))]]
     (assert (breaks? law (broken-harness (MemoryStore LAW-SCHEMA) inner)) law.__name__))
   ;; 書き手の名で断る置き場(欄の書き手でない stranger の書きを断る)— #2994 の前の置き場の形。
   (setv strict-store (MemoryStore LAW-SCHEMA))

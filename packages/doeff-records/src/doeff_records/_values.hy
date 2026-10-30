@@ -592,14 +592,39 @@
       (raise (TypeError (.format "AppendedEvents.items は Appended | Refused の空でない tuple: {!r}" self.items))))))
 
 (defclass [(dataclass :frozen True)] Event []
-  "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名。"
+  "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名 /
+   position = 出来事と同じ書き(PutRowsAppendEvents)で積んだ行の最後の変更の位置(WatchCursor — 出来事の読み手が、その位置まで追いついた
+   写しから行を読むため・card ki-e17ba3b32dea)。None = 行と一緒に積んでいない出来事(AppendEvent・AppendEvents で積んだ出来事 — HTTP の口の
+   綴りでは省く鍵)。位置は本文の外に持つので、冪等キーの本文の比べは位置に依らない。"
   (#^ str stream)
   (#^ int sequence)
   (#^ str idempotency-key)
   (#^ object body)
   (#^ str writer)
   (#^ int at)
-  (defn #^ None __post_init__ [self] (object.__setattr__ self "body" (freeze-json self.body))))
+  (setv #^ (| WatchCursor None) position None)
+  (defn #^ None __post_init__ [self]
+    (object.__setattr__ self "body" (freeze-json self.body))
+    (when (not (or (is self.position None) (isinstance self.position WatchCursor)))
+      (raise (TypeError (.format "Event.position は WatchCursor か None: {!r}" self.position))))))
+
+
+(defclass [(dataclass :frozen True)] WrittenAndAppended []
+  "PutRowsAppendEvents が確定した(card ki-e17ba3b32dea): rows = 行の束の答え(PutRows の WrittenRows と同じ — 各項の position は束の順に
+   続く)/ appends = 追記の束の答え(束の順の Appended — 束の i 番目の追記の答え = appends の i 番目。同じ冪等キー・同じ本文が既に在った
+   追記は前の番号を replayed 真で)/ replayed = 冪等キーつきの送り直しで、置き場が覚えた前の答えを返したか(真なら rows.replayed も真・
+   追記の各項も今は積んでいないと名乗る — WrittenRows.replayed と同じ名乗り)。今積んだ出来事は rows の最後の項の position を
+   Event.position に持つ。"
+  (#^ WrittenRows rows)
+  (#^ tuple appends)
+  (setv #^ bool replayed False)
+  (defn #^ None __post_init__ [self]
+    (when (not (isinstance self.rows WrittenRows))
+      (raise (TypeError (.format "WrittenAndAppended.rows は WrittenRows: {!r}" self.rows))))
+    (when (not (and (isinstance self.appends tuple) self.appends (all (gfor item self.appends (isinstance item Appended)))))
+      (raise (TypeError (.format "WrittenAndAppended.appends は Appended の空でない tuple: {!r}" self.appends))))
+    (when (not (isinstance self.replayed bool))
+      (raise (TypeError (.format "WrittenAndAppended.replayed は bool: {!r}" self.replayed))))))
 
 
 (defrecord RetiredKey
@@ -615,11 +640,11 @@
 
 (defrecord RememberedWrite
   "確定した行の書き(PutRow・PutRows)の冪等キーの覚え 1 つ(card ki-78c6d663491f): body-digest = 書きの本文の指紋(admission.write-digest)/
-   answer = 確定した時の答え(Written | WrittenRows — 版・値・位置)。置き場(memory・PG)は書きを確定するのと同じ錠・transaction で
+   answer = 確定した時の答え(Written | WrittenRows | WrittenAndAppended — 版・値・位置・追記の番号)。置き場(memory・PG)は書きを確定するのと同じ錠・transaction で
    鍵ごとに覚え、同じ鍵の次の書きを admission.judge-write-replay で判じる(覚えた刻は置き場が隣に持ち、WRITE-KEY-MEMORY-SECONDS の後の
    回収が外す)。置き場の判断と 2 つの置き場の両方が読む値なので、この値の module に置く(RetiredKey と同じ)。"
   #^ str body-digest
-  #^ (| Written WrittenRows) answer)
+  #^ (| Written WrittenRows WrittenAndAppended) answer)
 
 (defclass [(dataclass :frozen True)] Events []
   "ReadEvents の答え: items = after より後の出来事(sequence の昇順)/ last-sequence = 次に渡す after。
@@ -690,6 +715,15 @@
   (#^ tuple key)
   (#^ str reason))
 
+(defclass [(dataclass :frozen True)] AppendRefused []
+  "PutRowsAppendEvents の追記の束のある追記が断られた(行も出来事も何も書いていない — card ki-e17ba3b32dea)。index = 追記の束の中の位置
+   (0 から)/ stream・idempotency-key = その追記 / reason = AppendEvent の Refused と同じ理由の文(同じ冪等キーの別の本文・上限)。
+   断られる追記が 2 つ以上あれば、束の順で最初の追記。"
+  (#^ int index)
+  (#^ str stream)
+  (#^ str idempotency-key)
+  (#^ str reason))
+
 (defclass [(dataclass :frozen True)] Unreachable []
   "置き場に届かない(結末は不明 — 読みは撃ち直してよい。書きは期待つきなら撃ち直してよい)。"
   (#^ str detail))
@@ -733,4 +767,6 @@
 (val ReadEventByKeyAnswer (| Event EventAbsent EventRetired Unreachable))
 (val PutRowsAnswer (| WrittenRows RowsConflict RowsRefused Unreachable))
 (val AppendEventsAnswer (| AppendedEvents Unreachable))
+;; 冪等キーの同じ鍵の別の本文は PutRows と同じく行の束の 0 行目の RowsRefused(admission.judge-write-replay)。
+(val PutRowsAppendEventsAnswer (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Unreachable))
 (val ReadBatchAnswer (| BatchRead Unreachable))

@@ -4,7 +4,8 @@
 ;;;
 ;;; 表の形(列の名と型)は別の置き場(状態の行の表 state_rows・追記の表 append_rows)と同じ形:
 ;;;   state_rows   PK = (ledger, key)・payload = 値の JSON の綴り・version は書くたびに 1 増える・epoch = 書いた時の置き場の版
-;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り
+;;;   append_rows  seq = bigserial・ledger = 追記の列の名・payload = {"idempotencyKey" "writer" "body"} の JSON の綴り(行と一緒に積んだ出来事
+;;;                — PutRowsAppendEvents・card ki-e17ba3b32dea — は鍵 "position" {"epoch" "sequence"} も持つ。表の形は変えない)
 ;;; 足した物(この package の意味に要る物だけ):
 ;;;   row_changes  変更の列(WatchChanges が読む)— seq = bigserial・payload NULL = 行が消えた
 ;;;   store_epoch  置き場の版と、変更の列を忘れた位置(floor)の 1 行。版の初めの値は行を作った時の server の時計の ms
@@ -1361,6 +1362,20 @@
              :params (! (params-of #(#("ledger" stream) #("at" at) #("payload" payload) #("origin_host" origin-host) #("epoch" epoch))))))
 
 
+(defk insert-positioned-event-statement [prefix stream at head tail origin-host epoch]
+  {:pre [(: prefix str) (: stream str) (: at int) (: head str) (: tail str) (: origin-host str) (: epoch int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "行と一緒に積む出来事を 1 つ積んで番号を返す文を作るため(PutRowsAppendEvents — _pg.hy の put-rows-append-events-locked・card ki-e17ba3b32dea)。
+   payload = head と tail の間に変更の列の最大の番号(この書きの行の最後の変更 — 番号の錠の中で、変更の文の後に流す。remember-write-statement
+   と同じ読み)を挟んだ綴り(head と tail は呼び手が出来事の位置の鍵 position.sequence の前と後ろを正規の綴りで作る)。"
+  (Statement :text (.format "INSERT INTO {p}append_rows (ledger, at, payload, origin_host, epoch)
+                       VALUES (:ledger, :at, CAST(:head AS text) || (SELECT max(seq) FROM {p}row_changes)::text || CAST(:tail AS text),
+                               :origin_host, :epoch)
+                       RETURNING seq" :p prefix)
+             :params (! (params-of #(#("ledger" stream) #("at" at) #("head" head) #("tail" tail) #("origin_host" origin-host)
+                                     #("epoch" epoch))))))
+
+
 (defk insert-unused-event-statement [prefix stream at payload origin-host idempotency-key]
   {:pre [(: prefix str) (: stream str) (: at int) (: payload str) (: origin-host str) (: idempotency-key str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
@@ -1586,6 +1601,31 @@
                        ON CONFLICT (idempotency_key) DO NOTHING" :p prefix)
              :params (! (params-of #(#("idempotency_key" idempotency-key) #("body_digest" body-digest) #("answer" answer)
                                      #("remembered_at" remembered-at))))))
+
+
+(defk remember-rows-events-statement [prefix idempotency-key body-digest parts lookups remembered-at]
+  {:pre [(: prefix str) (: idempotency-key str) (: body-digest str) (: parts (get tuple #(str ...))) (: lookups (get tuple #(tuple ...)))
+         (= (len parts) (+ (len lookups) 1)) (: remembered-at int)]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "確定した PutRowsAppendEvents の冪等キーの覚えを入れる文を作るため(remember-write-statement と同じ表・同じ位置 — card ki-e17ba3b32dea)。
+   答えの綴り = parts と lookups を交互につないだ物: lookups の各項 #(列 冪等キー) は同じ transaction で今積んだ出来事の番号を、(列, 冪等キー)
+   の引き(find-event-statement と同じ式)で同じ文の中で読む(番号は同じ往復の追記の文が採るので、綴りの組み立ての時には知らない)。"
+  (var pieces #())
+  (var pairs #(#("idempotency_key" idempotency-key) #("body_digest" body-digest) #("remembered_at" remembered-at)))
+  (for [#(index part) (enumerate parts)]
+    (:= pieces (+ pieces #((.format "CAST(:part_{} AS text)" index))))
+    (:= pairs (+ pairs #(#((.format "part_{}" index) part))))
+    (when (< index (len lookups))
+      (val lookup (get lookups index))
+      (:= pieces (+ pieces #((.format "(SELECT found.seq FROM {p}append_rows AS found
+                                         WHERE found.ledger = :ledger_{i} AND (found.payload::jsonb) ->> 'idempotencyKey' = :key_{i})::text"
+                                       :p prefix :i index))))
+      (:= pairs (+ pairs #(#((.format "ledger_{}" index) (get lookup 0)) #((.format "key_{}" index) (get lookup 1)))))))
+  (Statement :text (.format "INSERT INTO {p}write_keys (idempotency_key, body_digest, answer, last_seq, remembered_at)
+                       VALUES (:idempotency_key, :body_digest, {answer}, (SELECT max(seq) FROM {p}row_changes), :remembered_at)
+                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix :answer (.join " || " pieces))
+             :params (! (params-of pairs))))
 
 
 (defk forget-write-keys-statement [prefix forget-before limit]

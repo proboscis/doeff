@@ -26,8 +26,8 @@
 ;;; handler(本番 = 塞がない http-production-handler と await-handler)。処理ループと同じ scheduler の task から読む呼び手が、記録の
 ;;; service に届かない間も処理ループを止めないため。届かない(HttpFailed)は Unreachable に読む。
 ;;;
-;;; 置き場の止まり(#3557 — 記録の service の短い停止を越える 1 か所): 要求と答えの 10 個(ReadRow・ListRows・PutRow・
-;;; PutRows・AppendEvent・AppendEvents・ReadEvents・ReadStreamEnd・ReadEventByKey・ReadBatch)は、届かない(503 store-unavailable を含む Unreachable)時に、止まりの上限まで置き場の
+;;; 置き場の止まり(#3557 — 記録の service の短い停止を越える 1 か所): 要求と答えの 12 個(ReadRow・ListRows・CountRows・PutRow・
+;;; PutRows・PutRowsAppendEvents・AppendEvent・AppendEvents・ReadEvents・ReadStreamEnd・ReadEventByKey・ReadBatch)は、届かない(503 store-unavailable を含む Unreachable)時に、止まりの上限まで置き場の
 ;;; 戻りを待って同じ要求を撃ち直す(answered-riding-stall)。待つ時間は client だけが問う ReadRequestPatience の答え(RequestPatience —
 ;;; 合図の源が止まりに耐える時間 ReadSourcePatience とは別の問い)、戻りは合図の源と同じ came-back-within(AwaitRecordsBack を見張りの task で
 ;;; 受ける — 時間で撃ち直さない)。待つ時間の問いは止まった時だけでなく要求のたびに撃つ — 答え手の無い組み立ては最初の要求で名指しで落ち、
@@ -35,11 +35,11 @@
 ;;; 待てない組み立てと呼び(処理ループ・coordinator の居ない process)は、client の外側に 0 秒の答え手を置く。合図の源の問いには答えない
 ;;; ので、同じ組の中で源は自分の時間だけ止まりに耐える。上限を越えたら、待った秒を名指した Unreachable を返す(呼び手の扱いは今までどおり)。撃ち直しの冪等: 書きは
 ;;; どれも冪等キーつきで撃つ — 追記(AppendEvent・AppendEvents)は effect の鍵(同じ鍵・同じ本文は前の番号を返す・_laws.hy の
-;;; law-append-is-idempotent)、行の書き(PutRow・PutRows)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
+;;; law-append-is-idempotent)、行の書き(PutRow・PutRows・PutRowsAppendEvents)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
 ;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(_event_source.hy の ride-out-stall)。
 ;;;
 ;;; 行の書きの冪等キー(card ki-78c6d663491f — 前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
-;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows には撃つ前に要求 1 つの鍵を
+;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows・PutRowsAppendEvents には撃つ前に要求 1 つの鍵を
 ;;; 乱数で作り(keyed-write)、1 回目と撃ち直しの全部に同じ鍵を見出し X-Records-Idempotency-Key(wire の IDEMPOTENCY-HEADER)で付ける。
 ;;; 置き場は確定した鍵の答えを覚え、同じ鍵・同じ本文の撃ち直しに前の答え(Written・WrittenRows の replayed 真)を返す(_laws.hy の
 ;;; law-a-keyed-write-replays-its-answer)。呼び手が鍵を選んだ書き(effect の idempotency-key)はその鍵で撃つ。覚えは置き場が
@@ -70,7 +70,7 @@
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource came-back-within first-seen])
 (import doeff_records._values [Changes EventsMoved EventsQuiet Reset Unreachable])
-(import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
+(import doeff_records._effects [PutRowsAppendEvents ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch CountRows ReadRequestPatience])
 (import doeff_records._wire [PATH-PREFIX PublicEffect WireAnswer JsonValue encode-request decode-answer answer-for-request refusal-from
                             undeclared-refusal CLIENT-ANSWER-METRICS CLIENT-UNREACHABLE client-answer-metric client-status-outcome
@@ -323,7 +323,8 @@
 
 
 (defk stall-names [ask]
-  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows
+                     PutRowsAppendEvents))]
    :post [(: % (get tuple #(str ...)))]
    :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask が触る表と列の名前を知るため(戻りの問い AwaitRecordsBack に渡す — 置き場は名ごとに止まり得る)。"
@@ -338,7 +339,9 @@
     (ReadEvents :stream stream) #(stream)
     (ReadStreamEnd :stream stream) #(stream)
     (ReadEventByKey :stream stream) #(stream)
-    (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads one.table))))))
+    (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads one.table))))
+    (PutRowsAppendEvents :writes writes :appends appends)
+      (! (first-seen (+ (tuple (gfor write writes write.table)) (tuple (gfor one appends one.stream)))))))
 
 
 ;; 行の書きの冪等キーの乱数の byte 数(16 進 32 字 — uuid4 の hex と同じ長さ)。
@@ -346,21 +349,23 @@
 
 
 (defk fresh-write-key [ask]
-  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
+  {:pre [(: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows
+                     PutRowsAppendEvents))]
    :post [(: % (| str None))]
    :tags {:context "records" :role "foundation"}}
-  "鍵の無い行の書き(PutRow・PutRows)に付ける、要求 1 つの冪等キーを作るため(file の頭の註「行の書きの冪等キー」— 撃ち直しにも同じ鍵を
+  "鍵の無い行の書き(PutRow・PutRows・PutRowsAppendEvents)に付ける、要求 1 つの冪等キーを作るため(file の頭の註「行の書きの冪等キー」— 撃ち直しにも同じ鍵を
    付け、置き場が送り直しを着いた 1 回目と見分ける)。鍵つきの書き(呼び手が身元を選んだ)と他の要求は None(付けない)。鍵は乱数の
    RandomBytes を本物の答え手 os-random-handler で引く: client は外の世界(HTTP)の境目の答え手で、鍵の値は答えに出ない(模擬の種で
    決まる値に替えても振る舞いは変わらない)— 組み立てに乱数の答え手を求めない。"
-  (when (or (not (isinstance ask #(PutRow PutRows))) (is-not ask.idempotency-key None))
+  (when (or (not (isinstance ask #(PutRow PutRows PutRowsAppendEvents))) (is-not ask.idempotency-key None))
     (return None))
   (<- noise bytes (with-handlers [os-random-handler] (RandomBytes WRITE-KEY-BYTES)))
   (.hex noise))
 
 
 (defk answered-riding-stall [endpoint ask]
-  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))]
+  {:pre [(: endpoint RecordsEndpoint) (: ask (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows
+                     PutRowsAppendEvents))]
    :post [(: % (| WireAnswer Unreachable))] :tags {:context "records" :role "foundation"}}
   "要求と答えの要求 ask 1 つに、置き場の止まりを越えて答えるため(file の頭の註「置き場の止まり」— client の 1 か所)。待つ時間を要求のたびに
    問い、届けばその答え、届かなければ待つ時間(0 秒なら待たない)の残りまで置き場の戻りを待って同じ要求を撃ち直す。越えたら、待った秒と
@@ -440,6 +445,11 @@
     ;; 追記の束は 1 回の要求(wire の append-events)— 届かない時は止まりを越えて同じ束を撃ち直す(冪等キーつき)。
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
+  (PutRowsAppendEvents [writes appends]
+    ;; 行と追記の束は 1 回の要求(wire の put-rows-append-events — card ki-e17ba3b32dea)— 鍵の無い書きには行の書きと同じく要求の冪等キーを
+    ;; 付け、届かない時は止まりを越えて同じ鍵で撃ち直す(置き場が覚えた答えを送り直しで返す)。
+    (<- answer (answered-riding-stall endpoint effect))
+    (resume answer))
   (ReadEvents [stream after limit]
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
@@ -490,6 +500,11 @@
   (WatchChanges [tables cursor timeout limit streams]
     :when (and tables (all (gfor t tables (in t served))) (all (gfor s streams (in s served))))
     (<- answer (long-poll endpoint effect))
+    (resume answer))
+  (PutRowsAppendEvents [writes appends]
+    ;; 行と追記の束も、束の表と列が全部 served の中の時だけ答える(置き場をまたぐ書きは 1 つの置き場では積めない — 外側で断られる)。
+    :when (and (all (gfor w writes (in w.table served))) (all (gfor one appends (in one.stream served))))
+    (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadBatch [reads]
     ;; 読みの束も束の表が全部 served の中の時だけ答える(置き場をまたぐ束は 1 往復で読めない — 外側で断られる)。

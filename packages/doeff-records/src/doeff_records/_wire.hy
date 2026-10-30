@@ -1,4 +1,4 @@
-;;; 記録の service の wire の綴り(I/O なし)— 公開 effect 11 個と列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
+;;; 記録の service の wire の綴り(I/O なし)— 公開 effect(_effects.hy の頭の註)と列の待ち WatchEvents(#3074)の要求と答えを JSON の値へ写し、JSON の
 ;;; 値から読む。
 ;;;
 ;;; JSON(dict / list)と凍らせた値(FrozenMap・tuple・frozen の dataclass)の行き来はこの file の 1 か所だけ。
@@ -29,9 +29,9 @@
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused Count StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet EventAbsent EventRetired BatchRead stored-text])
+                              EventsQuiet EventAbsent EventRetired BatchRead stored-text WrittenAndAppended AppendRefused])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows PutRowsAppendEvents])
 
 (setv PATH-PREFIX "/v1/records/")
 ;; 呼び手が名乗る書き手の名の見出し(口は確かめない — client は名乗り、口は名乗りをそのまま書き手の名に使う・#2988)。
@@ -59,8 +59,13 @@
 ;; 行の件数を数える操作(本文 = {table, where?, whereAny?, atLeast?: [欄の名, 下限の整数]} — 答え = count{count} | notIndexed)。前の 12 個の
 ;; 綴りは変えずに足した(使う client より先に service を新しい版で起こす — 古い service は知らない操作を 404 で断る)。
 (val OP-COUNT-ROWS "count-rows")
+;; 行の書きの束と追記の束を 1 つの書きで全部か 0 で積む操作(本文 = {writes: [put-rows と同じ綴り …], appends: [append-events と同じ綴り …]}
+;; — 答え = writtenAndAppended{rows: writtenRows の object, appends: appended の列} | rowsConflict | rowsRefused | appendRefused)。冪等キーは
+;; put-rows と同じく見出し IDEMPOTENCY-HEADER。前の 13 個の綴りは変えずに足した(card ki-e17ba3b32dea — 使う client より先に service を新しい
+;; 版で起こす — 古い service は知らない操作を 404 で断る)。
+(val OP-PUT-ROWS-APPEND-EVENTS "put-rows-append-events")
 (setv OPERATIONS #(OP-READ-ROW OP-LIST-ROWS OP-PUT-ROW OP-WATCH-CHANGES OP-APPEND-EVENT OP-READ-EVENTS OP-PUT-ROWS OP-READ-STREAM-END
-                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS OP-READ-BATCH OP-COUNT-ROWS))
+                   OP-WATCH-EVENTS OP-READ-EVENT-BY-KEY OP-APPEND-EVENTS OP-READ-BATCH OP-COUNT-ROWS OP-PUT-ROWS-APPEND-EVENTS))
 ;; 束の読み(read-batch)の本文の 1 項に載せてよい操作(束の中の読みの操作の名 — 束の中に束・書き・待ちは載せない)。
 (val BATCH-READ-OPERATIONS #(OP-READ-ROW OP-LIST-ROWS))
 ;; 変化の待ち(watch-changes・watch-events)1 回の要求で service が待つ秒の上限(#3074 の long-poll)。要求の読み(decode-request)が
@@ -68,7 +73,7 @@
 ;; client は待ちをこの秒ごとの要求に分けて撃ち直す(眠らない)。間に立つ口の要求の時間切れより短く置く。
 (val WATCH-MAX-SECONDS 25.0)
 ;; 書きの操作(行か出来事を書く — 計器の要求の種 write)。OPERATIONS の残りは読み(read)。
-(val WRITE-OPERATIONS (frozenset #(OP-PUT-ROW OP-PUT-ROWS OP-APPEND-EVENT OP-APPEND-EVENTS)))
+(val WRITE-OPERATIONS (frozenset #(OP-PUT-ROW OP-PUT-ROWS OP-APPEND-EVENT OP-APPEND-EVENTS OP-PUT-ROWS-APPEND-EVENTS)))
 
 ;; 要求の種(計器 /metrics の counter の名に畳む種 — #2709): WRITE = 書きの操作の route・READ = 残りの記録の操作の route・
 ;; OTHER = 記録の操作でない route(/healthz・/readyz・/metrics・知らない route)。
@@ -122,7 +127,7 @@
 
 ;; 呼び手が名乗る job の名の見出し(一覧の読みを呼び手ごとに数えるため — 書き手の名 X-Records-Writer とは別の名乗りで、許可には使わない)。
 (val CALLER-HEADER "X-Records-Caller")
-;; 行の書き(put-row・put-rows)の冪等キーの見出し(card ki-78c6d663491f): client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
+;; 行の書き(put-row・put-rows・put-rows-append-events)の冪等キーの見出し(card ki-78c6d663491f): client は書きの要求ごとに鍵を 1 つ載せ、届かない書きの撃ち直しに
 ;; 同じ鍵を載せる。service は見出しの鍵を撃つ PutRow・PutRows の idempotency-key にする(keyed-request)。本文の鍵にしない訳: 要求の本文の
 ;; 知らない鍵は古い service が 400 で断る(頭の註)ので、鍵を本文に足すと service を先に新しい版で起こす順を求める — 見出しは古い service が
 ;; 読み捨てるので、client と service をどの順で入れ替えても書きは通る(古い service の間は今までどおり鍵の無い書き)。他の操作の見出しは読まない。
@@ -194,14 +199,15 @@
                     OP-READ-EVENT-BY-KEY #("event" "eventAbsent" "eventRetired")
                     OP-APPEND-EVENTS #("appendedEvents")
                     OP-READ-BATCH #("batchRead")
-                    OP-COUNT-ROWS #("count" "notIndexed")})
+                    OP-COUNT-ROWS #("count" "notIndexed")
+                    OP-PUT-ROWS-APPEND-EVENTS #("writtenAndAppended" "rowsConflict" "rowsRefused" "appendRefused")})
 
 ;; 境界の値の型(公開 effect・wire の本文で運ぶ答え)。JSON の値の型 JsonValue は上の import(doeff_hy._json_value)。
 (setv PublicEffect (| ReadRow ListRows PutRow WatchChanges AppendEvent ReadEvents PutRows ReadStreamEnd WatchEvents ReadEventByKey
-                      AppendEvents ReadBatch CountRows))
+                      AppendEvents ReadBatch CountRows PutRowsAppendEvents))
 (setv WireAnswer (| Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events
                     WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired
-                    AppendedEvents BatchRead Count))
+                    AppendedEvents BatchRead Count WrittenAndAppended AppendRefused))
 
 
 (defclass WireMalformed [ValueError]
@@ -512,7 +518,14 @@
   {:pre [(: body JsonValue)] :post [(: % tuple)]}
   "put-rows の本文 {writes: [...]} から束の書き(RowWrite の tuple)を読む(同じ行が 2 度出る束・空の束は PutRows が作る時に断る)。"
   (<- (object-of body "put-rows の本文" #("writes") #()))
-  (<- items (list-in (get body "writes") "writes"))
+  (<- writes tuple (row-write-items (get body "writes")))
+  writes)
+
+
+(defk row-write-items [value]
+  {:pre [(: value JsonValue)] :post [(: % tuple)]}
+  "行の書きの束の配列(put-rows と put-rows-append-events の本文の鍵 writes の値)から束の書き(RowWrite の tuple)を読むため。"
+  (<- items (list-in value "writes"))
   (val writes [])
   (for [item items] (.append writes (! (row-write-from item))))
   (tuple writes))
@@ -537,7 +550,14 @@
   "append-events の本文 {appends: [...]} から束の追記(EventAppend の tuple)を読む(同じ追記が 2 度出る束・空の束は AppendEvents が作る時に
    断る)。"
   (<- (object-of body "append-events の本文" #("appends") #()))
-  (<- items list (list-in (get body "appends") "appends"))
+  (<- appends tuple (event-append-items (get body "appends")))
+  appends)
+
+
+(defk event-append-items [value]
+  {:pre [(: value JsonValue)] :post [(: % tuple)]}
+  "追記の束の配列(append-events と put-rows-append-events の本文の鍵 appends の値)から束の追記(EventAppend の tuple)を読むため。"
+  (<- items list (list-in value "appends"))
   (var appends #())
   (for [item items]
     (<- one EventAppend (event-append-from item))
@@ -615,6 +635,17 @@
             (<- item dict (event-append-json one))
             (:= append-items (+ append-items [item])))
           (WireRequest OP-APPEND-EVENTS {"appends" append-items}))
+    (PutRowsAppendEvents :writes writes :appends appends)
+      ;; 束の項は put-rows と append-events の項と同じ綴り(冪等キーは本文でなく見出し — request-key)。
+      (do (var row-items [])
+          (for [write writes]
+            (<- row-item dict (row-write-json write))
+            (:= row-items (+ row-items [row-item])))
+          (var event-items [])
+          (for [one appends]
+            (<- event-item dict (event-append-json one))
+            (:= event-items (+ event-items [event-item])))
+          (WireRequest OP-PUT-ROWS-APPEND-EVENTS {"writes" row-items "appends" event-items}))
     (ReadBatch :reads reads)
       ;; 束の項は読み 1 つを 1 つだけ撃つ時と同じ操作の名と本文(read-row・list-rows の綴りの 1 か所を継ぐ)。
       (do (var read-items [])
@@ -630,6 +661,7 @@
   (match ask
     (PutRow :idempotency_key key) key
     (PutRows :idempotency_key key) key
+    (PutRowsAppendEvents :idempotency_key key) key
     _ None))
 
 
@@ -641,6 +673,7 @@
     #(_ None) decoded
     #((PutRow) _) (DecodedRequest (replace decoded.effect :idempotency-key key))
     #((PutRows) _) (DecodedRequest (replace decoded.effect :idempotency-key key))
+    #((PutRowsAppendEvents) _) (DecodedRequest (replace decoded.effect :idempotency-key key))
     _ decoded))
 
 
@@ -740,6 +773,9 @@
         (AppendEvents (! (event-appends-from body)))
       "read-batch"
         (ReadBatch (! (batch-reads-from body)))
+      "put-rows-append-events"
+        (do (<- (object-of body "put-rows-append-events の本文" #("writes" "appends") #()))
+            (PutRowsAppendEvents (! (row-write-items (get body "writes"))) (! (event-append-items (get body "appends")))))
       _ (raise (WireMalformed (.format "知らない操作: {!r}(操作 = {})" request.operation OPERATIONS)))))
     (except [error WireMalformed] (raise error))
     (except [error #(TypeError ValueError)] (raise (! (malformed request.operation error)))))
@@ -762,6 +798,8 @@
     (ReadEventByKey :stream stream) (NamedStores #() #(stream))
     (PutRows :writes writes) (NamedStores (tuple (sorted (sfor write writes write.table))) #())
     (AppendEvents :appends appends) (NamedStores #() (tuple (sorted (sfor one appends one.stream))))
+    (PutRowsAppendEvents :writes writes :appends appends)
+      (NamedStores (tuple (sorted (sfor write writes write.table))) (tuple (sorted (sfor one appends one.stream))))
     (ReadBatch :reads reads) (NamedStores (tuple (sorted (sfor one reads one.table))) #())))
 
 
@@ -855,9 +893,11 @@
 
 (defk event-json [event]
   {:pre [(: event Event)] :post [(: % dict)]}
-  "追記の列の出来事 1 つを wire の object にする。"
-  {"stream" event.stream "sequence" event.sequence "idempotencyKey" event.idempotency-key "body" (thaw-json event.body)
-   "writer" event.writer "at" event.at})
+  "追記の列の出来事 1 つを wire の object にする。鍵 position は行と一緒に積んだ出来事(Event.position が在る — card ki-e17ba3b32dea)の時だけ
+   出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。"
+  (| {"stream" event.stream "sequence" event.sequence "idempotencyKey" event.idempotency-key "body" (thaw-json event.body)
+      "writer" event.writer "at" event.at}
+     (if (is event.position None) {} {"position" (! (watch-cursor-json event.position))})))
 
 
 (defk tail-json [tail]
@@ -940,6 +980,18 @@
       {"kind" "rowsConflict" "index" index "table" table "key" (list key) "current" (! (answer-object current value-of))}
     (RowsRefused :index index :table table :key key :reason reason)
       {"kind" "rowsRefused" "index" index "table" table "key" (list key) "reason" reason}
+    ;; PutRowsAppendEvents の答え(card ki-e17ba3b32dea): 行の束は writtenRows と同じ object を欄 rows に・追記は appended の列を欄 appends に
+    ;; 入れ子で運ぶ(読みは同じ written-rows-from と answer-from)。鍵 replayed は送り直しの時だけ出す(writtenRows と同じ)。
+    (WrittenAndAppended :rows rows :appends appends :replayed replayed)
+      (do (<- rows-object dict (answer-object rows value-of))
+          (var appends-items [])
+          (for [one appends]
+            (<- appends-item dict (answer-object one value-of))
+            (:= appends-items (+ appends-items [appends-item])))
+          (| {"kind" "writtenAndAppended" "rows" rows-object "appends" appends-items}
+             (if replayed {"replayed" True} {})))
+    (AppendRefused :index index :stream stream :idempotency_key idempotency-key :reason reason)
+      {"kind" "appendRefused" "index" index "stream" stream "idempotencyKey" idempotency-key "reason" reason}
     (Count :count count) {"kind" "count" "count" count}
     (StreamEnd :sequence sequence) {"kind" "streamEnd" "sequence" sequence}
     (StreamEmpty) {"kind" "streamEmpty"}
@@ -980,10 +1032,11 @@
 (defk event-from [value]
   {:pre [(: value JsonValue)] :post [(: % Event)]}
   "wire の object から追記の列の出来事 1 つを読む。"
-  (<- body (answer-object-of value "event" #("stream" "sequence" "idempotencyKey" "body" "writer" "at") #()))
+  (<- body (answer-object-of value "event" #("stream" "sequence" "idempotencyKey" "body" "writer" "at") #("position")))
   (Event (! (string-of (get body "stream") "event.stream")) (! (integer-of (get body "sequence") "event.sequence"))
          (! (string-of (get body "idempotencyKey") "event.idempotencyKey")) (get body "body")
-         (! (string-of (get body "writer") "event.writer")) (! (integer-of (get body "at") "event.at"))))
+         (! (string-of (get body "writer") "event.writer")) (! (integer-of (get body "at") "event.at"))
+         (if (in "position" body) (! (watch-cursor-from (get body "position") "event.position" True)) None)))
 
 
 (defk list-in [value what]
@@ -1063,6 +1116,24 @@
   (BatchRead items))
 
 
+(defk written-and-appended-from [value]
+  {:pre [(: value JsonValue)] :post [(: % WrittenAndAppended)]}
+  "wire の object から PutRowsAppendEvents の確定(行の束の writtenRows と束の順の appended の列)を読むため(card ki-e17ba3b32dea)。"
+  (<- (answer-object-of value "writtenAndAppended" #("kind" "rows" "appends") #("replayed")))
+  (<- rows WireAnswer (answer-from (get value "rows")))
+  (when (not (isinstance rows WrittenRows))
+    (raise (WireMalformed (.format "writtenAndAppended.rows は writtenRows: {!r}" value))))
+  (<- listed list (list-in (get value "appends") "writtenAndAppended.appends"))
+  (var appends #())
+  (for [item listed]
+    (<- one WireAnswer (answer-from item))
+    (when (not (isinstance one Appended))
+      (raise (WireMalformed (.format "writtenAndAppended.appends は appended の列: {!r}" value))))
+    (:= appends (+ appends #(one))))
+  (WrittenAndAppended rows appends
+                      :replayed (if (in "replayed" value) (! (boolean-of (get value "replayed") "writtenAndAppended.replayed")) False)))
+
+
 (defk rows-conflict-from [value]
   {:pre [(: value JsonValue)] :post [(: % RowsConflict)]}
   "wire の object から PutRows の衝突(束の中の位置・行・今の値)を読む。"
@@ -1138,6 +1209,12 @@
       {"kind" "appendedEvents"} (! (appended-events-from value))
       {"kind" "batchRead"} (! (batch-read-from value))
       {"kind" "rowsConflict"} (! (rows-conflict-from value))
+      {"kind" "writtenAndAppended"} (! (written-and-appended-from value))
+      {"kind" "appendRefused"}
+        (do (<- (answer-object-of value "appendRefused" #("kind" "index" "stream" "idempotencyKey" "reason") #()))
+            (AppendRefused (! (integer-of (get value "index") "appendRefused.index")) (! (string-of (get value "stream") "appendRefused.stream"))
+                           (! (string-of (get value "idempotencyKey") "appendRefused.idempotencyKey"))
+                           (! (string-of (get value "reason") "appendRefused.reason"))))
       {"kind" "rowsRefused"}
         (do (<- (answer-object-of value "rowsRefused" #("kind" "index" "table" "key" "reason") #()))
             (RowsRefused (! (integer-of (get value "index") "rowsRefused.index")) (! (string-of (get value "table") "rowsRefused.table"))

@@ -24,9 +24,9 @@
                               WatchCursor ListCursor Row Missing Page Written WrittenRows Conflict Refused NotIndexed Reset
                               Changes RowChanged RowRemoved Appended AppendedEvents Events EventsMoved EventsQuiet RowsConflict RowsRefused
                               StreamEnd StreamEmpty StreamTail StreamTailEmpty Event EventAbsent EventRetired Unreachable
-                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS BatchRead Count])
+                              RememberKeysFor RememberNoKeys WRITE-KEY-MEMORY-SECONDS BatchRead Count WrittenAndAppended AppendRefused])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
-                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows])
+                               ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows PutRowsAppendEvents])
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents
                                    RetireArchivedEvents RetiredEvents EventsArchived archive-expired-events])
@@ -1953,6 +1953,165 @@
   (! (unplaced-all [first kept inside forgot outside])))
 
 
+;; --- 法 28〜30: 行と出来事を 1 つの書きで積む(card ki-e17ba3b32dea)------------------------------------------------
+
+(defk unchanged-since [harness mark law what]
+  {:pre [(: harness LawHarness) (: mark Page) (: law str) (: what str)] :post [(: % Changes)]
+   :tags {:context "records" :role "program"}}
+  "断り・負け・送り直しの書きが、行の変更の列に何も積んでいない(印 mark の一覧の頭の後に変更が無い)ことを確かめるため。"
+  (<- after (as-writer harness MAKER (WatchChanges #("parts" "tickets") (WatchCursor mark.epoch mark.sequence))))
+  (<- (require-law (and (isinstance after Changes) (= after.items #())) law (.format "{}が行を書いた: {!r}" what after)))
+  after)
+
+
+(defk law-rows-and-events-are-written-together-or-not-at-all [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "行を書いた事を出来事で知らせる書き手が、行と出来事の片方だけが残る形を作らないための法: PutRowsAppendEvents の答えは、PutRows を撃ち、
+   続けて間に他の書きを挟まずに AppendEvents を撃った答えと同じ(行の束の Written の版・値と束の順に続く位置・追記ごとの今積んだ番号は束の順に
+   増え、同じ冪等キー・同じ本文の追記は前の番号で再送と名乗り他を止めない)— ただし全部か 0: 行の束が負ける(RowsConflict)か断られる
+   (RowsRefused)時はその答えで出来事も積まず、追記のどれかが断られる(同じ冪等キーの別の本文・上限)時は束の順で最初の断りの AppendRefused で
+   行も書かない。断り・負けの書きの後は、行の変更の列も追記の列の末尾も変わらない。"
+  (val law "PutRowsAppendEvents は PutRows → AppendEvents と同じ答えで、全部か 0 で積む")
+  (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- seed (as-writer harness MAKER (AppendEvent "journal" "re-seed" {"n" 1})))
+  (<- (require-law (and (isinstance start Page) (isinstance seed Appended)) law (.format "支度: {!r} {!r}" start seed)))
+  (<- both (as-writer harness MAKER
+             (PutRowsAppendEvents #((RowWrite "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))
+                                    (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent)))
+                                  #((EventAppend "journal" "re-1" {"n" 2})
+                                    (EventAppend "journal" "re-seed" {"n" 1})
+                                    (EventAppend "pairs" "ask:re" {"n" 3})))))
+  (<- (require-law (and (isinstance both WrittenAndAppended) (is both.replayed False) (= (len both.appends) 3)) law
+                   (.format "全部通る書き: {!r}" both)))
+  (<- (require-law (and (= (! (unplaced both.rows)) (WrittenRows #((Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))
+                                                                 (Written 1 (FrozenMap {"group" "g1" "id" "t1" "owner" "o1" "state" "open"})))))
+                        (= (lfor item both.rows.items item.position)
+                           (lfor n [1 2] (WatchCursor start.epoch (+ start.sequence n)))))
+                   law (.format "行の束の答えが PutRows と違う: {!r}" both.rows)))
+  (val fresh (get both.appends 0))
+  (val paired (get both.appends 2))
+  (<- (require-law (and (is fresh.replayed False) (> fresh.sequence seed.sequence) (! (replay-of (get both.appends 1) seed))
+                        (is paired.replayed False) (> paired.sequence fresh.sequence))
+                   law (.format "追記の束の答えが AppendEvents と違う: {!r}(種 {!r})" both.appends seed)))
+  (<- mark (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- end (as-writer harness MAKER (ReadStreamEnd "journal")))
+  ;; 行の束の負け(p1 は在る)— 追記は通る形でも積まない。
+  (<- lost (as-writer harness MAKER
+             (PutRowsAppendEvents #((RowWrite "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent))
+                                    (RowWrite "parts" #("p1") (FrozenMap {"label" "c"}) (ExpectAbsent)))
+                                  #((EventAppend "journal" "re-2" {"n" 4})))))
+  (<- (require-law (= lost (RowsConflict 1 "parts" #("p1") (Row #("p1") (FrozenMap {"id" "p1" "label" "a" "state" "open"}) 1))) law
+                   (.format "行の束の負け: {!r}" lost)))
+  ;; 行の束の断り(状態の語の外)。
+  (<- refused-rows (as-writer harness MAKER
+                     (PutRowsAppendEvents #((RowWrite "parts" #("p2") (FrozenMap {"state" "weird"}) (ExpectAbsent)))
+                                          #((EventAppend "journal" "re-2" {"n" 4})))))
+  (<- (require-law (and (isinstance refused-rows RowsRefused) (= #(refused-rows.index refused-rows.table refused-rows.key) #(0 "parts" #("p2"))))
+                   law (.format "行の束の断り: {!r}" refused-rows)))
+  ;; 追記の断り(束の 2 つ目が同じ冪等キーの別の本文・3 つ目が上限越え)— 束の順で最初の断りで、行も前の追記も書かない。
+  (<- refused-append (as-writer harness MAKER
+                       (PutRowsAppendEvents #((RowWrite "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent)))
+                                            #((EventAppend "journal" "re-2" {"n" 4})
+                                              (EventAppend "journal" "re-1" {"n" 9})
+                                              (EventAppend "journal" "re-big" {"n" (* "x" 300)})))))
+  (<- (require-law (and (isinstance refused-append AppendRefused)
+                        (= #(refused-append.index refused-append.stream refused-append.idempotency-key) #(1 "journal" "re-1"))
+                        (in "冪等キー" refused-append.reason))
+                   law (.format "追記の断り: {!r}" refused-append)))
+  (<- too-big (as-writer harness MAKER
+                (PutRowsAppendEvents #((RowWrite "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent)))
+                                     #((EventAppend "journal" "re-big" {"n" (* "x" 300)})))))
+  (<- (require-law (and (isinstance too-big AppendRefused) (= #(too-big.index too-big.idempotency-key) #(0 "re-big"))) law
+                   (.format "上限越えの追記の断り: {!r}" too-big)))
+  (<- unchanged (unchanged-since harness mark law "断り・負けの書き"))
+  (<- p2 (as-writer harness MAKER (ReadRow "parts" #("p2"))))
+  (<- end-after (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (<- never (as-writer harness MAKER (ReadEventByKey "journal" "re-2")))
+  (<- (require-law (and (= p2 (Missing)) (= end-after end) (= end (StreamEnd fresh.sequence)) (= never (EventAbsent))) law
+                   (.format "断り・負けの書きが行か出来事を残した: {!r} {!r} {!r}(前の末尾 {!r})" p2 end-after never end)))
+  (<- journal (as-writer harness MAKER (ReadEvents "journal")))
+  (<- (require-law (= (lfor e journal.items #(e.idempotency-key e.body)) [#("re-seed" {"n" 1}) #("re-1" {"n" 2})]) law
+                   (.format "列 journal の出来事: {!r}" journal)))
+  (+ (! (unplaced-all [start seed])) [both mark end lost refused-rows refused-append too-big unchanged p2 end-after never journal]))
+
+
+(defk law-a-keyed-rows-and-events-write-replays-its-answer [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "答えの切れた PutRowsAppendEvents を送り直す書き手が、自分の着いた書きの答えを受け取れるための法(PutRow・PutRows の冪等キーと同じ作法):
+   同じ冪等キー・同じ本文(行の束と追記の束の両方)の送り直しは、間に別の書き手が行を変えていても前の答え(行の版・値・位置と追記の番号)を
+   送り直しと名乗って(WrittenAndAppended・行の束・追記の各項の replayed)返し、行も変更の列も追記の列も変えない。同じ鍵の別の本文(追記の
+   本文だけが違う時も)は PutRows と同じ冪等キーの断り(行の束の 0 行目の RowsRefused)で、何も書かない。"
+  (val law "冪等キーつきの PutRowsAppendEvents の送り直しは前の答えを返し、置き場を変えない")
+  (val writes #((RowWrite "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
+  (val appends #((EventAppend "journal" "rk-1" {"n" 1}) (EventAppend "pairs" "ask:rk" {"n" 2})))
+  (<- first (as-writer harness MAKER (PutRowsAppendEvents writes appends :idempotency-key "rk-batch")))
+  (<- (require-law (and (isinstance first WrittenAndAppended) (is first.replayed False)) law (.format "最初の書き: {!r}" first)))
+  (<- moved (as-writer harness PAINTER (PutRow "parts" #("p1") (FrozenMap {"color" "red"}) (ExpectVersion 1))))
+  (<- mark (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- end (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (<- again (as-writer harness MAKER (PutRowsAppendEvents writes appends :idempotency-key "rk-batch")))
+  (<- (require-law (and (isinstance again WrittenAndAppended) (is again.replayed True) (is again.rows.replayed True)
+                        (= (lfor item again.rows.items #(item.version item.value item.position item.replayed))
+                           (lfor item first.rows.items #(item.version item.value item.position True)))
+                        (= again.appends (tuple (gfor item first.appends (Appended item.sequence True)))))
+                   law (.format "送り直しが前の答えでない: {!r}(前 {!r})" again first)))
+  (<- other (as-writer harness MAKER
+              (PutRowsAppendEvents writes #((EventAppend "journal" "rk-1" {"n" 1}) (EventAppend "pairs" "ask:rk" {"n" 9}))
+                                   :idempotency-key "rk-batch")))
+  (<- (require-law (and (isinstance other RowsRefused) (= #(other.index other.table other.key) #(0 "parts" #("p1")))
+                        (in "冪等キー" other.reason))
+                   law (.format "同じ鍵の別の本文が断られない: {!r}" other)))
+  (<- unchanged (unchanged-since harness mark law "送り直しと冪等キーの断り"))
+  (<- p1 (as-writer harness MAKER (ReadRow "parts" #("p1"))))
+  (<- end-after (as-writer harness MAKER (ReadStreamEnd "journal")))
+  (<- pairs (as-writer harness MAKER (ReadEvents "pairs")))
+  (<- (require-law (and (isinstance p1 Row) (= p1.version 2) (= end-after end)
+                        (= (lfor e pairs.items #(e.idempotency-key e.body)) [#("ask:rk" {"n" 2})]))
+                   law (.format "送り直しが置き場を変えた: {!r} {!r} {!r}" p1 end-after pairs)))
+  [first (! (unplaced moved)) mark end again other unchanged p1 end-after pairs])
+
+
+(defk law-events-written-with-rows-name-the-rows-position [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "出来事の読み手が、出来事と同じ書きで積まれた行の変更の位置を知り、その位置まで追いついた写しから行を読めるための法: PutRowsAppendEvents で
+   今積んだ出来事は、読み戻した ReadEvents・ReadEventByKey の Event.position に同じ書きの行の最後の変更の位置(rows の最後の項の position)を
+   名乗る。その位置から読む WatchChanges は同じ書きの行の変更を返さない(追いついている)。AppendEvent・AppendEvents で積んだ出来事の位置は
+   None で、PutRowsAppendEvents の束の中で再送と名乗った追記の元の出来事の位置も変わらない(None のまま・元の書きの位置のまま)。"
+  (val law "行と一緒に積んだ出来事は、読み戻しで同じ書きの行の最後の変更の位置を名乗る")
+  (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
+  (<- plain (as-writer harness MAKER (AppendEvent "journal" "pos-plain" {"n" 1})))
+  (<- bundle (as-writer harness MAKER (AppendEvents #((EventAppend "journal" "pos-bundle" {"n" 2})))))
+  (<- first (as-writer harness MAKER
+              (PutRowsAppendEvents #((RowWrite "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))
+                                     (RowWrite "parts" #("p2") (FrozenMap {"label" "b"}) (ExpectAbsent)))
+                                   #((EventAppend "journal" "pos-1" {"n" 3}) (EventAppend "journal" "pos-plain" {"n" 1})))))
+  (<- (require-law (isinstance first WrittenAndAppended) law (.format "最初の書き: {!r}" first)))
+  (val first-at (. (get first.rows.items -1) position))
+  (<- second (as-writer harness MAKER
+               (PutRowsAppendEvents #((RowWrite "parts" #("p1") (FrozenMap {"label" "c"}) (ExpectVersion 1)))
+                                    #((EventAppend "journal" "pos-2" {"n" 4}) (EventAppend "journal" "pos-1" {"n" 3})))))
+  (<- (require-law (isinstance second WrittenAndAppended) law (.format "2 つ目の書き: {!r}" second)))
+  (val second-at (. (get second.rows.items -1) position))
+  (<- (require-law (= first-at (WatchCursor start.epoch (+ start.sequence 2))) law (.format "最初の書きの行の最後の位置: {!r}" first)))
+  (<- journal (as-writer harness MAKER (ReadEvents "journal")))
+  (<- (require-law (= (lfor e journal.items #(e.idempotency-key e.position))
+                      [#("pos-plain" None) #("pos-bundle" None) #("pos-1" first-at) #("pos-2" second-at)])
+                   law (.format "読み戻した出来事の位置: {!r}" journal)))
+  (<- by-key (as-writer harness MAKER (ReadEventByKey "journal" "pos-1")))
+  (<- plain-by-key (as-writer harness MAKER (ReadEventByKey "journal" "pos-plain")))
+  (<- (require-law (and (isinstance by-key Event) (= by-key.position first-at) (= by-key (get journal.items 2))
+                        (isinstance plain-by-key Event) (is plain-by-key.position None))
+                   law (.format "鍵の読みの出来事の位置: {!r} {!r}" by-key plain-by-key)))
+  (<- caught-up (as-writer harness MAKER (WatchChanges #("parts") first-at)))
+  (<- (require-law (and (isinstance caught-up Changes)
+                        (= (lfor item caught-up.items item.sequence) [second-at.sequence]))
+                   law (.format "出来事の位置から読んだ変更が、その後の書きの変更だけでない: {!r}" caught-up)))
+  [(! (unplaced-all [start])) plain bundle first second journal by-key plain-by-key caught-up])
+
+
 ;; --- 法 6b3: 昇順の ListRows と件数の CountRows は、全件を読んで数えた物と同じ -------------------------------
 
 (defk ascending-pages [harness where limit]
@@ -2011,8 +2170,9 @@
 
 
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
-;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read は SHARED-LAWS に
-;; 入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents・ReadBatch を答えない handler の組(呼び手の系の
+;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read と、PutRowsAppendEvents の
+;; 法 3 つ(card ki-e17ba3b32dea)は SHARED-LAWS に
+;; 入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents・ReadBatch・PutRowsAppendEvents を答えない handler の組(呼び手の系の
 ;; 写しの handler など)もこの名簿で答えを比べている。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts
             "committed-changes-appear-once-in-order" law-committed-changes-appear-once-in-order
@@ -2053,6 +2213,9 @@
             "a-write-names-its-change-position" law-a-write-names-its-change-position
             "a-keyed-write-replays-its-answer" law-a-keyed-write-replays-its-answer
             "another-key-is-judged-by-its-expectation" law-another-key-is-judged-by-its-expectation
-            "write-keys-are-forgotten-after-their-memory" law-write-keys-are-forgotten-after-their-memory})
+            "write-keys-are-forgotten-after-their-memory" law-write-keys-are-forgotten-after-their-memory
+            "rows-and-events-are-written-together-or-not-at-all" law-rows-and-events-are-written-together-or-not-at-all
+            "a-keyed-rows-and-events-write-replays-its-answer" law-a-keyed-rows-and-events-write-replays-its-answer
+            "events-written-with-rows-name-the-rows-position" law-events-written-with-rows-name-the-rows-position})
 (setv SHARED-LAWS #("stale-put-conflicts" "committed-changes-appear-once-in-order" "epoch-change-resets"
                     "undeclared-writes-are-refused" "indexed-list-equals-filtered-scan" "append-is-idempotent" "none-removes-a-field"))

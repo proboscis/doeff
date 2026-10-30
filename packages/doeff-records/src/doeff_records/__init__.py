@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from doeff_records._effects import ListRows as ListRows
     from doeff_records._effects import PutRow as PutRow
     from doeff_records._effects import PutRows as PutRows
+    from doeff_records._effects import PutRowsAppendEvents as PutRowsAppendEvents
     from doeff_records._effects import ReadBatch as ReadBatch
     from doeff_records._effects import ReadEventByKey as ReadEventByKey
     from doeff_records._effects import ReadEvents as ReadEvents
@@ -95,6 +96,9 @@ if TYPE_CHECKING:
     from doeff_records._values import Page as Page
     from doeff_records._values import PutRowAnswer as PutRowAnswer
     from doeff_records._values import PutRowsAnswer as PutRowsAnswer
+    from doeff_records._values import PutRowsAppendEventsAnswer as PutRowsAppendEventsAnswer
+    from doeff_records._values import WrittenAndAppended as WrittenAndAppended
+    from doeff_records._values import AppendRefused as AppendRefused
     from doeff_records._values import ReadBatchAnswer as ReadBatchAnswer
     from doeff_records._values import ReadEventByKeyAnswer as ReadEventByKeyAnswer
     from doeff_records._values import ReadEventsAnswer as ReadEventsAnswer
@@ -226,6 +230,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Page": "doeff_records._values",
     "PutRowAnswer": "doeff_records._values",
     "PutRowsAnswer": "doeff_records._values",
+    "PutRowsAppendEventsAnswer": "doeff_records._values",
+    "WrittenAndAppended": "doeff_records._values",
+    "AppendRefused": "doeff_records._values",
     "ReadBatchAnswer": "doeff_records._values",
     "ReadEventByKeyAnswer": "doeff_records._values",
     "ReadEventsAnswer": "doeff_records._values",
@@ -269,6 +276,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ListRows": "doeff_records._effects",
     "PutRow": "doeff_records._effects",
     "PutRows": "doeff_records._effects",
+    "PutRowsAppendEvents": "doeff_records._effects",
     "ReadBatch": "doeff_records._effects",
     "ReadEventByKey": "doeff_records._effects",
     "ReadEvents": "doeff_records._effects",
