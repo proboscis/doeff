@@ -24,7 +24,7 @@
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.protocol.env_store [env-root])
 (import doeff_cluster.worker.protocol.process_host [HostSettings job-work-dir])
-(import doeff_core_effects.process_effects [EnvEntry StartProcess])
+(import doeff_core_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
 (import doeff_cluster.foundation.process_versions [process-versions])

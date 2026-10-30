@@ -24,7 +24,7 @@
 (import pathlib [Path])
 (import doeff [with-handlers Program EffectBase])
 (import doeff_core_effects [WriteText ReadText FileFailed])
-(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_core_effects [EnvEntry])
 (import doeff_time [Delay])
 (import doeff_cluster.foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

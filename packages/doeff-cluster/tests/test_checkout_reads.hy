@@ -17,7 +17,7 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadBytes])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects.scripted_process [ProcessScript scripted-process-handler])
+(import doeff_core_effects [ProcessScript scripted-process-handler])
 (import doeff_cluster.shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout SenderSourceRoot])
 (import doeff_cluster.shared.protocol.checkout_reads [SENDER-SOURCE-DIR checkout-reads checkout-state-at])
 (import doeff_cluster.shared.core.runtime_env [runtime-env-of-checkouts checked-declaring-checkout])
@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.intent.env_marker_model [FileSha256])
 (import doeff_cluster [GitCheckout GitRemote GitRev git-command]
         doeff_cluster._sim.checkout_git_script [GitUrlRewrite])
-(import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
+(import doeff_core_effects [ProcessOutcome RunProcess])
 
 (val LOCK "httpx==0.28.1\n")
 (val APP-HEAD (* "a" 40))

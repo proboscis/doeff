@@ -8,8 +8,7 @@ from typing import Any
 
 import pytest
 from _runner import run_program
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
+from doeff_core_effects import ReadEnvironment, subprocess_handler
 from doeff_openrouter._chat import chat_completion
 from doeff_openrouter._client import OpenRouterClient
 from doeff_openrouter._structured_llm import (

@@ -5,7 +5,7 @@
 (import dataclasses [replace])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_core_effects [slog-discard-handler])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage

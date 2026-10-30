@@ -4,7 +4,7 @@
 ;;; 立て、後から登録した待ちは誰にも満たされない(worker の 60 秒の待ちが SIGTERM で抜けなかった)。登録は、理由が立っていれば待ちを
 ;;; その場で満たし、立っていなければ並べる — 合図の受け手との間に取りこぼしの合間を作らない。
 (require doeff-hy.macros [deftest val])
-(import doeff_core_effects.stop_signal_handlers [StopBox])
+(import doeff_core_effects._stop_signal_handlers [StopBox])
 
 
 (defclass Recorder []

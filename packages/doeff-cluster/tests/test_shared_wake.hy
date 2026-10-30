@@ -151,8 +151,8 @@ print(f'{stop.requested} {time.monotonic() - started:.3f}', flush=True)
 from doeff import do, run, with_handlers
 from doeff_core_effects._handlers import await_handler, state
 from doeff_core_effects._scheduler import scheduled
-from doeff_core_effects.stop_signal_effects import StopRequested
-from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler
+from doeff_core_effects._stop_signal_effects import StopRequested
+from doeff_core_effects._stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler
 from doeff_cluster.shared.intent.due_model import DueAt
 from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy

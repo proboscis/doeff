@@ -10,7 +10,7 @@
 (import doeff_core_effects [ReadDiskFree ReadDiskUsage DiskUsage])
 (import doeff_core_effects [os-file-handler]
         doeff_core_effects._os_file [free-reader-for reread-free])
-(import doeff_core_effects.darwin_volume [darwin-volume-free])
+(import doeff_core_effects._darwin_volume [darwin-volume-free])
 
 
 (defk answers-nine [probe]

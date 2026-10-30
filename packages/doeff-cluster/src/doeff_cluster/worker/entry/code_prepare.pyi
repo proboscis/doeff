@@ -19,11 +19,11 @@ from doeff_core_effects import ReadText as ReadText
 from doeff_core_effects import StatPath as StatPath
 from doeff_core_effects._file_effects import file_done as file_done
 from doeff_core_effects import os_file_handler as os_file_handler
-from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
-from doeff_core_effects.process_effects import InterpreterFacts as InterpreterFacts
-from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
-from doeff_core_effects.process_effects import ReadInterpreter as ReadInterpreter
-from doeff_core_effects.process_effects import RunProcess as RunProcess
+from doeff_core_effects import subprocess_handler as subprocess_handler
+from doeff_core_effects import InterpreterFacts as InterpreterFacts
+from doeff_core_effects import ProcessOutcome as ProcessOutcome
+from doeff_core_effects import ReadInterpreter as ReadInterpreter
+from doeff_core_effects import RunProcess as RunProcess
 from doeff_cluster.worker.core.code_plan import compile_plan as compile_plan
 from doeff_cluster.worker.core.code_plan import marker_content as marker_content
 from doeff_cluster.worker.core.code_plan import tree_problem as tree_problem

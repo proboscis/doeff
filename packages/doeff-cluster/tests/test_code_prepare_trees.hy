@@ -15,7 +15,7 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
 (import doeff_cluster.worker.protocol.tree_files [tree-files])

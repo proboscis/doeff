@@ -15,13 +15,14 @@
 (import unittest.mock [Mock])
 (import pytest)
 (import doeff [run])
-(import doeff_core_effects.process_exit [exit-fd-opener-for ExitWaitUnavailable])
-(import doeff_core_effects.pidfd_exit [pidfd-of])
-(import doeff_core_effects.kqueue_exit [kqueue-fd-of])
-(import doeff_core_effects.darwin_proc [bsd-info-stat task-info-threads BSD-INFO-SIZE TASK-INFO-SIZE])
-(import doeff_core_effects.os_warm_process [same-child-running])
-(import doeff_core_effects.os_warm_process :as os-warm-process-module)
-(import doeff_core_effects.process_stat [ProcStat])
+(import doeff_core_effects [ExitWaitUnavailable]
+        doeff_core_effects._process_exit [exit-fd-opener-for])
+(import doeff_core_effects._pidfd_exit [pidfd-of])
+(import doeff_core_effects._kqueue_exit [kqueue-fd-of])
+(import doeff_core_effects._darwin_proc [bsd-info-stat task-info-threads BSD-INFO-SIZE TASK-INFO-SIZE])
+(import doeff_core_effects._os_warm_process [same-child-running])
+(import doeff_core_effects._os_warm_process :as os-warm-process-module)
+(import doeff_core_effects._process_stat [ProcStat])
 
 ;; <sys/proc_info.h> の struct proc_bsdinfo の並び(136 byte): uint32 × 5(flags status xstatus pid ppid)・uid / gid × 6・rfu_1・
 ;; comm[16]・name[32]・uint32 × 5(nfiles pgid pjobc e_tdev e_tpgid)・int32 nice・uint64 start_tvsec・uint64 start_tvusec。

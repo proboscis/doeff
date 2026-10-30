@@ -18,7 +18,7 @@
 (import doeff_cluster.worker.protocol.drain_requests [drain-request])
 (import doeff [run with-handlers])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import tests.env_fixtures [LOCK env-of])

@@ -17,8 +17,8 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.process_exit [process-exit-handler])
+(import doeff_core_effects [subprocess-handler])
+(import doeff_core_effects [process-exit-handler])
 (import doeff_time [async-time-handler])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.wake_fixtures [wakes-every])
@@ -33,7 +33,7 @@
 (import doeff_cluster.worker.protocol.observations [ObserveProcesses])
 (import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
 (import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import doeff_cluster.worker.core.program [run-worker JOB-EXIT-LOG])
 
 ;; この file の後半の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の

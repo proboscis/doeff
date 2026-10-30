@@ -36,8 +36,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry, EnvMode, RunProcess
+from doeff_core_effects import EnvEntry, EnvMode, RunProcess, subprocess_handler
 
 from doeff import run, with_handlers
 

@@ -25,7 +25,7 @@ from typing import Any, Generic, TypeVar
 import hy  # noqa: F401 — stop_signal_effects below is a Hy module
 from doeff_core_effects import slog
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait
-from doeff_core_effects.stop_signal_effects import AwaitStop, StopRequested
+from doeff_core_effects import AwaitStop, StopRequested
 
 from doeff import do
 from doeff_events._effects import Publish, WaitForEvent

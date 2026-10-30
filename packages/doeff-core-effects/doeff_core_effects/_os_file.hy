@@ -40,7 +40,7 @@
                                          AcquireLock ReleaseLock ReadDiskFree ReadDiskUsage MeasureTree LinkFile
                                          CompilePythonSources MakeSymlink])
 (import doeff_core_effects._python_bytecode [compile-python-sources])
-(import doeff_core_effects.darwin_volume [darwin-volume-free])
+(import doeff_core_effects._darwin_volume [darwin-volume-free])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])
 
 ;; offloaded-lock-handler の thread(錠の取り 1 つに thread 1 本 — 同時の数の上限は錠を取りに来る task の数)。

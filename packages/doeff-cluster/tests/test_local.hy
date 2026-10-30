@@ -20,8 +20,8 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster [sim-cluster EndProcess SimWorker SimProcess SimReport Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker SimOutside ProcessOutside]
         doeff_cluster._sim.local [sim-process SimChild SimLink ServiceReadiness SimCoordinatorRun])
-(import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop StopRequested])
-(import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
+(import doeff_core_effects [AwaitStop RaiseStop StopRequested])
+(import doeff_core_effects [scripted-stop-handler])
 (import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
                                                      JobProcessWaitExpired RestartService ServiceRestarted RestartRefused])
 (import doeff_cluster.shared.entry.service_build [job system-of])

@@ -26,7 +26,7 @@
 (import doeff_core_effects [Await])
 (import doeff_core_effects [state await-handler])
 (import doeff_core_effects [PublishLatest ReadLatest])
-(import doeff_core_effects.process_latest [process-latest-handler])
+(import doeff_core_effects [process-latest-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [MemoryFiles])
 (import doeff_core_effects [memory-file-handler])

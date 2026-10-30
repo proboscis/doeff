@@ -18,15 +18,15 @@ import hy
 import pytest
 from doeff_core_effects import (
     Listen,
+    RaiseStop,
     SlogEffect,
     Spawn,
     listen_handler,
     scheduled,
+    scripted_stop_handler,
     slog_discard_handler,
     state,
 )
-from doeff_core_effects.stop_signal_effects import RaiseStop
-from doeff_core_effects.stop_signal_handlers import scripted_stop_handler
 from doeff_events import EventBus, Publish, TimerFired, subscribed_event_handler, timer_handler
 from doeff_time import Delay, sim_time_handler
 
@@ -62,7 +62,7 @@ SUBSCRIBED: tuple[type, ...] = (Added, Done, Unrelated, Moved, TimerFired)
 PRELUDE = """
 (require doeff-hy.macros [defk <-])
 (require doeff-events.macros [event-loop])
-(import doeff_core_effects.stop_signal_effects [RaiseStop])
+(import doeff_core_effects._stop_signal_effects [RaiseStop])
 (import doeff_events [ArmTimer TimerFired])
 (import datetime [datetime])
 (import doeff_time [GetTime])

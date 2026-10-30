@@ -24,8 +24,8 @@ from doeff_cluster.shared.intent.due_model import DueAt, DueNever, DueNow
 from doeff_cluster.shared.intent.job_model import JobPhase, JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import EnvFailure
 from doeff_core_effects import Future
-from doeff_core_effects.process_effects import AwaitProcessExit
-from doeff_core_effects.warm_effects import AwaitWarmChildExit
+from doeff_core_effects import AwaitProcessExit
+from doeff_core_effects import AwaitWarmChildExit
 
 from doeff import EffectBase
 

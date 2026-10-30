@@ -3,7 +3,7 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_core_effects.process_effects import EnvEntry as EnvEntry
+from doeff_core_effects import EnvEntry as EnvEntry
 from doeff_cluster.shared.intent.launch_model import WorkerLaunch as WorkerLaunch
 from doeff_cluster.shared.intent.launch_model import CoordinatorLaunch as CoordinatorLaunch
 

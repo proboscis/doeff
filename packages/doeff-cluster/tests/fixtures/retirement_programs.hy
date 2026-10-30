@@ -8,7 +8,7 @@
 (import collections.abc [Callable])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [Spawn Task])
-(import doeff_core_effects.stop_signal_effects [AwaitStop])
+(import doeff_core_effects [AwaitStop])
 (import doeff_time [Delay])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

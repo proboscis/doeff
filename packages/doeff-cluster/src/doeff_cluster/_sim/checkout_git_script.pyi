@@ -3,9 +3,9 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from functools import partial as partial
-from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
-from doeff_core_effects.process_effects import RunProcess as RunProcess
-from doeff_core_effects.scripted_process import ScriptedCommand as ScriptedCommand
+from doeff_core_effects import ProcessOutcome as ProcessOutcome
+from doeff_core_effects import RunProcess as RunProcess
+from doeff_core_effects import ScriptedCommand as ScriptedCommand
 NOT_A_REPOSITORY: int
 BAD_USAGE: int
 NO_SUCH_REMOTE: int

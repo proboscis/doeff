@@ -15,7 +15,7 @@
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects [state :as session-store])
 (import doeff_core_effects [CreatePromise Promise])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import doeff_cluster.shared.intent.protocol [NextRequests Request Reply CoordinatorStopRequested])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
 (import doeff_cluster.coordinator.protocol.store [Persist])

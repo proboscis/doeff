@@ -1,11 +1,11 @@
 """待ちの子(worker/entry/warm_child・#3646)を本物の process で確かめる失敗ケース。
 
 worker の代わりに検が待ちの子を起こし(stdin を pipe で持つ = worker と同じ持ち方)、unix socket へ頼みを送る。頼みと答えの 1 行は
-doeff_core_effects.os_warm_process の約束の形(WarmRequestWire・WarmForkedWire・WarmRefusedWire)。分かれた子が走らせる入口は
+doeff_core_effects._os_warm_process の約束の形(WarmRequestWire・WarmForkedWire・WarmRefusedWire)。分かれた子が走らせる入口は
 tests/fixtures/warm_job(前もって読む module として名指す)。範囲は Linux と macOS の worker(fork・子孫の引き取りは Linux だけで、macOS は
 引き取らない形 — shim.py の註)。macOS の機体で直接 動く worker も warm child で job を走らせるため。
 検は眠らずに出来事で待つ: 待ちの子の準備完了は stderr の 1 行・分かれた子 A の終わりはその機体の終わると読める fd(Linux = pidfd・
-macOS = kqueue — doeff_core_effects.process_exit の exit-fd-of)・job の進みは検が開いた関所の socket。
+macOS = kqueue — doeff_core_effects._process_exit の exit-fd-of)・job の進みは検が開いた関所の socket。
 
 守る事と、その失敗ケース:
 - 分かれる前に thread が 1 本・VM が 0 個(準備完了の印)
@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from doeff_core_effects.process_exit import exit_fd_of
+from doeff_core_effects._process_exit import exit_fd_of
 
 from doeff import run
 from tests.warm_child_rig import READY_SECONDS, WARM, StartWarmChild
@@ -391,7 +391,7 @@ def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path, start
 
 def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
     """失敗ケース: 待ちの子は process の様子(起動の刻・thread の本数)を /proc から自分で読まず、
-    機体ごとの読み(doeff_core_effects.os_warm_process の proc-stat-of・own-thread-count)を使う — /proc の無い macOS で起動の前に落ちない。"""
+    機体ごとの読み(doeff_core_effects._os_warm_process の proc-stat-of・own-thread-count)を使う — /proc の無い macOS で起動の前に落ちない。"""
     source = (PACKAGE / "src" / "doeff_cluster" / "worker" / "entry" / "warm_child.py").read_text()
     assert "/proc" not in source
     assert "proc_stat_of" in source and "own_thread_count" in source

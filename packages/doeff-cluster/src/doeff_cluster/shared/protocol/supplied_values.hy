@@ -64,7 +64,7 @@
 (import doeff_core_effects [AcquireLock DirEntry FileFailed ListDirectory LockHeld MakeDirectory PathKind PathStat ReadText ReleaseLock
                             RemoveTree StatPath WriteBytes])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
-(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing
                                                    WorkerFactName])
 ;; 参照の綴りの定義元は shared/core(coordinator が置かれうる job の参照を並べる判断と同じ字 — ADR-DOE-CLUSTER-004)。

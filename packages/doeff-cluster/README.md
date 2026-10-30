@@ -206,7 +206,7 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 
 ```hy
 (import doeff [run with-handlers])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_cluster.shared.core.declaring [declaring-refusal])
 (import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
 (import doeff_cluster.shared.entry.service_build [system-declaration])

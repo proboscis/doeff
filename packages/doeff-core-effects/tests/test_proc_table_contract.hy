@@ -5,8 +5,9 @@
 ;;;         他人の process へ送らない)・合う SignalPid は True で、その後の表から眠る子が消える。
 ;;;   読み  comm に空白と括弧を含む stat を読める・zombie は表に入れない・欄の足りない中身は名指しで断る。
 (require doeff-hy.macros [deftest defk <- val var])
-(import doeff_core_effects.process_effects [ProcessSignal])
-(import doeff_core_effects.proc_table_effects [ProcRow ReadProcTable SignalPid proc-row-of-stat])
+(import doeff_core_effects [ProcessSignal])
+(import doeff_core_effects [ProcRow ReadProcTable SignalPid]
+        doeff_core_effects._proc_table_effects [proc-row-of-stat])
 (import proc_table_contract_handlers [ProcPids ProcWorld])
 
 ;; 眠る子が表から消えるまで表を読み直す回数の上限(本物の SIGKILL は届いてから終わるまでに少し間がある — 時間で待たずに読み直す)。

@@ -12,9 +12,9 @@ from doeff_core_effects import MakeDirectory as MakeDirectory
 from doeff_core_effects import ListDirectory as ListDirectory
 from doeff_core_effects import DirEntry as DirEntry
 from doeff_core_effects import RemoveTree as RemoveTree
-from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
-from doeff_core_effects.process_effects import RunProcess as RunProcess
-from doeff_core_effects.scripted_process import ScriptedCommand as ScriptedCommand
+from doeff_core_effects import ProcessOutcome as ProcessOutcome
+from doeff_core_effects import RunProcess as RunProcess
+from doeff_core_effects import ScriptedCommand as ScriptedCommand
 from doeff_traverse import sequence as sequence
 GIT_DIR: str
 ORIGIN: str

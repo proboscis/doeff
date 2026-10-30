@@ -29,15 +29,15 @@
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects [scheduled Spawn Race Cancel Wait TaskCancelledError])
 (import doeff_core_effects._scheduler :as scheduler-module)
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.os_warm_process [os-warm-process-handler proc-stat-of])
-(import doeff_core_effects.process_effects [StartProcess PollProcess AwaitProcessExit ProcessStarted ProcessExited ProcessEnded
-                                            ProcessNotChild])
-(import doeff_core_effects.warm_effects [AwaitWarmChildExit])
-(import doeff_core_effects.process_exit [process-exit-handler exit-fd-of])
-(import doeff_core_effects.process_exit :as process-exit-module)
-(import doeff_core_effects.pidfd_exit [pidfd-of])
-(import doeff_core_effects.os_process [STARTED-CHILDREN])
+(import doeff_core_effects [subprocess-handler])
+(import doeff_core_effects [os-warm-process-handler proc-stat-of])
+(import doeff_core_effects [StartProcess PollProcess AwaitProcessExit ProcessStarted ProcessExited ProcessEnded ProcessNotChild])
+(import doeff_core_effects [AwaitWarmChildExit])
+(import doeff_core_effects [process-exit-handler]
+        doeff_core_effects._process_exit [exit-fd-of])
+(import doeff_core_effects._process_exit :as process-exit-module)
+(import doeff_core_effects._pidfd_exit [pidfd-of])
+(import doeff_core_effects._os_process [STARTED-CHILDREN])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

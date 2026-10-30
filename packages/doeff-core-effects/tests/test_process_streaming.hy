@@ -7,7 +7,7 @@
 (require doeff-hy.macros [defk deftest <- val var])
 (import time)
 (import doeff_core_effects [Spawn Gather])
-(import doeff_core_effects.process_effects [EnvEntry EnvMode ProcessOutcome RunProcess])
+(import doeff_core_effects [EnvEntry EnvMode ProcessOutcome RunProcess])
 (import process_contract_handlers [ContractRoot])
 
 ;; 子が自分の log の 1 行目を読み返す文(書いてから 0.3 秒待つ — 読み手の thread が行を書く間)。

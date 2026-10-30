@@ -5,7 +5,7 @@
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_core_effects [CreatePromise Promise Wait])
-(import doeff_core_effects.stop_signal_effects [AwaitStop StopBell])
+(import doeff_core_effects [AwaitStop StopBell])
 
 
 (defhandler stop-signal-never-comes

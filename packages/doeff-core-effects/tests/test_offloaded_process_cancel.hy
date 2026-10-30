@@ -35,12 +35,12 @@
 (import doeff [Program with_handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [MeterSettings MeterSnapshot ReadMeter])
-(import doeff_core_effects.process_meter [process-meter-handler])
-(import doeff_core_effects.os_process :as process-module)
-(import doeff_core_effects.os_process [offloaded-subprocess-handler metered-offloaded-subprocess-handler
-                                       CANCEL-TERMINATED-METRIC CANCEL-KILLED-METRIC])
+(import doeff_core_effects [process-meter-handler])
+(import doeff_core_effects._os_process :as process-module)
+(import doeff_core_effects [offloaded-subprocess-handler metered-offloaded-subprocess-handler]
+        doeff_core_effects._os_process [CANCEL-TERMINATED-METRIC CANCEL-KILLED-METRIC])
 (import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
-(import doeff_core_effects.process_effects [ProcessAlive ProcessOutcome RunProcess])
+(import doeff_core_effects [ProcessAlive ProcessOutcome RunProcess])
 (import doeff_core_effects [scheduled CreateExternalPromise ExternalPromise Task Wait Spawn Cancel TaskCancelledError])
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

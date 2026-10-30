@@ -13,7 +13,7 @@
 (import doeff [Program with-handlers])
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import tests.link_rig [LinkRig LINK-ROUTE])
 (import tests.transport_http [transport-http])
