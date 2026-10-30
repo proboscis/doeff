@@ -42,7 +42,7 @@ def counted(program):  # the result, and every Await that program yielded
 
 
 def bridged(program):  # Await answered on asyncio, Listen inside it
-    return scheduled(await_handler()(listen_handler(program)))
+    return scheduled(await_handler(listen_handler(program)))
 
 
 if __name__ == "__main__":
