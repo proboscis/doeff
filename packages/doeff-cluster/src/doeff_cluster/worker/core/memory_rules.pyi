@@ -4,7 +4,14 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from bisect import bisect_left as bisect_left
-from bisect import bisect_right as bisect_right
+from operator import attrgetter as attrgetter
+from itertools import accumulate as accumulate
+from itertools import chain as chain
+from itertools import groupby as groupby
+from itertools import islice as islice
+from itertools import repeat as repeat
+from itertools import takewhile as takewhile
+from doeff_traverse import sequence as sequence
 from doeff_core_effects.proc_table_effects import ProcRow as ProcRow
 MIB: int
 
@@ -109,44 +116,50 @@ def memory_level(node: NodeMemory, limits: MemoryLimits) -> _Program[MemoryLevel
 class ProcTree:
     by_pid: tuple[ProcRow, ...]
     pids: tuple[int, ...]
-    by_parent: tuple[ProcRow, ...]
-    parents: tuple[int, ...]
+    children: dict[int, tuple]
 
 def proc_tree_of(rows: tuple) -> _Program[ProcTree, object]:
-    ...
-
-def children_of(tree: ProcTree, pid: int) -> _Program[tuple, object]:
     ...
 
 def row_of(tree: ProcTree, pid: int) -> _Program[ProcRow | None, object]:
     ...
 
-def subtree_of(tree: ProcTree, row: ProcRow) -> _Program[tuple, object]:
+@dataclass(frozen=True, kw_only=True)
+class TreeWalk:
+    members: tuple[ProcRow, ...]
+    sizes: tuple[int, ...]
+    counts: tuple[int, ...]
+    kids: tuple[tuple, ...]
+
+def walk_of(tree: ProcTree, row: ProcRow) -> _Program[TreeWalk, object]:
+    ...
+
+@dataclass(frozen=True, kw_only=True)
+class JobWalk:
+    root: JobRoot
+    walk: TreeWalk
+
+def job_walks(rows: tuple, roots: tuple) -> _Program[tuple, object]:
+    ...
+
+def uses_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
 def job_uses(rows: tuple, roots: tuple) -> _Program[tuple, object]:
     ...
 
-def tree_bytes(tree: ProcTree, row: ProcRow) -> _Program[int, object]:
-    ...
-
-@dataclass(frozen=True, kw_only=True)
-class SizedChild:
-    row: ProcRow
-    bytes: int
-
 @dataclass(frozen=True, kw_only=True)
 class Gathering:
-    point: ProcRow
-    sides: tuple[ProcRow, ...]
+    point: int
+    sides: tuple[int, ...]
 
-def gathering_of(tree: ProcTree, root_row: ProcRow) -> _Program[Gathering, object]:
+def gathering_of(walk: TreeWalk) -> _Program[Gathering, object]:
     ...
 
-def branch_unit(tree: ProcTree, name: str, head: ProcRow) -> _Program[KillUnit, object]:
+def units_of_job(walk: TreeWalk, root: JobRoot) -> _Program[tuple, object]:
     ...
 
-def units_of_job(tree: ProcTree, root_row: ProcRow, root: JobRoot) -> _Program[tuple, object]:
+def units_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
 def kill_units(rows: tuple, roots: tuple) -> _Program[tuple, object]:

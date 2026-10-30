@@ -32,7 +32,10 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
-(import bisect [bisect-left bisect-right])
+(import bisect [bisect-left])
+(import operator [attrgetter])
+(import itertools [accumulate chain groupby islice repeat takewhile])
+(import doeff_traverse [sequence])
 (import doeff_core_effects.proc_table_effects [ProcRow])
 
 ;; byte の単位(log の値は MiB)。
@@ -154,11 +157,10 @@
    :tags {:context "worker" :role "judgment"}}
   "min-victim-bytes 以上の単位を持つのに、平常の大きさで動くので止める候補にしなかった job の平常の大きさ(JobSteady — 名の昇順)を
    並べるため(止める単位が無い時の log に、止めなかった job を名指す)。"
-  (var names (frozenset))
-  (for [unit units]
-    (<- candidate bool (beyond-steady? unit uses steadies limits))
-    (when (and (not candidate) (>= unit.bytes limits.min-victim-bytes))
-      (:= names (| names #{unit.job}))))
+  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない — card ki-72f309f23e0f)。
+  (val large (tuple (gfor unit units :if (>= unit.bytes limits.min-victim-bytes) unit)))
+  (<- beyond tuple (sequence (gfor unit large (beyond-steady? unit uses steadies limits))))
+  (val names (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job)))
   (tuple (gfor s steadies :if (in s.job names) s)))
 
 
@@ -222,26 +224,22 @@
 
 
 (defrecord ProcTree
-  "process の表の木の形: by-pid = 行の pid の昇順・pids = その pid の列・by-parent = 行の (ppid pid) の昇順・parents = その ppid の列。
-   見張りの 1 回の読みの中で木を何度もたどるので、子と行を二分探索で引く(子を毎回 表の全部から探すと行の数の 2 乗)。"
+  "process の表の木の形: by-pid = 行の pid の昇順(pid ごとに 1 行)・pids = その pid の列・children = ppid → 子の行(pid の昇順 — 子の
+   在る process だけ)。行は二分探索で、子は 1 度で引く(子を毎回 表の全部から探すと行の数の 2 乗)。"
   (#^ (get tuple #(ProcRow ...)) by-pid)
   (#^ (get tuple #(int ...)) pids)
-  (#^ (get tuple #(ProcRow ...)) by-parent)
-  (#^ (get tuple #(int ...)) parents))
+  (#^ (get dict #(int tuple)) children))
 
 
 (defk proc-tree-of [rows]
   {:pre [(: rows tuple)] :post [(: % ProcTree)] :tags {:context "worker" :role "judgment"}}
-  "表の行を、木をたどる並びつきの形にするため(ProcTree の註)。"
-  (val by-pid (tuple (sorted rows :key (fn [r] r.pid))))
-  (val by-parent (tuple (sorted rows :key (fn [r] #(r.ppid r.pid)))))
-  (ProcTree :by-pid by-pid :pids (tuple (gfor r by-pid r.pid)) :by-parent by-parent :parents (tuple (gfor r by-parent r.ppid))))
-
-
-(defk children-of [tree pid]
-  {:pre [(: tree ProcTree) (: pid int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "pid の子の行を pid の昇順で引くため。"
-  (cut tree.by-parent (bisect-left tree.parents pid) (bisect-right tree.parents pid)))
+  "表の行を、木をたどる並びつきの形にするため(ProcTree の註)。同じ pid の行が 2 つ在れば後の行を使う(pid ごとに 1 行なら、根の外の
+   行は親が 1 つで、木をたどって 2 度は届かない — walk-of の註)。"
+  (val unique (.values (dfor r rows r.pid r)))
+  (val by-pid (tuple (sorted unique :key (attrgetter "pid"))))
+  (val by-parent (sorted unique :key (attrgetter "ppid" "pid")))
+  (ProcTree :by-pid by-pid :pids (tuple (map (attrgetter "pid") by-pid))
+            :children (dfor #(ppid kids) (groupby by-parent :key (attrgetter "ppid")) ppid (tuple kids))))
 
 
 (defk row-of [tree pid]
@@ -251,119 +249,157 @@
   (if (and (< at (len tree.pids)) (= (get tree.pids at) pid)) (get tree.by-pid at) None))
 
 
-(defk subtree-of [tree row]
-  {:pre [(: tree ProcTree) (: row ProcRow)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "row を頭とする木の process を、頭が先の順で並べるため(深さ優先 — 親の pid が子より大きい使い回しでも 1 度ずつ)。"
-  (var found #())
-  (var seen (frozenset))
-  (var pending #(row))
-  (while pending
-    (val here (get pending 0))
-    (:= pending (cut pending 1 None))
-    (when (not-in here.pid seen)
-      (:= seen (| seen #{here.pid}))
-      (:= found (+ found #(here)))
-      (<- children tuple (children-of tree here.pid))
-      (:= pending (+ children pending))))
-  found)
+(defrecord TreeWalk
+  "row を頭とする木を 1 度たどった結末: members = 木の process(頭が先の深さ優先・兄弟は pid の昇順)・sizes = members の各々を頭と
+   する木の rss の和・counts = その木の process の数・kids = その子の members の位置(pid の昇順)— どれも members と同じ位置。
+   深さ優先の順なので、位置 i を頭とする木は members の i から counts[i] 個の連なり — 子の木を数え直さずに大きさと process を
+   引ける(card ki-72f309f23e0f: 子の木を 1 本ずつたどり直すと、shim が引き取った孤児が 8.2 万本の時に見張りの 1 回が main の
+   scheduler を何十分も塞いだ)。"
+  (#^ (get tuple #(ProcRow ...)) members)
+  (#^ (get tuple #(int ...)) sizes)
+  (#^ (get tuple #(int ...)) counts)
+  (#^ (get tuple #(tuple ...)) kids))
+
+
+(defk walk-of [tree row]
+  {:pre [(: tree ProcTree) (: row ProcRow)] :post [(: % TreeWalk)] :tags {:context "worker" :role "judgment"}}
+  "row を頭とする木を、木の process の数に比例する手間で数えるため(TreeWalk の註)。深さごとの段を上から作り(段 = その深さの行・
+   行ごとの子の数・次の段 — 次の段はこの段の行の子を順に繋いだ物なので、行 i の子は次の段の starts[i] から starts[i+1] の前まで)、
+   下の段から木の大きさと数を足し上げ、上の段から深さ優先の位置を振り(子の位置 = 親の位置 + 1 + 前の兄弟の木の数)、位置の順に
+   並べる。1 歩ごとに dict を引かず、段の列の切り出しで数える(10 万行で 1 秒を越えないため)。根へ戻る子は除く — 根の ppid が
+   木の中を指す読みの食い違いでも回らない(表は pid ごとに 1 行なので、根の外の行に届く道は 1 つ)。"
+  (val head row.pid)
+  (val pid-of (attrgetter "pid"))
+  ;; 根へ戻る子が居うるのは根の親の子の組だけ(そこだけ根を除く)。
+  (val kids-of (fn [pid] (if (= pid row.ppid)
+                             (tuple (gfor c (.get tree.children pid #()) :if (!= c.pid head) c))
+                             (.get tree.children pid #()))))
+  (val grow (fn [rows] (let [kids (tuple (map kids-of (map pid-of rows)))]
+                         #(rows (tuple (map len kids)) (tuple (chain.from-iterable kids))))))
+  (val levels (tuple (takewhile (fn [level] (get level 0))
+                                (accumulate (repeat None) (fn [level _] (grow (get level 2))) :initial (grow #(row))))))
+  (val starts (tuple (gfor level levels (tuple (accumulate (get level 1) :initial 0)))))
+  ;; 段ごとの #(木の rss の和の列 木の process の数の列)(下の段から足し上げ、段の順に並べ直す — 最後は子の無い段の下の空)。
+  (val tally (fn [below depth]
+               (let [edges (get starts depth)
+                     spans (tuple (zip edges (cut edges 1 None)))
+                     #(sizes counts) below]
+                 #((tuple (gfor #(r #(a b)) (zip (get (get levels depth) 0) spans)
+                                (if (< a b) (+ r.rss-bytes (sum (cut sizes a b))) r.rss-bytes)))
+                   (tuple (gfor #(a b) spans (if (< a b) (+ 1 (sum (cut counts a b))) 1)))))))
+  (val tallies (tuple (reversed (tuple (accumulate (range (- (len levels) 1) -1 -1) tally :initial #(#() #()))))))
+  ;; 段ごとの深さ優先の位置(上の段から)。
+  (val place (fn [places depth]
+               (let [edges (get starts depth)
+                     counts (get (get tallies (+ depth 1)) 1)]
+                 (tuple (chain.from-iterable (gfor #(at a b) (zip places edges (cut edges 1 None)) :if (< a b)
+                                                   (islice (accumulate (cut counts a b) :initial (+ at 1)) (- b a))))))))
+  (val placed (tuple (accumulate (range (- (len levels) 1)) place :initial #(0))))
+  (val kid-places (tuple (gfor #(edges below) (zip starts (+ (cut placed 1 None) #(#())))
+                               (tuple (gfor #(a b) (zip edges (cut edges 1 None)) (cut below a b))))))
+  ;; 段の列を繋いで、位置の順に並べ直す。
+  (val flat (fn [columns] (tuple (chain.from-iterable columns))))
+  (val positions (flat placed))
+  (val order (sorted (range (len positions)) :key (. positions __getitem__)))
+  (val ordered (fn [column] (tuple (map (. column __getitem__) order))))
+  (TreeWalk :members (ordered (flat (gfor level levels (get level 0))))
+            :sizes (ordered (flat (gfor t (cut tallies 0 -1) (get t 0))))
+            :counts (ordered (flat (gfor t (cut tallies 0 -1) (get t 1))))
+            :kids (ordered (flat kid-places))))
+
+
+(defrecord JobWalk
+  "job 1 つの根と、その木を 1 度たどった結末(root = JobRoot・walk = TreeWalk)。"
+  (#^ JobRoot root)
+  (#^ TreeWalk walk))
+
+
+(defk job-walks [rows roots]
+  {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "表を木の形にし、job の根ごとに木を 1 度だけたどるため(JobWalk の列 — roots の順)。見張りの 1 回はこれを uses-of と units-of で
+   分けて使い、表を並べ直す・木をたどるのを 1 度で済ませる。表に根の無い job(読む間に終わった)は入れない。"
+  (<- tree ProcTree (proc-tree-of rows))
+  (<- found tuple (sequence (gfor root roots (row-of tree root.pid))))
+  (val present (tuple (gfor #(root r) (zip roots found) :if (is-not r None) #(root r))))
+  (<- walked tuple (sequence (gfor #(_ r) present (walk-of tree r))))
+  (tuple (gfor #(#(root _) walk) (zip present walked) (JobWalk :root root :walk walk))))
+
+
+(defk uses-of [walks]
+  {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "job ごとの memory の今(JobUse)を、根の木の rss の和で数えるため(walks = job-walks の答え)。大きい順。"
+  (tuple (sorted (gfor w walks (JobUse :job w.root.name :pid w.root.pid :bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)))
+                 :key (fn [use] #((- use.bytes) use.job)))))
 
 
 (defk job-uses [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "job ごとの memory の今(JobUse)を、根の木の rss の和で数えるため。表に根の無い job(読む間に終わった)は入れない。大きい順。"
-  (<- tree ProcTree (proc-tree-of rows))
-  (var uses #())
-  (for [root roots]
-    (<- root-row (| ProcRow None) (row-of tree root.pid))
-    (when (is-not root-row None)
-      (<- members tuple (subtree-of tree root-row))
-      (:= uses (+ uses #((JobUse :job root.name :pid root.pid :bytes (sum (gfor r members r.rss-bytes)) :processes (len members)))))))
-  (tuple (sorted uses :key (fn [use] #((- use.bytes) use.job)))))
-
-
-(defk tree-bytes [tree row]
-  {:pre [(: tree ProcTree) (: row ProcRow)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
-  "row を頭とする木の rss の和を数えるため。"
-  (<- members tuple (subtree-of tree row))
-  (sum (gfor r members r.rss-bytes)))
-
-
-(defrecord SizedChild
-  "子 1 つと、その子を頭とする木の rss の和(bytes)。"
-  (#^ ProcRow row)
-  (#^ int bytes))
+  "job ごとの memory の今(JobUse)を、表と根から数えるため(job-walks と uses-of の組)。"
+  (<- walks tuple (job-walks rows roots))
+  (<- uses tuple (uses-of walks))
+  uses)
 
 
 (defrecord Gathering
-  "常駐の job の木を下りた結末(頭の註): point = 集まりの点・sides = 下りなかった兄弟の行(根から順)。"
-  (#^ ProcRow point)
-  (#^ (get tuple #(ProcRow ...)) sides))
+  "常駐の job の木を下りた結末(頭の註): point = 集まりの点・sides = 下りなかった兄弟(根から順)— どちらも TreeWalk の位置。"
+  (#^ int point)
+  (#^ (get tuple #(int ...)) sides))
 
 
-(defk gathering-of [tree root-row]
-  {:pre [(: tree ProcTree) (: root-row ProcRow)] :post [(: % Gathering)] :tags {:context "worker" :role "judgment"}}
+(defk gathering-of [walk]
+  {:pre [(: walk TreeWalk)] :post [(: % Gathering)] :tags {:context "worker" :role "judgment"}}
   "常駐の job の集まりの点を求めるため(頭の註): いちばん大きい子の木が今の木の DOMINANT-SHARE 以上で、今の process 自身の rss 以上の間は
-   その子へ下り、下りなかった兄弟を残す。"
-  (var here root-row)
-  (var sides #())
-  (while True
-    (<- children tuple (children-of tree here.pid))
-    (var sized #())
-    (for [child children]
-      (<- size int (tree-bytes tree child))
-      (:= sized (+ sized #((SizedChild :row child :bytes size)))))
-    (when (not sized)
-      (break))
-    (val total (+ here.rss-bytes (sum (gfor c sized c.bytes))))
-    (val top (max sized :key (fn [c] #(c.bytes (- c.row.pid)))))
-    (if (and (>= top.bytes (* DOMINANT-SHARE total)) (>= top.bytes here.rss-bytes))
-        (do (:= sides (+ sides (tuple (gfor c sized :if (!= c.row.pid top.row.pid) c.row))))
-            (:= here top.row))
-        (break)))
-  (Gathering :point here :sides sides))
+   その子へ下り、下りなかった兄弟を残す。子の木の大きさは walk の数え済みの物を引く(下りるたびに子の木をたどり直さない)。"
+  (val down (fn [here]
+              (let [kids (get walk.kids here)
+                    top (max kids :key (fn [c] #((get walk.sizes c) (- (. (get walk.members c) pid)))) :default None)]
+                (if (and (is-not top None) (>= (get walk.sizes top) (* DOMINANT-SHARE (get walk.sizes here)))
+                         (>= (get walk.sizes top) (. (get walk.members here) rss-bytes)))
+                    top
+                    None))))
+  ;; 下りた道(根の位置 0 から集まりの点まで)。
+  (val path (tuple (takewhile (fn [p] (is-not p None)) (accumulate (repeat None) (fn [here _] (down here)) :initial 0))))
+  (Gathering :point (get path -1)
+             :sides (tuple (gfor #(here next) (zip path (cut path 1 None)) c (get walk.kids here) :if (!= c next) c))))
 
 
-(defk branch-unit [tree name head]
-  {:pre [(: tree ProcTree) (: name str) (: head ProcRow)] :post [(: % KillUnit)] :tags {:context "worker" :role "judgment"}}
-  "head を頭とする木を BRANCH の単位にするため。"
-  (<- members tuple (subtree-of tree head))
-  (KillUnit :job name :kind UnitKind.BRANCH :head head :bytes (sum (gfor r members r.rss-bytes)) :members members))
-
-
-(defk units-of-job [tree root-row root]
-  {:pre [(: tree ProcTree) (: root-row ProcRow) (: root JobRoot)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "job 1 つの止める単位を並べるため(頭の註)。根は単位に入れない。"
-  (<- below tuple (subtree-of tree root-row))
+(defk units-of-job [walk root]
+  {:pre [(: walk TreeWalk) (: root JobRoot)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "job 1 つの止める単位を並べるため(頭の註)。根(walk の頭)は単位に入れない。"
   (<- task bool (task-root? root))
-  (val members (cut below 1 None))
+  (val members walk.members)
   (when task
-    (return (if members
-                #((KillUnit :job root.name :kind UnitKind.TASK :head (get members 0) :bytes (sum (gfor r members r.rss-bytes))
-                            :members members))
+    (return (if (> (len members) 1)
+                #((KillUnit :job root.name :kind UnitKind.TASK :head (get members 1)
+                            :bytes (- (get walk.sizes 0) (. (get members 0) rss-bytes)) :members (cut members 1 None)))
                 #())))
-  (<- gathering Gathering (gathering-of tree root-row))
+  (<- gathering Gathering (gathering-of walk))
   (val point gathering.point)
-  (<- children tuple (children-of tree point.pid))
-  (var units (cond (= point.pid root-row.pid) #()
-                   children #((KillUnit :job root.name :kind UnitKind.BODY :head point :bytes point.rss-bytes :members #(point)))
-                   True #((KillUnit :job root.name :kind UnitKind.LEAF :head point :bytes point.rss-bytes :members #(point)))))
-  (for [head (+ gathering.sides children)]
-    (<- unit KillUnit (branch-unit tree root.name head))
-    (:= units (+ units #(unit))))
-  units)
+  (val head (get members point))
+  (val children (get walk.kids point))
+  (val own (cond (= point 0) #()
+                 children #((KillUnit :job root.name :kind UnitKind.BODY :head head :bytes head.rss-bytes :members #(head)))
+                 True #((KillUnit :job root.name :kind UnitKind.LEAF :head head :bytes head.rss-bytes :members #(head)))))
+  ;; 子の木(BRANCH)は walk の連なりを切り出す — 単位ごとに木をたどり直さない。
+  (+ own (tuple (gfor at (+ gathering.sides children)
+                      (KillUnit :job root.name :kind UnitKind.BRANCH :head (get members at) :bytes (get walk.sizes at)
+                                :members (cut members at (+ at (get walk.counts at))))))))
+
+
+(defk units-of [walks]
+  {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "全 job の止める単位を、大きい順に並べるため(walks = job-walks の答え・同じ大きさは job の名・頭の pid の順)。"
+  (<- found tuple (sequence (gfor w walks (units-of-job w.walk w.root))))
+  ;; 大きい順(同じ大きさは job の名・頭の pid の順)— 安定な並べ替えを 2 度(下位の鍵から)。
+  (tuple (sorted (sorted (chain.from-iterable found) :key (attrgetter "job" "head.pid")) :key (attrgetter "bytes") :reverse True)))
 
 
 (defk kill-units [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "全 job の止める単位を、大きい順に並べるため(同じ大きさは job の名・頭の pid の順)。"
-  (<- tree ProcTree (proc-tree-of rows))
-  (var units #())
-  (for [root roots]
-    (<- root-row (| ProcRow None) (row-of tree root.pid))
-    (when (is-not root-row None)
-      (<- found tuple (units-of-job tree root-row root))
-      (:= units (+ units found))))
-  (tuple (sorted units :key (fn [unit] #((- unit.bytes) unit.job unit.head.pid)))))
+  "全 job の止める単位を、表と根から並べるため(job-walks と units-of の組)。"
+  (<- walks tuple (job-walks rows roots))
+  (<- units tuple (units-of walks))
+  units)
 
 
 (defk victim-of [units uses steadies limits]
@@ -372,11 +408,10 @@
   "DANGER の時に止める単位を選ぶため(頭の註の順): 止める候補(beyond-steady? — uses = job ごとの今の memory・steadies = job ごとの平常の
    大きさ)の中で、BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY のいちばん大きい物。どれも無ければ止めない
    (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。"
-  (var candidates #())
-  (for [unit units]
-    (<- candidate bool (beyond-steady? unit uses steadies limits))
-    (when (and candidate (>= unit.bytes limits.min-victim-bytes))
-      (:= candidates (+ candidates #(unit)))))
+  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない — card ki-72f309f23e0f)。
+  (val large (tuple (gfor u units :if (>= u.bytes limits.min-victim-bytes) u)))
+  (<- beyond tuple (sequence (gfor u large (beyond-steady? u uses steadies limits))))
+  (val candidates (tuple (gfor #(u candidate) (zip large beyond) :if candidate u)))
   (val leaves (tuple (gfor u candidates :if (!= u.kind UnitKind.BODY) u)))
   (val bodies (tuple (gfor u candidates :if (= u.kind UnitKind.BODY) u)))
   (cond leaves (get leaves 0)
@@ -408,12 +443,6 @@
   (when (is job None)
     (return #()))
   (<- need int (swarm-need node limits))
-  (var picked #())
-  (var freed 0)
-  (for [unit units]
-    (when (>= freed need)
-      (break))
-    (when (and (= unit.job job.job) (!= unit.kind UnitKind.BODY))
-      (:= picked (+ picked #(unit)))
-      (:= freed (+ freed unit.bytes))))
-  picked)
+  (val mine (tuple (gfor unit units :if (and (= unit.job job.job) (!= unit.kind UnitKind.BODY)) unit)))
+  ;; 頭から、それより前の和が need に届くまで(届いた所で止める)。
+  (tuple (gfor #(unit freed) (zip mine (accumulate (gfor unit mine unit.bytes) :initial 0)) :if (< freed need) unit)))

@@ -19,11 +19,14 @@
 ;;     どれも 512 MiB 未満で見張りは何も止めず、機体ごと約 3 分止まった): 常駐の job が 300 MiB の CLI の木 40 本と、shim に引き取られた
 ;;     200 MiB の孤児 40 本を持つ尽きかけの機体では、job の本体を残して、大きい単位から DANGER の線を戻す量まで まとめて止める。worker の
 ;;     外の使用量がその job より大きい時は止めずに 1 度だけ言う。
+;;   - 孤児の溢れ(card ki-72f309f23e0f — 10-30 の zeus で、shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の 2 乗の
+;;     見張りの 1 回が main の scheduler を何十分も塞いだ): 10 万本の孤児の表を尽きかけの機体で 1 回読み、止めるまでを CPU 1 秒未満で終える。
 (require doeff-hy.macros [deftest defk defhandler defeffect <- val var])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import pytest)
+(import time)
 (import doeff [with-handlers])
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [state])
@@ -431,3 +434,38 @@
   (assert (= #((len spared) swarms) #(1 #())) seen.lines)
   (<- rows tuple (swarm-rows))
   (assert (= (len seen.table) (len rows)) seen.table))
+
+
+(defk orphan-flood-rows [orphans]
+  {:pre [(: orphans int) (> orphans 0)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "孤児の溢れた表: 常駐の job svc(shim 10 → uv 11 → 本体 12 の 200 MiB → 道具 13 の 3000 MiB)の shim が、引き取った 1 MiB の孤児を
+   orphans 本(pid 1000 から)持つ。"
+  (+ #((ProcRow :pid 1 :ppid 0 :start-ticks 1 :rss-bytes MIB :comm "tini")
+       (ProcRow :pid 10 :ppid 1 :start-ticks 10 :rss-bytes (* 10 MIB) :comm "python")
+       (ProcRow :pid 11 :ppid 10 :start-ticks 11 :rss-bytes (* 5 MIB) :comm "uv")
+       (ProcRow :pid 12 :ppid 11 :start-ticks 12 :rss-bytes (* 200 MIB) :comm "python")
+       (ProcRow :pid 13 :ppid 12 :start-ticks 13 :rss-bytes (* 3000 MIB) :comm "cargo"))
+     (tuple (gfor n (range orphans) (ProcRow :pid (+ 1000 n) :ppid 10 :start-ticks (+ 1000 n) :rss-bytes MIB :comm "sleep")))))
+
+
+(deftest test-one-reading-of-a-hundred-thousand-orphans-holds-the-scheduler-under-a-second [#^ float deadline-scale-factor]
+  ;; 失敗ケース(card ki-72f309f23e0f): 2026-10-30 の zeus で、job の shim の直下に孤児が約 8.2 万本溜まり、木をたどる手間が process の数の
+  ;; 2 乗だった見張りの 1 回が main の scheduler を何十分も塞いだ(生存の合図が止まり Pod が NotReady)。直す前の手順は 1 万本で約 3 秒・
+  ;; 2 万本で約 19 秒。直した見張りは、10 万本の孤児の表で尽きかけの機体を 1 回読み(job の memory・止める単位 10 万余り・止める単位の
+  ;; 選び)、uv の木(3205 MiB)を止めるまでを CPU 1 秒未満で終える。
+  ;; 閾の伸ばし: CPU の時間も、機体が込んでいると(hyperthread と cache の取り合い)伸びる — 込んだ機体の測りで 1 回 約 1 秒(load 150 /
+  ;; 36 CPU)。閾は機体の込み具合の倍率(deadline-scale-factor — 空いた機体では 1)で伸ばす。2 乗の手順は 10 万本で何十分なので、伸ばしても
+  ;; 見分けられる。
+  (<- files MemoryFiles (node-files 1.6))
+  (<- rows tuple (orphan-flood-rows 100000))
+  (val cell (MemoryCell))
+  (val started (time.process-time))
+  (<- seen WatchSeen (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files) (scripted-proc-table-handler rows)
+                                     (memory-world cell None 0)]
+                       (watch-then-seen (MemoryWatchSettings) cell)))
+  (val spent (- (time.process-time) started))
+  (<- kills tuple (lines-named seen.lines MEMORY-KILL-LOG))
+  (assert (= (tuple (gfor k kills #((get k "job") (get k "pid") (get k "unit_mib") (get k "processes") (get k "sent"))))
+             #(#("svc" 11 3205 3 3)))
+          kills)
+  (assert (< spent (* 1.0 deadline-scale-factor)) #(spent deadline-scale-factor)))

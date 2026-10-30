@@ -8,6 +8,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "process" :role "foundation"})
 (import os)
+(import itertools [accumulate repeat takewhile])
 (import doeff_core_effects.process_effects [ProcessSignal])
 (import doeff_core_effects.proc_table_effects [ProcRow ReadProcTable SignalPid proc-row-of-stat])
 (import doeff_core_effects.warm_effects [signal-number-of])
@@ -45,12 +46,15 @@
   (<- (proc-root-present))
   (val page-bytes (os.sysconf "SC_PAGE_SIZE"))
   (val pids (sorted (gfor name (os.listdir PROC-ROOT) :if (.isdigit name) (int name))))
-  (var rows #())
+  ;; 読んだ行は #(行 前の組) の組に繋ぎ、最後に 1 度だけ tuple にする(行ごとに今までの列を写し直すと行の数の 2 乗 — process が
+  ;; 8 万本を越えた機体で、読みが main の scheduler を塞いだ)。
+  (var chained #())
   (for [pid pids]
     (<- row (| ProcRow None) (stat-row pid page-bytes))
     (when (is-not row None)
-      (:= rows (+ rows #(row)))))
-  rows)
+      (:= chained #(row chained))))
+  (val cells (takewhile bool (accumulate (repeat None) (fn [cell _] (get cell 1)) :initial chained)))
+  (tuple (reversed (tuple (gfor cell cells (get cell 0))))))
 
 
 (defk os-signal-pid [pid start-ticks sent]
