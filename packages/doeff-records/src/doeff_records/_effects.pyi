@@ -7,7 +7,7 @@ effect は `EffectBase[答えの型]` の部分型として宣言する — `(<-
 
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from doeff_hy._frozen import FrozenMap
 
@@ -30,6 +30,9 @@ from doeff_records._values import (
     PutRowAnswer,
     PutRowsAnswer,
     PutRowsAppendEventsAnswer,
+    RequestPatience,
+    SignalSourceFactory,
+    SignalSourcePatience,
     WrittenAndAppended,
     ReadBatchAnswer,
     ReadEventByKeyAnswer,
@@ -181,22 +184,19 @@ class ReadEventByKey(EffectBase[ReadEventByKeyAnswer]):
     # `<-` が束ねる名の型 = 答えから :absent(EventAbsent)と :failure(Unreachable)を除いた物(_effects.hy の defeffect と同じ)。
     def __iter__(self) -> Generator[Any, Any, Event | EventRetired]: ...
 
-# 源の工場の問い(#3127)— 答えは doeff_records._event_source の SignalSourceFactory。event_source は effects を読むので、ここでは型を文字列で名指す。
+# 源の工場の問い(#3127)— 答えは SignalSourceFactory(_values.hy の型)。
 @dataclass(frozen=True)
-class ReadSignalSource(EffectBase["SignalSourceFactory"]): ...
+class ReadSignalSource(EffectBase[SignalSourceFactory]): ...
 
 # 置き場の戻りを待つ問いと、合図の源が止まりに耐える時間の問い(#3469)・HTTP の client が要求を待つ時間の問い(#3557)— 答えは
-# doeff_records._event_source の SignalSourcePatience と doeff_records._http_client の RequestPatience(型を文字列で名指す)。
+# SignalSourcePatience と RequestPatience(どちらも _values.hy の型)。
 @dataclass(frozen=True)
 class AwaitRecordsBack(EffectBase[None]):
     names: tuple[str, ...]
 
 @dataclass(frozen=True)
-class ReadSourcePatience(EffectBase["SignalSourcePatience"]): ...
+class ReadSourcePatience(EffectBase[SignalSourcePatience]): ...
 
 @dataclass(frozen=True)
-class ReadRequestPatience(EffectBase["RequestPatience"]): ...
+class ReadRequestPatience(EffectBase[RequestPatience]): ...
 
-if TYPE_CHECKING:
-    from doeff_records._event_source import SignalSourceFactory, SignalSourcePatience
-    from doeff_records._http_client import RequestPatience

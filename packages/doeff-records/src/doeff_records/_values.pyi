@@ -11,9 +11,11 @@ _values.hy は Hy の module なので、pyright は中を読めず、`from doef
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from doeff import Program
 from doeff_hy._frozen import FrozenMap
 
 TABLE_NAME_PATTERN: re.Pattern[str]
@@ -298,6 +300,26 @@ class EventAbsent:
 @dataclass(frozen=True)
 class EventRetired:
     sequence: int
+
+# --- 合図の源と HTTP の client の問いの答え ---
+
+@dataclass(frozen=True, kw_only=True)
+class SignalTables:
+    signal: type
+    tables: tuple[str, ...] = ...
+    streams: tuple[str, ...] = ...
+
+@dataclass(frozen=True, kw_only=True)
+class SignalSourceFactory:
+    make: Callable[[tuple[SignalTables, ...], str], Callable[[object], Program]]
+
+@dataclass(frozen=True, kw_only=True)
+class SignalSourcePatience:
+    seconds: float
+
+@dataclass(frozen=True, kw_only=True)
+class RequestPatience:
+    seconds: float
 
 # --- 失敗の答え ---
 

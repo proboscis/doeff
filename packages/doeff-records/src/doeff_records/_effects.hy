@@ -23,12 +23,13 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenMap freeze-json])
-(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
+(import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
                               Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused
                               WrittenAndAppended AppendRefused ReadRowAnswer ListRowsAnswer CountRowsAnswer
-                              ReadBatchAnswer PutRowAnswer AppendEventsAnswer])
+                              ReadBatchAnswer PutRowAnswer AppendEventsAnswer
+                              SignalSourceFactory SignalSourcePatience RequestPatience])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -210,7 +211,7 @@
   (#^ str table)
   (#^ tuple key)
   (#^ FrozenMap value)
-  (#^ object expect)
+  (#^ Expectation expect)
   (setv #^ (| str None) idempotency-key None)
   (defn #^ None __post_init__ [self]
     (check-row-write self "PutRow")
@@ -223,7 +224,7 @@
   (#^ str table)
   (#^ tuple key)
   (#^ FrozenMap value)
-  (#^ object expect)
+  (#^ Expectation expect)
   (defn #^ None __post_init__ [self]
     (check-row-write self "RowWrite")))
 
@@ -493,8 +494,8 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defclass [(dataclass :frozen True)] ReadSignalSource [EffectBase]
-  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory(doeff_records._event_source の型)。答えるのは記録の handler 自身(memory の
+(defclass [(dataclass :frozen True)] ReadSignalSource [(get EffectBase SignalSourceFactory)]
+  "この組で記録に答えている置き場の、源の工場を問う記録の effect(#3127)。答え = SignalSourceFactory。答えるのは記録の handler 自身(memory の
    handler = 自分の置き場の書きで鳴る模擬の源・HTTP の client と PostgreSQL = RECORDS-SIGNAL-SOURCE)— 源は必ず問うた所の記録の handler の置き場に
    結ばれる。Ask にしないのは、組の内側の設定の読み手(決まった鍵だけを持ち、知らない鍵を断る)に横取りされうるため — 記録の effect なら
    設定の読み手は触らない。")
@@ -514,16 +515,16 @@
       (checked-table-name name "AwaitRecordsBack.names"))))
 
 
-(defclass [(dataclass :frozen True)] ReadSourcePatience [EffectBase]
+(defclass [(dataclass :frozen True)] ReadSourcePatience [(get EffectBase SignalSourcePatience)]
   "置き場の止まりに耐える時間を問う記録の effect(#3469)— 問うのは止まりに耐える物(合図の源の止まりの拍・止まりの間も書き手の入力を
    process の中に持ち、戻りの合図で撃ち直す物 — client の要求の待ちは問わない・#3557)。答え = SignalSourcePatience
-   (doeff_records._event_source の型・0 = 耐えない)。答えるのは組み立てが置く source-patience-handler(既定の値は無い)。HTTP の client の
+   (0 = 耐えない)。答えるのは組み立てが置く source-patience-handler(既定の値は無い)。HTTP の client の
    要求を待つ時間は別の問い ReadRequestPatience(#3557 — 2 つの違う問いを 1 つに載せると、handler を並べる位置で答え分けるしかなくなる)。
    Ask にしないのは ReadSignalSource と同じ理由(組の内側の設定の読み手に横取りされうる)。")
 
 
-(defclass [(dataclass :frozen True)] ReadRequestPatience [EffectBase]
+(defclass [(dataclass :frozen True)] ReadRequestPatience [(get EffectBase RequestPatience)]
   "HTTP の client が、要求 1 つが置き場に届かない時に置き場の戻りを待つ時間を問う記録の effect(#3557)— 問うのは client だけ(要求のたびに)。
-   答え = RequestPatience(doeff_records._http_client の型・0 = 待たない)。答えるのは組み立てが client の外側に置く request-patience-handler
+   答え = RequestPatience(0 = 待たない)。答えるのは組み立てが client の外側に置く request-patience-handler
    (既定の値は無い — 置き忘れは client の最初の要求で、答え手の無い effect として名指して落ちる)。待てない組み立てと呼びは、0 秒の名のある
    答え手 records-unwaited を置いて選ぶ。合図の源が止まりに耐える時間は別の問い ReadSourcePatience。")

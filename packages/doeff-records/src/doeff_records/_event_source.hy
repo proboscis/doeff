@@ -39,8 +39,7 @@
 (require doeff-hy.macros [defhandler defk deff <- val var on-raise])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "records" :role "foundation"})
-(import collections.abc [Callable])
-(import dataclasses [dataclass fields is-dataclass replace])
+(import dataclasses [dataclass replace])
 (import functools [partial])
 (import doeff [EffectBase Program with-handlers])
 (import datetime [datetime])
@@ -51,19 +50,10 @@
 (import doeff_records._admission [key-text])
 (import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
 (import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
-                              checked-table-name])
+                              checked-table-name SignalTables SignalSourceFactory SignalSourcePatience])
 
 ;; 記録の変化の待ちの上限(秒)— 変化が無ければこの秒で静かな答えが返り、同じ位置から待ち直す(long-poll の 1 回の長さ)。
 (val WATCH-SECONDS 30.0)
-
-
-(defrecord SignalSourcePatience
-  "合図の源が置き場の止まりに耐える時間(ReadSourcePatience の答え — #3469): seconds = 止まりの最初の拍から数えて、戻りを待つ秒。これを
-   過ぎても戻らなければ源は SignalSourceUnreachable で process を落とす。0 = 耐えない(最初の止まりで落ちる)。値は組み立てが 1 か所で選ぶ
-   (この module は既定を持たない)。HTTP の client の要求を待つ時間は別の値 RequestPatience(doeff_records._http_client・#3557)。"
-  {:tags {:context "records" :role "type"}
-   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
-  (#^ float seconds))
 
 
 (defhandler source-patience-handler [#^ SignalSourcePatience patience]
@@ -83,21 +73,6 @@
            (and (isinstance key str) key)]}
   (#^ str table)
   (#^ str key))
-
-
-(defrecord SignalTables
-  "合図の型 1 つと、その型の合図を起こす表と列の名前の組の対: signal = 使い手が宣言する合図の型(欄 keys を持つ dataclass — 源が
-   (signal :keys 変わった所の tuple) で作る)/ tables = 行の変化でこの型の合図を起こす表の名前 / streams = 追記でこの型の合図を起こす
-   列の名前(どちらも既定は空・どちらか 1 つ以上)。欄 keys を持たない型・表も列も無い対は作る時に止める。"
-  {:tags {:context "records" :role "type"}
-   :check [(isinstance signal type)
-           (and (is-dataclass signal) (in "keys" (gfor declared (fields signal) declared.name)))
-           (and (isinstance tables tuple) (all (gfor name tables (checked-table-name name "SignalTables.tables の表"))))
-           (and (isinstance streams tuple) (all (gfor name streams (checked-table-name name "SignalTables.streams の列"))))
-           (or tables streams)]}
-  (#^ type signal)
-  (setv #^ (get tuple #(str ...)) tables #()
-        #^ (get tuple #(str ...)) streams #()))
 
 
 (defclass SignalSourceUnreachable [RuntimeError]
@@ -476,21 +451,13 @@
       records-signal-handler.__doeff_effects__ SOURCE-EFFECTS)
 
 
-(defrecord SignalSourceFactory
-  "源の工場を土台が渡す値(Ask の鍵 — 鍵はこの型そのもの・答えはこの型の値・#3127): make = 結び(SignalTables の tuple)と
-   購読者の名前から、本体を包む関数を作る工場。本番の土台は RECORDS-SIGNAL-SOURCE(記録の置き場の変化の待ちの long-poll —
-   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records._memory の memory-signal-source)を同じ鍵で渡す —
-   組み立ての entry は鍵を問うて (make 結び 購読者) を with-handlers の列に置くだけで、本番と模擬の違いは土台の答えだけになる。"
-  {:tags {:context "records" :role "type"}
-   :check [(callable make)]}
-  (#^ (get Callable #([(get tuple #(SignalTables ...)) str] (get Callable #([object] Program)))) make))
-
-
 ;; 本番の土台が鍵 SignalSourceFactory に答える値(記録の置き場の変化の待ちの long-poll で合図を発する源)。
 (val RECORDS-SIGNAL-SOURCE (SignalSourceFactory :make records-signal-handler))
 
 
 ;; 源の工場の問い ReadSignalSource は記録の effect の置き場 doeff_records._effects に在る(上の import で読み、ここからも公開する — #3127)。
+;; 源の問いの答えの型(SignalSourceFactory・SignalSourcePatience)と結び SignalTables は、effect がその答えを型で名指すために値の置き場
+;; doeff_records._values に在る(上の import で読み、ここからも公開する)。
 
 
 (defk run-read-signal [bindings subscriber body]

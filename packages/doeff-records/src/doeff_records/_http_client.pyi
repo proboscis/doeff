@@ -24,6 +24,7 @@ from doeff_records._values import EventsMoved as EventsMoved
 from doeff_records._values import EventsQuiet as EventsQuiet
 from doeff_records._values import Reset as Reset
 from doeff_records._values import Unreachable as Unreachable
+from doeff_records._values import RequestPatience as RequestPatience
 from doeff_records._effects import PutRowsAppendEvents as PutRowsAppendEvents
 from doeff_records._effects import ReadRow as ReadRow
 from doeff_records._effects import ListRows as ListRows
@@ -125,13 +126,6 @@ def reply_answer(endpoint: RecordsEndpoint, ask: PublicEffect, operation: str, r
 
 def call_service(endpoint: RecordsEndpoint, ask: PublicEffect) -> _Program[WireAnswer | Unreachable, object]:
     ...
-
-@dataclass(frozen=True, kw_only=True)
-class RequestPatience:
-    seconds: float
-
-    def __post_init__(self) -> None:
-        ...
 
 def request_patience_handler(patience: RequestPatience) -> _Handler:
     ...

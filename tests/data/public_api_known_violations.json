@@ -10548,122 +10548,17 @@
      ]
     },
     "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_records.admission": [
-      "Conflict",
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion",
-      "RememberedWrite",
-      "RetiredKey",
-      "StreamDecl",
-      "Written"
-     ],
-     "doeff_records.effects": [
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion"
-     ],
      "doeff_records.event_source": [
-      "ChangedRow",
-      "SignalSourceFactory",
-      "SignalSourcePatience"
-     ],
-     "doeff_records.http_client": [
-      "RequestPatience"
-     ],
-     "doeff_records.laws": [
-      "ByKeyHead",
-      "ChangeLog",
-      "Conflict",
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion",
-      "StreamDecl",
-      "StreamTail",
-      "StreamTailEmpty",
-      "Swept",
-      "Written"
-     ],
-     "doeff_records.loop_work": [
-      "Conflict",
-      "Written"
-     ],
-     "doeff_records.maintenance": [
-      "ChangeLog",
-      "Swept"
+      "ChangedRow"
      ],
      "doeff_records.memory": [
-      "ChangeLog",
-      "ChangedRow",
-      "Conflict",
-      "RememberedWrite",
-      "RetiredKey",
-      "SignalSourceFactory",
-      "StreamDecl",
-      "StreamTail",
-      "StreamTailEmpty",
-      "Swept",
-      "Written"
-     ],
-     "doeff_records.pg": [
-      "ChangeLog",
-      "Conflict",
-      "RememberedWrite",
-      "RetiredKey",
-      "StreamDecl",
-      "StreamTail",
-      "StreamTailEmpty",
-      "Swept",
-      "Written"
-     ],
-     "doeff_records.pg_sql": [
-      "RetiredKey"
-     ],
-     "doeff_records.typed": [
-      "Conflict",
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion",
-      "Written"
-     ],
-     "doeff_records.values": [
-      "ByKeyHead",
-      "Conflict",
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion",
-      "Expectation",
-      "KeyMemory",
-      "RememberedWrite",
-      "Retention",
-      "RetentionGroup",
-      "RetiredKey",
-      "StreamDecl",
-      "StreamTail",
-      "StreamTailEmpty",
-      "Written"
-     ],
-     "doeff_records.wire": [
-      "Conflict",
-      "ExpectAbsent",
-      "ExpectAny",
-      "ExpectVersion",
-      "StreamTail",
-      "StreamTailEmpty",
-      "Written"
+      "ChangedRow"
      ]
     },
     "外れ — 工場の引数に型を書くか内側へ移す": {
      "doeff_records.values": [
-      "ByKeySuffix",
       "DescendingWithin",
-      "EachEvent",
-      "FieldDecl",
-      "KeepFor",
-      "KeepForever",
-      "RememberKeysFor",
-      "RememberKeysForever",
-      "RememberNoKeys"
+      "FieldDecl"
      ]
     }
    }

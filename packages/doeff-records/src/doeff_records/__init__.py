@@ -106,14 +106,12 @@ if TYPE_CHECKING:
     from doeff_records._values import ReadStreamEndAnswer as ReadStreamEndAnswer
     from doeff_records._values import RecordsSchema as RecordsSchema
     from doeff_records._values import Refused as Refused
-    from doeff_records._values import RememberedWrite as RememberedWrite
     from doeff_records._values import RememberKeysFor as RememberKeysFor
     from doeff_records._values import RememberKeysForever as RememberKeysForever
     from doeff_records._values import RememberNoKeys as RememberNoKeys
     from doeff_records._values import Reset as Reset
     from doeff_records._values import Retention as Retention
     from doeff_records._values import RetentionGroup as RetentionGroup
-    from doeff_records._values import RetiredKey as RetiredKey
     from doeff_records._values import Row as Row
     from doeff_records._values import RowChanged as RowChanged
     from doeff_records._values import RowRemoved as RowRemoved
@@ -243,11 +241,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RememberKeysFor": "doeff_records._values",
     "RememberKeysForever": "doeff_records._values",
     "RememberNoKeys": "doeff_records._values",
-    "RememberedWrite": "doeff_records._values",
     "Reset": "doeff_records._values",
     "Retention": "doeff_records._values",
     "RetentionGroup": "doeff_records._values",
-    "RetiredKey": "doeff_records._values",
     "Row": "doeff_records._values",
     "RowChanged": "doeff_records._values",
     "RowRemoved": "doeff_records._values",

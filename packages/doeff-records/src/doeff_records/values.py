@@ -6,7 +6,7 @@
 #   KeepFor KeepForever KeyMemory ListCursor ListRowsAnswer Missing NotIndexed Page PutRowAnswer
 #   PutRowsAnswer ReadBatchAnswer ReadEventByKeyAnswer ReadEventsAnswer ReadRowAnswer
 #   ReadStreamEndAnswer RecordsSchema Refused RememberKeysFor RememberKeysForever RememberNoKeys
-#   RememberedWrite Reset Retention RetentionGroup RetiredKey Row RowChanged RowRemoved RowsConflict
+#   Reset Retention RetentionGroup Row RowChanged RowRemoved RowsConflict
 #   RowsRefused SEPARATOR_PATTERN StreamDecl StreamEmpty StreamEnd StreamTail StreamTailEmpty
 #   TABLE_NAME_PATTERN TableDecl UndeclaredField UndeclaredTable Unreachable WRITE_KEY_MAX_LENGTH
 #   WRITE_KEY_MEMORY_SECONDS WaitsClosed WatchChangesAnswer WatchCursor WatchEventsAnswer Written

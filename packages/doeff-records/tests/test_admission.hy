@@ -63,7 +63,7 @@
 (deftest test-a-retired-key-is-judged-like-a-live-event
   ;; 保持の期限で出来事を消した鍵の覚え(番号と本文の指紋だけ)にも、生きた出来事と同じ規則を当てる(#3022): 正規の綴りが同じ本文
   ;; (鍵の順だけ違う)は前の番号・別の本文(True と 1 も別)は「冪等キー」を名指す断り。指紋は正規の綴りの sha256。
-  (import doeff_records._admission [judge-append body-digest AppendReplay] doeff_records [RetiredKey])
+  (import doeff_records._admission [judge-append body-digest AppendReplay] doeff_records._values [RetiredKey])
   (import doeff_records [Event])
   (val decl (StreamDecl "pulses" #("w") :retention (KeepFor 60)))
   (val body {"a" 1 "b" [True "日本"]})
