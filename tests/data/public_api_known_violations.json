@@ -37,17 +37,6 @@
   "doeff-agentic": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_agentic": [
-      "AgenticEndOfEvents",
-      "AgenticEvent",
-      "AgenticMessageHandle",
-      "AgenticSessionHandle",
-      "AgenticSessionStatus",
-      "AgenticWorkflowHandle",
-      "AgenticWorkflowStatus"
-     ]
-    },
     "外れ — 工場の引数に型を書くか内側へ移す": {
      "doeff_agentic": [
       "VisualInterceptorConfig"
@@ -2072,12 +2061,6 @@
       "doeff_claude_code.values"
      ]
     },
-    "外れ — effect に答えの型を書く": {
-     "doeff_claude_code.values": [
-      "AutocompactWindow",
-      "PermissionAnswer"
-     ]
-    },
     "外れ — 工場の引数に型を書くか内側へ移す": {
      "doeff_claude_code.effects": [
       "SessionState",
@@ -2095,13 +2078,7 @@
   },
   "doeff-claude-judge": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_claude_judge": [
-      "MalformedAnswer"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-cluster": {
    "範囲": "決まりの範囲",
@@ -9090,16 +9067,7 @@
   },
   "doeff-docker": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_docker.effects": [
-      "ShellRunResult"
-     ],
-     "doeff_docker.handlers.shell": [
-      "ShellRunResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-domain": {
    "範囲": "決まりの範囲",
@@ -9284,28 +9252,11 @@
   },
   "doeff-gemini": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_gemini": [
-      "CostInfo",
-      "GeminiCallResult",
-      "GeminiImageEditResult",
-      "ImageResult",
-      "TokenUsage"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-git": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_git": [
-      "BranchRef",
-      "PRHandle"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-google-secret-manager": {
    "範囲": "決まりの範囲",
@@ -9342,13 +9293,7 @@
   },
   "doeff-image": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_image": [
-      "ImageResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-indexer": {
    "範囲": "決まりの範囲",
@@ -9364,14 +9309,7 @@
   },
   "doeff-llm": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_llm": [
-      "CostInfo",
-      "TokenUsage"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-ml-nexus": {
    "範囲": "決まりの範囲",
@@ -9379,36 +9317,15 @@
   },
   "doeff-notify": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_notify": [
-      "NotificationResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-openai": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_openai": [
-      "CostInfo",
-      "StreamChunk",
-      "TokenUsage"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-openrouter": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_openrouter.types": [
-      "CostInfo",
-      "TokenUsage"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-records": {
    "範囲": "決まりの範囲",
@@ -10814,30 +10731,16 @@
   },
   "doeff-seedream": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_seedream": [
-      "ImageResult",
-      "SeedreamImage",
-      "SeedreamImageEditResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-system-one": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_system_one": [
-      "Answer",
-      "Verdict",
-      "answer_choice",
-      "answer_noul",
-      "answer_score"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_system_one": [
+      "answer_choice",
+      "answer_noul",
+      "answer_score",
       "choice",
       "noul",
       "score"
@@ -10848,12 +10751,6 @@
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_time": [
-      "RaceOutcome",
-      "TicksOutcome"
-     ]
-    },
     "外れ — 工場の引数に型を書くか内側へ移す": {
      "doeff_time.handlers.async_time": [
       "AsyncTimeRuntime"

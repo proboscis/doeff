@@ -1,7 +1,7 @@
 # moved-submodule-shim: doeff_claude_code.values -> doeff_claude_code._values
 # moved-submodule-shim-names doeff_claude_code.values:
 #   ASK_HOST_MODES AUTOCOMPACT_MAX_TOKENS AUTOCOMPACT_MIN_TOKENS Allow AskHost AutocompactAuto
-#   AutocompactTokens AutocompactWindow BypassAll CREDENTIAL_FORBIDDEN_CHARS ClaudeHome
+#   AutocompactTokens BypassAll CREDENTIAL_FORBIDDEN_CHARS ClaudeHome
 #   ClaudeSessionSpec ClaudeTurn Deny DenyUnlisted ForkSession FreshSession HomeSettings IMAGE_MIMES
 #   ImageAttachment LentCredential LinkFromHome McpServer McpSse McpStdio PermissionAnswer
 #   PermissionPolicy PrintContent Rebuilt ResumeSession SessionOrigin TurnInput

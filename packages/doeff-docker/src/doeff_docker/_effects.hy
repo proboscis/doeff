@@ -83,7 +83,7 @@
   #^ bytes stdout
   #^ bytes stderr)
 
-(defclass [(dataclass :frozen True :kw-only True)] ShellRun [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] ShellRun [(get EffectBase ShellRunResult)]
   "Run a subprocess as a list of string args.  A production shell-run-handler
    calls subprocess.run — that IS the boundary.  Handler clauses yield this
    effect instead of calling subprocess directly."
