@@ -33,7 +33,9 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
    組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行だけ。組「許した物 — 換算の
    関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
-   program を作る・時計や環境や file を読む・generator の関数を置くと赤。
+   program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「許した物 — 例外の型」(R2 — effect と handler が
+   投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
+   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -94,6 +96,8 @@ CONVERSION_GROUP = "許した物 — 換算の関数"
 ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
 #: 決まりが許した effect の答えの型の組(ADR-DOE-API-001 R2 — 呼び手が match で読み分ける effect の結果の型)。
 ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
+#: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
+EXCEPTION_GROUP = "許した物 — 例外の型"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
@@ -104,6 +108,8 @@ ALLOWED_SHAPES: dict[str, str] = {
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
     ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
+    EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
+    "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -253,6 +259,15 @@ def _is_macro_module(package: Mapping[str, Any], module: str, writers: frozenset
     )
 
 
+def defined_by(row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
+    """目録の行の名を、その package が定義した: 定義の場所が package の dir の下の file か、package の import の根の下の
+    module(repo の外の使い捨ての package と Rust の拡張は module の名で書かれる — tools/public_api_inventory.py の _place_text)。"""
+    place = row["defined_at"]
+    return place.startswith(f"packages/{package['dir']}/") or (
+        place.partition("(")[0].split(".")[0] in package["import_roots"]
+    )
+
+
 def fits_allowed_group(
     group: str,
     row: Mapping[str, Any],
@@ -273,6 +288,8 @@ def fits_allowed_group(
         return row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
     if group == ANSWER_TYPE_GROUP:
         return row["form"] in ("class", "型")
+    if group == EXCEPTION_GROUP:
+        return row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package)
     return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
 
 
@@ -345,7 +362,7 @@ def _misshapen_text(directory: str, group: str, rows: list[Mapping[str, Any]]) -
         f"{directory}: 許した物の表の組「{group}」に、目録の形が組に合わない名が {len(rows)} 個 — "
         f"{ALLOWED_SHAPES[group]}。直すか、許した物の表から外して既知の表の外れか境界の組へ戻す:\n"
         + "\n".join(
-            f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['reason']})"
+            f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['reason']}・{row['defined_at']})"
             for row in rows
         )
     )
@@ -1293,6 +1310,75 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
             check_package(package, *tables(["ms_of", name]))
         assert f"{FIXTURE_ROOT}.{name}({tool.PLAIN_FUNCTION}・" in str(failure.value)
         assert said in str(failure.value)
+
+
+#: package が定義した例外の class と、例外でない class。
+EXCEPTIONS = '''
+
+
+class PingFailed(Exception):
+    """An exception the handler raises: its package defines it."""
+
+
+class PingNote:
+    """A class that is not an exception."""
+'''
+#: 標準の library の例外を __all__ で出し直す submodule(BaseException の子だが、package が定義した名でない)。
+REEXPORTED_EXCEPTION = '''
+from json import JSONDecodeError
+
+__all__ = ["JSONDecodeError"]
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_group(
+    tmp_path: Path,
+) -> None:
+    """許した物の表の組「許した物 — 例外の型」に置けるのは、目録の形が例外の class で、その package が定義した名だけ
+    (ADR-DOE-API-001 R2)。
+
+    package が定義した BaseException の子の class は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。例外でない
+    class と、標準の library の例外を submodule の __all__ で出し直した名を置くと赤(組と名と形と定義の場所を名指す)。
+    """
+    repo = _fixture_tree(
+        tmp_path,
+        {"__init__.py": EFFECTS_AND_HANDLERS + EXCEPTIONS, "errors.py": REEXPORTED_EXCEPTION},
+    )
+    package = _read_fixture(repo)
+    errors = f"{FIXTURE_ROOT}.errors"
+    forms = {(row["module"], row["name"]): row["form"] for row in package["exports"]}
+    assert forms[(FIXTURE_ROOT, "PingFailed")] == forms[(errors, "JSONDecodeError")] == tool.EXCEPTION_CLASS
+    assert forms[(FIXTURE_ROOT, "PingNote")] == "class"
+    outliers = {FIXTURE_ROOT: ["PingNote"], errors: ["JSONDecodeError"], SUBMODULE: [errors]}
+
+    def tables(exceptions: list[Key]) -> tuple[KnownTable, AllowedTable]:
+        listed = {
+            module: [name for name in names if (module, name) not in exceptions]
+            for module, names in outliers.items()
+        }
+        allowed = _fixture_grouped(
+            {key: EXCEPTION_GROUP for key in exceptions}, "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+        )
+        return _fixture_table({m: n for m, n in listed.items() if n}), allowed
+
+    defined = (FIXTURE_ROOT, "PingFailed")
+    check_package(package, *tables([defined]))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.PingFailed"):
+        check_package(package, *tables([]))
+
+    misplaced = [
+        ((FIXTURE_ROOT, "PingNote"), f"{FIXTURE_ROOT}.PingNote(class・class・"),
+        (
+            (errors, "JSONDecodeError"),
+            f"{errors}.JSONDecodeError({tool.EXCEPTION_CLASS}・BaseException の子・json.decoder)",
+        ),
+    ]
+    for key, said in misplaced:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{EXCEPTION_GROUP}」")) as failure:
+            check_package(package, *tables([defined, key]))
+        assert said in str(failure.value)
+        assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。

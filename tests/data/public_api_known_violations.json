@@ -10,7 +10,8 @@
   "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。今は 0 package — 最後の doeff-adr は答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ で「決まりの範囲」へ移した(ADR-DOE-API-001 R33・card ki-ae23c91f6e75)。",
   "doeff の中の部品(packages/doeff-vm — doeff の根の package だけが import する VM)は目録の範囲の外で、表に載せない(ADR-DOE-API-001 R11・card ki-9c326052f21c — 範囲「範囲の答え待ち」・組「境界 — 基盤・道具の package」の 64 行を消した)。doeff の外の file が部品の import の根を import しない事は、表を読む同じ test が見る。",
   "組「外れ — handler を返す工場の形に直す」は空になって消えた。2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で handler を返す工場として扱うと決めた名のうち、今の形が工場の構造に合わない物を置いた組だった(card ki-25eecd63bc57)。maybe・result・on_raise・absent_as は旧い形を消して表から消した(card ki-53be25c354e4)。scheduled は 2026-10-30 の方針(設定も呼びごとの状態も無い handler は工場にしない・ADR-DOE-API-001 R6・ADR-DOE-API-002 R1)で工場にせず、印 _doeff_is_handler_fn の付いた handler の値にした — 目録が handler と読むので表から消した(card ki-8187e8827ad9)。",
-  "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。"
+  "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
+  "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -49,11 +50,6 @@
      "doeff_adr.pytest_plugin": [
       "DEFAULT_FILE_PATTERNS",
       "DoeffAdrHyFile"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_adr.semgrep_hy": [
-      "HyScanExpansionError"
      ]
     }
    }
@@ -94,25 +90,6 @@
     "境界 — handler の設定の型": {
      "doeff_agentic": [
       "VisualInterceptorConfig"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_agentic": [
-      "AgentNotRunningError",
-      "AgenticAmbiguousPrefixError",
-      "AgenticDuplicateNameError",
-      "AgenticEnvironmentInUseError",
-      "AgenticEnvironmentNotFoundError",
-      "AgenticError",
-      "AgenticServerError",
-      "AgenticSessionNotFoundError",
-      "AgenticSessionNotRunningError",
-      "AgenticTimeoutError",
-      "AgenticUnsupportedOperationError",
-      "AgenticWorkflowNotFoundError",
-      "AmbiguousPrefixError",
-      "UserInputTimeoutError",
-      "WorkflowNotFoundError"
      ]
     }
    }
@@ -2057,107 +2034,6 @@
       "SessionBackend",
       "SessionConfig",
       "SessionInfo"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_agents": [
-      "AgentAttemptExhaustedError",
-      "AgentCapabilityUnsupportedError",
-      "AgentDeadlineExceededError",
-      "AgentError",
-      "AgentLaunchError",
-      "AgentNotAvailableError",
-      "AgentReadyTimeoutError",
-      "NoTurnInFlightError",
-      "ResumeTargetNotFoundError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError",
-      "TurnCredentialUnavailableError",
-      "TurnInFlightError"
-     ],
-     "doeff_agents.effects": [
-      "AgentAttemptExhaustedError",
-      "AgentCapabilityUnsupportedError",
-      "AgentDeadlineExceededError",
-      "AgentError",
-      "AgentLaunchError",
-      "AgentNotAvailableError",
-      "AgentReadyTimeoutError",
-      "NoTurnInFlightError",
-      "ResumeTargetNotFoundError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError",
-      "TurnCredentialUnavailableError",
-      "TurnInFlightError"
-     ],
-     "doeff_agents.effects.agent": [
-      "AgentAttemptExhaustedError",
-      "AgentCapabilityUnsupportedError",
-      "AgentDeadlineExceededError",
-      "AgentError",
-      "AgentLaunchError",
-      "AgentNotAvailableError",
-      "AgentReadyTimeoutError",
-      "NoTurnInFlightError",
-      "ResumeTargetNotFoundError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError",
-      "TurnCredentialUnavailableError",
-      "TurnInFlightError"
-     ],
-     "doeff_agents.handlers.claude": [
-      "AgentCapabilityUnsupportedError"
-     ],
-     "doeff_agents.handlers.codex": [
-      "AgentCapabilityUnsupportedError"
-     ],
-     "doeff_agents.handlers.daemon": [
-      "AgentError",
-      "AgentLaunchError",
-      "AgentNotAvailableError",
-      "SessionNotFoundError"
-     ],
-     "doeff_agents.handlers.effectful": [
-      "AgentCapabilityUnsupportedError"
-     ],
-     "doeff_agents.handlers.headless": [
-      "AgentCapabilityUnsupportedError",
-      "AgentError",
-      "AgentLaunchError",
-      "NoTurnInFlightError",
-      "ResumeTargetNotFoundError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError",
-      "TurnCredentialUnavailableError",
-      "TurnInFlightError"
-     ],
-     "doeff_agents.handlers.headless_codex": [
-      "AgentCapabilityUnsupportedError",
-      "AgentError",
-      "AgentLaunchError",
-      "NoTurnInFlightError",
-      "ResumeTargetNotFoundError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError",
-      "TurnCredentialUnavailableError",
-      "TurnInFlightError"
-     ],
-     "doeff_agents.handlers.production": [
-      "AgentAttemptExhaustedError",
-      "AgentDeadlineExceededError",
-      "AgentLaunchError",
-      "AgentNotAvailableError",
-      "AgentReadyTimeoutError",
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError"
-     ],
-     "doeff_agents.handlers.testing": [
-      "SessionAlreadyExistsError",
-      "SessionNotFoundError"
-     ],
-     "doeff_agents.sessionhost.substrate_herdr": [
-      "HerdrApiError",
-      "HerdrContractError"
      ]
     }
    }
@@ -8680,174 +8556,6 @@
       "MODULE_TAGS",
       "WorldView"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_cluster.coordinator.core.api_policy": [
-      "BodyInvalid",
-      "Refused"
-     ],
-     "doeff_cluster.coordinator.core.cluster_policy": [
-      "BodyInvalid",
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.coordinator.core.cluster_rules": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.coordinator.core.program": [
-      "KubeUnavailable"
-     ],
-     "doeff_cluster.coordinator.core.resource_policy": [
-      "BodyInvalid",
-      "Refused"
-     ],
-     "doeff_cluster.coordinator.core.rollout_policy": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.coordinator.core.wake_policy": [
-      "CoordinatorUnsettled"
-     ],
-     "doeff_cluster.coordinator.core.warm_policy": [
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.coordinator.entry.main": [
-      "KubeUnavailable"
-     ],
-     "doeff_cluster.coordinator.intent.due_model": [
-      "CoordinatorUnsettled"
-     ],
-     "doeff_cluster.coordinator.intent.kube_model": [
-      "KubeUnavailable"
-     ],
-     "doeff_cluster.coordinator.protocol.kube": [
-      "KubeUnavailable"
-     ],
-     "doeff_cluster.coordinator.protocol.request_bodies": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.coordinator.protocol.wal_format": [
-      "WalCorrupted"
-     ],
-     "doeff_cluster.foundation.in_cluster_api": [
-      "ClusterCaMissing"
-     ],
-     "doeff_cluster.foundation.process_versions": [
-      "SourceUnidentified"
-     ],
-     "doeff_cluster.foundation.record_codec": [
-      "MalformedRecordSpec",
-      "RecordedError",
-      "UnencodableValue",
-      "UnrecordableEffect"
-     ],
-     "doeff_cluster.foundation.record_handlers": [
-      "ReplayDiverged",
-      "ReplayFinished",
-      "UnencodableValue",
-      "UnrecordableEffect"
-     ],
-     "doeff_cluster.foundation.record_log": [
-      "ReplayDiverged",
-      "ReplayFinished"
-     ],
-     "doeff_cluster.shared.core.capabilities": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.shared.core.declaring": [
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.shared.core.launch_rules": [
-      "LaunchEnvMissing"
-     ],
-     "doeff_cluster.shared.core.lease_rules": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.shared.core.runtime_env": [
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.shared.core.runtime_env_rules": [
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.shared.core.semaphore_handlers": [
-      "LeaseLost",
-      "WriteFenced"
-     ],
-     "doeff_cluster.shared.entry.deployed_cluster": [
-      "DeployedCannotAnswer"
-     ],
-     "doeff_cluster.shared.entry.replay_main": [
-      "ReplayDiverged",
-      "ReplayFinished"
-     ],
-     "doeff_cluster.shared.intent.detached_model": [
-      "DetachedRefused"
-     ],
-     "doeff_cluster.shared.intent.protocol": [
-      "BodyInvalid"
-     ],
-     "doeff_cluster.shared.intent.remote_model": [
-      "EnvUnavailable",
-      "RemoteJobFailed",
-      "UnsendableProgram",
-      "VersionMismatch"
-     ],
-     "doeff_cluster.shared.intent.runtime_env_model": [
-      "RuntimeEnvInvalid"
-     ],
-     "doeff_cluster.shared.intent.semaphore_model": [
-      "LeaseLost",
-      "WriteFenced"
-     ],
-     "doeff_cluster.shared.intent.supplied_model": [
-      "SuppliedValueUnavailable",
-      "WorkerFactMissing"
-     ],
-     "doeff_cluster.shared.protocol.coordinator_route": [
-      "RouteRefused",
-      "RouteUnreachable"
-     ],
-     "doeff_cluster.shared.protocol.detached": [
-      "DetachedRefused"
-     ],
-     "doeff_cluster.shared.protocol.program_codec": [
-      "RemoteJobFailed",
-      "UnsendableProgram"
-     ],
-     "doeff_cluster.shared.protocol.remote": [
-      "EnvUnavailable",
-      "RemoteJobFailed"
-     ],
-     "doeff_cluster.shared.protocol.supplied_values": [
-      "SuppliedValueUnavailable",
-      "WorkerFactMissing"
-     ],
-     "doeff_cluster.sim.local": [
-      "RemoteJobFailed",
-      "SimDeadlockError",
-      "SimLivenessError",
-      "WorkerDied"
-     ],
-     "doeff_cluster.sim.machine": [
-      "MachineCannotAnswer"
-     ],
-     "doeff_cluster.sim.test_recording_on_sim": [
-      "ReplayDiverged"
-     ],
-     "doeff_cluster.worker.core.program": [
-      "WorkerUnsettled"
-     ],
-     "doeff_cluster.worker.entry.boot_wheel": [
-      "BootWheelFailed"
-     ],
-     "doeff_cluster.worker.entry.job_entry": [
-      "RemoteJobFailed",
-      "VersionMismatch"
-     ],
-     "doeff_cluster.worker.intent.worker_model": [
-      "WorkerUnsettled"
-     ],
-     "doeff_cluster.worker.protocol.declared": [
-      "DeclaredReplyMalformed"
-     ]
     }
    }
   },
@@ -9466,30 +9174,6 @@
       "TimeSpec",
       "WorkflowSpec",
       "WorkspaceSpec"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_conductor": [
-      "AgentError",
-      "AgentTimeoutError",
-      "ConductorError",
-      "ConductorStateWarning",
-      "GitCommandError",
-      "IssueAlreadyExistsError",
-      "IssueFileCorruptError",
-      "IssueNotFoundError",
-      "JournalCorruptionError",
-      "PRError",
-      "WorkspaceError"
-     ],
-     "doeff_conductor.dsl": [
-      "WorkflowExpansionError"
-     ],
-     "doeff_conductor.handlers.journaled_workspace": [
-      "PreCoverageRunError"
-     ],
-     "doeff_conductor.handlers.workspace_handler": [
-      "WorkspaceStateError"
      ]
     }
    }
@@ -11089,60 +10773,6 @@
      "doeff_core_effects.ws_client_effects": [
       "WsScript"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_core_effects": [
-      "ExternalPromiseCancelCallbackError",
-      "MissingEnvKeyError",
-      "SchedulerDeadlockError",
-      "TaskCancelledError"
-     ],
-     "doeff_core_effects.apart_call": [
-      "ApartClosed",
-      "TaskCancelledError"
-     ],
-     "doeff_core_effects.effects": [
-      "HttpError",
-      "MissingEnvKeyError"
-     ],
-     "doeff_core_effects.handlers": [
-      "MissingEnvKeyError"
-     ],
-     "doeff_core_effects.http_effects": [
-      "HttpError"
-     ],
-     "doeff_core_effects.http_host_gate": [
-      "HostNotAllowed"
-     ],
-     "doeff_core_effects.offloaded_call": [
-      "TaskCancelledError"
-     ],
-     "doeff_core_effects.os_proc_table": [
-      "ProcTableUnavailable"
-     ],
-     "doeff_core_effects.os_warm_process": [
-      "WarmProcUnavailable"
-     ],
-     "doeff_core_effects.postgres_sql": [
-      "TaskCancelledError",
-      "TransactionAbandoned"
-     ],
-     "doeff_core_effects.process_exit": [
-      "ExitWaitUnavailable"
-     ],
-     "doeff_core_effects.scheduler": [
-      "ExternalPromiseCancelCallbackError",
-      "SchedulerDeadlockError",
-      "SchedulerIndexDriftError",
-      "StepBudgetExceeded",
-      "TaskCancelledError"
-     ],
-     "doeff_core_effects.sql_effects": [
-      "SqlTransactionMisuse"
-     ],
-     "doeff_core_effects.sql_transaction": [
-      "SqlTransactionMisuse"
-     ]
     }
    }
   },
@@ -11167,18 +10797,6 @@
       "Domain",
       "DomainLaw",
       "DomainTerm"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_domain": [
-      "DomainCheckError",
-      "DomainCoverageError",
-      "DomainDefinitionError",
-      "DomainError",
-      "DomainRegistrationError",
-      "DuplicateDomainNameError",
-      "DuplicateEffectIntroductionError",
-      "OrphanEffectError"
      ]
     }
    }
@@ -11506,26 +11124,6 @@
      "doeff_events.notice_laws": [
       "NoticeRoute"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_events": [
-      "BrokerConnectionsExhausted",
-      "NoticeSourceUnreachable",
-      "UnroutedNotice"
-     ],
-     "doeff_events.handlers": [
-      "BrokerConnectionsExhausted",
-      "NoticeSourceUnreachable",
-      "UnroutedNotice"
-     ],
-     "doeff_events.handlers.notice_events": [
-      "NoticeSourceUnreachable",
-      "UnroutedNotice"
-     ],
-     "doeff_events.handlers.redis_notices": [
-      "BrokerAnswerMalformed",
-      "BrokerConnectionsExhausted"
-     ]
     }
    }
   },
@@ -11600,14 +11198,6 @@
      "doeff_git": [
       "MockGitRuntime"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_git": [
-      "GitCommandError"
-     ],
-     "doeff_git.exceptions": [
-      "GitError"
-     ]
     }
    }
   },
@@ -11639,37 +11229,6 @@
      ],
      "doeff_hy_bytecode_guard.records": [
       "MacroRecord"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_hy.clause_endings": [
-      "ClauseEndingError"
-     ],
-     "doeff_hy.pytest_items": [
-      "MalformedRecord"
-     ],
-     "doeff_hy.static_baseline": [
-      "BaselineUnreadable"
-     ],
-     "doeff_hy.static_carry": [
-      "CarryUnreadableError"
-     ],
-     "doeff_hy.static_check": [
-      "BaselineUnreadable",
-      "CarryUnreadableError",
-      "ExpansionWorkerLostError"
-     ],
-     "doeff_hy.static_stub": [
-      "StubUnmade"
-     ],
-     "doeff_hy.typecheck": [
-      "TypeCheckError"
-     ],
-     "doeff_hy.typecheck_handlers": [
-      "TypeCheckError"
-     ],
-     "doeff_hy_bytecode_guard.macro_hints": [
-      "HyMacroUseWarning"
      ]
     }
    }
@@ -11788,13 +11347,6 @@
       "MockOpenAIConfig",
       "MockOpenAIState"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_openai": [
-      "MissingCachedPricingError",
-      "PricingError",
-      "UnknownModelPricingError"
-     ]
     }
    }
   },
@@ -11818,11 +11370,6 @@
      ],
      "doeff_openrouter.handlers.testing": [
       "MockOpenRouterRuntime"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_openrouter": [
-      "OpenRouterResponseError"
      ]
     }
    }
@@ -13437,25 +12984,6 @@
       "RowsRefused"
      ]
     },
-    "境界 — 例外の型": {
-     "doeff_records.event_source": [
-      "SignalSourceUnreachable"
-     ],
-     "doeff_records.http_client": [
-      "WireError"
-     ],
-     "doeff_records.pg": [
-      "RecordsSqlFailed",
-      "StoreUnreachable"
-     ],
-     "doeff_records.values": [
-      "UndeclaredField",
-      "UndeclaredTable"
-     ],
-     "doeff_records.wire": [
-      "UndeclaredTable"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_records.event_source": [
       "SignalTables"
@@ -13545,12 +13073,6 @@
      "doeff_system_one.handlers.testing": [
       "Script"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_system_one": [
-      "JudgeError",
-      "JudgeUsageLimited"
-     ]
     }
    }
   },
@@ -13605,11 +13127,6 @@
      "doeff_traverse.handlers": [
       "BarFactory"
      ]
-    },
-    "境界 — 例外の型": {
-     "doeff_traverse": [
-      "ItemOutcomeNotPassedError"
-     ]
     }
    }
   },
@@ -13622,11 +13139,6 @@
       "CheckError",
       "CheckFailure",
       "EvaluatedArgument"
-     ]
-    },
-    "境界 — 例外の型": {
-     "doeff_validation": [
-      "ValidationException"
      ]
     }
    }
