@@ -20,8 +20,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, final
 
 from doeff_core_effects import (
-    PRIORITY_HIGH,
-    PRIORITY_NORMAL,
     Cancel,
     CompletePromise,
     CreatePromise,
@@ -29,6 +27,7 @@ from doeff_core_effects import (
     Spawn,
     Task,
     TaskCancelledError,
+    TaskPriority,
     Wait,
 )
 from doeff_events import (
@@ -139,8 +138,8 @@ def _tasks_left_waiting_after_a_cancel_in_the_spawn(
                 _wakes_the_canceller_at_the_spawn(woken, nth_spawn)(program)
             )
 
-        yield Spawn(cancels(), priority=PRIORITY_HIGH)
-        party = yield Spawn(party_under(layer), priority=PRIORITY_NORMAL - 1)
+        yield Spawn(cancels(), priority=TaskPriority.HIGH)
+        party = yield Spawn(party_under(layer), priority=TaskPriority.NORMAL - 1)
         yield CompletePromise(party_made, party, yield_to_woken=False)
         try:
             yield Wait(party)

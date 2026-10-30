@@ -17,9 +17,9 @@ from doeff_core_effects.memo_handlers import (  # 再利用の方針と保存先
     sqlite_memo_handler,  # 別runでも再利用できるよう、Memoの結果をSQLiteへ保存する。
 )
 from doeff_core_effects.scheduler import (  # 並行取得と、待機後の処理再開を扱う。
-    PRIORITY_HIGH,  # 優先して動かすタスクへ指定する、公開の優先度定数。
     Gather,  # 開始済みTaskを待ち、入力順の結果を受け取る。
     Spawn,  # 処理を開始し、待機に使うTaskを受け取る。
+    TaskPriority,  # 優先して動かすタスクへ指定する、公開の優先度の型。
     Wait,  # Taskの完了まで保留し、その結果で再開する。
     scheduled,  # 並行処理・待機を進めるスケジューラを取り付ける。
 )
@@ -126,7 +126,7 @@ def assemble(program, http, cache, clock):  # 外部との境界で、各責務�
 
 @do  # 優先度を付けた開始と、完了待ちを同じ処理として表す。
 def urgent_title():  # 優先度付きの読み取りでも、ドメイン操作の戻り値は見出し文字列。
-    task = yield Spawn(read_title("rules", "edition-1"), priority=PRIORITY_HIGH)  # 高優先度で開始。
+    task = yield Spawn(read_title("rules", "edition-1"), priority=TaskPriority.HIGH)  # 高優先度で開始。
     title = yield Wait(task)  # 取得が完了すると、その見出しで待機を再開する。
     return title  # 呼び出し元へ「遊び方」を返す。
 

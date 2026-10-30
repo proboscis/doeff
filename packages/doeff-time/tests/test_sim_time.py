@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff_core_effects import PRIORITY_HIGH, Gather, Spawn, Tell, Wait
+from doeff_core_effects import Gather, Spawn, TaskPriority, Tell, Wait
 from doeff_core_effects import Gather as GatherEffect
 from doeff_core_effects import Spawn as SpawnEffect
 from doeff_events import Publish, WaitForEvent, event_handler
@@ -143,7 +143,7 @@ def test_clock_driver_only_runs_at_idle_priority() -> None:
 
     @do
     def _program():
-        worker_task = yield Spawn(_high_priority_worker(), priority=PRIORITY_HIGH)
+        worker_task = yield Spawn(_high_priority_worker(), priority=TaskPriority.HIGH)
         worker_time = yield Wait(worker_task)
         yield Delay(1.0)
         now = yield GetTime()

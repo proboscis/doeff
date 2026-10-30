@@ -6555,6 +6555,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "TaskPriority",
+   "組": "許した物 — effect の値の型",
+   "決め": "[id]"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_http_server",
    "name": "HttpAddress",
    "組": "許した物 — effect の値の型",

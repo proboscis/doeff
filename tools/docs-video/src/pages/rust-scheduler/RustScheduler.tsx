@@ -219,7 +219,7 @@ const SAME = f(35);
 const SAME_CODE = [
   'gate = yield CreatePromise()',
   'a = yield Spawn(step("a", gate))',
-  'b = yield Spawn(step("b", gate), priority=PRIORITY_HIGH)',
+  'b = yield Spawn(step("b", gate), priority=TaskPriority.HIGH)',
   'slow = yield Spawn(stuck(never))',
   'yield Spawn(opener(gate))',
   'results = yield Gather(a, b)',
@@ -282,7 +282,7 @@ const SameScene: React.FC = () => {
         </div>
       ))}
       <Label x={630} y={444} size={17} color={MUTED} bold={false} opacity={fadeAt(frame, 16.0) * (1 - ramp(frame, 27.0, 27.4))}>
-        b (PRIORITY_HIGH) is ahead of a in the ready queue
+        b (TaskPriority.HIGH) is ahead of a in the ready queue
       </Label>
       <Terminal
         x={40} y={486} w={1200} size={18} line={30}

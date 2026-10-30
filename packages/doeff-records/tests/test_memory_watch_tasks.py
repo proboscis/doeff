@@ -18,18 +18,25 @@ from typing import Any
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     Cancel,
     ExternalPromise,
     Spawn,
     Task,
     TaskCancelledError,
+    TaskPriority,
     Wait,
     scheduled,
 )
-from doeff_records import Changes, ListRows, WatchChanges, WatchCursor, _memory as memory
+from doeff_records import (
+    Changes,
+    ListRows,
+    MemoryStore,
+    WatchChanges,
+    WatchCursor,
+    memory_records_handler,
+)
+from doeff_records import _memory as memory
 from doeff_records._laws import LAW_SCHEMA, MAKER
-from doeff_records import MemoryStore, memory_records_handler
 from doeff_time import GetTime, ScheduleAt, ScheduleAtEffect, SimClock, sim_time_handler
 
 from doeff import Effect, Pass, do, run, with_handlers
@@ -115,7 +122,7 @@ def _two_task_bell_or_timer(store: MemoryStore, bell: ExternalPromise, seconds: 
     now = yield GetTime()
     timer = yield ScheduleAt(now + timedelta(seconds=seconds), _ring(bell))
     try:
-        yield Wait(bell.future, priority=PRIORITY_IDLE)
+        yield Wait(bell.future, priority=TaskPriority.IDLE)
     finally:
         yield memory.drop_bell(store, bell)
         withdrawing = yield Spawn(_withdraw(timer))

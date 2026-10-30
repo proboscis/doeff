@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     AcquireSemaphore,
     CompletePromise,
     CreatePromise,
@@ -28,6 +27,7 @@ from doeff_core_effects import (
     SchedulerImplementation,
     Semaphore,
     Spawn,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -187,7 +187,7 @@ def test_virtual_clock_handler_cooperates_with_the_scheduler(
         clock["queue"].append((clock["now"] + effect.ticks, promise))
         if not clock["running"]:
             clock["running"] = True
-            yield Spawn(driver(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(driver(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 

@@ -33,7 +33,7 @@
 (import typing [Protocol TypeVar])
 (import doeff [Program])
 (import doeff [GetBoundaries K WithObserveRaw Callable :as VmCallable])
-(import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
+(import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise TaskPriority])
 (import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
@@ -682,7 +682,7 @@
     (setv (get state.waiting (if (is e None) #("end" (id promise)) e)) promise)
     (when (not state.driver-running)
       (setv state.driver-running True)
-      (<- (Spawn (replay-driver state) :priority PRIORITY-IDLE :daemon True)))
+      (<- (Spawn (replay-driver state) :priority TaskPriority.IDLE :daemon True)))
     (<- (Wait promise.future)))
   (when (is-not state.divergence None)
     (raise (ReplayDiverged (.get state.divergence "reason"))))
@@ -736,7 +736,7 @@
 
 (defk replay-driver [state]
   {:pre [(: state ReplayState)] :post [(: % (type None))]}
-  ;; 他の task が全部止まった時だけ動く(PRIORITY_IDLE の daemon)。それでも待っている task が居れば、番号の出来事を誰も出さない。
+  ;; 他の task が全部止まった時だけ動く(TaskPriority.IDLE の daemon)。それでも待っている task が居れば、番号の出来事を誰も出さない。
   (try
     (when state.waiting
       ;; 分岐は state.divergence に残る(最初の 1 つだけ)。ここは印を付けて、待っている task を起こすだけ。

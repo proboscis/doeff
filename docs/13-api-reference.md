@@ -97,8 +97,8 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | Name | What it is | See |
 |---|---|---|
 | `Await` | Effect: the result of a Python coroutine or future. | [Await](#awaitcoroutine) |
-| `Spawn` | Effect: start a program as a task and answer its `Task` handle. | [Spawn](#spawnprogram-prioritypriority_normal) |
-| `Task` | Handle of a spawned task; `Task[T]` returns `T`. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `Spawn` | Effect: start a program as a task and answer its `Task` handle. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
+| `Task` | Handle of a spawned task; `Task[T]` returns `T`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
 | `Wait` | Effect: the result of a `Task` or `Future`. | [Wait](#waittask) |
 | `Gather` | Effect: the results of several tasks or futures, in input order. | [Gather](#gathertasks) |
 | `Race` | Effect: the result of the first task or future to finish. | [Race](#racetasks) |
@@ -106,9 +106,10 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | `Cancel` | Effect: ask a task to stop. | [Cancel](#canceltask) |
 | `TaskCancelledError` | Raised in a cancelled task, and to whoever waits on it. | [TaskCancelledError](#taskcancellederror) |
 | `SchedulerDeadlockError` | Raised when every task waits on something nothing will complete. | [Troubleshooting](01-getting-started.md#schedulerdeadlockerror-scheduler-deadlock-parked-waiters-that-no-external-completion-can-wake-) |
-| `PRIORITY_IDLE` | Task priority 0, the lowest. | [Spawn](#spawnprogram-prioritypriority_normal) |
-| `PRIORITY_NORMAL` | Task priority 10, the default of `Spawn`. | [Spawn](#spawnprogram-prioritypriority_normal) |
-| `PRIORITY_HIGH` | Task priority 20. | [Spawn](#spawnprogram-prioritypriority_normal) |
+| `TaskPriority` | Task priorities `IDLE` (0, the lowest), `NORMAL` (10, the default of `Spawn`) and `HIGH` (20). | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
+| `PRIORITY_IDLE` | Old name of `TaskPriority.IDLE`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
+| `PRIORITY_NORMAL` | Old name of `TaskPriority.NORMAL`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
+| `PRIORITY_HIGH` | Old name of `TaskPriority.HIGH`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
 
 **Promises**
 
@@ -788,7 +789,7 @@ Requires `await_handler` and `scheduled()` to be installed.
 
 ---
 
-### Spawn(program, priority=PRIORITY_NORMAL)
+### Spawn(program, priority=TaskPriority.NORMAL)
 
 Spawn a program in the background and return a `Task` handle.
 
@@ -797,11 +798,11 @@ task = yield Spawn(worker())
 result = yield Wait(task)
 ```
 
-**Signature:** `Spawn(program, priority=PRIORITY_NORMAL)`
+**Signature:** `Spawn(program, priority=TaskPriority.NORMAL)`
 
 **Returns:** `Task`
 
-**Priorities:** `PRIORITY_IDLE` (0), `PRIORITY_NORMAL` (10) and `PRIORITY_HIGH` (20). When several
+**Priorities:** `TaskPriority.IDLE` (0), `TaskPriority.NORMAL` (10) and `TaskPriority.HIGH` (20), or any `int`. When several
 tasks are ready, the scheduler runs the one with the higher priority first.
 
 **See:** [Advanced Effects](09-advanced-effects.md)

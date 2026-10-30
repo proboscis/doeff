@@ -33,7 +33,6 @@ from typing import Any, Generic, TypeVar
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     AcquireSemaphore,
     Cancel,
     CompletePromise,
@@ -47,6 +46,7 @@ from doeff_core_effects import (
     ReleaseSemaphore,
     Spawn,
     TaskCancelledError,
+    TaskPriority,
     Wait,
     scheduled,
     state,
@@ -301,7 +301,7 @@ def _idle_daemon_behind_an_external_wait():
         yield Get("n")
         yield Put("n", 1)
 
-    yield Spawn(ticking(), daemon=True, priority=PRIORITY_IDLE)
+    yield Spawn(ticking(), daemon=True, priority=TaskPriority.IDLE)
     completing = yield Spawn(completer())
     value = yield Wait(promise.future)
     yield Wait(completing)

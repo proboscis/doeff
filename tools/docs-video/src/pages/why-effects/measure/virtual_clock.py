@@ -5,10 +5,19 @@ import time
 from dataclasses import dataclass
 from itertools import count
 
+from doeff_core_effects import (
+    CompletePromise,
+    CreatePromise,
+    ReadWriterLog,
+    TaskPriority,
+    Tell,
+    Wait,
+    scheduled,
+    state,
+    writer,
+)
+
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
-from doeff_core_effects import ReadWriterLog, Tell
-from doeff_core_effects import state, writer
-from doeff_core_effects import PRIORITY_IDLE, CompletePromise, CreatePromise, Wait, scheduled
 
 
 @dataclass(frozen=True)
@@ -49,7 +58,7 @@ def virtual_clock():
         trace.append(f"park until {(now + effect.seconds) / 3600:g}h")
         if not advancing:
             advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 

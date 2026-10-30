@@ -24,11 +24,10 @@ from typing import TYPE_CHECKING, final
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_HIGH,
-    PRIORITY_NORMAL,
     SchedulerDeadlockError,
     SchedulerImplementation,
     Spawn,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -155,7 +154,7 @@ class _Scene:
 
     bodies: tuple[str, ...]
     wanted: int
-    writer_priority: int = PRIORITY_NORMAL
+    writer_priority: int = TaskPriority.NORMAL
     pause_every: int | None = None
     reaction_waits: bool = False
 
@@ -203,7 +202,7 @@ def test_the_writer_sends_its_three_notices_before_the_waiting_subscriber_runs(
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
 @pytest.mark.parametrize(
-    "writer_priority", [PRIORITY_NORMAL, PRIORITY_HIGH], ids=["normal-writer", "high-writer"]
+    "writer_priority", [TaskPriority.NORMAL, TaskPriority.HIGH], ids=["normal-writer", "high-writer"]
 )
 def test_every_notice_reaches_a_subscriber_busy_between_its_receipts_in_order(
     implementation: SchedulerImplementation, writer_priority: int

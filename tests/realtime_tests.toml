@@ -51,7 +51,7 @@
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_pending_blocks_idle_task" = "本物の thread の外の待ちが残る Gather が IDLE の task を止める事"
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_race_external_pending_blocks_idle_task_and_drops_loser_placeholder" = "本物の thread の外の待ちを盾にした Race の決着と負けた側の場所の解放"
 "tests/test_scheduler.py::TestGatherRaceExternalWaitShield::test_gather_external_failure_drops_sibling_placeholder" = "本物の thread の外の待ちが失敗した時の Gather の兄弟の場所の解放"
-"tests/test_scheduler.py::TestRaceParkedWithoutShield::test_parked_race_still_blocks_for_the_external_completion" = "park した Race(priority=PRIORITY_IDLE)でも、本物の thread が後で満たす外の完了を待って塞がる事(deadlock と言わない)"
+"tests/test_scheduler.py::TestRaceParkedWithoutShield::test_parked_race_still_blocks_for_the_external_completion" = "park した Race(priority=TaskPriority.IDLE)でも、本物の thread が後で満たす外の完了を待って塞がる事(deadlock と言わない)"
 "packages/doeff-agents/tests/sessionhost_host_deftests.hy" = "本物の session host の daemon の process が lease の行の持ち主になるのを締め切りつきで待つ(外の process の実時間が対象)"
 "packages/doeff-agents/tests/sessionhost_substrate_deftests.hy" = "fork した本物の子 process の読み手の回り始めと終わりを締め切りつきで待つ(symlink の張り替えの競り — 外の process の実時間が対象)"
 "packages/doeff-agents/tests/sessionhost_substrate_herdr_deftests.hy::test_herdr_capture_preserves_trailing_space" = "本物の herdr の pane で shell が起きて描くのを実時間で待つ(外の process の実時間が対象)"

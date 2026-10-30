@@ -274,11 +274,11 @@ def production_program(database):  # 業務の手順を変えず、外部接続�
 ハンドラは、結果を即座に返すだけに限りません。前の例の`Wait`や`Gather`は、結果がまだない間は続きを保留し、準備ができたら再開します。タスクを開始する際には、優先度も指定できます。
 
 ```python
-from doeff_core_effects.scheduler import PRIORITY_HIGH, Wait  # 優先度の指定と完了待ちを使う。
+from doeff_core_effects.scheduler import TaskPriority, Wait  # 優先度の指定と完了待ちを使う。
 
 @do  # 優先度付きの開始と、結果の受け取りを同じProgramにする。
 def urgent_title():  # 開始方法を変えても、ドメイン操作の結果は見出し文字列。
-    task = yield Spawn(read_title("rules", "edition-1"), priority=PRIORITY_HIGH)  # 高優先度で開始。
+    task = yield Spawn(read_title("rules", "edition-1"), priority=TaskPriority.HIGH)  # 高優先度で開始。
     title = yield Wait(task)  # 取得完了まで保留し、結果の見出しで再開する。
     return title  # この例の本文なら「遊び方」を返す。
 ```

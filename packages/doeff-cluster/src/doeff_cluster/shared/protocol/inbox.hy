@@ -13,7 +13,7 @@
 (import json)
 (import typing [Protocol runtime-checkable])
 (import urllib.parse [unquote :as url-unquote])
-(import doeff_core_effects [CreateExternalPromise ExternalPromise PRIORITY-IDLE Promise Wait])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise TaskPriority Promise Wait])
 (import doeff_time [WaitWithin])
 (import doeff_cluster.shared.intent.protocol [Request Reply CoordinatorStopRequested PlainText NextRequests ServiceReached])
 
@@ -80,7 +80,7 @@
   (<- bell ExternalPromise (CreateExternalPromise))
   (when (not (.arm inbox timeout-seconds bell))
     (match timeout-seconds
-      None (<- (Wait bell.future :priority PRIORITY-IDLE))
+      None (<- (Wait bell.future :priority TaskPriority.IDLE))
       _ (<- (WaitWithin bell.future timeout-seconds :park True))))
   (val raws (.taken inbox limit))
   (.complete bell True)

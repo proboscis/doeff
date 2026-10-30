@@ -7,8 +7,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff_core_effects import Await
-from doeff_core_effects import PRIORITY_IDLE, Cancel, Race, Spawn
+from doeff_core_effects import Await, Cancel, Race, Spawn, TaskPriority
 
 from doeff import Pass, Transfer, do
 from doeff import handler as _program_handler
@@ -106,7 +105,7 @@ class AsyncTimeRuntime:
             started = float(self._monotonic())
             timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
             try:
-                first = yield Race(*timed_wait_futures(effect), timer, priority=PRIORITY_IDLE if effect.park else None)
+                first = yield Race(*timed_wait_futures(effect), timer, priority=TaskPriority.IDLE if effect.park else None)
             finally:
                 yield Cancel(timer)
             return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))

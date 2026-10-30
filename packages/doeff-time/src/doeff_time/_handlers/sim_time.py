@@ -5,16 +5,16 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from doeff_core_effects import WriterTellEffect
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     CompletePromise,
     CreatePromise,
     Future,
     Race,
     Spawn,
     Task,
+    TaskPriority,
     Wait,
+    WriterTellEffect,
 )
 
 from doeff import Pass, Transfer, do
@@ -146,7 +146,7 @@ class SimTimeRuntime:
         #   PRIORITY_EXTERNAL_WAIT shield may starve, which is exactly what
         #   keeps this driver from advancing sim time past a pending
         #   external completion.
-        yield Spawn(self._clock_driver(), priority=PRIORITY_IDLE, daemon=True)
+        yield Spawn(self._clock_driver(), priority=TaskPriority.IDLE, daemon=True)
         return None
 
     @do
@@ -170,7 +170,7 @@ class SimTimeRuntime:
         sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline)
         _ = yield self._ensure_clock_driver()
         try:
-            first = yield Race(future, deadline.future, priority=PRIORITY_IDLE if park else None)
+            first = yield Race(future, deadline.future, priority=TaskPriority.IDLE if park else None)
         finally:
             self._time_queue.withdraw(sequence)
         return first
@@ -188,7 +188,7 @@ class SimTimeRuntime:
         sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline, answer=DEADLINE_PASSED)
         _ = yield self._ensure_clock_driver()
         try:
-            first = yield Race(*futures, deadline.future, priority=PRIORITY_IDLE if park else None)
+            first = yield Race(*futures, deadline.future, priority=TaskPriority.IDLE if park else None)
         finally:
             self._time_queue.withdraw(sequence)
         timed_out = first is DEADLINE_PASSED
@@ -211,7 +211,7 @@ class SimTimeRuntime:
         self._mut_tick_runs[sequence] = run
         _ = yield self._ensure_clock_driver()
         try:
-            first = yield Race(future, deadline.future, priority=PRIORITY_IDLE if park else None)
+            first = yield Race(future, deadline.future, priority=TaskPriority.IDLE if park else None)
         finally:
             self._time_queue.withdraw(run.sequence)
             if run.sequence in self._mut_tick_runs:

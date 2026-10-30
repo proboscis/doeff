@@ -36,11 +36,8 @@ from typing import TYPE_CHECKING, Final, final
 import pytest
 import redis
 import redis.asyncio
-from doeff_core_effects import Await
-from doeff_core_effects import await_handler
 from doeff_core_effects import (
-    PRIORITY_HIGH,
-    PRIORITY_NORMAL,
+    Await,
     Cancel,
     CompletePromise,
     CreatePromise,
@@ -48,31 +45,37 @@ from doeff_core_effects import (
     Spawn,
     Task,
     TaskCancelledError,
+    TaskPriority,
     Wait,
+    await_handler,
     scheduled,
 )
-from doeff_events import (
-    EventBus,
-    SourceMissed,
-    SourceStalled,
-    SourceStarted,
-    subscribed_event_handler,
-)
-from doeff_events import Publish, WaitForEvent
 from doeff_events import (
     AckAnnouncement,
     Announce,
     Announcement,
     AwaitBrokerBack,
+    BrokerConnectionsExhausted,
     BrokerUnreachable,
     ChannelSubscription,
     CloseSubscription,
+    EventBus,
     NextAnnouncement,
+    NoticeGapMarked,
+    NoticeRoute,
+    NoticeSent,
     ProbeBroker,
+    Publish,
+    SourceMissed,
+    SourceStalled,
+    SourceStarted,
     SubscribeChannels,
+    WaitForEvent,
+    broker_back_by_retry,
+    notice_events_handler,
+    redis_notice_handler,
+    subscribed_event_handler,
 )
-from doeff_events import NoticeGapMarked, NoticeRoute, NoticeSent, notice_events_handler
-from doeff_events import BrokerConnectionsExhausted, broker_back_by_retry, redis_notice_handler
 from doeff_events._handlers.redis_notices import SUBSCRIPTION_SILENCE_SECONDS
 from doeff_events._notice_laws import (
     BROKER_LAWS,
@@ -375,12 +378,12 @@ def test_a_cancel_before_the_reader_holds_its_source_leaves_no_source_and_no_sta
             yield Wait(woken.future)
             yield Cancel((yield Wait(reader_made.future)))
 
-        yield Spawn(cancels(), priority=PRIORITY_HIGH)
+        yield Spawn(cancels(), priority=TaskPriority.HIGH)
         events = patient_notice_events(source, law_routes(prefix), PATIENCE_SECONDS)
         party = subscribed_event_handler(EventBus(), source, (LawNote,))(
             broker_back_by_retry(RETRY_SECONDS)(woken_at_the_source(woken)(events(follows_forever())))
         )
-        reader = yield Spawn(party, priority=PRIORITY_NORMAL - 1)
+        reader = yield Spawn(party, priority=TaskPriority.NORMAL - 1)
         yield CompletePromise(reader_made, reader, yield_to_woken=False)
         try:
             yield Wait(reader)

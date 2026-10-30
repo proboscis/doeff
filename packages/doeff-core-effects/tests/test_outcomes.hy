@@ -18,8 +18,8 @@
 (import doeff [run with-handlers])
 (import doeff.result [Nothing Some])
 (import doeff [Err Ok UnhandledEffect])
-(import doeff_core_effects [Absent Raise Resumption Ask]
-        doeff_core_effects._effects [resumption-of])
+(import doeff_core_effects [Absent Raise Ask]
+        doeff_core_effects._effects [Resumption resumption-of])
 (import doeff_core_effects [maybe result on-raise :as on-raise-fn absent-as :as absent-as-fn RaiseCase])
 
 

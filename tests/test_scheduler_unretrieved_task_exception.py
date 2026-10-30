@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     Cancel,
     CompletePromise,
     CreatePromise,
@@ -24,6 +23,7 @@ from doeff_core_effects import (
     Race,
     SchedulerIntrospection,
     Spawn,
+    TaskPriority,
     Wait,
     scheduled,
     try_handler,
@@ -218,7 +218,7 @@ class TestDoesNotWarn:
         def main():
             p = yield CreatePromise()
             t = yield Spawn(fail_after(p, "late failure"))  # parks on p
-            completer = yield Spawn(complete(p), priority=PRIORITY_IDLE)
+            completer = yield Spawn(complete(p), priority=TaskPriority.IDLE)
             try:
                 yield Wait(t)  # parked before the failure
                 return "unreachable"

@@ -7,7 +7,7 @@ See ``docs/proboscis-ema-2026-07-07-live-trade-correctness-architecture-plan.md`
 incident writeup.
 
 Incident shape: a pipeline effect handler raises while an MCP tool call is
-cooperatively parked (``Wait(..., priority=PRIORITY_IDLE)``) inside
+cooperatively parked (``Wait(..., priority=TaskPriority.IDLE)``) inside
 ``mcp_server_loop``'s captured-handler execution. The handler stack captured
 at the ``Spawn(mcp_server_loop(...))`` call site (``GetHandlers(k)`` +
 ``GetOuterHandlers()``) includes the scheduler's own handler. Reinstalling
@@ -41,12 +41,12 @@ import pytest
 from doeff_agents._handlers.mcp_server_loop import mcp_server_loop
 from doeff_agents._mcp_server import McpToolRequest, McpToolServer
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     CompletePromise,
     CreateExternalPromise,
     CreatePromise,
     Promise,
     Spawn,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -68,7 +68,7 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         real HTTP-thread bridge (``request_queue`` + ``wakeup_mailbox``),
         waits for the tool handler's parked signal, then raises.
       - the tool handler cooperatively parks on ``Wait(ep.future,
-        priority=PRIORITY_IDLE)`` while its worker thread is blocked on an
+        priority=TaskPriority.IDLE)`` while its worker thread is blocked on an
         explicit test event — same shape as
         ``_run-blocking-browser-call`` — so it is still in flight when the
         pipeline raises.
@@ -105,7 +105,7 @@ def test_pipeline_exception_propagates_despite_parked_mcp_tool_call():
         threading.Thread(target=release_tool_worker.wait, daemon=True).start()
         assert tool_parked_promise is not None
         yield CompletePromise(tool_parked_promise, None)
-        return (yield Wait(ep.future, priority=PRIORITY_IDLE))[1]
+        return (yield Wait(ep.future, priority=TaskPriority.IDLE))[1]
 
     tool = McpToolDef(
         name="sbi-complete-device-auth-from-mail",

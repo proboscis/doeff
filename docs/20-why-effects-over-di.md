@@ -336,7 +336,7 @@ from itertools import count
 from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects import ReadWriterLog, Tell
 from doeff_core_effects import state, writer
-from doeff_core_effects import PRIORITY_IDLE, CompletePromise, CreatePromise, Wait, scheduled
+from doeff_core_effects import TaskPriority, CompletePromise, CreatePromise, Wait, scheduled
 
 
 @dataclass(frozen=True)
@@ -372,7 +372,7 @@ def virtual_clock():
         heapq.heappush(sleepers, (now + effect.seconds, next(order), promise))
         if not advancing:
             advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 

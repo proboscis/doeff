@@ -9,10 +9,9 @@ from doeff_core_effects.handlers import (  # 待機と記録を受け持つハ�
     writer,  # Tellで送られた記録を集める。
 )
 from doeff_core_effects.scheduler import (  # 並行タスクの開始・待機・優先度を指定する。
-    PRIORITY_HIGH,  # 実行可能な通常タスクより先に選ばれる優先度。
-    PRIORITY_IDLE,  # 通常・高優先度の実行可能タスクがなくなってから選ばれる優先度。
     Gather,  # 複数タスクの結果を指定順で集める。
     Spawn,  # Programを別タスクとして開始し、Taskを返す。
+    TaskPriority,  # 優先度の名(HIGH は通常より先・IDLE は実行可能な仕事が尽きてから)。
     Wait,  # Taskの終了を待ち、その結果または例外を受け取る。
     scheduled,  # タスクの実行と再開を管理する。
 )
@@ -83,10 +82,10 @@ def record_label(label: str):  # 表示名だけを受け取る。
 @do  # 優先度は時間の設定と別に、スケジューラへの依頼として指定する。
 def priorities():  # 実行可能な2タスクがどちらから選ばれるかを記録する。
     background = yield Spawn(  # 背景処理を登録するが、通常優先度の親処理は先へ進める。
-        record_label("背景処理"), priority=PRIORITY_IDLE  # 実行を後回しにする。
+        record_label("背景処理"), priority=TaskPriority.IDLE  # 実行を後回しにする。
     )
     urgent = yield Spawn(  # 高優先度の応答処理を追加する。
-        record_label("応答処理"), priority=PRIORITY_HIGH  # 背景処理より先に選ばれる。
+        record_label("応答処理"), priority=TaskPriority.HIGH  # 背景処理より先に選ばれる。
     )
     yield Wait(urgent)  # 応答処理の完了を確認する。
     yield Wait(background)  # 背景処理も完了させ、未完了タスクを残さない。

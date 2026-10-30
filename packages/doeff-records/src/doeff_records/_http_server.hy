@@ -91,7 +91,7 @@
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_core_effects [ComputeLoad ReadComputeLoad])
 (import doeff_core_effects [run-apart])
-(import doeff_core_effects [Cancel CompletePromise CreatePromise Gather PRIORITY-IDLE Promise Race Spawn Task TaskCancelledError Wait scheduled])
+(import doeff_core_effects [Cancel CompletePromise CreatePromise Gather TaskPriority Promise Race Spawn Task TaskCancelledError Wait scheduled])
 (import doeff_core_effects [StopRequested])
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyRead HttpBodyTooLarge HttpEvent HttpHeader HttpListen HttpNextRequest HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown])
@@ -381,7 +381,7 @@
       _ (do ;; 期限と止めの門を 1 本の待ちにまとめ(門の値 = 印・期限 = None)、呼び鈴と早い方を取る。呼び鈴の park はそのまま Race の
             ;; 待ち方にする(仮想の時計を止めない — doeff-time の WaitWithin と同じ)。
             (<- deadline Task (Spawn (WaitWithin closing.future effect.seconds)))
-            (<- first (Race effect.future deadline :priority (if effect.park PRIORITY-IDLE None)))
+            (<- first (Race effect.future deadline :priority (if effect.park TaskPriority.IDLE None)))
             (<- (Cancel deadline))
             (resume first)))))
 
