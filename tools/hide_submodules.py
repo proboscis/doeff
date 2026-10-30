@@ -49,6 +49,9 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
   (段 1 で隠した conductor と events の macro の module は card ki-d80c9c978b35 が戻した)。
 - 同じ名で定義の違う物が 2 つ在る(子どうし・入口に在る名と)時は足さずに「ぶつかり」に出す。入口に同じ定義が在れば足さない。
   子が別の子の名を import して出し直す(定義が 1 つ)時は、定義の在る子から 1 度だけ足す。
+- 子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら、何も書かずに断る
+  (ADR-DOE-API-001 R33)。古い path に移し替えの module を置くと、古い path の import が親の属性 ``<根>.<子>`` を module に
+  束ね、入口の名を隠す(card ki-db44e4d3efe4 — 記録の service が起動の度に落ちた)。子の名か入口の名を先に替える。
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
 ``X as X``(``.py`` か ``.pyi`` の在る module の名だけ。``__all__`` は使わない — DOEFF021)。入口に ``_LAZY_EXPORTS`` と
@@ -1982,28 +1985,27 @@ if not any(isinstance(finder, _MovedSubmodules) for finder in sys.meta_path):
     sys.meta_path.insert(0, _MovedSubmodules())
 '''
 
-_SHIM_KEEP = '''
+def entry_name_clashes(children: Sequence[Child], fates: Sequence[NameFate]) -> list[str]:
+    """入口が出す名(足す名・既に在る名・入口が既に束ねる名)と同じ名の子 — 移し替えの module を置けない子の訳。
 
-def _keep_entry_name() -> None:
-    """Keeps the package's own ``{name}`` when the import system binds this old path on it.
-
-    The package exports a ``{name}`` that is not this module. Before the move the package
-    imported the child first and then rebound the name, so ``from {root} import {name}``
-    kept giving the package's own object; this keeps it so.
+    古い path を import すると、import の仕組みが親の package の属性 ``<根>.<子>`` を移した module に束ねる。属性が在るので
+    入口の遅延の ``__getattr__`` は呼ばれず、後から入口で名を取る呼び手は関数でなく module を受ける(どちらが勝つかは
+    import の順で決まる — 10-30 に doeff_core_effects の aiohttp_http_server で記録の service が起動の度に落ちた・card
+    ki-db44e4d3efe4)。ADR-DOE-API-001 R33: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない。
     """
-    package = sys.modules["{root}"]
-
-    class _KeepEntryName(type(package)):
-        def __setattr__(self, name: str, value: object) -> None:
-            if name == "{name}" and isinstance(value, ModuleType):
-                return
-            super().__setattr__(name, value)
-
-    package.__class__ = _KeepEntryName
-
-
-_keep_entry_name()
-'''
+    shown = {
+        (module.split(".")[0], fate.name)
+        for fate in fates
+        if fate.fate in ("entry", "already")
+        for module in fate.modules
+    }
+    return [
+        f"{child.old}: 入口 {child.root} が同じ名 {child.name} を出す(足す名か、入口が既に束ねる名)ので、"
+        f"古い path に移し替えの module を置けない — 古い path の import が入口の {child.name} を module で隠す"
+        "(ADR-DOE-API-001 R33)。子の名か入口の名を先に替えてから隠す"
+        for child in children
+        if (child.root, child.name) in shown or child.shadowed_by_entry()
+    ]
 
 
 def shown_at_hiding(
@@ -2066,7 +2068,6 @@ def shim_text(child: Child, typed: bool, pins: dict[str, tuple[str, ...]]) -> st
     印の行の下に、隠した時に古い path が出した名の固定の列(``pins`` — ``shown_at_hiding``)を書く。
     """
     package = child.is_package()
-    keep = child.shadowed_by_entry()
     imports = (
         (
             "import importlib.abc",
@@ -2078,11 +2079,7 @@ def shim_text(child: Child, typed: bool, pins: dict[str, tuple[str, ...]]) -> st
             "from types import CodeType, ModuleType",
         )
         if package
-        else (
-            "import sys",
-            "from importlib import import_module",
-            *(("from types import ModuleType",) if keep else ()),
-        )
+        else ("import sys", "from importlib import import_module")
     ) + (("from typing import TYPE_CHECKING",) if typed else ())
     checking = (
         # 型の検だけが古い path で移した module の名を読む為の * (finish が shim ごと消す — 規則の抑えはこの 1 行に閉じる)。
@@ -2091,7 +2088,6 @@ def shim_text(child: Child, typed: bool, pins: dict[str, tuple[str, ...]]) -> st
         else ""
     )
     finder = _SHIM_FINDER.format(old=child.old, new=child.new) if package else ""
-    finder += _SHIM_KEEP.format(root=child.root, name=child.name) if keep else ""
     return (
         f"{SHIM_MARK} {child.old} -> {child.new}\n"
         + pin_lines(pins)
@@ -2429,6 +2425,9 @@ def hide(
     groups, added = _table_groups(table, allowed, package_dir.name)
     used = used_names(package_dir, layout, children, used_by) if used_by else None
     fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added, used)
+    clashes = entry_name_clashes(children, fates)
+    if clashes:
+        raise SystemExit("\n".join(clashes))
     counted = tuple(
         {"old": c.old, "new": c.new, "modules": _module_count(c, c.name)} for c in children
     )

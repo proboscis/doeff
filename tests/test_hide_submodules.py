@@ -979,34 +979,89 @@ def test_a_relative_hy_import_is_left_as_it_is(tmp_path: Path) -> None:
     assert hy == "(import .runtime-env-model [EnvVar])\n(import pkg [h])\n"
 
 
-def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path) -> None:
-    """古い path を先に import しても、入口が子と同じ名で出す物(関数)が入口に残る。
+CLASH_PACKAGE = "doeff-fixture-hide-clash"
+CLASH_ROOT = "doeff_fixture_hide_clash"
 
-    移す前は入口が子を先に読んでから名を束ね直したので、``from <根> import <名>`` はいつも入口の関数だった。移した後は
-    古い path の import が import の仕組みに親の属性を module へ束ねさせるので、移し替えの module が入口の名を守る
-    (doeff_openrouter の structured_llm・card ki-67445807c406)。
+#: 子の名が入口の出す名と同じ package: 子 ping_handler は同じ名の handler を出し(入口へ足す名)、子 tool は入口が既に
+#: 同じ名の関数に束ねる(入口が既に束ねる名 — 移す前の doeff_openrouter の structured_llm の形)。
+CLASH_FILES = {
+    f"packages/{CLASH_PACKAGE}/pyproject.toml": f"""
+        [project]
+        name = "{CLASH_PACKAGE}"
+        version = "0"
+
+        [build-system]
+        requires = ["hatchling"]
+        build-backend = "hatchling.build"
+
+        [tool.hatch.build.targets.wheel]
+        packages = ["src/{CLASH_ROOT}"]
+    """,
+    f"packages/{CLASH_PACKAGE}/src/{CLASH_ROOT}/__init__.py": f'''
+        """The fixture package whose children are named like names its entry shows."""
+
+        from {CLASH_ROOT}.tool import tool as tool
+    ''',
+    f"packages/{CLASH_PACKAGE}/src/{CLASH_ROOT}/tool.py": """
+        def tool() -> str:
+            return "entry"
+    """,
+    f"packages/{CLASH_PACKAGE}/src/{CLASH_ROOT}/ping_handler.py": """
+        from doeff import EffectBase, Pass, handler
+
+
+        class Ping(EffectBase):
+            \"\"\"The one effect.\"\"\"
+
+
+        @handler
+        def ping_handler(effect: Ping, k):
+            yield Pass()
+    """,
+    f"packages/{CLASH_PACKAGE}/src/{CLASH_ROOT}/plain.py": """
+        VALUE = 1
+    """,
+}
+
+
+@pytest.mark.timeout(600)
+@pytest.mark.parametrize(
+    ("child", "why"),
+    [("ping_handler", "入口へ足す名"), ("tool", "入口が既に束ねる名")],
+)
+def test_hide_refuses_a_child_named_like_a_name_the_entry_shows(
+    tmp_path: Path, child: str, why: str
+) -> None:
+    """子の名が入口の出す名と同じなら、hide は移し替えの module を置かずに断り、木に何も書かない(ADR-DOE-API-001 R33)。
+
+    古い path の import が親の属性を module に束ね、入口の名を隠す(card ki-db44e4d3efe4 — doeff_core_effects の
+    aiohttp_http_server の殻で記録の service が起動の度に落ちた)。前の道具は入口へ足す名を見ずに殻を置き、入口が既に
+    束ねる名では package の class を差し替える手当てを殻に書いた。同じ名でない子(plain)は今までどおり隠せる。
+    """
+    repo = _write_repo(tmp_path / "repo", CLASH_FILES)
+    package_dir = repo / "packages" / CLASH_PACKAGE
+    with pytest.raises(SystemExit) as refused:
+        tool.hide(package_dir, [child, "plain"], None, None, None, [])
+    assert f"{CLASH_ROOT}.{child}: 入口 {CLASH_ROOT} が同じ名 {child} を出す" in str(refused.value), why
+    assert "ADR-DOE-API-001 R33" in str(refused.value)
+    assert "plain" not in str(refused.value)
+    assert _git(repo, "status", "--porcelain") == ""
+    report = tool.hide(package_dir, ["plain"], None, None, None, [])
+    assert [c["new"] for c in report.children] == [f"{CLASH_ROOT}._plain"]
+    assert (package_dir / "src" / CLASH_ROOT / "plain.py").read_text(encoding="utf-8").startswith(
+        f"{tool.SHIM_MARK} {CLASH_ROOT}.plain -> {CLASH_ROOT}._plain\n"
+    )
+
+
+def test_a_shim_does_not_guard_the_entry_name(tmp_path: Path) -> None:
+    """移し替えの module は package の class を差し替えない — 入口の名を守る手当ては無く、同じ名の子は hide が断る(R33)。
+
+    前の道具は、入口が子と同じ名を別の物に束ねる時(doeff_openrouter の structured_llm)、殻に package の ``__class__`` を
+    差し替えて module の束ねを捨てる手当てを書いた。手当ては古い path の import の順を隠すだけで、衝突は残った。
     """
     root_dir = tmp_path / "kept_pkg"
     root_dir.mkdir()
     (root_dir / "__init__.py").write_text("from ._tool import tool\n", encoding="utf-8")
-    (root_dir / "_tool.py").write_text(
-        'VALUE = 1\n\n\ndef tool() -> str:\n    return "entry"\n', encoding="utf-8"
-    )
-    child = tool.Child("kept_pkg", "tool", root_dir)
-    child.shim.write_text(tool.shim_text(child, False, {}), encoding="utf-8")
-    probe = textwrap.dedent(
-        """
-        import sys
-        sys.path.insert(0, sys.argv[1])
-        from kept_pkg.tool import VALUE
-        import kept_pkg.tool
-        from kept_pkg import tool
-        assert sys.modules["kept_pkg.tool"] is sys.modules["kept_pkg._tool"]
-        print(VALUE, tool())
-        """
-    )
-    done = subprocess.run(
-        [sys.executable, "-c", probe, str(tmp_path)], capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 0, done.stderr
-    assert done.stdout == "1 entry\n"
+    text = tool.shim_text(tool.Child("kept_pkg", "tool", root_dir), False, {})
+    assert "__class__" not in text
+    assert "__setattr__" not in text

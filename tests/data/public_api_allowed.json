@@ -1675,13 +1675,6 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
-   "package": "doeff-openrouter",
-   "module": "doeff_openrouter.structured_llm",
-   "name": "structured_llm",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
    "package": "doeff-records",
    "module": "doeff_records.event_source",
    "name": "came_back_within",
