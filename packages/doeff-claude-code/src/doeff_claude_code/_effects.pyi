@@ -18,6 +18,7 @@ from doeff_claude_code._values import checked_session_id as checked_session_id
 from doeff_claude_code._values import FreshSession as FreshSession
 from doeff_claude_code._values import ResumeSession as ResumeSession
 from doeff_claude_code._values import ForkSession as ForkSession
+from doeff_claude_code._values import SessionOrigin as SessionOrigin
 from doeff_claude_code._values import LentCredential as LentCredential
 from doeff_claude_code._values import PrintContent as PrintContent
 from doeff_claude_code._lines import ClaudeStreamLine as ClaudeStreamLine
@@ -138,7 +139,7 @@ ExportSessionOutcome: TypeAlias = SessionExported | SessionNotFound
 
 @dataclass(frozen=True)
 class ClaudeStartTurn(EffectBase[StartTurnOutcome]):
-    origin: FreshSession | ResumeSession | ForkSession
+    origin: SessionOrigin
     spec: ClaudeSessionSpec
     input: TurnInput
     tap: Callable[[ClaudeStreamLine], None] | None = None

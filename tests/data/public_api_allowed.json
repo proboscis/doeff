@@ -3392,6 +3392,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.dialogue",
+   "name": "StopReason",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
    "name": "TurnInput",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3560,6 +3567,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.effects",
+   "name": "InputAlreadyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
    "name": "InputQueued",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3595,7 +3609,21 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.effects",
+   "name": "NoSuchRequest",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
    "name": "NoSuchSession",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "NoTurnInFlight",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -3638,6 +3666,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.effects",
    "name": "PrintTimedOut",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ProcessStillAlive",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -3757,6 +3792,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.effects",
    "name": "TurnStarted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "UnknownTurn",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -3973,6 +4015,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
+   "name": "InputAlreadyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
    "name": "InputFate",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4015,6 +4064,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
+   "name": "LiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
    "name": "ModelRefusalHit",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4036,7 +4092,28 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
+   "name": "NoLiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "NoSuchRequest",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
    "name": "NoSuchSession",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "NoTurnInFlight",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -4162,6 +4239,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
+   "name": "StopReason",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
    "name": "SubagentTranscript",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4246,6 +4330,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
+   "name": "UnknownTurn",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
    "name": "Usage",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4256,6 +4347,27 @@
    "name": "stderr_tail_within",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.faults",
+   "name": "LiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.faults",
+   "name": "NoLiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.faults",
+   "name": "StopReason",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-claude-code",
@@ -4400,6 +4512,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.handler",
+   "name": "InputAlreadyRead",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
    "name": "InputQueued",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4442,6 +4561,27 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.handler",
+   "name": "LiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "NoLiveProcess",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "NoSuchRequest",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
    "name": "NoSuchSession",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4449,7 +4589,21 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.handler",
+   "name": "NoTurnInFlight",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
    "name": "PartialMessage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ProcessStillAlive",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -4513,6 +4667,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.handler",
    "name": "SessionWarmed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "StopReason",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -4597,6 +4758,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.handler",
    "name": "TurnStarted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "UnknownTurn",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -5100,6 +5268,13 @@
   {
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.values",
+   "name": "McpServer",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
    "name": "McpSse",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -5129,6 +5304,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.values",
    "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "SessionOrigin",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
