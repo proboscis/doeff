@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-run"
+version = "0.1.0"
+description = "image を、命令・環境変数・volume・資源の上限の設定で走らせる effect と型と模擬の handler(取っ手・止める・状態の出来事)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "doeff>=0.2.0",
+    "doeff-core-effects",
+    "doeff-hy",
+    "doeff-time",
+    "hy>=1.3",
+]
+
+[tool.hatch.build.targets.wheel]
+# import 名 doeff_run の入口(__init__.py)は、`_` で隠した Hy の module の名を遅延で出す(名を読む時に hy を読み込む)。
+packages = ["src/doeff_run"]
+# editable の install は src を明示して sys.path に載せる。
+dev-mode-dirs = ["src"]
+
+[tool.uv.sources]
+doeff = { workspace = true }
+doeff-core-effects = { workspace = true }
+doeff-hy = { workspace = true }
+doeff-time = { workspace = true }
