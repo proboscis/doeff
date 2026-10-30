@@ -16,7 +16,7 @@
 
 
 (defn #^ WorkerInfo worker [#^ str name]
-  (WorkerInfo name #("net") 10 0 :task-reserve 2))
+  (WorkerInfo name #("net") 0 :task-reserve 2 :background-room 10))
 
 
 (defn #^ TaskRecord task [#^ str id]
@@ -63,11 +63,11 @@
 
 
 (deftest test-a-worker-row-keeps-its-stored-fields-through-the-state-file
-  (val state (ClusterState :workers (table-of #((TableWrite "w1" (WorkerInfo "w1" #("net") 10 0 :task-reserve 2 :node "n1"))))))
+  (val state (ClusterState :workers (table-of #((TableWrite "w1" (WorkerInfo "w1" #("net") 0 :task-reserve 2 :node "n1" :background-room 10))))))
   (<- data dict (state-to-json state))
   (<- from-file ClusterState (state-from-json data 777))
   (val got (.row from-file.workers "w1"))
-  (assert (= #(got.name got.provides got.capacity got.task-reserve got.node) #("w1" #("net") 10 2 "n1")) got)
+  (assert (= #(got.name got.provides got.background-room got.task-reserve got.node) #("w1" #("net") 10 2 "n1")) got)
   ;; 知っていた worker は「いま生きていた」とみなす(読み直した時刻が最後の連絡)。
   (assert (= got.last-seen-ms 777) got))
 

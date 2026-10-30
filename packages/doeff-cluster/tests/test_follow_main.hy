@@ -115,7 +115,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
                        :actor None))
   (setv sim.desired (tuple (gfor j (get reply "jobs")
                                  (JobSpec (get j "name") (get j "entry") (tuple (get j "args")) (get j "revision")
@@ -205,7 +205,7 @@
   (val empty (ClusterState :workers (! (table-from-rows {}))))
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
   (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 10 1000 :task-reserve 0)}))
+  (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 1000 :task-reserve 0 :background-room 10)}))
                             :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
                                                                                      :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
                                                                                                         :retired-from "a")))}))))
@@ -218,8 +218,8 @@
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
   (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
   (val state (replace (ClusterState)
-                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 10 1000 :task-reserve 0)
-                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 10 61000 :exclusive #("agent-cli") :task-reserve 0)}))))
+                      :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 1000 :task-reserve 0 :background-room 10)
+                                "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 61000 :exclusive #("agent-cli") :task-reserve 0 :background-room 10)}))))
   (val text (metrics-text state 91000 T))
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"zeus\"} 90.0" text) text)
   (assert (in "doeff_worker_worker_heartbeat_age_seconds{worker=\"proboscis-mbp\"} 30.0" text) text)

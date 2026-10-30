@@ -37,7 +37,7 @@
 (defk named []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(起動の印 b1)が刻 SEEN に名乗っただけの状態(置き先も task も無い)を、検の出発点として組むため。"
-  (val body {"name" "w" "boot" "b1" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" []})
+  (val body {"name" "w" "boot" "b1" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" []})
   (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} body)) SEEN T) 0))
 
 

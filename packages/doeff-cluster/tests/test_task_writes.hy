@@ -28,7 +28,7 @@
               :phase phase :worker worker :detached detached :priority priority))
 
 (defn #^ WorkerInfo live-worker [#^ str name [capacity 10]]
-  (WorkerInfo name #() capacity NOW :task-reserve 0))
+  (WorkerInfo name #() NOW :task-reserve 0 :background-room capacity))
 
 (defk state-of [rows workers]
   {:pre [(: rows dict) (: workers dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}

@@ -47,7 +47,7 @@
   {:pre [(: state ClusterState) (: name str) (: now int) (: statuses (| list None)) (: versions dict) (: provides (| list None))] :post [(: % tuple)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name の heartbeat を 1 つ判断 responded に渡し、(状態 状態の番号 本文) の組を返すため。"
-  (responded state (! (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "capacity" 10 "taskReserve" 0
+  (responded state (! (req "POST" "/heartbeat" {"name" name "provides" (or provides ["net"]) "backgroundRoom" 10 "taskReserve" 0
                                            "versions" versions "statuses" (or statuses [])})) now T))
 
 
@@ -203,7 +203,7 @@
                                                                                                            (with-handlers [(state) (kube-unavailable NO-KUBE)] program)))))))))
 
 (deftest test-coordinator-loop-answers-after-persisting
-  (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
+  (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V}))
                         (! (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}))
                         (! (req "PUT" "/board/k" {"value" 1}))
                         (! (req "GET" "/nothing"))]))
@@ -267,7 +267,7 @@
                              (raise (TypeError "stamp の引数が合わない(偽の欠陥)"))
                              (real-stamp before after actor #* rest))))
   (val faults [])
-  (val script (Script [[(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
+  (val script (Script [[(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V}))
                         (! (req "PUT" "/board/k" [1 2]))]]))
   (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/heartbeat" 500) #("/board/k" 400)]) script.replies)

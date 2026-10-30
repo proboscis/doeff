@@ -60,7 +60,7 @@
 
 
 (deftest test-delete-resource-drops-the-row-of-each-table-and-keeps-the-others
-  (val worker (WorkerInfo "w1" #("net") 10 0 :task-reserve 0))
+  (val worker (WorkerInfo "w1" #("net") 0 :task-reserve 0 :background-room 10))
   (val task (TaskRecord "t1" "n" "b" "r" #() #() 15000 16000 1000))
   (<- rollouts Table (table-from-rows {"done" DONE "keep" DONE}))
   (<- refused Table (table-from-rows {"old" (RefusedJob :name "old" :row OLD-ROW :reason "旧い形の行")}))

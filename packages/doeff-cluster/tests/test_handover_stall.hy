@@ -15,7 +15,7 @@
 
 (defn #^ dict new-beat [#^ Coord c #^ str worker #^ list statuses]  ; defk にできない: 模擬の世界の method を呼ぶ(状態を進める)
   "今の世代(boot new)の heartbeat(前の世代がまだ走っている間に起きたと名乗る)。"
-  (c.call "POST" "/heartbeat" {"name" worker "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (c.call "POST" "/heartbeat" {"name" worker "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                "statuses" statuses "overlapsElder" True "stopping" False}
           :actor None))
 

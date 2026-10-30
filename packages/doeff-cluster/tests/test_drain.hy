@@ -72,7 +72,7 @@
                       #^ bool [stopping False]]
     "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)・stopping = 止まり始めた worker の名乗り(#2819)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
-    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "capacity" 10 "taskReserve" 0 "versions" {}
+    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "backgroundRoom" 10 "taskReserve" 0 "versions" {}
                                     "boot" (get self.boots worker)
                                     "statuses" (lfor n (or running []) (self.row worker n))
                                     "stopping" stopping}
@@ -491,7 +491,7 @@
   ;; 新しい世代の名乗り: w の process(世代の名 atlas-w-new)を起こして running と報告する(lease を待つ standby)。
   (setv new-row (| (c.row "atlas" "w") {"instance" "atlas-w-new"}))
   (setv (get c.boots "atlas") "new")
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                "statuses" [new-row] "stopping" False}
           :actor None)
   (setv before (c.beat "atlas" ["w"] :boot "old"))
@@ -505,7 +505,7 @@
   (setv after (c.beat "atlas" ["w"] :boot "old"))
   (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "atlas-w-new")]) (get after "jobs"))
   ;; 今の世代への返事には印が無い(今の世代は書き手を受け継ぐ側)。
-  (setv current (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (setv current (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                              "statuses" [new-row] "stopping" False}
                         :actor None))
   (assert (= (lfor j (get current "jobs") (.get j "supersededBy")) [None]) (get current "jobs")))
@@ -530,14 +530,14 @@
   (val old-row (c.row "atlas" "r"))
   (setv (get c.boots "atlas") "new")
   (val preparing {"name" "r" "phase" "preparing" "desiredRevision" (get old-row "desiredRevision")})
-  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                           "statuses" [preparing] "overlapsElder" True}
                       :actor None))
   (assert (= (lfor j (get first "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" True)]) (get first "jobs"))
   (assert (get first "handoverPending") first)
   (assert (not (get (c.call "GET" "/workers/atlas") "ready")) "受け取れない間は readinessProbe の答えも Ready でない")
   ;; 前の世代はまだ r を動かし続ける(返事に r が残る)。
-  (val old-reply (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+  (val old-reply (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                               "statuses" [old-row]}
                           :actor None))
   (assert (get old-reply "superseded") old-reply)
@@ -545,27 +545,27 @@
   ;; 新しい世代が r を起こせると報告した → handoverPending が外れる(Pod が Ready になる)。前の世代の Pod の止まりはまだ始まっていない
   ;; ので、r は前の世代に残る(Service の振り先はまだ前の世代の Pod)。新しい世代の印はまだ残る。
   (val ready-row (| preparing {"phase" "elder-runs"}))
-  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                            "statuses" [ready-row] "overlapsElder" True}
                        :actor None))
   (assert (= (lfor j (get second "jobs") (.get j "elderRuns")) [True]) (get second "jobs"))
   (assert (not (.get second "handoverPending" False)) second)
   (assert (get (c.call "GET" "/workers/atlas") "ready") "受け取れる姿になったら readinessProbe の答えも Ready")
-  (val kept (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+  (val kept (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                          "statuses" [old-row]}
                      :actor None))
   (assert (= (lfor j (get kept "jobs") (get j "name")) ["r"]) "前の世代の Pod の止まりが始まるまで r を渡さない")
   ;; 前の世代の Pod の preStop が drain を頼んだ(Pod の削除が始まり、Service の振り先が新しい Pod へ移った)→ r が前の世代の返事から外れる。
   (val waiting (c.call "POST" "/workers/atlas/drain" {"ttlSeconds" 150 "boot" "old"} :actor "drain@atlas"))
   (assert (not (get waiting "drain" "drained")) waiting)
-  (val told (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+  (val told (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                          "statuses" [old-row]}
                      :actor None))
   (assert (= (get told "jobs") []) (get told "jobs"))
   ;; 前の世代が r を止め終えた(報告に running の r が無い)→ 新しい世代の印が外れる(起こす)。
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old" "statuses" []}
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "old" "statuses" []}
           :actor None)
-  (val third (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (val third (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                           "statuses" [ready-row] "overlapsElder" True}
                       :actor None))
   (assert (= (lfor j (get third "jobs") #((get j "name") (.get j "elderRuns"))) [#("r" None)]) (get third "jobs"))
@@ -587,7 +587,7 @@
   (val old-row (c.row "atlas" "w"))
   (val new-row (| old-row {"instance" "atlas-w-new"}))
   (setv (get c.boots "atlas") "new")
-  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (val first (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                           "statuses" [new-row] "overlapsElder" True "stopping" False}
                       :actor None))
   (assert (get first "handoverPending") first)
@@ -596,7 +596,7 @@
           {"worker" "atlas" "pid" 2 "revision" (get new-row "runningRevision") "instance" "atlas-w-new" "attempt" "1"
            "specHash" (get new-row "specHash") "placement" (get new-row "placement") "ready" True "role" "standby"}
           :actor None)
-  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (val second (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                            "statuses" [new-row] "overlapsElder" True "stopping" False}
                        :actor None))
   (assert (not (.get second "handoverPending" False)) second)
@@ -622,7 +622,7 @@
   (val old-row (c.row "atlas" "w"))
   (val new-row (| old-row {"instance" "atlas-w-new"}))
   (setv (get c.boots "atlas") "new")
-  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "new"
+  (c.call "POST" "/heartbeat" {"name" "atlas" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "new"
                                "statuses" [new-row] "overlapsElder" True "stopping" False}
           :actor None)
   ;; 今の世代の process はまだ Ready を報告していない。止まりの始まる前: 印を付けない(前の世代が書き手のまま)。
@@ -697,7 +697,7 @@
   (assert (= (get view "drain" "remaining") [(+ "task/" task.id)]))
   ;; 新しい世代には drain を付けない。
   (assert (is (.row c.state.drains "zeus") None))
-  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "capacity" 10 "taskReserve" 0 "versions" {} "boot" "old"
+  (c.call "POST" "/heartbeat" {"name" "zeus" "provides" K3S "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "old"
                                "statuses" [{"name" (+ "task/" task.id) "phase" "finished" "result" "R" "detail" ""}]}
           :actor None)
   (assert (= (. (.row c.state.tasks task.id) phase) "finished"))

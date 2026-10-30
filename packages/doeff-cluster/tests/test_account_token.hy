@@ -106,9 +106,9 @@
 
 (deftest test-the-worker-status-carries-the-token-state-only-when-not-ok
   ;; coordinator は heartbeat の accountToken を worker の行に写し、Worker の資源の status に ok でない間だけ載せる。名乗らない worker は ok。
-  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []
+  (<- named (http-request "POST" "/heartbeat" {} {"name" "w1" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []
                                                   "accountToken" "stale"} :actor "c-test"))
-  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
+  (<- unnamed (http-request "POST" "/heartbeat" {} {"name" "w2" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                             :actor "c-test"))
   (val after-stale (get (responded (ClusterState) named 1000 T) 0))
   (val after-both (get (responded after-stale unnamed 1000 T) 0))

@@ -25,7 +25,7 @@
 (defk beat-body [boot]
   {:pre [(: boot str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "process の起動の印 boot を名乗る worker w の heartbeat の本文を組むため。"
-  {"name" "w" "boot" boot "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" []})
+  {"name" "w" "boot" boot "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" []})
 
 
 (defk named []

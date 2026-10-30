@@ -251,7 +251,7 @@
    :tags {:context "doeff-cluster-test" :role "program"}}
   "本物の coordinator-link(GET /watch を使う・最後の連絡の時刻 0)と本番の tick 間の待ちと本番の生存の合図の thread を、偽の coordinator と
    1 つの仮想の時計の下に並べて動かすため。thread は入口と同じ組み(lifeline-turn・lifeline-settled)で起こし、ループの後に止める。"
-  (val link (LinkState WORKER #("cpu") 1 0 FENCE-MS task-dir BOOT 0 0 0 :watch True))
+  (val link (LinkState WORKER #("cpu") 0 1 FENCE-MS task-dir BOOT 0 0 0 :watch True))
   (<- transport httpx.MockTransport (thread-coordinator clock heard-by-thread))
   (<- stop (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))
                                              :settle (fn [status detail] (lifeline-settled link status detail))

@@ -24,7 +24,7 @@
 (defk worker-at [name last-seen capacity]
   {:pre [(: name str) (: last-seen int) (: capacity int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "筋書きの worker(能力 cpu・python 3・最後の連絡 last-seen)を作るため。"
-  (replace (WorkerInfo name #("cpu") capacity last-seen :task-reserve 0) :versions PYTHON))
+  (replace (WorkerInfo name #("cpu") last-seen :task-reserve 0 :background-room capacity) :versions PYTHON))
 
 
 (defk task-on [id phase worker]

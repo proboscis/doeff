@@ -210,7 +210,7 @@
   {:pre [(: script Script) (: task-dir str)] :post [(: % Seen)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "台本 script を、本物の coordinator-link(本番の入口と同じく GET /watch を使う・最後の連絡の刻 0)と本番の周の間の待ちの下で回すため。
    壁の時計の代役は worker の側の全部(口・待ち・調整ループ)の外側、偽の coordinator はその内側で台本の時計(単調)だけを読む。"
-  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
+  (val link (LinkState WORKER #("cpu") 0 1 T.fence-ms task-dir "boot" 0 0 0 :watch True))
   (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
                                 script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
                                 (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
@@ -347,7 +347,7 @@
   "途絶の台本(10 秒目から届かない・台本の側では壁の時計を動かさない)を、seen-on と同じ組の一番内側に wall-stepped-before-the-wait を
    足して回すため。"
   (val script (Script :cut-ms 10000 :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 110000))
-  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True))
+  (val link (LinkState WORKER #("cpu") 0 1 T.fence-ms task-dir "boot" 0 0 0 :watch True))
   (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
                                 script-clock wall-clock-stepped (scripted-coordinator script) tick-pauses
                                 (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))
@@ -406,7 +406,7 @@
   "途絶えない台本を、seen-on と同じ組の口のすぐ外側に slept-inside-the-reply(30 秒 — fence 20 秒の後)を足して回すため。beat-beside =
    拍の外の背景の task でも heartbeat を送るか(本番の入口は真 — 偽は、背景の task が止まった口と同じく拍だけが送る形)。"
   (val script (Script :cut-ms None :cut-back-seconds 0.0 :step-after-beats None :beats-back-seconds 0.0 :until-ms 40000))
-  (val link (LinkState WORKER #("cpu") 1 0 T.fence-ms task-dir "boot" 0 0 0 :watch True :beat-beside beat-beside))
+  (val link (LinkState WORKER #("cpu") 0 1 T.fence-ms task-dir "boot" 0 0 0 :watch True :beat-beside beat-beside))
   (<- seen Seen (with-handlers [(state) (sim-time-handler :clock (SimClock)) os-file-handler slog-handler no-wakes stop-signal-never-comes
                                 script-clock wall-clock-stepped (scripted-coordinator script) (slept-inside-the-reply 30.0) tick-pauses
                                 (coordinator-link link (route-cell "http://coord") LINK-ROUTE (route-cell "http://coord"))

@@ -51,7 +51,7 @@
   (assert (= (! (expiry-of back)) {"w/process/atlas/7" 61000}))
   ;; 期限の前は残り、過ぎた後の最初の調停(要求の無い拍でも)で消える
   (setv #(s1 _ _) (! (call s "GET" "/state" None 60000)))
-  (setv #(s2 _ _) (! (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 1 "taskReserve" 0 "statuses" []} 61000)))
+  (setv #(s2 _ _) (! (call s "POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "backgroundRoom" 1 "taskReserve" 0 "statuses" []} 61000)))
   (assert (is-not (.row s1.board "w/process/atlas/7") None))
   (assert (is (.row s2.board "w/process/atlas/7") None))
   (assert (is-not (.row s2.board "w/cycle") None))
@@ -125,7 +125,7 @@
   (val queued (dfor i (range TASK-MAX-OPEN) (.format "t{}" i)
                     (TaskRecord (.format "t{}" i) "n" SAMPLE-TASK-PROGRAM "r" #() #() 60000 999999999 0)))
   (<- full tuple (program-placed (ClusterState :tasks (! (table-from-rows queued)) :next-task (+ TASK-MAX-OPEN 1)
-                                               :workers (! (table-from-rows {"a" (WorkerInfo "a" #("net") 0 1000 :task-reserve 0)})))
+                                               :workers (! (table-from-rows {"a" (WorkerInfo "a" #("net") 1000 :task-reserve 0 :background-room 0)})))
                                  {} :now 1000))
   (<- over (call (get full 0) "POST" "/tasks" (| body {"leaseSeconds" 60})))
   (assert (= (get over 1) 429) over)
@@ -136,7 +136,7 @@
 
 
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
-  (setv old (WorkerInfo "newmac" #("net") 10 0 :task-reserve 0) busy (WorkerInfo "atlas" #("net") 10 0 :task-reserve 0))
+  (setv old (WorkerInfo "newmac" #("net") 0 :task-reserve 0 :background-room 10) busy (WorkerInfo "atlas" #("net") 0 :task-reserve 0 :background-room 10))
   (var s (ClusterState :workers (! (table-from-rows {"newmac" old "atlas" busy}))))
   (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   (:= s (get reply-11 0))
@@ -167,14 +167,14 @@
 
 
 (deftest test-the-durable-delta-equals-the-delta-of-the-full-serialization
-  (val steps [#("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []} 1000)
+  (val steps [#("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []} 1000)
               #("POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}} 1500)
               #("PUT" "/board/k" {"value" 1} 2000)
               #("GET" "/state" None 2500)
-              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []} 3000)
-              #("POST" "/heartbeat" {"name" "zeus" "provides" ["net" "gpu"] "capacity" 1 "taskReserve" 0 "statuses" []} 3500)
+              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []} 3000)
+              #("POST" "/heartbeat" {"name" "zeus" "provides" ["net" "gpu"] "backgroundRoom" 1 "taskReserve" 0 "statuses" []} 3500)
               #("PUT" "/board/k" {"value" 2} 4000)
-              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []} 70000)])
+              #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []} 70000)])
   (var s (ClusterState))
   (var compared 0)
   (for [#(method path body now) steps]

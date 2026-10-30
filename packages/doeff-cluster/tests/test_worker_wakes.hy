@@ -133,7 +133,7 @@
   {:pre [(: with-link bool) (: delivered bool)] :post [(: % WakeSet)] :tags {:context "doeff-cluster-test" :role "program"}}
   "待ちの口を使わない送り手の口(最後に届いた返事 1000・間隔 BEAT-MS・fence 20 秒)の下で、今 1500 の起きる物の組を問うため。with-link =
    送り手の口の handler を並べるか(偽 = 一番外の空の組だけ)・delivered = 前の heartbeat が届いたか。"
-  (val state (LinkState "w" #("cpu") 1 0 20000 "tasks" "boot" 0 1000 1000 :watch False))
+  (val state (LinkState "w" #("cpu") 0 1 20000 "tasks" "boot" 0 1000 1000 :watch False))
   (setv state.beat-interval-ms BEAT-MS)
   (when delivered
     (setv state.last-desired (DesiredJobs #())))
@@ -162,7 +162,7 @@
   {:pre [(: back-ms int)] :post [(: % WakeSet)] :tags {:context "doeff-cluster-test" :role "program"}}
   "送り手の口(最後に届いた返事 = 壁の時計 1000・単調な時計 1000・間隔 BEAT-MS)の下で、tick の頭(壁の時計 1400・単調な時計 1400)の
    後に壁の時計だけが back-ms 戻り、単調な時計 1500 の時に起きる物の組を問うため(壁の時計の今 = 1500 − back-ms)。"
-  (val state (LinkState "w" #("cpu") 1 0 20000 "tasks" "boot" 0 1000 1000 :watch False))
+  (val state (LinkState "w" #("cpu") 0 1 20000 "tasks" "boot" 0 1000 1000 :watch False))
   (setv state.beat-interval-ms BEAT-MS state.last-desired (DesiredJobs #()))
   (<- cell (cell-of "http://127.0.0.1:9"))
   (<- watch-cell (cell-of "http://127.0.0.1:9"))

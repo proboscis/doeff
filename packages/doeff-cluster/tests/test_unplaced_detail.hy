@@ -36,7 +36,7 @@
    :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name が能力 provides を名乗る heartbeat を 1 つ受けた後の状態を返すため。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" provides "exclusive" [] "capacity" 10 "taskReserve" 0 "versions" V
+                         {"name" name "provides" provides "exclusive" [] "backgroundRoom" 10 "taskReserve" 0 "versions" V
                           "boot" "b1" "bootAt" 1 "statuses" []}
                          :actor None :now now))
   (assert (= (get answer 1) 200) answer)

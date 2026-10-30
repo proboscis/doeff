@@ -121,8 +121,8 @@
 
 
 (deftest test-the-worker-status-carries-env-capacity-only-when-not-ok
-  (val near (WorkerInfo "w1" #("net") 2 0 #() None #() :platform "linux-x86_64" :env-capacity "near" :task-reserve 0))
-  (val ok (WorkerInfo "w2" #("net") 2 0 #() None #() :platform "linux-x86_64" :env-capacity "ok" :task-reserve 0))
+  (val near (WorkerInfo "w1" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "near" :task-reserve 0 :background-room 2))
+  (val ok (WorkerInfo "w2" #("net") 0 #() None #() :platform "linux-x86_64" :env-capacity "ok" :task-reserve 0 :background-room 2))
   (val state (ClusterState :workers (! (table-from-rows {"w1" near "w2" ok}))))
   (assert (= (.get (get (worker-row state near 0 (ClusterTiming)) "status") "envCapacity") "near"))
   (assert (not-in "envCapacity" (get (worker-row state ok 0 (ClusterTiming)) "status"))))
