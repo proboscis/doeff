@@ -1825,7 +1825,7 @@
 
 ;; --- handler -----------------------------------------------------------------------------------
 
-(defhandler claude-code-handler [host]
+(defhandler claude-code-handler [#^ ClaudeCodeHost host]
   (ClaudeStartTurn [origin spec input]
     (<- outcome (start-turn host effect))
     (resume outcome))

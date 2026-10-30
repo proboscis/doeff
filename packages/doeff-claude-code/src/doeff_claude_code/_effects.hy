@@ -16,7 +16,7 @@
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenJson freeze-json])
 (import doeff_claude_code._values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
-                                  FreshSession ResumeSession ForkSession LentCredential PrintContent])
+                                  FreshSession ResumeSession ForkSession SessionOrigin LentCredential PrintContent])
 (import doeff_claude_code._lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
 
 
@@ -126,7 +126,7 @@
    足した行(ClaudeStreamLine)を 1 つずつ、行を足した直後に呼ぶ関数。本番の handler は stdout の読み手の thread から会話の lock の外で
    呼び、fake は行を出した所で呼ぶ — 上の層が ClaudeReadTurnEvents で頁を受ける遅れ(秒〜分)に縛られずに、行を読んだ時点で自分の
    記録を書くため。写し手は塞がず、例外を出さない(出した例外は handler が捨てる — 読み手の thread を止めない)。"
-  (#^ (| FreshSession ResumeSession ForkSession) origin)
+  (#^ SessionOrigin origin)
   (#^ ClaudeSessionSpec spec)
   (#^ TurnInput input)
   (setv #^ (| (get Callable #([ClaudeStreamLine] None)) None) tap None)

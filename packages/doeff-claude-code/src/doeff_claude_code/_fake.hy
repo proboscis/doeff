@@ -1133,7 +1133,7 @@
 
 ;; --- handler -----------------------------------------------------------------------------------
 
-(defhandler fake-claude-code-handler [world]
+(defhandler fake-claude-code-handler [#^ FakeClaudeWorld world]
   (ClaudeStartTurn [origin spec input]
     (<- outcome (fake-start-turn world effect))
     (resume outcome))

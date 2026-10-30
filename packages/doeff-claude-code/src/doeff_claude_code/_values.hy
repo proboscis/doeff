@@ -154,7 +154,7 @@
   (setv #^ (| str None) model None)
   (setv #^ (| str None) effort None)
   (setv #^ (get FrozenMap object) settings (field :default-factory FrozenMap))
-  (setv #^ (get FrozenMap (| McpSse McpStdio)) mcp-servers (field :default-factory FrozenMap))
+  (setv #^ (get FrozenMap McpServer) mcp-servers (field :default-factory FrozenMap))
   (setv #^ (| BypassAll AskHost DenyUnlisted HomeSettings) permission (BypassAll))
   (setv #^ (| AutocompactAuto AutocompactTokens None) autocompact None)
   (setv #^ (| str None) system-prompt-append None)
@@ -192,7 +192,6 @@
     (when (not (and (isinstance self.jsonl-text str) (.strip self.jsonl-text)))
       (raise (ValueError "Rebuilt.jsonl_text は空でない文字列")))))
 
-(setv TranscriptCarry (| LinkFromHome Rebuilt))
 
 (defclass [(dataclass :frozen True)] FreshSession []
   "新しい会話(--session-id。id は呼び手が決める)。"
