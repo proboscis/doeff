@@ -111,12 +111,6 @@ from doeff_conductor._effects import (
     MergeWorkspaces as MergeWorkspaces,
 )
 from doeff_conductor._effects import (
-    OpenGate as OpenGate,
-)
-from doeff_conductor._effects import (
-    OpenGateReason as OpenGateReason,
-)
-from doeff_conductor._effects import (
     OpenMonitor as OpenMonitor,
 )
 from doeff_conductor._effects import (
@@ -147,37 +141,13 @@ from doeff_conductor._effects import (
     ReviewerAgentLost as ReviewerAgentLost,
 )
 from doeff_conductor._effects import (
-    ReviewEscalationReason as ReviewEscalationReason,
-)
-from doeff_conductor._effects import (
-    ReviewEscalationTerminal as ReviewEscalationTerminal,
-)
-from doeff_conductor._effects import (
-    ReviewFinding as ReviewFinding,
-)
-from doeff_conductor._effects import (
     ReviewItem as ReviewItem,
 )
 from doeff_conductor._effects import (
     ReviewRoutingResult as ReviewRoutingResult,
 )
 from doeff_conductor._effects import (
-    ReviewSeverity as ReviewSeverity,
-)
-from doeff_conductor._effects import (
-    ReviewStakes as ReviewStakes,
-)
-from doeff_conductor._effects import (
-    ReviewStakesLevel as ReviewStakesLevel,
-)
-from doeff_conductor._effects import (
     ReviewVerdict as ReviewVerdict,
-)
-from doeff_conductor._effects import (
-    ReviewVerdictArtifact as ReviewVerdictArtifact,
-)
-from doeff_conductor._effects import (
-    ReviewVerdictTerminal as ReviewVerdictTerminal,
 )
 from doeff_conductor._effects import (
     RunWorkflow as RunWorkflow,
@@ -309,7 +279,6 @@ from doeff_conductor._types import (
     Workspace as Workspace,
 )
 
-
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import
 # them while it loads. `X as X` shows each name to type checkers; `__all__` is not used (DOEFF021).
 if TYPE_CHECKING:
@@ -361,22 +330,11 @@ if TYPE_CHECKING:
     from doeff_conductor._dsl import time_bang as time_bang
     from doeff_conductor._dsl import workspace as workspace
     from doeff_conductor._dsl import workspace_bang as workspace_bang
-    from doeff_conductor._effects.review import BudgetConsumption as BudgetConsumption
     from doeff_conductor._effects.review import BudgetCounterEntry as BudgetCounterEntry
-    from doeff_conductor._effects.review import BudgetCounterKey as BudgetCounterKey
     from doeff_conductor._effects.review import CalibrationEscapeRecord as CalibrationEscapeRecord
-    from doeff_conductor._effects.review import CalibrationLaneRate as CalibrationLaneRate
-    from doeff_conductor._effects.review import CalibrationLedger as CalibrationLedger
     from doeff_conductor._effects.review import CalibrationPolicy as CalibrationPolicy
-    from doeff_conductor._effects.review import ClosureTerminal as ClosureTerminal
-    from doeff_conductor._effects.base import E as E
-    from doeff_conductor._effects.review import GateOption as GateOption
     from doeff_conductor._effects.review import ReviewBudgetStatus as ReviewBudgetStatus
-    from doeff_conductor._effects.review import ReviewRouteRule as ReviewRouteRule
-    from doeff_conductor._effects.review import ReviewTier as ReviewTier
     from doeff_conductor._effects.review import Tier1ReviewResult as Tier1ReviewResult
-    from doeff_conductor._effects.review import Tier2Callback as Tier2Callback
-    from doeff_conductor._effects.review import Tier2ReviewRequest as Tier2ReviewRequest
     from doeff_conductor._handlers._workspace_handler import (
         WorkspaceStateError as WorkspaceStateError,
     )
@@ -433,22 +391,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "time_bang": "doeff_conductor._dsl",
     "workspace": "doeff_conductor._dsl",
     "workspace_bang": "doeff_conductor._dsl",
-    "BudgetConsumption": "doeff_conductor._effects.review",
     "BudgetCounterEntry": "doeff_conductor._effects.review",
-    "BudgetCounterKey": "doeff_conductor._effects.review",
     "CalibrationEscapeRecord": "doeff_conductor._effects.review",
-    "CalibrationLaneRate": "doeff_conductor._effects.review",
-    "CalibrationLedger": "doeff_conductor._effects.review",
     "CalibrationPolicy": "doeff_conductor._effects.review",
-    "ClosureTerminal": "doeff_conductor._effects.review",
-    "E": "doeff_conductor._effects.base",
-    "GateOption": "doeff_conductor._effects.review",
     "ReviewBudgetStatus": "doeff_conductor._effects.review",
-    "ReviewRouteRule": "doeff_conductor._effects.review",
-    "ReviewTier": "doeff_conductor._effects.review",
     "Tier1ReviewResult": "doeff_conductor._effects.review",
-    "Tier2Callback": "doeff_conductor._effects.review",
-    "Tier2ReviewRequest": "doeff_conductor._effects.review",
     "PreCoverageRunError": "doeff_conductor._handlers.journaled_workspace",
     "WorkspaceStateError": "doeff_conductor._handlers._workspace_handler",
 }

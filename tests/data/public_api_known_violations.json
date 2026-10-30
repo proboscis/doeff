@@ -8431,19 +8431,12 @@
   "doeff-conductor": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_conductor.overseer": [
-      "GateOption"
-     ],
-     "doeff_conductor.workflow_runtime": [
-      "GateOption"
-     ]
-    },
     "外れ — effect に答えの型を書く": {
      "doeff_conductor": [
       "AgentRef",
       "ExecResult",
       "IssueStatus",
+      "MergeConflict",
       "MergeStatus",
       "MergeWorkspacesResult",
       "PRHandle",
@@ -8479,51 +8472,6 @@
      ],
      "doeff_conductor.effects.review": [
       "CalibrationPolicy"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_conductor": [
-      "Issue",
-      "MergeConflict",
-      "MergeStrategy",
-      "OpenGate",
-      "OpenGateReason",
-      "ReviewEscalationReason",
-      "ReviewEscalationTerminal",
-      "ReviewFinding",
-      "ReviewSeverity",
-      "ReviewStakes",
-      "ReviewStakesLevel",
-      "ReviewVerdictArtifact",
-      "ReviewVerdictTerminal",
-      "Workspace"
-     ],
-     "doeff_conductor.effects": [
-      "BudgetConsumption",
-      "BudgetCounterKey",
-      "CalibrationLaneRate",
-      "CalibrationLedger",
-      "ClosureTerminal",
-      "GateOption",
-      "ReviewRouteRule",
-      "ReviewTier",
-      "Tier2Callback",
-      "Tier2ReviewRequest"
-     ],
-     "doeff_conductor.effects.base": [
-      "E"
-     ],
-     "doeff_conductor.effects.review": [
-      "BudgetConsumption",
-      "BudgetCounterKey",
-      "CalibrationLaneRate",
-      "CalibrationLedger",
-      "ClosureTerminal",
-      "GateOption",
-      "ReviewRouteRule",
-      "ReviewTier",
-      "Tier2Callback",
-      "Tier2ReviewRequest"
      ]
     }
    }

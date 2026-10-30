@@ -5618,6 +5618,13 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "Issue",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "IssueAlreadyExistsError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -5646,8 +5653,22 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "MergeStrategy",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "PRError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "Workspace",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {

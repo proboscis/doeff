@@ -9,12 +9,9 @@ Effects for managing issues in the vault:
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from doeff_conductor._effects.base import ConductorEffectBase
-
-if TYPE_CHECKING:
-    from doeff_conductor._types import Issue, IssueStatus
+from doeff_conductor._types import Issue, IssueStatus
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,7 +52,7 @@ class ListIssues(ConductorEffectBase):
             return issues
     """
 
-    status: "IssueStatus | None" = None  # Filter by status
+    status: IssueStatus | None = None  # Filter by status
     labels: tuple[str, ...] = ()  # Filter by labels (any match)
     limit: int | None = None  # Max issues to return
 
@@ -92,6 +89,6 @@ class ResolveIssue(ConductorEffectBase):
             yield ResolveIssue(issue=issue, pr_url=pr.url)
     """
 
-    issue: "Issue"  # Issue to resolve
+    issue: Issue  # Issue to resolve
     pr_url: str | None = None  # Associated PR URL
     result: str | None = None  # Resolution summary
