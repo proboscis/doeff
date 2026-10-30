@@ -95,6 +95,73 @@
   (assert (in ":readiness の値は数か :environ の名の文字列" a) a))
 
 
+;; card ki-02e836a9c628: 「既定を空にした」事実と「宣言の時に埋める」印を別の所(使い手の手書きの表)で持つと、表への書き漏れが宣言する者の
+;; 確かめの穴になった(使い手の 1 系だけの宣言が、埋める名を空のまま出した)。:environ の値を既定の値と埋める名の 2 つの型に分ける。
+(deftest test-defsystem-carries-the-names-filled-at-declaration
+  (<- ns (evaluate "
+(defk notice [foundation poll] {:pre [(: foundation Callable) (: poll float)] :post [(: % int)]} 1)
+(defsystem land [foundation]
+  (land-notice (notice foundation 5.0)
+    :needs #{\"pg-network\"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"POLL\" \"5.0\" \"BROKER\" (filled) \"PROXY\" (empty) \"ADDRESS\" (filled)}))
+"))
+  (val land (get ns "land"))
+  (val job (get (. land __doeff_system__) "jobs" 0))
+  ;; 静的な記述: 埋める名と (empty) の既定の値は空の文字列・埋める名は "filled" に、空を「無し」と読む名は "empty" に名の順で載る。
+  (assert (= (get job "environ") {"POLL" "5.0" "BROKER" "" "PROXY" "" "ADDRESS" ""}) job)
+  (assert (= (get job "filled") ["ADDRESS" "BROKER"]) job)
+  (assert (= (get job "empty") ["PROXY"]) job)
+  ;; 印の無い job の記述は鍵 "filled" も "empty" も持たない。印の無い空の文字列は型を決めていない既定として受け、どちらにも載らない
+  ;; (使い手が断れる形 — 頭の註)。
+  (<- plain (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"POLL\" \"5.0\"}))
+"))
+  (val described (get (. (get plain "s") __doeff_system__) "jobs" 0))
+  (assert (and (not-in "filled" described) (not-in "empty" described)) described)
+  (<- bare (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"BROKER\" \"\"}))
+"))
+  (val unmarked (get (. (get bare "s") __doeff_system__) "jobs" 0))
+  (assert (= (get unmarked "environ") {"BROKER" ""}) unmarked)
+  (assert (and (not-in "filled" unmarked) (not-in "empty" unmarked)) unmarked))
+
+
+(defk probe-program []
+  {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "構成子 job に渡す Program の値を作るため(呼び出しの形が module の最上位の関数を名指す)。"
+  1)
+
+
+(deftest test-defsystem-refuses-marks-other-than-filled-and-empty
+  ;; 反例: 印は (filled) と (empty) の 2 つだけ・引数を取らない。
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"BROKER\" (missing)}))"))
+  (assert (in ":environ の BROKER の値は文字列か (filled) か (empty)" c) c)
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"BROKER\" (filled \"x\")}))"))
+  (assert (in ":environ の BROKER の値は文字列か (filled) か (empty)" d) d))
+
+
+(deftest test-job-refuses-filled-names-outside-the-environ-or-with-a-default
+  ;; 構成子 job は埋める名を Job の filled に載せ((empty) の名と埋める名の無い job は載せない)、埋める名が :environ に無い・既定の値を
+  ;; 持つ形を断る(展開の外から呼ぶ時)。
+  (import doeff_cluster.shared.entry.service_build [job])
+  (import doeff_cluster.shared.intent.service_model [CallShape])
+  (val call (CallShape :function probe-program :args [] :kwargs {}))
+  (val built (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"POLL" "5.0" "BROKER" "" "PROXY" ""}
+                  :filled (frozenset ["BROKER"])))
+  (assert (= built.filled (frozenset ["BROKER"])) built)
+  (assert (= (dfor v built.environ v.name v.value) {"BROKER" "" "POLL" "5.0" "PROXY" ""}) built.environ)
+  (assert (= (. (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"POLL" "5.0"}) filled) (frozenset)))
+  (var stranger None)
+  (try (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"POLL" "5.0"} :filled (frozenset ["BROKER"]))
+       (except [error ValueError] (:= stranger (str error))))
+  (assert (and stranger (in "BROKER" stranger) (in ":environ に無い" stranger)) stranger)
+  (var defaulted None)
+  (try (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"BROKER" "redis://x"} :filled (frozenset ["BROKER"]))
+       (except [error ValueError] (:= defaulted (str error))))
+  (assert (and defaulted (in "既定の値を持つ" defaulted)) defaulted))
+
+
 (deftest test-defsystem-keeps-the-type-of-a-typed-foundation
   ;; 型の注記つきの引数 [#^ T foundation] は展開でき(前は SyntaxError)、記述の params は名の列のまま・型は param_types(名 →
   ;; module:qualname)に残り、系の関数の引数にも注記が付く — 汎用の模擬の検が系を呼ばずに土台の型を読むため。
@@ -126,7 +193,7 @@
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :update \"rolling\"))"))
   (assert (in ":update は" c) c)
   (<- d (refusal "(defsystem s [foundation] (job (make foundation) :environ {\"POLL\" 5}))"))
-  (assert (in ":environ の値は文字列" d) d)
+  (assert (in ":environ の値は文字列か (filled) か (empty)" d) d)
   (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100) (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100))"))
   (assert (in "job の名 job が 2 回ある" e) e)
   (<- f (refusal "(defsystem s [foundation] (job make))"))

@@ -23,15 +23,16 @@
 
 
 (deff job [#^ str name program * #^ CallShape call needs #^ int replicas #^ (| dict None) [readiness None] #^ str [update "recreate"]  ; defk にできない: macro の展開 — defsystem の展開(module の読み込みの時の値)が呼ぶ構成子
-           #^ (| dict None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None]]
+           #^ (| dict None) [environ None] #^ int peak-mib #^ int settle-mib #^ (| str None) [single-host None] #^ (| frozenset None) [filled None]]
   {:pre [(: name str) (: program (| Program int str list dict None)) (: call CallShape) (: needs (| frozenset set list tuple None)) (: replicas int) (: readiness (| dict None)) (: update str) (: environ (| dict None))
-         (: peak-mib int) (: settle-mib int) (: single-host (| str None))]
+         (: peak-mib int) (: settle-mib int) (: single-host (| str None)) (: filled (| frozenset None))]
    :post [(: % Job)] :tags {:context "doeff-cluster" :role "main" :reads "env"}}
   "job 1 つを検めて作る(defsystem の展開が呼ぶ)。replicas = 望む台数(必ず渡す — 0 = 取り下げ・1 = 動かす)。旧い引数(:env・:config・
    :env-config・:requires)はこの関数に無いので TypeError。readiness の欄を :environ の名で書いた時(readiness_model の註)は、宣言の
    :environ の既定の値で読んだ形を検める(job の readiness は名のまま持ち、system-declaration が上書きを重ねた値で読み直す)。
    peak-mib・settle-mib = 起動の memory の山と落ち着いた値(MiB — 必ず渡す・既定の値は無い)・single-host = 1 台に縛ってよい訳(無ければ
-   None)。規則は coordinator の宣言の読みと同じ job_rules.memory-refusal・single-host-refusal。"
+   None)。規則は coordinator の宣言の読みと同じ job_rules.memory-refusal・single-host-refusal。
+   filled = :environ の名のうち宣言の時に埋める名(defsystem の印 (filled) — 既定の値は空の文字列で渡る。card ki-02e836a9c628)。"
   (when (not (isinstance program DoExpr))
     (raise (TypeError (.format "job {}: Program の値(defk の関数を呼んだ結果)を渡す: {!r}" name program))))
   (when (not-in replicas REPLICAS-VALUES)
@@ -47,7 +48,14 @@
   (when (and (is-not environ None) (not (isinstance environ dict)))
     (raise (TypeError (.format "job {} の :environ は文字列の鍵と値の dict: {!r}" name environ))))
   (setv environ-given (if (is environ None) {} environ))
-  (setv env-vars (tuple (gfor k (sorted environ-given) (EnvVar :name k :value (get environ-given k)))))
+  (setv env-vars (tuple (gfor k (sorted environ-given) (EnvVar :name k :value (get environ-given k))))
+        filled-given (if (is filled None) (frozenset) filled)
+        strangers (sorted (gfor n filled-given :if (not-in n environ-given) n))
+        defaulted (sorted (gfor n filled-given :if (and (in n environ-given) (get environ-given n)) n)))
+  (when strangers
+    (raise (ValueError (.format "job {} の宣言の時に埋める名 {} が :environ に無い" name strangers))))
+  (when defaulted
+    (raise (ValueError (.format "job {} の宣言の時に埋める名 {} が既定の値を持つ — 埋める名の既定は空" name defaulted))))
   ;; readiness は :environ の値の型を EnvVar が検めた後に読む(名で書いた欄は environ の文字列を数として読む)。
   (setv refusal (or (readiness-environ-refusal readiness environ-given)
                     (readiness-refusal (readiness-from-environ readiness environ-given) update)))
@@ -55,7 +63,7 @@
     (raise (ValueError (.format "job {} の :readiness: {}" name refusal))))
   (identity-of call (.format "job {}" name))
   (Job :name name :program program :call call :needs (frozenset caps) :replicas replicas :readiness readiness :update update
-       :environ env-vars :peak-mib peak-mib :settle-mib settle-mib :single-host single-host))
+       :environ env-vars :peak-mib peak-mib :settle-mib settle-mib :single-host single-host :filled filled-given))
 
 
 (deff system-of [#^ str name #^ tuple jobs * #^ tuple [task-limits #()]]  ; defk にできない: defsystem の展開(module の読み込みの時の値)が呼ぶ構成子

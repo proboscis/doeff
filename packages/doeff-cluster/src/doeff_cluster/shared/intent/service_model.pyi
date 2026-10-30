@@ -96,6 +96,7 @@ class Job:
     peak_mib: int
     settle_mib: int
     single_host: str | None = None
+    filled: frozenset[str] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class System:

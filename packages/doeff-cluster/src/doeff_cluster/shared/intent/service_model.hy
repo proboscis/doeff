@@ -55,7 +55,8 @@
    frozenset — R4b)・replicas = 望む台数(0 = 取り下げ・1 = 動かす — 宣言し直しが Service に書く値)・readiness = {\"windowSeconds\" n …}
    か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・peak-mib = 起動の memory の山(MiB)・
    settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する・card ki-2acb63aec0fd)・single-host = 1 台の worker に縛ってよい訳
-   (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)。"
+   (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
+   (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ・card ki-02e836a9c628)。"
   (#^ str name)
   (#^ object program)
   (#^ CallShape call)
@@ -66,7 +67,8 @@
   (#^ tuple environ)
   (#^ int peak-mib)
   (#^ int settle-mib)
-  (setv #^ (| str None) single-host None))
+  (setv #^ (| str None) single-host None)
+  (setv #^ (get frozenset str) filled (frozenset)))
 
 
 (defrecord System
