@@ -27,7 +27,8 @@
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
                               Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused
-                              WrittenAndAppended AppendRefused])
+                              WrittenAndAppended AppendRefused ReadRowAnswer ListRowsAnswer CountRowsAnswer
+                              ReadBatchAnswer PutRowAnswer AppendEventsAnswer])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -68,7 +69,7 @@
     (raise (TypeError (+ what ".expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
 
-(defclass [(dataclass :frozen True)] ReadRow [EffectBase]
+(defclass [(dataclass :frozen True)] ReadRow [(get EffectBase ReadRowAnswer)]
   "行を鍵で 1 つ読む。答え = Row | Missing | Unreachable。"
   (#^ str table)
   (#^ tuple key)
@@ -77,7 +78,7 @@
     (checked-key self.key "ReadRow.key")))
 
 
-(defclass [(dataclass :frozen True)] ListRows [EffectBase]
+(defclass [(dataclass :frozen True)] ListRows [(get EffectBase ListRowsAnswer)]
   "表の行を鍵の綴りの順に 1 頁読む。where = 欄 → 値の凍らせた写像(索引の欄の等号の AND)/ fields = 返す欄(None = 全部。鍵の欄は常に返す)/
    cursor = 前の頁の next-cursor(None = 最初から)/ limit = 頁の行数の上限(1 以上 LIST-LIMIT-MAX 以下 — 外は作る時に ValueError)。
    答え = Page | Reset | Unreachable | NotIndexed。
@@ -152,7 +153,7 @@
   True)
 
 
-(defclass [(dataclass :frozen True)] CountRows [EffectBase]
+(defclass [(dataclass :frozen True)] CountRows [(get EffectBase CountRowsAnswer)]
   "表の行の件数を数える。where・where-any = ListRows と同じ絞り(欄 → 値の凍らせた写像・索引の欄の等号の AND、組のどれかに等しい行 —
    索引の無い欄は NotIndexed)/ at-least = (順の欄の名, 下限の整数)(None = 下限なし): 欄の値が整数で下限以上の行だけを数える
    (値が整数でない行・欄の無い行は数えない — ListRows の ascending-by / descending-by が並べる行と同じ)。保持の期限を過ぎた終端の行は
@@ -180,7 +181,7 @@
     (checked-at-least self.at-least)))
 
 
-(defclass [(dataclass :frozen True)] ReadBatch [EffectBase]
+(defclass [(dataclass :frozen True)] ReadBatch [(get EffectBase ReadBatchAnswer)]
   "行の読みの束を置き場への 1 往復で読む(card ki-177a4f287c42)。reads = ReadRow | ListRows の空でない tuple(READ-BATCH-MAX 個まで・
    束の中の ListRows の limit の和は LIST-LIMIT-MAX まで — 外は作る時に ValueError・読みでない項は TypeError)。
    答え = BatchRead(items = 束の順の、読み 1 つごとの答え — ReadRow は Row | Missing・ListRows は Page | Reset | NotIndexed)| Unreachable。
@@ -198,7 +199,7 @@
       (raise (ValueError (.format "ReadBatch の ListRows の limit の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
 
 
-(defclass [(dataclass :frozen True)] PutRow [EffectBase]
+(defclass [(dataclass :frozen True)] PutRow [(get EffectBase PutRowAnswer)]
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
    idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き。card ki-78c6d663491f): 置き場は確定した鍵つきの書きの答えを
@@ -356,7 +357,7 @@
     (check-event-append self "EventAppend")))
 
 
-(defclass [(dataclass :frozen True)] AppendEvents [EffectBase]
+(defclass [(dataclass :frozen True)] AppendEvents [(get EffectBase AppendEventsAnswer)]
   "追記の束を置き場への 1 往復で積む(card ki-48c34994ed15)。appends = EventAppend の空でない tuple(同じ列の同じ冪等キーは 1 度だけ —
    2 度出たら作る時に ValueError)。答え = AppendedEvents(items = 束の順の、追記 1 つごとの答え Appended | Refused)| Unreachable。
    束の答えは、束の順に AppendEvent を 1 つずつ、間に他の書きを挟まずに撃った答えと同じ: 追記 1 つの判断は AppendEvent と同じ(冪等キーの

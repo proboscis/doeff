@@ -574,7 +574,7 @@
    tails = 要求が名指した列(WatchChanges.streams)ごとの末尾(StreamTail | StreamTailEmpty — 名指した順・名指さなければ空・#3718)。
    tails は答えを返す時点の名指した列の末尾で、items と同じ置き場の断面から読む。列への追記では待ち手を起こさない — 起こしたい呼び手は
    列を源に別に待つ。"
-  (#^ tuple items)
+  (#^ (get tuple #((| RowChanged RowRemoved) ...)) items)
   (#^ WatchCursor cursor)
   (#^ (get tuple #((| StreamTail StreamTailEmpty) ...)) tails))
 

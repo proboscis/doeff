@@ -13115,6 +13115,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records",
+   "name": "Count",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "CountRowsAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
    "name": "PutRowsAppendEventsAnswer",
    "組": "許した物 — effect の答えの型",
    "決め": "ki-d76481732b61"
@@ -13360,6 +13374,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.event_source",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
    "name": "Reset",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13570,6 +13591,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.http_server",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
    "name": "RequestMark",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13640,6 +13668,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.laws",
+   "name": "AppendedEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
    "name": "Changes",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13696,6 +13731,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.laws",
+   "name": "ExpiredEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
    "name": "ListCursor",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13717,6 +13759,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.laws",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "Pruned",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
    "name": "Refused",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13725,6 +13781,13 @@
    "package": "doeff-records",
    "module": "doeff_records.laws",
    "name": "Reset",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "RetiredEvents",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -13829,6 +13892,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.loop_work",
+   "name": "AppendedEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.loop_work",
    "name": "Changes",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13886,6 +13956,13 @@
    "package": "doeff-records",
    "module": "doeff_records.loop_work",
    "name": "NotIndexed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.loop_work",
+   "name": "Page",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -13976,6 +14053,27 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.maintenance",
+   "name": "ExpiredEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.maintenance",
+   "name": "Pruned",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.maintenance",
+   "name": "RetiredEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.maintenance",
    "name": "Unreachable",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -13984,6 +14082,13 @@
    "package": "doeff-records",
    "module": "doeff_records.memory",
    "name": "Appended",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "AppendedEvents",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14053,6 +14158,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.memory",
+   "name": "ExpiredEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
    "name": "ListCursor",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14081,6 +14193,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.memory",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "Pruned",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
    "name": "Refused",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14089,6 +14215,13 @@
    "package": "doeff-records",
    "module": "doeff_records.memory",
    "name": "Reset",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "RetiredEvents",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14249,6 +14382,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.pg",
+   "name": "AppendedEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
    "name": "Changes",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14305,6 +14445,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.pg",
+   "name": "ExpiredEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
    "name": "ListCursor",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14326,6 +14473,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.pg",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "Pruned",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
    "name": "RecordsSqlFailed",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14341,6 +14502,13 @@
    "package": "doeff-records",
    "module": "doeff_records.pg",
    "name": "Reset",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "RetiredEvents",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14515,6 +14683,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.typed",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
    "name": "Row",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14557,7 +14732,28 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.values",
+   "name": "AppendEventsAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
    "name": "Appended",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "AppendedEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "BatchRead",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14620,6 +14816,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.values",
+   "name": "ListRowsAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
    "name": "Missing",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14634,7 +14837,28 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.values",
+   "name": "Page",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "PutRowAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
    "name": "PutRowsAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "ReadBatchAnswer",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14691,6 +14915,20 @@
    "package": "doeff-records",
    "module": "doeff_records.values",
    "name": "Row",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "RowChanged",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "RowRemoved",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -14844,6 +15082,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.wire",
+   "name": "AppendedEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
    "name": "Changes",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14915,6 +15160,13 @@
    "package": "doeff-records",
    "module": "doeff_records.wire",
    "name": "NotIndexed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "Page",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
