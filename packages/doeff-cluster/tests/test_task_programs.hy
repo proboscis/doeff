@@ -32,7 +32,7 @@
 (import doeff_cluster.worker.entry.job_entry [read-program])
 (import doeff_cluster.shared.intent.remote_model [VersionMismatch])
 (import doeff_core_effects [await-handler slog-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])

@@ -86,7 +86,7 @@ def test_lazy_names_still_import() -> None:
     code = (
         "from doeff import DoeffRunContext\n"
         "from doeff_core_effects import HttpRequest, http_production_handler\n"
-        "from doeff_core_effects.http_effects import HttpResponse\n"
+        "from doeff_core_effects._http_effects import HttpResponse\n"
         "import doeff_core_effects._memo_handlers_impl\n"
         "print('ok')"
     )

@@ -5,7 +5,7 @@
 (import pytest)
 (import doeff_core_effects [HttpError HttpRequest HttpResponse Listen SlogEffect])
 (import doeff_core_effects [await-handler listen-handler slog-handler state])
-(import doeff_core_effects.http_handlers [http-production-handler http-fixture-handler])
+(import doeff_core_effects [http-production-handler http-fixture-handler])
 (import doeff_hy._http [http-get http-post http-put http-delete http-head])
 (import tests.effects.http_request_support
   [FakeAsyncClient
@@ -251,8 +251,8 @@
 
 
 (deftest test-http-request-implementation-surface-is-hy
-  (assert (= HttpRequest.__module__ "doeff_core_effects.http_effects"))
-  (assert (= HttpResponse.__module__ "doeff_core_effects.http_effects"))
+  (assert (= HttpRequest.__module__ "doeff_core_effects._http_effects"))
+  (assert (= HttpResponse.__module__ "doeff_core_effects._http_effects"))
   (assert (= http-production-handler.__module__
              "doeff_core_effects._http_handlers_impl"))
   (assert (= http-fixture-handler.__module__

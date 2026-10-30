@@ -17,6 +17,7 @@ from doeff_core_effects import (
     Ask,
     CacheDeleteEffect,
     Get,
+    HttpRequest,
     Local,
     MemoDeleteEffect,
     MemoExistsEffect,
@@ -24,7 +25,6 @@ from doeff_core_effects import (
     MemoPutEffect,
     Put,
 )
-from doeff_core_effects.http_effects import HttpRequest
 from doeff_domain import (
     AssertDomainCovered,
     AssertNoOrphanEffects,

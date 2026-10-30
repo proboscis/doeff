@@ -50,8 +50,8 @@
                                       DetachedUnreachable DetachedAwaited DetachedUnrunnable
                                       AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster.shared.protocol.detached [detached-cluster])
-(import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [http-production-handler])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster [ProcessesOf])

@@ -13,7 +13,7 @@
 (require doeff-hy.macros [defk <- val])
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.http_effects [HttpResponse HttpFailed])
+(import doeff_core_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 

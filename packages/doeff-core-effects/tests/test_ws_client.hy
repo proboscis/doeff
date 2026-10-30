@@ -14,11 +14,9 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Cancel])
 (import doeff_core_effects [HttpHeader])
-(import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect ReadWsSent WsLink WsConnectFailed WsConnectOutcome WsText
-                                              WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome WsScript ScriptedWsEndpoint ScriptedWsReply
-                                              ScriptedWsText ScriptedWsBinary ScriptedWsClosed WsSentText WsSentRecord SCRIPT-EXHAUSTED-REASON
-                                              NOT-IN-SCRIPT-REASON])
-(import doeff_core_effects.scripted_ws_client [scripted-ws-client])
+(import doeff_core_effects [WsConnect WsReceive WsSend WsDisconnect ReadWsSent WsLink WsConnectFailed WsConnectOutcome WsText WsBinary WsLinkClosed WsFrame WsSent WsSendOutcome WsScript ScriptedWsEndpoint ScriptedWsReply ScriptedWsText ScriptedWsBinary ScriptedWsClosed WsSentText WsSentRecord]
+        doeff_core_effects._ws_client_effects [SCRIPT-EXHAUSTED-REASON NOT-IN-SCRIPT-REASON])
+(import doeff_core_effects._scripted_ws_client [scripted-ws-client])
 (import ws_client_contract_handlers [ContractWsWorld WsWorld PEER-SECONDS client-into])
 (import pytest)
 
@@ -167,7 +165,7 @@
 (deftest test-a-cancelled-connect-closes-its-client-and-the-other-connect-proceeds
   {:interpreters ["aiohttp-ws-client"]}
   ;; 同じ handler の下で同時に進む 2 つの繋ぎのうち片方を Cancel する: 残った方は動き、Cancel された方の client は finally で閉じる。
-  (import doeff_core_effects.aiohttp_ws_client [aiohttp-ws-client])
+  (import doeff_core_effects._aiohttp_ws_client [aiohttp-ws-client])
   (<- world WsWorld (ContractWsWorld))
   (val box ((get Queue "aiohttp.ClientSession")))
   (<- hello WsText (with-handler [(aiohttp-ws-client :client-factory (partial client-into box))]
@@ -204,7 +202,7 @@
   (import aiohttp)
   (import yarl [URL])
   (import multidict [CIMultiDict CIMultiDictProxy])
-  (import doeff_core_effects.aiohttp_ws_client [failure-detail])
+  (import doeff_core_effects._aiohttp_ws_client [failure-detail])
   (val url (URL "wss://api.test/v1/live/sessions/s1/attach?token=secret-in-query"))
   (val info (aiohttp.RequestInfo :url url :method "GET"
                                  :headers (CIMultiDictProxy (CIMultiDict [#("Authorization" "Bearer secret-in-header")])) :real-url url))

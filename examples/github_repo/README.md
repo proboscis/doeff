@@ -30,4 +30,4 @@ spending any of the limit.
 
 To test against answers recorded from the real API instead of written by hand, use
 `http_fixture_handler(path, mode="record")` once and `mode="replay"` in the tests (from
-`doeff_core_effects.http_handlers`).
+`doeff_core_effects._http_handlers`).

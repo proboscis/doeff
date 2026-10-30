@@ -52,7 +52,7 @@
 (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv])
 (import doeff_cluster.shared.protocol.shared_handlers [shared-http])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_cluster.shared.protocol.metrics_handlers [metrics-http])
 (import doeff_cluster.shared.protocol.metrics_memory [metrics-memory])
 (import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims readiness-http])

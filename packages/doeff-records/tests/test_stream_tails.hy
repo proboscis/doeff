@@ -14,7 +14,7 @@
 (import json)
 (import doeff [with_handlers])
 (import doeff_core_effects [Spawn Wait])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [SimClock sim-time-handler Delay GetMonotonic])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [Appended Changes Event Events ExpectAbsent StreamEmpty StreamTail StreamTailEmpty UndeclaredTable WatchCursor Written])

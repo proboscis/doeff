@@ -66,7 +66,7 @@ def test_star_import_does_not_load_the_hy_modules() -> None:
         "import sys\n"
         "namespace = {}\n"
         "exec('from doeff_core_effects import *', namespace)\n"
-        "loaded = sorted(m for m in ('httpx', 'doeff_core_effects.http_handlers', 'doeff_core_effects.http_effects') if m in sys.modules)\n"
+        "loaded = sorted(m for m in ('httpx', 'doeff_core_effects._http_handlers', 'doeff_core_effects._http_effects') if m in sys.modules)\n"
         "assert 'Ask' in namespace and 'reader' in namespace and 'HttpRequest' not in namespace, sorted(namespace)\n"
         "assert not loaded, loaded\n"
     )

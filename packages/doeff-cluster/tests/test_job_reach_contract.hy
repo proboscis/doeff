@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with_handlers])
 (import doeff_core_effects [Ask])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_cluster.shared.intent.job_call_model [JobRequest JobUnreachable])
 (import doeff_cluster.shared.intent.job_reach_model [JobNoWay JobNotReached JobReached JobWay ReachFailure ReachJob])
 (import doeff_cluster.shared.protocol.job_call_handlers [Counterpart])

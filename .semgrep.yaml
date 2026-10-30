@@ -1209,7 +1209,7 @@ rules:
               ...
     paths:
       include:
-        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+        - /packages/doeff-core-effects/doeff_core_effects/_http_handlers.py
 
   - id: http-request-effect-shape-is-hy
     languages: [python]
@@ -1242,7 +1242,7 @@ rules:
           ...
     paths:
       include:
-        - /packages/doeff-core-effects/doeff_core_effects/http_handlers.py
+        - /packages/doeff-core-effects/doeff_core_effects/_http_handlers.py
 
   - id: no-runresult-hasattr-duck-typing
     languages: [python]

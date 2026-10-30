@@ -11,8 +11,8 @@
 (import weakref)
 (import httpx)
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [http-production-handler])
 
 ;; 答える本文(本番の Node の一覧の大きさに近い 96 KB)。
 (val BODY (* b"x" (* 96 1024)))

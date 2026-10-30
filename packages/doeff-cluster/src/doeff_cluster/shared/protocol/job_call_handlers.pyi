@@ -7,9 +7,9 @@ from collections.abc import Callable as Callable
 from urllib.parse import quote as url_quote
 from urllib.parse import urlencode as urlencode
 from doeff_core_effects import Ask as Ask
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_cluster.shared.intent.job_call_model import CallJob as CallJob
 from doeff_cluster.shared.intent.job_call_model import JobAnswer as JobAnswer
 from doeff_cluster.shared.intent.job_call_model import JobField as JobField

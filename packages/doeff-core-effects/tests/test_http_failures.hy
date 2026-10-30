@@ -13,8 +13,8 @@
 (import datetime)
 (import httpx)
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [http-production-handler])
 
 
 (defclass GatewayTimeout [httpx.NetworkError]

@@ -142,14 +142,14 @@
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 8,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_handlers.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_handlers.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -436,21 +436,21 @@
     },
     {
       "count": 3,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_effects.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_effects.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__repr__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/http_effects.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_http_effects.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "raise_for_status"

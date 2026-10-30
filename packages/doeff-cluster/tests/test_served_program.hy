@@ -14,7 +14,7 @@
 (import httpx)
 (import doeff [with-handlers])
 (import doeff_core_effects [await-handler slog-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.service_model [Declaration])
 (import doeff_cluster.shared.entry.declare [apply-declaration])

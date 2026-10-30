@@ -8,7 +8,7 @@
 ;;; 外側の相手役は受けた要求に 200(本文 = 受けた url)で答える。外へ出た要求は相手役の HttpResponse を受け、止めた要求は HttpFailed か
 ;;; HostNotAllowed を受ける — HttpResponse を作るのは相手役だけなので、答えの型が「外へ出たか」をそのまま名指す。
 
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects.http_host_gate [HostNotAllowed http-host-gate])
 
 ;; 手元の構成の通す集合(この機体の中だけ)。

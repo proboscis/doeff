@@ -15,7 +15,7 @@
 (import doeff [with_handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Wait])
-(import doeff_core_effects.http_effects [HttpRequest HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpFailed HttpFailureKind])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_time [GetMonotonic])
 (import doeff_records [Changes EventsQuiet Unreachable WatchCursor ExpectAbsent])

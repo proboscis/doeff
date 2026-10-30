@@ -852,6 +852,8 @@
 
 
 (defhandler aiohttp-http-server
+  "HTTP の待ち受けの effect(HttpListen・HttpNextRequest・HttpRespond・ws の送受など)に、aiohttp の実 I/O で答える(頭の註)。
+   組の外側に await-handler が要る。"
   ;; 待ち受けの effect の実 I/O(頭の註)。待ち受けの object は session の値に 1 度だけ作る。節は Await で await-handler の共有の event loop に
   ;; 入り、そこから待ち受けの loop の coroutine を across で待つ(組の外側に await-handler が要る)。
   (session val edge (WebEdge))

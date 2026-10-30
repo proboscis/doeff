@@ -13,7 +13,8 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler http-client-factory])
+(import doeff_core_effects [http-production-handler]
+        doeff_core_effects._http_handlers [http-client-factory])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [ReadEvents])
 (import doeff_records [Events])

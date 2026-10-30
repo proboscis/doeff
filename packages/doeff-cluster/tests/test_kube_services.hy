@@ -20,7 +20,7 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [state])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_cluster.shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
                                                         KubeServicePort KubeServiceRefused KubeServiceType])

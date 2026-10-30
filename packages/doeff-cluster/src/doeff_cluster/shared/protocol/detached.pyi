@@ -6,8 +6,8 @@ from dataclasses import dataclass as dataclass
 from urllib.parse import quote as url_quote
 from collections.abc import Mapping as Mapping
 from doeff_time import Delay as Delay
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpFailed as HttpFailed
 from doeff_cluster.shared.protocol.coordinator_route import RouteCell as RouteCell
 from doeff_cluster.shared.protocol.coordinator_route import RouteOptions as RouteOptions
 from doeff_cluster.shared.protocol.coordinator_route import RoutedReply as RoutedReply

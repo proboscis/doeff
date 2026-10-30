@@ -57,10 +57,10 @@ sys.exit(98)
         (NO_HY, "import doeff_core_effects._os_process", "hy"),
         (NO_HY, "from doeff_core_effects._cache import cache", "hy"),
         (NO_HY, "from doeff_core_effects import http_production_handler", "http"),
-        (NO_HY, "from doeff_core_effects.http_handlers import http_fixture_handler", "http"),
+        (NO_HY, "from doeff_core_effects._http_handlers import http_fixture_handler", "http"),
         (NO_HY, "from doeff_core_effects import HttpRequest", "http"),
         (NO_HTTPX, "from doeff_core_effects import http_production_handler", "http"),
-        (NO_HTTPX, "from doeff_core_effects.http_handlers import http_fixture_handler", "http"),
+        (NO_HTTPX, "from doeff_core_effects._http_handlers import http_fixture_handler", "http"),
     ],
     ids=[
         "hy-module",

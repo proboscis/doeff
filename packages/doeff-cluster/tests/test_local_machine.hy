@@ -34,7 +34,7 @@
 (import doeff [with-handlers Program EffectBase])
 (import doeff_core_effects [await-handler slog-handler])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [WriteText FileFailed])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])

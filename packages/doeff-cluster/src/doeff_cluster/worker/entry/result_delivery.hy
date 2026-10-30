@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import doeff [run with-handlers])
 (import doeff_core_effects [await-handler slog-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.run_context [RunContext])

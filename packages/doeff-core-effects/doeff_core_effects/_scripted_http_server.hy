@@ -303,6 +303,7 @@
 
 
 (defhandler scripted-http-server [#^ HttpScript script]
+  "HTTP の待ち受けの effect に、呼び手の台本 HttpScript(届く出来事の列・中継先の答え・読まない相手)で I/O なしに答える(頭の註)。"
   ;; 台本の待ち受け(頭の註)。pending = まだ届けていない出来事・served = 受けた命令と送った ws の記録の列・opened = ws に上げて開いている札・
   ;; backlog = 読まない相手の札の箱の溜まり(byte)・limit = 送りの上限(HttpListen が控える)・tally = 送りの勘定・closed = HttpShutdown の理由
   ;; (None = 開いている)・body-table = 札 → 本文の台本・readable = 本文をまだ読める札 → 宣言の長さ(届けた要求の札を入れ、読んだ・命令を

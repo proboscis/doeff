@@ -6,10 +6,10 @@ from doeff_hy._static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from httpx import ConnectError as ConnectError
 from doeff_core_effects import ReadText as ReadText
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpFailureKind as HttpFailureKind
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_cluster.shared.core.supplied_spelling import OBJECT_SPELLING as OBJECT_SPELLING
 from doeff_cluster.shared.core.supplied_spelling import REF_SPELLING as REF_SPELLING
 from doeff_cluster.shared.protocol.supplied_values import KUBE_API as KUBE_API

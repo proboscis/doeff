@@ -22,7 +22,7 @@
 (import doeff [UnhandledEffect])
 (import doeff_core_effects [MemoryFile MemoryFiles ReadMemoryFiles])
 (import doeff_core_effects [state])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster [environ-table-reader])

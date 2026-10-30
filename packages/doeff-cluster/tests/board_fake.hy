@@ -13,7 +13,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)
 (import urllib.parse [urlsplit unquote :as url-unquote])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key lease-full-until])

@@ -6,8 +6,8 @@ __doeff_handles__ / __doeff_effects__ で宣言しているが、宣言は関数
 """
 
 from doeff import stacked_handlers
-from doeff_core_effects.http_effects import HttpRequest
-from doeff_core_effects.http_handlers import http_production_handler
+from doeff_core_effects import HttpRequest
+from doeff_core_effects import http_production_handler
 
 
 def test_the_installer_declares_what_the_function_declares() -> None:

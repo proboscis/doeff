@@ -15,7 +15,7 @@ from doeff_core_effects._extra_hints import extra_needed
 
 if TYPE_CHECKING:
     from doeff import Err, Ok, Program  # noqa: F401 - named in the string answer type of Try
-    from doeff_core_effects.http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
+    from doeff_core_effects._http_effects import HttpError, HttpRequest, HttpResponse  # noqa: F401
 
 # Answer types: each effect declares what its handler answers with (EffectBase[T]), so
 # ``x = yield from Get("k")`` is typed. Env and state values are dynamic (Any); use
@@ -356,7 +356,9 @@ def __getattr__(name: str) -> object:
     if name not in _HTTP_EFFECTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     with extra_needed("http", "the HTTP effects are written in Hy"):
-        from doeff_core_effects import http_effects  # a .hy module; loads Hy on first use
+        from doeff_core_effects import (
+            _http_effects as http_effects,  # a .hy module; loads Hy on first use
+        )
 
     value = getattr(http_effects, name)
     globals()[name] = value

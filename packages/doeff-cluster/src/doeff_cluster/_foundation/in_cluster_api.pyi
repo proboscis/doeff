@@ -8,11 +8,11 @@ from urllib.parse import urlsplit as urlsplit
 from doeff import Program as Program
 from doeff import EffectBase as EffectBase
 from doeff import with_handlers as with_handlers
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
-from doeff_core_effects.http_handlers import http_client_factory as http_client_factory
+from doeff_core_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpFailureKind as HttpFailureKind
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import http_production_handler as http_production_handler
+from doeff_core_effects._http_handlers import http_client_factory as http_client_factory
 SERVICE_ACCOUNT_CA_PATH: str
 CLUSTER_API: str
 CA_MISSING: str

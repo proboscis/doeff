@@ -18,7 +18,7 @@
 (import doeff_domain [DomainLaw DomainTerm Handles])
 
 (import doeff_core_effects [Ask Get Put Local Listen Await Try WriterTellEffect ReadWriterLog SlogEffect])
-(import doeff_core_effects.http-effects [HttpRequest])
+(import doeff_core_effects [HttpRequest])
 (import doeff_core_effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect])
 (import doeff_core_effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect])
 (import doeff_core_effects [Spawn TaskCompleted Gather Wait Cancel Discard Race CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore CreateExternalPromise SchedulerIntrospection scheduled])
@@ -44,11 +44,11 @@
 (import doeff_core_effects [HttpListen HttpNextRequest HttpTakeQueued HttpReadBody HttpRespond HttpForward HttpShutdown HttpStopListening WsAccept WsSendText WsSendTextEach WsForward WsClose TakeWsSendReport AppendHttpScript ReadHttpServed])
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_core_effects [scripted-http-server])
-(import doeff_core_effects.ws-client-effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent])
+(import doeff_core_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent])
 ;; 公開の installer(aiohttp-ws-client・scripted-ws-client)は program を後始末で包む素の関数で構造情報を持たないため、
 ;; 導出には __doeff_body__ を持つ defhandler 製の実物を挙げる(_http-production-handler と同じ)。
-(import doeff_core_effects.aiohttp-ws-client [aiohttp-ws-link-handler])
-(import doeff_core_effects.scripted-ws-client [scripted-ws-link-handler])
+(import doeff_core_effects [aiohttp-ws-link-handler])
+(import doeff_core_effects [scripted-ws-link-handler])
 (import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
                                         SqlTransaction SqlBatch SetSqlOutage])
 (import doeff_core_effects.postgres-sql [postgres-sql-handler])

@@ -32,7 +32,7 @@
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [ReadEnvironment])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects [StopRequested])
 (import doeff_time [Delay GetMonotonic GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [monotonic-ms-of])

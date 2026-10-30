@@ -9,7 +9,7 @@
 (import doeff [EffectBase run with-handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects [MeterSettings MeterSnapshot ReadMeter])
 (import doeff_core_effects [memory-meter-handler])
 (import doeff_hy._frozen [FrozenMap])

@@ -9,7 +9,7 @@
 (import doeff [EffectBase run with_handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [Appended ExpectAbsent ExpectAny Missing Unreachable UndeclaredTable Written WrittenRows WatchCursor])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])

@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects [slog])
-(import doeff_core_effects.http_effects [HttpResponse])
+(import doeff_core_effects [HttpResponse])
 (import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of routed-request])

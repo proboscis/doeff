@@ -9,7 +9,7 @@
 (import collections.abc [Callable])
 (import doeff [with-handlers EffectBase Program])
 (import doeff_time [Delay])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects [MeterSettings])
 (import doeff_core_effects [memory-meter-handler])
 (import doeff_hy._frozen [FrozenMap])
