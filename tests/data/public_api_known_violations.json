@@ -13,7 +13,7 @@
   "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
   "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。",
   "組「境界 — effect の値の型」の 757 行(278 名)は、目録が形(同じ package が見せる effect の class の欄の注釈に出る型 — 目録の value_types)を確かめる許す組「許した物 — effect の値の型」を足したので、形に合う 95 名 298 行と「足した名」の 25 行を許した物の表へ同じ答えの決めつきで移し、組は消えた(card ki-5401da404e8e)。合わない名のうち、同じ package の effect の答えの型(__doeff_answer__)に出る 25 名 107 行は組「境界 — effect の結果の型」へ、残りの 158 名 352 行は組「外れ — effect の欄に型を書くか内側へ移す」へ移した — effect の欄の注釈が object・素の tuple や dict・Any で型を言わない値の型と、どの effect の欄にも出ない名。effect の値の型なら欄の注釈に型を書いて許した物の表へ移し、そうでなければ内側へ移す。",
-  "組「外れ — effect の欄に型を書くか内側へ移す」の doeff-core-effects の 41 名は名ごとに読み分けた(card ki-c7f19b806f3f): 目録が effect の答えの型と読む 14 名 39 行は許した物の表の組「許した物 — effect の答えの型」へ、handler の台本・設定・工場の引数の型 8 名 14 行(MeterBucket・RaiseCase・SchedulerImplementation・ScriptedUpstream・ScriptedWs*)は組「境界 — handler の設定の型」へ移し、handler の内側の部品 6 名(SqlText・SqlPlaceholder・DriverValue・WsCloseFrame・VmWork・TraceSink — 外の repo の呼び手 0)は入口と古い path の固定の列から外して表から消した。残る 9 名(ComputeLoad・InterpreterFacts・ProcessInputWritten・ProcessNotChild・ProcessRunning・ModuleFound・WarmRunning・HttpPhases・HttpFailureKind)は card ki-91aeae4fa810 が effect に答えの型を書いた後に許した物の表へ移し、PRIORITY_HIGH・PRIORITY_IDLE・PRIORITY_NORMAL・Resumption は effect の欄の値と effect の型の宣言の語彙で、型の形を決めてから直す。",
+  "組「外れ — effect の欄に型を書くか内側へ移す」の doeff-core-effects の 41 名は名ごとに読み分けた(card ki-c7f19b806f3f): 目録が effect の答えの型と読む 14 名 39 行は許した物の表の組「許した物 — effect の答えの型」へ、handler の台本・設定・工場の引数の型 8 名 14 行(MeterBucket・RaiseCase・SchedulerImplementation・ScriptedUpstream・ScriptedWs*)は組「境界 — handler の設定の型」へ移し、handler の内側の部品 6 名(SqlText・SqlPlaceholder・DriverValue・WsCloseFrame・VmWork・TraceSink — 外の repo の呼び手 0)は入口と古い path の固定の列から外して表から消した。残る 9 名(ComputeLoad・InterpreterFacts・ProcessInputWritten・ProcessNotChild・ProcessRunning・ModuleFound・WarmRunning・HttpPhases・HttpFailureKind)は card ki-91aeae4fa810 が effect に答えの型を書いたので、25 行を許した物の表の組「許した物 — effect の答えの型」へ移した。残る PRIORITY_HIGH・PRIORITY_IDLE・PRIORITY_NORMAL・Resumption は effect の欄の値と effect の型の宣言の語彙で、型の形を決めてから直す(card ki-9f2990a98000)。",
   "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 1,034 行のうち、目録が答えの型と読む 603 行を許した物の表へ移し、残る 431 行をこの組へ移した。子 card ki-1c401af6d5d3・ki-91aeae4fa810・ki-bf9fdba32e04・ki-63db980652ad・ki-d976fdee464d・ki-4ccdcc97032c が package ごとに直す)。",
   "doeff-agents の組「外れ — effect の欄に型を書くか内側へ移す」13 名 49 行は空になって消えた(card ki-b3ea18004cce)。どれも effect の値の型でなかった。effect が docstring だけで答える値 9 名 34 行(RedeemTurnCredentialEffect の答え TurnCredential・CodexTurnCredential・HomeTurnCredential・TurnCredentialUnavailable、ReplaceSessionCredentialEffect の答え SessionOnHomeCredential・ReplacementCredentialUnavailable、ReadMemorySessionRows の答え MemorySessionRows、答えの class の欄の型 AgentTurnEnd(AwaitOutcome.turn_end・AgentTurnEndEvent.end)・CompactionTrigger(AgentCompactionEvent.trigger))は組「外れ — effect に答えの型を書く」へ移した(子 card ki-1c401af6d5d3 が答えの型を書く)。handler の工場の設定の ClaudeRuntimePolicy 5 行は、同じ形の CodexRuntimePolicy と同じ組「境界 — handler の設定の型」へ移した。LaunchConfig(内側の命令形の session の API だけが使う)・AgentValidationErrorKind・AgentValidationFailure(production の handler の再試行と、例外 AgentAttemptExhaustedError の欄 last_error だけが使う)の 10 行は、公開の名から外して内側の module(_adapters.base・_effects.agent)だけに置いた — 外の repo の呼び手は 0、doeff の中の呼び手(doeff-conductor と test)は内側の module から読む。",
   "doeff-agents の組「外れ — effect に答えの型を書く」54 名 263 行は空になって消えた(card ki-1c401af6d5d3)。公開の effect 24 個(_effects.agent — LaunchEffect は SessionHandle・AwaitResultEffect は AwaitOutcome・EventsEffect は AgentEventPage・RedeemTurnCredentialEffect と ReplaceSessionCredentialEffect は答えの和 など)と sessionhost の effect 8 個(ClassifyPane・ProcRun・FsLinkArtifact・FsEnsureSymlink・SessionStoreListActive・SessionStoreListCleanupPending・SessionStoreGet・ReadMemorySessionRows)に、docstring の答えを EffectBase[T] で書いた。目録が答えの型と読む 53 名 258 行を組「許した物 — effect の答えの型」へ、LaunchEffect.new_context_id の欄の型と読む NamedContextId 5 行を組「許した物 — effect の値の型」へ、決め lt-85SHMNQG7HG4AYHBER6V2BAKX6 で移した。",
@@ -9241,44 +9241,11 @@
       "PRIORITY_NORMAL",
       "Resumption"
      ],
-     "doeff_core_effects.compute_effects": [
-      "ComputeLoad"
-     ],
      "doeff_core_effects.effects": [
       "Resumption"
      ],
-     "doeff_core_effects.http_effects": [
-      "HttpFailureKind",
-      "HttpPhases"
-     ],
-     "doeff_core_effects.http_host_gate": [
-      "HttpFailureKind"
-     ],
-     "doeff_core_effects.inline_compute": [
-      "ComputeLoad"
-     ],
      "doeff_core_effects.memory_latest": [
       "PRIORITY_IDLE"
-     ],
-     "doeff_core_effects.os_process": [
-      "InterpreterFacts",
-      "ModuleFound",
-      "ProcessInputWritten",
-      "ProcessNotChild",
-      "ProcessRunning"
-     ],
-     "doeff_core_effects.os_warm_process": [
-      "WarmRunning"
-     ],
-     "doeff_core_effects.process_effects": [
-      "InterpreterFacts",
-      "ModuleFound",
-      "ProcessInputWritten",
-      "ProcessNotChild",
-      "ProcessRunning"
-     ],
-     "doeff_core_effects.process_exit": [
-      "ProcessNotChild"
      ],
      "doeff_core_effects.process_latest": [
       "PRIORITY_IDLE"
@@ -9287,22 +9254,6 @@
       "PRIORITY_HIGH",
       "PRIORITY_IDLE",
       "PRIORITY_NORMAL"
-     ],
-     "doeff_core_effects.scripted_process": [
-      "InterpreterFacts",
-      "ModuleFound",
-      "ProcessInputWritten",
-      "ProcessNotChild",
-      "ProcessRunning"
-     ],
-     "doeff_core_effects.scripted_warm_process": [
-      "WarmRunning"
-     ],
-     "doeff_core_effects.thread_pool_compute": [
-      "ComputeLoad"
-     ],
-     "doeff_core_effects.warm_effects": [
-      "WarmRunning"
      ]
     }
    }
