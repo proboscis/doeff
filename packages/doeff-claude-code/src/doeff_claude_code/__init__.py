@@ -139,7 +139,6 @@ if TYPE_CHECKING:
     from doeff_claude_code._values import Rebuilt as Rebuilt
     from doeff_claude_code._values import ResumeSession as ResumeSession
     from doeff_claude_code._values import SessionOrigin as SessionOrigin
-    from doeff_claude_code._values import TranscriptCarry as TranscriptCarry
     from doeff_claude_code._values import TurnInput as TurnInput
     from doeff_claude_code._fake import FakeClaudeWorld as FakeClaudeWorld
     from doeff_claude_code._fake import FakeReply as FakeReply
@@ -275,7 +274,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Rebuilt": "doeff_claude_code._values",
     "ResumeSession": "doeff_claude_code._values",
     "SessionOrigin": "doeff_claude_code._values",
-    "TranscriptCarry": "doeff_claude_code._values",
     "TurnInput": "doeff_claude_code._values",
     "ClaudeDropProcess": "doeff_claude_code._faults",
     "ClaudeEmitOutsideTurn": "doeff_claude_code._faults",

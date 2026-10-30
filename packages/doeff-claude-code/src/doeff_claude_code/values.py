@@ -4,7 +4,7 @@
 #   AutocompactTokens AutocompactWindow BypassAll CREDENTIAL_FORBIDDEN_CHARS ClaudeHome
 #   ClaudeSessionSpec ClaudeTurn Deny DenyUnlisted ForkSession FreshSession HomeSettings IMAGE_MIMES
 #   ImageAttachment LentCredential LinkFromHome McpServer McpSse McpStdio PermissionAnswer
-#   PermissionPolicy PrintContent Rebuilt ResumeSession SessionOrigin TranscriptCarry TurnInput
+#   PermissionPolicy PrintContent Rebuilt ResumeSession SessionOrigin TurnInput
 #   checked_env checked_session_id
 """Moved: ``doeff_claude_code.values`` is now ``doeff_claude_code._values`` (ADR-DOE-API-001 R5).
 

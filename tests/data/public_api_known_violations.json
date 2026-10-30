@@ -2110,54 +2110,15 @@
       "TranscriptState"
      ],
      "doeff_claude_code.fake": [
+      "FakeClaudeWorld",
       "FakeReply",
       "StopHookRejection"
      ],
+     "doeff_claude_code.handler": [
+      "ClaudeCodeHost"
+     ],
      "doeff_claude_code.values": [
       "PermissionPolicy"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_claude_code.dialogue": [
-      "StopReason"
-     ],
-     "doeff_claude_code.effects": [
-      "InputAlreadyRead",
-      "NoSuchRequest",
-      "NoTurnInFlight",
-      "ProcessStillAlive",
-      "UnknownTurn"
-     ],
-     "doeff_claude_code.fake": [
-      "FakeClaudeWorld",
-      "InputAlreadyRead",
-      "LiveProcess",
-      "NoLiveProcess",
-      "NoSuchRequest",
-      "NoTurnInFlight",
-      "StopReason",
-      "UnknownTurn"
-     ],
-     "doeff_claude_code.faults": [
-      "LiveProcess",
-      "NoLiveProcess",
-      "StopReason"
-     ],
-     "doeff_claude_code.handler": [
-      "ClaudeCodeHost",
-      "InputAlreadyRead",
-      "LiveProcess",
-      "NoLiveProcess",
-      "NoSuchRequest",
-      "NoTurnInFlight",
-      "ProcessStillAlive",
-      "StopReason",
-      "UnknownTurn"
-     ],
-     "doeff_claude_code.values": [
-      "McpServer",
-      "SessionOrigin",
-      "TranscriptCarry"
      ]
     }
    }

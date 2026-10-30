@@ -91,7 +91,7 @@ class ClaudeSessionSpec:
     model: str | None = None
     effort: str | None = None
     settings: FrozenMap[object] = ...
-    mcp_servers: FrozenMap[McpSse | McpStdio] = ...
+    mcp_servers: FrozenMap[McpServer] = ...
     permission: BypassAll | AskHost | DenyUnlisted | HomeSettings = ...
     autocompact: AutocompactAuto | AutocompactTokens | None = None
     system_prompt_append: str | None = None
@@ -111,7 +111,6 @@ class Rebuilt:
 
     def __post_init__(self) -> None:
         ...
-TranscriptCarry: TypeAlias = LinkFromHome | Rebuilt
 
 @dataclass(frozen=True)
 class FreshSession:
