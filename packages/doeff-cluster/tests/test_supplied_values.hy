@@ -375,8 +375,12 @@
   ;; 渡して <- で外側へ渡し直す所(in_cluster_api.hy の request)と、in-cluster-api-connected が引数の body を区画の CA の client の
   ;; with-handlers の本体に渡す所(同 body)まで追う。追えないと使い手の起動の閉じの検が「yielded a value that is not a call」で赤になる
   ;; (merge-queue の閉じの検 6 本 — 古い解析器が入っていた)。外側へ渡し直した要求は外側の代役が答え、CA の client が出す effect だけが残る。
+  ;; 代役の土台は scheduler を持たないので、本番の土台では scheduler が答える effect(Await と、同時数の上限の semaphore 3 つ)も gap に残る。
   (<- closure FoundationClosure (foundation-closure api-request-under :foundation routed-foundation))
   (assert (= #(closure.unknown closure.unresolved) #(#() #())) closure)
-  (assert (= (sorted (gfor g closure.gaps (get (.split g " ← ") 0))) ["doeff_core_effects._effects.Await" "doeff_core_effects._effects.SlogEffect"])
+  (assert (= (sorted (gfor g closure.gaps (get (.split g " ← ") 0)))
+             ["doeff_core_effects._effects.Await" "doeff_core_effects._effects.SlogEffect"
+              "doeff_core_effects._scheduler.AcquireSemaphore" "doeff_core_effects._scheduler.CreateSemaphore"
+              "doeff_core_effects._scheduler.ReleaseSemaphore"])
           closure.gaps)
   (assert (all (gfor g closure.gaps (in "verify=cluster_ca" g))) closure.gaps))
