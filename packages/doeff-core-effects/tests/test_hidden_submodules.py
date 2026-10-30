@@ -16,7 +16,8 @@ import pytest
 
 #: 子の古い path と新しい path(card [id] で移した中核の 10 個 — storage は下の module も・card [id] で
 #: 移した計算・VM・乱数・測りの 23 個・card [id] で移した file・memo・cache の 11 個・card [id] で移した
-#: process の 19 個・card [id] と [id] で移した http・ws の 6 個)。
+#: process の 19 個・card [id] と [id] で移した http・ws の 6 個・card [id] で移した sql の
+#: 7 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -89,6 +90,13 @@ MOVED = {
     "doeff_core_effects.ws_client_effects": "doeff_core_effects._ws_client_effects",
     "doeff_core_effects.aiohttp_ws_client": "doeff_core_effects._aiohttp_ws_client",
     "doeff_core_effects.scripted_ws_client": "doeff_core_effects._scripted_ws_client",
+    "doeff_core_effects.sql_effects": "doeff_core_effects._sql_effects",
+    "doeff_core_effects.postgres_sql": "doeff_core_effects._postgres_sql",
+    "doeff_core_effects.pooled_postgres_sql": "doeff_core_effects._pooled_postgres_sql",
+    "doeff_core_effects.sqlite_sql": "doeff_core_effects._sqlite_sql",
+    "doeff_core_effects.sqlite_file_sql": "doeff_core_effects._sqlite_file_sql",
+    "doeff_core_effects.clickhouse_http_sql": "doeff_core_effects._clickhouse_http_sql",
+    "doeff_core_effects.sql_transaction": "doeff_core_effects._sql_transaction",
 }
 
 #: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
@@ -121,6 +129,11 @@ LAZY_NAMES = {
     "WsConnect": "doeff_core_effects._ws_client_effects",
     "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
+    "SqlQuery": "doeff_core_effects._sql_effects",
+    "PostgresConnections": "doeff_core_effects._postgres_sql",
+    "sqlite_sql_handler": "doeff_core_effects._sqlite_sql",
+    "SqliteFiles": "doeff_core_effects._sqlite_file_sql",
+    "ClickHouseDatabase": "doeff_core_effects._clickhouse_http_sql",
 }
 
 #: `import doeff` が読まない module(入口の遅延の名だけが読む)。
@@ -187,6 +200,13 @@ NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._ws_client_effects",
     "doeff_core_effects._aiohttp_ws_client",
     "doeff_core_effects._scripted_ws_client",
+    "doeff_core_effects._sql_effects",
+    "doeff_core_effects._postgres_sql",
+    "doeff_core_effects._pooled_postgres_sql",
+    "doeff_core_effects._sqlite_sql",
+    "doeff_core_effects._sqlite_file_sql",
+    "doeff_core_effects._clickhouse_http_sql",
+    "doeff_core_effects._sql_transaction",
 )
 
 

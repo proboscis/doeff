@@ -16,11 +16,10 @@
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff [Program])
 (import doeff_core_effects [state])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlEnsureTables SqlParam SqlRows SqlFailed
-                                        SqlTransactionMisuse SqlTable SqlColumn SqlColumnType])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler PostgresDatabase PostgresConnections])
-(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
-(import doeff_core_effects.sqlite_file_sql [SqliteFile open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlEnsureTables SqlParam SqlRows SqlFailed SqlTransactionMisuse SqlTable SqlColumn SqlColumnType])
+(import doeff_core_effects [postgres-sql-handler PostgresDatabase PostgresConnections])
+(import doeff_core_effects [pooled-postgres-sql-handler])
+(import doeff_core_effects [SqliteFile open-sqlite-files close-sqlite-files sqlite-file-sql-handler])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import statement_wire_tap [StatementWireTap])
 

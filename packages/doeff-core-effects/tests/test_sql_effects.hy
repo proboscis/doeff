@@ -34,21 +34,17 @@
 (import doeff [Program])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Get Put])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SetSqlOutage SqlParam SqlRows
-                                        SqlFailed SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex
-                                        normalized-value normalized-rows split-statement])
-(import doeff_core_effects.sql_transaction [TransactionFlush run-in-batched-transaction])
-(import doeff_core_effects.sqlite_sql [sqlite-sql-handler sqlite-statement sqlite-failure])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement postgres-insert-statement postgres-failure
-                                         postgres-schema-statements PostgresDatabase PostgresConnections PostgresTimeouts])
-(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SetSqlOutage SqlParam SqlRows SqlFailed SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex]
+        doeff_core_effects._sql_effects [normalized-value normalized-rows split-statement])
+(import doeff_core_effects._sql_transaction [TransactionFlush run-in-batched-transaction])
+(import doeff_core_effects [sqlite-sql-handler]
+        doeff_core_effects._sqlite_sql [sqlite-statement sqlite-failure])
+(import doeff_core_effects [postgres-sql-handler PostgresDatabase PostgresConnections PostgresTimeouts]
+        doeff_core_effects._postgres_sql [postgres-statement postgres-insert-statement postgres-failure postgres-schema-statements])
+(import doeff_core_effects [pooled-postgres-sql-handler])
 (import doeff_core_effects [CreateExternalPromise Wait Spawn Gather Cancel TaskCancelledError])
-(import doeff_core_effects.clickhouse_http_sql [clickhouse-http-sql-handler clickhouse-statement clickhouse-query-request
-                                                clickhouse-insert-request clickhouse-kill-request clickhouse-waits clickhouse-answer
-                                                clickhouse-rows clickhouse-written-rows clickhouse-failure clickhouse-schema-statements
-                                                ClickHouseDatabase ClickHouseWaits ClickHouseRequest ClickHouseResponse ClickHouseParam
-                                                WAIT-MARGIN-SECONDS KILL-GRACE-SECONDS USER-AGENT RoundTrips EXIT-SETTLE-SECONDS
-                                                EXIT-KILL-GRACE-SECONDS])
+(import doeff_core_effects [clickhouse-http-sql-handler clickhouse-query-request clickhouse-answer clickhouse-schema-statements ClickHouseDatabase]
+        doeff_core_effects._clickhouse_http_sql [clickhouse-statement clickhouse-insert-request clickhouse-kill-request clickhouse-waits clickhouse-rows clickhouse-written-rows clickhouse-failure ClickHouseWaits ClickHouseRequest ClickHouseResponse ClickHouseParam WAIT-MARGIN-SECONDS KILL-GRACE-SECONDS USER-AGENT RoundTrips EXIT-SETTLE-SECONDS EXIT-KILL-GRACE-SECONDS])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 (import pytest)
 

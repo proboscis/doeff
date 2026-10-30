@@ -66,9 +66,10 @@
 (import doeff_core_effects [os-signal-stop-handler])
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_core_effects [HttpAddress])
-(import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts])
-(import doeff_core_effects.sql_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
-(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects [PostgresConnections PostgresDatabase PostgresTimeouts]
+        doeff_core_effects._postgres_sql [DEFAULT-TIMEOUTS])
+(import doeff_core_effects [SqlQuery SqlRows SqlFailed SqlUnreachable])
+(import doeff_core_effects [pooled-postgres-sql-handler])
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records._values [RecordsSchema])

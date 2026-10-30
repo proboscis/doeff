@@ -25,7 +25,7 @@
 (import doeff_core_effects [scripted-stop-handler])
 (import doeff_core_effects [scripted-http-server])
 (import doeff_core_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
-(import doeff_core_effects.postgres_sql [PostgresConnections postgres-sql-handler])
+(import doeff_core_effects [PostgresConnections postgres-sql-handler])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records._laws [LAW-SCHEMA MAKER])

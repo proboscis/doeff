@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = clickhouse_http_sql.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _clickhouse_http_sql.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from _typeshed import Incomplete
 from doeff import Program as _Program
@@ -10,24 +10,24 @@ from concurrent.futures import Future as Future
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
 from doeff import Program as Program
-from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
-from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
-from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
-from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
-from doeff_core_effects.sql_effects import SqlRows as SqlRows
-from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
-from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
-from doeff_core_effects.sql_effects import SqlSchemaApplied as SqlSchemaApplied
-from doeff_core_effects.sql_effects import SqlColumnType as SqlColumnType
-from doeff_core_effects.sql_effects import SqlText as SqlText
-from doeff_core_effects.sql_effects import SqlPlaceholder as SqlPlaceholder
-from doeff_core_effects.sql_effects import split_statement as split_statement
-from doeff_core_effects.sql_effects import checked_params as checked_params
-from doeff_core_effects.sql_effects import param_value as param_value
-from doeff_core_effects.sql_effects import checked_identifier as checked_identifier
-from doeff_core_effects.sql_effects import checked_identifiers as checked_identifiers
-from doeff_core_effects.sql_effects import checked_rows as checked_rows
-from doeff_core_effects.sql_effects import normalized_rows as normalized_rows
+from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
+from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects._sql_effects import SqlTransaction as SqlTransaction
+from doeff_core_effects._sql_effects import SqlEnsureTables as SqlEnsureTables
+from doeff_core_effects._sql_effects import SqlRows as SqlRows
+from doeff_core_effects._sql_effects import SqlFailed as SqlFailed
+from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
+from doeff_core_effects._sql_effects import SqlSchemaApplied as SqlSchemaApplied
+from doeff_core_effects._sql_effects import SqlColumnType as SqlColumnType
+from doeff_core_effects._sql_effects import SqlText as SqlText
+from doeff_core_effects._sql_effects import SqlPlaceholder as SqlPlaceholder
+from doeff_core_effects._sql_effects import split_statement as split_statement
+from doeff_core_effects._sql_effects import checked_params as checked_params
+from doeff_core_effects._sql_effects import param_value as param_value
+from doeff_core_effects._sql_effects import checked_identifier as checked_identifier
+from doeff_core_effects._sql_effects import checked_identifiers as checked_identifiers
+from doeff_core_effects._sql_effects import checked_rows as checked_rows
+from doeff_core_effects._sql_effects import normalized_rows as normalized_rows
 from doeff_core_effects._offloaded_call import ThreadPerCall as ThreadPerCall
 from doeff_core_effects._offloaded_call import offloaded as offloaded
 from doeff_core_effects._offloaded_call import run_detached as run_detached

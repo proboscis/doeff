@@ -1,4 +1,4 @@
-# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = sql_transaction.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
+# doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = _sql_transaction.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from typing import TypeAlias
 from _typeshed import Incomplete
@@ -12,15 +12,15 @@ from doeff import Program as Program
 from doeff import EffectBase as EffectBase
 from doeff import K as K
 from doeff import WithHandlerType as WithHandlerType
-from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
-from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
-from doeff_core_effects.sql_effects import SqlBatch as SqlBatch
-from doeff_core_effects.sql_effects import SqlNotify as SqlNotify
-from doeff_core_effects.sql_effects import SqlRows as SqlRows
-from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
-from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
-from doeff_core_effects.sql_effects import SqlTransactionMisuse as SqlTransactionMisuse
-from doeff_core_effects.sql_effects import T as T
+from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
+from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects._sql_effects import SqlBatch as SqlBatch
+from doeff_core_effects._sql_effects import SqlNotify as SqlNotify
+from doeff_core_effects._sql_effects import SqlRows as SqlRows
+from doeff_core_effects._sql_effects import SqlFailed as SqlFailed
+from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
+from doeff_core_effects._sql_effects import SqlTransactionMisuse as SqlTransactionMisuse
+from doeff_core_effects._sql_effects import T as T
 
 @dataclass(frozen=True, kw_only=True)
 class TransactionAborted:

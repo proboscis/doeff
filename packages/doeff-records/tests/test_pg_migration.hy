@@ -8,7 +8,7 @@
 (import threading)
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler])
+(import doeff_core_effects [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [Missing])
 (import doeff_records [ReadRow])

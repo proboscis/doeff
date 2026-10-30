@@ -16,7 +16,7 @@
 (import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction])
+(import doeff_core_effects [SqlQuery SqlTransaction])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records._laws [LAW-SCHEMA])
 (import doeff_records._pg [drop-records-tables prepare-records-store PreparedStore])

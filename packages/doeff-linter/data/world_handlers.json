@@ -171,6 +171,22 @@
    "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ"
   },
   {
+   "handler": "doeff_core_effects._clickhouse_http_sql:clickhouse-http-sql-handler",
+   "touches": [
+    "http",
+    "db"
+   ],
+   "why": "urllib.request.urlopen で POST"
+  },
+  {
+   "handler": "doeff_core_effects:clickhouse_http_sql_handler",
+   "touches": [
+    "http",
+    "db"
+   ],
+   "why": "clickhouse_http_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_core_effects.clickhouse_http_sql:clickhouse-http-sql-handler",
    "touches": [
     "http",
@@ -179,12 +195,44 @@
    "why": "urllib.request.urlopen で POST"
   },
   {
+   "handler": "doeff_core_effects._postgres_sql:postgres-sql-handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "psycopg.connect・BoundedSemaphore"
+  },
+  {
+   "handler": "doeff_core_effects:postgres_sql_handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "postgres_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_core_effects.postgres_sql:postgres-sql-handler",
    "touches": [
     "db",
     "thread"
    ],
    "why": "psycopg.connect・BoundedSemaphore"
+  },
+  {
+   "handler": "doeff_core_effects._pooled_postgres_sql:pooled-postgres-sql-handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "Executor の thread で psycopg"
+  },
+  {
+   "handler": "doeff_core_effects:pooled_postgres_sql_handler",
+   "touches": [
+    "db",
+    "thread"
+   ],
+   "why": "pooled_postgres_sql_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.pooled_postgres_sql:pooled-postgres-sql-handler",

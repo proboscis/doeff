@@ -24,7 +24,7 @@
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_core_effects [CountMetric ObserveSeconds ObserveSecondsBatch])
 (import concurrent.futures [ThreadPoolExecutor])
-(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects [pooled-postgres-sql-handler])
 (import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay GetMonotonic async-time-handler])
 (import doeff_records._laws [LAW-SCHEMA MAKER])

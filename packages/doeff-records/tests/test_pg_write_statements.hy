@@ -13,7 +13,8 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler NOTICE-STATEMENT])
+(import doeff_core_effects [postgres-sql-handler]
+        doeff_core_effects._postgres_sql [NOTICE-STATEMENT])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectVersion Written WrittenRows Appended WatchCursor])

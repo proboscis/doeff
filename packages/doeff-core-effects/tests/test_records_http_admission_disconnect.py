@@ -10,12 +10,12 @@ from urllib.request import Request, urlopen
 
 import psycopg
 import pytest
-from doeff_core_effects import scheduled
-from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
-from doeff_core_effects.postgres_sql import (
+from doeff_core_effects import (
     PostgresConnections,
     PostgresDatabase,
+    pooled_postgres_sql_handler,
     postgres_sql_handler,
+    scheduled,
 )
 from doeff_time import SimClock, sim_time_handler
 from test_pooled_writer_admission import DSN, AcquireObserver
@@ -97,11 +97,14 @@ def assert_http_callable_timed_out(abandoned):
 
 
 def records_config(connections, pool, observer, prefix, enabled):
+    from doeff_records import (
+        pg_records_handler,
+        records_server_config,
+        writer_gates,
+        writer_lock_key,
+    )
     from doeff_records._laws import LAW_SCHEMA
-    from doeff_records import records_server_config
-    from doeff_records import pg_records_handler, writer_gates
     from doeff_records._pg import prepare_records_store
-    from doeff_records import writer_lock_key
 
     key = run(writer_lock_key(prefix))
     store = run(

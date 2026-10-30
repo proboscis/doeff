@@ -16,11 +16,10 @@
 (import dataclasses [dataclass field])
 (import threading)
 (import doeff [EffectBase])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlRows SqlUnreachable])
-(import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
-(import doeff_core_effects.postgres_sql [PostgresConnections postgres-query postgres-insert postgres-insert-statement postgres-begin postgres-flush
-                                         postgres-control postgres-notice transaction-locks lock-text LOCK-STATEMENT LOCK-SHARED-STATEMENT
-                                         NOTICE-STATEMENT])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlTransaction SqlNotify SqlRows SqlUnreachable])
+(import doeff_core_effects._sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction])
+(import doeff_core_effects [PostgresConnections]
+        doeff_core_effects._postgres_sql [postgres-query postgres-insert postgres-insert-statement postgres-begin postgres-flush postgres-control postgres-notice transaction-locks lock-text LOCK-STATEMENT LOCK-SHARED-STATEMENT NOTICE-STATEMENT])
 
 
 (defclass StatementCounts []

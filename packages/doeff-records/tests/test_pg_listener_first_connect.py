@@ -16,7 +16,8 @@ from typing import Any
 import hy  # noqa: F401  # Hy の module(tests.interpreters)を import するため
 import pytest
 
-from doeff_core_effects.postgres_sql import PostgresConnections, PostgresListener
+from doeff_core_effects import PostgresConnections
+from doeff_core_effects._postgres_sql import PostgresListener
 from tests.interpreters import DATABASE, pg_skip_reason, postgres_connections
 
 

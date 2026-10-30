@@ -9,9 +9,9 @@
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import concurrent.futures [ThreadPoolExecutor])
 (import doeff_core_effects [state])
-(import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlEnsureTables SqlParam SqlRows SqlFailed SqlTable SqlColumn SqlColumnType])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler PostgresDatabase PostgresConnections])
-(import doeff_core_effects.pooled_postgres_sql [pooled-postgres-sql-handler])
+(import doeff_core_effects [SqlQuery SqlTransaction SqlEnsureTables SqlParam SqlRows SqlFailed SqlTable SqlColumn SqlColumnType])
+(import doeff_core_effects [postgres-sql-handler PostgresDatabase PostgresConnections])
+(import doeff_core_effects [pooled-postgres-sql-handler])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 
 (val DB "store")
