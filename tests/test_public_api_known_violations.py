@@ -339,6 +339,28 @@ def _unread_native_text(directory: str, modules: list[Mapping[str, Any]]) -> str
     )
 
 
+def _diff_against_tables(
+    package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable
+) -> tuple[dict[Key, Mapping[str, Any]], set[Key], set[Key], set[tuple[Key, Key]], list[Key]]:
+    """目録の 1 package の外れと、2 つの表の名・移した行・どちらの表にも無い新しい外れを返す(check_package と
+    tools/public_api_blame.py が同じ照合を使う 1 点)。"""
+    directory = package["dir"]
+    found = outside_rows(package)
+    known = known_names(table, directory)
+    permitted = allowed_names(allowed, directory)
+    moved = moved_to_root(package["import_roots"], found, known | permitted)
+    new = sorted(set(found) - known - permitted - {root for root, _old in moved})
+    return found, known, permitted, moved, new
+
+
+def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable) -> list[Key]:
+    """表に書かずに足された外れ((module, 名)の列)— 日次の全体検証の後段 tools/public_api_blame.py が、足した commit を引くために読む。"""
+    entry = table["packages"].get(package["dir"])
+    if package["error"] is not None or entry is None or entry["範囲"] == "範囲の外":
+        return []
+    return _diff_against_tables(package, table, allowed)[4]
+
+
 def check_package(
     package: Mapping[str, Any],
     table: KnownTable,
@@ -360,12 +382,8 @@ def check_package(
     )
     if entry["範囲"] == "範囲の外":
         return
-    found = outside_rows(package)
-    known = known_names(table, directory)
-    permitted = allowed_names(allowed, directory)
-    moved = moved_to_root(package["import_roots"], found, known | permitted)
+    found, known, permitted, moved, new = _diff_against_tables(package, table, allowed)
     olds = {old for _root, old in moved}
-    new = sorted(set(found) - known - permitted - {root for root, _old in moved})
     stale = sorted(known - set(found) - olds)
     stale_allowed = sorted(permitted - set(found) - olds)
     groups = allowed_groups(allowed, directory)
