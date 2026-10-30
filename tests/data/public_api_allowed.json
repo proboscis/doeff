@@ -697,6 +697,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "CodexTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "CompactionOutcome",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -727,6 +734,13 @@
    "module": "doeff_agents",
    "name": "HomeTurnCredential",
    "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "InputImage",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -906,63 +920,14 @@
   },
   {
    "package": "doeff-agents",
-   "module": "doeff_agents.effects",
-   "name": "CodexTurnCredential",
-   "組": "許した物 — effect の答えの型",
-   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.effects",
-   "name": "InputImage",
-   "組": "許した物 — effect の値の型",
-   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.effects.agent",
-   "name": "CodexTurnCredential",
-   "組": "許した物 — effect の答えの型",
-   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.effects.agent",
-   "name": "InputImage",
-   "組": "許した物 — effect の値の型",
-   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers.claude",
-   "name": "mcp_server_loop",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers.effectful",
-   "name": "mcp_server_loop",
-   "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers.headless_codex",
-   "name": "CodexTurnCredential",
-   "組": "許した物 — effect の答えの型",
-   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers.headless_codex",
+   "module": "doeff_agents",
    "name": "account_limit_of",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
    "package": "doeff-agents",
-   "module": "doeff_agents.handlers.mcp_server_loop",
+   "module": "doeff_agents",
    "name": "mcp_server_loop",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
