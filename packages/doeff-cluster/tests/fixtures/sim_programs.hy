@@ -434,13 +434,9 @@
   (roamer (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 (defsystem lone-pulses [#^ Callable foundation]
-  "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 宣言の needs を広げて置ける worker が増える筋書きの前の宣言・
+  "pulses の needs を、1 台の worker だけが持つ能力 lone にした宣言(#2804 — 置き先の上書きで効く needs を広げて置ける worker が増える筋書きの前の宣言・
    tests/test_keep_when_cut_off.hy)"
   (pulse (pulse-program foundation) :replicas 1 :needs #{"lone"} :readiness {"windowSeconds" 5}))
-
-(defsystem wide-pulses [#^ Callable foundation]
-  "lone-pulses の needs を広げた宣言(#2804 — 能力 cluster-net を持つ worker ならどれにも置ける)"
-  (pulse (pulse-program foundation) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 
 (defsystem reserved-trio [#^ Callable foundation]

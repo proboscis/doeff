@@ -28,10 +28,10 @@
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf ReadinessOf CutWorker StallWorker StartWorker DrainWorker Redeclare KillWorker ReadCoordinator]
-        doeff_cluster._sim.local [ServiceReadiness])
+(import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf ReadinessOf CutWorker StallWorker StartWorker DrainWorker KillWorker ReadCoordinator ClientLink]
+        doeff_cluster._sim.local [ServiceReadiness SimLink send-request])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.sim_programs [pulses lone-pulses wide-pulses])
+(import tests.fixtures.sim_programs [pulses lone-pulses])
 (import tests.program_rows [SAMPLE-RUN reports-observed])
 
 ;; 本番と同じ時間の設定(生存の窓 10 秒・fence 20 秒・移し替え 60 秒)。
@@ -474,12 +474,17 @@
 
 (defk cut-then-widen []
   {:pre [] :post [(: % CutSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き(条件 2 の (b)): w1(lone を持つ唯一の worker)の上の pulse の網を 120 秒切り、10 秒後に needs を cluster-net へ広げた宣言で
-   宣言し直す(w2 にも置けるようになる)。切って 70 秒後と、明けて 30 秒後に読む。"
+  "筋書き(条件 2 の (b)): w1(lone を持つ唯一の worker)の上の pulse の網を 120 秒切り、10 秒後に置き先の上書き NeedsOverride で効く
+   needs を cluster-net へ広げる(w2 にも置けるようになる)。切って 70 秒後と、明けて 30 秒後に読む。版(revision)を変えずに宣言の needs
+   を書き換える宣言し直しは coordinator が 409 で断る(placement-rewrite-refusal)ので上書きで広げ、新しい revision の宣言し直しは
+   版の入れ替えで担い手を起こし直すので使わない。"
   (<- (Delay 8.0))
   (<- (CutWorker "w1" 120.0))
   (<- (Delay 10.0))
-  (<- (Redeclare (wide-pulses sim-foundation)))
+  (<- link SimLink (ClientLink))
+  (<- written tuple (send-request link "POST" "/resources/NeedsOverride" {}
+                                  {"name" "pulse" "spec" {"needs" ["cluster-net"] "reason" "途絶の最中に置ける worker を増やす" "ttlSeconds" 3600}}))
+  (assert (= (get written 0) 201) written)
   (<- (Delay 60.0))
   (<- mid tuple (ProcessesOf "pulse"))
   (<- readiness ServiceReadiness (ReadinessOf "pulse"))
@@ -493,7 +498,7 @@
 
 
 (deftest test-widened-needs-during-a-cut-do-not-run-the-job-twice
-  ;; 受入 5・条件 2 の (b): 途絶の最中に宣言の needs が変わって置ける worker が増えても、印を渡した担い手から job を移さない。明けた後も
+  ;; 受入 5・条件 2 の (b): 途絶の最中に効く needs が変わって(置き先の上書き NeedsOverride)置ける worker が増えても、印を渡した担い手から job を移さない。明けた後も
   ;; 担い手は条件を満たすので、そのまま動かし続ける(起こし直さない・2 か所で走らない)。
   (<- seen CutSeen (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) (lone-pulses sim-foundation) (cut-then-widen) :workers WIDENING))
   (<- spans tuple (spans-of seen.after))
