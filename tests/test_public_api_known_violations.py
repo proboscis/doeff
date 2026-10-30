@@ -86,6 +86,10 @@ MACRO_GROUP = "許した物 — Hy の macro"
 COMMAND_GROUP = "許した物 — CLI コマンド"
 #: 決まりが名ごとに許した換算の関数の組(ADR-DOE-API-001 R35)— 目録の形が換算の関数の名だけを置ける。
 CONVERSION_GROUP = "許した物 — 換算の関数"
+#: 決まりが許した ADR を書く関数の組(ADR-DOE-API-001 R14 — docs/adr の file が import して呼ぶ fact・counterexample・interpretation)。
+ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
+#: 決まりが許した effect の答えの型の組(ADR-DOE-API-001 R2 — 呼び手が match で読み分ける effect の結果の型)。
+ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
@@ -94,6 +98,8 @@ ALLOWED_SHAPES: dict[str, str] = {
     COMMAND_GROUP: "console script と Rust の実行 file だけを置ける(ADR-DOE-API-001 R7・R31)",
     CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
+    ADR_WRITER_GROUP: "Hy の macro の module が出す関数だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
+    ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -250,6 +256,10 @@ def fits_allowed_group(group: str, row: Mapping[str, Any], package: Mapping[str,
         return row["form"] == tool.MACRO_FORM or (
             row["module"] == SUBMODULE and _is_macro_module(package, row["name"])
         )
+    if group == ADR_WRITER_GROUP:
+        return row["form"] == "関数" and row["module"].endswith(".macros")
+    if group == ANSWER_TYPE_GROUP:
+        return row["form"] in ("class", "型")
     return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
 
 
