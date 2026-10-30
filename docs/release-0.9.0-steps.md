@@ -163,19 +163,30 @@ git push origin v0.9.0
    uv run --no-project python tools/verify_release_install.py --python 3.12 --work-dir <repo の外の空の dir> --keep
    ```
 
-2. 残った venv に pytest の依存を足し、`wt/week1-core-only` の作業木で走らせる。子の interpreter は例の dir で起きるので、
-   `doeff` は venv の wheel から読まれる。
+2. 記事の branch を、準備の branch と合わせた作業木を作る。記事の branch の基の test の補助(`tests/cli/cli_child.py`)は
+   0.8.0 の `doeff_vm.doeff_vm.invariant_checks_enabled` を読み、0.9.0 の wheel では import できない。準備の branch には 0.9.0 の
+   形の補助が在る。記事の file(`docs/articles/`・`examples/effects_tour/`・Zenn の `doeff-main.md` と `reviews/main-check.py`)は
+   記事の branch の側を取る。この作業木は確かめだけに使い、push しない。
 
    ```bash
-   <venv>/bin/python -m pytest -q -p no:cacheprovider tests/test_docs_article_algebraic_effects.py
-   <venv>/bin/python -I publications/zenn-use-cases-v0/reviews/main-check.py
+   git merge --no-commit --no-ff origin/wt/release-0.9.0-prep   # 記事の branch を checkout した作業木で
+   ```
+
+3. 残った venv に、repo の conftest が読む test の道具を足し、合わせた作業木で走らせる。英語の版の test の子の interpreter は
+   例の dir で起き、Zenn の版の確かめは `-I` で起こすので、どちらも `doeff` を venv の wheel から読む。
+
+   ```bash
+   uv pip install --python <venv>/bin/python pytest-timeout pytest-asyncio
+   uv run --no-project --python <venv>/bin/python python -m pytest -q -p no:cacheprovider tests/test_docs_article_algebraic_effects.py
+   uv run --no-project --python <venv>/bin/python python -I publications/zenn-use-cases-v0/reviews/main-check.py
    ```
 
 | 確かめ | 通る条件 |
 | --- | --- |
 | 英語の版の test | 全て緑 |
-| Zenn の版の確かめ | 終了コード 0 と、最後の行「main: 枠…個が英語の版と同じ、…を確認」 |
+| Zenn の版の確かめ | 終了コード 0 と、最後の行「main: 枠…個が英語の版と同じ、…を確認」。確かめの後半の「目次」の照らしは本文の link だけを見て、doeff の版に依らない |
 | 読んだ `doeff` の出所 | 例の dir で起こした venv の Python の `doeff.__file__` が venv の `site-packages` に在り、`doeff.__version__` が `0.9.0` |
+| 0.8.0 との比べ | 同じ確かめを PyPI の `doeff==0.8.0` で走らせると、`await_handler(…)` の行で `TypeError: await_handler() takes 0 positional arguments but 1 was given` になる(記事の例が 0.9.0 を要る事の確かめ) |
 
 ## 根拠
 
