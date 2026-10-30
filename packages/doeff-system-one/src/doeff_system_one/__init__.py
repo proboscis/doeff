@@ -32,15 +32,6 @@ from doeff_system_one._types import (
 from doeff_system_one._types import (
     Verdict as Verdict,
 )
-from doeff_system_one._types import (
-    answer_choice as answer_choice,
-)
-from doeff_system_one._types import (
-    answer_noul as answer_noul,
-)
-from doeff_system_one._types import (
-    answer_score as answer_score,
-)
 
 
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import

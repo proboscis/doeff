@@ -86,7 +86,9 @@ def prepare(target: JevTarget, judge: Judge, *, caller: str = "") -> Prepared:
 def _parse_answer(kind: str, raw: Mapping[str, Any], gateway_confidence: float | None) -> Answer:
     if kind == "noul":
         value = raw.get("noul", raw.get("probability"))
-        confidence = None if value is None else abs(float(value) - 0.5) * 2
+        if value is not None:
+            return Answer.noul(float(value), probabilities=raw.get("probabilities"), raw=dict(raw))
+        confidence = None
     elif kind == "score":
         value = raw.get("score")
         confidence = raw.get("confidence", gateway_confidence)
