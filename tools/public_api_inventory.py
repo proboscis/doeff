@@ -277,6 +277,18 @@ class PackageLayout:
     notes: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _Walked:
+    """One file the walk below an import root reaches: its import name, the file, and whether it is a module.
+
+    A namespace dir's shim is reached but is not a module (``_files_below``).
+    """
+
+    name: str
+    path: Path
+    is_module: bool
+
+
 def package_dirs(repo: Path = ROOT) -> list[Path]:
     """Every package the inventory covers: each dir under ``packages/`` (not a dot or underscore dir, nor one of
     doeff's own parts — ``DOEFF_PARTS``)."""
@@ -431,21 +443,21 @@ def _init_of(directory: Path) -> Path | None:
     return next((directory / name for name in _INIT_NAMES if (directory / name).is_file()), None)
 
 
-def _root_modules(root: ImportRoot) -> Iterator[tuple[str, Path]]:
-    """The modules of one import root: the root package, then its public submodules and subpackages."""
+def _root_files(root: ImportRoot) -> Iterator[_Walked]:
+    """The files of one import root: the root package, then the files below it (``_files_below``)."""
     if not root.path.is_dir():
         return
-    yield root.name, _init_of(root.path) or root.path
-    yield from _modules_below(root.path, root.name, 0)
+    yield _Walked(root.name, _init_of(root.path) or root.path, True)
+    yield from _files_below(root.path, root.name, 0)
 
 
-def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, Path]]:
-    """The public modules below the package dir ``base`` (named ``prefix``).
+def _files_below(base: Path, prefix: str, depth: int) -> Iterator[_Walked]:
+    """The public files below the package dir ``base`` (named ``prefix``), each with whether it is a module.
 
     A moved-submodule shim (``SHIM_MARK``) also stands for the modules below the package it moved
     to, by their old names: they stay importable at the old path until the shim is removed. A shim
     for a namespace dir (no ``__init__`` — doeff-cluster's areas) is walked through like the dir it
-    stands for, and is not a module itself.
+    stands for, and is not a module itself; it is still a shim, whose pins name the old modules below.
     """
     for path in sorted(base.rglob("*")):
         relative = path.relative_to(base)
@@ -453,14 +465,13 @@ def _modules_below(base: Path, prefix: str, depth: int) -> Iterator[tuple[str, P
             continue
         init = _init_of(path) if path.is_dir() else None
         if init is not None:
-            yield _module_name(prefix, relative), init
+            yield _Walked(_module_name(prefix, relative), init, True)
         elif path.is_file() and path.name.endswith(_MODULE_SUFFIXES + _EXTENSION_SUFFIXES):
             name = _module_name(prefix, relative)
             moved_to = _shim_package(name, path)
-            if moved_to is None or _init_of(moved_to) is not None:
-                yield name, path
+            yield _Walked(name, path, moved_to is None or _init_of(moved_to) is not None)
             if moved_to is not None and depth < _FOLLOW_DEPTH:
-                yield from _modules_below(moved_to, name, depth + 1)
+                yield from _files_below(moved_to, name, depth + 1)
 
 
 def _shim_target(name: str, path: Path) -> Path | None:
@@ -532,21 +543,25 @@ def shim_pins(name: str, path: Path) -> dict[str, tuple[str, ...]]:
 
 
 def pinned_names(layout: PackageLayout) -> dict[str, tuple[str, ...]]:
-    """The names every shim of the package pins, per old module (``shim_pins`` of each public module)."""
+    """The names every shim of the package pins, per old module (``shim_pins`` of each shim)."""
     return {
         module: names
-        for name, path in public_modules(layout)
+        for name, path in shim_modules(layout)
         for module, names in shim_pins(name, path).items()
     }
 
 
 def shim_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
-    """The package's moved-submodule shims: the old name and the shim's file."""
-    return [
-        (name, path)
-        for name, path in public_modules(layout)
-        if _shim_target(name, path) is not None
-    ]
+    """The package's moved-submodule shims: the old name and the shim's file.
+
+    A namespace dir's shim is one too, though it is not a public module (``_files_below``).
+    """
+    return sorted(
+        (walked.name, walked.path)
+        for root in layout.roots
+        for walked in _root_files(root)
+        if _shim_target(walked.name, walked.path) is not None
+    )
 
 
 def unpinned_shim_modules(layout: PackageLayout) -> list[str]:
@@ -568,7 +583,12 @@ def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
     walked through (its modules are importable through the namespace package). A module with both
     a source file and a ``.pyi`` stub is listed once, by its source.
     """
-    candidates = [module for root in layout.roots for module in _root_modules(root)]
+    candidates = [
+        (walked.name, walked.path)
+        for root in layout.roots
+        for walked in _root_files(root)
+        if walked.is_module
+    ]
     # Stubs sort before sources of the same name, so the source is the one the dict keeps.
     ordered = sorted(candidates, key=lambda module: (module[0], module[1].suffix != ".pyi"))
     return sorted(dict(ordered).items())

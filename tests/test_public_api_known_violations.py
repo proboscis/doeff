@@ -1687,6 +1687,42 @@ def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path
     assert "added_helper" not in str(failure.value)
 
 
+#: namespace の dir(__init__ の無い _types)を指す移し替えの module に、下の module の名の固定の列を書いた形。
+PINNED_NAMESPACE_SHIM = MARKED_SHIM.replace(
+    "\n", f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types.sub:\n#   sub_helper\n", 1
+)
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public_api(
+    tmp_path: Path,
+) -> None:
+    """namespace の dir を指す移し替えの module の名の固定の列も読み、移した先の _ の下に helper を足しても緑。
+
+    その移し替えの module は module でないので、目録が module の列だけから列を読むと読まれず、足した helper が古い path の
+    公開名に加わって赤に戻った(doeff-cluster の区画 _sim・_record_store — card ki-fcf6342de575)。列の無い時は、
+    下の古い path を列の無い path に数える(tools/hide_submodules.py pin が列を書く移し替えの module に拾う)。
+    """
+    below = f"{FIXTURE_ROOT}.types.sub"
+    table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
+    files = {"__init__.py": EFFECTS_AND_HANDLERS, "_types/sub.py": BELOW + ADDED_INSIDE}
+    pinned = _fixture_tree(tmp_path / "pinned", {**files, "types.py": PINNED_NAMESPACE_SHIM})
+    package = _read_fixture(pinned)
+    check_package(package, table)
+    assert {row["name"] for row in package["exports"] if row["module"] == below} == {"sub_helper"}
+    layout = tool.read_layout(pinned / "packages" / FIXTURE_DIR)
+    shim = pinned / "packages" / FIXTURE_DIR / "src" / FIXTURE_ROOT / "types.py"
+    assert tool.shim_modules(layout) == [(f"{FIXTURE_ROOT}.types", shim)]
+    assert tool.unpinned_shim_modules(layout) == []
+
+    unpinned = _fixture_tree(tmp_path / "unpinned", {**files, "types.py": MARKED_SHIM})
+    with pytest.raises(AssertionError, match=rf"許した物の表に無い[\s\S]*{below}\.added_helper"):
+        check_package(_read_fixture(unpinned), table)
+    assert tool.unpinned_shim_modules(tool.read_layout(unpinned / "packages" / FIXTURE_DIR)) == [
+        below
+    ]
+
+
 @pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
 def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir: str) -> None:
     """移し替えの module の全部が、自分と下の module の古い path ごとに名の固定の列を持つ(列の無い古い path は、

@@ -1010,3 +1010,44 @@ def test_shim_keeps_the_entry_name_after_the_old_path_is_imported(tmp_path: Path
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout == "1 entry\n"
+
+
+def test_pin_writes_the_names_into_the_shim_of_a_namespace_dir(tmp_path: Path) -> None:
+    """namespace の dir(__init__ の無い _area)を指す移し替えの module にも、pin が下の古い path の名の固定の列を書く。
+
+    その移し替えの module は module でないので、目録の module の列だけから移し替えの module を探すと拾わず、何も書かな
+    かった(doeff-cluster の sim.py — card ki-fcf6342de575)。列には effect・handler と既知の表の名だけを書き、書き手が
+    下に足した helper は書かない。
+    """
+    src = f"packages/{PACKAGE}/src/{ROOT_NAME}"
+    repo = _write_repo(
+        tmp_path / "repo",
+        {
+            f"packages/{PACKAGE}/pyproject.toml": FILES[f"packages/{PACKAGE}/pyproject.toml"],
+            f"{src}/__init__.py": '"""The fixture package."""\n',
+            f"{src}/_area/sub.py": '''
+                from doeff import EffectBase
+
+
+                class PingEffect(EffectBase):
+                    """The one effect."""
+
+
+                def helper(x: int) -> int:
+                    return x + 1
+            ''',
+        },
+    )
+    child = tool.Child(ROOT_NAME, "area", repo / src)
+    child.shim.write_text(tool.shim_text(child, False, {}), encoding="utf-8")
+    report = tool.pin(repo / "packages" / PACKAGE, None, None)
+    head = child.shim.read_text(encoding="utf-8").split('"""', 1)[0]
+    assert head == (
+        f"{tool.SHIM_MARK} {child.old} -> {child.new}\n"
+        f"{tool.SHIM_NAMES_MARK} {child.old}.sub:\n"
+        f"{tool.SHIM_NAMES_MORE} PingEffect\n"
+    )
+    assert report.names == {
+        "列に書いた名": [f"{child.old}.sub.PingEffect"],
+        "列から外した名": [f"{child.old}.sub.helper"],
+    }
