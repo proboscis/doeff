@@ -11,7 +11,7 @@ adr_registry() は process の登録簿を読み書きし、adr_registry(specs=[
 """
 
 import doeff_adr
-import doeff_adr.registry
+import doeff_adr._registry
 import pytest
 from doeff_adr import (
     AdrIds,
@@ -27,7 +27,7 @@ from doeff_adr import (
     adr_registry,
     semgrep_enforcements,
 )
-from doeff_adr.registry import isolated_registry
+from doeff_adr._registry import isolated_registry
 
 from doeff import do, run
 
@@ -182,7 +182,7 @@ def test_the_registry_is_read_and_written_only_through_the_effects() -> None:
     for gone in ("register_adr", "clear_registry", "enforcement_ids", "get_enforcement"):
         assert gone not in doeff_adr.__all__
         assert not hasattr(doeff_adr, gone)
-        assert not hasattr(doeff_adr.registry, gone)
+        assert not hasattr(doeff_adr._registry, gone)
 
 
 def test_a_deftest_writes_to_a_swapped_registry_and_leaves_the_process_one(pytester) -> None:
