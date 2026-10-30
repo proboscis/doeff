@@ -236,7 +236,12 @@ spec:
             # GET /outbox は kinds を名乗った読み手にだけ待ちの行を返す(前の版の読み手には終わりの行だけ)。task の行に欄 queued_noticed_ms
             # が足る(積んだ行だけ — 前の版へ戻すと、その行だけが旧い形として failed になる)。間の差はこの 1 commit だけ。前の版 a227592e6 は
             # eafa71f80 の祖先。
-            - { name: WORKER_DOEFF_COMMIT, value: 762359834b7ab1b0c3ed901c9b510f8071891954 }
+            # be893ad9d = 失敗した Await の約束の行が橋の frame を通して自分の handle を生かす形を直した版(_await_handler の _bridged_error・
+            # card ki-84b4a6fb6503)。zeus の daily-verify が失敗した要求 1 本ごとに ExternalPromise と traceback を残し、private の memory が
+            # 127 MB から約 530 MB に増えて戻らない形を本番から消すため、coordinator を先に・同じ commit で zeus の行を上げる(card
+            # ki-5ab328700dc0)。coordinator の process に効く差: worker の枠を job の memory と task の側の予約・背景の枠で数える(327ea2322・
+            # card ki-2acb63aec0fd)・Service の宣言の memory の欄(f4c033737)。前の版 762359834 は be893ad9d の祖先。
+            - { name: WORKER_DOEFF_COMMIT, value: be893ad9dce5c9a3b617a551379e11ca8d70f415 }
             # coordinator の process 自身の行の名乗り(coordinator/entry/main の process-lines — job の名 coordinator/<namespace>・worker の
             # 名の欄 = Pod の名)。送り先(ConfigMap coordinator-env の DOEFF_JOB_LOG_OTLP)が無ければ読まない。
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
