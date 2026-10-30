@@ -298,6 +298,20 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentAccountLimit",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentAccountRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentAttemptExhaustedError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -305,8 +319,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentCompactionEndedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentCompactionEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentCompactionStartedEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -326,6 +368,34 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentHookEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentInputFateEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentLaunchError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -333,8 +403,22 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentModelRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentNotAvailableError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentProviderCapacity",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -361,8 +445,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentSpec",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentStopHookFeedbackEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentSubagentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -375,8 +480,141 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentTextDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTextEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentThinkingDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentThinkingStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentToolCallStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentToolInputDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentToolResultEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentToolUseEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnCompleted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnEnd",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnEndEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnInterrupted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnLost",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTurnUsage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "CompactionOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "CompactionTrigger",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -396,7 +634,21 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "HomeTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "JSONSchema",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "NamedContextId",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -410,8 +662,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "RecordStep",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "ReplaceSessionCredentialOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "ReplacementCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -431,8 +704,64 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "SessionCredentialReplaced",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "SessionOnHomeCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "SessionProcessNotLive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "TranscriptRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "TurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "TurnCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -454,6 +783,13 @@
    "module": "doeff_agents",
    "name": "TurnInputMode",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "TurnRef",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -494,6 +830,20 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentAccountLimit",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentAccountRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentAttemptExhaustedError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -501,8 +851,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentCompactionEndedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentCompactionEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentCompactionStartedEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -522,6 +900,34 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentHookEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentInputFateEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentLaunchError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -529,8 +935,22 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentModelRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentNotAvailableError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentProviderCapacity",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -557,8 +977,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentSpec",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentStopHookFeedbackEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentSubagentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -571,8 +1012,148 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentTextDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTextEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentThinkingDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentThinkingStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentToolCallStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentToolInputDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentToolResultEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentToolUseEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnCompleted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnEnd",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnEndEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnInterrupted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnLost",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTurnUsage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "CodexTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "CompactionOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "CompactionTrigger",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -592,6 +1173,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "HomeTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "InputImage",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -606,6 +1194,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "NamedContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -613,8 +1208,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "RecordStep",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "ReplaceSessionCredentialOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "ReplacementCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -634,8 +1250,64 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "SessionCredentialReplaced",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "SessionOnHomeCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "SessionProcessNotLive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "TranscriptRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "TurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "TurnCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -661,6 +1333,27 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "TurnRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentAccountLimit",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentAccountRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
    "name": "AgentAttemptExhaustedError",
    "組": "許した物 — 例外の型",
@@ -669,8 +1362,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentCompactionEndedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentCompactionEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentCompactionStartedEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -690,6 +1411,34 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentHookEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentInputFateEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "AgentLaunchError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -697,8 +1446,22 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentModelRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "AgentNotAvailableError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentProviderCapacity",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -725,8 +1488,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "AgentSpec",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentStopHookFeedbackEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentSubagentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -739,8 +1523,148 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentTextDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTextEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentThinkingDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentThinkingStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentToolCallStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentToolInputDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentToolResultEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentToolUseEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnCompleted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnEnd",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnEndEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnInterrupted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnLost",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTurnUsage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "CodexTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "CompactionOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "CompactionTrigger",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -760,6 +1684,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "HomeTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "InputImage",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -774,6 +1705,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "NamedContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -781,8 +1719,29 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "RecordStep",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "ReplaceSessionCredentialOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "ReplacementCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -802,8 +1761,64 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "SessionCredentialReplaced",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "SessionOnHomeCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "SessionProcessNotLive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "TranscriptRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "TurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "TurnCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -829,6 +1844,13 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "TurnRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.handlers.claude",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
@@ -839,6 +1861,27 @@
    "module": "doeff_agents.handlers.claude",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.claude",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.claude",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.claude",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -860,6 +1903,27 @@
    "module": "doeff_agents.handlers.codex",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.codex",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.codex",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.codex",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -886,8 +1950,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.daemon",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -907,6 +1999,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.effectful",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.effectful",
    "name": "mcp_server_loop",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -914,8 +2013,50 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless",
+   "name": "AgentAccountLimit",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentAccountRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentCompactionEndedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentCompactionEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentCompactionStartedEvent",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -928,8 +2069,155 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless",
+   "name": "AgentEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentHookEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentInputFateEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
    "name": "AgentLaunchError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentModelRefusal",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentProviderCapacity",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentStopHookFeedbackEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentSubagentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTextDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTextEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentThinkingDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentThinkingStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentToolCallStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentToolInputDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentToolResultEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentToolUseEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnCompleted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnEndEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnInterrupted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnLost",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AgentTurnUsage",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -942,7 +2230,49 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "CompactionOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "CompactionTrigger",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
    "name": "HandlerMadeContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "HomeTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "NamedContextId",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -951,6 +2281,20 @@
    "module": "doeff_agents.handlers.headless",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "ReplacementCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -970,8 +2314,57 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless",
+   "name": "SessionCredentialReplaced",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "SessionOnHomeCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "SessionProcessNotLive",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "TurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "TurnCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -998,6 +2391,20 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentAccountLimit",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentCallUsageEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -1012,8 +2419,120 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentEventPage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentInputFateEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
    "name": "AgentLaunchError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentProviderCapacity",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTextDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTextEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentThinkingDeltaEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentThinkingStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentToolCallStartedEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentToolResultEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentToolUseEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnCompleted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnEndEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnFailed",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnInterrupted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnLost",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentTurnUsage",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1026,8 +2545,50 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless_codex",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "CodexTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "HomeTurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "NamedContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1047,8 +2608,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless_codex",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "TurnCredential",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "TurnCredentialUnavailable",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1124,6 +2713,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.production",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
    "name": "AgentSpec",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -1145,8 +2741,36 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.production",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1158,6 +2782,13 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.handlers.session_store",
    "name": "AgentSessionQuery",
    "組": "許した物 — effect の値の型",
@@ -1165,9 +2796,44 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.handlers.session_store",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.handlers.testing",
    "name": "AgentType",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "AwaitOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "AwaitStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "Observation",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1180,8 +2846,22 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.testing",
+   "name": "SessionHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1193,9 +2873,23 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.session_store",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.session_store_sql",
    "name": "AgentSessionQuery",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "AgentSessionSnapshot",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1207,10 +2901,157 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "SessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "TranscriptRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "TurnRef",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.adopt",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.effects",
+   "name": "FsSymlinkOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.effects",
+   "name": "PaneObservation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.effects",
+   "name": "ProcResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.effects",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.host",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.impls.markers",
+   "name": "PaneObservation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.launch",
+   "name": "PaneObservation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.launch",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.policy",
+   "name": "PaneObservation",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.policy",
+   "name": "ProcResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.policy",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.sessionhost.policy",
    "name": "seat_env_credential_shaped_offenders",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.store",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.store_memory",
+   "name": "MemorySessionRows",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.store_memory",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.substrate",
+   "name": "FsSymlinkOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.substrate",
+   "name": "ProcResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.sessionhost.substrate",
+   "name": "SessionRow",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-agents",

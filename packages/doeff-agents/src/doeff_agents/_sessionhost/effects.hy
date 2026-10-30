@@ -461,7 +461,7 @@
   #^ dict params
   #^ str verb)
 
-(defclass [(dataclass :frozen True :kw-only True)] ClassifyPane [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] ClassifyPane [(get EffectBase PaneObservation)]
   "pane capture(tail 100 行)を kind 別 marker で観測する。戻り値: PaneObservation。
    marker は lowercase tail の部分文字列一致(oracle main.rs:2775-3229、F-* 表)。
    分類の順序・意味づけは policy 所有 — この effect は事実だけを返す。"
@@ -571,20 +571,21 @@
 ;; substrate effects(SessionStore / Tmux / Clock / Proc — DOE-004 R1)
 ;; ===========================================================================
 
-(defclass [(dataclass :frozen True :kw-only True)] SessionStoreListActive [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreListActive [(get EffectBase (get list SessionRow))]
   "非終端 session 行の一覧(active_statuses = pending / booting / running /
    blocked / blocked_api、main.rs:1931)。戻り値: list[SessionRow]。
    monitor cycle はこの level-triggered 再読からのみ駆動される(R3)。"
   )
 
-(defclass [(dataclass :frozen True :kw-only True)] SessionStoreListCleanupPending [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreListCleanupPending
+  [(get EffectBase (get list SessionRow))]
   "単一掃き取り(issue #568 / ADR-DOE-AGENTS-010 R5)の対象集合: 終端 status ∧
    cleaned_at IS NULL ∧ lifecycle=run_to_completion ∧ 非 adopted の行一覧。
    刈り取り免除(ADR-DOE-AGENTS-007 安全条項 1)は集合の定義で継承する —
    対話席・adopt 席の substrate には掃き取りが触れない。戻り値: list[SessionRow]。"
   )
 
-(defclass [(dataclass :frozen True :kw-only True)] SessionStoreGet [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] SessionStoreGet [(get EffectBase (| SessionRow None))]
   "session 行の単読。戻り値: SessionRow | None。"
   #^ str session-id)
 
@@ -659,7 +660,7 @@
    直接読まない。戻り値: datetime。"
   )
 
-(defclass [(dataclass :frozen True :kw-only True)] ProcRun [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] ProcRun [(get EffectBase ProcResult)]
   "子 process の実行(sh -c 同等、stdin 供給、wall-clock cap は substrate 所有)。
    戻り値: ProcResult — exit-code != 0 も値として返す(raise しない)。
    monitor policy では prompt judge の実行にのみ使う。"
@@ -812,7 +813,7 @@
     (hash #(self.state self.errno self.detail))))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] FsLinkArtifact [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] FsLinkArtifact [(get EffectBase FsSymlinkOutcome)]
   "会話 artifact の cross-home symlink 敷設(ADR-DOE-AGENTS-006 改訂 R7 の
    transplant プリミティブ — dotfiles agentcli share.py link_session_artifact
    の意味移植)。物理: source 不在(実体でも symlink でもない)= 触らず
@@ -831,7 +832,7 @@
   #^ str source-path
   #^ str target-path)
 
-(defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] FsEnsureSymlink [(get EffectBase FsSymlinkOutcome)]
   "symlink を**正しい先へ据える**(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8・盲検 A の反例)。
    物理(4 値・冪等・level-triggered):
      既に同じ先を指す symlink  = 触らない \"unchanged\"(走っている席の見張りを起こさない)
