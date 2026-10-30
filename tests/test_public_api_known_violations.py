@@ -1783,6 +1783,25 @@ class EchoEffect(EffectBase):
 @dataclass(frozen=True)
 class Settings:
     """A class no effect answers."""
+
+
+from collections.abc import Callable
+
+
+@dataclass(frozen=True)
+class Event:
+    """The argument of a listener: no effect answers it."""
+
+
+Listener = Callable[[Event], object]
+
+
+class PeekEffect(EffectBase[object]):
+    """An effect whose answer is any value."""
+
+
+class FactoryEffect(EffectBase[Callable[..., int]]):
+    """An effect that answers a function."""
 '''
 
 
@@ -1793,12 +1812,18 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
 
     EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
     緑・どちらの表にも無ければ外れのまま赤。答えを docstring だけに書いた effect の答えの class と、どの effect の答えにも
-    出ない class を置くと赤(組と名と形を名指す)。
+    出ない class を置くと赤(組と名と形を名指す)。答えに object と Callable が出ても、どの effect も答えない class を引数に
+    取る Callable の別名(Listener)は答えの型でない — Callable の引数の並びの型も読む(card ki-d976fdee464d)。
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + ANSWERS)
     package = _read_fixture(repo)
     forms = {row["name"]: row["form"] for row in package["exports"]}
-    assert (forms["ReadAnswer"], forms["Mood"], forms["Settings"]) == ("型", "Enum", "class")
+    assert (forms["ReadAnswer"], forms["Mood"], forms["Settings"], forms["Listener"]) == (
+        "型",
+        "Enum",
+        "class",
+        "型",
+    )
     places = {shown["name"]: shown["answers"] for shown in package["answer_types"]}
     assert places == {
         "ReadAnswer": ["ReadEffect"],
@@ -1808,7 +1833,7 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
         "Calm": ["Reading の子"],
     }
     answers = ["Calm", "Mood", "ReadAnswer", "Reading", "Refused"]
-    rest = ["Echoed", "Settings"]
+    rest = ["Echoed", "Event", "Listener", "Settings"]
 
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
         listed = sorted(set(rest) - set(placed))
@@ -1823,7 +1848,7 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
     for name in rest:
         with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
             check_package(package, *tables([*answers, name]))
-        assert f"{FIXTURE_ROOT}.{name}(class・" in str(failure.value)
+        assert f"{FIXTURE_ROOT}.{name}({forms[name]}・" in str(failure.value)
         assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 

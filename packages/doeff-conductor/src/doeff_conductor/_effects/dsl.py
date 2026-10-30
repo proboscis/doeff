@@ -54,7 +54,7 @@ class GateCall(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class TimeCall(ConductorEffectBase):
+class TimeCall(ConductorEffectBase[str]):
     """Explicit clock effect emitted by ``time!``."""
 
     label: str | None = None
@@ -63,7 +63,7 @@ class TimeCall(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RandomCall(ConductorEffectBase):
+class RandomCall(ConductorEffectBase[object]):
     """Explicit randomness effect emitted by ``random!``."""
 
     spec: Any

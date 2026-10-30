@@ -15,7 +15,7 @@ from doeff_conductor._types import Issue, IssueStatus
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreateIssue(ConductorEffectBase):
+class CreateIssue(ConductorEffectBase[Issue]):
     """Create a new issue in the vault.
 
     Creates a markdown file with YAML frontmatter in the issues directory.
@@ -40,7 +40,7 @@ class CreateIssue(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListIssues(ConductorEffectBase):
+class ListIssues(ConductorEffectBase[list[Issue]]):
     """List issues from the vault with optional filters.
 
     Yields: list[Issue]
@@ -58,7 +58,7 @@ class ListIssues(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetIssue(ConductorEffectBase):
+class GetIssue(ConductorEffectBase[Issue]):
     """Get an issue by ID.
 
     Yields: Issue
@@ -75,7 +75,7 @@ class GetIssue(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResolveIssue(ConductorEffectBase):
+class ResolveIssue(ConductorEffectBase[Issue]):
     """Mark an issue as resolved.
 
     Updates the issue status and optionally links the PR.

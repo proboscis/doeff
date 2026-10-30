@@ -131,6 +131,18 @@
   `resolved_identity_fingerprint`, `workflow_effect_cache_key`) and `make_scheduled_handler_with_store` /
   `make_blocking_scheduled_handler_with_store` stay in the internal modules `doeff_conductor._templates`,
   `doeff_conductor._effects`, `doeff_conductor._replay_keying` and `doeff_conductor._handlers`.
+- **doeff-conductor:** each effect declares its answer type: `ConductorEffectBase` is generic in its answer, and
+  `Exec` answers `ExecResult`, `CreatePR` answers `PRHandle`, `MergeWorkspaces` answers `MergeWorkspacesResult`, the
+  issue effects answer `Issue` (`ListIssues` a list of them), `ListWorkflows`, `GetWorkflow`, `RunWorkflow`,
+  `ResumeWorkflow` and `AnswerGate` answer `WorkflowHandle` (35 effects in all), so a type checker reads the value a
+  `yield` gives and the public API inventory counts those answer types as allowed (ADR-DOE-API-001 R2). `Push` and
+  `MergePR` declare `None`, the value their handlers always gave (their docstrings said `bool`). The DSL node
+  descriptions `AgentCall`, `GateCall`, `WorkspaceCall` and `MergeCall` are never performed and declare none.
+- **Breaking (doeff-conductor):** the import root no longer exports `AgentRef` and nine review routing types
+  (`RemainingReviewBudget`, `ReviewItem`, `ReviewRoutingResult`, `ReviewVerdict`, `ReviewerAgentLost`,
+  `BudgetCounterEntry`, `CalibrationEscapeRecord`, `ReviewBudgetStatus`, `Tier1ReviewResult`): no effect carries or
+  answers them, and `route_review_item`, the function they belong to, was already internal (ADR-DOE-API-001 R1). No
+  other repository reads them; they stay in `doeff_conductor._types` and `doeff_conductor._effects`.
 - **Breaking (doeff-agentic, doeff-flow, doeff-events, doeff-notify):** the import roots no longer export 15 names
   that are neither effects nor handlers and that no other repository reads (ADR-DOE-API-001 R1). doeff-agentic drops
   `AgenticAPI`, `EventLogReader`, `EventLogWriter`, `WorkflowIndex`, `StateManager`, `generate_workflow_id`,

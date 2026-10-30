@@ -11,7 +11,7 @@ from doeff_conductor._types import MergeStrategy, PRHandle, Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
-class Commit(ConductorEffectBase):
+class Commit(ConductorEffectBase[str]):
     """Create a commit in the workspace.
 
     Stages all changes and creates a commit with the given message.
@@ -32,12 +32,13 @@ class Commit(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Push(ConductorEffectBase):
+class Push(ConductorEffectBase[None]):
     """Push branch to remote.
 
     Pushes the workspace's ref to the remote repository.
 
-    Yields: bool (True if successful)
+    Yields: None
+    Raises: GitCommandError when the push fails
 
     Example:
         @do
@@ -53,7 +54,7 @@ class Push(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreatePR(ConductorEffectBase):
+class CreatePR(ConductorEffectBase[PRHandle]):
     """Create a pull request.
 
     Creates a PR from the workspace's ref to the target branch.
@@ -82,12 +83,13 @@ class CreatePR(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class MergePR(ConductorEffectBase):
+class MergePR(ConductorEffectBase[None]):
     """Merge a pull request.
 
     Merges the PR using the specified strategy.
 
-    Yields: bool (True if merged successfully)
+    Yields: None
+    Raises: GitCommandError when the merge fails
     """
 
     pr: PRHandle  # PR to merge

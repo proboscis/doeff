@@ -103,22 +103,6 @@ workspace = Workspace(
 Workspace materialization paths are handler-private. Use `Exec(workspace=...)` or
 handler-specific APIs for filesystem work.
 
-#### `AgentRef`
-
-Reference to a running agent session.
-
-```python
-from doeff_conductor import AgentRef
-
-ref = AgentRef(
-    id="session-abc123",
-    name="implementer",
-    workflow_id="wf-001",
-    workspace_id="wt-001",
-    agent_type="claude",
-)
-```
-
 #### `PRHandle`
 
 Handle to a pull request.
