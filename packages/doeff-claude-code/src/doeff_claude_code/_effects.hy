@@ -16,7 +16,8 @@
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenJson freeze-json])
 (import doeff_claude_code._values [ClaudeSessionSpec ClaudeHome ClaudeTurn TurnInput Allow Deny checked-session-id
-                                  FreshSession ResumeSession ForkSession SessionOrigin LentCredential PrintContent])
+                                  FreshSession ResumeSession ForkSession SessionOrigin LentCredential PrintContent
+                                  PermissionAnswer])
 (import doeff_claude_code._lines [ClaudeStreamLine Completed Failed Interrupted BackendLost Usage AccountLimitHit])
 
 
@@ -160,7 +161,7 @@
   "許可の問いに答える。答え = Answered | NoSuchRequest。"
   (#^ ClaudeTurn turn)
   (#^ str request-id)
-  (#^ (| Allow Deny) answer)
+  (#^ PermissionAnswer answer)
   (defn __post_init__ [self]
     (when (not (isinstance self.answer #(Allow Deny)))
       (raise (TypeError "ClaudeAnswerPermission.answer は Allow / Deny")))))

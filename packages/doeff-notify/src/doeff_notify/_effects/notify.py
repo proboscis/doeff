@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from doeff import EffectBase
-from doeff_notify._types import Urgency
+from doeff_notify._types import NotificationResult, Urgency
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -14,7 +14,7 @@ class NotificationEffectBase(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Notify(NotificationEffectBase):
+class Notify(NotificationEffectBase, EffectBase[NotificationResult]):
     """Send a notification to one or more channels."""
 
     message: str

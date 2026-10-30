@@ -136,8 +136,6 @@
       (raise (ValueError (.format "AutocompactTokens.tokens は {} 以上 {} 以下の整数: {!r}"
                                   AUTOCOMPACT-MIN-TOKENS AUTOCOMPACT-MAX-TOKENS self.tokens))))))
 
-(setv AutocompactWindow (| AutocompactAuto AutocompactTokens))
-
 
 ;; --- 会話の宣言 ---------------------------------------------------------------------------------
 

@@ -82,7 +82,6 @@ class AutocompactTokens:
 
     def __post_init__(self) -> None:
         ...
-AutocompactWindow: TypeAlias = AutocompactAuto | AutocompactTokens
 
 @dataclass(frozen=True)
 class ClaudeSessionSpec:

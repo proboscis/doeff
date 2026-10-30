@@ -56,9 +56,8 @@ from doeff_openai._structured_llm import structured_llm__openai
 
 # Type exports
 from doeff_openai._types import (
-    CostInfo,
-    StreamChunk,
     # Data classes
+    CostInfo,
     TokenUsage,
 )
 
@@ -72,7 +71,6 @@ __all__ = [
     "MockOpenAIState",
     # Types
     "PricingError",
-    "StreamChunk",
     "StreamingChatCompletion",
     "StructuredOutput",
     "TokenUsage",
