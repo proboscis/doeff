@@ -13535,6 +13535,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.event_source",
+   "name": "ChangedRow",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
    "name": "Changes",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -14412,6 +14419,13 @@
    "module": "doeff_records.memory",
    "name": "ChangeLog",
    "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "ChangedRow",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
