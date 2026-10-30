@@ -5,7 +5,7 @@
 ;;; 応えなくなった(4 回・OOM kill は起きない)。誰が食ったかは 10 分ごとの測りの間に落ちて読めなかった。見張りは 5 秒ごとに job ごとの
 ;;; memory を数えて最大を残し、機体の空きが閾を割ったら job の木の中のいちばん大きい単位を、kernel より先に止める。
 ;;;
-;;; 止める単位(kill-units — 根 = shim か待ちの子 A は止めない):
+;;; 止める単位(_kill-units — 根 = shim か待ちの子 A は止めない):
 ;;;   task(名が task/ で始まる job)  根の下の全部で 1 つ(TASK — task は 1 回の仕事なので丸ごと止める)。
 ;;;   常駐の job  根から、いちばん大きい子の木が今の木の DOMINANT-SHARE 以上で、今の process 自身の rss 以上の間は、その子へ下りる
 ;;;               (包みの uv・job の本体・memory を食った子へ)。着いた所を集まりの点とする。単位 = 下りなかった兄弟の木(BRANCH — shim が
@@ -332,7 +332,7 @@
                  :key (fn [use] #((- use.bytes) use.job)))))
 
 
-(defk job-uses [rows roots]
+(defk _job-uses [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "job ごとの memory の今(JobUse)を、表と根から数えるため(_job-walks と _uses-of の組)。"
   (<- walks tuple (_job-walks rows roots))
@@ -394,7 +394,7 @@
   (tuple (sorted (sorted (chain.from-iterable found) :key (attrgetter "job" "head.pid")) :key (attrgetter "bytes") :reverse True)))
 
 
-(defk kill-units [rows roots]
+(defk _kill-units [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "全 job の止める単位を、表と根から並べるため(_job-walks と _units-of の組)。"
   (<- walks tuple (_job-walks rows roots))
