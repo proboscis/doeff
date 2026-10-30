@@ -26,7 +26,8 @@
 ;;; 関数を module で隠し、記録の service が 2026-10-30 09:42〜13:12 JST に起動の度に落ちた)。根の下の package(_ の package を
 ;;; 含む)の入口にも同じく当てる(同じ R34・card [id])。
 ;;; effect の答えを他の物差しへ換える関数(換算の関数 — doeff-time の epoch_ms_of)を名ごとに許す事は R35(答え
-;;; [id]・card [id])。
+;;; [id]・card [id])。doeff-hy が配る .pth が起動ごとに呼ぶ install を起動の口として入口に
+;;; 残す事は R36(card [id] — R10 の plugin の登録と R14 の延長で、問わずに決めた)。
 ;;; 答えの無い物は R13 の「未決」に並べ、答えが来たら
 ;;; 持ち主がこの ADR に条を足す。
 ;;;
@@ -35,7 +36,9 @@
 ;;; 境界だけ・減るだけ)と許した物の表(tests/data/public_api_allowed.json — 決まりが名ごとに許した名・決めの id つきで足せる)と
 ;;; 突き合わせる。工場と読めた名は目録の道具が呼んで印を確かめ、印の無い値を返す名を外れと数える(R3)。許した物の表の組
 ;;; 「許した物 — program の helper」の名は、目録の道具が中を読んで helper の形(R18)と確かめた物だけを置ける。組「許した物 — Hy の
-;;; macro」と「許した物 — CLI コマンド」の名も、目録の行の形で確かめる(R31)。組「許した物 — 換算の関数」の名は、目録の道具が中を読んで換算の形(R35)と確かめた物だけを置ける。組「許した物 — 例外の型」の
+;;; macro」と「許した物 — CLI コマンド」の名も、目録の行の形で確かめる(R31)— CLI コマンドは、条が名を挙げた命令だけを置ける。
+;;; 組「許した物 — pytest の plugin の登録」と「許した物 — 起動の口」の名は、目録の道具が package の pyproject.toml の pytest11 の
+;;; entry point と .pth を読んで確かめる(R10・R33・R36)。組「許した物 — 換算の関数」の名は、目録の道具が中を読んで換算の形(R35)と確かめた物だけを置ける。組「許した物 — 例外の型」の
 ;;; 名は、目録の形が例外の class でその package が定義した物だけを置ける(R2)。組「許した物 — effect の値の型」の名は、目録の
 ;;; 道具が同じ package の effect の class の欄の注釈から集めた型(value_types)だけを置ける(R2)。この ADR は別の検を
 ;;; 作らない — law の :enforced-by がその test を指し、この file の deftest はその test の関数を呼ぶだけ(R12)。
@@ -173,7 +176,8 @@
      (rule R32 "doeff-adr の登録簿を読み書きする関数 4 個(register_adr・clear_registry・enforcement_ids・get_enforcement)は、effect RegisterAdr(ADR を載せる → AdrSpec)・ClearRegistry(ADR と検を空にする → None)・EnforcementIds(検の id の一覧 → list[str])・GetEnforcement(id で検を引く → EnforcementRef か SemgrepSpec)にし、R20 の工場 adr_registry の同じ handler が答える(2026-10-30 01:09 JST・依頼書 [id] の問い adr-scope の答え [id] — doeff-adr を範囲に入れ、残りの名を R20〜R22 と同じ向きで直す・card [id])。外の repo(agora-controllers・agora・custody ほか)に呼び手が無かったので、移し替えの層を残さずに 4 個を registry と入口から消し、本体は内側の registry._register_adr・_clear_registry・_enforcement_ids・_get_enforcement(どれも表を引数で受け、None = process の登録簿)に置いた。既知の表の 8 行(doeff_adr と doeff_adr._registry の 4 名ずつ)も消した。別の登録簿は R30 の引数 enforcements と同じ形で、ADR の表は specs の写し(工場を呼んだ時に 1 つ作り、RegisterAdr はそこへ載せる)・検の表は渡した辞書そのもの — semgrep_enforcements(table=…) と同じ辞書を渡せば、RegisterSemgrep の載せを GetEnforcement と RegisterAdr の検の id が読む。4 つの effect は別の登録簿から外へ落ちず(無い id は KeyError)、ClearRegistry は別の登録簿の 2 つの表だけを空にする。載せと引きの決まった失敗(KeyError・TypeError・ValueError)は TransferThrow で effect を出した所へ投げ返す。macro defadr の展開は、ADR の載せも import の時に effect RegisterAdr として adr_registry() の下で走らせる(R30 の RegisterDeftest と同じ形)。effect だけで読み書きする test は、別の登録簿を据えた handler で足り、registry.isolated_registry が要らない。isolated_registry は、macro の展開が import の時に process の登録簿へ載せる所を試す test だけが使う内側の道具として registry に残す(展開は handler を自分で据えるので、外から差し替えられない — 隠すのは submodule を _ へ移す card [id])。")
      (rule R33 "doeff-adr(実行できる ADR の macro と pytest の plugin の package)は範囲「決まりの範囲」に入れ、R1・R5 をほかの package と同じく当てる(2026-10-30 01:09 JST・依頼書 [id] の問い adr-scope の答え [id] — 範囲に入れる・card [id])。公開の名は effect と handler(R20・R21・R22・R30・R32)と、R2 の型・CLI コマンド doeff-adr(R7)・pytest11 の plugin の登録・macro を出す module doeff_adr.macros(R14・R31 と同じ向き)だけにする。submodule 12 個は _ へ移し(card [id] — doeff 64ac67a2a)、外の repo の古い path の呼び手 5 か所(agora-controllers と jev-proxy)を入口と doeff_adr.macros へ書き換えた後(card [id])に、移し替えの module 12 個を消した(tools/hide_submodules.py finish)。既知の表の doeff-adr の外れの組の行(submodule を _ で隠す 12・内側の module へ移す 174)と、入口の行と重なる境界の行 3 つを消し、範囲を「決まりの範囲」に改めた。残る境界の行(型・CLI・pytest の plugin の登録・Hy の macro)は、許した物の表へ移す card([id]・[id]・[id]・[id]・[id])が移す。R13 (b) から外した。")
      (rule R34 "import の根の入口(__init__)が出す名と同じ名の子(根のすぐ下の module・package・名前空間の dir と、移し替えの module)を置かない(2026-10-30・card [id])。古い path(<根>.<子>)を import すると、import の仕組みが親の package の属性 <根>.<子> を子の module に束ねる — 属性が在るので入口の遅延の __getattr__ は呼ばれず、すぐに束ねた名も上書きされ、後から入口で名を取る呼び手は関数でなく module を受ける。どちらが勝つかは import の順で決まる。実例: doeff 42f897000(card [id])が doeff_core_effects の子 aiohttp_http_server を _ へ移し、入口が遅延で関数 aiohttp_http_server を出す所に同じ名の移し替えの module を残した。agora-controllers の本番の土台が古い path を読んだので、10-30 09:42〜13:12 JST に記録の service が起動の度に TypeError(with_handlers: handler must be callable, got module)で落ち、画面に客が繋がれなかった。同じ形の殻は doeff_core_effects の scripted_http_server・doeff_agentic の opencode_handler と tmux_handler・doeff_openrouter の structured_llm(package の class を差し替えて束ねを捨てる手当てを持っていた)にも在った。doeff_core_effects の 2 つは外の repo の読み手(agora-controllers・moneta)を入口か _ の path へ書き換えてから消し、残りの 3 つは 21 package の殻を消した commit 32ba0e517 が消した。入口が遅延で package の属性から読む名も、その package に同じ名の子が在れば同じく隠れる(doeff_agents の agent は _effects から読んでいたので、移した package の古い path doeff_agents.effects.agent の import で module に替わった — 定義の module ._effects.agent から読む形に直した)。tools/hide_submodules.py の hide は、子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら何も書かずに断る — 子の名か入口の名を先に替える。根の下の package(_ の package を含む)の入口も同じく、出す名と同じ名の子を置かない(card [id])— 移した package の古い path <根>.<旧い子>.<下> を殻の finder が移した先の module で答えると、import の仕組みが移した先の package の属性 <下> を子の module に束ねる。doeff_agents._effects の入口は関数 agent を出さず(子の module agent と同じ名 — 根の入口 doeff_agents が定義の module ._effects.agent から出す。子を _ へ移すと effect の class の __module__ が替わり、外の repo(agora-controllers の土台の閉じの照合・semgrep の規則)が読む path が壊れるので子は移さない)、doeff_conductor._handlers の子 agent_handler・exec_handler・git_handler・issue_handler・workspace_handler と _templates の子 basic_pr・enforced_pr・multi_agent・reviewed_pr は _ の名へ移した(外の repo の読み手は 0 — 2026-10-30 の数え・~/repos の全 repo の既定の branch)。")
-     (rule R35 "effect の答えを他の物差しへ換える関数(換算の関数)は名ごとに許す(2026-10-30 17:10 JST・依頼書 [id] の問い epoch-ms の答え [id] — 換算の関数として名ごとに許し、呼び手は替えない・card [id])。換算と数えるのは次の 3 つを満たす関数: (1) 戻りの型が値の型 — effect・handler・program の型でなく、中身を言わない Any・object・Callable でもない。(2) generator でも coroutine でもない。(3) 中で effect も handler も program も作らず(effect の型と effect を作る関数・handler の値と作り手と工場・@do と defk の関数・Perform・WithHandler・handler の制御を読まない)、時計・環境・file・process・乱数・端末を名で読まない(now・time・monotonic・sleep・environ・getenv・open・read_text・run・Popen・socket・urlopen・random・uuid4・print ほか — 目録の道具の _WORLD_NAMES)。中は、その関数と、中で読む同じ package の関数を辿った全部で見る。目録の読みは R18 と同じく中の名を global の値か属性の名で見て、同じ package の関数だけを辿るので、引数で受けた物・module の容器や instance の属性から読んだ物・別の package の関数が外に触る形は見えず、換算と読む。だから換算の関数は名ごとに許し、許す名の中は人が読む。許す名は許した物の表(tests/data/public_api_allowed.json)に組「許した物 — 換算の関数」と許した決めの id をつけて置き、目録の道具がその名の形を確かめて、換算の形でなければ赤にする(R12)。形が換算でも、許した物の表に置いていない関数は外れのまま。今許す名: doeff-time の epoch_ms_of(GetTime の答えの時刻を、他の process や記録の刻と並べる epoch ミリ秒へ床で丸める — 丸めの式のただ 1 つの持ち主)。")]
+     (rule R35 "effect の答えを他の物差しへ換える関数(換算の関数)は名ごとに許す(2026-10-30 17:10 JST・依頼書 [id] の問い epoch-ms の答え [id] — 換算の関数として名ごとに許し、呼び手は替えない・card [id])。換算と数えるのは次の 3 つを満たす関数: (1) 戻りの型が値の型 — effect・handler・program の型でなく、中身を言わない Any・object・Callable でもない。(2) generator でも coroutine でもない。(3) 中で effect も handler も program も作らず(effect の型と effect を作る関数・handler の値と作り手と工場・@do と defk の関数・Perform・WithHandler・handler の制御を読まない)、時計・環境・file・process・乱数・端末を名で読まない(now・time・monotonic・sleep・environ・getenv・open・read_text・run・Popen・socket・urlopen・random・uuid4・print ほか — 目録の道具の _WORLD_NAMES)。中は、その関数と、中で読む同じ package の関数を辿った全部で見る。目録の読みは R18 と同じく中の名を global の値か属性の名で見て、同じ package の関数だけを辿るので、引数で受けた物・module の容器や instance の属性から読んだ物・別の package の関数が外に触る形は見えず、換算と読む。だから換算の関数は名ごとに許し、許す名の中は人が読む。許す名は許した物の表(tests/data/public_api_allowed.json)に組「許した物 — 換算の関数」と許した決めの id をつけて置き、目録の道具がその名の形を確かめて、換算の形でなければ赤にする(R12)。形が換算でも、許した物の表に置いていない関数は外れのまま。今許す名: doeff-time の epoch_ms_of(GetTime の答えの時刻を、他の process や記録の刻と並べる epoch ミリ秒へ床で丸める — 丸めの式のただ 1 つの持ち主)。")
+     (rule R36 "doeff-hy が配る .pth(doeff_hy_bytecode_guard.pth の 1 行 import doeff_hy_bytecode_guard; doeff_hy_bytecode_guard.install())が venv の Python の起動ごとに呼ぶ install は、R10 の pytest11 の plugin の登録と同じく、外の読み手(Python の site)が名で読む起動の登録として入口に残し、許した物の表の組「許した物 — 起動の口」に置く(2026-10-30・card [id] — R10・R14 の延長で問わずに決めた。持ち主が覆せる)。訳: .pth は hatchling の force-include が install の時に venv の site-packages へ写す物で、editable の install でも写しは入れた時の中身のまま(doeff を上げても書き換わらない)。入口から install を消すか内側へ移すと、写しの古い venv の Python は起動ごとに .pth の行で AttributeError を出し、bytecode の見張りが入らない(card [id] の数え — 外の起動の呼び手は、その .pth と、同じ 1 行を書く doeff-cluster の tests/test_boot_wheel.hy と、install を呼ぶ dotfiles の検)。R14 の「macro の外の名は内側の module へ移す」の外に置くのはこの 1 名だけで、入口のほかの名(R2 の型 MacroRecord・HyMacroUseWarning)は R14 のとおり。組「許した物 — 起動の口」の名は、目録の道具(startup_calls)が package の pyproject.toml の force-include が配る .pth を読み、起動の時に呼ぶ (module, 名) と合う時だけ置ける(R12)。")]
   :laws
     [(law subpackage-shows-only-effects-and-handlers
        :statement "for_all package p under packages/ with scope(p) = 決まりの範囲: outside(p) = {n in public_names(p) | kind(n) not in {effect, handler}} = known(p) + allowed(p) with known(p) and allowed(p) disjoint, listed_names(table) only shrinks from its first version, and the known table holds no allowed group"
@@ -257,17 +261,21 @@
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-conversion-can-be-allowed-as-one"]
        :wiring "配線済み(2026-10-30・card [id])— 目録は戻りの型が値の型の関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、effect・handler・program を作る物か _WORLD_NAMES の名を読むか、generator か coroutine なら形「関数」(理由の末尾に、どの関数がどの名を読むか)、読まなければ形「換算の関数」と数える(種類はどちらも それ以外)。表の test は許した物の表の組「許した物 — 換算の関数」の名の形が換算でなければ赤にする。今の行は doeff-time の epoch_ms_of 1 つ")
      (law an-allowed-macro-or-command-has-that-form
-       :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — Hy の macro): form(m, n) = Hy の macro or (m = (submodule) and names(n) != {} and for_all k in names(n): form(n, k) = Hy の macro); for_all (m, n) in allowed(p, 許した物 — CLI コマンド): form(m, n) in {console script, Rust の実行 file}"
+       :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — Hy の macro): form(m, n) = Hy の macro or (m = (submodule) and names(n) != {} and for_all k in names(n): form(n, k) = Hy の macro); for_all (m, n) in allowed(p, 許した物 — CLI コマンド): form(m, n) in {console script, Rust の実行 file} and n in ADR_COMMANDS(p) — ADR_COMMANDS(p) = the commands of p the test lists with the rule that keeps each, and that rule's text names the command"
        :counterexamples
          [(counterexample "段 1 で macro を出す module を _macros へ隠し、利用者の (require doeff-conductor.macros …) を移し替えの module に頼らせ、段 3 が移し替えの module を消すと macro の公開の置き場が無くなる(card [id] の前の doeff_conductor.macros と doeff_events.macros)")
           (counterexample "macro を出す module に macro でない関数を足し、その submodule の行を macro の組に置いたまま、関数を公開の module から見せて通す")
           (counterexample "macro でない関数や console script を macro の組に置いて通す")
-          (counterexample "macro か関数を CLI コマンドの組に置いて通す")]
+          (counterexample "macro か関数を CLI コマンドの組に置いて通す")
+          (counterexample "ADR の条が名を挙げない新しい console script を、形が console script だからと CLI コマンドの組に置いて通す(R8 が消した doeff-sessionhost のような常駐の起動の口が、決めなしに戻る)")
+          (counterexample "命令と条の組の表に新しい命令を書き、条の文を改めずに通す")]
        :enforced-by ["tests/test_public_api_known_violations.py::test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups"
+                     "tests/test_public_api_known_violations.py::test_a_command_the_adr_does_not_name_turns_red"
+                     "tests/test_public_api_known_violations.py::test_every_command_the_guard_allows_is_named_by_its_rule"
                      "tests/test_public_api_known_violations.py::test_the_allowed_table_is_well_formed"
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-macro-or-a-command-can-be-allowed-as-one"]
-       :wiring "配線済み(2026-10-30・card [id])— 表の test は許した物の表の組「許した物 — Hy の macro」の行を、目録の形が Hy の macro か、目録の名が全部 Hy の macro の公開の submodule の行の時だけ緑にし、組「許した物 — CLI コマンド」の行を console script か Rust の実行 file の行の時だけ緑にする。この file の deftest はその関数を呼ぶだけ")
+       :wiring "配線済み(2026-10-30・card [id])— 表の test は許した物の表の組「許した物 — Hy の macro」の行を、目録の形が Hy の macro か、目録の名が全部 Hy の macro の公開の submodule の行の時だけ緑にし、組「許した物 — CLI コマンド」の行を console script か Rust の実行 file の行で、ADR_COMMANDS がその package の命令と挙げる時だけ緑にする(条が名を挙げる命令の確かめは card [id] — 今の行は 9 package の 10 命令)。この file の deftest はその関数を呼ぶだけ")
      (law an-allowed-effect-value-type-is-written-in-a-field-of-an-effect-its-package-shows
        :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — effect の値の型): value(m, n) in value_types(p) — value_types(p) = the classes and named type aliases written in the field annotations (dataclass fields, or the parameters of an __init__ written in Python), type arguments included, of the effect classes p shows, followed through the fields of the classes p defines"
        :counterexamples
@@ -279,6 +287,17 @@
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-an-effect-value-type-can-be-allowed-as-one"]
        :wiring "配線済み(2026-10-30・card [id])— 目録は package ごとに、見せる effect の class の欄の注釈(注釈の文は effect の module の名で解く)から型を集め、package が定義した値の型の欄も辿り、見せる名のうち値がその型と同じ物を value_types に書く(欄の場所 <effect>.<欄> つき)。表の test は許した物の表の組「許した物 — effect の値の型」の行を、その名が value_types に在る時だけ緑にする。今の行は 323 行(108 名)。この file の deftest はその関数を呼ぶだけ")
+     (law an-allowed-plugin-registration-or-startup-call-is-what-the-package-installs
+       :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — pytest の plugin の登録): form(m, n) = entry point(pytest11) or m in plugin_modules(p); for_all (m, n) in allowed(p, 許した物 — 起動の口): (m, n) in startup_calls(p) — plugin_modules(p) = the modules p's pyproject.toml names as pytest11 entry points; startup_calls(p) = the (module, name) of each module.name(...) call in a line starting with import of a .pth file p's force-include installs"
+       :counterexamples
+         [(counterexample "plugin の module の外の関数(測りの中の class や helper)を、plugin の package の名だからと plugin の組に置いて通す")
+          (counterexample "起動の .pth が呼ばない入口の関数を、起動の口の組に置いて通す")
+          (counterexample ".pth を配らなくなった後も、install を起動の口の組に残して通す")]
+       :enforced-by ["tests/test_public_api_known_violations.py::test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_groups"
+                     "tests/test_public_api_known_violations.py::test_the_allowed_table_is_well_formed"
+                     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
+                     "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-plugin-registration-or-a-startup-call-can-be-allowed-as-one"]
+       :wiring "配線済み(2026-10-30・card [id])— 目録の道具の plugin_modules が package の pytest11 の entry point の読む module を、startup_calls が force-include の .pth の import で始まる行の呼び出しを読む。表の test は許した物の表の組「許した物 — pytest の plugin の登録」の行を、pytest11 の entry point の行か plugin の module が出す名の時だけ、組「許した物 — 起動の口」の行を .pth が呼ぶ (module, 名) の時だけ緑にする。今の行は doeff-adr と doeff-hy-pytest の pytest11 の登録・doeff-hy-pytest の宣言 2 個(declare_step_budget・declare_process_tree_cpu)と、doeff-hy の install。この file の deftest はその関数を呼ぶだけ")
      (law an-allowed-exception-type-is-an-exception-class-its-package-defines
        :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — 例外の型): form(m, n) = 例外の class (a subclass of BaseException) and defined_by(n, p) — defined_by(n, p) = the place the inventory gives for n's definition is a file under p's dir or a module under one of p's import roots"
        :counterexamples
@@ -365,10 +384,20 @@
      (deftest test-adr-doe-api-001-only-a-macro-or-a-command-can-be-allowed-as-one
        ;; R31・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package の Hy の macro と macro だけを出す submodule は組「許した物 — Hy の
        ;; macro」、console script は組「許した物 — CLI コマンド」に置けば緑。macro の外の名も出す submodule・関数・console script を
-       ;; macro の組に、macro と関数を CLI コマンドの組に置くと赤。
+       ;; macro の組に、macro と関数を CLI コマンドの組に置くと赤。ADR の条が名を挙げない console script を CLI コマンドの組に
+       ;; 置くと赤・命令と条の組の表の命令はどれも条の文が名を挙げる。
        (<- guard ModuleType (guard-module))
        (with [scratch (tempfile.TemporaryDirectory)]
-         (guard.test-only-a-macro-or-a-command-can-be-put-into-the-macro-and-command-groups (/ (Path scratch) "macro"))))
+         (guard.test-only-a-macro-or-a-command-can-be-put-into-the-macro-and-command-groups (/ (Path scratch) "macro"))
+         (guard.test-a-command-the-adr-does-not-name-turns-red (/ (Path scratch) "command")))
+       (guard.test-every-command-the-guard-allows-is-named-by-its-rule))
+     (deftest test-adr-doe-api-001-only-a-plugin-registration-or-a-startup-call-can-be-allowed-as-one
+       ;; R10・R33・R36・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package の pytest11 の登録と plugin の宣言と .pth が呼ぶ
+       ;; install は、それぞれの組に置けば緑。plugin の module の外の名を plugin の組に、.pth が呼ばない名を起動の口の組に置くと赤・
+       ;; .pth を配らなければ install も赤。
+       (<- guard ModuleType (guard-module))
+       (with [scratch (tempfile.TemporaryDirectory)]
+         (guard.test-only-a-plugin-registration-or-a-startup-call-can-be-put-into-their-groups (/ (Path scratch) "plugin"))))
      (deftest test-adr-doe-api-001-only-a-conversion-can-be-allowed-as-one
        ;; R35・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package の、値を受けて値を返すだけの関数は組「許した物 — 換算の関数」に
        ;; 置けば緑。中の同じ package の関数が時計を読む・属性で時計を読む・effect を作る関数を置くと赤。
@@ -416,4 +445,4 @@
           "R6: maybe・result・on_raise・absent_as を handler を返す工場の形に直す card (card [id])、外の repo の呼び手を書き換える card (card [id])、4 つの旧い形を消して既知の表から 4 名を消す card (card [id]) — 3 つとも済み。scheduled を工場にせず印の付いた handler の値にして、既知の表の組「外れ — handler を返す工場の形に直す」を空にする card (card [id] — 済み。工場の形を入れた card [id] の物と書き換えの道具を消した)。maybe・result を handler の値に戻す card (card [id])"
           "R16: 利用者向けの docs と例の WithHandler を h1(h2(p)) に書き替える card (持ち主が切る)"
           "R18・R13 (d)・R25: 外れの組の helper の形の program 関数を許すかを問う依頼書 ([id] の問い helper-155) と、答えに合わせて 155 名の組を移す card (card [id]) — どちらも済み。段 1 で既に _ に残した 36 名を入口へ出し直す card と、入口でぶつかる同じ名の 4 組を直す card (持ち主が切る)"
-          "R12・R18: 許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分け、既知の表を空になれる形にする card (card [id]) — 済み。R2 の例外・effect の値・effect の結果・handler の設定の型と答えの出た CLI・macro・plugin を、目録が形を確かめる許す組にして許した物の表へ移す card (card [id]・[id]・[id]・[id]・[id] — 例外の型の [id] と effect の値の型の [id] は済み)。組「外れ — effect の欄に型を書くか内側へ移す」の 158 名を package ごとに、effect の欄に型を書いて許した物の表へ移すか内側へ移す card (持ち主が切る)"])
+          "R12・R18: 許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分け、既知の表を空になれる形にする card (card [id]) — 済み。R2 の例外・effect の値・effect の結果・handler の設定の型と答えの出た CLI・macro・plugin を、目録が形を確かめる許す組にして許した物の表へ移す card (card [id]・[id]・[id]・[id]・[id] — 例外の型の [id] と effect の値の型の [id] と CLI・plugin・起動の口の [id] は済み。doeff-adr の入口が出す plugin の部品 DEFAULT_FILE_PATTERNS・DoeffAdrHyFile は条が名を挙げず、既知の表の組「境界 — pytest の plugin の登録」に残る)。組「外れ — effect の欄に型を書くか内側へ移す」の 158 名を package ごとに、effect の欄に型を書いて許した物の表へ移すか内側へ移す card (持ち主が切る)"])
