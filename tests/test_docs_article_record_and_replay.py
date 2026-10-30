@@ -19,11 +19,11 @@ sqlite_memo_handler は Hy で書いてあり、extra の http・hy が要るの
 `await_handler(program)` の形を使い、この形は 0.8.0 の wheel に無い(main b8d242689 から)ので、出るまでは main から組んだ
 wheel を入れる。環境は残る dir に作る(`uv run --with` の環境は命令が終わると消えるので、その python の path は渡せない):
 
-    uv build --package doeff --wheel --out-dir /tmp/doeff-main
-    uv build --package doeff-core-effects --wheel --out-dir /tmp/doeff-main
-    uv build --package doeff-vm --wheel --python 3.12 --out-dir /tmp/doeff-main
-    uv venv --python 3.12 /tmp/doeff-main/py && uv pip install --python /tmp/doeff-main/py --find-links /tmp/doeff-main doeff
-    DOEFF_ARTICLE_PYTHON=/tmp/doeff-main/py/bin/python uv run pytest tests/test_docs_article_record_and_replay.py
+    uv build --package doeff --wheel --out-dir /tmp/main-wheels
+    uv build --package doeff-core-effects --wheel --out-dir /tmp/main-wheels
+    uv build --package doeff-vm --wheel --python 3.12 --out-dir /tmp/main-wheels
+    uv venv --python 3.12 /tmp/main-wheels/py && uv pip install --python /tmp/main-wheels/py --find-links /tmp/main-wheels doeff
+    DOEFF_ARTICLE_PYTHON=/tmp/main-wheels/py/bin/python uv run pytest tests/test_docs_article_record_and_replay.py
 
 本文の主張のうち、走らせて確かめられる物も見る: 再生の組の外に HttpRequest の handler が無い・HttpRequest は hash を持たず、
 token だけが違う 2 つは等しくない・memo の層が出す effect の順・同じ 3 つに辞書で答えれば記憶に置いても同じ・保存の handler が
@@ -53,7 +53,7 @@ EXAMPLES = ROOT / "examples" / "record_and_replay"
 EXAMPLE_FILES = ("releases.py", "on_disk.py", "live.py")
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は約 1 秒(多くは doeff の import)。
 CHILD_DEADLINE_SECONDS = 50
-# 子の警告は誤りにする(古い形の `await_handler()` の DeprecationWarning も、閉じ忘れの ResourceWarning も赤にする)。
+# 子の警告は誤りにする(await_handler を引数の無い factory として呼ぶ古い形の DeprecationWarning も、閉じ忘れの ResourceWarning も赤にする)。
 WARNINGS = ["-W", "error"]
 
 _FENCE = re.compile(r"^~~~(?P<language>\w*)\n(?P<body>.*?)^~~~$", re.MULTILINE | re.DOTALL)
