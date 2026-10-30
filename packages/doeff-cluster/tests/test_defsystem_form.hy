@@ -95,6 +95,63 @@
   (assert (in ":readiness の値は数か :environ の名の文字列" a) a))
 
 
+;; card ki-02e836a9c628: 「既定を空にした」事実と「宣言の時に埋める」印を別の所(使い手の手書きの表)で持つと、表への書き漏れが宣言する者の
+;; 確かめの穴になった(使い手の 1 系だけの宣言が、埋める名を空のまま出した)。:environ の値を既定の値と埋める名の 2 つの型に分ける。
+(deftest test-defsystem-carries-the-names-filled-at-declaration
+  (<- ns (evaluate "
+(defk notice [foundation poll] {:pre [(: foundation Callable) (: poll float)] :post [(: % int)]} 1)
+(defsystem land [foundation]
+  (land-notice (notice foundation 5.0)
+    :needs #{\"pg-network\"} :replicas 1 :environ {\"POLL\" \"5.0\" \"BROKER\" (filled) \"PROXY\" (empty) \"ADDRESS\" (filled)}))
+"))
+  (val land (get ns "land"))
+  (val job (get (. land __doeff_system__) "jobs" 0))
+  ;; 静的な記述: 埋める名と (empty) の既定の値は空の文字列・埋める名は "filled" に名の順で載る。
+  (assert (= (get job "environ") {"POLL" "5.0" "BROKER" "" "PROXY" "" "ADDRESS" ""}) job)
+  (assert (= (get job "filled") ["ADDRESS" "BROKER"]) job)
+  ;; 系の値: Job の filled が埋める名を持ち、(empty) の名は持たない。
+  (val built (get (. (land (fn [] None)) jobs) 0))
+  (assert (= built.filled (frozenset ["ADDRESS" "BROKER"])) built)
+  (assert (= (dfor v built.environ v.name v.value) {"ADDRESS" "" "BROKER" "" "POLL" "5.0" "PROXY" ""}) built.environ)
+  ;; 埋める名の無い job の記述は鍵 "filled" を持たず、Job の filled は空。
+  (<- plain (evaluate "
+(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
+(defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :environ {\"POLL\" \"5.0\"}))
+"))
+  (assert (not-in "filled" (get (. (get plain "s") __doeff_system__) "jobs" 0)))
+  (assert (= (. (get (. ((get plain "s") (fn [] None)) jobs) 0) filled) (frozenset))))
+
+
+(deftest test-defsystem-refuses-an-empty-string-default-in-the-environ
+  ;; 反例: 空の文字列の既定(空白だけも)は書けない — 埋める名は (filled)、空を「無し」と読む名は (empty) と書いて、どちらかを宣言で決める。
+  (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :environ {\"BROKER\" \"\"}))"))
+  (assert (in ":environ の BROKER の値が空の文字列" a) a)
+  (assert (in "(filled)" a) a)
+  (<- b (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :environ {\"BROKER\" \"  \"}))"))
+  (assert (in ":environ の BROKER の値が空の文字列" b) b)
+  ;; 印は (filled) と (empty) の 2 つだけ・引数を取らない。
+  (<- c (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :environ {\"BROKER\" (missing)}))"))
+  (assert (in ":environ の BROKER の値は空でない文字列か (filled) か (empty)" c) c)
+  (<- d (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :environ {\"BROKER\" (filled \"x\")}))"))
+  (assert (in ":environ の BROKER の値は空でない文字列か (filled) か (empty)" d) d))
+
+
+(deftest test-job-refuses-filled-names-outside-the-environ-or-with-a-default
+  ;; 構成子 job(展開の外から呼ぶ時)も、埋める名が :environ に無い・既定の値を持つ形を断る。
+  (import doeff [Pure])
+  (import doeff_cluster.shared.entry.service_build [job])
+  (import doeff_cluster.shared.intent.service_model [CallShape])
+  (val call (CallShape :function len :args [] :kwargs {}))
+  (var stranger None)
+  (try (job "j" (Pure 1) :call call :needs #{"n"} :replicas 1 :environ {"POLL" "5.0"} :filled (frozenset ["BROKER"]))
+       (except [error ValueError] (:= stranger (str error))))
+  (assert (and stranger (in "BROKER" stranger) (in ":environ に無い" stranger)) stranger)
+  (var defaulted None)
+  (try (job "j" (Pure 1) :call call :needs #{"n"} :replicas 1 :environ {"BROKER" "redis://x"} :filled (frozenset ["BROKER"]))
+       (except [error ValueError] (:= defaulted (str error))))
+  (assert (and defaulted (in "既定の値を持つ" defaulted)) defaulted))
+
+
 (deftest test-defsystem-keeps-the-type-of-a-typed-foundation
   ;; 型の注記つきの引数 [#^ T foundation] は展開でき(前は SyntaxError)、記述の params は名の列のまま・型は param_types(名 →
   ;; module:qualname)に残り、系の関数の引数にも注記が付く — 汎用の模擬の検が系を呼ばずに土台の型を読むため。
@@ -126,7 +183,7 @@
   (<- c (refusal "(defsystem s [foundation] (job (make foundation) :update \"rolling\"))"))
   (assert (in ":update は" c) c)
   (<- d (refusal "(defsystem s [foundation] (job (make foundation) :environ {\"POLL\" 5}))"))
-  (assert (in ":environ の値は文字列" d) d)
+  (assert (in ":environ の値は空でない文字列か (filled) か (empty)" d) d)
   (<- e (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1) (job (make foundation) :replicas 1))"))
   (assert (in "job の名 job が 2 回ある" e) e)
   (<- f (refusal "(defsystem s [foundation] (job make))"))

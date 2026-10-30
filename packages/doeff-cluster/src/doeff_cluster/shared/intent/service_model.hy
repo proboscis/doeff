@@ -53,7 +53,8 @@
 (defrecord Job
   "系の job 1 つ(常駐の service)。program = Program の値(R1)・call = それを作った呼び出しの形・needs = 要る能力の名(空でない
    frozenset — R4b)・replicas = 望む台数(0 = 取り下げ・1 = 動かす — 宣言し直しが Service に書く値)・readiness = {\"windowSeconds\" n …}
-   か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)。"
+   か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・filled = environ の名のうち宣言の時に埋める名
+   (defsystem の印 (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ・card ki-02e836a9c628)。"
   (#^ str name)
   (#^ object program)
   (#^ CallShape call)
@@ -61,7 +62,8 @@
   (#^ int replicas)
   (#^ (| dict None) readiness)
   (#^ str update)
-  (#^ tuple environ))
+  (#^ tuple environ)
+  (setv #^ (get frozenset str) filled (frozenset)))
 
 
 (defrecord System

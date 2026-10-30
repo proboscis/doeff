@@ -90,6 +90,7 @@ class Job:
     readiness: dict[str, float] | None
     update: str
     environ: tuple[_EnvVarView, ...]
+    filled: frozenset[str] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class System:
