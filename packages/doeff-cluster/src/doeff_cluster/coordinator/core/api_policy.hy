@@ -228,6 +228,7 @@
                "next_task" "task_prefix" "env_cold_starts"     ; 数と名
                "outbox"                                  ; 終わった刻 finished-ms は事実(出口の保持の期限は受領されない行の掃除だけ)
                "needs_overrides"                         ; 上書きの期限 expires-ms は書き手が決めた刻(頼み直して延ばす期限でない)
+               "unplaced_since"                          ; 置き先が無いと最初に見た刻は事実(期限でなく読みの「いつから」— 止まりの間も置き先は無かった)
                "derivable" "running_commit"                    ; 導く能力の名・走っている版
                "unreached_ms")))                               ; 届かない間の起点 — ずらしの起点そのもの(unreached-shifted が進める)
 
