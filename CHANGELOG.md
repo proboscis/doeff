@@ -8,8 +8,8 @@
 and `doeff-hy-pytest` moved behind `_` names, and their effects and handlers are read from `doeff_core_effects`,
 `doeff_hy` and `doeff_hy_pytest`; the measuring functions of `doeff-vm` became effects read from `doeff`. Code written
 for 0.8.0 that imports a submodule of `doeff_hy` or `doeff_hy_pytest`, calls `writer_log`, `on_raise(prog, …)`,
-`absent_as(default, prog)` or `doeff_vm.vm_live_counts`, or relies on `doeff-hy` installing pydantic, needs the
-changes marked **Breaking** below.
+`absent_as(default, prog)` or `doeff_vm.vm_live_counts`, passes `PRIORITY_HIGH` or the other `PRIORITY_*` constants,
+or relies on `doeff-hy` installing pydantic, needs the changes marked **Breaking** below.
 
 ### Added
 
@@ -54,7 +54,7 @@ changes marked **Breaking** below.
   `doeff-hy-pytest`).
 - **Breaking (doeff-hy):** macros moved to the packages that own them: the 13 workflow macros of `doeff_hy.conductor`
   (`defworkflow`, `defphase`, `agent!` and the others) are in `doeff_conductor.macros`, and `defsystem` is in
-  doeff-cluster (`doeff_cluster.shared.entry.macros`).
+  doeff-cluster: write `(require doeff-cluster.macros [defsystem])`.
 - **Breaking (doeff-hy):** pydantic is no longer a dependency of `doeff-hy`. `defwire` decodes and encodes with its own
   codec; the extra `doeff-hy[parity]` installs pydantic for the tool that compares the two. Code that used pydantic
   without depending on it, through `doeff-hy`, adds it to its own dependencies.
@@ -166,14 +166,17 @@ changes marked **Breaking** below.
   `Exec` answers `ExecResult`, `CreatePR` answers `PRHandle`, `MergeWorkspaces` answers `MergeWorkspacesResult`, the
   issue effects answer `Issue` (`ListIssues` a list of them), `ListWorkflows`, `GetWorkflow`, `RunWorkflow`,
   `ResumeWorkflow` and `AnswerGate` answer `WorkflowHandle` (35 effects in all), so a type checker reads the value a
-  `yield` gives and the public API inventory counts those answer types as allowed (ADR-DOE-API-001 R2). `Push` and
+  `yield` gives (ADR-DOE-API-001 R2). `Push` and
   `MergePR` declare `None`, the value their handlers always gave (their docstrings said `bool`). The DSL node
   descriptions `AgentCall`, `GateCall`, `WorkspaceCall` and `MergeCall` are never performed and declare none.
-- **Breaking (doeff-conductor):** the import root no longer exports `AgentRef` and nine review routing types
-  (`RemainingReviewBudget`, `ReviewItem`, `ReviewRoutingResult`, `ReviewVerdict`, `ReviewerAgentLost`,
-  `BudgetCounterEntry`, `CalibrationEscapeRecord`, `ReviewBudgetStatus`, `Tier1ReviewResult`): no effect carries or
-  answers them, and `route_review_item`, the function they belong to, was already internal (ADR-DOE-API-001 R1). No
-  other repository reads them; they stay in `doeff_conductor._types` and `doeff_conductor._effects`.
+- **Breaking (doeff-conductor, doeff-agents):** the import roots no longer export names that no effect carries or
+  answers (ADR-DOE-API-001 R1). doeff-conductor drops `AgentRef`, the review routing types `RemainingReviewBudget`,
+  `ReviewItem`, `ReviewRoutingResult`, `ReviewVerdict` and `ReviewerAgentLost`, the review types `ReviewFinding`,
+  `ReviewSeverity`, `ReviewStakes`, `ReviewStakesLevel`, `ReviewEscalationReason`, `ReviewEscalationTerminal`,
+  `ReviewVerdictArtifact` and `ReviewVerdictTerminal`, and `OpenGate` and `OpenGateReason`; `route_review_item`, the
+  function the review types belong to, was already internal. doeff-conductor and doeff-agents both drop
+  `AgentValidationErrorKind` and `AgentValidationFailure`. They stay in `doeff_conductor._types`,
+  `doeff_conductor._effects` and `doeff_agents._effects`.
 - **Breaking (doeff-agentic, doeff-flow, doeff-events, doeff-notify):** the import roots no longer export 15 names
   that are neither effects nor handlers and that no other repository reads (ADR-DOE-API-001 R1). doeff-agentic drops
   `AgenticAPI`, `EventLogReader`, `EventLogWriter`, `WorkflowIndex`, `StateManager`, `generate_workflow_id`,
@@ -203,11 +206,72 @@ changes marked **Breaking** below.
   gone. Write `log = yield ReadWriterLog()` (`from doeff_core_effects import ReadWriterLog`) where you wrote
   `log = yield writer_log()`. Without `writer`, `ReadWriterLog` is an unhandled effect whose hint names
   `state()(writer(prog))`.
+- **Breaking:** the task priorities are the `IntEnum` `TaskPriority` (`IDLE` = 0, `NORMAL` = 10, `HIGH` = 20),
+  exported from `doeff` and `doeff_core_effects`; the constants `PRIORITY_IDLE`, `PRIORITY_NORMAL` and
+  `PRIORITY_HIGH` are gone. Write `Spawn(p, priority=TaskPriority.HIGH)` and `Wait(t, priority=TaskPriority.IDLE)`
+  (in Hy, `TaskPriority.IDLE`). The fields are annotated `TaskPriority | int` (`Spawn`, `Wait`) and
+  `TaskPriority | None` (`Race`), so a priority between the named ones is still an `int`, and the values are the same.
+- **Breaking (doeff-core-effects):** `Resumption`, the vocabulary an effect class declares in
+  `__doeff_resumption__`, is no longer exported from the import root; it lives in `doeff_core_effects._effects` beside
+  `resumption_of` (ADR-DOE-CORE-EFFECTS-003 R15). It is neither a value an effect carries nor an answer
+  (ADR-DOE-API-001 R1). The 0.8.0 path `doeff_core_effects.effects` still gives it through the moved-module layer.
+- **doeff-core-effects, doeff-records, doeff-agents, doeff-events:** more effects declare their answer types
+  (ADR-DOE-API-001 R2), so a type checker reads the value a `yield` gives: the process, warm-child and compute effects
+  of doeff-core-effects, `HttpRequest` (`HttpResponse | HttpFailed`) and `ReadProcTable` (`tuple[ProcRow, ...]`); the
+  row, batch, event and maintenance effects of doeff-records (`PutRow.expect` and `RowWrite.expect` are typed
+  `Expectation`); 32 doeff-agents effects (for example `LaunchEffect` answers `SessionHandle`); and doeff-events
+  `Publish` (`PublishAnswer | None`) and `PublishGap` (`GapAnswer`). `doeff-hy-check` now reports a binding narrower
+  than the answer, such as `(<- x HttpResponse (HttpRequest …))`.
+- **Breaking (doeff-records, doeff-agents, doeff-claude-code, doeff-codex, doeff-events):** the import root of each
+  package is its public API, and the submodules moved behind `_` names with no moved-module layer: the modules of
+  `doeff_records` (`effects`, `values`, `pg`, `memory`, `service` and the others), of `doeff_agents` (`effects`,
+  `handlers`, `adapters`, `sessionhost` and the others), of `doeff_claude_code` and of `doeff_codex`, and
+  `doeff_events.effects`, `.handlers`, `.event_loop` and `.notice_laws` no longer import. Import the effects, the
+  handlers and their types from the roots; `doeff_events.macros` stays. Names the roots do not export are internal,
+  among them doeff-records' `RememberedWrite` and `RetiredKey` and doeff-agents' `LaunchConfig`.
+- **doeff-cluster:** the import root `doeff_cluster` is the public API: it exports what the other packages use, and
+  the subpackages `coordinator`, `foundation`, `record_store`, `shared`, `sim` and `worker` moved behind `_` names.
+  Import from `doeff_cluster` where you imported from a subpackage. The former paths still import, without a warning,
+  through a moved-module layer that a later release removes.
+- **Breaking (doeff-system-one):** the import root no longer exports `choice`, `noul`, `score`, `answer_choice`,
+  `answer_noul` and `answer_score` (ADR-DOE-API-001 R1 — they build a `Question` or an `Answer`, and are neither
+  effects nor handlers). Build the question with the type itself: `Question(kind="noul", instructions=…)`,
+  `Question(kind="choice", instructions=…, options=(("id", "description"), …))` and `Question(kind="score",
+  instructions=…, levels=(…))`. Build an answer with `Answer(kind=…, value=…, confidence=…)`, or with
+  `Answer.noul(probability)`, which gives a noul answer the confidence `answer_noul` gave (twice the distance from
+  0.5).
+- Effects of the smaller packages declare the types their values and answers carry (ADR-DOE-API-001 R2):
+  `AgenticGetMessages` answers `list[AgenticMessage]`, `BorrowJudgeCredential` answers `JudgeCredential |
+  NoJudgeCredential`, `ArmedTimers` answers `tuple[ArmedTimer, ...]`, `GeminiCalculateCost` answers
+  `GeminiCostEstimate`, the `messages` of the doeff-llm effects are `list[Message]`, and `Notify.urgency` is an
+  `Urgency` (now a `StrEnum` — each level still equals its lower-case string; `Urgency.ALL` is gone, use
+  `list(Urgency)`).
+- **Breaking:** names that no effect carries are no longer exported by their import roots (ADR-DOE-API-001 R1):
+  doeff-agentic `WatchEventType`, `WatchUpdate`; doeff-gemini `APICallMetadata` and the `*ContentPart` types
+  (`structured_llm__gemini` still takes the same dicts); doeff-notify `Channel`; doeff-openai `APICallMetadata`,
+  `CompletionRequest`, `EmbeddingRequest`, `OpenAIModel`; doeff-seedream `CostEstimate`; doeff-validation
+  `CheckArgument`, `CheckError`, `CheckFailure`, `EvaluatedArgument` (the failures a `ValidationException` holds —
+  the Hy `check` expansion reads them from `doeff_validation._failures`).
+- More effects of the smaller packages declare their answer types (ADR-DOE-API-001 R2), so a type checker reads the
+  value a `yield` gives: the doeff-agentic workflow, session, environment, message and status effects (for example
+  `AgenticCreateSession` answers `AgenticSessionHandle`, `AgenticNextEvent` answers `AgenticEvent |
+  AgenticEndOfEvents`), doeff-time `RaceWithin` and `WaitTicks` (`RaceOutcome[T]`, `TicksOutcome[T]`), doeff-git
+  `CreatePR` (`PRHandle`), doeff-notify `Notify` (`NotificationResult`), doeff-openai `CalculateCost` (`CostInfo`),
+  doeff-image `ImageGenerate` and `ImageEdit` (`ImageResult`), doeff-seedream `SeedreamGenerate`
+  (`SeedreamImageEditResult`), doeff-docker `ShellRun` (`ShellRunResult`) and doeff-system-one `Judge` (`Verdict`).
+  doeff-claude-code `ClaudeAnswerPermission.answer` is typed `PermissionAnswer`.
+- **Breaking:** more names that no effect answers or carries are no longer exported by their import roots
+  (ADR-DOE-API-001 R1): doeff-git `BranchRef`; doeff-llm `CostInfo`, `TokenUsage`; doeff-openai `StreamChunk`;
+  doeff-gemini `TokenUsage`, `GeminiImageEditResult` (what `edit_image__gemini` returns); doeff-claude-judge
+  `MalformedAnswer`; doeff-seedream `ImageResult` (import it from doeff-image). They stay in each package's `_types`
+  (`_wire` for `MalformedAnswer`). doeff-claude-code's aliases `AutocompactWindow` (of `AutocompactAuto |
+  AutocompactTokens`) and `TranscriptCarry`, which nothing used, are removed.
 - **doeff-time 0.2.0** (released on its own tag, after the core packages): requires `doeff>=0.9.0,<0.10` and
   `doeff-core-effects>=0.9.0,<0.10`. **Breaking:** the submodules `doeff_time.effects`, `doeff_time.handlers` and
   `doeff_time.epoch_ms` are gone; import the effects, the handlers and `epoch_ms_of` from `doeff_time`. The root also
   exports `AsyncTimeRuntime`, `SyncTimeRuntime` and `LogFormatter`. doeff-time 0.1.0 on PyPI requires doeff 0.8, so
-  `pip install doeff-time` keeps choosing doeff 0.8.0 until 0.2.0 is on PyPI.
+  `pip install doeff-time` keeps choosing doeff 0.8.0 until 0.2.0 is on PyPI. 0.2.0 declares the MIT license and ships
+  the `LICENSE` file (0.1.0 had neither), and requires Python 3.11, as doeff does.
 
 ### Fixed
 
@@ -216,7 +280,24 @@ changes marked **Breaking** below.
   timed out while it waits no longer leaves a half-open connection that holds a slot of the pool.
 - **doeff-core-effects:** `ListDirectory` skips a name that disappears between listing the directory and reading its
   kind, and answers the rest.
-- **doeff-core-effects:** a PostgreSQL connection that carried a large value is closed when it goes back to the pool.
+- **doeff-core-effects:** a PostgreSQL connection that carried more than 512 KiB in one statement (the arguments and
+  rows sent, or one row received) is closed when it goes back to the pool, so the pool does not keep the enlarged
+  buffers. `PostgresConnections.tallies()` answers how many connections the pool opened and how many it closed for
+  each reason (`broken`, `pipeline`, `large`, `rollback`).
+- **doeff-core-effects:** an `Await` whose coroutine fails no longer keeps its promise, the error's traceback and the
+  awaited coroutine alive; before, each failed request of an httpx client kept its connection for the life of the
+  process.
+- **doeff-core-effects:** the memo of split SQL statements is bounded by the parts it holds, not only by the number of
+  statements: a statement of more than 64 parts is not memoized and the memo stops growing at 32,768 parts, so
+  statements spelled per value count (`IN (:k0, :k1, …)`, multi-row `VALUES`) no longer pile up in a long-running
+  process.
+- **doeff-records:** a write whose row key, row value, event body or idempotency key holds NUL (U+0000) is refused
+  when the effect is built (`ValueError`; the HTTP service answers `400 malformed`), in the memory and the PostgreSQL
+  store alike. Before, PostgreSQL refused the statement, the service answered 500, and the cleanup of the failed
+  statement broke other writes on the same connection.
+- **doeff-effect-analyzer:** an argument written as `None` is read like a parameter left at its default `None`, and a
+  handler that installs itself again in its own clause (doeff-traverse's `sequential`) is read as the same handler,
+  so the analysis of a program over them no longer stops at an unresolved call or an unknown handler.
 
 ## 0.8.0 — 2026-10-27
 
