@@ -12,10 +12,15 @@
 #                            持ち主が消せば、その分が Longhorn の分へ移る
 #   worker の分              空きの最低(minFreeGiB)+ near の幅 + 戻りの幅(worker の env_upkeep の NEAR-MARGIN-BYTES・
 #                            NEAR-RETURN-BYTES — 値はそこから読む)+ roots の上限(rootsGiB)+ roots の外の worker の state(stateBytes)
+#                            + 機体直の worker(nativeWorker — k8s の外で同じ根の disk に作業の dir を持つ worker が在る機体だけ)の
+#                            roots の上限と state。空きの最低から上の 3 つは disk の空きの線なので、同じ disk の worker どうしで 1 つ
+#                            (機体直の worker も worker.minFreeGiB を使う — 線が 2 つだと片方だけが near を名乗る帯ができる・card ki-705b0ad4893e)
 #   Longhorn の分            残り(Longhorn の disk の欄 longhornDisk ほかを持たない機体では、誰の分でもない余り — 負なら釣り合わない)
 #
 # ここから導く物(derive.py が書く — 手で直さない。宣言を直したら `uv run python packages/doeff-cluster/deploy/k8s/disk-share/derive.py`):
 #   ../nodes/<機体>/disk-share.yaml  worker の env WORKER_ENV_MIN_FREE_GIB = minFreeGiB・WORKER_ENV_ROOTS_GIB = rootsGiB
+#   ../nodes/<機体>/<名>.env         機体直の worker の env WORKER_ENV_MIN_FREE_GIB = worker.minFreeGiB・WORKER_ENV_ROOTS_GIB =
+#                                    nativeWorker.rootsGiB(`名=値` の行 — 機体直の worker の起動 script が読む)
 #   longhorn-nodes.yaml              Longhorn の disk の予約 storageReserved = disk − Longhorn の分 × 100 / overProvisioningPercent
 #                                    (Longhorn の disk の欄を持つ機体だけ)
 #   ../nodes/<機体>/kubelet-image-gc.conf  kubelet の image GC の線(drop-in — 置き先と効く時はその file の頭の註)。
@@ -92,21 +97,32 @@ nodes:
   # atlas の根の disk(nvme0n1p2・ext4)。値の出所は 2026-10-30 07:1x JST の atlas の du と 06:49 JST の df(worker の Pod の /work):
   #   systemBytes          /var/lib/rancher(k3s・containerd の snapshot と content)54.9・/usr 3.5・/var/log 3.0・/var/lib/docker 1.5・
   #                        ほかの /var/lib 0.5 GB の上に余り(image GC は使われていない image をこの内へ戻す)
-  #   otherResidentsBytes  /var/lib/agent-worker-coord 9.9・/home 8.1・旧い作業の dir(doeff-worker-lab 2.5・retired-1010 1.8・
-  #                        agent-worker-coord-rehearsal-834 1.7・agent-worker-exp 1.6・doeff-worker-lab-coord 0.5)8.1 GB の上に余り
+  #   otherResidentsBytes  /var/lib/agent-worker-coord 9.9・/home 8.1 から機体直の worker の作業の dir 5.7 を引いた 2.4・旧い作業の dir
+  #                        (doeff-worker-lab 2.5・retired-1010 1.8・agent-worker-coord-rehearsal-834 1.7・agent-worker-exp 1.6・
+  #                        doeff-worker-lab-coord 0.5)8.1 GB の上に余り
   #   worker.stateBytes    /var/lib/agent-worker 49.8 GB から roots 5.0 GB を引いた物(effect の解析の cache・Hy の検の cache・log ほか)
   #   worker.minFreeGiB    boot.sh の既定 25 GiB では分け前が disk を 14 GB 越える — 20 GiB に下げる(kubelet が Pod を追い出す線
-  #                        nodefs.available<15Gi の上)
+  #                        nodefs.available<15Gi の上)。同じ根の disk の機体直の worker atlas-native も同じ線を使う
   #   worker.rootsGiB      boot.sh の既定 20 GiB を 16 GiB に下げる(2026-10-30 の roots は 5.0〜21.4 GB)
+  #   nativeWorker         機体直の worker atlas-native(k8s の外 — 作業の dir は ~/.local/state/doeff-agent-worker-atlas)。値の出所は
+  #                        2026-10-30 09:04 JST の atlas の du(作業の dir 5.68 GB のうち state/roots 2.30 GB):
+  #     rootsGiB           boot.sh の既定 20 GiB を 3 GiB に下げる(IaC の deploy と verify だけを受ける — 2026-10-30 の roots は 2.3 GB)。
+  #                        atlas の根の disk は、これを足すと残りが 0.6 GB しかない — roots を広げるなら、先に otherResidentsBytes の
+  #                        旧い作業の dir を持ち主が消して、その分をここへ移す
+  #     stateBytes         作業の dir から roots を引いた 3.38 GB(boot の root と venv・mirror・log)の上に余り
   atlas:
     diskBytes: 210_241_560_576
     filesystemReservedBytes: 10_754_195_456
     systemBytes: 66_000_000_000
-    otherResidentsBytes: 26_500_000_000
+    otherResidentsBytes: 20_500_000_000
     worker:
       minFreeGiB: 20
       rootsGiB: 16
       stateBytes: 45_000_000_000
+    nativeWorker:
+      name: atlas-native
+      rootsGiB: 3
+      stateBytes: 3_500_000_000
   # eos の根の disk(nvme0n1p2・ext4)。worker の空きの最低と roots の上限は boot.sh の既定のまま(25 GiB・20 GiB)。値の出所は
   # 2026-10-30 06:49 JST の df と du(worker の Pod の /work — 使用 286.4 GB のうち worker は 14.3 GB・roots 3.7 GB):
   #   systemBytes          worker の外の使用 272.1 GB(内訳は worker の Pod から読めない — control plane・container の image ほか)の上に余り

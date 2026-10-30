@@ -1,8 +1,10 @@
 """根の disk を worker と Longhorn と container の image が分け合う機体の分け前(shares.yaml)から、worker の env と Longhorn の disk の
 予約と kubelet の image GC の線を導く。
 
-分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 3 つ:
+分け前の意味・値の出所・守りの外は shares.yaml の頭の註。導く物は 4 つ:
   ../nodes/<機体>/disk-share.yaml        worker の Deployment の env WORKER_ENV_MIN_FREE_GIB・WORKER_ENV_ROOTS_GIB(boot.sh が GiB の整数で読む)
+  ../nodes/<機体>/<機体直の worker>.env  同じ根の disk の機体直の worker(k8s の外 — nativeWorker を宣言した機体だけ)の同じ 2 つの env。
+                                         機体直の worker の起動 script が `名=値` の行を読み、boot.sh へ渡す
   ../nodes/<機体>/kubelet-image-gc.conf  kubelet の drop-in(imageGCHighThresholdPercent・imageGCLowThresholdPercent — 機体の
                                          /etc/rancher/k3s/kubelet.conf.d/ に置く。Flux は当てない)
   longhorn-nodes.yaml                    Longhorn の Node の disk の予約 storageReserved(Longhorn の disk を宣言した機体だけ)
@@ -55,6 +57,11 @@ NODE_KEYS = frozenset(
     }
 )
 WORKER_KEYS = frozenset({"minFreeGiB", "rootsGiB", "stateBytes"})
+# 機体直の worker(nativeWorker — 在る機体だけ)の欄。空きの最低は持たない — 同じ根の disk の空きは 1 つなので、機体の worker の
+# minFreeGiB を使う(線を 2 つ置くと、片方だけが near を名乗る帯ができる — card ki-705b0ad4893e)。
+NATIVE_KEY = "nativeWorker"
+NATIVE_KEYS = frozenset({"name", "rootsGiB", "stateBytes"})
+NATIVE_ENV_SUFFIX = ".env"
 # 導いた Longhorn の Node が書く欄の全部(Node の spec と disk の 1 つ)。Flux の server-side apply は kubectl の manager が持っていた欄を
 # 引き取ってから当て、宣言に無い欄を消す — 人が置き方を替える欄(置くか・退かせるか・札・予約)は、全部を宣言から書く(card ki-c37ae82751bf)。
 FLUX_NODE_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "disks"})
@@ -66,6 +73,15 @@ class WorkerShare:
     """worker の分のうち、宣言が決める 3 つ(near の幅と戻りの幅は worker の code の定数 — Margins)。"""
 
     min_free_gib: int
+    roots_gib: int
+    state_bytes: int
+
+
+@dataclass(frozen=True)
+class NativeWorkerShare:
+    """機体直の worker(k8s の外で同じ根の disk に作業の dir を持つ worker)の分のうち、宣言が決める 2 つと名(導く env file の名)。"""
+
+    name: str
     roots_gib: int
     state_bytes: int
 
@@ -90,6 +106,7 @@ class NodeShare:
     system_bytes: int
     other_residents_bytes: int
     worker: WorkerShare
+    native: NativeWorkerShare | None
 
 
 @dataclass(frozen=True)
@@ -171,7 +188,8 @@ def _node_share(name: str, raw: object) -> NodeShare:
         raise ValueError(
             f"{where} の Longhorn の欄は {sorted(LONGHORN_KEYS)} が揃って在るか揃って無い — 在る欄 {sorted(present)}"
         )
-    entry = _keys(raw, NODE_KEYS | present, where)
+    native_key = frozenset({NATIVE_KEY}) & set(raw)
+    entry = _keys(raw, NODE_KEYS | present | native_key, where)
     worker = _keys(entry["worker"], WORKER_KEYS, f"{where}.worker")
     return NodeShare(
         node=name,
@@ -187,6 +205,20 @@ def _node_share(name: str, raw: object) -> NodeShare:
             roots_gib=_count(worker["rootsGiB"], f"{where}.worker.rootsGiB"),
             state_bytes=_count(worker["stateBytes"], f"{where}.worker.stateBytes"),
         ),
+        native=_native_worker(entry[NATIVE_KEY], f"{where}.{NATIVE_KEY}") if native_key else None,
+    )
+
+
+def _native_worker(raw: object, where: str) -> NativeWorkerShare:
+    """機体の行の機体直の worker の欄を読む(_node_share の一部)— 名は導く file の名になるので、path を作らない綴りだけを受ける。"""
+    entry = _keys(raw, NATIVE_KEYS, where)
+    name = entry["name"]
+    if not isinstance(name, str) or not name or not all(c.isalnum() or c == "-" for c in name):
+        raise ValueError(f"{where}.name は worker の名(英数字と -): {name!r}")
+    return NativeWorkerShare(
+        name=name,
+        roots_gib=_count(entry["rootsGiB"], f"{where}.rootsGiB"),
+        state_bytes=_count(entry["stateBytes"], f"{where}.stateBytes"),
     )
 
 
@@ -210,14 +242,16 @@ def load() -> Declaration:
 
 
 def worker_bytes(share: NodeShare, margins: Margins) -> int:
-    """worker の分 = 空きの最低 + near の幅 + 戻りの幅 + roots の上限 + roots の外の state。空きの最低から上の 3 つは、worker が ok を
-    名乗り続けるために空けておく量。"""
+    """worker の分 = 空きの最低 + near の幅 + 戻りの幅 + roots の上限 + roots の外の state(+ 機体直の worker の roots の上限と state)。
+    空きの最低から上の 3 つは、worker が ok を名乗り続けるために空けておく量で、同じ disk の worker どうしで 1 つ。"""
+    native = share.native
     return (
         share.worker.min_free_gib * GIB
         + margins.near_bytes
         + margins.return_bytes
         + share.worker.roots_gib * GIB
         + share.worker.state_bytes
+        + (native.roots_gib * GIB + native.state_bytes if native is not None else 0)
     )
 
 
@@ -357,6 +391,26 @@ spec:
 """
 
 
+def native_env(share: NodeShare) -> dict[str, str]:
+    """機体直の worker の env(boot.sh が GiB の整数で読む 2 つ)— 空きの最低は機体の worker と同じ値(同じ disk の線は 1 つ)。"""
+    assert share.native is not None, share.node
+    return {
+        "WORKER_ENV_MIN_FREE_GIB": str(share.worker.min_free_gib),
+        "WORKER_ENV_ROOTS_GIB": str(share.native.roots_gib),
+    }
+
+
+def _native_env_file(share: NodeShare) -> str:
+    """機体直の worker の env file(`名=値` の行 — 起動 script が読んで boot.sh へ渡す)。"""
+    assert share.native is not None, share.node
+    lines = "".join(f"{name}={value}\n" for name, value in native_env(share).items())
+    return f"""\
+# 導いた物 — ../../disk-share/derive.py が ../../disk-share/shares.yaml の {share.node} の分け前から書く(手で直さない)。
+# 機体 {share.node} の上で k8s の外で動く worker {share.native.name} の空きの最低と roots の上限(boot.sh が GiB の整数で読む)。
+# 読み手 = 機体直の worker の起動 script(unit の env が この file の path を名指す)。空きの最低は同じ根の disk の Pod の worker と同じ値。
+{lines}"""
+
+
 LONGHORN_NODES_HEAD = """\
 # 導いた物 — derive.py が shares.yaml から書く(手で直さない)。Longhorn の Node の置き方の欄(Node と disk の allowScheduling・
 # evictionRequested・tags と disk の予約 storageReserved)を全部書く — Flux の server-side apply は kubectl の manager(kubectl-edit・
@@ -440,6 +494,14 @@ def render(declaration: Declaration, margins: Margins) -> tuple[Derived, ...]:
         *(
             Derived(K8S / "nodes" / share.node / KUBELET_DROPIN, _kubelet_dropin(share, margins))
             for share in declaration.nodes
+        ),
+        *(
+            Derived(
+                K8S / "nodes" / share.node / (share.native.name + NATIVE_ENV_SUFFIX),
+                _native_env_file(share),
+            )
+            for share in declaration.nodes
+            if share.native is not None
         ),
         Derived(LONGHORN_NODES, nodes_text),
     )
