@@ -19,6 +19,7 @@
 (import dataclasses [dataclass field fields is-dataclass])
 (import json)
 (import re)
+(import typing [Protocol])
 (import doeff [Program])
 (import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
 
@@ -695,10 +696,29 @@
 ;; 問いの effect(_effects.hy の ReadSignalSource・ReadSourcePatience・ReadRequestPatience)が答えを型で名指すため、源の module
 ;; (_event_source.hy)と client の module(_http_client.hy)でなくこの値の module に置く(どちらの module も effect の module を読むので、
 ;; そこに置くと effect の module から読めない)。源の module と client の module はここから読んで同じ名で出す。
+;; 合図が運ぶ ChangedRow と合図の型の約束 KeyedSignal も、結び SignalTables の欄 signal の注釈が名指すのでここに置く(源の module は
+;; ここから読んで同じ名で出す)。
+
+(defrecord ChangedRow
+  "合図が運ぶ「変わった所」1 つ: table = 表か列の名前 / key = 表の行なら行の鍵の綴り(admission の key-text — 鍵の欄の順の文字列を
+   JSON の配列に綴った文字列。tuple の鍵へは admission の key-from-text で戻す)、列なら頭の番号の 10 進の綴り。受けた Program はここを
+   読み直す(表 = その鍵の行・列 = 自分の位置から ReadEvents)。"
+  {:tags {:context "records" :role "type"}
+   :check [(checked-table-name table "ChangedRow.table")
+           (and (isinstance key str) key)]}
+  (#^ str table)
+  (#^ str key))
+
+
+(defclass KeyedSignal [Protocol]
+  "使い手が宣言する合図の型の約束: 欄 keys に変わった所(ChangedRow)の tuple を持つ。源は (signal :keys 変わった所の tuple) で作り、
+   受けた Program は keys を読み直す。読むだけの欄なので property で書く(frozen の dataclass の欄が合う形)。"
+  (defn [property] #^ (get tuple #(ChangedRow ...)) keys [self] ...))
+
 
 (defrecord SignalTables
-  "合図の型 1 つと、その型の合図を起こす表と列の名前の組の対: signal = 使い手が宣言する合図の型(欄 keys を持つ dataclass — 源が
-   (signal :keys 変わった所の tuple) で作る)/ tables = 行の変化でこの型の合図を起こす表の名前 / streams = 追記でこの型の合図を起こす
+  "合図の型 1 つと、その型の合図を起こす表と列の名前の組の対: signal = 使い手が宣言する合図の型(KeyedSignal — 欄 keys を持つ
+   dataclass。源が (signal :keys 変わった所の tuple) で作る)/ tables = 行の変化でこの型の合図を起こす表の名前 / streams = 追記でこの型の合図を起こす
    列の名前(どちらも既定は空・どちらか 1 つ以上)。欄 keys を持たない型・表も列も無い対は作る時に止める。"
   {:tags {:context "records" :role "type"}
    :check [(isinstance signal type)
@@ -706,7 +726,7 @@
            (and (isinstance tables tuple) (all (gfor name tables (checked-table-name name "SignalTables.tables の表"))))
            (and (isinstance streams tuple) (all (gfor name streams (checked-table-name name "SignalTables.streams の列"))))
            (or tables streams)]}
-  (#^ type signal)
+  (#^ (get type KeyedSignal) signal)
   (setv #^ (get tuple #(str ...)) tables #()
         #^ (get tuple #(str ...)) streams #()))
 

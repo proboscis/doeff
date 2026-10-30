@@ -50,7 +50,7 @@
 (import doeff_records._admission [key-text])
 (import doeff_records._effects [AwaitRecordsBack ListRows ReadSignalSource ReadSourcePatience ReadStreamEnd WatchChanges WatchEvents])
 (import doeff_records._values [Changes EventsMoved EventsQuiet NotIndexed Page Reset StreamEmpty StreamEnd Unreachable WatchCursor
-                              checked-table-name SignalTables SignalSourceFactory SignalSourcePatience])
+                              checked-table-name ChangedRow SignalTables SignalSourceFactory SignalSourcePatience])
 
 ;; 記録の変化の待ちの上限(秒)— 変化が無ければこの秒で静かな答えが返り、同じ位置から待ち直す(long-poll の 1 回の長さ)。
 (val WATCH-SECONDS 30.0)
@@ -62,17 +62,6 @@
   ;; 引数に残す理由: 上限は土台の宣言の値で、組み立ての 1 か所が渡す(Ask で読むと組の内側の設定の読み手に横取りされうる — ReadSourcePatience の註)。
   (ReadSourcePatience []
     (resume patience)))
-
-
-(defrecord ChangedRow
-  "合図が運ぶ「変わった所」1 つ: table = 表か列の名前 / key = 表の行なら行の鍵の綴り(admission の key-text — 鍵の欄の順の文字列を
-   JSON の配列に綴った文字列。tuple の鍵へは admission の key-from-text で戻す)、列なら頭の番号の 10 進の綴り。受けた Program はここを
-   読み直す(表 = その鍵の行・列 = 自分の位置から ReadEvents)。"
-  {:tags {:context "records" :role "type"}
-   :check [(checked-table-name table "ChangedRow.table")
-           (and (isinstance key str) key)]}
-  (#^ str table)
-  (#^ str key))
 
 
 (defclass SignalSourceUnreachable [RuntimeError]

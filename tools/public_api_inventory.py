@@ -67,7 +67,8 @@ failures stay out of the others.
 Besides the rows, each package lists its effects' value types (``value_types``, ADR-DOE-API-001 R2): the
 names it shows that are a class or a named type alias written in a field annotation of an effect class
 it shows (a dataclass field or an ``__init__`` parameter, type arguments included), followed through the
-fields of the value types the package defines itself. The allowed table's group
+fields of the value types the package defines itself (a Protocol's properties count as its fields — a field a
+value only has to be readable by). The allowed table's group
 ``許した物 — effect の値の型`` may hold those names only. A field typed ``object`` or a bare ``tuple`` says
 nothing, so the value types it carries are not found.
 
@@ -2225,6 +2226,8 @@ def _own_annotations(obj: object) -> dict[str, object]:
 def _class_fields(cls: type) -> list[tuple[str, object]]:
     """A class's fields and their types as written: a dataclass's fields, otherwise its annotations and the
     parameters of the ``__init__`` it defines in Python (bases first — an effect class written with ``__init__``).
+    A Protocol's properties are fields too, typed by their return annotation (a field a value only has to be
+    readable by — a frozen dataclass's field meets it).
 
     ``ClassVar`` annotations (``__doeff_answer__`` — the effect's answer type) are not fields.
     """
@@ -2237,6 +2240,14 @@ def _class_fields(cls: type) -> list[tuple[str, object]]:
         if isinstance(source, (type, types.FunctionType))
         for name, annotation in _own_annotations(source).items()
         if name != "return"
+    } | {
+        name: returned
+        for base in reversed(cls.__mro__)
+        if getattr(base, "_is_protocol", False)
+        for name, member in vars(base).items()
+        if isinstance(member, property)
+        and isinstance(member.fget, types.FunctionType)
+        and (returned := _function_annotations(member.fget).get("return", _MISSING)) is not _MISSING
     }
     return [
         (name, annotation)
@@ -2504,18 +2515,26 @@ def answer_types(
     ]
 
 
-def _parameter_annotations(function: types.FunctionType) -> dict[str, object]:
-    """A function's parameter annotations as written, so a handler's settings can be read without calling it.
+def _function_annotations(function: types.FunctionType) -> dict[str, object]:
+    """A function's annotations as written (its parameters' and ``return``), without evaluating them.
 
     Python 3.14 keeps them in ``__annotate__`` (``_own_annotations``); before, the function's ``__annotations__``
     holds them as written (text under ``from __future__ import annotations``).
     """
-    written = (
+    return (
         _own_annotations(function)
         if sys.version_info >= (3, 14)
         else dict(function.__annotations__)
     )
-    return {name: annotation for name, annotation in written.items() if name != "return"}
+
+
+def _parameter_annotations(function: types.FunctionType) -> dict[str, object]:
+    """A function's parameter annotations as written, so a handler's settings can be read without calling it."""
+    return {
+        name: annotation
+        for name, annotation in _function_annotations(function).items()
+        if name != "return"
+    }
 
 
 def _parameter_types(value: object, label: str) -> Iterator[_FieldType]:

@@ -13,7 +13,7 @@ _values.hy は Hy の module なので、pyright は中を読めず、`from doef
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Protocol, TypeAlias
 
 from doeff import Program
 from doeff_hy._frozen import FrozenMap
@@ -304,8 +304,20 @@ class EventRetired:
 # --- 合図の源と HTTP の client の問いの答え ---
 
 @dataclass(frozen=True, kw_only=True)
+class ChangedRow:
+    table: str
+    key: str
+
+    def __post_init__(self) -> None:
+        ...
+
+class KeyedSignal(Protocol):
+    @property
+    def keys(self) -> tuple[ChangedRow, ...]: ...
+
+@dataclass(frozen=True, kw_only=True)
 class SignalTables:
-    signal: type
+    signal: type[KeyedSignal]
     tables: tuple[str, ...] = ...
     streams: tuple[str, ...] = ...
 
