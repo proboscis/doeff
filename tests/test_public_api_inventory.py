@@ -8,6 +8,7 @@ Python の名の無い package — を確かめる。
 
 from __future__ import annotations
 
+import collections
 import importlib
 import importlib.util
 import os
@@ -15,7 +16,7 @@ import sys
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import FunctionType, ModuleType
 
 import pytest
 
@@ -318,6 +319,69 @@ def test_what_the_helper_reading_does_not_see(sample: ModuleType, name: str) -> 
     """
     verdict = tool._Classifier().classify(sample.__dict__[name], name)
     assert (verdict.kind, verdict.form) == ("other", tool.PROGRAM_HELPER)
+
+
+#: 同じ呼び先 shared を読む program 関数 3 つ(helper の読みが shared を 1 度だけ判じるかを数える)。
+SHARED = """
+from doeff import DoExpr, do
+from inventory_sample import ping
+
+
+@do
+def shared():
+    yield ping()
+
+
+def first() -> DoExpr:
+    return shared()
+
+
+def second() -> DoExpr:
+    return shared()
+
+
+@do
+def third():
+    yield shared()
+"""
+
+
+def test_the_helper_reading_judges_each_body_once(
+    sample: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """program を返す関数がいくつ同じ呼び先を読んでも、1 回の読み(1 つの _Classifier)の中で、本体ごとに読む関数を
+    1 度だけ集め、名と値ごとに 1 度だけ helper を越えるかを判じる(card ki-534cd3be4d7c — 関数ごとに呼び先を辿り直し、
+    日次の回の doeff-cluster の目録が 100 秒を越えた)。判定の結果は 3 つとも helper のまま。
+    """
+    (tmp_path / "inventory_shared.py").write_text(textwrap.dedent(SHARED), encoding="utf-8")
+    shared = importlib.import_module("inventory_shared")
+    read_bodies: collections.Counter[str] = collections.Counter()
+    judged_names: collections.Counter[str] = collections.Counter()
+    read_functions = tool._read_functions
+    judged = tool._Classifier._judged_breach_form
+
+    def counted_reads(function: FunctionType, package: str) -> Iterator[FunctionType]:
+        read_bodies[function.__qualname__] += 1
+        return read_functions(function, package)
+
+    def counted_judgment(self: object, name: str, value: object) -> str | None:
+        judged_names[name] += 1
+        return judged(self, name, value)
+
+    monkeypatch.setattr(tool, "_read_functions", counted_reads)
+    monkeypatch.setattr(tool._Classifier, "_judged_breach_form", counted_judgment)
+    classifier = tool._Classifier()
+    try:
+        forms = [
+            classifier.classify(shared.__dict__[name], name).form
+            for name in ("first", "second", "third")
+        ]
+    finally:
+        sys.modules.pop("inventory_shared", None)
+    assert forms == [tool.PROGRAM_HELPER] * 3
+    assert read_bodies == {"first": 1, "second": 1, "third": 1, "shared": 1}
+    assert judged_names["shared"] == 1
+    assert set(judged_names.values()) == {1}
 
 
 def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
