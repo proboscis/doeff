@@ -396,7 +396,7 @@ def fake_emit_outside(world: FakeClaudeWorld, session_id: str) -> _Program[bool,
 def fake_replace_credential(world: FakeClaudeWorld, request: ClaudeReplaceSessionCredential) -> _Program[CredentialReplaced | NoSuchSession | SessionProcessDown | HomeCredentialSession, object]:
     ...
 
-def fake_claude_code_handler(world: Incomplete) -> _Handler:
+def fake_claude_code_handler(world: FakeClaudeWorld) -> _Handler:
     ...
 
 def fake_print(respond: Callable, request: ClaudePrintOnce) -> _Program[PrintAnswered | PrintFailed | PrintLimited | PrintTimedOut, object]:
