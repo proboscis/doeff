@@ -109,17 +109,18 @@
   ;; 静的な記述: 埋める名と (empty) の既定の値は空の文字列・埋める名は "filled" に名の順で載る。
   (assert (= (get job "environ") {"POLL" "5.0" "BROKER" "" "PROXY" "" "ADDRESS" ""}) job)
   (assert (= (get job "filled") ["ADDRESS" "BROKER"]) job)
-  ;; 系の値: Job の filled が埋める名を持ち、(empty) の名は持たない。
-  (val built (get (. (land (fn [] None)) jobs) 0))
-  (assert (= built.filled (frozenset ["ADDRESS" "BROKER"])) built)
-  (assert (= (dfor v built.environ v.name v.value) {"ADDRESS" "" "BROKER" "" "POLL" "5.0" "PROXY" ""}) built.environ)
-  ;; 埋める名の無い job の記述は鍵 "filled" を持たず、Job の filled は空。
+  ;; 埋める名の無い job の記述は鍵 "filled" を持たない。
   (<- plain (evaluate "
 (defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
 (defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :environ {\"POLL\" \"5.0\"}))
 "))
-  (assert (not-in "filled" (get (. (get plain "s") __doeff_system__) "jobs" 0)))
-  (assert (= (. (get (. ((get plain "s") (fn [] None)) jobs) 0) filled) (frozenset))))
+  (assert (not-in "filled" (get (. (get plain "s") __doeff_system__) "jobs" 0))))
+
+
+(defk probe-program []
+  {:pre [] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "構成子 job に渡す Program の値を作るため(呼び出しの形が module の最上位の関数を名指す)。"
+  1)
 
 
 (deftest test-defsystem-refuses-an-empty-string-default-in-the-environ
@@ -137,17 +138,22 @@
 
 
 (deftest test-job-refuses-filled-names-outside-the-environ-or-with-a-default
-  ;; 構成子 job(展開の外から呼ぶ時)も、埋める名が :environ に無い・既定の値を持つ形を断る。
-  (import doeff [Pure])
+  ;; 構成子 job は埋める名を Job の filled に載せ((empty) の名と埋める名の無い job は載せない)、埋める名が :environ に無い・既定の値を
+  ;; 持つ形を断る(展開の外から呼ぶ時)。
   (import doeff_cluster.shared.entry.service_build [job])
   (import doeff_cluster.shared.intent.service_model [CallShape])
-  (val call (CallShape :function len :args [] :kwargs {}))
+  (val call (CallShape :function probe-program :args [] :kwargs {}))
+  (val built (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :environ {"POLL" "5.0" "BROKER" "" "PROXY" ""}
+                  :filled (frozenset ["BROKER"])))
+  (assert (= built.filled (frozenset ["BROKER"])) built)
+  (assert (= (dfor v built.environ v.name v.value) {"BROKER" "" "POLL" "5.0" "PROXY" ""}) built.environ)
+  (assert (= (. (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :environ {"POLL" "5.0"}) filled) (frozenset)))
   (var stranger None)
-  (try (job "j" (Pure 1) :call call :needs #{"n"} :replicas 1 :environ {"POLL" "5.0"} :filled (frozenset ["BROKER"]))
+  (try (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :environ {"POLL" "5.0"} :filled (frozenset ["BROKER"]))
        (except [error ValueError] (:= stranger (str error))))
   (assert (and stranger (in "BROKER" stranger) (in ":environ に無い" stranger)) stranger)
   (var defaulted None)
-  (try (job "j" (Pure 1) :call call :needs #{"n"} :replicas 1 :environ {"BROKER" "redis://x"} :filled (frozenset ["BROKER"]))
+  (try (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :environ {"BROKER" "redis://x"} :filled (frozenset ["BROKER"]))
        (except [error ValueError] (:= defaulted (str error))))
   (assert (and defaulted (in "既定の値を持つ" defaulted)) defaulted))
 
