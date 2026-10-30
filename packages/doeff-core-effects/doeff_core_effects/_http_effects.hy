@@ -9,65 +9,6 @@
 (val _HTTP-METHODS (frozenset ["GET" "POST" "PUT" "PATCH" "DELETE" "HEAD" "OPTIONS"]))
 
 
-(defclass HttpRequest [EffectBase]
-  "HTTP request effect: dispatch a generic HTTP call.
-
-   yield HttpRequest(method=\"GET\", url=\"https://...\") -> HttpResponse
-
-   failures-as-values = True asks the handler to answer HttpFailed (instead of raising the transport's exception) when no
-   response ever arrived — so a caller can read the failure as a value without importing the transport library.
-
-   log-each-request = True asks the handler to slog one \"http_request\" line per attempt (method, url, status, elapsed).
-   Off by default: a caller that polls (a node agent that PATCHes every minute) should not add a log line per request.
-   Added for agora-redesign #823 (item 2).
-
-   connect-timeout-seconds = a shorter limit for making the connection only (None = timeout-seconds covers every phase). A caller that
-   can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
-   is given up quickly while a slow answer still has timeout-seconds (#2337).
-
-   trace-phases = True asks the handler to time the exchange's phases (HttpPhases on the response's phases — whether a new
-   connection was made, and the seconds to connect, send, wait for the answer's head and read its body). Off by default: a
-   caller that does not read them pays nothing (agora card ki-ca4b41612e2e).
-
-   params and body are handed to the outside HTTP as they are (a query mapping; bytes / str sent as they are; a mapping sent as JSON),
-   so their values are any value the outside accepts: the boundary type is `Mapping[str, object]` — covariant in the value, so
-   a caller's `dict[str, str]` or `dict[str, Any]` is accepted (`dict[str, object]` is invariant and was not; `Any` is a type escape).
-   A mapping that is not a dict is kept as a dict (the handlers and the fixture key read a dict; a dict is kept as it is) —
-   agora-redesign #2939."
-
-  (defn #^ None __init__ [self #^ str method #^ str url *
-                          #^ (| (get dict #(str str)) None) [headers None]
-                          #^ (| (get Mapping #(str object)) None) [params None]
-                          #^ (| bytes str (get Mapping #(str object)) None) [body None]
-                          #^ float [timeout-seconds 30.0] #^ int [max-retries 3] #^ bool [follow-redirects True]
-                          #^ bool [failures-as-values False] #^ bool [log-each-request False]
-                          #^ (| float None) [connect-timeout-seconds None] #^ bool [trace-phases False]]
-    (.__init__ (super))
-    (setv normalized-method (.upper method))
-    (when (not-in normalized-method _HTTP-METHODS)
-      (raise (ValueError (+ "Unsupported HTTP method: " (repr method)))))
-    (when (< max-retries 0)
-      (raise (ValueError (+ "max_retries must be non-negative: "
-                            (repr max-retries)))))
-    (setv #^ str self.method normalized-method
-          self.url url
-          self.headers headers
-          #^ (| (get dict #(str object)) None) self.params
-          (if (isinstance params Mapping) (if (isinstance params dict) params (dict params)) params)
-          #^ (| bytes str (get dict #(str object)) None) self.body
-          (if (isinstance body Mapping) (if (isinstance body dict) body (dict body)) body)
-          self.timeout-seconds timeout-seconds
-          self.max-retries max-retries
-          self.follow-redirects follow-redirects
-          self.failures-as-values failures-as-values
-          self.log-each-request log-each-request
-          self.connect-timeout-seconds connect-timeout-seconds
-          self.trace-phases trace-phases))
-
-  (defn #^ str __repr__ [self]
-    (+ "HttpRequest(" self.method " " (repr self.url) ")")))
-
-
 (defrecord HttpPhases
   "The phases of one exchange, timed when the request set trace-phases (agora card ki-ca4b41612e2e) — where the seconds of a
    request went on the caller's side. new-connection = a connection was made for this request (False = a kept connection was
@@ -143,3 +84,63 @@
   (#^ str url)
   (#^ str detail)
   (#^ HttpFailureKind kind))
+
+
+;; 答えの型(ADR-DOE-API-001 R2)は和 HttpResponse | HttpFailed — HttpFailed は failures-as-values の時だけ答える(それ以外は例外)。
+(defclass HttpRequest [(get EffectBase (| HttpResponse HttpFailed))]
+  "HTTP request effect: dispatch a generic HTTP call.
+
+   yield HttpRequest(method=\"GET\", url=\"https://...\") -> HttpResponse
+
+   failures-as-values = True asks the handler to answer HttpFailed (instead of raising the transport's exception) when no
+   response ever arrived — so a caller can read the failure as a value without importing the transport library.
+
+   log-each-request = True asks the handler to slog one \"http_request\" line per attempt (method, url, status, elapsed).
+   Off by default: a caller that polls (a node agent that PATCHes every minute) should not add a log line per request.
+   Added for agora-redesign #823 (item 2).
+
+   connect-timeout-seconds = a shorter limit for making the connection only (None = timeout-seconds covers every phase). A caller that
+   can send the request elsewhere when no connection was made (CONNECT-FAILED) sets it short, so an address that drops the handshake
+   is given up quickly while a slow answer still has timeout-seconds (#2337).
+
+   trace-phases = True asks the handler to time the exchange's phases (HttpPhases on the response's phases — whether a new
+   connection was made, and the seconds to connect, send, wait for the answer's head and read its body). Off by default: a
+   caller that does not read them pays nothing (agora card ki-ca4b41612e2e).
+
+   params and body are handed to the outside HTTP as they are (a query mapping; bytes / str sent as they are; a mapping sent as JSON),
+   so their values are any value the outside accepts: the boundary type is `Mapping[str, object]` — covariant in the value, so
+   a caller's `dict[str, str]` or `dict[str, Any]` is accepted (`dict[str, object]` is invariant and was not; `Any` is a type escape).
+   A mapping that is not a dict is kept as a dict (the handlers and the fixture key read a dict; a dict is kept as it is) —
+   agora-redesign #2939."
+
+  (defn #^ None __init__ [self #^ str method #^ str url *
+                          #^ (| (get dict #(str str)) None) [headers None]
+                          #^ (| (get Mapping #(str object)) None) [params None]
+                          #^ (| bytes str (get Mapping #(str object)) None) [body None]
+                          #^ float [timeout-seconds 30.0] #^ int [max-retries 3] #^ bool [follow-redirects True]
+                          #^ bool [failures-as-values False] #^ bool [log-each-request False]
+                          #^ (| float None) [connect-timeout-seconds None] #^ bool [trace-phases False]]
+    (.__init__ (super))
+    (setv normalized-method (.upper method))
+    (when (not-in normalized-method _HTTP-METHODS)
+      (raise (ValueError (+ "Unsupported HTTP method: " (repr method)))))
+    (when (< max-retries 0)
+      (raise (ValueError (+ "max_retries must be non-negative: "
+                            (repr max-retries)))))
+    (setv #^ str self.method normalized-method
+          self.url url
+          self.headers headers
+          #^ (| (get dict #(str object)) None) self.params
+          (if (isinstance params Mapping) (if (isinstance params dict) params (dict params)) params)
+          #^ (| bytes str (get dict #(str object)) None) self.body
+          (if (isinstance body Mapping) (if (isinstance body dict) body (dict body)) body)
+          self.timeout-seconds timeout-seconds
+          self.max-retries max-retries
+          self.follow-redirects follow-redirects
+          self.failures-as-values failures-as-values
+          self.log-each-request log-each-request
+          self.connect-timeout-seconds connect-timeout-seconds
+          self.trace-phases trace-phases))
+
+  (defn #^ str __repr__ [self]
+    (+ "HttpRequest(" self.method " " (repr self.url) ")")))

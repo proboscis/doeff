@@ -25,7 +25,7 @@ def proc_row_of_stat(pid: int, text: str, page_bytes: int) -> _Program[ProcRow |
     ...
 
 @_doeff_dataclass(frozen=True)
-class ReadProcTable(_doeff_effect_base[tuple]):
+class ReadProcTable(_doeff_effect_base[tuple[ProcRow, ...]]):
     ...
 
 @_doeff_dataclass(frozen=True)

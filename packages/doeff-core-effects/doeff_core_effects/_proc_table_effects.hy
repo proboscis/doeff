@@ -56,7 +56,7 @@
 (defeffect ReadProcTable
   "機体の process の表を 1 度読む(頭の註)。答え = ProcRow の列(pid の昇順)。"
   {:fields []
-   :answer tuple
+   :answer (get tuple #(ProcRow ...))
    :tags {:context "process" :role "foundation"}})
 
 

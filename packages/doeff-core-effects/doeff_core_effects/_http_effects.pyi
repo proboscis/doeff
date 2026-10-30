@@ -6,26 +6,6 @@ from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
 _HTTP_METHODS: frozenset[str]
 
-class HttpRequest(EffectBase):
-    method: str
-    url: str
-    headers: dict[str, str] | None
-    params: dict[str, object] | None
-    body: bytes | str | dict[str, object] | None
-    timeout_seconds: float
-    max_retries: int
-    follow_redirects: bool
-    failures_as_values: bool
-    log_each_request: bool
-    connect_timeout_seconds: float | None
-    trace_phases: bool
-
-    def __init__(self, method: str, url: str, *, headers: dict[str, str] | None=None, params: Mapping[str, object] | None=None, body: bytes | str | Mapping[str, object] | None=None, timeout_seconds: float=30.0, max_retries: int=3, follow_redirects: bool=True, failures_as_values: bool=False, log_each_request: bool=False, connect_timeout_seconds: float | None=None, trace_phases: bool=False) -> None:
-        ...
-
-    def __repr__(self) -> str:
-        ...
-
 @dataclass(frozen=True, kw_only=True)
 class HttpPhases:
     new_connection: bool
@@ -71,3 +51,23 @@ class HttpFailed:
     url: str
     detail: str
     kind: HttpFailureKind
+
+class HttpRequest(EffectBase[HttpResponse | HttpFailed]):
+    method: str
+    url: str
+    headers: dict[str, str] | None
+    params: dict[str, object] | None
+    body: bytes | str | dict[str, object] | None
+    timeout_seconds: float
+    max_retries: int
+    follow_redirects: bool
+    failures_as_values: bool
+    log_each_request: bool
+    connect_timeout_seconds: float | None
+    trace_phases: bool
+
+    def __init__(self, method: str, url: str, *, headers: dict[str, str] | None=None, params: Mapping[str, object] | None=None, body: bytes | str | Mapping[str, object] | None=None, timeout_seconds: float=30.0, max_retries: int=3, follow_redirects: bool=True, failures_as_values: bool=False, log_each_request: bool=False, connect_timeout_seconds: float | None=None, trace_phases: bool=False) -> None:
+        ...
+
+    def __repr__(self) -> str:
+        ...
