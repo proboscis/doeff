@@ -4,8 +4,8 @@
 #   ClickHouseHeader ClickHouseKill ClickHouseParam ClickHouseRequest ClickHouseResponse
 #   ClickHouseStatement ClickHouseWaits ESCAPES EXIT_KILL_GRACE_SECONDS EXIT_SETTLE_SECONDS
 #   KILL_GRACE_SECONDS NOT_SUPPORTED_SQLSTATE QUERY_ID_SHAPE QUERY_SETTINGS ROUND_TRIPS RoundTrips
-#   SettleThenTerminate SqlColumnType SqlEnsureTables SqlFailed SqlInsertRows SqlPlaceholder
-#   SqlQuery SqlRows SqlSchemaApplied SqlText SqlTransaction SqlUnreachable TIMEOUT_OVERFLOW_MODE
+#   SettleThenTerminate SqlColumnType SqlEnsureTables SqlFailed SqlInsertRows
+#   SqlQuery SqlRows SqlSchemaApplied SqlTransaction SqlUnreachable TIMEOUT_OVERFLOW_MODE
 #   ThreadPerCall USER_AGENT WAIT_MARGIN_SECONDS answer_started checked_identifier
 #   checked_identifiers checked_params checked_rows clickhouse_abandon clickhouse_answer
 #   clickhouse_connection clickhouse_deadline_pairs clickhouse_ensure_tables clickhouse_exit_kill

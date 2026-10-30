@@ -6,7 +6,7 @@
 #   PREPARED PREPARED_LOCK PREPARED_MAX PipelineConnection PostgresConnections PostgresDatabase
 #   PostgresListener PostgresStatement PostgresStep PostgresTimeouts PreparedBook RaisedNotices
 #   SqlBatch SqlColumnType SqlDropNotice SqlEnsureTables SqlFailed SqlHangNotice SqlInsertRows
-#   SqlLock SqlNotify SqlParam SqlPlaceholder SqlQuery SqlRows SqlSchemaApplied SqlText
+#   SqlLock SqlNotify SqlParam SqlQuery SqlRows SqlSchemaApplied
 #   SqlTransaction SqlUnreachable StatementCursor TaskCancelledError TransactionAbandoned
 #   TransactionDriver TransactionFlush TransactionLease UNREACHABLE_CLASSES UNREACHABLE_SQLSTATES
 #   UNREACHABLE_SQLSTATE_CLASS abandon_lease abandoned_now cell_bytes checked_identifier

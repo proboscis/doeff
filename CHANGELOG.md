@@ -34,6 +34,10 @@
 
 ### Changed
 
+- **Breaking (doeff-core-effects):** the import root no longer exports `SqlText`, `SqlPlaceholder`, `DriverValue`,
+  `WsCloseFrame`, `VmWork` and `TraceSink` (ADR-DOE-API-001 R1 — parts the package's own handlers use, not an effect's
+  value or answer). No caller outside the package imports them; `set_scheduler_trace` still takes any
+  `Callable[[dict[str, object]], None]`.
 - **Breaking (doeff-events):** the import root no longer exports `GAP_NOTICE`, the wire name of the gap notice
   (ADR-DOE-API-001 R1 — a constant is not an effect or a handler). Write `Announce.gap(channel, source)` where you
   passed it to `Announce`, and `notice.is_gap` (or `effect.is_gap` on an `Announce`) where you compared a name with

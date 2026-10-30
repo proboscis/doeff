@@ -6,7 +6,7 @@
 #   HttpListen HttpNextRequest HttpNoBody HttpProbe HttpProbeAnswer HttpReadBody HttpRequestArrived
 #   HttpRespond HttpScript HttpServed HttpServerClosed HttpShutdown HttpStopListening HttpTakeQueued
 #   ReadHttpServed ScriptedBody ScriptedUpstream TakeWsSendReport WS_CLOSE_ABNORMAL WS_CLOSE_NORMAL
-#   WS_CUT_REASON WS_REFUSAL_TEXT WsAccept WsBinaryArrived WsClose WsCloseFrame WsCloseSent WsClosed
+#   WS_CUT_REASON WS_REFUSAL_TEXT WsAccept WsBinaryArrived WsClose WsCloseSent WsClosed
 #   WsEvent WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsShortcut WsShortcutAnswered
 #   WsShortcutFailed WsTextArrived WsTextSent carries_content closing_of probe_answer probe_failure
 #   probe_for send_overflows ws_refusal_status ws_shortcut_for ws_shortcut_outcome

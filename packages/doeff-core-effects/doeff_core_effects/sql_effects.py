@@ -1,9 +1,9 @@
 # moved-submodule-shim: doeff_core_effects.sql_effects -> doeff_core_effects._sql_effects
 # moved-submodule-shim-names doeff_core_effects.sql_effects:
-#   DriverValue ExternalPromise IDENTIFIER MODULE_TAGS PLAIN_VALUE_TYPES SPLIT_MEMO SPLIT_MEMO_LIMIT
+#   ExternalPromise IDENTIFIER MODULE_TAGS PLAIN_VALUE_TYPES SPLIT_MEMO SPLIT_MEMO_LIMIT
 #   SQL_VALUE_TYPES SetSqlOutage SqlBatch SqlColumn SqlColumnType SqlDropNotice SqlEnsureTables
-#   SqlFailed SqlHangNotice SqlIndex SqlInsertRows SqlLock SqlNotify SqlParam SqlPlaceholder
-#   SqlQuery SqlRows SqlSchemaApplied SqlTable SqlText SqlTransaction SqlTransactionMisuse
+#   SqlFailed SqlHangNotice SqlIndex SqlInsertRows SqlLock SqlNotify SqlParam
+#   SqlQuery SqlRows SqlSchemaApplied SqlTable SqlTransaction SqlTransactionMisuse
 #   SqlUnreachable SqlValue T TOKEN checked_identifier checked_identifiers checked_params
 #   checked_rows is_driver_value is_plain_rows normalized_rows normalized_value param_value
 #   split_statement

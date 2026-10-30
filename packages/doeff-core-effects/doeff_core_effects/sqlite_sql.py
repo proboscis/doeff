@@ -2,7 +2,7 @@
 # moved-submodule-shim-names doeff_core_effects.sqlite_sql:
 #   BIND_CLASS_SQLSTATES BIND_ERRORS BUSY_SQLSTATE OPERATIONAL_SQLSTATE SQLITE_CLASS_SQLSTATES
 #   SQLITE_TYPES SetSqlOutage SqlBatch SqlColumnType SqlEnsureTables SqlFailed SqlInsertRows
-#   SqlParam SqlPlaceholder SqlQuery SqlRows SqlSchemaApplied SqlTable SqlText SqlTransaction
+#   SqlParam SqlQuery SqlRows SqlSchemaApplied SqlTable SqlTransaction
 #   SqlUnreachable SqlValue SqliteConnection SqliteStatement TransactionFlush checked_identifier
 #   checked_identifiers checked_params checked_rows connection_of normalized_rows outage_marked
 #   outage_of param_value run_in_batched_transaction run_in_transaction split_statement
