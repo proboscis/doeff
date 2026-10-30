@@ -20,9 +20,10 @@
   "card ki-80380210ad7a が小さい 14 package の組「外れ — effect の欄に型を書くか内側へ移す」の 62 行を分けた: effect の答えと値の型 24 行は許した物の表へ、handler に渡す設定と引数の型(doeff-claude-judge の ClaudeJudgeTarget・ClaudeQuery・QueryImage、doeff-events の Drop・WhenUnsent、doeff-notify の NotificationCapture)10 行は組「境界 — handler の設定の型」へ、答えの型の別名を書く兄弟の card が答えに出す名(doeff-events の NoticeSent・NoticeGapTold は ki-bf9fdba32e04、doeff-seedream の SeedreamImage は ki-4ccdcc97032c)9 行は組「外れ — effect に答えの型を書く」へ移し、どの effect にも出ない 19 名 19 行は内側へ移して消した。doeff-system-one の choice・noul・score の 3 行は外の repo の呼び手が多いので残し、子 card ki-8a8fd1ef6ac5 が直す。",
   "組「境界 — bus の event の型」は空になって消えた(card ki-d94ee9f9f6ce)。package の handler が bus に Publish し、本体が WaitForEvent・WaitForEvents で名指して受ける event の class(doeff-events の StopArrived・SourceFailed・SourceStalled・SourceResumed・SourceMissed・SourceStarted・TimerFired の 7 名 — 分けた時は 31 行で、card ki-382e2438e23a が移し替えの module を消して入口の 7 行が残った)を置いた組だった。待ちの答えは本体が名指した型で決まり、EffectBase[T] の T に 1 つの型を書けないので、待ちの effect の class が package の bus の event を自分の __doeff_bus_events__ に宣言し、目録の answer_types がそれを待ちの答えの型と読む形にして、7 行を許した物の表の組「許した物 — effect の答えの型」へ移した。この組は組「外れ — effect に答えの型を書く」から分けた物で、同じ組の Publish・PublishGap の答え 21 行(card ki-80380210ad7a がこの組へ移した NoticeSent・NoticeGapTold を含む)は effect に答えの型を書いて許した物の表へ移し、MarkGap 4 行(NoticeRoute の when_unsent の値 — どの effect の答えでもない)は同じ選びの Drop・WhenUnsent と同じ組「境界 — handler の設定の型」へ移した(card ki-bf9fdba32e04)。",
   "組「境界 — handler の設定の型」の 179 行(20 package・109 名)は、目録が形(その package が定義した型で、同じ package が見せる handler・handler の class・工場の引数の注釈に出る物 — package が定義した設定の型の欄を辿る・目録の settings)を確かめる許す組「許した物 — handler の設定の型」を足したので、形に合う 112 行(18 package・64 名)と「足した名」の doeff-agents の ScenarioWorld 3 行を許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-93b21540e519)。合わない 67 行(9 package・45 名 — どの見せる handler と工場の引数にも出ない)のうち、型の 66 行は組「外れ — 工場の引数に型を書くか内側へ移す」へ、関数 default_session_backend の 1 行は組「外れ — 内側の module へ移す」へ移した。handler に渡す型なら、それを取る工場か handler の引数に型を書いて(Hy の defn の引数・注釈の無い backend=None など)許した物の表へ移し、渡さない型なら内側へ移す。",
-  "card ki-8a8fd1ef6ac5 が doeff-system-one の組「外れ — effect の欄に型を書くか内側へ移す」の 3 行(choice・noul・score — Question を作る関数)を消した。外の repo の呼び手(agent-commons の rulebook/core.py・agora-controllers の first_reader.hy と test 2 つ)と doeff の中の呼び手を Question(kind=…, instructions=…, options=…/levels=…) へ書き換えてから、3 つの関数を消した(R1・R20 の順)。組には card ki-4ccdcc97032c が移した answer_choice・answer_noul・answer_score(Answer を作る関数)の 3 行が残る。"
+  "card ki-8a8fd1ef6ac5 が doeff-system-one の組「外れ — effect の欄に型を書くか内側へ移す」の 3 行(choice・noul・score — Question を作る関数)を消した。外の repo の呼び手(agent-commons の rulebook/core.py・agora-controllers の first_reader.hy と test 2 つ)と doeff の中の呼び手を Question(kind=…, instructions=…, options=…/levels=…) へ書き換えてから、3 つの関数を消した(R1・R20 の順)。組には card ki-4ccdcc97032c が移した answer_choice・answer_noul・answer_score(Answer を作る関数)の 3 行が残る。",
+  "doeff-records の組「外れ — effect の欄に型を書くか内側へ移す」の最後の ChangedRow 2 行(event_source・memory)は消えた(card ki-fe3115756381)。合図の型の約束を Protocol KeyedSignal(読むだけの欄 keys: tuple[ChangedRow, ...] — frozen の dataclass の欄が合う形・内側の _values に置き公開しない)で書き、結び SignalTables.signal の注釈を素の type から type[KeyedSignal] にした。目録は Protocol の property の戻りの型も欄と読むので、handler の引数 bindings → SignalTables.signal → KeyedSignal.keys と辿って ChangedRow が settings に出る。2 行を組「許した物 — handler の設定の型」へ決め lt-85SHMNQG7HG4AYHBER6V2BAKX6 で移した。"
  ],
- "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
+ "問い":"lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
   "doeff-adr": {
    "範囲": "決まりの範囲",
@@ -6977,14 +6978,6 @@
      "doeff_records.wire": [
       "RowChanged",
       "RowRemoved"
-     ]
-    },
-    "外れ — effect の欄に型を書くか内側へ移す": {
-     "doeff_records.event_source": [
-      "ChangedRow"
-     ],
-     "doeff_records.memory": [
-      "ChangedRow"
      ]
     },
     "外れ — 工場の引数に型を書くか内側へ移す": {

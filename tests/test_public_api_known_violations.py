@@ -49,7 +49,7 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
    class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「許した物 — handler の設定の型」(R2)に
    置けるのは、その package が定義した型で、同じ package が見せる handler・handler の class・工場の引数の注釈(型引数を含み、
-   package が定義した設定の型の欄を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
+   package が定義した設定の型の欄〔Protocol の property を含む〕を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
    標準の library の型を出し直した名を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
@@ -1934,13 +1934,15 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
-#: 設定の型を引数に取る工場・欄で辿る設定の型・どの引数にも出ない class と関数を持つ package の名(注釈は字のまま)。
+#: 設定の型を引数に取る工場・欄で辿る設定の型(Protocol の property の戻りの型を含む)・どの引数にも出ない class と関数を持つ
+#: package の名(注釈は字のまま)。
 SETTINGS = '''
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol
 
 from doeff import EffectBase, Pass, handler
 from doeff.program import ProgramHandler
@@ -1962,10 +1964,25 @@ class Level(Enum):
 
 
 @dataclass(frozen=True)
+class Mark:
+    """A setting type reached through the property of the Protocol a Settings field is typed with."""
+
+    name: str
+
+
+class _Marked(Protocol):
+    """The shape of a class Settings names (inside the package — not shown): it has marks to read."""
+
+    @property
+    def marks(self) -> tuple[Mark, ...]: ...
+
+
+@dataclass(frozen=True)
 class Settings:
     """A setting type: ping_handlers takes it."""
 
     level: Level
+    marked: type[_Marked]
 
 
 @dataclass(frozen=True)
@@ -2009,8 +2026,9 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
     handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2・
     card ki-93b21540e519)。
 
-    工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)は、許した物の
-    表に置けば緑・どちらの表にも無ければ外れのまま赤。どの引数にも出ない class と関数と、標準の library の class Path を
+    工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)・欄が名指す
+    Protocol の、読むだけの欄(property)の戻りの型(Settings.marked の type[_Marked] の marks の Mark — card ki-fe3115756381)は、
+    許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。どの引数にも出ない class と関数と、標準の library の class Path を
     submodule の __all__ で出し直した名(工場の引数に出るが package が定義した型でない)を置くと赤(組と名と形を名指す)。
     """
     repo = _fixture_tree(tmp_path, {"__init__.py": SETTINGS, "rooted.py": REEXPORTED_SETTING})
@@ -2021,9 +2039,15 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
         (FIXTURE_ROOT, "Settings"): ["ping_handlers(settings)"],
         (FIXTURE_ROOT, "Hint"): ["ping_handlers(hints)"],
         (FIXTURE_ROOT, "Level"): ["Settings.level"],
+        (FIXTURE_ROOT, "Mark"): ["_Marked.marks"],
         (rooted, "Path"): ["rooted_ping_handlers(root)"],
     }
-    settings = [(FIXTURE_ROOT, "Hint"), (FIXTURE_ROOT, "Level"), (FIXTURE_ROOT, "Settings")]
+    settings = [
+        (FIXTURE_ROOT, "Hint"),
+        (FIXTURE_ROOT, "Level"),
+        (FIXTURE_ROOT, "Mark"),
+        (FIXTURE_ROOT, "Settings"),
+    ]
     rest = [(FIXTURE_ROOT, "Unrelated"), (FIXTURE_ROOT, "helper"), (rooted, "Path")]
 
     def tables(placed: list[Key]) -> tuple[KnownTable, AllowedTable]:

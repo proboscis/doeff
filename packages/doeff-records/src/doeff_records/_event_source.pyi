@@ -49,6 +49,7 @@ from doeff_records._values import StreamEnd as StreamEnd
 from doeff_records._values import Unreachable as Unreachable
 from doeff_records._values import WatchCursor as WatchCursor
 from doeff_records._values import checked_table_name as checked_table_name
+from doeff_records._values import ChangedRow as ChangedRow
 from doeff_records._values import SignalTables as SignalTables
 from doeff_records._values import SignalSourceFactory as SignalSourceFactory
 from doeff_records._values import SignalSourcePatience as SignalSourcePatience
@@ -56,14 +57,6 @@ WATCH_SECONDS: float
 
 def source_patience_handler(patience: SignalSourcePatience) -> _Handler:
     ...
-
-@dataclass(frozen=True, kw_only=True)
-class ChangedRow:
-    table: str
-    key: str
-
-    def __post_init__(self) -> None:
-        ...
 
 class SignalSourceUnreachable(RuntimeError):
     ...
