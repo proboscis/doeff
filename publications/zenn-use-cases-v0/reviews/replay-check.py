@@ -46,7 +46,7 @@ FENCE = re.compile(r"^```(\w*)\n(.*?)^```$", re.S | re.M)
 ENGLISH_FENCE = re.compile(r"^~~~(\w*)\n(.*?)^~~~$", re.S | re.M)
 HEADER = re.compile(r"# (\w+\.py)\(抜粋\)")
 SEGMENT = re.compile(r"^-- ([\w ]+): .*$\n", re.M)
-# 子の警告は誤りにする(古い形の`await_handler()`のDeprecationWarningも、閉じ忘れのResourceWarningも止める)。
+# 子の警告は誤りにする(await_handlerを引数の無いfactoryとして呼ぶ古い形のDeprecationWarningも、閉じ忘れのResourceWarningも止める)。
 WARNINGS = ("-W", "error")
 # IOの差し替えだけに読める語。I/Oの例の節の外で使えば、記事が代数的エフェクトの話からIOの差し替えの話に縮んで読める。
 IO_ONLY_WORDS = re.compile(r"swap\w*|fake\w*|mock\w*|real I/O|差し替|モック|偽|本物のI/O", re.I)
