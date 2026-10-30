@@ -144,7 +144,7 @@ def simulated(program):  # a virtual clock: 30-minute waits take no time
 
 
 def real(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+    return scheduled(await_handler(async_time_handler()(program)))
 
 
 if __name__ == "__main__":

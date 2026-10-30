@@ -136,7 +136,7 @@ print(run(budget(2)(fake_web(crawl(URLS)))))   # over budget
 | Is it full algebraic effects, like Koka? | One-shot continuations as in OCaml 5: no backtracking or nondeterministic choice, and effects are not in the types. | What doeff Is |
 | How is it different from `effect`, `effectful`, `returns`? | An `effect` performer answers an intent and does not get the rest of the computation. `effectful` handlers get the operation's arguments, and a missing handler returns a symbolic term. `returns` is typed containers without resumable handlers. | What doeff Is, docs/faq.md |
 | What is the overhead? | About 4 µs per effect. It does not show next to I/O; keep tight loops in plain Python. | README Performance |
-| Does it support async? | `@do` refuses `async def`. Use `yield Await(coro)` under `await_handler()`. From an asyncio app, call `run()` through `asyncio.to_thread`. | docs/faq.md, docs/04-async-effects.md |
+| Does it support async? | `@do` refuses `async def`. Use `yield Await(coro)` under `await_handler`. From an asyncio app, call `run()` through `asyncio.to_thread`. | docs/faq.md, docs/04-async-effects.md |
 | Does it type-check? | `EffectBase[str]` with `yield from` gives typed values under pyright strict and `mypy --strict`. Whether every effect has a handler is not checked statically. | docs/faq.md, README |
 | Do I need Hy or Rust? | No. The core install has no Hy, and prebuilt wheels cover the main platforms. The file, SQL and HTTP handlers need the `[hy]` or `[http]` extra. | docs/faq.md |
 | Is it production ready? | It is pre-1.0 and the API still breaks between minor versions. One maintainer uses it in their own projects. | docs/faq.md, CHANGELOG |

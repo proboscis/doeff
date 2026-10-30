@@ -361,7 +361,7 @@ def http_web(effect: Fetch, k):  # I/O over an async client
 
 
 def real(program):  # the wall clock, waiting on asyncio
-    return scheduled(await_handler()(async_time_handler()(program)))
+    return scheduled(await_handler(async_time_handler()(program)))
 ~~~
 
 ~~~python

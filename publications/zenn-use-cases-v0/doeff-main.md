@@ -345,7 +345,7 @@ def http_web(effect: Fetch, k):  # I/Oを、非同期のクライアントで行
 
 
 def real(program):  # 実時間の時計。asyncioで待つ。
-    return scheduled(await_handler()(async_time_handler()(program)))  # 実時間・Await・タスクのハンドラを付ける。
+    return scheduled(await_handler(async_time_handler()(program)))  # 実時間・Await・タスクのハンドラを付ける。
 ```
 
 ```python
