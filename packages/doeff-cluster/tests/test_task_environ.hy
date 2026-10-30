@@ -120,7 +120,7 @@
   (assert (= (. (EnvVar :name "ROWS_TOKEN_FILE" :value "/t") name) "ROWS_TOKEN_FILE"))
   (val program (based-add 1))
   (with [(pytest.raises RuntimeEnvInvalid)]
-    (job "svc" program :call (CallShape :function based-add :args [1] :kwargs {}) :replicas 1 :needs #{"net"}
+    (job "svc" program :call (CallShape :function based-add :args [1] :kwargs {}) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"net"}
          :environ {"ROWS_TOKEN" "t"})))
 
 

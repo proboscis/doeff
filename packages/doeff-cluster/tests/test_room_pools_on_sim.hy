@@ -32,7 +32,7 @@
 
 (defsystem pooled-system [#^ Callable foundation]
   "見本の系: 組の印 pool-a を要る service 1 つ"
-  (pooled (pulse-program foundation) :replicas 1 :needs #{"cluster-net" "pool-a"}))
+  (pooled (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net" "pool-a"}))
 
 
 (defrecord PoolSight

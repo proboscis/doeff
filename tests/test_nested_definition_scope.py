@@ -294,7 +294,7 @@ _CASES = {
         """
         (defn subject [x]
           (setv owner (. doeff_hy __name__))
-          (defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1))
+          (defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1 :peak-mib 200 :settle-mib 100))
           #(owner (. lab __name__) x))
         """,
         lambda mod: mod.subject(5),
@@ -415,7 +415,7 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
     ),
     "defhandler": ("(defhandler inner (Ask [k] (resume 1)))", frozenset({"inner"})),
     "defsystem": (
-        '(defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1))',
+        '(defsystem lab [#^ object foundation] "lab" (job (fn [] None) :replicas 1 :peak-mib 200 :settle-mib 100))',
         frozenset({"lab"}),
     ),
     "defpipeline": (

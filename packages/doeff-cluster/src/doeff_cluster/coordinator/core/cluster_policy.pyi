@@ -10,6 +10,8 @@ from math import ceil as ceil
 from typing import TypeGuard as TypeGuard
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.core.job_rules import content_refusal as content_refusal
+from doeff_cluster.shared.core.job_rules import memory_refusal as memory_refusal
+from doeff_cluster.shared.core.job_rules import single_host_refusal as single_host_refusal
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster.shared.intent.protocol import Request as Request
 from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
@@ -143,6 +145,9 @@ def task_environ_refusal(environ: dict | list | tuple | str | int | float | bool
     ...
 
 def optional_text_field(value: object, field: str) -> str | None:
+    ...
+
+def declared_job_from_json(item: Mapping[str, object]) -> ClusterJob:
     ...
 
 def job_from_json(item: Mapping[str, object]) -> ClusterJob:

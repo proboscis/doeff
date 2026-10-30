@@ -39,7 +39,7 @@
 (val WRAP1 "w1")
 (val WRAP2 "w2")
 (setv JOB-START 2000)
-(setv SERVICE {"revision" WRAP1 "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 10}
+(setv SERVICE {"revision" WRAP1 "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "replicas" 1 "readiness" {"windowSeconds" 10}
                "update" "handoff"})
 
 

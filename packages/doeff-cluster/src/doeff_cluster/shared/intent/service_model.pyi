@@ -69,6 +69,9 @@ class _DeclarationRow(TypedDict):
     readiness: NotRequired[dict[str, float]]
     update: NotRequired[str]
     runtimeEnv: NotRequired[dict[str, JsonValue]]
+    peakMiB: int
+    settleMiB: int
+    singleHost: NotRequired[str]
 
 @dataclass(frozen=True, kw_only=True)
 class CallShape:
@@ -90,6 +93,9 @@ class Job:
     readiness: dict[str, float] | None
     update: str
     environ: tuple[_EnvVarView, ...]
+    peak_mib: int
+    settle_mib: int
+    single_host: str | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class System:

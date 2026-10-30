@@ -51,7 +51,7 @@
     (setv self.state (ClusterState :started-ms (- self.now 60000)))
     (setv self.state (self.call "POST" "/resources/Service"
                                 {"name" "writer-a"
-                                 "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 0
+                                 "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "replicas" 0
                                          "readiness" {"windowSeconds" window}}})))
 
   (defn #^ ClusterState call [self #^ str method #^ str path #^ (| dict None) [body None] #^ (| str None) [actor "c-test"]]
@@ -335,7 +335,7 @@
   ;; 止めた dry-run の process の Ready の報告は window(120 秒)の中に残っているが、数えてはならない — 本番(旧)を止めるのは
   ;; 新しい process が最初の報告をした後。
   (setv sim (Sim :window 120 :first-report-ms 20000))
-  (setv spec {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "replicas" 1 "readiness" {"windowSeconds" 120}})
+  (setv spec {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "replicas" 1 "readiness" {"windowSeconds" 120}})
   ;; dry-run の書き手を動かし、Ready の報告を出させる
   (sim.call "PUT" "/resources/Service/writer-a" {"spec" spec "resourceVersion" (. (.row sim.state.meta "Service/writer-a") resource-version)})
   (for [_ (range 30)] (sim.step))

@@ -57,7 +57,7 @@
   (var s (get reply-1 0))
   (<- reply-2 (beat s "b" 0))
   (:= s (get reply-2 0))
-  (val reply-3 (responded s (! (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]})})) 0 T))
+  (val reply-3 (responded s (! (req "PUT" "/jobs" {"jobs" (lfor i (range 4) {"name" f"s{i}" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]})})) 0 T))
   (:= s (get reply-3 0))
   (setv before (dfor #(k v) (.items s.placements) k v.worker))
   (assert (= (set (.values before)) #{"a" "b"}))
@@ -69,7 +69,7 @@
 
 (deftest test-service-declaration-becomes-the-job-entry-command
   ;; Program の job の行 → job_entry の service 入口。引数は identity の指紋だけ(詰めた Program は置き場のキーで運ぶ・比べない欄)。
-  (val job (job-from-json {"name" "runner" "revision" "abc" "needs" ["net"] "run" SAMPLE-RUN "environ" {"B" "1" "A" "2"}}))
+  (val job (job-from-json {"name" "runner" "revision" "abc" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "environ" {"B" "1" "A" "2"}}))
   (assert (= job.spec.entry "doeff_cluster.worker.entry.job_entry"))
   (assert (= job.spec.args #("service" "--identity" (identity-hash SAMPLE-RUN))))
   (assert (= job.spec.program SAMPLE-PROGRAM))
@@ -204,7 +204,7 @@
 
 (deftest test-coordinator-loop-answers-after-persisting
   (setv script (Script [(! (req "POST" "/heartbeat" {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V}))
-                        (! (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}))
+                        (! (req "PUT" "/jobs" {"jobs" [{"name" "a" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}))
                         (! (req "PUT" "/board/k" {"value" 1}))
                         (! (req "GET" "/nothing"))]))
   (<- final ClusterState ((! (scripted script)) (run-coordinator (ClusterState) T (ClusterNaming))))
@@ -287,8 +287,8 @@
   ;; 送り手の誤りで 400。直す前は宣言の JSON → JobSpec の不変条件の素の ValueError が、本文の読み(ReadBody — 判断の欠陥の囲みの外)から
   ;; 調停ループの外まで抜け、coordinator の process ごと落ちた。後ろの要求(GET /state)にも答え、宣言は書かない。
   (val faults [])
-  (val script (Script [(! (req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}}))
-                       (! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "" "needs" ["net"]}}))
+  (val script (Script [(! (req "POST" "/resources/Service" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}}))
+                       (! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "" "needs" ["net"]}}))
                        (! (req "GET" "/state"))]))
   (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1)))
@@ -307,7 +307,7 @@
   (monkeypatch.setattr doeff_cluster.coordinator.protocol.request_bodies "service_body_of"
                        (fn [body parts] (raise (TypeError "宣言の本文の読みの欠陥(偽)"))))
   (val faults [])
-  (val script (Script [(! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "revision" "r" "needs" ["net"]}}))
+  (val script (Script [(! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}}))
                        (! (req "GET" "/state"))]))
   (<- final ClusterState ((! (scripted script)) ((fault-log faults) (run-coordinator (ClusterState) T (ClusterNaming)))))
   (assert (= (lfor r script.replies #((get r 0) (get r 1))) [#("/resources/Service/a" 500) #("/state" 200)]) script.replies)
@@ -376,7 +376,7 @@
   (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (<- (on-wal-files (durable-load store)))
-  (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}))
+  (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}))
                         (! (req "PUT" "/board/k" {"value" 1}))]))
   (<- final ClusterState ((sim-time-handler :clock script.clock) ((no-persist-script script) (with-handlers [slog-handler os-file-handler] ((wal-store store) (request-bodies (durable-states (with-handlers (memory-notices (MemoryBroker)) (with-handlers [(state) (kube-unavailable NO-KUBE)] (run-coordinator (ClusterState) T (ClusterNaming)))))))))))
   (<- stored dict (on-wal-files (durable-load (WalStore d))))
@@ -396,7 +396,7 @@
   (<- (on-wal-files (durable-load store)))
   (<- (on-wal-files (durable-persist store {"counter" {"nextTask" 1 "revision" 2 "auditSeq" 0}
                    "service/a" {"name" "a" "revision" "r" "needs" ["net"] "pin" None "replicas" 1 "readiness" None
-                                "owner" None "run" SAMPLE-RUN}
+                                "owner" None "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}
                    (+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "zeus" "generation" 3 "since_ms" 100}})))
   store)
 

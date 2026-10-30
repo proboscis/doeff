@@ -48,7 +48,7 @@
   "宣言の道具が Service a(needs net・gpu)を刻 1000 に宣言し、worker zeus(net だけ)が名乗った状態を作るため(a を置ける worker が無い —
    足りない能力は gpu)。"
   (<- created tuple (call (ClusterState) "POST" "/resources/Service"
-                          {"name" "a" "spec" {"revision" "r1" "needs" ["net" "gpu"] "run" SAMPLE-RUN}} :now 1000))
+                          {"name" "a" "spec" {"revision" "r1" "needs" ["net" "gpu"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}} :now 1000))
   (assert (= (get created 1) 201) created)
   (<- world ClusterState (beat (get created 0) "zeus" ["net"] 1000))
   world)

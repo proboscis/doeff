@@ -138,7 +138,7 @@
 (deftest test-a-worker-silent-for-a-week-without-work-is-forgotten
   (setv old (WorkerInfo "newmac" #("net") 10 0 :task-reserve 0) busy (WorkerInfo "atlas" #("net") 10 0 :task-reserve 0))
   (var s (ClusterState :workers (! (table-from-rows {"newmac" old "atlas" busy}))))
-  (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
+  (<- reply-11 (call s "PUT" "/jobs" {"jobs" [{"name" "j" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"] "pin" "atlas"}]} 1000))
   (:= s (get reply-11 0))
   ;; atlas は置き先を持つので忘れない(置き先は移し替えの規則が扱う)
   (assert (is-not (.row s.placements "j") None))
@@ -168,7 +168,7 @@
 
 (deftest test-the-durable-delta-equals-the-delta-of-the-full-serialization
   (val steps [#("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []} 1000)
-              #("POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}} 1500)
+              #("POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}} 1500)
               #("PUT" "/board/k" {"value" 1} 2000)
               #("GET" "/state" None 2500)
               #("POST" "/heartbeat" {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []} 3000)

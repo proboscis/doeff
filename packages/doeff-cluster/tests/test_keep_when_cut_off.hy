@@ -188,7 +188,7 @@
   ;; しれない)。古い worker(本文に keptWhenCutOff の欄が無い)には約束しない。
   (<- empty dict (beat-body "w1" [] []))
   (<- first tuple (heard (ClusterState) empty 0))
-  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}
                                                       :actor "test"))
                            0 T))
   (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))
@@ -226,7 +226,7 @@
   ;; 出ない)。版上げの後と障害の時に、どの job が約束で担い手に留まっているかを外から確かめるため。
   (<- empty dict (beat-body "w1" [] []))
   (<- first tuple (heard (ClusterState) (| empty {"boot" "w1-boot1"}) 0))
-  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+  (val declared (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}
                                                       :actor "test"))
                            0 T))
   (<- running dict (beat-body "w1" [{"name" "s0" "phase" "running" "revision" "r"}] []))

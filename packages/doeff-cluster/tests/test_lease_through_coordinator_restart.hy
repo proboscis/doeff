@@ -31,8 +31,8 @@
 
 (defsystem holder-and-taker [#^ Callable foundation]
   "lease を持つ job と、後から同じ lease を取りに来て待つ job(どちらも取ったら盤の HOLDER-ROW に世代と刻を書き、返さずに持ち続ける)"
-  (writer (lease-writer foundation 1.0 0.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5})
-  (taker (lease-writer foundation 1.0 3.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
+  (writer (lease-writer foundation 1.0 0.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5})
+  (taker (lease-writer foundation 1.0 3.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5}))
 
 
 (defk stop-the-coordinator-and-read []

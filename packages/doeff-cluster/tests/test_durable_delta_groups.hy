@@ -33,7 +33,7 @@
   ;; 1 欄(workers)だけ書いた歩: 組ごとに鍵を作る関数の呼ばれた回数を数え、workers の組だけが前後 1 回ずつ。
   (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
-  (val served (get (responded s (! (http-request "POST" "/resources/Service" {} {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN}}
+  (val served (get (responded s (! (http-request "POST" "/resources/Service" {} {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}
                                               :actor "c-test")) 1500 T) 0))
   (val changed (replace served :workers (! (table-from-rows (dfor #(k w) (.items served.workers) k (replace w :capacity (+ w.capacity 1)))))))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))

@@ -54,18 +54,18 @@
 
 (defsystem phase-world [#^ Callable foundation]
   "土台の世界: 0.5 秒ごとに起きる service 1 つと、起動の時だけ仕事をする service 1 つ"
-  (ticker (ticker-program foundation 0.5) :replicas 1 :needs #{"cluster-net"})
-  (warm-a (warm-program foundation 2000) :replicas 1 :needs #{"cluster-net"}))
+  (ticker (ticker-program foundation 0.5) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (warm-a (warm-program foundation 2000) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem phase-world-plus-part [#^ Callable foundation]
   "土台の世界に、起動の時だけ仕事をする service を 1 つ足した世界(部品を足した)"
-  (ticker (ticker-program foundation 0.5) :replicas 1 :needs #{"cluster-net"})
-  (warm-a (warm-program foundation 2000) :replicas 1 :needs #{"cluster-net"})
-  (warm-b (warm-program foundation 2000) :replicas 1 :needs #{"cluster-net"}))
+  (ticker (ticker-program foundation 0.5) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (warm-a (warm-program foundation 2000) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (warm-b (warm-program foundation 2000) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defsystem phase-world-double-idle [#^ Callable foundation]
   "土台の世界の周の service を 0.25 秒ごとに起こした世界(空回りを 2 倍にした)"
-  (ticker (ticker-program foundation 0.25) :replicas 1 :needs #{"cluster-net"})
-  (warm-a (warm-program foundation 2000) :replicas 1 :needs #{"cluster-net"}))
+  (ticker (ticker-program foundation 0.25) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (warm-a (warm-program foundation 2000) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))

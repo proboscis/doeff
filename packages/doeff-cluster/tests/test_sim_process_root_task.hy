@@ -52,8 +52,8 @@
 
 (defsystem burn-and-idle [#^ Callable foundation]
   "見本の系: 1 秒ごとに計算する service と、報告するだけの service"
-  (burner (burn-program foundation) :replicas 1 :needs #{"cluster-net"})
-  (idler (pulse-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (burner (burn-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (idler (pulse-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defrecord RootReading

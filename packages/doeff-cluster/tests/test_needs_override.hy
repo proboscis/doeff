@@ -26,7 +26,7 @@
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0"})
-(val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(val SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100})
 (val OWNER "declare-tool")
 (val HAND "recovery-hand")
 (val WHY "停電の復旧の間、rescue の機体に置く")

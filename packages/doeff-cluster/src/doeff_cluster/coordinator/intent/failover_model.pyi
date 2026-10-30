@@ -20,6 +20,7 @@ class ResidentJob:
     update: str
     peak_mib: int
     settle_mib: int
+    single_host: str | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -28,14 +29,6 @@ class ResidentJob:
 class ExtraProvides:
     name: str
     provides: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True, kw_only=True)
-class ExemptJob:
-    job: str
-    reason: str
 
     def __post_init__(self) -> None:
         ...

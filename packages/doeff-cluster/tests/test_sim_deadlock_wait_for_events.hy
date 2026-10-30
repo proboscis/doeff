@@ -35,7 +35,7 @@
 
 (defsystem batch-waiters [#^ Callable foundation]
   "合図 Ping を WaitForEvents で待つ 1 つの service"
-  (waiter (batch-waiter-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (waiter (batch-waiter-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defk await-the-waiter-forever []

@@ -68,9 +68,9 @@
 
 (defsystem lease-writers [#^ Callable foundation]
   "見本の系: 名前付きの lease を持つ service を handoff で入れ替える(版 1)"
-  (writer (lease-writer foundation 1.0 0.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
+  (writer (lease-writer foundation 1.0 0.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
 
 
 (defsystem lease-writers-v2 [#^ Callable foundation]
   "lease-writers の版 2(本体の引数 every を変えた — 入れ替わる)。起き上がりに 1 秒かかる(新が旧と並んで起きる間を刻で読める)"
-  (writer (lease-writer foundation 2.0 1.0) :replicas 1 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))
+  (writer (lease-writer foundation 2.0 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :readiness {"windowSeconds" 5} :update "handoff"))

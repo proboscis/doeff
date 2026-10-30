@@ -35,6 +35,9 @@ class ClusterJob:
     readiness: dict[str, object] | None = None
     owner: str | None = None
     update: str = 'recreate'
+    peak_mib: int | None = None
+    settle_mib: int | None = None
+    single_host: str | None = None
 
 class GenerationOrder(StrEnum):
     CURRENT = 'current'

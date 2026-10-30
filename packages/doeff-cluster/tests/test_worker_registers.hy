@@ -139,7 +139,7 @@
     (when old-store
       ;; 読み直しで受け付けない行になった旧い Service も、同じ名の新しい形の宣言で書ける。
       (val made (httpx.post (+ url "/resources/Service") :timeout 10.0 :headers {"X-Actor" "declarer"}
-                            :json {"name" SERVICE "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN}}))
+                            :json {"name" SERVICE "spec" {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}))
       (assert (= made.status-code 201) made.text)
       (assert (not-in "refused" (get (.json made) "status")) made.text))
     (finally

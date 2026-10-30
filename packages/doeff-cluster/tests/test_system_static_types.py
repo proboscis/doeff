@@ -34,7 +34,7 @@ MODULE = """\
 
 (defsystem lab [#^ Ping foundation]
   "見本の系"
-  (tally (tally 2) :needs #{"net"} :replicas 1 :environ {"TALLY_BASE" "1"}))
+  (tally (tally 2) :needs #{"net"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"TALLY_BASE" "1"}))
 
 (val declared (lab (Ping)))
 (val first-name (. (get declared.jobs 0) name))
@@ -111,8 +111,8 @@ EMPTY_NEEDS = """\
 
 (defsystem lab [#^ Ping foundation]
   "空の :needs の系"
-  (quiet (tally 1) :needs #{} :replicas 1)
-  (noisy (tally 2) :needs #{"net" "pg"} :replicas 1))
+  (quiet (tally 1) :needs #{} :replicas 1 :peak-mib 200 :settle-mib 100)
+  (noisy (tally 2) :needs #{"net" "pg"} :replicas 1 :peak-mib 200 :settle-mib 100))
 """
 
 
@@ -144,11 +144,11 @@ TWO_SYSTEMS = """\
 
 (defsystem lab [#^ Ping foundation]
   "1 つ目の系"
-  (quiet (tally 1) :needs #{"net"} :replicas 1))
+  (quiet (tally 1) :needs #{"net"} :replicas 1 :peak-mib 200 :settle-mib 100))
 
 (defsystem lab-two [#^ Ping foundation]
   "2 つ目の系"
-  (noisy (tally 2) :needs #{"net"} :replicas 1))
+  (noisy (tally 2) :needs #{"net"} :replicas 1 :peak-mib 200 :settle-mib 100))
 
 (val text (json.dumps {"systems" 2}))
 """

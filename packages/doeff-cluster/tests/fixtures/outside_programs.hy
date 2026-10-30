@@ -70,8 +70,8 @@
 
 (defsystem shared-store [#^ Callable foundation]
   "外の系の store を effect で共有する 2 つの service"
-  (writer (writer-program foundation) :replicas 1 :needs #{"cluster-net"})
-  (reader (reader-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (writer (writer-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
+  (reader (reader-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defhandler signed-puts [#^ dict rows #^ str job]
@@ -103,7 +103,7 @@
 
 (defsystem last-words [#^ Callable foundation]
   "取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
-  (speaker (last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (speaker (last-words-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defk slow-last-words-loop []
@@ -128,7 +128,7 @@
 
 (defsystem slow-last-words [#^ Callable foundation]
   "取り消しの巻き戻しで待ってから外の系へ書こうとする service 1 つ"
-  (speaker (slow-last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (speaker (slow-last-words-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))
 
 
 (defk child-last-words-loop []
@@ -155,4 +155,4 @@
 
 (defsystem spawning-last-words [#^ Callable foundation]
   "子の task を持ち、取り消しの巻き戻しで外の系へ書こうとする service 1 つ"
-  (speaker (spawning-last-words-program foundation) :replicas 1 :needs #{"cluster-net"}))
+  (speaker (spawning-last-words-program foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}))

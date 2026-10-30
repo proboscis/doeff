@@ -51,7 +51,7 @@
   {:pre [(: sha str) (: versions dict) (: revision str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "宣言の道具が書く Program の job の Service の spec(run の versions = 詰めた送り手の版 — 置き場へ Program と一緒に置く版と同じ)。"
   {"run" {"kind" "service" "program" sha "identity" {"function" "m:f" "args" [] "kwargs" {}} "versions" versions "describe" "m:f()"}
-   "revision" revision "needs" ["net"]})
+   "revision" revision "needs" ["net"] "peakMiB" 200 "settleMiB" 100})
 
 
 (defk declared [state sha versions now]
