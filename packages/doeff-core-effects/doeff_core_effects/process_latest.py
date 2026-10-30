@@ -1,7 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.process_latest -> doeff_core_effects._process_latest
 # moved-submodule-shim-names doeff_core_effects.process_latest:
 #   AwaitLatest BELLS BELLS_LOCK BOARDS BOARDS_LOCK CreateExternalPromise ExternalPromise
-#   MODULE_TAGS PRIORITY_IDLE PublishLatest ReadLatest Wait hang_bell latest_bells latest_board
+#   MODULE_TAGS PublishLatest ReadLatest Wait hang_bell latest_bells latest_board
 #   process_latest_handler ring_bells unhang_bell
 """Moved:``doeff_core_effects.process_latest`` is now ``doeff_core_effects._process_latest`` (ADR-DOE-API-001 R5).
 

@@ -20,8 +20,7 @@
 (import typing [Union get-args get-origin])
 (import hy)
 (import hy.models [Expression Symbol Keyword String Sequence Object Tuple])
-(import doeff_core_effects [Resumption]
-        doeff_core_effects._effects [resumption-of])
+(import doeff_core_effects._effects [Resumption resumption-of])
 ;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
 ;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた — card ki-b4c015d8ba1f)。resume は非末尾なら節へ戻るので、
 ;; 実行の時の検めが見る。

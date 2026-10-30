@@ -21,20 +21,23 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
-from doeff_core_effects import ReadWriterLog, Tell, state, writer
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     Cancel,
     CompletePromise,
     CreatePromise,
     Discard,
     Promise,
+    ReadWriterLog,
     SchedulerImplementation,
     Spawn,
     Task,
     TaskCancelledError,
+    TaskPriority,
+    Tell,
     Wait,
     scheduled,
+    state,
+    writer,
 )
 
 from doeff import do
@@ -150,7 +153,7 @@ def test_discard_drops_a_queued_resume(implementation: SchedulerImplementation) 
     @do
     def worker(gate: Promise[str]):
         try:
-            value = yield Wait(gate.future, priority=PRIORITY_IDLE)
+            value = yield Wait(gate.future, priority=TaskPriority.IDLE)
             yield Tell(f"got {value}")
         finally:
             yield Tell("finally")
@@ -225,7 +228,7 @@ def test_discard_of_an_unstarted_task_runs_nothing(
 
     @do
     def body():
-        task = yield Spawn(worker(), priority=PRIORITY_IDLE)
+        task = yield Spawn(worker(), priority=TaskPriority.IDLE)
         yield Discard(task)  # the task was only queued
         return (yield _outcome(task))
 

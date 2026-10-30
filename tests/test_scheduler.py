@@ -7,7 +7,6 @@ from typing import Any, NamedTuple
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     AcquireSemaphore,
     Cancel,
     CompletePromise,
@@ -21,6 +20,7 @@ from doeff_core_effects import (
     Spawn,
     Task,
     TaskCancelledError,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -76,7 +76,7 @@ def _count_waitable_status_calls_for_gather(total: int) -> int:
             gate = yield CreatePromise()
             gates.append(gate)
             tasks.append((yield Spawn(worker(gate, value))))
-        _ = yield Spawn(release_all(gates), priority=PRIORITY_IDLE)
+        _ = yield Spawn(release_all(gates), priority=TaskPriority.IDLE)
         return (yield Gather(*tasks))
 
     def profile_waitable_status(frame: FrameType, event: str, arg: object) -> Any:
@@ -237,7 +237,7 @@ class TestGather:
             failing_task = yield Spawn(failing(failure_gate))
             _ = yield Spawn(
                 release_failure_then_blocker(failure_gate, blocker_gate),
-                priority=PRIORITY_IDLE,
+                priority=TaskPriority.IDLE,
             )
             try:
                 yield Gather(blocker_task, failing_task)
@@ -297,7 +297,7 @@ class TestRace:
             fast_gate = yield CreatePromise()
             blocked_task = yield Spawn(blocked(blocked_gate))
             fast_task = yield Spawn(worker(fast_gate, "fast"))
-            _ = yield Spawn(release_fast(fast_gate), priority=PRIORITY_IDLE)
+            _ = yield Spawn(release_fast(fast_gate), priority=TaskPriority.IDLE)
             return (yield Race(blocked_task, fast_task))
 
         assert _run_race_with_timeout(body()) == "fast"
@@ -324,7 +324,7 @@ class TestRace:
             first_task = yield Spawn(blocked(first_gate))
             second_task = yield Spawn(blocked(second_gate))
             third_task = yield Spawn(worker(third_gate, "third"))
-            _ = yield Spawn(release_winner(third_gate), priority=PRIORITY_IDLE)
+            _ = yield Spawn(release_winner(third_gate), priority=TaskPriority.IDLE)
             return (yield Race(first_task, second_task, third_task))
 
         assert _run_race_with_timeout(body()) == "third"
@@ -350,7 +350,7 @@ class TestRace:
             failure_gate = yield CreatePromise()
             blocked_task = yield Spawn(blocked(blocked_gate))
             failing_task = yield Spawn(failing(failure_gate))
-            _ = yield Spawn(release_failure(failure_gate), priority=PRIORITY_IDLE)
+            _ = yield Spawn(release_failure(failure_gate), priority=TaskPriority.IDLE)
             try:
                 yield Race(blocked_task, failing_task)
                 return "should not reach"
@@ -374,7 +374,7 @@ class TestRace:
             cancelled_gate = yield CreatePromise()
             blocked_task = yield Spawn(blocked(blocked_gate))
             cancelled_task = yield Spawn(blocked(cancelled_gate))
-            _ = yield Spawn(cancel_task(cancelled_task), priority=PRIORITY_IDLE)
+            _ = yield Spawn(cancel_task(cancelled_task), priority=TaskPriority.IDLE)
             try:
                 yield Race(blocked_task, cancelled_task)
                 return "should not reach"
@@ -397,7 +397,7 @@ class TestRace:
         def body():
             gate = yield CreatePromise()
             task = yield Spawn(worker(gate))
-            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            _ = yield Spawn(release_gate(gate), priority=TaskPriority.IDLE)
             return (yield Race(task, task))
 
         assert _run_race_with_timeout(body()) == "duplicate"
@@ -441,7 +441,7 @@ class TestRace:
 class TestPriority:
     def test_high_priority_runs_first(self):
         """Higher priority task runs before lower priority."""
-        from doeff_core_effects import PRIORITY_HIGH, PRIORITY_IDLE
+        from doeff_core_effects import TaskPriority
 
         order = []
 
@@ -458,8 +458,8 @@ class TestPriority:
         @do
         def body():
             # Spawn low first, then high
-            t_low = yield Spawn(task_low(), priority=PRIORITY_IDLE)
-            t_high = yield Spawn(task_high(), priority=PRIORITY_HIGH)
+            t_low = yield Spawn(task_low(), priority=TaskPriority.IDLE)
+            t_high = yield Spawn(task_high(), priority=TaskPriority.HIGH)
             return (yield Gather(t_low, t_high))
 
         result = doeff_run(scheduled(body()))
@@ -875,7 +875,7 @@ class TestPrioritySurvivesSuspension:
         so a HIGH publisher resuming ahead of the woken NORMAL listener
         publishes into an empty registry and the event is silently lost
         (doeff_events memory handler shape)."""
-        from doeff_core_effects import PRIORITY_HIGH
+        from doeff_core_effects import TaskPriority
 
         mailbox: list[Any] = []
         delivered: list[int] = []
@@ -903,7 +903,7 @@ class TestPrioritySurvivesSuspension:
         @do
         def body():
             tl = yield Spawn(listener())
-            tp = yield Spawn(publisher(), priority=PRIORITY_HIGH)
+            tp = yield Spawn(publisher(), priority=TaskPriority.HIGH)
             yield Gather(tl, tp)
             return delivered
 
@@ -918,7 +918,7 @@ class TestPrioritySurvivesSuspension:
         within the same priority) and the HIGH spawner was demoted to NORMAL
         after each Spawn.
         """
-        from doeff_core_effects import PRIORITY_HIGH
+        from doeff_core_effects import TaskPriority
 
         order: list[str] = []
 
@@ -935,7 +935,7 @@ class TestPrioritySurvivesSuspension:
         def coordinator(gate):
             # Runs at HIGH so the NORMAL spawns below stay queued (backlog)
             # until the gate completes.
-            t_high = yield Spawn(high_waiter(gate.future), priority=PRIORITY_HIGH)
+            t_high = yield Spawn(high_waiter(gate.future), priority=TaskPriority.HIGH)
             t_n1 = yield Spawn(normal_task("n1"))
             t_n2 = yield Spawn(normal_task("n2"))
             yield CompletePromise(gate, None)
@@ -944,7 +944,7 @@ class TestPrioritySurvivesSuspension:
         @do
         def body():
             gate = yield CreatePromise()
-            t_coord = yield Spawn(coordinator(gate), priority=PRIORITY_HIGH)
+            t_coord = yield Spawn(coordinator(gate), priority=TaskPriority.HIGH)
             tasks = yield Wait(t_coord)
             yield Gather(*tasks)
             return order
@@ -983,7 +983,7 @@ class TestPrioritySurvivesSuspension:
             # Fully parked (no ready-heap placeholder) until idle_spawner
             # completes parked_fut; then holds the EXTERNAL_WAIT shield
             # while blocking_fut is pending.
-            yield Wait(parked_fut, priority=PRIORITY_IDLE)
+            yield Wait(parked_fut, priority=TaskPriority.IDLE)
             return (yield Wait(blocking_fut))
 
         @do
@@ -997,7 +997,7 @@ class TestPrioritySurvivesSuspension:
             blocking_ep = yield CreateExternalPromise()
             parked_ep = yield CreateExternalPromise()
             t_w = yield Spawn(external_waiter(parked_ep.future, blocking_ep.future))
-            t_i = yield Spawn(idle_spawner(parked_ep), priority=PRIORITY_IDLE,
+            t_i = yield Spawn(idle_spawner(parked_ep), priority=TaskPriority.IDLE,
                               daemon=True)
 
             def complete_later():
@@ -1095,7 +1095,7 @@ class TestCancel:
             task = yield Spawn(blocked_task(external_promise))
 
             yield Cancel(task)
-            _ = yield Spawn(release_gate(gate), priority=PRIORITY_IDLE)
+            _ = yield Spawn(release_gate(gate), priority=TaskPriority.IDLE)
             gate_value = yield Wait(gate.future)
 
             try:
@@ -1544,7 +1544,7 @@ class TestDeadlockDiagnostics:
 
         @do
         def listener(ep: Any):
-            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+            return (yield Wait(ep.future, priority=TaskPriority.IDLE))
 
         @do
         def acquirer(sem: Any):
@@ -1678,7 +1678,7 @@ class TestDeadlockDiagnostics:
             sem = yield CreateSemaphore(1)
             ep = yield CreateExternalPromise()
             t_h = yield Spawn(double_acquirer(sem))
-            t_r = yield Spawn(idle_releaser(sem), priority=PRIORITY_IDLE)
+            t_r = yield Spawn(idle_releaser(sem), priority=TaskPriority.IDLE)
 
             def completer():
                 time.sleep(0.1)
@@ -1945,7 +1945,7 @@ class TestRootCloseOut:
         def body():
             ep = yield CreateExternalPromise()
             tx = yield Spawn(x_task(ep))
-            _tw = yield Spawn(w_task(tx), priority=PRIORITY_IDLE)
+            _tw = yield Spawn(w_task(tx), priority=TaskPriority.IDLE)
 
             def completer():
                 time.sleep(0.1)
@@ -1971,7 +1971,7 @@ class TestRootCloseOut:
 
         @do
         def body():
-            _ = yield Spawn(noop(), priority=PRIORITY_IDLE)
+            _ = yield Spawn(noop(), priority=TaskPriority.IDLE)
             return "done"
 
         with pytest.warns(RuntimeWarning, match="unstarted task"):
@@ -2010,7 +2010,7 @@ class TestRootCloseOut:
         @do
         def body():
             p = yield CreatePromise()
-            _ = yield Spawn(completer(p), priority=PRIORITY_IDLE, daemon=True)
+            _ = yield Spawn(completer(p), priority=TaskPriority.IDLE, daemon=True)
             v = yield Wait(p.future)
             return v
 
@@ -2025,7 +2025,7 @@ class TestRootCloseOut:
 
         @do
         def listener(ep: Any):
-            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+            return (yield Wait(ep.future, priority=TaskPriority.IDLE))
 
         @do
         def body():
@@ -2042,7 +2042,7 @@ class TestRootCloseOut:
         the flag keeps the #501 diagnostic."""
         @do
         def listener(ep: Any):
-            return (yield Wait(ep.future, priority=PRIORITY_IDLE))
+            return (yield Wait(ep.future, priority=TaskPriority.IDLE))
 
         @do
         def body():
@@ -2217,7 +2217,7 @@ class TestGatherRaceExternalWaitShield:
         def body():
             ep1 = yield CreateExternalPromise()
             ep2 = yield CreateExternalPromise()
-            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE, daemon=True)
+            t_idle = yield Spawn(idle_probe(), priority=TaskPriority.IDLE, daemon=True)
 
             def completer():
                 time.sleep(0.15)
@@ -2253,7 +2253,7 @@ class TestGatherRaceExternalWaitShield:
         def body():
             win = yield CreateExternalPromise()
             lose = yield CreateExternalPromise()  # never completed
-            t_idle = yield Spawn(idle_probe(), priority=PRIORITY_IDLE, daemon=True)
+            t_idle = yield Spawn(idle_probe(), priority=TaskPriority.IDLE, daemon=True)
 
             def completer():
                 time.sleep(0.15)
@@ -2288,7 +2288,7 @@ class TestGatherRaceExternalWaitShield:
         def body():
             first = yield CreateExternalPromise()
             second = yield CreateExternalPromise()
-            _ = yield Spawn(complete_both(first, second), priority=PRIORITY_IDLE)
+            _ = yield Spawn(complete_both(first, second), priority=TaskPriority.IDLE)
             return (yield Race(first.future, second.future))
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == "first"
@@ -2306,7 +2306,7 @@ class TestGatherRaceExternalWaitShield:
         @do
         def body():
             ep = yield CreateExternalPromise()
-            t = yield Spawn(completer(ep), priority=PRIORITY_IDLE)
+            t = yield Spawn(completer(ep), priority=TaskPriority.IDLE)
             value = yield Wait(ep.future)
             _ = yield Wait(t)
             return value
@@ -2340,12 +2340,12 @@ class TestGatherRaceExternalWaitShield:
 
 
 # ---------------------------------------------------------------------------
-# Race park mode: priority=PRIORITY_IDLE (agora-redesign #3054)
+# Race park mode: priority=TaskPriority.IDLE (agora-redesign #3054)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.usefixtures("scheduler_implementation")
 class TestRaceParkedWithoutShield:
-    """``Race(..., priority=PRIORITY_IDLE)`` parks on a pending external
+    """``Race(..., priority=TaskPriority.IDLE)`` parks on a pending external
     promise without the PRIORITY_EXTERNAL_WAIT placeholder, as Wait's IDLE
     park does: DAEMON tasks (the sim clock driver) keep running, and the
     waiter still counts for the blocking drain.
@@ -2368,8 +2368,8 @@ class TestRaceParkedWithoutShield:
         def body():
             never = yield CreateExternalPromise()
             bell = yield CreatePromise()
-            _ = yield Spawn(ring(bell), priority=PRIORITY_IDLE, daemon=True)
-            return (yield Race(never.future, bell.future, priority=PRIORITY_IDLE))
+            _ = yield Spawn(ring(bell), priority=TaskPriority.IDLE, daemon=True)
+            return (yield Race(never.future, bell.future, priority=TaskPriority.IDLE))
 
         assert _run_scheduled_with_timeout(body(), timeout=2.0) == "daemon-ran"
 
@@ -2384,7 +2384,7 @@ class TestRaceParkedWithoutShield:
             timer = threading.Timer(0.1, lambda: ep.complete("from-outside"))
             timer.daemon = True
             timer.start()
-            return (yield Race(ep.future, priority=PRIORITY_IDLE))
+            return (yield Race(ep.future, priority=TaskPriority.IDLE))
 
         assert _run_scheduled_with_timeout(body(), timeout=5.0) == "from-outside"
 
@@ -2500,11 +2500,11 @@ class TestTerminalEntrySweep:
         def body():
             killed = 0
             for _ in range(cycles):
-                t = yield Spawn(never_started(), priority=PRIORITY_IDLE)
+                t = yield Spawn(never_started(), priority=TaskPriority.IDLE)
                 yield kill(t)
                 # The barrier queues behind the killed task's start at the same
                 # priority, so waiting for it makes pick_next pass that start.
-                barrier = yield Spawn(noop(), priority=PRIORITY_IDLE)
+                barrier = yield Spawn(noop(), priority=TaskPriority.IDLE)
                 yield Wait(barrier)
                 try:
                     yield Wait(t)

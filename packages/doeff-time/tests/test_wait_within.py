@@ -15,21 +15,20 @@ from typing import Any
 
 import pytest
 from doeff_core_effects import (
-    PRIORITY_NORMAL,
     CompletePromise,
     CreateExternalPromise,
     CreatePromise,
     Promise,
     Race,
     Spawn,
+    TaskPriority,
 )
-from doeff_time import Delay, GetTime, WaitWithin
+from doeff_time import Delay, GetTime, WaitWithin, sim_time_handler
 from doeff_time._internals import TimeQueue
 from time_test_support import run_with_handlers, sim_time
 
 from doeff import Effect, Pass, do
 from doeff import handler as _install_raw_handler
-from doeff_time import sim_time_handler
 
 
 @dataclass(frozen=True)
@@ -136,7 +135,7 @@ def test_a_withdrawn_entry_is_skipped_by_the_queue() -> None:
 # --- park: 外の promise を、仮想の時計を止めずに待つ(agora-redesign #3054)-----------------------------------------
 # 外の promise(handler の外の同期の書きや別の thread が埋める — doeff-records の memory の置き場の呼び鈴)の既定の待ちは、
 # 仮想の時計の駆動を止める(埋まる前に時間を進めない)。期限つきの待ちでは期限まで時計が進む必要があるので、park で待つ。
-# park は scheduler の Race の priority=PRIORITY_IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった —
+# park は scheduler の Race の priority=TaskPriority.IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった —
 # card ki-8f4f99f14664)。
 
 
@@ -217,4 +216,4 @@ def test_park_is_a_bool_and_race_takes_only_the_park_mode() -> None:
     with pytest.raises(TypeError):
         WaitWithin(Promise(1).future, 1.0, park=1)  # type: ignore[arg-type]  # 型の外の値を断る事を確かめる
     with pytest.raises(ValueError, match="park mode"):
-        Race(Promise(1).future, priority=PRIORITY_NORMAL)
+        Race(Promise(1).future, priority=TaskPriority.NORMAL)

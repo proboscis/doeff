@@ -34,58 +34,71 @@ from pathlib import Path
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_core_effects import Listen
-from doeff_core_effects import listen_handler
 from doeff_core_effects import (
-    PRIORITY_HIGH,
-    PRIORITY_NORMAL,
     Cancel,
     CompletePromise,
     CreatePromise,
     FailPromise,
+    Listen,
     Promise,
     Spawn,
     TaskCancelledError,
+    TaskPriority,
     Wait,
+    listen_handler,
     scheduled,
 )
 from doeff_events import (
     ArmTimer,
     EventBus,
+    PublishEffect,
     SourceResumed,
     SourceStalled,
     TimerFired,
+    WaitForEvent,
     subscribed_event_handler,
     timer_handler,
 )
-from doeff_events import PublishEffect, WaitForEvent
 from doeff_hy._frozen import FrozenMap
-from doeff_records._admission import key_from_text, key_text
-from doeff_records import AppendEvent, PutRow, ReadRow
 from doeff_records import (
+    AdvanceStoreEpoch,
+    Appended,
+    AppendEvent,
     ChangedRow,
+    ExpectAny,
+    FieldDecl,
+    MemoryStore,
+    PutRow,
+    ReadRow,
+    RecordsSchema,
+    SetStoreOutage,
     SignalSourcePatience,
     SignalSourceUnreachable,
     SignalTables,
-    records_signal_handler,
-    source_patience_handler,
-)
-from doeff_records._event_source import WATCH_SECONDS
-from doeff_records import AdvanceStoreEpoch, SetStoreOutage
-from doeff_records import MemoryStore, memory_records_handler
-from doeff_records import (
-    Appended,
-    ExpectAny,
-    FieldDecl,
-    RecordsSchema,
     StreamDecl,
     TableDecl,
     Written,
+    memory_records_handler,
+    records_signal_handler,
+    source_patience_handler,
 )
-from doeff_time import Delay, GetTime, SimClock, WaitWithin, sim_time_handler
-from doeff_time import WaitWithinEffect
+from doeff_records._admission import key_from_text, key_text
+from doeff_records._event_source import WATCH_SECONDS
+from doeff_time import Delay, GetTime, SimClock, WaitWithin, WaitWithinEffect, sim_time_handler
 
-from doeff import EffectBase, EffectGenerator, K, Pass, Program, Pure, Resume, do, handler, run, with_handlers
+from doeff import (
+    EffectBase,
+    EffectGenerator,
+    K,
+    Pass,
+    Program,
+    Pure,
+    Resume,
+    do,
+    handler,
+    run,
+    with_handlers,
+)
 from doeff.program import ProgramHandler
 
 # 共有の不変条件の関数の置き場(doeff-events の tests — package ではないので path で読む)。
@@ -801,8 +814,8 @@ def _write_between_read_and_wait() -> EffectGenerator[Changed]:
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source = records_signal_handler((CHANGED_ON_JOBS,), "worker")
     read_done: Promise[object] = yield CreatePromise()
-    writer = yield Spawn(_write_when_read(read_done), priority=PRIORITY_HIGH)
-    receiver = yield Spawn(with_handlers([waiting, source], _read_then_wait(read_done)), priority=PRIORITY_HIGH)
+    writer = yield Spawn(_write_when_read(read_done), priority=TaskPriority.HIGH)
+    receiver = yield Spawn(with_handlers([waiting, source], _read_then_wait(read_done)), priority=TaskPriority.HIGH)
     signal: Changed = yield Wait(receiver)
     yield Wait(writer)
     return signal
@@ -839,7 +852,7 @@ def _write_after_cancel() -> EffectGenerator[CancelOutcome]:
     waiting = subscribed_event_handler(bus, "worker", (Changed,))
     source = records_signal_handler((CHANGED_ON_JOBS,), "worker")
     got: Promise[Changed] = yield CreatePromise()
-    receiver = yield Spawn(with_handlers([waiting, source], _first_signal(got)), priority=PRIORITY_NORMAL - 1)
+    receiver = yield Spawn(with_handlers([waiting, source], _first_signal(got)), priority=TaskPriority.NORMAL - 1)
     yield Delay(1.0)
     yield Cancel(receiver)
     yield _write("jobs", "j1")

@@ -25,10 +25,9 @@ from pathlib import Path
 import doeff_core_effects._scheduler as scheduler_module
 import pytest
 from doeff_core_effects import (
-    PRIORITY_IDLE,
-    PRIORITY_NORMAL,
     SchedulerIndexDriftError,
     Spawn,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -244,10 +243,10 @@ def _raise_a_queued_idle_start_through_an_alias():
     @do
     def body():
         program = noop()
-        task = yield Spawn(program, priority=PRIORITY_IDLE)
+        task = yield Spawn(program, priority=TaskPriority.IDLE)
         heap = _run_holding(program)["ready"].cell_contents
         heap[:] = [
-            (-PRIORITY_NORMAL, seq, entry)
+            (-TaskPriority.NORMAL, seq, entry)
             if entry[0] == "new" and entry[1] == task.task_id
             else (neg, seq, entry)
             for neg, seq, entry in heap
@@ -293,7 +292,7 @@ def test_the_entry_functions_refuse_an_undeclared_or_misdeclared_kind() -> None:
     @do
     def body():
         program = noop()
-        task = yield Spawn(program, priority=PRIORITY_IDLE)  # still queued while body looks
+        task = yield Spawn(program, priority=TaskPriority.IDLE)  # still queued while body looks
         run = _run_holding(program)
         ready_push = run["ready_push"].cell_contents
         park_waiter = _park_waiter_of(run)
@@ -301,8 +300,8 @@ def test_the_entry_functions_refuse_an_undeclared_or_misdeclared_kind() -> None:
         refusals = tuple(
             _refusal(entry_function, argument)
             for entry_function, argument in (
-                (ready_push, (-PRIORITY_NORMAL, -1, ("reschedule", tid, None))),
-                (ready_push, (-PRIORITY_NORMAL, -1, ("resume", tid, state))),
+                (ready_push, (-TaskPriority.NORMAL, -1, ("reschedule", tid, None))),
+                (ready_push, (-TaskPriority.NORMAL, -1, ("resume", tid, state))),
                 (lambda entry: park_waiter(("task", tid), entry), ("some", tid, state, None)),
                 (lambda entry: park_waiter(("task", tid), entry), ("wait", tid, state, None)),
             )

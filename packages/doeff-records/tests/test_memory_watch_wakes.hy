@@ -10,7 +10,7 @@
 (import time)
 (import datetime [datetime timezone])
 (import doeff [run with_handlers])
-(import doeff_core_effects [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise PRIORITY-IDLE])
+(import doeff_core_effects [scheduled Spawn Wait Cancel Task TaskCancelledError CreateExternalPromise TaskPriority])
 (import doeff_time [SimClock sim-time-handler sync-time-handler Delay GetTime])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [Changes Reset RowChanged RowRemoved WatchCursor ExpectAbsent ExpectVersion Written EventsMoved EventsQuiet])
@@ -241,7 +241,7 @@
   (<- bell (CreateExternalPromise))
   (with [store.lock]
     (setv (get store.bells bell) (frozenset [#("table" "parts")])))
-  (<- (Wait bell.future :priority PRIORITY-IDLE))
+  (<- (Wait bell.future :priority TaskPriority.IDLE))
   (<- ended (cancelled-at watcher))
   ended)
 

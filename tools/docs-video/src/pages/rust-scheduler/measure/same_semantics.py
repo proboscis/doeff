@@ -1,12 +1,12 @@
 # The same program under both implementations: the order its tasks run in, what Cancel does, and the trace events.
 from doeff_core_effects import (
-    PRIORITY_HIGH,
     Cancel,
     CompletePromise,
     CreatePromise,
     Gather,
     Spawn,
     TaskCancelledError,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -45,7 +45,7 @@ def main():
     gate = yield CreatePromise()
     never = yield CreatePromise()
     a = yield Spawn(step("a", gate))
-    b = yield Spawn(step("b", gate), priority=PRIORITY_HIGH)
+    b = yield Spawn(step("b", gate), priority=TaskPriority.HIGH)
     slow = yield Spawn(stuck(never))
     yield Spawn(opener(gate))
     results = yield Gather(a, b)

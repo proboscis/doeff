@@ -144,7 +144,7 @@ with the same result as seen by the VM:
    (for the Rust implementation, `doeff_vm.doeff_vm.SchedulerPrompt`). It is a handler already, so it
    is reinstalled by applying it to a program as it is: `h(program)`. doeff-agents' `mcp_server_loop` recognizes the scheduler by this mark.
 4. **Handlers that cooperate with the scheduler**: a handler such as the virtual clock may perform
-   `CreatePromise`, `Spawn(..., priority=PRIORITY_IDLE, daemon=True)` and `Wait` from inside the
+   `CreatePromise`, `Spawn(..., priority=TaskPriority.IDLE, daemon=True)` and `Wait` from inside the
    handler. Priorities, daemons and the shield for external waits (#505) behave as in the Python
    implementation.
 

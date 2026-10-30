@@ -262,8 +262,8 @@
 (val DETACHED-POLL-SECONDS 1.0)              ; 切り離した task の待ちの問い合わせの間隔(本番の detached-cluster の既定と同じ)
 (val QUEUE-WAIT-SECONDS 0.01)                ; coordinator が受け付けを始める・worker が最初に名乗るのを待つ間隔
 (val WORKER-WAIT-SECONDS 5.0)                ; 筋書きの前に worker が最初に名乗るのを待つ上限(名乗れない worker が在っても筋書きは始める)
-;; 世界が静まった時だけ走る優先度: 普通の task(PRIORITY_NORMAL = 10)と外の待ちの席(PRIORITY_EXTERNAL_WAIT = 5)が 1 つも走れない時に
-;; 走り、仮想の時計を進める係(PRIORITY_IDLE = 0)より先に走る — 今の刻の仕事が尽きた時(card ki-a27b195a3f92)。
+;; 世界が静まった時だけ走る優先度: 普通の task(TaskPriority.NORMAL = 10)と外の待ちの席(PRIORITY_EXTERNAL_WAIT = 5)が 1 つも走れない時に
+;; 走り、仮想の時計を進める係(TaskPriority.IDLE = 0)より先に走る — 今の刻の仕事が尽きた時(card ki-a27b195a3f92)。
 (val SETTLED-PRIORITY 1)
 (val DRAIN-TTL-SECONDS (float (+ DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS)))  ; drain の期限(本番の preStop の頼みと同じ)
 (val REPORT-KINDS #("readiness" "metrics"))

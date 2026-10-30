@@ -26,10 +26,9 @@ import threading
 from typing import Any
 
 import doeff_hy  # noqa: F401  # registers the Hy import hook for the defk module
-from doeff_core_effects import Await, await_handler
 from doeff_core_effects import (
-    PRIORITY_IDLE,
     AcquireSemaphore,
+    Await,
     Cancel,
     CompletePromise,
     CreatePromise,
@@ -39,7 +38,9 @@ from doeff_core_effects import (
     ReleaseSemaphore,
     Spawn,
     TaskCancelledError,
+    TaskPriority,
     Wait,
+    await_handler,
     scheduled,
 )
 
@@ -158,7 +159,7 @@ def test_finally_runs_when_cancelled_with_a_queued_resume() -> None:
     def worker(gate: Any):
         try:
             # Wakes at IDLE, so the root (NORMAL) runs before it resumes.
-            value = yield Wait(gate.future, priority=PRIORITY_IDLE)
+            value = yield Wait(gate.future, priority=TaskPriority.IDLE)
             events.append(f"got {value}")
         finally:
             events.append("finally")
@@ -437,7 +438,7 @@ def test_unstarted_task_is_cancelled_without_running() -> None:
 
     @do
     def body():
-        task = yield Spawn(worker(), priority=PRIORITY_IDLE)
+        task = yield Spawn(worker(), priority=TaskPriority.IDLE)
         yield Cancel(task)  # the task was only queued
         return (yield _outcome(task))
 

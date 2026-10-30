@@ -104,6 +104,7 @@ from doeff_core_effects._scheduler import Semaphore as Semaphore
 from doeff_core_effects._scheduler import Spawn as Spawn
 from doeff_core_effects._scheduler import Task as Task
 from doeff_core_effects._scheduler import TaskCancelledError as TaskCancelledError
+from doeff_core_effects._scheduler import TaskPriority as TaskPriority
 from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
 from doeff_core_effects._vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts

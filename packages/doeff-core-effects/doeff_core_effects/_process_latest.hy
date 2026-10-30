@@ -10,7 +10,7 @@
 ;;; thread に触るのはこの module だけ(memory の答え手 memory_latest.hy は触らない)。
 ;;;
 ;;; 変わるまでの待ち(AwaitLatest — agora-redesign #4296): 待つ側は呼び鈴(CreateExternalPromise の約束 — 別の thread から完了してよい唯一の手段)を
-;;; 「名前 → 型 → 掛かっている呼び鈴の組」(BELLS)に掛けてから保存先を確かめ直し、まだ seen なら呼び鈴の約束を park の形(Wait の PRIORITY_IDLE —
+;;; 「名前 → 型 → 掛かっている呼び鈴の組」(BELLS)に掛けてから保存先を確かめ直し、まだ seen なら呼び鈴の約束を park の形(Wait の TaskPriority.IDLE —
 ;;; 仮想の時計を止めない)で待つ。置く側の PublishLatest は値を差し替えた後に、その型の呼び鈴を全部外して鳴らす。取りこぼさない順: 待つ側は
 ;;; 「掛ける → 確かめ直す」、置く側は「差し替える → 外して鳴らす」で、呼び鈴の組の出し入れだけを BELLS-LOCK の中で行う — 置く側が外す時に
 ;;; 呼び鈴が無ければ、待つ側がもう一度読む時は差し替えた後の値を見る。呼び手が待ちの task を Cancel した時は、呼び鈴の約束の取り消しの callback
@@ -20,7 +20,7 @@
 (import threading)
 (import functools [partial])
 (import doeff_core_effects._latest_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskPriority])
 
 
 ;; process に 1 つ: 名前 → 置き場(型 → 最新の値)と、置き場を作る時の lock。
@@ -97,7 +97,7 @@
       ;; 掛けてから確かめ直す(読んだ直後・掛ける前に置かれた値を取りこぼさない — 頭の註)。待ちが取り消されたら callback が呼び鈴を外す。
       (when (is (.get board kind) seen)
         (.on-cancel bell (partial unhang-bell bells kind bell))
-        (<- (Wait bell.future :priority PRIORITY_IDLE)))
+        (<- (Wait bell.future :priority TaskPriority.IDLE)))
       (unhang-bell bells kind bell)
       (.complete bell True)
       (:= current (.get board kind)))

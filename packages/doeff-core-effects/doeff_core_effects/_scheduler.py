@@ -35,6 +35,7 @@ import weakref
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
+from enum import IntEnum
 from types import FunctionType
 from typing import (
     TYPE_CHECKING,
@@ -401,10 +402,25 @@ def _drop_waiter_frames(error, kept_from) -> bool:
 # Effects
 # ---------------------------------------------------------------------------
 
-PRIORITY_IDLE = 0
+class TaskPriority(IntEnum):
+    """The named task priorities a ``Spawn`` / ``Wait`` / ``Race`` takes (higher runs first).
+
+    The scheduler orders ready work by the integer value, so a priority between the named
+    ones (any ``int``) is accepted where the field says ``TaskPriority | int``.
+    """
+
+    IDLE = 0
+    NORMAL = 10
+    HIGH = 20
+
+
 PRIORITY_EXTERNAL_WAIT = 5   # above IDLE (blocks clock driver), below NORMAL (yields to real work)
-PRIORITY_NORMAL = 10
-PRIORITY_HIGH = 20
+
+# The old constants, kept until the repos that read doeff's main use TaskPriority (agora card
+# ki-9f2990a98000 — ADR-DOE-API-001 R20's order: the callers first, then the names go).
+PRIORITY_IDLE = TaskPriority.IDLE
+PRIORITY_NORMAL = TaskPriority.NORMAL
+PRIORITY_HIGH = TaskPriority.HIGH
 
 
 class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
@@ -433,7 +449,7 @@ class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
     __doeff_runs_carried__: ClassVar[frozenset[str]] = frozenset({"program"})
 
     def __init__(
-        self, program: "Program[_T, _E]", priority: int = PRIORITY_NORMAL, daemon: bool = False
+        self, program: "Program[_T, _E]", priority: TaskPriority | int = TaskPriority.NORMAL, daemon: bool = False
     ) -> None:
         super().__init__()
         self.program = program
@@ -513,13 +529,15 @@ class Wait(EffectBase[_T], Generic[_T]):
     ``priority`` controls the priority at which the waiter is re-enqueued
     when the waitable resolves (#504). ``None`` (default) means the waiter
     wakes at its own task's spawn priority. For an *external* promise,
-    ``PRIORITY_IDLE`` is a park mode, not a wake priority: the wait is
+    ``TaskPriority.IDLE`` is a park mode, not a wake priority: the wait is
     parked without a ready-heap placeholder (so the sim clock driver may
     run) and the waiter still wakes at its own task priority — an IDLE
     wake would starve it behind the PRIORITY_EXTERNAL_WAIT shield.
     """
 
-    def __init__(self, task: "Task[_T] | Future[_T]", priority: int | None = None) -> None:
+    def __init__(
+        self, task: "Task[_T] | Future[_T]", priority: TaskPriority | int | None = None
+    ) -> None:
         super().__init__()
         self.task = task
         self.priority = priority
@@ -782,7 +800,7 @@ class Race(EffectBase[_T], Generic[_T]):
     ``priority`` is the same park mode as ``Wait``'s for *external* promises:
     ``None`` (default) holds a ready-heap placeholder per pending external
     promise that shields DAEMON tasks (the sim clock driver) from running past
-    the pending completion; ``PRIORITY_IDLE`` parks the race without that
+    the pending completion; ``TaskPriority.IDLE`` parks the race without that
     placeholder, so the sim clock may advance while it waits — a timed wait
     (doeff-time's WaitWithin) on a promise that in-run code completes, such as
     doeff-records' memory-store bell, needs the clock to reach its deadline
@@ -797,27 +815,27 @@ class Race(EffectBase[_T], Generic[_T]):
     def __init__(
         self: "Race[_T1 | _T2]",
         t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]", /,
-        *, priority: int | None = None,
+        *, priority: TaskPriority | None = None,
     ) -> None: ...
     @overload
     def __init__(
         self: "Race[_T1 | _T2 | _T3]",
         t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
-        t3: "Task[_T3] | Future[_T3]", /, *, priority: int | None = None,
+        t3: "Task[_T3] | Future[_T3]", /, *, priority: TaskPriority | None = None,
     ) -> None: ...
     @overload
     def __init__(
         self: "Race[_T1 | _T2 | _T3 | _T4]",
         t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
         t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]", /,
-        *, priority: int | None = None,
+        *, priority: TaskPriority | None = None,
     ) -> None: ...
     @overload
     def __init__(
         self: "Race[_T1 | _T2 | _T3 | _T4 | _T5]",
         t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
         t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
-        t5: "Task[_T5] | Future[_T5]", /, *, priority: int | None = None,
+        t5: "Task[_T5] | Future[_T5]", /, *, priority: TaskPriority | None = None,
     ) -> None: ...
     @overload
     def __init__(
@@ -825,17 +843,17 @@ class Race(EffectBase[_T], Generic[_T]):
         t1: "Task[_T1] | Future[_T1]", t2: "Task[_T2] | Future[_T2]",
         t3: "Task[_T3] | Future[_T3]", t4: "Task[_T4] | Future[_T4]",
         t5: "Task[_T5] | Future[_T5]", t6: "Task[_T6] | Future[_T6]", /,
-        *, priority: int | None = None,
+        *, priority: TaskPriority | None = None,
     ) -> None: ...
     @overload
-    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: int | None = None) -> None: ...
+    def __init__(self, *tasks: "Task[_T] | Future[_T]", priority: TaskPriority | None = None) -> None: ...
     def __init__(
-        self, *tasks: "Task[object] | Future[object]", priority: int | None = None,
+        self, *tasks: "Task[object] | Future[object]", priority: TaskPriority | None = None,
     ) -> None:
         super().__init__()
-        if priority not in (None, PRIORITY_IDLE):
+        if priority not in (None, TaskPriority.IDLE):
             raise ValueError(
-                f"Race priority is a park mode: None or PRIORITY_IDLE, got {priority!r}"
+                f"Race priority is a park mode: None or TaskPriority.IDLE, got {priority!r}"
             )
         self.tasks = tasks
         self.priority = priority
@@ -1390,9 +1408,9 @@ def _rust_spec() -> dict[str, object]:
         "trace_step_boundary": _trace_step_boundary,
         # 歩数の上限(#3143): 旗が立っている間だけ、起こすたびに Python の版と同じ確かめを呼ぶ。
         "check_step_budget": _check_armed_step_budget,
-        "PRIORITY_IDLE": PRIORITY_IDLE,
+        "PRIORITY_IDLE": TaskPriority.IDLE,
         "PRIORITY_EXTERNAL_WAIT": PRIORITY_EXTERNAL_WAIT,
-        "PRIORITY_NORMAL": PRIORITY_NORMAL,
+        "PRIORITY_NORMAL": TaskPriority.NORMAL,
         "CLAIMED_MARKS_COMPACT_MIN": _CLAIMED_MARKS_COMPACT_MIN,
     }
 
@@ -1874,7 +1892,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         return entry["status"], entry.get("result")
 
     def enqueue(
-        entry: tuple[object, ...], priority: int = PRIORITY_NORMAL, wake: tuple[str, int | None] | None = None,
+        entry: tuple[object, ...], priority: int = TaskPriority.NORMAL, wake: tuple[str, int | None] | None = None,
     ) -> None:
         """Add entry to priority queue. Higher priority = served first."""
         seq = insertion_seq[0]
@@ -2112,7 +2130,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         at the priority it was spawned with.
         """
         if owner_tid is None:
-            return PRIORITY_NORMAL
+            return TaskPriority.NORMAL
         return tasks[owner_tid]["priority"]
 
     def enqueue_resume(owner_tid, cont, value, priority=None):
@@ -2129,7 +2147,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         enqueue(("raise", owner_tid, cont, error), priority)
         return priority
 
-    def alloc_task(program, priority=PRIORITY_NORMAL, inner_boundaries=None,
+    def alloc_task(program, priority=TaskPriority.NORMAL, inner_boundaries=None,
                    daemon=False):
         tid = fresh_id()
         tasks[tid] = {
@@ -2859,7 +2877,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
         (or remove_gather_waiters/remove_race_waiters on early resolution)
         sets ``claimed`` and the placeholder drops itself, so Gather/Race
         get the same sim-ordering semantics as Wait. ``park`` (a Race with
-        ``priority=PRIORITY_IDLE``) registers without the placeholder, like
+        ``priority=TaskPriority.IDLE``) registers without the placeholder, like
         Wait's IDLE park: the waiter still counts for the blocking drain
         (has_pending_external_waiters reads ``waiters``), but the sim clock
         may run (agora-redesign #3054).
@@ -3190,12 +3208,12 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     # driver) from running past the pending completion.
                     # Callers that are just listening in the background
                     # (MCP server loop, result file polling, etc.) pass
-                    # priority=PRIORITY_IDLE, which parks the task in
+                    # priority=TaskPriority.IDLE, which parks the task in
                     # `waiters` just like an internal promise — drain()
                     # wakes it when the promise resolves, and the clock
                     # driver is free to advance sim time.
-                    if effect.priority == PRIORITY_IDLE:
-                        # PRIORITY_IDLE is the park mode, not the wake
+                    if effect.priority == TaskPriority.IDLE:
+                        # TaskPriority.IDLE is the park mode, not the wake
                         # priority: the waiter wakes at its own task priority
                         # (wake_priority=None). Waking at IDLE would starve
                         # it behind the PRIORITY_EXTERNAL_WAIT shield.
@@ -3305,7 +3323,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 for wk in pending_wks:
                     register_pending_waiter(
                         wk, "race", current_tid, race_state,
-                        park=effect.priority == PRIORITY_IDLE,
+                        park=effect.priority == TaskPriority.IDLE,
                     )
             yield TailEval(pick_next())
 

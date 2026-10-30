@@ -12,7 +12,7 @@
 - `read_title`・`make_index`・`workflow`の処理合成は`@do`と`yield helper(...)`です。一連の処理を`async def`へ逃がす例は削除しました。非同期SDKを自作する例も不要になり、`Await`は保存・HTTP・実時計の各ハンドラ側の操作だけです。
 - `assemble`やHTTPハンドラのファクトリは、Programを解決する業務処理ではなく、Programを包む構成関数です。ここで`run()`は呼びません。`run()`は本文と専用例の検証境界にのみあります。
 - 現行の`Gather`は、ProgramのlistではなくTask/Futureの可変長引数を受け取ります。先に`Spawn(read_title(...))`し、得たTaskを`Gather(*tasks)`へ渡す形を、実行で確認しました。スキル内の古い`Gather(programs)`例をそのまま採用していません。
-- 優先度と完了待ちは、`Spawn(..., priority=PRIORITY_HIGH)`と`Wait(task)`のコードを追加しました。高優先度タスクの正しい結果を検証し、プリエンプションや実時間の締め切り保証は主張していません。
+- 優先度と完了待ちは、`Spawn(..., priority=TaskPriority.HIGH)`と`Wait(task)`のコードを追加しました。高優先度タスクの正しい結果を検証し、プリエンプションや実時間の締め切り保証は主張していません。
 - 状態へ翻訳する`DealDamage`も全行コメントへ改稿しました。HP 10から7、HP 2から0を本文コードで検証しました。
 - asyncioの説明は一次資料を確認し、非同期I/O・タスク・同期・イベントループも扱うことを明記しました。新しいcoroutine・VM・ハンドラ合成の記事への導線も追加しました。
 - 画像2枚の仕様を`boundaries-visuals.json`へ保存しました。本文のaltとcaptionは同じ仕様へそろえています。
@@ -44,7 +44,7 @@
 - SQLiteへ保存後、新しいProgram・新しいSQLiteハンドラ・HTTP拒否ハンドラでも同じ結果になる。取得待機がないため仮想経過時間は0秒。
 - `edition-2`へ変えた未保存の依頼は、正しいURLを含む`LookupError`になる。この期待したエラーのdoeff tracebackがstderrに表示されるが、`pytest.raises`で検証済みであり、例ファイル自体は終了コード0。
 - 同じ文書処理を仮想時計とasyncio実時計で実行し、同じ索引と取得回数になる。待機10ミリ秒を2段階で行い、各時計の経過時間が合計20ミリ秒以上になる。
-- `PRIORITY_HIGH`付きTaskを`Wait`して、`"遊び方"`を受け取る。
+- `TaskPriority.HIGH`付きTaskを`Wait`して、`"遊び方"`を受け取る。
 
 ### 本文・コメント・既存テスト
 

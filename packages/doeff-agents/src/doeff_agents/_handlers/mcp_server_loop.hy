@@ -21,7 +21,7 @@
 
 (require doeff-hy.macros [<- defk val])
 (import doeff.handler_utils [reinstaller])
-(import doeff_core_effects [CreateExternalPromise Wait Spawn Race Cancel PRIORITY_IDLE])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn Race Cancel TaskPriority])
 (import doeff_agents._mcp-server [
   McpToolServer McpToolRequest TOOL_VM_TIMEOUT])
 (import queue [Empty])
@@ -48,7 +48,7 @@
           (fn [] (.complete timeout-ep None))))
   (setv (get timer-box "timer") timer)
   (.start timer)
-  (<- _ (Wait timeout-ep.future :priority PRIORITY_IDLE))
+  (<- _ (Wait timeout-ep.future :priority TaskPriority.IDLE))
   #("timeout" seconds))
 
 
@@ -150,7 +150,7 @@
     ;; Background wait: don't block the sim_time clock driver while idle.
     ;; The HTTP thread completes this promise when a request arrives, and
     ;; drain() picks that up without forcing a foreground external wait.
-    (<- _ (Wait wakeup-ep.future :priority PRIORITY_IDLE))
+    (<- _ (Wait wakeup-ep.future :priority TaskPriority.IDLE))
     (while (not (.empty server.request-queue))
       (setv req None)
       (try

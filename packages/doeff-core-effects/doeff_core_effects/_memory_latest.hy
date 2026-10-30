@@ -10,7 +10,7 @@
 ;;; 持っていた形では置くたびに 3 回だった・test_memory_latest.hy)。
 ;;;
 ;;; 変わるまでの待ち(AwaitLatest — agora-redesign #4296)は本物と同じ形: 待つ側は呼び鈴(CreateExternalPromise の約束 — 同じ run の task が
-;;; 完了してもよい)を呼び鈴の組に掛け、park の形(Wait の PRIORITY_IDLE — 約束が開いている間も仮想の時計が進む)で待つ。PublishLatest が値を
+;;; 完了してもよい)を呼び鈴の組に掛け、park の形(Wait の TaskPriority.IDLE — 約束が開いている間も仮想の時計が進む)で待つ。PublishLatest が値を
 ;;; 差し替えた後に、その型の呼び鈴を全部外して鳴らす。呼び手が待ちの task を Cancel した時は、約束の取り消しの callback(effect を出せない)が
 ;;; 呼び鈴の組から外す。鳴らす側は置いた値で呼び鈴を完了し、待つ側はその値を答える(同じ object が置き直された時は seen のままなので、
 ;;; また掛けて待つ)。
@@ -20,7 +20,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import functools [partial])
 (import doeff_core_effects._latest_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait PRIORITY_IDLE])
+(import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskPriority])
 
 
 (defrecord MemoryLatestStore
@@ -56,7 +56,7 @@
       (<- bell ExternalPromise (CreateExternalPromise))
       (setv (get store.bells kind) (+ (.get store.bells kind #()) #(bell)))
       (.on-cancel bell (partial drop-bell store.bells kind bell))
-      (<- rung (Wait bell.future :priority PRIORITY_IDLE))
+      (<- rung (Wait bell.future :priority TaskPriority.IDLE))
       (drop-bell store.bells kind bell)
       (:= current rung))
     (resume current)))

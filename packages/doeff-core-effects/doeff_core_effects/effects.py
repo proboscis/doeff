@@ -1,7 +1,7 @@
 # moved-submodule-shim: doeff_core_effects.effects -> doeff_core_effects._effects
 # moved-submodule-shim-names doeff_core_effects.effects:
 #   Absent Ask Await Err Get HttpError HttpRequest HttpResponse Listen Local MissingEnvKeyError Ok
-#   Program Put Raise ReadWriterLog Resumption Slog SlogEffect Tell Try WriterTellEffect
+#   Program Put Raise ReadWriterLog Slog SlogEffect Tell Try WriterTellEffect
 #   extra_needed resumption_of runs_carried_of slog
 """Moved: ``doeff_core_effects.effects`` is now ``doeff_core_effects._effects`` (ADR-DOE-API-001 R5).
 

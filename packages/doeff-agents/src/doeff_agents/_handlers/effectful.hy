@@ -13,7 +13,7 @@
 (import functools [partial])
 (import collections.abc [Callable])
 (import doeff [Ask GetHandlers GetOuterHandlers K])
-(import doeff_core_effects [CreateExternalPromise Wait Spawn PRIORITY_IDLE])
+(import doeff_core_effects [CreateExternalPromise Wait Spawn TaskPriority])
 (import doeff_agents._agentd-client [DEFAULT_AWAIT_BUDGET_SECONDS])
 (import doeff_agents._effects [
   AgentCapabilityUnsupportedError
@@ -139,7 +139,7 @@
     (when (> delay-seconds 0.0)
       (<- delay-ep (CreateExternalPromise))
       (.start (threading.Timer delay-seconds delay-ep.complete [None]))
-      (<- (Wait delay-ep.future :priority PRIORITY_IDLE))))
+      (<- (Wait delay-ep.future :priority TaskPriority.IDLE))))
   outcome)
 
 

@@ -2965,7 +2965,7 @@ impl Locked<'_> {
     }
 
     /// A pending external promise also gets the PRIORITY_EXTERNAL_WAIT
-    /// placeholder, unless `park` (a Race with `priority=PRIORITY_IDLE`):
+    /// placeholder, unless `park` (a Race with `priority=TaskPriority.IDLE`):
     /// then the waiter still counts for the blocking drain
     /// (`has_pending_external_waiters` reads `waiters`), but the sim clock
     /// driver may run (agora-redesign #3054).
@@ -3651,7 +3651,7 @@ impl Locked<'_> {
             }
         }
         if !pending.is_empty() {
-            // `priority` is the park mode (validated by Race itself): None or PRIORITY_IDLE.
+            // `priority` is the park mode (validated by Race itself): None or TaskPriority.IDLE.
             let priority_obj = effect.getattr(pyo3::intern!(py, "priority"))?;
             let park = !priority_obj.is_none()
                 && priority_obj.extract::<i64>()? == self.spec().priority_idle;

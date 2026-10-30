@@ -5,15 +5,13 @@ from typing import Any
 
 import doeff
 from doeff import (
-    PRIORITY_HIGH,
-    PRIORITY_IDLE,
-    PRIORITY_NORMAL,
     Await,
     CompletePromise,
     CreatePromise,
     FailPromise,
     Gather,
     Spawn,
+    TaskPriority,
     Wait,
     do,
 )
@@ -25,13 +23,18 @@ def _result_is_ok(result: Any) -> bool:
     return bool(probe() if callable(probe) else probe)
 
 
-def test_priority_constants_exported() -> None:
-    assert hasattr(doeff, "PRIORITY_IDLE")
-    assert hasattr(doeff, "PRIORITY_NORMAL")
-    assert hasattr(doeff, "PRIORITY_HIGH")
-    assert PRIORITY_IDLE == 0
-    assert PRIORITY_NORMAL == 10
-    assert PRIORITY_HIGH == 20
+def test_task_priority_is_exported_with_its_values() -> None:
+    assert doeff.TaskPriority is TaskPriority
+    assert TaskPriority.IDLE == 0
+    assert TaskPriority.NORMAL == 10
+    assert TaskPriority.HIGH == 20
+
+
+def test_the_old_priority_constants_are_the_task_priorities() -> None:
+    # Kept until the repos that read doeff's main use TaskPriority (agora card ki-9f2990a98000).
+    assert doeff.PRIORITY_IDLE is TaskPriority.IDLE
+    assert doeff.PRIORITY_NORMAL is TaskPriority.NORMAL
+    assert doeff.PRIORITY_HIGH is TaskPriority.HIGH
 
 
 def test_spawn_effect_exposes_priority_field() -> None:
@@ -42,7 +45,7 @@ def test_spawn_effect_exposes_priority_field() -> None:
     default_effect = Spawn(child())
     custom_effect = Spawn(child(), priority=5)
 
-    assert default_effect.priority == PRIORITY_NORMAL
+    assert default_effect.priority == TaskPriority.NORMAL
     assert custom_effect.priority == 5
 
 
@@ -57,8 +60,8 @@ def test_priority_idle_runs_after_normal() -> None:
 
     @do
     def program():
-        idle = yield Spawn(child("idle"), priority=PRIORITY_IDLE)
-        normal = yield Spawn(child("normal"), priority=PRIORITY_NORMAL)
+        idle = yield Spawn(child("idle"), priority=TaskPriority.IDLE)
+        normal = yield Spawn(child("normal"), priority=TaskPriority.NORMAL)
         _ = yield Gather(idle, normal)
         return tuple(events)
 
@@ -77,9 +80,9 @@ def test_deterministic_ordering_within_priority() -> None:
 
     @do
     def program():
-        t1 = yield Spawn(child("one"), priority=PRIORITY_NORMAL)
-        t2 = yield Spawn(child("two"), priority=PRIORITY_NORMAL)
-        t3 = yield Spawn(child("three"), priority=PRIORITY_NORMAL)
+        t1 = yield Spawn(child("one"), priority=TaskPriority.NORMAL)
+        t2 = yield Spawn(child("two"), priority=TaskPriority.NORMAL)
+        t3 = yield Spawn(child("three"), priority=TaskPriority.NORMAL)
         _ = yield Gather(t1, t2, t3)
         return tuple(events)
 
@@ -99,13 +102,13 @@ def test_spawn_higher_priority_preempts_current() -> None:
     @do
     def idle_task():
         events.append("idle-before-spawn")
-        task = yield Spawn(normal_task(), priority=PRIORITY_NORMAL)
+        task = yield Spawn(normal_task(), priority=TaskPriority.NORMAL)
         events.append("idle-after-spawn")
         return (yield Wait(task))
 
     @do
     def program():
-        idle = yield Spawn(idle_task(), priority=PRIORITY_IDLE)
+        idle = yield Spawn(idle_task(), priority=TaskPriority.IDLE)
         return (yield Wait(idle))
 
     result = run_with_defaults(program())
@@ -143,13 +146,13 @@ def test_complete_promise_preempts_if_woken_task_higher_priority() -> None:
 
         idle_task = yield Spawn(
             idle_completer(target_promise, release_promise, idle_started),
-            priority=PRIORITY_IDLE,
+            priority=TaskPriority.IDLE,
         )
         _ = yield Wait(idle_started.future)
 
         waiter_task_handle = yield Spawn(
             waiter_task(target_promise, waiter_started),
-            priority=PRIORITY_NORMAL,
+            priority=TaskPriority.NORMAL,
         )
         _ = yield Wait(waiter_started.future)
 
@@ -200,13 +203,13 @@ def test_fail_promise_preempts_if_woken_task_higher_priority() -> None:
 
         idle_task = yield Spawn(
             idle_failer(target_promise, release_promise, idle_started),
-            priority=PRIORITY_IDLE,
+            priority=TaskPriority.IDLE,
         )
         _ = yield Wait(idle_started.future)
 
         waiter_task_handle = yield Spawn(
             waiter_task(target_promise, waiter_started),
-            priority=PRIORITY_NORMAL,
+            priority=TaskPriority.NORMAL,
         )
         _ = yield Wait(waiter_started.future)
 
@@ -240,13 +243,13 @@ def test_lower_priority_spawn_does_not_preempt() -> None:
     @do
     def spawner():
         events.append("normal-before")
-        task = yield Spawn(spawned(), priority=PRIORITY_IDLE)
+        task = yield Spawn(spawned(), priority=TaskPriority.IDLE)
         events.append("normal-after")
         return (yield Wait(task))
 
     @do
     def program():
-        task = yield Spawn(spawner(), priority=PRIORITY_NORMAL)
+        task = yield Spawn(spawner(), priority=TaskPriority.NORMAL)
         return (yield Wait(task))
 
     result = run_with_defaults(program())

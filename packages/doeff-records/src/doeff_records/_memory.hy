@@ -63,7 +63,7 @@
 (import dataclasses [dataclass replace])
 (import datetime [timedelta])
 (import doeff [EffectBase Program with-handlers])
-(import doeff_core_effects [CompletePromise CreateExternalPromise CreatePromise ExternalPromise PRIORITY-IDLE Spawn Task TaskCancelledError Wait Cancel])
+(import doeff_core_effects [CompletePromise CreateExternalPromise CreatePromise ExternalPromise TaskPriority Spawn Task TaskCancelledError Wait Cancel])
 (import doeff_events [PublishEffect])
 (import doeff_records._event_source [BodyWrapper ChangedRow ReadSignalSource SignalSourceFactory SignalTables checked-bindings failure-announced
                                     first-seen ride-out-stall stop-source waits-beside-sources])
@@ -1326,7 +1326,7 @@
       (<- (drop-bell store bell))
       (return None))
     (try
-      (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
+      (<- _rang (Wait bell.future :priority TaskPriority.IDLE))
       (except [cancelled TaskCancelledError]
         (<- (drop-bell store bell))
         (raise cancelled))))
@@ -1543,7 +1543,7 @@
                       (<- (PublishEffect signal))))
                 ;; 取り消されたら(本体が終わった)掛けた呼び鈴を外してから解ける — 鳴らない呼び鈴を置き場に残さない。
                 (try
-                  (<- _rang (Wait bell.future :priority PRIORITY-IDLE))
+                  (<- _rang (Wait bell.future :priority TaskPriority.IDLE))
                   (except [cancelled TaskCancelledError]
                     (<- (drop-bell store bell))
                     (raise cancelled)))))))

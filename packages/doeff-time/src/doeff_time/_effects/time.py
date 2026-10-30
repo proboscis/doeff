@@ -88,7 +88,7 @@ class WaitWithinEffect(EffectBase, Generic[_T]):
 
     ``park`` is for an *external* promise that in-run code completes (doeff-records'
     memory-store bell, rung by a synchronous write): the race against the deadline
-    parks like ``Wait(future, priority=PRIORITY_IDLE)`` instead of shielding the sim
+    parks like ``Wait(future, priority=TaskPriority.IDLE)`` instead of shielding the sim
     clock, so virtual time can reach the deadline while the promise is pending. With
     the default (``False``) a pending external promise holds the clock, and the
     deadline cannot pass before it completes (agora-redesign #3054).

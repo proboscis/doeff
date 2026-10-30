@@ -194,7 +194,7 @@ def test_schedule_at_8_seconds():  # 3秒と8秒の流れを、待たずに確�
 
 仮想時計の日時は、`start_time`の引数か`SetTime`で決めます。`SetTime`を扱うのは仮想時計だけです。実時間のハンドラで、OSの時計を変えることはできません。
 
-優先度も、タスクを始める時の引数で書きます。`Spawn(処理, priority=PRIORITY_HIGH)`のように渡すと、動ける時に先に選ばれます。動いているCPU処理を、途中で止める仕組みではありません。優先度の例は、[完全な例](examples/scheduling.py)に入れています。
+優先度も、タスクを始める時の引数で書きます。`Spawn(処理, priority=TaskPriority.HIGH)`のように渡すと、動ける時に先に選ばれます。動いているCPU処理を、途中で止める仕組みではありません。優先度の例は、[完全な例](examples/scheduling.py)に入れています。
 
 ## まとめ
 
