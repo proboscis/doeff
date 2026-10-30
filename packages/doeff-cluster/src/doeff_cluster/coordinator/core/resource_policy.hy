@@ -34,7 +34,7 @@
                                                        ReportOrigin ReadinessReport MetricsReport WorkerReport])
 (import doeff_cluster.coordinator.core.cluster_rules [int-field])
 (import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text unplaced-view active-jobs resource-version-of keep-mark-of warms-for
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text unplaced-memory unplaced-view active-jobs resource-version-of keep-mark-of warms-for
                                                        handover-blockers handover-since HANDOVER-STALL-MS])
 (import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-targets target-key TERMINAL-PHASES])
 (import doeff [run])
@@ -143,7 +143,7 @@
   (setv a (if (is placement None) (.row state.placements name) placement))
   (when (is a None)
     (setv unplaced (unplaced-kind now state job timing))
-    (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job (effective-needs state job))))))
+    (return (no "NotReady" (unplaced-not-ready unplaced) (+ "置き先が無い: " (unplaced-text unplaced job (effective-needs state job) (run (unplaced-memory now state job unplaced timing)))))))
   (setv warming (< now (warm-until state timing))
         st (.row state.observations.statuses a.worker))
   ;; 担い手の報告が古い: 移し替えの期限(reassign-after-ms)の内なら「分からない」(Unknown — 途絶の間。Rollout は失敗と数えない)。
@@ -610,8 +610,11 @@
    (timing の lease で前の世代の沈黙を数える — handover-of)。"
   ;; spec.doeffCommit = 今の世代の process の doeff の版(card ki-6e83e03d146d — 名乗る worker だけ。名乗らない worker の spec の形・版は
   ;; 以前と同じ)。版が替わった拍に版と出来事が進み、版の読み手が GET /watch で起きる。spec.memoryMiB = 枠の file の行の常駐の job の
-  ;; memory の予算(card ki-ced3c45980a5 — 名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。
-  {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity "taskReserve" w.task-reserve
+  ;; memory の予算(card ki-ced3c45980a5 — 名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。spec.backgroundRoom = 背景の
+  ;; 仕事を同時に置ける数(card ki-2acb63aec0fd — 手書きの capacity の代わり)。いまの task の空き(taskRoom)は task を置くたびに変わる観測
+  ;; なので spec に入れない(版が拍ごとに進む)— GET /state の workers の taskRoom で読む。
+  {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "taskReserve" w.task-reserve
+              "backgroundRoom" w.background-room
               "versions" (dict w.versions)}
              (if w.doeff-commit {"doeffCommit" w.doeff-commit} {})
              (if (is w.memory-mib None) {} {"memoryMiB" w.memory-mib}))

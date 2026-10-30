@@ -40,14 +40,15 @@
 ;;; と答え、置き先にも選ぶ — 本番 2026-09-25 の欠陥・L643)。判断は記録(生存の読みと、その worker が届かなくなった時刻)を受けて、届かなく
 ;;; なってから lease-ms + 余裕を過ぎて alive と答えた読みの列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の止まりの検)。
 ;;;
-;;; 条 C6 running-within-capacity: どの瞬間も、worker の上で動いている job の process の数は、その worker が本当に置ける数(capacity)を
-;;; 越えない。判断は記録(job の process ごとの生きていた区間と、worker ごとの本当の capacity)を受けて、越えた瞬間の列を返す純関数 1 つ。
-;;; 記録を集めるのは検(tests/test_local.hy の容量の検)。
+;;; 条 C6 running-within-capacity(card ki-2acb63aec0fd で memory の版へ): どの瞬間も、worker の上で動いている job の process の落ち着いた
+;;; memory(宣言の settle-mib)の和は、その worker の本当の memory の予算を越えない。判断は記録(job の process ごとの生きていた区間と
+;;; その job の settle、worker ごとの本当の memory の予算)を受けて、越えた瞬間の列を返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy
+;;; の memory の検)。
 ;;;
-;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489): どの worker でも、常駐の job の置き先と並べた置き先(surge)の数の和は、capacity から
-;;; task のために空けておく数(task-reserve)を引いた数を越えない — 常駐の job が枠を埋めても task の置き場が残る。判断は記録(GET /state の
-;;; 読みごとの worker の常駐の job と surge の数と、worker ごとの本当の capacity と task-reserve)を受けて、越えた読みの列を返す純関数 1 つ。
-;;; 記録を集めるのは検(tests/test_local.hy の予約の検)。
+;;; 条 C17 jobs-stay-out-of-the-task-reserve(#3489・card ki-2acb63aec0fd で task の側の版へ): どの瞬間も、worker の上で動いている task の
+;;; 数は、本当の予約(task-reserve)と背景の枠(background-room)の和を越えない — task の置き場は常駐の job の数に依らず、名乗りの外へ
+;;; 置かれない。判断は記録(task ごとの動いていた区間と、worker ごとの本当の task-reserve と background-room)を受けて、越えた瞬間の列を
+;;; 返す純関数 1 つ。記録を集めるのは検(tests/test_local.hy の予約の検)。
 ;;;
 ;;; 条 C7 placed-only-where-eligible: 置き先の worker は、job の needs を本当に提供する。判断は記録(読めた置き先・job ごとの needs・worker
 ;;; ごとの本当の能力)を受けて、needs を提供しない worker への置き先の列を返す純関数 1 つ。専用の能力の決まりは条 C10、drain の期限の
@@ -244,72 +245,80 @@
                p)))
 
 
-(defrecord WorkerCapacity
-  "条 C6 の記録 1 つ = worker 1 台の本当の capacity(置ける job の数)。"
+(defrecord SettledSpan
+  "条 C6 の記録 1 つ = job の process 1 つが生きていた区間と、その job の落ち着いた memory(worker = 走らせた worker の名・settle-mib =
+   job の宣言の settle-mib・started-ms = 起きた時刻・ended-ms = 終わった時刻(まだ動いていれば None))。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
-  (#^ int capacity))
+  (#^ int settle-mib)
+  (#^ int started-ms)
+  (#^ (| int None) ended-ms))
+
+
+(defrecord WorkerCapacity
+  "条 C6 の記録 1 つ = worker 1 台の本当の memory の予算(MiB — 常駐の job の settle の和の上限)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int memory-mib))
 
 
 (defrecord OverCapacity
-  "条 C6 の破り 1 つ = worker の上で capacity を越えて動いていた瞬間(at-ms = 越えた process の起きた時刻・running = その時に動いていた数)。"
+  "条 C6 の破り 1 つ = worker の上で memory の予算を越えて job が動いていた瞬間(at-ms = 越えた process の起きた時刻・settle-mib = その時に
+   動いていた job の settle の和・memory-mib = 本当の予算)。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int at-ms)
+  (#^ int settle-mib)
+  (#^ int memory-mib))
+
+
+(defk running-within-capacity [spans capacities]
+  {:pre [(: spans (get tuple #(SettledSpan ...))) (: capacities (get tuple #(WorkerCapacity ...)))] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "条 C6: job の process の生きていた区間と settle の列(SettledSpan)と worker ごとの本当の memory の予算から、process が起きた瞬間に
+   その worker で動いていた job の settle の和が予算を越えた所(OverCapacity)を返す(空なら緑)。coordinator が worker の memory の予算より
+   多く置かない(cluster_policy.memory-misfit)ことを、筋書きの記録から判じるため。数えるのは起きた瞬間だけで足りる(和が増えるのは起きる
+   時だけ)。区間は [起きた時刻, 終わった時刻)。"
+  (val ending (fn [s] (if (is s.ended-ms None) (float "inf") s.ended-ms)))
+  (tuple (gfor c capacities
+               at (sorted (set (gfor s spans :if (= s.worker c.worker) s.started-ms)))
+               :setv used (sum (gfor o spans :if (and (= o.worker c.worker) (<= o.started-ms at) (< at (ending o))) o.settle-mib))
+               :if (> used c.memory-mib)
+               (OverCapacity :worker c.worker :at-ms at :settle-mib used :memory-mib c.memory-mib))))
+
+
+(defrecord WorkerReserve
+  "条 C17 の記録 1 つ = worker 1 台の本当の task の枠: task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ int task-reserve)
+  (#^ int background-room))
+
+
+(defrecord ReserveTaken
+  "条 C17 の破り 1 つ = worker の上で本当の task の枠を越えて task が動いていた瞬間(at-ms = 越えた task の動き始めた時刻・running = その時に
+   動いていた task の数・limit = task-reserve + background-room)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
   (#^ int at-ms)
   (#^ int running)
-  (#^ int capacity))
-
-
-(defk running-within-capacity [spans capacities]
-  {:pre [(: spans (get tuple #(ProcessSpan ...))) (: capacities (get tuple #(WorkerCapacity ...)))] :post [(: % tuple)]
-   :tags {:context "coordinator" :role "judgment"}}
-  "条 C6: job の process の生きていた区間の列(ProcessSpan — どの job でも)と worker ごとの本当の capacity から、process が起きた瞬間に
-   その worker で動いていた数が capacity を越えた所(OverCapacity)を返す(空なら緑)。coordinator が worker の置ける数より多く置かない
-   ことを、筋書きの記録から判じるため。数えるのは起きた瞬間だけで足りる(数が増えるのは起きる時だけ)。区間は [起きた時刻, 終わった時刻)。"
-  (val ending (fn [s] (if (is s.ended-ms None) (float "inf") s.ended-ms)))
-  (tuple (gfor c capacities
-               at (sorted (set (gfor s spans :if (= s.worker c.worker) s.started-ms)))
-               :setv running (len (lfor o spans :if (and (= o.worker c.worker) (<= o.started-ms at) (< at (ending o))) o))
-               :if (> running c.capacity)
-               (OverCapacity :worker c.worker :at-ms at :running running :capacity c.capacity))))
-
-
-(defrecord JobPlacesSeen
-  "条 C17 の記録 1 つ = GET /state の 1 回の読みの worker 1 台(at-ms = 読んだ時刻・worker = 名・jobs = その worker の上の常駐の job の
-   置き先と並べた置き先 surge の数の和)。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ int at-ms)
-  (#^ str worker)
-  (#^ int jobs))
-
-
-(defrecord WorkerReserve
-  "条 C17 の記録 1 つ = worker 1 台の本当の capacity と、そのうち task のために空けておく数(task-reserve)。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ str worker)
-  (#^ int capacity)
-  (#^ int task-reserve))
-
-
-(defrecord ReserveTaken
-  "条 C17 の破り 1 つ = 常駐の job と surge が task のために空けておく分に入っていた読み(seen = その読み・limit = capacity − task-reserve)。"
-  {:tags {:context "coordinator" :role "type"}}
-  (#^ JobPlacesSeen seen)
   (#^ int limit))
 
 
-(defk jobs-stay-out-of-the-task-reserve [seen reserves]
-  {:pre [(: seen (get tuple #(JobPlacesSeen ...))) (: reserves (get tuple #(WorkerReserve ...)))] :post [(: % tuple)]
+(defk jobs-stay-out-of-the-task-reserve [spans reserves]
+  {:pre [(: spans (get tuple #(ProcessSpan ...))) (: reserves (get tuple #(WorkerReserve ...)))] :post [(: % tuple)]
    :tags {:context "coordinator" :role "judgment"}}
-  "条 C17: GET /state の読みごとの worker の常駐の job と surge の数(JobPlacesSeen)と、worker ごとの本当の capacity と task-reserve から、
-   数が capacity − task-reserve を越えた読み(ReserveTaken)を返す(空なら緑)。常駐の job(と入れ替えで並べた置き先)が worker の枠を
-   埋め切っても、task のために空けておく分が残る(手番の task が置き場を失わない)ことを、筋書きの記録から判じるため。本当の値の記録が
-   無い worker は判じない。"
+  "条 C17: task の動いていた区間の列(ProcessSpan — worker・動き始め・終わり)と worker ごとの本当の task-reserve と background-room から、
+   task が動き始めた瞬間にその worker で動いていた task の数が task-reserve + background-room を越えた所(ReserveTaken)を返す(空なら緑)。
+   task の置き場が常駐の job の数に依らず、名乗った枠の外へ置かれないこと(cluster_policy.task-room-of)を、筋書きの記録から判じるため。
+   本当の値の記録が無い worker は判じない。区間は [動き始め, 終わり)。"
+  (val ending (fn [s] (if (is s.ended-ms None) (float "inf") s.ended-ms)))
   (tuple (gfor r reserves
-               s seen
-               :setv limit (- r.capacity r.task-reserve)
-               :if (and (= s.worker r.worker) (> s.jobs limit))
-               (ReserveTaken :seen s :limit limit))))
+               at (sorted (set (gfor s spans :if (= s.worker r.worker) s.started-ms)))
+               :setv running (len (lfor o spans :if (and (= o.worker r.worker) (<= o.started-ms at) (< at (ending o))) o))
+               :setv limit (+ r.task-reserve r.background-room)
+               :if (> running limit)
+               (ReserveTaken :worker r.worker :at-ms at :running running :limit limit))))
 
 
 (defrecord PlacementSeen

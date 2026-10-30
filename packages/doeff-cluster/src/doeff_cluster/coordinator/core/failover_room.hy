@@ -45,7 +45,9 @@
       (raise (ValueError (+ "枠の file の " reading.reason))))
     (<- launched (get tuple #(str ...)) (launch-provides name (sum (gfor e extras :if (= e.name name) e.provides) #())))
     (<- provides (get tuple #(str ...)) (announced-provides launched reading.room.pools))
-    (:= workers (+ workers #((FailoverWorker :info (WorkerInfo :name name :provides provides :capacity reading.room.capacity :last-seen-ms 0
-                                                              :exclusive #() :task-reserve reading.room.task-reserve)
+    (:= workers (+ workers #((FailoverWorker :info (WorkerInfo :name name :provides provides :last-seen-ms 0
+                                                              :exclusive #() :task-reserve reading.room.task-reserve
+                                                              :background-room reading.room.background-room
+                                                              :memory-mib reading.room.memory-mib)
                                              :memory-mib reading.room.memory-mib)))))
   workers)

@@ -111,8 +111,9 @@
 
 (defclass LinkState []
   "coordinator への口が拍から拍へ持ち越す値の入れ物(頭の註)。組み立て(main・検)が作り、handler coordinator-link と背景の待ちが書き換える。
-   name = worker の名・provides / exclusive = 提供する能力・専用の能力の名・capacity = 同時の job の上限・task-reserve = capacity のうち
-   task のために空けておく数(heartbeat で必ず名乗る — 常駐の job はこの分に置かれない)・fence-ms = 途絶で止める長さ
+   name = worker の名・provides / exclusive = 提供する能力・専用の能力の名・task-reserve = task のために空けておく数・background-room =
+   背景の仕事を同時に置ける数(どちらも heartbeat で必ず名乗る — card ki-2acb63aec0fd)・memory-mib = 常駐の job の memory の予算(MiB —
+   None = 名乗らない。起動の引数 --memory-mib の値で始め、枠の file を読めば行の値)・fence-ms = 途絶で止める長さ
    (返事の timing が上書きする)・task-dir = task の印と結果の file の置き場・versions = 名乗る版・tools = 名乗る道具(名 → 版)・
    handles-envs = 実行環境の job を扱うか(真なら root の名乗りを heartbeat に載せ、温める表を受ける)・node = k8s の node の名・
    watch = 名指しの待ちを使うか(本番の入口が真にする)・beat-beside = 拍の外の背景の task でも heartbeat を送るか(既定 真 — card
@@ -122,19 +123,20 @@
    boot-marks = 起動の内訳の刻(最初の heartbeat の答えの後に 1 行で出す — None = 出さない・#3676)・overlaps-elder = この世代は同じ名の
    前の世代がまだ走っている間に起きた(起動の script が渡す — heartbeat に載せ、coordinator は前の世代の lease を外さない・AL-D2e)・
    token-file = ServiceAccount の token の file(None = 読まない — 本番の入口が標準の path を渡す。読んだ状態を heartbeat の
-   accountToken で名乗る・card ki-d31166f84ad0)・room-file = 枠の file(None = 読まない — 起動の引数の capacity・task-reserve を
+   accountToken で名乗る・card ki-d31166f84ad0)・room-file = 枠の file(None = 読まない — 起動の引数の task-reserve・background-room・memory-mib を
    名乗り続ける。渡すと heartbeat の前に読み直し、自分の名の行の値を名乗る・card ki-6828eda880ce)・doeff-commit = この process の doeff の
    版(起動の script の WORKER_DOEFF_COMMIT — 空 = 名乗らない。heartbeat の doeffCommit・card ki-6e83e03d146d)。
    supplied = 最後に届いた返事の、この worker に置かれうる job の参照の綴り(None = まだ渡されていない — 値の写しの係 supplied_hold が
    読む・ADR-DOE-CLUSTER-004)。"
-  (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms #^ str task-dir #^ str boot
+  (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int task-reserve #^ int background-room #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
                           #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""] #^ bool [watch False]
                           #^ bool [beat-beside True] #^ (| BootMarks None) [boot-marks None] #^ bool [overlaps-elder False]
-                          #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]]
-    (setv self.name name self.provides provides self.exclusive exclusive self.node node self.capacity capacity
-          self.task-reserve task-reserve self.tools (or tools {})
+                          #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
+                          #^ (| int None) [memory-mib None]]
+    (setv self.name name self.provides provides self.exclusive exclusive self.node node
+          self.task-reserve task-reserve self.background-room background-room self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
           self.fence-ms fence-ms self.statuses []
           ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
@@ -182,7 +184,7 @@
           ;; room-read-ms = 最後に読んだ刻。pools = 枠の file から名乗る置ける組の印(heartbeat の provides に足す)・memory-mib = 名乗る
           ;; 常駐の job の memory の予算(None = 名乗らない — card ki-ced3c45980a5)。どちらも file を読めない間は前の値のまま。
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
-          self.pools #() self.memory-mib None)))
+          self.pools #() self.memory-mib memory-mib)))
 
 
 
@@ -474,7 +476,7 @@
   ;; 今持っている印 = 最後に届いた返事の job の印(#2804 — coordinator はこれで印の約束を外す)。
   (<- kept tuple (keep-marks-held state.last-jobs))
   (<- base dict (heartbeat-body :name state.name :provides state.provides :exclusive state.exclusive :node state.node
-                                :capacity state.capacity :task-reserve state.task-reserve :versions state.versions :statuses sending
+                                :task-reserve state.task-reserve :background-room state.background-room :versions state.versions :statuses sending
                                 :endpoint endpoint :boot state.boot :boot-at state.boot-at :tools state.tools :kept kept
                                 :stopping stopping :overlaps-elder state.overlaps-elder :doeff-commit state.doeff-commit
                                 :pools state.pools :memory-mib state.memory-mib))
@@ -709,7 +711,7 @@
 
 (defk room-noted [state]
   {:pre [(: state LinkState)] :post [(: % None)]}
-  "枠の file を READ-EVERY-MS ごとに読み直し、次の heartbeat で名乗る capacity・task-reserve・置ける組の印・memory の予算を file の
+  "枠の file を READ-EVERY-MS ごとに読み直し、次の heartbeat で名乗る task-reserve・background-room・置ける組の印・memory の予算を file の
    自分の行の値にするため(card ki-6828eda880ce・ki-ced3c45980a5 — 枠と組を変えても Pod を作り直さない)。file を読めない・形が崩れている時は前に名乗った値のままにし、状態を
    heartbeat の roomFile で名乗る。値が変わった時・読めなくなった時(訳が変わった時)・戻った時に log へ 1 行出す。file を読まない
    worker(room-file が None)は何もしない。"
@@ -724,12 +726,12 @@
       (when (isinstance text str)
         (<- read RoomReading (room-of-text text state.name))
         (:= reading read))
-      (val before (WorkerRoom :capacity state.capacity :task-reserve state.task-reserve :pools state.pools :memory-mib state.memory-mib))
+      (val before (WorkerRoom :task-reserve state.task-reserve :background-room state.background-room :memory-mib state.memory-mib :pools state.pools))
       (val after (if (is reading.room None) before reading.room))
       (when (or (!= after before) (!= reading.state state.room-state) (!= reading.reason state.room-reason))
         (<- line str (room-line before after reading))
         (<- (slog line :level (if (= reading.state RoomState.OK) "info" "warning"))))
-      (setv state.capacity after.capacity state.task-reserve after.task-reserve state.pools after.pools state.memory-mib after.memory-mib
+      (setv state.task-reserve after.task-reserve state.background-room after.background-room state.pools after.pools state.memory-mib after.memory-mib
             state.room-state reading.state state.room-reason reading.reason)))
   None)
 

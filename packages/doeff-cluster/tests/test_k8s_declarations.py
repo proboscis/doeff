@@ -194,8 +194,9 @@ HOST_ONLY_ROOM = {
 # 予算は N+1 の判断の規則 3(置ける job の落ち着いた値の和 + 最悪の 1 台の停止で移る job の起動の山の上乗せ ≤ 予算)が読む。
 HOST_ONLY_WORKER_SELF_MIB = 256
 TASK_SHARE_MIB = 3072
-# 枠の定義元(card ki-6828eda880ce): 機体の名 → capacity・taskReserve の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
-# file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_CAPACITY・WORKER_TASK_RESERVE は書かない。
+# 枠の定義元(card ki-6828eda880ce): 機体の名 → taskReserve・backgroundRoom・memoryMiB の JSON 1 つ。名の固定した ConfigMap worker-room にして worker の Pod に
+# file で置き、worker は heartbeat の前に読み直す(枠の変更で Pod を作り直さない)。env の WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・
+# WORKER_MEMORY_MIB は書かない。
 ROOM_FILE = K8S / "workers" / "worker-room.json"
 ROOM_CONFIGMAP = "worker-room"
 ROOM_DIR = "/etc/worker-room"
@@ -668,18 +669,20 @@ def test_every_worker_reads_its_room_from_the_fixed_named_configmap_file(rendere
 
 
 def test_the_room_file_has_one_valid_row_per_node() -> None:
-    """枠の file は機体ごとに 1 行を持ち、どの行も 0 ≤ taskReserve ≤ capacity の整数(worker が名乗れる値 — 外れた行は worker が読まず、前の
-    値のまま名乗り続ける)。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の起動を断る・
-    card ki-67abc0cf71e9)。"""
+    """枠の file は機体ごとに 1 行を持ち、どの行も taskReserve・backgroundRoom・memoryMiB が 0 以上の整数(worker が名乗れる値 — 外れた行は
+    worker が読まず、前の値のまま名乗り続ける・card ki-2acb63aec0fd)。背景の仕事を同時に置ける数 backgroundRoom は zeus が 4(背景の仕事に
+    残す枠 3 + 入れ替えの並べた置き先 1 — 手書きの capacity が持っていた分)、他の機体は 0。capacity は worker が読まないが、上に載る系の
+    pin がまだ読むので残す(step 4 で消す)。省ける欄 warmServices は真偽だけ(service を待ちの子から分ける旗 — 真偽でない綴りは worker の
+    起動を断る・card ki-67abc0cf71e9)。"""
     rows = _room_rows()
     assert sorted(rows) == sorted(NODES)
     for node, row in rows.items():
         room = _mapping(row, node)
-        assert sorted(set(room) - {"warmServices", "pools"}) == ["capacity", "memoryMiB", "taskReserve"], node
+        assert sorted(set(room) - {"warmServices", "pools", "capacity"}) == ["backgroundRoom", "memoryMiB", "taskReserve"], node
         assert type(room.get("warmServices", False)) is bool, node
-        assert type(room["capacity"]) is int and type(room["taskReserve"]) is int, node
-        assert 0 <= int(room["taskReserve"]) <= int(room["capacity"]), node
-        assert type(room["memoryMiB"]) is int and int(room["memoryMiB"]) >= 0, node
+        for field in ("taskReserve", "backgroundRoom", "memoryMiB"):
+            assert type(room[field]) is int and int(room[field]) >= 0, (node, field)
+        assert room["backgroundRoom"] == (4 if node == "zeus" else 0), node
 
 
 def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:

@@ -73,12 +73,14 @@
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
+;; 保存の行は capacity を書かず backgroundRoom を書く(card ki-2acb63aec0fd)。capacity の在る旧い行は capacity を読まずに通し、backgroundRoom の無い行は
+;; 0 で読む — 配備の間だけの許し(旧い coordinator の保存から読み直す間)。
 (deff worker-json [#^ WorkerInfo w]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: w WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "鍵 worker/<名> の値。lastSeenMs は生存の印の拍で写した w.seen-mark(heartbeat ごとに進む last-seen-ms は書かない — 書きは
    印の拍ごと・#2903 の前は ClusterState.seen-marks から引いた)。"
-  (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
-      "taskReserve" w.task-reserve
+  (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node
+      "taskReserve" w.task-reserve "backgroundRoom" w.background-room
       "versions" (dict w.versions)}
      (worker-generations-json w)
      (if (is w.seen-mark None) {} {"lastSeenMs" w.seen-mark})))
@@ -263,11 +265,13 @@
     :placements (table-of (tuple (gfor #(k v) (.items (dict (+ (part LEGACY-PLACEMENT) (part PLACEMENT)))) (TableWrite k (Placement #** v))))) ; 後に並ぶ新しい鍵が勝つ
     :workers (table-of (tuple (gfor #(#(k w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" (get w "name")))
-                   (TableWrite k (WorkerInfo (get w "name") (get caps 0) (get w "capacity")
+                   (TableWrite k (WorkerInfo (get w "name") (get caps 0)
                                  (.get w "lastSeenMs" unknown-seen)
                                  (component-versions-of (.get w "versions" {}))
                                  :exclusive (get caps 1) :node (.get w "node" "")
                                  :task-reserve (get w "taskReserve")
+                                 ;; backgroundRoom の無い旧い行は 0 で読む(配備の間だけの許し — worker-json の註)。
+                                 :background-room (.get w "backgroundRoom" 0)
                                  :seen-mark (.get w "lastSeenMs")
                                  #** generation)))))
     :tasks (table-of (tuple (gfor #(k t) tasks (TableWrite k t))))

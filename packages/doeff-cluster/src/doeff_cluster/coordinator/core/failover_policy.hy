@@ -1,14 +1,13 @@
-;;; 1 台の worker が止まっても常駐の job が残りの worker の枠と memory に入るか(N+1)の純粋な判断(card ki-4689c7008147)。I/O はしない。
+;;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の純粋な判断(card ki-4689c7008147)。I/O はしない。
 ;;;
 ;;; coordinator は、他に置ける worker が在る job を、担い手が移し替えの期限を過ぎて黙ったら外して他へ移す(cluster_policy の #2804 の註)。
-;;; 移る先が在るか・移った後に枠と memory に入るかは置く時に照らさない(移る先は担う数の少ない順に選び、memory は見ない)ので、
-;;; 宣言の側がこの判断で前もって照らす。照らす規則は 4 つ(1 件目で止めず、破りをみな文にする):
+;;; 移る先が在るか・移った後に起動の山まで memory に入るかは置く時に照らさない(置く時は落ち着いた値の和だけを見る —
+;;; cluster_policy.memory-misfit)ので、宣言の側がこの判断で前もって照らす。照らす規則は 3 つ(1 件目で止めず、破りをみな文にする):
 ;;;   1. 置き先: 機体ごとの job(per-machine? — needs が雛形の能力だけか、それに機体の印 host-<機体> を 1 つ足して機体ごとに広げた
 ;;;      物 — 置ける worker のそれぞれに 1 つずつ動く)と、1 台に縛る訳を宣言した job(job の :single-host — ResidentJob.single-host)を
 ;;;      除き、どの常駐の job も置ける worker が 2 台以上ある。言い換えると、どの 1 台を止めても、その機体にしか置けない job が 0。
-;;;   2. 枠: どの worker も、置ける常駐の job の全部(と handoff の job が在れば surge 1)を自分の枠に数えて job-room-of が 0 以上。
-;;;      移った job は元の機体が戻っても戻らないので、「今どこに在るか」でなく「置けるか」で数える — この数え方なら、どの置き方の後の
-;;;      どの 1 台の停止でも枠が足りる。等号は求めない(予備の枠を持ってよい)。枠の式は写さず job-room-of を呼ぶ。
+;;;   2. (消した — card ki-2acb63aec0fd)数の枠: 手書きの capacity から job の数を引いた空きで照らしていた。coordinator は job を数でなく
+;;;      memory で縛る(cluster_policy.memory-misfit)ので、memory の規則 3 だけが照らす。規則の番号は他の文書が引くので詰めない。
 ;;;   3. memory: 各 worker w で、置ける job の落ち着いた値の和 + max(止まる機体 m について、w と m の両方に置けて m から移りうる job の
 ;;;      (山 − 落ち着いた値)の和)≤ w の memory の予算。予算の無い worker に置ける job が在れば赤。機体ごとの job は移らないので山の
 ;;;      上乗せに数えない。
@@ -16,14 +15,9 @@
 ;;; replicas 0 の job は置かないので、どの規則にも数えない。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
-(import doeff_cluster.coordinator.intent.cluster_model [WorkerLoad])
 (import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob KeptApart JobTakers DownSpike])
-(import doeff_cluster.coordinator.core.cluster_policy [placeable job-room-of])
+(import doeff_cluster.coordinator.core.cluster_policy [placeable])
 (import doeff_cluster.shared.core.capabilities [HOST-PREFIX])
-
-;; handoff の job を置ける worker が枠に足す並べた置き先(surge)の数。入れ替えは worker ごとに 1 つずつ数える。
-(val HANDOFF-SURGE 1)
-
 
 (defk per-machine? [needs template]
   {:pre [(: needs (get tuple #(str ...))) (: template (get tuple #(str ...)))] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}
@@ -61,27 +55,6 @@
       (.format "worker {} を止めると、{} にしか置けない job {}(needs {})が置き先を失う — 置ける worker を 2 台以上にするか、1 台に縛る訳を job の宣言に :single-host \"<訳>\" で書く"
                (get placed.takers 0) (get placed.takers 0) job.name (list job.needs))
     True None))
-
-
-(defk load-alone [worker jobs]
-  {:pre [(: worker FailoverWorker) (: jobs int)] :post [(: % (get dict #(str WorkerLoad)))] :tags {:context "coordinator" :role "judgment"}}
-  "job-room-of が受ける担っている数の形(worker の名 → WorkerLoad — cluster_policy.load-of の答えと同じ形)を、worker 1 台が job と
-   surge を jobs 個担う世界で作るため(task は数えない — job の側の空きは task を引かない)。"
-  {worker.info.name (WorkerLoad :jobs jobs :tasks 0)})
-
-
-(defk room-refusal [worker here]
-  {:pre [(: worker FailoverWorker) (: here tuple)] :post [(: % (| str None))] :tags {:context "coordinator" :role "judgment"}}
-  "規則 2(置ける常駐の job の全部が worker の枠に入る)の破りを文にするため(入れば None)。here = worker に置ける job(JobTakers)。
-   数えるのは置ける job の台数の和と、handoff の job が在る時の surge。空きは job-room-of が答える(枠の式を写さない)。"
-  (val placed (sum (gfor p here p.job.replicas)))
-  (val surge (if (any (gfor p here (= p.job.update "handoff"))) HANDOFF-SURGE 0))
-  (<- load (get dict #(str WorkerLoad)) (load-alone worker (+ placed surge)))
-  (<- room int (job-room-of worker.info load))
-  (if (>= room 0)
-      None
-      (.format "worker {}: 置ける常駐の job {}({})+ surge {} を数えると job の側の空きが {}(job-room-of)— どの 1 台が止まっても移る先の枠が足りるように、枠を {} 足すか置ける job を減らす"
-               worker.info.name placed (.join ", " (gfor p here p.job.name)) surge room (- room))))
 
 
 (defk spike-of [worker down here]
@@ -134,11 +107,11 @@
          (all (gfor a apart (isinstance a KeptApart)))
          (= (len (set (gfor w workers w.info.name))) (len workers)) (= (len (set (gfor j jobs j.name))) (len jobs))]
    :post [(: % (get tuple #(str ...)))] :tags {:context "coordinator" :role "judgment"}}
-  "どの 1 台の worker が止まっても、その機体の常駐の job が残りの worker の枠と memory に入るか(頭の註の規則 1〜4)を判じるため。
+  "どの 1 台の worker が止まっても、その機体の常駐の job が残りの worker の memory に入るか(頭の註の規則 1・3・4)を判じるため。
    workers = 照らす worker(名は重ならない)・jobs = 常駐の job(名は重ならない)・template = 雛形の能力(どの機体の worker も名乗る能力 —
    needs がこれだけの job は機体ごとの job)・apart = 同じ機体に置いてはいけない job の対。規則 1 を当てない job は、job の値の
    single-host(1 台に縛る訳 — job の宣言の :single-host)が持つ。
-   答え = 破りの文の列(空 = 通る — 規則 1・各 worker の規則 2 と 3・規則 4 の順)。1 件目で止めない。"
+   答え = 破りの文の列(空 = 通る — 規則 1・各 worker の規則 3・規則 4 の順)。1 件目で止めない。"
   (var placed #())
   (for [j jobs]
     (when (> j.replicas 0)
@@ -151,9 +124,8 @@
       (when (is-not text None) (:= out (+ out #(text))))))
   (for [w workers]
     (val here (tuple (gfor p placed :if (in w.info.name p.takers) p)))
-    (<- room (| str None) (room-refusal w here))
     (<- memory (| str None) (memory-refusal w here workers))
-    (:= out (+ out (tuple (gfor text #(room memory) :if (is-not text None) text)))))
+    (when (is-not memory None) (:= out (+ out #(memory)))))
   (for [pair apart]
     (<- texts (get tuple #(str ...)) (apart-refusals pair placed workers))
     (:= out (+ out texts)))

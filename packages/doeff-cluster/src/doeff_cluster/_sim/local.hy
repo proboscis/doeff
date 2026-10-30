@@ -287,9 +287,11 @@
 ;; --- 公開の値 --------------------------------------------------------------------------------------------
 
 (defrecord SimWorker
-  "sim の worker 1 台(本番の worker の --provides・--exclusive・--capacity・--task-reserve・node に当たる)。provides = 提供する能力の名・
-   exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・task-reserve = capacity のうち task のために空けておく数(必ず渡す —
-   本番の worker の --task-reserve と同じく既定の値は無い)・node = 置かれた k8s の node の名(空 = k8s の外)・
+  "sim の worker 1 台(本番の worker の --provides・--exclusive・--task-reserve・--background-room・--memory-mib・node に当たる)。provides =
+   提供する能力の名・exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・task-reserve = task のために空けておく数(必ず渡す —
+   本番の worker の --task-reserve と同じく既定の値は無い)・background-room = 背景の仕事を同時に置ける数(既定 10 — 模擬の筋書きが task の
+   空きを気にせず走るため。本番の既定は 0)・memory-mib = 常駐の job の memory の予算(MiB — None = 名乗らず、memory で縛られない・
+   card ki-2acb63aec0fd)・node = 置かれた k8s の node の名(空 = k8s の外)・
    versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
@@ -301,8 +303,8 @@
    世界だけの壊れた worker(入れ替えで旧を名から外す RetireJob の handler が、外すと同時に旧を止める — 条 W1 の反例)・ignores-keep-marks =
    途絶しても動かし続けてよい印(#2804)を知らない古い版の worker の代役(heartbeat に keptWhenCutOff を載せず、返事の keepWhenCutOff を
    読み捨てる — 新しい coordinator と古い worker の組を確かめるため)・silent-stop = 反例の世界だけの壊れた worker(宣言の読みの handler が
-   止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)・overstates-capacity = 反例の世界だけの壊れた worker(heartbeat で capacity の
-   代わりにこの数を名乗る — None = capacity。本当に置ける数は capacity のまま — 条 C6 の反例・#1976)・claims-provides = 反例の世界だけの
+   止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)・overstates-memory = 反例の世界だけの壊れた worker(heartbeat で memory-mib の
+   代わりにこの予算を名乗る — None = memory-mib。本当の予算は memory-mib のまま — 条 C6 の反例・#1976・card ki-2acb63aec0fd)・claims-provides = 反例の世界だけの
    壊れた worker(heartbeat で provides の代わりにこの能力を名乗る — None = provides。本当に提供する能力は provides のまま — 条 C7 の反例・#1976)・
    claims-exclusive = 反例の世界だけの壊れた worker(heartbeat で exclusive の代わりにこの専用の能力を名乗る — None = exclusive。本当の
    専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
@@ -317,14 +319,15 @@
    GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
    刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)・
    reads-room = 枠の file を読む worker(本番の --room-file を渡した worker — 世界の枠の file を WriteRoomFile が書き換え、worker は本番の
-   room-noted と同じ間 room-read-due で読み直して、file の行の capacity・task-reserve・置ける組の印 pools・memory の予算を名乗る。組の印は
-   provides に足す。file を読めない・崩れた間は前に名乗った値(初めは capacity・task-reserve の値・組の印は無し)のまま・card ki-ced3c45980a5)。"
+   room-noted と同じ間 room-read-due で読み直して、file の行の task-reserve・background-room・memory の予算・置ける組の印 pools を名乗る。組の
+   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の task-reserve・background-room・memory-mib・組の印は無し)のまま・card ki-ced3c45980a5)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (#^ int task-reserve)
   (setv #^ str doeff-commit "")
   (setv #^ (get frozenset str) exclusive (frozenset))
-  (setv #^ int capacity 10)
+  (setv #^ int background-room 10)
+  (setv #^ (| int None) memory-mib None)
   (setv #^ str node "")
   (setv #^ (| dict None) versions None)
   (setv #^ float prepare-seconds 0.0)
@@ -336,7 +339,7 @@
   (setv #^ bool retire-stops False)
   (setv #^ bool ignores-keep-marks False)
   (setv #^ bool silent-stop False)
-  (setv #^ (| int None) overstates-capacity None)
+  (setv #^ (| int None) overstates-memory None)
   (setv #^ (| (get frozenset str) None) claims-provides None)
   (setv #^ (| (get frozenset str) None) claims-exclusive None)
   (setv #^ bool fresh-boot-every-beat False)
@@ -805,7 +808,7 @@
   ;; 前の世代がまだ走っている間に起きた世代(RollWorker の新しい世代 — 本番の起動の script が前の世代の dir の錠を見て渡す
   ;; --overlaps-elder と同じ・AL-D2e)。heartbeat に overlapsElder を載せる。
   (setv #^ bool overlaps-elder False)
-  ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の capacity・task-reserve・pools・memory-mib —
+  ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の task-reserve・background-room・memory-mib・pools —
   ;; None = まだ読めていない = SimWorker の値を名乗る)・最後に読んだ状態(None = まだ読んでいない・読まない worker — heartbeat の
   ;; roomFile に載せない)・最後に読んだ刻(card ki-ced3c45980a5)。世代ごと(新しい世代は読み直す — 本番の起動の boot-room と同じく
   ;; 最初の heartbeat の前に読む)。
@@ -2031,16 +2034,19 @@
   (val named (if (is worker.claims-provides None) worker.provides worker.claims-provides))
   (val named-exclusive (if (is worker.claims-exclusive None) worker.exclusive worker.claims-exclusive))
   ;; 枠の file から名乗る枠(card ki-ced3c45980a5 — 読めていない worker は SimWorker の値・組の印は無し)。
-  (val room (if (is truth.room None) (WorkerRoom :capacity worker.capacity :task-reserve worker.task-reserve) truth.room))
+  (val room (if (is truth.room None)
+                (WorkerRoom :task-reserve worker.task-reserve :background-room worker.background-room :memory-mib worker.memory-mib)
+                truth.room))
   (<- base dict (heartbeat-body :name worker.name :provides (tuple (sorted named)) :exclusive (tuple (sorted named-exclusive))
                                 :node worker.node
-                                :capacity (if (is worker.overstates-capacity None) room.capacity worker.overstates-capacity)
                                 :task-reserve (if (is worker.claims-task-reserve None) room.task-reserve worker.claims-task-reserve)
+                                :background-room room.background-room
                                 :versions (or worker.versions plan.versions)
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
-                                :pools room.pools :memory-mib room.memory-mib))
+                                :pools room.pools
+                                :memory-mib (if (is worker.overstates-memory None) room.memory-mib worker.overstates-memory)))
   (val full (| base
                (env-heartbeat-part (env-report views "ok" (frozenset)) (current-platform))
                ;; 枠の file の状態は file を読む worker だけが名乗る(本番の coordinator への口の beat と同じ)。
@@ -2052,7 +2058,7 @@
   {:pre [(: worker SimWorker) (: boot str) (: truth HostTruth) (: now-ms int)] :post [(: % HostTruth)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "本番の coordinator への口の room-noted の代役(card ki-ced3c45980a5): 枠の file を読む worker が、読み直しの番(room-read-due)に世界の
-   枠の file を読み、名乗る枠(capacity・task-reserve・置ける組の印・memory の予算)と読めた状態を宿の真実へ書いて、その真実を返すため。
+   枠の file を読み、名乗る枠(task-reserve・background-room・memory の予算・置ける組の印)と読めた状態を宿の真実へ書いて、その真実を返すため。
    読めない・崩れた file は前に名乗った値のまま(状態だけを替える — 本番と同じ room-of-text の判断)。読まない worker と番でない拍は
    truth のまま返す(世界へ問わない)。"
   (<- due bool (room-read-due truth.room-read-ms now-ms))

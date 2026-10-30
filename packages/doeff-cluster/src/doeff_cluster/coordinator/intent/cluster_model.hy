@@ -81,7 +81,6 @@
 (defclass [(dataclass :frozen True)] WorkerInfo []
   (#^ str name)
   (#^ (get tuple #(str ...)) provides)                 ; 提供する能力の名(名の順 — クラスタの設定で名乗る)
-  (#^ int capacity)
   (#^ int last-seen-ms)
   (setv #^ (get tuple #(ComponentVersion ...)) versions #())        ; worker の Python / cloudpickle / doeff の版(task を送れる相手を選ぶ)
   ;; worker の process の世代(起動のたびに新しく振る・heartbeat の boot)。drain は頼まれた時の世代に付き、別の世代の heartbeat
@@ -114,7 +113,8 @@
   ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str doeff-commit "")
   ;; 常駐の job に使ってよい memory の予算(MiB — heartbeat の memoryMiB = 枠の file の行の値・card ki-ced3c45980a5。名乗らない worker は
-  ;; None)。GET /state と Worker の spec に出すだけで、置き方の判断には使わない(照らすのは宣言の側)。保存しない(次の heartbeat で埋まる)。
+  ;; None)。job の側の枠: 置いた job と surge の settle の和 + 新しい job の settle がこの値以下の時だけ置く(cluster_policy.memory-misfit —
+  ;; card ki-2acb63aec0fd)。None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| int None) memory-mib None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
@@ -135,12 +135,13 @@
   ;; まだ印の拍を通っていない worker は None(lastSeenMs を書かない)。以前は ClusterState の写像 seen-marks(worker 名 → 時刻)に
   ;; 持っていた — worker の保存の行の材料をこの記録 1 つに寄せた(#2903)。
   (setv #^ (| int None) seen-mark None)
-  ;; task のために空けておく数(heartbeat の taskReserve — 0 以上 capacity 以下・必ず名乗る)。常駐の job と並べた置き先(surge)は
-  ;; capacity からこの分を引いた数までしか置かない(cluster_policy.job-room-of)。task は予約を使い切ったら job の残りへはみ出してよい
-  ;; (cluster_policy.task-room-of は capacity 全体から数える)。保存する。位置で渡す欄の後ろに置くので、KW_ONLY の印の後の名で渡す
-  ;; 必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
+  ;; task の側の枠(card ki-2acb63aec0fd): task-reserve = task のために空けておく数(heartbeat の taskReserve — 0 以上・必ず名乗る)・
+  ;; background-room = 背景の仕事を同時に置ける数(heartbeat の backgroundRoom — 0 以上)。task の空きは 予約 + 背景の枠 − 置いた task
+  ;; (cluster_policy.task-room-of)で、常駐の job の数に依らない(job は memory で数える — memory-mib)。どちらも保存する。位置で渡す欄の
+  ;; 後ろに置くので、KW_ONLY の印の後の名で渡す必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
   (#^ KW_ONLY _)
   (#^ int task-reserve)
+  (#^ int background-room)
   ;; 宣言の在る job ごとの、最後に終わったと知れた刻と今の世代の報告で process を持つか(KnownExit の列・job の名の順 — #3672)。
   ;; heartbeat ごとに cluster_policy.known-exits-after が作り直す。保存する(worker/<名> の knownExits — 状態の報告 statuses は保存しないので、
   ;; coordinator を作り直した後に最初に来る新しい世代の heartbeat も、前の世代で process を持っていた job をこの列から数える)。
@@ -151,10 +152,13 @@
 
 (defrecord WorkerLoad
   "worker 1 台の担っている数(cluster_policy.load-of の値): jobs = 常駐の job の置き先と並べた置き先(surge)の数・tasks = 置かれた task
-   (PLACED-PHASES)の数。置ける空き(job-room-of・task-room-of)はこの 2 つと worker の capacity・task-reserve から求める。"
+   (PLACED-PHASES)の数・settle-mib = 置いた job と surge の落ち着いた memory(ClusterJob.settle-mib)の和(MiB — memory を知らない旧い
+   保存の行の job は 0 と数える)。job の側の空き(memory-room-of・memory-misfit)は settle-mib と worker の memory-mib から、task の空き
+   (task-room-of)は tasks と worker の task-reserve・background-room から求める。jobs は置く順(担う数の少ない順)にだけ使う。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ int jobs)
-  (#^ int tasks))
+  (#^ int tasks)
+  (#^ int settle-mib))
 
 
 (defclass [(dataclass :frozen True)] EnvFailed []
@@ -447,7 +451,8 @@
 
 
 ;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
-;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い。
+;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い(job の側の空きは memory —
+;; 訳は UnplacedView.memory・card ki-2acb63aec0fd)。
 
 
 (defrecord UnplacedView
@@ -455,14 +460,17 @@
    止まりの長さになった(2026-10-26 22:45〜23:21 に 13 本)ので、外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため。
    service = Service の名・kind = 置き先が無い理由の種類・needs = 効く needs(cluster_policy.effective-needs — 上書きの間は上書きの needs)・
    missing = needs のうち、生きていて drain 中でない worker のどれも名乗らない能力(名の順 — 空なら、能力は揃うが 1 台に揃わない・固定・
-   専用の能力・空きのどれかで置けない)・pin = 固定の worker の名・since-ms = 置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)。"
+   専用の能力・空きのどれかで置けない)・pin = 固定の worker の名・since-ms = 置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)・
+   memory = 生きていて条件を満たし drain 中でない worker ごとの、memory で置けない訳(cluster_policy.memory-misfit の文 — worker の名の順・
+   card ki-2acb63aec0fd)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str service)
   (#^ UnplacedKind kind)
   (#^ (get tuple #(str ...)) needs)
   (#^ (get tuple #(str ...)) missing)
   (#^ (| str None) pin)
-  (#^ int since-ms))
+  (#^ int since-ms)
+  (setv #^ (get tuple #(str ...)) memory #()))
 
 
 (defrecord StateView
@@ -664,7 +672,7 @@
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
 ;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも task を置ける空き
-;; (task-room-of)が 0(常駐の job と置かれた task で capacity が埋まっている)。
+;; (task-room-of)が 0(置かれた task で予約と背景の枠が埋まっている — 常駐の job は task の空きを使わない・card ki-2acb63aec0fd)。
 
 
 (defenum NotReadyKind

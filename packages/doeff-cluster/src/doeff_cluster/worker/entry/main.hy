@@ -142,12 +142,15 @@
     True found))
 
 
-(defk boot-room [room-file name capacity task-reserve]
-  {:pre [(: room-file str) (: name str) (: capacity (| int None)) (: task-reserve (| int None))] :post [(: % (| WorkerRoom str))]
+(defk boot-room [room-file name task-reserve background-room memory-mib]
+  {:pre [(: room-file str) (: name str) (: task-reserve (| int None)) (: background-room int) (: memory-mib (| int None))]
+   :post [(: % (| WorkerRoom str))]
    :tags {:context "worker" :role "main"}}
   "起動の時に名乗る枠を決めるため(card ki-6828eda880ce): 枠の file(room-file — 空 = 読まない)の自分の行が読めればその値、読めなければ
-   引数の値(--capacity は既定 10)。引数の --task-reserve も無ければ起動を断る訳の文を返す — 既定の値で埋めない。file を読めない事は
-   最初の heartbeat の前の読み直し(coordinator_link.room-noted)が log に出し、heartbeat の roomFile で名乗る。"
+   引数の値(--background-room は既定 0・--memory-mib は省けば名乗らない — card ki-2acb63aec0fd)。引数の --task-reserve も無ければ起動を
+   断る訳の文を返す — 既定の値で埋めない。0 未満の引数も断る訳の文(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り
+   続けて断られない)。file を読めない事は最初の heartbeat の前の読み直し(coordinator_link.room-noted)が log に出し、heartbeat の
+   roomFile で名乗る。"
   (var reading None)
   (when room-file
     (<- text (ReadText room-file))
@@ -157,9 +160,11 @@
       (:= reading read)))
   (cond
     (and (is-not reading None) (is-not reading.room None)) reading.room
-    (is-not task-reserve None) (WorkerRoom :capacity (if (is capacity None) 10 capacity) :task-reserve task-reserve)
+    (and (is-not task-reserve None) (or (< task-reserve 0) (< background-room 0) (and (is-not memory-mib None) (< memory-mib 0))))
+      (.format "--task-reserve {}・--background-room {}・--memory-mib {} は 0 以上で名乗る" task-reserve background-room memory-mib)
+    (is-not task-reserve None) (WorkerRoom :task-reserve task-reserve :background-room background-room :memory-mib memory-mib)
     (is reading None) "--task-reserve を渡す(--room-file を渡さない時は必ず要る)"
-    True (.format "枠の file {} を読めない({}: {})— 読めるようにするか、--task-reserve(と --capacity)を渡す"
+    True (.format "枠の file {} を読めない({}: {})— 読めるようにするか、--task-reserve(と --background-room・--memory-mib)を渡す"
                   room-file reading.state.value reading.reason)))
 
 
@@ -334,13 +339,16 @@
   (.add-argument parser "--exclusive" :default "" :help "専用の能力(provides の一部・a,b)— このどれかを要る仕事だけを受ける")
   (.add-argument parser "--node" :default "" :help "この worker の置かれた k8s の node の名(coordinator が node の label から能力を導く)")
   (.add-argument parser "--labels" :default None :help "受け付けない(旧い形 — --provides / --exclusive で能力を名乗る)")
-  (.add-argument parser "--capacity" :type int :default None
-                 :help "同時の job と task の上限(--room-file が無ければ既定 10 — 在れば file の値が勝ち、file を読めない起動の時だけ使う)")
   (.add-argument parser "--task-reserve" :type int :default None
-                 :help "capacity のうち task のために空けておく数(0 以上 capacity 以下)— coordinator は常駐の job をこの分に置かない。
-                        --room-file が無ければ必ず渡す")
+                 :help "task のために空けておく数(0 以上)。--room-file が無ければ必ず渡す(在れば file の値が勝ち、file を読めない起動の時だけ使う)")
+  (.add-argument parser "--background-room" :type int :default 0
+                 :help "背景の仕事を同時に置ける数(0 以上 — task の空きは task-reserve + この数 − 置いた task・card ki-2acb63aec0fd)。
+                        --room-file が在れば file の値が勝つ")
+  (.add-argument parser "--memory-mib" :type int :default None
+                 :help "常駐の job に使ってよい memory の予算(MiB・0 以上)。coordinator は置いた job の settle の和 + 新しい job の settle が
+                        この値以下の時だけ置く。省けば名乗らず、memory で縛られない(枠の file の外の機体の worker)。--room-file が在れば file の値が勝つ")
   (.add-argument parser "--room-file" :default ""
-                 :help "枠の file(JSON — worker の名 → capacity・taskReserve)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
+                 :help "枠の file(JSON — worker の名 → taskReserve・backgroundRoom・memoryMiB)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
                         値を名乗る — 枠の変更で worker を起こし直さない(card ki-6828eda880ce)。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
@@ -390,12 +398,9 @@
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
   ;; 起動の時に名乗る枠(card ki-6828eda880ce): 枠の file が在れば file の自分の行(読めなければ引数 — 両方無ければ起動しない)、
   ;; 無ければ引数。以後の読み直しは coordinator への口(room-noted)。
-  (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.capacity args.task-reserve))))
+  (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.task-reserve args.background-room args.memory-mib))))
   (when (isinstance room str)
     (.error parser room))
-  ;; task のために空けておく数を起動の時点で検める(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り続けて断られない)。
-  (when (not (<= 0 room.task-reserve room.capacity))
-    (.error parser (.format "--task-reserve {} は 0 以上 --capacity {} 以下で名乗る" room.task-reserve room.capacity)))
   (setv layout (CodeLayout :import-roots (tuple (gfor r (.split args.import-roots ",") :if r r))
                            :base-paths (tuple (gfor p (.split args.base-pythonpath ",") :if p p))))
   (setv state-dir (Path args.state-dir)
@@ -476,7 +481,7 @@
   ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る・card ki-069f4a5c07f7)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
-        link (LinkState args.name provides room.capacity room.task-reserve (int (* args.fence 1000)) places.tasks boot
+        link (LinkState args.name provides room.task-reserve room.background-room (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
@@ -484,6 +489,8 @@
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(card ki-6828eda880ce — 空 = 読まない)。
                         :room-file (or args.room-file None)
+                        ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない・card ki-2acb63aec0fd)。
+                        :memory-mib room.memory-mib
                         ;; 自分の doeff の版を heartbeat で名乗る(card ki-6e83e03d146d — 無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator

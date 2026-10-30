@@ -39,7 +39,7 @@ class LaunchEnvMissing(ValueError):
 def shown_value(field: LaunchField, value: str | int | tuple) -> _Program[str, object]:
     ...
 
-def read_value(field: LaunchField, text: str) -> _Program[str | int | tuple, object]:
+def read_value(field: LaunchField, text: str) -> _Program[str | int | tuple | None, object]:
     ...
 
 def launch_env(table: tuple[LaunchField, ...], launch: WorkerLaunch | CoordinatorLaunch) -> _Program[tuple[EnvEntry, ...], object]:
