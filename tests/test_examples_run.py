@@ -292,6 +292,14 @@ ARTICLE_STDOUT: dict[str, tuple[str, ...]] = {
     ),
 }
 ARTICLE_TIMED = "fanout.py"
+# 例の dir が書く旧い呼びと、repo の版でその呼びが出す DeprecationWarning の文の頭。ADR-DOE-API-002 R3 は、この dir を PyPI の版で
+# 毎日走らせる物として、値の形を持つ版が PyPI に出るまで書き換えない(PyPI の 0.8.0 の await_handler は factory で、値の形で書くと
+# 記事の読み手の `pip install doeff` で落ちる)とし、同じ R3 が旧い呼びを 1 つの版の間 DeprecationWarning つきで残す。そこで
+# repo の版で走らせるこの検は、その 1 つの警告だけを許して捨て、ほかの警告(sqlite3 の ResourceWarning など)は誤りのままにする。
+# 例を値の形に書き換えたら、ここから行を消す(test_article_former_calls_are_still_written が、書き換えた後に行が残るのを赤にする)。
+ARTICLE_FORMER_CALLS: dict[str, tuple[str, str]] = {
+    "fanout.py": ("await_handler()", "await_handler() is deprecated"),
+}
 # 他の file が import するだけで、何も印字しない module。
 ARTICLE_MODULES = ("infra.py", "plain_app.py", "welcome.py")
 
@@ -301,9 +309,12 @@ def test_article_example_prints_what_the_article_shows(
     name: str, deadline_scale_factor: float
 ) -> None:
     # 読み手と同じく例の dir で `python <名>` と打つ(例は同じ dir の file を import する)。警告も誤りにする — 記事は印字を
-    # 囲みのまま見せ、3.13 からの sqlite3 の閉じ忘れの ResourceWarning も印字に混ざる。
+    # 囲みのまま見せ、3.13 からの sqlite3 の閉じ忘れの ResourceWarning も印字に混ざる。ARTICLE_FORMER_CALLS の旧い呼びの
+    # DeprecationWarning だけは捨てる(後に書いた -W が先に効く)。
+    former = ARTICLE_FORMER_CALLS.get(name)
+    tolerated = ["-W", f"ignore:{former[1]}:DeprecationWarning"] if former else []
     completed = subprocess.run(
-        with_settings([sys.executable, "-W", "error", name], {"DOEFF_PROFILE": None}),
+        with_settings([sys.executable, "-W", "error", *tolerated, name], {"DOEFF_PROFILE": None}),
         cwd=ARTICLE_EXAMPLES,
         capture_output=True,
         text=True,
@@ -349,3 +360,12 @@ def test_article_stdout_names_every_script_of_the_article() -> None:
     )
     assert scripts == sorted(ARTICLE_STDOUT)
     assert all((ARTICLE_EXAMPLES / name).is_file() for name in ARTICLE_MODULES)
+
+
+def test_article_former_calls_are_still_written() -> None:
+    # 許した警告は、例がまだ旧い呼びを書いている間だけ要る。例を値の形へ書き換えたのに許しが残ると、旧い呼びが戻っても気づかない。
+    assert set(ARTICLE_FORMER_CALLS) <= set(ARTICLE_STDOUT)
+    for name, (call, _) in ARTICLE_FORMER_CALLS.items():
+        assert call in (ARTICLE_EXAMPLES / name).read_text(), (
+            f"examples/testing_without_mocks/{name} はもう {call} を書かない — ARTICLE_FORMER_CALLS から行を消す"
+        )
