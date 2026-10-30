@@ -168,6 +168,11 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   selector: { app: doeff-worker, job.doeff.dev/<job の名>: placed }
   ```
 
+- label の綴り(前置き `job.doeff.dev/` と値 `placed`)は外へ約束した値で、契約の file `contracts/pod-job-labels.json`
+  (`{"prefix": …, "value": …}`)に置きます。selector を書く外の系とその検は、隠した区画の中の file でなくこの file を読みます。
+  契約の file と worker の定義(`pod_label_rules` の `JOB-LABEL-PREFIX`・`JOB-LABEL-VALUE`)の食い違いは
+  `tests/test_pod_job_label_contract.hy` が赤にします。
+
 - worker が死んだ Pod は readinessProbe が落ちて Service の振り先から外れます。label にできない名(label の名の字の外・63 字を越える)
   の job は label にせず、worker の log に 1 行出します。task は label にしません。Pod の外の worker(機体の上で直に動く worker)は
   label を持ちません。
