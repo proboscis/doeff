@@ -22,28 +22,34 @@ asyncioでコードを書く人なら、coroutineの奥の`await client.get(url)
 # releases.py(抜粋)
 import json  # APIの答えの本文を、JSONとして読む。
 from collections import Counter  # 送った依頼を、URLごとに数える。
+from dataclasses import dataclass, field  # エフェクトを、凍ったdataclassで定義する。
 
-from doeff import Resume, ResumeThrow, do, handler, run  # 再開・例外での再開・定義・ハンドラ・実行を使う。
-from doeff_core_effects import HttpRequest, HttpResponse  # HTTPの依頼のエフェクトと、その答えの型。
+from doeff import EffectBase, Resume, ResumeThrow, do, handler, run  # エフェクトの基底・再開・例外での再開・定義・ハンドラ・実行を使う。
 
 GITHUB = "https://api.github.com"  # GitHubのAPIの根のURL。
+
+
+@dataclass(frozen=True)  # 欄を変えられない値にする。
+class HttpRequest(EffectBase):  # 「この依頼を送って」。ハンドラは、答えの本文を返す。
+    method: str  # メソッド。
+    url: str  # 依頼の先のURL。
+    headers: dict[str, str] = field(default_factory=dict)  # ヘッダ。
 
 
 @do  # yieldのたびに止まるプログラムにする。
 def latest_releases(repos: list[str], token: str, api: str = GITHUB):  # 尋ねるだけで、自分では送らない。
     tags = {}  # リポジトリごとの最新のタグを集める。
     for repo in repos:  # リポジトリを1つずつ尋ねる。
-        response = yield HttpRequest(  # 依頼を出して止まる。答え方はハンドラが決める。
+        body = yield HttpRequest(  # 依頼を出して止まる。答え方はハンドラが決める。
             "GET",  # メソッド。
             f"{api}/repos/{repo}/releases/latest",  # 最新のリリースのURL。
             headers={"Authorization": f"Bearer {token}"},  # トークンをヘッダに載せる。
         )
-        response.raise_for_status()  # 400以上の答えなら、例外にする。
-        tags[repo] = json.loads(response.text)["tag_name"]  # 本文のJSONから、タグの名を取る。
+        tags[repo] = json.loads(body)["tag_name"]  # 本文のJSONから、タグの名を取る。
     return tags  # リポジトリからタグへの辞書を返す。
 ```
 
-`HttpRequest`は、doeffのパッケージのエフェクトです。`HttpResponse`は、そのハンドラが返す答えです。`latest_releases`は、何も送りません。依頼を`yield`し、何が起きるかは`HttpRequest`のハンドラが決めます。本番では、httpxで送る`http_production_handler()`がそのハンドラです。最後の節で、手元のサーバーに向けて走らせます。それまでは`github`が、APIと同じ形で辞書から答えます。そして、届いた依頼を1つずつ数えます。
+`HttpRequest`は、この記事で定義したエフェクトです。[1本目の入門](doeff-main.md)のエフェクトと同じく、`EffectBase`を継ぐ凍ったdataclassです。そのハンドラは、答えの本文を文字列で返します。`latest_releases`は、何も送りません。依頼を`yield`し、何が起きるかは`HttpRequest`のハンドラが決めます。最後の節では、HTTPで送るハンドラを書きます。そして、手元のサーバーに向けて走らせます。それまでは`github`が、APIと同じ形で辞書から答えます。そして、届いた依頼を1つずつ数えます。
 
 ```python
 # releases.py(抜粋)
@@ -57,8 +63,7 @@ sent: Counter[str] = Counter()  # URLごとに、送った依頼の数。
 def github(effect: HttpRequest, k):  # ここに届いた依頼は、送った物として数える。
     sent[effect.url] += 1  # このURLへの依頼を1つ数える。
     repo = effect.url.removeprefix(f"{GITHUB}/repos/").removesuffix("/releases/latest")  # URLからリポジトリの名を取る。
-    body = json.dumps({"tag_name": TAGS[repo]})  # APIと同じ形の本文を作る。
-    return (yield Resume(k, HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)))  # 状態200の答えでkを再開する。
+    return (yield Resume(k, json.dumps({"tag_name": TAGS[repo]})))  # APIと同じ形の本文で、kを再開する。
 ```
 
 ## 記録の係は、エフェクトをもう一度出す
@@ -82,7 +87,7 @@ def recording(tape: dict):  # 依頼を1つずつ外へ出し、その答えを�
 ![recordは、出ていく依頼と戻る答えを両方見る](/images/zenn-use-cases-v0/generated/replay-concept.png)
 *recordは依頼を外のgithubへ出し直し、答えをtapeに書いてから、同じ答えでkを再開します。*
 
-tapeは、依頼をメソッドとURLで引きます。欄が同じ`HttpRequest`の値どうしでも、等しくはなりません。値ではなく、同一性で比べるからです。そこで記録の係が、どの2つの依頼を同じと見るかを決めます。この係は、ヘッダを鍵から外しました。この選び方は、ヘッダのトークンが効いてくる後の節で、また出てきます。
+tapeは、依頼をメソッドとURLで引きます。依頼そのものは、鍵にしません。依頼はヘッダの辞書を持つので、ハッシュが無く、辞書の鍵になれません。トークンだけが違う2つの依頼も、等しくなりません。そこで記録の係が、どの2つの依頼を同じと見るかを決めます。この係は、ヘッダを鍵から外しました。この選び方は、ヘッダのトークンが効いてくる後の節で、また出てきます。
 
 ## 再生の係は、tapeから答える
 
@@ -139,15 +144,30 @@ LookupError: not recorded: GET https://api.github.com/repos/acme/docs/releases/l
 
 ## tapeをファイルに置く
 
-辞書は、プロセスが生きている間しか残りません。doeffのパッケージには、記録の係と再生の係を1つにしたハンドラがあります。後ろに保存先を持つ`make_memo_rewriter`です。
+辞書は、プロセスが生きている間しか残りません。doeffには、記録の係と再生の係を1つにしたハンドラ`make_memo_rewriter`があります。答えは、自前の3つのエフェクトで保存へ出します。その3つには、数行のハンドラがファイルで答えます。
 
 ```python
 # on_disk.py(抜粋)
-def recorded(program, database, network, key=content_address):  # 保存の層を付けて、最後まで走らせる。
+def json_tape(path: Path):  # 保存: MemoExists・MemoGet・MemoPutに、JSONのファイルで答える。
+    @handler  # 3つのエフェクトを受けるハンドラにする。
+    def storage(effect: MemoExistsEffect | MemoGetEffect | MemoPutEffect, k):  # 保存のエフェクトだけを受ける。
+        tape = json.loads(path.read_text()) if path.exists() else {}  # ファイルを読む。無ければ空。
+        if isinstance(effect, MemoExistsEffect):  # 在るかを尋ねられたら、
+            return (yield Resume(k, effect.key in tape))  # 鍵が在るかで、kを再開する。
+        if isinstance(effect, MemoGetEffect):  # 読めと言われたら、
+            return (yield Resume(k, tape[effect.key]))  # 保存した答えで、kを再開する。
+        tape[effect.key] = effect.value  # 残せと言われたら、答えを鍵の所に置く。
+        path.write_text(json.dumps(tape, indent=2))  # ファイルに書き戻す。
+        return (yield Resume(k, None))  # 書けたら、kを再開する。
+
+    return storage  # 作ったハンドラを返す。
+
+
+def recorded(program, tape, network, key=content_address):  # 保存の層を付けて、最後まで走らせる。
     program = make_memo_rewriter(HttpRequest, key_fn=key)(program)  # 在れば保存から答え、無ければ外へ出して残す。
-    program = sqlite_memo_handler(database)(program)  # 保存: MemoExists・MemoGet・MemoPutにSQLiteのファイルで答える。
+    program = json_tape(tape)(program)  # 保存: 答えをJSONのファイルに残す。
     program = network(program)  # 保存に無い依頼だけが、ここまで届く。
-    return run(scheduled(await_handler()(slog_discard_handler(program))))  # 補助のハンドラを付けて走らせる。
+    return run(scheduled(await_handler(slog_discard_handler(program))))  # 補助のハンドラを付けて走らせる。
 
 
 @handler  # HttpRequestを受けるハンドラにする。
@@ -160,14 +180,14 @@ def offline(effect: HttpRequest, k):  # 通信の位置に置く。保存に無�
 | ハンドラ | すること |
 |---|---|
 | `make_memo_rewriter(HttpRequest, key_fn=key)` | `HttpRequest`ごとに鍵を作り、`MemoExists(key)`を`yield`します。在れば`MemoGet(key)`を`yield`し、保存した答えで`k`を再開します。無ければ`record`と同じく、依頼を外へ出します。そして`MemoPut(key, answer)`を`yield`し、`k`を再開します |
-| `sqlite_memo_handler(database)` | `MemoExists`・`MemoGet`・`MemoPut`に、SQLiteのファイルで答えます |
-| `network` | 保存に無い依頼だけを受けます。ここでは`github`、本番では`http_production_handler()`、CIでは`offline`です |
-| `slog_discard_handler`・`await_handler`・`scheduled` | `slog_discard_handler`は、`make_memo_rewriter`のログの行を捨てます。残りの2つは、保存の層が`yield`する`Await`を走らせます。ファイルの読み書きを、worker threadで行うためです |
+| `json_tape(tape)` | `MemoExists`・`MemoGet`・`MemoPut`に、JSONのファイルで答えます。3つのクラスは、`MemoExistsEffect`・`MemoGetEffect`・`MemoPutEffect`です |
+| `network` | 保存に無い依頼だけを受けます。ここでは`github`、最後の節では`send`、CIでは`offline`です |
+| `slog_discard_handler`・`await_handler`・`scheduled` | `slog_discard_handler`は、`make_memo_rewriter`のログの行を捨てます。残りの2つは、最後の節の`send`が`yield`する`Await`を走らせます。その間、worker threadが通信を待ちます |
 
 ![保存に在れば、通信の位置まで届かない](/images/zenn-use-cases-v0/generated/replay-flow.png)
 *make_memo_rewriterは、まず保存に在るかを尋ねます。在れば保存から答え、無い時だけ依頼を外へ出して答えを残します。*
 
-保存も、エフェクトです。`make_memo_rewriter`は、SQLiteについて何も知りません。`MemoGet`と`MemoPut`を`yield`し、行き先は1つ外のハンドラが決めます。`sqlite_memo_handler(database)`の所は、ほかの保存のハンドラでも構いません。`in_memory_memo_handler()`を置けば、tapeはメモリに残ります。`make_memo_rewriter`は、そのままで同じように働きます。
+保存も、エフェクトです。`make_memo_rewriter`は、ファイルについて何も知りません。`MemoExists`・`MemoGet`・`MemoPut`を`yield`し、行き先は1つ外のハンドラが決めます。保存の仕組みは、`json_tape`がすべてです。同じ3つに辞書で答えれば、tapeはメモリに残ります。`make_memo_rewriter`は、そのままで同じように働きます。
 
 `offline`は、通信の位置に座ります。ファイルが答える依頼は、そこまで届きません。ほかの依頼は、`LookupError`を起こします。例外は前と同じくプログラムの`yield`に届き、何も送られません。
 
@@ -200,7 +220,7 @@ print(recorded(reported(latest_releases(REPOS, "ci-dummy")), tape, offline))  # 
 LookupError: not recorded: GET https://api.github.com/repos/acme/server/releases/latest
 ```
 
-既定の鍵の`content_address`は、依頼の全部のハッシュです。メソッド・URL・ヘッダ・params・本文・時間の上限など、どの欄も入ります。トークンはヘッダに在るので、別のトークンの依頼は別の依頼です。だから、保存に当たりません。上で手で書いたtapeは、メソッドとURLで引きました。同じ鍵を、`make_memo_rewriter`に渡します。
+既定の鍵の`content_address`は、依頼の全部のハッシュです。メソッド・URL・ヘッダの、どの欄も入ります。トークンはヘッダに在るので、別のトークンの依頼は別の依頼です。だから、保存に当たりません。上で手で書いたtapeは、メソッドとURLで引きました。同じ鍵を、`make_memo_rewriter`に渡します。
 
 ```python
 # on_disk.py(抜粋)
@@ -217,22 +237,34 @@ print(recorded(latest_releases(REPOS, "ci-dummy"), keyed, offline, method_and_ur
 {'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
 ```
 
-鍵は、APIごとに選びます。鍵から外した物は、再生の時に区別されません。答えが`params`や本文で変わるなら、それも鍵に入れます。どちらの鍵でも、ファイルにトークンは残りません。鍵は`GET https://...`の文字列かハッシュで、保存する答えは応答だからです。ただし、応答は丸ごと保存されます。そのヘッダや本文には、個人の情報が入ることがあります。commitする前に、ファイルを読んで確かめます。
+鍵は、APIごとに選びます。鍵から外した物は、再生の時に区別されません。答えが`Accept`のようなヘッダで変わるなら、それも鍵に入れます。どちらの鍵でも、ファイルにトークンは残りません。鍵は`GET https://...`の文字列かハッシュで、保存する答えは応答の本文だからです。ただし、本文は丸ごと保存されます。本文には、個人の情報が入ることがあります。commitする前に、ファイルを読んで確かめます。
 
 ## I/O:動いているサーバーで記録し、止めて再生する
 
-ここまでは、`github`が辞書から答えてきました。`live.py`は、GitHubのAPIと同じ形で答えるHTTPサーバーを手元に立てます。`http_production_handler()`で記録し、サーバーを止め、ファイルから再生します。
+ここまでは、`github`が辞書から答えてきました。`send`は、標準ライブラリのurllibで、依頼をHTTPで送ります。`live.py`は、GitHubのAPIと同じ形で答えるHTTPサーバーを手元に立てます。`send`で記録し、サーバーを止め、ファイルから再生します。
 
 ```python
 # live.py(抜粋)
+def fetch(request: Request) -> str:  # 止まる所: HTTPで依頼を1つ送り、本文を文字列で返す。
+    with urlopen(request, timeout=10) as response:  # 依頼を送り、答えを開く。
+        return response.read().decode()  # 本文を読み、文字列にする。
+
+
+@handler  # HttpRequestを受けるハンドラにする。
+def send(effect: HttpRequest, k):  # urllibをworker threadで走らせ、Awaitで待つ。
+    request = Request(effect.url, method=effect.method, headers=effect.headers)  # urllibの依頼を作る。
+    body = yield Await(asyncio.to_thread(fetch, request))  # worker threadで送り、終わるまで待つ。
+    return (yield Resume(k, body))  # 答えの本文で、kを再開する。
+
+
 if __name__ == "__main__":  # ファイルとして走らせた時だけ動く。
     server = ThreadingHTTPServer(("127.0.0.1", 0), Releases)  # 手元に、空いた番号のHTTPサーバーを立てる。
     threading.Thread(target=server.serve_forever, daemon=True).start()  # 別のスレッドで答えさせる。
     api = f"http://127.0.0.1:{server.server_port}"  # 手元のサーバーのURL。
     with tempfile.TemporaryDirectory() as directory:  # 記録のファイルを、一時のdirに置く。
-        tape = Path(directory) / "releases.sqlite"  # 記録のSQLiteのファイル。
-        print("-- live: httpx sends each request, and the file keeps each answer")  # 区切りの見出し。
-        print(recorded(latest_releases(REPOS, "secret", api), tape, http_production_handler()))  # httpxで送り、記録する。
+        tape = Path(directory) / "releases.json"  # 記録のJSONのファイル。
+        print("-- live: urllib sends each request, and the file keeps each answer")  # 区切りの見出し。
+        print(recorded(latest_releases(REPOS, "secret", api), tape, send))  # urllibで送り、記録する。
         print(f"served: {served.total()}")  # サーバーが答えた数。
         server.shutdown()  # サーバーを止める。
         server.server_close()  # サーバーの口を閉じる。
@@ -249,13 +281,14 @@ served: 2
 {'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
 ```
 
-1回目は、HTTPで通信します。`http_production_handler()`は、`httpx.AsyncClient`で依頼を送ります。その待ちは、`Await`を通します。サーバーは2回答えます。2回目は話す相手のサーバーが無く、ファイルが答えます。`latest_releases`は前と同じ関数で、`api`を手元のサーバーへ向けただけです。どこにも`async`がありません。その訳は、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で扱います。自分のリポジトリでは、`http_production_handler()`で一度記録し、ファイルをcommitします。CIでは、その所に`offline`を置きます。トークンは要りません。
+1回目は、HTTPで通信し、サーバーが2回答えます。`urlopen`は、答えが来るまで止まります。そこで`send`は、`asyncio.to_thread`でworker threadに任せます。その待ちは`Await`を通し、`await_handler`が答えます。2回目は話す相手のサーバーが無く、ファイルが答えます。`latest_releases`は前と同じ関数で、`api`を手元のサーバーへ向けただけです。どこにも`async`がありません。その訳は、9本目の[async/awaitがあるのに、なぜyieldで書くのか](doeff-coroutines.md)で扱います。自分のリポジトリでは、`send`のようなハンドラで一度記録し、ファイルをcommitします。CIでは、その所に`offline`を置きます。トークンは要りません。
 
 VCR.pyや`unittest.mock`を知っている人もいるでしょう。VCR.pyは、requestsやhttpxのようなHTTPクライアントにpatchを当てます。そうして、やり取りをカセットに記録します。`unittest.mock`では、テストがクライアントを名前で差し替えます。どちらも、クライアントの所で働きます。VCR.pyはpatchを当てるライブラリを知り、mockは差し替える名前を知っています。ここの記録の係は、エフェクトの所で働きます。どのクライアントが依頼を送るかを知りません。そして同じハンドラが、プログラムが`yield`するどのエフェクトも記録します。[testing_without_mocks/record_replay.py](https://github.com/proboscis/doeff/blob/main/examples/testing_without_mocks/record_replay.py)は、言語モデルの答えを記録します。docsの章[Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#6-keep-the-answers-record-once-replay)は、1つの記録の係で`Chat`と`Draw`を記録します。
 
 ## 限界
 
-- 保存する答えは、pickleで残します。信頼できるファイルだけを開きます。pickleを読むと、コードが走ることがあるからです。
+- `json_tape`は、JSONで表せる物だけを残します。ここでの答えは、文字列の本文です。状態やヘッダを持つ応答のような物で答えるエフェクトなら、それを書き表す保存のハンドラが要ります。
+- `json_tape`は、エフェクトのたびにファイルを丸ごと読みます。新しい答えのたびに、丸ごと書きます。テストのtapeには十分ですが、大きなキャッシュには遅すぎます。
 - 既定の鍵は、pickleした依頼のハッシュです。pickleのバイト列は、Pythonの版で変わります。下の「試す」の節のとおりに入れたdoeffでは、Python 3.13で作った鍵が3.14では当たりません。3.14のpickleは、既定で新しいprotocolを書くからです。doeffの版をまたいで同じままかも、約束されていません。`method_and_url`のような自分の鍵は、自分で決めるただの文字列です。
 - 保存のハンドラを付けないと、`make_memo_rewriter`はどの依頼も保存に無いと見ます。そして毎回、外へ出します。保存が無いという誤りは出ません。通信の位置に`offline`を置いた再生なら、これに気付けます。保存に無い依頼が、例外を起こすからです。
 - `make_memo_rewriter`は、型で選んで記録します。POSTも含めて、どの`HttpRequest`も記録します。記録したPOSTは、再生で送り直しません。たいていは、それがテストの望む形です。いつも外へ出したい依頼があるなら、`record`のような係を書きます。そして、その依頼を`Pass`で外へ渡します。
@@ -264,13 +297,13 @@ VCR.pyや`unittest.mock`を知っている人もいるでしょう。VCR.pyは�
 ## 試す
 
 ```bash
-pip install "doeff[http]"   # CPython 3.11から3.14で入る。http extraで、HttpRequestとhttpxが入る。
+pip install doeff   # CPython 3.11から3.14で入る。ほかには何も要らない。
 python releases.py  # 記録・再生と、記録に無いリポジトリを走らせる。
 python on_disk.py  # ファイルに置いた記録と、トークンを外した鍵を走らせる。
 python live.py  # 手元のサーバーで記録し、止めてから再生する。
 ```
 
-この記事の例はどれも、PyPIのdoeff 0.8.0で、載せたとおりに走ります。完全なファイルは、[examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay)にあります。docsの章[Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md)は、`CacheGet`と`CachePut`を扱います。プログラムが、わざとキャッシュする時に自分で`yield`する物です。ここの`make_memo_rewriter`は、外から来た答えを取っておきます。プログラムは、何も頼みません。
+この記事の例はどれも、`pip install doeff`だけで、載せたとおりに走ります。extraもほかのパッケージも要りません。完全なファイルは、[examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay)にあります。docsの章[Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md)は、`CacheGet`と`CachePut`を扱います。プログラムが、わざとキャッシュする時に自分で`yield`する物です。ここの`make_memo_rewriter`は、外から来た答えを取っておきます。プログラムは、何も頼みません。
 
 時計をハンドラにし、何日分もの待ちを数ミリ秒で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。[1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。
 
@@ -280,12 +313,11 @@ python live.py  # 手元のサーバーで記録し、止めてから再生す�
 
 ## 参考
 
-この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.13・3.14で試しました。
+この記事のコードは、2026年10月30日に、doeffのmainから組んだwheelで確かめました。`pip install doeff`で入る物だけを使い、extraは入れていません。Pythonは3.11・3.12・3.13・3.14で試しました。
 
-- [HttpRequestとHttpResponseの定義(doeff 0.8.0)](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/http_effects.hy)
-- [make_memo_rewriterとcontent_addressの実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
-- [SQLiteへの保存の実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/storage/sqlite.py)
-- [http_production_handlerの実装](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/_http_handlers_impl.hy)
+- [make_memo_rewriterとcontent_addressの実装(doeff 0.8.0)](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/memo_handlers.py)
+- [MemoExists・MemoGet・MemoPutの定義(doeff 0.8.0)](https://github.com/proboscis/doeff/blob/v0.8.0/packages/doeff-core-effects/doeff_core_effects/memo_effects.py)
+- [urllib.request(Pythonの公式の説明)](https://docs.python.org/3/library/urllib.request.html)
 - [VCR.py(公式の説明)](https://vcrpy.readthedocs.io/)
 - 前の回:[ライブラリのcommitの68%を、Claude Codeと書いた1年](doeff-commits.md)
 - 次の回:[バックテストと本番で処理を2つ書くのをやめる](doeff-backtest.md)

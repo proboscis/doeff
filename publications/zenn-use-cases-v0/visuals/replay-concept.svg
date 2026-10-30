@@ -42,7 +42,7 @@
   <text class="ja" x="715" y="562" font-size="30" text-anchor="middle">1つ外へ出し直す</text>
 
   <!-- ③ githubが答える -->
-  <text class="code" x="715" y="638" font-size="26" text-anchor="middle">③ HttpResponse(200, ...)</text>
+  <text class="code" x="715" y="638" font-size="22" text-anchor="middle">③ {"tag_name": "v2.4.1"}</text>
   <line class="back" x1="880" y1="662" x2="554" y2="662" marker-end="url(#arrow)"/>
   <text class="ja" x="715" y="712" font-size="30" text-anchor="middle">recordが受け取る</text>
 

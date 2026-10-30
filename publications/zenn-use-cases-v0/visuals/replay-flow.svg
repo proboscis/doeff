@@ -25,8 +25,8 @@
   <text class="code" x="480" y="178" font-size="24" font-weight="bold" text-anchor="middle">make_memo_rewriter</text>
   <text class="ja" x="480" y="226" font-size="28" text-anchor="middle">(記録と再生を1つに)</text>
   <rect x="650" y="120" width="300" height="130" rx="22" fill="#e3eefc" stroke="#9dbbe8" stroke-width="3"/>
-  <text class="code" x="800" y="178" font-size="24" font-weight="bold" text-anchor="middle">sqlite_memo_handler</text>
-  <text class="ja" x="800" y="226" font-size="28" text-anchor="middle">(SQLiteのファイル)</text>
+  <text class="code" x="800" y="178" font-size="30" font-weight="bold" text-anchor="middle">json_tape</text>
+  <text class="ja" x="800" y="226" font-size="28" text-anchor="middle">(JSONのファイル)</text>
   <rect x="970" y="120" width="300" height="130" rx="22" fill="#fff6dc" stroke="#e5c66b" stroke-width="3"/>
   <text class="code" x="1120" y="178" font-size="30" font-weight="bold" text-anchor="middle">network</text>
   <text class="ja" x="1120" y="226" font-size="28" text-anchor="middle">(通信の位置)</text>
@@ -52,7 +52,7 @@
   <text class="ja" x="800" y="618" font-size="28" text-anchor="middle">③ HttpRequestを外へ出す</text>
   <line class="call" x1="490" y1="640" x2="1106" y2="640" marker-end="url(#arrow)"/>
 
-  <text class="code" x="800" y="698" font-size="26" text-anchor="middle">HttpResponse(200, ...)</text>
+  <text class="code" x="800" y="698" font-size="26" text-anchor="middle">{"tag_name": "v2.4.1"}</text>
   <line class="back" x1="1110" y1="720" x2="494" y2="720" marker-end="url(#arrow)"/>
 
   <text class="code" x="640" y="778" font-size="26" text-anchor="middle">④ MemoPut(key, answer)</text>

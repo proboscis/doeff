@@ -22,7 +22,7 @@
 | L1/L2/L3の取得・補充・削除 | [memo](doeff-memo.md)（本文にコード） | 本文のメモリ3層例を実行確認。Redis/MinIOは組み込みと主張しない |
 | MemoPut / コスト条件 / MemoPolicy | [memo](doeff-memo.md)・[完全な例](examples/memo_policy.py) | 保存する層と削除を確認。標準memo_handlerがTTLを適用しないこと、コスト条件が違う削除で古い値が復活することも確認 |
 | rewriter / 部分的再利用 / データ源の差し替え | [boundaries](doeff-boundaries.md)・[完全な例](examples/document_pipeline.py) | ReadPage→HTTPへ翻訳。HTTP/Memo/時計を独立に交換。3件・仮想4秒、次のrunはHTTP不要で0秒を確認 |
-| HTTP記録・再生 / production | [replay](doeff-replay.md)・[完全な例](../../examples/record_and_replay/README.md) | yield effectで出し直す記録の係とResumeThrowの再生の係、Memo書き換え＋SQLite＋通信の位置のoffline、トークンを外した鍵、手元のHTTPサーバーで記録して止めた後の再生を検証 |
+| HTTP記録・再生 / production | [replay](doeff-replay.md)・[完全な例](../../examples/record_and_replay/README.md) | yield effectで出し直す記録の係とResumeThrowの再生の係、Memo書き換え＋JSONのファイルに答える保存のハンドラ＋通信の位置のoffline、トークンを外した鍵、手元のHTTPサーバーで記録して止めた後の再生を検証 |
 | cache / SQLite / プロセスをまたぐ再利用 | [durable](doeff-durable.md)・[完全な例](examples/durable.py) | prepare→finish→finishを別プロセスで実行。再利用と未完了の後続処理を確認 |
 | Conductorの履歴 / 時刻・乱数 | [durable](doeff-durable.md)・[完全な例](examples/workflow_journal.hy) | 同じ実行IDで再実行し結果一致を確認。エージェントなし |
 | journaled_agent_handler | [durable](doeff-durable.md)（本文にコード） | 既存のテスト用実行基盤への接続コード。エージェントの強制終了→再開は未検証 |

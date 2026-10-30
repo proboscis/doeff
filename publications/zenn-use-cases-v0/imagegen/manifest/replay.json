@@ -5,11 +5,11 @@
     "generation_prompt": "replay-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "221741791169326294a82d9c07eeba4c689bb61649c20d3e39aa4547881a9bd7",
+    "sha256": "7e6931264349796d5f039602c1bee6d3a68abd6492373c7c4612259999d821d4",
     "width": 1080,
     "height": 1200,
-    "bytes": 114051,
-    "review": "2026-10-29：英語の4本目「Record and replay」の版に書き直した時に、英語の記事のsequenceDiagramをSVGで描き直した。yield HttpRequest・yield effect・HttpResponse(200, ...)・tape[(\"GET\", url)] = answer・Resume(k, answer)の順を、本文のreleases.pyの抜粋(recording)と照合。携帯の幅でも字が読める大きさにした。"
+    "bytes": 112971,
+    "review": "2026-10-29：英語の4本目「Record and replay」の版に書き直した時に、英語の記事のsequenceDiagramをSVGで描き直した。yield HttpRequest・yield effect・HttpResponse(200, ...)・tape[(\"GET\", url)] = answer・Resume(k, answer)の順を、本文のreleases.pyの抜粋(recording)と照合。携帯の幅でも字が読める大きさにした。 2026-10-30：doeff本体だけの形(HttpRequestを記事で定義し、答えは本文の文字列)に直した時に、③の答えをHttpResponse(200, ...)から{\"tag_name\": \"v2.4.1\"}に替えた。本文のreleases.pyの抜粋(github・recording)と照合。"
   },
   {
     "id": "replay-flow",
@@ -17,10 +17,10 @@
     "generation_prompt": "replay-svg-source.txt",
     "edit_prompts": [],
     "tool": "SVG (hand-written) + chromium screenshot",
-    "sha256": "3800b0c7c265d383b6ff9bf873f348a08b1bc84420f9fbc0bed55a41135608e3",
+    "sha256": "816b3777081b1f08444922d8fed67ff20655e95a8393f179aec67f388277660e",
     "width": 1280,
     "height": 1480,
-    "bytes": 144434,
-    "review": "2026-10-29：英語の4本目の表の1行目(make_memo_rewriter)を、1回目(ファイルは空・networkはgithub)と2回目(同じファイル・networkはoffline)のsequenceDiagramにした。エフェクトの順(1回目はMemoExists・HttpRequest・MemoPut、2回目はMemoExists・MemoGet)を、reviews/replay-check.pyが印字で照らす順と照合。携帯の幅でも字が読める大きさにした。"
+    "bytes": 143919,
+    "review": "2026-10-29：英語の4本目の表の1行目(make_memo_rewriter)を、1回目(ファイルは空・networkはgithub)と2回目(同じファイル・networkはoffline)のsequenceDiagramにした。エフェクトの順(1回目はMemoExists・HttpRequest・MemoPut、2回目はMemoExists・MemoGet)を、reviews/replay-check.pyが印字で照らす順と照合。携帯の幅でも字が読める大きさにした。 2026-10-30：doeff本体だけの形に直した時に、保存の線をsqlite_memo_handler(SQLiteのファイル)からjson_tape(JSONのファイル)に、networkの答えをHttpResponse(200, ...)から{\"tag_name\": \"v2.4.1\"}に替えた。エフェクトの順は、reviews/replay-check.pyが印字で照らす順と同じ。"
   }
 ]

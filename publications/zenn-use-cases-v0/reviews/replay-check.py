@@ -1,7 +1,7 @@
 # PyPIで入れる物(../verify_pypi.pyが、PyPIのdoeffの版を決めて毎日走らせる)。
 # /// script
 # dependencies = [
-#     "doeff[http]",
+#     "doeff",
 # ]
 # ///
 """replay記事(英語の4本目「Record and replay」の版)の例が、英語の版と同じコードで、載せたとおりに走る事を確かめる。
@@ -14,7 +14,8 @@
 - 載せたとおりに走る: 試し方の3つのファイルをこのPythonで走らせ、印字を見出し「-- <鍵>: ...」ごとの区切りに分ける。
   本文のtextの枠はどれも、どれかの区切りと同じ。区切りはどれも、本文のどれかのtextの枠に在る。
 - 本文の主張: 走らせて確かめられる物を、例のファイルの部品で1つずつ印字して照らす(再生の外にHttpRequestのハンドラが
-  無い・欄が同じHttpRequestは等しくない・make_memo_rewriterが保存へ出すエフェクトの順・保存をメモリに置いても同じ・
+  無い・HttpRequestはハッシュを持たず、トークンだけが違う2つは等しくない・make_memo_rewriterが保存へ出すエフェクトの順・
+  同じ3つに辞書で答えればメモリから再生する・
   保存のハンドラが無いと毎回外へ出る・POSTも記録して再生で送らない・ファイルにトークンが残らない・別のプロセスが
   同じファイルから再生する)。
 - 本文の決まり: published: false、AIが書いたと名乗る文が無い、IOの差し替えだけに読める語がI/Oの節の外に無い、
@@ -45,9 +46,8 @@ FENCE = re.compile(r"^```(\w*)\n(.*?)^```$", re.S | re.M)
 ENGLISH_FENCE = re.compile(r"^~~~(\w*)\n(.*?)^~~~$", re.S | re.M)
 HEADER = re.compile(r"# (\w+\.py)\(抜粋\)")
 SEGMENT = re.compile(r"^-- ([\w ]+): .*$\n", re.M)
-# 子の警告は誤りにする。ResourceWarningだけは外す: SQLiteStorageはworkerのthreadごとに接続を開き、close()は呼んだthreadの
-# 接続だけを閉じるので、CPython 3.13からの「閉じていない接続」の警告が終わりに出る(読み手の既定の警告の設定では出ない)。
-WARNINGS = ("-W", "error", "-W", "ignore::ResourceWarning")
+# 子の警告は誤りにする(古い形の`await_handler()`のDeprecationWarningも、閉じ忘れのResourceWarningも止める)。
+WARNINGS = ("-W", "error")
 # IOの差し替えだけに読める語。I/Oの例の節の外で使えば、記事が代数的エフェクトの話からIOの差し替えの話に縮んで読める。
 IO_ONLY_WORDS = re.compile(r"swap\w*|fake\w*|mock\w*|real I/O|差し替|モック|偽|本物のI/O", re.I)
 # 記事の中に、AIが書いた・AIのエージェントが書いたと名乗る文を置かない。
@@ -185,19 +185,19 @@ CLAIMS = """
 import contextlib, io, tempfile
 from pathlib import Path
 
-from doeff import Pass, do, handler, run
-from doeff_core_effects import HttpRequest
+from doeff import Pass, Resume, do, handler, run
 from doeff_core_effects.handlers import await_handler, slog_discard_handler
-from doeff_core_effects.memo_handlers import in_memory_memo_handler, make_memo_rewriter, sqlite_memo_handler
+from doeff_core_effects.memo_effects import MemoExistsEffect, MemoGetEffect, MemoPutEffect
+from doeff_core_effects.memo_handlers import make_memo_rewriter
 from doeff_core_effects.scheduler import scheduled
 
-from on_disk import method_and_url, offline, recorded
-from releases import REPOS, github, latest_releases, sent
+from on_disk import json_tape, method_and_url, offline, recorded
+from releases import REPOS, HttpRequest, github, latest_releases, sent
 
 def stacked(program, *handlers):
     for install in handlers:
         program = install(program)
-    return run(scheduled(await_handler()(slog_discard_handler(program))))
+    return run(scheduled(await_handler(slog_discard_handler(program))))
 
 # 再生の係の外にHttpRequestのハンドラが無ければ、UnhandledEffectで止まる(本文「doeffはUnhandledEffectで走りを止めます」)。
 try:
@@ -207,9 +207,15 @@ try:
 except Exception as error:
     print("bare:", type(error).__name__, "HttpRequest" in str(error))
 
-# 欄が同じHttpRequestの値どうしは、等しくない(本文「同一性で比べるからです」)。
+# 依頼そのものはtapeの鍵にならない: ヘッダが辞書なのでハッシュが無く、トークンだけが違う2つは等しくない
+# (本文「ハッシュが無く、辞書の鍵になれません」「トークンだけが違う2つの依頼も、等しくなりません」)。
 url = "https://api.github.com/repos/acme/server/releases/latest"
-print("equal:", HttpRequest("GET", url) == HttpRequest("GET", url))
+try:
+    hash(HttpRequest("GET", url))
+    print("hash: ok")
+except TypeError:
+    print("hash: TypeError")
+print("equal:", HttpRequest("GET", url, {"Authorization": "Bearer a"}) == HttpRequest("GET", url, {"Authorization": "Bearer b"}))
 
 # make_memo_rewriterが保存のハンドラへ出すエフェクトの順(本文の表の1行目と図の2枚目)。ログのSlogは除く。
 def watching(name):
@@ -223,13 +229,24 @@ def watching(name):
 directory = Path(tempfile.mkdtemp())
 for name, network in (("miss", github), ("hit", offline)):
     stacked(latest_releases(["acme/server"], "secret"), make_memo_rewriter(HttpRequest),
-            watching(name), sqlite_memo_handler(directory / "watched.sqlite"), network)
+            watching(name), json_tape(directory / "watched.json"), network)
 
-# 保存をメモリに置いても、同じmake_memo_rewriterが再生する(本文「in_memory_memo_handler()を置けば」)。
-memory = in_memory_memo_handler()
+# 同じ3つに辞書で答えれば、同じmake_memo_rewriterがメモリから再生する(本文「同じ3つに辞書で答えれば」)。
+def dict_tape(tape):
+    @handler
+    def storage(effect: MemoExistsEffect | MemoGetEffect | MemoPutEffect, k):
+        if isinstance(effect, MemoExistsEffect):
+            return (yield Resume(k, effect.key in tape))
+        if isinstance(effect, MemoGetEffect):
+            return (yield Resume(k, tape[effect.key]))
+        tape[effect.key] = effect.value
+        return (yield Resume(k, None))
+    return storage
+
+memory = {}
 sent.clear()
-first = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), memory, github)
-again = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), memory, offline)
+first = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), dict_tape(memory), github)
+again = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), dict_tape(memory), offline)
 print("memory:", first == again, sent.total())
 
 # 保存のハンドラが無いと、毎回外へ出る(本文の限界「保存のハンドラを付けないと」)。
@@ -241,18 +258,17 @@ print("no storage:", sent.total())
 # POSTも記録し、再生では送り直さない(本文の限界「POSTも含めて」)。
 @do
 def publish():
-    response = yield HttpRequest("POST", url)
-    return response.status
+    return (yield HttpRequest("POST", url))
 
 sent.clear()
-tape = directory / "post.sqlite"
-print("post:", recorded(publish(), tape, github), recorded(publish(), tape, offline), sent.total())
+tape = directory / "post.json"
+print("post:", recorded(publish(), tape, github) == recorded(publish(), tape, offline), sent.total())
 
 # ファイルにトークンが残らない(本文「どちらの鍵でも、ファイルにトークンは残りません」)。
 for name, key in (("default", None), ("method_and_url", method_and_url)):
-    tape = directory / f"token-{name}.sqlite"
+    tape = directory / f"token-{name}.json"
     recorded(latest_releases(REPOS, "s3cr3t-token"), tape, github, *([key] if key else []))
-    stored = b"".join(path.read_bytes() for path in directory.glob(f"token-{name}.sqlite*"))
+    stored = tape.read_bytes()
     print(f"token in {name}:", b"s3cr3t-token" in stored, b"v2.4.1" in stored)
 
 # 既定の鍵はpickleした依頼のハッシュで、pickleのprotocolが変われば鍵も変わる(本文の限界「Python 3.13で作った鍵が3.14では当たりません」)。
@@ -266,6 +282,7 @@ print("key:", content_address(request) in by_protocol.values(), by_protocol[4] !
 claims = [tuple(line.split(": ", 1)) for line in child(["-c", CLAIMS]).splitlines()]
 assert claims == [
     ("bare", "UnhandledEffect True"),
+    ("hash", "TypeError"),
     ("equal", "False"),
     # 保存に無い時: 在るかを尋ね、外へ出し、答えを置く。在る時: 在るかを尋ね、読む(HttpRequestは保存のハンドラへ届かない)。
     ("miss", "MemoExistsEffect"),
@@ -275,17 +292,17 @@ assert claims == [
     ("hit", "MemoGetEffect"),
     ("memory", "True 2"),
     ("no storage", "4"),
-    ("post", "200 200 1"),
+    ("post", "True 1"),
     ("token in default", "False True"),
     ("token in method_and_url", "False True"),
     ("key", "True True"),
 ], claims
 
 # 別のプロセスが、同じファイルから再生する(本文「別のプロセスのテストやCIも、同じようにそのファイルから再生します」)。
-RECORD = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), sys.argv[1], github))"
-REPLAY = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), sys.argv[1], offline))"
+RECORD = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), Path(sys.argv[1]), github))"
+REPLAY = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), Path(sys.argv[1]), offline))"
 with tempfile.TemporaryDirectory(prefix="replay-check-") as directory:
-    tape = str(Path(directory) / "releases.sqlite")
+    tape = str(Path(directory) / "releases.json")
     recorded_once = child(["-c", RECORD, tape])
     replayed = child(["-c", REPLAY, tape])
 assert recorded_once == replayed == "{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}", (
