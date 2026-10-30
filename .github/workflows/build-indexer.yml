@@ -159,9 +159,7 @@ jobs:
       - name: Setup free-threaded Python
         uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.13t
-            3.14t
+          python-version: 3.14t
       - name: Build native binary
         working-directory: packages/doeff-indexer
         run: |
@@ -173,7 +171,9 @@ jobs:
         with:
           maturin-version: v1.15.0
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          # --find-interpreter also finds the runner's regular Pythons and builds the same abi3 wheel as the
+          # non-free-threaded job; naming the free-threaded interpreter builds the cp314t wheel.
+          args: --release --out dist -i python3.14t
           working-directory: packages/doeff-indexer
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -224,9 +224,7 @@ jobs:
       - name: Setup free-threaded Python
         uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.13t
-            3.14t
+          python-version: 3.14t
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build native binary
@@ -240,7 +238,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           maturin-version: v1.15.0
-          args: --release --out dist --find-interpreter
+          args: --release --out dist -i python3.14t
           working-directory: packages/doeff-indexer
       - name: Upload wheels
         uses: actions/upload-artifact@v4
