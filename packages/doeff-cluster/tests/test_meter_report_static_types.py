@@ -65,6 +65,7 @@ DECLARED = {
         "NextRequests",
         "Reply",
         "CoordinatorStopRequested",
+        "ServiceReached",
     },
 }
 
