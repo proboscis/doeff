@@ -17,8 +17,9 @@
 (import doeff_core_effects [CreatePromise Promise])
 (import doeff_core_effects [StopRequested])
 (import doeff_cluster.shared.intent.protocol [NextRequests Request Reply CoordinatorStopRequested])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
-(import doeff_cluster.coordinator.protocol.store [Persist])
+(import doeff_cluster [queued-requests]
+        doeff_cluster._coordinator.protocol.request_queue [RequestQueue enqueue-request])
+(import doeff_cluster [Persist])
 (import doeff_cluster.worker.intent.worker_model [PublishStatus ReadDesired])
 (import doeff_cluster [SimWorker HostTruthOf PartsOf sim-world sim-host StopCoordinator CrashCoordinator TakeHeldRequests observe-requests]
         doeff_cluster._sim.local [SimPlan SimParts HostTruth sim-plan StepBook])

@@ -828,14 +828,14 @@ class CoordinatorRan:
 
 
 def coordinator_run(tmp: Path, env: dict[str, str], before_stop: Callable[[], object] | None = None) -> CoordinatorRan:
-    """本物の coordinator の入口(boot.sh と同じ `hy -m doeff_cluster.coordinator.entry.main`)を、k8s の container と同じく stdout と
+    """本物の coordinator の入口(boot.sh と同じ `hy -m doeff_cluster._coordinator.entry.main`)を、k8s の container と同じく stdout と
     stderr を別の 2 つの先へ向けて起こし、受け始めたら止めの合図(SIGTERM — Pod の止めと同じ)を送って終わらせるため。env = 足す環境変数・
     before_stop = 受け始めた後、止めの合図の前に呼ぶ物(例 受け手が最初の POST を受けるまで待つ)。"""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     hy_command = str(Path(sys.executable).parent / "hy")
-    argv = ["env", *(f"{name}={value}" for name, value in env.items()), hy_command, "-m", "doeff_cluster.coordinator.entry.main",
+    argv = ["env", *(f"{name}={value}" for name, value in env.items()), hy_command, "-m", "doeff_cluster._coordinator.entry.main",
             "--state-file", str(tmp / "coord" / "state.json"), "--port", str(port), "--notice-broker", "memory"]
     (tmp / "coord").mkdir()
     out_path, err_path = tmp / "coordinator.out", tmp / "coordinator.err"

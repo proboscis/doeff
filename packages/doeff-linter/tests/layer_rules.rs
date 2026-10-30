@@ -1058,6 +1058,30 @@ fn architecture_declares_services_layers_and_dependencies() {
     assert_eq!(report["layers"][0]["name"], "core");
 }
 
+/// :dir で dir と名の違う service(doeff-cluster が区画を _ の dir へ隠した形 — doeff の ADR-DOE-API-001 R15)。置き場は :dir の dir で
+/// (DOEFF114 にしない)、DOEFF113 はタグの :context を dir でなく service の名と照らす。
+#[test]
+fn a_service_with_its_own_dir_matches_the_context_by_its_name() {
+    let files = [
+        ("app/_custody/core/pick.hy", tags("custody", "judgment") + "(defn pick [] 1)\n"),
+        ("app/_custody/intent/lease.hy", tags("custody", "intent") + "(defclass Lease [])\n"),
+        ("app/_custody/core/wrong_context.hy", tags("billing", "judgment") + "(defn g [] 1)\n"),
+    ];
+    let dir = architecture_repo(&files, "");
+    let architecture = std::fs::read_to_string(dir.path().join("architecture.hy")).unwrap();
+    let hidden = architecture.replace("(defservice custody \"預かり所\" {:layers", "(defservice custody \"預かり所\" {:dir \"_custody\" :layers");
+    assert_ne!(hidden, architecture);
+    std::fs::write(dir.path().join("architecture.hy"), hidden).unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF114").is_empty(), "{}", report);
+    // :context が service の名(custody)の file は鳴らない。名と違う :context(billing)だけが warning。
+    assert_eq!(keys(&report, "DOEFF113"), vec!["app/_custody/core/wrong_context.hy::DOEFF113::billing"]);
+    let wrong = violation(&report, "app/_custody/core/wrong_context.hy::DOEFF113::billing");
+    assert_eq!(wrong["severity"], "warning");
+    assert!(wrong["message"].as_str().unwrap().contains("置き場の service custody と食い違う"), "{}", wrong["message"]);
+    assert!(wrong["explanation"]["reason"].as_str().unwrap().starts_with("dir は service custody を指す"), "{}", wrong["explanation"]["reason"]);
+}
+
 /// #1799: DOEFF101 と DOEFF116 は同じ import を二重に数えない(層の向きを DOEFF101 が持つ)。DOEFF116 の案内は依存が輪になる時に
 /// 「宣言に足す」と言わない。DOEFF114 の移し先の層は定義の :role から推す(今の置き場所の層は推せない時だけ)。
 #[test]

@@ -12,7 +12,7 @@
 (import doeff_core_effects [state])
 (import doeff_time [Delay sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
+(import doeff_cluster._coordinator.protocol.request_queue [RequestQueue])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (val REPLY-SECONDS (/ (. (ClusterTiming) client-reply-ms) 1000.0))  ; 本番の client の返事の打ち切りの既定(ClusterTiming)
 (import doeff_cluster._sim.local [SimLink send-request])

@@ -30,7 +30,7 @@ cd packages/doeff-cluster && uv run --frozen --no-sync hy gen_old_state.hy <ç½®ã
 (import doeff [run])
 (import doeff_time [Delay])
 (import doeff_cluster [WalStore])
-(import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
+(import doeff_cluster._coordinator.entry.handler_sets [MemoryWalStore])
 (import doeff_cluster [sim-cluster])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSucceeded])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])

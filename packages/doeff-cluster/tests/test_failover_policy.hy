@@ -7,9 +7,9 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pathlib [Path])
 (import re)
-(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
-(import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob KeptApart])
-(import doeff_cluster.coordinator.core.failover_policy [failover-refusals per-machine?])
+(import doeff_cluster [WorkerInfo])
+(import doeff_cluster [FailoverWorker ResidentJob KeptApart])
+(import doeff_cluster [failover-refusals per-machine?])
 
 ;; 雛形の能力(どの機体の worker も名乗る — needs がこれだけの job は機体ごとの job)。
 (val TEMPLATE #("host-facts"))
@@ -183,7 +183,7 @@
   ;; 規則 2 を消した後(card ki-2acb63aec0fd)、この判断は task の側の枠(task-reserve・background-room)も、数の空き(job-room-of —
   ;; coordinator から消した)も読まない。読むと task の側の値で常駐の job を赤にし、coordinator の置き方(memory だけで job を数える)と
   ;; ずれる。
-  (val source (.read-text (/ (. (Path __file__) parent parent) "src" "doeff_cluster" "coordinator" "core" "failover_policy.hy")
+  (val source (.read-text (/ (. (Path __file__) parent parent) "src" "doeff_cluster" "_coordinator" "core" "failover_policy.hy")
                           :encoding "utf-8"))
   (val code (.join "\n" (gfor line (.splitlines source) (get (.split line ";") 0))))
   (assert (not (re.search r"job-room-of|HANDOFF-SURGE|load-alone|room-refusal" code)) "数の枠の判断が残っている")

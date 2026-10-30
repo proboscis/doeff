@@ -9,14 +9,16 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState HandoffPhase])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.api_policy [placement-due plan-rollouts tick ROLLOUT-ACTOR])
-(import doeff_cluster.coordinator.core.resource_policy [stamp])
+(import doeff_cluster [ClusterNaming ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [HandoffPhase])
+(import doeff_cluster [responded])
+(import doeff_cluster [tick]
+        doeff_cluster._coordinator.core.api_policy [placement-due plan-rollouts ROLLOUT-ACTOR])
+(import doeff_cluster._coordinator.core.resource_policy [stamp])
 (import tests.program_rows [SAMPLE-RUN])
-(import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
-(import doeff_cluster.coordinator.core.rollout_policy [ready-timeout-from])
-(import doeff_cluster.coordinator.core.wake_policy [rollout-due])
+(import doeff_cluster._coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
+(import doeff_cluster._coordinator.core.rollout_policy [ready-timeout-from])
+(import doeff_cluster._coordinator.core.wake_policy [rollout-due])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 

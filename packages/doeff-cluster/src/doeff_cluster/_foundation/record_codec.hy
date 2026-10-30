@@ -164,7 +164,14 @@
      ;; 定義する module(記録の例外 RecordedError・ClusterCaMissing、記録の形 Entry ほか)だけを並べる。移し替えの module を消した後も引く。
      (dfor name #("coordinator_inbox" "in_cluster_api" "notice_pipe" "otlp_post" "process_environ" "process_versions" "record_codec"
                   "record_handlers" "record_inbox" "record_log" "wal_store")
-           (+ "doeff_cluster.foundation." name) (+ "doeff_cluster._foundation." name))))
+           (+ "doeff_cluster.foundation." name) (+ "doeff_cluster._foundation." name))
+     ;; coordinator の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-65a5889e595b)— 同じく class を定義する module(観測の型
+     ;; cluster_model・置き場の型 wal_format・store ほか)だけを並べる。移し替えの module を消した後も引く。
+     (dfor name #("core.coordinator_invariants" "core.detached_policy" "core.program" "core.resource_policy" "entry.handler_sets"
+                  "intent.cluster_model" "intent.due_model" "intent.failover_model" "intent.kube_model" "intent.request_bodies"
+                  "intent.worker_notices" "protocol.durable_kv" "protocol.kube" "protocol.request_queue" "protocol.store"
+                  "protocol.wal_format" "protocol.worker_notices")
+           (+ "doeff_cluster.coordinator." name) (+ "doeff_cluster._coordinator." name))))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。

@@ -112,7 +112,7 @@ def test_generated_stubs_are_what_the_tool_makes() -> None:
 WAL_STORE_AS_BYTE_LOG = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_cluster._foundation.wal_store [WalStore])
-(import doeff_cluster.coordinator.protocol.store [ByteLog])
+(import doeff_cluster._coordinator.protocol.store [ByteLog])
 
 (defk seq-of [log]
   {:pre [(: log ByteLog)] :post [(: % int)] :tags {:context "probe" :role "judgment"}}

@@ -10,8 +10,9 @@
 (import pathlib [Path])
 (import doeff_hy._table [TableWrite])
 (import doeff_cluster [WalStore])
-(import doeff_cluster.coordinator.protocol.wal_format [WalCorrupted GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
-(import doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
+(import doeff_cluster [WalCorrupted]
+        doeff_cluster._coordinator.protocol.wal_format [GoodLine DroppedTail LogScan SnapshotRead encode-line read-line-record scan-log sealed read-snapshot])
+(import doeff_cluster._coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
 (import tests.wal_rig [on-wal-files])
 
 

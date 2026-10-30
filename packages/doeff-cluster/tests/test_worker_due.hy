@@ -190,7 +190,7 @@
 
 (deftest test-the-due-types-live-only-in-the-shared-layer
   ;; 期限の型と合わせ方は worker と coordinator が共用する層に 1 つ(移した後の旧い置き場に残さない)。
-  (import doeff_cluster.coordinator.intent.due_model :as old-model)
+  (import doeff_cluster._coordinator.intent.due_model :as old-model)
   (import importlib.util [find-spec])
   (assert (not (hasattr old-model "DueAt")))
-  (assert (is (find-spec "doeff_cluster.coordinator.core.due_policy") None)))
+  (assert (is (find-spec "doeff_cluster._coordinator.core.due_policy") None)))

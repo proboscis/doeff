@@ -356,8 +356,8 @@ rules:
       include:
         - "**/doeff_cluster/**/*.hy"
       exclude:
-        - "**/doeff_cluster/coordinator/core/resource_policy.hy"
-        - "**/doeff_cluster/coordinator/core/metrics_policy.hy"
+        - "**/doeff_cluster/_coordinator/core/resource_policy.hy"
+        - "**/doeff_cluster/_coordinator/core/metrics_policy.hy"
 
   - id: doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure
     languages:
@@ -5870,8 +5870,8 @@ rules:
     pattern-regex: 'doeff_cluster\.worker\.entry\.line_stamp'
     paths:
       include:
-        - /packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
-        - /tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/coordinator/core/**
+        - /packages/doeff-cluster/src/doeff_cluster/_coordinator/core/**
+        - /tests/semgrep/fixtures/python/packages/doeff-cluster/src/doeff_cluster/_coordinator/core/**
 
   # ADR-DOE-CORE-003: a handler is a def marked with @handler, which makes it a @do function (the
   # owner's decisions 2026-10-20 13:07 and 16:26 JST). handler() and with_handlers refuse other

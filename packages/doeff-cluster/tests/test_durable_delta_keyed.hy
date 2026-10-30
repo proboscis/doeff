@@ -14,9 +14,10 @@
 (import random)
 (import dataclasses [replace])
 (import unittest.mock [Mock])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord ResourceMeta BoardRow])
-(import doeff_cluster.coordinator.core.cluster_policy [board-changes])
-(import doeff_cluster.coordinator.protocol.durable_kv :as dk)
+(import doeff_cluster [ClusterState BoardRow]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord ResourceMeta])
+(import doeff_cluster._coordinator.core.cluster_policy [board-changes])
+(import doeff_cluster._coordinator.protocol.durable_kv :as dk)
 (import doeff_hy._table [Table TableWrite])
 (import tests.state_rows [table-from-rows])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])

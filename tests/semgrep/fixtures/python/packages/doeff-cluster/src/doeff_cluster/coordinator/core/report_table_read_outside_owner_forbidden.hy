@@ -1,6 +1,6 @@
 ;;; 検体(違反をわざと書いた file): Service の報告の表(観測の readiness・metrics)を、持ち主の module の外で直に読む。
 ;;; doeff-cluster-report-tables-are-read-by-their-owner が 9 行目と 13 行目で発火し、17〜19 行目では発火しない。
-(import doeff_cluster.coordinator.core.resource_policy [service-readiness])
+(import doeff_cluster [service-readiness])
 
 
 (defn new-generation-reported-ready [state job want]

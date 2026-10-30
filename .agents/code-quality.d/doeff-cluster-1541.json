@@ -22,7 +22,7 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/intent/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/_foundation/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/protocol/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/handler_sets.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy",
@@ -30,8 +30,8 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_json.hy",
-    "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_json.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/protocol/checkout_reads.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_identity.hy",
@@ -73,10 +73,10 @@
       "layer": "pure",
       "name": "doeff-cluster-api-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/api_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/api_policy.hy"
       ],
       "responsibility": "coordinator の HTTP の要求 1 件への返事と、Rollout の調停の段取り(純粋な判断・I/O はしない)。",
       "typed": true
@@ -164,10 +164,10 @@
       "layer": "domain",
       "name": "doeff-cluster-cluster-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/cluster_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/cluster_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/cluster_model.hy"
       ],
       "responsibility": "複数の worker に job と task を割り当てる coordinator の型と effect。",
       "typed": true
@@ -200,10 +200,10 @@
       "layer": "pure",
       "name": "doeff-cluster-cluster-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy"
       ],
       "responsibility": "coordinator の純粋な判断。",
       "typed": true
@@ -251,12 +251,12 @@
       "layer": "runtime",
       "name": "doeff-cluster-coordinator",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/main.hy"
       ],
       "responsibility": "doeff worker の coordinator(実験)。",
       "typed": true
@@ -278,10 +278,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-handler-sets",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/handler_sets.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/handler_sets.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/handler_sets.hy"
       ],
       "responsibility": "coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(環境の違いは handler の差し替えだけで扱う — operator の決定 2026-09-25)。",
       "typed": true
@@ -313,12 +313,12 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-inbox",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/faults.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/faults.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_inbox.hy",
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/faults.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/faults.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_inbox.hy",
         "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
       ],
@@ -409,10 +409,10 @@
       "layer": "pure",
       "name": "doeff-cluster-detached-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/detached_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/detached_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/detached_policy.hy"
       ],
       "responsibility": "切り離した task の HTTP の口の純粋な判断(2026-09-25・effect は detached_model.hy)。",
       "typed": true
@@ -463,10 +463,10 @@
       "layer": "pure",
       "name": "doeff-cluster-drain-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/drain_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/drain_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/drain_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/drain_policy.hy"
       ],
       "responsibility": "worker の drain の純粋な判断(2026-09-25)。",
       "typed": true
@@ -485,10 +485,10 @@
       "layer": "pure",
       "name": "doeff-cluster-durable-kv",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/durable_kv.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/durable_kv.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/durable_kv.hy"
       ],
       "responsibility": "coordinator の耐久の状態を「キー → JSON の値」の表として見る形(純粋な関数)。",
       "typed": true
@@ -652,10 +652,10 @@
       "layer": "pure",
       "name": "doeff-cluster-handoff-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/handoff_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/handoff_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/handoff_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/handoff_policy.hy"
       ],
       "responsibility": "入れ替え(update = handoff)の期限の純粋な判断(2026-09-26)。",
       "typed": true
@@ -739,11 +739,11 @@
       "layer": "io",
       "name": "doeff-cluster-kube-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/kube.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/kube_client.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/kube.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/kube_client.hy"
       ],
       "responsibility": "kube_model の effect の handler(coordinator/protocol/kube)と、その handler が呼ぶ k8s の API の client(foundation/kube_client)。",
@@ -757,10 +757,10 @@
       "layer": "domain",
       "name": "doeff-cluster-kube-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/kube_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/kube_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/kube_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/kube_model.hy"
       ],
       "responsibility": "k8s の Deployment を読む・台数を変える effect(Rollout の reconciler が旧 / 新の片方として本番の Deployment を扱う口)。",
       "typed": true
@@ -948,10 +948,10 @@
       "layer": "pure",
       "name": "doeff-cluster-metrics-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/metrics_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/metrics_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/metrics_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/metrics_policy.hy"
       ],
       "responsibility": "worker の service の計器を coordinator が Prometheus の形で出す、純粋な判断。",
       "typed": true
@@ -994,10 +994,10 @@
       "layer": "pure",
       "name": "doeff-cluster-program-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program_policy.hy"
       ],
       "responsibility": "coordinator の詰めた Program の置き場(ADR-DOE-CLUSTER-001 R3b・改訂 1 の F — 純粋な判断・I/O はしない)。",
       "typed": true
@@ -1219,10 +1219,10 @@
       "layer": "pure",
       "name": "doeff-cluster-resource-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/resource_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/resource_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/resource_policy.hy"
       ],
       "responsibility": "coordinator の資源(Service・Worker・Task・Rollout)の純粋な判断。",
       "typed": true
@@ -1235,10 +1235,10 @@
       "layer": "pure",
       "name": "doeff-cluster-rollout-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/rollout_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/rollout_policy.hy"
       ],
       "responsibility": "Rollout の純粋な判断(旧 → 新の切り替えを宣言で表す)。",
       "typed": true
@@ -1572,15 +1572,15 @@
       "layer": "io",
       "name": "doeff-cluster-wal-store",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_files.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_format.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/store.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/wal_files.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/wal_format.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/wal_store.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/store.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_files.hy",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/wal_format.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/store.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/wal_files.hy",
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/wal_format.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/wal_store.hy"
       ],
       "responsibility": "coordinator の耐久の置き場: 追記の log(wal.jsonl)+ まとめ直した写し(snapshot.json)の帳簿(foundation/wal_store — file に触らない)・帳簿の file の読み書き(coordinator/protocol/wal_files — file の effect)・行と写しの形(coordinator/protocol/wal_format)・置き場の口と Persist に答える handler(coordinator/protocol/store)。",
@@ -1617,10 +1617,10 @@
       "layer": "pure",
       "name": "doeff-cluster-warm-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/warm_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/warm_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/warm_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/warm_policy.hy"
       ],
       "responsibility": "coordinator の温める表の口の純粋な判断(2026-09-26 — 効果 WarmRuntimeEnv・ReadWarmState の本番の答え)。",
       "typed": true
@@ -1636,10 +1636,10 @@
       "layer": "pure",
       "name": "doeff-cluster-watch-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/watch_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/watch_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/watch_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/watch_policy.hy"
       ],
       "responsibility": "版の変化を待つ読み(GET /watch)の判断(純粋・I/O はしない — 待ちを起こす条件・期限・worker ごとの見え方)。",
       "typed": true
@@ -1744,10 +1744,10 @@
       "layer": "domain",
       "name": "doeff-cluster-cluster-json",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/cluster_json.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/cluster_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/cluster_json.hy"
       ],
       "responsibility": "coordinator の保存の行と受け口の本文(JSON)を型へ読み・型から書く純粋な関数。",
       "typed": true
@@ -1760,10 +1760,10 @@
       "layer": "domain",
       "name": "doeff-cluster-cluster-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_rules.hy"
       ],
       "responsibility": "coordinator の小さな純粋な判断 — 本文の版の検め・版の組の並べ。",
       "typed": true
@@ -2453,10 +2453,10 @@
       "layer": "domain",
       "name": "doeff-cluster-coordinator-request-bodies-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/request_bodies.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/request_bodies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/request_bodies.hy"
       ],
       "responsibility": "coordinator の受け口の要求の本文の道ごとの型と ReadBody(#2445)",
       "typed": true
@@ -2475,10 +2475,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-request-bodies",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_bodies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/request_bodies.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_bodies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/request_bodies.hy"
       ],
       "responsibility": "coordinator の受け口の要求の本文を道ごとの型に解く 1 点(#2445)",
       "typed": true
@@ -2652,10 +2652,10 @@
       "layer": "pure",
       "name": "doeff-cluster-state-json",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/state_json.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/state_json.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/state_json.hy"
       ],
       "responsibility": "coordinator の状態の保存の綴り(state file の JSON と durable の KV の行の値)を型と JSON の間で書き・読む純粋な関数。",
       "typed": true
@@ -2713,10 +2713,10 @@
       "layer": "pure",
       "name": "doeff-cluster-coordinator-replies",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/replies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/replies.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/replies.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/replies.hy"
       ],
       "responsibility": "coordinator の返事の本文の型を外へ見せる JSON の形に綴る 1 点(返事の答え手 reply-bodies と検の入口が通る)。",
       "typed": true

@@ -9,11 +9,12 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_cluster.coordinator.core.api_policy [tick])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat liveness-moves liveness-now])
-(import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
+(import doeff_cluster [ClusterState])
+(import doeff_cluster [WorkerBack WorkerGone])
+(import doeff_cluster [tick])
+(import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat liveness-moves liveness-now])
+(import doeff_cluster [responded]
+        doeff_cluster._coordinator.protocol.request_bodies [body-of])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})

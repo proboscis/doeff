@@ -23,8 +23,9 @@
 (import doeff_cluster.shared.entry.service_build [job system-of system-declaration])
 (import doeff_cluster.shared.intent.service_model [CallShape System])
 (import doeff_cluster [process-versions])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json spec-of-declaration])
-(import doeff_cluster.coordinator.protocol.replies [spec-json])
+(import doeff_cluster [spec-of-declaration]
+        doeff_cluster._coordinator.core.cluster_policy [job-from-json job-to-json])
+(import doeff_cluster._coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-spec declared-job-specs]
         doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 (import doeff_cluster.worker.core.policy [plan records-after statuses])

@@ -19,10 +19,10 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
-(import doeff_cluster.coordinator.protocol.store [DurableStore])
-(import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json task-record-from-json])
-(import doeff_cluster.coordinator.entry.main [load-state])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord])
+(import doeff_cluster._coordinator.protocol.store [DurableStore])
+(import doeff_cluster._coordinator.protocol.cluster_json [naming-from-json task-record-from-json])
+(import doeff_cluster._coordinator.entry.main [load-state])
 
 (defk probe-boot [state-file store now]
   {:pre [(: state-file str) (: store DurableStore) (: now int)] :post [(: % ClusterState)] :tags {:context "probe" :role "program"}}

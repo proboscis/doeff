@@ -17,7 +17,8 @@
 (import tests.probe_rig [probe-settings observed run-probes])
 (import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
-(import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES spec-of-declaration])
+(import doeff_cluster [spec-of-declaration]
+        doeff_cluster._coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

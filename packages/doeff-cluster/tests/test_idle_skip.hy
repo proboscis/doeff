@@ -18,14 +18,18 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_core_effects [Spawn Cancel Task])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo KeepMark])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-due note-liveness forget-silent-workers alive sweep-keep-marks])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [KeepMark])
+(import doeff_cluster [liveness-due]
+        doeff_cluster._coordinator.core.cluster_policy [note-liveness forget-silent-workers alive sweep-keep-marks])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms sweep-due])
-(import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
-(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ProgramRow Drain WarmEntry])
-(import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue nudge-takers])
+(import doeff_cluster [sweep-due]
+        doeff_cluster._coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms])
+(import doeff_cluster._coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
+(import doeff_cluster [BoardRow]
+        doeff_cluster._coordinator.intent.cluster_model [ProgramRow Drain WarmEntry])
+(import doeff_cluster._coordinator.entry.handler_sets [MemoryWalStore])
+(import doeff_cluster._coordinator.protocol.request_queue [RequestQueue nudge-takers])
 (import doeff_cluster [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimWorker Redeclare CoordinatorSteps]
         doeff_cluster._sim.local [SimLink CoordinatorStep])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
@@ -386,8 +390,10 @@
 ;;   lease の内に終わって保持の期限が来る切り離した task・lease の切れる置いた切り離した task・呼び手が問い合わせを止めた task・能力の
 ;;   合う worker の沈黙を待つ task。反例 — 判断か task-due の片方だけ期限をずらすと赤(task-due を行の有無の形に戻しても赤)。
 
-(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord WorkerInfo ComponentVersion])
-(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-due])
+(import doeff_cluster [WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
+(import doeff_cluster [task-due]
+        doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import tests.state_rows [table-from-rows])
 
 

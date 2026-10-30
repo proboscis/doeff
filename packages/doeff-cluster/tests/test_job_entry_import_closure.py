@@ -36,7 +36,7 @@ ENTRY = "doeff_cluster.worker.entry.job_entry"
 FOUNDATION = "doeff_cluster.shared.entry.cluster_foundation"
 
 # どの子も読まない module(名か、その名の下の module)。
-NEVER = ("rich", "pygments", "click", "httpx._main", "doeff_cluster.coordinator", "pydantic", "pydantic_core")
+NEVER = ("rich", "pygments", "click", "httpx._main", "doeff_cluster._coordinator", "pydantic", "pydantic_core")
 # 入口だけ(service の子が Program を解く前)が読まない module — task の道の届けと、その先の HTTP の handler。
 ENTRY_NEVER = (*NEVER, "httpx", "doeff_cluster.worker.entry.result_delivery", "doeff_core_effects._http_handlers_impl")
 

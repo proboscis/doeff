@@ -15,7 +15,7 @@
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
+(import doeff_cluster._coordinator.core.cluster_policy [JOB-ENTRY])
 
 (val BLOB "cHJvZ3JhbQ==")
 (val SHA (.hexdigest (hashlib.sha256 (.encode BLOB "ascii"))))

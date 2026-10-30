@@ -1,7 +1,7 @@
 ;;; 本物の process と HTTP で、worker が起きて coordinator に名乗る(#1005)。
 ;;;
 ;;; 13 回目の本番の切り替え(2026-09-29)で、本番の状態の写しから起きた coordinator に新しい形の worker が 1 つも名乗れなかった。
-;;; sim-cluster の検は本物の HTTP の口を通らないので見えなかった。ここでは coordinator(hy -m doeff_cluster.coordinator.entry.main)と worker
+;;; sim-cluster の検は本物の HTTP の口を通らないので見えなかった。ここでは coordinator(hy -m doeff_cluster._coordinator.entry.main)と worker
 ;;; (hy -m doeff_cluster.worker.entry.main — deploy/boot.sh の ROLE=worker と同じ引数)を子 process で起こし、worker が GET /state の workers に出て、
 ;;; heartbeat の返事を受けた(readiness の file が ready)ことを確かめる。置き場は 2 つ:
 ;;;   - 空の置き場
@@ -14,7 +14,7 @@
 (import pathlib [Path])
 (import httpx)
 (import doeff_cluster [WalStore])
-(import doeff_cluster.coordinator.protocol.store [durable-load durable-persist])
+(import doeff_cluster._coordinator.protocol.store [durable-load durable-persist])
 (import tests.wal_rig [on-wal-files])
 (import tests.served_fixtures [ROOT HY start-coordinator])
 (import tests.program_rows [SAMPLE-RUN])

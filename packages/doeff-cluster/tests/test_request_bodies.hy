@@ -3,13 +3,14 @@
 ;; 知らない欄は読み捨てる(送り手の版が新しい欄を足しても断らない)。まだ型にしていない道は JSON の object のまま判断へ渡る。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
-(import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
+(import doeff_cluster [ClusterState])
+(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
+(import doeff_cluster [responded]
+        doeff_cluster._coordinator.protocol.request_bodies [body-of])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
-(import doeff_cluster.coordinator.core.cluster_policy [job-to-json])
-(import doeff_cluster.coordinator.protocol.state_json [read-service-rows])
+(import doeff_cluster._coordinator.core.cluster_policy [job-to-json])
+(import doeff_cluster._coordinator.protocol.state_json [read-service-rows])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))

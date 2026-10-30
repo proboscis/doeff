@@ -7,11 +7,12 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo Placement ClusterState KeepMark Drain])
-(import doeff_cluster.coordinator.core.cluster_policy [place-jobs jobs-placed reconcile unplaced-jobs])
-(import doeff_cluster.coordinator.core.drain_policy [advance-drains])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster [ClusterJob WorkerInfo ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [Placement KeepMark Drain])
+(import doeff_cluster._coordinator.core.cluster_policy [place-jobs jobs-placed reconcile unplaced-jobs])
+(import doeff_cluster._coordinator.core.drain_policy [advance-drains])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_hy._table [TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 

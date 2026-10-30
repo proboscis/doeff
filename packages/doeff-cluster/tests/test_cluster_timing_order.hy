@@ -17,8 +17,9 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
-(import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers liveness-due note-liveness])
+(import doeff_cluster [ClusterState WorkerInfo])
+(import doeff_cluster [liveness-due]
+        doeff_cluster._coordinator.core.cluster_policy [forget-silent-workers note-liveness])
 (import doeff_cluster._sim.local [SimPlan SIM-TIMING-RATIO sim-plan])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
