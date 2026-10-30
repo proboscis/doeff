@@ -14,10 +14,12 @@
 ;;; この汎用の層の上に、表ごとの行の型(pydantic の model か dataclass)で読み書きする層が _typed.hy に在る — 業務の呼び手はそちらを使う。
 (require doeff-hy.macros [val deff])
 (require doeff-hy.record [defrecord])
+(import collections.abc [Callable])
 (import copy)
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass field fields is-dataclass])
 (import json)
 (import re)
+(import doeff [Program])
 (import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of])
 
 (setv TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
@@ -297,12 +299,12 @@
    外す 2 つは KeepFor の列だけ。上の KeyMemory の註)。"
   (#^ str name)
   (#^ tuple writers)
-  (setv #^ object retention (KeepForever))
+  (setv #^ Retention retention (KeepForever))
   (setv #^ (| int None) size-budget None)
-  (setv #^ object retention-group (EachEvent))
+  (setv #^ RetentionGroup retention-group (EachEvent))
   (setv #^ (| ByKeyHead None) key-lookup None)
   (setv #^ bool archive-before-retire False)
-  (setv #^ object key-memory (RememberKeysForever))
+  (setv #^ KeyMemory key-memory (RememberKeysForever))
   (defn #^ None __post_init__ [self]
     (checked-table-name self.name "StreamDecl.name")
     (when (not (and (isinstance self.writers tuple) self.writers (all (gfor n self.writers (and (isinstance n str) n)))))
@@ -687,6 +689,52 @@
   (defn #^ None __post_init__ [self]
     (when (or (isinstance self.sequence bool) (not (isinstance self.sequence int)) (< self.sequence 1))
       (raise (ValueError (.format "EventRetired.sequence は 1 以上の整数: {!r}" self.sequence))))))
+
+
+;; --- 合図の源と HTTP の client の問いの答え ----------------------------------------------------------------
+;; 問いの effect(_effects.hy の ReadSignalSource・ReadSourcePatience・ReadRequestPatience)が答えを型で名指すため、源の module
+;; (_event_source.hy)と client の module(_http_client.hy)でなくこの値の module に置く(どちらの module も effect の module を読むので、
+;; そこに置くと effect の module から読めない)。源の module と client の module はここから読んで同じ名で出す。
+
+(defrecord SignalTables
+  "合図の型 1 つと、その型の合図を起こす表と列の名前の組の対: signal = 使い手が宣言する合図の型(欄 keys を持つ dataclass — 源が
+   (signal :keys 変わった所の tuple) で作る)/ tables = 行の変化でこの型の合図を起こす表の名前 / streams = 追記でこの型の合図を起こす
+   列の名前(どちらも既定は空・どちらか 1 つ以上)。欄 keys を持たない型・表も列も無い対は作る時に止める。"
+  {:tags {:context "records" :role "type"}
+   :check [(isinstance signal type)
+           (and (is-dataclass signal) (in "keys" (gfor declared (fields signal) declared.name)))
+           (and (isinstance tables tuple) (all (gfor name tables (checked-table-name name "SignalTables.tables の表"))))
+           (and (isinstance streams tuple) (all (gfor name streams (checked-table-name name "SignalTables.streams の列"))))
+           (or tables streams)]}
+  (#^ type signal)
+  (setv #^ (get tuple #(str ...)) tables #()
+        #^ (get tuple #(str ...)) streams #()))
+
+(defrecord SignalSourceFactory
+  "源の工場を土台が渡す値(Ask の鍵 — 鍵はこの型そのもの・答えはこの型の値・#3127): make = 結び(SignalTables の tuple)と
+   購読者の名前から、本体を包む関数を作る工場。本番の土台は RECORDS-SIGNAL-SOURCE(記録の置き場の変化の待ちの long-poll —
+   records-signal-handler)、模擬の土台は memory の置き場の書きで鳴る源(doeff_records._memory の memory-signal-source)を同じ鍵で渡す —
+   組み立ての entry は鍵を問うて (make 結び 購読者) を with-handlers の列に置くだけで、本番と模擬の違いは土台の答えだけになる。"
+  {:tags {:context "records" :role "type"}
+   :check [(callable make)]}
+  (#^ (get Callable #([(get tuple #(SignalTables ...)) str] (get Callable #([object] Program)))) make))
+
+(defrecord SignalSourcePatience
+  "合図の源が置き場の止まりに耐える時間(ReadSourcePatience の答え — #3469): seconds = 止まりの最初の拍から数えて、戻りを待つ秒。これを
+   過ぎても戻らなければ源は SignalSourceUnreachable で process を落とす。0 = 耐えない(最初の止まりで落ちる)。値は組み立てが 1 か所で選ぶ
+   (この module は既定を持たない)。HTTP の client の要求を待つ時間は別の値 RequestPatience(#3557)。"
+  {:tags {:context "records" :role "type"}
+   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
+  (#^ float seconds))
+
+(defrecord RequestPatience
+  "HTTP の client が、要求 1 つが置き場に届かない時に置き場の戻りを待つ時間(ReadRequestPatience の答え — #3557): seconds = 最初に届かなかった
+   時から数えて待つ秒。過ぎても戻らなければ client は待った秒を名指した Unreachable を返す。0 = 待たない(最初の Unreachable をそのまま返す —
+   名のある答え手 records-unwaited)。値は組み立てが 1 か所で選ぶ(この module は既定を持たない)。合図の源が止まりに耐える時間は別の値
+   SignalSourcePatience。"
+  {:tags {:context "records" :role "type"}
+   :check [(and (isinstance seconds (| int float)) (not (isinstance seconds bool)) (>= seconds 0))]}
+  (#^ float seconds))
 
 
 ;; --- 失敗の答え --------------------------------------------------------------------------------------------

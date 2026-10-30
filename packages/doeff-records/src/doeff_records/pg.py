@@ -9,8 +9,8 @@
 #   PRUNE_STATEMENT_MILLISECONDS Page PreparedStore PruneChanges Pruned PutRow PutRows
 #   QUERY_CANCELED_SQLSTATE RECORDS_SIGNAL_SOURCE ROWS_UNIT ReadBatch ReadChangeLog ReadEventByKey
 #   ReadEvents ReadExpiredEvents ReadRow ReadSignalSource ReadStreamEnd RecordsSchema
-#   RecordsSqlFailed Refused ReleaseWriters RememberedWrite Reset RetireArchivedEvents RetiredEvents
-#   RetiredKey Row RowChanged RowExpiry RowRemoved RowSteps RowsConflict RowsRefused SchemaStep
+#   RecordsSqlFailed Refused ReleaseWriters Reset RetireArchivedEvents RetiredEvents
+#   Row RowChanged RowExpiry RowRemoved RowSteps RowsConflict RowsRefused SchemaStep
 #   StagedRow Statement StoreHead StoreUnreachable StreamDecl StreamEmpty StreamEnd StreamTail
 #   StreamTailEmpty SweepExpired Swept TableDecl TailRead UNBOUNDED_SEQ Unreachable
 #   WRITE_KEY_MEMORY_SECONDS WatchChanges WatchCursor WatchEvents Written WrittenRows
