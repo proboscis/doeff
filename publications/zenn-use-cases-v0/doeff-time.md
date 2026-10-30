@@ -39,9 +39,9 @@ from itertools import count  # 同じ時刻の待ちに、頼んだ順の番号�
 from doeff import Await, EffectBase, Gather, Resume, Spawn, do, handler, run  # awaitの依頼・エフェクトの元・集める・再開・始める・定義・ハンドラ・実行を使う。
 from doeff_core_effects.handlers import await_handler  # asyncioの待ちを、スケジューラの下で走らせるハンドラ。
 from doeff_core_effects.scheduler import (  # doeffのスケジューラの、タスクと約束(promise)のエフェクト。
-    PRIORITY_IDLE,  # いちばん低い優先度。ほかのタスクが全部待っている時だけ走る。
     CompletePromise,  # 約束を果たし、それを待つタスクを起こすエフェクト。
     CreatePromise,  # 約束を作るエフェクト。
+    TaskPriority,  # タスクの優先度。IDLEはいちばん低く、ほかのタスクが全部待っている時だけ走る。
     Wait,  # タスクか約束を待つエフェクト。
     scheduled,  # SpawnとGatherに答える、doeffの参考のハンドラ。
 )
@@ -161,7 +161,7 @@ def virtual_clock(start: datetime):  # 待ちに時間がかからず、待ち�
         heapq.heappush(sleepers, (wake_up, next(order), promise))  # 待つ列に入れる。
         if not advancing:  # 時計を進めるタスクが無ければ、
             advancing = True  # 走っている印を付け、
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)  # いちばん低い優先度で始める。
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)  # いちばん低い優先度で始める。
         yield Wait(promise.future)  # 約束が果たされるまで、このタスクを待たせる。
         return (yield Resume(k, None))  # 起きたら、続きを再開する。
 
