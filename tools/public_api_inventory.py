@@ -577,9 +577,28 @@ def public_modules(layout: PackageLayout) -> list[tuple[str, Path]]:
 # --- typing the names of imported modules (the child process uses this) ---
 
 
+_Answer = typing.TypeVar("_Answer")
+
+
+@dataclass(frozen=True)
+class _Read(typing.Generic[_Answer]):
+    """What one value gave a read: the value (held so its id is not reused while the child runs) and the answer."""
+
+    value: object
+    answer: _Answer
+
+
+# The reads made so far, by the value's id: the names of a package read the same values again.
+_STATICS: dict[tuple[int, str], _Read[object]] = {}
+_DEFINITIONS: dict[int, _Read[object]] = {}
+
+
 def _static(obj: object, name: str) -> object:
     """An attribute read without running descriptors or ``__getattr__`` (``_MISSING`` when absent)."""
-    return inspect.getattr_static(obj, name, _MISSING)
+    key = (id(obj), name)
+    if key not in _STATICS:
+        _STATICS[key] = _Read(obj, inspect.getattr_static(obj, name, _MISSING))
+    return _STATICS[key].answer
 
 
 def _is_handler_marked(obj: object) -> bool:
@@ -604,13 +623,16 @@ def _unwrapped_once(obj: object) -> object:
 
 def _definition(obj: object) -> object:
     """The function or class a value comes from, through doeff's and functools' wrappers."""
-    current = obj
-    for _ in range(_FOLLOW_DEPTH):
-        inner = _unwrapped_once(current)
-        if inner is _MISSING or inner is current:
-            break
-        current = inner
-    return current
+    key = id(obj)
+    if key not in _DEFINITIONS:
+        current = obj
+        for _ in range(_FOLLOW_DEPTH):
+            inner = _unwrapped_once(current)
+            if inner is _MISSING or inner is current:
+                break
+            current = inner
+        _DEFINITIONS[key] = _Read(obj, current)
+    return _DEFINITIONS[key].answer
 
 
 def _is_program_function(obj: object) -> bool:
@@ -664,6 +686,12 @@ class _Classifier:
         )
         # The calls made so far, by the factory's id (a definition shown by several modules is called once).
         self._factory_calls: dict[int, _FactoryCall] = {}
+        # The program helper's reads (ADR-DOE-API-001 R18), each made once per child: the functions of its
+        # package a body reads, the bodies reached from a function, a body's first breach, a name's form.
+        self._read_functions: dict[tuple[int, str], _Read[tuple[types.FunctionType, ...]]] = {}
+        self._reached_bodies: dict[int, _Read[tuple[types.FunctionType, ...]]] = {}
+        self._body_breaches: dict[int, _Read[_Breach | None]] = {}
+        self._breach_forms: dict[tuple[str, int], _Read[str | None]] = {}
 
     def is_effect_class(self, obj: object) -> bool:
         """Whether a value is an effect type (a subclass of ``EffectBase``)."""
@@ -812,17 +840,16 @@ class _Classifier:
         A helper's program only emits effects: nothing its body reads — and the bodies of the
         functions of its own package it reads, followed through — installs a handler or answers an
         effect. A body that cannot be read (not a Python function) keeps the verdict ``read`` gave.
+        Each body is judged once per child, however many program functions read it.
         """
         if not isinstance(function, types.FunctionType):
             return Verdict(
                 read.kind, read.form, f"{read.reason}・中を読めず、helper と確かめていない"
             )
         breaches = (
-            _Breach(form, current.__qualname__, name)
-            for current in _package_bodies(function)
-            for name in sorted(_code_names(current.__code__))
-            if (form := self._breach_form(name, current.__globals__.get(name, _MISSING)))
-            is not None
+            found
+            for current in self._package_bodies(function)
+            if (found := self._body_breach(current)) is not None
         )
         breach = next(breaches, None)
         if breach is None:
@@ -833,12 +860,63 @@ class _Classifier:
             "other", breach.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
         )
 
+    def _package_bodies(self, function: types.FunctionType) -> tuple[types.FunctionType, ...]:
+        """A function and the functions of its own package its body reads, followed through (each once).
+
+        In the order reached: the function, then each step's newly read functions in the order read.
+        """
+        key = id(function)
+        if key not in self._reached_bodies:
+            package = (function.__module__ or "").split(".")[0]
+            reached = {key: function}
+            frontier: tuple[types.FunctionType, ...] = (function,)
+            while frontier:
+                step: dict[int, types.FunctionType] = {}
+                for current in frontier:
+                    for each in self._package_reads(current, package):
+                        if id(each) not in reached:
+                            step.setdefault(id(each), each)
+                reached.update(step)
+                frontier = tuple(step.values())
+            self._reached_bodies[key] = _Read(function, tuple(reached.values()))
+        return self._reached_bodies[key].answer
+
+    def _package_reads(
+        self, function: types.FunctionType, package: str
+    ) -> tuple[types.FunctionType, ...]:
+        """The functions of ``package`` a function's body reads by a global name (read once per body)."""
+        key = (id(function), package)
+        if key not in self._read_functions:
+            self._read_functions[key] = _Read(function, tuple(_read_functions(function, package)))
+        return self._read_functions[key].answer
+
+    def _body_breach(self, function: types.FunctionType) -> _Breach | None:
+        """The first name (in name order) one body reads that takes it past a helper's (judged once per body)."""
+        key = id(function)
+        if key not in self._body_breaches:
+            breaches = (
+                _Breach(form, function.__qualname__, name)
+                for name in sorted(_code_names(function.__code__))
+                if (form := self._breach_form(name, function.__globals__.get(name, _MISSING)))
+                is not None
+            )
+            self._body_breaches[key] = _Read(function, next(breaches, None))
+        return self._body_breaches[key].answer
+
     def _breach_form(self, name: str, value: object) -> str | None:
         """The form one name a body reads gives past a helper's (``None`` when a helper may read it).
 
         A global is read by its value — doeff's ``WithHandler`` and handler control (``Resume``,
         ``Pass`` ...), a handler value, builder or factory; an attribute (``doeff.Resume``) by its name.
+        Each name and value is judged once per child.
         """
+        key = (name, id(value))
+        if key not in self._breach_forms:
+            self._breach_forms[key] = _Read(value, self._judged_breach_form(name, value))
+        return self._breach_forms[key].answer
+
+    def _judged_breach_form(self, name: str, value: object) -> str | None:
+        """The form ``_breach_form`` gives, judged from the name and value."""
         if value is _MISSING:
             if name in _INSTALL_NAMES:
                 return HELPER_INSTALLS
@@ -1102,29 +1180,6 @@ def _read_functions(function: types.FunctionType, package: str) -> Iterator[type
             yield inner
 
 
-def _first_each(functions: Sequence[types.FunctionType]) -> tuple[types.FunctionType, ...]:
-    """``functions`` without the repeats (by identity), in the order first seen."""
-    return tuple(
-        function
-        for index, function in enumerate(functions)
-        if all(function is not earlier for earlier in functions[:index])
-    )
-
-
-def _package_bodies(function: types.FunctionType) -> tuple[types.FunctionType, ...]:
-    """A function and the functions of its own package its body reads, followed through (each once)."""
-    package = (function.__module__ or "").split(".")[0]
-    reached: tuple[types.FunctionType, ...] = (function,)
-    frontier = reached
-    while frontier:
-        read = _first_each(
-            [each for current in frontier for each in _read_functions(current, package)]
-        )
-        frontier = tuple(each for each in read if all(each is not seen for seen in reached))
-        reached = (*reached, *frontier)
-    return reached
-
-
 @dataclass(frozen=True)
 class _CallFailure:
     """A factory call that raised: the error, for the row's reason."""
@@ -1286,6 +1341,40 @@ def _source_text(file: str) -> str | None:
         return None
 
 
+@dataclass(frozen=True)
+class _HyImport:
+    """One Hy ``(import x [a b])`` form: the module and the names it brings in."""
+
+    source: str
+    names: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _HyForms:
+    """A Hy module's defining and ``import`` forms, read from its text once per child."""
+
+    defined: dict[str, int]  # each defined name's first line (looked up by name for every export)
+    imports: tuple[_HyImport, ...]
+
+
+@functools.cache
+def _hy_forms(file: str) -> _HyForms | None:
+    """The defining and ``import`` forms of a Hy source (``None`` when it cannot be read)."""
+    text = _source_text(file)
+    if text is None:
+        return None
+    defined: dict[str, int] = {}
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = _HY_DEFINING_FORM.match(line)
+        if match:
+            defined.setdefault(match.group(1).rstrip(")"), number)
+    imports = tuple(
+        _HyImport(match.group(1), frozenset(match.group(2).split()))
+        for match in _HY_IMPORT_FORM.finditer(text)
+    )
+    return _HyForms(defined, imports)
+
+
 @functools.cache
 def _source_tree(file: str) -> ast.Module | None:
     """A Python file's syntax tree, parsed once per child (``None`` when it does not parse)."""
@@ -1362,17 +1451,16 @@ class _Sources:
 
     def _hy_origin(self, module_name: str, file: str, name: str, depth: int) -> Place:
         """``origin`` for a Hy module, read from its text (its defining forms and ``import`` forms)."""
-        text = _source_text(file)
-        if text is None:
+        forms = _hy_forms(file)
+        if forms is None:
             return Place(module_name, file)
         hy_names = {name, name.replace("_", "-")}
-        for number, line in enumerate(text.splitlines(), start=1):
-            match = _HY_DEFINING_FORM.match(line)
-            if match and match.group(1).rstrip(")") in hy_names:
-                return Place(module_name, file, number)
-        for match in _HY_IMPORT_FORM.finditer(text):
-            if hy_names & set(match.group(2).split()):
-                source = match.group(1)
+        lines = [forms.defined[each] for each in hy_names if each in forms.defined]
+        if lines:
+            return Place(module_name, file, min(lines))
+        for imported in forms.imports:
+            if hy_names & imported.names:
+                source = imported.source
                 return (
                     self.origin(source, name, depth + 1) if source in sys.modules else Place(source)
                 )
@@ -1448,13 +1536,19 @@ def _place_text(place: Place) -> str:
     """A repo-relative ``path:line`` for the table, or the module name for code outside the repo."""
     if place.file is None:
         return place.module
-    path = Path(place.file).resolve()
+    path = _resolved(place.file)
     if path.suffix in _EXTENSION_SUFFIXES:
         return f"{place.module}(native)"
     if path.is_relative_to(ROOT) and not path.is_relative_to(ROOT / ".venv"):
         relative = path.relative_to(ROOT).as_posix()
         return f"{relative}:{place.line}" if place.line is not None else relative
     return place.module
+
+
+@functools.cache
+def _resolved(file: str) -> Path:
+    """A source file's resolved path, resolved once per child (the names of one module share its file)."""
+    return Path(file).resolve()
 
 
 def _code_place(target: object) -> Place | None:
