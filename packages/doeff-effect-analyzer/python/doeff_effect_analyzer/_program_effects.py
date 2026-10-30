@@ -545,9 +545,9 @@ def pass_through(
                 del pending[effect]
             # An effect the guard sends on leaves as it arrived; what the clause did before
             # sending it on (taking the session values its guard reads) leaves with it.
-            performed = (
-                clause.performed_before_guard() if sent_on else clause.emits
-            ).residual_with(include)
+            performed = _left_from(
+                clause.performed_before_guard() if sent_on else clause.emits, include
+            )
             unknown.extend(performed.unknown_handlers)
             unresolved.extend(
                 replace(item, via=(handler.name, *item.via)) for item in performed.unresolved
@@ -556,7 +556,7 @@ def pass_through(
                 sent = _forwarded_as(escape, effect)
                 emitted.setdefault(sent.effect, replace(sent, by=escape.by or handler.name))
         if handler.performs is not None:
-            own = handler.performs.residual_with(include)
+            own = _left_from(handler.performs, include)
             unknown.extend(own.unknown_handlers)
             unresolved.extend(replace(item, via=(handler.name, *item.via)) for item in own.unresolved)
             for escape in own.escapes:
@@ -565,6 +565,58 @@ def pass_through(
             pending.setdefault(effect, escape)
     return Residual(
         tuple(pending.values()), tuple(dict.fromkeys(unknown)), tuple(dict.fromkeys(unresolved))
+    )
+
+
+# What a handler performs (a clause's emits, what it performs before its guard or around the
+# body) while what leaves it is being worked out further up, each with what is taken to leave it
+# so far (``_left_from``).
+_LEAVING: contextvars.ContextVar[Mapping[int, Callable[[], Residual]]] = contextvars.ContextVar(
+    "doeff_effect_analyzer_leaving", default=types.MappingProxyType({})
+)
+
+
+def _left_from(performed: "ProgramEffects", include: Callable[[Any], bool]) -> Residual:
+    """What leaves ``performed`` — what a handler performs (``pass_through``).
+
+    A clause can install its own handler again (``handler_effects._installed_again``: the same
+    handler), so an effect can reach the same clause again inside what it performs.  There what
+    leaves the clause is taken to be what is known to leave it so far (nothing at first), and the
+    clause is worked out again with that until nothing more leaves: the least answer that holds
+    at every turn of the recursion.  Taking the inner turn to leave nothing, without working it
+    out again, would lose what a handler between the inner turn and the clause makes of what the
+    turn performs (agora card ki-70117167ebf3).  Each turn leaves at least what the one before
+    did, out of a finite set of effects, handler names and places, so the turns end.
+    """
+    leaving = _LEAVING.get()
+    known = leaving.get(id(performed))
+    if known is not None:
+        return known()
+    so_far = Residual()
+    asked = False
+
+    def taken() -> Residual:
+        nonlocal asked
+        asked = True
+        return so_far
+
+    while True:
+        token = _LEAVING.set({**leaving, id(performed): taken})
+        try:
+            left = performed.residual_with(include)
+        finally:
+            _LEAVING.reset(token)
+        if not asked or _holds_no_more(left, so_far):
+            return left
+        so_far, asked = left, False
+
+
+def _holds_no_more(left: Residual, so_far: Residual) -> bool:
+    """Whether ``left`` names no effect, unread handler or unfollowed place ``so_far`` does not."""
+    return (
+        left.effect_types <= so_far.effect_types
+        and set(left.unknown_handlers) <= set(so_far.unknown_handlers)
+        and set(left.unresolved) <= set(so_far.unresolved)
     )
 
 
