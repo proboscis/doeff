@@ -1,5 +1,6 @@
-"""核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)の配布物が、根と同じ MIT の LICENSE を持つ事の
-失敗ケース(取り組み doeff-publish の区切り 2・card ki-2dbb91f7e2c8)。
+"""核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)と、自分の tag で出す doeff-time の配布物が、根と
+同じ MIT の LICENSE を持つ事の失敗ケース(取り組み doeff-publish の区切り 2・card ki-2dbb91f7e2c8)。doeff-time 0.1.0 は license の
+欄も LICENSE の file も無いまま PyPI に出た。
 
 license の欄は PEP 639 の SPDX の式(`license = "MIT"`)と `license-files` で書く。build の口はそれを core metadata の
 License-Expression と License-File にし、LICENSE を wheel の dist-info/licenses と sdist の根に入れる。PEP 639 では license の
@@ -26,6 +27,9 @@ CORE = {
     "doeff-hy": REPO / "packages" / "doeff-hy",
     "doeff-hy-pytest": REPO / "packages" / "doeff-hy-pytest",
 }
+# 核の tag でなく自分の tag で PyPI へ出す部品の名 → pyproject.toml の在る dir。
+ON_PYPI_ALONE = {"doeff-time": REPO / "packages" / "doeff-time"}
+RELEASED = CORE | ON_PYPI_ALONE
 
 # build の口の名 → PEP 639 の欄を License-Expression と License-File に書かない最後の版(下限はこの版を断る)。
 LAST_BACKEND_WITHOUT_PEP639 = {"hatchling": "1.26.3", "maturin": "1.9.2"}
@@ -55,9 +59,9 @@ def _strings(table: dict[str, object], key: str) -> list[str]:
             pytest.fail(f"{key} が文字列の列でない: {other!r}")
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
-def test_each_core_package_declares_mit_and_ships_the_root_license(name: str) -> None:
-    directory = CORE[name]
+@pytest.mark.parametrize("name", sorted(RELEASED))
+def test_each_released_package_declares_mit_and_ships_the_root_license(name: str) -> None:
+    directory = RELEASED[name]
     project = _table(directory, "project")
     assert project.get("name") == name
     assert project.get("license") == "MIT", (
@@ -79,10 +83,10 @@ def test_each_core_package_declares_mit_and_ships_the_root_license(name: str) ->
     )
 
 
-@pytest.mark.parametrize("name", sorted(CORE))
-def test_each_core_package_build_backend_writes_the_license_expression(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(RELEASED))
+def test_each_released_package_build_backend_writes_the_license_expression(name: str) -> None:
     requires = [
-        Requirement(line) for line in _strings(_table(CORE[name], "build-system"), "requires")
+        Requirement(line) for line in _strings(_table(RELEASED[name], "build-system"), "requires")
     ]
     backends = [
         requirement for requirement in requires if requirement.name in LAST_BACKEND_WITHOUT_PEP639

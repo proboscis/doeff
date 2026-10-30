@@ -1,5 +1,6 @@
 [build-system]
-requires = ["hatchling"]
+# license の SPDX の式と license-files(PEP 639)を既定で core metadata に書くのは hatchling 1.27 から(既定の版 2.4)。
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,7 +8,9 @@ name = "doeff-time"
 version = "0.2.0"
 description = "Algebraic effects for Python: provider-agnostic time effects for doeff (delay, wait until, clock readings, scheduling) with asyncio, blocking and virtual-time handlers"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["algebraic-effects", "effects", "effect-handlers", "handlers", "continuations", "time", "clock", "scheduling", "simulation"]
 classifiers = [
     "Development Status :: 4 - Beta",
