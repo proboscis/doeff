@@ -129,7 +129,7 @@
   #((ModuleOrigin :module PROBE :file (+ app PROBE "/__init__.py"))
     (ModuleOrigin :module NAMESPACE :file (+ app NAMESPACE "/"))
     (ModuleOrigin :module "json" :file (str (.resolve (Path json.__file__))))
-    (ModuleOrigin :module "doeff_cluster" :file (+ (str (.resolve (Path (get (list doeff_cluster.__path__) 0)))) "/"))))
+    (ModuleOrigin :module "doeff_cluster" :file (str (.resolve (Path doeff_cluster.__file__))))))
 
 
 (defk scene-facts [world scene]
