@@ -23,7 +23,8 @@
 ;;; card [id])。doeff-adr の登録簿を読み書きする関数 4 個は R32(答え [id]・card [id])。
 ;;; doeff-adr を範囲「決まりの範囲」に入れ、submodule の移し替えの module を消す事は R33(同じ答え・card [id])。
 ;;; 入口の出す名と同じ名の子(移し替えの module を含む)を置かない事は R34(card [id] — 古い path の import が入口の
-;;; 関数を module で隠し、記録の service が 2026-10-30 09:42〜13:12 JST に起動の度に落ちた)。
+;;; 関数を module で隠し、記録の service が 2026-10-30 09:42〜13:12 JST に起動の度に落ちた)。effect の答えを他の物差しへ換える関数
+;;; (換算の関数 — doeff-time の epoch_ms_of)を名ごとに許す事は R35(答え [id]・card [id])。
 ;;; 答えの無い物は R13 の「未決」に並べ、答えが来たら
 ;;; 持ち主がこの ADR に条を足す。
 ;;;
@@ -32,7 +33,7 @@
 ;;; 境界だけ・減るだけ)と許した物の表(tests/data/public_api_allowed.json — 決まりが名ごとに許した名・決めの id つきで足せる)と
 ;;; 突き合わせる。工場と読めた名は目録の道具が呼んで印を確かめ、印の無い値を返す名を外れと数える(R3)。許した物の表の組
 ;;; 「許した物 — program の helper」の名は、目録の道具が中を読んで helper の形(R18)と確かめた物だけを置ける。組「許した物 — Hy の
-;;; macro」と「許した物 — CLI コマンド」の名も、目録の行の形で確かめる(R31)。この ADR は別の検を
+;;; macro」と「許した物 — CLI コマンド」の名も、目録の行の形で確かめる(R31)。組「許した物 — 換算の関数」の名は、目録の道具が中を読んで換算の形(R35)と確かめた物だけを置ける。この ADR は別の検を
 ;;; 作らない — law の :enforced-by がその test を指し、この file の deftest はその test の関数を呼ぶだけ(R12)。
 ;;;
 ;;; 戻し方: 決まりを外すなら、この file と tests/test_public_api_known_violations.py と既知の表と許した物の表を消し、台帳(docs/adr/enforcement-ledger.json)を
@@ -118,7 +119,10 @@
        :evidence "tools/public_api_inventory.py --package <dir> の目録の行(card [id] の発言に名ごとの表)・packages/doeff-indexer/python/doeff_indexer/__init__.py・packages/doeff-indexer/src/python_api.rs")
      (fact
        "外れの組の helper の形の行を doeff 9c0707dd87a2 の目録で数え直すと 3,264 行・2,460 名(名は定義の数)。そのうち外の 12 repo(agora-controllers・merge-queue・moneta ほか)の origin/main か doeff の別 package が import する名は 155 名(271 行)だけ — 組で 内側の module へ移す 100・handler の中へ入れる 49・effect にする 6、repo ごとに agora-controllers 131・merge-queue 23・moneta 9 ほか。使わない 2,305 名は区切り 5 の隠す card が _ の下へ移す。"
-       :evidence "card [id] の発言(表 1・表 2・155 名の一覧)・artifact 2026-10-29-r13d-helper-counts.html")]
+       :evidence "card [id] の発言(表 1・表 2・155 名の一覧)・artifact 2026-10-29-r13d-helper-counts.html")
+     (fact
+       [removed]
+       :evidence "依頼書 [id] の問い epoch-ms の答え [id]・card [id] の発言(呼び手の数え — ~/repos の 21 の checkout の origin/main と doeff の main・2026-10-30 01:00 JST)")]
   :context
     [(interpretation
        "doeff の値は、handler を替えれば同じ program が test でも本番でも走る事にある。subpackage が手続き型の関数や client の class を見せると、利用者はその口を直に呼び、handler の差し替えの外で書く。effect と handler だけを見せれば、どの subpackage も effect を yield して handler を据えるだけで使える。")
@@ -131,7 +135,7 @@
      (interpretation
        "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名と、その submodule そのもの(R5)・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。doeff だけが import する doeff の中の部品(doeff-vm — R11)も同じ。")]
   :decision
-    [(rule R1 "subpackage の公開 API は effect(EffectBase の型と、effect を作る関数)と handler(@handler・defhandler・stacked_handlers の、印の付いた値)と handler を返す工場(呼ぶと handler か handler の組を返す関数 — R3)と、名ごとに許した program の helper(R18)だけ(2026-10-26 の決まりを、2026-10-28 の決定 [id]〜[id] が工場まで、2026-10-29 の答え [id] が helper まで書き表した)。ほかの名(手続き型の関数・R18 で許していない program 関数・client や API の class・設定を読む関数・定数)は、名か module の path に _ を付けた内側に置くか、effect か handler か工場に作り直す。")
+    [(rule R1 "subpackage の公開 API は effect(EffectBase の型と、effect を作る関数)と handler(@handler・defhandler・stacked_handlers の、印の付いた値)と handler を返す工場(呼ぶと handler か handler の組を返す関数 — R3)と、名ごとに許した program の helper(R18)と換算の関数(R35)だけ(2026-10-26 の決まりを、2026-10-28 の決定 [id]〜[id] が工場まで、2026-10-29 の答え [id] が helper まで書き表した)。ほかの名(手続き型の関数・R18 で許していない program 関数・client や API の class・設定を読む関数・定数)は、名か module の path に _ を付けた内側に置くか、effect か handler か工場に作り直す。")
      (rule R2 "effect の値の型・effect の結果の型・effect と handler が投げる例外の型・handler の設定の型は、effect と handler の一部として公開してよい(2026-10-27・依頼書 [id] の問い types の答え [id])。")
      (rule R3 "handler は印 _doeff_is_handler_fn の付いた callable の値(中核の ProgramHandler)で、中身は (effect, k) を受けて答えるか外へ渡す body(2026-10-28 の決定 [id]〜[id])。handler を返す工場は、引数なしか最小の引数で呼ぶとその値(か、その値の list か tuple)を返す関数。印の無い関数は、program を受けて program を返しても handler と数えず、戻りの型を ProgramHandler と書いても呼んで印の無い値を返す関数は工場と数えない。目録の道具は工場と読めた名を最小の引数(既定値の無い引数ごとに中身の無い置き物)で呼んで印を確かめ、印の無い値を返す名を外れ(handler を返さない関数)と数える。呼ぶと例外の出る工場(置き物を呼ぶ時に読む物・機体に無い命令を探す物)は戻りの型の読みのまま。改めた前の形: 2026-10-27 の「handler は (effect, k) を受けて答える関数に限り、program を受けて program を返すだけの関数を handler と数えない」(combinator の書 [id] の問い maybe の答え [id])— 決定 (1) が handler を ProgramHandler の値と決めたので、形(program → program)でなく印で数える形に改めた。印の無い program → program の関数を handler と数えない事は変わらない。")
      (rule R4 "handler は class で書かない。名が Handler で終わり method で effect を受ける class の形の handler は、内側へ隠すのでなく doeff の handler(@handler・defhandler)に書き直して class を消す(2026-10-27・問い class-handler の答え [id])。直しは card [id](doeff-git)・[id](doeff-agentic)・[id](doeff-conductor)。")
@@ -164,7 +168,8 @@
      [removed]
      (rule R32 "doeff-adr の登録簿を読み書きする関数 4 個(register_adr・clear_registry・enforcement_ids・get_enforcement)は、effect RegisterAdr(ADR を載せる → AdrSpec)・ClearRegistry(ADR と検を空にする → None)・EnforcementIds(検の id の一覧 → list[str])・GetEnforcement(id で検を引く → EnforcementRef か SemgrepSpec)にし、R20 の工場 adr_registry の同じ handler が答える(2026-10-30 01:09 JST・依頼書 [id] の問い adr-scope の答え [id] — doeff-adr を範囲に入れ、残りの名を R20〜R22 と同じ向きで直す・card [id])。外の repo(agora-controllers・agora・custody ほか)に呼び手が無かったので、移し替えの層を残さずに 4 個を registry と入口から消し、本体は内側の registry._register_adr・_clear_registry・_enforcement_ids・_get_enforcement(どれも表を引数で受け、None = process の登録簿)に置いた。既知の表の 8 行(doeff_adr と doeff_adr._registry の 4 名ずつ)も消した。別の登録簿は R30 の引数 enforcements と同じ形で、ADR の表は specs の写し(工場を呼んだ時に 1 つ作り、RegisterAdr はそこへ載せる)・検の表は渡した辞書そのもの — semgrep_enforcements(table=…) と同じ辞書を渡せば、RegisterSemgrep の載せを GetEnforcement と RegisterAdr の検の id が読む。4 つの effect は別の登録簿から外へ落ちず(無い id は KeyError)、ClearRegistry は別の登録簿の 2 つの表だけを空にする。載せと引きの決まった失敗(KeyError・TypeError・ValueError)は TransferThrow で effect を出した所へ投げ返す。macro defadr の展開は、ADR の載せも import の時に effect RegisterAdr として adr_registry() の下で走らせる(R30 の RegisterDeftest と同じ形)。effect だけで読み書きする test は、別の登録簿を据えた handler で足り、registry.isolated_registry が要らない。isolated_registry は、macro の展開が import の時に process の登録簿へ載せる所を試す test だけが使う内側の道具として registry に残す(展開は handler を自分で据えるので、外から差し替えられない — 隠すのは submodule を _ へ移す card [id])。")
      (rule R33 "doeff-adr(実行できる ADR の macro と pytest の plugin の package)は範囲「決まりの範囲」に入れ、R1・R5 をほかの package と同じく当てる(2026-10-30 01:09 JST・依頼書 [id] の問い adr-scope の答え [id] — 範囲に入れる・card [id])。公開の名は effect と handler(R20・R21・R22・R30・R32)と、R2 の型・CLI コマンド doeff-adr(R7)・pytest11 の plugin の登録・macro を出す module doeff_adr.macros(R14・R31 と同じ向き)だけにする。submodule 12 個は _ へ移し(card [id] — doeff 64ac67a2a)、外の repo の古い path の呼び手 5 か所(agora-controllers と jev-proxy)を入口と doeff_adr.macros へ書き換えた後(card [id])に、移し替えの module 12 個を消した(tools/hide_submodules.py finish)。既知の表の doeff-adr の外れの組の行(submodule を _ で隠す 12・内側の module へ移す 174)と、入口の行と重なる境界の行 3 つを消し、範囲を「決まりの範囲」に改めた。残る境界の行(型・CLI・pytest の plugin の登録・Hy の macro)は、許した物の表へ移す card([id]・[id]・[id]・[id]・[id])が移す。R13 (b) から外した。")
-     (rule R34 "import の根の入口(__init__)が出す名と同じ名の子(根のすぐ下の module・package・名前空間の dir と、移し替えの module)を置かない(2026-10-30・card [id])。古い path(<根>.<子>)を import すると、import の仕組みが親の package の属性 <根>.<子> を子の module に束ねる — 属性が在るので入口の遅延の __getattr__ は呼ばれず、すぐに束ねた名も上書きされ、後から入口で名を取る呼び手は関数でなく module を受ける。どちらが勝つかは import の順で決まる。実例: doeff 42f897000(card [id])が doeff_core_effects の子 aiohttp_http_server を _ へ移し、入口が遅延で関数 aiohttp_http_server を出す所に同じ名の移し替えの module を残した。agora-controllers の本番の土台が古い path を読んだので、10-30 09:42〜13:12 JST に記録の service が起動の度に TypeError(with_handlers: handler must be callable, got module)で落ち、画面に客が繋がれなかった。同じ形の殻は doeff_core_effects の scripted_http_server・doeff_agentic の opencode_handler と tmux_handler・doeff_openrouter の structured_llm(package の class を差し替えて束ねを捨てる手当てを持っていた)にも在った。doeff_core_effects の 2 つは外の repo の読み手(agora-controllers・moneta)を入口か _ の path へ書き換えてから消し、残りの 3 つは 21 package の殻を消した commit 32ba0e517 が消した。入口が遅延で package の属性から読む名も、その package に同じ名の子が在れば同じく隠れる(doeff_agents の agent は _effects から読んでいたので、移した package の古い path doeff_agents.effects.agent の import で module に替わった — 定義の module ._effects.agent から読む形に直した)。tools/hide_submodules.py の hide は、子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら何も書かずに断る — 子の名か入口の名を先に替える。")]
+     (rule R34 "import の根の入口(__init__)が出す名と同じ名の子(根のすぐ下の module・package・名前空間の dir と、移し替えの module)を置かない(2026-10-30・card [id])。古い path(<根>.<子>)を import すると、import の仕組みが親の package の属性 <根>.<子> を子の module に束ねる — 属性が在るので入口の遅延の __getattr__ は呼ばれず、すぐに束ねた名も上書きされ、後から入口で名を取る呼び手は関数でなく module を受ける。どちらが勝つかは import の順で決まる。実例: doeff 42f897000(card [id])が doeff_core_effects の子 aiohttp_http_server を _ へ移し、入口が遅延で関数 aiohttp_http_server を出す所に同じ名の移し替えの module を残した。agora-controllers の本番の土台が古い path を読んだので、10-30 09:42〜13:12 JST に記録の service が起動の度に TypeError(with_handlers: handler must be callable, got module)で落ち、画面に客が繋がれなかった。同じ形の殻は doeff_core_effects の scripted_http_server・doeff_agentic の opencode_handler と tmux_handler・doeff_openrouter の structured_llm(package の class を差し替えて束ねを捨てる手当てを持っていた)にも在った。doeff_core_effects の 2 つは外の repo の読み手(agora-controllers・moneta)を入口か _ の path へ書き換えてから消し、残りの 3 つは 21 package の殻を消した commit 32ba0e517 が消した。入口が遅延で package の属性から読む名も、その package に同じ名の子が在れば同じく隠れる(doeff_agents の agent は _effects から読んでいたので、移した package の古い path doeff_agents.effects.agent の import で module に替わった — 定義の module ._effects.agent から読む形に直した)。tools/hide_submodules.py の hide は、子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら何も書かずに断る — 子の名か入口の名を先に替える。")
+     (rule R35 "effect の答えを他の物差しへ換える関数(換算の関数)は名ごとに許す(2026-10-30 17:10 JST・依頼書 [id] の問い epoch-ms の答え [id] — 換算の関数として名ごとに許し、呼び手は替えない・card [id])。換算と数えるのは次の 3 つを満たす関数: (1) 戻りの型が値の型 — effect・handler・program の型でなく、中身を言わない Any・object・Callable でもない。(2) generator でも coroutine でもない。(3) 中で effect も handler も program も作らず(effect の型と effect を作る関数・handler の値と作り手と工場・@do と defk の関数・Perform・WithHandler・handler の制御を読まない)、時計・環境・file・process・乱数・端末を名で読まない(now・time・monotonic・sleep・environ・getenv・open・read_text・run・Popen・socket・urlopen・random・uuid4・print ほか — 目録の道具の _WORLD_NAMES)。中は、その関数と、中で読む同じ package の関数を辿った全部で見る。目録の読みは R18 と同じく中の名を global の値か属性の名で見て、同じ package の関数だけを辿るので、引数で受けた物・module の容器や instance の属性から読んだ物・別の package の関数が外に触る形は見えず、換算と読む。だから換算の関数は名ごとに許し、許す名の中は人が読む。許す名は許した物の表(tests/data/public_api_allowed.json)に組「許した物 — 換算の関数」と許した決めの id をつけて置き、目録の道具がその名の形を確かめて、換算の形でなければ赤にする(R12)。形が換算でも、許した物の表に置いていない関数は外れのまま。今許す名: doeff-time の epoch_ms_of(GetTime の答えの時刻を、他の process や記録の刻と並べる epoch ミリ秒へ床で丸める — 丸めの式のただ 1 つの持ち主)。")]
   :laws
     [(law subpackage-shows-only-effects-and-handlers
        :statement "for_all package p under packages/ with scope(p) = 決まりの範囲: outside(p) = {n in public_names(p) | kind(n) not in {effect, handler}} = known(p) + allowed(p) with known(p) and allowed(p) disjoint, listed_names(table) only shrinks from its first version, and the known table holds no allowed group"
@@ -234,6 +239,19 @@
                      "tests/test_public_api_inventory.py::test_a_program_function_says_whether_it_is_a_helper"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-program-helper-can-be-allowed-as-one"]
        :wiring "配線済み(2026-10-29・card [id])— 目録は program を返す関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、handler の制御か handler を被せる物を読めば形「handler を被せる program を返す関数」か「effect に答える program を返す関数」、読まなければ形「program の helper」と数える(種類はどれも それ以外)。表の test は許した物の表の組「許した物 — program の helper」の名の形が helper でなければ赤にし、許した物の表の組は形を確かめる組だけを置け、行は決めの id を持つ(2026-10-30・card [id] が許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分けた — tools/hide_submodules.py も 2 つの表を読む)。読みが見ない形(引数で受けた handler・別の package の関数が被せる)は、今の限りとして目録の test に固定した(構成のレビュー 2026-10-29 の所見)。この file の deftest はその関数を呼ぶだけ")
+     (law an-allowed-conversion-makes-nothing-and-reads-no-world
+       :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — 換算の関数): value_return_type(n) and not generator(n) and not coroutine(n) and for_all body b in bodies(n): not reads(b, maker) and not reads(b, world) — bodies(n) = n and the functions of p that n reads, followed through; maker = an effect type or a function returning one, a marked handler or a handler builder or a factory, a @do or defk function, Perform, WithHandler or handler control; world = a name of _WORLD_NAMES (a clock, the environment, a file, a process, randomness or the console)"
+       :counterexamples
+         [(counterexample "今の時刻を読んで epoch ミリ秒を返す関数(datetime.now を読む)を、整数を返すから換算の組に置いて通す")
+          (counterexample "換算の組に置いた関数の中で、同じ package の別の関数が time.time を読むのに、組の名の中だけを読んで通す")
+          (counterexample "中で effect の値を作る関数を、戻りの型が整数だから換算と数える")
+          (counterexample "program を返す関数か handler を返す工場を換算の組に置いて通す")]
+       :enforced-by ["tests/test_public_api_known_violations.py::test_only_a_conversion_can_be_put_into_the_conversion_group"
+                     "tests/test_public_api_known_violations.py::test_the_allowed_table_is_well_formed"
+                     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
+                     "tests/test_public_api_inventory.py::test_names_are_typed_by_marker_return_type_and_return_shape"
+                     "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-conversion-can-be-allowed-as-one"]
+       :wiring "配線済み(2026-10-30・card [id])— 目録は戻りの型が値の型の関数の中(と、中で読む同じ package の関数の中)の名を code object から読み、effect・handler・program を作る物か _WORLD_NAMES の名を読むか、generator か coroutine なら形「関数」(理由の末尾に、どの関数がどの名を読むか)、読まなければ形「換算の関数」と数える(種類はどちらも それ以外)。表の test は許した物の表の組「許した物 — 換算の関数」の名の形が換算でなければ赤にする。今の行は doeff-time の epoch_ms_of 1 つ")
      (law an-allowed-macro-or-command-has-that-form
        :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — Hy の macro): form(m, n) = Hy の macro or (m = (submodule) and names(n) != {} and for_all k in names(n): form(n, k) = Hy の macro); for_all (m, n) in allowed(p, 許した物 — CLI コマンド): form(m, n) in {console script, Rust の実行 file}"
        :counterexamples
@@ -322,6 +340,12 @@
        (<- guard ModuleType (guard-module))
        (with [scratch (tempfile.TemporaryDirectory)]
          (guard.test-only-a-macro-or-a-command-can-be-put-into-the-macro-and-command-groups (/ (Path scratch) "macro"))))
+     (deftest test-adr-doe-api-001-only-a-conversion-can-be-allowed-as-one
+       ;; R35・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package の、値を受けて値を返すだけの関数は組「許した物 — 換算の関数」に
+       ;; 置けば緑。中の同じ package の関数が時計を読む・属性で時計を読む・effect を作る関数を置くと赤。
+       (<- guard ModuleType (guard-module))
+       (with [scratch (tempfile.TemporaryDirectory)]
+         (guard.test-only-a-conversion-can-be-put-into-the-conversion-group (/ (Path scratch) "conversion"))))
      (deftest test-adr-doe-api-001-a-doeff-part-imported-outside-doeff-turns-the-guard-red
        ;; R11・R12: 同じ test の関数を呼ぶだけ — 使い捨ての repo で、doeff の外の file が doeff の中の部品(doeff_vm)を import すると
        ;; 赤(import の文・Hy の形・名の文字列の行を名指す)・doeff の根と doeff._vm から読む形に直すと緑。部品そのもの・doeff の根の

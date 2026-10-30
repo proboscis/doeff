@@ -10,6 +10,10 @@
 - **doeff-events:** the gap notice is made and told apart through the types: `Announce.gap(channel, source)` sends
   it, and `Announce.is_gap` / `Announcement.is_gap` tell it from a routed notice (in Hy, `(Announce.gap channel
   source)` and `(Announcement :is-gap True)` in a `match`).
+- **doeff-time:** `epoch_ms_of` stays exported from the import root: ADR-DOE-API-001 R35 allows, name by name, a
+  conversion function — one that turns an effect's answer into another scale and makes no effect, handler or program
+  and reads no clock, environment, file or process — and the public API inventory checks that shape. Before, the
+  known-violations table listed it to move inward. Callers need no change.
 
 ### Changed
 
