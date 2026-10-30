@@ -400,7 +400,7 @@ def wall_clock(effect: Delay | GetTime, k):  # 実時間の時計。asyncioで�
 
 
 def real(program):  # 実時間の時計と、非同期のクライアント。
-    return scheduled(await_handler()(wall_clock(program)))  # 実時間・Await・タスクのハンドラを付ける。
+    return scheduled(await_handler(wall_clock(program)))  # 実時間・Await・タスクのハンドラを付ける。
 ```
 
 ```python

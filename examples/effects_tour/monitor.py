@@ -200,7 +200,7 @@ def wall_clock(effect: Delay | GetTime, k):  # waits on asyncio
 
 
 def real(program):  # the wall clock and an async client
-    return scheduled(await_handler()(wall_clock(program)))
+    return scheduled(await_handler(wall_clock(program)))
 
 
 if __name__ == "__main__":
