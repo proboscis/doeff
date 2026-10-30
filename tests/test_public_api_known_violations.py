@@ -102,7 +102,7 @@ ALLOWED_SHAPES: dict[str, str] = {
     COMMAND_GROUP: "console script と Rust の実行 file だけを置ける(ADR-DOE-API-001 R7・R31)",
     CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
-    ADR_WRITER_GROUP: "Hy の macro の module が出す関数だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
+    ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
     ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
@@ -244,24 +244,33 @@ def allowed_groups(allowed: AllowedTable, package_dir: str) -> dict[Key, str]:
     }
 
 
-def _is_macro_module(package: Mapping[str, Any], module: str) -> bool:
-    """module の目録の名が 1 つ以上在り、全部が Hy の macro(macro の module — ADR-DOE-API-001 R14・R15・R31)。"""
-    forms = {row["form"] for row in package["exports"] if row["module"] == module}
-    return forms == {tool.MACRO_FORM}
+def _is_macro_module(package: Mapping[str, Any], module: str, writers: frozenset[Key] = frozenset()) -> bool:
+    """module の目録の名が 1 つ以上在り、全部が Hy の macro か、許した物の表で ADR を書く関数に置いた名(macro の module
+    — ADR-DOE-API-001 R14・R15・R31)。"""
+    rows = [row for row in package["exports"] if row["module"] == module]
+    return any(row["form"] == tool.MACRO_FORM for row in rows) and all(
+        row["form"] == tool.MACRO_FORM or (module, row["name"]) in writers for row in rows
+    )
 
 
-def fits_allowed_group(group: str, row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
-    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。"""
+def fits_allowed_group(
+    group: str,
+    row: Mapping[str, Any],
+    package: Mapping[str, Any],
+    writers: frozenset[Key] = frozenset(),
+) -> bool:
+    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。writers = 許した物の表で組「ADR を書く関数」に
+    置いた (module, 名)。"""
     if group == HELPER_GROUP:
         return row["form"] == tool.PROGRAM_HELPER
     if group == CONVERSION_GROUP:
         return row["form"] == tool.CONVERSION
     if group == MACRO_GROUP:
         return row["form"] == tool.MACRO_FORM or (
-            row["module"] == SUBMODULE and _is_macro_module(package, row["name"])
+            row["module"] == SUBMODULE and _is_macro_module(package, row["name"], writers)
         )
     if group == ADR_WRITER_GROUP:
-        return row["form"] == "関数" and row["module"].endswith(".macros")
+        return row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
     if group == ANSWER_TYPE_GROUP:
         return row["form"] in ("class", "型")
     return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
@@ -417,11 +426,12 @@ def check_package(
     shown = {key: groups[key] for key in groups.keys() & found.keys()} | {
         root: groups[old] for root, old in moved if old in groups
     }
+    writers = frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP)
     misshapen = {
         group: [
             found[key]
             for key in sorted(shown)
-            if shown[key] == group and not fits_allowed_group(group, found[key], package)
+            if shown[key] == group and not fits_allowed_group(group, found[key], package, writers)
         ]
         for group in ALLOWED_GROUPS
     }
