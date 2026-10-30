@@ -186,8 +186,9 @@
 
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
-   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・capacity・task-reserve = task のために空けておく数
-   (必ず書く欄・0 以上 capacity 以下 — 常駐の job と並べた置き先はこの分を使わない・欄の無い本文は形の誤りで断る)・versions / tools = 名 → 版・platform・
+   provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・task-reserve = task のために空けておく数
+   (必ず書く欄・0 以上 — 欄の無い本文は形の誤りで断る)・background-room = 背景の仕事を同時に置ける数(0 以上 — task の空きは予約 + この数 −
+   置いた task・card ki-2acb63aec0fd)・versions / tools = 名 → 版・platform・
    envs = root の名乗り・env-capacity = disk の条件・statuses = 状態の報告の行の列(StatusRow)・
    endpoint・boot = process の世代・boot-at = 起動時刻(epoch ms)・format = 本文の形の版・kept-when-cut-off = 途絶しても動かし続けてよい印を
    今持っている job の名の列(#2804 — None = 欄の無い古い worker = 印を知らない)・stopping = この世代が止まり始めた
@@ -198,17 +199,19 @@
    名乗らない worker(Pod の外・旧い worker)は ok)・room-file = 枠の file の状態(ok・unreadable・malformed — ok でない間 worker は
    前に名乗った枠のまま・card ki-6828eda880ce。file を読まない worker・旧い worker は ok)・doeff-commit = その process の doeff の版
    (起動の script の WORKER_DOEFF_COMMIT — card ki-6e83e03d146d。版を持たない worker・旧い worker は空)・memory-MiB = 枠の file の行の
-   常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB — card ki-ced3c45980a5。Worker の行と GET /state に出すだけで、置き方の判断には
-   使わない。名乗らない worker・旧い worker は None)。"
+   常駐の job の memory の予算(欄 memoryMiB・0 以上の MiB — card ki-ced3c45980a5。job の側の枠 — 置いた job の settle の和 + 新しい job の
+   settle がこの値以下の時だけ置く・card ki-2acb63aec0fd。名乗らない worker(枠の file の外の機体)は None で、memory で縛らない)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
-   :check [(> (len name) 0) (<= 0 task-reserve capacity) (or (is memory-MiB None) (>= memory-MiB 0))]}
+   :check [(> (len name) 0) (>= task-reserve 0) (>= background-room 0) (or (is memory-MiB None) (>= memory-MiB 0))]}
   (#^ str name)
   (#^ int task-reserve)
   (setv #^ (| (get tuple #(str ...)) None) provides None)
   (setv #^ (| (get tuple #(str ...)) None) exclusive None)
   (setv #^ object labels None)
   (setv #^ str node "")
-  (setv #^ int capacity 10)
+  ;; 配備の間だけの許し(card ki-2acb63aec0fd — coordinator を先・worker を後に入れ替える間): 旧い worker は capacity を送り backgroundRoom を
+  ;; 送らない。capacity は欄に持たずに捨て(:unknown :ignore)、backgroundRoom の無い本文は 0 で受ける。worker を入れ替え終えたら既定の値を外す。
+  (setv #^ int background-room 0)
   (setv #^ (| (get dict #(str str)) None) versions None)
   (setv #^ (| (get dict #(str str)) None) tools None)
   (setv #^ str platform "")

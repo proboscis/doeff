@@ -31,8 +31,9 @@
     (LaunchField :env-name "WORKER_NAME" :field "name" :kind LaunchFieldKind.TEXT :optional False)
     (LaunchField :env-name "WORKER_PROVIDES" :field "provides" :kind LaunchFieldKind.NAMES :optional False)
     (LaunchField :env-name "WORKER_EXCLUSIVE" :field "exclusive" :kind LaunchFieldKind.NAMES :optional True)
-    (LaunchField :env-name "WORKER_CAPACITY" :field "capacity" :kind LaunchFieldKind.COUNT :optional False)
-    (LaunchField :env-name "WORKER_TASK_RESERVE" :field "task_reserve" :kind LaunchFieldKind.COUNT :optional False)))
+    (LaunchField :env-name "WORKER_TASK_RESERVE" :field "task_reserve" :kind LaunchFieldKind.COUNT :optional False)
+    (LaunchField :env-name "WORKER_BACKGROUND_ROOM" :field "background_room" :kind LaunchFieldKind.COUNT :optional False)
+    (LaunchField :env-name "WORKER_MEMORY_MIB" :field "memory_mib" :kind LaunchFieldKind.COUNT :optional True)))
 
 (val COORDINATOR-LAUNCH-FIELDS
   #((LaunchField :env-name "WORKER_DOEFF_COMMIT" :field "doeff_commit" :kind LaunchFieldKind.TEXT :optional False)))
@@ -78,23 +79,23 @@
 
 
 (defk read-value [field text]
-  {:pre [(: field LaunchField) (: text str)] :post [(: % (| str int tuple))]
+  {:pre [(: field LaunchField) (: text str)] :post [(: % (| str int tuple None))]
    :tags {:context "doeff-cluster" :role "judgment"}}
-  "環境変数の値の綴りを欄の値に戻すため(shown-value の逆)。names の空の綴りは空の列。"
+  "環境変数の値の綴りを欄の値に戻すため(shown-value の逆)。names の空の綴りは空の列・count の空の綴り(省ける欄の行が無い)は None。"
   (match field.kind
     LaunchFieldKind.TEXT text
     LaunchFieldKind.NAMES (if text (tuple (.split text ",")) #())
-    LaunchFieldKind.COUNT (int text)))
+    LaunchFieldKind.COUNT (if text (int text) None)))
 
 
 (defk launch-env [table launch]
   {:pre [(: table (get tuple #(LaunchField ...))) (: launch (| WorkerLaunch CoordinatorLaunch))]
    :post [(: % (get tuple #(EnvEntry ...)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "起動の値を、表 table の順に boot.sh の名の行にするため。optional の欄は値が空なら行を持たない。"
+  "起動の値を、表 table の順に boot.sh の名の行にするため。optional の欄は値が空(None・空の文字・空の列 — 数の 0 は空でない)なら行を持たない。"
   (var lines #())
   (for [f table]
     (val value (getattr launch f.field))
-    (when (not (and f.optional (not value)))
+    (when (not (and f.optional (or (is value None) (= value "") (= value #()))))
       (<- shown str (shown-value f value))
       (:= lines (+ lines #((EnvEntry :name f.env-name :value shown))))))
   lines)
@@ -112,7 +113,7 @@
   (var values {})
   (for [f table]
     (val text (next (gfor e env :if (= e.name f.env-name) e.value) ""))
-    (<- value (| str int tuple) (read-value f text))
+    (<- value (| str int tuple None) (read-value f text))
     (:= values (| values {f.field value})))
   values)
 

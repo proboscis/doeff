@@ -254,7 +254,10 @@ def board_without_generation_holders(board: Table[BoardRow], report: WorkerRepor
 def load_of(state: ClusterState, placements: Table[Placement]) -> dict:
     ...
 
-def job_room_of(worker: WorkerInfo, load: dict[str, WorkerLoad]) -> _Program[int, object]:
+def memory_room_of(worker: WorkerInfo, load: dict[str, WorkerLoad]) -> _Program[int | None, object]:
+    ...
+
+def memory_misfit(worker: WorkerInfo, load: dict[str, WorkerLoad], job: ClusterJob) -> _Program[str | None, object]:
     ...
 
 def task_room_of(worker: WorkerInfo, load: dict) -> _Program[int, object]:
@@ -320,7 +323,13 @@ def versions_note(task: TaskRecord, state: ClusterState, now: int, timing: Clust
 def unplaced_kind(now: int, state: ClusterState, job: ClusterJob, timing: ClusterTiming) -> UnplacedKind:
     ...
 
-def unplaced_text(kind: UnplacedKind, job: ClusterJob, needs: tuple) -> str:
+def memory_misfits(now: int, state: ClusterState, job: ClusterJob, timing: ClusterTiming) -> _Program[tuple[str, ...], object]:
+    ...
+
+def unplaced_text(kind: UnplacedKind, job: ClusterJob, needs: tuple, memory: tuple) -> str:
+    ...
+
+def unplaced_memory(now: int, state: ClusterState, job: ClusterJob, kind: UnplacedKind, timing: ClusterTiming) -> _Program[tuple[str, ...], object]:
     ...
 
 def unplaced_jobs(now: int, state: ClusterState, timing: ClusterTiming) -> dict:

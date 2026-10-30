@@ -358,7 +358,8 @@ class SimWorker:
     task_reserve: int
     doeff_commit: str = ''
     exclusive: frozenset[str] = ...
-    capacity: int = 10
+    background_room: int = 10
+    memory_mib: int | None = None
     node: str = ''
     versions: dict | None = None
     prepare_seconds: float = 0.0
@@ -370,7 +371,7 @@ class SimWorker:
     retire_stops: bool = False
     ignores_keep_marks: bool = False
     silent_stop: bool = False
-    overstates_capacity: int | None = None
+    overstates_memory: int | None = None
     claims_provides: frozenset[str] | None = None
     claims_exclusive: frozenset[str] | None = None
     fresh_boot_every_beat: bool = False

@@ -44,8 +44,8 @@
    "programs" (dfor #(k p) (.items state.programs) k (program-row-to-json p))
    "placements" (dfor #(k v) (.items state.placements) k (asdict v))
    "workers" (lfor w (.rows state.workers)
-                   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "capacity" w.capacity
-                       "taskReserve" w.task-reserve
+                   (| {"name" w.name "provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node
+                       "taskReserve" w.task-reserve "backgroundRoom" w.background-room
                        "versions" (dict w.versions)}
                       (worker-generations-json w)))
    "tasks" (lfor t (.rows state.tasks) (task-record-to-json t))
@@ -242,10 +242,12 @@
     :workers (table-of (tuple (gfor #(#(name w) #(_ generation)) (zip stored-workers generations)
                    :setv caps (worker-capabilities-of w (.format "保存の worker {}" name))
                    (TableWrite name
-                   (WorkerInfo name (get caps 0) (get w "capacity") now
+                   (WorkerInfo name (get caps 0) now
                                (component-versions-of (.get w "versions" {}))
                                :exclusive (get caps 1) :node (.get w "node" "")
                                :task-reserve (get w "taskReserve")
+                               ;; capacity の在る旧い行は capacity を読まず、backgroundRoom の無い行は 0 で読む(配備の間だけの許し — card ki-2acb63aec0fd)。
+                               :background-room (.get w "backgroundRoom" 0)
                                #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
     :placements (table-of (tuple (gfor #(k v) (.items (| (.get data "assignments" {}) (.get data "placements" {}))) (TableWrite k (Placement #** v)))))

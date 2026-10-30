@@ -126,7 +126,7 @@
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(card ki-ced3c45980a5 — 名乗った worker だけに載せる)。
    "workers" (dfor w view.workers
                    w.info.name (| {"provides" (list w.info.provides) "exclusive" (list w.info.exclusive) "derived" (list w.info.derived)
-                                   "node" w.info.node "capacity" w.info.capacity "taskReserve" w.info.task-reserve "taskRoom" w.task-room
+                                   "node" w.info.node "taskReserve" w.info.task-reserve "backgroundRoom" w.info.background-room "taskRoom" w.task-room
                                    "silentMs" w.silent-ms
                                    "versions" (dict w.info.versions) "live" w.live "draining" w.draining}
                                   (if (is w.info.memory-mib None) {} {"memoryMiB" w.info.memory-mib})))
@@ -164,9 +164,11 @@
 
 (defk unplaced-view-json [#^ UnplacedView view]
   {:pre [(: view UnplacedView)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "置き先の無い Service 1 つの読み → JSON の形 {kind needs missing pin sinceMs}(GET /state の unplacedDetail の値と、Service の資源の
-   status.unplaced が同じ形を読むため — card ki-53b8677f1374)。kind = UnplacedKind の値(no-eligible-worker・no-room・waiting-previous-holder)。"
-  {"kind" view.kind.value "needs" (list view.needs) "missing" (list view.missing) "pin" view.pin "sinceMs" view.since-ms})
+  "置き先の無い Service 1 つの読み → JSON の形 {kind needs missing pin sinceMs memory}(GET /state の unplacedDetail の値と、Service の資源の
+   status.unplaced が同じ形を読むため — card ki-53b8677f1374)。kind = UnplacedKind の値(no-eligible-worker・no-room・waiting-previous-holder)・
+   memory = worker ごとの memory で置けない訳の文の列(no-room の時 — card ki-2acb63aec0fd)。"
+  {"kind" view.kind.value "needs" (list view.needs) "missing" (list view.missing) "pin" view.pin "sinceMs" view.since-ms
+   "memory" (list view.memory)})
 
 
 (defk drain-progress-json [#^ DrainProgress drain]

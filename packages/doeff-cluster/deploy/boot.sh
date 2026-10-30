@@ -7,8 +7,10 @@
 #   ROLE=worker      … worker(COORDINATOR_URL = URL を `,` で並べると前から順に試す・WORKER_NAME・WORKER_PROVIDES(提供する能力の名 a,b)・
 #                      WORKER_EXCLUSIVE(専用の能力 — provides の一部)・NODE_NAME(k8s の downward API の spec.nodeName —
 #                      coordinator が node の label から company-machine などの能力を導く)・WORKER_ROOM_FILE = 枠の file
-#                      (名 → capacity・taskReserve の JSON — 在れば heartbeat の前に読み直す)・WORKER_CAPACITY・
-#                      WORKER_TASK_RESERVE = capacity のうち task のために空けておく数(枠の file が無ければ必ず渡す — 無ければ起動しない)・
+#                      (名 → taskReserve・backgroundRoom・memoryMiB の JSON — 在れば heartbeat の前に読み直す)・
+#                      WORKER_TASK_RESERVE = task のために空けておく数(枠の file が無ければ必ず渡す — 無ければ起動しない)・
+#                      WORKER_BACKGROUND_ROOM = 背景の仕事を同時に置ける数(既定 0)・WORKER_MEMORY_MIB = 常駐の job の memory の予算
+#                      (MiB — 省けば名乗らず、memory で縛られない)・
 #                      CODE_REPO_URL = 業務のコードの git の clone 元(空 = 版の木の job を受けない)・CODE_IMPORT_ROOTS = 木の中の
 #                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
@@ -945,18 +947,20 @@ if [ -n "${WORKER_LABELS:-}" ]; then
   echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2
   exit 2
 fi
-# 枠(card ki-6828eda880ce): WORKER_ROOM_FILE(worker の名 → capacity・taskReserve の JSON — k8s では名の固定した ConfigMap worker-room を
-# volume で置いた file)が在れば、worker は起動の時と heartbeat の前にその file の自分の行を読み直して名乗る(枠を変えても Pod を作り
-# 直さない)。WORKER_CAPACITY・WORKER_TASK_RESERVE は file を読めない起動の時だけ使う。file の無い worker(機体の上の worker)は
-# task のために空けておく数(WORKER_TASK_RESERVE)を必ず渡す — 既定の値で埋めない(範囲 0 以上 capacity 以下は worker の入口が検める)。
+# 枠(card ki-6828eda880ce・ki-2acb63aec0fd): WORKER_ROOM_FILE(worker の名 → taskReserve・backgroundRoom・memoryMiB の JSON — k8s では名の
+# 固定した ConfigMap worker-room を volume で置いた file)が在れば、worker は起動の時と heartbeat の前にその file の自分の行を読み直して
+# 名乗る(枠を変えても Pod を作り直さない)。WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・WORKER_MEMORY_MIB は file を読めない起動の時だけ
+# 使う。file の無い worker(機体の上の worker)は task のために空けておく数(WORKER_TASK_RESERVE)を必ず渡す — 既定の値で埋めない(範囲
+# 0 以上は worker の入口が検める)。WORKER_MEMORY_MIB を省いた worker は memory を名乗らず、coordinator は memory で縛らない。
 if [ -z "${WORKER_ROOM_FILE:-}" ] && [ -z "${WORKER_TASK_RESERVE:-}" ]; then
-  echo "boot: WORKER_ROOM_FILE も WORKER_TASK_RESERVE も無い — 枠の file か、capacity のうち task のために空けておく数(0 以上 WORKER_CAPACITY 以下)を渡す" >&2
+  echo "boot: WORKER_ROOM_FILE も WORKER_TASK_RESERVE も無い — 枠の file か、task のために空けておく数(0 以上)を渡す" >&2
   exit 2
 fi
 set --
 [ -z "${WORKER_ROOM_FILE:-}" ] || set -- "$@" --room-file "$WORKER_ROOM_FILE"
-[ -z "${WORKER_CAPACITY:-}" ] || set -- "$@" --capacity "$WORKER_CAPACITY"
 [ -z "${WORKER_TASK_RESERVE:-}" ] || set -- "$@" --task-reserve "$WORKER_TASK_RESERVE"
+set -- "$@" --background-room "${WORKER_BACKGROUND_ROOM:-0}"
+[ -z "${WORKER_MEMORY_MIB:-}" ] || set -- "$@" --memory-mib "$WORKER_MEMORY_MIB"
 # 実行環境の root の置き場の 2 つの量(#3732 — 掃除の下限を disk 全体の割合から絶対の量へ。既定の値はここの 1 か所で、worker の
 # 入口は必ずの引数として受ける)。台ごとに変える時は Deployment の env に GiB の整数で書く:
 #   WORKER_ENV_ROOTS_GIB    roots の合計の上限(既定 20)— 越えた時は、固定(走っている job・宣言の job・準備中・温める表)でも

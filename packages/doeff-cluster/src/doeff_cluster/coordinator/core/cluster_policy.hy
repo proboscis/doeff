@@ -498,12 +498,11 @@
 
 (defn #^ bool can-take [#^ int now #^ ClusterState state #^ ClusterJob job #^ WorkerInfo w #^ dict load #^ ClusterTiming timing
                         #^ (| frozenset None) [draining None]]
-  "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・job の側の空き job-room-of と全体の
-   空き task-room-of の両方が在る — task のために空けておく分 task-reserve には置かない)。load = load-of の答え(worker の名 → WorkerLoad)。"
+  "job(と並べた置き先 surge)を新しく置ける worker か(生きている・条件を満たす・drain 中でない・memory の残りに job の settle が入る —
+   memory-misfit が None)。job は task の空き(task-room-of)を使わない(card ki-2acb63aec0fd)。load = load-of の答え(worker の名 → WorkerLoad)。"
   (and (alive now w timing.lease-ms) (eligible state job w)
        (not-in w.name (if (is draining None) (draining-workers state now) draining))
-       (> (run (job-room-of w load)) 0)
-       (> (run (task-room-of w load)) 0)))
+       (is (run (memory-misfit w load job)) None)))
 
 
 ;; --- 同じ名の process の世代(2026-09-27) ------------------------------------------------
@@ -627,32 +626,58 @@
 
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
-   task(PLACED-PHASES)。置ける空きは job-room-of・task-room-of がこの値から求める(数え方を 1 か所にする)。"
-  (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0))
+   task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)。
+   置ける空きは memory-room-of・memory-misfit・task-room-of がこの値から求める(数え方を 1 か所にする)。"
+  (setv jobs (dfor name (.keys state.workers) name 0) tasks (dfor name (.keys state.workers) name 0)
+        settles (dfor name (.keys state.workers) name 0)
+        settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0)))
   (for [a (+ (list (.rows placements)) (list (.rows state.surges)))]
-    (when (in a.worker jobs) (+= (get jobs a.worker) 1)))
+    (when (in a.worker jobs)
+      (+= (get jobs a.worker) 1)
+      (+= (get settles a.worker) (.get settle-of a.job 0))))
   (for [t (scan-rows state.tasks)]
     (when (and (in t.phase PLACED-PHASES) (in t.worker tasks)) (+= (get tasks t.worker) 1)))
-  (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name))))
+  (dfor name (.keys state.workers) name (WorkerLoad :jobs (get jobs name) :tasks (get tasks name) :settle-mib (get settles name))))
 
 
-(defk job-room-of [worker load]
-  {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad)))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker に常駐の job と並べた置き先(surge)をあと幾つ置けるかを知るため: (capacity − task-reserve) − (job の置き先 + surge の数)。
-   task のために空けておく分(task-reserve)は job の側から引く — 常駐の job が枠を埋めても task の置き場が残る。load = load-of の答え
-   (worker の名 → WorkerLoad)。0 以下なら job の側に空きが無い(置き先の判断 place-jobs・movable?・drain の move-target はどれも can-take を
-   通してこの値を読む)。"
+(defk memory-room-of [worker load]
+  {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad)))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker の常駐の job の memory の残り(MiB)を知るため: memory の予算(memory-mib)− 置いた job と surge の settle の和(card
+   ki-2acb63aec0fd)。memory を名乗らない worker(memory-mib None — 枠の file の外の機体の worker。Mac・zeus-native の worker は file を
+   読まない)は memory で縛らない(None)。load = load-of の答え(worker の名 → WorkerLoad)。"
   (val used (get load worker.name))
-  (- (- worker.capacity worker.task-reserve) used.jobs))
+  (if (is worker.memory-mib None) None (- worker.memory-mib used.settle-mib)))
+
+
+(defk memory-misfit [worker load job]
+  {:pre [(: worker WorkerInfo) (: load (get dict #(str WorkerLoad))) (: job ClusterJob)] :post [(: % (| str None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "job(と並べた置き先 surge)を worker に新しく置けない memory の訳を、job を名指す文にするため(置けるなら None — card ki-2acb63aec0fd)。
+   job の側の枠は「置いた job の settle の和 + 新しい job の settle ≤ memory の予算」だけで、数では縛らない。山(peak-mib)は使わない — 山は
+   宣言の側の N+1 の照らし(failover_policy の規則 3)が見る。置く時に新しい job の山で照らすと、最後に置く大きい job が落ち着いた値の
+   和では入るのに断られる(本番の zeus では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
+   memory を名乗らない worker(memory-room-of が None)は memory で縛らない。置き先の判断 place-jobs・movable?・drain の move-target は
+   どれも can-take を通してこの判断を読む。"
+  (<- room (| int None) (memory-room-of worker load))
+  (val used (. (get load worker.name) settle-mib))
+  (cond
+    (is job.settle-mib None)
+      (.format "job {} は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ" job.spec.name)
+    (is room None) None
+    (> job.settle-mib room)
+      (.format "job {} を worker {} に置くと、置いた job の settle の和 {} MiB + job の settle {} MiB = {} MiB が memory の予算 {} MiB を越える"
+               job.spec.name worker.name used job.settle-mib (+ used job.settle-mib) worker.memory-mib)
+    True None))
 
 
 (defk task-room-of [worker load]
   {:pre [(: worker WorkerInfo) (: load dict)] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "worker に task(と job)をあと幾つ置けるかを知るため: capacity − (job の置き先 + surge の数 + 置かれた task の数)。task は予約
-   (task-reserve)を使い切ったら job の残りへはみ出してよいので、capacity 全体から数える。job と surge を置くにも、この値が 0 より大きい事が
-   要る(can-take)。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom はこの値を読む。"
+  "worker に task をあと幾つ置けるかを知るため: 予約(task-reserve)+ 背景の枠(background-room)− 置かれた task の数。常駐の job の数に
+   依らない — job は memory で数え、task の空きを使わない(card ki-2acb63aec0fd — 以前は手書きの capacity から job も引き、job を足すと
+   背景の仕事の置き場が減った)。load = load-of の答え(worker の名 → WorkerLoad)。task の置き先(place-tasks)と GET /state の taskRoom は
+   この値を読む。"
   (val used (get load worker.name))
-  (- worker.capacity (+ used.jobs used.tasks)))
+  (- (+ worker.task-reserve worker.background-room) used.tasks))
 
 
 (defn #^ tuple active-jobs [#^ ClusterState state]
@@ -826,8 +851,8 @@
   ;;    古い宣言の process が動いているかもしれない — 宣言から消えて置き先を外した後に宣言し直した job など・#2804)。
   ;;    drain で並べた置き先(surge)を持つ job は、その置き先へ付け替える(そこで動いている process をそのまま使う — 旧い担い手が
   ;;    沈黙して外れた時)。
-  ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。置けるかは job の側の空きと
-  ;; 全体の空きの両方(can-take — task のために空けておく分には置かない)・並びは担っている数(job と task の和)の少ない順。
+  ;; 置いた後の負荷は担い手の無い job を置く時だけ読む — 全部の job が割り当てを保っていれば求めない(#2655)。置けるかは memory の残りに
+  ;; job の settle が入るか(can-take — memory-misfit。task の空きは使わない)・並びは担っている数(job と task の和)の少ない順。
   ;; 全部の job が割り当てを保っていれば load は読まれない(None)。
   (setv load (if (all (gfor job jobs (in job.spec.name kept))) None (load-of state (table-of (tuple (gfor #(n a) (.items kept) (TableWrite n a)))))))
   ;; 保った割り当ては state.placements の行そのもの(書かない)。新しく置く物だけ fresh に貯める。
@@ -852,7 +877,7 @@
       (setv chosen (get candidates 0)
             previous (.row state.placements job.spec.name)
             used (get load chosen.name)
-            (get load chosen.name) (replace used :jobs (+ used.jobs 1)))
+            (get load chosen.name) (replace used :jobs (+ used.jobs 1) :settle-mib (+ used.settle-mib job.settle-mib)))
       (.append fresh (Placement job.spec.name chosen.name (if previous (+ previous.generation 1) 1) now))
       (.add taken job.spec.name)))
   ;; 書く = 新しく置いた行(今の行と値も同じなら書かない)と、保たれなかった・宣言から消えた job の行を消す書き(None)。
@@ -952,23 +977,50 @@
     True UnplacedKind.NO-ROOM))
 
 
-(defn #^ str unplaced-text [#^ UnplacedKind kind #^ ClusterJob job #^ tuple needs]
+(defk memory-misfits [now state job timing]
+  {:pre [(: now int) (: state ClusterState) (: job ClusterJob) (: timing ClusterTiming)] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "担い手の無い job を、生きていて条件を満たし drain 中でない worker のそれぞれに memory で置けない訳(memory-misfit の文 — worker の名の
+   順)— 置けない訳(unplaced-text の NO-ROOM・UnplacedView.memory)が、どの worker の予算をどれだけ越えるかを名指すため(card ki-2acb63aec0fd)。"
+  (val draining (draining-workers state now))
+  (val load (load-of state state.placements))
+  (var texts #())
+  (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]
+    (when (and (alive now w timing.lease-ms) (eligible state job w) (not-in w.name draining))
+      (<- text (| str None) (memory-misfit w load job))
+      (when (is-not text None) (:= texts #(#* texts text)))))
+  texts)
+
+
+(defn #^ str unplaced-text [#^ UnplacedKind kind #^ ClusterJob job #^ tuple needs #^ tuple memory]
   "置き先が無い理由の種類 → 人が読む文(状態の表示 GET /state の unplaced と Service の readyReason の綴り)。needs = 効く needs
-   (effective-needs — 上書きの間は上書きの needs)。"
+   (effective-needs — 上書きの間は上書きの needs)・memory = worker ごとの memory で置けない訳(memory-misfits — NO-ROOM の文に足す)。"
   (match kind
     UnplacedKind.WAITING-PREVIOUS-HOLDER "前の担い手が止め終えるのを待っている"
     UnplacedKind.NO-ELIGIBLE-WORKER
       (.format "置ける worker が無い(要る能力 {}・固定 {}。専用の能力を持つ worker には、そのどれかを要る job だけを置く。drain 中の worker には置かない)"
                (list needs) job.pin)
-    UnplacedKind.NO-ROOM "置ける worker に空きが無い"))
+    UnplacedKind.NO-ROOM (if memory (.format "置ける worker に空きが無い({})" (.join "・" memory)) "置ける worker に空きが無い")))
+
+
+(defk unplaced-memory [now state job kind timing]
+  {:pre [(: now int) (: state ClusterState) (: job ClusterJob) (: kind UnplacedKind) (: timing ClusterTiming)] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "置き先の無い job の memory で置けない訳(NO-ROOM の時だけ memory-misfits — 他の種類では空)— unplaced-text と UnplacedView が同じ訳を読むため。"
+  (var texts #())
+  (when (= kind UnplacedKind.NO-ROOM)
+    (<- found (get tuple #(str ...)) (memory-misfits now state job timing))
+    (:= texts found))
+  texts)
 
 
 (defn #^ dict unplaced-jobs [#^ int now #^ ClusterState state #^ ClusterTiming timing]
   "担い手の無い job と、その理由(状態の表示用)。"
   (dfor job (active-jobs state)
         :if (is (.row state.placements job.spec.name) None)
+        :setv kind (unplaced-kind now state job timing)
         job.spec.name
-        (unplaced-text (unplaced-kind now state job timing) job (effective-needs state job))))
+        (unplaced-text kind job (effective-needs state job) (run (unplaced-memory now state job kind timing)))))
 
 
 (defk note-unplaced [state now]
@@ -996,10 +1048,12 @@
    (card ki-53b8677f1374)。GET /state の unplacedDetail(unplaced-views)と Service の資源の status.unplaced(resource_policy.observed-of)が
    同じこの関数を読む。刻は ClusterState.unplaced-since(まだ調停の拍が見ていなければ now)。"
   (setv needs (tuple (effective-needs state job))
-        since (.row state.unplaced-since job.spec.name))
-  (UnplacedView :service job.spec.name :kind (unplaced-kind now state job timing) :needs needs
+        since (.row state.unplaced-since job.spec.name)
+        kind (unplaced-kind now state job timing))
+  (UnplacedView :service job.spec.name :kind kind :needs needs
                 :missing (missing-needs now state needs timing) :pin job.pin
-                :since-ms (if (is since None) now since)))
+                :since-ms (if (is since None) now since)
+                :memory (run (unplaced-memory now state job kind timing))))
 
 
 (defn #^ tuple unplaced-views [#^ int now #^ ClusterState state #^ ClusterTiming timing]
@@ -1015,7 +1069,7 @@
    文は種類ごとに固定 — 待つ間に調停が拍ごとに書き換えて保存の版を進めない。"
   (match kind
     TaskUnplacedKind.TASK-NO-ROOM
-      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(常駐の job と置かれた task で capacity が埋まっている)— 空くまで待つ"
+      "能力と版の合う worker は在るが、どれも task を置ける空きが無い(置かれた task で予約と背景の枠が埋まっている)— 空くまで待つ"
     TaskUnplacedKind.TASK-LIMITED
       "task の名乗った組(limits)の同時数が系の宣言の上限に達している — 同じ組の task が終わるまで待つ"
     TaskUnplacedKind.TASK-RESERVED
@@ -1351,7 +1405,7 @@
       (setv able (lfor w (.rows state.workers) :if (and (alive now w timing.lease-ms) (can-run-task task w)) w)
             ;; drain 中と、disk の尽きた worker(準備済みでない env の task)は避ける — 置ける先が他に無ければ待つ。
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
-      ;; task を置けるのは task の空き(task-room-of — capacity 全体から job・surge・置かれた task を引いた数)が在り、名乗った上限に
+      ;; task を置けるのは task の空き(task-room-of — 予約と背景の枠から置かれた task を引いた数)が在り、名乗った上限に
       ;; 達しておらず、負の優先なら予約を越える空きの在る worker だけ(task-misfit)。置けない worker の理由は待ちの文に使う。
       (var roomy #())
       (var misfits [])
@@ -1801,9 +1855,9 @@
       (!= (set (.keys before.workers)) (set (.keys after.workers)))
       (any (gfor #(n w) (.items after.workers)
                  :setv b (.row before.workers n)
-                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.capacity b.task-reserve b.versions b.boot b.retired b.boot-at
+                 (or (is b None) (!= #(b.provides b.exclusive b.derived b.node b.task-reserve b.background-room b.versions b.boot b.retired b.boot-at
                                        b.known-exits)
-                                     #(w.provides w.exclusive w.derived w.node w.capacity w.task-reserve w.versions w.boot w.retired w.boot-at
+                                     #(w.provides w.exclusive w.derived w.node w.task-reserve w.background-room w.versions w.boot w.retired w.boot-at
                                        w.known-exits)))))))
 
 
@@ -1929,12 +1983,13 @@
         caps (named-capabilities body.provides body.exclusive (is-not body.labels None) (.format "worker {} の名乗り" name))
         node body.node
         info (WorkerInfo name (tuple (gfor c (get caps 0) :if (not-in c adopted.derivable) c))
-                         body.capacity now
+                         now
                          (component-versions-of (or body.versions {}))
                          boot
                          (component-versions-of (or body.tools {}))
-                         ;; task のために空けておく数(本文の必ずの欄 — 0 以上 capacity 以下は本文の型が検める)。
+                         ;; task のために空けておく数(本文の必ずの欄)と背景の仕事を同時に置ける数(0 以上は本文の型が検める)。
                          :task-reserve body.task-reserve
+                         :background-room body.background-room
                          :platform body.platform
                          :env-ready (frozenset envs.ready)
                          :env-preparing (frozenset envs.preparing)
