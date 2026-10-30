@@ -548,6 +548,25 @@ class _AwaitedValue:
         return value
 
 
+def _bridged_error(error: BaseException) -> BaseException:
+    """Drop the bridge coroutine's own frame from the head of ``error``'s traceback before it fails the promise.
+
+    The scheduler keeps a failed promise's error in its promise table until the
+    terminal-entry sweep finds every handle dead (#502). The head of the
+    traceback is the bridge frame that caught the error, and that frame's
+    closure holds the ExternalPromise (and the Await with its coroutine), so the
+    row kept its own handle alive and was never swept: every failed Await kept
+    its row, error, traceback, frames and the awaited coroutine's locals — an
+    httpx client's failed requests kept their httpcore connection each
+    (agora card ki-84b4a6fb6503 — ~0.8 a second in a messaging process). The
+    rest of the traceback (the awaited coroutine's frames) is kept.
+    """
+    tb = error.__traceback__
+    if tb is not None:
+        error.__traceback__ = tb.tb_next
+    return error
+
+
 @do
 def _await_handler(effect: Await, k):
     """Await handler: runs async coroutines via a background thread with asyncio.
@@ -609,7 +628,8 @@ def _await_handler(effect: Await, k):
                 # run_forever and kill the SHARED loop thread, silently
                 # hanging every other in-flight Await in the process.
                 # ep.fail already delivers it to the run() caller.
-                ep.fail(e)
+                # The error goes without this bridge frame (_bridged_error).
+                ep.fail(_bridged_error(e))
             else:
                 # Boxed so the scheduler's promise table does not keep
                 # the value after the hand-over (_AwaitedValue).
