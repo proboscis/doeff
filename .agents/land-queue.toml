@@ -307,6 +307,16 @@ full_sessions = 1
 #     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)だから。
 #   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
 # 上限 1800 秒 = 2026-10-10 まで日次の段の運び(remote_check)が持った同期の上限 900 秒の 2 倍(Rust の release build と飽和帯の機体)。
+# 2026-10-30(card ki-7bd396248ba2・triage の決定 案 B): 後段 public-api-blame = 表を直さずに公開名を足した commit の引き。
+#   tests/test_public_api_known_violations.py は merge の列も commit の時の hook も回さないので、表を直さない commit は main に入り、
+#   日次の全体検証で初めて failing になる。この後段が、表に書かれていない外れを tools/public_api_blame.py(照合は test と同じ関数)で
+#   読み、名を最初に足した commit を git log -S で引いて `public_api_blame: 足した <package> <module>.<名> <sha> <card の id> <題>` の
+#   行にする。日次の task が agora-controllers の AfterReport(controllers/daily_verify/protocol/schedule.hy)として集めて赤の card に載せ、
+#   担い手の会話が行の card か会話へ返す(日次の worker は書き込みの資格を持たない)。後段は結末を変えない。commit の時には回さない。
+#   戻し方 = 下の [verify] を外す。
+[verify]
+after = [{ name = "public-api-blame", run = "PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=\"${UV_CACHE_DIR:-$HOME/.cache/uv-lanes/land-doeff}\" uv run --no-sync python tools/public_api_blame.py" }]
+
 [follow]
 install = "sh $HOME/dotfiles/agent/venv-run.sh --exclusive . -- uv sync --frozen"
 install_timeout_s = 1800
