@@ -14,6 +14,12 @@
   conversion function — one that turns an effect's answer into another scale and makes no effect, handler or program
   and reads no clock, environment, file or process — and the public API inventory checks that shape. Before, the
   known-violations table listed it to move inward. Callers need no change.
+- The effect value types the subpackages export (108 names) are counted as allowed: ADR-DOE-API-001 R2 lets an effect
+  show the types of the values it carries, and the public API inventory now lists, per package, the classes and type
+  aliases written in the field annotations of the effect classes it shows (type arguments included, followed through
+  the fields of the value types the package defines) and checks each allowed name against that list. A field typed
+  `object` or a bare `tuple` names no type, so 158 names whose effect fields say nothing about them are listed as
+  outliers to type or move inward. Callers need no change.
 - The exception types the subpackages export (129 names in 16 packages) are counted as allowed: ADR-DOE-API-001 R2
   lets an effect or a handler show the exception classes it raises, and the public API inventory now checks that each
   allowed one is a `BaseException` subclass its own package defines (an exception re-exported from another package or
