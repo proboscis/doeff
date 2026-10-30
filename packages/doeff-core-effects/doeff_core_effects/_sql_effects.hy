@@ -73,6 +73,7 @@
 (import dataclasses [dataclass])
 (import enum [StrEnum])
 (import collections.abc [Sequence])
+(import itertools [groupby])
 (import typing [TypeGuard TypeVar])
 (import doeff [Program])
 (import doeff_core_effects._scheduler [ExternalPromise])
@@ -281,11 +282,20 @@
 
 
 ;; 文の割りの覚え(文 → 割った並び)。割りは文だけで決まる純粋な計算で、答えは凍った record の tuple なので同じ物を何度返しても
-;; 呼び手は書き換えられない。問い合わせの文は code の literal でほぼ決まった数なので、SPLIT-MEMO-LIMIT 個で覚えるのを止める(組み立てた
-;; 文が限りなく増えても memory は増えない — 止めた後は毎回割る)。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を
-;; 2 度割るだけで食い違わない(agora-redesign #2423 — SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
+;; 呼び手は書き換えられない。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を 2 度割るだけで食い違わない
+;; (agora-redesign #2423 — SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
+;; 覚えの大きさは部品(SqlText・SqlPlaceholder)の数で限る。code の literal の文は部品が数十まで(18 欄の INSERT で約 40)だが、
+;; 値の数だけ引数を並べる文(`IN (:k0, :k1, …)`・行の数だけ VALUES を並べる INSERT)は値の数ごとに別の文になり、1 つで数百の部品を持つ。
+;; 文の数だけで限った時は 4096 文 × 平均約 120 部品 ≈ 50 万個の record を抱え、GC の 1 回を重くした(agora card ki-a1feff4314cc)。
+;; そこで部品が SPLIT-MEMO-STATEMENT-PARTS を越える文は覚えず(値の数で変わる文 — 同じ文が繰り返す見込みが薄い)、覚えた部品の総数が
+;; SPLIT-MEMO-PART-LIMIT に着いたら覚えるのを止める(止めた後は毎回割る)。thread が重なると総数の足しが前後し、上限を文 1 つ分×thread の
+;; 数まで越えうる(越えは SPLIT-MEMO-STATEMENT-PARTS × thread の数で止まる)。
 (val SPLIT-MEMO-LIMIT 4096)
+(val SPLIT-MEMO-STATEMENT-PARTS 64)
+(val SPLIT-MEMO-PART-LIMIT 32768)
 (val #^ (get dict #(str (get tuple #((| SqlText SqlPlaceholder) ...)))) SPLIT-MEMO {})
+;; 覚えた部品の総数(1 つの枡 — split-statement だけが足す)。
+(val #^ (get list int) SPLIT-MEMO-PARTS [0])
 
 
 (defk split-statement [statement]
@@ -296,17 +306,19 @@
   (val remembered (.get SPLIT-MEMO statement))
   (when (is-not remembered None)
     (return remembered))
-  (var #^ (get tuple #((| SqlText SqlPlaceholder) ...)) parts #())
-  (var pending "")
-  (for [found (.finditer TOKEN statement)]
-    (val name (.group found "name"))
-    (if (is name None)
-        (:= pending (+ pending (.group found 0)))
-        (do (when pending (:= parts (+ parts #((SqlText :text pending)))))
-            (:= pending "")
-            (:= parts (+ parts #((SqlPlaceholder :name name)))))))
-  (when pending (:= parts (+ parts #((SqlText :text pending)))))
-  (when (< (len SPLIT-MEMO) SPLIT-MEMO-LIMIT)
+  ;; 字句(引数の名 | None・綴り)を、続く文の字句の組ごとに SqlText 1 つ・引数の字句ごとに SqlPlaceholder 1 つにする。覚えない文
+  ;; (部品が数百)は呼ぶたびに割るので、tuple を足し算で伸ばさず(部品の数の 2 乗)1 度だけ組む。字句は空にならない(TOKEN のどの枝も 1 字以上)。
+  (val tokens (lfor found (.finditer TOKEN statement) #((.group found "name") (.group found 0))))
+  (val #^ (get tuple #((| SqlText SqlPlaceholder) ...)) parts
+    (tuple (gfor #(is-text run) (groupby tokens (fn [token] (is (get token 0) None)))
+                 part (if is-text
+                          #((SqlText :text (.join "" (gfor token run (get token 1)))))
+                          (gfor token run (SqlPlaceholder :name (get token 0))))
+                 part)))
+  (when (and (<= (len parts) SPLIT-MEMO-STATEMENT-PARTS)
+             (< (len SPLIT-MEMO) SPLIT-MEMO-LIMIT)
+             (<= (+ (get SPLIT-MEMO-PARTS 0) (len parts)) SPLIT-MEMO-PART-LIMIT))
+    (setv (get SPLIT-MEMO-PARTS 0) (+ (get SPLIT-MEMO-PARTS 0) (len parts)))
     (setv (get SPLIT-MEMO statement) parts))
   parts)
 
