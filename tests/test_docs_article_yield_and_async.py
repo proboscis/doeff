@@ -10,11 +10,14 @@
 - text の囲みは、例の file の印字の 1 区切り(見出し「-- <鍵>: ...」の下)のどれかと同じ。逆に、どの区切りも記事のどこかの
   text の囲みが見せる(区切りを足して記事に書き忘れた時も赤にする)。
 
-例を走らせる interpreter は、既定で検を走らせている物(repo の doeff)。環境変数 DOEFF_ARTICLE_PYTHON に、PyPI の doeff だけを
-入れた環境の python を渡すと、同じ検を出した版で走らせる(記事は「doeff 0.8.0 でそのまま走る」と書く):
+例を走らせる interpreter は、既定で検を走らせている物(repo の doeff)。環境変数 DOEFF_ARTICLE_PYTHON に、doeff の wheel だけを
+入れた環境の python を渡すと、同じ検をその wheel で走らせる(記事は「doeff だけでそのまま走る」と書く)。記事は await_handler を
+() の要らない形で書くので、0.8.0 の wheel では走らない — main を組んだ wheel(doeff・doeff-core-effects・doeff-vm)か次の版で
+走らせる。--with の環境は命令が終わると消えるので、pytest をその中で走らせる:
 
-    DOEFF_ARTICLE_PYTHON="$(uv run --no-project --isolated --with 'doeff==0.8.0' python -c 'import sys; print(sys.executable)')" \\
-        uv run pytest tests/test_docs_article_yield_and_async.py
+    uv run --no-project --with <doeff の wheel> --with <doeff-core-effects の wheel> --with <doeff-vm の wheel> \\
+        bash -c 'DOEFF_ARTICLE_PYTHON="$(python -c "import sys; print(sys.executable)")" \\
+            env -u VIRTUAL_ENV uv run pytest tests/test_docs_article_yield_and_async.py'
 
 本文の決まりも見る: AI が書いたと名乗る行が無い・IO の差し替えだけに読める語(swap・fake・mock・real I/O)が見出し「## I/O」の
 節の外に無い(軸は algebraic effects — 記事を IO の差し替えの話に縮めない)・1 本目の記事と互いに link し合う。

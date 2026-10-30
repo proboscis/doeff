@@ -273,7 +273,7 @@ Within one run, the two models agree: `k` is one-shot, as a coroutine is. doeff 
 
 ## I/O through an async library
 
-Python's I/O libraries are often `async`: HTTP clients, database drivers, the SDKs of model providers. doeff does not ask you to rewrite them. `Await(coroutine)` is one more effect, and `await_handler()` answers it: it runs the coroutine on a background asyncio loop that the whole process shares, and resumes `k` with the result once it is done, while other doeff tasks run. The event loop is still there, but it has moved from above the program to behind one handler.
+Python's I/O libraries are often `async`: HTTP clients, database drivers, the SDKs of model providers. doeff does not ask you to rewrite them. `Await(coroutine)` is one more effect, and `await_handler` answers it: it runs the coroutine on a background asyncio loop that the whole process shares, and resumes `k` with the result once it is done, while other doeff tasks run. The event loop is still there, but it has moved from above the program to behind one handler.
 
 Where you put the `Await` decides what the handlers see. Here a stream of chunks, of the kind a model's SDK returns, is collected two ways: with the loop as a program and one `Await` per chunk, or with the whole loop in one coroutine and one `Await` around it:
 
@@ -322,7 +322,7 @@ def counted(program):  # the result, and every Await that program yielded
 
 
 def bridged(program):  # Await answered on asyncio, Listen inside it
-    return scheduled(await_handler()(listen_handler(program)))
+    return scheduled(await_handler(listen_handler(program)))
 ~~~
 
 ~~~python
@@ -379,7 +379,7 @@ python drive.py
 python stream.py
 ~~~
 
-Every example in this post runs as shown with doeff 0.8.0. The complete files are in [examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async). The docs chapter [Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md) covers `Await`, `Spawn`, `Gather`, `Race` and cancellation, and the FAQ answers [How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio).
+Every example in this post runs as shown with doeff and nothing else. The complete files are in [examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async). The docs chapter [Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md) covers `Await`, `Spawn`, `Gather`, `Race` and cancellation, and the FAQ answers [How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio).
 
 The previous post, [Algebraic effects for Python](algebraic-effects-in-python.md), stacks handlers for time, concurrency, retries, budgets and I/O around one program. The next one is about time: a clock as a handler, so days of waiting run in milliseconds.
 
