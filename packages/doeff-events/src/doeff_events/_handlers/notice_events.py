@@ -103,7 +103,13 @@ from doeff_time import GetTime, GetTimeEffect, WaitWithin, WaitWithinEffect
 from doeff import K, Pass, Program, Resume, ResumeThrow, do
 from doeff import handler as _program_handler
 from doeff_events._effects.events import (
+    GapAnswer,
+    NoticeDropped,
+    NoticeGapMarked,
+    NoticeGapTold,
+    NoticeSent,
     Publish,
+    PublishAnswer,
     PublishEffect,
     PublishGapEffect,
     SourceFailed,
@@ -181,49 +187,6 @@ class NoticeRoute(Generic[_E]):
     when_unsent: WhenUnsent
     reads: tuple[str, ...] = ()
     kept: bool = False
-
-
-@dataclass(frozen=True)
-class NoticeSent:
-    """What ``Publish`` of a routed event answers when the broker took it: ``receivers`` = how many subscribers the
-    broker handed the notice to. ``0`` means nobody was listening and nobody will ever receive it."""
-
-    receivers: int
-
-
-@dataclass(frozen=True)
-class NoticeGapMarked:
-    """What ``Publish`` of a ``MarkGap`` route answers when the event was not sent: ``channel`` is marked and its
-    gap will be told. ``detail`` = the broker's words, or why the event waits behind a gap being told."""
-
-    channel: str
-    detail: str
-
-
-@dataclass(frozen=True)
-class NoticeDropped:
-    """What ``Publish`` of a ``Drop`` route answers when the broker could not take the event: it is gone. Also what
-    ``PublishGap`` of a ``Drop`` route answers: such a route keeps no gap."""
-
-    detail: str
-
-
-PublishAnswer = NoticeSent | NoticeGapMarked | NoticeDropped
-"""Everything ``Publish`` of a routed event answers (it never raises for a broker it cannot reach)."""
-
-
-@dataclass(frozen=True)
-class NoticeGapTold:
-    """What ``PublishGap`` of a ``MarkGap`` route answers when the gap was told: ``channel``'s gap notice reached
-    the broker (with every older gap of the body), and its connected readers are told ``SourceMissed``."""
-
-    channel: str
-
-
-GapAnswer = NoticeGapTold | NoticeGapMarked | NoticeDropped
-"""Everything ``PublishGap`` of a routed event answers (it never raises for a broker it cannot reach):
-``NoticeGapTold``, ``NoticeGapMarked`` (the broker could not take the gap notice — told later like the gap of a
-missed ``Publish``), or ``NoticeDropped`` (a ``Drop`` route)."""
 
 
 @final
