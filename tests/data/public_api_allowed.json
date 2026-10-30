@@ -2,10 +2,10 @@
  "説明": [
   "subpackage の公開 API は effect と handler だけ、の決まりが名ごとに許した、effect と handler の外の名の表(tests/test_public_api_known_violations.py が読む)。外れと境界は既知の違反の表 tests/data/public_api_known_violations.json に在り、許した名はこの表だけに置く(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。",
   "1 行 = 許した名 1 つ: package(packages/ の下の dir)・module(名を出す module)・name・組・決め。鍵 (package, module, name) は目録の行と同じで、行は鍵の順に並べ、重ねない。違反の表と同じ鍵を置かない。",
-  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R31 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R31 — console script と Rust の実行 file の行)・「許した物 — 換算の関数」(R35 — 値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない関数)・「許した物 — ADR を書く関数」(R14 — Hy の macro の module が出す関数)・「許した物 — effect の答えの型」(R2 — class と型の別名)・「許した物 — 例外の型」(R2 — その package が定義した BaseException の子の class)の 7 つで、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
+  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R31 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R31 — console script と Rust の実行 file の行)・「許した物 — 換算の関数」(R35 — 値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない関数)・「許した物 — ADR を書く関数」(R14 — Hy の macro の module が出す関数)・「許した物 — effect の答えの型」(R2 — class と型の別名)・「許した物 — 例外の型」(R2 — その package が定義した BaseException の子の class)・「許した物 — handler の設定の型」(R2 — その package が定義した class・Enum・Protocol・型の別名で、同じ package の見せる工場か handler の引数の注釈が名指す物)の 8 つで、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
   "決め = 許した決めの id(card ki-… か依頼 lt-… か利用者の発言 ci-…)。この表は決めの id つきで足せる(違反の表と違い減るだけでない)。決めの id の無い行は test が赤にする。",
   "名を submodule から入口へ移した行は、違反の表と同じく表の module を書き換えずに同じ行と読む。表に在るのに目録に無い名は赤 — 直した名と隠した submodule の名は表から消す(tools/hide_submodules.py finish が隠した子の行を消す)。",
-  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)。"
+  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)、handler の設定の型 39 名(15 package の 70 行 — 前の既知の表の組「境界 — handler の設定の型」の 67 行と「足した名」の ScenarioWorld 3 行)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-93b21540e519)。"
  ],
  "許した物": [
   {
@@ -14,6 +14,13 @@
    "name": "doeff_adr.macros",
    "組": "許した物 — Hy の macro",
    "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr",
+   "name": "EnforcementRef",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-adr",
@@ -228,6 +235,34 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentSessionRepository",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentdSessionClient",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "CodexRuntimePolicy",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "MockSessionScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -237,6 +272,20 @@
    "module": "doeff_agents",
    "name": "ResumeTargetNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "ScenarioStep",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "ScenarioWorld",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -447,6 +496,48 @@
    "module": "doeff_agents.effects.agent",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "AgentSessionRepository",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "AgentdSessionClient",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "CodexRuntimePolicy",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "MockSessionScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "ScenarioStep",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers",
+   "name": "ScenarioWorld",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -489,6 +580,13 @@
    "module": "doeff_agents.handlers.daemon",
    "name": "AgentNotAvailableError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
+   "name": "CodexRuntimePolicy",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -690,6 +788,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.production",
+   "name": "CodexRuntimePolicy",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -704,6 +809,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.testing",
+   "name": "ScenarioWorld",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -713,6 +825,13 @@
    "module": "doeff_agents.handlers.testing",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.runtime",
+   "name": "CodexRuntimePolicy",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2307,6 +2426,13 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "MockConductorRuntime",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "PRError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -2558,10 +2684,31 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.inline_compute",
    "name": "computed",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_handlers",
+   "name": "DurableStorage",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_handlers",
+   "name": "MemoKeyFn",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -2572,10 +2719,24 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_meter",
+   "name": "MeterSettings",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.memory_stack_dump",
    "name": "stack_dumps_at",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.meter_effects",
+   "name": "MeterSettings",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -2698,6 +2859,20 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.pooled_postgres_sql",
+   "name": "PostgresConnections",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "PostgresConnections",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.postgres_sql",
    "name": "TaskCancelledError",
    "組": "許した物 — 例外の型",
@@ -2775,6 +2950,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_meter",
+   "name": "MeterSettings",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.python_bytecode",
    "name": "checked_hash_pyc",
    "組": "許した物 — program の helper",
@@ -2824,6 +3006,27 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "ProcessScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "ScriptedCommand",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_process",
    "name": "environment_answer",
    "組": "許した物 — program の helper",
@@ -2859,6 +3062,20 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_warm_process",
+   "name": "WarmScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_ws_client",
+   "name": "WsScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_ws_client",
    "name": "closing_links",
    "組": "許した物 — program の helper",
@@ -2883,6 +3100,13 @@
    "module": "doeff_core_effects.sql_transaction",
    "name": "SqlTransactionMisuse",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_file_sql",
+   "name": "SqliteFiles",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2936,10 +3160,24 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.storage",
+   "name": "DurableStorage",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.thread_pool_compute",
    "name": "computed",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.ws_client_effects",
+   "name": "WsScript",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -3035,6 +3273,27 @@
   {
    "package": "doeff-events",
    "module": "doeff_events",
+   "name": "EventBus",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "MemoryBroker",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "NoticeRoute",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3091,6 +3350,34 @@
   {
    "package": "doeff-events",
    "module": "doeff_events.handlers",
+   "name": "EventBus",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "MemoryBroker",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "MemoryFiles",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "NoticeRoute",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3125,10 +3412,31 @@
   },
   {
    "package": "doeff-events",
+   "module": "doeff_events.handlers.memory",
+   "name": "EventBus",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_files",
+   "name": "MemoryFiles",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
    "module": "doeff_events.handlers.memory_files",
    "name": "announce_file_change",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_notices",
+   "name": "MemoryBroker",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-events",
@@ -3143,6 +3451,13 @@
    "name": "restore_broker",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
+   "name": "NoticeRoute",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-events",
@@ -3180,6 +3495,41 @@
    "決め": "ki-d80c9c978b35"
   },
   {
+   "package": "doeff-events",
+   "module": "doeff_events.notice_laws",
+   "name": "NoticeRoute",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-flow",
+   "module": "doeff_flow.handlers",
+   "name": "MockTraceRecorder",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-flow",
+   "module": "doeff_flow.handlers",
+   "name": "ProductionTraceRecorder",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-flow",
+   "module": "doeff_flow.handlers.production",
+   "name": "ProductionTraceRecorder",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-flow",
+   "module": "doeff_flow.handlers.testing",
+   "name": "MockTraceRecorder",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-gemini",
    "module": "doeff_gemini",
    "name": "edit_image__gemini",
@@ -3198,6 +3548,13 @@
    "module": "doeff_git",
    "name": "GitCommandError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-git",
+   "module": "doeff_git",
+   "name": "MockGitRuntime",
+   "組": "許した物 — handler の設定の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3572,6 +3929,13 @@
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
+   "package": "doeff-jev",
+   "module": "doeff_jev",
+   "name": "JevTarget",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-openai",
    "module": "doeff_openai",
    "name": "MissingCachedPricingError",
@@ -3600,6 +3964,34 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-openai",
+   "module": "doeff_openai.handlers",
+   "name": "MockOpenAIConfig",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai.handlers",
+   "name": "MockOpenAIState",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai.handlers.testing",
+   "name": "MockOpenAIConfig",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai.handlers.testing",
+   "name": "MockOpenAIState",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-openrouter",
    "module": "doeff_openrouter",
    "name": "OpenRouterResponseError",
@@ -3612,6 +4004,20 @@
    "name": "structured_llm",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-openrouter",
+   "module": "doeff_openrouter.handlers",
+   "name": "MockOpenRouterRuntime",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openrouter",
+   "module": "doeff_openrouter.handlers.testing",
+   "name": "MockOpenRouterRuntime",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3644,6 +4050,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.event_source",
+   "name": "SignalTables",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
    "name": "came_back_within",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -3661,6 +4074,13 @@
    "name": "ride_out_stall",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_client",
+   "name": "RecordsEndpoint",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3794,6 +4214,20 @@
    "name": "records_settings",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "MemoryStore",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "SignalTables",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -4048,6 +4482,20 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-secret",
+   "module": "doeff_secret",
+   "name": "InMemorySecretStore",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-secret",
+   "module": "doeff_secret",
+   "name": "SeedValue",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
    "name": "JudgeError",
@@ -4064,9 +4512,37 @@
   {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
+   "name": "ScriptedJudgeState",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
    "name": "judge_many",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one.handlers",
+   "name": "Script",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one.handlers.testing",
+   "name": "Script",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-time",
+   "module": "doeff_time",
+   "name": "SimClock",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-time",
@@ -4074,6 +4550,13 @@
    "name": "epoch_ms_of",
    "組": "許した物 — 換算の関数",
    "決め": "lt-YB2AMVK3D876GN4RM1SB3T24AR"
+  },
+  {
+   "package": "doeff-time",
+   "module": "doeff_time.handlers.sim_time",
+   "name": "LogFormatter",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-traverse",
@@ -4095,6 +4578,13 @@
    "name": "try_call",
    "組": "許した物 — program の helper",
    "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse.handlers",
+   "name": "BarFactory",
+   "組": "許した物 — handler の設定の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-validation",

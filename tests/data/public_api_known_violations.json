@@ -11,7 +11,8 @@
   "doeff の中の部品(packages/doeff-vm — doeff の根の package だけが import する VM)は目録の範囲の外で、表に載せない(ADR-DOE-API-001 R11・card ki-9c326052f21c — 範囲「範囲の答え待ち」・組「境界 — 基盤・道具の package」の 64 行を消した)。doeff の外の file が部品の import の根を import しない事は、表を読む同じ test が見る。",
   "組「外れ — handler を返す工場の形に直す」は空になって消えた。2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で handler を返す工場として扱うと決めた名のうち、今の形が工場の構造に合わない物を置いた組だった(card ki-25eecd63bc57)。maybe・result・on_raise・absent_as は旧い形を消して表から消した(card ki-53be25c354e4)。scheduled は 2026-10-30 の方針(設定も呼びごとの状態も無い handler は工場にしない・ADR-DOE-API-001 R6・ADR-DOE-API-002 R1)で工場にせず、印 _doeff_is_handler_fn の付いた handler の値にした — 目録が handler と読むので表から消した(card ki-8187e8827ad9)。",
   "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
-  "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。"
+  "組「境界 — 例外の型」の 247 行(16 package・129 名)は、目録が形(その package が定義した BaseException の子の class)を確かめる許す組「許した物 — 例外の型」を足したので、許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-03aa4c49f7e0)。",
+  "組「境界 — handler の設定の型」の 141 行(18 package・89 名)は、目録が形(その package が定義した class・Enum・Protocol・型の別名で、同じ package の見せる工場か handler の引数の注釈が名指す物)を確かめる許す組「許した物 — handler の設定の型」を足したので、形に合う 67 行(15 package・38 名)を許した物の表へ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(ADR-DOE-API-001 R2)の決めつきで移し、組は消えた(card ki-93b21540e519)。形に合わない 74 行(9 package・51 名 — どの見せる工場と handler の引数の注釈にも出ない)のうち、型の 73 行は外れの組「外れ — 工場の引数の注釈に出すか内側へ移す」へ、関数 default_session_backend の 1 行は「外れ — 内側の module へ移す」へ戻した。新しい外れの組の直しの向き: handler に渡す値の型なら、それを取る工場か handler の引数に注釈を書く(Hy の defn の引数・注釈の無い backend=None など — 目録が数えると許した物の表へ移せる)。渡さない型なら内側の module へ移す。「足した名」の doeff-agents の ScenarioWorld 3 行(訳が R2 の handler の設定の型)も同じ組で許した物の表へ移した。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -38,11 +39,6 @@
       "AdrStatus"
      ]
     },
-    "境界 — handler の設定の型": {
-     "doeff_adr": [
-      "EnforcementRef"
-     ]
-    },
     "境界 — pytest の plugin の登録": {
      "(entry point)": [
       "pytest11:doeff_adr"
@@ -57,6 +53,11 @@
   "doeff-agentic": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_agentic": [
+      "VisualInterceptorConfig"
+     ]
+    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-agentic-tui"
@@ -85,11 +86,6 @@
       "AgenticWorkflowStatus",
       "WorkflowInfo",
       "WorkflowStatus"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_agentic": [
-      "VisualInterceptorConfig"
      ]
     }
    }
@@ -912,6 +908,7 @@
      "doeff_agents.session_backend": [
       "IoGenerator",
       "as_optional_str",
+      "default_session_backend",
       "resolve_default_executable",
       "which_executable"
      ],
@@ -1551,6 +1548,51 @@
       "doeff_agents.tmux"
      ]
     },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_agents": [
+      "InMemoryAgentSessionRepository",
+      "InputFateState",
+      "JsonlAgentSessionRepository",
+      "SessionBackend"
+     ],
+     "doeff_agents.effects": [
+      "InputFateState"
+     ],
+     "doeff_agents.effects.agent": [
+      "InputFateState"
+     ],
+     "doeff_agents.handlers": [
+      "SessionBackend"
+     ],
+     "doeff_agents.handlers.claude": [
+      "SessionBackend"
+     ],
+     "doeff_agents.handlers.codex": [
+      "SessionBackend"
+     ],
+     "doeff_agents.handlers.effectful": [
+      "SessionBackend"
+     ],
+     "doeff_agents.handlers.headless": [
+      "InputFateState"
+     ],
+     "doeff_agents.handlers.headless_codex": [
+      "InputFateState"
+     ],
+     "doeff_agents.handlers.production": [
+      "SessionBackend"
+     ],
+     "doeff_agents.session_backend": [
+      "SessionBackend",
+      "SessionConfig",
+      "SessionInfo"
+     ],
+     "doeff_agents.tmux": [
+      "SessionBackend",
+      "SessionConfig",
+      "SessionInfo"
+     ]
+    },
     "境界 — CLI": {
      "(console script)": [
       "doeff-agents"
@@ -1971,69 +2013,6 @@
       "FsSymlinkOutcome",
       "ProcResult",
       "SessionRow"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_agents": [
-      "AgentSessionRepository",
-      "AgentdSessionClient",
-      "CodexRuntimePolicy",
-      "InMemoryAgentSessionRepository",
-      "InputFateState",
-      "JsonlAgentSessionRepository",
-      "MockSessionScript",
-      "ScenarioStep",
-      "SessionBackend"
-     ],
-     "doeff_agents.effects": [
-      "InputFateState"
-     ],
-     "doeff_agents.effects.agent": [
-      "InputFateState"
-     ],
-     "doeff_agents.handlers": [
-      "AgentSessionRepository",
-      "AgentdSessionClient",
-      "CodexRuntimePolicy",
-      "MockSessionScript",
-      "ScenarioStep",
-      "SessionBackend"
-     ],
-     "doeff_agents.handlers.claude": [
-      "SessionBackend"
-     ],
-     "doeff_agents.handlers.codex": [
-      "SessionBackend"
-     ],
-     "doeff_agents.handlers.daemon": [
-      "CodexRuntimePolicy"
-     ],
-     "doeff_agents.handlers.effectful": [
-      "SessionBackend"
-     ],
-     "doeff_agents.handlers.headless": [
-      "InputFateState"
-     ],
-     "doeff_agents.handlers.headless_codex": [
-      "InputFateState"
-     ],
-     "doeff_agents.handlers.production": [
-      "CodexRuntimePolicy",
-      "SessionBackend"
-     ],
-     "doeff_agents.runtime": [
-      "CodexRuntimePolicy"
-     ],
-     "doeff_agents.session_backend": [
-      "SessionBackend",
-      "SessionConfig",
-      "SessionInfo",
-      "default_session_backend"
-     ],
-     "doeff_agents.tmux": [
-      "SessionBackend",
-      "SessionConfig",
-      "SessionInfo"
      ]
     }
    }
@@ -2550,6 +2529,19 @@
       "doeff_claude_code.values"
      ]
     },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_claude_code.effects": [
+      "SessionState",
+      "TranscriptState"
+     ],
+     "doeff_claude_code.fake": [
+      "FakeReply",
+      "StopHookRejection"
+     ],
+     "doeff_claude_code.values": [
+      "PermissionPolicy"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_claude_code.argv": [
       "AskHost",
@@ -2910,19 +2902,6 @@
      "doeff_claude_code.values": [
       "AutocompactWindow",
       "PermissionAnswer"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_claude_code.effects": [
-      "SessionState",
-      "TranscriptState"
-     ],
-     "doeff_claude_code.fake": [
-      "FakeReply",
-      "StopHookRejection"
-     ],
-     "doeff_claude_code.values": [
-      "PermissionPolicy"
      ]
     }
    }
@@ -8843,6 +8822,21 @@
       "doeff_codex.values"
      ]
     },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_codex.fake": [
+      "FakeCodexWorld",
+      "FakeReply"
+     ],
+     "doeff_codex.handler": [
+      "CodexHost"
+     ],
+     "doeff_codex.rpc": [
+      "ApprovalPolicy"
+     ],
+     "doeff_codex.values": [
+      "ApprovalPolicy"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_codex.effects": [
       "CodexInput",
@@ -8978,21 +8972,6 @@
      "doeff_codex.values": [
       "CodexEvent"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_codex.fake": [
-      "FakeCodexWorld",
-      "FakeReply"
-     ],
-     "doeff_codex.handler": [
-      "CodexHost"
-     ],
-     "doeff_codex.rpc": [
-      "ApprovalPolicy"
-     ],
-     "doeff_codex.values": [
-      "ApprovalPolicy"
-     ]
     }
    }
   },
@@ -9005,6 +8984,18 @@
      ],
      "doeff_conductor.workflow_runtime": [
       "GateOption"
+     ]
+    },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_conductor": [
+      "DefaultReviewRouter",
+      "DurableReviewBudget"
+     ],
+     "doeff_conductor.effects": [
+      "CalibrationPolicy"
+     ],
+     "doeff_conductor.effects.review": [
+      "CalibrationPolicy"
      ]
     },
     "境界 — CLI": {
@@ -9085,19 +9076,6 @@
       "CalibrationEscapeRecord",
       "ReviewBudgetStatus",
       "Tier1ReviewResult"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_conductor": [
-      "DefaultReviewRouter",
-      "DurableReviewBudget",
-      "MockConductorRuntime"
-     ],
-     "doeff_conductor.effects": [
-      "CalibrationPolicy"
-     ],
-     "doeff_conductor.effects.review": [
-      "CalibrationPolicy"
      ]
     },
     "境界 — workflow の DSL の言葉": {
@@ -10159,6 +10137,64 @@
       "doeff_core_effects.ws_client_effects"
      ]
     },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_core_effects.aiohttp_http_server": [
+      "WebEdge"
+     ],
+     "doeff_core_effects.clickhouse_http_sql": [
+      "ClickHouseDatabase"
+     ],
+     "doeff_core_effects.faulthandler_stack_dump": [
+      "StackDumpLedger"
+     ],
+     "doeff_core_effects.memo_handlers": [
+      "InMemoryStorage",
+      "SQLiteStorage"
+     ],
+     "doeff_core_effects.memory_latest": [
+      "MemoryLatestStore"
+     ],
+     "doeff_core_effects.memory_stack_dump": [
+      "StackDumpLedger"
+     ],
+     "doeff_core_effects.postgres_sql": [
+      "PostgresDatabase",
+      "PostgresTimeouts"
+     ],
+     "doeff_core_effects.process_exit": [
+      "ExitEnd"
+     ],
+     "doeff_core_effects.scheduler": [
+      "ProcessStepBudget",
+      "SpentStepBudget",
+      "StepBudget"
+     ],
+     "doeff_core_effects.scripted_warm_process": [
+      "WarmRun",
+      "WarmSocket",
+      "WarmSocketAnswer"
+     ],
+     "doeff_core_effects.sqlite_file_sql": [
+      "SqliteConnection",
+      "SqliteFile"
+     ],
+     "doeff_core_effects.sqlite_sql": [
+      "SqliteConnection"
+     ],
+     "doeff_core_effects.stack_dump_effects": [
+      "StackDumpLedger"
+     ],
+     "doeff_core_effects.storage": [
+      "InMemoryStorage",
+      "SQLiteStorage"
+     ],
+     "doeff_core_effects.storage.memory": [
+      "InMemoryStorage"
+     ],
+     "doeff_core_effects.storage.sqlite": [
+      "SQLiteStorage"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_core_effects": [
       "ExternalPromise",
@@ -10681,98 +10717,6 @@
       "WsSendOutcome",
       "WsSentRecord"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_core_effects.aiohttp_http_server": [
-      "WebEdge"
-     ],
-     "doeff_core_effects.clickhouse_http_sql": [
-      "ClickHouseDatabase"
-     ],
-     "doeff_core_effects.faulthandler_stack_dump": [
-      "StackDumpLedger"
-     ],
-     "doeff_core_effects.http_server_effects": [
-      "HttpScript"
-     ],
-     "doeff_core_effects.memo_handlers": [
-      "DurableStorage",
-      "InMemoryStorage",
-      "MemoKeyFn",
-      "SQLiteStorage"
-     ],
-     "doeff_core_effects.memory_latest": [
-      "MemoryLatestStore"
-     ],
-     "doeff_core_effects.memory_meter": [
-      "MeterSettings"
-     ],
-     "doeff_core_effects.memory_stack_dump": [
-      "StackDumpLedger"
-     ],
-     "doeff_core_effects.meter_effects": [
-      "MeterSettings"
-     ],
-     "doeff_core_effects.pooled_postgres_sql": [
-      "PostgresConnections"
-     ],
-     "doeff_core_effects.postgres_sql": [
-      "PostgresConnections",
-      "PostgresDatabase",
-      "PostgresTimeouts"
-     ],
-     "doeff_core_effects.process_exit": [
-      "ExitEnd"
-     ],
-     "doeff_core_effects.process_meter": [
-      "MeterSettings"
-     ],
-     "doeff_core_effects.scheduler": [
-      "ProcessStepBudget",
-      "SpentStepBudget",
-      "StepBudget"
-     ],
-     "doeff_core_effects.scripted_http_server": [
-      "HttpScript"
-     ],
-     "doeff_core_effects.scripted_process": [
-      "ProcessScript",
-      "ScriptedCommand"
-     ],
-     "doeff_core_effects.scripted_warm_process": [
-      "WarmRun",
-      "WarmScript",
-      "WarmSocket",
-      "WarmSocketAnswer"
-     ],
-     "doeff_core_effects.scripted_ws_client": [
-      "WsScript"
-     ],
-     "doeff_core_effects.sqlite_file_sql": [
-      "SqliteConnection",
-      "SqliteFile",
-      "SqliteFiles"
-     ],
-     "doeff_core_effects.sqlite_sql": [
-      "SqliteConnection"
-     ],
-     "doeff_core_effects.stack_dump_effects": [
-      "StackDumpLedger"
-     ],
-     "doeff_core_effects.storage": [
-      "DurableStorage",
-      "InMemoryStorage",
-      "SQLiteStorage"
-     ],
-     "doeff_core_effects.storage.memory": [
-      "InMemoryStorage"
-     ],
-     "doeff_core_effects.storage.sqlite": [
-      "SQLiteStorage"
-     ],
-     "doeff_core_effects.ws_client_effects": [
-      "WsScript"
-     ]
     }
    }
   },
@@ -10930,6 +10874,14 @@
       "doeff_events.handlers.redis_notices",
       "doeff_events.handlers.timer",
       "doeff_events.notice_laws"
+     ]
+    },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_events.handlers.memory_notices": [
+      "KeptReaders"
+     ],
+     "doeff_events.handlers.redis_notices": [
+      "KeptReaders"
      ]
     },
     "境界 — effect の値の型": {
@@ -11092,38 +11044,6 @@
       "SourceStalled",
       "SourceStarted"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_events": [
-      "EventBus",
-      "MemoryBroker",
-      "NoticeRoute"
-     ],
-     "doeff_events.handlers": [
-      "EventBus",
-      "MemoryBroker",
-      "MemoryFiles",
-      "NoticeRoute"
-     ],
-     "doeff_events.handlers.memory": [
-      "EventBus"
-     ],
-     "doeff_events.handlers.memory_files": [
-      "MemoryFiles"
-     ],
-     "doeff_events.handlers.memory_notices": [
-      "KeptReaders",
-      "MemoryBroker"
-     ],
-     "doeff_events.handlers.notice_events": [
-      "NoticeRoute"
-     ],
-     "doeff_events.handlers.redis_notices": [
-      "KeptReaders"
-     ],
-     "doeff_events.notice_laws": [
-      "NoticeRoute"
-     ]
     }
    }
   },
@@ -11139,18 +11059,6 @@
      "doeff_flow": [
       "LiveTrace",
       "TraceFrame"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_flow.handlers": [
-      "MockTraceRecorder",
-      "ProductionTraceRecorder"
-     ],
-     "doeff_flow.handlers.production": [
-      "ProductionTraceRecorder"
-     ],
-     "doeff_flow.handlers.testing": [
-      "MockTraceRecorder"
      ]
     }
    }
@@ -11192,11 +11100,6 @@
      "doeff_git": [
       "BranchRef",
       "PRHandle"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_git": [
-      "MockGitRuntime"
      ]
     }
    }
@@ -11265,13 +11168,7 @@
   },
   "doeff-jev": {
    "範囲": "決まりの範囲",
-   "名": {
-    "境界 — handler の設定の型": {
-     "doeff_jev": [
-      "JevTarget"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-linter": {
    "範囲": "決まりの範囲",
@@ -11337,16 +11234,6 @@
       "StreamChunk",
       "TokenUsage"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_openai.handlers": [
-      "MockOpenAIConfig",
-      "MockOpenAIState"
-     ],
-     "doeff_openai.handlers.testing": [
-      "MockOpenAIConfig",
-      "MockOpenAIState"
-     ]
     }
    }
   },
@@ -11362,14 +11249,6 @@
      "doeff_openrouter.types": [
       "CostInfo",
       "TokenUsage"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_openrouter.handlers": [
-      "MockOpenRouterRuntime"
-     ],
-     "doeff_openrouter.handlers.testing": [
-      "MockOpenRouterRuntime"
      ]
     }
    }
@@ -12593,6 +12472,21 @@
       "doeff_records.wire"
      ]
     },
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_records.values": [
+      "ByKeySuffix",
+      "DescendingWithin",
+      "EachEvent",
+      "FieldDecl",
+      "KeepFor",
+      "KeepForever",
+      "RecordsSchema",
+      "RememberKeysFor",
+      "RememberKeysForever",
+      "RememberNoKeys",
+      "TableDecl"
+     ]
+    },
     "境界 — effect の値の型": {
      "doeff_records.admission": [
       "Conflict",
@@ -12983,44 +12877,12 @@
       "Row",
       "RowsRefused"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_records.event_source": [
-      "SignalTables"
-     ],
-     "doeff_records.http_client": [
-      "RecordsEndpoint"
-     ],
-     "doeff_records.memory": [
-      "MemoryStore",
-      "SignalTables"
-     ],
-     "doeff_records.values": [
-      "ByKeySuffix",
-      "DescendingWithin",
-      "EachEvent",
-      "FieldDecl",
-      "KeepFor",
-      "KeepForever",
-      "RecordsSchema",
-      "RememberKeysFor",
-      "RememberKeysForever",
-      "RememberNoKeys",
-      "TableDecl"
-     ]
     }
    }
   },
   "doeff-secret": {
    "範囲": "決まりの範囲",
-   "名": {
-    "境界 — handler の設定の型": {
-     "doeff_secret": [
-      "InMemorySecretStore",
-      "SeedValue"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-seedream": {
    "範囲": "決まりの範囲",
@@ -13062,41 +12924,24 @@
       "answer_noul",
       "answer_score"
      ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_system_one": [
-      "ScriptedJudgeState"
-     ],
-     "doeff_system_one.handlers": [
-      "Script"
-     ],
-     "doeff_system_one.handlers.testing": [
-      "Script"
-     ]
     }
    }
   },
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
+    "外れ — 工場の引数の注釈に出すか内側へ移す": {
+     "doeff_time.handlers.async_time": [
+      "AsyncTimeRuntime"
+     ],
+     "doeff_time.handlers.sync_time": [
+      "SyncTimeRuntime"
+     ]
+    },
     "境界 — effect の結果の型": {
      "doeff_time": [
       "RaceOutcome",
       "TicksOutcome"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_time": [
-      "SimClock"
-     ],
-     "doeff_time.handlers.async_time": [
-      "AsyncTimeRuntime"
-     ],
-     "doeff_time.handlers.sim_time": [
-      "LogFormatter"
-     ],
-     "doeff_time.handlers.sync_time": [
-      "SyncTimeRuntime"
      ]
     }
    }
@@ -13121,11 +12966,6 @@
      ],
      "doeff_traverse.handlers": [
       "ItemResult"
-     ]
-    },
-    "境界 — handler の設定の型": {
-     "doeff_traverse.handlers": [
-      "BarFactory"
      ]
     }
    }
@@ -13288,27 +13128,6 @@
    "name": "RecordStep",
    "訳": "effect LaunchEffect の欄 event_record の値 EventRecord の fold が答える値の型(R2 の effect の値の型 — card ki-31b41eac5071 が足し、ki-21ee56535177 が表に書いた)",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents",
-   "name": "ScenarioWorld",
-   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型 — doeff-codex の FakeCodexWorld と同じ形)。class の形の handler ScenarioAgentHandler を defhandler に書き直した時、test が読む scenario の状態(launch の数・follow-up・stop・release)と手順の入れ替えを、class の method から handler の外の値へ移した",
-   "決め": "ki-1408a7300ff0"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers",
-   "name": "ScenarioWorld",
-   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型)。移し替えの module doeff_agents.handlers が同じ物を出す — 移し替えの module を消す段 3 で消える",
-   "決め": "ki-1408a7300ff0"
-  },
-  {
-   "package": "doeff-agents",
-   "module": "doeff_agents.handlers.testing",
-   "name": "ScenarioWorld",
-   "訳": "handler の factory scenario_agent_handler(world=…) の引数の値の型(R2 の handler の設定の型)の定義の場所。移し替えの module doeff_agents.handlers の下の古い path が同じ物を出す — 移し替えの module を消す段 3 で消える",
-   "決め": "ki-1408a7300ff0"
   },
   {
    "package": "doeff-records",

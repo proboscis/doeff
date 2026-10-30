@@ -137,6 +137,9 @@ PLAIN_FUNCTION = "関数"
 MACRO_FORM = "Hy の macro"
 #: The form of a class that subclasses ``BaseException`` (an exception type an effect or handler raises — R2).
 EXCEPTION_CLASS = "例外の class"
+#: The forms of an exported type a handler's settings can be typed by (a class, an enum, a protocol, a type alias —
+#: R2): the inventory lists such a row in ``settings`` when a public handler or factory's parameters name it.
+SETTING_TYPE_FORMS = frozenset({"class", "Enum", "Protocol", "型"})
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
 RUST_EXECUTABLE = "Rust の実行 file"
@@ -246,6 +249,17 @@ class ModuleRead(TypedDict):
     error: str | None
 
 
+class SettingType(TypedDict):
+    """An exported type a public handler's or factory's parameter annotation names (a setting type — R2).
+
+    ``used_by`` is every handler and factory (``module.name``) whose parameters name it.
+    """
+
+    module: str
+    name: str
+    used_by: list[str]
+
+
 class PackageInventory(TypedDict):
     """The public API of one package dir (the JSON the child process hands the parent)."""
 
@@ -255,6 +269,7 @@ class PackageInventory(TypedDict):
     notes: list[str]
     modules: list[ModuleRead]
     exports: list[ExportRow]
+    settings: list[SettingType]
     error: str | None
 
 
@@ -1258,6 +1273,55 @@ def _return_annotation(function: object) -> object:
     return annotation
 
 
+def _parameter_types(value: object) -> Iterator[object]:
+    """Every type a handler's or factory's parameter annotations name (a handler class: its ``__init__``'s).
+
+    An annotation is followed into its generic arguments and union members, and an annotation written as text
+    (``from __future__ import annotations``, a forward reference) is read name by name in the function's module,
+    so a type alias named there is found as itself (ADR-DOE-API-001 R2 — the types a handler's settings are).
+    """
+    target = _definition(value)
+    if isinstance(target, type):
+        target = _static(target, "__init__")
+    if not callable(target):
+        return
+    try:
+        parameters = inspect.signature(target).parameters.values()
+    except (TypeError, ValueError, NameError):
+        return
+    namespace = getattr(target, "__globals__", {})
+    for parameter in parameters:
+        if parameter.annotation is not parameter.empty:
+            yield from _annotation_types(parameter.annotation, namespace, 0)
+
+
+def _annotation_types(
+    annotation: object, namespace: dict[str, object], depth: int
+) -> Iterator[object]:
+    """An annotation and the types inside it (generic arguments, union members, names in its text)."""
+    if depth > _FOLLOW_DEPTH:
+        return
+    if isinstance(annotation, typing.ForwardRef):
+        annotation = annotation.__forward_arg__
+    if isinstance(annotation, str):
+        try:
+            tree = ast.parse(annotation, mode="eval")
+        except SyntaxError:
+            return
+        for node in ast.walk(tree):
+            named = _resolve(node, namespace) if isinstance(node, ast.expr) else _MISSING
+            if named is not _MISSING and not isinstance(named, types.ModuleType):
+                yield from _annotation_types(named, namespace, depth + 1)
+        return
+    yield annotation
+    origin = typing.get_origin(annotation)
+    if isinstance(origin, type):
+        yield origin  # a generic class written with its arguments (NoticeRoute[object])
+    if origin is not typing.Literal:
+        for argument in typing.get_args(annotation):
+            yield from _annotation_types(argument, namespace, depth + 1)
+
+
 def _annotation_text(annotation: object) -> str:
     """A return type as a reader writes it, for the row's reason."""
     if isinstance(annotation, str):
@@ -1942,11 +2006,20 @@ def _macro_row(
 
 
 @dataclass(frozen=True)
+class _ReadValue:
+    """A row read by import, and the value its module shows under the name."""
+
+    row: ExportRow
+    value: object
+
+
+@dataclass(frozen=True)
 class _ModuleResult:
-    """One public module as read: how it was read, and the rows of its names."""
+    """One public module as read: how it was read, the rows of its names, and the values of the rows read by import."""
 
     read: ModuleRead
     rows: tuple[ExportRow, ...]
+    values: tuple[_ReadValue, ...] = ()
 
 
 def _read_module(
@@ -1993,12 +2066,19 @@ def _read_module(
         macros = [(name, macro) for name, macro in macros if _display_name(name) in shown]
         names = [name for name in pinned if name not in {_display_name(n) for n, _m in macros}]
         read = "pinned"
+    values = tuple(
+        _ReadValue(
+            _name_row(module, module_name, name, classifier, sources), _module_value(module, name)
+        )
+        for name in names
+    )
     return _ModuleResult(
         ModuleRead(name=module_name, read=read, error=None),
         (
-            *(_name_row(module, module_name, name, classifier, sources) for name in names),
+            *(each.row for each in values),
             *(_macro_row(module, module_name, name, macro) for name, macro in macros),
         ),
+        values,
     )
 
 
@@ -2086,8 +2166,58 @@ def probe_package(package_dir: Path) -> PackageInventory:
             *submodule_rows(layout),
             *_metadata_rows(layout),
         ],
+        settings=setting_types(results),
         error=None,
     )
+
+
+@dataclass(frozen=True)
+class _TypeUse:
+    """One type a public handler's or factory's parameters name, and that handler or factory (``module.name``)."""
+
+    value: object
+    user: str
+
+
+def _use_id(use: _TypeUse) -> int:
+    """The identity a type use is grouped by (the type object itself)."""
+    return id(use.value)
+
+
+def setting_types(results: Sequence[_ModuleResult]) -> list[SettingType]:
+    """The exported types the package's public handlers and factories name in their parameters (R2's setting types),
+    so the table's test can allow a type as a handler's setting only when a handler or factory takes it.
+
+    A row counts when its form is a type's (``SETTING_TYPE_FORMS``) and its value is one a handler's or factory's
+    parameter annotation names (``_parameter_types`` — the same object, or an equal typing construct).
+    """
+    uses = sorted(
+        (
+            _TypeUse(value, f"{each.row['module']}.{each.row['name']}")
+            for result in results
+            for each in result.values
+            if each.row["kind"] == "handler"
+            for value in _parameter_types(each.value)
+        ),
+        key=_use_id,
+    )
+    by_identity = {
+        key: frozenset(use.user for use in group)
+        for key, group in itertools.groupby(uses, key=_use_id)
+    }
+    constructs = [use for use in uses if _is_type_like(use.value)]
+
+    def users(value: object) -> list[str]:
+        """The handlers and factories that name an exported value in their parameters (none: not a setting type)."""
+        equal = (use.user for use in constructs if _is_type_like(value) and use.value == value)
+        return sorted(by_identity.get(id(value), frozenset()) | frozenset(equal))
+
+    return [
+        SettingType(module=each.row["module"], name=each.row["name"], used_by=found)
+        for result in results
+        for each in result.values
+        if each.row["form"] in SETTING_TYPE_FORMS and (found := users(each.value))
+    ]
 
 
 # --- the whole repo (parent process) ---
@@ -2132,6 +2262,7 @@ def _failed(package_dir: Path, message: str) -> PackageInventory:
         notes=list(layout.notes),
         modules=[],
         exports=[],
+        settings=[],
         error=message,
     )
 

@@ -19,6 +19,12 @@
   allowed one is a `BaseException` subclass its own package defines (an exception re-exported from another package or
   the standard library, or a class that is not an exception, is refused). Before, the known-violations table listed
   them as a boundary. Callers need no change.
+- The handler setting types the subpackages export (39 names in 15 packages) are counted as allowed: ADR-DOE-API-001
+  R2 lets a handler show the types it is built with, and the public API inventory now reads the parameter annotations
+  of each public handler, handler class and factory (generic arguments, union members and annotations written as
+  text included), lists the exported types they name in the package's `settings`, and allows only those, when the
+  package defines them. 51 names no public factory's parameters name (for example a Hy factory whose parameter has no
+  annotation) stay in the known-violations table as outliers to annotate or move inward. Callers need no change.
 
 ### Changed
 
