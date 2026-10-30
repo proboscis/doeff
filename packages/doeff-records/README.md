@@ -99,7 +99,7 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
   番号は束の順に増える。PostgreSQL の handler は追記の数に依らず `AppendEvent` と同じ書きの錠の transaction 1 つ・2 往復で積む(法
   `law_append_events_answer_like_appends_in_order`)。
 - `PutRowsAppendEvents` は行の書きの束と追記の束を、置き場の 1 つの書き(PostgreSQL は書きの錠の transaction 1 つ・memory は錠の内の 1 回)で
-  全部か 0 で積む(行を書いた事を出来事で知らせる書き手が、行と出来事の片方だけが残る形を作らないため — card ki-e17ba3b32dea)。答えは
+  全部か 0 で積む(行を書いた事を出来事で知らせる書き手が、行と出来事の片方だけが残る形を作らないため)。答えは
   `PutRows(writes)` を撃ち、続けて間に他の書きを挟まずに `AppendEvents(appends)` を撃った答えと同じ — ただし全部か 0: 行の束が `RowsConflict` /
   `RowsRefused` ならその答えで出来事も積まず、追記のどれかが断られる(同じ冪等キーの別の本文・上限)なら束の順で最初の断りの `AppendRefused` で
   行も書かない。同じ冪等キー・同じ本文が既に在る追記は断りでなく `Appended`(前の番号・`replayed=True`)で、他は進める。今積んだ出来事の番号は

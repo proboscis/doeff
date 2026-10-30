@@ -16023,6 +16023,27 @@
    "name": "WsShortcutFailed",
    "訳": "4fa2eb931(agora card ki-d5887d5edbd5)が ws の口の答えを段に分けた時に足した名。台本の答え手が import した型が module から見える。ADR-DOE-API-001 R15 の段 1 の子 card が区画を _ で隠すと目録から消える",
    "決め": "ki-d5887d5edbd5"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "WrittenAndAppended",
+   "訳": "PutRowsAppendEvents(card ki-e17ba3b32dea)の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
+   "決め": "ki-e17ba3b32dea"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "AppendRefused",
+   "訳": "PutRowsAppendEvents(card ki-e17ba3b32dea)の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
+   "決め": "ki-e17ba3b32dea"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "PutRowsAppendEventsAnswer",
+   "訳": "PutRowsAppendEvents(card ki-e17ba3b32dea)の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
+   "決め": "ki-e17ba3b32dea"
   }
  ]
 }
