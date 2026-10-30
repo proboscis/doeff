@@ -3,7 +3,7 @@
 ;;; doeff_cluster.shared.core.run_context_rules。この process の環境変数そのものの読み(context-from-env)と、宿の契約の
 ;;; Ask HOST-CONTRACT.run-context-key への答え手(host-reader)は doeff_cluster.shared.entry.host_reader。
 ;;;
-;;; 入口(job_entry)でない module に置く理由: 子は `hy -m doeff_cluster.worker.entry.job_entry` で起き、入口の module は __main__ として読まれる。
+;;; 入口(job_entry)でない module に置く理由: 子は `hy -m doeff_cluster._worker.entry.job_entry` で起き、入口の module は __main__ として読まれる。
 ;;; 型を入口に置くと、env の組み立て(業務の側の関数)が入口から import した時に同じ file がもう 1 回読まれて class が 2 つになり、
 ;;; __main__ の RunContext を渡された :pre の型の検めが必ず落ちた(実験用の namespace で再現・2026-09-26)。この module の class は 1 つだけ読まれる。
 (require doeff-hy.macros [val])

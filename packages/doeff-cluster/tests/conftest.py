@@ -129,7 +129,7 @@ def job_child_code_store(tmp_path_factory: pytest.TempPathFactory) -> None:
     """
     import hy  # noqa: F401  - Hy の module を import できるようにする
 
-    from doeff_cluster.worker.protocol.declared import JOB_ENTRY
+    from doeff_cluster._worker.protocol.declared import JOB_ENTRY
 
     prefix = tmp_path_factory.mktemp("job-child-code")
     subprocess.run(

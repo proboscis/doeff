@@ -10,13 +10,14 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.worker.intent.worker_model [EnvDisk ObserveWorld])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills])
-(import doeff_cluster.worker.protocol.world [local-host])
-(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written])
-(import doeff_cluster.worker.protocol.leaving_observer [leaving-observer])
-(import doeff_cluster.worker.entry.main [boot-file-written])
-(import doeff_cluster.worker.entry.drain_main [main :as drain-main])
+(import doeff_cluster [ObserveWorld]
+        doeff_cluster._worker.intent.worker_model [EnvDisk])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveMemoryTight ObserveMemoryKills])
+(import doeff_cluster [local-host])
+(import doeff_cluster._worker.protocol.leaving_mark [leaving-mark-written])
+(import doeff_cluster [leaving-observer])
+(import doeff_cluster._worker.entry.main [boot-file-written])
+(import doeff_cluster._worker.entry.drain_main [main :as drain-main])
 
 ;; 届かない coordinator(preStop の頼みは届かずに期限で終わる — 印は頼みの前に書く)。
 (val UNREACHABLE "http://127.0.0.1:9")

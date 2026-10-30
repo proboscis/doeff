@@ -20,7 +20,7 @@
 (import doeff_cluster [queued-requests]
         doeff_cluster._coordinator.protocol.request_queue [RequestQueue enqueue-request])
 (import doeff_cluster [Persist])
-(import doeff_cluster.worker.intent.worker_model [PublishStatus ReadDesired])
+(import doeff_cluster [PublishStatus ReadDesired])
 (import doeff_cluster [SimWorker HostTruthOf PartsOf sim-world sim-host StopCoordinator CrashCoordinator TakeHeldRequests observe-requests]
         doeff_cluster._sim.local [SimPlan SimParts HostTruth sim-plan StepBook])
 (import tests.fixtures.envs [sim-foundation])

@@ -28,8 +28,8 @@
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec])
-(import doeff_cluster.worker.core.policy [kept-when-cut-off])
+(import doeff_cluster._worker.protocol.declared [declared-job-spec])
+(import doeff_cluster._worker.core.policy [kept-when-cut-off])
 (import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf ReadinessOf CutWorker StallWorker StartWorker DrainWorker KillWorker ReadCoordinator ClientLink]
         doeff_cluster._sim.local [ServiceReadiness SimLink send-request])
 (import tests.fixtures.envs [sim-foundation])

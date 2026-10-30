@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 
 #: 準備の道具(本番の準備の処理ステージが起こす script と同じ file)。
-TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "worker" / "entry" / "code_prepare.hy"
+TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "_worker" / "entry" / "code_prepare.hy"
 
 _ENTRIES = "use.user,imp.importer,other.plain"
 

@@ -48,8 +48,8 @@
                                                                  DrainWindow no-new-place-while-draining])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.worker.core.invariants [handoff-keeps-a-ready-writer])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster._worker.core.invariants [handoff-keeps-a-ready-writer])
+(import doeff_cluster [WorkerPolicy])
 (import tests.env_fixtures [LOCK env-of])
 
 
@@ -607,9 +607,9 @@
   (val child (SimChild :ctx ctx :program-path "" :environ {} :pid 7 :passable #()
                        :link (SimLink :queue (RequestQueue) :actor "svc" :revision "r" :peer "w" :versions {} :timing (ClusterTiming))))
   (<- (with-handlers [(end-recorder ends)]
-        (sim-process "w" (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #("service") "r" :program (* "a" 64) :versions #()) child None)))
+        (sim-process "w" (JobSpec "svc" "doeff_cluster._worker.entry.job_entry" #("service") "r" :program (* "a" 64) :versions #()) child None)))
   (<- (with-handlers [(end-recorder ends)]
-        (sim-process "w" (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "r" :once True :program (* "b" 64) :versions #()) child None)))
+        (sim-process "w" (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "r" :once True :program (* "b" 64) :versions #()) child None)))
   (assert (= (len ends) 2) ends)
   (val service (get ends 0))
   (val task (get ends 1))

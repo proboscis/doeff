@@ -434,15 +434,21 @@
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
-  (import doeff_cluster.worker.intent.worker_model [StartJob])
+  (import doeff_cluster [StartJob])
   (assert (is (resolve-type "doeff_cluster.worker_model:StartJob") StartJob))
   ;; 実行環境の準備と drain の型(#2025 の 3 本目)
-  (import doeff_cluster.worker.intent.env_prepare_model [PrepareNote] doeff_cluster.shared.intent.env_marker_model [FileSha256]
-          doeff_cluster.worker.intent.drain_model [CoordinatorCall])
+  (import doeff_cluster [PrepareNote] doeff_cluster.shared.intent.env_marker_model [FileSha256]
+          doeff_cluster [CoordinatorCall])
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 49)))
+  ;; worker の区画を _ へ隠す前の記録の名(worker の effect・準備の型・drain の型)も、表で今の置き場を引く
+  (assert (= (get MOVED-MODULES "doeff_cluster.worker.intent.worker_model") "doeff_cluster._worker.intent.worker_model"))
+  (assert (= (get MOVED-MODULES "doeff_cluster.worker.intent.env_prepare_model") "doeff_cluster._worker.intent.env_prepare_model"))
+  (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:StartJob") StartJob))
+  (assert (is (resolve-type "doeff_cluster.worker.intent.env_prepare_model:PrepareNote") PrepareNote))
+  (assert (is (resolve-type "doeff_cluster.worker.intent.drain_model:CoordinatorCall") CoordinatorCall))
+  (assert (= (len MOVED-MODULES) 90)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------

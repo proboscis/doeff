@@ -140,7 +140,7 @@
           "packages/doeff-indexer/doeff_indexer_build_backend.py"
           "packages/doeff-vm/pyproject.toml"
           "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
-          "packages/doeff-cluster/src/doeff_cluster/worker/entry/boot_wheel.py"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/entry/boot_wheel.py"
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
     [(fact

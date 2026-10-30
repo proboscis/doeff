@@ -10,7 +10,7 @@
 (import json)
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerInfo])
 (import doeff_cluster._coordinator.intent.failover_model [ExtraProvides FailoverWorker])
-(import doeff_cluster.worker.core.room_rules [RoomReading RoomState announced-provides launch-provides room-of-text])
+(import doeff_cluster._worker.core.room_rules [RoomReading RoomState announced-provides launch-provides room-of-text])
 
 
 (defk room-row-names [text]

@@ -5,8 +5,8 @@
 ;;   * 掃除の候補の project の名・準備の process の起こし方(掃除の下限は env_upkeep の 2 つの絶対の量 — test_env_warm・#3732)。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
-(import doeff_cluster.worker.core.env_upkeep [PrepareLimits])
-(import doeff_cluster.worker.core.env_rules [ReadyAnswer launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
+(import doeff_cluster._worker.core.env_upkeep [PrepareLimits])
+(import doeff_cluster._worker.core.env_rules [ReadyAnswer launch-order prepare-argv answer-of-text prepare-outcome overdue-failure
                                              root-project])
 
 
@@ -81,9 +81,9 @@
 (import json)
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.worker.intent.env_prepare_model [BytecodeTree PrepareRequest])
-(import doeff_cluster.worker.core.env_rules [prepare-request])
-(import doeff_cluster.worker.protocol.env_translation [compile-argv request-of-json])
+(import doeff_cluster._worker.intent.env_prepare_model [BytecodeTree PrepareRequest])
+(import doeff_cluster._worker.core.env_rules [prepare-request])
+(import doeff_cluster._worker.protocol.env_translation [compile-argv request-of-json])
 
 (deftest test-the-compile-jobs-ride-the-request-into-the-compile-command-only-when-given
   ;; 失敗ケース(2026-10-08): 準備の頼みの並べる数(recreate の job の旧い process が動いている間の新しい版の準備 — 旧と同じ memory の上限を

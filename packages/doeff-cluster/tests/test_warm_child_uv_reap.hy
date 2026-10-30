@@ -14,8 +14,8 @@
 (import doeff_core_effects [ReadText])
 (import doeff_core_effects [EnvMode StartProcess PollProcess ProcessAlive RunProcess ReadEnvironment ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
-(import doeff_cluster.worker.core.warm_rules [WARM-CHILD-FLAGS])
+(import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster._worker.core.warm_rules [WARM-CHILD-FLAGS])
 
 ;; repo の根(uv の --project — 待ちの子の代わりの sleeper は標準の module だけを使う)。
 (val REPO (str (get (. (.resolve (Path __file__)) parents) 3)))

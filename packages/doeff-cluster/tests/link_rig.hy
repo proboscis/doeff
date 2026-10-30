@@ -18,9 +18,11 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
-(import doeff_cluster.worker.intent.worker_model [ReadDesired DesiredJobs DesiredUnreadable])
-(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link accepted-tasks fetched-programs status-rows])
-(import doeff_cluster.worker.core.launch [program-file program-file-text])
+(import doeff_cluster [ReadDesired]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster [coordinator-link]
+        doeff_cluster._worker.protocol.coordinator_link [LinkState accepted-tasks fetched-programs status-rows])
+(import doeff_cluster [program-file program-file-text])
 (import tests.transport_http [transport-http])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])

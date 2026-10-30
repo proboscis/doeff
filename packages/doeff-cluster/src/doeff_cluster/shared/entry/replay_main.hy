@@ -24,7 +24,7 @@
 (import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_cluster._foundation.record_log [Recording read-recording ReplayFinished ReplayDiverged])
 (import doeff_cluster._foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
-(import doeff_cluster.worker.entry.job_entry [read-program])
+(import doeff_cluster._worker.entry.job_entry [read-program])
 
 
 (defk read-lines [path]

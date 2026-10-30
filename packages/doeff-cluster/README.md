@@ -174,7 +174,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 
 ### 実行先の契約(HOST-CONTRACT)と job_entry
 
-worker の子 process の入口は `hy -m doeff_cluster.worker.entry.job_entry service|task|probe --program FILE …` です。版(Python・cloudpickle・doeff)を
+worker の子 process の入口は `hy -m doeff_cluster._worker.entry.job_entry service|task|probe --program FILE …` です。版(Python・cloudpickle・doeff)を
 検めて詰めた Program を解き、`(run program)` するだけで、handler を 1 つも足しません。答えの無い effect はその場で上がり、process は
 0 以外で終わります(worker が理由つきで起動し直します)。task の入口は結果を `--result` の file に書いた後、終わる前に coordinator の
 `POST /tasks/<id>/result` へ結果を直接送ります。届かなかった時だけ、worker が file を読んで次の heartbeat で運びます(子が終了コード 0 で
@@ -275,7 +275,7 @@ worker は業務の repo の commit を 1 つ展開して子 process の cwd に
 | `--import-roots` | 子の PYTHONPATH に並べる木の中の dir(`,` で並べる・前が先)。bytecode の準備も同じ根で module 名を決める | `.` |
 | `--base-pythonpath` | 木の根の後ろに並べる機体の絶対 path(image に焼かない土台の package を持つ機体の worker だけ) | 空 |
 
-子 process の入口(`doeff_cluster.worker.entry.job_entry`)はこの package の物です。業務のコードの版は木が、クラスタの仕組みの版は worker の
+子 process の入口(`doeff_cluster._worker.entry.job_entry`)はこの package の物です。業務のコードの版は木が、クラスタの仕組みの版は worker の
 実行環境(か実行環境の root)が決めます。
 
 ### 外の系と取り交わす名(coordinator の引数)
@@ -473,7 +473,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   実行時に読む OS の library — 頭の註の表の理由 (2)・今は psycopg が読む `libpq5`)。doeff も Python も持たず、
   `boot.sh` が `WORKER_DOEFF_COMMIT` の doeff を展開して `uv sync --locked --package doeff-cluster` した venv から coordinator / worker を
   起動します(自己起動)。doeff-vm(Rust)は uv sync で組まず(`--no-install-package doeff-vm`)、実行環境の準備と同じ鍵・同じ置き場
-  (`$WORK_DIR/state/wheels/doeff-vm-<鍵>`)の組み済みの wheel を `python -m doeff_cluster.worker.entry.boot_wheel` で用意して venv へ
+  (`$WORK_DIR/state/wheels/doeff-vm-<鍵>`)の組み済みの wheel を `python -m doeff_cluster._worker.entry.boot_wheel` で用意して venv へ
   入れます(無ければ組んで置く — 鍵と置き場の定義点は `shared/core/native_wheel.py` の 1 つ)。doeff-vm の source が同じ commit への
   入れ替えでは、起動も実行環境の準備も Rust を組み直しません。worker のコードを変える時は commit を変えて入れ替え、image は作り直しません。image に
   焼いた `boot.sh` は root の展開(印 `.doeff-boot-extracted`)だけをして、root の中の同じ commit の `deploy/boot.sh` へ必ず引き継ぎ

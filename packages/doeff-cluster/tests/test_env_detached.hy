@@ -38,10 +38,9 @@
 (import doeff_cluster._coordinator.core.cluster_policy [can-run-task absorb-env-failure tasks-placed submit-task ENV-RETRIES])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
-                                    PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.core.policy [plan statuses])
-(import doeff_cluster.worker.protocol.declared [task-spec] doeff_cluster.worker.protocol.heartbeat [status-row])
+(import doeff_cluster [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster [code-key])
+(import doeff_cluster [plan statuses])
+(import doeff_cluster._worker.protocol.declared [task-spec] doeff_cluster._worker.protocol.heartbeat [status-row])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK APP-URL LIB-URL env-of])
 (import tests.detached_rig [slow-add])

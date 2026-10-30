@@ -18,11 +18,12 @@
 (import doeff_core_effects._os_process [STARTED-CHILDREN])
 (import doeff_core_effects [StartProcess])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy StartJob SignalJob ReapJob Outcome StopStage ProcessView Undeclared])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings job-log-stem])
-(import doeff_cluster.worker.core.invariants [DescendantLife DescendantOutlivedTheStop stopped-job-leaves-no-descendant])
-(import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
+(import doeff_cluster [WorkerPolicy StartJob SignalJob ReapJob StopStage ProcessView]
+        doeff_cluster._worker.intent.worker_model [Outcome Undeclared])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster._worker.protocol.process_host [HostSettings job-log-stem])
+(import doeff_cluster._worker.core.invariants [DescendantLife DescendantOutlivedTheStop stopped-job-leaves-no-descendant])
+(import doeff_cluster._worker.core.shim_timing [shim-deadline-ms])
 (import tests.host_rig [host-settings run-on-host job-ended])
 (import tests.test_entry_probe [wait-pid process-alive])
 (import pytest)
@@ -40,7 +41,7 @@
 (val SHORT (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 1000 :shim-sweep-margin-ms 500))
 ;; 止め切りの後に孫を見張る長さ(ms)— 残った孫を「止め切りの後に生きていた」と見るため。
 (val WATCH-AFTER-MS 300)
-(val SHIM "doeff_cluster.worker.entry.shim")
+(val SHIM "doeff_cluster._worker.entry.shim")
 (val VARIANT "tests.fixtures.shim_without_adoption")
 
 

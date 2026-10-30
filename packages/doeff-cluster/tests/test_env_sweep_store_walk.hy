@@ -23,9 +23,9 @@
 (import doeff_core_effects._offloaded_call [ThreadPerCall run-detached])
 (import doeff_core_effects [os-file-handler offloaded-tree-handler])
 (import doeff_core_effects [scheduled CreatePromise CreateExternalPromise Spawn Wait Task])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings RemovedRoots removing-leftovers])
-(import doeff_cluster.worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster._worker.protocol.env_store [EnvSettings RemovedRoots removing-leftovers])
+(import doeff_cluster._worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
 
 ;; 筋書き 1 つの上限(実時間の秒)。普段は 1 秒の内に終わる。
 (val SCENARIO-LIMIT 5.0)

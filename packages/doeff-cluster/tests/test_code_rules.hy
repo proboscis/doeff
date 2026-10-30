@@ -2,9 +2,9 @@
 ;;   * どの命令も set -eu の下の単独の文で、完成の印を確かめてから最後に rename する(final の在る dir は常に完成品)。
 ;;   * 焼きの hy が無ければ bytecode を省いて印だけを置く・前の版の木から引き継がない(.pyc は source の中身で引く保存先から書く — #3858)。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout])
-(import doeff_cluster.worker.core.code_plan [MARKER])
-(import doeff_cluster.worker.core.code_rules [prepare-script])
+(import doeff_cluster [CodeLayout])
+(import doeff_cluster._worker.core.code_plan [MARKER])
+(import doeff_cluster._worker.core.code_rules [prepare-script])
 
 
 (deftest test-the-script-checks-the-marker-before-the-rename-that-comes-last

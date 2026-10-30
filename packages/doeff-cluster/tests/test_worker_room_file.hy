@@ -22,8 +22,9 @@
 (import tests.program_rows [heartbeat-of])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
-(import doeff_cluster.worker.entry.main [boot-room boot-warm-services])
+(import doeff_cluster [RoomReading RoomState WorkerRoom room-of-text]
+        doeff_cluster._worker.core.room_rules [room-read-due room-line])
+(import doeff_cluster._worker.entry.main [boot-room boot-warm-services])
 (import doeff_cluster [ClusterJob ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [Placement ComponentVersion TaskRecord TaskUnplacedKind])
 (import doeff_cluster [memory-room-of]

@@ -16,7 +16,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.worker.protocol.tree_files [tree-files])
+(import doeff_cluster [tree-files])
 (import tests.file_contract_handlers [root-answers MEMORY-ROOT])
 
 (val OS-FILES-TREE "os-files-tree")

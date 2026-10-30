@@ -25,15 +25,15 @@
     "src/doeff_cluster/shared/intent/service_model.hy": 3,
     "src/doeff_cluster/shared/protocol/detached.hy": 1,
     "src/doeff_cluster/shared/protocol/remote.hy": 1,
-    "src/doeff_cluster/worker/core/beat_policy.hy": 1,
-    "src/doeff_cluster/worker/core/code_prepare.hy": 1,
-    "src/doeff_cluster/worker/core/drain_client.hy": 2,
-    "src/doeff_cluster/worker/core/env_prepare.hy": 1,
-    "src/doeff_cluster/worker/core/launch.hy": 2,
-    "src/doeff_cluster/worker/core/probe_rules.hy": 2,
-    "src/doeff_cluster/worker/intent/code_model.hy": 1,
-    "src/doeff_cluster/worker/intent/drain_model.hy": 1,
-    "src/doeff_cluster/worker/intent/worker_model.hy": 2,
-    "src/doeff_cluster/worker/protocol/env_store.hy": 2
+    "src/doeff_cluster/_worker/core/beat_policy.hy": 1,
+    "src/doeff_cluster/_worker/core/code_prepare.hy": 1,
+    "src/doeff_cluster/_worker/core/drain_client.hy": 2,
+    "src/doeff_cluster/_worker/core/env_prepare.hy": 1,
+    "src/doeff_cluster/_worker/core/launch.hy": 2,
+    "src/doeff_cluster/_worker/core/probe_rules.hy": 2,
+    "src/doeff_cluster/_worker/intent/code_model.hy": 1,
+    "src/doeff_cluster/_worker/intent/drain_model.hy": 1,
+    "src/doeff_cluster/_worker/intent/worker_model.hy": 2,
+    "src/doeff_cluster/_worker/protocol/env_store.hy": 2
   }
 }

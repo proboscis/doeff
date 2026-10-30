@@ -9,8 +9,8 @@
 (import doeff_cluster [WorkerInfo])
 (import doeff_cluster [ExtraProvides FailoverWorker])
 (import doeff_cluster [room-file-workers])
-(import doeff_cluster.worker.core.room_rules [TEMPLATE-PROVIDES])
-(import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
+(import doeff_cluster [TEMPLATE-PROVIDES])
+(import doeff_cluster._worker.protocol.heartbeat [heartbeat-body])
 
 (val ROOMS {"zeus" {"capacity" 40 "taskReserve" 6 "backgroundRoom" 4 "warmServices" True "memoryMiB" 60000}
             "k3s-1" {"capacity" 2 "taskReserve" 0 "backgroundRoom" 0 "pools" ["pool-k3s-1-k3s-2"] "memoryMiB" 1792}

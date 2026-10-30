@@ -8,7 +8,7 @@
 (import doeff_cluster [responded]
         doeff_cluster._coordinator.protocol.request_bodies [body-of])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
+(import doeff_cluster._worker.protocol.heartbeat [heartbeat-body])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json])
 (import doeff_cluster._coordinator.protocol.state_json [read-service-rows])
 (import tests.program_rows [SAMPLE-RUN])

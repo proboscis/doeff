@@ -38,7 +38,7 @@
 #   準備: `uv sync --locked --compile-bytecode --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を
 #   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じく `uv build --wheel` で build の口(tools/doeff_cargo_backend.py
 #   — Rust の部品を組む・引く入口の 1 つ・ADR-DOE-BUILD-001)を通し、口の保存先($WORK_DIR/state/wheels — source の中身の鍵)の物を
-#   使い、無ければ口が組んで置く(python -m doeff_cluster.worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/shared/core/native_wheel.py
+#   使い、無ければ口が組んで置く(python -m doeff_cluster._worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/shared/core/native_wheel.py
 #   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
 #   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
 #   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。
@@ -140,8 +140,8 @@ fi
 # 自己起動の root に bytecode を焼く範囲の入口(`,` で並べる・役で分けない): 下の役が root の venv の hy で起こす module の全部と、worker が
 # 同じ venv で起こす準備の process(env_tool)・shim・job の子の入口(job_entry)と、venv の .pth が interpreter の起動ごとに import する
 # doeff-hy の doeff_hy_bytecode_guard(どこからも import の文で辿れない)。焼くのはこの入口から import を辿った閉包だけ。
-BOOT_ENTRIES=doeff_cluster.worker.entry.main,doeff_cluster.worker.entry.drain_main,doeff_cluster._coordinator.entry.main,doeff_cluster._record_store.entry.main,doeff_cluster.worker.entry.env_tool,doeff_cluster.worker.entry.shim,doeff_cluster.worker.entry.job_entry,doeff_hy_bytecode_guard
-# 焼く道具が焼き終えた木の根に置く完成の印(doeff_cluster/worker/core/code_plan.hy の MARKER と同じ名)。
+BOOT_ENTRIES=doeff_cluster._worker.entry.main,doeff_cluster._worker.entry.drain_main,doeff_cluster._coordinator.entry.main,doeff_cluster._record_store.entry.main,doeff_cluster._worker.entry.env_tool,doeff_cluster._worker.entry.shim,doeff_cluster._worker.entry.job_entry,doeff_hy_bytecode_guard
+# 焼く道具が焼き終えた木の根に置く完成の印(doeff_cluster/_worker/core/code_plan.hy の MARKER と同じ名)。
 CODE_MARKER=.doeff-code-ready.json
 
 # 今の刻(epoch ミリ秒)。GNU の date は %3N でミリ秒を出す・BSD(macOS の worker)は出さないので秒の 1000 倍。
@@ -227,7 +227,7 @@ doeff_prepare() {
     synced=$(date +%s)
     # 答え = 1 行「<組んだ|使った|組んだかは不明で用意した> <wheel の path>」(path は uv build が root の下の --out-dir に出した wheel・
     # 組めなければ理由を stderr に出して非 0 — set -e で止まり、印を置かない)。
-    answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster.worker.entry.boot_wheel --root "$root" \
+    answer=$(PYTHONDONTWRITEBYTECODE=1 "$root/.venv/bin/python" -m doeff_cluster._worker.entry.boot_wheel --root "$root" \
       --state "$WORK_DIR/state" --uv-cache "$DOEFF_UV_CACHE_DIR")
     how=${answer%% *}
     wheel=${answer#* }
@@ -264,7 +264,7 @@ doeff_prepare() {
 # 決める 3 値(bake_result)— baked = 焼けた・nothing = 焼く物が無い(失敗ではない — 印を置く)・failed = 焼く道具が非 0 で終わったか、
 # 報告に stored/rebuilt の数の行が無い(印を置かない — 頭の註の「完成の印」)。どれでも 0 で返す(set -e の下で呼ぶ)。
 doeff_bake() {
-  tool=$root/packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy
+  tool=$root/packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy
   if [ ! -f "$tool" ] || [ ! -x "$root/.venv/bin/hy" ]; then
     # 焼く道具を持たない版の root か、hy の無い venv — 組み直しても焼く物は無い(import の時に作られる)。
     baked="bytecode を焼かない(焼く道具か venv の hy が root に無い — import の時に作られる)"
@@ -578,7 +578,7 @@ keeper_retire() {
   : >"$k_gen/draining"
   keeper_log "前の世代 ${k_gen##*/}(doeff $(keeper_short "$k_commit")・pid $k_pid)を drain してから止める"
   ( (
-    "$k_hy" -m doeff_cluster.worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+    "$k_hy" -m doeff_cluster._worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
       --deadline "${DRAIN_DEADLINE:-90}" --boot-file "$k_gen/boot" || true
     kill -TERM "$k_pid" 2>/dev/null || true
     k_waited=0
@@ -814,13 +814,13 @@ case "$role" in
       : >"$keeper_dir/leaving"
       for g in "$keeper_dir"/gens/*; do
         [ -f "$g/boot" ] && keeper_alive "$(cat "$g/pid" 2>/dev/null || true)" || continue
-        hy -m doeff_cluster.worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+        hy -m doeff_cluster._worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
           --deadline "${DRAIN_DEADLINE:-90}" --boot-file "$g/boot" 2>>/proc/1/fd/2 &
       done
       wait
       exit 0
     fi
-    exec hy -m doeff_cluster.worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+    exec hy -m doeff_cluster._worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
       --deadline "${DRAIN_DEADLINE:-90}" --boot-file "${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}" 2>>/proc/1/fd/2 ;;
   coordinator)
     mkdir -p "$WORK_DIR/coord"
@@ -983,7 +983,7 @@ done
 # worker を exec する刻(起動の内訳の 3 番目の刻・#3676)。
 DOEFF_BOOT_EXEC_MS=$(boot_ms)
 export DOEFF_BOOT_EXEC_MS
-exec hy -m doeff_cluster.worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
+exec hy -m doeff_cluster._worker.entry.main --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
   --provides "${WORKER_PROVIDES:-}" --exclusive "${WORKER_EXCLUSIVE:-}" --node "${NODE_NAME:-}" "$@" \
   --repo "$repo" --state-dir "$state_dir" --shared-dir "$WORK_DIR/state" ${overlaps_elder} --stop-grace 10 \
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \

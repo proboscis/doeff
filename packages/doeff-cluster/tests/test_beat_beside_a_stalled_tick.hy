@@ -24,11 +24,13 @@
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState ObserveWorld EnvReport PublishStatus])
-(import doeff_cluster.worker.core.program [run-worker HEARTBEAT-GAP-LOG])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
-(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
-(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link])
+(import doeff_cluster [WorldView WorkerPolicy ObserveWorld EnvReport PublishStatus]
+        doeff_cluster._worker.intent.worker_model [WorkerState])
+(import doeff_cluster._worker.core.program [run-worker HEARTBEAT-GAP-LOG])
+(import doeff_cluster [tick-pauses])
+(import doeff_cluster [no-wakes])
+(import doeff_cluster [coordinator-link]
+        doeff_cluster._worker.protocol.coordinator_link [LinkState])
 (import doeff_core_effects [StopRequested])
 (import tests.link_rig [LINK-ROUTE])
 (import tests.stop_fixtures [stop-signal-never-comes])

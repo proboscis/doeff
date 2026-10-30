@@ -19,7 +19,7 @@
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster._coordinator.core.cluster_policy [job-from-json])
-(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json])
+(import doeff_cluster [DeclaredReply declared-reply-of-json declared-job-specs] doeff_cluster [status-rows-json])
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
 (import doeff_cluster.shared.entry.service_build [job])
@@ -27,9 +27,8 @@
 (import tests.fixtures.services [tally-program])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob
-                                    RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.worker.core.policy [plan records-after statuses])
+(import doeff_cluster [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [plan records-after statuses])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0"})
@@ -239,7 +238,7 @@
 (import doeff_cluster.shared.core.readiness_rules [retired-lifetime-ms retired-limit-of])
 (import doeff_cluster [spec-of-declaration])
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec])
+(import doeff_cluster._worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 
 

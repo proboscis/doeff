@@ -24,10 +24,10 @@
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded])
 (import doeff_cluster [sim-cluster SimWorker ProcessesOf ReadCoordinator])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView DesiredJobs ReadDesired ObserveWorld
-                                                  PublishStatus EnvReport])
-(import doeff_cluster.worker.core.program [run-worker])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [WorkerPolicy WorldView ReadDesired ObserveWorld PublishStatus EnvReport]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs])
+(import doeff_cluster._worker.core.program [run-worker])
+(import doeff_cluster [tick-pauses])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.wake_fixtures [wakes-every])
 (import tests.fixtures.sim_programs [beacons slow-task sim-task-foundation NET])

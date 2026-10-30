@@ -309,7 +309,7 @@ def test_silence_anchor_rule_detects_reads_outside_the_one_measure() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/"
         "silence_anchor_read_outside_measure_forbidden.hy",
         cwd=fixture_root,
     )
@@ -347,7 +347,7 @@ def test_clock_effect_rule_detects_answers_outside_the_time_handlers() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/"
         "clock_effect_answered_outside_time_handlers_forbidden.hy",
         cwd=fixture_root,
     )

@@ -39,7 +39,8 @@
 (import doeff_cluster [responded])
 (import tests.link_rig [LinkRig])
 
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster [JobStatus]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
 (import doeff_cluster.shared.core.remote_rules [failed-from])
@@ -740,8 +741,8 @@
 (import doeff_cluster [load-state])
 (import doeff_cluster [WalStore])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.core.policy [kept-when-cut-off])
-(import doeff_cluster.worker.protocol.declared [task-spec])
+(import doeff_cluster._worker.core.policy [kept-when-cut-off])
+(import doeff_cluster._worker.protocol.declared [task-spec])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
@@ -1343,10 +1344,10 @@
 
 
 (deftest test-a-cut-off-worker-keeps-detached-tasks-and-stops-remote-job-tasks
-  (setv detached (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #() "r" :once True :detached True)
-        remote (JobSpec "task/t2" "doeff_cluster.worker.entry.job_entry" #() "r" :once True)
-        writer (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #() "r" :handoff True)
-        plain (JobSpec "plain" "doeff_cluster.worker.entry.job_entry" #() "r"))
+  (setv detached (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #() "r" :once True :detached True)
+        remote (JobSpec "task/t2" "doeff_cluster._worker.entry.job_entry" #() "r" :once True)
+        writer (JobSpec "svc" "doeff_cluster._worker.entry.job_entry" #() "r" :handoff True)
+        plain (JobSpec "plain" "doeff_cluster._worker.entry.job_entry" #() "r"))
   (assert (= (kept-when-cut-off #(detached remote writer plain) 60000 240000) #(detached writer)))
   ;; coordinator への口: 途絶が fence を越えたら、最後に受け取った宣言のうち切り離した task を動かし続ける
   (setv link (LinkRig "http://127.0.0.1:9" "w" #() 1 0 60000))

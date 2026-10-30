@@ -2,7 +2,7 @@
 ;;;
 ;;; 13 回目の本番の切り替え(2026-09-29)で、本番の状態の写しから起きた coordinator に新しい形の worker が 1 つも名乗れなかった。
 ;;; sim-cluster の検は本物の HTTP の口を通らないので見えなかった。ここでは coordinator(hy -m doeff_cluster._coordinator.entry.main)と worker
-;;; (hy -m doeff_cluster.worker.entry.main — deploy/boot.sh の ROLE=worker と同じ引数)を子 process で起こし、worker が GET /state の workers に出て、
+;;; (hy -m doeff_cluster._worker.entry.main — deploy/boot.sh の ROLE=worker と同じ引数)を子 process で起こし、worker が GET /state の workers に出て、
 ;;; heartbeat の返事を受けた(readiness の file が ready)ことを確かめる。置き場は 2 つ:
 ;;;   - 空の置き場
 ;;;   - 本番の写しと同じ形の置き場: 旧い形(labels だけ)の worker の行とその版の記録 meta/Worker/<名>、旧い形の Service の行とその版の記録。
@@ -20,9 +20,9 @@
 (import tests.program_rows [SAMPLE-RUN])
 (import doeff [with-handlers])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.worker.protocol.leaving_mark [leaving-mark-written leaving-path])
-(import doeff_cluster.worker.entry.main [boot-file-written])
-(import doeff_cluster.worker.entry.drain_main [read-boot])
+(import doeff_cluster._worker.protocol.leaving_mark [leaving-mark-written leaving-path])
+(import doeff_cluster._worker.entry.main [boot-file-written])
+(import doeff_cluster._worker.entry.drain_main [read-boot])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
@@ -60,7 +60,7 @@
    readiness の file・log は tmp-path の下)。能力は zeus の worker と同じ形(agent・機体・境界と、機体を専用にする)。止めるのは呼び手。"
   (val repo (/ tmp-path "mirror.git"))
   (subprocess.run ["git" "init" "-q" "--bare" (str repo)] :check True)
-  (subprocess.Popen [HY "-m" "doeff_cluster.worker.entry.main" "--coordinator" url "--name" NAME
+  (subprocess.Popen [HY "-m" "doeff_cluster._worker.entry.main" "--coordinator" url "--name" NAME
                      "--provides" "agent,host-t,boundary-personal" "--exclusive" "host-t" "--node" "" "--task-reserve" "0" "--background-room" "1"
                      "--repo" (str repo) "--state-dir" (str (/ tmp-path "state")) "--stop-grace" "10"
                      "--import-roots" "." "--repo-keys" "" "--tools" "git=2.43.0" "--pass-env" ""

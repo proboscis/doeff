@@ -15,10 +15,10 @@
 (import time)
 (import pathlib [Path])
 (import doeff_time [Delay])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.intent.worker_model [PrepareEnv SweepEnvs])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [PrepareEnv SweepEnvs])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings])
+(import doeff_cluster._worker.protocol.env_store [EnvSettings])
 (import tests.careful_rig [run-envs])
 (import pytest)
 

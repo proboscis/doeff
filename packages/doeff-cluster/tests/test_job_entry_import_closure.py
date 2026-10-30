@@ -24,7 +24,7 @@ import importlib
 for name in sys.argv[2:]:
     importlib.import_module(name)
 if sys.argv[1] == "entry-then-httpx":
-    from doeff_cluster.worker.entry.job_entry import _decline_httpx_cli
+    from doeff_cluster._worker.entry.job_entry import _decline_httpx_cli
     _decline_httpx_cli()
     import httpx
     assert callable(httpx.main) and httpx.AsyncClient
@@ -32,13 +32,13 @@ loaded = sorted(name for name in set(sys.modules) - before if sys.modules[name] 
 print(json.dumps(loaded))
 """
 
-ENTRY = "doeff_cluster.worker.entry.job_entry"
+ENTRY = "doeff_cluster._worker.entry.job_entry"
 FOUNDATION = "doeff_cluster.shared.entry.cluster_foundation"
 
 # どの子も読まない module(名か、その名の下の module)。
 NEVER = ("rich", "pygments", "click", "httpx._main", "doeff_cluster._coordinator", "pydantic", "pydantic_core")
 # 入口だけ(service の子が Program を解く前)が読まない module — task の道の届けと、その先の HTTP の handler。
-ENTRY_NEVER = (*NEVER, "httpx", "doeff_cluster.worker.entry.result_delivery", "doeff_core_effects._http_handlers_impl")
+ENTRY_NEVER = (*NEVER, "httpx", "doeff_cluster._worker.entry.result_delivery", "doeff_core_effects._http_handlers_impl")
 
 # 上限 = 直した時の数(入口 125・入口と土台 255)に 2 割ほどの余裕を足した値。
 ENTRY_MODULE_LIMIT = 150

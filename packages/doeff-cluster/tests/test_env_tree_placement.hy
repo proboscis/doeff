@@ -22,8 +22,10 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.worker.intent.env_prepare_model [MaterializeTree TreeSource TreePlaced TREE-COPY TREE-EXPAND])
-(import doeff_cluster.worker.protocol.env_translation [env-translation PATHS-PER-COMMAND run-watched CommandResult])
+(import doeff_cluster [MaterializeTree]
+        doeff_cluster._worker.intent.env_prepare_model [TreeSource TreePlaced TREE-COPY TREE-EXPAND])
+(import doeff_cluster [env-translation]
+        doeff_cluster._worker.protocol.env_translation [PATHS-PER-COMMAND run-watched CommandResult])
 
 
 (defk git [repo #* args]

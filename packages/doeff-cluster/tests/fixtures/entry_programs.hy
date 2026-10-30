@@ -13,10 +13,10 @@
 (import doeff_cluster [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import tests.fixtures.envs [scheduler-foundation])
-;; 子の中で入口 doeff_cluster.worker.entry.job_entry は __main__ として読まれる(送る名 JOB-ENTRY — #2112)ので、ここで同じ file を
+;; 子の中で入口 doeff_cluster._worker.entry.job_entry は __main__ として読まれる(送る名 JOB-ENTRY — #2112)ので、ここで同じ file を
 ;; import するともう 1 回読まれる。業務の module が入口の module から文脈の読みを import しても、文脈の型が 1 つのままであること
 ;; (型は job_context にだけ在る)の反例(test_job_context)に使うので、あえて入口の本体から import する。
-(import doeff_cluster.worker.entry.job_entry [runtime-env-of-context])
+(import doeff_cluster [runtime-env-of-context])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 
 

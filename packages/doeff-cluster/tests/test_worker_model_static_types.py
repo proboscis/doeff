@@ -21,7 +21,7 @@ from typing import get_args
 import hy  # .hy の module(worker_model・job_model)を読む import hook を有効にする(名の mangle にも使う)
 import pytest
 from doeff_cluster.shared.intent import job_model
-from doeff_cluster.worker.intent import worker_model
+from doeff_cluster._worker.intent import worker_model
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
@@ -33,7 +33,7 @@ MODULE = """\
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster._sim.local [sim-cluster])
 (import doeff_events [MemoryBroker])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorldView CodeView CodeState ProcessView JobStatus
+(import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorldView CodeView CodeState ProcessView JobStatus
                                                   ObserveWorld ReadDesired DesiredJobs DesiredUnreadable])
 
 (defk probe-policy [grace]

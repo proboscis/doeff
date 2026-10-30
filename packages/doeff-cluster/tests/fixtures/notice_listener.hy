@@ -10,9 +10,9 @@
 (import doeff_core_effects [AppendText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.worker.intent.worker_model [Retired HandoffAbandoned])
-(import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
-(import doeff_cluster.worker.entry.retirement_notices [pipe-retirement-notices])
+(import doeff_cluster [Retired HandoffAbandoned])
+(import doeff_cluster [AwaitRetirement])
+(import doeff_cluster [pipe-retirement-notices])
 
 
 (defk listen [path]

@@ -2,8 +2,8 @@
 (require doeff-hy.macros [deftest val])
 (import time)
 (import httpx)
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable CutOff])
-(import tests.link_rig [LinkRig] doeff_cluster.worker.core.launch [spec-program-name])
+(import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable CutOff])
+(import tests.link_rig [LinkRig] doeff_cluster._worker.core.launch [spec-program-name])
 
 (deftest test-broken-declaration-is-reported-not-raised
   ;; worker が job を受けるのは coordinator の返事からだけ(宣言の file を直に読む口は無い)。読めない返事は例外を上げず「読めない」に
@@ -28,9 +28,9 @@
   (assert (isinstance cut.cut-off CutOff)))
 
 (import pathlib [Path])
-(import doeff_cluster.worker.intent.worker_model [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.protocol.declared [task-spec])
-(import doeff_cluster.worker.core.code_plan [module-name carry-pairs compile-plan cache-rel])
+(import doeff_cluster [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster._worker.protocol.declared [task-spec])
+(import doeff_cluster._worker.core.code_plan [module-name carry-pairs compile-plan cache-rel])
 
 (deftest test-task-files-are-written-reported-and-cleaned [tmp-path]
   (val tasks (/ tmp-path "tasks"))

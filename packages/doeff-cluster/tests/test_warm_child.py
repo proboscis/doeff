@@ -229,7 +229,7 @@ def test_the_ready_mark_shows_one_thread_and_no_vm_before_any_fork(place: Path, 
         facts = readied(warm)
         assert facts["threads"] == 1, facts
         assert facts["vmLive"] == [0, 0, 0], facts
-        assert facts["preloaded"] == ["doeff_cluster.worker.entry.job_entry", JOB], facts
+        assert facts["preloaded"] == ["doeff_cluster._worker.entry.job_entry", JOB], facts
         assert facts["root"] == os.path.realpath(warm.root), facts
     finally:
         stopped(warm)
@@ -392,7 +392,7 @@ def test_a_forked_job_log_has_a_wall_clock_stamp_on_each_line(place: Path, start
 def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
     """失敗ケース: 待ちの子は process の様子(起動の刻・thread の本数)を /proc から自分で読まず、
     機体ごとの読み(doeff_core_effects._os_warm_process の proc-stat-of・own-thread-count)を使う — /proc の無い macOS で起動の前に落ちない。"""
-    source = (PACKAGE / "src" / "doeff_cluster" / "worker" / "entry" / "warm_child.py").read_text()
+    source = (PACKAGE / "src" / "doeff_cluster" / "_worker" / "entry" / "warm_child.py").read_text()
     assert "/proc" not in source
     assert "proc_stat_of" in source and "own_thread_count" in source
 

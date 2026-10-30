@@ -21,9 +21,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay GetMonotonicEffect GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld
-                                                 EnvReport PublishStatus PrepareCode])
-(import doeff_cluster.worker.core.program [worker-tick TICK-LAG-LOG ACTIONS-TO-PUBLISH])
+(import doeff_cluster [CodeView CodeState WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode]
+        doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs])
+(import doeff_cluster._worker.core.program [worker-tick TICK-LAG-LOG ACTIONS-TO-PUBLISH])
 
 (val SPEC (JobSpec "svc" "jobs.svc" #() "rev-a"))
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500))

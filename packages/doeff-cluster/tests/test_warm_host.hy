@@ -18,12 +18,13 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
-  StopStage StartJob JobNotStarted SignalJob ProcessView])
-(import doeff_cluster.worker.protocol.observations [ObserveWarmChildren ObserveProcesses])
-(import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
-(import doeff_cluster.worker.protocol.process_host [process-host])
-(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
+(import doeff_cluster [StartWarmChild StopWarmChild ForgetWarmChild StopStage StartJob SignalJob ProcessView]
+        doeff_cluster._worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch JobNotStarted])
+(import doeff_cluster [ObserveWarmChildren ObserveProcesses])
+(import doeff_cluster [warm-host]
+        doeff_cluster._worker.protocol.warm_host [WarmSettings])
+(import doeff_cluster [process-host])
+(import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.host_rig [host-settings])
 
@@ -125,7 +126,7 @@
   "root のキー key の実行環境で走る task の宣言を組むため。"
   (<- env RuntimeEnv (env-of "app" "lib" LOCK))
   (<- value dict (runtime-env->json env))
-  (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True
+  (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True
            :runtime-env (json.dumps value :sort-keys True) :env-key (cut key 4 None)))
 
 

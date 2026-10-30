@@ -29,7 +29,7 @@ PROBE = """\
 (import pathlib [Path])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.service_model [Declaration])
-(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json heartbeat-body])
+(import doeff_cluster._worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster._worker.protocol.heartbeat [status-rows-json heartbeat-body])
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 
 (defk probe-beat []

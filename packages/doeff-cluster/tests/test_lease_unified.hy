@@ -26,10 +26,10 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster [responded])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.core.policy [kept-when-cut-off])
+(import doeff_cluster._worker.core.policy [kept-when-cut-off])
 (import tests.link_rig [LinkRig])
 (import tests.transport_http [released-through])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import tests.test_semaphore [lease-writer run-all written-log FakeWrite cut-off-at writer-a-lease])
 (import doeff_cluster.shared.core.semaphore_handlers [cluster-semaphore leases-fence])
 

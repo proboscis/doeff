@@ -9,9 +9,9 @@
 ;;     test_env_rules)。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_cluster.worker.core.places [worker-places])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings env-root])
+(import doeff_cluster._worker.core.places [worker-places])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster._worker.protocol.env_store [EnvSettings env-root])
 
 (val SHARED "/work/state")
 (val OLD-STATE "/work/gen/0b6f-old/state")

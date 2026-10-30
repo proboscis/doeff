@@ -36,10 +36,10 @@
 (import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _kill-units
+(import doeff_cluster._worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _kill-units
                                                 spared-steady steady-sizes victim-of])
-(import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
-(import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
+(import doeff_cluster [ObserveJobRoots])
+(import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
                                                    MEMORY-LEVEL-LOG MEMORY-KILL-LOG MEMORY-NO-VICTIM-LOG MEMORY-UNREAD-LOG MEMORY-SWARM-KILL-LOG])
 
 (val GIB (* 1024 MIB))

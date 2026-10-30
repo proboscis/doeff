@@ -31,17 +31,19 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-                                                 EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs EnvDisk])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveEnvDisk])
-(import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
-(import doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [CodeView CodeState WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable EnvDisk])
+(import doeff_cluster [ObserveProcesses ObserveEnvDisk])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [HostSettings STOP-TIMING-LOG])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [env-host]
+        doeff_cluster._worker.protocol.env_store [EnvSettings])
+(import doeff_cluster [code-key])
+(import doeff_cluster [tick-pauses])
 (import tests.wake_fixtures [wakes-every])
-(import doeff_cluster.worker.core.heartbeat_rules [desired-after-silence])
-(import doeff_cluster.worker.core.program [run-worker TICK-LAG-LOG TICK-LAG-MS ACTIONS-TO-PUBLISH])
+(import doeff_cluster._worker.core.heartbeat_rules [desired-after-silence])
+(import doeff_cluster._worker.core.program [run-worker TICK-LAG-LOG TICK-LAG-MS ACTIONS-TO-PUBLISH])
 (import tests.host_rig [host-settings])
 
 (val STATE "/state")

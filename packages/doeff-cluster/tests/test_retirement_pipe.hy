@@ -14,10 +14,10 @@
 (import pathlib [Path])
 (import doeff_core_effects [StartProcess])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy StartJob SignalJob ReapJob RetireJob NoticeJob Outcome StopStage ProcessView
-                                                 Retired HandoffAbandoned])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings job-log-stem])
+(import doeff_cluster [WorkerPolicy StartJob SignalJob ReapJob RetireJob NoticeJob StopStage ProcessView Retired HandoffAbandoned]
+        doeff_cluster._worker.intent.worker_model [Outcome])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster._worker.protocol.process_host [HostSettings job-log-stem])
 (import tests.host_rig [host-settings run-on-host])
 (import tests.test_shim_descendants [end-of])
 (import pytest)
@@ -40,7 +40,7 @@
 (val NOTICE-SECONDS 10.0)
 (val SILENCE-SECONDS 3.0)
 (val NOTICE-FLAG "--notice-env")
-(val SHIM "doeff_cluster.worker.entry.shim")
+(val SHIM "doeff_cluster._worker.entry.shim")
 ;; 読まない job へ書く知らせの量(知らせの pipe の容量 約 64 KiB と shim の標準入力の pipe の容量を合わせた数倍)・書きを続ける上限(秒)・
 ;; 標準入力を閉じてから shim の終わりを待つ上限(秒 — shim の猶予 0.5 秒 + 片づけ)・1 行の知らせ。
 (val FLOOD-BYTES (* 512 1024))

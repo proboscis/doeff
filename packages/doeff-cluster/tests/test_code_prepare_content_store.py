@@ -41,11 +41,17 @@ from doeff_core_effects import os_file_handler
 from doeff_core_effects import subprocess_handler
 from doeff_time import sync_time_handler
 
-from doeff_cluster.worker.intent.env_prepare_model import TREE_COPY, TREE_EXPAND, MaterializeTree, TreePlaced, TreeSource
-from doeff_cluster.worker.protocol.env_translation import env_translation
+from doeff_cluster import MaterializeTree
+from doeff_cluster._worker.intent.env_prepare_model import (
+    TREE_COPY,
+    TREE_EXPAND,
+    TreePlaced,
+    TreeSource,
+)
+from doeff_cluster import env_translation
 
 #: 準備の道具(本番の準備の処理ステージが起こす script と同じ file)。
-TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "worker" / "entry" / "code_prepare.hy"
+TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "_worker" / "entry" / "code_prepare.hy"
 
 _COMPILED_HOOK = """\
 import os

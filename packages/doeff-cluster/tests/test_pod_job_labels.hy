@@ -23,11 +23,13 @@
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
-(import doeff_cluster.worker.intent.worker_model [CutOff DesiredJobs DesiredUnreadable ReadDesired])
-(import doeff_cluster.worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-label-key job-labels-wanted job-labels-patch
+(import doeff_cluster [ReadDesired]
+        doeff_cluster._worker.intent.worker_model [CutOff DesiredJobs DesiredUnreadable])
+(import doeff_cluster._worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-label-key job-labels-wanted job-labels-patch
                                                    labels-sync-due retry-after-ms labels-line])
-(import doeff_cluster.worker.protocol.pod_labels [PodLabelCell PodLabelSettings pod-job-labels])
-(import doeff_cluster.worker.entry.main [pod-label-parts])
+(import doeff_cluster [pod-job-labels]
+        doeff_cluster._worker.protocol.pod_labels [PodLabelCell PodLabelSettings])
+(import doeff_cluster._worker.entry.main [pod-label-parts])
 
 (val TOKEN "worker-identity-token")
 (val NAMESPACE-FILE (+ SERVICE-ACCOUNT-DIR "/namespace"))

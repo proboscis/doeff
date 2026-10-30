@@ -24,9 +24,11 @@
 (import doeff_core_effects [scheduled])
 (import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.worker.intent.worker_model [ReadDesired DesiredJobs])
+(import doeff_cluster [ReadDesired]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs])
 (import doeff_core_effects [HttpRequest])
-(import doeff_cluster.worker.protocol.coordinator_link [coordinator-link bell-rung])
+(import doeff_cluster [coordinator-link]
+        doeff_cluster._worker.protocol.coordinator_link [bell-rung])
 (import tests.link_rig [LinkRig LINK-ROUTE])
 (import tests.transport_http [transport-http])
 (import pytest)

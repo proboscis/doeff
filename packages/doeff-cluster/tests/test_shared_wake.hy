@@ -155,8 +155,8 @@ from doeff_core_effects._stop_signal_effects import StopRequested
 from doeff_core_effects._stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler
 from doeff_cluster.shared.intent.due_model import DueAt
-from doeff_cluster.worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy
-from doeff_cluster.worker.protocol.tick_pauses import tick_pauses
+from doeff_cluster._worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy
+from doeff_cluster._worker.protocol.tick_pauses import tick_pauses
 
 @do
 def body():

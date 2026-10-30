@@ -17,11 +17,14 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout StartJob ReapJob Outcome ProcessView WorkerPolicy])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
-(import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
+(import doeff_cluster [CodeLayout StartJob ReapJob ProcessView WorkerPolicy]
+        doeff_cluster._worker.intent.worker_model [Outcome])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster._worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [HostSettings])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

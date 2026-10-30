@@ -16,11 +16,13 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeState ProbeView WorkerPolicy])
-(import doeff_cluster.worker.protocol.observations [ObserveProbes])
-(import doeff_cluster.worker.core.probe_rules [PROBE-SECONDS])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
-(import doeff_cluster.worker.protocol.probes [ProbeSettings probe-host])
+(import doeff_cluster [CodeLayout ProbeState ProbeView WorkerPolicy])
+(import doeff_cluster [ObserveProbes])
+(import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans])
+(import doeff_cluster [probe-host]
+        doeff_cluster._worker.protocol.probes [ProbeSettings])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

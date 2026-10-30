@@ -9,10 +9,12 @@
 (import doeff_cluster.shared.intent [runtime_env_model])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout WorkerPolicy])
-(import doeff_cluster.worker.entry.main [passed-environment])
-(import doeff_cluster.worker.core.launch [child-environment job-launch JobLaunch])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
+(import doeff_cluster [CodeLayout WorkerPolicy])
+(import doeff_cluster._worker.entry.main [passed-environment])
+(import doeff_cluster [child-environment]
+        doeff_cluster._worker.core.launch [job-launch JobLaunch])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans])
 
 (val PACKAGE (. (Path __file__) (resolve) parent parent))
 ;; Claude Code が hook・MCP の起動にだけ置く env の名(検の側の綴り — 検の dir は下の照合の外)。

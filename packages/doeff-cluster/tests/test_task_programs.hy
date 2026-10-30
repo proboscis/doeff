@@ -26,10 +26,11 @@
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS])
 (import tests.host_rig [host-settings launched])
 (import tests.link_rig [LinkRig])
-(import tests.link_rig [write-program-file] doeff_cluster.worker.core.launch [program-file spec-program-file])
+(import tests.link_rig [write-program-file] doeff_cluster [program-file]
+                                            doeff_cluster._worker.core.launch [spec-program-file])
 (import doeff_cluster [HOST-CONTRACT])
 (import doeff [Program run with-handlers])
-(import doeff_cluster.worker.entry.job_entry [read-program])
+(import doeff_cluster._worker.entry.job_entry [read-program])
 (import doeff_cluster.shared.intent.remote_model [VersionMismatch])
 (import doeff_core_effects [await-handler slog-handler])
 (import doeff_core_effects [http-production-handler])
@@ -42,7 +43,8 @@
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import doeff_cluster [process-versions])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster [JobStatus]
+        doeff_cluster._worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
 (import doeff_cluster._coordinator.core.cluster_policy [JOB-ENTRY])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed])
 (import tests.fixtures.entry_programs [based-add])

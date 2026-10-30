@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pathlib [Path])
 (import httpx)
-(import doeff_cluster.worker.intent.worker_model [DesiredUnreadable])
+(import doeff_cluster._worker.intent.worker_model [DesiredUnreadable])
 (import tests.link_rig [LinkRig])
 
 

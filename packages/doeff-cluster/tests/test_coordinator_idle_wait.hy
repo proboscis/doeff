@@ -24,7 +24,7 @@
 (import doeff_cluster [kube-unavailable])
 (import doeff_cluster [wall-sim-cluster ClientLink SimWorker]
         doeff_cluster._sim.local [SimLink])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster [WorkerPolicy])
 (import tests.clock_fixtures [clock-ms])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [quitters])

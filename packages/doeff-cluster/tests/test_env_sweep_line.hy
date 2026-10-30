@@ -19,9 +19,10 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.intent.worker_model [SweepEnvs])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG env-host])
+(import doeff_cluster [SweepEnvs])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [env-host]
+        doeff_cluster._worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG])
 
 ;; 同じ project の完成した root 3 つ(いちばん古い方は消してよい・新しい 2 つは今の版と戻し先の版なので残す — #3732)。
 (val OLD-NAME "0123456789abcdef01234567")
