@@ -1,0 +1,12 @@
+# NAS の控え用 dir(card ki-4aa4389b88bb)。家計の記録 moneta の毎日の控え(restic の repository)を置く。前例は別 namespace の PostgreSQL の
+# 控えの PVC(canonical-backup-nfs)。PVC は namespace を越えて使えないので、同じ StorageClass nfs-oborodukiyo(NAS の
+# /volume1/k3s-storage の下に subdir を切る・reclaimPolicy Retain)で agent-worker に別に切る。名は kustomize の nameSuffix で -zeus が付く。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: moneta-backup-nfs
+  namespace: agent-worker
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-oborodukiyo
+  resources: { requests: { storage: 50Gi } }
