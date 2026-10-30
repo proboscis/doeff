@@ -218,6 +218,8 @@
                   "revision" "rev1"
                   "needs" ["cluster-net"]
                   "replicas" 1
+                  "peakMiB" 200
+                  "settleMiB" 100
                   "run" {"kind" "service"
                          "program" (get run "program")
                          "identity" identity
