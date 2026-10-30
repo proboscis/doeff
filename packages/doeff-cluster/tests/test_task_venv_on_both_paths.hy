@@ -187,7 +187,8 @@
   (<- (warm-child-readied key))
   (<- warm-at WarmPlace (warm-place warm-dir key))
   (<- warm dict (forked-seen plan plan.entry-env warm-at.socket out (+ place "/forked")))
-  (<- old dict (forked-seen plan (venv-dropped plan.entry-env) warm-at.socket out (+ place "/old")))
+  (<- old-env tuple (venv-dropped plan.entry-env))
+  (<- old dict (forked-seen plan old-env warm-at.socket out (+ place "/old")))
   (<- (StopWarmChild key StopStage.TERM "検の終わり"))
   #(cold warm old (+ place "/boot/bin") (+ root "/app/.venv") (dfor e plan.entry-env e.name e.value)))
 
