@@ -109,9 +109,37 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "job_room_of",
+   "name": "memory_misfit",
    "組": "許した物 — program の helper",
-   "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+   "決め": "ki-2acb63aec0fd"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "memory_misfits",
+   "組": "許した物 — program の helper",
+   "決め": "ki-2acb63aec0fd"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "memory_room_of",
+   "組": "許した物 — program の helper",
+   "決め": "ki-2acb63aec0fd"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "unplaced_memory",
+   "組": "許した物 — program の helper",
+   "決め": "ki-2acb63aec0fd"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.resource_policy",
+   "name": "unplaced_memory",
+   "組": "許した物 — program の helper",
+   "決め": "ki-2acb63aec0fd"
   },
   {
    "package": "doeff-cluster",
