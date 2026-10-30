@@ -37,7 +37,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
    class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「許した物 — effect の値の型」(R2)に置けるのは、
    同じ package が見せる effect の class の欄の注釈(型引数を含み、package が定義した値の型の欄を辿る — 目録の value_types)に
-   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。
+   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「許した物 — effect の答えの型」(R2)に置けるのは、
+   package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型と、答えの class の欄の型・子の class・
+   答えの class だけを並べた型の別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の
+   答えにも出ない class を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -111,7 +114,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
-    ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
+    ANSWER_TYPE_GROUP: "目録が package の effect の答えの型と読む class と型の別名だけを置ける(EffectBase[T] の T か defeffect の"
+    " :answer に出る型と、答えの class の欄の型・子の class — effect の答えの型 — ADR-DOE-API-001 R2)。答えを docstring だけに"
+    "書いた effect の答えは数えない — effect に答えの型を書く",
     EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
     "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
     VALUE_TYPE_GROUP: "同じ package が見せる effect の class の欄の注釈(型引数を含む・package が定義した値の型の欄を辿る)に"
@@ -292,7 +297,10 @@ def fits_allowed_group(
         ADR_WRITER_GROUP: lambda: (
             row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
         ),
-        ANSWER_TYPE_GROUP: lambda: row["form"] in ("class", "型"),
+        ANSWER_TYPE_GROUP: lambda: any(
+            (shown["module"], shown["name"]) == (row["module"], row["name"])
+            for shown in package["answer_types"]
+        ),
         EXCEPTION_GROUP: lambda: row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package),
         VALUE_TYPE_GROUP: lambda: any(
             (shown["module"], shown["name"]) == (row["module"], row["name"])
@@ -1480,6 +1488,102 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
         check_package(package, *tables([*value_types, "Unrelated"], []))
     assert f"{FIXTURE_ROOT}.Unrelated(class・" in str(failure.value)
     assert ALLOWED_SHAPES[VALUE_TYPE_GROUP] in str(failure.value)
+
+
+#: 答えを EffectBase[T] に書いた effect と docstring だけに書いた effect、どの effect の答えにも出ない class を持つ package の名。
+ANSWERS = '''
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Mood(Enum):
+    """A field type of an answer class."""
+
+    CALM = "calm"
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A member of ReadEffect's answer."""
+
+    mood: Mood
+
+
+@dataclass(frozen=True)
+class Calm(Reading):
+    """A case of the answer a caller matches."""
+
+
+@dataclass(frozen=True)
+class Refused:
+    """The other member of ReadEffect's answer."""
+
+
+ReadAnswer = Reading | Refused
+
+
+class ReadEffect(EffectBase[ReadAnswer]):
+    """An effect that declares its answer type."""
+
+
+@dataclass(frozen=True)
+class Echoed:
+    """The answer of EchoEffect, said in its docstring only."""
+
+
+class EchoEffect(EffectBase):
+    """An effect that names its answer in the docstring only.
+
+    Yields: Echoed
+    """
+
+
+@dataclass(frozen=True)
+class Settings:
+    """A class no effect answers."""
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
+    """許した物の表の組「許した物 — effect の答えの型」に置けるのは、目録が package の effect の答えの型と読む名だけ
+    (ADR-DOE-API-001 R2・card ki-17fb02cf904b)。
+
+    EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
+    緑・どちらの表にも無ければ外れのまま赤。答えを docstring だけに書いた effect の答えの class と、どの effect の答えにも
+    出ない class を置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + ANSWERS)
+    package = _read_fixture(repo)
+    forms = {row["name"]: row["form"] for row in package["exports"]}
+    assert (forms["ReadAnswer"], forms["Mood"], forms["Settings"]) == ("型", "Enum", "class")
+    places = {shown["name"]: shown["answers"] for shown in package["answer_types"]}
+    assert places == {
+        "ReadAnswer": ["ReadEffect"],
+        "Reading": ["ReadEffect"],
+        "Refused": ["ReadEffect"],
+        "Mood": ["Calm.mood", "Reading.mood"],
+        "Calm": ["Reading の子"],
+    }
+    answers = ["Calm", "Mood", "ReadAnswer", "Reading", "Refused"]
+    rest = ["Echoed", "Settings"]
+
+    def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted(set(rest) - set(placed))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, "ki-17fb02cf904b"
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(answers))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Reading"):
+        check_package(package, *tables([name for name in answers if name != "Reading"]))
+    for name in rest:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
+            check_package(package, *tables([*answers, name]))
+        assert f"{FIXTURE_ROOT}.{name}(class・" in str(failure.value)
+        assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。

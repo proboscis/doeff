@@ -67,6 +67,13 @@ fields of the value types the package defines itself. The allowed table's group
 ``許した物 — effect の値の型`` may hold those names only. A field typed ``object`` or a bare ``tuple`` says
 nothing, so the value types it carries are not found.
 
+It lists its effects' answer types too (``answer_types``, R2): the names it shows that are a class or a
+named type alias an effect class it defines declares as its answer (the ``T`` of ``EffectBase[T]``, or
+``defeffect``'s ``:answer``), followed through the fields and the subclasses of the answer classes the
+package defines itself (the cases a caller matches), and a type alias whose classes are all answer types.
+The allowed table's group ``許した物 — effect の答えの型`` may hold those names only. An effect that says
+its answer only in its docstring declares none.
+
     uv run python tools/public_api_inventory.py --json inventory.json --markdown inventory.md
     uv run python tools/public_api_inventory.py --package doeff-time --json -
 """
@@ -94,7 +101,7 @@ import tempfile
 import textwrap
 import types
 import typing
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -266,6 +273,18 @@ class ValueType(TypedDict):
     fields: list[str]
 
 
+class AnswerType(TypedDict):
+    """One name a package shows that a caller reads out of an effect's answer (an effect's answer type).
+
+    ``answers`` is where the type is reached: ``<effect class>`` (the effect declares it in its answer),
+    ``<class>.<field>`` (a field of an answer class) or ``<class> の子`` (ADR-DOE-API-001 R2 — ``answer_types``).
+    """
+
+    module: str
+    name: str
+    answers: list[str]
+
+
 class PackageInventory(TypedDict):
     """The public API of one package dir (the JSON the child process hands the parent)."""
 
@@ -276,6 +295,7 @@ class PackageInventory(TypedDict):
     modules: list[ModuleRead]
     exports: list[ExportRow]
     value_types: list[ValueType]
+    answer_types: list[AnswerType]
     error: str | None
 
 
@@ -2253,6 +2273,121 @@ def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[Va
     ]
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    """Every class made so far that inherits ``cls``: the effect classes a package defines, the cases of an answer class."""
+    for sub in type.__subclasses__(cls):
+        yield sub
+        yield from _subclasses(sub)
+
+
+def _is_own_class(found: object, roots: tuple[str, ...]) -> bool:
+    """Whether a type read from an annotation is a class the package defines (one whose fields are followed)."""
+    return isinstance(found, type) and found.__module__.split(".", 1)[0] in roots
+
+
+def _own_classes(
+    found: Iterable[_FieldType], roots: tuple[str, ...], seen: frozenset[int] = frozenset()
+) -> dict[int, type]:
+    """The classes the package defines among the types read, not seen yet (by id, each once) — the next to follow."""
+    return {
+        id(cls): cls
+        for each in found
+        if isinstance(cls := each.found, type) and _is_own_class(cls, roots) and id(cls) not in seen
+    }
+
+
+def _declared_answer(effect: type) -> Iterator[_FieldType]:
+    """The types an effect class declares its answer with, so the answer types can be told from other classes.
+
+    The answer is the ``T`` of ``EffectBase[T]`` (followed through generic parents) or ``defeffect``'s ``:answer``
+    (``__doeff_answer__``). An effect that declares neither (its answer only in its docstring) yields none.
+    """
+    from doeff_vm._effect_types import effect_result_type
+
+    owner = sys.modules.get(effect.__module__)
+    namespace = {**(owner.__dict__ if owner is not None else {}), **vars(effect)}
+    declared = (effect_result_type(effect), getattr(effect, "__doeff_answer__", typing.Any))
+    for annotation in declared:
+        if annotation is not typing.Any:
+            yield from (
+                _FieldType(found, effect.__name__)
+                for found in _annotation_types(annotation, namespace)
+            )
+
+
+def _read_out_of_answers(
+    classes: Sequence[type], roots: tuple[str, ...], seen: frozenset[int]
+) -> tuple[_FieldType, ...]:
+    """The types a caller reads out of the answer classes: their fields and the package's subclasses of them
+    (the cases a caller matches), followed through the classes the package defines (each once)."""
+    if not classes:
+        return ()
+    found = (
+        *(field_type for cls in classes for field_type in _field_types(cls, cls.__name__)),
+        *(
+            _FieldType(sub, f"{cls.__name__} の子")
+            for cls in classes
+            for sub in _subclasses(cls)
+            if _is_own_class(sub, roots)
+        ),
+    )
+    own = _own_classes(found, roots, seen)
+    return found + _read_out_of_answers(list(own.values()), roots, seen | own.keys())
+
+
+def _alias_classes(value: object) -> list[type]:
+    """The classes a type alias names (``Row | Missing`` → Row, Missing); none for a value that is not a type alias."""
+    if isinstance(value, type) or not _is_type_like(value):
+        return []
+    return [
+        found
+        for found in _annotation_types(value, {})
+        if isinstance(found, type) and typing.get_origin(found) is None
+    ]
+
+
+def answer_types(
+    exports: Sequence[ExportRow], roots: tuple[str, ...], effect_base: type
+) -> list[AnswerType]:
+    """The names a package shows that a caller reads out of its effects' answers (ADR-DOE-API-001 R2 — effect の答えの型).
+
+    The types are read from the declared answer of every effect class the package defines (shown, or made by
+    a function it shows), and followed through the fields and the subclasses of the answer classes the
+    package defines itself. A name the package shows is an answer type when its value is one of those types
+    (the same object), or a type alias whose classes are all answer types (``ReadRowAnswer = Row | Missing``
+    when the effect writes the union out). Run in the child process, after the package's modules are imported.
+    """
+    effects = [cls for cls in dict.fromkeys(_subclasses(effect_base)) if _is_own_class(cls, roots)]
+    declared = tuple(each for effect in effects for each in _declared_answer(effect))
+    answers = _own_classes(declared, roots)
+    reached = declared + _read_out_of_answers(list(answers.values()), roots, frozenset(answers))
+    places = {
+        key: sorted({each.place for each in group})
+        for key, group in itertools.groupby(
+            sorted(reached, key=lambda each: id(each.found)), key=lambda each: id(each.found)
+        )
+    }
+    values = {
+        (row["module"], row["name"]): _module_value(sys.modules[row["module"]], row["name"])
+        for row in exports
+        if row["module"] in sys.modules and row["kind"] in ("other", "unclassified")
+    }
+    aliased = {
+        key: sorted({place for found in named for place in places[id(found)]})
+        for key, value in values.items()
+        if id(value) not in places
+        and (named := _alias_classes(value))
+        and all(id(found) in places for found in named)
+    }
+    return [
+        AnswerType(
+            module=module, name=name, answers=places.get(id(value)) or aliased[(module, name)]
+        )
+        for (module, name), value in values.items()
+        if id(value) in places or (module, name) in aliased
+    ]
+
+
 def probe_package(package_dir: Path) -> PackageInventory:
     """Import one package's public modules and type every exported name (run in a child process)."""
     layout = read_layout(package_dir)
@@ -2266,6 +2401,7 @@ def probe_package(package_dir: Path) -> PackageInventory:
         for name, path in public_modules(layout)
     ]
     rows = [row for result in results for row in result.rows]
+    roots = tuple(root.name for root in layout.roots)
     return PackageInventory(
         dir=package_dir.name,
         distribution=layout.distribution,
@@ -2273,7 +2409,8 @@ def probe_package(package_dir: Path) -> PackageInventory:
         notes=list(layout.notes),
         modules=[result.read for result in results],
         exports=[*rows, *submodule_rows(layout), *_metadata_rows(layout)],
-        value_types=value_types(rows, tuple(root.name for root in layout.roots)),
+        value_types=value_types(rows, roots),
+        answer_types=answer_types(rows, roots, classifier.effect_base),
         error=None,
     )
 
@@ -2321,6 +2458,7 @@ def _failed(package_dir: Path, message: str) -> PackageInventory:
         modules=[],
         exports=[],
         value_types=[],
+        answer_types=[],
         error=message,
     )
 
