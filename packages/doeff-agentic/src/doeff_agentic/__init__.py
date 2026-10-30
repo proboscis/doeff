@@ -156,8 +156,6 @@ from ._types import (
     AgenticWorkflowStatus,
     AgentInfo,
     AgentStatus,
-    WatchEventType,
-    WatchUpdate,
     WorkflowInfo,
     WorkflowStatus,
 )
@@ -244,8 +242,6 @@ __all__ = [
     "WaitForStatusEffect",
     "WaitForUserInput",
     "WaitForUserInputEffect",
-    "WatchEventType",
-    "WatchUpdate",
     "WorkflowInfo",
     # Errors - legacy aliases
     "WorkflowNotFoundError",

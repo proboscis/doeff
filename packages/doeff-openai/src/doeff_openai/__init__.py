@@ -56,30 +56,21 @@ from doeff_openai._structured_llm import structured_llm__openai
 
 # Type exports
 from doeff_openai._types import (
-    APICallMetadata,
-    CompletionRequest,
     CostInfo,
-    EmbeddingRequest,
-    # Enums
-    OpenAIModel,
     StreamChunk,
     # Data classes
     TokenUsage,
 )
 
 __all__ = [
-    "APICallMetadata",
     "CalculateCost",
     "ChatCompletion",
-    "CompletionRequest",
     "CostInfo",
     "Embedding",
-    "EmbeddingRequest",
     "MissingCachedPricingError",
     "MockOpenAIConfig",
     "MockOpenAIState",
     # Types
-    "OpenAIModel",
     "PricingError",
     "StreamChunk",
     "StreamingChatCompletion",

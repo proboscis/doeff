@@ -10,7 +10,8 @@ import pytest
 from doeff_core_effects import reader
 from doeff_core_effects import scheduled
 from doeff_traverse import parallel, sequential
-from doeff_validation import CheckError, CheckFailure, ValidationException
+from doeff_validation import ValidationException
+from doeff_validation._failures import CheckError, CheckFailure
 
 from doeff import Program, run
 from doeff.program import ProgramHandler

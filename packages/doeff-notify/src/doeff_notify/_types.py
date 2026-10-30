@@ -2,21 +2,20 @@
 
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 
-class Urgency:
-    """Notification urgency levels."""
+class Urgency(StrEnum):
+    """Notification urgency levels (the type of ``Notify.urgency`` — each level is its lower-case string)."""
 
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
-    ALL = (LOW, MEDIUM, HIGH, CRITICAL)
-
     @classmethod
     def is_valid(cls, value: str) -> bool:
-        return value in cls.ALL
+        return value in cls._value2member_map_
 
 
 class Channel:

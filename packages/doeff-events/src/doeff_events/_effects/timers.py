@@ -56,7 +56,7 @@ class ArmedTimer:
 
 
 @dataclass(frozen=True)
-class ArmedTimersEffect(EffectBase):
+class ArmedTimersEffect(EffectBase[tuple[ArmedTimer, ...]]):
     """Ask which timers are armed now: answers ``tuple[ArmedTimer, ...]``, earliest deadline first.
 
     Only the timers armed with ``ArmTimer`` are listed — the programs' deadlines, not the clock's own waits

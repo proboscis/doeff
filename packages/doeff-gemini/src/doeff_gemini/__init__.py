@@ -19,16 +19,10 @@ from ._handlers import (
     production_handlers,
 )
 from ._structured_llm import (
-    FileUriContentPart,
-    GeminiContentPart,
-    LocalFileContentPart,
-    TextContentPart,
-    UriContentPart,
     edit_image__gemini,
     structured_llm__gemini,
 )
 from ._types import (
-    APICallMetadata,
     CostInfo,
     GeminiCallResult,
     GeminiCostEstimate,
@@ -37,13 +31,10 @@ from ._types import (
 )
 
 __all__ = [
-    "APICallMetadata",
     "CostInfo",
-    "FileUriContentPart",
     "GeminiCalculateCost",
     "GeminiCallResult",
     "GeminiChat",
-    "GeminiContentPart",
     "GeminiCostEstimate",
     "GeminiEmbedding",
     "GeminiImageEdit",
@@ -53,10 +44,7 @@ __all__ = [
     "ImageEdit",
     "ImageGenerate",
     "ImageResult",
-    "LocalFileContentPart",
-    "TextContentPart",
     "TokenUsage",
-    "UriContentPart",
     "default_gemini_cost_handler",
     "edit_image__gemini",
     "gemini_image_handler",

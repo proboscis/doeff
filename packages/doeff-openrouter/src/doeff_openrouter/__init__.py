@@ -14,7 +14,6 @@ from ._handlers import (
 from ._structured_llm import structured_llm
 
 __all__ = [
-    "APICallMetadata",
     "CostInfo",
     "MockOpenRouterRuntime",
     "OpenRouterResponseError",
@@ -35,13 +34,11 @@ __all__ = [
 # lists the names there too; the tool does not add `__all__` to a root without one (DOEFF021).
 if TYPE_CHECKING:
     from doeff_openrouter._handlers.testing import MockOpenRouterRuntime as MockOpenRouterRuntime
-    from doeff_openrouter._types import APICallMetadata as APICallMetadata
     from doeff_openrouter._types import CostInfo as CostInfo
     from doeff_openrouter._types import TokenUsage as TokenUsage
 
 _LAZY_EXPORTS: dict[str, str] = {
     "MockOpenRouterRuntime": "doeff_openrouter._handlers.testing",
-    "APICallMetadata": "doeff_openrouter._types",
     "CostInfo": "doeff_openrouter._types",
     "TokenUsage": "doeff_openrouter._types",
 }

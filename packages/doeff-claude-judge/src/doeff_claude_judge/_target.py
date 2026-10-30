@@ -56,7 +56,7 @@ class NoJudgeCredential:
     detail: str
 
 
-class BorrowJudgeCredential(EffectBase):
+class BorrowJudgeCredential(EffectBase[JudgeCredential | NoJudgeCredential]):
     """判定 1 回のために Claude の口座の資格を借りる。答え = `JudgeCredential` | `NoJudgeCredential`。
 
     model = 判定させる model(貸し手が借りる口座や持ち時間を選ぶ手掛かり)。貸し手の handler は使い手の組み立てが積む

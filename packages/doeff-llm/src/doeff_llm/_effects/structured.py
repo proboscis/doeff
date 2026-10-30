@@ -3,6 +3,7 @@
 from typing import Any
 
 from doeff import EffectBase
+from doeff_llm._types import Message
 
 
 class LLMStructuredQuery(EffectBase):
@@ -10,7 +11,7 @@ class LLMStructuredQuery(EffectBase):
 
     def __init__(
         self, *,
-        messages: list[dict[str, Any]],
+        messages: list[Message],
         response_format: type[Any],
         model: str,
         temperature: float = 0.7,

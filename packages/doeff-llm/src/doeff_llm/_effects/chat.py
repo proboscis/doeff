@@ -3,6 +3,7 @@
 from typing import Any
 
 from doeff import EffectBase
+from doeff_llm._types import Message
 
 
 class LLMChat(EffectBase):
@@ -10,7 +11,7 @@ class LLMChat(EffectBase):
 
     def __init__(
         self, *,
-        messages: list[dict[str, Any]],
+        messages: list[Message],
         model: str,
         temperature: float = 0.7,
         max_tokens: int | None = None,

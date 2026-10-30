@@ -9,11 +9,10 @@ from ._handlers import (
     log_handler,
     testing_handler,
 )
-from ._types import Channel, NotificationResult, Urgency
+from ._types import NotificationResult, Urgency
 
 __all__ = [
     "Acknowledge",
-    "Channel",
     "NotificationCapture",
     "NotificationEffectBase",
     "NotificationResult",

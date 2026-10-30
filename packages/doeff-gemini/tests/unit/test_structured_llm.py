@@ -31,13 +31,13 @@ from PIL import Image
 
 google_genai = pytest.importorskip("google.genai")
 from doeff_gemini import (
-    APICallMetadata,
     GeminiImageEditResult,
     default_gemini_cost_handler,
     edit_image__gemini,
     structured_llm__gemini,
 )
 from doeff_gemini._costs import calculate_cost
+from doeff_gemini._types import APICallMetadata
 from doeff_gemini._client import track_api_call
 from doeff_gemini._structured_llm import (
     GeminiStructuredOutputError,
