@@ -36,7 +36,8 @@
 ;;; 突き合わせる。工場と読めた名は目録の道具が呼んで印を確かめ、印の無い値を返す名を外れと数える(R3)。許した物の表の組
 ;;; 「許した物 — program の helper」の名は、目録の道具が中を読んで helper の形(R18)と確かめた物だけを置ける。組「許した物 — Hy の
 ;;; macro」と「許した物 — CLI コマンド」の名も、目録の行の形で確かめる(R31)。組「許した物 — 換算の関数」の名は、目録の道具が中を読んで換算の形(R35)と確かめた物だけを置ける。組「許した物 — 例外の型」の
-;;; 名は、目録の形が例外の class でその package が定義した物だけを置ける(R2)。この ADR は別の検を
+;;; 名は、目録の形が例外の class でその package が定義した物だけを置ける(R2)。組「許した物 — effect の値の型」の名は、目録の
+;;; 道具が同じ package の effect の class の欄の注釈から集めた型(value_types)だけを置ける(R2)。この ADR は別の検を
 ;;; 作らない — law の :enforced-by がその test を指し、この file の deftest はその test の関数を呼ぶだけ(R12)。
 ;;;
 ;;; 戻し方: 決まりを外すなら、この file と tests/test_public_api_known_violations.py と既知の表と許した物の表を消し、台帳(docs/adr/enforcement-ledger.json)を
@@ -139,7 +140,7 @@
        "公開の名の数え方は目録の道具の 1 か所が持つ: import の根の __init__ が出す名・path のどの部分も _ で始まらない submodule が出す名と、その submodule そのもの(R5)・[project.scripts] と entry point と maturin の bin。この ADR は数え方を別に持たない。repo の根の doeff(program・do・run・handler の核)は subpackage でなく、目録も数えない。doeff だけが import する doeff の中の部品(doeff-vm — R11)も同じ。")]
   :decision
     [(rule R1 "subpackage の公開 API は effect(EffectBase の型と、effect を作る関数)と handler(@handler・defhandler・stacked_handlers の、印の付いた値)と handler を返す工場(呼ぶと handler か handler の組を返す関数 — R3)と、名ごとに許した program の helper(R18)と換算の関数(R35)だけ(2026-10-26 の決まりを、2026-10-28 の決定 [id]〜[id] が工場まで、2026-10-29 の答え [id] が helper まで書き表した)。ほかの名(手続き型の関数・R18 で許していない program 関数・client や API の class・設定を読む関数・定数)は、名か module の path に _ を付けた内側に置くか、effect か handler か工場に作り直す。")
-     (rule R2 "effect の値の型・effect の結果の型・effect と handler が投げる例外の型・handler の設定の型は、effect と handler の一部として公開してよい(2026-10-27・依頼書 [id] の問い types の答え [id])。例外の型は、許した物の表の組「許した物 — 例外の型」に答えの id をつけて置き、目録の道具がその名の形を確かめる — 目録の形が例外の class(BaseException の子)で、定義の場所がその package の dir の下か import の根の下の module の名だけを置ける。別の package か標準の library の例外を出し直した名・例外でない class は置くと赤(2026-10-30・card [id] — 既知の表の組「境界 — 例外の型」の 247 行・16 package・129 名を移した)。")
+     (rule R2 "effect の値の型・effect の結果の型・effect と handler が投げる例外の型・handler の設定の型は、effect と handler の一部として公開してよい(2026-10-27・依頼書 [id] の問い types の答え [id])。例外の型は、許した物の表の組「許した物 — 例外の型」に答えの id をつけて置き、目録の道具がその名の形を確かめる — 目録の形が例外の class(BaseException の子)で、定義の場所がその package の dir の下か import の根の下の module の名だけを置ける。別の package か標準の library の例外を出し直した名・例外でない class は置くと赤(2026-10-30・card [id] — 既知の表の組「境界 — 例外の型」の 247 行・16 package・129 名を移した)。effect の値の型は、許した物の表の組「許した物 — effect の値の型」に答えの id をつけて置き、目録の道具がその名の形を確かめる — 同じ package が見せる effect の class の欄(dataclass の欄か、Python で書いた __init__ の引数)の注釈に、型引数(list[X]・X | None)を含めて出る class と型の別名で、package が定義した値の型の欄も辿って集めた物(目録の value_types — effect の欄の X の欄の Y も値の型)だけを置ける。どの effect の欄にも出ない class は置くと赤。欄の注釈が object・素の tuple や dict・Any のように型を言わない値の型は目録に見えないので、既知の表の組「外れ — effect の欄に型を書くか内側へ移す」に置き、欄に型を書いてから許した物の表へ移す — effect の値でなければ内側へ移す(2026-10-30・card [id] — 既知の表の組「境界 — effect の値の型」の 757 行・278 名のうち 95 名 298 行と「足した名」の 25 行を移し、effect の答えの型(__doeff_answer__)に出る 25 名 107 行を組「境界 — effect の結果の型」へ、残りの 158 名 352 行をその外れの組へ移した)。")
      (rule R3 "handler は印 _doeff_is_handler_fn の付いた callable の値(中核の ProgramHandler)で、中身は (effect, k) を受けて答えるか外へ渡す body(2026-10-28 の決定 [id]〜[id])。handler を返す工場は、引数なしか最小の引数で呼ぶとその値(か、その値の list か tuple)を返す関数。印の無い関数は、program を受けて program を返しても handler と数えず、戻りの型を ProgramHandler と書いても呼んで印の無い値を返す関数は工場と数えない。目録の道具は工場と読めた名を最小の引数(既定値の無い引数ごとに中身の無い置き物)で呼んで印を確かめ、印の無い値を返す名を外れ(handler を返さない関数)と数える。呼ぶと例外の出る工場(置き物を呼ぶ時に読む物・機体に無い命令を探す物)は戻りの型の読みのまま。改めた前の形: 2026-10-27 の「handler は (effect, k) を受けて答える関数に限り、program を受けて program を返すだけの関数を handler と数えない」(combinator の書 [id] の問い maybe の答え [id])— 決定 (1) が handler を ProgramHandler の値と決めたので、形(program → program)でなく印で数える形に改めた。印の無い program → program の関数を handler と数えない事は変わらない。")
      (rule R4 "handler は class で書かない。名が Handler で終わり method で effect を受ける class の形の handler は、内側へ隠すのでなく doeff の handler(@handler・defhandler)に書き直して class を消す(2026-10-27・問い class-handler の答え [id])。直しは card [id](doeff-git)・[id](doeff-agentic)・[id](doeff-conductor)。")
      (rule R5 "公開の名は subpackage の import の根(__init__)からだけ出す。submodule は名に _ を付けて隠し、_ で始まらない submodule は外れと数える(2026-10-27・問い submodule の答え [id])。subpackage ごとの直しの分けは card [id]。")
@@ -267,6 +268,17 @@
                      "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
                      "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-a-macro-or-a-command-can-be-allowed-as-one"]
        :wiring "配線済み(2026-10-30・card [id])— 表の test は許した物の表の組「許した物 — Hy の macro」の行を、目録の形が Hy の macro か、目録の名が全部 Hy の macro の公開の submodule の行の時だけ緑にし、組「許した物 — CLI コマンド」の行を console script か Rust の実行 file の行の時だけ緑にする。この file の deftest はその関数を呼ぶだけ")
+     (law an-allowed-effect-value-type-is-written-in-a-field-of-an-effect-its-package-shows
+       :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — effect の値の型): value(m, n) in value_types(p) — value_types(p) = the classes and named type aliases written in the field annotations (dataclass fields, or the parameters of an __init__ written in Python), type arguments included, of the effect classes p shows, followed through the fields of the classes p defines"
+       :counterexamples
+         [(counterexample "どの effect の欄にも出ない class(client・設定の読み手・内側の helper の class)を、class だからと値の型の組に置いて通す")
+          (counterexample "欄の注釈を外の型(list・Optional・Union)だけで見て、型引数の中の list[Payload] の Payload を見落とし、値の型を外れのまま残す")
+          (counterexample "名が同じ別の package の class を、名で引いて値の型と読む(値の同じ物で比べない)")]
+       :enforced-by ["tests/test_public_api_known_violations.py::test_only_an_effect_value_type_can_be_put_into_the_value_type_group"
+                     "tests/test_public_api_known_violations.py::test_the_allowed_table_is_well_formed"
+                     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table"
+                     "docs/adr/defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy::test-adr-doe-api-001-only-an-effect-value-type-can-be-allowed-as-one"]
+       :wiring "配線済み(2026-10-30・card [id])— 目録は package ごとに、見せる effect の class の欄の注釈(注釈の文は effect の module の名で解く)から型を集め、package が定義した値の型の欄も辿り、見せる名のうち値がその型と同じ物を value_types に書く(欄の場所 <effect>.<欄> つき)。表の test は許した物の表の組「許した物 — effect の値の型」の行を、その名が value_types に在る時だけ緑にする。今の行は 323 行(108 名)。この file の deftest はその関数を呼ぶだけ")
      (law an-allowed-exception-type-is-an-exception-class-its-package-defines
        :statement "for_all package p in scope: for_all (m, n) in allowed(p, 許した物 — 例外の型): form(m, n) = 例外の class (a subclass of BaseException) and defined_by(n, p) — defined_by(n, p) = the place the inventory gives for n's definition is a file under p's dir or a module under one of p's import roots"
        :counterexamples
@@ -369,6 +381,12 @@
        (<- guard ModuleType (guard-module))
        (with [scratch (tempfile.TemporaryDirectory)]
          (guard.test-only-an-exception-class-of-its-package-can-be-put-into-the-exception-group (/ (Path scratch) "exception"))))
+     (deftest test-adr-doe-api-001-only-an-effect-value-type-can-be-allowed-as-one
+       ;; R2・R12: 同じ test の関数を呼ぶだけ — 使い捨ての package の effect の欄の型引数・__init__ の引数・値の型の欄に出る
+       ;; class は組「許した物 — effect の値の型」に置けば緑。どの effect の欄にも出ない class を置くと赤。
+       (<- guard ModuleType (guard-module))
+       (with [scratch (tempfile.TemporaryDirectory)]
+         (guard.test-only-an-effect-value-type-can-be-put-into-the-value-type-group (/ (Path scratch) "value-type"))))
      (deftest test-adr-doe-api-001-a-doeff-part-imported-outside-doeff-turns-the-guard-red
        ;; R11・R12: 同じ test の関数を呼ぶだけ — 使い捨ての repo で、doeff の外の file が doeff の中の部品(doeff_vm)を import すると
        ;; 赤(import の文・Hy の形・名の文字列の行を名指す)・doeff の根と doeff._vm から読む形に直すと緑。部品そのもの・doeff の根の
@@ -398,4 +416,4 @@
           "R6: maybe・result・on_raise・absent_as を handler を返す工場の形に直す card (card [id])、外の repo の呼び手を書き換える card (card [id])、4 つの旧い形を消して既知の表から 4 名を消す card (card [id]) — 3 つとも済み。scheduled を工場にせず印の付いた handler の値にして、既知の表の組「外れ — handler を返す工場の形に直す」を空にする card (card [id] — 済み。工場の形を入れた card [id] の物と書き換えの道具を消した)。maybe・result を handler の値に戻す card (card [id])"
           "R16: 利用者向けの docs と例の WithHandler を h1(h2(p)) に書き替える card (持ち主が切る)"
           "R18・R13 (d)・R25: 外れの組の helper の形の program 関数を許すかを問う依頼書 ([id] の問い helper-155) と、答えに合わせて 155 名の組を移す card (card [id]) — どちらも済み。段 1 で既に _ に残した 36 名を入口へ出し直す card と、入口でぶつかる同じ名の 4 組を直す card (持ち主が切る)"
-          "R12・R18: 許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分け、既知の表を空になれる形にする card (card [id]) — 済み。R2 の例外・effect の値・effect の結果・handler の設定の型と答えの出た CLI・macro・plugin を、目録が形を確かめる許す組にして許した物の表へ移す card (card [id]・[id]・[id]・[id]・[id] — 例外の型の [id] は済み)"])
+          "R12・R18: 許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分け、既知の表を空になれる形にする card (card [id]) — 済み。R2 の例外・effect の値・effect の結果・handler の設定の型と答えの出た CLI・macro・plugin を、目録が形を確かめる許す組にして許した物の表へ移す card (card [id]・[id]・[id]・[id]・[id] — 例外の型の [id] と effect の値の型の [id] は済み)。組「外れ — effect の欄に型を書くか内側へ移す」の 158 名を package ごとに、effect の欄に型を書いて許した物の表へ移すか内側へ移す card (持ち主が切る)"])
