@@ -9,6 +9,62 @@
  ],
  "許した物": [
   {
+   "package": "doeff-adr",
+   "module": "(submodule)",
+   "name": "doeff_adr.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "counterexample",
+   "組": "許した物 — ADR を書く関数",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "defadr",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "defsemgrep",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "fact",
+   "組": "許した物 — ADR を書く関数",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "interpretation",
+   "組": "許した物 — ADR を書く関数",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "law",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.macros",
+   "name": "rule",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-d76481732b61"
+  },
+  {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.claude",
    "name": "mcp_server_loop",
@@ -1904,6 +1960,27 @@
    "name": "structured_llm",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "AppendRefused",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "PutRowsAppendEventsAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ki-d76481732b61"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records",
+   "name": "WrittenAndAppended",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ki-d76481732b61"
   },
   {
    "package": "doeff-records",
