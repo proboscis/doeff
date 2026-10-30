@@ -23,7 +23,7 @@
 (import doeff_core_effects [ReadEnvironment])
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [WorldView WorkerPolicy ObserveWorld EnvReport PublishStatus]
         doeff_cluster._worker.intent.worker_model [WorkerState])
 (import doeff_cluster._worker.core.program [run-worker HEARTBEAT-GAP-LOG])

@@ -25,8 +25,8 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster"
 # HTTP 要求を作る。答えの要素の型が見えなければ、for の変数・欄の読みが Unknown の赤になる。
 WORKER_BEAT_USERS = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.protocol.inbox [http-request])
 (import doeff_cluster._worker.core.drain_client [await-drained drain-outcome ready-of])
 (import doeff_cluster._worker.core.policy [plan records-after statuses])
 (import doeff_cluster._worker.intent.worker_model [JobRecord StartJob WarmLaunch WorkerPolicy WorldView])
@@ -71,19 +71,19 @@ GENERIC_NAMES = frozenset({"list", "tuple", "dict", "set", "frozenset"})
 
 # 使い手が import する 7 つの名(module → 関数の名)。
 USED_FUNCTIONS = {
-    "worker/core/policy": ("plan", "records_after", "statuses"),
-    "shared/protocol/inbox": ("http_request",),
-    "worker/core/drain_client": ("await_drained", "drain_outcome", "ready_of"),
+    "_worker/core/policy": ("plan", "records_after", "statuses"),
+    "_shared/protocol/inbox": ("http_request",),
+    "_worker/core/drain_client": ("await_drained", "drain_outcome", "ready_of"),
 }
 
 # 使い手が答えを読む関数の宣言(module → 関数の名 → 期待する答えの型)。
 EXPECTED_RETURNS = {
-    "worker/core/policy": {
+    "_worker/core/policy": {
         "plan": "_Program[tuple[Action, ...], object]",
         "records_after": "_Program[dict[str, JobRecord], object]",
         "statuses": "_Program[tuple[JobStatus, ...], object]",
     },
-    "worker/core/drain_client": {
+    "_worker/core/drain_client": {
         "await_drained": "_Program[dict[str, object], object]",
     },
 }

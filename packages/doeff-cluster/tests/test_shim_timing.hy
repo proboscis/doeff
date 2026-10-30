@@ -9,8 +9,8 @@
 (import time)
 (import pathlib [Path])
 (import pytest)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [WorkerPolicy StartJob ReapJob]
         doeff_cluster._worker.intent.worker_model [Outcome])
 (import doeff_cluster [ObserveProcesses])

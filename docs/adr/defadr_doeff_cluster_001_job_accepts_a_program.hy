@@ -51,10 +51,10 @@
   :title "doeff-cluster の job(service も task も同じ API)が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。handler は Program の中の with-handlers で与え、実行器 job_entry は既定の handler を 1 つも足さない(scheduled と env の関数の包みも外す)。service の :env・:config・:env-config をやめ、設定は Program の中の Ask と os.environ を読む handler で読む。宣言が process へ渡す環境変数は宣言の値として持つ"
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy"
-          "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
-          "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
-          "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
-          "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/core/service_rules.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy"
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
     [(fact
@@ -65,7 +65,7 @@
        :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
      (fact
        "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
      (fact
        "operator 裁定 2026-09-27(記録係): 記録係は VM の計装でなく handler の事として扱えるか(algebraic effect の handler は一般にその用途を支えるか)を問い、支えるなら記録係は handler で作る、と決めた。"
        :evidence "agora-redesign #829(2026-09-27 の決定)")
@@ -77,7 +77,7 @@
        :evidence "agora-redesign #829(2026-09-27 の決定)")
      (fact
        "task は Program の値を encode-program で詰めた文字列(--blob の file)で運び、実行先が decode-program で解く。service は関数の参照(module:attr)と本体の引数の JSON(:config)で運び、実行先が関数を呼んで Program を作る — 同じ job なのに運び方が 2 つある。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
      (fact
        "operator 裁定 2026-09-27(置き場所): kind=k3s のような置き場所の指定は宣言に書かない。Program が要る物を宣言するのはよいが、宣言するのは実行器の置き場所ではなく必要な能力である。"
        :evidence "agora-redesign #829(2026-09-27 の決定)")

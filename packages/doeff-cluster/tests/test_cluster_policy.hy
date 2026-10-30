@@ -2,8 +2,8 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterJob WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [WorkerReport Placement])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
@@ -215,7 +215,7 @@
 
 (import doeff_cluster [placeable]
         doeff_cluster._coordinator.core.cluster_policy [request-needs] doeff_cluster._coordinator.protocol.state_json [worker-capabilities-of])
-(import doeff_cluster.shared.core.capabilities [capabilities-of])
+(import doeff_cluster._shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
   (setv gpu (replace (! (worker "g" 0 10 "gpu" "cluster-net")) :exclusive #("gpu")))
@@ -610,7 +610,7 @@
 ;; 予約(task-reserve)+ 背景の枠(background-room)− 置いた task(task-room-of)で、常駐の job の数に依らない。置けない job は memory の訳を、
 ;; 置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
 
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [UnplacedKind]
         doeff_cluster._coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
 (import doeff_cluster [memory-room-of memory-misfit]
@@ -1000,7 +1000,7 @@
 ;; 担い手を、worker が終わった process の lease を返すのと同じ定義(lease_rules.lease-holder・holder-tokens-prefix・drop-holders)で外す。
 (import doeff_cluster._coordinator.core.cluster_policy [lease-write])
 (import doeff_cluster._coordinator.intent.request_bodies [LeaseBody])
-(import doeff_cluster.shared.core.lease_rules [lease-holder holder-tokens-prefix])
+(import doeff_cluster [lease-holder holder-tokens-prefix])
 
 (val LEASE-TTL-MS 30000)
 
@@ -1094,7 +1094,7 @@
 ;; --- 退きの保ち(card ki-e3531030eb37): 今の世代の worker への返事は、入れ替えの job の退いた process のうち、退きの保ち(名前付きの lease
 ;;     RETIREMENT-HOLD)を期限の内に持つ process の世代の名を JobSpec.retired-held に載せる(worker はその process を寿命の上限で止めない)。---
 (import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
-(import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
+(import doeff_cluster [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
 
 (val HOLD-AT 5000000)
 
@@ -1219,7 +1219,8 @@
 
 
 (import doeff_cluster [task-due])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import random)
 
 (defk held-due [tasks now]

@@ -21,9 +21,9 @@
 (import doeff_core_effects [ExternalPromise scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
-(import doeff_cluster.shared.protocol.inbox [http-requests])
+(import doeff_cluster [http-requests])
 (import doeff_cluster [ClusterState ClusterNaming])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested])
+(import doeff_cluster [ClusterTiming NextRequests Reply CoordinatorStopRequested])
 (import doeff_cluster [run-coordinator])
 (import doeff_cluster [request-bodies])
 (import doeff_cluster [Persist durable-states])
@@ -134,8 +134,8 @@ from doeff_core_effects._scheduler import scheduled
 from doeff_time import async_time_handler
 from doeff_cluster._foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
 from doeff_cluster._foundation.record_inbox import RecordInbox
-from doeff_cluster.shared.intent.protocol import NextRequests
-from doeff_cluster.shared.protocol.inbox import http_requests
+from doeff_cluster._shared.intent.protocol import NextRequests
+from doeff_cluster._shared.protocol.inbox import http_requests
 inbox = RecordInbox(0) if sys.argv[1] == 'records' else RequestInbox(0, 30.0)
 stop = StopState()
 run(stop_on_signals(stop, wake=inbox.wake))
@@ -154,7 +154,7 @@ from doeff_core_effects._scheduler import scheduled
 from doeff_core_effects._stop_signal_effects import StopRequested
 from doeff_core_effects._stop_signal_handlers import os_signal_stop_handler
 from doeff_time import async_time_handler
-from doeff_cluster.shared.intent.due_model import DueAt
+from doeff_cluster._shared.intent.due_model import DueAt
 from doeff_cluster._worker.intent.worker_model import AwaitNextTick, WakeSet, WorkerPolicy
 from doeff_cluster._worker.protocol.tick_pauses import tick_pauses
 

@@ -40,11 +40,9 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [StopProcess ProcessExited])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash
-                                                     AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
-                                                     JobProcessWaitExpired])
-(import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
+(import doeff_cluster [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
+(import doeff_cluster [System])
+(import doeff_cluster [RuntimeEnv RepoCheckout PythonProject])
 (import tests.fixtures.machine_app [pings machine-foundation])
 (import doeff_cluster._sim.machine :as machine-module)
 (import doeff_cluster [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])

@@ -21,7 +21,7 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import tests.state_rows [table-from-rows])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster._worker.core.env_upkeep [env-capacity NEAR-MARGIN-BYTES NEAR-RETURN-BYTES])
 (import doeff_cluster [EnvReport])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])

@@ -8,10 +8,10 @@
 (import json)
 (import pathlib [Path])
 (import doeff_hy._wire [Malformed parse])
-(import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json env-key])
-(import doeff_cluster.shared.core.native_wheel [current-platform])
-(import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster._shared.core.capabilities [environ-pairs])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json env-key])
+(import doeff_cluster._shared.core.native_wheel [current-platform])
+(import doeff_cluster._shared.intent.job_model [JobSpec] doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 
 

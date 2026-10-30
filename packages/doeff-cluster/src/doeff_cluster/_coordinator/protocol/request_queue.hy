@@ -5,13 +5,13 @@
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [dataclass])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_time [Delay])
 (import doeff_core_effects [CreatePromise CompletePromise Promise])
-(import doeff_cluster.shared.intent.protocol [Request Reply])
+(import doeff_cluster._shared.intent.protocol [Request Reply])
 (import doeff_cluster._coordinator.intent.cluster_model [CoordinatorFault]
-        doeff_cluster.shared.intent.protocol [NextRequests ServiceReached])
-(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
+        doeff_cluster._shared.intent.protocol [NextRequests ServiceReached])
+(import doeff_cluster._shared.core.promise_wait [promise-or-timeout])
 
 
 (defclass RequestQueue []

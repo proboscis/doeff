@@ -11,8 +11,8 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [async-time-handler])
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
-(import doeff_cluster.shared.intent.protocol [NextRequests Reply])
-(import doeff_cluster.shared.protocol.inbox [http-requests])
+(import doeff_cluster [NextRequests Reply])
+(import doeff_cluster [http-requests])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 

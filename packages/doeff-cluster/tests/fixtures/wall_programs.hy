@@ -5,7 +5,7 @@
 ;;; ので、本番の土台と同じく job の中の await-handler が Await を外部の promise(CreateExternalPromise・Wait — 柵を通る)に変える。
 ;;; 外の thread の客(talk-over-ws)は Program の外の本物の socket の客で、筋書きが Await で待つ(壁の時計の入口の await-handler が答える)。
 (require doeff-hy.macros [defk deff <- val var])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (require doeff-hy.record [defrecord])
 (import asyncio)
 (import json)
@@ -18,13 +18,13 @@
 (import doeff_core_effects [HttpAddress HttpListen HttpNextRequest HttpRequestArrived HttpServerClosed WsAccept WsTextArrived WsSendText HttpShutdown])
 (import doeff_core_effects [aiohttp-http-server])
 (import doeff_time [Delay GetMonotonic])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [SharedRows])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_cluster [ReportReady])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster [ReadShared WriteShared])
+(import doeff_cluster [AwaitDetached DetachedSubmitted DetachedSucceeded])
+(import doeff_cluster [submit-detached-task])
 (import tests.fixtures.sim_programs [sim-task-foundation])
 
 (val NET (frozenset ["cluster-net"]))

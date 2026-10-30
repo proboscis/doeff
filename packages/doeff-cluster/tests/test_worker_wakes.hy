@@ -19,7 +19,7 @@
 (import doeff_core_effects [process-exit-handler])
 (import doeff_core_effects [StartProcess ProcessStarted AwaitProcessExit])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster [now-epoch-ms monotonic-ms-of])
 (import doeff [with-handlers])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_core_effects [CreatePromise CompletePromise Promise Spawn])
@@ -27,7 +27,8 @@
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms wall-back])
 (import tests.link_rig [cell-of LINK-ROUTE])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [WorkerPolicy WorldView ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick WorkerWakes WorkerUnsettled]
         doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs WakeSet])
 (import doeff_cluster._worker.core.program [run-worker next-tick-due count-unsettled-ticks UNSETTLED-TICK-LIMIT])

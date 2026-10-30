@@ -20,8 +20,8 @@
 (import doeff_core_effects [os-file-handler])
 (import tests.link_rig [LinkRig])
 (import tests.program_rows [heartbeat-of])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [RoomReading RoomState WorkerRoom room-of-text]
         doeff_cluster._worker.core.room_rules [room-read-due room-line])
 (import doeff_cluster._worker.entry.main [boot-room boot-warm-services])

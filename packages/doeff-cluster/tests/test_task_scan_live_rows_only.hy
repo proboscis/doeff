@@ -10,13 +10,13 @@
 (import pytest)
 (import unittest.mock [Mock])
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.core [cluster_policy :as cluster-policy])
 (import doeff_cluster [task-due]
         doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
-(import doeff_cluster.shared.intent.due_model [DueAt])
+(import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_hy._table [table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.state_rows [table-from-rows])

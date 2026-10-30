@@ -10,11 +10,11 @@
 ;;   4. 停止の述語は 1 つ: target-view と version-state が同じ関数(service-stopped)を呼ぶ(止まっている・止めている途中)。
 (require doeff-hy.macros [deftest defk val <-])
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState UnplacedKind]
         doeff_cluster._coordinator.intent.cluster_model [RefusedJob RolloutTarget VersionState NotReadyKind])
-(import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.shared.intent.job_model [JobPhase] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [http-request])
+(import doeff_cluster [JobPhase] doeff_cluster [spec-hash])
 (import doeff_cluster._coordinator.core.cluster_policy [unplaced-jobs resource-version-of])
 (import doeff_cluster._coordinator.core.api_policy [target-view])
 (import doeff_cluster [responded])

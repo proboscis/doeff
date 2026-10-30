@@ -11,7 +11,7 @@
 ;;; (a)): 子は自分の pid を file へ書いてから眠り、本体は file が現れるまで待ってから取り消す。子 process の答え手は thread で子を待つので
 ;;; 外側に scheduler が要る — sim-cluster の外側の scheduler が答え、待ちの effect(CreateExternalPromise・Wait)は柵を通る。
 (require doeff-hy.macros [defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import os)
 (import collections.abc [Callable])
 (import doeff [with-handlers])
@@ -22,8 +22,8 @@
 (import doeff_core_effects [RunProcess])
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [WriteShared])
-(import doeff_cluster.shared.protocol.meter_report [with-meter-report])
+(import doeff_cluster [WriteShared])
+(import doeff_cluster [with-meter-report])
 
 ;; 子: 自分の pid を $1 へ書いてから眠る(exec なので眠りも同じ pid)。眠りは検より長い — 止める係が居なければ残る。
 (val CHILD-SCRIPT "echo $$ > \"$1\"; exec sleep 30")

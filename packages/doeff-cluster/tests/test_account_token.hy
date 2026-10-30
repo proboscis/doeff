@@ -12,12 +12,12 @@
 (import time)
 (import httpx)
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState STALE-AFTER-MS token-claims token-state token-read-due])
 (import doeff_cluster._worker.protocol.coordinator_link [token-line])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [responded])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
 
 ;; 10-24 の zeus の最後の token(20:37:48Z に発行・期限 1 時間)と、401 が始まった刻(exp の 81 秒後)。

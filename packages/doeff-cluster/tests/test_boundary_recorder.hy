@@ -31,17 +31,17 @@
 (import doeff_core_effects [reader await-handler])
 (import doeff_core_effects [http-production-handler])
 (import doeff_cluster [HOST-CONTRACT os-environ-reader])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.protocol.program_codec [encode-program])
-(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster [RunContext])
+(import doeff_cluster [encode-program])
+(import doeff_cluster [program-sha])
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.shared_model [ReadShared])
+(import doeff_cluster [ReadShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster._foundation.record_log [read-recording])
 (import doeff_cluster [effect-recorder]
         doeff_cluster._foundation.record_handlers [MemorySink EffectLog open-log ReplayState replay-report RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
-(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder recording-header])
+(import doeff_cluster._shared.entry.boundary_recorder [boundary-recorder recording-header])
 (import tests.fixtures.recorded_programs [ledger-program world-foundation ledger-translation-layer drifting-translation-layer])
 
 (val ROOT (str (. (Path __file__) (resolve) parent parent)))   ; この package の根(見本の module は tests.* の名)
@@ -164,7 +164,7 @@
   (.write-text recording (.join "" (gfor text texts (+ text "\n"))) :encoding "utf-8")
   (val out (/ tmp-path "report.json"))
   (<- replayed subprocess.CompletedProcess
-      (child "doeff_cluster.shared.entry.replay_main" {} "--recording" (str recording) "--program" (str path) "--out" (str out)))
+      (child "doeff_cluster._shared.entry.replay_main" {} "--recording" (str recording) "--program" (str path) "--out" (str out)))
   (Cycle :recorded recorded
          :lines (lfor text texts (json.loads text))
          :sha sha
@@ -270,7 +270,7 @@
   (assert (= (get header "versions") (! (process-versions os.environ))) header)
   ;; 記録係は翻訳の後の汎用の effect だけを見る: 業務の effect(CountVisit・DrawTicket)も、記録係を選ぶ前の mode の Ask も載らない。
   (val types (sfor line cycle.lines :if (in "ty" line) (get line "ty")))
-  (assert (= types #{"doeff_core_effects._effects:Ask" "doeff_cluster.shared.intent.shared_model:ReadShared" "doeff_cluster.shared.intent.shared_model:WriteShared"})
+  (assert (= types #{"doeff_core_effects._effects:Ask" "doeff_cluster._shared.intent.shared_model:ReadShared" "doeff_cluster._shared.intent.shared_model:WriteShared"})
           types)
   (val asked (lfor line cycle.lines :if (= (.get line "ty") "doeff_core_effects._effects:Ask") (get line "a" "key")))
   (assert (= asked ["LEDGER_ROUNDS"]) asked)

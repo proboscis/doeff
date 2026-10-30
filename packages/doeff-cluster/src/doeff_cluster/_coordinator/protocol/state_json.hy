@@ -14,10 +14,10 @@
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster._coordinator.core.rollout_policy [validate-rollout-spec rollout-spec-to-json rollout-status-to-json rollout-status-from-json])
 (import doeff_cluster._coordinator.core.cluster_policy [job-from-json job-to-json named-capabilities value-size boot-at-of board-tally-of])
-(import doeff_cluster.shared.core.capabilities [capabilities-of])
-(import doeff_cluster.shared.intent.detached_model [GroupLimit])
+(import doeff_cluster._shared.core.capabilities [capabilities-of])
+(import doeff_cluster._shared.intent.detached_model [GroupLimit])
 (import doeff_hy._table [Table TableWrite table-of])
-(import doeff_cluster.shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
+(import doeff_cluster._shared.core.detached_rules [group-limit-refusal group-limit-of group-limit-spec])
 
 
 (deff read-service-rows [#^ list rows]  ; defk にできない: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な判断

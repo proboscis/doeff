@@ -58,35 +58,35 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/core/detached_rules.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/core/launch_rules.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/core/launch_rules.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/intent/detached_model.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/detached.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"

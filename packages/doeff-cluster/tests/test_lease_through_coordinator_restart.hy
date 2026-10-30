@@ -11,16 +11,16 @@
 ;;   (b) 純粋: 持ち主が本当に居ない lease は、起き直した刻 + 止まる前に残っていた時間(≤ TTL)を過ぎると取りが通る(切れない lease を
 ;;       作らない)。止まる前に既に切れていた担い手は、ずらしても切れたまま。
 (require doeff-hy.macros [deftest defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import doeff_hy._table [TableWrite table-of])
 (import collections.abc [Callable])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
+(import doeff_cluster [StopCoordinator])
 (import doeff_cluster [sim-cluster ProcessesOf SharedRows])
 (import doeff_cluster [BoardRow ClusterState])
 (import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
-(import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
+(import doeff_cluster [lease-op semaphore-key])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writer HOLDER-ROW LOCK])
 
 ;; 担い手(cluster-semaphore の SemaphoreSession)の既定の TTL(秒)と、coordinator を止める秒(TTL より長く)。

@@ -11,10 +11,10 @@
 (import httpx)
 (import tests.link_rig [LinkRig])
 (import doeff_cluster._worker.core.launch [spec-program-file])
-(import doeff_cluster.shared.core.capabilities [environ-pairs])
+(import doeff_cluster._shared.core.capabilities [environ-pairs])
 (import tests.host_rig [host-settings launched])
 (import doeff_cluster [HOST-CONTRACT])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster._coordinator.core.cluster_policy [JOB-ENTRY])
 
 (val BLOB "cHJvZ3JhbQ==")

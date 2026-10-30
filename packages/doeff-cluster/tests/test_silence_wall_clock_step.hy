@@ -35,8 +35,8 @@
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_core_effects [StopRequested])
 (import doeff_time [Delay GetMonotonic GetTimeEffect SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [monotonic-ms-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [monotonic-ms-of])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus AwaitNextTick]
         doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs])
 (import doeff_cluster [silent-ms])

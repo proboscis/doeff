@@ -10,7 +10,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff [with-handlers])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [wall-sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.wall_programs [wall-io-foundation submitters listeners rows-when-present talk-to-the-listener])

@@ -9,11 +9,12 @@
 (import dataclasses [replace])
 (import collections.abc [Callable])
 (import doeff [run])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage JobRecord WorkerPolicy ProbeState ProbeView]
         doeff_cluster._worker.intent.worker_model [StopProgress JobStop Outcome WarmChildView WarmLaunch Undeclared])
-(import doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [spec-hash])
 (import doeff_cluster [plan statuses]
         doeff_cluster._worker.core.policy [warm-child-step kept-when-cut-off?])
 (import doeff_cluster._worker.core.beat_policy [heartbeat-due])

@@ -38,7 +38,7 @@
 ] doeff_cluster._coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
                                                group-limit-from-json needs-override-from-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
-(import doeff_cluster.shared.core.detached_rules [group-limit-spec])
+(import doeff_cluster._shared.core.detached_rules [group-limit-spec])
 (import doeff_hy._table [TableWrite table-of])
 
 (setv BOARD "board/")

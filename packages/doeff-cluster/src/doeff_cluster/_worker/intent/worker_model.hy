@@ -5,8 +5,8 @@
 ;;; (JobRecord)は再起動で失われてよい一時的なもので、job の正本は宣言の側にある。
 ;;;
 ;;; job は 2 種類: service(once=False・終われば起動し直す常駐)と task(once=True・1 度だけ走らせて結果を返す)。
-;;; job の宣言 JobSpec と段階 JobPhase は coordinator と共有の部品なので doeff_cluster.shared.intent.job_model、指紋 spec-hash は
-;;; doeff_cluster.shared.core.job_rules に在る(#2025)。
+;;; job の宣言 JobSpec と段階 JobPhase は coordinator と共有の部品なので doeff_cluster._shared.intent.job_model、指紋 spec-hash は
+;;; doeff_cluster._shared.core.job_rules に在る(#2025)。
 (require doeff-hy.macros [val])
 (require doeff-hy.record [defrecord defenum])
 (val MODULE-TAGS {:context "worker" :role "intent"})
@@ -14,9 +14,9 @@
 (import enum [Enum StrEnum])  ; StrEnum = defenum の展開が名指す
 (import doeff [EffectBase])
 (import doeff_core_effects [Future])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
-(import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
+(import doeff_cluster._shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 
 
 ;; 業務の repo の木の形(2026-09-25 — クラスタの仕組みを業務の repo から切り出した時に、木の形を worker の引数へ出した)。

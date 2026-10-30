@@ -6,8 +6,8 @@
 
 (import dataclasses [replace])
 (import doeff_hy._table [Table])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterJob WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [Placement TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
@@ -15,7 +15,7 @@
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit])
+(import doeff_cluster [TaskLimit GroupLimit])
 (import doeff_hy._table [TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 

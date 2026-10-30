@@ -2,7 +2,7 @@
 ;;; 手元の sim-cluster の宿 sim/local が同じ関数で作る — 本文を写さない)。handlers.hy から分けた(#2026)。判断は worker/core/heartbeat_rules。
 (require doeff-hy.macros [defk deff <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster.shared.intent.protocol [PROTOCOL-FORMAT])
+(import doeff_cluster._shared.intent.protocol [PROTOCOL-FORMAT])
 (import doeff_cluster._worker.intent.worker_model [CodeState CodeView JobStatus])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.heartbeat_rules [finished-task-id])

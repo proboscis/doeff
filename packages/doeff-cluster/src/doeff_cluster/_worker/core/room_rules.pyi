@@ -3,9 +3,9 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_cluster.shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
-from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
-from doeff_cluster.shared.core.capabilities import pool_refusal as pool_refusal
+from doeff_cluster._shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
+from doeff_cluster._shared.core.capabilities import capabilities_of as capabilities_of
+from doeff_cluster._shared.core.capabilities import pool_refusal as pool_refusal
 READ_EVERY_MS: int
 
 class RoomState(StrEnum):

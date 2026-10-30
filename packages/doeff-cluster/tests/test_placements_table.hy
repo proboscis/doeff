@@ -5,8 +5,8 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterJob WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [Placement KeepMark Drain])
 (import doeff_cluster._coordinator.core.cluster_policy [place-jobs jobs-placed reconcile unplaced-jobs])

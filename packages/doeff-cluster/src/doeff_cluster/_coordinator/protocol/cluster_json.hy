@@ -4,9 +4,9 @@
 (import dataclasses [asdict fields])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of])
 (import doeff_cluster._coordinator.intent.cluster_model [HandoffPhase HandoffWatch ClusterNaming TaskRecord ENDED-PHASES])
-(import doeff_cluster.shared.intent.detached_model [DetachedEnded OUTBOX-ENDED])
-(import doeff_cluster.shared.core.capabilities [POOL-PREFIX capabilities-of environ-pairs])
-(import doeff_cluster.shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
+(import doeff_cluster._shared.intent.detached_model [DetachedEnded OUTBOX-ENDED])
+(import doeff_cluster._shared.core.capabilities [POOL-PREFIX capabilities-of environ-pairs])
+(import doeff_cluster._shared.core.detached_rules [task-limits-refusal task-limits-of task-limits-json])
 
 
 (defn #^ HandoffWatch handoff-watch-from-json [#^ dict data]  ; defk にできない: 保存の読み(coordinator の起動の純粋な関数)が呼ぶ

@@ -2,7 +2,7 @@
 ;;; doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers が 10・15・20・21 行目で発火し、24〜26 行目では発火しない。
 (require doeff-hy.macros [defhandler <- val])
 (import doeff_time [GetMonotonic GetMonotonicEffect GetTimeEffect async-time-handler sync-time-handler sim-time-handler])
-(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms monotonic-ms-of])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms monotonic-ms-of])
 
 
 (defhandler steady-wall [#^ int started-ms #^ int started-mono-ms]

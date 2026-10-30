@@ -6,17 +6,17 @@
 (import dataclasses [replace])
 (import doeff [run])
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
-(import doeff_cluster.shared.core.detached_rules [task-notify-refusal])
+(import doeff_cluster._shared.core.detached_rules [task-notify-refusal])
 (import doeff_cluster._coordinator.core.detached_policy [ended-of outbox-noted outbox-read outbox-ack queued-noticed OUTBOX-RETAIN-MS])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster [responded])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 
 
 (defk task-row [id phase [notify "n:c-a"] [detached True]]

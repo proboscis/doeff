@@ -11,9 +11,9 @@
 (import posixpath)
 (import pathlib [Path])
 (import doeff_core_effects [EnvEntry EnvMode])
-(import doeff_cluster.shared.core.run_context_rules [process-context-environ])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
+(import doeff_cluster._shared.core.run_context_rules [process-context-environ])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
 
 

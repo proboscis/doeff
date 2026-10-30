@@ -106,6 +106,13 @@ def type_name(cls: Incomplete) -> str:
 MOVED_MODULES: Incomplete
 MOVED_TYPES: Incomplete
 
+def current_type_name(name: str) -> str:
+    ...
+TYPE_NAME_MARKS: tuple[str, ...]
+
+def with_current_type_names(v: JsonValue) -> JsonValue:
+    ...
+
 def resolve_type(name: str) -> type | None:
     ...
 

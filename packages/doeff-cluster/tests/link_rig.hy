@@ -17,7 +17,7 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
 (import doeff_cluster [ReadDesired]
         doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import doeff_cluster [coordinator-link]
@@ -25,7 +25,7 @@
 (import doeff_cluster [program-file program-file-text])
 (import tests.transport_http [transport-http])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 ;; 口の送り方(本番の組み立てと同じく一巡し直さない — 届かない拍は次の拍で送り直す)。
 (val LINK-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 0 :recheck-ms 60000 :actor "test-worker"))

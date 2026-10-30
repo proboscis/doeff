@@ -20,9 +20,9 @@
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [GetTimeEffect])
-(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster [ReadDesired]
         doeff_cluster._worker.intent.worker_model [CutOff DesiredJobs DesiredUnreadable])
 (import doeff_cluster._worker.core.pod_label_rules [JobLabels LabelChange PodLabel job-label-key job-labels-wanted job-labels-patch

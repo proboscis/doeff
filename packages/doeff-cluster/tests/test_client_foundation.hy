@@ -18,13 +18,13 @@
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
-(import doeff_cluster.shared.entry.client_foundation [with-detached-client])
+(import doeff_cluster [with-detached-client])
 (import doeff_cluster [process-versions]
         doeff_cluster._foundation.process_versions [RUNTIME-ENV-KEY-VAR])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSubmitted DetachedSucceeded])
+(import doeff_cluster [RuntimeEnv RepoCheckout PythonProject])
+(import doeff_cluster [runtime-env->json])
+(import doeff_cluster [submit-detached-task])
+(import doeff_cluster [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
 

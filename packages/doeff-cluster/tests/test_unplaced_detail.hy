@@ -5,9 +5,9 @@
 ;; 気づくまでの長さになった。直した後は、GET /state の unplacedDetail と Service の資源の status.unplaced に、種類・効く needs・足りない
 ;; 能力・置き先が無いと最初に見た刻(sinceMs — 後の拍でも最初の刻を保つ)が出て、置かれた拍に消える。
 (require doeff-hy.macros [deftest defk <- val])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster [ClusterTiming Request])
 (import doeff_cluster [ClusterState])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster [responded])
 (import doeff_cluster [tick])
 (import tests.program_rows [SAMPLE-RUN])

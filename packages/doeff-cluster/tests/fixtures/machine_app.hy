@@ -4,7 +4,7 @@
 ;;; tests.fixtures.machine_app で静的に import して系を組む — 詰めた Program は module の最上位の関数を名で運ぶので、送り手と子が同じ名で
 ;;; import する。土台は本番の形(tests/fixtures/cluster_foundation_programs.hy の production-foundation と同じ並び)。
 (require doeff-hy.macros [defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [DoExpr with-handlers])
 (import doeff_core_effects [Ask])
@@ -14,10 +14,10 @@
 (import doeff_time [Delay async-time-handler])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster [os-environ-reader])
-(import doeff_cluster.shared.entry.host_reader [host-reader])
-(import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared.intent.shared_model [WriteShared])
+(import doeff_cluster [host-reader])
+(import doeff_cluster [with-cluster-handlers])
+(import doeff_cluster [ReportReady])
+(import doeff_cluster [WriteShared])
 
 ;; 版の入れ替えの検(tests/test_worker_version_swap.hy — card ki-6e83e03d146d)の盤の行の頭と、worker が子へ渡す版の環境変数の名
 ;; (検は WORKER_PASS_ENV にこの名を置く — 子は自分を走らせた worker の世代の版を読む)。

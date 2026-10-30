@@ -50,12 +50,12 @@
 (import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText MakeDirectory ListDirectory WalkTree LinkFile RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
-(import doeff_cluster.shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json url-location])
+(import doeff_cluster._shared.core.native_wheel [UV-DROP WHEEL-REPORT-ENV NotReported reported-built uv-environment :as uv-variables wheel-lock])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind RepoLocation RuntimeEnv])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json url-location])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory VolumeKind EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -97,6 +97,9 @@
 ;; 子の入口の約束の版は root の新旧の両方の置き場から読む — 新しい置き場(shared/intent・c56fa8634 から)を先に、無ければ旧い置き場
 ;; (それより前の doeff で宣言した root)。片方だけを読むと、worker の版と root の版の組によって約束の版を 0 と読み、起こせる root を
 ;; env-failed にする(issue #2413 — 2026-10-01 22:20 に service の宣言 1 つが env-failed)。旧い doeff の root が無くなったら旧い置き場を外す。
+;; 新しい置き場は共有の区画を _ へ隠す前の名のまま(ADR-DOE-API-001 R15・card ki-6f70e9c957c0): root は job が宣言した版の doeff で、
+;; _shared の無い版の root でも解ける名が要る(_shared の在る版の root では移し替えの module shared.py が _shared の module を返す —
+;; worker の JOB-ENTRY と同じ順)。段 3 で移し替えの module を消す前に、root の版の下限と合わせて _shared の名へ替える。
 (val CHILD-PROTOCOL-PLACES #("doeff_cluster.shared.intent.runtime_env_model" "doeff_cluster.runtime_env_model"))
 (val PROBE-PROGRAM (.join "\n" [
   "(import importlib importlib.util json os sys)"

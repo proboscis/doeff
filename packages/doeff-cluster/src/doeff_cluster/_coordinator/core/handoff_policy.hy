@@ -23,12 +23,12 @@
 (import doeff_hy._table [TableWrite])
 (import hashlib)
 (import json)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState HandoffWatch HandoffPhase])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json LIVE-PHASES])
 (import doeff_cluster._coordinator.core.resource_policy [service-readiness carrier-stale-from readiness-due last-refusal])
-(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
-(import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.core.readiness_rules [handoff-timeout-ms])
+(import doeff_cluster._shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster._shared.intent.job_model [JobSpec])
 
 
 (defn #^ str declaration-fingerprint [#^ ClusterJob job]  ; defk にできない: coordinator の純粋な判断(Program の外 — api_policy.settle)が呼ぶ

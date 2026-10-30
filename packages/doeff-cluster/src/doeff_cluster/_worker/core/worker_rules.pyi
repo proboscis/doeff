@@ -1,7 +1,7 @@
 # doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = worker_rules.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from doeff import Program as _Program
-from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster._worker.intent.worker_model import CodeView as CodeView
 ENV_KEY_PREFIX: str
 

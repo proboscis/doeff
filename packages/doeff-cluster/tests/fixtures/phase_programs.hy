@@ -2,7 +2,7 @@
 ;;; 見本の系: 起動の時だけ仕事をする service(本番の部品の起動の追いつきの代わり)と、周ごとに起きて少し仕事をする service(空回りの
 ;;; 代わり)。部品を足した系と、空回りを 2 倍にした系を並べる。
 (require doeff-hy.macros [defk <- var])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff_core_effects [Put])
 (import doeff_time [Delay])

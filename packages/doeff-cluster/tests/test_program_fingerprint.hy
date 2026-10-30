@@ -13,8 +13,8 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [Pure run])
-(import doeff_cluster.shared.protocol.program_codec [encode-program decode-program])
-(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster [encode-program decode-program])
+(import doeff_cluster [program-sha])
 
 
 ;; 見本の module(package fp_sample の job)。defk の関数は値ごと詰まる(module の名で引くと defk の包みに当たり、中の関数そのものではない)。
@@ -40,7 +40,7 @@ sys.path.insert(0, root)
 import hy
 warm = os.path.exists(importlib.util.cache_from_source(os.path.join(root, 'fp_sample', 'job.hy')))
 import fp_sample.job as job
-from doeff_cluster.shared.protocol.program_codec import encode_program
+from doeff_cluster._shared.protocol.program_codec import encode_program
 program = job.sample_job(1) if name == 'sample-job' else job.sample_boom()
 print(json.dumps({'blob': encode_program(program), 'warm': warm}))
 ")
@@ -94,7 +94,7 @@ compiled = not os.path.exists(importlib.util.cache_from_source(os.path.join(root
 for name in filter(None, first.split(',')):
     importlib.import_module(name)
 import fp_sample.bind as bind
-from doeff_cluster.shared.protocol.program_codec import encode_program
+from doeff_cluster._shared.protocol.program_codec import encode_program
 print(json.dumps({'blob': encode_program(bind.bind_job(1)), 'compiled': compiled}))
 ")
 
@@ -105,7 +105,7 @@ root, blob = sys.argv[1], sys.stdin.read()
 sys.path.insert(0, root)
 import hy
 from doeff import run
-from doeff_cluster.shared.protocol.program_codec import decode_program
+from doeff_cluster._shared.protocol.program_codec import decode_program
 try:
     print(json.dumps({'value': run(decode_program(blob))}))
 except ValueError:

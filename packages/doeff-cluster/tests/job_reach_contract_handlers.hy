@@ -11,9 +11,9 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [Program with_handlers])
 (import doeff_core_effects [Ask])
-(import doeff_cluster.shared.intent.job_reach_model [JobNoWay ReachJob])
-(import doeff_cluster.shared.protocol.job_call_handlers [Counterpart])
-(import doeff_cluster.shared.protocol.job_reach_handlers [ReachDestination job-reach-handover job-reach-sender])
+(import doeff_cluster [JobNoWay ReachJob])
+(import doeff_cluster [Counterpart])
+(import doeff_cluster [ReachDestination job-reach-handover job-reach-sender])
 (import tests.job_call_contract_handlers [NOTES-API NOTES-ENVIRON NOTES-ROOT NOTES-URL notes-answer served-notes])
 
 ;; 番地の道の宛先の環境変数の名(試しの値は名の道と同じ口の URL)。

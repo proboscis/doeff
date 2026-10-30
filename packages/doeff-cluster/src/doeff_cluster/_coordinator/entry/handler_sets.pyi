@@ -18,8 +18,8 @@ from doeff_cluster._coordinator.protocol.kube import MemoryFollows as MemoryFoll
 from doeff_cluster._coordinator.protocol.kube import kube_memory as kube_memory
 from doeff_cluster._foundation.coordinator_inbox import RequestInbox as RequestInbox
 from doeff_cluster._foundation.coordinator_inbox import StopState as StopState
-from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
-from doeff_cluster.shared.protocol.inbox import stop_flag as stop_flag
+from doeff_cluster._shared.protocol.inbox import http_requests as http_requests
+from doeff_cluster._shared.protocol.inbox import stop_flag as stop_flag
 from doeff_cluster._coordinator.protocol.faults import coordinator_faults as coordinator_faults
 from doeff_events import MemoryBroker as MemoryBroker
 from doeff_events import broker_back_by_retry as broker_back_by_retry

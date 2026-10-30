@@ -7,8 +7,8 @@
 ;;   - 反例: owner・name・host のどれかが違えば別の正体。
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
-(import doeff_cluster.shared.core.runtime_env_rules [url-location])
-(import doeff_cluster.shared.intent.runtime_env_model [LocalPath RemoteRepo RepoLocation])
+(import doeff_cluster._shared.core.runtime_env_rules [url-location])
+(import doeff_cluster._shared.intent.runtime_env_model [LocalPath RemoteRepo RepoLocation])
 
 (val LOCAL-URLS #("/srv/git/app.git" "./app.git" "../remotes/app.git" "file:///srv/git/app.git" "app.git" "repos/app.git"
                   "/srv/git/with:colon.git"))

@@ -1,4 +1,4 @@
-;;; job が要る値を、worker の中の file の path でなく cluster の ConfigMap・Secret の参照で受ける部品(doeff_cluster.shared.protocol.supplied_values)
+;;; job が要る値を、worker の中の file の path でなく cluster の ConfigMap・Secret の参照で受ける部品(doeff_cluster._shared.protocol.supplied_values)
 ;;; と、その要求を区画の CA で検める答え手(doeff_cluster._foundation.in_cluster_api の in-cluster-api-routed)の検 — 使い手の repo の job が
 ;;; 同じ定義元から値を受ける(使い手の repo に在った同じ部品をここへ移した)。
 ;;;
@@ -29,9 +29,8 @@
 (import doeff_cluster [FoundationClosure foundation-closure])
 (import doeff_cluster [CLUSTER-API SERVICE-ACCOUNT-CA-PATH ClusterCaMissing in-cluster-api-routed]
         doeff_cluster._foundation.in_cluster_api [cluster-ca-answer])
-(import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing])
-(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-CA-FILE SERVICE-ACCOUNT-TOKEN-FILE supplied-directory
-                                                      supplied-object-ref-of supplied-ref-of supplied-ref-text supplied-setting supplied-value])
+(import doeff_cluster [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing])
+(import doeff_cluster [KUBE-API SERVICE-ACCOUNT-CA-FILE SERVICE-ACCOUNT-TOKEN-FILE supplied-directory supplied-object-ref-of supplied-ref-of supplied-ref-text supplied-setting supplied-value])
 (import doeff_cluster [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})

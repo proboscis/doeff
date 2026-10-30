@@ -34,7 +34,7 @@
 (import doeff_core_effects [ProcessSignal])
 (import doeff_core_effects [ReadProcTable SignalPid])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster._worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory KillUnit JobUse JobSteady node-memory-of
                                                 cgroup-bytes-of memory-level _job-walks _uses-of _units-of steady-sizes spared-steady victim-of swarm-of])

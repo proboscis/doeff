@@ -11,10 +11,10 @@ import textwrap
 
 #: job の土台の module(どの job も読み込む)。
 JOB_BASE = (
-    "doeff_cluster.shared.protocol.shared_handlers",
-    "doeff_cluster.shared.protocol.detached",
-    "doeff_cluster.shared.core.runtime_identity",
-    "doeff_cluster.shared.protocol.supplied_values",
+    "doeff_cluster._shared.protocol.shared_handlers",
+    "doeff_cluster._shared.protocol.detached",
+    "doeff_cluster._shared.core.runtime_identity",
+    "doeff_cluster._shared.protocol.supplied_values",
 )
 
 

@@ -12,22 +12,22 @@
 (import doeff [run])
 (import dataclasses [replace])
 (import pytest)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.durable_kv [durable-kv state-from-kv])
 (import doeff_cluster._coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster [DeclaredReply declared-reply-of-json declared-job-specs] doeff_cluster [status-rows-json])
-(import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
-(import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
-(import doeff_cluster.shared.entry.service_build [job])
-(import doeff_cluster.shared.intent.service_model [Job CallShape])
+(import doeff_cluster._shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
+(import doeff_cluster._shared.core.readiness_rules [handoff-timeout-ms])
+(import doeff_cluster [job])
+(import doeff_cluster [Job CallShape])
 (import tests.fixtures.services [tally-program])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.program_rows [SAMPLE-RUN])
-(import doeff_cluster [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [CodeView CodeState ProcessView WorldView WorkerPolicy PrepareCode StartJob SignalJob ReapJob RetireJob ProbeEntry ProbeView ProbeState ForgetProbes Action] doeff_cluster [spec-hash])
 (import doeff_cluster [plan records-after statuses])
 
 (val T (ClusterTiming))
@@ -235,11 +235,11 @@
 
 
 ;; 退いた process の寿命の上限(#4072 の D-2)の宣言の読みと、coordinator → worker の運び。
-(import doeff_cluster.shared.core.readiness_rules [retired-lifetime-ms retired-limit-of])
+(import doeff_cluster._shared.core.readiness_rules [retired-lifetime-ms retired-limit-of])
 (import doeff_cluster [spec-of-declaration])
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
 (import doeff_cluster._worker.protocol.declared [declared-job-spec])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 
 
 (deftest test-the-retired-lifetime-is-declared-in-readiness-and-reaches-the-worker

@@ -10,11 +10,11 @@
 (import doeff_time [GetMonotonic])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [StopRequested])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs DesiredUnreadable
   ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick Undeclared WorkerStopping CutOff DeclarationRead WakeSet WorkerWakes
-  WorkerUnsettled SweepEnvs TickMarks StartHold JobNotStarted] doeff_cluster.shared.intent.job_model [JobPhase])
+  WorkerUnsettled SweepEnvs TickMarks StartHold JobNotStarted] doeff_cluster._shared.intent.job_model [JobPhase])
 (import doeff_cluster._worker.core.worker_due [plan-due wakes-with])
 (import doeff_cluster._worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster._worker.core.policy [plan ready-followups records-after statuses start-holds noted-holds held-records declared-jobs

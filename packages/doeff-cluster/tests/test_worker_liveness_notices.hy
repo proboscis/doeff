@@ -7,8 +7,8 @@
 ;;   起き直し(D): 今の状態は、沈黙の worker の WorkerGone と生きている worker の WorkerBack。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [WorkerBack WorkerGone])
 (import doeff_cluster [tick])

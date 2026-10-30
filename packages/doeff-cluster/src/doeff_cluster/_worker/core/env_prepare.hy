@@ -38,12 +38,12 @@
 (import datetime [datetime])
 (import re)
 (import doeff_time [GetMonotonic GetTime])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
                                                        SUPPORTED-CHILD-PROTOCOLS])
-(import doeff_cluster.shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material])
-(import doeff_cluster.shared.core.runtime_env [project-dir])
-(import doeff_cluster.shared.core.native_wheel [wheel-out-dir])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material])
+(import doeff_cluster._shared.core.runtime_env [project-dir])
+(import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest StageTime StagePart TreeSource TreePlaced VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT FileSha256])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}

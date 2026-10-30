@@ -28,7 +28,7 @@
   (assert (isinstance cut.cut-off CutOff)))
 
 (import pathlib [Path])
-(import doeff_cluster [JobStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster [JobStatus] doeff_cluster [JobPhase])
 (import doeff_cluster._worker.protocol.declared [task-spec])
 (import doeff_cluster._worker.core.code_plan [module-name carry-pairs compile-plan cache-rel])
 
@@ -72,7 +72,7 @@
 (import json)
 (import threading)
 (import http.server [BaseHTTPRequestHandler ThreadingHTTPServer])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 
 (deftest test-default-timing-outlasts-the-measured-tailnet-outage
   ;; 2026-09-23 の newmac の tailnet の途絶は最長 約 13 秒。自己停止はそれより長く、移し替えは自己停止より十分長い(worker の止め切りより
@@ -106,7 +106,7 @@
 (import json)
 (import httpx)
 (import tests.transport_http [released-through])
-(import doeff_cluster.shared.core.lease_rules [drop-holders])
+(import doeff_cluster._shared.core.lease_rules [drop-holders])
 
 (deftest test-release-leases-drops-only-the-finished-process-holders-on-an-old-coordinator
   ;; 盤の semaphore の行から、token が子の名乗った担い手の頭「<job>/<世代の名>/」(lease_rules.lease-holder)で始まる担い手だけを

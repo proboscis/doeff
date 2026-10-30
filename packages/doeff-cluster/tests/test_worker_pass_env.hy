@@ -6,9 +6,9 @@
 (import json)
 (import pathlib [Path])
 (import pytest)
-(import doeff_cluster.shared.intent [runtime_env_model])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
+(import doeff_cluster._shared.intent [runtime_env_model])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster._shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster [CodeLayout WorkerPolicy])
 (import doeff_cluster._worker.entry.main [passed-environment])
 (import doeff_cluster [child-environment]

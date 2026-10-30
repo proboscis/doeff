@@ -911,7 +911,7 @@
 ;; 間(外の世界との境目 — 汎用の effect だけを記録する)。記録係より内側の handler は決定的でなければならない(R5b)。
 ;; with-handlers の list は先が外側なので、記録係を翻訳の handler より先に書く(後に書くと記録係が翻訳より内側に入り、業務の effect を
 ;; 受けてしまう)。組(boundary-recorder)と記録の頭書き(recording-header)は宿の契約の run-context を読むので入口の側
-;; (doeff_cluster.shared.entry.boundary_recorder — #2981 でここから移した)。ここに残るのは記録係・再生係と、下の選びの鍵。
+;; (doeff_cluster._shared.entry.boundary_recorder — #2981 でここから移した)。ここに残るのは記録係・再生係と、下の選びの鍵。
 ;;
 ;;   (defk job-program [foundation]                  ; 土台 = 本体を受けて自分の handler の下で走らせる関数(計画 10.1)
 ;;     (<- answer (foundation (do! (<- recorder list (boundary-recorder HOST-CONTRACT))  ; off / record / replay を Ask で選ぶ

@@ -18,16 +18,16 @@
 (import dataclasses [replace])
 (import typing [NamedTuple])
 (import doeff_hy._table [TableWrite])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
-(import doeff_cluster.shared.core.capabilities [environ-pairs])
-(import doeff_cluster.shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal])
+(import doeff_cluster._shared.core.capabilities [environ-pairs])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
                                                      limits-undeclared-refusal scan-rows])
-(import doeff_cluster.shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
+(import doeff_cluster._shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
                                                     DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE])
 
 (setv DETACHED-MAX-LEASE-SECONDS 3600)

@@ -13,7 +13,7 @@
 (import time)
 (import pathlib [Path])
 (import doeff_core_effects [StartProcess])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [WorkerPolicy StartJob SignalJob ReapJob RetireJob NoticeJob StopStage ProcessView Retired HandoffAbandoned]
         doeff_cluster._worker.intent.worker_model [Outcome])
 (import doeff_cluster [ObserveProcesses])

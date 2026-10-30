@@ -1,5 +1,5 @@
 ;;; job が自分へ届く網の宛先(k8s の Service と Ingress)を宣言どおりに在らせる effect EnsureKubeService・EnsureKubeIngress
-;;; (doeff_cluster.shared.intent.kube_service_model)の検 — 本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api)と
+;;; (doeff_cluster._shared.intent.kube_service_model)の検 — 本番の答え手(doeff_cluster._shared.protocol.kube_services の kube-services-api)と
 ;;; 模擬の答え手(doeff_cluster._sim.k8s_services の held-kube-services)が同じ筋書きに同じ結末で答え、同じ一覧を残す事を確かめる。
 ;;;
 ;;;   綴り              宣言 → server-side apply の本文(宣言が持つ欄だけ・LOAD-BALANCER は node の口を開けない・class は書いた時だけ・
@@ -22,11 +22,11 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_cluster.shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
-                                                        KubeServicePort KubeServiceRefused KubeServiceType])
-(import doeff_cluster.shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER _ingress-apply-text _ingress-path kube-services-api
-                                                    service-apply-text service-path])
-(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
+(import doeff_cluster [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServicePort KubeServiceType]
+        doeff_cluster._shared.intent.kube_service_model [KubeServiceOutcome KubeServiceRefused])
+(import doeff_cluster [kube-services-api]
+        doeff_cluster._shared.protocol.kube_services [APPLY-CONTENT-TYPE FIELD-MANAGER _ingress-apply-text _ingress-path service-apply-text service-path])
+(import doeff_cluster [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster [held-kube-services]
         doeff_cluster._sim.k8s_services [KubeServiceLog])
 

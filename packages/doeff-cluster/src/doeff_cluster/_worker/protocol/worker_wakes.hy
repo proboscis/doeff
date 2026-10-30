@@ -3,7 +3,7 @@
 ;;; これを状態を持つ handler より外に置く。
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
-(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_cluster._shared.intent.due_model [DueNever])
 (import doeff_cluster._worker.intent.worker_model [WakeSet WorkerWakes])
 
 
