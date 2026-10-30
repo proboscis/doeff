@@ -22,20 +22,6 @@
       "doeff-adr"
      ]
     },
-    "境界 — Hy の macro": {
-     "(submodule)": [
-      "doeff_adr.macros"
-     ],
-     "doeff_adr.macros": [
-      "counterexample",
-      "defadr",
-      "defsemgrep",
-      "fact",
-      "interpretation",
-      "law",
-      "rule"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_adr.registry": [
       "EnforcementMode",
