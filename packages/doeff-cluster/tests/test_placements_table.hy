@@ -19,10 +19,10 @@
 
 
 (defn #^ ClusterJob job-of [#^ str name [needs #()] [handoff False]]
-  (ClusterJob (JobSpec name "m" #() "rev" :handoff handoff) :needs needs))
+  (ClusterJob (JobSpec name "m" #() "rev" :handoff handoff) :needs needs :peak-mib 200 :settle-mib 100))
 
 (defn #^ WorkerInfo worker-of [#^ str name #^ int seen [provides #()]]
-  (WorkerInfo name provides 10 seen :task-reserve 0))
+  (WorkerInfo name provides seen :task-reserve 0 :background-room 10))
 
 (defn rows-table [#^ dict rows]
   (table-of (tuple (gfor #(key row) (.items rows) (TableWrite key row)))))

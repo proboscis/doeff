@@ -76,13 +76,15 @@
   (get answered 0))
 
 
-(defk beat [state worker [rows None] [now START] [capacity 10] [boot None] [boot-at None]]
-  {:pre [(: state ClusterState) (: worker str) (: rows (| (get list (get dict #(str object))) None)) (: now int) (: capacity int)
+(defk beat [state worker [rows None] [now START] [memory None] [boot None] [boot-at None]]
+  {:pre [(: state ClusterState) (: worker str) (: rows (| (get list (get dict #(str object))) None)) (: now int) (: memory (| int None))
          (: boot (| str None)) (: boot-at (| int None))] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
-  "worker の heartbeat(rows = 担い手の行・boot / boot-at = process の世代と起動の刻 — None は名乗らない)。"
-  (val generation (| (if (is boot None) {} {"boot" boot}) (if (is boot-at None) {} {"bootAt" boot-at})))
-  (! (call state "POST" "/heartbeat" (| {"name" worker "provides" ["net"] "capacity" capacity "taskReserve" 0 "versions" {} "statuses" (or rows [])}
+  "worker の heartbeat(rows = 担い手の行・memory = memory の予算 MiB — None は名乗らない・boot / boot-at = process の世代と起動の刻 —
+   None は名乗らない)。"
+  (val generation (| (if (is boot None) {} {"boot" boot}) (if (is boot-at None) {} {"bootAt" boot-at})
+                     (if (is memory None) {} {"memoryMiB" memory})))
+  (! (call state "POST" "/heartbeat" (| {"name" worker "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "statuses" (or rows [])}
                                         generation)
            :now now :actor None)))
 
@@ -218,9 +220,11 @@
   ;; 置き先が無い: 置ける worker が無い・空きが無い(理由の文は今までどおり)。
   (assert (= (! (answer (! (declared)))) #(NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED)))
   (assert (.startswith (get (running-process (! (declared)) "w" START T) "reason") "置き先が無い: 置ける worker が無い"))
-  (val full (! (beat (! (declared)) "atlas" :capacity 0)))
+  ;; 空きが無い = memory の予算 0 の worker(card ki-2acb63aec0fd — 理由の文に memory の訳が付く)。
+  (val full (! (beat (! (declared)) "atlas" :memory 0)))
   (assert (= (! (answer full)) #(NotReadyKind.NO-ROOM VersionState.BLOCKED)))
-  (assert (= (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い"))
+  (assert (.startswith (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い(job w を worker atlas に置くと")
+          (running-process full "w" START T))
   ;; 担い手の報告が古い: 移し替えの期限の内は Unknown(分からない)、過ぎた後(調停の前)は NotReady。
   (val silent (+ START (* 2 T.lease-ms)))
   (val gone (+ START T.reassign-after-ms T.lease-ms))

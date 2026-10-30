@@ -38,14 +38,14 @@
 
 (defclass LinkRig []
   "検の coordinator への口: state = 本番と同じ入れ物・cell / watch-cell = heartbeat と待ちの宛先・transport = 送り先(None = 本物の網)。
-   task-reserve = heartbeat で名乗る task のために空けておく数(本番の --task-reserve と同じく必ず渡す)。"
-  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int capacity #^ int task-reserve #^ int fence-ms
+   background-room・task-reserve = heartbeat で名乗る背景の枠と task のために空けておく数(本番の --background-room・--task-reserve)。"
+  (defn #^ None __init__ [self #^ str url #^ str name #^ tuple provides #^ int background-room #^ int task-reserve #^ int fence-ms
                           #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None]
                           #^ (| dict None) [tools None] #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""]
                           #^ bool [watch False]]
     ;; 最後の連絡とみなす初めの刻は、本番の入口と同じく壁の時計と単調な時計の両方で読む(時計は実時間 — card ki-069f4a5c07f7)。
     (setv now-ms (int (* 1000 (time.time))))
-    (setv self.state (LinkState name provides capacity task-reserve fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
+    (setv self.state (LinkState name provides task-reserve background-room fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
                                 (round (* 1000 (time.monotonic)))
                                 :versions versions :tools tools :handles-envs handles-envs :exclusive exclusive :node node :watch watch
                                 :beat-beside False)

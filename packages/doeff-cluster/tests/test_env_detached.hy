@@ -199,7 +199,7 @@
 (deftest test-env-tasks-are-placed-without-comparing-worker-versions
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- task TaskRecord (env-task env))
-  (val worker (WorkerInfo "w1" #("net") 1 0 #((ComponentVersion "doeff" "new")) :task-reserve 0))
+  (val worker (WorkerInfo "w1" #("net") 0 #((ComponentVersion "doeff" "new")) :task-reserve 0 :background-room 1))
   (assert (can-run-task task worker) "env の task は worker の版と比べない")
   (assert (not (can-run-task (replace task :runtime-env None) worker)) "今の commit だけの task は今のまま版を比べる")
   (assert (not (can-run-task (replace task :avoid #("w1")) worker)) "準備に一時の失敗をした worker には置き直さない"))
@@ -223,7 +223,7 @@
   ;; 置き直せる別の worker が無ければ、最後の失敗で終える
   (val timing (ClusterTiming))
   (val requeued (absorb-env-failure (replace task :phase "assigned" :worker "w1" :detached True) "w1" report 10))
-  (val cluster (ClusterState :workers (! (table-from-rows {"w1" (WorkerInfo "w1" #("net") 1 10 #() :task-reserve 0)})) :tasks (! (table-from-rows {"t1" requeued}))))
+  (val cluster (ClusterState :workers (! (table-from-rows {"w1" (WorkerInfo "w1" #("net") 10 #() :task-reserve 0 :background-room 1)})) :tasks (! (table-from-rows {"t1" requeued}))))
   (val placed (! (tasks-placed 20 cluster (table-of #()) timing)))
   (assert (= (. (.row placed "t1") phase) "env-failed") (.row placed "t1"))
   (val view {"key" "k" "phase" "env-failed" "detail" "d" "failureKind" "repo-unreachable" "retryable" True})

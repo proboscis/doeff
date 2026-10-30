@@ -306,7 +306,7 @@
 (deftest test-liveness-due-is-the-deadline-the-judgments-compare
   (val timing (ClusterTiming))
   (val seen 1000000)
-  (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms seen :task-reserve 0))
+  (val worker (WorkerInfo :name "w" :provides #("cpu") :background-room 1 :last-seen-ms seen :task-reserve 0))
   (val start (ClusterState :workers (! (table-from-rows {"w" worker}))))
   ;; lease-ms — note-liveness が生きていないと数え始める刻。
   (<- lease-answer (| DueAt DueNow DueNever) (liveness-due start seen timing))
@@ -408,7 +408,7 @@
   (<- lost TaskRecord (task-row "lost" "assigned" 20000 :detached True :worker "w1"))
   (<- dropped TaskRecord (task-row "call" "finished" 12000 :worker "w1" :finished 3000))
   (<- waiting TaskRecord (task-row "wait" "queued" 20000 :detached True :needs #("verify")))
-  (val verify (replace (WorkerInfo "verify-1" #("verify") 1 0 :task-reserve 0) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
+  (val verify (replace (WorkerInfo "verify-1" #("verify") 0 :task-reserve 0 :background-room 1) :versions #((ComponentVersion "python" "3")) :exclusive #("verify")))
   #(#("lease の内に終わった task の保持" (ClusterState :tasks (! (table-from-rows {"done" retained}))) 5000 10001)
     #("lease の切れる置いた task" (ClusterState :tasks (! (table-from-rows {"lost" lost}))) 5000 20001)
     #("呼び手が問い合わせを止めた task" (ClusterState :tasks (! (table-from-rows {"call" dropped}))) 5000 12001)

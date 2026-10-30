@@ -440,9 +440,8 @@
 
 
 (defsystem reserved-trio [#^ Callable foundation]
-  "見本の系: task を出す service 1 つと、拍ごとに盤へ書く service 2 つ(#3489 — capacity 3・task のために 1 つ空けておく worker に常駐を
-   3 つ宣言すると、名の順に delegator と echo-a が置かれ echo-b は空きが無く、delegator の出す task は空けておいた分で走る・条 C17 の検
-   tests/test_local.hy)"
+  "見本の系: task を出す service 1 つと、拍ごとに盤へ書く service 2 つ(#3489・card ki-2acb63aec0fd — 予約 1・背景の枠 0 の worker に常駐を
+   3 つ宣言すると 3 つとも置かれ(job は task の空きを使わない)、delegator の出す task は予約の分で走る・条 C17 の検 tests/test_local.hy)"
   (delegator (delegate-program foundation 3 "trio/result") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"})
   (echo-a (beacon-program foundation "trio/a" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"})
   (echo-b (beacon-program foundation "trio/b" 1.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :environ {"STEP" "1"}))

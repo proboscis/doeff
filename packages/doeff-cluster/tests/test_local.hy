@@ -39,8 +39,8 @@
                                                                  ServiceVersionRead service-versions-never-go-back
                                                                  WorkerProbe alive-only-while-reachable
                                                                  PlacementSeen WorkerGone places-only-on-reachable
-                                                                 ProcessSpan WorkerCapacity running-within-capacity
-                                                                 JobPlacesSeen WorkerReserve jobs-stay-out-of-the-task-reserve
+                                                                 ProcessSpan SettledSpan WorkerCapacity running-within-capacity
+                                                                 WorkerReserve jobs-stay-out-of-the-task-reserve
                                                                  JobNeeds WorkerAbility placed-only-where-eligible
                                                                  JobProcess moves-to-a-live-worker
                                                                  WorkerExclusive exclusive-workers-take-only-their-jobs ran-only-where-eligible
@@ -1055,94 +1055,96 @@
 
 (defk spans-on-one-worker []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "条 C6 の記録を集めるため: 15 秒待って、beacons-plus の 2 つの service(beacon・beacon-b)の process の生きていた区間を読む。"
+  "条 C6 の記録を集めるため: 15 秒待って、beacons-plus の 2 つの service(beacon・beacon-b — どちらも宣言の settle 100 MiB)の process の
+   生きていた区間を読む。"
   (<- (Delay 15.0))
   (<- a tuple (ProcessesOf "beacon"))
   (<- b tuple (ProcessesOf "beacon-b"))
-  (tuple (gfor p (+ a b) (ProcessSpan :worker p.worker :started-ms p.started-ms :ended-ms p.ended-ms))))
+  (tuple (gfor p (+ a b) (SettledSpan :worker p.worker :settle-mib 100 :started-ms p.started-ms :ended-ms p.ended-ms))))
 
 
-(val ONE-SLOT (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :task-reserve 0))
+;; memory の予算 150 MiB の worker: settle 100 の service は 1 つしか入らない。
+(val ONE-SLOT (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :memory-mib 150 :task-reserve 0))
 
 
-(deftest test-a-worker-runs-no-more-jobs-than-its-capacity
-  ;; 条 C6(architecture.hy の :invariants): capacity 1 の worker 1 台に service 2 つの系を置くと、coordinator は 1 つだけ置き、動く数は
-  ;; capacity を越えない。
+(deftest test-a-worker-runs-no-more-jobs-than-its-memory
+  ;; 条 C6(architecture.hy の :invariants・card ki-2acb63aec0fd で memory の版へ): memory の予算 150 MiB の worker 1 台に settle 100 の
+  ;; service 2 つの系を置くと、coordinator は 1 つだけ置き、動く job の settle の和は予算を越えない。
   (<- spans tuple (sim-cluster :notice-broker (MemoryBroker) (beacons-plus sim-foundation) (spans-on-one-worker) :workers #(ONE-SLOT)))
   (assert spans spans)
-  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
+  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :memory-mib 150))))
   (assert (= over #()) #(over spans)))
 
 
-(deftest test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6
-  ;; 条 C6 の失敗ケース: heartbeat で capacity を多く名乗る壊れた worker(SimWorker の overstates-capacity)では、coordinator が名乗りどおり
-  ;; 2 つ置き、本当の capacity 1 を越えて動き、条 C6 の判断がその瞬間を名指す。
+(deftest test-a-counterexample-worker-that-overstates-its-memory-breaks-c6
+  ;; 条 C6 の失敗ケース: heartbeat で memory の予算を多く名乗る壊れた worker(SimWorker の overstates-memory)では、coordinator が名乗り
+  ;; どおり 2 つ置き、本当の予算 150 MiB を越えて動き(settle の和 200)、条 C6 の判断がその瞬間を名指す。
   (<- spans tuple (sim-cluster :notice-broker (MemoryBroker) (beacons-plus sim-foundation) (spans-on-one-worker)
-                               :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 1 :overstates-capacity 5 :task-reserve 0))))
-  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :capacity 1))))
-  (assert (= (len over) 1) #(over spans)))
+                               :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :memory-mib 150 :overstates-memory 500
+                                                     :task-reserve 0))))
+  (<- over tuple (running-within-capacity spans #((WorkerCapacity :worker "w1" :memory-mib 150))))
+  (assert (= (lfor o over #(o.settle-mib o.memory-mib)) [#(200 150)]) #(over spans)))
 
 
 (defrecord ReserveScene
-  "条 C17 の筋書きの読み: places = GET /state を読むたびの worker ごとの常駐の job と並べた置き先(surge)の数・unplaced = 最後の読みの
-   置き先の無い job と理由・workers = 最後の読みの worker の欄(taskReserve・taskRoom を見る)・rows = 盤の trio/ の行。"
-  (#^ (get tuple #(JobPlacesSeen ...)) places)
+  "条 C17 の筋書きの読み: tasks = 読みのどれかに載った task の動いていた区間(ProcessSpan — task の id ごとに最後の読み)・unplaced = 最後の
+   読みの置き先の無い job と理由・workers = 最後の読みの worker の欄(taskReserve・backgroundRoom・taskRoom を見る)・rows = 盤の trio/ の行。"
+  (#^ (get tuple #(ProcessSpan ...)) tasks)
   (#^ dict unplaced)
   (#^ dict workers)
   (#^ dict rows))
 
 
-(defk job-places-seen [state at]
-  {:pre [(: state dict) (: at int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "条 C17 の記録を GET /state の 1 回の読みから作るため: worker ごとに、置き先(placements)と並べた置き先(surges)のうちその worker の物の数。"
-  (val held (+ (lfor p (.values (get state "placements")) (get p "worker")) (lfor p (.values (get state "surges")) (get p "worker"))))
-  (tuple (gfor name (sorted (get state "workers"))
-               (JobPlacesSeen :at-ms at :worker name :jobs (len (lfor w held :if (= w name) w))))))
+(defk task-spans-seen [states]
+  {:pre [(: states tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "条 C17 の記録を GET /state の読みの列から作るため: 動き始めた(startedMs の在る)task ごとに、最後の読みの worker・動き始め・終わり。"
+  (val last (dfor state states t (get state "tasks") :if (and (get t "worker") (get t "startedMs")) (get t "id") t))
+  (tuple (gfor t (.values last) (ProcessSpan :worker (get t "worker") :started-ms (get t "startedMs") :ended-ms (get t "finishedMs")))))
 
 
 (defk reserve-scene []
   {:pre [] :post [(: % ReserveScene)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "条 C17 の記録を集めるため: 5 秒ごとに 4 回 GET /state を読み(常駐の job と surge の数)、最後に置き先の無い job・worker の欄・delegator が
-   task の答えを書いた盤の trio/ の行を読む。"
-  (var places #())
+  "条 C17 の記録を集めるため: 5 秒ごとに 4 回 GET /state を読み(task の区間)、最後に置き先の無い job・worker の欄・delegator が task の
+   答えを書いた盤の trio/ の行を読む。"
+  (var states #())
   (for [_ (range 4)]
     (<- (Delay 5.0))
-    (<- at int (now-epoch-ms))
     (<- state dict (ReadCoordinator "/state"))
-    (<- seen tuple (job-places-seen state at))
-    (:= places (+ places seen)))
-  (<- last-state dict (ReadCoordinator "/state"))
+    (:= states (+ states #(state))))
+  (<- spans tuple (task-spans-seen states))
   (<- rows dict (SharedRows "trio/"))
-  (ReserveScene :places places :unplaced (get last-state "unplaced") :workers (get last-state "workers") :rows rows))
+  (val last-state (get states -1))
+  (ReserveScene :tasks spans :unplaced (get last-state "unplaced") :workers (get last-state "workers") :rows rows))
 
 
-(val RESERVED-ONE (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1))
-(val RESERVE-TRUTH #((WorkerReserve :worker "w1" :capacity 3 :task-reserve 1)))
+;; 予約 1・背景の枠 0・memory を名乗らない worker(常駐の job を数で縛らない)。
+(val RESERVED-ONE (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :background-room 0 :task-reserve 1))
+(val RESERVE-TRUTH #((WorkerReserve :worker "w1" :task-reserve 1 :background-room 0)))
 
 
-(deftest test-resident-jobs-leave-the-task-reserve-for-tasks
-  ;; 条 C17(architecture.hy の :invariants): capacity 3・task のために 1 つ空けておく worker 1 台に常駐の service を 3 つ宣言すると、
-  ;; coordinator は 2 つだけ置き(名の順に delegator と echo-a — echo-b は空きが無い)、delegator が出す手番の task は空けておいた分で走って
-  ;; 答える(add-task の答え 103 が盤に載る)。どの読みでも常駐の数は capacity − task-reserve = 2 を越えない。
+(deftest test-tasks-run-in-the-reserve-beside-every-resident-job
+  ;; 条 C17(architecture.hy の :invariants・card ki-2acb63aec0fd で task の側の版へ): 予約 1・背景の枠 0 の worker 1 台に常駐の service を
+  ;; 3 つ宣言すると、coordinator は 3 つとも置き(job は task の空きを使わない)、delegator が出す手番の task は予約の分で走って答える
+  ;; (add-task の答え 103 が盤に載る)。どの瞬間も動く task は予約 + 背景の枠 = 1 を越えない。
   (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene) :workers #(RESERVED-ONE)))
-  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
+  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.tasks RESERVE-TRUTH))
   (assert (= taken #()) #(taken scene))
-  (assert (= (lfor p scene.places p.jobs) [2 2 2 2]) scene.places)
-  (assert (= scene.unplaced {"echo-b" "置ける worker に空きが無い"}) scene.unplaced)
-  (assert (= #((get scene.workers "w1" "taskReserve") (get scene.workers "w1" "capacity")) #(1 3)) scene.workers)
+  (assert scene.tasks scene)
+  (assert (= scene.unplaced {}) scene.unplaced)
+  (assert (= #((get scene.workers "w1" "taskReserve") (get scene.workers "w1" "backgroundRoom")) #(1 0)) scene.workers)
+  (assert (not-in "capacity" (get scene.workers "w1")) scene.workers)
   (assert (= (get scene.rows "trio/result" "sum") 103) scene.rows))
 
 
-(deftest test-a-counterexample-worker-that-hides-its-task-reserve-breaks-c17
-  ;; 条 C17 の失敗ケース: heartbeat で task のために空けておく数を 0 と名乗る壊れた worker(SimWorker の claims-task-reserve)では、
-  ;; coordinator が名乗りどおり常駐を 3 つとも置き、本当の予約(1)に常駐が入り、条 C17 の判断がその読みを名指す(手番の task は置けずに待つ)。
+(deftest test-a-counterexample-worker-that-overclaims-its-task-reserve-breaks-c17
+  ;; 条 C17 の失敗ケース: 本当は予約も背景の枠も 0 の worker が heartbeat で予約を 1 と名乗る(SimWorker の claims-task-reserve)と、
+  ;; coordinator が名乗りどおり手番の task を置き、本当の枠 0 を越えて task が動き、条 C17 の判断がその瞬間を名指す。
   (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene)
-                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :capacity 3 :task-reserve 1
-                                                            :claims-task-reserve 0))))
-  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.places RESERVE-TRUTH))
+                                      :workers #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :background-room 0 :task-reserve 0
+                                                            :claims-task-reserve 1))))
+  (<- taken tuple (jobs-stay-out-of-the-task-reserve scene.tasks #((WorkerReserve :worker "w1" :task-reserve 0 :background-room 0))))
   (assert taken #(taken scene))
-  (assert (all (gfor t taken (and (= t.seen.jobs 3) (= t.limit 2)))) taken)
-  (assert (not-in "trio/result" scene.rows) scene.rows))
+  (assert (all (gfor t taken (and (= t.running 1) (= t.limit 0)))) taken))
 
 
 (defk placements-after [seconds]

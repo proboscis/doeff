@@ -45,13 +45,13 @@
 (defk job-of [name needs]
   {:pre [(: name str) (: needs tuple)] :post [(: % ClusterJob)] :tags {:context "doeff-cluster-test" :role "program"}}
   "検の宣言 1 つ(入れ替えでない service)を作るため。"
-  (ClusterJob (JobSpec name "m" #() "rev") :needs needs))
+  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :peak-mib 200 :settle-mib 100))
 
 
 (defk worker-of [name seen provides]
   {:pre [(: name str) (: seen int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "program"}}
   "検の worker 1 台(最後の連絡の時刻 seen・提供する能力 provides)を作るため。"
-  (WorkerInfo name provides 10 seen :task-reserve 0))
+  (WorkerInfo name provides seen :task-reserve 0 :background-room 10))
 
 
 (defk promise-to [job worker]
@@ -172,7 +172,7 @@
 (defk beat-body [name statuses kept]
   {:pre [(: name str) (: statuses list) (: kept (| list None))] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
   "heartbeat の本文 1 つ(kept = 今持っている印の名の列 — None なら欄を書かない古い worker)を組むため。"
-  (| {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" {"python" "3.14.0"} "statuses" statuses}
+  (| {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {"python" "3.14.0"} "statuses" statuses}
      (if (is kept None) {} {"keptWhenCutOff" kept})))
 
 

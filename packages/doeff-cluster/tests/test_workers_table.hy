@@ -16,7 +16,7 @@
 
 (defn #^ WorkerInfo worker [#^ str name #^ int seen [seen-mark None] [node ""]]
   "最後の連絡が seen・印が seen-mark の worker 1 台。"
-  (WorkerInfo name #() 10 seen :task-reserve 0 :seen-mark seen-mark :node node))
+  (WorkerInfo name #() seen :task-reserve 0 :seen-mark seen-mark :node node :background-room 10))
 
 (defn table-of-workers [#* workers]
   (table-of (tuple (gfor w workers (TableWrite w.name w)))))

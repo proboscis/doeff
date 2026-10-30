@@ -12,22 +12,22 @@
 (import doeff_cluster.worker.core.room_rules [TEMPLATE-PROVIDES])
 (import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
 
-(val ROOMS {"zeus" {"capacity" 40 "taskReserve" 6 "warmServices" True "memoryMiB" 60000}
-            "k3s-1" {"capacity" 2 "taskReserve" 0 "pools" ["pool-k3s-1-k3s-2"] "memoryMiB" 1792}
-            "atlas" {"capacity" 17 "taskReserve" 3 "pools" ["pool-b" "pool-a"]}})
+(val ROOMS {"zeus" {"capacity" 40 "taskReserve" 6 "backgroundRoom" 4 "warmServices" True "memoryMiB" 60000}
+            "k3s-1" {"capacity" 2 "taskReserve" 0 "backgroundRoom" 0 "pools" ["pool-k3s-1-k3s-2"] "memoryMiB" 1792}
+            "atlas" {"capacity" 17 "taskReserve" 3 "backgroundRoom" 0 "pools" ["pool-b" "pool-a"] "memoryMiB" 8960}})
 
 
 (deftest test-every-row-becomes-a-worker-with-the-provides-it-announces
   (<- workers (get tuple #(FailoverWorker ...)) (room-file-workers (json.dumps ROOMS) #((ExtraProvides :name "zeus" :provides #("agent" "boundary-x")))))
   (assert (= workers
-             #((FailoverWorker :info (WorkerInfo :name "atlas" :provides #("host-atlas" "host-systemd-readable" "pool-a" "pool-b") :capacity 17
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 3)
-                               :memory-mib None)
-               (FailoverWorker :info (WorkerInfo :name "k3s-1" :provides #("host-k3s-1" "host-systemd-readable" "pool-k3s-1-k3s-2") :capacity 2
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 0)
+             #((FailoverWorker :info (WorkerInfo :name "atlas" :provides #("host-atlas" "host-systemd-readable" "pool-a" "pool-b") :background-room 0
+                                                 :last-seen-ms 0 :exclusive #() :task-reserve 3 :memory-mib 8960)
+                               :memory-mib 8960)
+               (FailoverWorker :info (WorkerInfo :name "k3s-1" :provides #("host-k3s-1" "host-systemd-readable" "pool-k3s-1-k3s-2") :background-room 0
+                                                 :last-seen-ms 0 :exclusive #() :task-reserve 0 :memory-mib 1792)
                                :memory-mib 1792)
-               (FailoverWorker :info (WorkerInfo :name "zeus" :provides #("agent" "boundary-x" "host-systemd-readable" "host-zeus") :capacity 40
-                                                 :last-seen-ms 0 :exclusive #() :task-reserve 6)
+               (FailoverWorker :info (WorkerInfo :name "zeus" :provides #("agent" "boundary-x" "host-systemd-readable" "host-zeus") :background-room 4
+                                                 :last-seen-ms 0 :exclusive #() :task-reserve 6 :memory-mib 60000)
                                :memory-mib 60000)))
          workers))
 
@@ -37,17 +37,17 @@
   (<- workers (get tuple #(FailoverWorker ...)) (room-file-workers (json.dumps ROOMS) #()))
   (val atlas (get workers 0))
   (<- body dict (heartbeat-body :name "atlas" :provides (tuple (sorted #("host-atlas" #* TEMPLATE-PROVIDES))) :exclusive #() :node "atlas"
-                                :capacity 17 :task-reserve 3 :versions {} :statuses [] :endpoint "" :boot "b" :boot-at 0 :tools {} :kept #()
+                                :background-room 0 :task-reserve 3 :versions {} :statuses [] :endpoint "" :boot "b" :boot-at 0 :tools {} :kept #()
                                 :pools #("pool-a" "pool-b")))
   (assert (= (get body "provides") (list atlas.info.provides)) #(body atlas)))
 
 
 (deftest test-a-row-the-worker-would-not-announce-stops-the-reading
   ;; worker が malformed と読む行は、既定の値で埋めずに名指して止まる。
-  (for [#(rows word) [[{"eos" {"capacity" 3}} "worker eos の行の capacity・taskReserve が整数でない"]
-                      [{"eos" {"capacity" 3 "taskReserve" 4}} "worker eos の taskReserve 4 が 0 以上 capacity 3 以下でない"]
-                      [{"eos" {"capacity" 3 "taskReserve" 0 "pools" ["resident-roomy"]}} "worker eos の pools の"]
-                      [{"eos" {"capacity" 3 "taskReserve" 0 "memoryMiB" -1}} "worker eos の memoryMiB -1"]]]
+  (for [#(rows word) [[{"eos" {"capacity" 3}} "worker eos の行の taskReserve が 0 以上の整数でない"]
+                      [{"eos" {"capacity" 3 "taskReserve" 0 "memoryMiB" 3840}} "worker eos の行の backgroundRoom が 0 以上の整数でない"]
+                      [{"eos" {"taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840 "pools" ["resident-roomy"]}} "worker eos の pools の"]
+                      [{"eos" {"taskReserve" 0 "backgroundRoom" 0 "memoryMiB" -1}} "worker eos の行の memoryMiB が 0 以上の整数でない: -1"]]]
     (with [error (pytest.raises ValueError)]
       (! (room-file-workers (json.dumps rows) #())))
     (assert (in word (str error.value)) #(word (str error.value)))))

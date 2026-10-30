@@ -59,7 +59,7 @@
 (deftest test-forgetting-a-silent-worker-reads-the-timing
   ;; 最後の連絡 0 の worker: 設定の忘れる期限 2 時間の刻の 1 ms 後に忘れ、その刻には残る。1.5 時間の刻の liveness-due もその刻 + 1 を返す。
   (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
-  (val worker (WorkerInfo :name "w" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0))
+  (val worker (WorkerInfo :name "w" :provides #("cpu") :background-room 1 :last-seen-ms 0 :task-reserve 0))
   (val state (note-liveness (ClusterState :workers (! (table-from-rows {"w" worker}))) (* 3600 1000) timing))
   (<- kept ClusterState (forget-silent-workers state (* 2 3600 1000) timing))
   (<- gone ClusterState (forget-silent-workers state (+ (* 2 3600 1000) 1) timing))
