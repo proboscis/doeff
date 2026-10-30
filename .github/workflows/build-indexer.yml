@@ -48,7 +48,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -90,7 +90,8 @@ jobs:
         with:
           maturin-version: v1.15.0
           target: ${{ matrix.target }}
-          args: --release --out dist -i python3.13t python3.14t
+          # pyo3 0.28 supports free-threaded Python only from 3.14, so maturin 1.13+ rejects python3.13t.
+          args: --release --out dist -i python3.14t
           working-directory: packages/doeff-indexer
           manylinux: auto
           before-script-linux: |
@@ -185,10 +186,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # requires-python is >=3.11 (doeff-indexer 0.2.0), so maturin only accepts a 3.11+ interpreter here;
+      # with only 3.10 on the runner it stops with "Need a Python interpreter to compile for Windows".
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
