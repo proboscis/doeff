@@ -101,11 +101,20 @@ def test_the_gif_runs_the_lines_of_the_demo_command_and_gets_its_answers(
         assert answers[0] == answers[1], line
 
 
-def test_readme_head_shows_the_gif_the_recorder_writes() -> None:
-    head = README.read_text(encoding="utf-8").split("\n## ", 1)[0]
-    # PyPI の頁も README を見せるので、repo の中の path でなく絶対の URL で指す。
-    assert re.search(rf"!\[[^\]]+\]\({re.escape(GIF_URL)}\)", head), (
-        f"README の最初の節の前に、alt の付いた GIF の画像({GIF_URL})が無い"
+def test_readme_opening_shows_the_gif_the_recorder_writes() -> None:
+    # The opening keeps `pip install doeff` and the 30-second example above the GIF (about 740 px
+    # tall), so the first screen shows the install line and the code; the GIF follows them, before
+    # "Why doeff?".
+    text = README.read_text(encoding="utf-8")
+    assert "\n## Why doeff?\n" in text, "README has no section 'Why doeff?'"
+    opening = text.split("\n## Why doeff?\n", 1)[0]
+    gif = re.search(rf"!\[[^\]]+\]\({re.escape(GIF_URL)}\)", opening)
+    # PyPI shows the README too, so the GIF is linked by its absolute URL, not a path in the repo.
+    assert gif, f"README has no GIF ({GIF_URL}) with alt text before 'Why doeff?'"
+    assert (
+        opening.index("pip install doeff")
+        < opening.index("\n## A 30-second example\n")
+        < gif.start()
     )
     assert _load(DEMO_DIR / "record.py").DEFAULT_OUT == GIF
 

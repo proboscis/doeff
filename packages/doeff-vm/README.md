@@ -133,7 +133,7 @@ uv run pytest packages/doeff-vm/tests
 `make sync` rebuilds the extension whenever the Rust sources change. Do not run
 `maturin develop` directly; the build goes through `tools/doeff_cargo_backend.py`.
 Dispatch micro-benchmarks live in `packages/doeff-vm-core/benches/` (see the
-[root README](https://github.com/proboscis/doeff#performance-benchmarks)).
+[contributing guide](https://github.com/proboscis/doeff/blob/main/CONTRIBUTING.md#performance-benchmarks)).
 
 ## License
 
