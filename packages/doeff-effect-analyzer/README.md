@@ -102,6 +102,12 @@ How it reads code (`python/doeff_effect_analyzer/_program_effects.py`,
   `CheckCoverage` walks the env from the innermost handler out. A clause's body
   is read the first time its `emits` is asked for — `CheckCoverage` asks only
   the clauses an effect reaches.
+- A clause that installs its own handler again (doeff-traverse's `sequential`
+  reports each item's outcome under itself) installs that same handler: its
+  clauses answer there. When an effect reaches a clause again inside what the
+  clause performs, what leaves the clause is worked out again until nothing more
+  leaves, so what a handler between the two turns makes of the inner turn's
+  effects is counted too.
 - Factories returning `doeff.handler(dispatch)`, `functools.partial(dispatch,
   ...)`, a method of an object they build (`handler(runtime.handle)`, or an
   attribute `__init__` sets to one — doeff-time's clocks), dispatchers that
