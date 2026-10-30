@@ -269,7 +269,7 @@ Hello, Grace
 
 ## 非同期ライブラリを通したI/O
 
-PythonのI/Oのライブラリは、多くが`async`です。HTTPのclient、データベースのdriver、モデルの提供元のSDKなどです。doeffは、それらを書き直せとは言いません。`Await(coroutine)`はエフェクトの1つで、`await_handler()`がそれに答えます。`await_handler()`は、プロセスで共有する裏のasyncioのループでcoroutineを走らせます。済むと、その結果で`k`を再開します。待つ間は、ほかのdoeffのタスクが走ります。イベントループは今も在ります。ただし、プログラムの上から、1つのハンドラの後ろへ移りました。
+PythonのI/Oのライブラリは、多くが`async`です。HTTPのclient、データベースのdriver、モデルの提供元のSDKなどです。doeffは、それらを書き直せとは言いません。`Await(coroutine)`はエフェクトの1つで、`await_handler`がそれに答えます。`await_handler`は、プロセスで共有する裏のasyncioのループでcoroutineを走らせます。済むと、その結果で`k`を再開します。待つ間は、ほかのdoeffのタスクが走ります。イベントループは今も在ります。ただし、プログラムの上から、1つのハンドラの後ろへ移りました。
 
 `Await`をどこに置くかで、ハンドラに何が見えるかが決まります。ここでは、モデルのSDKが返すような断片のストリームを、2通りに集めます。
 
@@ -321,7 +321,7 @@ def counted(program):  # 結果と、programが出したAwaitの全部。
 
 
 def bridged(program):  # Awaitにはasyncioで答え、その内側にListenを置く。
-    return scheduled(await_handler()(listen_handler(program)))  # 外からscheduled・await_handler・listen_handlerの順に付ける。
+    return scheduled(await_handler(listen_handler(program)))  # 外からscheduled・await_handler・listen_handlerの順に付ける。
 ```
 
 ```python
@@ -380,7 +380,7 @@ python drive.py  # awaitの行き先と、1回きりのcoroutineを走らせる�
 python stream.py  # 断片ごとのAwaitと、1つのAwaitを比べる。
 ```
 
-この記事の例はどれも、PyPIのdoeff 0.8.0で、載せたとおりに走ります。完全なファイルは、[examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async)にあります。docsの章[Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md)は、`Await`・`Spawn`・`Gather`・`Race`と取り消しを扱います。FAQの[How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio)も、同じ問いに答えています。
+この記事の例はどれも、doeffだけで、載せたとおりに走ります。完全なファイルは、[examples/yield_and_async](https://github.com/proboscis/doeff/tree/main/examples/yield_and_async)にあります。docsの章[Async Effects](https://github.com/proboscis/doeff/blob/main/docs/04-async-effects.md)は、`Await`・`Spawn`・`Gather`・`Race`と取り消しを扱います。FAQの[How is it different from asyncio?](https://github.com/proboscis/doeff/blob/main/docs/faq.md#how-is-it-different-from-asyncio)も、同じ問いに答えています。
 
 [1本目の入門](doeff-main.md)は、時間・並行・リトライ・予算・I/Oのハンドラを、1つのプログラムの周りに重ねます。時計をハンドラにし、何日分もの待ちを数ミリ秒で走らせる話は、3本目の[テストで20秒待つのをやめる](doeff-time.md)にあります。
 
@@ -390,12 +390,12 @@ asyncioのコードで、イベントループが邪魔になる所はありま�
 
 ## 参考
 
-この記事のコードは、2026年10月29日に、PyPIのdoeff 0.8.0で確かめました。Pythonは3.11・3.12・3.13・3.14で試しました。
+この記事のコードは、2026年10月30日に、doeffのmainから組んだwheelで確かめました。Pythonは3.14で試しました。
 
 - [Python公式: Coroutine objects](https://docs.python.org/3/reference/datamodel.html#coroutine-objects)
 - [Python公式: Coroutines and tasks](https://docs.python.org/3/library/asyncio-task.html)
 - [Python公式: contextvars](https://docs.python.org/3/library/contextvars.html)
 - [PEP 492 – Coroutines with async and await syntax](https://peps.python.org/pep-0492/)
-- [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/9adc4f8e657a552f5253d8a7b422363789c2608c/packages/doeff-core-effects/doeff_core_effects/handlers.py)
+- [Awaitの橋渡しの実装(await_handlerの説明に、取り消しと共有ループの約束)](https://github.com/proboscis/doeff/blob/a2e13c527c98754f25eb2f19871edbac8073eccf/packages/doeff-core-effects/doeff_core_effects/_handlers.py#L552)
 - 前の回:[公開APIの型の穴をテストで塞ぎ、黙って開かせない](doeff-types.md)
 - 次の回:[ADRを書いて終わりにするのをやめる](doeff-adr.md)
