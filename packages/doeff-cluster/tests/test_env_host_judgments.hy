@@ -50,7 +50,7 @@
   WarmChildView WarmChildMark])
 (import doeff_cluster.worker.core.policy [plan])
 (import doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 (import tests.clock_fixtures [clock-at])
 

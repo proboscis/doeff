@@ -48,7 +48,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import FrameType
 
-from doeff_cluster.foundation.process_environ import child_environ, named_environ
+from doeff_cluster._foundation.process_environ import child_environ, named_environ
 from doeff_cluster.worker.entry.line_stamp import (
     JOB_LOG_ENV_NAMES,
     OutputLines,

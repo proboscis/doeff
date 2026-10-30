@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.intent.remote_model [VersionMismatch])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import tests.link_rig [LinkRig])
 (import tests.fixtures.entry_programs [based-add])
 

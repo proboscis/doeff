@@ -22,8 +22,8 @@
 (import doeff_core_effects [reader])
 (import doeff_core_effects [os-file-handler])
 (import doeff_time [GetMonotonic sync-time-handler])
-(import doeff_cluster.foundation.record_log [Recording read-recording ReplayFinished ReplayDiverged])
-(import doeff_cluster.foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
+(import doeff_cluster._foundation.record_log [Recording read-recording ReplayFinished ReplayDiverged])
+(import doeff_cluster._foundation.record_handlers [ReplayState replay-report RECORD-MODE-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 
 

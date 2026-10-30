@@ -36,7 +36,7 @@
 (import doeff_cluster.shared.protocol.remote [task-submit-body])
 (import doeff_cluster.shared.intent.remote_model [RemoteJob TaskSucceeded])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-outcome])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid InvalidKind])
 (import doeff_cluster.shared.entry.service_build [job system-of])

@@ -47,7 +47,7 @@
 (import doeff_core_effects [EnvEntry ReadEnvironment RunProcess ProcessOutcome StartProcess ProcessStarted ProcessNotStarted AwaitProcessExit PollProcess ProcessExited ProcessRunning ProcessNotChild])
 (import doeff_core_effects [ForkFromWarm WarmForked WarmRefused AwaitWarmChildExit PollWarmChild WarmExited WarmRunning WarmLost])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])

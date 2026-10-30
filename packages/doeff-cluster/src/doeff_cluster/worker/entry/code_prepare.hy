@@ -29,7 +29,7 @@
 ;;;             1 つ用意し終えるたびに進めさせる(card ki-6401ff10af71)。呼び手の準備は印の
 ;;;             時刻で停滞を見分けるので、disk が遅いだけの歩みを止まりと読ませない。
 ;;;   3 用意      用意する物を全部の木から集め、source の大きい順に 1 つの process の pool へ 1 つずつ渡す(BakeSources — 答え手は焼きの
-;;;               道具 foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
+;;;               道具 _foundation/bytecode_pool.hy を子 process で起こす)— 1 file の秒の偏りが大きい(大半は Hy の macro の展開)ので、
 ;;;               名の順・束で渡すと最後に遅い file を 1 core で待つ。並列数の既定は cgroup の CPU の上限(pod の limits・天井 BAKE-JOBS-CEILING)。道具は 1 つずつ
 ;;;               保存先の code を引き(stored)、無ければ焼いて足す(rebuilt)。木に既に在る .pyc が今の source と macro に合う物は
 ;;;               焼かずに残す(reused — 同じ commit の木を hardlink で写した root)。
@@ -98,7 +98,7 @@
 (val BAKE-PLAN (str (/ WORKER-CODE "worker" "core" "bake_plan.hy")))
 (val BAKE-PLAN-MODULE "doeff_cluster_worker_bake_plan")
 ;; 焼きの道具(生の process の pool を持つ foundation の console の道具)。
-(val POOL-TOOL (str (/ WORKER-CODE "foundation" "bytecode_pool.hy")))
+(val POOL-TOOL (str (/ WORKER-CODE "_foundation" "bytecode_pool.hy")))
 ;; 保存先の入口(worker の版の doeff-hy の code_store — worker のコード doeff_cluster は doeff の checkout の packages/doeff-cluster/src/ に在る)と、
 ;; その module 名(root の版の doeff_hy_bytecode_guard._code_store と重ならない名)。
 (val CODE-STORE (str (/ (. WORKER-CODE parent parent parent) "doeff-hy" "src" "doeff_hy_bytecode_guard" "_code_store.py")))
@@ -351,7 +351,7 @@
 
 
 ;; --- 焼きの効果の訳し --------------------------------------------------------------------
-;; 焼きの道具 foundation/bytecode_pool.hy はこの file と同じく準備する root の venv の python で起こす(root の側から import するのは
+;; 焼きの道具 _foundation/bytecode_pool.hy はこの file と同じく準備する root の venv の python で起こす(root の側から import するのは
 ;; python_bytecode と doeff-hy の bytecode-is-current だけ・保存先の入口は worker の版の code_store)。用意する物を標準入力で渡し、
 ;; 結果の行を標準出力から読む。
 

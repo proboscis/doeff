@@ -12,7 +12,7 @@
 (import doeff_core_effects [slog-handler])
 (import doeff_core_effects [os-file-handler])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster [WalStore])
 (import doeff_cluster.coordinator.entry.main [load-state])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])

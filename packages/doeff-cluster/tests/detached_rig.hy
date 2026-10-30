@@ -24,7 +24,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [responded])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [spec-program-file])
-(import doeff_cluster.foundation.host_contract [environ-table-reader])
+(import doeff_cluster [environ-table-reader])
 (import doeff_cluster.worker.entry.job_entry [read-program])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs JobStatus] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded])

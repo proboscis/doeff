@@ -7,9 +7,9 @@
 (import sys)
 (import doeff [run with-handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_cluster.foundation.coordinator_inbox [StopState stop-on-signals])
+(import doeff_cluster._foundation.coordinator_inbox [StopState stop-on-signals])
 (import doeff_cluster._record_store.core.program [store-loop])
-(import doeff_cluster.foundation.record_inbox [RecordInbox])
+(import doeff_cluster._foundation.record_inbox [RecordInbox])
 (import doeff_cluster._record_store.entry.handler_sets [production-handlers])
 
 

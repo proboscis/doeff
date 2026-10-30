@@ -34,11 +34,11 @@
 (import doeff [Program])
 (import doeff [GetBoundaries K WithObserveRaw Callable :as VmCallable])
 (import doeff_core_effects [Spawn Wait CreatePromise CompletePromise Promise PRIORITY-IDLE])
-(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
+(import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE DIVERGE INTERN-MIN-CHARS BLOB-MEMORY-MAX FORMAT-VERSION BlobMemory
                                          EffectCodec HandleTable UnencodableValue UnrecordableEffect
                                          encode-value encode-error decode-value decode-error canonical intern-json
                                          codec-of mode-of args-of subject-of])
-(import doeff_cluster.foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize
+(import doeff_cluster._foundation.record_log [ROOT ReplayFinished ReplayDiverged Entry Recording WatchedRef match-step diff-row summarize
                                               entry-of queue-of recorded-args])
 
 

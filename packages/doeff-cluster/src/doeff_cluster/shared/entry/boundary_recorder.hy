@@ -6,8 +6,8 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import doeff_core_effects [Ask])
 (import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.foundation.host_contract [HostContract])
-(import doeff_cluster.foundation.record_handlers [RecordingInstaller ReplayState recording-handler effect-replayer
+(import doeff_cluster._foundation.host_contract [HostContract])
+(import doeff_cluster._foundation.record_handlers [RecordingInstaller ReplayState recording-handler effect-replayer
                                                   RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY RECORD-MODES])
 
 

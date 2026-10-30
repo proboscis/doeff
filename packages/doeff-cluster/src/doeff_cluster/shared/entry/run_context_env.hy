@@ -7,7 +7,7 @@
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import doeff [run])
-(import doeff_cluster.foundation.process_versions [this-process-environ])
+(import doeff_cluster._foundation.process_versions [this-process-environ])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [context-of-environ])
 

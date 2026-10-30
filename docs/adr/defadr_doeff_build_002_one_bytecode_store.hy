@@ -26,7 +26,7 @@
 
 ;; worker の bytecode の準備の道具(入口を worker の版の file として path で読む所)と、起動の script(保存先の既定を置く所)。
 (val PREPARE-TOOL "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy")
-(val POOL-TOOL "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy")
+(val POOL-TOOL "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy")
 (val BOOT-SCRIPT "packages/doeff-cluster/deploy/boot.sh")
 (val UPKEEP "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy")
 
@@ -40,7 +40,7 @@
 ;; よいのは焼く道具の module と模擬の世界だけ(R3b — 木を置く翻訳や準備の program が .pyc を置くと、前の root からの 2 本目の引き継ぎになる)。
 (val PLACEMENT-TOKEN (re.compile r"[\"']__pycache__[\"']|[\"']\.pyc[\"']|\bpyc[-_]path\b|\bcache[-_]from[-_]source\b"))
 (val CLUSTER-SRC "packages/doeff-cluster/src/doeff_cluster")
-(val BYTECODE-TOOL-FILES #{"packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
+(val BYTECODE-TOOL-FILES #{"packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"
                            "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
                            "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
                            "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
@@ -128,7 +128,7 @@
   :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py"
           "packages/doeff-hy/src/doeff_hy_bytecode_guard/_loader_hooks.py"
           "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
-          "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"
           "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
           "packages/doeff-cluster/deploy/boot.sh"
           "docs/adr/defadr_doeff_build_002_one_bytecode_store.hy"]
@@ -205,7 +205,7 @@
        (val found (run (placement-files repo-root)))
        (val violations (run (placement-violations found)))
        (assert (= violations []) (+ ".pyc を root に置く 2 本目の道(ADR-DOE-BUILD-002 R3b): " (str violations)))
-       (assert (in "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy" found) "焼く道具の綴りを見つけない — 走査の範囲が壊れた"))
+       (assert (in "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy" found) "焼く道具の綴りを見つけない — 走査の範囲が壊れた"))
      (deftest test-adr-doe-build-002-the-worker-defaults-the-store-under-its-state
        (val repo-root (. (Path __file__) parent parent parent))
        (val boot (.read-text (/ repo-root BOOT-SCRIPT) :encoding "utf-8"))
@@ -238,6 +238,6 @@
        (assert (not (run (spells-bytecode-placement ";; 追跡しない物(.venv・__pycache__)は写さない\n"))))
        (assert (not (run (spells-bytecode-placement "\"追跡しない物(.venv・__pycache__・焼いた印)は写さない\"\n"))))
        (val tree "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy")
-       (assert (= (len (run (placement-violations (frozenset #{tree "packages/doeff-cluster/src/doeff_cluster/foundation/bytecode_pool.hy"})))) 1))
+       (assert (= (len (run (placement-violations (frozenset #{tree "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"})))) 1))
        (assert (= (run (placement-violations (frozenset #{"packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"}))) [])))]
   :plans [])

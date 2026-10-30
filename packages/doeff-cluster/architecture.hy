@@ -188,26 +188,28 @@
              :summary "intent を相手の話し方へ訳す handler"
              :roles [protocol]
              :imports [protocol intent core])
-           (layer foundation
+           ;; 層の名 = root の下の dir の名(linter は :foundation の層を <root>/<層の名> に置く)。区画を _foundation へ隠した
+           ;; (ADR-DOE-API-001 R15・card ki-56d2dcf86f01)ので層の名も _foundation。module の :role は foundation のまま。
+           (layer _foundation
              :summary "汎用の I/O(環境で差し替えるのはここだけ)— まだ src/doeff_cluster/ に平たく在る coordinator・worker・土台の handler は移しの子で分ける"
              :roles [foundation]
-             :imports [foundation]
+             :imports [_foundation]
              ;; process_environ = 起動の script の入口(worker/entry/boot_wheel)が uv build の子へ渡す環境を、この process の環境変数から組む
              ;; 読み。doeff-vm を入れる前の venv の python で走るので doeff を import できず、Python の module(DOEFF004 の母集団)になる。
              ;; doeff_cluster が __init__.py の無い namespace package だった頃に module の名が素の stem になったので、file を path で名指す(#2934 の形)。
-             :files ["src/doeff_cluster/foundation/process_environ.py"]
+             :files ["src/doeff_cluster/_foundation/process_environ.py"]
              :exempt [(rule DOEFF004 "起動の script が doeff-vm を入れる前の venv の python で読む Program の外の code で、子 process の環境を組む生の環境変数の読みそのもの(生の副作用に触ってよい foundation の層の役目)— 設定を Ask で受ける入口が無い")])
            (layer entry
              :summary "入口 — 系の宣言・handler の並び・薄い main"
              :roles [system process main]
-             :imports [core intent protocol foundation entry])]
+             :imports [core intent protocol _foundation entry])]
   :shared "shared"
-  :foundation foundation
+  :foundation _foundation
   ;; 本物の coordinator と worker を 1 process・仮想の時計で走らせる模擬の環境(sim-cluster の local・環境の世界 env_world・git の台本
   ;; checkout_git_script・worktree の git の台本 worktree_git_script)。全 service の core と entry を読むので、どの service にも属さない(DOEFF114・115 の外・ほかの規則は当たる)。
   ;; 本番の code はこの dir を import しない。
   ;; JSON の値を手で綴ってよい foundation の module — 盤の送受信と、effect の記録の綴り(record_codec)と記録の形(record_log)(#2580)。
-  :wire-modules ["doeff_cluster.shared.protocol.board_requests" "doeff_cluster.foundation.record_codec" "doeff_cluster.foundation.record_log"]
+  :wire-modules ["doeff_cluster.shared.protocol.board_requests" "doeff_cluster._foundation.record_codec" "doeff_cluster._foundation.record_log"]
   :verification-environment "_sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"

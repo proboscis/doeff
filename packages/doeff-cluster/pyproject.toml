@@ -59,8 +59,9 @@ disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF124", "DOEFF125
 # 読みは違反)で効かせた — それ以外の層は effect を出し、foundation の答え手(os-file-handler・subprocess-handler・時計の handler など)
 # が答える(#3014)。当たりは 0 にしてから効かせた(登録簿に載せて通さない)。残る warning 1 件 = coordinator/protocol/store.hy の
 # (.exists store)(置き場の Protocol の method・書き方では Path.exists と見分けられない弱い証拠 — cisco-c8 の決め・#3014)。
+# 層の名は architecture.hy の :foundation の層の名(区画を _foundation へ隠した — ADR-DOE-API-001 R15)。
 [tool.doeff-linter.raw_side_effects]
-allowed_layers = ["foundation"]
+allowed_layers = ["_foundation"]
 
 [tool.doeff-linter.definitions]
 paths = ["doeff_cluster", "../tests"]

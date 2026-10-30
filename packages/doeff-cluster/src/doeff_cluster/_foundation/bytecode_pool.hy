@@ -2,7 +2,7 @@
 ;;; が、準備する root の venv の python で子 process として起こす)。1 file ずつ独立で CPU だけを使うので、並列数の process に 1 つずつ
 ;;; 渡す(chunksize 1 — 束で渡すと遅い file を含む束を 1 core が抱える)。渡す順は呼び手が決める(大きい source から)。
 ;;;
-;;;   python -m hy <worker のコード>/doeff_cluster/foundation/bytecode_pool.hy --jobs N --store-module <code_store.py>
+;;;   python -m hy <worker のコード>/doeff_cluster/_foundation/bytecode_pool.hy --jobs N --store-module <code_store.py>
 ;;;       [--store <保存先の dir>] [--progress <進みの印の file>] [--path <dir> …] < 焼く物の行
 ;;;
 ;;; 標準入力 = 焼く物 1 つ 1 行の `<木の path>\t<相対 path>\t<module 名>`(この順に pool へ渡す)。
@@ -191,7 +191,7 @@
   (.add-argument parser "--progress" :default None :help "進みの印の file(1 つ用意し終えるたびに時刻を進める・無ければ触らない)")
   (.add-argument parser "--path" :action "append" :help "焼く process の import の路の先頭に足す dir(前が先)")
   (setv args (.parse-args parser))
-  ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/foundation)が sys.path の先頭に入る。焼く木の module 名が
+  ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/_foundation)が sys.path の先頭に入る。焼く木の module 名が
   ;; そこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))

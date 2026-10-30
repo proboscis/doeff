@@ -22,7 +22,7 @@
 ;;;
 ;;; 仕組み: 参照を API server の GET 1 本へ言い換え、doeff の汎用の effect(token の file の ReadText と HttpRequest・書き出しは file の effect・
 ;;; 機体の事実は ReadEnvironment)で問う。言い換えは環境で変わらず、本番と模擬で同じこの関数が動く。環境ごとに違うのは外側だけ(本番 =
-;;; worker の file と、区画の CA で API server を検める接続 doeff_cluster.foundation.in_cluster_api の in-cluster-api-routed・模擬 = memory の
+;;; worker の file と、区画の CA で API server を検める接続 doeff_cluster._foundation.in_cluster_api の in-cluster-api-routed・模擬 = memory の
 ;;; file と API server の相手役 doeff_cluster._sim.k8s_supplied)。区画の CA で検める接続は使い手の process の外側が並べる(宛先が API server の
 ;;; 要求だけを区画の CA で検め、job の本体が外の系へ出す HTTP は既定の CA の client のまま)。
 ;;;
@@ -74,7 +74,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 
 ;; 自区画の API server と、k8s が worker の Pod に必ず置く ServiceAccount の dir の file。区画の CA で検める答え手
-;; (doeff_cluster.foundation.in_cluster_api)も同じ字を持つ(層 foundation は protocol を import できない — 同じ字である事は検が縛る)。
+;; (doeff_cluster._foundation.in_cluster_api)も同じ字を持つ(層 foundation は protocol を import できない — 同じ字である事は検が縛る)。
 (val KUBE-API "https://kubernetes.default.svc")
 (val SERVICE-ACCOUNT-DIR "/var/run/secrets/kubernetes.io/serviceaccount")
 (val SERVICE-ACCOUNT-TOKEN-FILE (+ SERVICE-ACCOUNT-DIR "/token"))

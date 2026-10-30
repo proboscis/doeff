@@ -16,7 +16,7 @@
     木と展開が依った macro の記録を、その code の隣に足す(:func:`add_tree`)。doeff-effect-analyzer が同じ source を展開し直す前に、今の
     環境の macro で照らして引く(:func:`tree_entries`)。bytecode の保存先は worker の上の job が全部で共有するので、どの job が compile
     しても、後から読む analyzer(日次の閉じの検)が同じ保存先から引ける(card ki-5c1fc605c17d)。
-  - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
+  - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と _foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
     source の code(:func:`current_code`・:func:`add_code`)と import の名を引き、無い物だけを compile して足す。道具は準備する root の venv の python で走るので、root の版の
     doeff-hy でなく worker の版のこの file を path で読む — だから標準 library だけを import する(この package の他の module も読まない)。
 

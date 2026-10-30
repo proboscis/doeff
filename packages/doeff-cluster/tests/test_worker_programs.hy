@@ -13,7 +13,7 @@
 (import doeff_cluster.worker.core.launch [spec-program-file])
 (import doeff_cluster.shared.core.capabilities [environ-pairs])
 (import tests.host_rig [host-settings launched])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.coordinator.core.cluster_policy [JOB-ENTRY])
 

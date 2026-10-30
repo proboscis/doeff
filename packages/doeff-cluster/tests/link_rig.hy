@@ -22,7 +22,7 @@
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link accepted-tasks fetched-programs status-rows])
 (import doeff_cluster.worker.core.launch [program-file program-file-text])
 (import tests.transport_http [transport-http])
-(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 ;; 口の送り方(本番の組み立てと同じく一巡し直さない — 届かない拍は次の拍で送り直す)。
