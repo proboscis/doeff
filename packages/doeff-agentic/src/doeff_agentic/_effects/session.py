@@ -3,11 +3,14 @@
 
 from dataclasses import dataclass
 
+from doeff import EffectBase
+from doeff_agentic._types import AgenticSessionHandle
+
 from .workflow import AgenticEffectBase
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticCreateSession(AgenticEffectBase):
+class AgenticCreateSession(AgenticEffectBase, EffectBase[AgenticSessionHandle]):
     """Create a new agent session."""
 
     name: str
@@ -18,7 +21,7 @@ class AgenticCreateSession(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticForkSession(AgenticEffectBase):
+class AgenticForkSession(AgenticEffectBase, EffectBase[AgenticSessionHandle]):
     """Fork an existing session."""
 
     session_id: str
@@ -27,7 +30,7 @@ class AgenticForkSession(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticGetSession(AgenticEffectBase):
+class AgenticGetSession(AgenticEffectBase, EffectBase[AgenticSessionHandle]):
     """Get an existing session by ID or name."""
 
     session_id: str | None = None
@@ -35,14 +38,14 @@ class AgenticGetSession(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticAbortSession(AgenticEffectBase):
+class AgenticAbortSession(AgenticEffectBase, EffectBase[None]):
     """Abort a running session."""
 
     session_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticDeleteSession(AgenticEffectBase):
+class AgenticDeleteSession(AgenticEffectBase, EffectBase[bool]):
     """Delete an existing session."""
 
     session_id: str

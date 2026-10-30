@@ -36,17 +36,6 @@
   "doeff-agentic": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_agentic": [
-      "AgenticEndOfEvents",
-      "AgenticEvent",
-      "AgenticMessageHandle",
-      "AgenticSessionHandle",
-      "AgenticSessionStatus",
-      "AgenticWorkflowHandle",
-      "AgenticWorkflowStatus"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_agentic": [
       "VisualInterceptorConfig"
@@ -2447,12 +2436,6 @@
       "doeff_claude_code.values"
      ]
     },
-    "外れ — effect に答えの型を書く": {
-     "doeff_claude_code.values": [
-      "AutocompactWindow",
-      "PermissionAnswer"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_claude_code.effects": [
       "SessionState",
@@ -2504,6 +2487,7 @@
       "UnknownTurn"
      ],
      "doeff_claude_code.values": [
+      "AutocompactWindow",
       "McpServer",
       "SessionOrigin",
       "TranscriptCarry"
@@ -2514,11 +2498,6 @@
   "doeff-claude-judge": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_claude_judge": [
-      "MalformedAnswer"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_claude_judge": [
       "ClaudeJudgeTarget",
@@ -9912,16 +9891,7 @@
   },
   "doeff-docker": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_docker.effects": [
-      "ShellRunResult"
-     ],
-     "doeff_docker.handlers.shell": [
-      "ShellRunResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-domain": {
    "範囲": "決まりの範囲",
@@ -10209,15 +10179,6 @@
   "doeff-gemini": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_gemini": [
-      "CostInfo",
-      "GeminiCallResult",
-      "GeminiImageEditResult",
-      "ImageResult",
-      "TokenUsage"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_gemini": [
       "APICallMetadata",
@@ -10234,12 +10195,6 @@
   "doeff-git": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_git": [
-      "BranchRef",
-      "PRHandle"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_git": [
       "MockGitRuntime"
@@ -10282,13 +10237,7 @@
   },
   "doeff-image": {
    "範囲": "決まりの範囲",
-   "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_image": [
-      "ImageResult"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-indexer": {
    "範囲": "決まりの範囲",
@@ -10311,12 +10260,6 @@
   "doeff-llm": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_llm": [
-      "CostInfo",
-      "TokenUsage"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_llm": [
       "Message"
@@ -10331,11 +10274,6 @@
   "doeff-notify": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_notify": [
-      "NotificationResult"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_notify": [
       "Channel",
@@ -10348,13 +10286,6 @@
   "doeff-openai": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_openai": [
-      "CostInfo",
-      "StreamChunk",
-      "TokenUsage"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_openai.handlers": [
       "MockOpenAIConfig",
@@ -10378,12 +10309,6 @@
   "doeff-openrouter": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_openrouter.types": [
-      "CostInfo",
-      "TokenUsage"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_openrouter.handlers": [
       "MockOpenRouterRuntime"
@@ -11823,12 +11748,6 @@
   "doeff-seedream": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_seedream": [
-      "ImageResult",
-      "SeedreamImageEditResult"
-     ]
-    },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_seedream": [
       "CostEstimate",
@@ -11840,15 +11759,6 @@
   "doeff-system-one": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_system_one": [
-      "Answer",
-      "Verdict",
-      "answer_choice",
-      "answer_noul",
-      "answer_score"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_system_one": [
       "ScriptedJudgeState"
@@ -11862,6 +11772,9 @@
     },
     "外れ — effect の欄に型を書くか内側へ移す": {
      "doeff_system_one": [
+      "answer_choice",
+      "answer_noul",
+      "answer_score",
       "choice",
       "noul",
       "score"
@@ -11872,12 +11785,6 @@
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_time": [
-      "RaceOutcome",
-      "TicksOutcome"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_time": [
       "SimClock"

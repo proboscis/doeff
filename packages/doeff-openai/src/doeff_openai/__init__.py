@@ -62,7 +62,6 @@ from doeff_openai._types import (
     EmbeddingRequest,
     # Enums
     OpenAIModel,
-    StreamChunk,
     # Data classes
     TokenUsage,
 )
@@ -81,7 +80,6 @@ __all__ = [
     # Types
     "OpenAIModel",
     "PricingError",
-    "StreamChunk",
     "StreamingChatCompletion",
     "StructuredOutput",
     "TokenUsage",

@@ -15,13 +15,11 @@ from ._structured_llm import structured_llm
 
 __all__ = [
     "APICallMetadata",
-    "CostInfo",
     "MockOpenRouterRuntime",
     "OpenRouterResponseError",
     "RouterChat",
     "RouterStreamingChat",
     "RouterStructuredOutput",
-    "TokenUsage",
     "mock_handlers",
     "openrouter_mock_handler",
     "openrouter_production_handler",
@@ -36,14 +34,10 @@ __all__ = [
 if TYPE_CHECKING:
     from doeff_openrouter._handlers.testing import MockOpenRouterRuntime as MockOpenRouterRuntime
     from doeff_openrouter._types import APICallMetadata as APICallMetadata
-    from doeff_openrouter._types import CostInfo as CostInfo
-    from doeff_openrouter._types import TokenUsage as TokenUsage
 
 _LAZY_EXPORTS: dict[str, str] = {
     "MockOpenRouterRuntime": "doeff_openrouter._handlers.testing",
     "APICallMetadata": "doeff_openrouter._types",
-    "CostInfo": "doeff_openrouter._types",
-    "TokenUsage": "doeff_openrouter._types",
 }
 
 

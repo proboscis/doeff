@@ -32,8 +32,6 @@ from ._types import (
     CostInfo,
     GeminiCallResult,
     GeminiCostEstimate,
-    GeminiImageEditResult,
-    TokenUsage,
 )
 
 __all__ = [
@@ -47,7 +45,6 @@ __all__ = [
     "GeminiCostEstimate",
     "GeminiEmbedding",
     "GeminiImageEdit",
-    "GeminiImageEditResult",
     "GeminiStreamingChat",
     "GeminiStructuredOutput",
     "ImageEdit",
@@ -55,7 +52,6 @@ __all__ = [
     "ImageResult",
     "LocalFileContentPart",
     "TextContentPart",
-    "TokenUsage",
     "UriContentPart",
     "default_gemini_cost_handler",
     "edit_image__gemini",

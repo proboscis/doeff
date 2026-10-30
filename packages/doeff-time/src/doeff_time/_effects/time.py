@@ -117,7 +117,7 @@ class RaceOutcome(Generic[_T]):
 
 
 @dataclass(frozen=True)
-class RaceWithinEffect(EffectBase, Generic[_T]):
+class RaceWithinEffect(EffectBase[RaceOutcome[_T]], Generic[_T]):
     """Wait for the first of several scheduler futures or tasks for at most ``seconds``.
 
     WaitWithin for a Race: answers ``RaceOutcome(value, False)`` with the value of the first of ``futures``
@@ -156,7 +156,7 @@ class TicksOutcome(Generic[_T]):
 
 
 @dataclass(frozen=True)
-class WaitTicksEffect(EffectBase, Generic[_T]):
+class WaitTicksEffect(EffectBase[TicksOutcome[_T]], Generic[_T]):
     """Wait for a scheduler future across a run of ``count`` ticks spaced ``every`` seconds, without waking
     at each tick.
 

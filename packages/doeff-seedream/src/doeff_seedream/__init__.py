@@ -1,6 +1,6 @@
 """doeff-seedream: ByteDance Seedream helpers for doeff."""
 
-from doeff_image import ImageEdit, ImageGenerate, ImageResult
+from doeff_image import ImageEdit, ImageGenerate
 
 from ._costs import CostEstimate
 from ._effects import SeedreamGenerate, SeedreamStructuredOutput
@@ -11,7 +11,6 @@ __all__ = [
     "CostEstimate",
     "ImageEdit",
     "ImageGenerate",
-    "ImageResult",
     "SeedreamGenerate",
     "SeedreamImage",
     "SeedreamImageEditResult",
