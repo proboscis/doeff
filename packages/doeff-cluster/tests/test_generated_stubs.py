@@ -19,11 +19,12 @@ from doeff_hy._static_stub import UsedModule, stale_in, strict_errors, unknown_i
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 # 使い手の repo の main が import する名のうち、道具の .pyi で宣言する module の物(module ごと・2026-10-02 の数え)。
+# module が空の行は根の入口(区画 sim を _sim へ移した後の使い手の形 (import doeff_cluster [...]) — ADR-DOE-API-001 R15)。
 USED = (
     UsedModule("shared.protocol.checkout_reads", ("SENDER-SOURCE-DIR", "checkout-reads", "checkout-root", "checkout-state-at", "file-sha256")),
     UsedModule("shared.protocol.inbox", ("http-request",)),
-    UsedModule("sim.checkout_git_script", ("GitCheckout", "GitRemote", "GitRev", "git-command")),
-    UsedModule("sim.worktree_git_script", ("OriginBranch", "sha-of", "worktree-git-answer", "worktree-git-command")),
+    UsedModule("", ("GitCheckout", "GitRemote", "GitRev", "git-command")),
+    UsedModule("", ("OriginBranch", "sha-of", "worktree-git-answer", "worktree-git-command")),
     UsedModule("shared.core.job_rules", ("spec-hash",)),
     UsedModule("shared.intent.env_marker_model", ("ENV-MARKER", "FileSha256")),
     UsedModule("shared.entry.cluster_foundation", ("lease-holder-of", "with-cluster-handlers")),
@@ -74,7 +75,7 @@ USED = (
         ("ClusterJob", "ClusterNaming", "ClusterState", "RolloutSpec", "RolloutStatus", "TargetView"),
     ),
     # 手元の 1 台の cluster の入口と置き方(#3033 の 2b — 使い手の日次の検が同じ Program を手元の 1 台で走らせる)。
-    UsedModule("sim.machine", ("GitSource", "LocalMachine", "local-machine-cluster")),
+    UsedModule("", ("GitSource", "LocalMachine", "local-machine-cluster")),
     # 時刻の物差し(#3366 — 使い手の版上げの名簿の読みが Program で今の時刻を取る)。
     UsedModule("shared.core.clock", ("now-epoch-ms",)),
     # 退きの知らせ(#3672 — 使い手の常駐の job が入れ替えで退く事を出来事で知り、本番の答え手を土台に並べる)。
@@ -87,8 +88,8 @@ USED = (
     UsedModule("shared.intent.supplied_model", ("SuppliedValueUnavailable", "WorkerFactMissing", "WorkerFactName")),
     UsedModule("shared.protocol.supplied_values", ("supplied-setting", "supplied-directory", "worker-fact", "SERVICE-ACCOUNT-TOKEN-FILE")),
     UsedModule("foundation.in_cluster_api", ("CLUSTER-API", "SERVICE-ACCOUNT-CA-PATH", "in-cluster-api-routed")),
-    UsedModule("sim.k8s_supplied", ("HeldEntry", "HeldObject", "ReadGrant", "SuppliedCluster", "held-value-of", "held-whole-of",
-                                    "read-grant-of", "service-account-token-file", "k8s-supplied-peer")),
+    UsedModule("", ("HeldEntry", "HeldObject", "ReadGrant", "SuppliedCluster", "held-value-of", "held-whole-of",
+                    "read-grant-of", "service-account-token-file", "k8s-supplied-peer")),
     # 1 台が止まっても常駐の job が残りの worker の枠と memory に入るか(N+1)の判断(card ki-4689c7008147 — 使い手の枠の検と宣言の前の
     # 照らしが値を作って呼ぶ)。
     UsedModule("coordinator.intent.failover_model", ("FailoverWorker", "ResidentJob", "ExemptJob", "KeptApart")),
