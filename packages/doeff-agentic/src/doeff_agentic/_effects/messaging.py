@@ -4,13 +4,18 @@
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_agentic._types import AgenticMessage
+from doeff_agentic._types import (
+    AgenticEndOfEvents,
+    AgenticEvent,
+    AgenticMessage,
+    AgenticMessageHandle,
+)
 
 from .workflow import AgenticEffectBase
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticSendMessage(AgenticEffectBase):
+class AgenticSendMessage(AgenticEffectBase, EffectBase[AgenticMessageHandle]):
     """Send a message to a session."""
 
     session_id: str
@@ -29,7 +34,7 @@ class AgenticGetMessages(AgenticEffectBase, EffectBase[list[AgenticMessage]]):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticNextEvent(AgenticEffectBase):
+class AgenticNextEvent(AgenticEffectBase, EffectBase[AgenticEvent | AgenticEndOfEvents]):
     """Wait for the next event from a session."""
 
     session_id: str

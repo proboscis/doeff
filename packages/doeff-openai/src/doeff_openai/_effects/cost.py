@@ -12,11 +12,11 @@ and an unhandled effect becomes a loud ``RuntimeError``.
 from dataclasses import dataclass
 
 from doeff import EffectBase
-from doeff_openai._types import TokenUsage
+from doeff_openai._types import CostInfo, TokenUsage
 
 
 @dataclass(frozen=True)
-class CalculateCost(EffectBase):
+class CalculateCost(EffectBase[CostInfo]):
     """Compute the billed cost of an OpenAI API response.
 
     A handler resolves this by reading pricing (per-1k token rates for

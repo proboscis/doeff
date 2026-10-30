@@ -7,10 +7,11 @@ from typing import Any
 from PIL import Image
 
 from doeff import EffectBase
+from doeff_image._types import ImageResult
 
 
 @dataclass(frozen=True, kw_only=True)
-class ImageEdit(EffectBase):
+class ImageEdit(EffectBase[ImageResult]):
     """Edit or transform one or more images with text guidance."""
 
     prompt: str

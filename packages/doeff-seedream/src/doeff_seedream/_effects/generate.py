@@ -8,10 +8,11 @@ from warnings import warn
 from PIL import Image
 
 from doeff import EffectBase
+from doeff_seedream._types import SeedreamImageEditResult
 
 
 @dataclass(frozen=True, kw_only=True)
-class SeedreamGenerate(EffectBase):
+class SeedreamGenerate(EffectBase[SeedreamImageEditResult]):
     """Deprecated alias for Seedream image editing/generation."""
 
     prompt: str

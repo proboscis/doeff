@@ -21,9 +21,6 @@ from doeff_claude_judge._wire import (
     ClaudeQuery as ClaudeQuery,
 )
 from doeff_claude_judge._wire import (
-    MalformedAnswer as MalformedAnswer,
-)
-from doeff_claude_judge._wire import (
     QueryImage as QueryImage,
 )
 from doeff_claude_judge._wiring import (

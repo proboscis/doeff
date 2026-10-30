@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from doeff import EffectBase
+from doeff_agentic._types import AgenticWorkflowHandle
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -14,7 +15,7 @@ class AgenticEffectBase(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticCreateWorkflow(AgenticEffectBase):
+class AgenticCreateWorkflow(AgenticEffectBase, EffectBase[AgenticWorkflowHandle]):
     """Create a new workflow instance."""
 
     name: str | None = None
@@ -22,7 +23,7 @@ class AgenticCreateWorkflow(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticGetWorkflow(AgenticEffectBase):
+class AgenticGetWorkflow(AgenticEffectBase, EffectBase[AgenticWorkflowHandle]):
     """Get the current workflow handle."""
 
     created_at: datetime | None = None

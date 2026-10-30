@@ -3,13 +3,14 @@
 
 from dataclasses import dataclass
 
-from doeff_agentic._types import AgenticEnvironmentType
+from doeff import EffectBase
+from doeff_agentic._types import AgenticEnvironmentHandle, AgenticEnvironmentType
 
 from .workflow import AgenticEffectBase
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticCreateEnvironment(AgenticEffectBase):
+class AgenticCreateEnvironment(AgenticEffectBase, EffectBase[AgenticEnvironmentHandle]):
     """Create a new environment for agent sessions."""
 
     env_type: AgenticEnvironmentType
@@ -20,14 +21,14 @@ class AgenticCreateEnvironment(AgenticEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticGetEnvironment(AgenticEffectBase):
+class AgenticGetEnvironment(AgenticEffectBase, EffectBase[AgenticEnvironmentHandle]):
     """Get an existing environment by ID."""
 
     environment_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticDeleteEnvironment(AgenticEffectBase):
+class AgenticDeleteEnvironment(AgenticEffectBase, EffectBase[bool]):
     """Delete an existing environment by ID."""
 
     environment_id: str

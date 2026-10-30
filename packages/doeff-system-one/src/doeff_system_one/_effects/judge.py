@@ -4,10 +4,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from doeff import EffectBase
-from doeff_system_one._types import Image, Question
+from doeff_system_one._types import Image, Question, Verdict
 
 
-class Judge(EffectBase):
+class Judge(EffectBase[Verdict]):
     """state について問いの束を判定器へ出し、`Verdict` を受け取る。
 
     問いは 1 request に束ねる(独立な問いは同じ state に対して一緒に出す — 順に 1 問ずつ

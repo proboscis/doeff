@@ -21,6 +21,7 @@ from doeff_claude_code._values import ForkSession as ForkSession
 from doeff_claude_code._values import SessionOrigin as SessionOrigin
 from doeff_claude_code._values import LentCredential as LentCredential
 from doeff_claude_code._values import PrintContent as PrintContent
+from doeff_claude_code._values import PermissionAnswer as PermissionAnswer
 from doeff_claude_code._lines import ClaudeStreamLine as ClaudeStreamLine
 from doeff_claude_code._lines import Completed as Completed
 from doeff_claude_code._lines import Failed as Failed
@@ -167,7 +168,7 @@ class ClaudeReadTurnEvents(EffectBase[TurnEventPage | UnknownTurn]):
 class ClaudeAnswerPermission(EffectBase[Answered | NoSuchRequest]):
     turn: ClaudeTurn
     request_id: str
-    answer: Allow | Deny
+    answer: PermissionAnswer
 
     def __post_init__(self) -> None:
         ...

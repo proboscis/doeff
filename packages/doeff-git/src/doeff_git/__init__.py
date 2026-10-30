@@ -11,10 +11,9 @@ from ._handlers import (
     mock_handlers,
     production_handlers,
 )
-from ._types import BranchRef, MergeStrategy, PRHandle
+from ._types import MergeStrategy, PRHandle
 
 __all__ = [
-    "BranchRef",
     "CreatePR",
     "GitCommandError",
     "GitCommit",

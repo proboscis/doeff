@@ -6,8 +6,8 @@ import math
 from pathlib import Path
 
 import pytest
-from doeff_claude_judge import ClaudeQuery, MalformedAnswer, QueryImage
-from doeff_claude_judge._wire import parse, prepare, state_text
+from doeff_claude_judge import ClaudeQuery, QueryImage
+from doeff_claude_judge._wire import MalformedAnswer, parse, prepare, state_text
 from doeff_claude_judge._wire import NOUL_HEAD
 from doeff_system_one import Answer, Image, Judge, JudgeError, Verdict, choice, noul, score
 

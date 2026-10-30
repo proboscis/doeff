@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import EffectBase
+from doeff_image._types import ImageResult
 
 
 @dataclass(frozen=True, kw_only=True)
-class ImageGenerate(EffectBase):
+class ImageGenerate(EffectBase[ImageResult]):
     """Text-to-image generation."""
 
     prompt: str
