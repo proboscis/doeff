@@ -281,8 +281,10 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 client の handler `doeff_records._http_client.http_records_handler(RecordsEndpoint(base_url, writer=…))` は、同じ公開 effect に口越しで
 答える(書き手の名 `writer` を平文の見出し `X-Records-Writer`(綴りは `doeff_records._wire` の `WRITER-HEADER`)で送る。`Authorization` は送らない)。`404` は `UndeclaredTable` を上げる
 (欄 = 要求が名指した名のうち断りの理由に載った物 — 断りの本文の形は変えない。理由の綴りは `_wire.hy` の `undeclared-reason` と
-`undeclared-refusal` の 1 か所)。`400` / `500` と、ほかの status(`401` / `403`・間の proxy の `502` など — status ごとの枝は持たない)は
-一般の失敗で `WireError` を上げる(本文が契約の断りの形でない JSON の時だけ `WireMalformed`。口は `401` / `403` を出さない)。
+`undeclared-refusal` の 1 か所)。`500 internal`(口の要求の task が答えを決める前か送る途中で落ちた — 書きが着いたかは不明)は
+`503 store-unavailable` と同じく `Unreachable` で答える(上げると、答えの型で読み分ける呼び手の外へ例外が抜ける — card ki-200a8499710f。
+撃ち直しは下の置き場の止まりの待ちが持ち、書きは冪等キーで守る)。`400` と、ほかの status(`401` / `403`・間の proxy の `502` など —
+status ごとの枝は持たない)は一般の失敗で `WireError` を上げる(本文が契約の断りの形でない JSON の時だけ `WireMalformed`。口は `401` / `403` を出さない)。
 `WatchChanges` の待ちは client の時計で回す(口へは待たない問い合わせだけを送る)。
 置き場の止まり(#3557): 要求と答えの公開 effect 8 つは、届かない(`503` の `store-unavailable` を含む `Unreachable`)時に、待つ時間まで
 置き場の戻りを待って同じ要求を撃ち直す。待つ時間は要求のたびに client だけが問う `ReadRequestPatience` で問い、戻りは合図の源と同じ
