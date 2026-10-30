@@ -343,10 +343,11 @@ No. `pip install doeff` installs no Hy, and the README's Python examples run wit
 
 Judge from these facts:
 
-- doeff is at 0.8.0, and versions before 1.0 change the API: code written for 0.4 does not run on
+- doeff is at 0.9.0, and versions before 1.0 change the API: code written for 0.4 does not run on
   0.5 (`WithHandler` is gone from `doeff`), 0.6.0 changed what `pip install doeff` installs,
-  0.7.0 changed the reference scheduler `scheduled` to the Rust one, and 0.8.0 takes only a `def`
-  marked with `@handler` as a handler.
+  0.7.0 changed the reference scheduler `scheduled` to the Rust one, 0.8.0 takes only a `def`
+  marked with `@handler` as a handler, and 0.9.0 makes the import root of each core package its
+  public API (the submodules moved behind `_` names).
   The [changelog](../CHANGELOG.md) lists each change. Pin the version you test with.
 - One person maintains it, and uses it in their own projects.
 - Each push to `main` and each pull request runs the tests of the core packages on Linux with

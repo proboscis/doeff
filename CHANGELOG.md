@@ -2,90 +2,77 @@
 
 ## Unreleased
 
+## 0.9.0 — unreleased
+
+0.9.0 makes the import root of each core package its public API: the submodules of `doeff-core-effects`, `doeff-hy`
+and `doeff-hy-pytest` moved behind `_` names, and their effects and handlers are read from `doeff_core_effects`,
+`doeff_hy` and `doeff_hy_pytest`; the measuring functions of `doeff-vm` became effects read from `doeff`. Code written
+for 0.8.0 that imports a submodule of `doeff_hy` or `doeff_hy_pytest`, calls `writer_log`, `on_raise(prog, …)`,
+`absent_as(default, prog)` or `doeff_vm.vm_live_counts`, or relies on `doeff-hy` installing pydantic, needs the
+changes marked **Breaking** below.
+
 ### Added
 
-- doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
+- doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so 0.9.0
   installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.
 - **doeff-events:** the gap notice is made and told apart through the types: `Announce.gap(channel, source)` sends
   it, and `Announce.is_gap` / `Announcement.is_gap` tell it from a routed notice (in Hy, `(Announce.gap channel
   source)` and `(Announcement :is-gap True)` in a `match`).
-- **doeff-time:** `epoch_ms_of` stays exported from the import root: ADR-DOE-API-001 R35 allows, name by name, a
-  conversion function — one that turns an effect's answer into another scale and makes no effect, handler or program
-  and reads no clock, environment, file or process — and the public API inventory checks that shape. Before, the
-  known-violations table listed it to move inward. Callers need no change.
-- The effect value types the subpackages export (108 names) are counted as allowed: ADR-DOE-API-001 R2 lets an effect
-  show the types of the values it carries, and the public API inventory now lists, per package, the classes and type
-  aliases written in the field annotations of the effect classes it shows (type arguments included, followed through
-  the fields of the value types the package defines) and checks each allowed name against that list. A field typed
-  `object` or a bare `tuple` names no type, so 158 names whose effect fields say nothing about them are listed as
-  outliers to type or move inward. Callers need no change.
-- The exception types the subpackages export (129 names in 16 packages) are counted as allowed: ADR-DOE-API-001 R2
-  lets an effect or a handler show the exception classes it raises, and the public API inventory now checks that each
-  allowed one is a `BaseException` subclass its own package defines (an exception re-exported from another package or
-  the standard library, or a class that is not an exception, is refused). Before, the known-violations table listed
-  them as a boundary. Callers need no change.
-- **doeff-conductor:** the workflow builders (`agent`, `gate`, `loop`, `parallel`, `prompt`, `ref` and the rest — 28
-  names) and the types they return (`AgentSpec`, `WorkflowSpec` and the rest — 19 names) stay exported from the import
-  root: ADR-DOE-API-001 R37 allows a builder — a function that builds a value of a program's shape, returns a class its
-  own package shows, and emits no effect and reads no clock, environment, file or process — and the class it returns.
-  The public API inventory now reads such a function as a builder and checks both. Before, the known-violations table
-  listed them as a boundary. Workflows keep their current form.
-- The handler setting types the subpackages export (65 names in 18 packages) are counted as allowed: ADR-DOE-API-001
-  R2 lets a handler show the types it is built with, and the public API inventory now lists, per package, the classes
-  and type aliases written in the parameter annotations of the handlers, handler classes and factories it shows (type
-  arguments included, followed through the fields of the setting types the package defines) and allows a name only
-  when it is on that list and its own package defines it. A parameter written without a type (a Hy `defn` parameter,
-  `backend=None`) names no type, so 45 names no public handler's parameters name are listed as outliers to type or
-  move inward. Callers need no change.
+- `doeff` exports from its import root the `doeff-vm` types a program or a handler meets: `BindOpener`, `Call`,
+  `DoFunction`, `HandlerSpec`, `IRStream`, `TailEval` and `WithBoundaries`, so code reads them from `doeff` rather than
+  from `doeff_vm`.
+- `doeff.handler_values.BuiltBy` marks the type of a handler carried as a value with the factory that builds it, so an
+  analyzer reads the handler from the type.
+- **doeff-core-effects:** `clickhouse_mock_sql_handler`, a mock SQL handler that keeps ClickHouse's contract;
+  `SqlQuery(binary=True)`, which has PostgreSQL send the rows in the binary format, so a `bytea` is not read as hex
+  text twice its length; and the WebSocket shortcuts of the HTTP server (`ws_shortcut_for`, `WsShortcut`,
+  `WsShortcutAnswered`, `WsShortcutFailed`), with which a handler answers one WebSocket message where it arrives.
+  The aiohttp HTTP server writes one line per 60-second window to stderr with how late its loop woke up
+  (`http-server: edge-loop lag: window=60s ticks=… max_ms=… p99_ms=…`).
+- **doeff-hy:** `doeff-hy-check --carry-group` splits the `.hy` files it checks into groups, runs pyright on one group
+  at a time and rewrites the carried results after each group.
 
 ### Changed
 
-- **Breaking:** the task priorities are the `IntEnum` `TaskPriority` (`IDLE` = 0, `NORMAL` = 10, `HIGH` = 20),
-  exported from `doeff` and `doeff_core_effects`; the constants `PRIORITY_IDLE`, `PRIORITY_NORMAL` and
-  `PRIORITY_HIGH` are gone. Write `Spawn(p, priority=TaskPriority.HIGH)` and `Wait(t, priority=TaskPriority.IDLE)`
-  (in Hy, `TaskPriority.IDLE`). The fields are annotated `TaskPriority | int` (`Spawn`, `Wait`) and
-  `TaskPriority | None` (`Race`), so a priority between the named ones is still an `int`, and the values are the same.
-- **Breaking (doeff-core-effects):** `Resumption`, the vocabulary an effect class declares in
-  `__doeff_resumption__`, is no longer exported from the import root or `doeff_core_effects.effects`; it lives in
-  `doeff_core_effects._effects` beside `resumption_of` (ADR-DOE-CORE-EFFECTS-003 R15). It is neither a value an
-  effect carries nor an answer (ADR-DOE-API-001 R1).
-- **Breaking (doeff-system-one):** the import root no longer exports `choice`, `noul` and `score` (ADR-DOE-API-001 R1
-  — they build a `Question`, which is neither an effect nor its answer). Build the question with the type itself:
-  `Question(kind="noul", instructions=…)`, `Question(kind="choice", instructions=…, options=(("id", "description"),
-  …))` and `Question(kind="score", instructions=…, levels=(…))`. The callers in agent-commons and agora-controllers
-  were rewritten first.
-- **Breaking (doeff-core-effects):** the import root no longer exports `SqlText`, `SqlPlaceholder`, `DriverValue`,
-  `WsCloseFrame`, `VmWork` and `TraceSink` (ADR-DOE-API-001 R1 — parts the package's own handlers use, not an effect's
-  value or answer). No caller outside the package imports them; `set_scheduler_trace` still takes any
-  `Callable[[dict[str, object]], None]`.
-- Effects of the smaller packages declare the types their values and answers carry (ADR-DOE-API-001 R2):
-  `AgenticGetMessages` answers `list[AgenticMessage]`, `BorrowJudgeCredential` answers `JudgeCredential |
-  NoJudgeCredential`, `ArmedTimers` answers `tuple[ArmedTimer, ...]`, `GeminiCalculateCost` answers
-  `GeminiCostEstimate`, the `messages` of the doeff-llm effects are `list[Message]`, and `Notify.urgency` is an
-  `Urgency` (now a `StrEnum` — each level still equals its lower-case string; `Urgency.ALL` is gone, use
-  `list(Urgency)`).
-- **Breaking:** names that no effect carries are no longer exported by their import roots (ADR-DOE-API-001 R1):
-  doeff-agentic `WatchEventType`, `WatchUpdate`; doeff-gemini `APICallMetadata` and the `*ContentPart` types
-  (`structured_llm__gemini` still takes the same dicts); doeff-notify `Channel`; doeff-openai `APICallMetadata`,
-  `CompletionRequest`, `EmbeddingRequest`, `OpenAIModel`; doeff-openrouter `APICallMetadata`; doeff-seedream
-  `CostEstimate`; doeff-validation `CheckArgument`, `CheckError`, `CheckFailure`, `EvaluatedArgument` (the
-  failures a `ValidationException` holds — the Hy `check` expansion reads them from `doeff_validation._failures`).
-- More effects of the smaller packages declare their answer types (ADR-DOE-API-001 R2), so a type checker reads the
-  value a `yield` gives: the doeff-agentic workflow, session, environment, message and status effects (for example
-  `AgenticCreateSession` answers `AgenticSessionHandle`, `AgenticNextEvent` answers `AgenticEvent |
-  AgenticEndOfEvents`), doeff-time `RaceWithin` and `WaitTicks` (`RaceOutcome[T]`, `TicksOutcome[T]`), doeff-git
-  `CreatePR` (`PRHandle`), doeff-notify `Notify` (`NotificationResult`), doeff-openai `CalculateCost` (`CostInfo`),
-  doeff-image `ImageGenerate` and `ImageEdit` (`ImageResult`), doeff-seedream `SeedreamGenerate`
-  (`SeedreamImageEditResult`), doeff-docker `ShellRun` (`ShellRunResult`) and doeff-system-one `Judge` (`Verdict`).
-  doeff-claude-code `ClaudeAnswerPermission.answer` is typed `PermissionAnswer`.
-- **Breaking:** more names that no effect answers or carries are no longer exported by their import roots
-  (ADR-DOE-API-001 R1): doeff-git `BranchRef`; doeff-llm `CostInfo`, `TokenUsage`; doeff-openai `StreamChunk`;
-  doeff-openrouter `CostInfo`, `TokenUsage`; doeff-gemini `TokenUsage`, `GeminiImageEditResult` (what
-  `edit_image__gemini` returns); doeff-claude-judge `MalformedAnswer`; doeff-seedream `ImageResult` (import it from
-  doeff-image). No other repository imports them from the roots; they stay in each package's `_types` (`_wire` for
-  `MalformedAnswer`). doeff-claude-code `AutocompactWindow`, an alias of `AutocompactAuto | AutocompactTokens` that
-  nothing used, is removed.
+- **doeff-core-effects:** the import root is the public API (ADR-DOE-API-001): it exports the effects and handlers of
+  every submodule, and the submodules moved behind `_` names (`handlers` → `_handlers`,
+  `scheduler` → `_scheduler`, `outcomes` → `_outcomes`, `effects`, `storage`, the SQL, HTTP, process, file and memo
+  modules and the others). Import from `doeff_core_effects` where you imported from a submodule. The former paths
+  still import, without a warning, through a moved-module layer that a later release removes. **Breaking:** three
+  former paths are gone because the root exports a handler of the same name — import the handlers
+  `aiohttp_http_server`, `scripted_http_server` and `http_host_gate` from `doeff_core_effects` where you imported the
+  modules `doeff_core_effects.aiohttp_http_server`, `.scripted_http_server` and `.http_host_gate`.
+- **Breaking (doeff-hy):** the submodules of `doeff_hy` moved behind `_` names, and the former paths are gone (no
+  moved-module layer): `doeff_hy.wire`, `table`, `session`, `frozen`, `lazy`, `json_value`, `http`, `json_lines`,
+  `typecheck`, `typecheck_handlers`, `record_runtime`, the `static_*` modules and the others no longer import. The
+  root exports what they gave users: `parse`, `parse_json`, `dump`, `dump_json`, `json_schema`, `http_get`,
+  `jsonl_lines`, `whole_lines_end`, `TypeCheck`, `TypeCheckError`, `type_check`, `type_checks_on`,
+  `type_checks_off` and the error types (`MalformedRecord`, `ClauseEndingError` and the static check's errors). The
+  macro modules (`doeff_hy.macros`, `handle`, `record`) stay where they are, and the 36 names in them that are not
+  macros moved inward. `doeff_hy.pytest_plugin` and `doeff_hy.system_form` are removed (the pytest plugin is
+  `doeff-hy-pytest`).
+- **Breaking (doeff-hy):** macros moved to the packages that own them: the 13 workflow macros of `doeff_hy.conductor`
+  (`defworkflow`, `defphase`, `agent!` and the others) are in `doeff_conductor.macros`, and `defsystem` is in
+  doeff-cluster (`doeff_cluster.shared.entry.macros`).
+- **Breaking (doeff-hy):** pydantic is no longer a dependency of `doeff-hy`. `defwire` decodes and encodes with its own
+  codec; the extra `doeff-hy[parity]` installs pydantic for the tool that compares the two. Code that used pydantic
+  without depending on it, through `doeff-hy`, adds it to its own dependencies.
+- **doeff-hy:** a `defrecord` type shares one implementation of `__repr__`, `__eq__`, `__hash__`, `__setattr__` and
+  `__delattr__` and keeps the same behaviour; its `__init__` parameters carry no annotations (the field types stay on
+  the class), and the class keeps no runtime docstring. A `session val` or `session var` clause written directly
+  under `handle` raises a `SyntaxError` that sends you to `defhandler`, instead of an `AssertionError`.
+- **Breaking (doeff-hy-pytest):** the public names are the plugin and the two declarations `declare_step_budget` and
+  `declare_process_tree_cpu`, imported from `doeff_hy_pytest`. The modules `doeff_hy_pytest.budget`, `.python_calls`
+  and `.tree_cpu` are gone.
+- **Breaking (doeff-vm):** the functions that read and set the VM's counts and switches are effects answered by
+  `vm_probe_handler` (from `doeff_core_effects`): yield `ReadVmLiveCounts()`, `ReadVmWorkCounts()`,
+  `ReadVmScanCounts()`, `ReadInvariantChecks()`, `SetInvariantChecks(…)`, `SetSchedulerStepBudgetArmed(…)` or
+  `SetSchedulerTraceInstalled(…)` (all from `doeff`) where you called `doeff_vm.vm_live_counts()`,
+  `doeff_vm.invariant_checks_enabled()` and the other functions, which are now internal to the extension.
+- **Breaking (doeff run):** `doeff run` discovers the default interpreter and envs with a program that yields
+  `FindSymbols`; `doeff.cli.discovery` no longer has the classes `IndexerBasedDiscovery`, `InterpreterDiscovery` and
+  `EnvDiscovery`.
 - **Breaking (doeff-events):** the import root no longer exports `GAP_NOTICE`, the wire name of the gap notice
   (ADR-DOE-API-001 R1 — a constant is not an effect or a handler). Write `Announce.gap(channel, source)` where you
   passed it to `Announce`, and `notice.is_gap` (or `effect.is_gap` on an `Announce`) where you compared a name with
@@ -119,15 +106,21 @@
   still answer the same handler for one release, with a `DeprecationWarning`. doeff-git's `production_handlers` is
   still `github_handler` outside `git_local_handler`, as one handler (`doeff.program._former_factory_stack`).
   `publications/zenn-use-cases-v0` keeps the calls, since it runs against the packages on PyPI.
-- **doeff-core-effects:** `maybe` and `result` are handlers, not handler factories, for the same reason
-  (ADR-DOE-API-002 — they have neither settings nor per-call state): write `maybe(prog)`, `result(prog)` and
-  `result(maybe(prog))` (in Hy, `(maybe body)` and `(result body)`) where you wrote `maybe()(prog)` and
-  `((maybe) body)`. The former calls `maybe()` and `result()` still answer the same handler for one release, with a
-  `DeprecationWarning`. `on_raise` and `absent_as` take settings and stay handler factories.
-- **doeff-core-effects:** `scheduled` is a handler applied straight to the program, `scheduled(prog)` (and
-  `scheduled(prog, implementation="python")`), for the same reason (ADR-DOE-API-001 R6, ADR-DOE-API-002): it carries
-  the handler marker, so it also stands in `with_handlers` and `stacked_handlers`. It is not a handler factory —
-  `scheduled()` without a program is a `TypeError`.
+- **Breaking (doeff-core-effects):** `on_raise` and `absent_as` are handler factories: call one with its settings to
+  get the handler, then apply that to the program. Write `on_raise(case, …)(prog)` where you wrote
+  `on_raise(prog, case, …)`, and `absent_as(default)(prog)` where you wrote `absent_as(default, prog)`; the 0.8.0 forms
+  raise `TypeError`. The `on-raise` and `absent-as` macros of doeff-hy expand to the new form, so Hy code written with
+  them does not change, and Hy bytecode compiled from an older expansion of `absent-as` is compiled again on import.
+  `maybe` and `result` keep their use — `maybe(prog)`, `result(prog)` and `result(maybe(prog))` (in Hy,
+  `(maybe body)` and `(result body)`) — and are now handlers (ADR-DOE-API-002 — they have neither settings nor
+  per-call state), so all four also stand in `with_handlers` and `stacked_handlers`. `maybe()` and `result()`, a form
+  that main had for a while before this release, answer the same handler for one release, with a
+  `DeprecationWarning`.
+- **doeff-core-effects:** `scheduled` carries the handler marker (ADR-DOE-API-001 R6, ADR-DOE-API-002), so it also
+  stands in `with_handlers` and `stacked_handlers`. Its use does not change: `scheduled(prog)` and
+  `scheduled(prog, implementation="python")`.
+- **doeff-core-effects:** `run_apart` is a handler value (it has neither settings nor per-call state); its use,
+  `run_apart(prog)` (in Hy, `(run-apart program)`), does not change.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-hy):** the import root `doeff_hy_bytecode_guard` exports only `install` (what the
@@ -136,7 +129,9 @@
   `record_is_current_here`, `macro_recording`, `loaded_record`, `record_fingerprint`, `record_to_json`,
   `record_from_json`, `value_reference`, `gensym_renaming`, `file_sha256`, `installed`, `SharedScope`,
   `TYPE_CHECK_EXPANSION` and `TYPE_CHECKING` — are internal to doeff: its packages read them from
-  `doeff_hy_bytecode_guard._loader_hooks`, `._import_scope` and `._expansion`. No other repository read them.
+  `doeff_hy_bytecode_guard._loader_hooks`, `._import_scope` and `._expansion`. No other repository read them. The 12
+  submodules of `doeff_hy_bytecode_guard` (`loader_hooks`, `import_scope`, `expansion`, `code_store` and the others)
+  moved behind `_` names, and the former paths are gone.
 - **Breaking (doeff-openai, doeff-gemini, doeff-openrouter, doeff-conductor, doeff-events, doeff-seedream,
   doeff-google-secret-manager, doeff-system-one):** the import roots no longer export 50 program helpers that no
   other repository reads, since a subpackage's public API is its effects and handlers (ADR-DOE-API-001). doeff-openai
@@ -189,7 +184,8 @@
   `TraceAnnotate` and `TraceSnapshot` under `production_handlers(workflow_id, trace_dir)`; the runner the examples use
   is `doeff_flow._run.run_workflow`, inside the package. doeff-events drops `SubscriberQueue` (the queue
   `EventBus.subscribe` returns, a part of the handler). doeff-notify drops `collected_notifications` — read
-  `capture.notifications` of the `NotificationCapture` that `build_testing_handler()` returns.
+  `capture.notifications` of the `NotificationCapture` you give to `build_testing_handler(capture=…)`, which returns
+  the handler alone (not a `(handler, capture)` pair).
 - **Breaking (doeff-openai):** the import root no longer exports the client class, the pricing table or the token
   counters (`OpenAIClient`, `ClientHolder`, `MODEL_PRICING`, `ModelPricing`, `calculate_cost`, `estimate_cost`,
   `estimate_max_cost`, `get_model_pricing`, `count_tokens`, `count_message_tokens`, `count_embedding_tokens`,
@@ -198,8 +194,7 @@
   client from the Reader keys `openai_api_key`, `openai_organization`, `openai_base_url`, `openai_timeout_seconds`
   and `openai_max_retries`: put the settings in the environment where you built an `OpenAIClient` and gave it as
   `openai_client`. Ask for the cost of a call with the effect `CalculateCost`, and answer the models the package's
-  pricing table does not know with an outer handler. The old path `doeff_openai.client` still reads `OpenAIClient`
-  until the moved-module layer is removed.
+  pricing table does not know with an outer handler. The old path `doeff_openai.client` is gone.
 - **Breaking (doeff-openai, doeff-gemini, doeff-seedream, doeff-git, doeff-image):** the packages no longer export
   `__version__`, since a subpackage's public API is its effects and handlers. Read the installed version with
   `importlib.metadata.version("doeff-openai")` (and likewise for the other four).
@@ -208,15 +203,20 @@
   gone. Write `log = yield ReadWriterLog()` (`from doeff_core_effects import ReadWriterLog`) where you wrote
   `log = yield writer_log()`. Without `writer`, `ReadWriterLog` is an unhandled effect whose hint names
   `state()(writer(prog))`.
-- **Breaking (doeff-core-effects):** `maybe`, `result`, `on_raise` and `absent_as` are handler factories, like
-  `state`: call one to get the handler, then apply that to the program. Write `maybe()(prog)` where you wrote
-  `maybe(prog)`, `result()(prog)` for `result(prog)`, `on_raise(case, …)(prog)` for `on_raise(prog, case, …)` and
-  `absent_as(default)(prog)` for `absent_as(default, prog)`; in Hy, `((maybe) body)` and `((result) body)`. The
-  handlers carry the handler marker, so they also go in `with_handlers` and `stacked_handlers`. The `on-raise` and
-  `absent-as` macros of doeff-hy expand to the new form, so code written with them does not change. The old forms,
-  which pass the program to the function, are gone: `maybe(prog)`, `result(prog)`, `on_raise(prog, case, …)` and
-  `absent_as(default, prog)` raise `TypeError`. Hy bytecode compiled from an older expansion of `absent-as` is
-  compiled again on import, since the doeff-hy bytecode guard sees that the macro changed.
+- **doeff-time 0.2.0** (released on its own tag, after the core packages): requires `doeff>=0.9.0,<0.10` and
+  `doeff-core-effects>=0.9.0,<0.10`. **Breaking:** the submodules `doeff_time.effects`, `doeff_time.handlers` and
+  `doeff_time.epoch_ms` are gone; import the effects, the handlers and `epoch_ms_of` from `doeff_time`. The root also
+  exports `AsyncTimeRuntime`, `SyncTimeRuntime` and `LogFormatter`. doeff-time 0.1.0 on PyPI requires doeff 0.8, so
+  `pip install doeff-time` keeps choosing doeff 0.8.0 until 0.2.0 is on PyPI.
+
+### Fixed
+
+- **doeff-core-effects:** the HTTP client handlers keep the requests they hand to the client within its connection
+  limits (64 at a time per origin, 100 in all; the rest wait in the scheduler in order), and a request cancelled or
+  timed out while it waits no longer leaves a half-open connection that holds a slot of the pool.
+- **doeff-core-effects:** `ListDirectory` skips a name that disappears between listing the directory and reading its
+  kind, and answers the rest.
+- **doeff-core-effects:** a PostgreSQL connection that carried a large value is closed when it goes back to the pool.
 
 ## 0.8.0 — 2026-10-27
 
