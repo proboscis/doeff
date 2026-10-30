@@ -53,9 +53,6 @@ from doeff_core_effects._outcomes import absent_as as absent_as
 from doeff_core_effects._outcomes import maybe as maybe
 from doeff_core_effects._outcomes import on_raise as on_raise
 from doeff_core_effects._outcomes import result as result
-from doeff_core_effects._scheduler import PRIORITY_HIGH as PRIORITY_HIGH
-from doeff_core_effects._scheduler import PRIORITY_IDLE as PRIORITY_IDLE
-from doeff_core_effects._scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
 from doeff_core_effects._scheduler import AcquireSemaphore as AcquireSemaphore
 from doeff_core_effects._scheduler import Cancel as Cancel
 from doeff_core_effects._scheduler import CompletePromise as CompletePromise

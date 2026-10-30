@@ -107,9 +107,6 @@ names that are kept only to say what replaced them are in [Removed APIs](#remove
 | `TaskCancelledError` | Raised in a cancelled task, and to whoever waits on it. | [TaskCancelledError](#taskcancellederror) |
 | `SchedulerDeadlockError` | Raised when every task waits on something nothing will complete. | [Troubleshooting](01-getting-started.md#schedulerdeadlockerror-scheduler-deadlock-parked-waiters-that-no-external-completion-can-wake-) |
 | `TaskPriority` | Task priorities `IDLE` (0, the lowest), `NORMAL` (10, the default of `Spawn`) and `HIGH` (20). | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
-| `PRIORITY_IDLE` | Old name of `TaskPriority.IDLE`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
-| `PRIORITY_NORMAL` | Old name of `TaskPriority.NORMAL`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
-| `PRIORITY_HIGH` | Old name of `TaskPriority.HIGH`, kept until the callers use `TaskPriority`. | [Spawn](#spawnprogram-prioritytaskprioritynormal) |
 
 **Promises**
 

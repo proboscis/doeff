@@ -84,9 +84,6 @@ from doeff_core_effects._effects import Try as Try
 from doeff_core_effects._effects import WriterTellEffect as WriterTellEffect
 from doeff_core_effects._effects import MissingEnvKeyError as MissingEnvKeyError
 from doeff_core_effects._effects import slog as slog
-from doeff_core_effects._scheduler import PRIORITY_HIGH as PRIORITY_HIGH
-from doeff_core_effects._scheduler import PRIORITY_IDLE as PRIORITY_IDLE
-from doeff_core_effects._scheduler import PRIORITY_NORMAL as PRIORITY_NORMAL
 from doeff_core_effects._scheduler import AcquireSemaphore as AcquireSemaphore
 from doeff_core_effects._scheduler import Cancel as Cancel
 from doeff_core_effects._scheduler import CompletePromise as CompletePromise
