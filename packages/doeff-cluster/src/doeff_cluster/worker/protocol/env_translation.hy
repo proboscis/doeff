@@ -46,7 +46,7 @@
 (import doeff_time [GetTime Delay])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome ReadEnvironment RunProcess StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted ProcessRunning ProcessExited]
-        doeff_core_effects._process_effects [NOT_STARTED_CODE])
+        doeff_core_effects._process_effects [NOT_STARTED_CODE :as _NOT-STARTED-CODE])
 (import doeff_core_effects [PathKind FileFailed PathStat DirEntry LockHeld StatPath ReadText ReadBytes WriteText AppendText MakeDirectory ListDirectory WalkTree LinkFile RenamePath RemoveTree AcquireLock ReleaseLock ReadDiskFree])
 ;; uv の子に継がせない変数の型(UV-DROP)・足す変数・native の wheel の錠と build の口の報告の読みは、起動の script(worker/entry/boot_wheel)と
 ;; 共有する定義点 native_wheel の物。
@@ -472,7 +472,7 @@
       (StartProcess :argv argv :env env :env-mode EnvMode.EXTEND :stdout-path out-path :stderr-path err-path))
   (var result None)
   (match started
-    (ProcessNotStarted :detail detail) (:= result (CommandResult :code NOT_STARTED_CODE :stdout "" :stderr detail))
+    (ProcessNotStarted :detail detail) (:= result (CommandResult :code _NOT-STARTED-CODE :stdout "" :stderr detail))
     _ None)
   (var seen-bytes 0)
   (while (is result None)
