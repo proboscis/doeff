@@ -34,7 +34,7 @@ from doeff_conductor._effects.runs import (
     StopWorkflow,
     ValidateWorkflow,
 )
-from doeff_conductor._handlers.issue_handler import issue_handler
+from doeff_conductor._handlers._issue_handler import issue_handler
 
 if TYPE_CHECKING:
     from doeff_conductor._api import ConductorAPI

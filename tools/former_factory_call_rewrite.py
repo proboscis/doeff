@@ -88,7 +88,7 @@ FORMER_FACTORIES: Mapping[str, frozenset[str]] = {
             "doeff_conductor",
             "doeff_conductor.handlers",
             "doeff_conductor._handlers",
-            "doeff_conductor._handlers.agent_handler",
+            "doeff_conductor._handlers._agent_handler",
         }
     ),
     "git_handler": frozenset(
@@ -96,7 +96,7 @@ FORMER_FACTORIES: Mapping[str, frozenset[str]] = {
             "doeff_conductor",
             "doeff_conductor.handlers",
             "doeff_conductor._handlers",
-            "doeff_conductor._handlers.git_handler",
+            "doeff_conductor._handlers._git_handler",
         }
     ),
 }
