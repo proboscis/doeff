@@ -9,8 +9,7 @@
 ;;; HostNotAllowed を受ける — HttpResponse を作るのは相手役だけなので、答えの型が「外へ出たか」をそのまま名指す。
 
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_core_effects [HostNotAllowed]
-        doeff_core_effects._http_host_gate [http-host-gate])
+(import doeff_core_effects [HostNotAllowed http-host-gate])
 
 ;; 手元の構成の通す集合(この機体の中だけ)。
 (val LOOPBACK (frozenset ["127.0.0.1" "localhost" "::1"]))

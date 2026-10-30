@@ -9630,9 +9630,6 @@
       "CLIENT_KEEPALIVE_SECONDS",
       "http_client_factory"
      ],
-     "doeff_core_effects.http_host_gate": [
-      "MODULE_TAGS"
-     ],
      "doeff_core_effects.inline_compute": [
       "INLINE_LOAD",
       "MODULE_TAGS"
@@ -10425,7 +10422,6 @@
       "doeff_core_effects.heap_effects",
       "doeff_core_effects.http_effects",
       "doeff_core_effects.http_handlers",
-      "doeff_core_effects.http_host_gate",
       "doeff_core_effects.http_server_effects",
       "doeff_core_effects.inline_compute",
       "doeff_core_effects.kqueue_exit",
