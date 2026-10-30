@@ -1,7 +1,7 @@
 ;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で焼く段取りの検 — 本物の file system(一時 dir)の上で。
 ;;   * 失敗ケース(a) 木をまたぐ閉包: 業務の木の入口が import する別の木(editable で入る依存の木)の module は焼かれ、どこからも import
 ;;     されない別の木の module は焼かれない — 閉包を木の中だけに戻すと、依存の木の module が焼かれずに赤。焼きは本物の焼きの道具
-;;     (foundation/bytecode_pool.hy を子 process で起こす・並列 2)。
+;;     (_foundation/bytecode_pool.hy を子 process で起こす・並列 2)。
 ;;   * 失敗ケース(b) 大きい順: pool へ渡す焼く物の列は source の大きさの降順(同じ大きさは木と相対 path の順)— 名の順に戻すと赤。
 ;;     列を作る純粋な関数 bake-order と、準備の Program が焼きの効果へ渡す列(焼きの効果だけを記録の答え手に替える)の両方で確かめる。
 ;;   * 木ごとの引数の揃え方: --roots は木ごとに 1 つ。

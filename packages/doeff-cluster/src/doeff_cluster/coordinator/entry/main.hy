@@ -26,13 +26,13 @@
 (import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
 (import doeff_cluster.coordinator.core.cluster_policy [fresh-task-prefix] doeff_cluster.coordinator.protocol.state_json [state-from-json])
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster._foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.store [DurableStore durable-exists durable-load durable-persist durable-checkpoint])
 (import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.coordinator.core.resource_policy [adopt-legacy])
-(import doeff_cluster.coordinator.protocol.kube [kube-api kube-unavailable] doeff_cluster.foundation.kube_client [kube-available kube-client] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
+(import doeff_cluster.coordinator.protocol.kube [kube-api kube-unavailable] doeff_cluster._foundation.kube_client [kube-available kube-client] doeff_cluster.coordinator.intent.kube_model [KubeUnavailable])
 ;; HTTP の受付と停止の合図(coordinator_inbox — 以前の coordinator.hy の再輸出は #2022 で消した)。
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
 ;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。

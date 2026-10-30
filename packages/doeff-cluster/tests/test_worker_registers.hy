@@ -13,7 +13,7 @@
 (import time)
 (import pathlib [Path])
 (import httpx)
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster [WalStore])
 (import doeff_cluster.coordinator.protocol.store [durable-load durable-persist])
 (import tests.wal_rig [on-wal-files])
 (import tests.served_fixtures [ROOT HY start-coordinator])

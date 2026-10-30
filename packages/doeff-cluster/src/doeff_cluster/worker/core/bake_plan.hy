@@ -259,7 +259,7 @@
 (defk bake-argv [python tool jobs paths store-module store progress]
   {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None)) (: progress (| str None))]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "焼きの道具(tool = worker 自身のコードの foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
+  "焼きの道具(tool = worker 自身のコードの _foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
    準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
    code_store.py・store = 保存先の dir — None は保存先を使わない・progress = 進みの印の file — 道具が 1 つ用意するたびに時刻を進める・
    None は印を触らない・card ki-6401ff10af71)。"

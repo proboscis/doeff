@@ -23,18 +23,17 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical
-                                         UnrecordableEffect RecordedError HandleTable args-of type-name
-                                         EffectCodec MalformedRecordSpec READ LIVE OUTPUT DECISION SPEC-FIELDS codec-of mode-of subject-of can-record
-                                         register registered-types])
+(import doeff_cluster [UnrecordableEffect RecordedError type-name EffectCodec MalformedRecordSpec READ DECISION register registered-types]
+        doeff_cluster._foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical HandleTable args-of LIVE OUTPUT SPEC-FIELDS codec-of mode-of subject-of can-record])
 (import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
 (import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
-(import doeff_cluster.foundation.record_log [read-recording ReplayFinished ReplayDiverged LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
+(import doeff_cluster [ReplayFinished ReplayDiverged]
+        doeff_cluster._foundation.record_log [read-recording LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
 (import pathlib)
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog open-log effect-recorder ReplayState effect-replayer replay-report deliver-recorded
-                                                  stall-divergence])
+(import doeff_cluster [effect-recorder effect-replayer]
+        doeff_cluster._foundation.record_handlers [MemorySink EffectLog open-log ReplayState replay-report deliver-recorded stall-divergence])
 
 
 ;; --- 1. 符号化 ---------------------------------------------------------------------------------
@@ -372,7 +371,8 @@
 
 ;; ---- 置き場を移した module の旧い型の名を読む(#2105・#2021 の決め 2a)-----------------------------------------
 (deftest test-a-type-name-written-before-the-move-resolves-to-the-type-in-its-new-place
-  (import doeff_cluster.foundation.record_codec [resolve-type type-name MOVED-MODULES])
+  (import doeff_cluster [type-name]
+          doeff_cluster._foundation.record_codec [resolve-type MOVED-MODULES])
   (import doeff_cluster.shared.intent.detached_model [SubmitDetached])
   (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
   ;; 書くのは今の名だけ
@@ -386,22 +386,22 @@
   (assert (is (resolve-type "doeff_cluster.semaphore_model:HeldLease")
               (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease")))
   ;; 記録の綴りと記録の handler(#2108)— shared/core と foundation へ移した型も旧い名で引ける
-  (import doeff_cluster.foundation.record_log [Entry])
-  (import doeff_cluster.foundation.record_handlers [MemorySink])
+  (import doeff_cluster._foundation.record_log [Entry])
+  (import doeff_cluster._foundation.record_handlers [MemorySink])
   (assert (is (resolve-type "doeff_cluster.record_model:Entry") Entry))
   (assert (is (resolve-type "doeff_cluster.record_handlers:MemorySink") MemorySink))
   (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError")
               (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError")))
   ;; foundation へ移した後(#2580)— shared/core と shared/protocol に在った間の記録の名も、今の置き場の同じ class を引く
-  (import doeff_cluster.foundation.record_codec [RecordedError])
-  (assert (= (type-name Entry) "doeff_cluster.foundation.record_log:Entry"))
+  (import doeff_cluster [RecordedError])
+  (assert (= (type-name Entry) "doeff_cluster._foundation.record_log:Entry"))
   (assert (is (resolve-type "doeff_cluster.shared.core.effect_codec:RecordedError") RecordedError))
   (assert (is (resolve-type "doeff_cluster.effect_codec:RecordedError") RecordedError))
   (assert (is (resolve-type "doeff_cluster.shared.core.record_model:Entry") Entry))
   (assert (is (resolve-type "doeff_cluster.shared.protocol.record_handlers:MemorySink") MemorySink))
   ;; module の一部の型だけを移した物(#2025 — worker_model の JobSpec・JobPhase を shared/intent/job_model へ)も旧い名で引ける。
   ;; 引く先は表の名で決まる(worker_model が後で別の置き場へ移っても、旧い記録の JobSpec は job_model を引く)。
-  (import doeff_cluster.foundation.record_codec [MOVED-TYPES])
+  (import doeff_cluster._foundation.record_codec [MOVED-TYPES])
   (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
   (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
@@ -417,6 +417,13 @@
   (assert (= (get MOVED-MODULES "doeff_cluster.record_store.intent.record_store_model")
              "doeff_cluster._record_store.intent.record_store_model"))
   (assert (is (resolve-type "doeff_cluster.record_store.intent.record_store_model:AppendRecordLines") AppendRecordLines))
+  ;; 土台の区画を _ へ隠す前の記録の名(記録の形・記録の例外・in-cluster API の例外)も、表で今の置き場を引く
+  (import doeff_cluster [ClusterCaMissing])
+  (assert (= (get MOVED-MODULES "doeff_cluster.foundation.record_log") "doeff_cluster._foundation.record_log"))
+  (assert (= (get MOVED-MODULES "doeff_cluster.foundation.in_cluster_api") "doeff_cluster._foundation.in_cluster_api"))
+  (assert (is (resolve-type "doeff_cluster.foundation.record_log:Entry") Entry))
+  (assert (is (resolve-type "doeff_cluster.foundation.record_codec:RecordedError") RecordedError))
+  (assert (is (resolve-type "doeff_cluster.foundation.in_cluster_api:ClusterCaMissing") ClusterCaMissing))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
@@ -428,7 +435,7 @@
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 21)))
+  (assert (= (len MOVED-MODULES) 32)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------
@@ -626,7 +633,7 @@
 (deftest test-open-log-writes-the-run-header-first-with-the-clock-it-was-given
   ;; 組み立て(open-log)が run の頭の行を置き場に書く — 時刻は渡した時計の読みで、壁時計には触れない。欄は header のとおり。
   ;; (以前は class EffectLog の __init__ が書いた。値の EffectLog は組んだだけでは何も書かず、書くのは open-log。)
-  (import doeff_cluster.foundation.record_codec [FORMAT-VERSION])
+  (import doeff_cluster._foundation.record_codec [FORMAT-VERSION])
   (val sink (MemorySink))
   (<- log EffectLog (open-log sink {"service" "s" "run" "r1" "worker" "w"} :wall-ms (fn [] 4242)))
   (assert (= log.started 4242) log.started)

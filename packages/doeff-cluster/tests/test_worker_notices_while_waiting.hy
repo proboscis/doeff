@@ -22,7 +22,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox])
 (import doeff_cluster.coordinator.core.program [announced-aside])
 (import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES back-of gone-of])

@@ -28,7 +28,7 @@
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnvInvalid])
 (import doeff_cluster.shared.entry [declare :as declare-module])
 (import doeff_core_effects [Listen])

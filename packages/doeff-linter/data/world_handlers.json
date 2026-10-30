@@ -5,7 +5,7 @@
   "doeff_cluster.worker.protocol.status_file:status-file": "file system の effect(MakeDirectory・WriteText)を出し直すだけ — 実 I/O は外側の os-file-handler(#2466)",
   "doeff_cluster._record_store.protocol.record_files:record-files": "file system の effect を出し直すだけ — 実 I/O は外側の os-file-handler(record_store.entry.main)",
   "doeff_cluster.worker.protocol.tree_files:tree-files": "木の effect を file system の effect と slog へ出し直すだけ — 本番は os-file-handler・模擬の世界は memory-file-handler が答える(#2468 で本物の答え手を退役)",
-  "doeff_cluster.foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)",
+  "doeff_cluster._foundation.record_handlers:effect-recorder": "sink が注入(MemorySink なら値だけ)— 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)",
   "doeff_records._pg:pg-records-handler": "SqlQuery の出し直しだけ(実 DB は postgres-sql-handler)",
   "doeff_core_effects._scheduler:scheduled": "共同の scheduler(模擬を含む全部の Program の下に敷く)— 環境変数は実装の選択・time.monotonic は停滞の見張りだけで、外の世界から effect に答えない",
   "doeff_cluster.worker.protocol.world:local-host": "ObserveWorld に各言い換えの観測を問うてまとめるだけ(#2469)",
@@ -413,6 +413,20 @@
    "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
   },
   {
+   "handler": "doeff_cluster._foundation.host_contract:os-environ-reader",
+   "touches": [
+    "env"
+   ],
+   "why": "この process の os.environ を読む(host_contract.hy:93)— 値の表だけに答える environ-table-reader は名を分けて載せない(#1536)"
+  },
+  {
+   "handler": "doeff_cluster:os_environ_reader",
+   "touches": [
+    "env"
+   ],
+   "why": "os_environ_reader の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.foundation.host_contract:os-environ-reader",
    "touches": [
     "env"
@@ -420,11 +434,25 @@
    "why": "この process の os.environ を読む(host_contract.hy:93)— 値の表だけに答える environ-table-reader は名を分けて載せない(#1536)"
   },
   {
+   "handler": "doeff_cluster._foundation.record_handlers:recording-handler",
+   "touches": [
+    "clock"
+   ],
+   "why": "run の名と行の時刻を実時計(time.time)で作る — 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)"
+  },
+  {
    "handler": "doeff_cluster.foundation.record_handlers:recording-handler",
    "touches": [
     "clock"
    ],
    "why": "run の名と行の時刻を実時計(time.time)で作る — 置き場への送りは HttpRequest を出し直すだけ(実 I/O は外側の http-production-handler・#2583)"
+  },
+  {
+   "handler": "doeff_cluster._foundation.kube_handlers:kube-api",
+   "touches": [
+    "http"
+   ],
+   "why": "httpx で kubernetes の API"
   },
   {
    "handler": "doeff_cluster.foundation.kube_handlers:kube-api",
@@ -477,6 +505,15 @@
    "why": "WarmClient の /warm"
   },
   {
+   "handler": "doeff_cluster._foundation.coordinator_inbox:http-requests",
+   "touches": [
+    "network",
+    "clock",
+    "thread"
+   ],
+   "why": "本物の HTTP server の thread と queue.get(timeout)"
+  },
+  {
    "handler": "doeff_cluster.foundation.coordinator_inbox:http-requests",
    "touches": [
     "network",
@@ -484,6 +521,13 @@
     "thread"
    ],
    "why": "本物の HTTP server の thread と queue.get(timeout)"
+  },
+  {
+   "handler": "doeff_cluster._foundation.wal_store:wal-store",
+   "touches": [
+    "file"
+   ],
+   "why": "fsync・rename"
   },
   {
    "handler": "doeff_cluster.foundation.wal_store:wal-store",

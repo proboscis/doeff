@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.core.native_wheel [current-platform])
 (import doeff_cluster.shared.entry.service_build [job resolve system-of system-declaration])
 (import doeff_cluster.shared.intent.service_model [CallShape System])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster.coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [spec-program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])

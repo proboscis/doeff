@@ -73,7 +73,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.foundation.host_contract [os-environ-reader])
+(import doeff_cluster [os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
 
@@ -243,7 +243,8 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 (`Ask`・doeff-time・scheduler)とこの package の型だけです。業務の型は、job の Program が import する業務の module で登録します。
 
 ```hy
-(import doeff_cluster.foundation.record_codec [register EffectCodec READ DECISION OUTPUT])
+(import doeff_cluster [register EffectCodec READ DECISION]
+        doeff_cluster._foundation.record_codec [OUTPUT])
 (import myapp.effects [ReadRows WriteRow])
 (register (EffectCodec ReadRows READ))
 (register (EffectCodec WriteRow DECISION :subject (fn [args] (.get args "key")) :unexecuted True))

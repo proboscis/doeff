@@ -27,7 +27,7 @@
 (import doeff_core_effects [EnvEntry StartProcess])
 (import doeff_cluster.worker.intent.worker_model [CodeState CodeView])
 (import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 
 
 (import tests.careful_rig [LOCK git push-commit app-files Rig make-rig declare count-log downloads prepare run-task])

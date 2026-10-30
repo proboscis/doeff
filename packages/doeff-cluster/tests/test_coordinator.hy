@@ -26,7 +26,7 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
 (import doeff_cluster.coordinator.protocol.store [Persist durable-states durable-load durable-persist])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster [WalStore])
 (import tests.wal_rig [on-wal-files])
 (import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
 (import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
@@ -341,7 +341,7 @@
 (deftest test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [tmp-path]
   ;; 耐久の置き場: 返事を済ませた(fsync まで終えた)まとまりは読み直しで必ず戻る。fsync の途中で落ちたまとまり(最後の切れた行)は
   ;; 捨てる(その送り手には返事をしていない)。まとめ直しの後も同じ。
-  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
+  (import doeff_cluster [WalStore] doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
   (val store (WalStore (str tmp-path) :max-log-bytes 10000000))
   (<- (on-wal-files (durable-load store)))
   (<- (on-wal-files (durable-persist store {"board/a" {"value" 1 "resourceVersion" 1}})))
@@ -372,7 +372,7 @@
 (deftest test-state-survives-a-restart-through-the-log-with-the-same-versions
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
-  (import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [wal-store durable-load])
+  (import doeff_cluster [WalStore] doeff_cluster.coordinator.protocol.store [wal-store durable-load])
   (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (<- (on-wal-files (durable-load store)))

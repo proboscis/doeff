@@ -31,7 +31,7 @@ from doeff_cluster.coordinator.protocol.durable_kv import full_kv as full_kv
 from doeff_cluster.coordinator.protocol.durable_kv import state_from_kv as state_from_kv
 from doeff_cluster.coordinator.protocol.durable_kv import legacy_key_moves as legacy_key_moves
 from doeff_cluster.coordinator.protocol.durable_kv import resume_writes as resume_writes
-from doeff_cluster.foundation.wal_store import WalStore as WalStore
+from doeff_cluster._foundation.wal_store import WalStore as WalStore
 from doeff_cluster.coordinator.protocol.store import DurableStore as DurableStore
 from doeff_cluster.coordinator.protocol.store import durable_exists as durable_exists
 from doeff_cluster.coordinator.protocol.store import durable_load as durable_load
@@ -41,12 +41,12 @@ from doeff_cluster.coordinator.core.api_policy import resume_after_downtime as r
 from doeff_cluster.coordinator.core.resource_policy import adopt_legacy as adopt_legacy
 from doeff_cluster.coordinator.protocol.kube import kube_api as kube_api
 from doeff_cluster.coordinator.protocol.kube import kube_unavailable as kube_unavailable
-from doeff_cluster.foundation.kube_client import kube_available as kube_available
-from doeff_cluster.foundation.kube_client import kube_client as kube_client
+from doeff_cluster._foundation.kube_client import kube_available as kube_available
+from doeff_cluster._foundation.kube_client import kube_client as kube_client
 from doeff_cluster.coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
-from doeff_cluster.foundation.coordinator_inbox import RequestInbox as RequestInbox
-from doeff_cluster.foundation.coordinator_inbox import StopState as StopState
-from doeff_cluster.foundation.coordinator_inbox import stop_on_signals as stop_on_signals
+from doeff_cluster._foundation.coordinator_inbox import RequestInbox as RequestInbox
+from doeff_cluster._foundation.coordinator_inbox import StopState as StopState
+from doeff_cluster._foundation.coordinator_inbox import stop_on_signals as stop_on_signals
 from doeff_cluster.coordinator.entry.handler_sets import memory_notices as memory_notices
 from doeff_cluster.coordinator.entry.handler_sets import production_handlers as production_handlers
 from doeff_cluster.coordinator.entry.handler_sets import redis_notices as redis_notices

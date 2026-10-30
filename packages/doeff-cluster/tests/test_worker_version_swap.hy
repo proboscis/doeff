@@ -26,7 +26,7 @@
 (import doeff_core_effects [WriteText ReadText FileFailed])
 (import doeff_core_effects [EnvEntry])
 (import doeff_time [Delay])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster._foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])

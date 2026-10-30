@@ -15,7 +15,7 @@
 (import pathlib [Path])
 (import doeff [Program])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import tests.fixtures.envs [plain-foundation])
 (import tests.fixtures.services [tally-program bare-program self-contained-program])
 

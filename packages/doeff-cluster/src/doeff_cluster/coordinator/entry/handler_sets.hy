@@ -21,10 +21,10 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_time [async-time-handler])
 (import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests])
-(import doeff_cluster.foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
+(import doeff_cluster._foundation.wal_store [WalStore] doeff_cluster.coordinator.protocol.store [durable-states wal-store])
 (import doeff_cluster.coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster.coordinator.protocol.faults [coordinator-faults])
 (import doeff_events [MemoryBroker broker-back-by-retry memory-notice-handler notice-events-handler redis-notice-handler])
 (import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES])
 

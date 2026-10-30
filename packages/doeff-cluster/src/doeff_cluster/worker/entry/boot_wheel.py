@@ -25,7 +25,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from doeff_cluster.foundation.process_environ import child_environ
+from doeff_cluster._foundation.process_environ import child_environ
 from doeff_cluster.shared.core import native_wheel
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の入口 shim.py と同じ。
