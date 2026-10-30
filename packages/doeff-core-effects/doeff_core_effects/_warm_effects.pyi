@@ -4,46 +4,10 @@ from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from doeff import EffectBase as EffectBase
 from doeff_core_effects._process_effects import EnvEntry as EnvEntry
+from doeff_core_effects._process_effects import ProcessEnded as ProcessEnded
 from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
 WARM_ANSWER_SECONDS: float
 EXIT_CODE_PATTERN: str
-
-@dataclass(frozen=True, kw_only=True)
-class ForkFromWarm(EffectBase):
-    socket_path: str
-    entry: str
-    args: tuple[str, ...] = ...
-    cwd: str
-    env: tuple[EnvEntry, ...] = ...
-    log_path: str
-    exit_path: str
-    grace_seconds: float = 10.0
-    hold_input: bool = False
-    cgroup_procs: str | None = None
-    notice_env: str | None = None
-
-@dataclass(frozen=True, kw_only=True)
-class WriteWarmChildInput(EffectBase):
-    pid: int
-    start_ticks: int
-    text: str
-
-@dataclass(frozen=True, kw_only=True)
-class PollWarmChild(EffectBase):
-    pid: int
-    start_ticks: int
-    exit_path: str
-
-@dataclass(frozen=True, kw_only=True)
-class AwaitWarmChildExit(EffectBase):
-    pid: int
-    start_ticks: int
-
-@dataclass(frozen=True, kw_only=True)
-class SignalWarmChild(EffectBase):
-    pid: int
-    start_ticks: int
-    signal: ProcessSignal
 
 @dataclass(frozen=True, kw_only=True)
 class WarmForked:
@@ -81,6 +45,43 @@ class WarmInputWritten:
 class WarmGone:
     pid: int
     detail: str
+
+@dataclass(frozen=True, kw_only=True)
+class ForkFromWarm(EffectBase[WarmForked | WarmRefused]):
+    socket_path: str
+    entry: str
+    args: tuple[str, ...] = ...
+    cwd: str
+    env: tuple[EnvEntry, ...] = ...
+    log_path: str
+    exit_path: str
+    grace_seconds: float = 10.0
+    hold_input: bool = False
+    cgroup_procs: str | None = None
+    notice_env: str | None = None
+
+@dataclass(frozen=True, kw_only=True)
+class WriteWarmChildInput(EffectBase[WarmInputWritten]):
+    pid: int
+    start_ticks: int
+    text: str
+
+@dataclass(frozen=True, kw_only=True)
+class PollWarmChild(EffectBase[WarmRunning | WarmExited | WarmLost]):
+    pid: int
+    start_ticks: int
+    exit_path: str
+
+@dataclass(frozen=True, kw_only=True)
+class AwaitWarmChildExit(EffectBase[ProcessEnded]):
+    pid: int
+    start_ticks: int
+
+@dataclass(frozen=True, kw_only=True)
+class SignalWarmChild(EffectBase[WarmSignaled | WarmGone]):
+    pid: int
+    start_ticks: int
+    signal: ProcessSignal
 
 def warm_socket_missing(socket_path: str) -> _Program[str, object]:
     ...

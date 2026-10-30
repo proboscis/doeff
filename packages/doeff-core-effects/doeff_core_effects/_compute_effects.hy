@@ -29,7 +29,7 @@
   (#^ Exception error))
 
 
-(defclass [(dataclass :frozen True)] Compute [EffectBase]
+(defclass [(dataclass :frozen True)] Compute [(get EffectBase (| Computed ComputeFailed))]
   "純粋な program を回して答えを値で受ける(頭の註)。答え = Computed | ComputeFailed。"
   (#^ DoExpr program))
 
@@ -46,5 +46,5 @@
   (#^ float ran-seconds))
 
 
-(defclass [(dataclass :frozen True)] ReadComputeLoad [EffectBase]
+(defclass [(dataclass :frozen True)] ReadComputeLoad [(get EffectBase ComputeLoad)]
   "答え手が今 抱えている計算の負荷の断面を読む(頭の註)。答え = ComputeLoad。")

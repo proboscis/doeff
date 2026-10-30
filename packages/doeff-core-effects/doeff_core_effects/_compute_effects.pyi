@@ -13,7 +13,7 @@ class ComputeFailed:
     error: Exception
 
 @dataclass(frozen=True)
-class Compute(EffectBase):
+class Compute(EffectBase[Computed | ComputeFailed]):
     program: DoExpr
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,5 +28,5 @@ class ComputeLoad:
         ...
 
 @dataclass(frozen=True)
-class ReadComputeLoad(EffectBase):
+class ReadComputeLoad(EffectBase[ComputeLoad]):
     ...

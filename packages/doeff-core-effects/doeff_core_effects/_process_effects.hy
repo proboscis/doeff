@@ -133,7 +133,8 @@
   (setv start-error ""))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] RunProcess [EffectBase]
+;; 各 effect は答えの型を基底 EffectBase[答え] に書く(ADR-DOE-API-001 R2 — 答えの record は、それを答える effect の前に置く)。
+(defclass [(dataclass :frozen True :kw-only True)] RunProcess [(get EffectBase ProcessOutcome)]
   "子 process を 1 回走らせて終わりを待つ(頭の註)。終了 code は値で返る。"
   #^ (get tuple #(str ...)) argv
   #^ (| str None) stdin
@@ -158,12 +159,12 @@
   (setv stream-output False))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] ExecutableAt [EffectBase]
+(defclass [(dataclass :frozen True :kw-only True)] ExecutableAt [(get EffectBase bool)]
   "その path に実行できる file が在るか。"
   #^ str path)
 
 
-(defclass [(dataclass :frozen True)] ReadEnvironment [EffectBase]
+(defclass [(dataclass :frozen True)] ReadEnvironment [(get EffectBase (get tuple #(EnvEntry ...)))]
   "自分の process の環境変数のうち names の分と、prefixes のどれかで始まる名の分を読む(頭の註)。"
   (#^ (get tuple #(str ...)) names)
   (setv #^ (get tuple #(str ...)) prefixes #()))
@@ -191,32 +192,27 @@
   (dfor entry entries entry.name entry.value))
 
 
-(defclass [(dataclass :frozen True)] WorkingDirectory [EffectBase]
+(defclass [(dataclass :frozen True)] WorkingDirectory [(get EffectBase str)]
   "自分の process の作業 dir(頭の註)。")
 
 
-(defclass [(dataclass :frozen True)] ProcessAlive [EffectBase]
+(defclass [(dataclass :frozen True)] ProcessAlive [(get EffectBase bool)]
   "pid の process が生きているか(頭の註)。"
   (#^ int pid))
-
-
-(defclass [(dataclass :frozen True)] ReadInterpreter [EffectBase]
-  "自分の process の Python の interpreter の事実を読む(頭の註)。答え = InterpreterFacts。")
-
-
-(defclass [(dataclass :frozen True)] ReadMachineName [EffectBase]
-  "自分の process が走る機体の名を読む(頭の註)。答え = 名(str)。")
-
-
-(defclass [(dataclass :frozen True)] ResolveModule [EffectBase]
-  "module の名を、自分の process の import が解く置き場へ(頭の註)。答え = ModuleFound か ModuleNotFound。"
-  (#^ str name))
 
 
 (defrecord InterpreterFacts
   "自分の process の Python の interpreter の事実(prefix = sys.prefix を symlink まで解いた絶対 path・pid = この process の id)。"
   (#^ str prefix)
   (#^ int pid))
+
+
+(defclass [(dataclass :frozen True)] ReadInterpreter [(get EffectBase InterpreterFacts)]
+  "自分の process の Python の interpreter の事実を読む(頭の註)。答え = InterpreterFacts。")
+
+
+(defclass [(dataclass :frozen True)] ReadMachineName [(get EffectBase str)]
+  "自分の process が走る機体の名を読む(頭の註)。答え = 名(str)。")
 
 
 (defrecord ModuleFound
@@ -232,7 +228,22 @@
   (#^ str name))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] StartProcess [EffectBase]
+(defclass [(dataclass :frozen True)] ResolveModule [(get EffectBase (| ModuleFound ModuleNotFound))]
+  "module の名を、自分の process の import が解く置き場へ(頭の註)。答え = ModuleFound か ModuleNotFound。"
+  (#^ str name))
+
+
+(defrecord ProcessStarted
+  "子を立てた(pid = PollProcess と StopProcess で問う子の印)。"
+  (#^ int pid))
+
+
+(defrecord ProcessNotStarted
+  "子を立てられなかった(detail = OSError の文と同じ形の理由 — 出力の file が開けない・cwd が無い・命令が無い)。"
+  (#^ str detail))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StartProcess [(get EffectBase (| ProcessStarted ProcessNotStarted))]
   "子 process を立てて、終わりを待たずに返す(頭の註)。答え = ProcessStarted か ProcessNotStarted。"
   #^ (get tuple #(str ...)) argv
   #^ (| str None) cwd
@@ -257,64 +268,6 @@
   (setv lifetime ChildLifetime.WITH-STARTER))
 
 
-(defclass [(dataclass :frozen True)] PollProcess [EffectBase]
-  "StartProcess で立てた子の様子を、待たずに 1 度だけ問う(頭の註)。答え = ProcessRunning か ProcessExited か ProcessNotChild。"
-  (#^ int pid))
-
-
-(defclass [(dataclass :frozen True :kw-only True)] StopProcess [EffectBase]
-  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessNotChild。"
-  #^ int pid
-  #^ float stop-grace
-  (setv stop-grace 10.0))
-
-
-(defclass [(dataclass :frozen True)] AwaitProcessExit [EffectBase]
-  "StartProcess で立てた子が終わるまで待つ(頭の註)。答え = ProcessEnded か ProcessNotChild。"
-  (#^ int pid))
-
-
-;; SignalProcess で送る signal の閉じた型(#2461): TERM = 止まってくれと頼む(子は後始末をして終われる)・KILL = 強いて止める。
-(defenum ProcessSignal TERM KILL)
-(setv ProcessSignal.__doc__ "SignalProcess で送る signal: TERM = 止まってくれと頼む・KILL = 強いて止める。")
-
-
-(defclass [(dataclass :frozen True :kw-only True)] SignalProcess [EffectBase]
-  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessNotChild。"
-  #^ int pid
-  #^ ProcessSignal signal)
-
-
-(defrecord ProcessSignalled
-  "SignalProcess の答え: delivered = 走っている子へ送った(True)・既に終わっていた子なので送らなかった(False — 終わりは PollProcess が
-   答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
-  (#^ int pid)
-  (#^ bool delivered))
-
-
-(defclass [(dataclass :frozen True :kw-only True)] WriteProcessInput [EffectBase]
-  "hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(頭の註)。答え = ProcessInputWritten か ProcessNotChild。"
-  #^ int pid
-  #^ str text)
-
-
-(defrecord ProcessInputWritten
-  "WriteProcessInput の答え: delivered = 子の標準入力の pipe へ書いた(True)・書かなかった(False — 終わっていた子・pipe を握っていない子・
-   読み手の居ない pipe。終わりは PollProcess が答えて回収する)。"
-  (#^ int pid)
-  (#^ bool delivered))
-
-
-(defrecord ProcessStarted
-  "子を立てた(pid = PollProcess と StopProcess で問う子の印)。"
-  (#^ int pid))
-
-
-(defrecord ProcessNotStarted
-  "子を立てられなかった(detail = OSError の文と同じ形の理由 — 出力の file が開けない・cwd が無い・命令が無い)。"
-  (#^ str detail))
-
-
 (defrecord ProcessRunning
   "子はまだ走っている。"
   (#^ int pid))
@@ -326,14 +279,62 @@
   (#^ int exit-code))
 
 
+(defrecord ProcessNotChild
+  "この答え手が立てた子でない pid(立てていない・既に終わりを答えて回収した)— 他人の process に signal を送らないため。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True)] PollProcess [(get EffectBase (| ProcessRunning ProcessExited ProcessNotChild))]
+  "StartProcess で立てた子の様子を、待たずに 1 度だけ問う(頭の註)。答え = ProcessRunning か ProcessExited か ProcessNotChild。"
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessNotChild))]
+  "StartProcess で立てた子を止めて回収する(頭の註)。答え = ProcessExited か ProcessNotChild。"
+  #^ int pid
+  #^ float stop-grace
+  (setv stop-grace 10.0))
+
+
 (defrecord ProcessEnded
   "待った process が終わった(AwaitProcessExit・AwaitWarmChildExit の答え — 回収はしない。終了 code は PollProcess・PollWarmChild が答える)。"
   (#^ int pid))
 
 
-(defrecord ProcessNotChild
-  "この答え手が立てた子でない pid(立てていない・既に終わりを答えて回収した)— 他人の process に signal を送らないため。"
+(defclass [(dataclass :frozen True)] AwaitProcessExit [(get EffectBase (| ProcessEnded ProcessNotChild))]
+  "StartProcess で立てた子が終わるまで待つ(頭の註)。答え = ProcessEnded か ProcessNotChild。"
   (#^ int pid))
+
+
+;; SignalProcess で送る signal の閉じた型(#2461): TERM = 止まってくれと頼む(子は後始末をして終われる)・KILL = 強いて止める。
+(defenum ProcessSignal TERM KILL)
+(setv ProcessSignal.__doc__ "SignalProcess で送る signal: TERM = 止まってくれと頼む・KILL = 強いて止める。")
+
+
+(defrecord ProcessSignalled
+  "SignalProcess の答え: delivered = 走っている子へ送った(True)・既に終わっていた子なので送らなかった(False — 終わりは PollProcess が
+   答えて回収する)。送った後に子が終わったかは PollProcess で問う。"
+  (#^ int pid)
+  (#^ bool delivered))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] SignalProcess [(get EffectBase (| ProcessSignalled ProcessNotChild))]
+  "StartProcess で立てた子へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = ProcessSignalled か ProcessNotChild。"
+  #^ int pid
+  #^ ProcessSignal signal)
+
+
+(defrecord ProcessInputWritten
+  "WriteProcessInput の答え: delivered = 子の標準入力の pipe へ書いた(True)・書かなかった(False — 終わっていた子・pipe を握っていない子・
+   読み手の居ない pipe。終わりは PollProcess が答えて回収する)。"
+  (#^ int pid)
+  (#^ bool delivered))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] WriteProcessInput [(get EffectBase (| ProcessInputWritten ProcessNotChild))]
+  "hold-stdin で立てた子の標準入力の pipe へ text を書き、待たずに返す(頭の註)。答え = ProcessInputWritten か ProcessNotChild。"
+  #^ int pid
+  #^ str text)
 
 
 (defk timed-out-outcome [stdout stderr]

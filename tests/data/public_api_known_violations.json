@@ -9544,104 +9544,6 @@
       "doeff_core_effects.ws_client_effects"
      ]
     },
-    "外れ — effect に答えの型を書く": {
-     "doeff_core_effects.compute_effects": [
-      "ComputeFailed",
-      "Computed"
-     ],
-     "doeff_core_effects.effects": [
-      "HttpResponse"
-     ],
-     "doeff_core_effects.http_effects": [
-      "HttpFailed",
-      "HttpResponse"
-     ],
-     "doeff_core_effects.http_host_gate": [
-      "HttpFailed"
-     ],
-     "doeff_core_effects.http_server_effects": [
-      "HttpProbeAnswer"
-     ],
-     "doeff_core_effects.inline_compute": [
-      "ComputeFailed",
-      "Computed"
-     ],
-     "doeff_core_effects.meter_effects": [
-      "SecondsObservation"
-     ],
-     "doeff_core_effects.os_proc_table": [
-      "ProcRow"
-     ],
-     "doeff_core_effects.os_process": [
-      "EnvEntry",
-      "ModuleNotFound",
-      "ProcessExited",
-      "ProcessNotStarted",
-      "ProcessOutcome",
-      "ProcessSignalled",
-      "ProcessStarted"
-     ],
-     "doeff_core_effects.os_warm_process": [
-      "WarmExited",
-      "WarmForked",
-      "WarmGone",
-      "WarmLost",
-      "WarmRefused",
-      "WarmSignaled"
-     ],
-     "doeff_core_effects.proc_table_effects": [
-      "ProcRow"
-     ],
-     "doeff_core_effects.process_effects": [
-      "EnvEntry",
-      "ModuleNotFound",
-      "ProcessEnded",
-      "ProcessExited",
-      "ProcessNotStarted",
-      "ProcessOutcome",
-      "ProcessSignalled",
-      "ProcessStarted"
-     ],
-     "doeff_core_effects.process_exit": [
-      "ProcessEnded"
-     ],
-     "doeff_core_effects.scripted_http_server": [
-      "HttpProbeAnswer"
-     ],
-     "doeff_core_effects.scripted_process": [
-      "EnvEntry",
-      "ModuleNotFound",
-      "ProcessExited",
-      "ProcessNotStarted",
-      "ProcessOutcome",
-      "ProcessSignalled",
-      "ProcessStarted"
-     ],
-     "doeff_core_effects.scripted_warm_process": [
-      "WarmExited",
-      "WarmForked",
-      "WarmGone",
-      "WarmLost",
-      "WarmRefused",
-      "WarmSignaled"
-     ],
-     "doeff_core_effects.scripted_ws_client": [
-      "ScriptedWsClosed"
-     ],
-     "doeff_core_effects.warm_effects": [
-      "EnvEntry",
-      "WarmExited",
-      "WarmForked",
-      "WarmGone",
-      "WarmLost",
-      "WarmRefused",
-      "WarmSignaled"
-     ],
-     "doeff_core_effects.ws_client_effects": [
-      "ScriptedWsClosed",
-      "ScriptedWsReply"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_core_effects.aiohttp_http_server": [
       "WebEdge"
@@ -9706,6 +9608,7 @@
       "WarmSocketAnswer"
      ],
      "doeff_core_effects.scripted_ws_client": [
+      "ScriptedWsClosed",
       "WsScript"
      ],
      "doeff_core_effects.sqlite_file_sql": [
@@ -9731,6 +9634,8 @@
       "SQLiteStorage"
      ],
      "doeff_core_effects.ws_client_effects": [
+      "ScriptedWsClosed",
+      "ScriptedWsReply",
       "WsScript"
      ]
     },
@@ -13473,27 +13378,6 @@
    "module": "doeff_core_effects.os_warm_process",
    "name": "input_written",
    "訳": "待ちの子の答え手の中の名(頼み手が握る子の入力の pipe の書き口とその書き)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule os_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
-   "決め": "ki-de44efdb9aa4"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.os_warm_process",
-   "name": "WarmInputWritten",
-   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型 — 定義は warm_effects)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule os_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
-   "決め": "ki-de44efdb9aa4"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_warm_process",
-   "name": "WarmInputWritten",
-   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型 — 定義は warm_effects)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule scripted_warm_process はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
-   "決め": "ki-de44efdb9aa4"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.warm_effects",
-   "name": "WarmInputWritten",
-   "訳": "effect WriteWarmChildInput の答えの型(R2 の effect の結果の型)。commit 4510d5f40(card ki-de44efdb9aa4)が表を直さずに足した — card ki-f576eafb26fb が doeff main 2b10bc9ec の目録で見つけた。submodule warm_effects はまだ公開で、submodule を _ で隠す段 1 の card ki-8d33df2c82df(4/6: process)が内側へ移し、移し替えの module を消す段 3 の card ki-127f9cd053e0 で目録から消える",
    "決め": "ki-de44efdb9aa4"
   },
   {

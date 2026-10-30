@@ -35,60 +35,12 @@
 (import re)
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-(import doeff_core_effects._process_effects [EnvEntry ProcessSignal])
+(import doeff_core_effects._process_effects [EnvEntry ProcessEnded ProcessSignal])
 
 ;; 待ちの子が答えるまでの期限の秒(接続・送り・答えの 1 行の受けの全部)。
 (val WARM-ANSWER-SECONDS 5.0)
 ;; exit の file の中身の形(符号つきの整数 1 つ)。
 (val EXIT-CODE-PATTERN "-?[0-9]+")
-
-
-(defclass [(dataclass :frozen True :kw-only True)] ForkFromWarm [EffectBase]
-  "待ちの子に仕事を 1 つ頼む(頭の註)。答え = WarmForked か WarmRefused。"
-  #^ str socket-path
-  #^ str entry
-  #^ (get tuple #(str ...)) args
-  (setv args #())
-  #^ str cwd
-  #^ (get tuple #(EnvEntry ...)) env
-  (setv env #())
-  #^ str log-path
-  #^ str exit-path
-  #^ float grace-seconds
-  (setv grace-seconds 10.0)
-  #^ bool hold-input
-  (setv hold-input False)
-  #^ (| str None) cgroup-procs
-  (setv cgroup-procs None)
-  #^ (| str None) notice-env
-  (setv notice-env None))
-
-
-(defclass [(dataclass :frozen True :kw-only True)] WriteWarmChildInput [EffectBase]
-  "hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す(頭の註)。答え = WarmInputWritten。"
-  #^ int pid
-  #^ int start-ticks
-  #^ str text)
-
-
-(defclass [(dataclass :frozen True :kw-only True)] PollWarmChild [EffectBase]
-  "頼んだ子の様子を、待たずに 1 度だけ問う(頭の註)。答え = WarmRunning か WarmExited か WarmLost。"
-  #^ int pid
-  #^ int start-ticks
-  #^ str exit-path)
-
-
-(defclass [(dataclass :frozen True :kw-only True)] AwaitWarmChildExit [EffectBase]
-  "頼んだ子が終わるまで待つ(頭の註)。答え = ProcessEnded。"
-  #^ int pid
-  #^ int start-ticks)
-
-
-(defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [EffectBase]
-  "頼んだ子の group へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = WarmSignaled か WarmGone。"
-  #^ int pid
-  #^ int start-ticks
-  #^ ProcessSignal signal)
 
 
 (defrecord WarmForked
@@ -134,6 +86,54 @@
   "signal を送らなかった(detail = 理由 — 居ない・終わっている・使い回された)。"
   (#^ int pid)
   (#^ str detail))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] ForkFromWarm [(get EffectBase (| WarmForked WarmRefused))]
+  "待ちの子に仕事を 1 つ頼む(頭の註)。答え = WarmForked か WarmRefused。"
+  #^ str socket-path
+  #^ str entry
+  #^ (get tuple #(str ...)) args
+  (setv args #())
+  #^ str cwd
+  #^ (get tuple #(EnvEntry ...)) env
+  (setv env #())
+  #^ str log-path
+  #^ str exit-path
+  #^ float grace-seconds
+  (setv grace-seconds 10.0)
+  #^ bool hold-input
+  (setv hold-input False)
+  #^ (| str None) cgroup-procs
+  (setv cgroup-procs None)
+  #^ (| str None) notice-env
+  (setv notice-env None))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] WriteWarmChildInput [(get EffectBase WarmInputWritten)]
+  "hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す(頭の註)。答え = WarmInputWritten。"
+  #^ int pid
+  #^ int start-ticks
+  #^ str text)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] PollWarmChild [(get EffectBase (| WarmRunning WarmExited WarmLost))]
+  "頼んだ子の様子を、待たずに 1 度だけ問う(頭の註)。答え = WarmRunning か WarmExited か WarmLost。"
+  #^ int pid
+  #^ int start-ticks
+  #^ str exit-path)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] AwaitWarmChildExit [(get EffectBase ProcessEnded)]
+  "頼んだ子が終わるまで待つ(頭の註)。答え = ProcessEnded。"
+  #^ int pid
+  #^ int start-ticks)
+
+
+(defclass [(dataclass :frozen True :kw-only True)] SignalWarmChild [(get EffectBase (| WarmSignaled WarmGone))]
+  "頼んだ子の group へ signal を 1 度だけ送り、待たずに返す(頭の註)。答え = WarmSignaled か WarmGone。"
+  #^ int pid
+  #^ int start-ticks
+  #^ ProcessSignal signal)
 
 
 (defk warm-socket-missing [socket-path]
