@@ -19,8 +19,8 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [Request NextRequests Reply CoordinatorStopRequested])
-(import doeff_cluster.record_store.intent.record_store_model [CompactRecords PruneRecords])
-(import doeff_cluster.record_store.core.program [store-loop MAINTENANCE-MS])
+(import doeff_cluster [CompactRecords PruneRecords])
+(import doeff_cluster._record_store.core.program [store-loop MAINTENANCE-MS])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
@@ -107,8 +107,8 @@ from doeff import run
 from doeff_core_effects._scheduler import scheduled
 from doeff_cluster.foundation.coordinator_inbox import StopState, stop_on_signals
 from doeff_cluster.foundation.record_inbox import RecordInbox
-from doeff_cluster.record_store.entry.handler_sets import production_handlers
-from doeff_cluster.record_store.entry.main import record_store_on
+from doeff_cluster._record_store.entry.handler_sets import production_handlers
+from doeff_cluster._record_store.entry.main import record_store_on
 stop = StopState()
 inbox = RecordInbox(0)
 run(stop_on_signals(stop, wake=inbox.wake))

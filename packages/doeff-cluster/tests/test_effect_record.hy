@@ -411,8 +411,12 @@
   ;; (調停ループは本番と同じ NextRequests を出す)。旧い名は引けない(黙って別の型へ倒れない — 保存の形は互換を持たない)。
   (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") None))
   ;; record-store の effect(#2030)— 旧い module の名 doeff_cluster.record_store は今は dir(package)なので、表が無ければ引けない
-  (import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines])
+  (import doeff_cluster [AppendRecordLines])
   (assert (is (resolve-type "doeff_cluster.record_store:AppendRecordLines") AppendRecordLines))
+  ;; 区画を _ へ隠す前(ADR-DOE-API-001 R15)の記録の名も、移し替えの module に頼らず表で今の置き場を引く
+  (assert (= (get MOVED-MODULES "doeff_cluster.record_store.intent.record_store_model")
+             "doeff_cluster._record_store.intent.record_store_model"))
+  (assert (is (resolve-type "doeff_cluster.record_store.intent.record_store_model:AppendRecordLines") AppendRecordLines))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
@@ -424,7 +428,7 @@
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 20)))
+  (assert (= (len MOVED-MODULES) 21)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------

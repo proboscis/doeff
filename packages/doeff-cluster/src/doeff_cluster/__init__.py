@@ -220,6 +220,8 @@ if TYPE_CHECKING:
     from doeff_cluster.worker.protocol.declared import (
         declared_reply_of_json as declared_reply_of_json,
     )
+    from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
+    from doeff_cluster.shared.protocol.inbox import stop_flag as stop_flag
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
@@ -426,6 +428,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "worktree_git_answer": "doeff_cluster._sim.worktree_git_script",
     "worktree_git_command": "doeff_cluster._sim.worktree_git_script",
     "world_settings_reader": "doeff_cluster._sim.env_world",
+    "AppendRecordLines": "doeff_cluster._record_store.intent.record_store_model",
+    "CompactRecords": "doeff_cluster._record_store.intent.record_store_model",
+    "ListRecordRuns": "doeff_cluster._record_store.intent.record_store_model",
+    "PruneRecords": "doeff_cluster._record_store.intent.record_store_model",
+    "ReadRecordRun": "doeff_cluster._record_store.intent.record_store_model",
+    "http_requests": "doeff_cluster.shared.protocol.inbox",
+    "record_files": "doeff_cluster._record_store.protocol.record_files",
+    "stop_flag": "doeff_cluster.shared.protocol.inbox",
 }
 
 
