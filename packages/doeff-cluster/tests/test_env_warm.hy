@@ -38,11 +38,12 @@
 (import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits SWEEP-EVERY-MS sweep-choice sweep-due sweep-wanted
                                               recent-per-project prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed register-heartbeat heartbeat-reply load-of tasks-for])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
+(import doeff_cluster._coordinator.core.cluster_policy [tasks-placed register-heartbeat heartbeat-reply load-of tasks-for])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv StartWarmChild WarmChildView WarmChildMark
                                     EnvDisk NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan pinned-env-keys sweep-actions])

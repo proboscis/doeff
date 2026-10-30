@@ -22,8 +22,8 @@
 (import doeff_cluster._foundation.kube_client [KubeClient keepalive-options kube-client])
 (import doeff [with-handlers])
 (import pytest)
-(import doeff_cluster.coordinator.intent.kube_model [AnnotateDeployment ScaleDeployment])
-(import doeff_cluster.coordinator.protocol.kube [kube-api])
+(import doeff_cluster [AnnotateDeployment ScaleDeployment])
+(import doeff_cluster [kube-api])
 
 
 (val NAMESPACE "prod")

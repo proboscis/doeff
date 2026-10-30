@@ -17,7 +17,7 @@
 (import doeff [Program EffectBase with-handlers])
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
+(import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.shared.entry.client_foundation [with-detached-client])
 (import doeff_cluster [process-versions]
         doeff_cluster._foundation.process_versions [RUNTIME-ENV-KEY-VAR])

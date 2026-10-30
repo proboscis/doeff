@@ -14,9 +14,9 @@ from test_vm_failfast_semgrep_rules import _semgrep_results
 pytestmark = pytest.mark.semgrep
 
 RULE = "doeff-cluster-coordinator-core-does-not-know-where-its-lines-go"
-FIXTURE = "packages/doeff-cluster/src/doeff_cluster/coordinator/core/line_stamp_import_forbidden.hy"
-ENTRY = "packages/doeff-cluster/src/doeff_cluster/coordinator/entry/main.hy"
-CORE = "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy"
+FIXTURE = "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/line_stamp_import_forbidden.hy"
+ENTRY = "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/main.hy"
+CORE = "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program.hy"
 
 
 def _hits(findings: list[dict], rule: str) -> list[int]:

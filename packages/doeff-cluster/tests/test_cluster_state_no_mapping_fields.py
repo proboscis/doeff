@@ -14,7 +14,7 @@ import hy  # noqa: F401  (Hy の module を読むため)
 from doeff_hy._frozen import FrozenMap
 from doeff_hy._table import Table
 
-from doeff_cluster.coordinator.intent.cluster_model import ClusterState
+from doeff_cluster import ClusterState
 
 MAPPING_ROOTS = (dict, collections.abc.Mapping, FrozenMap)
 

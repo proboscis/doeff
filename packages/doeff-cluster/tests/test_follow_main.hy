@@ -18,15 +18,16 @@
 (import dataclasses [replace])
 (import doeff [with_handlers])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState])
+(import doeff_cluster [ClusterNaming ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.resource_policy [ready-instances])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
+(import doeff_cluster._coordinator.core.resource_policy [ready-instances])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.core.program [rollout-tick])
+(import doeff_cluster [kube-memory]
+        doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows])
 (import doeff_cluster.worker.protocol.heartbeat [status-rows-json])
-(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
-(import doeff_cluster.coordinator.core.cluster_policy [still-live-somewhere])
+(import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
+(import doeff_cluster._coordinator.core.cluster_policy [still-live-somewhere])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState ProcessView WorldView WorkerPolicy JobRecord
                         PrepareCode StartJob SignalJob ReapJob RetireJob ReleaseLeases StopStage ProbeEntry ProbeView ProbeState
                         ForgetProbes Action] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
@@ -203,8 +204,9 @@
 (deftest test-a-retired-process-still-counts-as-live
   ;; 入れ替えで退いた process(行の名は <名>#retired-<世代>)が居る間、その job はまだ動いていると数える(他の worker へ置かない)。
   (val empty (ClusterState :workers (! (table-from-rows {}))))
-  (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo WorkerReport])
-  (import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
+  (import doeff_cluster [WorkerInfo]
+          doeff_cluster._coordinator.intent.cluster_model [WorkerReport])
+  (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
   (val state (replace empty :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("net") 1000 :task-reserve 0 :background-room 10)}))
                             :observations (! (reports-observed {"zeus" (WorkerReport :at 1000 :endpoint None
                                                                                      :jobs #((StatusRow :name "a#retired-1-x" :phase "running"
@@ -216,7 +218,7 @@
 (deftest test-heartbeat-age-per-worker-is-exposed
   ;; coordinator 自身の alert(DoeffWorkerHeartbeatStale)の材料: worker ごとの最後の heartbeat の古さ(label は worker の名だけ —
   ;; 能力の名乗りは計器の label に写さない)。忘れた worker は出ない。
-  (import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
+  (import doeff_cluster [WorkerInfo])
   (val state (replace (ClusterState)
                       :workers (! (table-from-rows {"zeus" (WorkerInfo "zeus" #("cluster-net" "net") 1000 :task-reserve 0 :background-room 10)
                                 "proboscis-mbp" (WorkerInfo "proboscis-mbp" #("agent-cli") 61000 :exclusive #("agent-cli") :task-reserve 0 :background-room 10)}))))

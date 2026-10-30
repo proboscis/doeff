@@ -12,8 +12,8 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_time [Delay])
-(import doeff_cluster.coordinator.entry.handler_sets [MemoryWalStore])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue])
+(import doeff_cluster._coordinator.entry.handler_sets [MemoryWalStore])
+(import doeff_cluster._coordinator.protocol.request_queue [RequestQueue])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [decode-outcome])
@@ -34,7 +34,7 @@
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
+(import doeff_cluster._coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
                                                                  acknowledged-values-survive declared-services-survive
                                                                  ServiceVersionRead service-versions-never-go-back
                                                                  WorkerProbe alive-only-while-reachable

@@ -23,10 +23,11 @@
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox])
-(import doeff_cluster.coordinator.core.program [announced-aside])
-(import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES back-of gone-of])
-(import doeff_cluster.coordinator.entry.handler_sets [NOTICE-SOURCE])
+(import doeff_cluster._coordinator.core.program [announced-aside])
+(import doeff_cluster [WorkerBack WorkerGone])
+(import doeff_cluster [WORKER-NOTICE-ROUTES]
+        doeff_cluster._coordinator.protocol.worker_notices [back-of gone-of])
+(import doeff_cluster._coordinator.entry.handler_sets [NOTICE-SOURCE])
 
 ;; 起動の時の今の状態(coordinator の liveness-now の形): w1・w2 は生きている・w3 は沈黙。
 (val W1-BACK (WorkerBack :worker "w1" :boot "b1" :seen-ms 1000))

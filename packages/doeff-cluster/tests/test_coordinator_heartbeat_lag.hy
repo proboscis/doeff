@@ -21,12 +21,13 @@
 (import doeff_events [MemoryBroker])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming SaveState])
-(import doeff_cluster.coordinator.core.program [run-coordinator HEARTBEAT-LAG-LOG HEARTBEAT-LAG-MS])
-(import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
-(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
-(import doeff_cluster.coordinator.protocol.replies [reply-bodies])
-(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
+(import doeff_cluster [ClusterState ClusterNaming SaveState])
+(import doeff_cluster [run-coordinator]
+        doeff_cluster._coordinator.core.program [HEARTBEAT-LAG-LOG HEARTBEAT-LAG-MS])
+(import doeff_cluster._coordinator.entry.handler_sets [memory-notices])
+(import doeff_cluster [request-bodies])
+(import doeff_cluster [reply-bodies])
+(import doeff_cluster [kube-unavailable])
 
 (val VERSIONS {"python" "3.14.0" "doeff" "1"})
 ;; 検の coordinator は k8s を持たない(本番の手元の coordinator と同じ答え手 — 調停ループは毎歩 Deployment と Node の見張りを揃える・

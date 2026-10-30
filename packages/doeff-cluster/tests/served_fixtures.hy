@@ -31,7 +31,7 @@
   (<- port int (free-port))
   (val url f"http://127.0.0.1:{port}")
   (val log (open (/ tmp-path "coordinator.log") "w"))
-  (val process (subprocess.Popen [HY "-m" "doeff_cluster.coordinator.entry.main" "--state-file" (str (/ tmp-path "state.json"))
+  (val process (subprocess.Popen [HY "-m" "doeff_cluster._coordinator.entry.main" "--state-file" (str (/ tmp-path "state.json"))
                                   "--port" (str port) "--notice-broker" "memory"]
                                  :cwd (str ROOT) :stdout log :stderr subprocess.STDOUT))
   (val deadline (+ (time.monotonic) 60))

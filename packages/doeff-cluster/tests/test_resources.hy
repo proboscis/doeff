@@ -4,14 +4,15 @@
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming PlainText Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
+(import doeff_cluster [ClusterState])
+(import doeff_cluster._coordinator.core.cluster_policy [board-changes job-from-json] doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json board-rows-of])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.coordinator.core.api_policy [tick plan-rollouts])
-(import doeff_cluster.coordinator.core.resource_policy [ready-instance])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.resource_policy [LEGACY-OWNER REPORTS-KEPT adopt-legacy])
+(import doeff_cluster [tick]
+        doeff_cluster._coordinator.core.api_policy [plan-rollouts])
+(import doeff_cluster._coordinator.core.resource_policy [ready-instance])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.core.resource_policy [LEGACY-OWNER REPORTS-KEPT adopt-legacy])
 (import tests.program_rows [SAMPLE-RUN program-placed program-run])
 (import doeff [run])
 
@@ -562,7 +563,7 @@
 ;; status.lastReadiness と GET /metrics の本文は前と同じ形で綴り、保存の差分(durable_kv.durable-delta)には何も出ない。
 
 (import json)
-(import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
+(import doeff_cluster._coordinator.protocol.durable_kv [durable-delta])
 
 (defk last-readiness-json [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}

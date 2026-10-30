@@ -19,9 +19,9 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster._sim.local :as sim-local)
 (import doeff_cluster [sim-cluster SimWorker DeclareRollout ReadCoordinator ProcessesOf SIM-START-MS])
-(import doeff_cluster.coordinator.intent.kube_model [FollowDeployments])
+(import doeff_cluster [FollowDeployments])
 (import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows follow-wait follows-nodes])
+(import doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows follow-wait follows-nodes])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 

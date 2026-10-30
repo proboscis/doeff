@@ -273,7 +273,7 @@ def test_report_tables_rule_detects_a_reader_outside_the_owner() -> None:
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/core/"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/"
         "report_table_read_outside_owner_forbidden.hy",
         cwd=fixture_root,
     )

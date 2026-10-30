@@ -4,14 +4,15 @@
 (import tests.state_rows [table-from-rows])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState EventsView StateReply HeartbeatReply WorkerInfo WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased ProgramStored ProgramRow])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [EventsView StateReply HeartbeatReply WorkerDrainView ResourceList ResourceView ErrorReply RowConflict BoardWritten BoardConflict BoardRead TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped DetachedUnknown DetachedWarming DetachedSubmitted DetachedCancelled DetachedReleased ProgramStored ProgramRow])
 (import doeff_cluster.shared.intent.warm_model [WarmState])
-(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
-(import doeff_cluster.coordinator.core.drain_policy [superseded-worker-view])
+(import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster._coordinator.core.drain_policy [superseded-worker-view])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [respond])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.protocol.replies [reply-json])
+(import doeff_cluster._coordinator.core.api_policy [respond])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.protocol.replies [reply-json])
 
 (setv T (ClusterTiming))
 
@@ -170,9 +171,10 @@
 
 (import json)
 (import doeff [with_handlers])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
-(import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
+(import doeff_cluster [ClusterNaming])
+(import doeff_cluster._coordinator.core.program [rollout-tick])
+(import doeff_cluster [kube-memory]
+        doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows])
 (import doeff_core_effects [slog-discard-handler])
 
 (val DEPLOYMENT-TO-DEPLOYMENT {"from" {"kind" "Deployment" "namespace" "prod" "name" "old"}

@@ -33,10 +33,11 @@
 (import doeff_cluster.shared.core.remote_rules [version-diffs failed-from])
 (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord WorkerInfo ComponentVersion])
-(import doeff_cluster.coordinator.core.cluster_policy [can-run-task absorb-env-failure tasks-placed submit-task ENV-RETRIES])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.detached_policy [submit-detached])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
+(import doeff_cluster._coordinator.core.cluster_policy [can-run-task absorb-env-failure tasks-placed submit-task ENV-RETRIES])
+(import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
+(import doeff_cluster._coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView JobRecord WorkerPolicy PrepareEnv
                                     PrepareCode] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.worker.core.worker_rules [code-key])
 (import doeff_cluster.worker.core.policy [plan statuses])

@@ -4,14 +4,16 @@
 (import doeff_cluster.shared.core.lease_rules [semaphore-key])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState WorkerInfo TaskRecord])
+(import doeff_cluster [BoardRow ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [tick clocks-shifted])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
-(import doeff_cluster.coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN
-                          board-usage board-tally-of value-size sweep-board] doeff_cluster.coordinator.protocol.state_json [board-rows-of])
-(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
+(import doeff_cluster [tick]
+        doeff_cluster._coordinator.core.api_policy [clocks-shifted])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.protocol.durable_kv [durable-kv full-kv durable-delta state-from-kv])
+(import doeff_cluster._coordinator.core.cluster_policy [BOARD-MAX-VALUE-BYTES BOARD-MAX-ROWS BOARD-MAX-BYTES TASK-MAX-OPEN
+                          board-usage board-tally-of value-size sweep-board] doeff_cluster._coordinator.protocol.state_json [board-rows-of])
+(import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-TASK-PROGRAM program-placed])
 (import tests.state_rows [table-from-rows])
 

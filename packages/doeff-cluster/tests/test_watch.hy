@@ -11,12 +11,12 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming Watcher WatchRefusal
-                                                       WatchStep HeartbeatReply])
+(import doeff_cluster [ClusterState ClusterNaming]
+        doeff_cluster._coordinator.intent.cluster_model [Watcher WatchRefusal WatchStep HeartbeatReply])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
-(import doeff_cluster.coordinator.protocol.replies [reply-json])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged same-view])
+(import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster._coordinator.protocol.replies [reply-json])
+(import doeff_cluster._coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged same-view])
 (import dataclasses [replace])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster [sim-cluster ClientLink SimWorker ReadCoordinator DrainWorker StopCoordinator]

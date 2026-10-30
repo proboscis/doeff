@@ -15,9 +15,9 @@
 (import doeff_core_effects [slog-handler])
 (import doeff_core_effects [os-file-handler])
 (import doeff_cluster [WalStore])
-(import doeff_cluster.coordinator.protocol.store [durable-load])
-(import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv])
-(import doeff_cluster.coordinator.protocol.state_json [read-each])
+(import doeff_cluster._coordinator.protocol.store [durable-load])
+(import doeff_cluster._coordinator.protocol.durable_kv [state-from-kv])
+(import doeff_cluster._coordinator.protocol.state_json [read-each])
 
 (val FIXTURE (/ (. (Path __file__) (resolve) parent) "fixtures" "coordinator_state_ec727f20" "wal"))
 (val NOW 1767229200000)

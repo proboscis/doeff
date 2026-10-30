@@ -6,10 +6,10 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (require doeff-hy.macros [defhandler <-])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
-(import doeff_cluster.coordinator.core.metrics_policy [checked-metrics :as _checked-metrics])
-(import doeff_cluster.coordinator.intent.request_bodies [MetricsPayload :as _MetricsPayload])
+(import doeff_cluster._coordinator.core.metrics_policy [checked-metrics :as _checked-metrics])
+(import doeff_cluster._coordinator.intent.request_bodies [MetricsPayload :as _MetricsPayload])
 (import doeff_hy._wire [parse Malformed])
-(import doeff_cluster.coordinator.core.resource_policy [Refused :as _Refused])
+(import doeff_cluster._coordinator.core.resource_policy [Refused :as _Refused])
 
 
 ;; fake。本物(metrics-http → coordinator)と同じ契約を tests/test_metrics_contract.hy が両方で回す: coordinator と同じ解きと検め

@@ -6,12 +6,13 @@
 
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RefusedJob RolloutRow RolloutStatus TaskRecord WorkerInfo])
-(import doeff_cluster.coordinator.core.api_policy [plan-rollouts record-action])
-(import doeff_cluster.coordinator.core.resource_policy [delete-resource])
-(import doeff_cluster.coordinator.core.rollout_policy [validate-rollout-spec])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json read-service-rows])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [RefusedJob RolloutRow RolloutStatus TaskRecord])
+(import doeff_cluster._coordinator.core.api_policy [plan-rollouts record-action])
+(import doeff_cluster._coordinator.core.resource_policy [delete-resource])
+(import doeff_cluster._coordinator.core.rollout_policy [validate-rollout-spec])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json read-service-rows])
 (import doeff_hy._table [Table TableWrite table-of])
 (import tests.state_rows [table-from-rows])
 

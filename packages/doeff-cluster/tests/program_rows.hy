@@ -6,10 +6,11 @@
 ;;; task を受けるので、task の検は先に program-placed で置いてから送る(置き場の版が task の版になる)。
 (require doeff-hy.macros [defk <- val])
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations ClusterState WorkerReport])
-(import doeff_cluster.coordinator.core.program_policy [program-write])
-(import doeff_cluster.coordinator.intent.request_bodies [ProgramBody HeartbeatBody TaskBody BodyMalformed])
-(import doeff_cluster.coordinator.protocol.request_bodies [body-of])
+(import doeff_cluster [ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [ClusterObservations WorkerReport])
+(import doeff_cluster._coordinator.core.program_policy [program-write])
+(import doeff_cluster._coordinator.intent.request_bodies [ProgramBody HeartbeatBody TaskBody BodyMalformed])
+(import doeff_cluster._coordinator.protocol.request_bodies [body-of])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
 (import doeff_cluster.shared.core.remote_rules [program-sha])

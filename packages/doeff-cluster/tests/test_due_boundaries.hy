@@ -13,14 +13,14 @@
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterObservations KeepMark WorkerInfo RolloutRow RolloutSpec
-                                                       RolloutStatus RolloutTarget DeploymentUnreadable NodeLabelsSeen])
-(import doeff_cluster.coordinator.core.resource_policy [readiness-due service-readiness carrier-stale-from report-expired-from
-                                                        unreported-until warm-until service-stopped service-stopped-due current-report
-                                                        running-process])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-deadline liveness-due note-liveness reconcile nodes-to-follow])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [ClusterObservations KeepMark RolloutRow RolloutSpec RolloutStatus RolloutTarget DeploymentUnreadable NodeLabelsSeen])
+(import doeff_cluster [service-readiness]
+        doeff_cluster._coordinator.core.resource_policy [readiness-due carrier-stale-from report-expired-from unreported-until warm-until service-stopped service-stopped-due current-report running-process])
+(import doeff_cluster [liveness-due]
+        doeff_cluster._coordinator.core.cluster_policy [liveness-deadline note-liveness reconcile nodes-to-follow])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.api_policy [deployments-to-follow])
+(import doeff_cluster._coordinator.core.api_policy [deployments-to-follow])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
 ;; 担い手の報告が古くならない時計(効く期限を準備の報告の window の 1 つにする)。

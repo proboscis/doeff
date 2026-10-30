@@ -6,12 +6,13 @@
 (import dataclasses [replace])
 (import doeff_hy._table [Table table-of])
 (import tests.state_rows [table-from-rows])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ComponentVersion TaskRecord WorkerInfo])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [absorb-task-reports renew-detached promote-prepared])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [ComponentVersion TaskRecord])
+(import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
+(import doeff_cluster._coordinator.core.cluster_policy [absorb-task-reports renew-detached promote-prepared])
 (import unittest.mock [Mock])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat])
-(import doeff_cluster.coordinator.protocol.durable_kv :as dk)
+(import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat])
+(import doeff_cluster._coordinator.protocol.durable_kv :as dk)
 (import tests.program_rows [SAMPLE-TASK-PROGRAM heartbeat-of])
 
 (defk task [id phase worker detached boot]

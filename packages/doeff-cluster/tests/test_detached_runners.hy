@@ -33,7 +33,7 @@
 (import doeff_cluster [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])
+(import doeff_cluster._coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 
 (val RUNNERS #((RunnerFact :name "a" :provides #("x-tool") :exclusive #() :live True :draining False :task-room 1)

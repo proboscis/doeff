@@ -4,11 +4,12 @@
 (require doeff-hy.macros [deftest val <- defk])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain])
-(import doeff_cluster.coordinator.core.cluster_policy [absorb-boot sweep-drains])
-(import doeff_cluster.coordinator.core.drain_policy [cancel-drain drains-view])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv DRAIN])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster [ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [Drain])
+(import doeff_cluster._coordinator.core.cluster_policy [absorb-boot sweep-drains])
+(import doeff_cluster._coordinator.core.drain_policy [cancel-drain drains-view])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv DRAIN])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_hy._table [Table])
 (import tests.state_rows [table-from-rows])
 

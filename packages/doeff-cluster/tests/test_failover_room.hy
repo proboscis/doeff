@@ -6,9 +6,9 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import pytest)
-(import doeff_cluster.coordinator.intent.cluster_model [WorkerInfo])
-(import doeff_cluster.coordinator.intent.failover_model [ExtraProvides FailoverWorker])
-(import doeff_cluster.coordinator.core.failover_room [room-file-workers])
+(import doeff_cluster [WorkerInfo])
+(import doeff_cluster [ExtraProvides FailoverWorker])
+(import doeff_cluster [room-file-workers])
 (import doeff_cluster.worker.core.room_rules [TEMPLATE-PROVIDES])
 (import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
 

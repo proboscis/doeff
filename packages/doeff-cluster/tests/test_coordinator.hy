@@ -11,25 +11,27 @@
 (import doeff_time [SimClock sim-time-handler])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming ClusterState CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster [ClusterNaming ClusterState CoordinatorFault] doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.cluster_policy [reconcile state-view job-from-json identity-hash] doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster._coordinator.core.cluster_policy [reconcile state-view job-from-json identity-hash] doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM SAMPLE-TASK-PROGRAM program-placed])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
+(import doeff_cluster [responded])
 (import doeff [run with-handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [slog-handler])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.coordinator.core.program [run-coordinator])
-(import doeff_cluster.coordinator.entry.handler_sets [memory-notices])
+(import doeff_cluster [run-coordinator])
+(import doeff_cluster._coordinator.entry.handler_sets [memory-notices])
 (import doeff_events [MemoryBroker])
-(import doeff_cluster.coordinator.protocol.request_bodies [request-bodies])
-(import doeff_cluster.coordinator.protocol.store [Persist durable-states durable-load durable-persist])
-(import doeff_cluster.coordinator.protocol.replies [reply-bodies state-view-json])
+(import doeff_cluster [request-bodies])
+(import doeff_cluster [Persist durable-states]
+        doeff_cluster._coordinator.protocol.store [durable-load durable-persist])
+(import doeff_cluster [reply-bodies]
+        doeff_cluster._coordinator.protocol.replies [state-view-json])
 (import doeff_cluster [WalStore])
 (import tests.wal_rig [on-wal-files])
-(import doeff_cluster.coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
-(import doeff_cluster.coordinator.protocol.kube [kube-unavailable])
+(import doeff_cluster._coordinator.protocol.durable_kv [LEGACY-PLACEMENT PLACEMENT])
+(import doeff_cluster [kube-unavailable])
 
 (setv T (ClusterTiming))
 ;; 検の coordinator は k8s を持たない — 本番の手元の coordinator と同じく、Deployment と Node の見張りは k8s の無い理由を伝える
@@ -259,9 +261,9 @@
   ;; 反例(#1024 — #1005 の形): 状態の書きの印(stamp)の中で TypeError が上がる。送り手の誤りの 400 に畳まず 500 で返し、
   ;; log の 1 行(CoordinatorFault)に要求の path・例外の型・上がった所が出る。同じまとまりの送り手の誤り(object でない本文)は 400 のまま。
   ;; 偽の stamp は worker w の名乗りの書きでだけ上げる(毎拍の調停 tick も stamp を通るので、他は本物に渡す)。
-  (import doeff_cluster.coordinator.core.api_policy)
-  (val real-stamp doeff_cluster.coordinator.core.api_policy.stamp)
-  (monkeypatch.setattr doeff_cluster.coordinator.core.api_policy "stamp"
+  (import doeff_cluster._coordinator.core.api_policy)
+  (val real-stamp doeff_cluster._coordinator.core.api_policy.stamp)
+  (monkeypatch.setattr doeff_cluster._coordinator.core.api_policy "stamp"
                        (fn [before after actor #* rest]
                          (if (= actor "w")
                              (raise (TypeError "stamp の引数が合わない(偽の欠陥)"))
@@ -303,8 +305,8 @@
 (deftest test-a-fault-while-reading-a-body-is-500-and-the-loop-goes-on [monkeypatch]
   ;; 失敗ケース(#2796): 本文の読みの中で予期しない例外が上がっても(Service の宣言の読みを壊す)、その要求 1 件を 500 の Fault で答え、
   ;; log に 1 行(CoordinatorFault — 上がった所が出る)出して、調停ループは止まらない。直す前は例外が調停ループの外まで抜けた。
-  (import doeff_cluster.coordinator.protocol.request_bodies)
-  (monkeypatch.setattr doeff_cluster.coordinator.protocol.request_bodies "service_body_of"
+  (import doeff_cluster._coordinator.protocol.request_bodies)
+  (monkeypatch.setattr doeff_cluster._coordinator.protocol.request_bodies "service_body_of"
                        (fn [body parts] (raise (TypeError "宣言の本文の読みの欠陥(偽)"))))
   (val faults [])
   (val script (Script [(! (req "PUT" "/resources/Service/a" {"spec" {"run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}}))
@@ -341,7 +343,7 @@
 (deftest test-wal-store-keeps-answered-batches-and-drops-a-torn-tail [tmp-path]
   ;; 耐久の置き場: 返事を済ませた(fsync まで終えた)まとまりは読み直しで必ず戻る。fsync の途中で落ちたまとまり(最後の切れた行)は
   ;; 捨てる(その送り手には返事をしていない)。まとめ直しの後も同じ。
-  (import doeff_cluster [WalStore] doeff_cluster.coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
+  (import doeff_cluster [WalStore] doeff_cluster._coordinator.protocol.store [durable-load durable-persist durable-checkpoint])
   (val store (WalStore (str tmp-path) :max-log-bytes 10000000))
   (<- (on-wal-files (durable-load store)))
   (<- (on-wal-files (durable-persist store {"board/a" {"value" 1 "resourceVersion" 1}})))
@@ -372,8 +374,9 @@
 (deftest test-state-survives-a-restart-through-the-log-with-the-same-versions
   ;; 資源の書き(版つき)を追記の log へ永続化し、読み直した状態の資源の版と宣言が同じ。
   (import tempfile)
-  (import doeff_cluster [WalStore] doeff_cluster.coordinator.protocol.store [wal-store durable-load])
-  (import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
+  (import doeff_cluster [WalStore] doeff_cluster [wal-store]
+                                   doeff_cluster._coordinator.protocol.store [durable-load])
+  (import doeff_cluster._coordinator.protocol.durable_kv [durable-kv state-from-kv])
   (setv d (tempfile.mkdtemp) store (WalStore d))
   (<- (on-wal-files (durable-load store)))
   (setv script (Script [(! (req "POST" "/resources/Service" {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}))
@@ -404,7 +407,7 @@
 (deftest test-a-store-written-before-the-rename-starts-with-its-placements-and-moves-the-keys
   (import json)
   (import tempfile)
-  (import doeff_cluster.coordinator.entry.main [load-state])
+  (import doeff_cluster [load-state])
   (setv d (tempfile.mkdtemp))
   (<- (on-wal-files (legacy-store d)))
   ;; 置き場が在るので以前の形の file は読まない — 読み直しの 1 行の報告(slog)だけに答える。
@@ -432,7 +435,7 @@
 
 
 (deftest test-the-new-placement-key-wins-over-the-legacy-one-and-is-not-overwritten
-  (import doeff_cluster.coordinator.protocol.durable_kv [state-from-kv legacy-key-moves])
+  (import doeff_cluster._coordinator.protocol.durable_kv [state-from-kv legacy-key-moves])
   (setv kv {(+ LEGACY-PLACEMENT "a") {"job" "a" "worker" "old" "generation" 1 "since_ms" 0}
             (+ PLACEMENT "a") {"job" "a" "worker" "new" "generation" 2 "since_ms" 10}
             (+ LEGACY-PLACEMENT "b") {"job" "b" "worker" "zeus" "generation" 5 "since_ms" 0}})

@@ -7,8 +7,9 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import json)
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain HandoffWatch Placement ProgramRow ResourceMeta TaskRecord WarmEntry WorkerInfo])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [Drain HandoffWatch Placement ProgramRow ResourceMeta TaskRecord WarmEntry])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_hy._table [Table TableWrite table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 

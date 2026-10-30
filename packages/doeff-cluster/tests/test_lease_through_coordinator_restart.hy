@@ -18,8 +18,8 @@
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
 (import doeff_cluster [sim-cluster ProcessesOf SharedRows])
-(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState])
-(import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
+(import doeff_cluster [BoardRow ClusterState])
+(import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
 (import doeff_cluster.shared.core.lease_rules [lease-op semaphore-key])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writer HOLDER-ROW LOCK])
 

@@ -21,9 +21,10 @@
 (import doeff_cluster.shared.intent.semaphore_model [ClusterSemaphore LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated])
 (import doeff_cluster.shared.protocol.board_requests [lease-vacate-request lease-vacate-answer])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [BoardRow ClusterState Watcher WatchRefusal WatchAnswer WatchStep])
-(import doeff_cluster.coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged watch-answer-body])
-(import doeff_cluster.coordinator.core.wake_policy [watchers-due])
+(import doeff_cluster [BoardRow ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [Watcher WatchRefusal WatchAnswer WatchStep])
+(import doeff_cluster._coordinator.core.watch_policy [watch-of settle-watch all-waiting-unchanged watch-answer-body])
+(import doeff_cluster._coordinator.core.wake_policy [watchers-due])
 (import doeff_cluster [sim-cluster])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])

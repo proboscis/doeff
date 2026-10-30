@@ -13,12 +13,12 @@
 (import dataclasses [replace])
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster [ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.protocol.durable_kv [durable-kv state-from-kv])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
+(import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
+(import doeff_cluster [responded])
+(import doeff_cluster._coordinator.protocol.durable_kv [durable-kv state-from-kv])
+(import doeff_cluster._coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs] doeff_cluster.worker.protocol.heartbeat [status-rows-json])
 (import doeff_cluster.shared.intent.readiness_model [HANDOFF-TIMEOUT-SECONDS])
 (import doeff_cluster.shared.core.readiness_rules [handoff-timeout-ms])
@@ -237,8 +237,8 @@
 
 ;; 退いた process の寿命の上限(#4072 の D-2)の宣言の読みと、coordinator → worker の運び。
 (import doeff_cluster.shared.core.readiness_rules [retired-lifetime-ms retired-limit-of])
-(import doeff_cluster.coordinator.core.cluster_policy [spec-of-declaration])
-(import doeff_cluster.coordinator.protocol.replies [spec-json])
+(import doeff_cluster [spec-of-declaration])
+(import doeff_cluster._coordinator.protocol.replies [spec-json])
 (import doeff_cluster.worker.protocol.declared [declared-job-spec])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 

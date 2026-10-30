@@ -1,4 +1,4 @@
-"""coordinator の型の宣言(doeff_cluster/coordinator/intent/cluster_model.pyi)の失敗ケース(#2447)。
+"""coordinator の型の宣言(doeff_cluster/_coordinator/intent/cluster_model.pyi)の失敗ケース(#2447)。
 
 cluster_model.hy は Hy の module で型の宣言が無かったので、Rollout の宣言の型 RolloutSpec を名指す使い手(使い手の repo の模擬の
 世界の反例)の strict に、書き手に直せない Unknown の赤(Type of "RolloutSpec" is unknown ほか)が出た。→ cluster_model.pyi で
@@ -20,7 +20,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState RolloutSpec RolloutTarget])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState RolloutSpec RolloutTarget])
 
 (defk probe-old-first [spec]
   {:pre [(: spec RolloutSpec)] :post [(: % RolloutTarget)] :tags {:context "probe" :role "judgment"}}

@@ -17,13 +17,14 @@
 (import dataclasses [fields replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState BoardRow Drain WarmEntry SupersededRun])
-(import doeff_cluster.coordinator.intent.due_model [StepPace Stall])
-(import doeff_cluster.coordinator.intent.worker_notices [WorkerGone])
-(import doeff_cluster.coordinator.core.api_policy [tick stall-of clocks-shifted resume-after-downtime unreached-shifted REACH-WAIT-MS
-                                                   STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-moves])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
+(import doeff_cluster [ClusterState BoardRow]
+        doeff_cluster._coordinator.intent.cluster_model [Drain WarmEntry SupersededRun])
+(import doeff_cluster._coordinator.intent.due_model [StepPace Stall])
+(import doeff_cluster [WorkerGone])
+(import doeff_cluster [tick]
+        doeff_cluster._coordinator.core.api_policy [stall-of clocks-shifted resume-after-downtime unreached-shifted REACH-WAIT-MS STALL-SHIFTED-FIELDS STALL-UNSHIFTED-FIELDS])
+(import doeff_cluster._coordinator.core.cluster_policy [liveness-moves])
+(import doeff_cluster [responded])
 
 (val T (ClusterTiming))
 (val V {"python" "3.14.0" "doeff" "1"})

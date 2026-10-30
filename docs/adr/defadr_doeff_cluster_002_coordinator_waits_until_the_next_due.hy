@@ -21,15 +21,15 @@
 (import pathlib [Path])
 (import doeff_hy._table [TableWrite table-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming BoardRow])
+(import doeff_cluster [ClusterState ClusterNaming BoardRow])
 (import doeff_cluster.shared.intent.due_model [DueNow DueNever])
-(import doeff_cluster.coordinator.core.cluster_policy [liveness-due task-due sweep-due])
-(import doeff_cluster.coordinator.core.api_policy [tick-due])
-(import doeff_cluster.coordinator.core.wake_policy [next-wake])
+(import doeff_cluster [liveness-due task-due sweep-due])
+(import doeff_cluster [tick-due])
+(import doeff_cluster [next-wake])
 
 
 ;; ratchet 台帳 — 期限の関数の file に、数の (+ now 1) を期限として書く所の数(2026-10-07・単位 1a の後の実測)。
-(val CORE "packages/doeff-cluster/src/doeff_cluster/coordinator/core")
+(val CORE "packages/doeff-cluster/src/doeff_cluster/_coordinator/core")
 (val NOW-PLUS-ONE-ROSTER
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
@@ -41,14 +41,14 @@
   :status "accepted"
   :scope ["packages/doeff-cluster/src/doeff_cluster/shared/intent/due_model.hy"
           "packages/doeff-cluster/src/doeff_cluster/shared/core/due_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/intent/due_model.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/wake_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/cluster_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/api_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/program.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_queue.hy"
-          "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/intent/due_model.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/wake_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/api_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/program.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/rollout_policy.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/request_queue.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/kube.hy"
           "packages/doeff-cluster/src/doeff_cluster/_foundation/kube_client.hy"
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem

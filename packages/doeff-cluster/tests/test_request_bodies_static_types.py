@@ -17,13 +17,13 @@ from pathlib import Path
 import pytest
 
 import hy  # noqa: F401  # .hy の module(request_bodies)を読む import hook を有効にする
-from doeff_cluster.coordinator.protocol import request_bodies as launch
+from doeff_cluster._coordinator.protocol import request_bodies as launch
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [deff])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded request-bodies])
+(import doeff_cluster._coordinator.protocol.request_bodies [responded request-bodies])
 
 (deff answered [#^ object state #^ object request]
   {:pre [] :post [(: % int)] :tags {:context "probe" :role "foundation"}}

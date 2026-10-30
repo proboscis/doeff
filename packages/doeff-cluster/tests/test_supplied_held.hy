@@ -29,9 +29,10 @@
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedRef SuppliedValueUnavailable])
 (import doeff_cluster.shared.protocol.supplied_values [HoldTally SERVICE-ACCOUNT-TOKEN-FILE hold-supplied supplied-directory supplied-setting
                                                       supplied-value])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState HeartbeatReply WorkerInfo])
-(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply supplied-for])
-(import doeff_cluster.coordinator.protocol.replies [reply-json])
+(import doeff_cluster [ClusterJob ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [HeartbeatReply])
+(import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply supplied-for])
+(import doeff_cluster._coordinator.protocol.replies [reply-json])
 (import doeff_cluster [HeldEntry HeldObject ReadGrant SuppliedCluster k8s-supplied-peer service-account-token-file])
 (import tests.state_rows [table-from-rows])
 

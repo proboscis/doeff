@@ -25,7 +25,7 @@
 (import doeff_cluster.shared.core.service_rules [identity-of describe-identity job-named])
 (import doeff_cluster.shared.entry.service_build [job system-of system-declaration])
 (import doeff_cluster.shared.intent.service_model [Job System CallShape Declaration])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json identity-hash])
+(import doeff_cluster._coordinator.core.cluster_policy [job-from-json identity-hash])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster [process-versions])
@@ -409,7 +409,8 @@
 
 (import types [MappingProxyType])
 (import doeff_cluster.shared.intent.protocol [BodyInvalid])
-(import doeff_cluster.coordinator.core.cluster_policy [spec-of-declaration json-object? json-array?])
+(import doeff_cluster [spec-of-declaration]
+        doeff_cluster._coordinator.core.cluster_policy [json-object? json-array?])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val PROGRAM-ROW {"name" "w" "revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "replicas" 1 "environ" {"B" "1" "A" "2"}})

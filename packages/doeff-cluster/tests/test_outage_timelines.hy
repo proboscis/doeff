@@ -26,7 +26,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.remote_rules [remote-job])
-(import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
+(import doeff_cluster._coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf ReadinessOf ReportsOf ReadCoordinator CoordinatorRuns CutWorker StallWorker StartWorker StopCoordinator]
         doeff_cluster._sim.local [ServiceReadiness])
 (import tests.fixtures.envs [sim-foundation])

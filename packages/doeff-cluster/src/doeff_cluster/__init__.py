@@ -134,9 +134,9 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.worktree_git_script import sha_of as sha_of
     from doeff_cluster._sim.worktree_git_script import worktree_git_answer as worktree_git_answer
     from doeff_cluster._sim.worktree_git_script import worktree_git_command as worktree_git_command
-    from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
-    from doeff_cluster.coordinator.entry.main import load_state as load_state
-    from doeff_cluster.coordinator.protocol.store import Persist as Persist
+    from doeff_cluster._coordinator.core.program import run_coordinator as run_coordinator
+    from doeff_cluster._coordinator.entry.main import load_state as load_state
+    from doeff_cluster._coordinator.protocol.store import Persist as Persist
     from doeff_cluster._foundation.host_contract import environ_table_reader as environ_table_reader
     from doeff_cluster._foundation.process_versions import process_versions as process_versions
     from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
@@ -255,6 +255,81 @@ if TYPE_CHECKING:
     from doeff_cluster._foundation.record_codec import register as register
     from doeff_cluster._foundation.record_codec import registered_types as registered_types
     from doeff_cluster._foundation.record_codec import type_name as type_name
+    from doeff_cluster._coordinator.core.api_policy import ALIVE_MARK_MS as ALIVE_MARK_MS
+    from doeff_cluster._coordinator.intent.kube_model import (
+        AnnotateDeployment as AnnotateDeployment,
+    )
+    from doeff_cluster._coordinator.intent.cluster_model import BoardRow as BoardRow
+    from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
+    from doeff_cluster._coordinator.intent.cluster_model import ClusterJob as ClusterJob
+    from doeff_cluster._coordinator.intent.cluster_model import ClusterNaming as ClusterNaming
+    from doeff_cluster._coordinator.intent.cluster_model import ClusterState as ClusterState
+    from doeff_cluster._coordinator.intent.cluster_model import CoordinatorFault as CoordinatorFault
+    from doeff_cluster._coordinator.intent.due_model import (
+        CoordinatorUnsettled as CoordinatorUnsettled,
+    )
+    from doeff_cluster._coordinator.intent.failover_model import ExtraProvides as ExtraProvides
+    from doeff_cluster._coordinator.intent.failover_model import FailoverWorker as FailoverWorker
+    from doeff_cluster._coordinator.intent.kube_model import FollowDeployments as FollowDeployments
+    from doeff_cluster._coordinator.intent.kube_model import FollowNodes as FollowNodes
+    from doeff_cluster._coordinator.core.cluster_policy import (
+        IMAGE_FOLLOW_KEYS as IMAGE_FOLLOW_KEYS,
+    )
+    from doeff_cluster._coordinator.intent.failover_model import KeptApart as KeptApart
+    from doeff_cluster._coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
+    from doeff_cluster._coordinator.intent.failover_model import ResidentJob as ResidentJob
+    from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnvInvalid as RuntimeEnvInvalid
+    from doeff_cluster._coordinator.intent.cluster_model import SaveState as SaveState
+    from doeff_cluster._coordinator.intent.kube_model import ScaleDeployment as ScaleDeployment
+    from doeff_cluster.shared.intent.protocol import ServiceReached as ServiceReached
+    from doeff_cluster._coordinator.intent.cluster_model import UnplacedKind as UnplacedKind
+    from doeff_cluster._coordinator.protocol.worker_notices import (
+        WORKER_NOTICE_READS as WORKER_NOTICE_READS,
+    )
+    from doeff_cluster._coordinator.protocol.worker_notices import (
+        WORKER_NOTICE_ROUTES as WORKER_NOTICE_ROUTES,
+    )
+    from doeff_cluster._coordinator.intent.worker_notices import WorkerBack as WorkerBack
+    from doeff_cluster._coordinator.intent.worker_notices import WorkerGone as WorkerGone
+    from doeff_cluster._coordinator.intent.cluster_model import WorkerInfo as WorkerInfo
+    from doeff_cluster._coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
+    from doeff_cluster._coordinator.protocol.store import durable_states as durable_states
+    from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
+    from doeff_cluster._coordinator.core.failover_policy import (
+        failover_refusals as failover_refusals,
+    )
+    from doeff_cluster._coordinator.core.failover_policy import (
+        hyx_per_machineXquestion_markX as hyx_per_machineXquestion_markX,
+    )
+    from doeff_cluster._coordinator.protocol.kube import kube_api as kube_api
+    from doeff_cluster._coordinator.protocol.kube import kube_memory as kube_memory
+    from doeff_cluster._coordinator.protocol.kube import kube_unavailable as kube_unavailable
+    from doeff_cluster._coordinator.core.cluster_policy import liveness_due as liveness_due
+    from doeff_cluster._coordinator.core.cluster_policy import memory_misfit as memory_misfit
+    from doeff_cluster._coordinator.core.cluster_policy import memory_misfits as memory_misfits
+    from doeff_cluster._coordinator.core.cluster_policy import memory_room_of as memory_room_of
+    from doeff_cluster._coordinator.protocol.store import memory_store as memory_store
+    from doeff_cluster._coordinator.protocol.cluster_json import (
+        naming_from_json as naming_from_json,
+    )
+    from doeff_cluster._coordinator.core.cluster_policy import placeable as placeable
+    from doeff_cluster._coordinator.protocol.request_bodies import request_bodies as request_bodies
+    from doeff_cluster._coordinator.protocol.request_bodies import responded as responded
+    from doeff_cluster._coordinator.core.failover_room import room_file_workers as room_file_workers
+    from doeff_cluster.shared.core.runtime_env_rules import (
+        runtime_env_of_json as runtime_env_of_json,
+    )
+    from doeff_cluster._coordinator.core.cluster_policy import (
+        spec_of_declaration as spec_of_declaration,
+    )
+    from doeff_cluster._coordinator.core.cluster_policy import sweep_due as sweep_due
+    from doeff_cluster._coordinator.core.cluster_policy import task_due as task_due
+    from doeff_cluster._coordinator.core.api_policy import tick as tick
+    from doeff_cluster._coordinator.core.api_policy import tick_due as tick_due
+    from doeff_cluster._coordinator.core.cluster_policy import unplaced_kind as unplaced_kind
+    from doeff_cluster._coordinator.core.cluster_policy import unplaced_memory as unplaced_memory
+    from doeff_cluster._coordinator.protocol.store import wal_store as wal_store
+    from doeff_cluster.shared.core.warm_rules import warm_key as warm_key
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
@@ -328,7 +403,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OriginBranch": "doeff_cluster._sim.worktree_git_script",
     "PartsOf": "doeff_cluster._sim.local",
     "PauseDue": "doeff_cluster._sim.local",
-    "Persist": "doeff_cluster.coordinator.protocol.store",
+    "Persist": "doeff_cluster._coordinator.protocol.store",
     "PersistCrashDue": "doeff_cluster._sim.local",
     "PlanOf": "doeff_cluster._sim.local",
     "PreparationsOf": "doeff_cluster._sim.local",
@@ -433,7 +508,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "host_answers": "doeff_cluster._sim.local",
     "http_request": "doeff_cluster.shared.protocol.inbox",
     "k8s_supplied_peer": "doeff_cluster._sim.k8s_supplied",
-    "load_state": "doeff_cluster.coordinator.entry.main",
+    "load_state": "doeff_cluster._coordinator.entry.main",
     "local_machine_cluster": "doeff_cluster._sim.machine",
     "machine_answers": "doeff_cluster._sim.machine",
     "no_business_timers": "doeff_cluster._sim.local",
@@ -445,7 +520,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "promise_or_timeout": "doeff_cluster.shared.core.promise_wait",
     "read_grant_of": "doeff_cluster._sim.k8s_supplied",
     "readiness_awaited": "doeff_cluster.shared.protocol.coordinator_reads",
-    "run_coordinator": "doeff_cluster.coordinator.core.program",
+    "run_coordinator": "doeff_cluster._coordinator.core.program",
     "runtime_env_of_context": "doeff_cluster.shared.core.run_context_rules",
     "scenario_wait_tap": "doeff_cluster._sim.local",
     "service_account_token_file": "doeff_cluster._sim.k8s_supplied",
@@ -498,6 +573,69 @@ _LAZY_EXPORTS: dict[str, str] = {
     "register": "doeff_cluster._foundation.record_codec",
     "registered_types": "doeff_cluster._foundation.record_codec",
     "type_name": "doeff_cluster._foundation.record_codec",
+    "ALIVE_MARK_MS": "doeff_cluster._coordinator.core.api_policy",
+    "AnnotateDeployment": "doeff_cluster._coordinator.intent.kube_model",
+    "BoardRow": "doeff_cluster._coordinator.intent.cluster_model",
+    "BodyInvalid": "doeff_cluster.shared.intent.protocol",
+    "ClusterJob": "doeff_cluster._coordinator.intent.cluster_model",
+    "ClusterNaming": "doeff_cluster._coordinator.intent.cluster_model",
+    "ClusterState": "doeff_cluster._coordinator.intent.cluster_model",
+    "CoordinatorFault": "doeff_cluster._coordinator.intent.cluster_model",
+    "CoordinatorUnsettled": "doeff_cluster._coordinator.intent.due_model",
+    "ExtraProvides": "doeff_cluster._coordinator.intent.failover_model",
+    "FailoverWorker": "doeff_cluster._coordinator.intent.failover_model",
+    "FollowDeployments": "doeff_cluster._coordinator.intent.kube_model",
+    "FollowNodes": "doeff_cluster._coordinator.intent.kube_model",
+    "IMAGE_FOLLOW_KEYS": "doeff_cluster._coordinator.core.cluster_policy",
+    "KeptApart": "doeff_cluster._coordinator.intent.failover_model",
+    "KubeUnavailable": "doeff_cluster._coordinator.intent.kube_model",
+    "ReadBody": "doeff_cluster._coordinator.intent.request_bodies",
+    "Refused": "doeff_cluster._coordinator.core.resource_policy",
+    "ResidentJob": "doeff_cluster._coordinator.intent.failover_model",
+    "RuntimeEnvInvalid": "doeff_cluster.shared.intent.runtime_env_model",
+    "SaveState": "doeff_cluster._coordinator.intent.cluster_model",
+    "ScaleDeployment": "doeff_cluster._coordinator.intent.kube_model",
+    "ServiceReached": "doeff_cluster.shared.intent.protocol",
+    "UnplacedKind": "doeff_cluster._coordinator.intent.cluster_model",
+    "WORKER_NOTICE_READS": "doeff_cluster._coordinator.protocol.worker_notices",
+    "WORKER_NOTICE_ROUTES": "doeff_cluster._coordinator.protocol.worker_notices",
+    "WalCorrupted": "doeff_cluster._coordinator.protocol.wal_format",
+    "WorkerBack": "doeff_cluster._coordinator.intent.worker_notices",
+    "WorkerGone": "doeff_cluster._coordinator.intent.worker_notices",
+    "WorkerInfo": "doeff_cluster._coordinator.intent.cluster_model",
+    "WorkerLoad": "doeff_cluster._coordinator.intent.cluster_model",
+    "coordinator_faults": "doeff_cluster._coordinator.protocol.faults",
+    "durable_states": "doeff_cluster._coordinator.protocol.store",
+    "env_key": "doeff_cluster.shared.core.runtime_env_rules",
+    "failover_refusals": "doeff_cluster._coordinator.core.failover_policy",
+    "hyx_per_machineXquestion_markX": "doeff_cluster._coordinator.core.failover_policy",
+    "kube_api": "doeff_cluster._coordinator.protocol.kube",
+    "kube_memory": "doeff_cluster._coordinator.protocol.kube",
+    "kube_unavailable": "doeff_cluster._coordinator.protocol.kube",
+    "liveness_due": "doeff_cluster._coordinator.core.cluster_policy",
+    "memory_misfit": "doeff_cluster._coordinator.core.cluster_policy",
+    "memory_misfits": "doeff_cluster._coordinator.core.cluster_policy",
+    "memory_room_of": "doeff_cluster._coordinator.core.cluster_policy",
+    "memory_store": "doeff_cluster._coordinator.protocol.store",
+    "naming_from_json": "doeff_cluster._coordinator.protocol.cluster_json",
+    "next_wake": "doeff_cluster._coordinator.core.wake_policy",
+    "placeable": "doeff_cluster._coordinator.core.cluster_policy",
+    "queued_requests": "doeff_cluster._coordinator.protocol.request_queue",
+    "reply_bodies": "doeff_cluster._coordinator.protocol.replies",
+    "request_bodies": "doeff_cluster._coordinator.protocol.request_bodies",
+    "responded": "doeff_cluster._coordinator.protocol.request_bodies",
+    "room_file_workers": "doeff_cluster._coordinator.core.failover_room",
+    "runtime_env_of_json": "doeff_cluster.shared.core.runtime_env_rules",
+    "service_readiness": "doeff_cluster._coordinator.core.resource_policy",
+    "spec_of_declaration": "doeff_cluster._coordinator.core.cluster_policy",
+    "sweep_due": "doeff_cluster._coordinator.core.cluster_policy",
+    "task_due": "doeff_cluster._coordinator.core.cluster_policy",
+    "tick": "doeff_cluster._coordinator.core.api_policy",
+    "tick_due": "doeff_cluster._coordinator.core.api_policy",
+    "unplaced_kind": "doeff_cluster._coordinator.core.cluster_policy",
+    "unplaced_memory": "doeff_cluster._coordinator.core.cluster_policy",
+    "wal_store": "doeff_cluster._coordinator.protocol.store",
+    "warm_key": "doeff_cluster.shared.core.warm_rules",
 }
 
 

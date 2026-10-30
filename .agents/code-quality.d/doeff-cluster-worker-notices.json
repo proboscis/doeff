@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/worker_notices.hy"
+    "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/worker_notices.hy"
   ],
   "module_extensions": {
     "doeff-cluster-coordinator-handler-sets": {
@@ -27,10 +27,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-notices",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/worker_notices.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/worker_notices.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/worker_notices.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/worker_notices.hy"
       ],
       "responsibility": "worker の生死の出来事を doeff-events の知らせの道へ写す表の 1 か所(出す側 WORKER-NOTICE-ROUTES・受ける側 WORKER-NOTICE-READS・#3864)。",
       "typed": true

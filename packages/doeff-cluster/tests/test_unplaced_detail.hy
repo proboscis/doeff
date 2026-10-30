@@ -6,10 +6,10 @@
 ;; 能力・置き先が無いと最初に見た刻(sinceMs — 後の拍でも最初の刻を保つ)が出て、置かれた拍に消える。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
+(import doeff_cluster [ClusterState])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.protocol.request_bodies [responded])
-(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster [responded])
+(import doeff_cluster [tick])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))

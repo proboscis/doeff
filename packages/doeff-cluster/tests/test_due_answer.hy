@@ -11,10 +11,12 @@
 (import doeff_hy._table [Table TableWrite table-of])
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming TaskRecord WorkerInfo ComponentVersion BoardRow])
+(import doeff_cluster [ClusterState ClusterNaming WorkerInfo BoardRow]
+        doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed task-due liveness-due sweep-due note-liveness liveness-deadline])
-(import doeff_cluster.coordinator.core.api_policy [tick tick-due])
+(import doeff_cluster [task-due liveness-due sweep-due]
+        doeff_cluster._coordinator.core.cluster_policy [tasks-placed note-liveness liveness-deadline])
+(import doeff_cluster [tick tick-due])
 (import tests.state_rows [table-from-rows])
 
 
