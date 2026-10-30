@@ -10434,8 +10434,36 @@
   {
    "package": "doeff-events",
    "module": "doeff_events",
+   "name": "GapAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "NoticeDropped",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "NoticeGapMarked",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "PublishAnswer",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -10574,8 +10602,36 @@
   {
    "package": "doeff-events",
    "module": "doeff_events.handlers",
+   "name": "GapAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "NoticeDropped",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "NoticeGapMarked",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers",
+   "name": "PublishAnswer",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -10693,8 +10749,36 @@
   {
    "package": "doeff-events",
    "module": "doeff_events.handlers.notice_events",
+   "name": "GapAnswer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
+   "name": "NoticeDropped",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
+   "name": "NoticeGapMarked",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
+   "name": "PublishAnswer",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -10772,6 +10856,13 @@
    "module": "doeff_events.notice_laws",
    "name": "Announcement",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.notice_laws",
+   "name": "NoticeGapMarked",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
