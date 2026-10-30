@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 from doeff_agents import AgentType
+from doeff_agents._effects.agent import AgentValidationErrorKind
 from doeff_agents import (
     AgentAttemptExhaustedError,
     AgentDeadlineExceededError,
     AgentSpec,
     AgentTask,
-    AgentValidationErrorKind,
     AwaitResult,
     AwaitResultEffect,
     AwaitStatus,

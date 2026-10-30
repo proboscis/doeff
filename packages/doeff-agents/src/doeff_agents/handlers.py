@@ -98,7 +98,7 @@
 #   AgentAdapter AgentAttemptExhaustedError AgentDeadlineExceededError AgentEffect
 #   AgentLaunchError AgentNotAvailableError AgentReadyTimeoutError AgentSessionLifecycle
 #   AgentSessionRepository AgentSessionSnapshot AgentSpec AgentTask AgentType
-#   AgentValidationErrorKind AgentValidationFailure AttachAgentSessionEffect AwaitOutcome
+#   AttachAgentSessionEffect AwaitOutcome
 #   AwaitResultEffect AwaitStatus CancelAgentSessionEffect CaptureEffect ClaudeAdapter
 #   ClaudeLaunchEffect ClaudeRuntimePolicy CleanupAgentSessionEffect CodexAdapter CodexRuntimePolicy
 #   DEFAULT_AWAIT_BUDGET_SECONDS FollowUpEffect GeminiAdapter GetAgentSessionEffect

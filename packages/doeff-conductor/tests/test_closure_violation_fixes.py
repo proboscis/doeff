@@ -34,10 +34,9 @@ from doeff_conductor import (
 from doeff_conductor import (
     AgentAttemptExhaustedError,
     AgentEffect,
-    AgentValidationErrorKind,
-    AgentValidationFailure,
 )
 from doeff_conductor import MergeWorkspaces
+from doeff_conductor._effects.agent import AgentValidationErrorKind, AgentValidationFailure
 from doeff_conductor import mock_handlers as build_mock_handlers
 from doeff_conductor._handlers import run_sync
 from doeff_conductor import MockConductorRuntime

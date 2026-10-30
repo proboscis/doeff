@@ -1,9 +1,9 @@
 # moved-submodule-shim: doeff_agents.adapters -> doeff_agents._adapters
 # moved-submodule-shim-names doeff_agents.adapters:
-#   AgentAdapter AgentType ClaudeAdapter CodexAdapter GeminiAdapter InjectionMethod LaunchConfig
+#   AgentAdapter AgentType ClaudeAdapter CodexAdapter GeminiAdapter InjectionMethod
 #   LaunchParams
 # moved-submodule-shim-names doeff_agents.adapters.base:
-#   AgentAdapter AgentSessionLifecycle AgentType InjectionMethod IoGenerator LaunchConfig
+#   AgentAdapter AgentSessionLifecycle AgentType InjectionMethod IoGenerator
 #   LaunchParams PreLaunchAdapter cli_available which_executable
 # moved-submodule-shim-names doeff_agents.adapters.claude:
 #   AgentType CLAUDE_SCREEN_READER_READY_PATTERN ClaudeAdapter InjectionMethod IoGenerator
