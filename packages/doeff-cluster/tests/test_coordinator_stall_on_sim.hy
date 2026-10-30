@@ -13,8 +13,8 @@
 (import doeff_events [BrokerPatience EventBus MemoryBroker WaitForEvent broker-patience-handler memory-notice-handler notice-events-handler subscribed-event-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
+(import doeff_cluster [WorkerBack WorkerGone])
+(import doeff_cluster [WORKER-NOTICE-READS])
 (import doeff_cluster.shared.intent.cluster_control [KillWorker])
 (import doeff_cluster [sim-cluster PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps CutWorker]
         doeff_cluster._sim.local [SimParts])

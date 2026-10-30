@@ -4,9 +4,10 @@
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob WorkerInfo WorkerReport Placement ClusterState])
-(import doeff_cluster.coordinator.intent.request_bodies [StatusRow])
-(import doeff_cluster.coordinator.core.cluster_policy [jobs-placed jobs-for board-tally-of])
+(import doeff_cluster [ClusterJob WorkerInfo ClusterState]
+        doeff_cluster._coordinator.intent.cluster_model [WorkerReport Placement])
+(import doeff_cluster._coordinator.intent.request_bodies [StatusRow])
+(import doeff_cluster._coordinator.core.cluster_policy [jobs-placed jobs-for board-tally-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM reports-observed])
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
@@ -65,8 +66,8 @@
 
 ;; --- 能力と専用の能力(exclusive — 以前の dedicated の印・k8s の taint に当たる) ---------------------------------
 
-(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord ComponentVersion])
-(import doeff_cluster.coordinator.core.cluster_policy [tasks-placed unplaced-jobs])
+(import doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
+(import doeff_cluster._coordinator.core.cluster_policy [tasks-placed unplaced-jobs])
 
 (setv AGENT "agent-cli")
 (defk mac [name [seen 0]]
@@ -212,7 +213,8 @@
 
 ;; --- 能力の名乗りの形(ADR-DOE-CLUSTER-001 R4b)-----------------------------------------------------
 
-(import doeff_cluster.coordinator.core.cluster_policy [placeable request-needs] doeff_cluster.coordinator.protocol.state_json [worker-capabilities-of])
+(import doeff_cluster [placeable]
+        doeff_cluster._coordinator.core.cluster_policy [request-needs] doeff_cluster._coordinator.protocol.state_json [worker-capabilities-of])
 (import doeff_cluster.shared.core.capabilities [capabilities-of])
 
 (deftest test-placeable-is-needs-subset-of-provides-and-respects-exclusive
@@ -247,15 +249,16 @@
 
 (require doeff-hy.macros [defk <- val var])
 (import doeff [with_handlers])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterNaming])
+(import doeff_cluster [ClusterNaming])
 (import tests.program_rows [heartbeat-of])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities])
-(import doeff_cluster.coordinator.core.program [rollout-tick])
-(import doeff_cluster.coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory memory-relabel])
+(import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat with-derived-capabilities])
+(import doeff_cluster._coordinator.core.program [rollout-tick])
+(import doeff_cluster [kube-memory]
+        doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows memory-relabel])
 (import doeff_core_effects [slog-discard-handler])
 
 (import doeff_hy._table [Table TableWrite table-of])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterObservations NodeLabelsSeen NodeLabelsUnreadable])
 
 (setv COMPANY "company-machine")
 (setv COMPANY-LABEL {"doeff.dev/company-machine" "true"})
@@ -369,9 +372,9 @@
 ;; coordinator を落とさずに読む: 旧い worker の行(labels)と温める表の行(requires)は捨て(次の heartbeat・頼み直しで作り直す)、
 ;; まだ終わっていない旧い task の行は failed(理由つき)にし、終わった行はそのまま読む。
 
-(import doeff_cluster.coordinator.intent.cluster_model [WarmEntry])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
+(import doeff_cluster._coordinator.intent.cluster_model [WarmEntry])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 
 (defk saved-state []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
@@ -499,9 +502,9 @@
 ;; 保存の差分(durable_kv.durable-delta)の外。観測を書き直すだけの拍は、資源の版・出来事の記録・保存の行を 1 つも動かさない。
 
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable])
-(import doeff_cluster.coordinator.core.resource_policy [stamp])
-(import doeff_cluster.coordinator.protocol.durable_kv [durable-delta])
+(import doeff_cluster._coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable])
+(import doeff_cluster._coordinator.core.resource_policy [stamp])
+(import doeff_cluster._coordinator.protocol.durable_kv [durable-delta])
 
 (deftest test-the-observation-write-moves-neither-versions-nor-the-store
   (val kube (KubeMemory {} :nodes {"node-company" COMPANY-LABEL "node-home" {}}))
@@ -542,7 +545,7 @@
 
 ;; 版を進める資源が 0 件の stamp は after をそのまま返す(meta・audit を作り直さない — 保存の差分が欄を `is` で比べて組を飛ばす)。
 ;; 出来事を足す時は版の連番・出来事の順・AUDIT-PER-KIND の上限が変わらない。
-(import doeff_cluster.coordinator.core.resource_policy [AUDIT-PER-KIND])
+(import doeff_cluster._coordinator.core.resource_policy [AUDIT-PER-KIND])
 
 (deftest test-a-stamp-without-moved-resources-returns-after-itself
   (val later 2000)
@@ -590,7 +593,7 @@
   (assert (is gone.meta bare.meta)))
 
 
-(import doeff_cluster.coordinator.core.api_policy [settle])
+(import doeff_cluster._coordinator.core.api_policy [settle])
 
 (deftest test-a-quiet-settle-keeps-meta-and-audit-as-the-same-objects
   ;; 静かな heartbeat の settle 経路: 資源が 1 つも変わらない 2 度目の settle は meta と audit を作り直さない。
@@ -608,11 +611,12 @@
 ;; 置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind UnplacedKind])
-(import doeff_cluster.coordinator.core.cluster_policy [load-of memory-room-of memory-misfit task-room-of task-unplaced-text durable-changed
-                                                      unplaced-views])
-(import doeff_cluster.coordinator.core.drain_policy [advance-drains drain-view])
-(import doeff_cluster.coordinator.core.api_policy [tick])
+(import doeff_cluster [UnplacedKind]
+        doeff_cluster._coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
+(import doeff_cluster [memory-room-of memory-misfit]
+        doeff_cluster._coordinator.core.cluster_policy [load-of task-room-of task-unplaced-text durable-changed unplaced-views])
+(import doeff_cluster._coordinator.core.drain_policy [advance-drains drain-view])
+(import doeff_cluster [tick])
 
 (defk reserved [name seen room reserve [memory None]]
   {:pre [(: name str) (: seen int) (: room int) (: reserve int) (: memory (| int None))] :post [(: % WorkerInfo)]
@@ -755,8 +759,8 @@
 ;; lastExitAtMs を、新しい世代の起動の刻まで進める(実の終わりはそれ以前)。同じ worker・同じ job の名では前に知っていた刻から戻さない。
 ;; 新しい世代の最初の heartbeat は行を載せない(worker は返事の宣言を受けてから行を作る — LinkState.statuses の初めは空)ので、
 ;; 進めた刻は次に載る同じ名の行へ運ぶ。
-(import doeff_cluster.coordinator.core.cluster_policy [status-row-to-json])
-(import doeff_cluster.coordinator.intent.cluster_model [KnownExit])
+(import doeff_cluster._coordinator.core.cluster_policy [status-row-to-json])
+(import doeff_cluster._coordinator.intent.cluster_model [KnownExit])
 
 (val BOOT-1 1000000)
 (val BOOT-2 2000000)
@@ -849,7 +853,7 @@
 ;; 持っていた job と進めた刻を報告ごと失い、刻は進まず・None へ戻った。worker/<名> の保存の行の knownExits(job の名・知れた刻・今の世代の
 ;; 報告で process を持つか)から読み戻し、作り直しの後に来る新しい世代の heartbeat でも数える。
 (import json)
-(import doeff_cluster.coordinator.core.api_policy [resume-after-downtime])
+(import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
 (import tests.program_rows [SAMPLE-RUN])
 
 (defk saved-w []
@@ -994,8 +998,8 @@
 ;; (<job>/<process の世代の名>/…)は盤の lease の行に期限まで残り、同じ名で起き直した worker の新しい process は期限まで lease を取れない。
 ;; coordinator は新しい世代(generation-order が NEWER)の名乗りを受けた時、前の世代の最新の報告で process の世代の名を持っていた行の
 ;; 担い手を、worker が終わった process の lease を返すのと同じ定義(lease_rules.lease-holder・holder-tokens-prefix・drop-holders)で外す。
-(import doeff_cluster.coordinator.core.cluster_policy [lease-write])
-(import doeff_cluster.coordinator.intent.request_bodies [LeaseBody])
+(import doeff_cluster._coordinator.core.cluster_policy [lease-write])
+(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody])
 (import doeff_cluster.shared.core.lease_rules [lease-holder holder-tokens-prefix])
 
 (val LEASE-TTL-MS 30000)
@@ -1089,7 +1093,7 @@
 
 ;; --- 退きの保ち(card ki-e3531030eb37): 今の世代の worker への返事は、入れ替えの job の退いた process のうち、退きの保ち(名前付きの lease
 ;;     RETIREMENT-HOLD)を期限の内に持つ process の世代の名を JobSpec.retired-held に載せる(worker はその process を寿命の上限で止めない)。---
-(import doeff_cluster.coordinator.core.cluster_policy [heartbeat-reply])
+(import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
 
 (val HOLD-AT 5000000)
@@ -1135,8 +1139,8 @@
   (assert (= (! (held-in-reply released (+ HOLD-AT 300))) {"w" #() "k" #()})))
 
 
-(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
-(import doeff_cluster.coordinator.core.cluster_policy [task-split task-lapse-at])
+(import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
+(import doeff_cluster._coordinator.core.cluster_policy [task-split task-lapse-at])
 
 (defk split-task [id phase [detached True] [finished None] [retain 1000]]
   {:pre [(: id str) (: phase str) (: detached bool) (: finished (| int None)) (: retain int)] :post [(: % TaskRecord)]
@@ -1214,7 +1218,7 @@
   (assert (= (.size (! (place-held {"b" live} 5001))) 0)))
 
 
-(import doeff_cluster.coordinator.core.cluster_policy [task-due])
+(import doeff_cluster [task-due])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import random)
 
@@ -1265,7 +1269,7 @@
       True (assert (= got expected-live)))))
 
 
-(import doeff_cluster.coordinator.core.cluster_policy [state-view scan-rows load-of forget-silent-workers tasks-for placed-claims cold-starts])
+(import doeff_cluster._coordinator.core.cluster_policy [state-view scan-rows load-of forget-silent-workers tasks-for placed-claims cold-starts])
 (import tests.state_rows [table-from-rows rows-merged])
 
 (deftest test-scan-rows-is-the-complement-of-the-held-rows

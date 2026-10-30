@@ -340,8 +340,8 @@ pub enum Explain {
         /// 受け入れない答えの確率の和。
         rejected_total: f64,
     },
-    /// DOEFF113: タグの :context が置き場の service と食い違う。
-    ContextMismatch { placement: Placement, contexts: Vec<String> },
+    /// DOEFF113: タグの :context が置き場の service と食い違う。`service` = 照らした service の名(:dir で dir と名が違えば名)。
+    ContextMismatch { placement: Placement, service: String, contexts: Vec<String> },
 }
 
 /// 違反 1 件の説明(出力の explanation の欄)。
@@ -737,11 +737,11 @@ impl<'a> Narrator<'a> {
                     ),
                 )
             }
-            Explain::ContextMismatch { placement, contexts } => (
+            Explain::ContextMismatch { placement, service, contexts } => (
                 format!("タグの :context = {} — {}", contexts.join("・"), self.file_subject(placement)),
                 format!(
                     "dir は service {} を指すのに、タグは文脈 {} を名乗っている。タグで引いた時と dir で見た時に別の service に見える。:context を service の名に合わせるか、file を {} の dir へ移す(知らせ)。",
-                    placement.service.clone().unwrap_or_default(),
+                    service,
                     contexts.join("・"),
                     contexts.join("・")
                 ),

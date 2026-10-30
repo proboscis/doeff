@@ -17,7 +17,8 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [NextRequests])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.protocol.request_queue [RequestQueue queued-requests enqueue-request])
+(import doeff_cluster [queued-requests]
+        doeff_cluster._coordinator.protocol.request_queue [RequestQueue enqueue-request])
 (import tests.clock_fixtures [clock-at count-delays])
 
 

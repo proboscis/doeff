@@ -5,10 +5,12 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState])
-(import doeff_cluster.coordinator.core.api_policy [respond tick quiet-heartbeat])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat])
-(import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
+(import doeff_cluster [ClusterState])
+(import doeff_cluster [tick]
+        doeff_cluster._coordinator.core.api_policy [respond quiet-heartbeat])
+(import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat])
+(import doeff_cluster [responded]
+        doeff_cluster._coordinator.protocol.request_bodies [body-of])
 (import tests.program_rows [SAMPLE-RUN])
 
 (setv T (ClusterTiming))
@@ -80,8 +82,8 @@
 ;; --- task の比べを行の同一性で絞る(Q1): 同じ object の行は replace を通さず、違う行だけ lease-until-ms を外して比べる ---
 (import dataclasses [replace])
 (import unittest.mock [patch])
-(import doeff_cluster.coordinator.core [api_policy])
-(import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
+(import doeff_cluster._coordinator.core [api_policy])
+(import doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import tests.state_rows [table-from-rows])
 
 

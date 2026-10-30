@@ -11,9 +11,9 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [state])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.coordinator.intent.cluster_model [DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
-(import doeff_cluster.coordinator.intent.kube_model [FollowDeployments FollowNodes ScaleDeployment KubeUnavailable])
-(import doeff_cluster.coordinator.protocol.kube [kube-api kube-unavailable])
+(import doeff_cluster._coordinator.intent.cluster_model [DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
+(import doeff_cluster [FollowDeployments FollowNodes ScaleDeployment KubeUnavailable])
+(import doeff_cluster [kube-api kube-unavailable])
 
 (val DEPLOYMENT {"metadata" {"generation" 3 "annotations" {}} "spec" {"replicas" 2} "status" {"replicas" 2 "readyReplicas" 1 "observedGeneration" 3}})
 (val SCALED-DOWN {"metadata" {"generation" 4 "annotations" {}} "spec" {"replicas" 0} "status" {"replicas" 0 "observedGeneration" 4}})

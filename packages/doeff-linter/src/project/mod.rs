@@ -1457,7 +1457,9 @@ fn judge_layer_file(
             drafts.extend(judge.placed_dependencies(&facts, index, architecture));
         }
         if enabled.contains(&ProjectRule::ContextMatchesService) {
-            let declared = judge.placement.service.as_deref().is_some_and(|s| architecture.service_by_dir(s).is_some());
+            // :dir で dir と名の違う service(区画を _ の dir へ隠した — doeff の ADR-DOE-API-001 R15)は、:context を dir でなく
+            // service の名と照らす。
+            let declared = judge.placement.service.as_deref().and_then(|s| architecture.service_by_dir(s));
             let shared = settings::ServiceSettings {
                 shared: architecture.shared.iter().cloned().collect(),
                 guarded: BTreeSet::new(),
@@ -1465,8 +1467,8 @@ fn judge_layer_file(
                 exceptions: BTreeSet::new(),
                 check_context: true,
             };
-            if let Some(mut draft) = judge.context_matches_service(&facts, &contexts, &shared) {
-                if declared {
+            if let Some(mut draft) = judge.context_matches_service(&facts, &contexts, &shared, declared.map(|s| s.name.as_str())) {
+                if declared.is_some() {
                     draft.base = Severity::Warning;
                 }
                 drafts.push(draft);
@@ -1478,7 +1480,7 @@ fn judge_layer_file(
             drafts.extend(judge.service_boundary(&facts, index, services));
         }
         if enabled.contains(&ProjectRule::ContextMatchesService) && services.check_context {
-            drafts.extend(judge.context_matches_service(&facts, &contexts, services));
+            drafts.extend(judge.context_matches_service(&facts, &contexts, services, None));
         }
     }
     if let (Some(raw), Some(hy_file)) = (&settings.raw, hy_file) {
@@ -1989,11 +1991,19 @@ impl<'a> LayerJudge<'a> {
     }
 
     /// DOEFF113: タグの :context と dir の service が食い違う(info)。名の `-` と `_` は同じに見る。共有の置き場は見ない。
-    fn context_matches_service(&self, facts: &ModuleFacts, contexts: &[String], services: &settings::ServiceSettings) -> Option<Draft> {
-        let own = self.placement.service.as_deref()?;
-        if services.shared.contains(own) {
+    /// `named` = dir を宣言した service の名(architecture.hy の :dir で dir と名が違う時に、dir でなく名と照らす)。
+    fn context_matches_service(
+        &self,
+        facts: &ModuleFacts,
+        contexts: &[String],
+        services: &settings::ServiceSettings,
+        named: Option<&str>,
+    ) -> Option<Draft> {
+        let dir = self.placement.service.as_deref()?;
+        if services.shared.contains(dir) {
             return None;
         }
+        let own = named.unwrap_or(dir);
         let norm = |text: &str| text.replace('-', "_");
         let mut foreign: Vec<String> = contexts.iter().filter(|c| norm(c) != norm(own)).cloned().collect();
         foreign.dedup();
@@ -2005,7 +2015,7 @@ impl<'a> LayerJudge<'a> {
             range,
             format!("{} のタグの :context {} が、置き場の service {} と食い違う", self.file.file.rel, foreign.join("・"), own),
             Some(foreign.join("+")),
-            Explain::ContextMismatch { placement: self.placement.clone(), contexts: foreign.clone() },
+            Explain::ContextMismatch { placement: self.placement.clone(), service: own.to_string(), contexts: foreign.clone() },
         );
         draft.base = Severity::Info;
         Some(draft)

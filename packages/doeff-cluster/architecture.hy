@@ -8,12 +8,12 @@
 ;;; entry から)、src/doeff_cluster/ の直下に平たく在った最後の 3 file(旧い入口)を 2026-10-03 に消して DOEFF114・115 を効かせた(#2095)。
 ;;;
 ;;; 条と確かめる検:
-;;;   C1 acknowledged-writes-survive(doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
+;;;   C1 acknowledged-writes-survive(doeff_cluster._coordinator.core.coordinator_invariants:acknowledged-writes-survive)— 返事を返した盤の行は、coordinator が
 ;;;   止まり置き場から作り直された後も残る。確かめるのは tests/test_local.hy の
 ;;;   test-a-stopped-coordinator-is-recreated-from-its-store-after-the-downtime(止める前の行と作り直した後の行を判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-store-that-pretends-to-persist-breaks-c1(置き場の差し替えの口に Persist を捨てる
 ;;;   置き場 PretendsToPersist — fsync したふり — を差すと、作り直した後に行が無く C1 が名指す・#1976 の #35)。
-;;;   C2 one-place-per-job(doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job — #2804)— 入れ替えを宣言しない job は、
+;;;   C2 one-place-per-job(doeff_cluster._coordinator.core.coordinator_invariants:one-place-per-job — #2804)— 入れ替えを宣言しない job は、
 ;;;   担い手が途絶しても(処理の止まり・網の途絶)、その間に能力の合う worker が加わっても・宣言の needs が変わっても・置ける worker が
 ;;;   退いても(drain・Worker の削除)、同時に 2 つ走らない(違う worker の上でも、同じ名の worker の新しい世代の上でも)。他へ移せる job は時間の柵(worker の fence が coordinator の
 ;;;   移し替えより先)・他へ移せない job は「移さない」(途絶しても動かし続けてよい印を渡した担い手から、担い手が印を持たないと知らせるか
@@ -27,7 +27,7 @@
 ;;;   ignores-fence — で、移せる先の在る job が移し替えの後に 2 か所で走り、C2 が重なりを名指す)。2026-10-02 の本番の途絶 3 つ(処理の止まり
 ;;;   47 秒・網の途絶 115 秒とその最中の coordinator の止まり 20.2 秒・途絶の 30 秒目の 2 台目)を実際の秒と順序で再現した筋書きは
 ;;;   tests/test_outage_timelines.hy(#2805)。
-;;;   C3 stopped-generation-gets-no-new-task(doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task)—
+;;;   C3 stopped-generation-gets-no-new-task(doeff_cluster._coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task)—
 ;;;   止まり始めた worker の世代(drain の頼みを通らない止め — sigterm・機体の終了・手の kill)へ、止まり始めの後に新しい task を置かない
 ;;;   (その世代は task を始めずに抜け、切り離した task は新しい世代へ渡らず lease まで止まる — #2819)。確かめるのは
 ;;;   tests/test_detached_runners.hy の test-a-runner-stopped-without-a-drain-gets-no-new-task-until-its-next-generation(止めた世代と、
@@ -64,59 +64,59 @@
 ;;;   生きて見た時刻を判断に渡す)。失敗ケースは同じ file の test-a-shim-without-adoption-leaves-the-grandchild-and-c4b-names-it(引き取りを
 ;;;   「使えない」と答える部品を渡した shim の変種 tests/fixtures/shim_without_adoption を差すと、別の session の孫が止め切りの後も残り、
 ;;;   C4b がその孫を名指す)。
-;;;   C5 revision-never-goes-back(doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back — #1976 の #36)— GET /state の
+;;;   C5 revision-never-goes-back(doeff_cluster._coordinator.core.coordinator_invariants:revision-never-goes-back — #1976 の #36)— GET /state の
 ;;;   coordinator の版は、読んだ順に減らない(止まり置き場から作り直されても)。確かめるのは tests/test_local.hy の
 ;;;   test-the-coordinator-revision-never-goes-back-across-a-stop(止まりの前と作り直しの後の版を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-store-that-forgets-on-reload-breaks-c5(置き場の差し替えの口に、読み直しで何も無いと答える置き場 ForgetsOnReload を
 ;;;   差すと、coordinator が空から起き直して版が戻り、C5 が名指す)。
-;;;   C12 service-versions-never-go-back(doeff_cluster.coordinator.core.coordinator_invariants:service-versions-never-go-back — #1976 の写しの
+;;;   C12 service-versions-never-go-back(doeff_cluster._coordinator.core.coordinator_invariants:service-versions-never-go-back — #1976 の写しの
 ;;;   C2 の残り)— GET /state の Service ごとの resourceVersion も、読んだ順に減らない(作り直しの後も)。確かめるのは tests/test_local.hy の
 ;;;   test-service-versions-never-go-back-across-a-stop。失敗ケースは同じ file の test-a-counterexample-store-that-resets-service-versions-breaks-c12
 ;;;   (読み直しで資源の版の記録と版を配る数を 1 に戻す置き場 ResetsServiceVersionsOnReload を差すと、Service の版が戻り、C12 が名指す)。
-;;;   L2 alive-only-while-reachable(doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable — #1976 の #34)— GET
+;;;   L2 alive-only-while-reachable(doeff_cluster._coordinator.core.coordinator_invariants:alive-only-while-reachable — #1976 の #34)— GET
 ;;;   /workers/<名> が alive と答えるのは、その worker が lease-ms(+ 余裕)のうちに届き得た時だけ(止まり置き場から作り直された後も)。
 ;;;   確かめるのは tests/test_local.hy の test-a-dead-worker-is-not-alive-after-the-coordinator-is-recreated(死んだ worker の生存の読みと
 ;;;   死の時刻を判断に渡す)。失敗ケースは同じ file の test-a-counterexample-store-without-last-seen-breaks-l2(最後の連絡の時刻 lastSeenMs を
 ;;;   置かない置き場 DropsLastSeen を差すと、作り直した coordinator が死んだ worker を生きていると答え、L2 が名指す)。
-;;;   L1 places-only-on-reachable(doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable — #1976 の #33)— 新しい
+;;;   L1 places-only-on-reachable(doeff_cluster._coordinator.core.coordinator_invariants:places-only-on-reachable — #1976 の #33)— 新しい
 ;;;   置き先は、lease-ms(+ 余裕)のうちに届き得た worker にだけ置く(止まり置き場から作り直された後も)。確かめるのは tests/test_local.hy の
 ;;;   test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker(作り直しの後に宣言し直して足した job の置き先と、死なせた worker の
 ;;;   届かなくなった時刻を判断に渡す)。失敗ケースは同じ file の test-a-counterexample-store-without-last-seen-breaks-l1(DropsLastSeen を差すと、
 ;;;   作り直した coordinator が足した job を死んだ worker へ置き、L1 が名指す)。
-;;;   C6 running-within-capacity(doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32・card ki-2acb63aec0fd
+;;;   C6 running-within-capacity(doeff_cluster._coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32・card ki-2acb63aec0fd
 ;;;   で memory の版へ)— どの瞬間も、worker の上で動く job の process の落ち着いた memory(宣言の settle-mib)の和は、その worker の本当の
 ;;;   memory の予算を越えない。確かめるのは tests/test_local.hy の test-a-worker-runs-no-more-jobs-than-its-memory(予算 150 MiB の worker に
 ;;;   settle 100 の service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-overstates-its-memory-breaks-c6(heartbeat で memory の予算を多く名乗る壊れた worker — SimWorker の
 ;;;   overstates-memory — で 2 つ置かれて C6 が名指す)。
-;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489・
+;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster._coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489・
 ;;;   card ki-2acb63aec0fd で task の側の版へ)— どの瞬間も、worker の上で動く task の数は、本当の予約(task-reserve)と背景の枠
 ;;;   (background-room)の和を越えない(task の置き場は常駐の job の数に依らない)。確かめるのは tests/test_local.hy の
 ;;;   test-tasks-run-in-the-reserve-beside-every-resident-job(予約 1・背景の枠 0 の worker に常駐の service 3 つと task を出す service の系を
 ;;;   置き、3 つとも置かれて task が予約で走る — task の区間を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-overclaims-its-task-reserve-breaks-c17(本当は枠 0 の worker が heartbeat で予約を 1 と名乗る — SimWorker の
 ;;;   claims-task-reserve — で task が置かれて C17 が名指す)。
-;;;   C7 placed-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
+;;;   C7 placed-only-where-eligible(doeff_cluster._coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
 ;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c7(heartbeat で持たない能力を名乗る壊れた worker — SimWorker の
 ;;;   claims-provides — へ置かれて C7 が名指す)。専用の能力の決まりは C10、drain の期限の中へ置かない事は別の条として後から足す。
-;;;   C10 exclusive-workers-take-only-their-jobs(doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs —
+;;;   C10 exclusive-workers-take-only-their-jobs(doeff_cluster._coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs —
 ;;;   #1976)— 専用の能力を本当に持つ worker には、その能力を needs に持つ job だけを置く。確かめるのは tests/test_local.hy の
 ;;;   test-an-exclusive-worker-takes-no-job-that-does-not-need-its-ability(gpu を専用に持つ worker だけの世界の置き先を判断に渡す)。失敗ケース
 ;;;   は同じ file の test-a-counterexample-worker-that-hides-its-exclusive-ability-breaks-c10(heartbeat で専用の能力を名乗らない壊れた worker —
 ;;;   SimWorker の claims-exclusive — へ gpu を要らない job が置かれて C10 が名指す)。
-;;;   C11 no-new-place-while-draining(doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining — #1976)— drain を
+;;;   C11 no-new-place-while-draining(doeff_cluster._coordinator.core.coordinator_invariants:no-new-place-while-draining — #1976)— drain を
 ;;;   頼まれた worker には、drain の期限の内に新しい置き先を置かない。確かめるのは tests/test_local.hy の test-a-draining-worker-takes-no-new-job
 ;;;   (drain を頼んだ worker 1 台の世界で系に service を足し、置き先と drain の窓を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-claims-a-new-generation-every-beat-breaks-c11(heartbeat ごとに新しい世代を名乗る壊れた worker —
 ;;;   SimWorker の fresh-boot-every-beat — では drain が効かず、足した job が drain の期限の内に置かれて C11 が名指す)。
-;;;   C13 ran-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible — #1976 の写しの C3 の残り)—
+;;;   C13 ran-only-where-eligible(doeff_cluster._coordinator.core.coordinator_invariants:ran-only-where-eligible — #1976 の写しの C3 の残り)—
 ;;;   子 process も、needs を本当に提供し、専用の能力を持つなら job がその能力を要る worker でだけ動く(C7・C10 の置き先 = 信念に対し、
 ;;;   本当に動いた process = 真実を見る)。確かめるのは tests/test_local.hy の test-a-job-process-runs-only-on-an-eligible-worker。失敗ケースは
 ;;;   同じ file の test-a-counterexample-worker-that-claims-abilities-it-lacks-breaks-c13(持たない能力を名乗る壊れた worker — SimWorker の
 ;;;   claims-provides — の上で beacon が動き、C13 が名指す)。
-;;;   C14 runs-within-their-limit(doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit — #1976 の写しの C5 の残り)—
+;;;   C14 runs-within-their-limit(doeff_cluster._coordinator.core.coordinator_invariants:runs-within-their-limit — #1976 の写しの C5 の残り)—
 ;;;   入れ替え(handoff)を宣言した job は同時に R + 1 まで(退いた process の上限 R = 宣言の readiness の retiredLimit か、無ければ worker の
 ;;;   WorkerPolicy.retired-limit・既定 3 — と今の process 1 つ。退いた process が居る間に宣言が変われば今の process も退かせ、R に達して
 ;;;   いれば退いた process を止めずに、今の process も退かせずに待つ・#4072 の D-3 とその改め)、task は同時に 1 つまでしか動かない(C2 は入れ替えを宣言しない job だけを見る)。確かめるのは
@@ -126,18 +126,18 @@
 ;;;   worker — 退いた版 1 も今の版 2 も止めず、版 3 は空きを待つ — 上限 2)と tests/test_task_result_window.hy の task の検(上限 1)。失敗ケースは test_local.hy の
 ;;;   test-a-counterexample-worker-that-hides-retired-processes-breaks-c14(入れ替えで名から外した旧を観測に載せない壊れた worker —
 ;;;   SimWorker の hides-retired — では、worker の判断が退いた process が無いと読んで次の新を並べ、beacon が 3 つ動いて C14 が名指す)。
-;;;   C15 acknowledged-values-survive・C16 declared-services-survive(doeff_cluster.coordinator.core.coordinator_invariants — #1976 の写しの
+;;;   C15 acknowledged-values-survive・C16 declared-services-survive(doeff_cluster._coordinator.core.coordinator_invariants — #1976 の写しの
 ;;;   C1 の残り)— 書き手の止まった盤の行は作り直した後も止める前と同じ値(C15)・受け付けた Service の宣言は作り直した後も在る(C16)。
 ;;;   確かめるのは tests/test_local.hy の test-a-quiet-board-and-the-declared-services-survive-a-stop(beacon を版 2 へ、その後 beacon の
 ;;;   居ない系へ宣言し直して盤を止め、coordinator を止めて作り直す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-store-that-keeps-the-first-value-breaks-c15(盤の行の最初の値だけを残す置き場 KeepsFirstValue — C1 は緑のまま
 ;;;   C15 が名指す)と test-a-counterexample-store-that-forgets-services-breaks-c16(読み直しで Service の宣言を渡さない置き場 ForgetsServices)。
-;;;   C8 moves-to-a-live-worker(doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
+;;;   C8 moves-to-a-live-worker(doeff_cluster._coordinator.core.coordinator_invariants:moves-to-a-live-worker — #1976 の #32)— 担い手が死に、
 ;;;   job を本当に受けられる生きた worker が他に在るなら、死から移し替えの期限 + 余裕のうちに他で動き始める。確かめるのは tests/test_local.hy の
 ;;;   test-the-job-of-a-dead-carrier-moves-to-a-live-worker-in-time(2 台のうち担い手を死なせ、process の区間と死の刻を判断に渡す — 期限は
 ;;;   ClusterTiming.reassign-after-ms から作る)。失敗ケースは同じ file の test-a-counterexample-worker-that-hides-its-abilities-breaks-c8(もう
 ;;;   1 台が heartbeat で能力を名乗らない壊れた worker — claims-provides = 空 — だと、coordinator は移せる先が無いと読んで動かさず、C8 が名指す)。
-;;;   C9 tasks-answered-in-time(doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time — #1976 の #32)— 送った task は、
+;;;   C9 tasks-answered-in-time(doeff_cluster._coordinator.core.coordinator_invariants:tasks-answered-in-time — #1976 の #32)— 送った task は、
 ;;;   それを本当に走らせられる worker が在るなら、決めた時間のうちに値で答えられる。確かめるのは tests/test_task_result_window.hy の
 ;;;   test-a-task-is-answered-within-the-limit(task の答えと 65 秒の見張りを競わせ、送った刻・答えた刻を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-hides-its-abilities-breaks-c9(task を走らせられる worker が heartbeat で能力を名乗らない — claims-provides
@@ -214,27 +214,30 @@
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
+   ;; 置き場 = root の下の dir(linter は :dir が無いと service の名の dir に層を置く)。区画を _coordinator へ隠した
+   ;; (ADR-DOE-API-001 R15・card ki-65a5889e595b)ので dir も _coordinator。service の名は coordinator のまま。
+   :dir "_coordinator"
    :layers [core intent protocol entry]
-   :entry-modules ["doeff_cluster.coordinator.entry.main"]
-   :invariants ["doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-writes-survive"
-                "doeff_cluster.coordinator.core.coordinator_invariants:one-place-per-job"
-                "doeff_cluster.coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
+   :entry-modules ["doeff_cluster._coordinator.entry.main"]
+   :invariants ["doeff_cluster._coordinator.core.coordinator_invariants:acknowledged-writes-survive"
+                "doeff_cluster._coordinator.core.coordinator_invariants:one-place-per-job"
+                "doeff_cluster._coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
                 "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"
-                "doeff_cluster.coordinator.core.coordinator_invariants:revision-never-goes-back"
-                "doeff_cluster.coordinator.core.coordinator_invariants:service-versions-never-go-back"
-                "doeff_cluster.coordinator.core.coordinator_invariants:alive-only-while-reachable"
-                "doeff_cluster.coordinator.core.coordinator_invariants:places-only-on-reachable"
-                "doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity"
-                "doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve"
-                "doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible"
-                "doeff_cluster.coordinator.core.coordinator_invariants:moves-to-a-live-worker"
-                "doeff_cluster.coordinator.core.coordinator_invariants:tasks-answered-in-time"
-                "doeff_cluster.coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
-                "doeff_cluster.coordinator.core.coordinator_invariants:no-new-place-while-draining"
-                "doeff_cluster.coordinator.core.coordinator_invariants:ran-only-where-eligible"
-                "doeff_cluster.coordinator.core.coordinator_invariants:runs-within-their-limit"
-                "doeff_cluster.coordinator.core.coordinator_invariants:acknowledged-values-survive"
-                "doeff_cluster.coordinator.core.coordinator_invariants:declared-services-survive"]})
+                "doeff_cluster._coordinator.core.coordinator_invariants:revision-never-goes-back"
+                "doeff_cluster._coordinator.core.coordinator_invariants:service-versions-never-go-back"
+                "doeff_cluster._coordinator.core.coordinator_invariants:alive-only-while-reachable"
+                "doeff_cluster._coordinator.core.coordinator_invariants:places-only-on-reachable"
+                "doeff_cluster._coordinator.core.coordinator_invariants:running-within-capacity"
+                "doeff_cluster._coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve"
+                "doeff_cluster._coordinator.core.coordinator_invariants:placed-only-where-eligible"
+                "doeff_cluster._coordinator.core.coordinator_invariants:moves-to-a-live-worker"
+                "doeff_cluster._coordinator.core.coordinator_invariants:tasks-answered-in-time"
+                "doeff_cluster._coordinator.core.coordinator_invariants:exclusive-workers-take-only-their-jobs"
+                "doeff_cluster._coordinator.core.coordinator_invariants:no-new-place-while-draining"
+                "doeff_cluster._coordinator.core.coordinator_invariants:ran-only-where-eligible"
+                "doeff_cluster._coordinator.core.coordinator_invariants:runs-within-their-limit"
+                "doeff_cluster._coordinator.core.coordinator_invariants:acknowledged-values-survive"
+                "doeff_cluster._coordinator.core.coordinator_invariants:declared-services-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)・W2(退く process は新の Ready と自分の止めより前に退く知らせを受ける — #3672)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
 ;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
@@ -259,6 +262,9 @@
 ;; 言い換え(record-files)・entry = 入口。HTTP の受付(RecordInbox)は汎用の I/O なので foundation/record_inbox。
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
+   ;; 区画を _record_store へ隠した(ADR-DOE-API-001 R15・card ki-ff69baa69a6b)ので dir も _record_store(coordinator と同じ — 書くまでは
+   ;; 区画の 6 module が DOEFF114・115 の置き場の外だった)。
+   :dir "_record_store"
    :layers [core intent protocol entry]
    :entry-modules ["doeff_cluster._record_store.entry.main"]
    :invariants ["doeff_cluster._record_store.core.invariants:prune-keeps-runs-whole"]})

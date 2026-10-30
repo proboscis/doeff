@@ -26,8 +26,8 @@
 (import doeff_cluster.worker.intent.worker_model [EnvReport])
 (import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo])
-(import doeff_cluster.coordinator.core.resource_policy [worker-row])
+(import doeff_cluster [ClusterState WorkerInfo])
+(import doeff_cluster._coordinator.core.resource_policy [worker-row])
 
 ;; 下限(本番の既定 25 GiB)と、下限の上の空き(byte)。
 (val MIN-FREE (* 25 1024 1024 1024))

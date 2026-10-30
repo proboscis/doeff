@@ -13,7 +13,7 @@
 (import doeff_core_effects [Try])
 (import doeff_core_effects [try-handler])
 (import doeff [with-handlers])
-(import doeff_cluster.coordinator.core.coordinator_invariants [TaskCall tasks-answered-in-time JobProcess RunLimit runs-within-their-limit])
+(import doeff_cluster._coordinator.core.coordinator_invariants [TaskCall tasks-answered-in-time JobProcess RunLimit runs-within-their-limit])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster [sim-cluster SimWorker ProcessesOf KillWorker StartWorker ReadCoordinator])

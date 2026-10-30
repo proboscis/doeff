@@ -424,6 +424,13 @@
   (assert (is (resolve-type "doeff_cluster.foundation.record_log:Entry") Entry))
   (assert (is (resolve-type "doeff_cluster.foundation.record_codec:RecordedError") RecordedError))
   (assert (is (resolve-type "doeff_cluster.foundation.in_cluster_api:ClusterCaMissing") ClusterCaMissing))
+  ;; coordinator の区画を _ へ隠す前の記録の名(coordinator の観測の型・置き場の型)も、表で今の置き場を引く
+  (import doeff_cluster [WorkerInfo]
+          doeff_cluster._coordinator.protocol.wal_format [GoodLine])
+  (assert (= (get MOVED-MODULES "doeff_cluster.coordinator.intent.cluster_model") "doeff_cluster._coordinator.intent.cluster_model"))
+  (assert (= (get MOVED-MODULES "doeff_cluster.coordinator.protocol.wal_format") "doeff_cluster._coordinator.protocol.wal_format"))
+  (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:WorkerInfo") WorkerInfo))
+  (assert (is (resolve-type "doeff_cluster.coordinator.protocol.wal_format:GoodLine") GoodLine))
   ;; 表に無い旧い名は引けない(黙って別の型へ倒れない)
   (assert (is (resolve-type "doeff_cluster.no_such_model:SubmitDetached") None))
   ;; worker の型(#2025 の 2 本目)— 記録に残る worker の effect(StartJob など)の旧い名
@@ -435,7 +442,7 @@
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
   (assert (is (resolve-type "doeff_cluster.drain_client:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 32)))
+  (assert (= (len MOVED-MODULES) 49)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------

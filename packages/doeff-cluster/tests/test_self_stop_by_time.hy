@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
+(import doeff_cluster._coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster.worker.core.heartbeat_rules [desired-after-silence])
 (import doeff_cluster [sim-cluster SimWorker ProcessesOf StallWorker])

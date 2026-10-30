@@ -15,7 +15,7 @@
 (import dataclasses [replace])
 (import httpx)
 (import pytest)
-(import doeff_cluster.coordinator.protocol.cluster_json [naming-from-json])
+(import doeff_cluster [naming-from-json])
 (import doeff [run with-handlers])
 (import doeff_core_effects [os-file-handler])
 (import tests.link_rig [LinkRig])
@@ -24,12 +24,12 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 (import doeff_cluster.worker.entry.main [boot-room boot-warm-services])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterJob ClusterState Placement WorkerInfo ComponentVersion TaskRecord
-                                                       TaskUnplacedKind])
-(import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat load-of memory-room-of task-room-of task-unplaced-text
-                                                       jobs-placed unplaced-jobs])
-(import doeff_cluster.coordinator.core.api_policy [tick])
-(import doeff_cluster.coordinator.core.resource_policy [worker-row])
+(import doeff_cluster [ClusterJob ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [Placement ComponentVersion TaskRecord TaskUnplacedKind])
+(import doeff_cluster [memory-room-of]
+        doeff_cluster._coordinator.core.cluster_policy [register-heartbeat load-of task-room-of task-unplaced-text jobs-placed unplaced-jobs])
+(import doeff_cluster [tick])
+(import doeff_cluster._coordinator.core.resource_policy [worker-row])
 (import tests.state_rows [table-from-rows])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])
 

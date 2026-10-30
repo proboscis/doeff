@@ -6,9 +6,10 @@
 
 (import dataclasses [replace])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState WorkerInfo NodeLabelsSeen ClusterObservations])
-(import doeff_cluster.coordinator.core.api_policy [stamp-alive])
-(import doeff_cluster.coordinator.core.cluster_policy [forget-silent-workers with-derived-capabilities])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen ClusterObservations])
+(import doeff_cluster._coordinator.core.api_policy [stamp-alive])
+(import doeff_cluster._coordinator.core.cluster_policy [forget-silent-workers with-derived-capabilities])
 (import doeff_hy._table [TableWrite table-of])
 
 (val T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))

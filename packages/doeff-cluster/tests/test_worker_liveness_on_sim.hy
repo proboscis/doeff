@@ -18,8 +18,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [scaled-timing])
 (import pytest)
-(import doeff_cluster.coordinator.intent.worker_notices [WorkerBack WorkerGone])
-(import doeff_cluster.coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
+(import doeff_cluster [WorkerBack WorkerGone])
+(import doeff_cluster [WORKER-NOTICE-READS])
 (import doeff_cluster [SimLivenessError sim-cluster PartsOf SimWorker StallWorker StopCoordinator ReadCoordinator CoordinatorRuns]
         doeff_cluster._sim.local [SIM-TIMING-RATIO SimParts])
 (import tests.fixtures.envs [sim-foundation])

@@ -7,9 +7,9 @@
 (require doeff-hy.macros [deftest defk val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run])
-(import doeff_cluster.coordinator.core.cluster_policy [HANDOVER-STALL-MS])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.core.metrics_policy [metrics-text])
+(import doeff_cluster._coordinator.core.cluster_policy [HANDOVER-STALL-MS])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
+(import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
 (import tests.test_drain [Coord service K3S T])
 
 

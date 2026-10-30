@@ -5,12 +5,14 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.coordinator.intent.cluster_model [ClusterState Drain HandoffPhase HandoffWatch ProgramRow WarmEntry WorkerInfo])
-(import doeff_cluster.coordinator.core.cluster_policy [sweep-warms sweep-due warms-for])
-(import doeff_cluster.coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
-(import doeff_cluster.coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
-(import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
+(import doeff_cluster [ClusterState WorkerInfo]
+        doeff_cluster._coordinator.intent.cluster_model [Drain HandoffPhase HandoffWatch ProgramRow WarmEntry])
+(import doeff_cluster [sweep-due]
+        doeff_cluster._coordinator.core.cluster_policy [sweep-warms warms-for])
+(import doeff_cluster._coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
+(import doeff_cluster._coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
+(import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_hy._table [Table TableWrite table-of])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 (import tests.test_quiet_due_placement_rollout [LONG-LEASE WINDOW-OVER-DEADLINE])
