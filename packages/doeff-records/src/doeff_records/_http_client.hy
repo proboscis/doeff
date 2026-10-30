@@ -10,10 +10,18 @@
 ;;;   200                    wire の本文の答え(Row・Page・Written・Conflict・Refused・Changes・WrittenRows・RowsConflict・RowsRefused・
 ;;;                          AppendedEvents・BatchRead …)
 ;;;   503 / 届かない          Unreachable(読みは撃ち直してよい・書きは期待つきなら撃ち直してよい)
+;;;   500 internal           Unreachable(service の要求の task が答えを決める前か、答えを送る途中で落ちた — 書きが着いたかは不明。
+;;;                          置き場の一時の失敗〔PostgreSQL の接続の prepare の名が消えた 26000 など〕も service の実装の誤りも同じ答えで
+;;;                          来て、client には分けられない。結末の不明な答えの値は Unreachable だけで、どの要求の答えの型にも在る — 書きの
+;;;                          断り Refused は「宣言が許さない・何も書いていない」と言い切る値なので当てない。前は WireError を上げ、答えの型で
+;;;                          読み分ける呼び手の外へ例外が抜けて、呼び手の process ごと落ちた(card ki-200a8499710f)。撃ち直しは 503 と同じく
+;;;                          置き場の止まりの待ちが持ち、書きは冪等キーで守る(下の「置き場の止まり」「行の書きの冪等キー」)。誤りの
+;;;                          追跡は service の標準の誤りの行と、500 の計器の系列(service の records_requests_*_500・client の
+;;;                          records_client_requests_*_500)が持つ
 ;;;   404(宣言に無い表)      UndeclaredTable を上げる(組み立ての誤り — memory の handler と同じ)。欄 tables・streams は、撃った要求が
 ;;;                          名指した名のうち断りの理由に載った物(_wire.hy の undeclared-refusal — 本文の形は変えない)
-;;;   400 / 500              WireError を上げる(client か service の実装の誤り)
-;;;   ほかの status          400 / 500 と同じ一般の失敗で WireError(401 / 403・間の proxy の 502 など — status ごとの枝を持たない。
+;;;   400                    WireError を上げる(client の実装の誤り — 撃ち直しても同じ断り)
+;;;   ほかの status          400 と同じ一般の失敗で WireError(401 / 403・間の proxy の 502 など — status ごとの枝を持たない。
 ;;;                          本文が契約の断りの形でない JSON の時だけ WireMalformed)。記録の service は 401 / 403 を出さない
 ;;;                          (呼び手を断らない — #2988・#3007)ので、身元の断りの名の付いた例外も持たない(#2986)
 ;;;
@@ -85,8 +93,8 @@
 
 
 (defclass WireError [RuntimeError]
-  "service が 400 / 500 で答えた(client か service の実装の誤り — 値の失敗ではない)。ほかの status(401 / 403・間の proxy の 502 など)の
-   本文が JSON でない時も同じ(file の頭の表)。")
+  "service が 400 で答えた(client の実装の誤り — 値の失敗ではない)。ほかの status(401 / 403・間の proxy の 502 など)の
+   本文が JSON でない時も同じ。service の 500 internal は上げずに Unreachable で答える(file の頭の表)。")
 
 
 (defclass [(dataclass :frozen True)] RecordsEndpoint []
@@ -275,6 +283,9 @@
   (<- refusal (refusal-from body))
   (match refusal.error
     "store-unavailable" (Unreachable refusal.reason)
+    ;; 結末の不明な落ち(file の頭の表の 500 internal)— 答えの型の読み分けの外へ例外を出さない。
+    "internal" (Unreachable (.format "記録の service が {} に答える前か送る途中で落ちた(500 internal — 結末は不明): {}"
+                                     operation refusal.reason))
     "not-found" (raise (! (undeclared-refusal ask refusal.reason)))
     _ (raise (WireError (.format "{} が {} で断られた: {} {}" operation reply.status refusal.error refusal.reason)))))
 
