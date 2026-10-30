@@ -57,7 +57,7 @@ import importlib
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from types import FunctionType
+from types import FunctionType, MappingProxyType
 from typing import Any
 
 from doeff_effect_analyzer._program_effects import (
@@ -155,10 +155,11 @@ def analyze_handler(target: Any, *, name: str | None = None) -> HandlerEffects:
 
 _MAX_FACTORY_HOPS = 3
 
-# Handler functions being read further up: a clause that installs its own handler
-# again must not read it forever.
-_READING: contextvars.ContextVar[frozenset[Any]] = contextvars.ContextVar(
-    "doeff_effect_analyzer_reading", default=frozenset()
+# Handler functions (and dispatchers written in a body) being read further up, each with what
+# answers that read once it is done: a clause that installs its own handler again must not read
+# it forever — it gets the handler being read (``_installed_again``).
+_READING: contextvars.ContextVar[Mapping[Any, Callable[[], HandlerEffects | None]]] = (
+    contextvars.ContextVar("doeff_effect_analyzer_reading", default=MappingProxyType({}))
 )
 
 
@@ -169,22 +170,42 @@ def _analyze_handler(obj: Any, label: str, *, depth: int) -> HandlerEffects:
     if function is None:
         read = _unread(label, Unresolved("not a handler or handler factory", repr(obj), _nowhere()))
         return _decide(read, declared)
-    if function in _READING.get():
-        return _unread(
+    reading = _READING.get()
+    if function in reading:
+        return _installed_again(
             label,
+            reading[function](),
             Unresolved(
                 "handler installs itself inside its own clause",
                 function.__qualname__,
                 _location_of(function),
             ),
         )
-    token = _READING.set(_READING.get() | {function})
+    answer: HandlerEffects | None = None
+
+    def done() -> HandlerEffects | None:
+        return answer
+
+    token = _READING.set({**reading, function: done})
     try:
         installed = getattr(obj, "__doeff_handler_data__", None) is not None
         read = _read_function(function, label, depth=depth, installed=installed)
     finally:
         _READING.reset(token)
-    return _decide(read, declared)
+    answer = _decide(read, declared)
+    return answer
+
+
+def _installed_again(label: str, done: HandlerEffects | None, why: Unresolved) -> HandlerEffects:
+    """A handler a clause of its own installs again (doeff-traverse's ``sequential`` reports each
+    item's outcome under itself — agora card ki-70117167ebf3): the same handler, as its read
+    answered it.  An effect that reaches it there is answered by the same clauses; what leaves a
+    clause reached again inside what it performs is worked out in ``pass_through``.  A clause's
+    body is read after its handler's read is done (``_emits_read_later``), so ``done`` is there;
+    one installed again before that is unread (``why``)."""
+    if done is None:
+        return _unread(label, why)
+    return dataclasses.replace(done, name=label)
 
 
 def _read_function(
@@ -908,12 +929,21 @@ def _inline_handler(
 ) -> HandlerEffects:
     """The clauses of a dispatcher written in a body (``handle``'s lambda or local def)."""
     # A clause that runs the Program installing this very handler again would read
-    # it forever (each handler is read with a fresh reader) — stop at the second visit.
-    if node in _READING.get():
-        return _unread(
-            label, Unresolved("handler installs itself inside its own clause", label, location)
+    # it forever (each handler is read with a fresh reader) — at the second visit it is the
+    # handler being read.
+    reading = _READING.get()
+    if node in reading:
+        return _installed_again(
+            label,
+            reading[node](),
+            Unresolved("handler installs itself inside its own clause", label, location),
         )
-    token = _READING.set(_READING.get() | {node})
+    answer: HandlerEffects | None = None
+
+    def done() -> HandlerEffects | None:
+        return answer
+
+    token = _READING.set({**reading, node: done})
     try:
         read = _clauses_in(
             node, _scope_of(node, scope.module, parent=scope), filename, label, _Reader()
@@ -921,12 +951,14 @@ def _inline_handler(
     finally:
         _READING.reset(token)
     if read.clauses:
-        return HandlerEffects(label, read.clauses, read.unresolved, Basis.CLAUSES)
-    return _unread(
-        label,
-        *read.unresolved,
-        Unresolved("no isinstance(effect, T) clause found", label, location),
-    )
+        answer = HandlerEffects(label, read.clauses, read.unresolved, Basis.CLAUSES)
+    else:
+        answer = _unread(
+            label,
+            *read.unresolved,
+            Unresolved("no isinstance(effect, T) clause found", label, location),
+        )
+    return answer
 
 
 def _wrapped_dispatcher(expr: ast.expr, scope: _Scope) -> ast.expr | None:
