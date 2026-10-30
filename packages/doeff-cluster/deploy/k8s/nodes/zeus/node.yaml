@@ -38,6 +38,8 @@ spec:
           volumeMounts:
             - { name: usb-claude-projects, mountPath: /work/host-usb/claude-projects }
             - { name: usb-service-workers, mountPath: /work/host-usb/service-workers }
+            # NAS の控え用 dir(moneta の毎日の控え — moneta-backup-pvc.yaml)。job の子は /mnt/moneta-backup へ書く。
+            - { name: moneta-backup, mountPath: /mnt/moneta-backup }
       # 作業の root(volume work — WORK_DIR=/work)は USB の SSD の下(2026-10-10 の利用者の決定 — zeus の容量を食う置き場を USB の
       # SSD へ移す。同じ日の 13:39 JST に root の disk の空きが準備の最低 25 GiB を切り、新しい版の準備が全部
       # 止まった)。type は Directory: SSD が外れて mount の点が無ければ、root の disk へ黙って dir を作らず起動で止まる。中身は切り替えの前に
@@ -57,3 +59,5 @@ spec:
           hostPath: { path: /mnt/fast_ssd_usb/claude-projects, type: Directory }
         - name: usb-service-workers
           hostPath: { path: /mnt/fast_ssd_usb/service-workers, type: Directory }
+        - name: moneta-backup
+          persistentVolumeClaim: { claimName: moneta-backup-nfs }
