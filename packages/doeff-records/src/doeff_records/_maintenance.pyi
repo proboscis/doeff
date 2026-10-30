@@ -14,35 +14,6 @@ from datetime import datetime as datetime
 ARCHIVE_PAGE: int
 
 @dataclass(frozen=True)
-class SweepExpired(EffectBase):
-    ...
-
-@dataclass(frozen=True)
-class PruneChanges(EffectBase):
-    keep_seconds: float
-    upto_seq: int | None = None
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True)
-class ReadChangeLog(EffectBase):
-    after: int
-    limit: int
-
-    def __post_init__(self) -> None:
-        ...
-
-@dataclass(frozen=True)
-class ChangeLog:
-    changes: tuple[RowChanged | RowRemoved, ...]
-    epoch: int
-
-@dataclass(frozen=True)
-class ArchivedThrough:
-    seq: int
-
-@dataclass(frozen=True)
 class Swept:
     rows: int
     forgotten: int = 0
@@ -54,19 +25,39 @@ class Pruned:
     removed: int
 
 @dataclass(frozen=True)
-class ExpiredCursor:
-    stream: str
-    at: int | None = None
-    sequence: int | None = None
+class ChangeLog:
+    changes: tuple[RowChanged | RowRemoved, ...]
+    epoch: int
+
+@dataclass(frozen=True)
+class SweepExpired(EffectBase[Swept | Unreachable]):
+    ...
+
+@dataclass(frozen=True)
+class PruneChanges(EffectBase[Pruned | Unreachable]):
+    keep_seconds: float
+    upto_seq: int | None = None
 
     def __post_init__(self) -> None:
         ...
 
 @dataclass(frozen=True)
-class ReadExpiredEvents(EffectBase):
-    at: datetime
-    after: ExpiredCursor | None = None
-    limit: int = ...
+class ReadChangeLog(EffectBase[ChangeLog | Unreachable]):
+    after: int
+    limit: int
+
+    def __post_init__(self) -> None:
+        ...
+
+@dataclass(frozen=True)
+class ArchivedThrough:
+    seq: int
+
+@dataclass(frozen=True)
+class ExpiredCursor:
+    stream: str
+    at: int | None = None
+    sequence: int | None = None
 
     def __post_init__(self) -> None:
         ...
@@ -77,10 +68,10 @@ class ExpiredEvents:
     next: ExpiredCursor | None
 
 @dataclass(frozen=True)
-class RetireArchivedEvents(EffectBase):
-    stream: str
+class ReadExpiredEvents(EffectBase[ExpiredEvents | Unreachable]):
     at: datetime
-    sequences: tuple[int, ...]
+    after: ExpiredCursor | None = None
+    limit: int = ...
 
     def __post_init__(self) -> None:
         ...
@@ -88,6 +79,15 @@ class RetireArchivedEvents(EffectBase):
 @dataclass(frozen=True)
 class RetiredEvents:
     count: int
+
+@dataclass(frozen=True)
+class RetireArchivedEvents(EffectBase[RetiredEvents | Unreachable]):
+    stream: str
+    at: datetime
+    sequences: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True)
 class EventsArchived:

@@ -51,44 +51,7 @@
 (val ARCHIVE-PAGE 500)
 
 
-(defclass [(dataclass :frozen True)] SweepExpired [EffectBase]
-  "保持の期限を過ぎた行と出来事を回収する。答え = Swept | Unreachable。")
-
-
-(defclass [(dataclass :frozen True)] PruneChanges [EffectBase]
-  "keep-seconds 秒より古い変更を変更の列から消す。upto-seq = 消してよい番号の上限(送って確かめた番号 — None = 上限なし・送りを持たない
-   計画)。答え = Pruned | Unreachable。"
-  (#^ float keep-seconds)
-  (setv #^ (| int None) upto-seq None)
-  (defn #^ None __post_init__ [self]
-    (when (or (isinstance self.keep-seconds bool) (not (isinstance self.keep-seconds #(int float))) (< self.keep-seconds 0))
-      (raise (ValueError (.format "PruneChanges.keep_seconds は 0 以上の秒: {!r}" self.keep-seconds))))
-    (when (and (is-not self.upto-seq None) (or (isinstance self.upto-seq bool) (not (isinstance self.upto-seq int)) (< self.upto-seq 0)))
-      (raise (ValueError (.format "PruneChanges.upto_seq は 0 以上の番号か None: {!r}" self.upto-seq))))))
-
-
-(defclass [(dataclass :frozen True)] ReadChangeLog [EffectBase]
-  "変更の列の、番号 after より後の変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む。答え = ChangeLog | Unreachable。"
-  (#^ int after)
-  (#^ int limit)
-  (defn #^ None __post_init__ [self]
-    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
-      (raise (ValueError (.format "ReadChangeLog.after は 0 以上の番号: {!r}" self.after))))
-    (when (or (isinstance self.limit bool) (not (isinstance self.limit int)) (< self.limit 1))
-      (raise (ValueError (.format "ReadChangeLog.limit は 1 以上の数: {!r}" self.limit))))))
-
-
-(defclass [(dataclass :frozen True)] ChangeLog []
-  "変更の列の生の読みの答え: changes = 番号の昇順の変更(空 = after より後に無い)/ epoch = 置き場の版。"
-  (#^ (get tuple #((| RowChanged RowRemoved) ...)) changes)
-  (#^ int epoch))
-
-
-(defclass [(dataclass :frozen True)] ArchivedThrough []
-  "送りの答え: seq = 送り先に在ると確かめた変更の番号の上限(この番号までは刈ってよい — 0 = 1 つも確かめていない)。"
-  (#^ int seq))
-
-
+;; 答えの class は答える effect より前に置く(effect が基底 EffectBase[答え] で答えの型を名乗る — ADR-DOE-API-001 R2)。
 (defclass [(dataclass :frozen True)] Swept []
   "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)/ forgotten = 外した鍵の覚えの数(覚え方の長さを過ぎた覚え —
    _values.hy の KeyMemory の註)/ write-keys = 外した行の書きの冪等キーの覚えの数(覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた
@@ -104,6 +67,44 @@
   (#^ int removed))
 
 
+(defclass [(dataclass :frozen True)] ChangeLog []
+  "変更の列の生の読みの答え: changes = 番号の昇順の変更(空 = after より後に無い)/ epoch = 置き場の版。"
+  (#^ (get tuple #((| RowChanged RowRemoved) ...)) changes)
+  (#^ int epoch))
+
+
+(defclass [(dataclass :frozen True)] SweepExpired [(get EffectBase (| Swept Unreachable))]
+  "保持の期限を過ぎた行と出来事を回収する。答え = Swept | Unreachable。")
+
+
+(defclass [(dataclass :frozen True)] PruneChanges [(get EffectBase (| Pruned Unreachable))]
+  "keep-seconds 秒より古い変更を変更の列から消す。upto-seq = 消してよい番号の上限(送って確かめた番号 — None = 上限なし・送りを持たない
+   計画)。答え = Pruned | Unreachable。"
+  (#^ float keep-seconds)
+  (setv #^ (| int None) upto-seq None)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.keep-seconds bool) (not (isinstance self.keep-seconds #(int float))) (< self.keep-seconds 0))
+      (raise (ValueError (.format "PruneChanges.keep_seconds は 0 以上の秒: {!r}" self.keep-seconds))))
+    (when (and (is-not self.upto-seq None) (or (isinstance self.upto-seq bool) (not (isinstance self.upto-seq int)) (< self.upto-seq 0)))
+      (raise (ValueError (.format "PruneChanges.upto_seq は 0 以上の番号か None: {!r}" self.upto-seq))))))
+
+
+(defclass [(dataclass :frozen True)] ReadChangeLog [(get EffectBase (| ChangeLog Unreachable))]
+  "変更の列の、番号 after より後の変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む。答え = ChangeLog | Unreachable。"
+  (#^ int after)
+  (#^ int limit)
+  (defn #^ None __post_init__ [self]
+    (when (or (isinstance self.after bool) (not (isinstance self.after int)) (< self.after 0))
+      (raise (ValueError (.format "ReadChangeLog.after は 0 以上の番号: {!r}" self.after))))
+    (when (or (isinstance self.limit bool) (not (isinstance self.limit int)) (< self.limit 1))
+      (raise (ValueError (.format "ReadChangeLog.limit は 1 以上の数: {!r}" self.limit))))))
+
+
+(defclass [(dataclass :frozen True)] ArchivedThrough []
+  "送りの答え: seq = 送り先に在ると確かめた変更の番号の上限(この番号までは刈ってよい — 0 = 1 つも確かめていない)。"
+  (#^ int seq))
+
+
 (defclass [(dataclass :frozen True)] ExpiredCursor []
   "ReadExpiredEvents の続きの位置: stream = 列の名 / at・sequence = その列で前の頁の最後の出来事の刻と番号(None = 列の頭から)。"
   (#^ str stream)
@@ -114,7 +115,14 @@
       (raise (ValueError (.format "ExpiredCursor の at と sequence は両方在るか両方 None: {!r}" self))))))
 
 
-(defclass [(dataclass :frozen True)] ReadExpiredEvents [EffectBase]
+(defclass [(dataclass :frozen True)] ExpiredEvents []
+  "ReadExpiredEvents の答え: items = 1 つの列の出来事(積んだ刻と番号の順 — 空もある)/ next = 続きの位置(None = 印の列の全部を
+   読み終えた)。"
+  (#^ (get tuple #(Event ...)) items)
+  (#^ (| ExpiredCursor None) next))
+
+
+(defclass [(dataclass :frozen True)] ReadExpiredEvents [(get EffectBase (| ExpiredEvents Unreachable))]
   "印(StreamDecl.archive-before-retire)の列の、刻 at(GetTime の答え — 境の秒は handler が epoch ミリ秒にする)の境で保持の期限を過ぎた出来事を、after の位置から limit 件まで
    読む(頭の註)。答え = ExpiredEvents | Unreachable。"
   (#^ datetime at)
@@ -129,14 +137,12 @@
       (raise (ValueError (.format "ReadExpiredEvents.limit は 1 以上の数: {!r}" self.limit))))))
 
 
-(defclass [(dataclass :frozen True)] ExpiredEvents []
-  "ReadExpiredEvents の答え: items = 1 つの列の出来事(積んだ刻と番号の順 — 空もある)/ next = 続きの位置(None = 印の列の全部を
-   読み終えた)。"
-  (#^ (get tuple #(Event ...)) items)
-  (#^ (| ExpiredCursor None) next))
+(defclass [(dataclass :frozen True)] RetiredEvents []
+  "RetireArchivedEvents の答え: count = 外した出来事の数。"
+  (#^ int count))
 
 
-(defclass [(dataclass :frozen True)] RetireArchivedEvents [EffectBase]
+(defclass [(dataclass :frozen True)] RetireArchivedEvents [(get EffectBase (| RetiredEvents Unreachable))]
   "列 stream の番号 sequences(送り先に在ると確かめた出来事)のうち、刻 at の境で今も保持の期限を過ぎた出来事だけを置き場から外し、
    冪等キーを覚える。答え = RetiredEvents | Unreachable。"
   (#^ str stream)
@@ -148,11 +154,6 @@
     (when (not (and (isinstance self.sequences tuple)
                     (all (gfor n self.sequences (and (isinstance n int) (not (isinstance n bool)) (> n 0))))))
       (raise (ValueError (.format "RetireArchivedEvents.sequences は正の番号の tuple: {!r}" self.sequences))))))
-
-
-(defclass [(dataclass :frozen True)] RetiredEvents []
-  "RetireArchivedEvents の答え: count = 外した出来事の数。"
-  (#^ int count))
 
 
 (defclass [(dataclass :frozen True)] EventsArchived []
