@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doeff-hy-pytest"
-version = "0.8.0"
+version = "0.9.0"
 description = "Algebraic effects for Python: the pytest plugin for doeff-hy tests, with a Python 3.14 fix for Hy and optional per-test time limits"
 readme = "README.md"
 requires-python = ">=3.11"

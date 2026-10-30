@@ -8,8 +8,8 @@ Provider-agnostic time effects for `doeff`.
 pip install doeff-time
 ```
 
-doeff-time 0.1.0 needs doeff 0.8 (`doeff>=0.8.0,<0.9` and `doeff-core-effects>=0.8.0,<0.9`); pip
-installs them with it.
+doeff-time 0.2.0 needs doeff 0.9 (`doeff>=0.9.0,<0.10` and `doeff-core-effects>=0.9.0,<0.10`); pip
+installs them with it. doeff-time 0.1.0 needs doeff 0.8.
 
 ## Effects
 

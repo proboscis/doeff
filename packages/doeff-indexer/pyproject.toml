@@ -21,7 +21,7 @@ authors = [
     {name = "Proboscis", email = "3684241+proboscis@users.noreply.github.com"}
 ]
 dependencies = [
-    "doeff>=0.8.0,<0.9",
+    "doeff>=0.9.0,<0.10",
 ]
 
 [project.scripts]

@@ -209,7 +209,7 @@ it does: keep the loop in plain Python and yield effects around it.
 - The other Python effect libraries measured: effect 1.1.0 takes 12.7 µs per effect, effectful
   0.4.0 57.9 µs.
 - Many tasks: the Rust scheduler costs about 17 µs of CPU per spawned task, asyncio 11 µs.
-  `pip install doeff` installs 0.8.0, whose `scheduled()` runs the Rust scheduler by default (since
+  `pip install doeff` installs 0.9.0, whose `scheduled()` runs the Rust scheduler by default (since
   0.7.0; up to 0.6.0 it ran the Python one, about 150 µs per task). Select the Python one with
   `DOEFF_SCHEDULER=python` or `scheduled(program, implementation="python")`
   ([Rust Scheduler](25-rust-scheduler.md)).

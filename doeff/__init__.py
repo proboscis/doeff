@@ -266,7 +266,7 @@ if not TYPE_CHECKING:
         "default_async_handlers", "compose handlers by calling handler(program)"
     )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 
 # Handlers are imported from the package doeff_core_effects, not from doeff: the package shows its

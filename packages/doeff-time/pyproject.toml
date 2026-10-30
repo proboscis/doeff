@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "doeff-time"
-version = "0.1.0"
+version = "0.2.0"
 description = "Algebraic effects for Python: provider-agnostic time effects for doeff (delay, wait until, clock readings, scheduling) with asyncio, blocking and virtual-time handlers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,8 +22,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "doeff>=0.8.0,<0.9",
-    "doeff-core-effects>=0.8.0,<0.9",
+    "doeff>=0.9.0,<0.10",
+    "doeff-core-effects>=0.9.0,<0.10",
 ]
 
 [project.urls]
