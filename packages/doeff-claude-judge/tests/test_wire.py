@@ -9,12 +9,11 @@ import pytest
 from doeff_claude_judge import ClaudeQuery, MalformedAnswer, QueryImage
 from doeff_claude_judge._wire import parse, prepare, state_text
 from doeff_claude_judge._wire import NOUL_HEAD
-from doeff_system_one import Answer, Image, Judge, JudgeError, Verdict, choice, noul, score
+from doeff_system_one import Answer, Image, Judge, JudgeError, Question, Verdict
 
 QUESTIONS = {
-    "s-d": noul("Does the opening say what the operator must decide?"),
-    "s-d_where": choice("Which place most clearly fails s-d?",
-                        {"p0": "First line of the opening", "p1": "Second line", "none": "None of these places"}),
+    "s-d": Question(kind="noul", instructions="Does the opening say what the operator must decide?"),
+    "s-d_where": Question(kind="choice", instructions="Which place most clearly fails s-d?", options=(("p0", "First line of the opening"), ("p1", "Second line"), ("none", "None of these places"))),
 }
 JUDGE = Judge(state={"document": "依頼書の本文\n2 行目"}, questions=QUESTIONS)
 
@@ -158,7 +157,7 @@ def test_malformed_answer_becomes_the_same_judge_error_kind_as_jev() -> None:
 
 def test_score_questions_are_not_translated() -> None:
     with pytest.raises(JudgeError) as scored:
-        prepare(Judge(state="s", questions={"s": score("how plain", ["no", "some", "all"])}))
+        prepare(Judge(state="s", questions={"s": Question(kind="score", instructions="how plain", levels=("no", "some", "all"))}))
     assert scored.value.kind == "unsupported"
 
 
@@ -167,24 +166,24 @@ PNG = Image(format="png", data_base64="iVBORw0KGgo=")
 
 def test_a_picture_the_state_points_at_sits_between_the_tags_of_its_field() -> None:
     # 失敗ケース(前の形): 画像の在る Judge は unsupported で断られ、ポスターの絵を Claude に判定させられなかった。
-    pictured = Judge(state={"poster": "p-1"}, questions={"n": noul("Is `poster` text only?")}, assets={"p-1": PNG})
+    pictured = Judge(state={"poster": "p-1"}, questions={"n": Question(kind="noul", instructions="Is `poster` text only?")}, assets={"p-1": PNG})
     query = prepare(pictured)
     assert query.user == ("<poster>", QueryImage(media_type="image/png", data_base64="iVBORw0KGgo="),
                           "</poster>\n\n" + NOUL_HEAD + "\n- n: Is `poster` text only?")
     assert json.loads(query.schema_json)["required"] == ["n"]
-    assert query.system == prepare(Judge(state="x", questions={"n": noul("q")})).system
+    assert query.system == prepare(Judge(state="x", questions={"n": Question(kind="noul", instructions="q")})).system
 
 
 def test_text_fields_and_loose_pictures_keep_their_tags_around_the_picture() -> None:
     # 文の欄はそのまま札で囲み、欄から指されない画像は state の後ろに鍵の札で置く。jpg は image/jpeg。
-    judge = Judge(state={"title": "Plan", "poster": "p-1"}, questions={"n": noul("q")},
+    judge = Judge(state={"title": "Plan", "poster": "p-1"}, questions={"n": Question(kind="noul", instructions="q")},
                   assets={"p-1": PNG, "extra": Image(format="jpg", data_base64="/9j/")})
     assert prepare(judge).user == (
         "<title>\nPlan\n</title>\n\n<poster>", QueryImage("image/png", "iVBORw0KGgo="),
         "</poster>\n\n<extra>", QueryImage("image/jpeg", "/9j/"),
         "</extra>\n\n" + NOUL_HEAD + "\n- n: q")
     with pytest.raises(JudgeError) as untagged:
-        prepare(Judge(state="s", questions={"n": noul("q")}, assets={"1 bad": PNG}))
+        prepare(Judge(state="s", questions={"n": Question(kind="noul", instructions="q")}, assets={"1 bad": PNG}))
     assert untagged.value.kind == "unsupported"
 
 

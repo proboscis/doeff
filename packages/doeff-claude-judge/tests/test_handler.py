@@ -31,7 +31,7 @@ from doeff_claude_judge import (
 from doeff_claude_judge._wire import NOUL_HEAD, prepare
 from doeff_core_effects import scheduled
 from doeff_hy._frozen import freeze_json
-from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, choice, noul, score
+from doeff_system_one import Image, Judge, JudgeError, JudgeUsageLimited, Question
 
 from doeff import Err, Pass, Resume, ResumeThrow, Try, do, run, with_handlers
 from doeff import handler as _program_handler
@@ -40,8 +40,8 @@ if TYPE_CHECKING:
     from doeff_hy._frozen import JsonIn  # 型の宣言(frozen.pyi)だけに在る JSON の値の別名
 
 QUESTIONS = {
-    "plain": noul("Can a first-time reader decide from the document?"),
-    "plain_where": choice("Which place most clearly fails plain?", {"p0": "The opening", "none": "None of these places"}),
+    "plain": Question(kind="noul", instructions="Can a first-time reader decide from the document?"),
+    "plain_where": Question(kind="choice", instructions="Which place most clearly fails plain?", options=(("p0", "The opening"), ("none", "None of these places"))),
 }
 JUDGE = Judge(state={"document": "the document"}, questions=QUESTIONS, timeout_seconds=90.0, cacheable=False)
 ANSWER = {"plain": 0.8125, "plain_where": {"p0": 0.625, "none": 0.375}}
@@ -139,7 +139,7 @@ def test_a_judge_with_one_picture_prints_one_stream_json_user_line() -> None:
     # 画像 1 枚の判定は、print の本文が PrintContent になり、CLI の argv に --input-format stream-json・標準入力に user の 1 行
     # (開きの印・画像の block・閉じの印と問い — 測り 2026-10-19 の probe_once.py と同じ形)が載る。他の旗は文の判定と同じ。
     # 失敗ケース(前の形): 画像の在る Judge は print の前に unsupported で断られた。
-    poster = Judge(state={"poster": "p-1"}, questions={"poster-picture": noul("Is the image `poster` an illustrated picture?")},
+    poster = Judge(state={"poster": "p-1"}, questions={"poster-picture": Question(kind="noul", instructions="Is the image `poster` an illustrated picture?")},
                    assets={"p-1": Image(format="png", data_base64="iVBORw0KGgo=")}, timeout_seconds=60.0)
     captured: dict[str, ClaudePrintOnce] = {}
     verdict = _run(poster, printer=_printer(_answered({"poster-picture": 0.875}), captured), lender=_lender(LENT))
@@ -166,7 +166,7 @@ def test_a_judge_without_pictures_prints_its_text_as_before() -> None:
 
 
 def test_the_scripted_printer_reads_back_the_picture_query() -> None:
-    poster = Judge(state={"poster": "p-1"}, questions={"n": noul("Is `poster` a picture?")},
+    poster = Judge(state={"poster": "p-1"}, questions={"n": Question(kind="noul", instructions="Is `poster` a picture?")},
                    assets={"p-1": Image(format="jpeg", data_base64="/9j/")})
 
     def answer(query: ClaudeQuery, model: str) -> JsonIn:
@@ -229,7 +229,7 @@ def test_an_answer_out_of_shape_is_a_malformed_refusal() -> None:
 
 
 def test_a_judge_the_cli_cannot_take_is_refused_before_borrowing_or_printing() -> None:
-    scored = Judge(state="x", questions={"grade": score("How good?", ["low", "high"])})
+    scored = Judge(state="x", questions={"grade": Question(kind="score", instructions="How good?", levels=("low", "high"))})
     error = _refusal(scored, printer=_no_print(), lender=_lender(RuntimeError("no borrow before refusing")))
     assert error.kind == "unsupported"
 

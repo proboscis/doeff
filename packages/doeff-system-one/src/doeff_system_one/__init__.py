@@ -41,15 +41,6 @@ from doeff_system_one._types import (
 from doeff_system_one._types import (
     answer_score as answer_score,
 )
-from doeff_system_one._types import (
-    choice as choice,
-)
-from doeff_system_one._types import (
-    noul as noul,
-)
-from doeff_system_one._types import (
-    score as score,
-)
 
 
 # Names of the submodules behind `_` (ADR-DOE-API-001 R5), read on first use: the root does not import

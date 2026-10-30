@@ -34,6 +34,11 @@
 
 ### Changed
 
+- **Breaking (doeff-system-one):** the import root no longer exports `choice`, `noul` and `score` (ADR-DOE-API-001 R1
+  — they build a `Question`, which is neither an effect nor its answer). Build the question with the type itself:
+  `Question(kind="noul", instructions=…)`, `Question(kind="choice", instructions=…, options=(("id", "description"),
+  …))` and `Question(kind="score", instructions=…, levels=(…))`. The callers in agent-commons and agora-controllers
+  were rewritten first.
 - **Breaking (doeff-core-effects):** the import root no longer exports `SqlText`, `SqlPlaceholder`, `DriverValue`,
   `WsCloseFrame`, `VmWork` and `TraceSink` (ADR-DOE-API-001 R1 — parts the package's own handlers use, not an effect's
   value or answer). No caller outside the package imports them; `set_scheduler_trace` still takes any

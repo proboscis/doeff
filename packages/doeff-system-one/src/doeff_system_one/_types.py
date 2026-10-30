@@ -6,7 +6,7 @@ choice(候補から 1 つ)/ noul(条件が成り立つ確率)/ score(段階の�
 choice の候補は **id → 説明** の表(答えは id で返る)。score の段階は順序つきの説明の列。
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -75,26 +75,6 @@ class Image:
     def as_payload(self) -> dict[str, Any]:
         """TypeSafe の綴り(本文の根の assets の値)。"""
         return {"type": "image", "format": self.format, "data_base64": self.data_base64}
-
-
-def choice(instructions: str, options: Mapping[str, str] | Sequence[str]) -> Question:
-    """候補から 1 つ選ぶ問い。候補は id → 説明の表か、id だけの列(説明 = id)。
-    「どれでもない」を候補に含めたい時は呼び手が足す。"""
-    if isinstance(options, Mapping):
-        pairs = tuple((str(k), str(v)) for k, v in options.items())
-    else:
-        pairs = tuple((str(o), str(o)) for o in options)
-    return Question(kind="choice", instructions=instructions, options=pairs)
-
-
-def noul(instructions: str) -> Question:
-    """条件が成り立つ確率を問う。"""
-    return Question(kind="noul", instructions=instructions)
-
-
-def score(instructions: str, levels: Sequence[str]) -> Question:
-    """段階(順序つき)の期待値を問う。"""
-    return Question(kind="score", instructions=instructions, levels=tuple(str(level) for level in levels))
 
 
 @dataclass(frozen=True)

@@ -7,20 +7,17 @@ from doeff_system_one import (
     answer_choice,
     answer_noul,
     answer_score,
-    choice,
-    noul,
-    score,
 )
 from doeff_system_one._judgment import answered, calibration_ok, chosen, clip, crosses
 
 
-def test_question_constructors_and_payload() -> None:
-    assert choice("which", ["a", "b"]).as_payload() == {"type": "choice", "instructions": "which", "criteria": {"a": "a", "b": "b"}}
-    described = choice("which", {"zsh": "glob が当たらない", "none": "どれでもない"})
+def test_question_payload() -> None:
+    assert Question(kind="choice", instructions="which", options=(("a", "a"), ("b", "b"))).as_payload() == {"type": "choice", "instructions": "which", "criteria": {"a": "a", "b": "b"}}
+    described = Question(kind="choice", instructions="which", options=(("zsh", "glob が当たらない"), ("none", "どれでもない")))
     assert described.as_payload()["criteria"] == {"zsh": "glob が当たらない", "none": "どれでもない"}
     assert described.option_ids == ["zsh", "none"]
-    assert noul("is it").as_payload() == {"type": "noul", "instructions": "is it"}
-    assert score("how", ["lo", "mid", "hi"]).as_payload() == {"type": "score", "instructions": "how", "criteria": ["lo", "mid", "hi"]}
+    assert Question(kind="noul", instructions="is it").as_payload() == {"type": "noul", "instructions": "is it"}
+    assert Question(kind="score", instructions="how", levels=("lo", "mid", "hi")).as_payload() == {"type": "score", "instructions": "how", "criteria": ["lo", "mid", "hi"]}
 
 
 def test_question_rejects_bad_shapes() -> None:
@@ -39,7 +36,7 @@ def test_judge_requires_questions_of_the_right_type() -> None:
         Judge(state="s", questions={})
     with pytest.raises(TypeError):
         Judge(state="s", questions={"q": {"type": "noul"}})  # type: ignore[dict-item]
-    effect = Judge(state={"x": 1}, questions={"q": noul("is"), "c": choice("w", ["a"])}, cacheable=False)
+    effect = Judge(state={"x": 1}, questions={"q": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"),))}, cacheable=False)
     assert effect.kinds() == {"q": "noul", "c": "choice"}
     assert effect.cacheable is False
 

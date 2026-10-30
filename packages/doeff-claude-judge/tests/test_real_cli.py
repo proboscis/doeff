@@ -30,7 +30,7 @@ from doeff_claude_judge import (
     fixed_credential_lender,
 )
 from doeff_core_effects import scheduled
-from doeff_system_one import Judge, Verdict, choice, noul
+from doeff_system_one import Judge, Question, Verdict
 
 from doeff import do, run, with_handlers
 
@@ -46,14 +46,12 @@ FIFTY_THOUSAND = 50_000
 WAIT_SECONDS = 180.0
 
 QUESTIONS = {
-    "decision": noul("Does the document state, near its start, the one decision the reader is asked to make?"),
-    "options": noul("Does the document give each option the reader can choose together with what follows from it?"),
-    "undo": noul("Does the document say how the chosen option could be undone later?"),
-    "terms": noul("Can a reader who has never seen the project follow the document without terms it never explains?"),
-    "evidence": noul("Does the document back its claims with measured facts rather than impressions?"),
-    "decision_where": choice("Which part of the document most clearly states the decision?",
-                             {"p0": "The first section", "p1": "A middle section", "p2": "The last section",
-                              "none": "No part states it"}),
+    "decision": Question(kind="noul", instructions="Does the document state, near its start, the one decision the reader is asked to make?"),
+    "options": Question(kind="noul", instructions="Does the document give each option the reader can choose together with what follows from it?"),
+    "undo": Question(kind="noul", instructions="Does the document say how the chosen option could be undone later?"),
+    "terms": Question(kind="noul", instructions="Can a reader who has never seen the project follow the document without terms it never explains?"),
+    "evidence": Question(kind="noul", instructions="Does the document back its claims with measured facts rather than impressions?"),
+    "decision_where": Question(kind="choice", instructions="Which part of the document most clearly states the decision?", options=(("p0", "The first section"), ("p1", "A middle section"), ("p2", "The last section"), ("none", "No part states it"))),
 }
 
 

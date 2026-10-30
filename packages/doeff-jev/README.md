@@ -32,13 +32,13 @@ program は effect `Judge` を出すだけで、組み立て点が `judge_stack`
 ```python
 from doeff import do, run, with_handlers
 from doeff_core_effects import scheduled
-from doeff_system_one import Judge, noul
+from doeff_system_one import Judge, Question
 from doeff_jev import durable_cache, judge_stack
 
 @do
 def is_japanese():
     return (yield Judge(state="この文章は日本語か。",
-                        questions={"ja": noul("この文章は日本語で書かれているか。")}))
+                        questions={"ja": Question(kind="noul", instructions="この文章は日本語で書かれているか。")}))
 
 stack = judge_stack(            # 宛先を渡さなければ、この process の環境と home の file から解く(上の「宛先の切り替え」)
     cache=durable_cache(),      # 省くと process 内だけの cache
