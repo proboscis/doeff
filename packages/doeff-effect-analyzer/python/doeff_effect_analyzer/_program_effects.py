@@ -2805,6 +2805,11 @@ def _passed_arguments(
 
 def _argument_value(argument: ast.expr, scope: _Scope) -> Imported:
     """What an argument denotes when it is known: an object, or a Program built here."""
+    if isinstance(argument, ast.Constant) and argument.value is None:
+        # A written None is what a parameter left at its default None is bound to (``_defaulted``):
+        # the callee calls it only on a path where it is set (``(sieved-mirror-of table None
+        # fields)`` — agora card ki-8694f6cc9b39).
+        return None
     value = scope.resolve(argument)
     if isinstance(value, _LocalFunction) or isinstance(argument, ast.Lambda):
         # A function written here, called by the callee (``begin`` / ``commit`` handed to
