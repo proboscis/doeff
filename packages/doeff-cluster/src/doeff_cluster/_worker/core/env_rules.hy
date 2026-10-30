@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits])
 
 (val ANSWER-HEAD-CHARS 200)   ; 形の読めない答えの file の中身を失敗の理由に載せる長さ

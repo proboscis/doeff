@@ -9,12 +9,12 @@
 (import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.protocol.task_result [delivered-task-result])
-(import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.run_context [RunContext])
+(import doeff_cluster._shared.protocol.task_result [delivered-task-result])
+(import doeff_cluster._shared.protocol.coordinator_route [RouteOptions])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 
 (deff deliver-task-result [#^ RunContext ctx #^ str encoded]  ; defk にできない: process の入口(Program の外)が届けを 1 回走らせる

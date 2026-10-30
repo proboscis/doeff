@@ -5,7 +5,7 @@
   "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R31 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R23・R24・R27・R28・R31・R33 — ADR の条が名を挙げた console script と Rust の実行 file の行・名と条の組は test の ADR_COMMANDS)・「許した物 — 換算の関数」(R35 — 値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない関数)・「許した物 — ADR を書く関数」(R14 — Hy の macro の module が出す関数)・「許した物 — effect の答えの型」(R2 — package の effect の答えの型 — EffectBase[T] の T か defeffect の :answer に出る型と、答えの class の欄の型・子の class・答えの class だけを並べた型の別名 — 目録の answer_types)・「許した物 — 例外の型」(R2 — その package が定義した BaseException の子の class)・「許した物 — effect の値の型」(R2 — 同じ package が見せる effect の class の欄の注釈に、型引数を含めて出る class と型の別名。package が定義した値の型の欄も辿る — 目録の value_types)・「許した物 — pytest の plugin の登録」(R10・R33 — pytest11 の entry point の行と、その entry point が読む module が出す名)・「許した物 — 起動の口」(R36 — package が配る .pth が venv の Python の起動ごとに呼ぶ名)・「許した物 — program の形を組む作り手と型」(R37 — その package が見せる class の値を返し、中で effect も handler も program も作らず時計・環境・file・process・乱数を読まない関数と、組の作り手が返す class)の 11 個で、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
   "決め = 許した決めの id(card ki-… か依頼 lt-… か利用者の発言 ci-…)。この表は決めの id つきで足せる(違反の表と違い減るだけでない)。決めの id の無い行は test が赤にする。",
   "名を submodule から入口へ移した行は、違反の表と同じく表の module を書き換えずに同じ行と読む。表に在るのに目録に無い名は赤 — 直した名と隠した submodule の名は表から消す(tools/hide_submodules.py finish が隠した子の行を消す)。",
-  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)、effect の値の型 108 名(323 行 — 前の既知の表の組「境界 — effect の値の型」の 95 名 298 行と「足した名」の 25 行)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-5401da404e8e)、effect の答えの型 197 名(10 package の 604 行 — 前の既知の表の組「境界 — effect の結果の型」の 603 行と「足した名」の doeff-indexer の SymbolInfo)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-17fb02cf904b)、前の既知の表の組「境界 — CLI」と「足した名」の CLI コマンド 9 つは名を挙げた条の答えか card(doeff-agents・conductor・doeff-flow・doeff-agentic-tui は R7 の lt-57AKP3A28CQN8VVWH74YH8N8S5・doeff-linter は R23 の ki-4c1d18a98579・doeff-effects は R24 の lt-646XDCG0CJXMX7JP6558JD426W・doeff-indexer は R27 の lt-ZDN45RSNPV16BKSM997GGZ9CVB・doeff-agentic は R28 の lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1・doeff-adr は R33 の lt-RA4FZ731JNZQ6JEGVAYD35XCAZ)、doeff-hy-pytest の pytest11 の登録と宣言 2 個は R10 の答え lt-796ZF4G6CQ6TSHS5JDDRP09P1K、doeff-adr の pytest11 の登録は R33 の答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ、doeff_hy_bytecode_guard の install は card ki-a07d4703a73b(R36)— 移したのは card ki-a07d4703a73b。doeff-conductor の workflow を書く作り手 28 名と型 19 名(66 行 — 前の既知の表の組「境界 — workflow の DSL の言葉」)は答え lt-D4KB5PAECAE921VNAFHQHX4W3G(R37・card ki-471d3f085c14)。"
+  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-cluster の公開の macro の module doeff_cluster.macros と defsystem は答え lt-G256RJK3A95G4N7R5XC5FEJBVP(R15・card ki-6f70e9c957c0 — 共有の区画を _shared へ隠した時に根のすぐ下に置いた)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)、effect の値の型 108 名(323 行 — 前の既知の表の組「境界 — effect の値の型」の 95 名 298 行と「足した名」の 25 行)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-5401da404e8e)、effect の答えの型 197 名(10 package の 604 行 — 前の既知の表の組「境界 — effect の結果の型」の 603 行と「足した名」の doeff-indexer の SymbolInfo)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-17fb02cf904b)、前の既知の表の組「境界 — CLI」と「足した名」の CLI コマンド 9 つは名を挙げた条の答えか card(doeff-agents・conductor・doeff-flow・doeff-agentic-tui は R7 の lt-57AKP3A28CQN8VVWH74YH8N8S5・doeff-linter は R23 の ki-4c1d18a98579・doeff-effects は R24 の lt-646XDCG0CJXMX7JP6558JD426W・doeff-indexer は R27 の lt-ZDN45RSNPV16BKSM997GGZ9CVB・doeff-agentic は R28 の lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1・doeff-adr は R33 の lt-RA4FZ731JNZQ6JEGVAYD35XCAZ)、doeff-hy-pytest の pytest11 の登録と宣言 2 個は R10 の答え lt-796ZF4G6CQ6TSHS5JDDRP09P1K、doeff-adr の pytest11 の登録は R33 の答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ、doeff_hy_bytecode_guard の install は card ki-a07d4703a73b(R36)— 移したのは card ki-a07d4703a73b。doeff-conductor の workflow を書く作り手 28 名と型 19 名(66 行 — 前の既知の表の組「境界 — workflow の DSL の言葉」)は答え lt-D4KB5PAECAE921VNAFHQHX4W3G(R37・card ki-471d3f085c14)。"
  ],
  "許した物": [
   {
@@ -3294,6 +3294,13 @@
   {
    "package": "doeff-cluster",
    "module": "(submodule)",
+   "name": "doeff_cluster.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
    "name": "doeff_cluster.shared.entry.macros",
    "組": "許した物 — Hy の macro",
    "決め": "ki-838cd4565b33"
@@ -3682,6 +3689,13 @@
    "name": "ReplayFinished",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.macros",
+   "name": "defsystem",
+   "組": "許した物 — Hy の macro",
+   "決め": "lt-G256RJK3A95G4N7R5XC5FEJBVP"
   },
   {
    "package": "doeff-cluster",

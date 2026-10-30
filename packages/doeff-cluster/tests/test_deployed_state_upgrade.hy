@@ -17,8 +17,8 @@
 (import doeff_cluster [tick])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv])
-(import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [http-request])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [SIM-START-MS])
 
 (val FIXTURE (/ (. (Path __file__) (resolve) parent) "fixtures" "coordinator_state_ec727f20" "wal"))

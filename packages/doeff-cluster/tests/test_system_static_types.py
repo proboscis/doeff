@@ -1,7 +1,7 @@
-"""defsystem の展開と doeff_cluster.shared.intent.service_model・doeff_cluster.shared.entry.service_build の型(service_model.pyi・
+"""defsystem の展開と doeff_cluster._shared.intent.service_model・doeff_cluster._shared.entry.service_build の型(service_model.pyi・
 service_build.pyi)の失敗ケース(#2291・#2279 の対。構成子の置き場は #2540 で service_build へ移した)。
 
-defsystem は `doeff_cluster.shared.entry.service_build.system_of` / `job` と `doeff_cluster.shared.intent.service_model.CallShape` を
+defsystem は `doeff_cluster._shared.entry.service_build.system_of` / `job` と `doeff_cluster._shared.intent.service_model.CallShape` を
 呼ぶ関数に展開する。どちらも Hy の module で、型の宣言(service_build.pyi・service_model.pyi)が無いと pyright はこれらを Unknown として読み、系の関数の戻りまで Unknown に
 引きずられる(書き手に直せない赤)。また、引数に型の注記を持つ系の展開が、置いた後の関数の属性 `__doeff_system__` を
 読み直していた所は reportFunctionMemberAccess になっていた。宣言と展開の直しが在れば:
@@ -23,7 +23,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 
 (defclass Ping []
   "土台の型の見本(系の引数の型の注記 — 展開が __doeff_system__ の param_types に載せる)。")
@@ -100,7 +100,7 @@ def test_a_system_field_used_as_the_wrong_type_is_red(probe: Path) -> None:
 #: 変われば、書き手に直せない赤になる — その退行をここで止める。
 EMPTY_NEEDS = """\
 (require doeff-hy.macros [defk])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 
 (defclass Ping []
   "土台の型の見本")
@@ -131,7 +131,7 @@ def test_an_empty_needs_set_reads_as_a_set_of_names(tmp_path: Path) -> None:
 #: 2026-10-12 00:00 の 3 file・6 件)。書き手が自分で 2 度書いた import(json の 3・4 行目)は畳まず、赤のまま残す。
 TWO_SYSTEMS = """\
 (require doeff-hy.macros [defk val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import json)
 (import json)
 

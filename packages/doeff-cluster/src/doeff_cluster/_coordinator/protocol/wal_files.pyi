@@ -15,7 +15,7 @@ from doeff_core_effects import SyncDirectory as SyncDirectory
 from doeff_core_effects import TruncateFile as TruncateFile
 from doeff_core_effects import WriteBytes as WriteBytes
 from doeff_core_effects._file_effects import file_done as file_done
-from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
 MOVED_MARK: str
 SLOW_FSYNC_SECONDS: float
 FSYNC_REPORT_EVERY: int

@@ -13,16 +13,17 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])
 (import doeff [Program])
-(import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster [System])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [KeepMark])
 (import doeff_cluster [liveness-due]
         doeff_cluster._coordinator.core.cluster_policy [note-liveness forget-silent-workers alive sweep-keep-marks])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [sweep-due]
         doeff_cluster._coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms])
 (import doeff_cluster._coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
@@ -33,8 +34,8 @@
 (import doeff_cluster [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimWorker Redeclare CoordinatorSteps]
         doeff_cluster._sim.local [SimLink CoordinatorStep])
 (import doeff_cluster [WorkerPolicy])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster [AwaitDetached DetachedAwaited DetachedSucceeded])
+(import doeff_cluster [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [quitters quitters-v2 beacons slow-task sim-task-foundation NET])
 (import tests.test_local_rollout [reverse-scenario DEPLOYMENTS WORKERS :as ROLLOUT-WORKERS])

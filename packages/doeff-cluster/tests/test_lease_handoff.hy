@@ -9,13 +9,14 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.entry.cluster_foundation [lease-holder-of])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.semaphore_handlers [SemaphoreSession])
-(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster [lease-holder-of])
+(import doeff_cluster [RunContext])
+(import doeff_cluster [SemaphoreSession])
+(import doeff_cluster [lease-holder holder-tokens-prefix]
+        doeff_cluster._shared.core.lease_rules [drop-holders])
 (import doeff_cluster [ReleaseLeases])
 (import doeff_cluster [sim-cluster Redeclare ProcessesOf SharedRows KillWorker StartWorker])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import tests.fixtures.lease_programs [lease-sim-foundation lease-writers lease-writers-v2 HOLDER-ROW])
 
 ;; 担い手(cluster-semaphore の SemaphoreSession)の既定の TTL(秒)— 外しが効かなければ、新しい版はこの期限まで取れない。

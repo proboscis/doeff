@@ -11,8 +11,8 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.entry.declare [apply-declaration])
-(import doeff_cluster.shared.intent.service_model [Declaration])
+(import doeff_cluster._shared.entry.declare [apply-declaration])
+(import doeff_cluster [Declaration])
 
 (val URL "http://coordinator.test")
 (val DECLARATION (Declaration :rows [{"name" "writer-a" "revision" "r1" "replicas" 1 "run" {"program" "sha-a" "versions" {"python" "3.14.0"}}}]

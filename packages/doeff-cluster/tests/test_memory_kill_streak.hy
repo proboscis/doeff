@@ -21,9 +21,9 @@
 (import doeff_core_effects [ProcRow])
 (import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
-(import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster [spec-hash])
+(import doeff_cluster [JobSpec JobPhase])
 (import doeff_cluster._worker.core.memory_rules [JobRoot])
 (import doeff_cluster [CodeState CodeView JobRecord ObserveWorld ProcessView ReapJob StartJob WorkerPolicy WorldView]
         doeff_cluster._worker.intent.worker_model [EnvDisk Outcome StartHold])

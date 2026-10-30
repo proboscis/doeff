@@ -92,7 +92,7 @@ macro の展開が型のために持つ形:
 | 関数への属性 | `setattr(f, '__doeff_body__', …)` | 同じ |
 | `deftest` の関数 | `def test_x(doeff_interpreter, tmp_path):` + `return doeff_interpreter(…)` | `def test_x(doeff_interpreter: _doeff_DeftestInterpreter, tmp_path: _doeff_TmpPath) -> None:`(fixture の名 → 型の表 = `static_view.py` の `DEFTEST_FIXTURE_TYPES`・型 = `static_types.pyi`。表に無い名は書き手の `#^ T 名` を写し、無ければ `object`)。decorator の pytest は module の頭の `_doeff_pytest`(agora-redesign #2214) |
 | pytest の item の記録 | `doeff_hy._pytest_items.record_at_import(globals(), …)` | 記帳として外す(`static_check.without_bookkeeping`) |
-| `_doeff_` の別名の import(doeff-cluster の `defsystem` など、持ち主の package の定義の macro) | 系ごとに `import doeff_cluster.shared.intent.service_model as _doeff_cluster_service_model`・`import doeff_cluster.shared.entry.service_build as _doeff_cluster_service_build`・`import doeff_hy._declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む物 = 束ねる名が展開の名の頭 `_doeff_`(`expansion_names.PREFIX`)の `import <module> as _doeff_<名>` と根 `doeff_hy` の import — doeff-hy は持ち主の module の綴りを持たない)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
+| `_doeff_` の別名の import(doeff-cluster の `defsystem` など、持ち主の package の定義の macro) | 系ごとに `import doeff_cluster._shared.intent.service_model as _doeff_cluster_service_model`・`import doeff_cluster._shared.entry.service_build as _doeff_cluster_service_build`・`import doeff_hy._declarations` | 同じ文を出し、module の直下の重ねを `static_check.without_bookkeeping` が最初の 1 つに畳む(畳む物 = 束ねる名が展開の名の頭 `_doeff_`(`expansion_names.PREFIX`)の `import <module> as _doeff_<名>` と根 `doeff_hy` の import — doeff-hy は持ち主の module の綴りを持たない)。系を 2 つ持つ module に、書き手の書いていない import の reportDuplicateImport を出さない。書き手が自分で重ねた import は畳まず赤のまま |
 
 ## 捕まえるもの(2026-09-23 の測定)
 
@@ -128,7 +128,7 @@ guard の method 不足・読みだけの job の書き)に当てると、Hy で
 
 ## 捕まえないもの・その直し先
 
-- **env と effect の集合**(6・7・8): service の宣言(`doeff_cluster.shared.intent.service_model.service`)の `:env` と `RemoteJob` の `:env` は import path
+- **env と effect の集合**(6・7・8): service の宣言(`doeff_cluster._shared.intent.service_model.service`)の `:env` と `RemoteJob` の `:env` は import path
   の文字列で、Program が出す effect の集合も Hy では宣言しない。doeff core の `@do` は
   `Generator[E, Any, T]` の E を「出してよい effect」と読む(docs/23-static-typing.md)ので、残る仕事は
   Hy 側に E を書く口を作ること(例: defk の契約に effect の並びを書き、型検査のための展開で生成器の

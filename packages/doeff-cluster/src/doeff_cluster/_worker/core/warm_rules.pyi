@@ -4,11 +4,11 @@ from doeff import Program as _Program
 from collections import Counter as Counter
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
-from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
-from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
-from doeff_cluster.shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
+from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
+from doeff_cluster._shared.core.runtime_env_rules import runtime_env_of_json as runtime_env_of_json
 from doeff_cluster._worker.intent.worker_model import WorldView as WorldView
 from doeff_cluster._worker.intent.worker_model import WarmChildMark as WarmChildMark
 from doeff_cluster._worker.intent.worker_model import WarmMarkUnreadable as WarmMarkUnreadable
@@ -16,7 +16,7 @@ from doeff_cluster._worker.intent.worker_model import WarmChildView as WarmChild
 from doeff_cluster._worker.intent.worker_model import WarmLaunch as WarmLaunch
 from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster._worker.core.worker_rules import code_key as code_key
-from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
+from doeff_cluster._shared.core.runtime_env import project_dir as project_dir
 
 def forks_from_warm_child(spec: JobSpec) -> bool:
     ...

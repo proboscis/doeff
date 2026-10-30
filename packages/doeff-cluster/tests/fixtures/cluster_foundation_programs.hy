@@ -8,11 +8,11 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster [os-environ-reader])
-(import doeff_cluster.shared.entry.host_reader [host-reader])
-(import doeff_cluster.shared.entry.cluster_foundation [with-cluster-handlers])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
+(import doeff_cluster [host-reader])
+(import doeff_cluster [with-cluster-handlers])
+(import doeff_cluster [ReportReady])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
+(import doeff_cluster [ReadShared WriteShared])
 
 
 (defk production-foundation [body]

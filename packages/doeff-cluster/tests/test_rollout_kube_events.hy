@@ -11,7 +11,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [sim-cluster DeclareRollout KubeReads SettleDeployment ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])

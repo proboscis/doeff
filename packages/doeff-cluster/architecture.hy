@@ -34,7 +34,7 @@
 ;;;   止めた後・戻す前に読めた task の置き先を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-does-not-announce-its-stop-breaks-c3(止まり始めを heartbeat で名乗らない worker — sim の SimWorker の
 ;;;   silent-stop — で、同じ筋書きに C3 の破りが出る)。
-;;;   C4 timing-outlasts-the-self-stop(doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop — #2806)— coordinator が
+;;;   C4 timing-outlasts-the-self-stop(doeff_cluster._shared.core.timing_rules:timing-outlasts-the-self-stop — #2806)— coordinator が
 ;;;   連絡の途絶えた worker の印の無い job を他へ移す時刻(ClusterTiming.reassign-after-ms)は、その worker が自分で job を止め切る最悪の
 ;;;   時刻(fence + heartbeat の返事の上限 + 接続の上限 + 子の停止の猶予 — 送った heartbeat が上限まで答えない間は worker の周期が止まって
 ;;;   いて判じられない)より後(C2 の時間の柵の値の側)。値の定義は 3 か所(fence・移し替え・返事の上限 = ClusterTiming・
@@ -203,13 +203,15 @@
              :summary "入口 — 系の宣言・handler の並び・薄い main"
              :roles [system process main]
              :imports [core intent protocol _foundation entry])]
-  :shared "shared"
+  ;; 共有の置き場 = root の下の dir(linter は :shared の dir をどの service からも読める置き場と読む)。区画を _shared へ隠した
+  ;; (ADR-DOE-API-001 R15・card ki-6f70e9c957c0)ので dir も _shared。
+  :shared "_shared"
   :foundation _foundation
   ;; 本物の coordinator と worker を 1 process・仮想の時計で走らせる模擬の環境(sim-cluster の local・環境の世界 env_world・git の台本
   ;; checkout_git_script・worktree の git の台本 worktree_git_script)。全 service の core と entry を読むので、どの service にも属さない(DOEFF114・115 の外・ほかの規則は当たる)。
   ;; 本番の code はこの dir を import しない。
   ;; JSON の値を手で綴ってよい foundation の module — 盤の送受信と、effect の記録の綴り(record_codec)と記録の形(record_log)(#2580)。
-  :wire-modules ["doeff_cluster.shared.protocol.board_requests" "doeff_cluster._foundation.record_codec" "doeff_cluster._foundation.record_log"]
+  :wire-modules ["doeff_cluster._shared.protocol.board_requests" "doeff_cluster._foundation.record_codec" "doeff_cluster._foundation.record_log"]
   :verification-environment "_sim")
 
 (defservice coordinator "worker へ job を割り当てる coordinator(資源と盤の置き場・調停のループ)"
@@ -222,7 +224,7 @@
    :invariants ["doeff_cluster._coordinator.core.coordinator_invariants:acknowledged-writes-survive"
                 "doeff_cluster._coordinator.core.coordinator_invariants:one-place-per-job"
                 "doeff_cluster._coordinator.core.coordinator_invariants:stopped-generation-gets-no-new-task"
-                "doeff_cluster.shared.core.timing_rules:timing-outlasts-the-self-stop"
+                "doeff_cluster._shared.core.timing_rules:timing-outlasts-the-self-stop"
                 "doeff_cluster._coordinator.core.coordinator_invariants:revision-never-goes-back"
                 "doeff_cluster._coordinator.core.coordinator_invariants:service-versions-never-go-back"
                 "doeff_cluster._coordinator.core.coordinator_invariants:alive-only-while-reachable"

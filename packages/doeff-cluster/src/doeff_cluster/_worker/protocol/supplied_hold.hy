@@ -13,8 +13,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_core_effects [slog])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.protocol.supplied_values [HoldTally hold-supplied])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.protocol.supplied_values [HoldTally hold-supplied])
 (import doeff_cluster._worker.protocol.coordinator_link [LinkState])
 
 (val MODULE-TAGS {:context "worker" :role "protocol"})

@@ -7,7 +7,7 @@
     },
     {
       "function": "resolve_value",
-      "path": "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy",
       "reason": "利用側の宣言の道具の入口が引数の関数の参照(module:attr)を関数へ解くのが役目の口 — 系の関数は名で渡される(#1692・この package の宣言の命令は #3030 で消した)。"
     }
   ],
@@ -19,34 +19,34 @@
     "packages/doeff-cluster/src/doeff_cluster/*.py",
     "packages/doeff-cluster/tests/*.hy",
     "packages/doeff-cluster/tests/*.py",
-    "packages/doeff-cluster/src/doeff_cluster/shared/intent/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/intent/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/_foundation/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/_coordinator/entry/handler_sets.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/capabilities.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/board_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/lease_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/semaphore_handlers.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/clock.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/promise_wait.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/image_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_json.hy",
     "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/checkout_reads.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_identity.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_env.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/checkout_reads.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_identity.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/runtime_facts.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/entry/declare.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/entry/image_contract.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/declaration_requests.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/declaring.hy",
     "packages/doeff-cluster/src/doeff_cluster/_sim/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/_worker/core/program.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/job_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/_record_store/*/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/_worker/*/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy",
-    "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
+    "packages/doeff-cluster/src/doeff_cluster/_shared/core/service_rules.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy"
   ],
   "modules": [
     {
@@ -115,10 +115,10 @@
       "layer": "pure",
       "name": "doeff-cluster-clock",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/clock.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/clock.hy"
       ],
       "responsibility": "時計の物差しの換算。",
       "typed": true
@@ -145,10 +145,10 @@
       "layer": "io",
       "name": "doeff-cluster-cluster-foundation",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/cluster_foundation.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/cluster_foundation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/cluster_foundation.hy"
       ],
       "responsibility": "本番の土台が並べる「coordinator に話す handler の組」(ADR-DOE-CLUSTER-001・計画 2.3)。",
       "typed": true
@@ -296,11 +296,11 @@
       "name": "doeff-cluster-coordinator-http",
       "paths": [
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_http.hy",
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/resend.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/resend.hy"
       ],
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_http.hy",
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/resend.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/resend.hy"
       ],
       "responsibility": "coordinator へ話す口の定数(foundation/coordinator_http)と、ClusterTiming から導く読みの送り直しの期限(shared/core/resend)。",
       "typed": true
@@ -315,12 +315,12 @@
       "paths": [
         "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/faults.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_inbox.hy",
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/inbox.hy"
       ],
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/faults.hy",
         "packages/doeff-cluster/src/doeff_cluster/_foundation/coordinator_inbox.hy",
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/inbox.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/inbox.hy"
       ],
       "responsibility": "coordinator と記録の置き場の HTTP の受付 — 生の要求を並べる箱(foundation/coordinator_inbox)・要求を Request に解き NextRequests / Reply / CoordinatorStopRequested に答える handler(shared/protocol/inbox)・CoordinatorFault の handler(coordinator/protocol/faults)。",
       "typed": true
@@ -339,10 +339,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-declare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/declare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/declare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/declare.hy"
       ],
       "responsibility": "系(defsystem の関数)から coordinator に渡す宣言を出す(ADR-DOE-CLUSTER-001)。",
       "typed": true
@@ -370,10 +370,10 @@
       "layer": "io",
       "name": "doeff-cluster-detached",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/detached.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/detached.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/detached.hy"
       ],
       "responsibility": "切り離した task の本番の handler(effect は detached_model.hy)。",
       "typed": true
@@ -387,10 +387,10 @@
       "layer": "domain",
       "name": "doeff-cluster-detached-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/detached_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/detached_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/detached_model.hy"
       ],
       "responsibility": "切り離した task(呼び手と寿命を切り離した task)の effect と、答えの型(2026-09-25)。",
       "typed": true
@@ -682,10 +682,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-image-contract",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/image_contract.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/image_contract.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/image_contract.hy"
       ],
       "responsibility": "Dockerfile を読み、土台だけの image の約束への違反を出す入口(判断は image_rules.hy)。",
       "typed": true
@@ -695,10 +695,10 @@
       "layer": "pure",
       "name": "doeff-cluster-image-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/image_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/image_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/image_rules.hy"
       ],
       "responsibility": "土台だけの image の約束(設計 worker-runtime-env.md 節 3.5・E13)を Dockerfile の字面で検める純粋な規則。",
       "typed": true
@@ -895,10 +895,10 @@
       "layer": "io",
       "name": "doeff-cluster-metrics-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/metrics_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/metrics_handlers.hy"
       ],
       "responsibility": "ReportMetrics の本物の handler(coordinator へ送る)。",
       "typed": true
@@ -914,10 +914,10 @@
       "layer": "io",
       "name": "doeff-cluster-metrics-memory",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_memory.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/metrics_memory.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/metrics_memory.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/metrics_memory.hy"
       ],
       "responsibility": "ReportMetrics の fake の handler(coordinator と同じ解きと検めを通して list に記録する)。",
       "typed": true
@@ -929,10 +929,10 @@
       "layer": "domain",
       "name": "doeff-cluster-metrics-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/metrics_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/metrics_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/metrics_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/metrics_model.hy"
       ],
       "responsibility": "service が自分の計器(Prometheus の counter・gauge・秒の合計と回数)を報告する effect。",
       "typed": true
@@ -961,10 +961,10 @@
       "layer": "domain",
       "name": "doeff-cluster-process-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/process_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/process_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/process_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/process_model.hy"
       ],
       "responsibility": "job の process の終わりを待つ effect と、答えの型(2026-09-29・proboscis/doeff#631)。",
       "typed": true
@@ -1007,10 +1007,10 @@
       "layer": "pure",
       "name": "doeff-cluster-promise-wait",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/promise_wait.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/promise_wait.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/promise_wait.hy"
       ],
       "responsibility": "書きで起きる待ちの 1 点 — 書き手が満たす Promise を、期限まで待つ(読み直さない)。",
       "typed": true
@@ -1026,10 +1026,10 @@
       "layer": "io",
       "name": "doeff-cluster-readiness-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/readiness_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/readiness_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/readiness_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/readiness_handlers.hy"
       ],
       "responsibility": "ReportReady の handler 2 つ。",
       "typed": true
@@ -1041,10 +1041,10 @@
       "layer": "domain",
       "name": "doeff-cluster-readiness-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/readiness_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/readiness_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/readiness_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/readiness_model.hy"
       ],
       "responsibility": "service が「準備できた」を報告する effect(process の生存とは別の、業務の条件つきの readiness)。",
       "typed": true
@@ -1155,10 +1155,10 @@
       "layer": "io",
       "name": "doeff-cluster-remote",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/remote.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/remote.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/remote.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/remote.hy"
       ],
       "responsibility": "RemoteJob の本番の handler(remote-cluster — coordinator へ出し、worker の子 process で走らせる)。",
       "typed": true
@@ -1172,10 +1172,10 @@
       "layer": "domain",
       "name": "doeff-cluster-remote-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/remote_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy"
       ],
       "responsibility": "task(呼んだ側に寿命が縛られる短い仕事)の effect と、送る形・戻す形。",
       "typed": true
@@ -1189,10 +1189,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-replay-main",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/replay_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/replay_main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/replay_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/replay_main.hy"
       ],
       "responsibility": "再生の道具の入口(ADR-DOE-CLUSTER-001 R5・R5b)。",
       "typed": true
@@ -1254,10 +1254,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-env",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_env.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_env.hy"
       ],
       "responsibility": "送り手の側の実行環境の宣言の組み立て(2026-09-26)。",
       "typed": true
@@ -1269,10 +1269,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-env-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/runtime_env_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_env_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/runtime_env_model.hy"
       ],
       "responsibility": "実行環境の宣言(runtime env)の型・キー・JSON の往復・準備の失敗の型(2026-09-26)。",
       "typed": true
@@ -1289,10 +1289,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-identity",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_identity.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_identity.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_identity.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_identity.hy"
       ],
       "responsibility": "入口の検め — この process が「宣言した実行環境(RuntimeEnv)の root から、宣言の commit の code を import している」ことを確かめる。",
       "typed": true
@@ -1306,10 +1306,10 @@
       "layer": "io",
       "name": "doeff-cluster-semaphore-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/semaphore_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/semaphore_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/semaphore_handlers.hy"
       ],
       "responsibility": "名前付きの semaphore の handler 2 つ。",
       "typed": true
@@ -1321,10 +1321,10 @@
       "layer": "domain",
       "name": "doeff-cluster-semaphore-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/semaphore_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/semaphore_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/semaphore_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/semaphore_model.hy"
       ],
       "responsibility": "lock は doeff の scheduler の Semaphore の effect(CreateSemaphore / AcquireSemaphore / ReleaseSemaphore)で扱う。",
       "typed": true
@@ -1336,10 +1336,10 @@
       "layer": "domain",
       "name": "doeff-cluster-service-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/service_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy"
       ],
       "responsibility": "系(System)の宣言の値の型(CallShape・Job・System・Declaration — ADR-DOE-CLUSTER-001 の段 3)。",
       "typed": true
@@ -1359,10 +1359,10 @@
       "layer": "io",
       "name": "doeff-cluster-shared-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/shared_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/shared_handlers.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/shared_handlers.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/shared_handlers.hy"
       ],
       "responsibility": "共有の保存の handler 2 つ。",
       "typed": true
@@ -1375,10 +1375,10 @@
       "layer": "domain",
       "name": "doeff-cluster-shared-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/shared_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/shared_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/shared_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/shared_model.hy"
       ],
       "responsibility": "共有の保存(cluster のどの worker で走っても同じ意味になる読み書き)の effect。",
       "typed": true
@@ -1594,10 +1594,10 @@
       "layer": "domain",
       "name": "doeff-cluster-warm-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/warm_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/warm_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/warm_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/warm_model.hy"
       ],
       "responsibility": "実行環境の先読み(warm)の effect と型(2026-09-26・設計 worker-runtime-env.md 節 3.2・決定 D9)。",
       "typed": true
@@ -1709,10 +1709,10 @@
       "layer": "domain",
       "name": "doeff-cluster-shared-protocol",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/protocol.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/protocol.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/protocol.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/protocol.hy"
       ],
       "responsibility": "coordinator・worker・記録の置き場が取り交わす形 — 本文の版・拍の時間・HTTP の要求と返事の effect・送り手の誤り。",
       "typed": true
@@ -1725,10 +1725,10 @@
       "layer": "domain",
       "name": "doeff-cluster-shared-capabilities",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/capabilities.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/capabilities.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/capabilities.hy"
       ],
       "responsibility": "能力の名の検めと子の環境変数の並べ — job・task・worker・宣言が共に使う純粋な判断。",
       "typed": true
@@ -1775,10 +1775,10 @@
       "layer": "domain",
       "name": "doeff-cluster-board-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/board_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/board_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/board_rules.hy"
       ],
       "responsibility": "盤(共有の保存)の書きの規則 — coordinator の /board と fake の保存が同じ定義で判じる。",
       "typed": true
@@ -1791,10 +1791,10 @@
       "layer": "domain",
       "name": "doeff-cluster-lease-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/lease_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/lease_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/lease_rules.hy"
       ],
       "responsibility": "名前付きの lease(cluster の semaphore)の行の純粋な判断。",
       "typed": true
@@ -1804,10 +1804,10 @@
       "layer": "domain",
       "name": "doeff-cluster-checkout-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/checkout_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/checkout_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/checkout_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/checkout_model.hy"
       ],
       "responsibility": "送り手の手元の checkout の読みの型と effect。",
       "typed": true
@@ -1821,10 +1821,10 @@
       "layer": "io",
       "name": "doeff-cluster-checkout-reads",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/checkout_reads.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/checkout_reads.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/checkout_reads.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/checkout_reads.hy"
       ],
       "responsibility": "checkout の読みを汎用の子 process と file の effect へ訳す handler。",
       "typed": true
@@ -1836,10 +1836,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-identity-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_identity_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/runtime_identity_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/runtime_identity_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/runtime_identity_model.hy"
       ],
       "responsibility": "入口の検めの型と effect。",
       "typed": true
@@ -1853,10 +1853,10 @@
       "layer": "io",
       "name": "doeff-cluster-runtime-facts",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/runtime_facts.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/runtime_facts.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/runtime_facts.hy"
       ],
       "responsibility": "入口の検めの材料に、渡した材料で答える handler(検と模擬)。",
       "typed": true
@@ -1868,10 +1868,10 @@
       "layer": "io",
       "name": "doeff-cluster-coordinator-route",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/coordinator_route.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/coordinator_route.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/coordinator_route.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/coordinator_route.hy"
       ],
       "responsibility": "coordinator への宛先の部品 — 宛先の順・接続できない時だけ次へ・先頭の試し直し・期限までの送り直しを HttpRequest と時計の効果だけで書く(#2337)。",
       "typed": true
@@ -1884,10 +1884,10 @@
       "layer": "io",
       "name": "doeff-cluster-service-report",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/service_report.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/service_report.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/service_report.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/service_report.hy"
       ],
       "responsibility": "service の process が coordinator へ自分の様子(readiness・計器)を送る口 — 宛先の部品の上の HttpRequest で送る(#2337)。",
       "typed": true
@@ -1900,10 +1900,10 @@
       "layer": "io",
       "name": "doeff-cluster-declaration-requests",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/declaration_requests.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/declaration_requests.hy"
       ],
       "responsibility": "coordinator の資源の口へ宣言の行を書く要求の本文の形。",
       "typed": true
@@ -1918,10 +1918,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-declaring",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/declaring.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/declaring.hy"
       ],
       "responsibility": "宣言してよいかの検めの判断。",
       "typed": true
@@ -1931,10 +1931,10 @@
       "layer": "domain",
       "name": "doeff-cluster-job-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/job_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/job_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/job_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/job_model.hy"
       ],
       "responsibility": "job 1 本の宣言(JobSpec)と job の段階(JobPhase)— coordinator と worker と SDK の模擬の環境が読む共有の型。",
       "typed": true
@@ -1946,10 +1946,10 @@
       "layer": "domain",
       "name": "doeff-cluster-job-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/job_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/job_rules.hy"
       ],
       "responsibility": "job の宣言の指紋 spec-hash — worker と coordinator が同じ関数で計算して比べる。",
       "typed": true
@@ -2032,10 +2032,10 @@
       "layer": "domain",
       "name": "doeff-cluster-env-marker-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/env_marker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/env_marker_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/intent/env_marker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/intent/env_marker_model.hy"
       ],
       "responsibility": "実行環境の root の完成の印と file の中身の指紋の effect — worker の準備と送り手の宣言・入口の検めが読む共有の約束。",
       "typed": true
@@ -2357,10 +2357,10 @@
       "layer": "io",
       "name": "doeff-cluster-task-result",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/task_result.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/task_result.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/task_result.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/task_result.hy"
       ],
       "responsibility": "task の子 process が終わる前に結果を coordinator へ直に届ける口(宛先の部品の上の HttpRequest — #1387・#2427)",
       "typed": true
@@ -2490,10 +2490,10 @@
       "layer": "domain",
       "name": "doeff-cluster-service-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/service_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/service_rules.hy"
       ],
       "responsibility": "系の宣言の値の identity と検めの判断(呼び出しの形の正規 JSON と表示・job の引き・土台の :needs・environ の上書き)。",
       "typed": true
@@ -2505,10 +2505,10 @@
       "layer": "domain",
       "name": "doeff-cluster-readiness-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/readiness_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/readiness_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/readiness_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/readiness_rules.hy"
       ],
       "responsibility": "service の readiness の判断 — 宣言の readiness の形の検め・入れ替えの期限(純粋な判断)。",
       "typed": true
@@ -2521,10 +2521,10 @@
       "layer": "domain",
       "name": "doeff-cluster-remote-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/remote_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/remote_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/remote_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/remote_rules.hy"
       ],
       "responsibility": "task の純粋な判断 — RemoteJob の構築関数(needs の検め)・送り手と受け側の版の突き合わせ・詰めた Program の置き場のキー・例外から失敗の値。",
       "typed": true
@@ -2538,10 +2538,10 @@
       "layer": "domain",
       "name": "doeff-cluster-detached-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/detached_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/detached_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/detached_rules.hy"
       ],
       "responsibility": "切り離した task の純粋な判断 — SubmitDetached の構築関数(needs の検め — intent の型は core を読まないので型の外に置く・#2564)。",
       "typed": true
@@ -2553,10 +2553,10 @@
       "layer": "domain",
       "name": "doeff-cluster-program-codec",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/program_codec.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/program_codec.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/program_codec.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/program_codec.hy"
       ],
       "responsibility": "task の Program と結果を送れる形(base64 の cloudpickle)に詰める・戻す(I/O の無い変換)。",
       "typed": true
@@ -2568,10 +2568,10 @@
       "layer": "io",
       "name": "doeff-cluster-board-requests",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/board_requests.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/board_requests.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/protocol/board_requests.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/board_requests.hy"
       ],
       "responsibility": "coordinator の盤(/board)と lease の口(/leases)へ送る要求の形を作る 1 点 — 本番の shared-http と手元の sim-cluster が同じ関数で作る。",
       "typed": true
@@ -2584,10 +2584,10 @@
       "layer": "domain",
       "name": "doeff-cluster-runtime-env-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_env_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/runtime_env_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/runtime_env_rules.hy"
       ],
       "responsibility": "実行環境の宣言の純粋な判断 — キー・JSON の往復・準備の失敗の値・子の環境変数の組の検め。",
       "typed": true
@@ -2608,10 +2608,10 @@
       "layer": "domain",
       "name": "doeff-cluster-service-build",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/entry/service_build.hy"
       ],
       "responsibility": "系の宣言の値を作る構成子(defsystem の展開が呼ぶ job・system-of)と、coordinator へ渡す宣言の行の組み立て。",
       "typed": true
@@ -2626,10 +2626,10 @@
       "layer": "domain",
       "name": "doeff-cluster-warm-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/warm_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/shared/core/warm_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_shared/core/warm_rules.hy"
       ],
       "responsibility": "実行環境の先読みの純粋な判断 — WarmRuntimeEnv の構築関数(needs の検め)・温める表の行のキーと、行の今の姿と通信の本文との往復。",
       "typed": true

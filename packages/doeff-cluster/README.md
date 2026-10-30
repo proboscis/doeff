@@ -67,15 +67,15 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 
 ```hy
 (require doeff-hy.macros [defk <-])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff [with-handlers DoExpr])
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [os-environ-reader])
-(import doeff_cluster.shared.entry.host_reader [host-reader])
-(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
+(import doeff_cluster [host-reader])
+(import doeff_cluster._shared.entry.boundary_recorder [boundary-recorder])
 
 ;; 本番の土台: scheduler・時計・実行先の読み・環境変数の読み・クラスタに話す handler を並べる。
 (defk production-foundation [body]
@@ -215,10 +215,10 @@ worker の下で起きた job では、知らせの pipe(環境変数 `DOEFF_WOR
 ```hy
 (import doeff [run with-handlers])
 (import doeff_core_effects [subprocess-handler])
-(import doeff_cluster.shared.core.declaring [declaring-refusal])
-(import doeff_cluster.shared.protocol.checkout_reads [checkout-reads])
-(import doeff_cluster.shared.entry.service_build [system-declaration])
-(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster [declaring-refusal])
+(import doeff_cluster [checkout-reads])
+(import doeff_cluster [system-declaration])
+(import doeff_cluster._shared.entry.declare [apply-declaration])
 
 ;; foundation = 利用側の表が系の関数の土台の引数の型から引いた本番の土台
 (setv system (my-system foundation))
@@ -381,10 +381,9 @@ coordinator の状態(`GET /state`)から読み直します。受け手は `coor
 入れ替わっても続けたい仕事)は、切り離した task として送ります。どちらも Program の値 1 つを送り、Program は自分の土台で包みます。
 
 ```hy
-(import doeff_cluster.shared.core.remote_rules [remote-job])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached CancelDetached ReleaseDetached
-                                      DetachedSucceeded DetachedFailed DetachedLost])
+(import doeff_cluster._shared.core.remote_rules [remote-job])
+(import doeff_cluster [submit-detached-task])
+(import doeff_cluster [AwaitDetached CancelDetached ReleaseDetached DetachedSucceeded DetachedFailed DetachedLost])
 (val NET (frozenset ["cluster-net"]))      ; effect の needs は frozenset(空は構築関数が断る)
 ;; RemoteJob・SubmitDetached・WarmRuntimeEnv は構築関数(remote-job・submit-detached-task・warm-runtime-env)を通して出す。
 ;; needs を検めてから effect を出し、答えを返す。
@@ -457,7 +456,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 
 - 記録係より内側の handler(翻訳の handler・業務の handler)は決定的でなければなりません。時計・乱数・I/O は汎用の effect にして
   土台の handler に答えさせます(破れは再生の分岐として出ます)。
-- 再生は `hy -m doeff_cluster.shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE` です。`--program` は
+- 再生は `hy -m doeff_cluster._shared.entry.replay_main --recording FILE --program FILE [--from-ms N] [--to-ms N] --out FILE` です。`--program` は
   記録した job の詰めた Program(`/programs/<sha>` の JSON — header の `program` と同じキー)。版を検めて解き、上の 2 つの Ask にだけ
   外から答えて走らせます。版(Python・cloudpickle・doeff)と記録した commit のコードが揃う間だけ再生でき、違えば理由つきで止まります。
 - 記録の形は `record_log.hy` の先頭、型ごとの扱いは上の表です。
@@ -479,7 +478,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
   焼いた `boot.sh` は root の展開(印 `.doeff-boot-extracted`)だけをして、root の中の同じ commit の `deploy/boot.sh` へ必ず引き継ぎ
   (中身が同じでも)、venv と wheel の準備(印 `.doeff-boot-ready`)と役の起動は引き継いだ先がします。だから準備の手順を含めて起動の script を
   直した時も image は作り直しません(2026-10-06 より前の image は準備まで自分でしてから引き継ぎ、引き継いだ先は印を見て準備済みとして続けます)。作り直す理由は頭の註の 2 種類
-  だけで、それ以外の変更は `hy -m doeff_cluster.shared.entry.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
+  だけで、それ以外の変更は `hy -m doeff_cluster._shared.entry.image_contract <Dockerfile>`(と `tests/test_base_image_contract.hy`)が赤にします。
   非公開の repo は `WORKER_REPOS`(url ごとの読み取り専用の deploy key)で読みます。`ROLE=access` で書かれる設定だけを確かめられます。
   この表は url に鍵を結ぶだけで、url を断りません。表に無い url は worker が鍵なしで clone します(公開の repo は通り、読めない非公開の
   repo は clone の失敗 `repo-unreachable` で返ります)。

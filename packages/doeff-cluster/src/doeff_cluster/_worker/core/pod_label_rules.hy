@@ -16,7 +16,7 @@
 (val MODULE-TAGS {:context "worker" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import re)
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
 
 ;; worker が持ち主の label の鍵の前置き(後ろに job の名)と、置かれた job の label の値。
 (val JOB-LABEL-PREFIX "job.doeff.dev/")

@@ -13,10 +13,10 @@
 (import sys)
 (import pathlib [Path])
 (import doeff_cluster [HOST-CONTRACT])
-(import doeff_cluster.shared.protocol.program_codec [encode-program])
+(import doeff_cluster [encode-program])
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster [RepoCheckout PythonProject RuntimeEnv])
+(import doeff_cluster [runtime-env->json])
 (import tests.fixtures.entry_programs [context-program host-foundation])
 
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))
@@ -56,11 +56,11 @@
 ;; キー(DOEFF_RUNTIME_ENV・DOEFF_RUNTIME_ENV_KEY)を受け、そうでない job の子は空で受ける(以前の sim の宿は env の job でも空で渡した)。
 
 (import tests.host_rig [host-settings launched])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.run_context_rules [worker-context-environ context-of-environ])
+(import doeff_cluster [RunContext])
+(import doeff_cluster._shared.core.run_context_rules [worker-context-environ context-of-environ])
 (import doeff_cluster [SIM-URL]
         doeff_cluster._sim.local [run-context-of])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 
 (val WORKER "w1")
 (val INSTANCE "1-abc")

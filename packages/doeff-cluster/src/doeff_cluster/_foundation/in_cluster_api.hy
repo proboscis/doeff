@@ -1,4 +1,4 @@
-;;; k8s の Pod の中から自分の区画の API server を呼ぶ土台(job が要る値を参照で受ける部品 doeff_cluster.shared.protocol.supplied_values の
+;;; k8s の Pod の中から自分の区画の API server を呼ぶ土台(job が要る値を参照で受ける部品 doeff_cluster._shared.protocol.supplied_values の
 ;;; 要求を、区画の CA で検める接続へ回す)。
 ;;;
 ;;;   SERVICE-ACCOUNT-CA-PATH     k8s が Pod に必ず置く ServiceAccount の dir の区画の CA の file
@@ -28,7 +28,7 @@
 
 ;; Pod の中の ServiceAccount の CA(k8s が必ず置く path)。
 (val SERVICE-ACCOUNT-CA-PATH "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
-;; Pod の中から見た自区画の API server(k8s が置く名)。値を読む部品が要求を出す宛先 doeff_cluster.shared.protocol.supplied_values の KUBE-API と
+;; Pod の中から見た自区画の API server(k8s が置く名)。値を読む部品が要求を出す宛先 doeff_cluster._shared.protocol.supplied_values の KUBE-API と
 ;; 同じ字(層 foundation は protocol を import できないので 2 か所に在る — 同じ字である事は tests/test_supplied_values.hy が縛る)。
 (val CLUSTER-API "https://kubernetes.default.svc")
 ;; API server 宛ての要求を、CA の file が無い worker で止めた時の文(宛先と CA の file の path を挙げる)。

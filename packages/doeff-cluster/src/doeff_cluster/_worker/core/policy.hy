@@ -34,8 +34,8 @@
 (import doeff_cluster._worker.intent.worker_model [Action CodeState CodeView ProcessView WorldView StopStage JobStop ProbeState ProbeView ProbeStatus
   Outcome JobRecord JobNotStarted WorkerPolicy JobStatus PrepareCode PrepareEnv SweepEnvs StartJob SignalJob ReapJob RetireJob ReleaseLeases
   ProbeEntry ForgetProbes WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild
-  StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+  StopReason SpecChanged Undeclared HandoffAbandoned Retired StartHold NotYetRead DeclarationRead] doeff_cluster._shared.intent.job_model [JobSpec JobPhase] doeff_cluster._shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [code-key probed-job retired-name ready-path RETIRED-MARK ENV-KEY-PREFIX])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready mark-refusal
   warm-launch warm-child-refused warm-refusal-failure service-warm-keys fork-candidate WarmStart warm-start])

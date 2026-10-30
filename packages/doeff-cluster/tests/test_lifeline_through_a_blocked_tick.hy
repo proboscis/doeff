@@ -31,8 +31,8 @@
 (import doeff_core_effects [ReadEnvironment])
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.core.cluster_policy [register-heartbeat tasks-placed])

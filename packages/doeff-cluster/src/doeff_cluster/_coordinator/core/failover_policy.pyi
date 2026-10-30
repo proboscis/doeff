@@ -7,7 +7,7 @@ from doeff_cluster._coordinator.intent.failover_model import KeptApart as KeptAp
 from doeff_cluster._coordinator.intent.failover_model import JobTakers as JobTakers
 from doeff_cluster._coordinator.intent.failover_model import DownSpike as DownSpike
 from doeff_cluster._coordinator.core.cluster_policy import placeable as placeable
-from doeff_cluster.shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
+from doeff_cluster._shared.core.capabilities import HOST_PREFIX as HOST_PREFIX
 
 def hyx_per_machineXquestion_markX(needs: tuple[str, ...], template: tuple[str, ...]) -> _Program[bool, object]:
     ...

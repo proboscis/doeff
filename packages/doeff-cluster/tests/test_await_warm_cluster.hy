@@ -10,12 +10,13 @@
 (import doeff [with_handlers])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_core_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (val WATCH-MAX-SECONDS (/ (. (ClusterTiming) watch-max-ms) 1000.0))  ; 待ちの上限の既定(ClusterTiming)
-(import doeff_cluster.shared.intent.warm_model [AwaitWarm WarmState WarmReady WarmWaitExpired])
-(import doeff_cluster.shared.core.warm_rules [warm-state->json])
-(import doeff_cluster.shared.protocol.detached [warm-cluster])
+(import doeff_cluster [AwaitWarm WarmState]
+        doeff_cluster._shared.intent.warm_model [WarmReady WarmWaitExpired])
+(import doeff_cluster._shared.core.warm_rules [warm-state->json])
+(import doeff_cluster [warm-cluster])
 (import tests.coordinator_contract_handlers [CONTRACT-ROUTE contract-route])
 
 (val KEY "0123456789abcdef01234567")

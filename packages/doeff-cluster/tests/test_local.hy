@@ -14,26 +14,25 @@
 (import doeff_time [Delay])
 (import doeff_cluster._coordinator.entry.handler_sets [MemoryWalStore])
 (import doeff_cluster._coordinator.protocol.request_queue [RequestQueue])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.intent.remote_model [UnsendableProgram TaskFailed])
-(import doeff_cluster.shared.protocol.program_codec [decode-outcome])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [RunContext])
+(import doeff_cluster [UnsendableProgram TaskFailed])
+(import doeff_cluster [decode-outcome])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [sim-cluster EndProcess SimWorker SimProcess SimReport Crash Redeclare ReportsOf ReadinessOf ProcessesOf SharedRows ReadCoordinator StopCoordinator CrashCoordinator CoordinatorRuns KillWorker StopWorker StartWorker CutWorker DrainWorker SimOutside ProcessOutside]
         doeff_cluster._sim.local [sim-process SimChild SimLink ServiceReadiness SimCoordinatorRun])
 (import doeff_core_effects [AwaitStop RaiseStop StopRequested])
 (import doeff_core_effects [scripted-stop-handler])
-(import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen
-                                                     JobProcessWaitExpired RestartService ServiceRestarted RestartRefused])
-(import doeff_cluster.shared.entry.service_build [job system-of])
-(import doeff_cluster.shared.intent.service_model [System CallShape])
+(import doeff_cluster [AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired RestartService ServiceRestarted RestartRefused])
+(import doeff_cluster [job system-of])
+(import doeff_cluster [System CallShape])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.replicas [with-replicas])
 (import tests.fixtures.event_programs [stop-minders stop-ignorers])
 (import tests.fixtures.sim_programs [reserved-trio beacons beacons-v2 beacons-plus handoff-beacons handoff-beacons-v2 late-handoff-beacons-v2 handoff-beacons-v3 relay flavors fenced gpu-only
                                     lingering-handoff-beacons lingering-handoff-beacons-v2 lingering-handoff-beacons-v3
                                     holding-unloadable Unloadable spawners quitters pulses detaching context-env-readers])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster [RuntimeEnv])
+(import doeff_cluster [runtime-env->json])
 (import doeff_cluster._coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
                                                                  acknowledged-values-survive declared-services-survive
                                                                  ServiceVersionRead service-versions-never-go-back
@@ -46,8 +45,8 @@
                                                                  WorkerExclusive exclusive-workers-take-only-their-jobs ran-only-where-eligible
                                                                  RunLimit runs-within-their-limit
                                                                  DrainWindow no-new-place-while-draining])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster._worker.core.invariants [handoff-keeps-a-ready-writer])
 (import doeff_cluster [WorkerPolicy])
 (import tests.env_fixtures [LOCK env-of])

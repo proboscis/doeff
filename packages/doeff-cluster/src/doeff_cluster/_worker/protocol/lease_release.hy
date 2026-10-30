@@ -11,9 +11,9 @@
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [HttpResponse])
-(import doeff_cluster.shared.intent.semaphore_model [SEMAPHORE-PREFIX])
-(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
-(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request])
+(import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX])
+(import doeff_cluster._shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request])
 (import doeff_cluster._worker.intent.worker_model [ReleaseLeases])
 
 

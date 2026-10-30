@@ -7,16 +7,17 @@
 (import doeff [run])
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster [ClusterTiming Request])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [RolloutRow RolloutStatus TaskRecord TargetView DeploymentUnreadable])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster [ALIVE-MARK-MS]
         doeff_cluster._coordinator.core.api_policy [plan-rollouts record-action resume-after-downtime mark-alive])
 (import doeff_cluster._coordinator.core.wake_policy [rollout-due])
 (import doeff_cluster [ClusterNaming])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.core.rollout_policy [validate-rollout-spec rollout-step action-due retry-delay-ms shift-clocks RETRY-MAX-MS])
 (import doeff_cluster._coordinator.core.metrics_policy [metrics-text])

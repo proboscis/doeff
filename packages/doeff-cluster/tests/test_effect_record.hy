@@ -17,18 +17,19 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [Spawn Task Wait Gather])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
+(import doeff_cluster [ReadShared WriteShared]
+        doeff_cluster._shared.intent.shared_model [ANY])
 (import tests.board_fake [board-handlers])
 (import doeff_cluster [UnrecordableEffect RecordedError type-name EffectCodec MalformedRecordSpec READ DECISION register registered-types]
         doeff_cluster._foundation.record_codec [BlobMemory intern-json resolve-refs content-hash encode-value decode-value encode-error decode-error delta-of apply-delta canonical HandleTable args-of LIVE OUTPUT SPEC-FIELDS codec-of mode-of subject-of can-record])
-(import doeff_cluster.shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
-(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore HeldLease LeaseStanding])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared.intent.metrics_model [ReportMetrics ReadProcessGauges])
+(import doeff_cluster._shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
+(import doeff_cluster [CreateNamedSemaphore HeldLease LeaseStanding])
+(import doeff_cluster [ReportReady])
+(import doeff_cluster [ReportMetrics ReadProcessGauges])
 (import doeff_cluster [ReplayFinished ReplayDiverged]
         doeff_cluster._foundation.record_log [read-recording LEGACY-ANY CURRENT-ANY WatchedRef recorded-args])
 (import pathlib)
@@ -242,6 +243,25 @@
     (assert (= (get report "consumed") (get report "events")) report)))
 
 
+(deftest test-reading-a-recording-spells-type-names-of-moved-modules-as-today
+  ;; 区画を _ へ隠す前(ADR-DOE-API-001 R15)に書いた行の型の名 — 問いの型と引数の中の $c — は、読む時に今の置き場の名へ揃う。
+  ;; 再生は今の綴りの文字列で比べるので、揃えなければ同じ問いが「記録に無い問い」になる(上の system_record_before_2727.json の
+  ;; 再生は WriteShared を shared/intent の名で持つ)。
+  (import doeff_cluster._foundation.record_codec [current-type-name with-current-type-names])
+  (val old-write "doeff_cluster.shared.intent.shared_model:WriteShared")
+  (val old-any {"$c" "doeff_cluster.shared.intent.shared_model:AnyExpect" "f" {}})
+  (assert (= (current-type-name old-write) (type-name WriteShared)))
+  (assert (= (with-current-type-names {"expect" old-any "xs" [old-any] "n" 1}) {"expect" CURRENT-ANY "xs" [CURRENT-ANY] "n" 1}))
+  ;; 今の名と表に無い名はそのまま(表に無い旧い名を別の型へ倒さない — 再生はその問いを違いとして止まる)
+  (assert (= (current-type-name (type-name WriteShared)) (type-name WriteShared)))
+  (assert (= (current-type-name "doeff_cluster.no_such_model:WriteShared") "doeff_cluster.no_such_model:WriteShared"))
+  (val head {"k" "run" "format" 2 "startedMs" 0 "service" "s" "run" "r0"})
+  (val written {"k" "call" "e" 0 "t" "root" "at" 0 "ty" old-write "m" "output" "a" {"key" "row/a" "expect" old-any} "ok" True "v" None})
+  (val entry (get (. (! (read-recording [head written {"k" "end" "e" 2 "t" "root" "ok" True}])) entries) 0))
+  (assert (= entry.type (type-name WriteShared)) entry.type)
+  (assert (= entry.args-text (canonical {"key" "row/a" "expect" CURRENT-ANY})) entry.args-text))
+
+
 (deftest test-a-recorded-failure-is-delivered-as-a-fresh-exception-of-the-same-kind
   ;; #2727: 失敗の答え(err)は読む時に中継の OpaqueJson で持ち、再生が渡す時に decode-error で戻す — 同じ型・同じ文の例外を、
   ;; 渡すたびに別の object で(読む時に例外へ戻すと、同じ object を再生のたびに投げ直す)。task の終わりの行は終わった task の名に入る。
@@ -373,10 +393,10 @@
 (deftest test-a-type-name-written-before-the-move-resolves-to-the-type-in-its-new-place
   (import doeff_cluster [type-name]
           doeff_cluster._foundation.record_codec [resolve-type MOVED-MODULES])
-  (import doeff_cluster.shared.intent.detached_model [SubmitDetached])
-  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+  (import doeff_cluster [SubmitDetached])
+  (import doeff_cluster [RuntimeEnv])
   ;; 書くのは今の名だけ
-  (assert (= (type-name SubmitDetached) "doeff_cluster.shared.intent.detached_model:SubmitDetached"))
+  (assert (= (type-name SubmitDetached) "doeff_cluster._shared.intent.detached_model:SubmitDetached"))
   ;; 移しの前に書いた記録の名(旧い module)も、今の名も、同じ class を引く
   (assert (is (resolve-type "doeff_cluster.detached_model:SubmitDetached") SubmitDetached))
   (assert (is (resolve-type "doeff_cluster.runtime_env_model:RuntimeEnv") RuntimeEnv))
@@ -384,7 +404,7 @@
   ;; 盤と lease の effect(#2107)— 記録に最も多く残る型
   (assert (is (resolve-type "doeff_cluster.shared_model:WriteShared") WriteShared))
   (assert (is (resolve-type "doeff_cluster.semaphore_model:HeldLease")
-              (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease")))
+              (resolve-type "doeff_cluster._shared.intent.semaphore_model:HeldLease")))
   ;; 記録の綴りと記録の handler(#2108)— shared/core と foundation へ移した型も旧い名で引ける
   (import doeff_cluster._foundation.record_log [Entry])
   (import doeff_cluster._foundation.record_handlers [MemorySink])
@@ -402,11 +422,11 @@
   ;; module の一部の型だけを移した物(#2025 — worker_model の JobSpec・JobPhase を shared/intent/job_model へ)も旧い名で引ける。
   ;; 引く先は表の名で決まる(worker_model が後で別の置き場へ移っても、旧い記録の JobSpec は job_model を引く)。
   (import doeff_cluster._foundation.record_codec [MOVED-TYPES])
-  (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-  (assert (= (type-name JobSpec) "doeff_cluster.shared.intent.job_model:JobSpec"))
+  (import doeff_cluster [JobSpec JobPhase])
+  (assert (= (type-name JobSpec) "doeff_cluster._shared.intent.job_model:JobSpec"))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobSpec") JobSpec))
   (assert (is (resolve-type "doeff_cluster.worker_model:JobPhase") JobPhase))
-  (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster.shared.intent.job_model:JobSpec"))
+  (assert (= (get MOVED-TYPES "doeff_cluster.worker_model:JobSpec") "doeff_cluster._shared.intent.job_model:JobSpec"))
   ;; 受け口の effect(#2180)— 移しの前の記録の NextRequests は調停ループが材料 idle 付きで出した物で、その子 class は #3865 で消した
   ;; (調停ループは本番と同じ NextRequests を出す)。旧い名は引けない(黙って別の型へ倒れない — 保存の形は互換を持たない)。
   (assert (is (resolve-type "doeff_cluster.coordinator.intent.cluster_model:NextRequests") None))
@@ -437,7 +457,7 @@
   (import doeff_cluster [StartJob])
   (assert (is (resolve-type "doeff_cluster.worker_model:StartJob") StartJob))
   ;; 実行環境の準備と drain の型(#2025 の 3 本目)
-  (import doeff_cluster [PrepareNote] doeff_cluster.shared.intent.env_marker_model [FileSha256]
+  (import doeff_cluster [PrepareNote] doeff_cluster [FileSha256]
           doeff_cluster [CoordinatorCall])
   (assert (is (resolve-type "doeff_cluster.env_prepare:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.env_prepare:FileSha256") FileSha256))
@@ -448,7 +468,16 @@
   (assert (is (resolve-type "doeff_cluster.worker.intent.worker_model:StartJob") StartJob))
   (assert (is (resolve-type "doeff_cluster.worker.intent.env_prepare_model:PrepareNote") PrepareNote))
   (assert (is (resolve-type "doeff_cluster.worker.intent.drain_model:CoordinatorCall") CoordinatorCall))
-  (assert (= (len MOVED-MODULES) 90)))
+  ;; 共有の区画を _ へ隠す前の記録の名(共有の effect・盤と lease の型・job の型)も、表で今の置き場を引く
+  (import doeff_cluster [Crash])
+  (assert (= (get MOVED-MODULES "doeff_cluster.shared.intent.detached_model") "doeff_cluster._shared.intent.detached_model"))
+  (assert (= (get MOVED-MODULES "doeff_cluster.shared.intent.shared_model") "doeff_cluster._shared.intent.shared_model"))
+  (assert (is (resolve-type "doeff_cluster.shared.intent.detached_model:SubmitDetached") SubmitDetached))
+  (assert (is (resolve-type "doeff_cluster.shared.intent.shared_model:WriteShared") WriteShared))
+  (assert (is (resolve-type "doeff_cluster.shared.intent.semaphore_model:HeldLease") HeldLease))
+  (assert (is (resolve-type "doeff_cluster.shared.intent.job_model:JobSpec") JobSpec))
+  (assert (is (resolve-type "doeff_cluster.shared.intent.cluster_control:Crash") Crash))
+  (assert (= (len MOVED-MODULES) 131)))
 
 
 ;; ---- 型の宣言(__record_spec__)で記録する(#2578)--------------------------------------------------------------

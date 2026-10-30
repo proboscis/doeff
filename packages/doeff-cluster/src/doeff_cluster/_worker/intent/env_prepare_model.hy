@@ -5,8 +5,8 @@
 (import dataclasses [dataclass])
 (import enum [StrEnum])  ; defenum の展開が使う
 (import doeff [EffectBase])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
-(import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
+(import doeff_cluster._shared.intent.env_marker_model [BytecodeCounts])
 
 
 (val ROOTS-PTH "_doeff_cluster_roots.pth")

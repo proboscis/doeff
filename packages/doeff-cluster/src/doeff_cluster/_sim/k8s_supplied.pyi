@@ -10,11 +10,11 @@ from doeff_core_effects import HttpFailed as HttpFailed
 from doeff_core_effects import HttpFailureKind as HttpFailureKind
 from doeff_core_effects import HttpRequest as HttpRequest
 from doeff_core_effects import HttpResponse as HttpResponse
-from doeff_cluster.shared.core.supplied_spelling import OBJECT_SPELLING as OBJECT_SPELLING
-from doeff_cluster.shared.core.supplied_spelling import REF_SPELLING as REF_SPELLING
-from doeff_cluster.shared.protocol.supplied_values import KUBE_API as KUBE_API
-from doeff_cluster.shared.protocol.supplied_values import SERVICE_ACCOUNT_TOKEN_FILE as SERVICE_ACCOUNT_TOKEN_FILE
-from doeff_cluster.shared.protocol.supplied_values import text_field as text_field
+from doeff_cluster._shared.core.supplied_spelling import OBJECT_SPELLING as OBJECT_SPELLING
+from doeff_cluster._shared.core.supplied_spelling import REF_SPELLING as REF_SPELLING
+from doeff_cluster._shared.protocol.supplied_values import KUBE_API as KUBE_API
+from doeff_cluster._shared.protocol.supplied_values import SERVICE_ACCOUNT_TOKEN_FILE as SERVICE_ACCOUNT_TOKEN_FILE
+from doeff_cluster._shared.protocol.supplied_values import text_field as text_field
 UNREACHABLE: str
 OBJECT_PATH: Incomplete
 KIND_OF_RESOURCE: dict[str, str]

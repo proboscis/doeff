@@ -9,12 +9,12 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [sim-cluster SimWorker DrainWorker PreparationsOf])
-(import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState])
-(import doeff_cluster.shared.core.warm_rules [warm-runtime-env])
+(import doeff_cluster [system-of])
+(import doeff_cluster [ReadWarmState WarmState])
+(import doeff_cluster [warm-runtime-env])
 (import tests.env_fixtures [LOCK env-of])
 
 ;; gpu-1 は gpu を専用の能力に持つ(gpu を要らない行を受けない)・cpu-1 は一般の担い手。

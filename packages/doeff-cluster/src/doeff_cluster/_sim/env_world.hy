@@ -47,7 +47,7 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.runtime_env_model [CHILD-PROTOCOL])
+(import doeff_cluster._shared.intent.runtime_env_model [CHILD-PROTOCOL])
 (import doeff_cluster._worker.protocol.env_translation [env-translation])
 
 (val SOURCE-SUFFIXES #(".py" ".hy"))

@@ -4,7 +4,7 @@
 ;;; 「書けた」(200)で答える。client に渡す計器(RecordsEndpoint.meter)と橋が読む計器は同じ答え手(memory-meter-handler — 断面は run
 ;;; ごとに 1 つ)。橋は引数で差し替える(本物 = with-meter-report・反例 = 送らない橋)。
 (require doeff-hy.macros [defk defhandler <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import json)
 (import collections.abc [Callable])
 (import doeff [with-handlers EffectBase Program])
@@ -18,8 +18,8 @@
 (import doeff_records [RecordsEndpoint http-records-handler]
         doeff_records._http_client [zero-client-metrics])
 (import doeff_records [records-unwaited])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.protocol.meter_report [with-meter-report])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [with-meter-report])
 
 ;; 窓の後の書きへの答えの本文(PutRow の 200 の答え — wire の written)。
 (val WRITTEN-BODY (.encode (json.dumps {"kind" "written" "version" 1 "value" {"note" "a"}}) "utf-8"))

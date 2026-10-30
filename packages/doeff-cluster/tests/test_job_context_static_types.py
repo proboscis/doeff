@@ -21,8 +21,8 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.run_context_rules [context-of-environ])
+(import doeff_cluster._shared.intent.run_context [RunContext])
+(import doeff_cluster._shared.core.run_context_rules [context-of-environ])
 
 (defk probe-context [root]
   {:pre [(: root str)] :post [(: % RunContext)] :tags {:context "probe" :role "judgment"}}

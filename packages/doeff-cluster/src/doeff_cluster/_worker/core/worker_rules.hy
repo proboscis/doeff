@@ -2,7 +2,7 @@
 ;;; 入口の検めの対象と断り(probed-job・probe-args・probe-refusal)。型は worker/intent/worker_model(#2025 で分けた)。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "worker" :role "judgment"})
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._worker.intent.worker_model [CodeView])
 
 

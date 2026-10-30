@@ -28,7 +28,7 @@
 (import doeff_core_effects [WarmScript WarmSocket WarmRun scripted-warm-process-handler])
 (import doeff_core_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [StartJob StartWarmChild]
         doeff_cluster._worker.intent.worker_model [WarmLaunch])
 (import doeff_cluster._worker.core.places [WorkerPlaces worker-places])

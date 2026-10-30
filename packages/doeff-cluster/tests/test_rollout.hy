@@ -9,15 +9,15 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterNaming ClusterState])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.core.program [rollout-tick])
 (import doeff_cluster [kube-memory]
         doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows])
-(import doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [JobSpec] doeff_cluster [spec-hash])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
 (setv T (ClusterTiming))

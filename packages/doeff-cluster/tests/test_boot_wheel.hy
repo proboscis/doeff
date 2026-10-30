@@ -57,8 +57,8 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.core.native_wheel :as native-wheel)
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure])
+(import doeff_cluster._shared.core.native_wheel :as native-wheel)
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster._worker.core.code_plan [MARKER cache-rel])
 (import doeff_cluster._worker.core.launch [shim-argv])
 (import doeff_cluster [EnsureNativeWheel]

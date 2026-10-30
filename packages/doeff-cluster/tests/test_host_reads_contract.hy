@@ -12,7 +12,7 @@
 (import doeff_cluster [HOST-CONTRACT])
 (import os)
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster [RunContext])
 (import tests.host_reads_contract_handlers [Outside CONTEXT PROGRAM-PATH JSON-NAME JSON-VALUE PLAIN-NAME PLAIN-VALUE EMPTY-NAME
                                             MISSING OUTER-NAME OUTSIDE-ANSWER])
 

@@ -22,10 +22,10 @@
 (import doeff [EffectBase])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._table [Table table-of])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
 
 
 (defclass ComponentVersion [NamedTuple]

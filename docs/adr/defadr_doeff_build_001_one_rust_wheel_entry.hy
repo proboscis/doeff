@@ -139,7 +139,7 @@
           ".github/workflows/rust-wheels.yml"
           "packages/doeff-indexer/doeff_indexer_build_backend.py"
           "packages/doeff-vm/pyproject.toml"
-          "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/core/native_wheel.py"
           "packages/doeff-cluster/src/doeff_cluster/_worker/entry/boot_wheel.py"
           "docs/adr/defadr_doeff_build_001_one_rust_wheel_entry.hy"]
   :problem
@@ -154,7 +154,7 @@
        :evidence "agora-redesign #3860 の調べの表・tools/doeff_cargo_backend.py の 2026-10-06 の版の頭の註「editable と sdist は引かない」")
      (fact
        "鍵と保存先を自前で持つ所が 3 系統あった: build の口(中身の hash・$XDG_CACHE_HOME/doeff-cargo-wheels/<package>/<hash>/)・doeff-cluster の worker(doeff-vm と doeff-vm-core の git の tree hash・state/wheels/doeff-vm-<鍵>/)・commit の hook の linter(sha と入力の object id・doeff-linter-snapshots)。worker の鍵は Python の版と機体だけを足し、rustc・maturin の版と組みを変える環境変数と作業木の未 commit の変更を見ない。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/shared/core/native_wheel.py・packages/doeff-linter/scripts/linter_snapshot.py")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/core/native_wheel.py・packages/doeff-linter/scripts/linter_snapshot.py")
      (fact
        "2026-10-07 19:47 と 18:5x: zeus の追随の腕(com.masui.land-arm.service)が ai live-plane slot の doeff 074c29efe を uv sync --frozen した時、build の口が保存先の鍵を作るために `rustc -V` を起こし、腕の PATH(dotfiles の cron_management/job_env.sh)に rustc が無いので FileNotFoundError で rc=1 に成った。保存先には同じ source の doeff-vm の wheel が 05:41 から在った。手の shell(~/.cargo/bin が在る)で同じ argv を撃つと rc=0(保存先の wheel を使い 1 秒)。"
        :evidence "agora-redesign #3850 の 2026-10-07 の slot の同期の調べ(cc3-w56)・R4b")

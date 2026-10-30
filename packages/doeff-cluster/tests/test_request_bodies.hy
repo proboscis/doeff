@@ -2,12 +2,12 @@
 ;; task の結果・drain の頼み)の本文は、欠けた欄・型の違う値・JSON の object でない本文を、判断に入る前に 400 と欄の理由で断る。
 ;; 知らない欄は読み捨てる(送り手の版が新しい欄を足しても断らない)。まだ型にしていない道は JSON の object のまま判断へ渡る。
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody BoardWrite BodyMalformed])
 (import doeff_cluster [responded]
         doeff_cluster._coordinator.protocol.request_bodies [body-of])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._worker.protocol.heartbeat [heartbeat-body])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json])
 (import doeff_cluster._coordinator.protocol.state_json [read-service-rows])

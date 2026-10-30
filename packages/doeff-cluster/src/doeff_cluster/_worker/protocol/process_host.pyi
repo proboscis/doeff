@@ -39,7 +39,7 @@ from doeff_core_effects import ProcessNotChild as ProcessNotChild
 from doeff_core_effects import WriteProcessInput as WriteProcessInput
 from doeff_core_effects import ProcessInputWritten as ProcessInputWritten
 from doeff_cluster._worker.intent.worker_model import NoticeJob as NoticeJob
-from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_cluster._worker.intent.worker_model import CodeLayout as CodeLayout
 from doeff_cluster._worker.intent.worker_model import ProcessView as ProcessView
 from doeff_cluster._worker.intent.worker_model import StartJob as StartJob
@@ -59,12 +59,12 @@ from doeff_cluster._worker.intent.worker_model import WorkerStopping as WorkerSt
 from doeff_cluster._worker.protocol.observations import ObserveProcesses as ObserveProcesses
 from doeff_cluster._worker.protocol.observations import ObserveJobRoots as ObserveJobRoots
 from doeff_cluster._worker.core.memory_rules import JobRoot as JobRoot
-from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
+from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster._worker.core.job_cgroup import placed_argv as placed_argv
 from doeff_cluster._worker.intent.worker_model import WakeSet as WakeSet
 from doeff_cluster._worker.intent.worker_model import WorkerWakes as WorkerWakes
 from doeff_cluster._worker.core.worker_due import wakes_with as wakes_with
-from doeff_cluster.shared.intent.due_model import DueNever as DueNever
+from doeff_cluster._shared.intent.due_model import DueNever as DueNever
 from doeff_core_effects import AwaitProcessExit as AwaitProcessExit
 from doeff_core_effects import AwaitWarmChildExit as AwaitWarmChildExit
 from doeff_cluster._worker.core.launch import JobLaunch as JobLaunch

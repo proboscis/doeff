@@ -3,7 +3,7 @@
 
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob Retired]
-        doeff_cluster._worker.intent.worker_model [JobStop Outcome SpecChanged Undeclared CutOff WorkerStopping] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+        doeff_cluster._worker.intent.worker_model [JobStop Outcome SpecChanged Undeclared CutOff WorkerStopping] doeff_cluster [JobSpec JobPhase])
 (import doeff_cluster [plan records-after statuses]
         doeff_cluster._worker.core.policy [ready-followups])
 
@@ -533,7 +533,7 @@
 ;; 両方が済んでから旧を止める。止め終えた次の周期で新しい版をすぐ起動する。新旧の本体を同時には動かさない(検めは import だけ)。
 
 (import doeff_cluster [ProbeEntry ProbeState ProbeView]
-        doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster.shared.core.job_rules [spec-hash])
+        doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster [spec-hash])
 (import doeff_cluster._worker.core.policy [start-holds JobHold])
 
 ;; 入口の検めの対象の service の job(args の先頭が "service")・入れ替えの形は既定の recreate。

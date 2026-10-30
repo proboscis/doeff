@@ -16,7 +16,7 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay GetTimeEffect SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus]
         doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs])
 (import doeff_cluster._worker.core.program [worker-tick TICK-LAG-LOG])

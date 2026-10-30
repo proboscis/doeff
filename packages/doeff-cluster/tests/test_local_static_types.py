@@ -34,7 +34,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import collections.abc [Callable])
-(import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster._shared.intent.service_model [System])
 (import doeff_cluster._sim.local [sim-cluster SimWorker SimOutside ProcessOutside SimProcess ProcessesOf KillWorker
                                  SimReport ReportsOf SimPreparation PreparationsOf])
 (import doeff_events [MemoryBroker])

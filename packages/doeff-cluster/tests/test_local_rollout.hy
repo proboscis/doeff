@@ -5,7 +5,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster._coordinator.core.api_policy :as api-policy)
 (import doeff_cluster [sim-cluster SimWorker DeclareRollout KubeCalls SettleDeployment ReadCoordinator ProcessesOf StartWorker StopCoordinator])
-(import doeff_cluster.shared.intent.remote_model [RemoteJobFailed])
+(import doeff_cluster [RemoteJobFailed])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 (import doeff_cluster._coordinator.intent.cluster_model [RolloutSpec RolloutStatus TargetView])

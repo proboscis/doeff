@@ -20,7 +20,7 @@ from types import ModuleType
 import hy  # noqa: F401  # Hy の module を import する前に hy の import hook を有効にする(検だけを単独で走らせても読めるように)
 import pytest
 
-from doeff_cluster.shared.intent import semaphore_model
+from doeff_cluster._shared.intent import semaphore_model
 from doeff_cluster._worker.intent import drain_model
 from doeff_cluster._worker.protocol import drain_requests
 
@@ -34,7 +34,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 PROBE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer LeaseStanding HELD])
+(import doeff_cluster._shared.intent.semaphore_model [LeaseOp LeaseAnswer LeaseStanding HELD])
 (import doeff_cluster._worker.intent.drain_model [AskDrain CoordinatorCall])
 (import doeff_cluster._worker.protocol.drain_requests [drain-request])
 

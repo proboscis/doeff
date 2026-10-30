@@ -29,7 +29,7 @@
 (val MODULE-TAGS {:context "worker" :role "program"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す

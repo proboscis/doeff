@@ -143,7 +143,7 @@
 (setv MOVED-MODULES
   (| (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
                            "semaphore_model" "shared_model")
-          (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name))
+          (+ "doeff_cluster." name) (+ "doeff_cluster._shared.intent." name))
      ;; 記録の綴りと記録の handler(#2108)— 置き場が shared/intent でないので名ごとに書く。
      {"doeff_cluster.effect_codec" "doeff_cluster._foundation.record_codec"
       "doeff_cluster.record_model" "doeff_cluster._foundation.record_log"
@@ -182,25 +182,55 @@
                   "protocol.coordinator_link" "protocol.declared" "protocol.env_store" "protocol.env_translation" "protocol.memory_watch"
                   "protocol.observations" "protocol.pod_labels" "protocol.probes" "protocol.process_host" "protocol.supplied_hold"
                   "protocol.tick_pauses" "protocol.warm_host")
-           (+ "doeff_cluster.worker." name) (+ "doeff_cluster._worker." name))))
+           (+ "doeff_cluster.worker." name) (+ "doeff_cluster._worker." name))
+     ;; 共有の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-6f70e9c957c0)— 同じく class を定義する module(共有の effect の型
+     ;; detached_model・cluster_control・盤と lease の型 shared_model・semaphore_model ほか)だけを並べる。移し替えの module を消した後も引く。
+     (dfor name #("core.image_rules" "core.launch_rules" "core.native_wheel" "core.semaphore_handlers" "core.timing_rules"
+                  "entry.deployed_cluster" "intent.checkout_model" "intent.cluster_control" "intent.detached_model" "intent.due_model"
+                  "intent.env_marker_model" "intent.job_call_model" "intent.job_model" "intent.job_reach_model"
+                  "intent.kube_service_model" "intent.launch_model" "intent.metrics_model" "intent.process_model" "intent.protocol"
+                  "intent.readiness_model" "intent.record_spec" "intent.remote_model" "intent.run_context"
+                  "intent.runtime_env_model" "intent.runtime_identity_model" "intent.semaphore_model" "intent.service_model"
+                  "intent.shared_model" "intent.supplied_model" "intent.warm_model" "protocol.coordinator_route"
+                  "protocol.declaration_requests" "protocol.detached" "protocol.inbox" "protocol.job_call_handlers"
+                  "protocol.job_reach_handlers" "protocol.program_codec" "protocol.readiness_handlers" "protocol.remote"
+                  "protocol.service_report" "protocol.supplied_values")
+           (+ "doeff_cluster.shared." name) (+ "doeff_cluster._shared." name))))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。
 (setv MOVED-TYPES
   (| (dfor name #("JobSpec" "JobPhase")
-           (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
+           (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster._shared.intent.job_model:" name))
      ;; record-store の effect(#2030)— record_store.hy は置き場の Program と effect を一緒に持っていた。effect だけを intent へ分けた。
      (dfor name #("AppendRecordLines" "ListRecordRuns" "ReadRecordRun" "CompactRecords" "PruneRecords")
            (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster._record_store.intent.record_store_model:" name))
      ;; #2025 の 3 本目 — env_prepare の FileSha256 は送り手の宣言と入口の検めも出す共有の effect・drain_client の effect は worker/intent へ。
-     {"doeff_cluster.env_prepare:FileSha256" "doeff_cluster.shared.intent.env_marker_model:FileSha256"
+     {"doeff_cluster.env_prepare:FileSha256" "doeff_cluster._shared.intent.env_marker_model:FileSha256"
       "doeff_cluster.drain_client:CoordinatorCall" "doeff_cluster._worker.intent.drain_model:CoordinatorCall"}))
+
+(defn #^ str current-type-name [#^ str name]
+  "記録に書いた型の名(module:qualname)→ 今の置き場の型の名。置き場を移した型の旧い名は MOVED-TYPES、module の旧い名は
+  MOVED-MODULES で引く(import しない — class の在る無しは resolve-type が見る)。今の名はそのまま返る。"
+  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
+  (.format "{}:{}" (.get MOVED-MODULES written written) qualname))
+
+;; 値の綴りのうち型の名を持つ印(dataclass の $c・例外の $e)。
+(setv TYPE-NAME-MARKS #("$c" "$e"))
+
+(defn #^ JsonValue with-current-type-names [#^ JsonValue v]
+  "記録の値の綴りの中の型の名(TYPE-NAME-MARKS の印の値)を今の置き場の名へ揃える(ほかの綴りはそのまま)。再生は問いの型と
+  引数を今の綴りの文字列で比べるので、置き場を移す前に書いた記録の行も読む時に今の綴りへ揃える。"
+  (match v
+    (dict) (dfor #(k x) (.items v)
+                 k (if (and (in k TYPE-NAME-MARKS) (isinstance x str)) (current-type-name x) (with-current-type-names x)))
+    (list) (lfor x v (with-current-type-names x))
+    _ v))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。
-  置き場を移した型の旧い名は MOVED-TYPES、module の旧い名は MOVED-MODULES で今の名へ引く。"
-  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
-  (setv module (.get MOVED-MODULES written written))
+  置き場を移した型の旧い名は current-type-name で今の名へ引く。"
+  (setv #(module qualname) (.split (current-type-name name) ":" 1))
   (try
     (setv obj (importlib.import-module module))
     (for [part (.split qualname ".")]

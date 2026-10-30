@@ -32,11 +32,12 @@
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [StartProcess PollProcess StopProcess ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [Delay SetTime SimClock sim-time-handler sync-time-handler])
-(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvFailureKind])
-(import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout PythonProject RuntimeEnv CHILD-PROTOCOL])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json runtime-env-of-json env-key])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailureKind])
+(import doeff_cluster [RepoCheckout PythonProject RuntimeEnv]
+        doeff_cluster._shared.intent.runtime_env_model [CHILD-PROTOCOL])
+(import doeff_cluster [runtime-env->json runtime-env-of-json env-key])
+(import doeff_cluster [ENV-MARKER])
 (import doeff_cluster [EnvMarker]
         doeff_cluster._worker.intent.env_prepare_model [EnvReady])
 (import doeff_cluster [env-marker->json])
@@ -47,7 +48,7 @@
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster [ObserveEnvs])
 (import doeff_cluster._worker.protocol.declared [task-spec])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeState CodeView PrepareEnv SweepEnvs EnvReport StartJob WorkerPolicy WorldView]
         doeff_cluster._worker.intent.worker_model [WarmEnv WarmChildView WarmChildMark])
 (import doeff_cluster [plan])

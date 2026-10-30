@@ -10,16 +10,16 @@
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest <-])
-(import doeff_cluster.shared.core.supplied_spelling :as spelling)
-(import doeff_cluster.shared.core.supplied_spelling [supplied-spellings])
-(import doeff_cluster.shared.protocol.supplied_values :as reader)
+(import doeff_cluster._shared.core.supplied_spelling :as spelling)
+(import doeff_cluster [supplied-spellings])
+(import doeff_cluster._shared.protocol.supplied_values :as reader)
 
 
 (defadr ADR-DOE-CLUSTER-004
   :title "worker は、自分に置かれうる job の宣言の :environ の ConfigMap・Secret の参照(coordinator が heartbeat の返事の supplied で渡す綴り)の値を、API server が答えている間に作業の根の下の写し(file 0600・dir 0700)として持つ。job の読みは API server に届かない時(HttpFailed)だけ写しで答え、届いて断られた時は写しを読まない"
   :status "accepted"
-  :scope ["packages/doeff-cluster/src/doeff_cluster/shared/core/supplied_spelling.hy"
-          "packages/doeff-cluster/src/doeff_cluster/shared/protocol/supplied_values.hy"
+  :scope ["packages/doeff-cluster/src/doeff_cluster/_shared/core/supplied_spelling.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_shared/protocol/supplied_values.hy"
           "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/replies.hy"
           "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/coordinator_link.hy"

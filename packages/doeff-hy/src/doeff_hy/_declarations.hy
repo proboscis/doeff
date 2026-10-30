@@ -460,7 +460,7 @@
   "`:reads` / `:writes` / `:serves` の値の form を展開の時に検め、外の置き場の名の整列した list を返す — linter が実行せずに綴りで読めるように、
    形は文字列の literal の集合だけ(空の集合 = 読み書きしないと宣言した)、綴りは <置き場>:<名>(`:` がちょうど 1 つ・両側が空でない)。
    置き場の名が何かは照らさない(使い手の repo の語彙)。読み手は定義の契約の :writes(macros.hy の _extract-contracts)と、
-   doeff-cluster の defsystem の job の行(doeff_cluster/shared/entry/_system_form.hy)。"
+   doeff-cluster の defsystem の job の行(doeff_cluster/_shared/entry/_system_form.hy)。"
   (when (not (isinstance form Set))
     (raise (SyntaxError (.format "{}: {} は置き場の名の文字列の集合 #{{\"<置き場>:<名>\" …}}: {}" where key (hy.repr form)))))
   (for [item form]

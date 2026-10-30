@@ -8,7 +8,7 @@
 (import importlib.util [find-spec])
 (import pathlib [Path])
 
-(val RETIRED-MODULES #("doeff_cluster.shared.core.upgrade_program" "doeff_cluster.shared.intent.upgrade_model"
+(val RETIRED-MODULES #("doeff_cluster._shared.core.upgrade_program" "doeff_cluster._shared.intent.upgrade_model"
                        "doeff_cluster._sim.flux" "doeff_cluster._coordinator.core.upgrade_invariants"))
 (val ARCHITECTURE (/ (. (.resolve (Path __file__)) parent parent) "architecture.hy"))
 

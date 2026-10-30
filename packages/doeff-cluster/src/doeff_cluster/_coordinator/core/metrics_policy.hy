@@ -23,7 +23,7 @@
 (import math)
 (import doeff [run])
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster._coordinator.intent.request_bodies [MetricsBody MetricsPayload])
 (import doeff_cluster._coordinator.core.resource_policy [refuse running-process current-report keep-report placed-senders report-origin service-readiness

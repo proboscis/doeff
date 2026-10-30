@@ -19,10 +19,10 @@
 (import doeff_core_effects [PathKind PathStat FileFailed StatPath ReadText ListDirectory WalkTree RenamePath MakeDirectory RemoveTree]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [EnvEntry EnvMode StartProcess PollProcess ProcessNotStarted ProcessExited])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode WakeSet WorkerWakes])
 (import doeff_cluster._worker.core.worker_due [wakes-with])
-(import doeff_cluster.shared.intent.due_model [DueNever])
+(import doeff_cluster._shared.intent.due_model [DueNever])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_cluster._worker.protocol.observations [ObserveCode CodeTimings])
 (import doeff_cluster._worker.core.code_plan [MARKER marker-problem])

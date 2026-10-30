@@ -14,11 +14,13 @@
 (import doeff_time [Delay])
 (import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects [HttpRequest HttpResponse])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit SubmitDetached TASK-LIMIT-SCOPES])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task group-limit-spec GROUP-LIMIT-KEYS])
-(import doeff_cluster.shared.entry.service_build [system-of system-declaration])
-(import doeff_cluster.shared.entry.declare [apply-declaration])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [TaskLimit GroupLimit SubmitDetached]
+        doeff_cluster._shared.intent.detached_model [TASK-LIMIT-SCOPES])
+(import doeff_cluster [submit-detached-task]
+        doeff_cluster._shared.core.detached_rules [group-limit-spec GROUP-LIMIT-KEYS])
+(import doeff_cluster [system-of system-declaration])
+(import doeff_cluster._shared.entry.declare [apply-declaration])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody ResourceBody])
@@ -29,8 +31,8 @@
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json group-limit-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster [sim-cluster SimWorker ReadCoordinator Redeclare])
-(import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.shared.entry._system_form :as system_form)
+(import doeff_cluster [System])
+(import doeff_cluster._shared.entry._system_form :as system_form)
 (import tests.detached_rig [slow-add RIG-PROVIDES])
 (import tests.state_rows [table-from-rows])
 

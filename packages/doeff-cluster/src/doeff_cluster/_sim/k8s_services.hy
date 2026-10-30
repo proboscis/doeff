@@ -1,5 +1,5 @@
 ;;; job が自分へ届く網の宛先(k8s の Service と Ingress)を宣言どおりに在らせる effect EnsureKubeService・EnsureKubeIngress の模擬の答え手
-;;; (模擬の環境)。本番の答え手(doeff_cluster.shared.protocol.kube_services の kube-services-api — API server への server-side apply)と同じ
+;;; (模擬の環境)。本番の答え手(doeff_cluster._shared.protocol.kube_services の kube-services-api — API server への server-side apply)と同じ
 ;;; 結末で答え、作った Service と Ingress の一覧を入れ物に残す(検と模擬の世界が、走らせた後に読む)。
 ;;;
 ;;; 契約(本番の server-side apply と同じ — tests/test_kube_services.hy が両方の答え手で同じ筋書きを回す):
@@ -8,7 +8,7 @@
 ;;;   * 届かない API server は、種類と namespace と名・理由を挙げた KubeServiceRefused。
 (require doeff-hy.macros [defhandler defk val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
-(import doeff_cluster.shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
+(import doeff_cluster._shared.intent.kube_service_model [EnsureKubeIngress EnsureKubeService KubeIngress KubeService KubeServiceOutcome
                                                         KubeServiceRefused])
 
 

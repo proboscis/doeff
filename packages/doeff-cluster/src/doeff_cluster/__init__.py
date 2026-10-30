@@ -139,62 +139,62 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.protocol.store import Persist as Persist
     from doeff_cluster._foundation.host_contract import environ_table_reader as environ_table_reader
     from doeff_cluster._foundation.process_versions import process_versions as process_versions
-    from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
-    from doeff_cluster.shared.core.run_context_rules import (
+    from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
+    from doeff_cluster._shared.core.run_context_rules import (
         runtime_env_of_context as runtime_env_of_context,
     )
-    from doeff_cluster.shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
-    from doeff_cluster.shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
-    from doeff_cluster.shared.intent.cluster_control import Crash as Crash
-    from doeff_cluster.shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
-    from doeff_cluster.shared.intent.cluster_control import KillWorker as KillWorker
-    from doeff_cluster.shared.intent.cluster_control import ReadinessOf as ReadinessOf
-    from doeff_cluster.shared.intent.cluster_control import Redeclare as Redeclare
-    from doeff_cluster.shared.intent.cluster_control import RestartService as RestartService
-    from doeff_cluster.shared.intent.cluster_control import StopCoordinator as StopCoordinator
-    from doeff_cluster.shared.intent.cluster_control import StopWorker as StopWorker
-    from doeff_cluster.shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
-    from doeff_cluster.shared.intent.detached_model import AwaitDetached as AwaitDetached
-    from doeff_cluster.shared.intent.detached_model import (
+    from doeff_cluster._shared.intent.cluster_control import AwaitJobProcess as AwaitJobProcess
+    from doeff_cluster._shared.intent.cluster_control import AwaitReadiness as AwaitReadiness
+    from doeff_cluster._shared.intent.cluster_control import Crash as Crash
+    from doeff_cluster._shared.intent.cluster_control import CrashCoordinator as CrashCoordinator
+    from doeff_cluster._shared.intent.cluster_control import KillWorker as KillWorker
+    from doeff_cluster._shared.intent.cluster_control import ReadinessOf as ReadinessOf
+    from doeff_cluster._shared.intent.cluster_control import Redeclare as Redeclare
+    from doeff_cluster._shared.intent.cluster_control import RestartService as RestartService
+    from doeff_cluster._shared.intent.cluster_control import StopCoordinator as StopCoordinator
+    from doeff_cluster._shared.intent.cluster_control import StopWorker as StopWorker
+    from doeff_cluster._shared.intent.detached_model import AckDetachedOutbox as AckDetachedOutbox
+    from doeff_cluster._shared.intent.detached_model import AwaitDetached as AwaitDetached
+    from doeff_cluster._shared.intent.detached_model import (
         AwaitDetachedOutbox as AwaitDetachedOutbox,
     )
-    from doeff_cluster.shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
-    from doeff_cluster.shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
-    from doeff_cluster.shared.intent.detached_model import CancelDetached as CancelDetached
-    from doeff_cluster.shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
-    from doeff_cluster.shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
-    from doeff_cluster.shared.intent.detached_model import ReadRunners as ReadRunners
-    from doeff_cluster.shared.intent.detached_model import ReadServices as ReadServices
-    from doeff_cluster.shared.intent.detached_model import ReleaseDetached as ReleaseDetached
-    from doeff_cluster.shared.intent.detached_model import SubmitDetached as SubmitDetached
-    from doeff_cluster.shared.intent.kube_service_model import (
+    from doeff_cluster._shared.intent.detached_model import AwaitRunnersChange as AwaitRunnersChange
+    from doeff_cluster._shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
+    from doeff_cluster._shared.intent.detached_model import CancelDetached as CancelDetached
+    from doeff_cluster._shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
+    from doeff_cluster._shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
+    from doeff_cluster._shared.intent.detached_model import ReadRunners as ReadRunners
+    from doeff_cluster._shared.intent.detached_model import ReadServices as ReadServices
+    from doeff_cluster._shared.intent.detached_model import ReleaseDetached as ReleaseDetached
+    from doeff_cluster._shared.intent.detached_model import SubmitDetached as SubmitDetached
+    from doeff_cluster._shared.intent.kube_service_model import (
         EnsureKubeIngress as EnsureKubeIngress,
     )
-    from doeff_cluster.shared.intent.kube_service_model import (
+    from doeff_cluster._shared.intent.kube_service_model import (
         EnsureKubeService as EnsureKubeService,
     )
-    from doeff_cluster.shared.intent.metrics_model import ReportMetrics as ReportMetrics
-    from doeff_cluster.shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
-    from doeff_cluster.shared.intent.protocol import (
+    from doeff_cluster._shared.intent.metrics_model import ReportMetrics as ReportMetrics
+    from doeff_cluster._shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
+    from doeff_cluster._shared.intent.protocol import (
         CoordinatorStopRequested as CoordinatorStopRequested,
     )
-    from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
-    from doeff_cluster.shared.intent.protocol import Reply as Reply
-    from doeff_cluster.shared.intent.readiness_model import ReportReady as ReportReady
-    from doeff_cluster.shared.intent.remote_model import RemoteJob as RemoteJob
-    from doeff_cluster.shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
-    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
-    from doeff_cluster.shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
-    from doeff_cluster.shared.intent.semaphore_model import LeaseOp as LeaseOp
-    from doeff_cluster.shared.intent.shared_model import ReadShared as ReadShared
-    from doeff_cluster.shared.intent.shared_model import WriteShared as WriteShared
-    from doeff_cluster.shared.intent.warm_model import AwaitWarm as AwaitWarm
-    from doeff_cluster.shared.intent.warm_model import ReadWarmState as ReadWarmState
-    from doeff_cluster.shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
-    from doeff_cluster.shared.protocol.coordinator_reads import (
+    from doeff_cluster._shared.intent.protocol import NextRequests as NextRequests
+    from doeff_cluster._shared.intent.protocol import Reply as Reply
+    from doeff_cluster._shared.intent.readiness_model import ReportReady as ReportReady
+    from doeff_cluster._shared.intent.remote_model import RemoteJob as RemoteJob
+    from doeff_cluster._shared.intent.remote_model import RemoteJobFailed as RemoteJobFailed
+    from doeff_cluster._shared.intent.semaphore_model import AwaitLeaseFree as AwaitLeaseFree
+    from doeff_cluster._shared.intent.semaphore_model import AwaitLeaseVacated as AwaitLeaseVacated
+    from doeff_cluster._shared.intent.semaphore_model import LeaseOp as LeaseOp
+    from doeff_cluster._shared.intent.shared_model import ReadShared as ReadShared
+    from doeff_cluster._shared.intent.shared_model import WriteShared as WriteShared
+    from doeff_cluster._shared.intent.warm_model import AwaitWarm as AwaitWarm
+    from doeff_cluster._shared.intent.warm_model import ReadWarmState as ReadWarmState
+    from doeff_cluster._shared.intent.warm_model import WarmRuntimeEnv as WarmRuntimeEnv
+    from doeff_cluster._shared.protocol.coordinator_reads import (
         readiness_awaited as readiness_awaited,
     )
-    from doeff_cluster.shared.protocol.inbox import http_request as http_request
+    from doeff_cluster._shared.protocol.inbox import http_request as http_request
     from doeff_cluster._worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
     from doeff_cluster._worker.intent.worker_model import AwaitNextTick as AwaitNextTick
     from doeff_cluster._worker.intent.worker_model import EnvReport as EnvReport
@@ -220,8 +220,8 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.protocol.declared import (
         declared_reply_of_json as declared_reply_of_json,
     )
-    from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
-    from doeff_cluster.shared.protocol.inbox import stop_flag as stop_flag
+    from doeff_cluster._shared.protocol.inbox import http_requests as http_requests
+    from doeff_cluster._shared.protocol.inbox import stop_flag as stop_flag
     from doeff_cluster._foundation.in_cluster_api import CLUSTER_API as CLUSTER_API
     from doeff_cluster._foundation.in_cluster_api import ClusterCaMissing as ClusterCaMissing
     from doeff_cluster._foundation.record_codec import DECISION as DECISION
@@ -260,7 +260,7 @@ if TYPE_CHECKING:
         AnnotateDeployment as AnnotateDeployment,
     )
     from doeff_cluster._coordinator.intent.cluster_model import BoardRow as BoardRow
-    from doeff_cluster.shared.intent.protocol import BodyInvalid as BodyInvalid
+    from doeff_cluster._shared.intent.protocol import BodyInvalid as BodyInvalid
     from doeff_cluster._coordinator.intent.cluster_model import ClusterJob as ClusterJob
     from doeff_cluster._coordinator.intent.cluster_model import ClusterNaming as ClusterNaming
     from doeff_cluster._coordinator.intent.cluster_model import ClusterState as ClusterState
@@ -278,10 +278,10 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.intent.failover_model import KeptApart as KeptApart
     from doeff_cluster._coordinator.intent.kube_model import KubeUnavailable as KubeUnavailable
     from doeff_cluster._coordinator.intent.failover_model import ResidentJob as ResidentJob
-    from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnvInvalid as RuntimeEnvInvalid
+    from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnvInvalid as RuntimeEnvInvalid
     from doeff_cluster._coordinator.intent.cluster_model import SaveState as SaveState
     from doeff_cluster._coordinator.intent.kube_model import ScaleDeployment as ScaleDeployment
-    from doeff_cluster.shared.intent.protocol import ServiceReached as ServiceReached
+    from doeff_cluster._shared.intent.protocol import ServiceReached as ServiceReached
     from doeff_cluster._coordinator.intent.cluster_model import UnplacedKind as UnplacedKind
     from doeff_cluster._coordinator.protocol.worker_notices import (
         WORKER_NOTICE_READS as WORKER_NOTICE_READS,
@@ -294,7 +294,7 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.intent.cluster_model import WorkerInfo as WorkerInfo
     from doeff_cluster._coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
     from doeff_cluster._coordinator.protocol.store import durable_states as durable_states
-    from doeff_cluster.shared.core.runtime_env_rules import env_key as env_key
+    from doeff_cluster._shared.core.runtime_env_rules import env_key as env_key
     from doeff_cluster._coordinator.core.failover_policy import (
         failover_refusals as failover_refusals,
     )
@@ -316,7 +316,7 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.protocol.request_bodies import request_bodies as request_bodies
     from doeff_cluster._coordinator.protocol.request_bodies import responded as responded
     from doeff_cluster._coordinator.core.failover_room import room_file_workers as room_file_workers
-    from doeff_cluster.shared.core.runtime_env_rules import (
+    from doeff_cluster._shared.core.runtime_env_rules import (
         runtime_env_of_json as runtime_env_of_json,
     )
     from doeff_cluster._coordinator.core.cluster_policy import (
@@ -329,7 +329,7 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_kind as unplaced_kind
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_memory as unplaced_memory
     from doeff_cluster._coordinator.protocol.store import wal_store as wal_store
-    from doeff_cluster.shared.core.warm_rules import warm_key as warm_key
+    from doeff_cluster._shared.core.warm_rules import warm_key as warm_key
     from doeff_cluster._worker.intent.worker_model import Action as Action
     from doeff_cluster._worker.intent.drain_model import AskDrain as AskDrain
     from doeff_cluster._worker.entry.code_prepare import BakeSources as BakeSources
@@ -357,7 +357,7 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._worker.intent.env_prepare_model import EnvMarker as EnvMarker
     from doeff_cluster._worker.intent.env_prepare_model import FetchCommit as FetchCommit
-    from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
+    from doeff_cluster._shared.intent.env_marker_model import FileSha256 as FileSha256
     from doeff_cluster._worker.intent.worker_model import HandoffAbandoned as HandoffAbandoned
     from doeff_cluster._worker.intent.env_prepare_model import InstallWheels as InstallWheels
     from doeff_cluster._worker.entry.line_stamp import JobLogShipper as JobLogShipper
@@ -389,7 +389,7 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.intent.worker_model import StopStage as StopStage
     from doeff_cluster._worker.intent.env_prepare_model import SyncProject as SyncProject
     from doeff_cluster._worker.core.room_rules import TEMPLATE_PROVIDES as TEMPLATE_PROVIDES
-    from doeff_cluster.shared.intent.remote_model import VersionMismatch as VersionMismatch
+    from doeff_cluster._shared.intent.remote_model import VersionMismatch as VersionMismatch
     from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
     from doeff_cluster._worker.core.room_rules import WorkerRoom as WorkerRoom
     from doeff_cluster._worker.intent.worker_model import WorkerUnsettled as WorkerUnsettled
@@ -404,7 +404,7 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.protocol.drain_requests import coordinator_calls as coordinator_calls
     from doeff_cluster._worker.entry.line_stamp import coordinator_log_plan as coordinator_log_plan
     from doeff_cluster._worker.entry.line_stamp import cut_lines as cut_lines
-    from doeff_cluster.shared.protocol.program_codec import decode_program as decode_program
+    from doeff_cluster._shared.protocol.program_codec import decode_program as decode_program
     from doeff_cluster._worker.core.drain_client import drain_outcome as drain_outcome
     from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
     from doeff_cluster._worker.core.worker_due import fence_due as fence_due
@@ -432,25 +432,339 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.protocol.heartbeat import status_rows_json as status_rows_json
     from doeff_cluster._worker.core.policy import statuses as statuses
     from doeff_cluster._worker.entry.code_prepare import store_entries as store_entries
+    from doeff_cluster._shared.intent.job_call_model import CallJob as CallJob
+    from doeff_cluster._shared.intent.service_model import CallShape as CallShape
+    from doeff_cluster._shared.intent.checkout_model import CheckoutRoot as CheckoutRoot
+    from doeff_cluster._shared.intent.checkout_model import CheckoutState as CheckoutState
+    from doeff_cluster._shared.intent.semaphore_model import ClusterSemaphore as ClusterSemaphore
+    from doeff_cluster._shared.intent.protocol import ClusterTiming as ClusterTiming
+    from doeff_cluster._shared.protocol.job_call_handlers import Counterpart as Counterpart
+    from doeff_cluster._shared.intent.semaphore_model import (
+        CreateNamedSemaphore as CreateNamedSemaphore,
+    )
+    from doeff_cluster._shared.intent.detached_model import (
+        DETACHED_DEFAULT_LEASE_SECONDS as DETACHED_DEFAULT_LEASE_SECONDS,
+    )
+    from doeff_cluster._shared.intent.service_model import Declaration as Declaration
+    from doeff_cluster._shared.entry.deployed_cluster import (
+        DeployedCannotAnswer as DeployedCannotAnswer,
+    )
+    from doeff_cluster._shared.entry.deployed_cluster import DeployedCluster as DeployedCluster
+    from doeff_cluster._shared.intent.launch_model import DesireCoordinator as DesireCoordinator
+    from doeff_cluster._shared.intent.launch_model import DesireWorker as DesireWorker
+    from doeff_cluster._shared.intent.detached_model import DetachedAwaited as DetachedAwaited
+    from doeff_cluster._shared.intent.detached_model import DetachedCancelled as DetachedCancelled
+    from doeff_cluster._shared.intent.detached_model import DetachedEnded as DetachedEnded
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedEnvUnavailable as DetachedEnvUnavailable,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedFailed as DetachedFailed
+    from doeff_cluster._shared.intent.detached_model import DetachedLost as DetachedLost
+    from doeff_cluster._shared.intent.detached_model import DetachedOutbox as DetachedOutbox
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedOutboxAcked as DetachedOutboxAcked,
+    )
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedOutboxAnswer as DetachedOutboxAnswer,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedPending as DetachedPending
+    from doeff_cluster._shared.intent.detached_model import DetachedQueueGroup as DetachedQueueGroup
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedQueueReason as DetachedQueueReason,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedRefused as DetachedRefused
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedSubmitAnswer as DetachedSubmitAnswer,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedSubmitted as DetachedSubmitted
+    from doeff_cluster._shared.intent.detached_model import DetachedSucceeded as DetachedSucceeded
+    from doeff_cluster._shared.intent.detached_model import DetachedTiming as DetachedTiming
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedTimingAnswer as DetachedTimingAnswer,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedUnknown as DetachedUnknown
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedUnreachable as DetachedUnreachable,
+    )
+    from doeff_cluster._shared.intent.detached_model import DetachedUnrunnable as DetachedUnrunnable
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedVersionMismatch as DetachedVersionMismatch,
+    )
+    from doeff_cluster._shared.intent.due_model import DueNever as DueNever
+    from doeff_cluster._shared.intent.due_model import DueNow as DueNow
+    from doeff_cluster._shared.intent.env_marker_model import ENV_MARKER as ENV_MARKER
+    from doeff_cluster._shared.intent.remote_model import EnvUnavailable as EnvUnavailable
+    from doeff_cluster._shared.intent.runtime_env_model import EnvVar as EnvVar
+    from doeff_cluster._shared.protocol.supplied_values import (
+        FACT_ENVIRON_NAMES as FACT_ENVIRON_NAMES,
+    )
+    from doeff_cluster._shared.intent.semaphore_model import FENCE_MARGIN_MS as FENCE_MARGIN_MS
+    from doeff_cluster._shared.intent.detached_model import GroupLimit as GroupLimit
+    from doeff_cluster._shared.intent.semaphore_model import HELD as HELD
+    from doeff_cluster._shared.protocol.supplied_values import HeldData as HeldData
+    from doeff_cluster._shared.intent.semaphore_model import HeldLease as HeldLease
+    from doeff_cluster._shared.intent.runtime_env_model import InvalidKind as InvalidKind
+    from doeff_cluster._shared.intent.service_model import Job as Job
+    from doeff_cluster._shared.intent.job_call_model import JobAnswer as JobAnswer
+    from doeff_cluster._shared.protocol.job_call_handlers import JobDestination as JobDestination
+    from doeff_cluster._shared.intent.job_call_model import JobField as JobField
+    from doeff_cluster._shared.intent.job_reach_model import JobNoWay as JobNoWay
+    from doeff_cluster._shared.intent.job_reach_model import JobNotReached as JobNotReached
+    from doeff_cluster._shared.intent.job_model import JobPhase as JobPhase
+    from doeff_cluster._shared.intent.cluster_control import JobProcessSeen as JobProcessSeen
+    from doeff_cluster._shared.intent.cluster_control import (
+        JobProcessWaitExpired as JobProcessWaitExpired,
+    )
+    from doeff_cluster._shared.intent.job_reach_model import JobReached as JobReached
+    from doeff_cluster._shared.intent.job_call_model import JobRequest as JobRequest
+    from doeff_cluster._shared.intent.job_model import JobSpec as JobSpec
+    from doeff_cluster._shared.intent.job_call_model import JobUnreachable as JobUnreachable
+    from doeff_cluster._shared.intent.job_reach_model import JobWay as JobWay
+    from doeff_cluster._shared.protocol.supplied_values import KUBE_API as KUBE_API
+    from doeff_cluster._shared.intent.kube_service_model import KubeIngress as KubeIngress
+    from doeff_cluster._shared.intent.kube_service_model import KubeService as KubeService
+    from doeff_cluster._shared.intent.kube_service_model import KubeServicePort as KubeServicePort
+    from doeff_cluster._shared.intent.kube_service_model import KubeServiceType as KubeServiceType
+    from doeff_cluster._shared.intent.semaphore_model import LEASE_MAX_TTL_MS as LEASE_MAX_TTL_MS
+    from doeff_cluster._shared.intent.semaphore_model import LOST as LOST
+    from doeff_cluster._shared.core.launch_rules import LaunchEnvMissing as LaunchEnvMissing
+    from doeff_cluster._shared.intent.semaphore_model import LeaseAnswer as LeaseAnswer
+    from doeff_cluster._shared.intent.semaphore_model import LeaseLost as LeaseLost
+    from doeff_cluster._shared.intent.semaphore_model import LeaseStanding as LeaseStanding
+    from doeff_cluster._shared.intent.checkout_model import LocalCheckout as LocalCheckout
+    from doeff_cluster._shared.intent.runtime_identity_model import ModuleOrigin as ModuleOrigin
+    from doeff_cluster._shared.intent.runtime_env_model import NativeWheel as NativeWheel
+    from doeff_cluster._shared.intent.detached_model import OUTBOX_ENDED as OUTBOX_ENDED
+    from doeff_cluster._shared.intent.detached_model import (
+        OUTBOX_QUEUED_OVERDUE as OUTBOX_QUEUED_OVERDUE,
+    )
+    from doeff_cluster._shared.intent.protocol import PlainText as PlainText
+    from doeff_cluster._shared.intent.process_model import ProcessEnded as ProcessEnded
+    from doeff_cluster._shared.intent.runtime_identity_model import ProcessFacts as ProcessFacts
+    from doeff_cluster._shared.intent.process_model import ProcessWaitExpired as ProcessWaitExpired
+    from doeff_cluster._shared.intent.checkout_model import ProjectOfCheckout as ProjectOfCheckout
+    from doeff_cluster._shared.intent.runtime_env_model import PythonProject as PythonProject
+    from doeff_cluster._shared.intent.readiness_model import RETIREMENT_HOLD as RETIREMENT_HOLD
+    from doeff_cluster._shared.intent.readiness_model import (
+        RETIREMENT_HOLD_PERMITS as RETIREMENT_HOLD_PERMITS,
+    )
+    from doeff_cluster._shared.intent.readiness_model import ROLE_ACTIVE as ROLE_ACTIVE
+    from doeff_cluster._shared.intent.readiness_model import ROLE_STANDBY as ROLE_STANDBY
+    from doeff_cluster._shared.protocol.job_reach_handlers import (
+        ReachDestination as ReachDestination,
+    )
+    from doeff_cluster._shared.intent.job_reach_model import ReachFailure as ReachFailure
+    from doeff_cluster._shared.intent.job_reach_model import ReachJob as ReachJob
+    from doeff_cluster._shared.intent.checkout_model import ReadCheckout as ReadCheckout
+    from doeff_cluster._shared.intent.metrics_model import ReadProcessGauges as ReadProcessGauges
+    from doeff_cluster._shared.intent.runtime_identity_model import (
+        ReadRuntimeFacts as ReadRuntimeFacts,
+    )
+    from doeff_cluster._shared.intent.readiness_model import ReadinessClaim as ReadinessClaim
+    from doeff_cluster._shared.protocol.readiness_handlers import ReadinessLog as ReadinessLog
+    from doeff_cluster._shared.intent.cluster_control import (
+        ReadinessWaitExpired as ReadinessWaitExpired,
+    )
+    from doeff_cluster._shared.intent.service_model import RecordArgument as RecordArgument
+    from doeff_cluster._shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
+    from doeff_cluster._shared.intent.protocol import Request as Request
+    from doeff_cluster._shared.intent.cluster_control import RestartRefused as RestartRefused
+    from doeff_cluster._shared.protocol.coordinator_route import RouteRefused as RouteRefused
+    from doeff_cluster._shared.protocol.coordinator_route import (
+        RouteUnreachable as RouteUnreachable,
+    )
+    from doeff_cluster._shared.intent.run_context import RunContext as RunContext
+    from doeff_cluster._shared.intent.detached_model import RunnerFact as RunnerFact
+    from doeff_cluster._shared.intent.detached_model import RunnersChange as RunnersChange
+    from doeff_cluster._shared.intent.detached_model import (
+        RunnersChangeAnswer as RunnersChangeAnswer,
+    )
+    from doeff_cluster._shared.intent.detached_model import RunnersUnreachable as RunnersUnreachable
+    from doeff_cluster._shared.intent.detached_model import (
+        RunnersWatchMissing as RunnersWatchMissing,
+    )
+    from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
+    from doeff_cluster._shared.intent.runtime_identity_model import (
+        RuntimeIdentityMismatch as RuntimeIdentityMismatch,
+    )
+    from doeff_cluster._shared.intent.semaphore_model import SEMAPHORE_PREFIX as SEMAPHORE_PREFIX
+    from doeff_cluster._shared.protocol.checkout_reads import SENDER_SOURCE_DIR as SENDER_SOURCE_DIR
+    from doeff_cluster._shared.protocol.supplied_values import (
+        SERVICE_ACCOUNT_CA_FILE as SERVICE_ACCOUNT_CA_FILE,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import (
+        SERVICE_ACCOUNT_DIR as SERVICE_ACCOUNT_DIR,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import (
+        SERVICE_ACCOUNT_TOKEN_FILE as SERVICE_ACCOUNT_TOKEN_FILE,
+    )
+    from doeff_cluster._shared.core.service_back import (
+        SERVICE_BACK_CHANGE_SECONDS as SERVICE_BACK_CHANGE_SECONDS,
+    )
+    from doeff_cluster._shared.intent.semaphore_model import STANDBY as STANDBY
+    from doeff_cluster._shared.core.semaphore_handlers import SemaphoreSession as SemaphoreSession
+    from doeff_cluster._shared.intent.checkout_model import SenderSourceRoot as SenderSourceRoot
+    from doeff_cluster._shared.intent.detached_model import ServiceFact as ServiceFact
+    from doeff_cluster._shared.intent.cluster_control import ServiceFailed as ServiceFailed
+    from doeff_cluster._shared.intent.detached_model import ServiceListWire as ServiceListWire
+    from doeff_cluster._shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
+    from doeff_cluster._shared.intent.detached_model import ServiceReady as ServiceReady
+    from doeff_cluster._shared.intent.cluster_control import ServiceRestarted as ServiceRestarted
+    from doeff_cluster._shared.intent.detached_model import (
+        ServicesUnreachable as ServicesUnreachable,
+    )
+    from doeff_cluster._shared.intent.supplied_model import SuppliedKind as SuppliedKind
+    from doeff_cluster._shared.intent.supplied_model import SuppliedObjectRef as SuppliedObjectRef
+    from doeff_cluster._shared.intent.supplied_model import SuppliedRef as SuppliedRef
+    from doeff_cluster._shared.intent.supplied_model import (
+        SuppliedValueUnavailable as SuppliedValueUnavailable,
+    )
+    from doeff_cluster._shared.intent.service_model import System as System
+    from doeff_cluster._shared.intent.remote_model import TaskFailed as TaskFailed
+    from doeff_cluster._shared.intent.detached_model import TaskLimit as TaskLimit
+    from doeff_cluster._shared.intent.remote_model import TaskSucceeded as TaskSucceeded
+    from doeff_cluster._shared.intent.remote_model import UnsendableProgram as UnsendableProgram
+    from doeff_cluster._shared.intent.warm_model import WarmFailure as WarmFailure
+    from doeff_cluster._shared.intent.warm_model import WarmState as WarmState
+    from doeff_cluster._shared.intent.warm_model import WarmUnreachable as WarmUnreachable
+    from doeff_cluster._shared.intent.supplied_model import WorkerFactMissing as WorkerFactMissing
+    from doeff_cluster._shared.intent.supplied_model import WorkerFactName as WorkerFactName
+    from doeff_cluster._shared.intent.semaphore_model import WriteFenced as WriteFenced
+    from doeff_cluster._shared.protocol.coordinator_reads import answer_body as answer_body
+    from doeff_cluster._shared.core.service_rules import canonical_argument as canonical_argument
+    from doeff_cluster._shared.core.runtime_identity import (
+        check_runtime_identity as check_runtime_identity,
+    )
+    from doeff_cluster._shared.protocol.checkout_reads import checkout_reads as checkout_reads
+    from doeff_cluster._shared.protocol.checkout_reads import checkout_root as checkout_root
+    from doeff_cluster._shared.protocol.checkout_reads import checkout_state_at as checkout_state_at
+    from doeff_cluster._shared.core.semaphore_handlers import cluster_semaphore as cluster_semaphore
+    from doeff_cluster._shared.core.native_wheel import current_platform as current_platform
+    from doeff_cluster._shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
+    from doeff_cluster._shared.core.declaring import declaring_refusal as declaring_refusal
+    from doeff_cluster._shared.protocol.program_codec import decode_outcome as decode_outcome
+    from doeff_cluster._shared.entry.deployed_cluster import deployed_cluster as deployed_cluster
+    from doeff_cluster._shared.entry.deployed_cluster import (
+        deployed_cluster_answers as deployed_cluster_answers,
+    )
+    from doeff_cluster._shared.protocol.detached import detached_cluster as detached_cluster
+    from doeff_cluster._shared.protocol.detached import detached_path as detached_path
+    from doeff_cluster._shared.protocol.program_codec import encode_program as encode_program
+    from doeff_cluster._shared.core.service_rules import (
+        environ_overlay_refusal as environ_overlay_refusal,
+    )
+    from doeff_cluster._shared.core.service_rules import (
+        foundation_needs_refusal as foundation_needs_refusal,
+    )
+    from doeff_cluster._shared.protocol.runtime_facts import (
+        given_runtime_facts as given_runtime_facts,
+    )
+    from doeff_cluster._shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix
+    from doeff_cluster._shared.entry.host_reader import host_reader as host_reader
+    from doeff_cluster._shared.core.runtime_env_rules import (
+        hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson,
+    )
+    from doeff_cluster._shared.core.service_rules import identity_of as identity_of
+    from doeff_cluster._shared.entry.service_build import job as job
+    from doeff_cluster._shared.protocol.job_call_handlers import job_answer_of as job_answer_of
+    from doeff_cluster._shared.protocol.job_call_handlers import (
+        job_call_handover as job_call_handover,
+    )
+    from doeff_cluster._shared.protocol.job_call_handlers import job_call_sender as job_call_sender
+    from doeff_cluster._shared.core.service_rules import job_named as job_named
+    from doeff_cluster._shared.protocol.job_reach_handlers import (
+        job_reach_handover as job_reach_handover,
+    )
+    from doeff_cluster._shared.protocol.job_reach_handlers import (
+        job_reach_sender as job_reach_sender,
+    )
+    from doeff_cluster._shared.protocol.job_call_handlers import job_target as job_target
+    from doeff_cluster._shared.protocol.kube_services import kube_services_api as kube_services_api
+    from doeff_cluster._shared.core.lease_rules import lease_full_until as lease_full_until
+    from doeff_cluster._shared.core.lease_rules import lease_holder as lease_holder
+    from doeff_cluster._shared.entry.cluster_foundation import lease_holder_of as lease_holder_of
+    from doeff_cluster._shared.core.lease_rules import lease_op as lease_op
+    from doeff_cluster._shared.core.semaphore_handlers import leases_fence as leases_fence
+    from doeff_cluster._shared.core.lease_rules import live_holders as live_holders
+    from doeff_cluster._shared.core.clock import monotonic_ms_of as monotonic_ms_of
+    from doeff_cluster._shared.core.semaphore_handlers import (
+        named_semaphore_local as named_semaphore_local,
+    )
+    from doeff_cluster._shared.core.lease_rules import outside_holders as outside_holders
+    from doeff_cluster._shared.protocol.runtime_facts import (
+        process_runtime_facts as process_runtime_facts,
+    )
+    from doeff_cluster._shared.core.remote_rules import program_sha as program_sha
+    from doeff_cluster._shared.protocol.readiness_handlers import (
+        readiness_claims as readiness_claims,
+    )
+    from doeff_cluster._shared.protocol.readiness_handlers import readiness_http as readiness_http
+    from doeff_cluster._shared.entry.service_build import resolve as resolve
+    from doeff_cluster._shared.entry.service_build import resolve_value as resolve_value
+    from doeff_cluster._shared.core.runtime_env import (
+        runtime_env_of_checkouts as runtime_env_of_checkouts,
+    )
+    from doeff_cluster._shared.core.lease_rules import semaphore_key as semaphore_key
+    from doeff_cluster._shared.protocol.supplied_values import (
+        service_account_text as service_account_text,
+    )
+    from doeff_cluster._shared.protocol.coordinator_reads import service_answer as service_answer
+    from doeff_cluster._shared.core.service_back import service_back as service_back
+    from doeff_cluster._shared.core.service_back import service_back_within as service_back_within
+    from doeff_cluster._shared.protocol.detached import (
+        service_facts_of_view as service_facts_of_view,
+    )
+    from doeff_cluster._shared.core.job_rules import spec_hash as spec_hash
+    from doeff_cluster._shared.core.semaphore_handlers import standby_divert as standby_divert
+    from doeff_cluster._shared.core.detached_rules import (
+        submit_detached_task as submit_detached_task,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import (
+        supplied_directory as supplied_directory,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import (
+        supplied_object_ref_of as supplied_object_ref_of,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import supplied_ref_of as supplied_ref_of
+    from doeff_cluster._shared.protocol.supplied_values import (
+        supplied_ref_text as supplied_ref_text,
+    )
+    from doeff_cluster._shared.protocol.supplied_values import supplied_setting as supplied_setting
+    from doeff_cluster._shared.protocol.supplied_values import supplied_value as supplied_value
+    from doeff_cluster._shared.entry.service_build import system_declaration as system_declaration
+    from doeff_cluster._shared.entry.service_build import system_of as system_of
+    from doeff_cluster._shared.core.detached_rules import task_limits_json as task_limits_json
+    from doeff_cluster._shared.protocol.detached import warm_answer as warm_answer
+    from doeff_cluster._shared.protocol.detached import warm_cluster as warm_cluster
+    from doeff_cluster._shared.protocol.detached import warm_path as warm_path
+    from doeff_cluster._shared.core.warm_rules import warm_runtime_env as warm_runtime_env
+    from doeff_cluster._shared.entry.cluster_foundation import (
+        with_cluster_handlers as with_cluster_handlers,
+    )
+    from doeff_cluster._shared.entry.client_foundation import (
+        with_detached_client as with_detached_client,
+    )
+    from doeff_cluster._shared.protocol.meter_report import with_meter_report as with_meter_report
+    from doeff_cluster._shared.protocol.supplied_values import worker_fact as worker_fact
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
+    "AckDetachedOutbox": "doeff_cluster._shared.intent.detached_model",
     "AdmitBatch": "doeff_cluster._sim.local",
     "ArmWaitChange": "doeff_cluster._sim.local",
-    "AwaitDetached": "doeff_cluster.shared.intent.detached_model",
-    "AwaitDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
-    "AwaitJobProcess": "doeff_cluster.shared.intent.cluster_control",
-    "AwaitLeaseFree": "doeff_cluster.shared.intent.semaphore_model",
-    "AwaitLeaseVacated": "doeff_cluster.shared.intent.semaphore_model",
+    "AwaitDetached": "doeff_cluster._shared.intent.detached_model",
+    "AwaitDetachedOutbox": "doeff_cluster._shared.intent.detached_model",
+    "AwaitJobProcess": "doeff_cluster._shared.intent.cluster_control",
+    "AwaitLeaseFree": "doeff_cluster._shared.intent.semaphore_model",
+    "AwaitLeaseVacated": "doeff_cluster._shared.intent.semaphore_model",
     "AwaitNextTick": "doeff_cluster._worker.intent.worker_model",
-    "AwaitProcessEnded": "doeff_cluster.shared.intent.process_model",
+    "AwaitProcessEnded": "doeff_cluster._shared.intent.process_model",
     "AwaitProcessStarted": "doeff_cluster._sim.local",
-    "AwaitReadiness": "doeff_cluster.shared.intent.cluster_control",
+    "AwaitReadiness": "doeff_cluster._shared.intent.cluster_control",
     "AwaitRetirement": "doeff_cluster._worker.intent.retirement_model",
-    "AwaitRunnersChange": "doeff_cluster.shared.intent.detached_model",
-    "AwaitServiceReady": "doeff_cluster.shared.intent.detached_model",
-    "AwaitWarm": "doeff_cluster.shared.intent.warm_model",
-    "CancelDetached": "doeff_cluster.shared.intent.detached_model",
+    "AwaitRunnersChange": "doeff_cluster._shared.intent.detached_model",
+    "AwaitServiceReady": "doeff_cluster._shared.intent.detached_model",
+    "AwaitWarm": "doeff_cluster._shared.intent.warm_model",
+    "CancelDetached": "doeff_cluster._shared.intent.detached_model",
     "ChangeHostTruth": "doeff_cluster._sim.local",
     "ClientLink": "doeff_cluster._sim.local",
     "CoordinatorEnded": "doeff_cluster._sim.local",
@@ -458,17 +772,17 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CoordinatorRuns": "doeff_cluster._sim.local",
     "CoordinatorStarted": "doeff_cluster._sim.local",
     "CoordinatorSteps": "doeff_cluster._sim.local",
-    "CoordinatorStopRequested": "doeff_cluster.shared.intent.protocol",
-    "Crash": "doeff_cluster.shared.intent.cluster_control",
-    "CrashCoordinator": "doeff_cluster.shared.intent.cluster_control",
+    "CoordinatorStopRequested": "doeff_cluster._shared.intent.protocol",
+    "Crash": "doeff_cluster._shared.intent.cluster_control",
+    "CrashCoordinator": "doeff_cluster._shared.intent.cluster_control",
     "CutWorker": "doeff_cluster._sim.local",
     "DeclareRollout": "doeff_cluster._sim.local",
     "DowntimeOf": "doeff_cluster._sim.local",
     "DrainGeneration": "doeff_cluster._sim.local",
     "DrainWorker": "doeff_cluster._sim.local",
     "EndProcess": "doeff_cluster._sim.local",
-    "EnsureKubeIngress": "doeff_cluster.shared.intent.kube_service_model",
-    "EnsureKubeService": "doeff_cluster.shared.intent.kube_service_model",
+    "EnsureKubeIngress": "doeff_cluster._shared.intent.kube_service_model",
+    "EnsureKubeService": "doeff_cluster._shared.intent.kube_service_model",
     "EnvReport": "doeff_cluster._worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
     "ForgetProbes": "doeff_cluster._worker.intent.worker_model",
@@ -483,14 +797,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "HostTruthOf": "doeff_cluster._sim.local",
     "KeepChild": "doeff_cluster._sim.local",
     "KeepHandle": "doeff_cluster._sim.local",
-    "KillWorker": "doeff_cluster.shared.intent.cluster_control",
+    "KillWorker": "doeff_cluster._shared.intent.cluster_control",
     "KubeCalls": "doeff_cluster._sim.local",
     "KubeReads": "doeff_cluster._sim.local",
-    "LeaseOp": "doeff_cluster.shared.intent.semaphore_model",
+    "LeaseOp": "doeff_cluster._shared.intent.semaphore_model",
     "LocalMachine": "doeff_cluster._sim.machine",
     "MachineCannotAnswer": "doeff_cluster._sim.machine",
     "NextPid": "doeff_cluster._sim.local",
-    "NextRequests": "doeff_cluster.shared.intent.protocol",
+    "NextRequests": "doeff_cluster._shared.intent.protocol",
     "NextWorldDue": "doeff_cluster._sim.local",
     "NodeReads": "doeff_cluster._sim.local",
     "NoteCoordinatorWrite": "doeff_cluster._sim.local",
@@ -523,31 +837,31 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PutHostTruth": "doeff_cluster._sim.local",
     "ReadCoordinator": "doeff_cluster._sim.local",
     "ReadDesired": "doeff_cluster._worker.intent.worker_model",
-    "ReadDetachedQueue": "doeff_cluster.shared.intent.detached_model",
-    "ReadDetachedTiming": "doeff_cluster.shared.intent.detached_model",
+    "ReadDetachedQueue": "doeff_cluster._shared.intent.detached_model",
+    "ReadDetachedTiming": "doeff_cluster._shared.intent.detached_model",
     "ReadGrant": "doeff_cluster._sim.k8s_supplied",
-    "ReadRunners": "doeff_cluster.shared.intent.detached_model",
-    "ReadServices": "doeff_cluster.shared.intent.detached_model",
-    "ReadShared": "doeff_cluster.shared.intent.shared_model",
-    "ReadWarmState": "doeff_cluster.shared.intent.warm_model",
-    "ReadinessOf": "doeff_cluster.shared.intent.cluster_control",
+    "ReadRunners": "doeff_cluster._shared.intent.detached_model",
+    "ReadServices": "doeff_cluster._shared.intent.detached_model",
+    "ReadShared": "doeff_cluster._shared.intent.shared_model",
+    "ReadWarmState": "doeff_cluster._shared.intent.warm_model",
+    "ReadinessOf": "doeff_cluster._shared.intent.cluster_control",
     "ReapJob": "doeff_cluster._worker.intent.worker_model",
     "ReceivedLines": "doeff_cluster._sim.test_recording_on_sim",
-    "Redeclare": "doeff_cluster.shared.intent.cluster_control",
+    "Redeclare": "doeff_cluster._shared.intent.cluster_control",
     "RelabelNode": "doeff_cluster._sim.local",
-    "ReleaseDetached": "doeff_cluster.shared.intent.detached_model",
+    "ReleaseDetached": "doeff_cluster._shared.intent.detached_model",
     "ReleaseLeases": "doeff_cluster._worker.intent.worker_model",
     "ReleaseRequest": "doeff_cluster._sim.local",
-    "RemoteJob": "doeff_cluster.shared.intent.remote_model",
-    "RemoteJobFailed": "doeff_cluster.shared.intent.remote_model",
+    "RemoteJob": "doeff_cluster._shared.intent.remote_model",
+    "RemoteJobFailed": "doeff_cluster._shared.intent.remote_model",
     "ReplaceCoordinatorEnviron": "doeff_cluster._sim.local",
     "ReplaceWorker": "doeff_cluster._sim.local",
     "ReplayDiverged": "doeff_cluster._foundation.record_log",
-    "Reply": "doeff_cluster.shared.intent.protocol",
-    "ReportMetrics": "doeff_cluster.shared.intent.metrics_model",
-    "ReportReady": "doeff_cluster.shared.intent.readiness_model",
+    "Reply": "doeff_cluster._shared.intent.protocol",
+    "ReportMetrics": "doeff_cluster._shared.intent.metrics_model",
+    "ReportReady": "doeff_cluster._shared.intent.readiness_model",
     "ReportsOf": "doeff_cluster._sim.local",
-    "RestartService": "doeff_cluster.shared.intent.cluster_control",
+    "RestartService": "doeff_cluster._shared.intent.cluster_control",
     "RetireJob": "doeff_cluster._worker.intent.worker_model",
     "RevivalOf": "doeff_cluster._sim.local",
     "RollBellOf": "doeff_cluster._sim.local",
@@ -572,20 +886,20 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StartWorker": "doeff_cluster._sim.local",
     "StepEnded": "doeff_cluster._sim.local",
     "StepWorkerWall": "doeff_cluster._sim.local",
-    "StopCoordinator": "doeff_cluster.shared.intent.cluster_control",
+    "StopCoordinator": "doeff_cluster._shared.intent.cluster_control",
     "StopElder": "doeff_cluster._sim.local",
     "StopRequestOf": "doeff_cluster._sim.local",
     "StopWarmChild": "doeff_cluster._worker.intent.worker_model",
-    "StopWorker": "doeff_cluster.shared.intent.cluster_control",
+    "StopWorker": "doeff_cluster._shared.intent.cluster_control",
     "StopWorkers": "doeff_cluster._sim.local",
-    "SubmitDetached": "doeff_cluster.shared.intent.detached_model",
+    "SubmitDetached": "doeff_cluster._shared.intent.detached_model",
     "SuppliedCluster": "doeff_cluster._sim.k8s_supplied",
     "SweepEnvs": "doeff_cluster._worker.intent.worker_model",
     "TakeHeldRequests": "doeff_cluster._sim.local",
     "TrackedSpawn": "doeff_cluster._sim.local",
     "WaitsOf": "doeff_cluster._sim.local",
     "WallBackOf": "doeff_cluster._sim.local",
-    "WarmRuntimeEnv": "doeff_cluster.shared.intent.warm_model",
+    "WarmRuntimeEnv": "doeff_cluster._shared.intent.warm_model",
     "WatchFailuresOf": "doeff_cluster._sim.local",
     "WorkerDied": "doeff_cluster._sim.local",
     "WorkerEnded": "doeff_cluster._sim.local",
@@ -593,7 +907,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkerWakes": "doeff_cluster._worker.intent.worker_model",
     "WorkersStopping": "doeff_cluster._sim.local",
     "WriteRoomFile": "doeff_cluster._sim.local",
-    "WriteShared": "doeff_cluster.shared.intent.shared_model",
+    "WriteShared": "doeff_cluster._shared.intent.shared_model",
     "answer_of": "doeff_cluster._sim.k8s_supplied",
     "business_wait_tap": "doeff_cluster._sim.local",
     "coordinator_answers": "doeff_cluster._sim.local",
@@ -608,22 +922,22 @@ _LAZY_EXPORTS: dict[str, str] = {
     "held_value_of": "doeff_cluster._sim.k8s_supplied",
     "held_whole_of": "doeff_cluster._sim.k8s_supplied",
     "host_answers": "doeff_cluster._sim.local",
-    "http_request": "doeff_cluster.shared.protocol.inbox",
+    "http_request": "doeff_cluster._shared.protocol.inbox",
     "k8s_supplied_peer": "doeff_cluster._sim.k8s_supplied",
     "load_state": "doeff_cluster._coordinator.entry.main",
     "local_machine_cluster": "doeff_cluster._sim.machine",
     "machine_answers": "doeff_cluster._sim.machine",
     "no_business_timers": "doeff_cluster._sim.local",
-    "now_epoch_ms": "doeff_cluster.shared.core.clock",
+    "now_epoch_ms": "doeff_cluster._shared.core.clock",
     "observe_requests": "doeff_cluster._sim.local",
     "process_notices": "doeff_cluster._sim.local",
     "process_signals": "doeff_cluster._sim.local",
     "process_versions": "doeff_cluster._foundation.process_versions",
-    "promise_or_timeout": "doeff_cluster.shared.core.promise_wait",
+    "promise_or_timeout": "doeff_cluster._shared.core.promise_wait",
     "read_grant_of": "doeff_cluster._sim.k8s_supplied",
-    "readiness_awaited": "doeff_cluster.shared.protocol.coordinator_reads",
+    "readiness_awaited": "doeff_cluster._shared.protocol.coordinator_reads",
     "run_coordinator": "doeff_cluster._coordinator.core.program",
-    "runtime_env_of_context": "doeff_cluster.shared.core.run_context_rules",
+    "runtime_env_of_context": "doeff_cluster._shared.core.run_context_rules",
     "scenario_wait_tap": "doeff_cluster._sim.local",
     "service_account_token_file": "doeff_cluster._sim.k8s_supplied",
     "sha_of": "doeff_cluster._sim.worktree_git_script",
@@ -643,9 +957,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ListRecordRuns": "doeff_cluster._record_store.intent.record_store_model",
     "PruneRecords": "doeff_cluster._record_store.intent.record_store_model",
     "ReadRecordRun": "doeff_cluster._record_store.intent.record_store_model",
-    "http_requests": "doeff_cluster.shared.protocol.inbox",
+    "http_requests": "doeff_cluster._shared.protocol.inbox",
     "record_files": "doeff_cluster._record_store.protocol.record_files",
-    "stop_flag": "doeff_cluster.shared.protocol.inbox",
+    "stop_flag": "doeff_cluster._shared.protocol.inbox",
     "CLUSTER_API": "doeff_cluster._foundation.in_cluster_api",
     "ClusterCaMissing": "doeff_cluster._foundation.in_cluster_api",
     "DECISION": "doeff_cluster._foundation.record_codec",
@@ -678,7 +992,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ALIVE_MARK_MS": "doeff_cluster._coordinator.core.api_policy",
     "AnnotateDeployment": "doeff_cluster._coordinator.intent.kube_model",
     "BoardRow": "doeff_cluster._coordinator.intent.cluster_model",
-    "BodyInvalid": "doeff_cluster.shared.intent.protocol",
+    "BodyInvalid": "doeff_cluster._shared.intent.protocol",
     "ClusterJob": "doeff_cluster._coordinator.intent.cluster_model",
     "ClusterNaming": "doeff_cluster._coordinator.intent.cluster_model",
     "ClusterState": "doeff_cluster._coordinator.intent.cluster_model",
@@ -694,10 +1008,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReadBody": "doeff_cluster._coordinator.intent.request_bodies",
     "Refused": "doeff_cluster._coordinator.core.resource_policy",
     "ResidentJob": "doeff_cluster._coordinator.intent.failover_model",
-    "RuntimeEnvInvalid": "doeff_cluster.shared.intent.runtime_env_model",
+    "RuntimeEnvInvalid": "doeff_cluster._shared.intent.runtime_env_model",
     "SaveState": "doeff_cluster._coordinator.intent.cluster_model",
     "ScaleDeployment": "doeff_cluster._coordinator.intent.kube_model",
-    "ServiceReached": "doeff_cluster.shared.intent.protocol",
+    "ServiceReached": "doeff_cluster._shared.intent.protocol",
     "UnplacedKind": "doeff_cluster._coordinator.intent.cluster_model",
     "WORKER_NOTICE_READS": "doeff_cluster._coordinator.protocol.worker_notices",
     "WORKER_NOTICE_ROUTES": "doeff_cluster._coordinator.protocol.worker_notices",
@@ -708,7 +1022,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkerLoad": "doeff_cluster._coordinator.intent.cluster_model",
     "coordinator_faults": "doeff_cluster._coordinator.protocol.faults",
     "durable_states": "doeff_cluster._coordinator.protocol.store",
-    "env_key": "doeff_cluster.shared.core.runtime_env_rules",
+    "env_key": "doeff_cluster._shared.core.runtime_env_rules",
     "failover_refusals": "doeff_cluster._coordinator.core.failover_policy",
     "hyx_per_machineXquestion_markX": "doeff_cluster._coordinator.core.failover_policy",
     "kube_api": "doeff_cluster._coordinator.protocol.kube",
@@ -727,7 +1041,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "request_bodies": "doeff_cluster._coordinator.protocol.request_bodies",
     "responded": "doeff_cluster._coordinator.protocol.request_bodies",
     "room_file_workers": "doeff_cluster._coordinator.core.failover_room",
-    "runtime_env_of_json": "doeff_cluster.shared.core.runtime_env_rules",
+    "runtime_env_of_json": "doeff_cluster._shared.core.runtime_env_rules",
     "service_readiness": "doeff_cluster._coordinator.core.resource_policy",
     "spec_of_declaration": "doeff_cluster._coordinator.core.cluster_policy",
     "sweep_due": "doeff_cluster._coordinator.core.cluster_policy",
@@ -737,7 +1051,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "unplaced_kind": "doeff_cluster._coordinator.core.cluster_policy",
     "unplaced_memory": "doeff_cluster._coordinator.core.cluster_policy",
     "wal_store": "doeff_cluster._coordinator.protocol.store",
-    "warm_key": "doeff_cluster.shared.core.warm_rules",
+    "warm_key": "doeff_cluster._shared.core.warm_rules",
     "Action": "doeff_cluster._worker.intent.worker_model",
     "AskDrain": "doeff_cluster._worker.intent.drain_model",
     "BakeSources": "doeff_cluster._worker.entry.code_prepare",
@@ -759,7 +1073,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "EnsureNativeWheel": "doeff_cluster._worker.intent.env_prepare_model",
     "EnvMarker": "doeff_cluster._worker.intent.env_prepare_model",
     "FetchCommit": "doeff_cluster._worker.intent.env_prepare_model",
-    "FileSha256": "doeff_cluster.shared.intent.env_marker_model",
+    "FileSha256": "doeff_cluster._shared.intent.env_marker_model",
     "HandoffAbandoned": "doeff_cluster._worker.intent.worker_model",
     "ImportClosure": "doeff_cluster._worker.intent.code_model",
     "InstallWheels": "doeff_cluster._worker.intent.env_prepare_model",
@@ -803,7 +1117,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StopStage": "doeff_cluster._worker.intent.worker_model",
     "SyncProject": "doeff_cluster._worker.intent.env_prepare_model",
     "TEMPLATE_PROVIDES": "doeff_cluster._worker.core.room_rules",
-    "VersionMismatch": "doeff_cluster.shared.intent.remote_model",
+    "VersionMismatch": "doeff_cluster._shared.intent.remote_model",
     "WorkerPolicy": "doeff_cluster._worker.intent.worker_model",
     "WorkerRoom": "doeff_cluster._worker.core.room_rules",
     "WorkerUnsettled": "doeff_cluster._worker.intent.worker_model",
@@ -822,7 +1136,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "coordinator_link": "doeff_cluster._worker.protocol.coordinator_link",
     "coordinator_log_plan": "doeff_cluster._worker.entry.line_stamp",
     "cut_lines": "doeff_cluster._worker.entry.line_stamp",
-    "decode_program": "doeff_cluster.shared.protocol.program_codec",
+    "decode_program": "doeff_cluster._shared.protocol.program_codec",
     "drain_outcome": "doeff_cluster._worker.core.drain_client",
     "drain_request": "doeff_cluster._worker.protocol.drain_requests",
     "env_host": "doeff_cluster._worker.protocol.env_store",
@@ -861,6 +1175,230 @@ _LAZY_EXPORTS: dict[str, str] = {
     "store_entries": "doeff_cluster._worker.entry.code_prepare",
     "tree_files": "doeff_cluster._worker.protocol.tree_files",
     "warm_host": "doeff_cluster._worker.protocol.warm_host",
+    "CallJob": "doeff_cluster._shared.intent.job_call_model",
+    "CallShape": "doeff_cluster._shared.intent.service_model",
+    "CheckoutRoot": "doeff_cluster._shared.intent.checkout_model",
+    "CheckoutState": "doeff_cluster._shared.intent.checkout_model",
+    "ClusterSemaphore": "doeff_cluster._shared.intent.semaphore_model",
+    "ClusterTiming": "doeff_cluster._shared.intent.protocol",
+    "Counterpart": "doeff_cluster._shared.protocol.job_call_handlers",
+    "CreateNamedSemaphore": "doeff_cluster._shared.intent.semaphore_model",
+    "DETACHED_DEFAULT_LEASE_SECONDS": "doeff_cluster._shared.intent.detached_model",
+    "Declaration": "doeff_cluster._shared.intent.service_model",
+    "DeployedCannotAnswer": "doeff_cluster._shared.entry.deployed_cluster",
+    "DeployedCluster": "doeff_cluster._shared.entry.deployed_cluster",
+    "DesireCoordinator": "doeff_cluster._shared.intent.launch_model",
+    "DesireWorker": "doeff_cluster._shared.intent.launch_model",
+    "DetachedAwaited": "doeff_cluster._shared.intent.detached_model",
+    "DetachedCancelled": "doeff_cluster._shared.intent.detached_model",
+    "DetachedEnded": "doeff_cluster._shared.intent.detached_model",
+    "DetachedEnvUnavailable": "doeff_cluster._shared.intent.detached_model",
+    "DetachedFailed": "doeff_cluster._shared.intent.detached_model",
+    "DetachedLost": "doeff_cluster._shared.intent.detached_model",
+    "DetachedOutbox": "doeff_cluster._shared.intent.detached_model",
+    "DetachedOutboxAcked": "doeff_cluster._shared.intent.detached_model",
+    "DetachedOutboxAnswer": "doeff_cluster._shared.intent.detached_model",
+    "DetachedPending": "doeff_cluster._shared.intent.detached_model",
+    "DetachedQueueGroup": "doeff_cluster._shared.intent.detached_model",
+    "DetachedQueueReason": "doeff_cluster._shared.intent.detached_model",
+    "DetachedRefused": "doeff_cluster._shared.intent.detached_model",
+    "DetachedSubmitAnswer": "doeff_cluster._shared.intent.detached_model",
+    "DetachedSubmitted": "doeff_cluster._shared.intent.detached_model",
+    "DetachedSucceeded": "doeff_cluster._shared.intent.detached_model",
+    "DetachedTiming": "doeff_cluster._shared.intent.detached_model",
+    "DetachedTimingAnswer": "doeff_cluster._shared.intent.detached_model",
+    "DetachedUnknown": "doeff_cluster._shared.intent.detached_model",
+    "DetachedUnreachable": "doeff_cluster._shared.intent.detached_model",
+    "DetachedUnrunnable": "doeff_cluster._shared.intent.detached_model",
+    "DetachedVersionMismatch": "doeff_cluster._shared.intent.detached_model",
+    "DueNever": "doeff_cluster._shared.intent.due_model",
+    "DueNow": "doeff_cluster._shared.intent.due_model",
+    "ENV_MARKER": "doeff_cluster._shared.intent.env_marker_model",
+    "EnvUnavailable": "doeff_cluster._shared.intent.remote_model",
+    "EnvVar": "doeff_cluster._shared.intent.runtime_env_model",
+    "FACT_ENVIRON_NAMES": "doeff_cluster._shared.protocol.supplied_values",
+    "FENCE_MARGIN_MS": "doeff_cluster._shared.intent.semaphore_model",
+    "GroupLimit": "doeff_cluster._shared.intent.detached_model",
+    "HELD": "doeff_cluster._shared.intent.semaphore_model",
+    "HeldData": "doeff_cluster._shared.protocol.supplied_values",
+    "HeldLease": "doeff_cluster._shared.intent.semaphore_model",
+    "InvalidKind": "doeff_cluster._shared.intent.runtime_env_model",
+    "Job": "doeff_cluster._shared.intent.service_model",
+    "JobAnswer": "doeff_cluster._shared.intent.job_call_model",
+    "JobDestination": "doeff_cluster._shared.protocol.job_call_handlers",
+    "JobField": "doeff_cluster._shared.intent.job_call_model",
+    "JobNoWay": "doeff_cluster._shared.intent.job_reach_model",
+    "JobNotReached": "doeff_cluster._shared.intent.job_reach_model",
+    "JobPhase": "doeff_cluster._shared.intent.job_model",
+    "JobProcessSeen": "doeff_cluster._shared.intent.cluster_control",
+    "JobProcessWaitExpired": "doeff_cluster._shared.intent.cluster_control",
+    "JobReached": "doeff_cluster._shared.intent.job_reach_model",
+    "JobRequest": "doeff_cluster._shared.intent.job_call_model",
+    "JobSpec": "doeff_cluster._shared.intent.job_model",
+    "JobUnreachable": "doeff_cluster._shared.intent.job_call_model",
+    "JobWay": "doeff_cluster._shared.intent.job_reach_model",
+    "KUBE_API": "doeff_cluster._shared.protocol.supplied_values",
+    "KubeIngress": "doeff_cluster._shared.intent.kube_service_model",
+    "KubeService": "doeff_cluster._shared.intent.kube_service_model",
+    "KubeServicePort": "doeff_cluster._shared.intent.kube_service_model",
+    "KubeServiceType": "doeff_cluster._shared.intent.kube_service_model",
+    "LEASE_MAX_TTL_MS": "doeff_cluster._shared.intent.semaphore_model",
+    "LOST": "doeff_cluster._shared.intent.semaphore_model",
+    "LaunchEnvMissing": "doeff_cluster._shared.core.launch_rules",
+    "LeaseAnswer": "doeff_cluster._shared.intent.semaphore_model",
+    "LeaseLost": "doeff_cluster._shared.intent.semaphore_model",
+    "LeaseStanding": "doeff_cluster._shared.intent.semaphore_model",
+    "LocalCheckout": "doeff_cluster._shared.intent.checkout_model",
+    "ModuleOrigin": "doeff_cluster._shared.intent.runtime_identity_model",
+    "NativeWheel": "doeff_cluster._shared.intent.runtime_env_model",
+    "OBJECT_SPELLING": "doeff_cluster._shared.core.supplied_spelling",
+    "OUTBOX_ENDED": "doeff_cluster._shared.intent.detached_model",
+    "OUTBOX_QUEUED_OVERDUE": "doeff_cluster._shared.intent.detached_model",
+    "PlainText": "doeff_cluster._shared.intent.protocol",
+    "ProcessEnded": "doeff_cluster._shared.intent.process_model",
+    "ProcessFacts": "doeff_cluster._shared.intent.runtime_identity_model",
+    "ProcessWaitExpired": "doeff_cluster._shared.intent.process_model",
+    "ProjectOfCheckout": "doeff_cluster._shared.intent.checkout_model",
+    "PythonProject": "doeff_cluster._shared.intent.runtime_env_model",
+    "RETIREMENT_HOLD": "doeff_cluster._shared.intent.readiness_model",
+    "RETIREMENT_HOLD_PERMITS": "doeff_cluster._shared.intent.readiness_model",
+    "ROLE_ACTIVE": "doeff_cluster._shared.intent.readiness_model",
+    "ROLE_STANDBY": "doeff_cluster._shared.intent.readiness_model",
+    "ReachDestination": "doeff_cluster._shared.protocol.job_reach_handlers",
+    "ReachFailure": "doeff_cluster._shared.intent.job_reach_model",
+    "ReachJob": "doeff_cluster._shared.intent.job_reach_model",
+    "ReadCheckout": "doeff_cluster._shared.intent.checkout_model",
+    "ReadProcessGauges": "doeff_cluster._shared.intent.metrics_model",
+    "ReadRuntimeFacts": "doeff_cluster._shared.intent.runtime_identity_model",
+    "ReadinessClaim": "doeff_cluster._shared.intent.readiness_model",
+    "ReadinessLog": "doeff_cluster._shared.protocol.readiness_handlers",
+    "ReadinessWaitExpired": "doeff_cluster._shared.intent.cluster_control",
+    "RecordArgument": "doeff_cluster._shared.intent.service_model",
+    "RepoCheckout": "doeff_cluster._shared.intent.runtime_env_model",
+    "Request": "doeff_cluster._shared.intent.protocol",
+    "RestartRefused": "doeff_cluster._shared.intent.cluster_control",
+    "RouteRefused": "doeff_cluster._shared.protocol.coordinator_route",
+    "RouteUnreachable": "doeff_cluster._shared.protocol.coordinator_route",
+    "RunContext": "doeff_cluster._shared.intent.run_context",
+    "RunnerFact": "doeff_cluster._shared.intent.detached_model",
+    "RunnersChange": "doeff_cluster._shared.intent.detached_model",
+    "RunnersChangeAnswer": "doeff_cluster._shared.intent.detached_model",
+    "RunnersUnreachable": "doeff_cluster._shared.intent.detached_model",
+    "RunnersWatchMissing": "doeff_cluster._shared.intent.detached_model",
+    "RuntimeEnv": "doeff_cluster._shared.intent.runtime_env_model",
+    "RuntimeIdentityMismatch": "doeff_cluster._shared.intent.runtime_identity_model",
+    "SEMAPHORE_PREFIX": "doeff_cluster._shared.intent.semaphore_model",
+    "SENDER_SOURCE_DIR": "doeff_cluster._shared.protocol.checkout_reads",
+    "SERVICE_ACCOUNT_CA_FILE": "doeff_cluster._shared.protocol.supplied_values",
+    "SERVICE_ACCOUNT_DIR": "doeff_cluster._shared.protocol.supplied_values",
+    "SERVICE_ACCOUNT_TOKEN_FILE": "doeff_cluster._shared.protocol.supplied_values",
+    "SERVICE_BACK_CHANGE_SECONDS": "doeff_cluster._shared.core.service_back",
+    "STANDBY": "doeff_cluster._shared.intent.semaphore_model",
+    "SemaphoreSession": "doeff_cluster._shared.core.semaphore_handlers",
+    "SenderSourceRoot": "doeff_cluster._shared.intent.checkout_model",
+    "ServiceFact": "doeff_cluster._shared.intent.detached_model",
+    "ServiceFailed": "doeff_cluster._shared.intent.cluster_control",
+    "ServiceListWire": "doeff_cluster._shared.intent.detached_model",
+    "ServiceReadiness": "doeff_cluster._shared.intent.cluster_control",
+    "ServiceReady": "doeff_cluster._shared.intent.detached_model",
+    "ServiceRestarted": "doeff_cluster._shared.intent.cluster_control",
+    "ServicesUnreachable": "doeff_cluster._shared.intent.detached_model",
+    "SuppliedKind": "doeff_cluster._shared.intent.supplied_model",
+    "SuppliedObjectRef": "doeff_cluster._shared.intent.supplied_model",
+    "SuppliedRef": "doeff_cluster._shared.intent.supplied_model",
+    "SuppliedValueUnavailable": "doeff_cluster._shared.intent.supplied_model",
+    "System": "doeff_cluster._shared.intent.service_model",
+    "TaskFailed": "doeff_cluster._shared.intent.remote_model",
+    "TaskLimit": "doeff_cluster._shared.intent.detached_model",
+    "TaskSucceeded": "doeff_cluster._shared.intent.remote_model",
+    "UnsendableProgram": "doeff_cluster._shared.intent.remote_model",
+    "WarmFailure": "doeff_cluster._shared.intent.warm_model",
+    "WarmState": "doeff_cluster._shared.intent.warm_model",
+    "WarmUnreachable": "doeff_cluster._shared.intent.warm_model",
+    "WorkerFactMissing": "doeff_cluster._shared.intent.supplied_model",
+    "WorkerFactName": "doeff_cluster._shared.intent.supplied_model",
+    "WriteFenced": "doeff_cluster._shared.intent.semaphore_model",
+    "answer_body": "doeff_cluster._shared.protocol.coordinator_reads",
+    "canonical_argument": "doeff_cluster._shared.core.service_rules",
+    "check_runtime_identity": "doeff_cluster._shared.core.runtime_identity",
+    "checkout_reads": "doeff_cluster._shared.protocol.checkout_reads",
+    "checkout_root": "doeff_cluster._shared.protocol.checkout_reads",
+    "checkout_state_at": "doeff_cluster._shared.protocol.checkout_reads",
+    "cluster_semaphore": "doeff_cluster._shared.core.semaphore_handlers",
+    "current_platform": "doeff_cluster._shared.core.native_wheel",
+    "datetime_of_epoch_ms": "doeff_cluster._shared.core.clock",
+    "declaring_refusal": "doeff_cluster._shared.core.declaring",
+    "decode_outcome": "doeff_cluster._shared.protocol.program_codec",
+    "deployed_cluster": "doeff_cluster._shared.entry.deployed_cluster",
+    "deployed_cluster_answers": "doeff_cluster._shared.entry.deployed_cluster",
+    "detached_cluster": "doeff_cluster._shared.protocol.detached",
+    "detached_path": "doeff_cluster._shared.protocol.detached",
+    "encode_program": "doeff_cluster._shared.protocol.program_codec",
+    "environ_overlay_refusal": "doeff_cluster._shared.core.service_rules",
+    "foundation_needs_refusal": "doeff_cluster._shared.core.service_rules",
+    "given_runtime_facts": "doeff_cluster._shared.protocol.runtime_facts",
+    "holder_tokens_prefix": "doeff_cluster._shared.core.lease_rules",
+    "host_reader": "doeff_cluster._shared.entry.host_reader",
+    "hyx_runtime_env_XgreaterHthan_signXjson": "doeff_cluster._shared.core.runtime_env_rules",
+    "identity_of": "doeff_cluster._shared.core.service_rules",
+    "job": "doeff_cluster._shared.entry.service_build",
+    "job_answer_of": "doeff_cluster._shared.protocol.job_call_handlers",
+    "job_call_handover": "doeff_cluster._shared.protocol.job_call_handlers",
+    "job_call_sender": "doeff_cluster._shared.protocol.job_call_handlers",
+    "job_named": "doeff_cluster._shared.core.service_rules",
+    "job_reach_handover": "doeff_cluster._shared.protocol.job_reach_handlers",
+    "job_reach_sender": "doeff_cluster._shared.protocol.job_reach_handlers",
+    "job_target": "doeff_cluster._shared.protocol.job_call_handlers",
+    "kube_services_api": "doeff_cluster._shared.protocol.kube_services",
+    "lease_full_until": "doeff_cluster._shared.core.lease_rules",
+    "lease_holder": "doeff_cluster._shared.core.lease_rules",
+    "lease_holder_of": "doeff_cluster._shared.entry.cluster_foundation",
+    "lease_op": "doeff_cluster._shared.core.lease_rules",
+    "leases_fence": "doeff_cluster._shared.core.semaphore_handlers",
+    "live_holders": "doeff_cluster._shared.core.lease_rules",
+    "metrics_http": "doeff_cluster._shared.protocol.metrics_handlers",
+    "metrics_memory": "doeff_cluster._shared.protocol.metrics_memory",
+    "monotonic_ms_of": "doeff_cluster._shared.core.clock",
+    "named_semaphore_local": "doeff_cluster._shared.core.semaphore_handlers",
+    "outside_holders": "doeff_cluster._shared.core.lease_rules",
+    "process_runtime_facts": "doeff_cluster._shared.protocol.runtime_facts",
+    "program_sha": "doeff_cluster._shared.core.remote_rules",
+    "readiness_claims": "doeff_cluster._shared.protocol.readiness_handlers",
+    "readiness_from_environ": "doeff_cluster._shared.core.readiness_rules",
+    "readiness_http": "doeff_cluster._shared.protocol.readiness_handlers",
+    "remote_cluster": "doeff_cluster._shared.protocol.remote",
+    "resolve": "doeff_cluster._shared.entry.service_build",
+    "resolve_value": "doeff_cluster._shared.entry.service_build",
+    "runtime_env_of_checkouts": "doeff_cluster._shared.core.runtime_env",
+    "semaphore_key": "doeff_cluster._shared.core.lease_rules",
+    "service_account_text": "doeff_cluster._shared.protocol.supplied_values",
+    "service_answer": "doeff_cluster._shared.protocol.coordinator_reads",
+    "service_back": "doeff_cluster._shared.core.service_back",
+    "service_back_within": "doeff_cluster._shared.core.service_back",
+    "service_facts_of_view": "doeff_cluster._shared.protocol.detached",
+    "shared_http": "doeff_cluster._shared.protocol.shared_handlers",
+    "spec_hash": "doeff_cluster._shared.core.job_rules",
+    "standby_divert": "doeff_cluster._shared.core.semaphore_handlers",
+    "submit_detached_task": "doeff_cluster._shared.core.detached_rules",
+    "supplied_directory": "doeff_cluster._shared.protocol.supplied_values",
+    "supplied_object_ref_of": "doeff_cluster._shared.protocol.supplied_values",
+    "supplied_ref_of": "doeff_cluster._shared.protocol.supplied_values",
+    "supplied_ref_text": "doeff_cluster._shared.protocol.supplied_values",
+    "supplied_setting": "doeff_cluster._shared.protocol.supplied_values",
+    "supplied_spellings": "doeff_cluster._shared.core.supplied_spelling",
+    "supplied_value": "doeff_cluster._shared.protocol.supplied_values",
+    "system_declaration": "doeff_cluster._shared.entry.service_build",
+    "system_of": "doeff_cluster._shared.entry.service_build",
+    "task_limits_json": "doeff_cluster._shared.core.detached_rules",
+    "update_body": "doeff_cluster._shared.protocol.declaration_requests",
+    "warm_answer": "doeff_cluster._shared.protocol.detached",
+    "warm_cluster": "doeff_cluster._shared.protocol.detached",
+    "warm_path": "doeff_cluster._shared.protocol.detached",
+    "warm_runtime_env": "doeff_cluster._shared.core.warm_rules",
+    "with_cluster_handlers": "doeff_cluster._shared.entry.cluster_foundation",
+    "with_detached_client": "doeff_cluster._shared.entry.client_foundation",
+    "with_meter_report": "doeff_cluster._shared.protocol.meter_report",
+    "worker_fact": "doeff_cluster._shared.protocol.supplied_values",
 }
 
 

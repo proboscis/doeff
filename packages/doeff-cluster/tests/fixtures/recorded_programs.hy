@@ -15,12 +15,12 @@
 (import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_cluster [HOST-CONTRACT os-environ-reader])
-(import doeff_cluster.shared.entry.host_reader [host-reader])
+(import doeff_cluster [host-reader])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
+(import doeff_cluster [ReadShared WriteShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
+(import doeff_cluster._shared.entry.boundary_recorder [boundary-recorder])
 
 
 ;; --- 業務の effect と翻訳 ------------------------------------------------------------------------------

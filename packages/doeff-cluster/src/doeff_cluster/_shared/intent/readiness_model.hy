@@ -1,0 +1,74 @@
+;;; service が「準備できた」を報告する effect(process の生存とは別の、業務の条件つきの readiness)。
+;;;
+;;; 業務コード(service の Program)は拍ごとに ReportReady を出す。何をもって準備できたとするかは service が決める
+;;; (書き手なら「書き先へ書けた・または書く必要が無いと判断した拍を終えた」)。coordinator は Service の宣言の
+;;; readiness {"windowSeconds": n} を見て、同じ担い手・同じ版からの ready が直近 n 秒以内にある時だけ Ready とする。
+;;; 報告が途絶えれば(拍が止まった・落ちた)window を過ぎて NotReady になる。Rollout はこの Ready を見て旧を止める。
+;;;
+;;; handler は 2 つ(readiness_handlers.hy): readiness-http = coordinator へ送る・readiness-claims = テストと模擬の記録(ReadinessLog)。
+;;; 宣言の readiness の形の検め(readiness-refusal)・入れ替えの期限(handoff-timeout-ms)は doeff_cluster._shared.core.readiness_rules
+;;; (宣言の側と coordinator の側が使う)・報告の揃え(reported-readiness)は doeff_cluster._shared.core.readiness_report。ここは型と定数だけ。
+(require doeff-hy.macros [val])
+(require doeff-hy.record [defrecord])
+(val MODULE-TAGS {:context "doeff-cluster" :role "intent"})
+(import dataclasses [dataclass])
+(import doeff [EffectBase])
+(import typing [ClassVar])
+(import doeff_cluster._shared.intent.record_spec [RecordSpec RecordMode Unexecuted])
+
+
+(setv ROLE-ACTIVE "active" ROLE-STANDBY "standby")
+
+;; --- 宣言の readiness の形 ---
+;; {"windowSeconds" n "handoffTimeoutSeconds" m?}。windowSeconds = 直近 n 秒以内の「準備できた」だけを Ready と数える。
+;; handoffTimeoutSeconds = 入れ替え(update = handoff)の新の世代が動き出してから Ready になるまで待つ上限(既定 300 — Rollout の
+;; readyTimeoutSeconds の既定と同じ)。越えたら coordinator が入れ替えを諦め(新を止めて旧を残す — handoff_policy)、Service の status に
+;; 理由を出す。期限は handoff の Service だけが持つ(recreate の宣言に書けば断る — 効かない欄を黙って受けない)。
+;; retiredSeconds = 入れ替えで退いた process の寿命の上限(#4072 の D-2・handoff の Service だけ・既定なし)。書いた Service は、新の世代が
+;; Ready と数えられても退いた旧を止めず、旧が自分で終わるか、退いてからこの秒を越えた時に止める(旧が持つ仕事を終わりまで回す — 旧が
+;; 退きの保ち RETIREMENT-HOLD を持つ間は、この秒を越えても止めない・下の註)。
+;; 書かない Service は今どおり新の Ready で旧を止める(lease を持つ書き手は、旧が止まって lease を返すまで新が書けないため)。
+;; retiredLimit = 退いた process を同時に残す数の上限 R(正の整数・handoff の Service だけ・既定なし = worker の WorkerPolicy.retired-limit)。
+;; 退いた process が R に達している間の宣言し直しは、退いた process を止めず、今の process も退かせずに待つ(#4072 の D-3 の改め —
+;; 退いた process は自分で終わるか寿命の上限でだけ止まる)。長い仕事を持つ退いた process が並ぶ Service は大きい R を書いて待ちを減らす。
+;; 欄の値は数の代わりに、同じ job の :environ に宣言した名(文字列)で書ける(例 {"windowSeconds" 30 "retiredSeconds" "RETIRED_SECONDS"} と
+;; :environ {"RETIRED_SECONDS" "21600"})。宣言の組み立て(service_build.system-declaration)が、environ の上書きを重ねた後のその名の値を
+;; JSON の数として読んで行に載せる — coordinator が受ける行の readiness はいつも数。宣言の既定の値は :environ の 1 か所に在り、宣言し直しの
+;; environ の上書き(declare の --environ・sim-cluster の Redeclare)で変えられる(上書きは spec-hash に入るので入れ替わる)。
+(val HANDOFF-TIMEOUT-SECONDS 300)
+(val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds" "retiredLimit"))
+
+;; 退きの保ち(card ki-e3531030eb37): 寿命の上限 retiredSeconds は、自分で終わらない退いた process(引き継ぎが来ない・固まった)を受け止める
+;; 物で、仕事の長さの上限ではない。退いた process が走っている仕事を終わりまで回す間は、この名の名前付きの lease を取って持つ
+;; (CreateNamedSemaphore RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS → AcquireSemaphore・終えたら ReleaseSemaphore)。持つ間は、退いてから上限を
+;; 越えても worker が止めない(coordinator が期限の内の持ち手の世代の名を worker への返事の JobSpec.retired-held に載せ、worker の
+;; retired-actions が読む)。保ちは子の lease の session が延ばすので、process が止まる・固まると期限で切れ、その拍から上限が今どおり効く。
+;; 持ち手は lease の担い手の名(<job>/<process の世代の名>)で job ごとに分かれるので、行は 1 つ・数は退いた process の数より十分に大きい。
+(val RETIREMENT-HOLD "retirement-hold")
+(val RETIREMENT-HOLD-PERMITS 1024)
+
+
+;; 報告の reason を coordinator が残す長さ(字)。
+(val REASON-KEPT-CHARS 300)
+;; 報告の本文の 1 つの欄の素の値(JSON の値)。
+(val JsonField (| dict list str int float bool None))
+
+
+(defclass [(dataclass :frozen True)] ReportReady [(get EffectBase None)]
+  "結果は None。ready = 準備できた(真)/できていない(偽)。reason = 人が読む理由(短く)。報告が届かなくても業務は止めない。
+   role(2026-09-24)= active(本当に仕事をしている)か standby(名前付きの lease を他が持つ間、書きを捨てて拍を回している待機)。
+   coordinator は standby の Ready も Service の Ready に数える(入れ替えで旧を止める合図)が、書き手の計器
+   doeff_worker_service_ready_replicas は active の Ready だけを数える(alert の材料)。"
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT :unexecuted Unexecuted.NOTHING))
+  (#^ bool ready)
+  (setv #^ str reason "")
+  (setv #^ str role ROLE-ACTIVE))
+
+
+(defrecord ReadinessClaim
+  "報告 1 つを coordinator が残す形に揃えた物(shared/core/readiness_report.reported-readiness の答え — coordinator と fake が同じ形で残す):
+   ready = 準備できたか・reason = 理由の先頭 REASON-KEPT-CHARS 字・role = ROLE-ACTIVE か ROLE-STANDBY(standby 以外は active と読む)。
+   以前は 3 欄の dict で、使い手が欄の名の綴りで読んでいた(#3028)。"
+  (#^ bool ready)
+  (#^ str reason)
+  (#^ str role))

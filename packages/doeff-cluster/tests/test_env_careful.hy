@@ -18,15 +18,16 @@
 (import os)
 (import sys)
 (import pathlib [Path])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [env-key])
-(import doeff_cluster.shared.core.native_wheel [current-platform])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster [RuntimeEnv]
+        doeff_cluster._shared.intent.runtime_env_model [EnvFailureKind])
+(import doeff_cluster [env-key])
+(import doeff_cluster [current-platform])
+(import doeff_cluster [ENV-MARKER])
 (import doeff_cluster._worker.protocol.env_store [env-root])
 (import doeff_cluster._worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects [EnvEntry StartProcess])
 (import doeff_cluster [CodeState CodeView])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed])
+(import doeff_cluster [TaskSucceeded TaskFailed])
 (import doeff_cluster [process-versions])
 
 
@@ -194,8 +195,8 @@
   (assert (any (gfor p (get results "leaky") (in "PYTHONPATH" p))) "子に PYTHONPATH を残すと筋書き 1 が赤")
   (assert (any (gfor p (get results "restarting") (in "worker の pid" p))) "worker の再起動で走らせると筋書き 2 が赤")
   ;; 送り手の版の doeff を 1 つずらす → 子が復元を断り、欄の名と env のキーが載る
-  (import doeff_cluster.shared.intent.detached_model [DetachedVersionMismatch])
-  (import doeff_cluster.shared.protocol.detached [outcome-from-task-outcome])
+  (import doeff_cluster [DetachedVersionMismatch])
+  (import doeff_cluster._shared.protocol.detached [outcome-from-task-outcome])
   (<- key str (env-key env (current-platform)))
   (val shifted (| (! (process-versions {})) {"doeff" "0.0.0-shifted"}))  ; 送り手は env の root の外(careful_rig の run-task と同じ)
   (<- refused (run-task rig env "shifted" :versions shifted))

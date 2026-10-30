@@ -498,6 +498,20 @@
    "why": "上の再輸出の綴り"
   },
   {
+   "handler": "doeff_cluster._shared.entry.host_reader:host-reader",
+   "touches": [
+    "env"
+   ],
+   "why": "os.environ の DOEFF_WORKER_PROGRAM と子の文脈(foundation の読みを通す — 古い置き場 foundation/host_contract の host-reader は 2026-10-03 に消した)"
+  },
+  {
+   "handler": "doeff_cluster:host_reader",
+   "touches": [
+    "env"
+   ],
+   "why": "host_reader の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.entry.host_reader:host-reader",
    "touches": [
     "env"
@@ -554,6 +568,20 @@
    "why": "httpx で kubernetes の API"
   },
   {
+   "handler": "doeff_cluster._shared.protocol.readiness_handlers:readiness-http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "coordinator へ httpx で POST"
+  },
+  {
+   "handler": "doeff_cluster:readiness_http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "readiness_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.protocol.readiness_handlers:readiness-http",
    "touches": [
     "cluster"
@@ -561,11 +589,41 @@
    "why": "coordinator へ httpx で POST"
   },
   {
+   "handler": "doeff_cluster._shared.protocol.metrics_handlers:metrics-http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "coordinator へ httpx で POST"
+  },
+  {
+   "handler": "doeff_cluster:metrics_http",
+   "touches": [
+    "cluster"
+   ],
+   "why": "metrics_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.protocol.metrics_handlers:metrics-http",
    "touches": [
     "cluster"
    ],
    "why": "coordinator へ httpx で POST"
+  },
+  {
+   "handler": "doeff_cluster._shared.protocol.shared_handlers:shared-http",
+   "touches": [
+    "cluster",
+    "clock"
+   ],
+   "why": "coordinator の board・leases へ httpx・time.sleep の再送"
+  },
+  {
+   "handler": "doeff_cluster:shared_http",
+   "touches": [
+    "cluster",
+    "clock"
+   ],
+   "why": "shared_http の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.shared_handlers:shared-http",
@@ -576,6 +634,20 @@
    "why": "coordinator の board・leases へ httpx・time.sleep の再送"
   },
   {
+   "handler": "doeff_cluster._shared.protocol.remote:remote-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "TaskClient で coordinator へ"
+  },
+  {
+   "handler": "doeff_cluster:remote_cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "remote_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.protocol.remote:remote-cluster",
    "touches": [
     "cluster"
@@ -583,11 +655,39 @@
    "why": "TaskClient で coordinator へ"
   },
   {
+   "handler": "doeff_cluster._shared.protocol.detached:detached-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "DetachedClient(httpx)"
+  },
+  {
+   "handler": "doeff_cluster:detached_cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "detached_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.protocol.detached:detached-cluster",
    "touches": [
     "cluster"
    ],
    "why": "DetachedClient(httpx)"
+  },
+  {
+   "handler": "doeff_cluster._shared.protocol.detached:warm-cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "WarmClient の /warm"
+  },
+  {
+   "handler": "doeff_cluster:warm_cluster",
+   "touches": [
+    "cluster"
+   ],
+   "why": "warm_cluster の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_cluster.shared.protocol.detached:warm-cluster",
@@ -629,6 +729,20 @@
    "why": "fsync・rename"
   },
   {
+   "handler": "doeff_cluster._shared.entry.cluster_foundation:with-cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
+  },
+  {
+   "handler": "doeff_cluster:with_cluster_handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "with_cluster_handlers の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_cluster.shared.entry.cluster_foundation:with-cluster-handlers",
    "touches": [
     "cluster"
@@ -636,11 +750,34 @@
    "why": "組み立て — readiness-http・shared-http・remote-cluster などの実 I/O の handler を被せる"
   },
   {
+   "handler": "doeff_cluster._shared.entry.cluster_foundation:cluster-handlers",
+   "touches": [
+    "cluster"
+   ],
+   "why": "組み立て — 上の列そのもの"
+  },
+  {
    "handler": "doeff_cluster.shared.entry.cluster_foundation:cluster-handlers",
    "touches": [
     "cluster"
    ],
    "why": "組み立て — 上の列そのもの"
+  },
+  {
+   "handler": "doeff_cluster._shared.entry.client_foundation:with-detached-client",
+   "touches": [
+    "cluster",
+    "env"
+   ],
+   "why": "組み立て — 手元の道具の名乗りで detached-cluster を被せる・版の識別に os.environ の DOEFF_RUNTIME_ENV_KEY を読む(#2782)"
+  },
+  {
+   "handler": "doeff_cluster:with_detached_client",
+   "touches": [
+    "cluster",
+    "env"
+   ],
+   "why": "with_detached_client の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_cluster.shared.entry.client_foundation:with-detached-client",

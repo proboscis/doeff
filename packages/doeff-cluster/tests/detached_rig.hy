@@ -16,9 +16,9 @@
 (import doeff_core_effects [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster [tick])
 (import doeff_cluster._coordinator.core.detached_policy [outbox-noted])
 (import doeff_cluster [responded])
@@ -27,10 +27,10 @@
 (import doeff_cluster [environ-table-reader])
 (import doeff_cluster._worker.entry.job_entry [read-program])
 (import doeff_cluster [JobStatus]
-        doeff_cluster._worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobPhase JobSpec])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
-(import doeff_cluster.shared.protocol.program_codec [encode-outcome])
-(import doeff_cluster.shared.core.remote_rules [failed-from])
+        doeff_cluster._worker.intent.worker_model [DesiredJobs] doeff_cluster [JobPhase JobSpec])
+(import doeff_cluster [TaskSucceeded])
+(import doeff_cluster._shared.protocol.program_codec [encode-outcome])
+(import doeff_cluster._shared.core.remote_rules [failed-from])
 
 
 ;; 担い手の既定の能力(筋書きの task の needs — sim の組・coordinator の組・served の組の担い手が共に提供する)。

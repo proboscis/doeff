@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "intent"})
 (import dataclasses [dataclass])
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerInfo])
-(import doeff_cluster.shared.intent.service_model [UPDATE-FORMS])
+(import doeff_cluster._shared.intent.service_model [UPDATE-FORMS])
 
 
 ;; --- 入力 ---------------------------------------------------------------------------------------------------------------------
