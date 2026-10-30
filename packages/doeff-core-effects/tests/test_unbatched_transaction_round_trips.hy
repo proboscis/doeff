@@ -37,8 +37,8 @@
                         :primary-key #("id")))
 
 ;; 基点の往復の列(PostgreSQL)— 文 1 つが往復 1 回。SqlInsertRows は executemany(行ごとの文を 1 往復で)。引数は wire の綴り($1 …)。
-;; ROLLBACK の後の DEALLOCATE ALL は driver(psycopg)が流す — psycopg が自分で prepare した文を覚えている接続で ROLLBACK を流すと、
-;; transaction の中で prepare した文が消えたかもしれないので、覚えを捨てて DEALLOCATE ALL を流す(答え手の手順ではない)。
+;; 基点では ROLLBACK の後に driver(psycopg)が DEALLOCATE ALL を流していた(psycopg が自分で prepare した文を覚えている接続で ROLLBACK を
+;; 見ると、覚えを捨てて流す)。psycopg の自動の prepare を止めたので流れない(名の持ち主は doeff 1 つ — agora card ki-2c5646a8a2c1)。
 (val INSERT-PARAMS "INSERT INTO items (id, label) VALUES ($1, $2)")
 (val LOCK-WIRE "SELECT pg_advisory_xact_lock(hashtext($1))")
 (val BASE-POSTGRES-ROUND-TRIPS
@@ -47,7 +47,7 @@
    "SQL を出さない(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #("COMMIT"))
    "SQL を出さない(錠なし)" #(#("BEGIN") #("COMMIT"))
    "途中で落ちて ROLLBACK" #(#("BEGIN") #("INSERT INTO items (id, label) VALUES (110, 'x')")
-                             #("INSERT INTO items (id, label) VALUES (110, 'y')") #("ROLLBACK") #("DEALLOCATE ALL"))
+                             #("INSERT INTO items (id, label) VALUES (110, 'y')") #("ROLLBACK"))
    "預かり所の commit-rows の形(錠あり)" #(#("BEGIN") #(LOCK-WIRE) #("SELECT version FROM accounts WHERE id = $1")
                                             #("SELECT version FROM accounts WHERE id = $1")
                                             #("INSERT INTO accounts (id, version) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET version = excluded.version")
