@@ -9500,11 +9500,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — effect にする": {
-     "doeff_core_effects.aiohttp_http_server": [
-      "probe_answer",
-      "probe_for",
-      "send_overflows"
-     ],
      "doeff_core_effects.aiohttp_ws_client": [
       "closed_answer"
      ],
@@ -9529,11 +9524,6 @@
      "doeff_core_effects.scheduler_step_tally": [
       "set_scheduler_trace"
      ],
-     "doeff_core_effects.scripted_http_server": [
-      "probe_answer",
-      "probe_for",
-      "send_overflows"
-     ],
      "doeff_core_effects.scripted_ws_client": [
       "closed_answer"
      ],
@@ -9542,38 +9532,6 @@
      ]
     },
     "外れ — handler の中へ入れる": {
-     "doeff_core_effects.aiohttp_http_server": [
-      "ABNORMAL_CLOSE_CODES",
-      "Arrivals",
-      "BODY_CHUNK_BYTES",
-      "CONNECT_SECONDS",
-      "Carried",
-      "EDGE_KEY",
-      "EDGE_LOOPS",
-      "EDGE_LOOP_LOCK",
-      "FILE_CHUNK_BYTES",
-      "HOP_BY_HOP",
-      "HTTP_READ_SECONDS",
-      "IDLE_CONNECTION_SECONDS",
-      "MODULE_TAGS",
-      "NORMAL_CLOSE",
-      "NO_STATUS_CLOSE",
-      "PREFETCH_BYTES",
-      "RELAY_FAILED_CLOSE",
-      "WS_HANDSHAKE_PREFIX",
-      "WS_UPSTREAM_CONNECT_SECONDS",
-      "WS_UPSTREAM_HANDSHAKE_SECONDS",
-      "WsPeer",
-      "forwarded_headers",
-      "hop_names",
-      "next_on_edge",
-      "pump",
-      "read_on_edge",
-      "refusal_status",
-      "relay_failed",
-      "sendable_close",
-      "upgrade_asked"
-     ],
      "doeff_core_effects.aiohttp_ws_client": [
       "AIOHTTP_WS_EFFECTS",
       "AIOHTTP_WS_HANDLES",
@@ -10057,26 +10015,6 @@
      "doeff_core_effects.scripted_freeze": [
       "MODULE_TAGS"
      ],
-     "doeff_core_effects.scripted_http_server": [
-      "CLOSED_REASON",
-      "EMPTY_REPORT",
-      "MODULE_TAGS",
-      "ProbeHit",
-      "ScriptTake",
-      "bodies_by_ticket",
-      "body_text",
-      "declared_length",
-      "probe_hit",
-      "probe_served",
-      "script_take",
-      "scripted_body_outcome",
-      "served_of",
-      "tally_dropped",
-      "tally_flushed",
-      "tally_queued",
-      "upstream_for",
-      "without_ticket"
-     ],
      "doeff_core_effects.scripted_proc_table": [
       "MODULE_TAGS"
      ],
@@ -10183,16 +10121,6 @@
      ]
     },
     "外れ — 内側の module へ移す": {
-     "doeff_core_effects.aiohttp_http_server": [
-      "DEFAULT_DRAIN_SECONDS",
-      "FLUSH_SAMPLES_LIMIT",
-      "WS_CLOSE_ABNORMAL",
-      "WS_CUT_REASON",
-      "WS_REFUSAL_TEXT",
-      "carries_content",
-      "closing_of",
-      "ws_refusal_status"
-     ],
      "doeff_core_effects.aiohttp_ws_client": [
       "link_name"
      ],
@@ -10387,15 +10315,6 @@
       "EMPTY_STEP_TALLY",
       "scheduler_trace_sink"
      ],
-     "doeff_core_effects.scripted_http_server": [
-      "DEFAULT_WS_SEND_MAX_BYTES",
-      "FLUSH_SAMPLES_LIMIT",
-      "WS_CUT_REASON",
-      "WS_REFUSAL_TEXT",
-      "carries_content",
-      "closing_of",
-      "ws_refusal_status"
-     ],
      "doeff_core_effects.scripted_warm_process": [
       "signal_number_of",
       "warm_answer_late",
@@ -10488,7 +10407,6 @@
     },
     "外れ — submodule を _ で隠す": {
      "(submodule)": [
-      "doeff_core_effects.aiohttp_http_server",
       "doeff_core_effects.aiohttp_ws_client",
       "doeff_core_effects.apart_call",
       "doeff_core_effects.cache",
@@ -10546,7 +10464,6 @@
       "doeff_core_effects.scheduler_channel",
       "doeff_core_effects.scheduler_step_tally",
       "doeff_core_effects.scripted_freeze",
-      "doeff_core_effects.scripted_http_server",
       "doeff_core_effects.scripted_proc_table",
       "doeff_core_effects.scripted_process",
       "doeff_core_effects.scripted_warm_process",

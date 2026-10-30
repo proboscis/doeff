@@ -39,6 +39,11 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    docs/adr)が部品の import の根を import すれば赤(file と行と module を名指す)。失敗ケース: 使い捨ての repo で、素の import・
    from・下の module・Hy の import と require・importlib と pytest.importorskip に渡す名の文字列は赤、doeff の根と doeff._vm から
    読む形と、部品そのもの・doeff の根の package・doeff の検(tests/)の import は緑。
+9. 入口(import の根の __init__)の出す名と同じ名の子(移し替えの module を含む)を根の下に置かない(ADR-DOE-API-001 R34・
+   card ki-db44e4d3efe4 — 古い path の import が親の属性を module に束ね、入口の関数を隠して記録の service が起動の度に
+   落ちた)。package ごとに 2 つで照らす: 字面の照合(入口の file が束ねる名と子の名)と、新しい process で根と全部の公開の
+   module(古い path を含む)を 1 つずつ import した後も入口の名が module に替わらない確かめ。失敗ケース: 使い捨ての package
+   の入口が関数 serve(遅延)・tool(すぐ)を出す所に同じ名の移し替えの module を置くと両方が赤・殻を消すと緑。
 """
 
 from __future__ import annotations
@@ -622,6 +627,213 @@ def test_the_known_table_only_shrinks_from_its_first_version() -> None:
         "既知の表の「名」の組に、最初の版に無い名が在る — 表は減るだけ。足すしか無い名は「足した名」に訳と決めつきで書く:\n"
         + "\n".join(f"  {package_dir} {module}.{name}" for package_dir, module, name in grown)
     )
+
+
+# --- 入口の名と同じ名の submodule(ADR-DOE-API-001 R34・card ki-db44e4d3efe4) ---
+
+#: 子の module の file の末尾(拡張の module は名の後の最初の . までが名)。
+_CHILD_SUFFIXES = (".py", ".pyi", ".hy")
+_EXTENSION_SUFFIXES = (".so", ".pyd")
+
+
+def _bound_by_entry(node: ast.stmt, root: str) -> Iterator[tuple[str, int]]:
+    """入口の top level の文 1 つが束ねる名と行(子の module そのものを束ねる import と ``*`` は数えない)。"""
+    # match の文で書かない: commit の hook の semgrep が match の文を構文として読めない(tools/hide_submodules.py と同じ)。
+    if isinstance(node, (ast.If, ast.Try)):
+        handlers = node.handlers if isinstance(node, ast.Try) else []
+        finals = node.finalbody if isinstance(node, ast.Try) else []
+        for inner in [*node.body, *(s for h in handlers for s in h.body), *node.orelse, *finals]:
+            yield from _bound_by_entry(inner, root)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield node.name, node.lineno
+    elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "_LAZY_EXPORTS" and isinstance(node.value, ast.Dict):
+                yield from (
+                    (key.value, key.lineno)
+                    for key in node.value.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                )
+            else:
+                yield target.id, node.lineno
+    elif isinstance(node, ast.ImportFrom):
+        own = (node.level == 1 and node.module is None) or (node.level == 0 and node.module == root)
+        for alias in node.names:
+            name = alias.asname or alias.name
+            if alias.name != "*" and not (own and alias.name in (name, f"_{name}")):
+                yield name, node.lineno
+
+
+def _is_child(path: Path) -> bool:
+    """import の根のすぐ下の、_ で始まらない子(module の file・package の dir・名前空間の dir)か。"""
+    if path.name.startswith(("_", ".")):
+        return False
+    if path.is_dir():
+        return any(any(path.glob(f"*{suffix}")) for suffix in _CHILD_SUFFIXES)
+    return path.name.endswith(_CHILD_SUFFIXES + _EXTENSION_SUFFIXES)
+
+
+def _child_names(root_dir: Path) -> dict[str, Path]:
+    """import の根のすぐ下の子の名から path へ(同じ名の .py と .pyi は名の順で先の file)。"""
+    return {
+        path.name.split(".")[0]: path
+        for path in sorted(root_dir.iterdir(), reverse=True)
+        if _is_child(path)
+    }
+
+
+def written_entry_name_clashes(package_dir: Path) -> list[str]:
+    """字面の照合: import の根の ``__init__.py`` が束ねる公開の名と同じ名の子(移し替えの module を含む)。
+
+    import の順に依らない — 移し替えの module が package の class を差し替えて束ねを捨てても(前の hide の手当て)赤。
+    """
+    repo = package_dir.parent.parent
+    entries = [
+        (root, root.path / "__init__.py")
+        for root in tool.read_layout(package_dir).roots
+        if (root.path / "__init__.py").is_file()
+    ]
+    return [
+        f"{root.name}.{name}: 入口 {init.relative_to(repo)} の {bound[name]} 行が出す名と同じ名の子"
+        f" {path.relative_to(repo)} が在る"
+        for root, init in entries
+        for bound in [_entry_bindings(init, root.name)]
+        for name, path in _child_names(root.path).items()
+        if name in bound
+    ]
+
+
+def _entry_bindings(init: Path, root: str) -> dict[str, int]:
+    """入口の file が top level で束ねる公開の名から、最初に束ねる行へ。"""
+    tree = ast.parse(init.read_text(encoding="utf-8"))
+    pairs = [pair for node in tree.body for pair in _bound_by_entry(node, root)]
+    return {name: line for name, line in reversed(pairs) if not name.startswith("_")}
+
+
+#: 新しい process の確かめ: 根を import して入口の公開の名(dir — 遅延の名を含む)のうち module でない物を控え、公開の
+#: module(移し替えの module の古い path と、移した package の下の古い名を含む)を 1 つずつ import し、そのたびに入口の
+#: 名が module に替わったかを見る。最後に入口の名を全部読み(遅延の名を作らせ)、module が返れば同じく数える。
+#: import に落ちた module は名を束ねないので数えず、結末に並べる(赤の文に出す)。
+_IMPORTED_PROBE = r"""
+import importlib
+import importlib.util
+import json
+import sys
+import types
+
+payload = json.loads(sys.argv[1])
+sys.path[:0] = payload["first"]
+sys.path.extend(place for place in payload["last"] if place not in sys.path)
+if importlib.util.find_spec("hy") is not None:
+    importlib.import_module("hy")
+entries = {root: importlib.import_module(root) for root in payload["roots"]}
+names = [
+    (root, name)
+    for root, module in entries.items()
+    for name in dir(module)
+    if not name.startswith("_") and not isinstance(module.__dict__.get(name), types.ModuleType)
+]
+
+
+def failure(label, error):
+    return [label, f"{type(error).__name__}: {error}"[:200]]
+
+
+def imported(name):
+    try:
+        importlib.import_module(name)
+    except Exception as error:  # the failure is written into the result, not dropped
+        return failure(name, error)
+    return None
+
+
+def bound_modules():
+    return {
+        (root, name): entries[root].__dict__[name].__name__
+        for root, name in names
+        if isinstance(entries[root].__dict__.get(name), types.ModuleType)
+    }
+
+
+def read(root, name):
+    try:
+        return getattr(entries[root], name), None
+    except Exception as error:  # the failure is written into the result, not dropped
+        return None, failure(f"{root}.{name}", error)
+
+
+steps = [(name, imported(name), bound_modules()) for name in payload["modules"]]
+values = {(root, name): read(root, name) for root, name in names}
+last = {
+    key: value.__name__
+    for key, (value, _error) in values.items()
+    if isinstance(value, types.ModuleType)
+}
+first = {
+    key: [module, after]
+    for after, bound in [("(入口の名を全部読んだ後)", last), *reversed([(n, b) for n, _f, b in steps])]
+    for key, module in bound.items()
+}
+print(json.dumps({
+    "found": [[root, name, *first[(root, name)]] for root, name in sorted(first)],
+    "failed": [*(f for _n, f, _b in steps if f is not None), *(e for _v, e in values.values() if e is not None)],
+}, ensure_ascii=False))
+"""
+
+
+def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]]:
+    """新しい process の確かめ: 全部の公開の module と古い path を import した後に module になった入口の名と、import に落ちた物。"""
+    layout = tool.read_layout(package_dir)
+    roots = [root for root in layout.roots if root.path.is_dir()]
+    if not roots:
+        return [], []
+    places = [str(root.path.parent) for root in roots]
+    payload = {
+        "first": [] if layout.maturin else places,
+        "last": places if layout.maturin else [],
+        "roots": [root.name for root in roots],
+        "modules": [name for name, _path in tool.public_modules(layout) if "." in name],
+    }
+    done = subprocess.run(
+        [sys.executable, "-c", _IMPORTED_PROBE, json.dumps(payload)],
+        capture_output=True,
+        text=True,
+        timeout=_PROBE_SECONDS,
+        check=False,
+        cwd=package_dir,
+    )
+    assert done.returncode == 0, f"{package_dir.name} の入口を新しい process で読めなかった:\n{done.stderr[-2000:]}"
+    result = json.loads(done.stdout.strip().splitlines()[-1])
+    return (
+        [
+            f"{root}.{name}: {after} を import した後、入口の名が module {module} に替わった"
+            for root, name, module, after in result["found"]
+        ],
+        [f"{name}: {error}" for name, error in result["failed"]],
+    )
+
+
+def check_entry_names(package_dir: Path) -> None:
+    """package の入口の出す名と同じ名の submodule が無い事(字面の照合と、新しい process の確かめの両方 — R34)。"""
+    imported, failed = imported_entry_name_clashes(package_dir)
+    clashes = [*written_entry_name_clashes(package_dir), *imported]
+    assert not clashes, (
+        f"{package_dir.name}: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない"
+        "(ADR-DOE-API-001 R34 — 古い path の import が親の属性を module に束ね、入口の名を隠す・card ki-db44e4d3efe4):\n"
+        + "\n".join(f"  {line}" for line in clashes)
+        + ("\n  import に落ちた(名を束ねないので数えない): " + "; ".join(failed) if failed else "")
+    )
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+@pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
+def test_no_submodule_is_named_like_a_name_its_entry_shows(package_dir: str) -> None:
+    """入口(import の根の __init__)の出す名と同じ名の子を根の下に置かず、新しい process で全部の公開の module と古い path を
+    import した後も、入口の名が module に替わらない(ADR-DOE-API-001 R34)。"""
+    check_entry_names(ROOT / "packages" / package_dir)
 
 
 # --- 失敗ケース: 使い捨ての package で、同じ照合が赤と緑を返す事 ---
@@ -1733,3 +1945,73 @@ def test_every_moved_submodule_shim_pins_the_names_of_its_old_paths(package_dir:
         f"`uv run python tools/hide_submodules.py pin --package packages/{package_dir}` で書く: "
         + ", ".join(tool.unpinned_shim_modules(layout))
     )
+
+
+#: 入口が遅延で関数 serve を出し(doeff_core_effects の aiohttp_http_server の形)、すぐに関数 tool を出す(doeff_agentic の
+#: tmux_handler の形)package。どちらの関数も _ の module に在り、古い path の子 serve・tool は移し替えの module。
+CLASHING_ENTRY = f"""
+import importlib as _importlib
+
+from {FIXTURE_ROOT}._tool import tool as tool
+
+_LAZY_EXPORTS = {{"serve": "{FIXTURE_ROOT}._serve"}}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    value = getattr(_importlib.import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({{*globals(), *_LAZY_EXPORTS}})
+"""
+
+
+def _moved_shim(child: str) -> str:
+    """古い path の子 ``child`` の移し替えの module(tools/hide_submodules.py の殻と同じく sys.modules を差し替える)。"""
+    return (
+        f"# moved-submodule-shim: {FIXTURE_ROOT}.{child} -> {FIXTURE_ROOT}._{child}\n"
+        f"# moved-submodule-shim-names {FIXTURE_ROOT}.{child}:\n"
+        f"#   {child}\n"
+        "import sys\n"
+        "from importlib import import_module\n\n"
+        f'sys.modules[__name__] = import_module("{FIXTURE_ROOT}._{child}")\n'
+    )
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_green(
+    tmp_path: Path,
+) -> None:
+    """入口が出す関数 serve(遅延)・tool(すぐ)と同じ名の移し替えの module を置くと、字面の照合も新しい process の確かめも
+    赤(どの古い path の import で名が module に替わったかを名指す)・2 つの殻を消すと緑(ADR-DOE-API-001 R34)。
+
+    doeff 42f897000 の doeff_core_effects の殻 aiohttp_http_server.py と同じ形で、10-30 に記録の service が起動の度に
+    ``with_handlers: handler must be callable, got module`` で落ちた(card ki-db44e4d3efe4)。
+    """
+    files = {
+        "__init__.py": CLASHING_ENTRY,
+        "_serve.py": 'def serve() -> str:\n    return "serve"\n',
+        "_tool.py": 'def tool() -> str:\n    return "tool"\n',
+        "serve.py": _moved_shim("serve"),
+        "tool.py": _moved_shim("tool"),
+    }
+    package_dir = _fixture_tree(tmp_path, files) / "packages" / FIXTURE_DIR
+    written = written_entry_name_clashes(package_dir)
+    imported, failed = imported_entry_name_clashes(package_dir)
+    assert [line.split(":")[0] for line in written] == [f"{FIXTURE_ROOT}.serve", f"{FIXTURE_ROOT}.tool"]
+    assert imported == [
+        f"{FIXTURE_ROOT}.serve: {FIXTURE_ROOT}.serve を import した後、入口の名が module {FIXTURE_ROOT}._serve に替わった",
+        f"{FIXTURE_ROOT}.tool: {FIXTURE_ROOT}.tool を import した後、入口の名が module {FIXTURE_ROOT}._tool に替わった",
+    ]
+    assert failed == []
+    with pytest.raises(AssertionError, match=r"ADR-DOE-API-001 R34"):
+        check_entry_names(package_dir)
+
+    for child in ("serve", "tool"):
+        (package_dir / "src" / FIXTURE_ROOT / f"{child}.py").unlink()
+    check_entry_names(package_dir)

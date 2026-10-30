@@ -194,7 +194,8 @@ mod tests {
                 moved_from.insert(new.trim().to_string(), old.trim().to_string());
             }
         }
-        assert!(moved_from.contains_key("doeff_core_effects._aiohttp_http_server"), "移し替えの module を見つけられない(探す根 {})", packages.display());
+        // aiohttp_http_server の殻は入口の名と同じ名なので消した(ADR-DOE-API-001 R34・card ki-db44e4d3efe4)— 残る殻で探しを確かめる。
+        assert!(moved_from.contains_key("doeff_core_effects._thread_pool_compute"), "移し替えの module を見つけられない(探す根 {})", packages.display());
         let catalog = WorldCatalog::bundled();
         let missing: Vec<String> = catalog
             .handlers
