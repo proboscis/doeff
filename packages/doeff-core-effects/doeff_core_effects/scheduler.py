@@ -4,7 +4,7 @@
 #   DEFAULT_IMPLEMENTATION Discard EXTERNAL_STALL_LOG_INTERVAL_SECONDS ExternalPromise
 #   ExternalPromiseCancelCallbackError FailPromise Future Gather HANDLE_REFS_PRUNE_MIN
 #   HANDLE_SWEEP_INTERVAL IDLE_SWEEP_ROWS_PER_ID IMPLEMENTATION_ENV_VAR PRIORITY_EXTERNAL_WAIT
-#   PRIORITY_HIGH PRIORITY_IDLE PRIORITY_NORMAL ProcessStepBudget Promise
+#   ProcessStepBudget Promise
 #   ROOT_CLOSE_OUT_GRACE_SECONDS Race ReleaseSemaphore STALL_LOG_WAITERS_SHOWN
 #   SchedulerDeadlockError SchedulerImplementation SchedulerIndexDriftError SchedulerIntrospection
 #   Semaphore Spawn SpentStepBudget StepBudget StepBudgetExceeded Task TaskCancelledError

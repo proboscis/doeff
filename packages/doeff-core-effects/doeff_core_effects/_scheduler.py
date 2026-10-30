@@ -416,12 +416,6 @@ class TaskPriority(IntEnum):
 
 PRIORITY_EXTERNAL_WAIT = 5   # above IDLE (blocks clock driver), below NORMAL (yields to real work)
 
-# The old constants, kept until the repos that read doeff's main use TaskPriority (agora card
-# ki-9f2990a98000 — ADR-DOE-API-001 R20's order: the callers first, then the names go).
-PRIORITY_IDLE = TaskPriority.IDLE
-PRIORITY_NORMAL = TaskPriority.NORMAL
-PRIORITY_HIGH = TaskPriority.HIGH
-
 
 class Spawn(EffectBase["Task[_T]"], Generic[_T, _E]):
     """Spawn a task; resumes the spawner with a Task handle.

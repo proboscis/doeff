@@ -41,6 +41,15 @@
 
 ### Changed
 
+- **Breaking:** the task priorities are the `IntEnum` `TaskPriority` (`IDLE` = 0, `NORMAL` = 10, `HIGH` = 20),
+  exported from `doeff` and `doeff_core_effects`; the constants `PRIORITY_IDLE`, `PRIORITY_NORMAL` and
+  `PRIORITY_HIGH` are gone. Write `Spawn(p, priority=TaskPriority.HIGH)` and `Wait(t, priority=TaskPriority.IDLE)`
+  (in Hy, `TaskPriority.IDLE`). The fields are annotated `TaskPriority | int` (`Spawn`, `Wait`) and
+  `TaskPriority | None` (`Race`), so a priority between the named ones is still an `int`, and the values are the same.
+- **Breaking (doeff-core-effects):** `Resumption`, the vocabulary an effect class declares in
+  `__doeff_resumption__`, is no longer exported from the import root or `doeff_core_effects.effects`; it lives in
+  `doeff_core_effects._effects` beside `resumption_of` (ADR-DOE-CORE-EFFECTS-003 R15). It is neither a value an
+  effect carries nor an answer (ADR-DOE-API-001 R1).
 - **Breaking (doeff-system-one):** the import root no longer exports `choice`, `noul` and `score` (ADR-DOE-API-001 R1
   — they build a `Question`, which is neither an effect nor its answer). Build the question with the type itself:
   `Question(kind="noul", instructions=…)`, `Question(kind="choice", instructions=…, options=(("id", "description"),

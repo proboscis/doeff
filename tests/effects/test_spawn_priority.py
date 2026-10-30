@@ -30,11 +30,13 @@ def test_task_priority_is_exported_with_its_values() -> None:
     assert TaskPriority.HIGH == 20
 
 
-def test_the_old_priority_constants_are_the_task_priorities() -> None:
-    # Kept until the repos that read doeff's main use TaskPriority (agora card ki-9f2990a98000).
-    assert doeff.PRIORITY_IDLE is TaskPriority.IDLE
-    assert doeff.PRIORITY_NORMAL is TaskPriority.NORMAL
-    assert doeff.PRIORITY_HIGH is TaskPriority.HIGH
+def test_the_old_priority_constants_are_gone() -> None:
+    # TaskPriority replaced them (agora card ki-9f2990a98000); the old names must not come back.
+    import doeff_core_effects
+
+    for name in ("PRIORITY_IDLE", "PRIORITY_NORMAL", "PRIORITY_HIGH"):
+        assert not hasattr(doeff, name), name
+        assert not hasattr(doeff_core_effects, name), name
 
 
 def test_spawn_effect_exposes_priority_field() -> None:
