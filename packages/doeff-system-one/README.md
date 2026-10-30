@@ -15,15 +15,16 @@ provider を知らない層で、doeff-llm と doeff-openai の関係と同じ�
 
 ```python
 from doeff import do, run, with_handlers
-from doeff_system_one import Judge, choice, noul, score
+from doeff_system_one import Judge, Question
 
 @do
 def is_vague(prompt: str):
     verdict = yield Judge(
         state={"prompt": prompt},
         questions={
-            "vague": noul("この依頼は曖昧で、着手前に計画が要るか。"),
-            "kind": choice("この依頼の種類はどれか。", ["調査", "実装", "運用"]),
+            "vague": Question(kind="noul", instructions="この依頼は曖昧で、着手前に計画が要るか。"),
+            "kind": Question(kind="choice", instructions="この依頼の種類はどれか。",
+                             options=(("調査", "調査"), ("実装", "実装"), ("運用", "運用"))),
         },
     )
     vague = verdict.answer("vague")
@@ -35,11 +36,13 @@ handler は組み立て点(composition root)が選ぶ。テストでは `scripte
 
 ## 問いの 3 種類
 
+問いは `Question(kind=…, instructions=…)` で作る。choice は候補を `options`(id と説明の対の列)、score は段階を `levels`(順序つきの説明の列)に持つ。
+
 | 種類 | 答え | 使いどころ |
 |---|---|---|
-| `choice(instructions, options)` | `value` = 選ばれた option・`probabilities`・`confidence` | 決まった候補から 1 つ選ぶ |
-| `noul(instructions)` | `value` = はいの確率(0〜1)・`confidence` = 0.5 からの距離 × 2 | 条件が成り立つか |
-| `score(instructions, levels)` | `value` = 段階の期待値・`confidence` | 程度を測る |
+| `Question(kind="choice", instructions, options)` | `value` = 選ばれた option・`probabilities`・`confidence` | 決まった候補から 1 つ選ぶ |
+| `Question(kind="noul", instructions)` | `value` = はいの確率(0〜1)・`confidence` = 0.5 からの距離 × 2 | 条件が成り立つか |
+| `Question(kind="score", instructions, levels)` | `value` = 段階の期待値・`confidence` | 程度を測る |
 
 ## 答えの読み方
 

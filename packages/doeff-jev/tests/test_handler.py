@@ -5,7 +5,7 @@ import pickle
 
 from doeff_core_effects import HttpRequest, HttpResponse, in_memory_cache_handler, scheduled
 from doeff_jev import JevTarget, jev_handler, judge_stack
-from doeff_system_one import JudgeError, Verdict, choice, noul
+from doeff_system_one import JudgeError, Question, Verdict
 from doeff_system_one._programs import judge
 
 from doeff import Err, Ok, Pass, Resume, ResumeThrow, Try, do, run, with_handlers
@@ -57,7 +57,7 @@ def test_judge_becomes_one_post_and_a_verdict() -> None:
 
     @do
     def flow():
-        verdict = yield judge({"x": 1}, {"n": noul("is"), "c": choice("w", ["a", "b"])})
+        verdict = yield judge({"x": 1}, {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})
         return verdict
 
     verdict = _run(flow(), DIRECT, script)
@@ -78,9 +78,9 @@ def test_cache_hit_skips_the_second_post_but_uncacheable_does_not() -> None:
 
     @do
     def flow():
-        first = yield judge("same", {"n": noul("is")})
-        second = yield judge("same", {"n": noul("is")})
-        third = yield judge("same", {"n": noul("is")}, cacheable=False)
+        first = yield judge("same", {"n": Question(kind="noul", instructions="is")})
+        second = yield judge("same", {"n": Question(kind="noul", instructions="is")})
+        third = yield judge("same", {"n": Question(kind="noul", instructions="is")}, cacheable=False)
         return (first.answer("n").value, second.answer("n").value, third.answer("n").value)
 
     assert _run(flow(), DIRECT, script) == (0.8, 0.8, 0.8)
@@ -92,8 +92,8 @@ def test_http_error_and_transport_failure_become_judge_errors() -> None:
 
     @do
     def flow():
-        a = yield Try(judge("s", {"n": noul("is")}, cacheable=False))
-        b = yield Try(judge("s", {"n": noul("is")}, cacheable=False))
+        a = yield Try(judge("s", {"n": Question(kind="noul", instructions="is")}, cacheable=False))
+        b = yield Try(judge("s", {"n": Question(kind="noul", instructions="is")}, cacheable=False))
         return a, b
 
     a, b = _run(flow(), DIRECT, script)
@@ -112,7 +112,7 @@ def test_missing_key_for_typesafe_fails_without_a_request() -> None:
 
     @do
     def flow():
-        return (yield Try(judge("s", {"n": noul("is")})))
+        return (yield Try(judge("s", {"n": Question(kind="noul", instructions="is")})))
 
     outcome = _run(flow(), no_key, script)
     assert isinstance(outcome, Err)
@@ -125,7 +125,7 @@ def test_foreign_target_sends_without_key() -> None:
 
     @do
     def flow():
-        return (yield Try(judge("s", {"n": noul("is")})))
+        return (yield Try(judge("s", {"n": Question(kind="noul", instructions="is")})))
 
     outcome = _run(flow(), SEIMF, script)
     assert isinstance(outcome, Ok)
@@ -138,8 +138,8 @@ def test_journal_records_each_judgment(tmp_path) -> None:
 
     @do
     def flow():
-        yield judge("a", {"n": noul("is")})
-        yield judge("a", {"n": noul("is")})   # cache hit
+        yield judge("a", {"n": Question(kind="noul", instructions="is")})
+        yield judge("a", {"n": Question(kind="noul", instructions="is")})   # cache hit
 
     _run(flow(), DIRECT, script, journal=str(path))
     lines = [json.loads(line) for line in path.read_text().splitlines()]
@@ -168,8 +168,8 @@ def test_caller_header_proxy_outcome_and_cache_mark_reach_the_verdict_and_the_jo
 
     @do
     def flow():
-        asked = yield judge("a", {"n": noul("is"), "c": choice("w", ["a", "b"])})
-        remembered = yield judge("a", {"n": noul("is"), "c": choice("w", ["a", "b"])})   # 手元の cache
+        asked = yield judge("a", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})
+        remembered = yield judge("a", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))})   # 手元の cache
         return asked, remembered
 
     asked, remembered = _run(flow(), DIRECT, script, journal=str(path), caller="rulebook-advisor/Stop")
@@ -191,7 +191,7 @@ def test_failure_rows_carry_the_caller_and_the_question_keys(tmp_path) -> None:
 
     @do
     def flow():
-        return (yield Try(judge("s", {"n": noul("is")}, cacheable=False)))
+        return (yield Try(judge("s", {"n": Question(kind="noul", instructions="is")}, cacheable=False)))
 
     outcome = _run(flow(), DIRECT, script, journal=str(path), caller="agora-messaging/land-classification")
     assert isinstance(outcome, Err)
@@ -205,7 +205,7 @@ def test_without_a_journal_the_row_reaches_the_outer_slog_sink_with_caller_and_k
 
     @do
     def flow():
-        return (yield judge("s", {"n": noul("is"), "c": choice("w", ["a", "b"])}, cacheable=False))
+        return (yield judge("s", {"n": Question(kind="noul", instructions="is"), "c": Question(kind="choice", instructions="w", options=(("a", "a"), ("b", "b")))}, cacheable=False))
 
     layers = judge_stack(DIRECT, http=script.handler(), cache=in_memory_cache_handler(), journal=None,
                          caller="land-notice/notice_lead", log_stderr=True)
@@ -236,7 +236,7 @@ def test_without_a_target_the_stack_resolves_it_from_the_process_environment(mon
 
     @do
     def flow():
-        return (yield judge("s", {"n": noul("is")}, cacheable=False))
+        return (yield judge("s", {"n": Question(kind="noul", instructions="is")}, cacheable=False))
 
     verdict = _judged(flow(), judge_stack(http=script.handler(), journal=None))
     assert verdict.answers["n"].value == 0.8

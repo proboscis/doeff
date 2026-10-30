@@ -65,13 +65,13 @@ program は effect `Judge` を出すだけで、組み立て点が `claude_judge
 ```python
 from doeff_claude_judge import ClaudeJudgeTarget, JudgeCredential, claude_judge_stack, fixed_credential_lender
 from doeff_core_effects import scheduled
-from doeff_system_one import Judge, noul
+from doeff_system_one import Judge, Question
 
 from doeff import do, run, with_handlers
 
 target = ClaudeJudgeTarget(model="claude-sonnet-5-5", config_dir="/var/lib/judge/claude",
                            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/var/lib/judge"})
-judge = Judge(state={"document": text}, questions={"plain": noul("Can a first-time reader decide from the document?")},
+judge = Judge(state={"document": text}, questions={"plain": Question(kind="noul", instructions="Can a first-time reader decide from the document?")},
               timeout_seconds=60.0, cacheable=False)
 
 
