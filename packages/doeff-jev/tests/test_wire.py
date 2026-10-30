@@ -7,11 +7,11 @@ import pytest
 from doeff_jev import JevTarget
 from doeff_jev._wire import cache_key, parse, prepare
 from doeff_jev._wire import CALLER_HEADER, IMAGES_HEADER, PROXY_HEADER
-from doeff_system_one import Image, Judge, JudgeError, choice, noul, score
+from doeff_system_one import Image, Judge, JudgeError, Question
 
 DIRECT = JevTarget("https://api.typesafe.ai/v1/systemone", "jev-latest", "direct", "k-direct", "default")
 GATEWAY = JevTarget("https://ai-gateway.vercel.sh/v4/ai/evaluation-model", "typesafe-ai/jev", "gateway", "k-gw", "default")
-QUESTIONS = {"c": choice("lang", ["ja", "en"]), "n": noul("is ja"), "s": score("how ja", ["no", "some", "all"])}
+QUESTIONS = {"c": Question(kind="choice", instructions="lang", options=(("ja", "ja"), ("en", "en"))), "n": Question(kind="noul", instructions="is ja"), "s": Question(kind="score", instructions="how ja", levels=("no", "some", "all"))}
 
 
 def test_direct_request_shape() -> None:
@@ -39,7 +39,7 @@ def test_gateway_request_translates_noul_to_boolean() -> None:
 
 def test_no_key_means_no_authorization_header() -> None:
     seimf = JevTarget("http://zeus:8646/v1/systemone", "seimf", "direct", None, "env")
-    assert "authorization" not in prepare(seimf, Judge(state="s", questions={"n": noul("x")})).headers
+    assert "authorization" not in prepare(seimf, Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})).headers
 
 
 def test_parse_direct_answers() -> None:
@@ -76,7 +76,7 @@ def test_parse_gateway_answers() -> None:
 
 
 def test_parse_errors_are_judge_errors() -> None:
-    judge = Judge(state="s", questions={"n": noul("x")})
+    judge = Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})
     with pytest.raises(JudgeError) as http:
         parse(DIRECT, judge, 400, '{"error":"invalid discriminator"}')
     assert http.value.kind == "http"
@@ -92,9 +92,9 @@ def test_parse_errors_are_judge_errors() -> None:
 
 
 def test_cache_key_depends_on_target_state_and_questions() -> None:
-    a = Judge(state="same", questions={"n": noul("x")})
-    b = Judge(state="same", questions={"n": noul("x")})
-    c = Judge(state="other", questions={"n": noul("x")})
+    a = Judge(state="same", questions={"n": Question(kind="noul", instructions="x")})
+    b = Judge(state="same", questions={"n": Question(kind="noul", instructions="x")})
+    c = Judge(state="other", questions={"n": Question(kind="noul", instructions="x")})
     assert cache_key(DIRECT, a) == cache_key(DIRECT, b)
     assert cache_key(DIRECT, a) != cache_key(DIRECT, c)
     assert cache_key(DIRECT, a) != cache_key(GATEWAY, a)
@@ -103,11 +103,11 @@ def test_cache_key_depends_on_target_state_and_questions() -> None:
 
 def test_direct_request_carries_images_and_the_images_header() -> None:
     poster = Image(format="png", data_base64="iVBORw0KGgo=")
-    judge = Judge(state={"poster": "p-1"}, questions={"n": noul("Is `poster` text only?")}, assets={"p-1": poster})
+    judge = Judge(state={"poster": "p-1"}, questions={"n": Question(kind="noul", instructions="Is `poster` text only?")}, assets={"p-1": poster})
     prepared = prepare(DIRECT, judge)
     assert prepared.body["assets"] == {"p-1": {"type": "image", "format": "png", "data_base64": "iVBORw0KGgo="}}
     assert prepared.headers[IMAGES_HEADER] == "true"
-    plain = prepare(DIRECT, Judge(state={"x": 1}, questions={"n": noul("x")}))
+    plain = prepare(DIRECT, Judge(state={"x": 1}, questions={"n": Question(kind="noul", instructions="x")}))
     assert "assets" not in plain.body
     assert IMAGES_HEADER not in plain.headers
     with pytest.raises(JudgeError, match="unsupported"):
@@ -115,7 +115,7 @@ def test_direct_request_carries_images_and_the_images_header() -> None:
 
 
 def test_images_enter_the_cache_key_only_when_present() -> None:
-    questions = {"n": noul("Is `poster` text only?")}
+    questions = {"n": Question(kind="noul", instructions="Is `poster` text only?")}
     a = Judge(state={"poster": "p-1"}, questions=questions, assets={"p-1": Image(format="png", data_base64="AAAA")})
     b = Judge(state={"poster": "p-1"}, questions=questions, assets={"p-1": Image(format="png", data_base64="BBBB")})
     assert cache_key(DIRECT, a) != cache_key(DIRECT, b)
@@ -133,11 +133,11 @@ def test_image_and_judge_refuse_malformed_assets() -> None:
     with pytest.raises(ValueError):
         Image(format="png", data_base64="")
     with pytest.raises(TypeError):
-        Judge(state="s", questions={"n": noul("x")}, assets={"p": {"format": "png"}})  # type: ignore[dict-item]
+        Judge(state="s", questions={"n": Question(kind="noul", instructions="x")}, assets={"p": {"format": "png"}})  # type: ignore[dict-item]
 
 
 def test_caller_travels_as_a_header_and_not_in_the_body() -> None:
-    judge = Judge(state="s", questions={"n": noul("x")})
+    judge = Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})
     prepared = prepare(DIRECT, judge, caller="rulebook-advisor/Stop")
     assert prepared.headers[CALLER_HEADER] == "rulebook-advisor/Stop"
     assert "caller" not in json.dumps(prepared.body)
@@ -145,11 +145,11 @@ def test_caller_travels_as_a_header_and_not_in_the_body() -> None:
     # 見出しの値は ASCII に限る — 日本語の名は %XX に写して要求を壊さない。
     assert prepare(DIRECT, judge, caller="部品/問い").headers[CALLER_HEADER] == "%E9%83%A8%E5%93%81/%E5%95%8F%E3%81%84"
     # 呼び手の名は答えの鍵に入らない(同じ問いは呼び手が違っても中継と手元の cache で当たる)。
-    assert cache_key(DIRECT, judge) == cache_key(DIRECT, Judge(state="s", questions={"n": noul("x")}))
+    assert cache_key(DIRECT, judge) == cache_key(DIRECT, Judge(state="s", questions={"n": Question(kind="noul", instructions="x")}))
 
 
 def test_parse_reads_the_proxy_header_case_insensitively() -> None:
-    judge = Judge(state="s", questions={"n": noul("x")})
+    judge = Judge(state="s", questions={"n": Question(kind="noul", instructions="x")})
     text = json.dumps({"answers": {"n": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 7}})
     assert parse(DIRECT, judge, 200, text, headers={PROXY_HEADER: "hit"}).proxy == "hit"
     assert parse(DIRECT, judge, 200, text, headers={"X-Jev-Proxy": "Coalesced"}).proxy == "coalesced"
