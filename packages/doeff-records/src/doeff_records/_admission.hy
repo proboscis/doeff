@@ -14,7 +14,7 @@
 (import doeff_hy._frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
-                              RememberedWrite])
+                              RememberedWrite WrittenAndAppended Appended])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -182,31 +182,41 @@
     _ (raise (TypeError (.format "知らない期待: {!r}" expect)))))
 
 
-(defn #^ str write-digest [#^ bool rows #^ tuple writes]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+(defn #^ str write-digest [#^ bool rows #^ tuple writes #^ (| tuple None) [appends None]]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
   "行の書き 1 つの本文の指紋を作るため(同じ冪等キーの書きが同じ書きの送り直しか、鍵の使い回しかを見分ける — 鍵と書き手の名は含めず、
-   書きの種(rows = 束 PutRows か 1 行 PutRow か)と、書きの並び writes の表・鍵・値・期待を含める)。writes = PutRow 1 つの tuple か
-   PutRows の束(どちらも欄 table・key・value・expect を持つ — この file は effect の層に依らない)。"
-  (body-digest {"put" (if rows "rows" "row")
-                "writes" (lfor write writes
-                               {"table" write.table "key" (list write.key) "value" write.value "expect" (expect-form write.expect)})}))
+   書きの種(rows = 束 PutRows か 1 行 PutRow か・追記の束を伴う PutRowsAppendEvents か)と、書きの並び writes の表・鍵・値・期待と、
+   追記の束 appends(None = 追記を伴わない書き)の列・冪等キー・本文を含める)。writes = PutRow 1 つの tuple か行の束(どれも欄 table・key・
+   value・expect を持つ)/ appends = 追記の束(欄 stream・idempotency-key・body — この file は effect の層に依らない)。追記を伴わない書きの
+   指紋の綴りは前のまま(置き場が覚えた前の版の指紋と比べられる)。"
+  (setv written (lfor write writes
+                      {"table" write.table "key" (list write.key) "value" write.value "expect" (expect-form write.expect)}))
+  (if (is appends None)
+      (body-digest {"put" (if rows "rows" "row") "writes" written})
+      (body-digest {"put" "rows-events" "writes" written
+                    "appends" (lfor one appends {"stream" one.stream "idempotencyKey" one.idempotency-key "body" one.body})})))
 
 
-(defn #^ (| Written WrittenRows) replayed-answer [#^ (| Written WrittenRows) answer]  ; defk にできない: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
-  "覚えた書きの答えを、送り直しと名乗る答えにするため(版・値・位置は前の答えのまま — 束は束の名乗りと各項の名乗りの両方)。"
+(defn #^ (| Written WrittenRows WrittenAndAppended) replayed-answer [#^ (| Written WrittenRows WrittenAndAppended) answer]  ; defk にできない: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
+  "覚えた書きの答えを、送り直しと名乗る答えにするため(版・値・位置・番号は前の答えのまま — 束は束の名乗りと各項の名乗りの両方。追記の束を
+   伴う答えは、追記の各項も今は積んでいないと名乗る)。"
   (match answer
     (Written) (replace answer :replayed True)
-    (WrittenRows :items items) (WrittenRows (tuple (gfor item items (replace item :replayed True))) :replayed True)))
+    (WrittenRows :items items) (WrittenRows (tuple (gfor item items (replace item :replayed True))) :replayed True)
+    (WrittenAndAppended :rows rows :appends appends)
+      (WrittenAndAppended (replayed-answer rows) (tuple (gfor item appends (Appended item.sequence True))) :replayed True)))
 
 
-(defn #^ (| Written WrittenRows Refused RowsRefused None) judge-write-replay [#^ (| str None) key #^ bool rows #^ tuple writes
-                                                                              #^ (| RememberedWrite None) remembered]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+(defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) judge-write-replay [#^ (| str None) key #^ bool rows #^ tuple writes
+                                                                              #^ (| RememberedWrite None) remembered
+                                                                              #^ (| tuple None) [appends None]]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
   "冪等キー key の書き(rows = 束か・writes = 書きの並び — write-digest と同じ)を、同じ鍵の覚え remembered(無ければ None)で判じるため
-   (memory と PostgreSQL の handler が同じ答えを返す 1 か所)。答え = 送り直しの答え(覚えた答えを replayed 真で — 期待も書きの判定も
+   (memory と PostgreSQL の handler が同じ答えを返す 1 か所)。appends = 追記の束(PutRowsAppendEvents — 指紋に含める。None = 追記を伴わない)。
+   答え = 送り直しの答え(覚えた答えを replayed 真で — 期待も書きの判定も
    見ない)/ 同じ鍵の別の本文の断り(1 行は Refused・束は束の 0 行目の RowsRefused — 断りの文は「冪等キー」を含む)/ None = 覚えが無い
    (鍵の無い書きを含む — 期待と書きの判定へ進む)。"
   (cond
     (or (is key None) (is remembered None)) None
-    (= remembered.body-digest (write-digest rows writes)) (replayed-answer remembered.answer)
+    (= remembered.body-digest (write-digest rows writes appends)) (replayed-answer remembered.answer)
     True (do (setv reason (.format "行の書きの冪等キー {!r} は別の本文の書きで既に使われた" key)
                    head (get writes 0))
              (if rows (RowsRefused 0 head.table head.key reason) (Refused reason)))))

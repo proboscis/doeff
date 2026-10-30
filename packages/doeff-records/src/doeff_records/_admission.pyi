@@ -28,6 +28,8 @@ from doeff_records._values import RowsRefused as RowsRefused
 from doeff_records._values import Written as Written
 from doeff_records._values import WrittenRows as WrittenRows
 from doeff_records._values import RememberedWrite as RememberedWrite
+from doeff_records._values import WrittenAndAppended as WrittenAndAppended
+from doeff_records._values import Appended as Appended
 
 def canonical_json(value: object) -> str:
     ...
@@ -84,13 +86,13 @@ def judge_put_rows(schema: RecordsSchema, writes: tuple, currents: tuple) -> tup
 def expect_form(expect: object) -> dict:
     ...
 
-def write_digest(rows: bool, writes: tuple) -> str:
+def write_digest(rows: bool, writes: tuple, appends: tuple | None=None) -> str:
     ...
 
-def replayed_answer(answer: Written | WrittenRows) -> Written | WrittenRows:
+def replayed_answer(answer: Written | WrittenRows | WrittenAndAppended) -> Written | WrittenRows | WrittenAndAppended:
     ...
 
-def judge_write_replay(key: str | None, rows: bool, writes: tuple, remembered: RememberedWrite | None) -> Written | WrittenRows | Refused | RowsRefused | None:
+def judge_write_replay(key: str | None, rows: bool, writes: tuple, remembered: RememberedWrite | None, appends: tuple | None=None) -> Written | WrittenRows | WrittenAndAppended | Refused | RowsRefused | None:
     ...
 
 def retention_cutoff_ms(decl: TableDecl | StreamDecl, now_ms: int) -> int | None:

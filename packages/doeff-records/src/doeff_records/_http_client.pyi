@@ -24,6 +24,7 @@ from doeff_records._values import EventsMoved as EventsMoved
 from doeff_records._values import EventsQuiet as EventsQuiet
 from doeff_records._values import Reset as Reset
 from doeff_records._values import Unreachable as Unreachable
+from doeff_records._effects import PutRowsAppendEvents as PutRowsAppendEvents
 from doeff_records._effects import ReadRow as ReadRow
 from doeff_records._effects import ListRows as ListRows
 from doeff_records._effects import PutRow as PutRow
@@ -136,14 +137,14 @@ def request_patience_handler(patience: RequestPatience) -> _Handler:
     ...
 records_unwaited: _Handler
 
-def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[tuple[str, ...], object]:
+def stall_names(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows | PutRowsAppendEvents) -> _Program[tuple[str, ...], object]:
     ...
 WRITE_KEY_BYTES: int
 
-def fresh_write_key(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[str | None, object]:
+def fresh_write_key(ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows | PutRowsAppendEvents) -> _Program[str | None, object]:
     ...
 
-def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows) -> _Program[WireAnswer | Unreachable, object]:
+def answered_riding_stall(endpoint: RecordsEndpoint, ask: ReadRow | ListRows | PutRow | PutRows | AppendEvent | AppendEvents | ReadEvents | ReadStreamEnd | ReadEventByKey | ReadBatch | CountRows | PutRowsAppendEvents) -> _Program[WireAnswer | Unreachable, object]:
     ...
 
 def long_poll(endpoint: RecordsEndpoint, ask: WatchChanges | WatchEvents) -> _Program[Changes | Reset | EventsMoved | EventsQuiet | Unreachable, object]:

@@ -11,7 +11,8 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Written WrittenRows Missing Refused Unreachable Appended Changes Page Events WatchCursor])
-(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents])
+(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges AppendEvent ReadEvents PutRowsAppendEvents EventAppend
+                        AppendRefused WrittenAndAppended])
 (import doeff_records [SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
@@ -146,3 +147,30 @@
                (fn [] (StoreFault (frozenset #("parts")) StoreOperation.READ DOWN :lands 1))
                (fn [] (StoreFault (frozenset #("parts")) StoreOperation.READ DOWN :matching "name"))]]
     (assert (try (build) False (except [TypeError] True)) build)))
+
+
+(deftest test-rows-and-events-are-faulted-as-one-write
+  ;; card ki-e17ba3b32dea: PutRowsAppendEvents は書き全体(束の表 — PutRows と同じ)と追記ごと(同じ追記の AppendEvent — AppendEvents と同じ)
+  ;; に当たり、全部か 0 なので着けない故障は何も書かない。追記に当たった Refused はその追記の AppendRefused。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val both (PutRowsAppendEvents #((RowWrite "parts" #("p1") (part "p1") (ExpectAbsent)))
+                                 #((EventAppend "pulses" "f-0" {"n" 0}) (EventAppend "journal" "f-1" {"n" 1}))))
+  (in-store store (AddStoreFault (StoreFault (frozenset #("journal")) StoreOperation.WRITE REFUSED)))
+  (assert (= (in-store store both) (AppendRefused 1 "journal" "f-1" REFUSED.reason)))
+  (in-store store (ClearStoreFaults))
+  (in-store store (AddStoreFault (StoreFault (frozenset #("parts")) StoreOperation.WRITE REFUSED)))
+  (assert (= (in-store store both) REFUSED))
+  (assert (and (= store.head 0) (= store.events [])) "当たった書きが行か出来事を積んだ")
+  ;; lands なら全部を着けてから故障の答え。
+  (in-store store (ClearStoreFaults))
+  (in-store store (AddStoreFault (StoreFault (frozenset #("pulses")) StoreOperation.WRITE DOWN :lands True)))
+  (assert (= (in-store store both) DOWN))
+  (assert (and (= store.head 1) (= (lfor event store.events event.idempotency-key) ["f-0" "f-1"])) "着ける故障の書きが全部を着けていない")
+  ;; 届かない状態は束の表と列のどれかの名で当たる。
+  (in-store store (ClearStoreFaults))
+  (in-store store (SetStoreOutage (. DOWN detail) (frozenset #("pulses"))))
+  (assert (= (in-store store both) DOWN))
+  (in-store store (SetStoreOutage None))
+  (assert (isinstance (in-store store (PutRowsAppendEvents #((RowWrite "parts" #("p2") (part "p2") (ExpectAbsent)))
+                                                           #((EventAppend "journal" "f-2" {"n" 2}))))
+                      WrittenAndAppended)))

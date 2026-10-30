@@ -1,4 +1,4 @@
-;;; memory の handler — 公開 effect 11 個と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
+;;; memory の handler — 公開 effect(_effects.hy の頭の註)と列の待ち WatchEvents に手元の表と番号の列で答える(模擬環境・手元の 1 process・単体の検)。
 ;;; 行の値は凍らせた写像なので、答えに出す Row は置き場の Row そのもの(写し取らなくても呼び手は変えられない)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は _admission.hy の純関数ちょうど 1 つ。ここは置き場の data と番号の採り方だけを持つ。
@@ -73,10 +73,12 @@
 (import doeff_records._values [KeepFor RecordsSchema TableDecl StreamDecl Row Missing Page Written WrittenRows RowChanged RowRemoved Changes Appended
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
-                              EventAbsent EventRetired BatchRead Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change])
+                              EventAbsent EventRetired BatchRead Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change
+                              WrittenAndAppended AppendRefused])
 (import doeff_records._watching [closing-wake?])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
-                               ReadStreamEnd ReadEventByKey ReadBatch CountRows AwaitRecordsBack ReadSourcePatience write-parts])
+                               ReadStreamEnd ReadEventByKey ReadBatch CountRows AwaitRecordsBack ReadSourcePatience write-parts
+                               PutRowsAppendEvents append-parts])
 (import doeff_records._faults [AdvanceStoreEpoch SetStoreOutage StoreFault StoreOperation AddStoreFault ClearStoreFaults])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents])
@@ -631,19 +633,21 @@
     True stored.row))
 
 
-(defn #^ (| Written WrittenRows Refused RowsRefused None) write-replay [#^ MemoryStore store #^ (| PutRow PutRows) ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(memory-put-row / memory-put-rows の頭)
+(defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) write-replay [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読み(memory-put-row / memory-put-rows の頭)
   "鍵つきの書き ask の、同じ鍵の覚えによる答え(送り直しの答え・別の本文の断り・覚えが無ければ None)を引くため(頭の註の「行の書きの
    冪等キー」— 判じは admission.judge-write-replay の 1 か所)。"
   (if (is ask.idempotency-key None)
       None
-      (judge-write-replay ask.idempotency-key (isinstance ask PutRows) (write-parts ask) (.get store.write-keys ask.idempotency-key))))
+      (judge-write-replay ask.idempotency-key (not (isinstance ask PutRow)) (write-parts ask) (.get store.write-keys ask.idempotency-key)
+                          (append-parts ask))))
 
 
-(defn #^ None remember-write [#^ MemoryStore store #^ (| PutRow PutRows) ask #^ (| Written WrittenRows) answer #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(書きの確定と同じ錠の内で覚える)
+(defn #^ None remember-write [#^ MemoryStore store #^ (| PutRow PutRows PutRowsAppendEvents) ask #^ (| Written WrittenRows WrittenAndAppended) answer #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(書きの確定と同じ錠の内で覚える)
   "確定した鍵つきの書き ask の答えを、本文の指紋と覚えた刻と一緒に覚え、外してよい刻を覚えの外しの索引に積むため(鍵の無い書きは覚えない)。"
   (when (is-not ask.idempotency-key None)
     (setv key ask.idempotency-key)
-    (setv (get store.write-keys key) (RememberedWrite :body-digest (write-digest (isinstance ask PutRows) (write-parts ask)) :answer answer)
+    (setv (get store.write-keys key) (RememberedWrite :body-digest (write-digest (not (isinstance ask PutRow)) (write-parts ask) (append-parts ask))
+                                                   :answer answer)
           (get store.write-remembered-at key) now-ms)
     (+= store.expiry-order 1)
     (heapq.heappush store.write-forgets #((+ now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) store.expiry-order key)))
@@ -856,25 +860,39 @@
   "AppendEvent に答えるため: 触る単位の期限を過ぎた出来事を片付け(retire-touched-events)、冪等キーの前の使い(生きた出来事・無ければ保持の
    期限で消した鍵の覚え)を引いて判じ、新しければ積む。"
   (setv decl (store.schema.stream ask.stream)
-        slot #(ask.stream ask.idempotency-key))
-  (retire-touched-events store decl ask.idempotency-key now-ms)
-  ;; 鍵の覚えが在れば覚えで判じる(送ってから外す列は、鍵を覚えただけの出来事が置き場に残る — 他の列では覚えと出来事は同じ鍵で両方は無い)。
-  (setv retired (.get store.retired-keys slot)
-        verdict (judge-append decl ask.body (if (is retired None) (.get store.by-idempotency slot) retired)))
+        verdict (judged-append store decl ask.stream ask.idempotency-key ask.body now-ms))
   (cond
     (isinstance verdict Refused) verdict
     (isinstance verdict AppendReplay) (Appended verdict.sequence True)
-    True (do (+= store.event-head 1)
-             (setv event (Event ask.stream store.event-head ask.idempotency-key ask.body writer now-ms))
-             (.append store.events event)
-             (setv (get store.by-idempotency slot) event
-                   ;; 書きの控え: 積んだ時の変更の番号の頭(追記は頭を動かさない — 頭の註の「書きの控え」)。
-                   (get store.appended-at-head event.sequence) store.head)
-             (when (isinstance decl.retention KeepFor)
-               (note-event-due store decl event))
-             ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
-             (ring-bells store (_bell-names #() #(ask.stream)))
-             (Appended event.sequence False))))
+    True (memory-store-event store writer decl ask.stream ask.idempotency-key ask.body None now-ms)))
+
+
+(defn #^ (| AppendNew AppendReplay Refused) judged-append [#^ MemoryStore store #^ StreamDecl decl #^ str stream #^ str idempotency-key
+                                                          #^ object body #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の読みと片付け(memory-append・memory-put-rows-append-events)
+  "追記 1 つを積んでよいかを判じるため(積まない — AppendEvent と PutRowsAppendEvents の判じを 1 つにする): 触る単位の期限を過ぎた出来事を
+   片付け(retire-touched-events)、冪等キーの前の使い(生きた出来事・無ければ保持の期限で消した鍵の覚え)を引いて admission.judge-append で判じる。"
+  (retire-touched-events store decl idempotency-key now-ms)
+  ;; 鍵の覚えが在れば覚えで判じる(送ってから外す列は、鍵を覚えただけの出来事が置き場に残る — 他の列では覚えと出来事は同じ鍵で両方は無い)。
+  (setv slot #(stream idempotency-key)
+        retired (.get store.retired-keys slot))
+  (judge-append decl body (if (is retired None) (.get store.by-idempotency slot) retired)))
+
+
+(defn #^ Appended memory-store-event [#^ MemoryStore store #^ str writer #^ StreamDecl decl #^ str stream #^ str idempotency-key
+                                      #^ object body #^ (| WatchCursor None) position #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-append・memory-put-rows-append-events)
+  "判じを通った新しい出来事 1 つを列に積むため(AppendEvent と PutRowsAppendEvents の積み方を 1 つにする — position = 同じ書きの行の最後の
+   変更の位置・行を伴わない追記は None)。"
+  (+= store.event-head 1)
+  (setv event (Event stream store.event-head idempotency-key body writer now-ms position))
+  (.append store.events event)
+  (setv (get store.by-idempotency #(stream idempotency-key)) event
+        ;; 書きの控え: 積んだ時の変更の番号の頭(追記は頭を動かさない — 頭の註の「書きの控え」)。
+        (get store.appended-at-head event.sequence) store.head)
+  (when (isinstance decl.retention KeepFor)
+    (note-event-due store decl event))
+  ;; 新しく積んだ時だけ、この列を待つ待ち手を鳴らす(再送は列の頭を動かさない)。
+  (ring-bells store (_bell-names #() #(stream)))
+  (Appended event.sequence False))
 
 
 (defn #^ object memory-append-one [#^ MemoryStore store #^ str writer #^ EventAppend one #^ (| StoreFault None) fault #^ int now-ms]  ; defk にできない: 錠の内で同期に呼ぶ置き場の書き(memory-append-events が束の順に呼ぶ)
@@ -891,6 +909,38 @@
   "AppendEvents の束に答えるため(card ki-48c34994ed15): 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
    入らない — 番号は束の順に増え、断られた追記は他の追記を止めない)。faults = 追記ごとに当たる故障(append-faults の答え — 無ければ None)。"
   (AppendedEvents (tuple (gfor #(one fault) (zip ask.appends faults :strict True) (memory-append-one store writer one fault now-ms)))))
+
+
+(defn #^ object memory-put-rows-append-events [#^ MemoryStore store #^ str writer #^ PutRowsAppendEvents ask #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-put-rows と同じ作法)
+  "PutRowsAppendEvents に錠の内の 1 回で全部か 0 で答えるため(card ki-e17ba3b32dea): 鍵つきの書きは同じ鍵の覚えで先に判じ(行の束と追記の束の
+   両方の指紋 — memory-put-rows と同じ)、次に行の束を PutRows と同じく判じ(admission.judge-put-rows — 通らなければその答えで何も書かない)、
+   次に追記を束の順に積まずに判じる(judged-append — 断りがあれば束の順で最初の断りの AppendRefused で何も書かない)。全部通れば行を束の順に
+   書き、今積む出来事に行の最後の変更の位置を持たせて束の順に積み(同じ冪等キー・同じ本文が在る追記は前の番号を replayed で)、鍵つきなら
+   答えを覚える。答え = WrittenAndAppended | RowsConflict | RowsRefused | AppendRefused。"
+  (for [write ask.writes] (store.schema.table write.table))
+  (for [one ask.appends] (store.schema.stream one.stream))
+  (setv replay (write-replay store ask))
+  (when (is-not replay None) (return replay))
+  (setv currents (tuple (gfor write ask.writes (writable-row store (store.schema.table write.table) write.key now-ms)))
+        verdict (judge-put-rows store.schema ask.writes currents))
+  (when (not (isinstance verdict tuple)) (return verdict))
+  (setv judged [])
+  (for [#(index one) (enumerate ask.appends)]
+    (setv decision (judged-append store (store.schema.stream one.stream) one.stream one.idempotency-key one.body now-ms))
+    (when (isinstance decision Refused)
+      (return (AppendRefused index one.stream one.idempotency-key decision.reason)))
+    (.append judged decision))
+  (setv rows (WrittenRows (tuple (gfor #(write current admitted) (zip ask.writes currents verdict :strict True)
+                                       (memory-store-row store write.table write.key current admitted.value writer write.value now-ms))))
+        position (. (get rows.items -1) position))
+  (setv appended (tuple (gfor #(one decision) (zip ask.appends judged :strict True)
+                              (if (isinstance decision AppendReplay)
+                                  (Appended decision.sequence True)
+                                  (memory-store-event store writer (store.schema.stream one.stream) one.stream one.idempotency-key one.body
+                                                      position now-ms))))
+        answer (WrittenAndAppended rows appended))
+  (remember-write store ask answer now-ms)
+  answer)
 
 
 (defn #^ (| Events NotIndexed) memory-read-events [#^ MemoryStore store #^ ReadEvents ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
@@ -1173,6 +1223,41 @@
   (if (is landed-cut None) answer landed-cut.answer))
 
 
+(defn #^ object rows-events-fault-answer [#^ PutRowsAppendEvents ask #^ int at #^ StoreFault fault]  ; defk にできない: answered-rows-events が同期に呼ぶ純粋な読み替え
+  "PutRowsAppendEvents に当たった故障 fault の答えを、当たった所 at(0 = 書き全体・i = 追記の束の i - 1 番目)に合わせて読み替えるため: 追記に
+   当たった Refused はその追記の AppendRefused(束は全部か 0 — 追記 1 つの断りで何も書かない形)・ほかは故障の答えのまま(PutRows の故障と同じ)。"
+  (if (and (> at 0) (isinstance fault.answer Refused))
+      (do (setv one (get ask.appends (- at 1)))
+          (AppendRefused (- at 1) one.stream one.idempotency-key fault.answer.reason))
+      fault.answer))
+
+
+(defk answered-rows-events [store writer ask]
+  {:pre [(: store MemoryStore) (: writer str) (: ask PutRowsAppendEvents)]
+   :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Refused Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "PutRowsAppendEvents の答え(answered の、行の束と追記の束を組んだ形 — card ki-e17ba3b32dea): 届かない状態(SetStoreOutage)が束の表と列の
+   どれかに当たれば Unreachable・次に故障を PutRows と同じく書き全体に(束の表の名・matching は PutRowsAppendEvents を受ける)、AppendEvents と
+   同じく追記ごとに(同じ追記の AppendEvent として — append-faults)探す。置き場に着けない故障が 1 つでも当たれば何も書かずに最初の故障の答え
+   (追記に当たった Refused は AppendRefused — 全部か 0)・そうでなければ錠の内で書き(memory-put-rows-append-events)、置き場に着けてから
+   答える故障が当たっていれば全部を書いた後に最初の故障の答え。当たった故障は 1 回の書きにつき 1 回ずつ使う。"
+  (val tables (tuple (gfor write ask.writes write.table)))
+  (val down (unreachable-for store (+ tables (tuple (gfor one ask.appends one.stream)))))
+  (when down
+    (return down))
+  (<- whole (| StoreFault None) (fault-for store StoreOperation.WRITE tables ask))
+  (<- faults (get tuple #((| StoreFault None) ...)) (append-faults store ask.appends))
+  (val hits (+ #(whole) faults))
+  (for [fault (first-seen-faults hits)]
+    (memory-spend-fault store fault))
+  (val cut (next (gfor #(at fault) (enumerate hits) :if (and (is-not fault None) (not fault.lands)) #(at fault)) None))
+  (when (is-not cut None)
+    (return (rows-events-fault-answer ask #* cut)))
+  (<- answer (at-now store (fn [now-ms] (memory-put-rows-append-events store writer ask now-ms))))
+  (val landed (next (gfor #(at fault) (enumerate hits) :if (is-not fault None) #(at fault)) None))
+  (if (is landed None) answer (rows-events-fault-answer ask #* landed)))
+
+
 (defk answered-reads [store ask]
   {:pre [(: store MemoryStore) (: ask ReadBatch)] :post [(: % (| BatchRead Unreachable))]
    :tags {:context "records" :role "foundation"}}
@@ -1202,7 +1287,7 @@
   {:pre [(: store MemoryStore) (: operation Callable)]
    ;; 答え = 置き場の操作の答え(公開 effect の答えの型のどれか)。
    :post [(: % (| Row Missing Page Reset NotIndexed Written Conflict Refused Unreachable WrittenRows RowsConflict RowsRefused
-                  Changes Appended AppendedEvents Events StreamEnd StreamEmpty))]
+                  Changes Appended AppendedEvents Events StreamEnd StreamEmpty WrittenAndAppended AppendRefused))]
    :tags {:context "records" :role "foundation"}}
   "いまの刻(epoch ミリ秒)を読み、置き場の錠の内で operation(刻 → 答え)を呼ぶため(書きの節 PutRow・PutRows・AppendEvent・AppendEvents の置き場の
    操作の形 — 回収は走らせない。書きの操作が自分の触る物だけを片付ける・頭の註・#3605 の D。回収は SweepExpired だけ。読みの節は
@@ -1295,6 +1380,10 @@
   (AppendEvents [appends]
     ;; 届かない状態と故障は束の追記ごとに当てる(answered-appends — 追記 1 つに置いた故障は束の中の同じ追記に当たる)。
     (<- answer (answered-appends store writer effect))
+    (resume answer))
+  (PutRowsAppendEvents [writes appends]
+    ;; 届かない状態と故障は書き全体(束の表)と追記ごとに当てる(answered-rows-events — 全部か 0 なので、着けない故障が当たれば何も書かない)。
+    (<- answer (answered-rows-events store writer effect))
     (resume answer))
   (ReadEvents [stream after limit]
     (<- answer (answered store READ #(stream) effect (read-at-now store (fn [now-ms] (memory-read-events store effect now-ms)))))

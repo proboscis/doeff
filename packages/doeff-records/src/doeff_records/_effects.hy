@@ -9,6 +9,8 @@
 ;;; 11 個目の ReadBatch は行の読みの束(ReadRow と ListRows の組)を置き場への 1 往復で読む(複数の表から名指す鍵と欄の値の組の行を
 ;;; 読む読み手が、読みを 1 本ずつ撃って往復ごとの client の接続の取り合いと service の受けの列を読みの数だけ待たないため —
 ;;; card ki-177a4f287c42)。
+;;; PutRowsAppendEvents は行の書きの束と追記の束を置き場の 1 つの書きで全部か 0 で積む(行を書いた事を出来事で知らせる書き手が、片方だけが
+;;; 残る形を作らないため。今積んだ出来事は同じ書きの行の最後の変更の位置を Event.position に持つ — card ki-e17ba3b32dea)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -24,7 +26,8 @@
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset
-                              Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused])
+                              Appended Refused Events NotIndexed WrittenRows RowsConflict RowsRefused
+                              WrittenAndAppended AppendRefused])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -228,12 +231,18 @@
   "PutRows の欄(writes・idempotency-key)を作る時に検める — 冪等キーは None か空でない文字列・writes は RowWrite の空でない tuple で、
    同じ表の同じ鍵を 2 度含まない。断りの型と文言と順は defclass の時から変えない。"
   (checked-write-key idempotency-key "PutRows.idempotency_key")
+  (check-row-writes writes "PutRows")
+  True)
+
+
+(defn #^ None check-row-writes [#^ object writes #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(checked-put-rows・checked-put-rows-append-events)
+  "行の書きの束 writes を作る時に検める — RowWrite の空でない tuple で、同じ表の同じ鍵を 2 度含まない(PutRows と PutRowsAppendEvents の
+   検めを 1 つにするため。what = 断りの文の頭の effect の名)。"
   (when (not (and (isinstance writes tuple) writes (all (gfor w writes (isinstance w RowWrite)))))
-    (raise (TypeError (.format "PutRows.writes は RowWrite の空でない tuple: {!r}" writes))))
+    (raise (TypeError (.format "{}.writes は RowWrite の空でない tuple: {!r}" what writes))))
   (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor w writes #(w.table w.key)))) :if (> times 1) slot)))
   (when repeated
-    (raise (ValueError (.format "PutRows.writes に同じ行が 2 度出る(表・鍵): {!r}" repeated))))
-  True)
+    (raise (ValueError (.format "{}.writes に同じ行が 2 度出る(表・鍵): {!r}" what repeated)))))
 
 
 (defeffect PutRows
@@ -255,10 +264,16 @@
    :tags {:context "records" :role "foundation"}})
 
 
-(defn #^ tuple write-parts [#^ (| PutRow PutRows) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
-  "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows は束 —
-   どれも欄 table・key・value・expect を持つ)。"
-  (if (isinstance ask PutRows) ask.writes #(ask)))
+(defn #^ tuple write-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ値の読み(admission の冪等キーの判じに渡す)
+  "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows と
+   PutRowsAppendEvents は行の束 — どれも欄 table・key・value・expect を持つ)。"
+  (if (isinstance ask #(PutRows PutRowsAppendEvents)) ask.writes #(ask)))
+
+
+(defn #^ (| tuple None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; defk にできない: write-parts と同じ
+  "行の書き ask の、冪等キーの本文の指紋(admission.write-digest)に含める追記の束を読むため(PutRowsAppendEvents は追記の束・PutRow と PutRows は
+   None — 前からの書きの指紋の綴りを変えない)。"
+  (if (isinstance ask PutRowsAppendEvents) ask.appends None))
 
 
 (defn #^ bool checked-watch-changes [#^ object tables #^ object cursor #^ object timeout #^ object limit #^ object streams]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
@@ -355,6 +370,42 @@
     (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor a self.appends #(a.stream a.idempotency-key)))) :if (> times 1) slot)))
     (when repeated
       (raise (ValueError (.format "AppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))))
+
+
+(defn #^ bool checked-put-rows-append-events [#^ object writes #^ object appends #^ object idempotency-key]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "PutRowsAppendEvents の欄(writes・appends・idempotency-key)を作る時に検めるため — 冪等キーと行の束は PutRows と同じ・追記の束は
+   AppendEvents と同じ(EventAppend の空でない tuple で、同じ列の同じ冪等キーを 2 度含まない)。"
+  (checked-write-key idempotency-key "PutRowsAppendEvents.idempotency_key")
+  (check-row-writes writes "PutRowsAppendEvents")
+  (when (not (and (isinstance appends tuple) appends (all (gfor a appends (isinstance a EventAppend)))))
+    (raise (TypeError (.format "PutRowsAppendEvents.appends は EventAppend の空でない tuple: {!r}" appends))))
+  (setv repeated (sorted (sfor #(slot times) (.items (Counter (lfor a appends #(a.stream a.idempotency-key)))) :if (> times 1) slot)))
+  (when repeated
+    (raise (ValueError (.format "PutRowsAppendEvents.appends に同じ追記が 2 度出る(列・冪等キー): {!r}" repeated))))
+  True)
+
+
+(defeffect PutRowsAppendEvents
+  "行の書きの束と追記の束を、置き場の 1 つの書き(PostgreSQL は 1 つの transaction・memory は錠の内の 1 回)で全部か 0 で積む
+   (card ki-e17ba3b32dea — 行を書いた事を出来事で知らせる書き手が、行と出来事を別の書きにして片方だけが残る形を作らないため)。
+   writes = RowWrite の空でない tuple(PutRows と同じ検め)/ appends = EventAppend の空でない tuple(AppendEvents と同じ検め)/
+   idempotency-key = 書き 1 つの身元(PutRows と同じ — 同じ鍵・同じ本文〔行の束と追記の束の両方〕の送り直しは前の WrittenAndAppended を
+   replayed 真で返し、同じ鍵の別の本文は行の束の 0 行目の RowsRefused)。
+   答えは PutRows(writes) を撃ち、続けて間に他の書きを挟まずに AppendEvents(appends) を撃った答えと同じ — ただし全部か 0: 行の束が
+   RowsConflict / RowsRefused ならその答えで何も書かない(出来事も積まない)。追記のどれかが断られる(同じ冪等キーの別の本文・上限)なら
+   AppendRefused(束の順で最初の断り)で何も書かない(行も書かない)。同じ冪等キーに同じ本文が既に在る追記は断りではなく Appended(前の
+   番号・replayed 真)で、他は進める。確定した答え = WrittenAndAppended(rows = 行の束の WrittenRows・appends = 束の順の Appended)。今積んだ
+   出来事の番号は束の順に増え、出来事は Event.position に rows の最後の項の position を持つ(読み戻した ReadEvents・ReadEventByKey の
+   出来事に載る)。届かない(Unreachable)時は全部が積まれたか、何も積まれていない。書き手の名は欄に無い(handler を組む時に入る)。
+   答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補 — PutRows と AppendEvent に揃える): WrittenAndAppended = 成功 / RowsConflict = 値
+   (版の負け — 呼び手が読み直して撃ち直す普通の答え)/ RowsRefused・AppendRefused = 失敗(宣言・冪等キーの断り — <- は Raise を出す)/
+   Unreachable = 失敗。不在は無い。答える handler は今までどおり全部を値で答える(R4)。"
+  {:fields [(: writes (get tuple #(RowWrite ...))) (: appends (get tuple #(EventAppend ...))) (: idempotency-key (| str None) None)]
+   :pre [(checked-put-rows-append-events writes appends idempotency-key)]
+   :answer (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Unreachable)
+   :failure [RowsRefused AppendRefused Unreachable]
+   :value [RowsConflict]
+   :tags {:context "records" :role "foundation"}})
 
 
 (defn #^ bool checked-watch-window [#^ object after #^ object timeout]

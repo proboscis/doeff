@@ -1,5 +1,7 @@
-;;; PostgreSQL の handler — 公開 effect 10 個に PostgreSQL の表で答える(本番の置き場)。
+;;; PostgreSQL の handler — 公開 effect(_effects.hy の頭の註)に PostgreSQL の表で答える(本番の置き場)。
 ;;; PutRows は PutRow と同じ置き場の錠と transaction 1 つの中で、全部の行を検めてから書く(途中の失敗は transaction ごと戻る)。
+;;; PutRowsAppendEvents は行の束と追記の束を、触る表と列の全部の書きの錠の transaction 1 つ・2 往復で全部か 0 で積み、今積む出来事の payload の
+;;; 鍵 position に同じ書きの行の最後の変更の位置を置く(put-rows-append-events-locked — card ki-e17ba3b32dea)。
 ;;;
 ;;; 判断(期待・書きの許可・保持・索引・頁)は _admission.hy の純関数ちょうど 1 つ(memory の handler と同じ関数)。
 ;;; 文は _pg_sql.hy(純粋・中立の記法)で、この file はそれを doeff の汎用の SQL の effect(SqlQuery・SqlTransaction)に載せる
@@ -122,9 +124,10 @@
                               RowRemoved Changes Appended AppendedEvents Conflict NotIndexed RetiredKey EventsMoved EventsQuiet StreamEnd StreamEmpty
                               EventAbsent EventRetired Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
-                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead])
+                              Event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead
+                              WrittenAndAppended AppendRefused])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey ReadBatch CountRows write-parts])
+                               ReadEventByKey ReadBatch CountRows write-parts PutRowsAppendEvents append-parts])
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
@@ -147,7 +150,8 @@
                               expire-chosen-events-statement touched-events-statement delete-events-statement expiring-candidates-statement
                               retire-keys-statement find-retired-key-statement expired-page-statement
                               SchemaStep columns-statement drop-keys-statement forget-keys-statement
-                              find-write-key-statement remember-write-statement forget-write-keys-statement])
+                              find-write-key-statement remember-write-statement forget-write-keys-statement
+                              insert-positioned-event-statement remember-rows-events-statement])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 
@@ -365,8 +369,8 @@
 
 (defk committed [store statements answer]
   {:pre [(: store PreparedStore) (: statements tuple)
-         (: answer (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows))]
-   :post [(: % (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows))]
+         (: answer (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows WrittenAndAppended AppendRefused))]
+   :post [(: % (| Appended Conflict Refused RowsConflict RowsRefused Written WrittenRows WrittenAndAppended AppendRefused))]
    :tags {:context "records" :role "foundation"}}
   "書かない時の 2 往復目: statements(片付け)を合図と COMMIT と同じ往復で流し、前もって決まった答え answer を返すため(頭の註 — 断り・衝突・
    追記の再送・行の書きの冪等キーの送り直し〔覚えた Written・WrittenRows — 片付けは流さない〕の時も COMMIT を流す)。行を書く時は、変更の
@@ -1017,10 +1021,16 @@
   {:pre [(: stream str) (: records (| tuple list))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
   "append_rows の行(seq at payload)の列を、列 stream の番号の順の出来事(Event)の tuple にするため(出来事を出す読みの全部が通る 1 点 —
-   1 行の event-of もここを通る。内包表記で 1 度に組む・純粋 — 束の読みでは decoded-batch が scheduler の thread の外で回す)。"
+   1 行の event-of もここを通る。内包表記で 1 度に組む・純粋 — 束の読みでは decoded-batch が scheduler の thread の外で回す)。payload の鍵
+   position(行と一緒に積んだ出来事だけが持つ — card ki-e17ba3b32dea)は Event.position に読む(鍵が無ければ None)。"
   (tuple (gfor #(record decoded) (gfor record records #(record (json.loads (get record 2))))
                (Event stream (int (get record 0)) (get decoded "idempotencyKey") (get decoded "body") (get decoded "writer")
-                      (int (get record 1))))))
+                      (int (get record 1)) (event-position (.get decoded "position"))))))
+
+
+(defn #^ (| WatchCursor None) event-position [#^ object stored]  ; defk にできない: events-of の内包表記が出来事ごとに同期に呼ぶ純粋な綴りの戻し(decoded-value と同じ)
+  "append_rows の payload の鍵 position の値({epoch sequence} | 無い)を、出来事の位置(Event.position)に戻すため。"
+  (if (is stored None) None (WatchCursor (int (get stored "epoch")) (int (get stored "sequence")))))
 
 
 (defk event-of [stream record]
@@ -1464,7 +1474,7 @@
 
 
 (defk write-key-reads [store ask]
-  {:pre [(: store PreparedStore) (: ask (| PutRow PutRows))] :post [(: % (get tuple #(Statement ...)))]
+  {:pre [(: store PreparedStore) (: ask (| PutRow PutRows PutRowsAppendEvents))] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "鍵つきの行の書きの 1 往復目に足す、同じ鍵の錠と覚えの引き(鍵の無い書きは 0 文・鍵つきは 2 文で引きが最後 — 頭の註の「行の書きの
    冪等キー」)を作るため。鍵の錠は、同じ鍵を別の表へ並んで撃った書き(表の単位の錠では並ばない)の判じと確定を重ねないため。"
@@ -1487,7 +1497,8 @@
   {:pre [(: records tuple)] :post [(: % (| RememberedWrite None))]
    :tags {:context "records" :role "foundation"}}
   "1 往復目の覚えの引きの行(本文の指紋・答えの綴り・最後の変更の番号 — 無ければ空)から、覚え values.RememberedWrite を作り直すため
-   (答えの各項の変更の位置は、最後の変更の番号から束の順に遡る — 束の変更の番号は錠の中で続く)。"
+   (答えの各項の変更の位置は、最後の変更の番号から束の順に遡る — 束の変更の番号は錠の中で続く。綴りに鍵 appends〔追記の番号の列〕が
+   在れば PutRowsAppendEvents の答え — 追記の各項の名乗りは送り直しの答えにする時に replayed へ替わる・admission.replayed-answer)。"
   (when (not records)
     (return None))
   (val record (get records 0))
@@ -1497,7 +1508,12 @@
   (val written (tuple (gfor #(index item) (enumerate items)
                             (Written (int (get item "version")) (frozen-json-object (get item "value") "write_keys.answer.items[].value")
                                      (WatchCursor (int (get body "epoch")) (+ (- last (len items)) 1 index))))))
-  (RememberedWrite :body-digest (get record 0) :answer (if (get body "rows") (WrittenRows written) (get written 0))))
+  (val answer (cond
+                 (in "appends" body) (WrittenAndAppended (WrittenRows written)
+                                                         (tuple (gfor sequence (get body "appends") (Appended (int sequence) False))))
+                 (get body "rows") (WrittenRows written)
+                 True (get written 0)))
+  (RememberedWrite :body-digest (get record 0) :answer answer))
 
 
 (defk remember-statements [store ask epoch stageds now-ms]
@@ -1510,6 +1526,33 @@
     (return #()))
   (<- answer str (remembered-answer-json (isinstance ask PutRows) epoch stageds))
   #((! (remember-write-statement store.prefix ask.idempotency-key (write-digest (isinstance ask PutRows) (write-parts ask)) answer now-ms))))
+
+
+(defk remember-rows-events-statements [store ask epoch stageds appended now-ms]
+  {:pre [(: store PreparedStore) (: ask PutRowsAppendEvents) (: epoch int) (: stageds (get tuple #(StagedRow ...)))
+         (: appended tuple) (: now-ms int)]
+   :post [(: % (get tuple #(Statement ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "確定する鍵つきの PutRowsAppendEvents の答えを覚える文(2 往復目の追記の文の後ろ — 鍵の無い書きは 0 文)を作るため(card ki-e17ba3b32dea):
+   答えの綴りは remembered-answer-json の綴りの頭に鍵 appends(束の順の追記の番号)を足した物。appended = 束の順の、送り直しの追記の前の番号
+   (int)か今積む追記の印(InsertAt — 番号は同じ往復の追記の文が採るので、覚えの文が同じ文の中で (列, 冪等キー) で引く)。"
+  (when (is ask.idempotency-key None)
+    (return #()))
+  (<- rest str (remembered-answer-json True epoch stageds))
+  (var parts #())
+  (var lookups #())
+  (var literal "{\"appends\":[")
+  (for [#(index #(one item)) (enumerate (zip ask.appends appended :strict True))]
+    (when (> index 0)
+      (:= literal (+ literal ",")))
+    (if (isinstance item int)
+        (:= literal (+ literal (str item)))
+        (do (:= parts (+ parts #(literal)))
+            (:= lookups (+ lookups #(#(one.stream one.idempotency-key))))
+            (:= literal ""))))
+  (:= parts (+ parts #((+ literal "]," (cut rest 1 None)))))
+  #((! (remember-rows-events-statement store.prefix ask.idempotency-key (write-digest True (write-parts ask) (append-parts ask))
+                                       parts lookups now-ms))))
 
 
 (defk put-row-locked [store origin-host writer ask now-ms]
@@ -1600,6 +1643,109 @@
     (<- answered (written-of staged rows (+ first index) head.epoch))
     (:= written (+ written #(answered))))
   (WrittenRows written))
+
+
+(defk positioned-payload [plain writer epoch]
+  {:pre [(: plain str) (: writer str) (: epoch int)] :post [(: % (get tuple #(str str)))]
+   :tags {:context "records" :role "foundation"}}
+  "行と一緒に積む出来事の payload の正規の綴り(canonical-json の {body idempotencyKey position writer} — 鍵の昇順)を、position.sequence の
+   前と後ろの 2 つに割って作るため(番号は同じ往復の変更の文が採る — pg_sql.insert-positioned-event-statement が間に挟む)。plain = 本文と
+   冪等キーだけの正規の綴り(canonical-json の {body idempotencyKey})。"
+  #((+ (cut plain 0 -1) (.format ",\"position\":{{\"epoch\":{},\"sequence\":" epoch))
+    (+ "},\"writer\":" (canonical-json writer) "}")))
+
+
+(defk put-rows-append-events-locked [store origin-host writer ask now-ms]
+  {:pre [(: store PreparedStore) (: origin-host str) (: writer str) (: ask PutRowsAppendEvents) (: now-ms int)]
+   :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused))]
+   :tags {:context "records" :role "foundation"}}
+  "PutRowsAppendEvents を全部か 0 で、行と追記の数に依らず 2 往復で積むため(頭の註の「書きの往復」・card ki-e17ba3b32dea): 1 往復目に置き場の
+   頭・全部の行の錠つきの読み(put-rows-locked と同じ)・追記ごとの冪等キーの引き・鍵の覚え・組の期限を過ぎた出来事(append-events-locked と
+   同じ)・(鍵つきなら)同じ鍵の錠と覚えを読む。覚えで先に判じ(送り直しは何も流さずに COMMIT)、行の束を判じ(通らなければ片付けと COMMIT
+   だけでその答え)、追記を束の順に判じる(断りがあれば束の順で最初の AppendRefused — 片付けと COMMIT だけ)。全部通れば 2 往復目に追記の
+   片付け・行の片付けと書き・番号の錠・変更・今積む追記(payload の position に変更の列の最大の番号 = この書きの行の最後の変更)・(鍵つきなら)
+   答えの覚えを COMMIT と同じ往復で流す。往復の途中の失敗は transaction ごと戻る(全部か 0)。"
+  (for [write ask.writes] (store.schema.table write.table))
+  (val texts (tuple (gfor write ask.writes (key-text write.key))))
+  (<- head-statement (store-head-statement store.prefix))
+  (var reads #(head-statement))
+  (for [#(write text) (zip ask.writes texts :strict True)]
+    (<- lock-statement (lock-row-statement store.prefix write.table text))
+    (:= reads (+ reads #(lock-statement))))
+  (var spans #())
+  (for [one ask.appends]
+    (val decl (store.schema.stream one.stream))
+    (<- expiry (event-expiry decl now-ms))
+    (<- find (find-event-statement store.prefix one.stream one.idempotency-key))
+    (<- lookup (find-retired-key-statement store.prefix one.stream one.idempotency-key))
+    (<- grouping (touched-reads store decl expiry one.idempotency-key))
+    (:= spans (+ spans #((AppendReads :decl decl :expiry expiry :at (len reads) :grouped (len grouping)))))
+    (:= reads (+ reads #(find lookup) grouping)))
+  (<- key-reads (write-key-reads store ask))
+  (<- read (batch-rows store.database (+ reads key-reads) False))
+  (<- remembered (remembered-write-of (if key-reads (get read -1) #())))
+  (val replay (judge-write-replay ask.idempotency-key True ask.writes remembered ask.appends))
+  (when (is-not replay None)
+    (<- replayed (committed store #() replay))
+    (return replayed))
+  (<- head (head-of (get read 0)))
+  (var found #())
+  (for [#(index #(write text)) (enumerate (zip ask.writes texts :strict True))]
+    (<- one (locked-row store (store.schema.table write.table) text (get read (+ index 1)) now-ms head.epoch))
+    (:= found (+ found #(one))))
+  (<- cleanup (joined-steps (tuple (gfor one found one.cleanup))))
+  (val currents (tuple (gfor one found one.current)))
+  (val verdict (judge-put-rows store.schema ask.writes currents))
+  (when (not (isinstance verdict tuple))
+    (<- tidied (numbered-statements store cleanup #()))
+    (<- refused (committed store tidied verdict))
+    (return refused))
+  ;; 追記を束の順に判じる(書かない — 束の前の追記が片付ける出来事は重ねて片付けない・append-events-locked と同じ)。
+  (var scheduled (frozenset))
+  (var swept #())
+  (var decisions #())
+  (for [#(index #(one span)) (enumerate (zip ask.appends spans :strict True))]
+    (val start (+ span.at 2))
+    (<- use (earlier-use store span.decl span.expiry one.idempotency-key (get read span.at) (get read (+ span.at 1))
+                         (tuple (cut read start (+ start span.grouped))) now-ms scheduled))
+    (:= scheduled (| scheduled use.removed))
+    (:= swept (+ swept use.cleanup))
+    (val decision (judge-append span.decl one.body use.previous))
+    (when (isinstance decision Refused)
+      (<- tidied-rows (numbered-statements store cleanup #()))
+      (<- refused-append (committed store (+ swept tidied-rows)
+                                    (AppendRefused index one.stream one.idempotency-key decision.reason)))
+      (return refused-append))
+    (:= decisions (+ decisions #(decision))))
+  (var stageds #())
+  (for [#(write text current admitted) (zip ask.writes texts currents verdict :strict True)]
+    (<- staged (staged-row store origin-host writer write.table text current admitted.value now-ms head.epoch))
+    (:= stageds (+ stageds #(staged))))
+  (<- steps (joined-steps (+ #(cleanup) (tuple (gfor staged stageds (RowSteps :rows #(staged.upsert) :changes #(staged.change)))))))
+  ;; 今積む追記の文は番号の錠の中の変更の文の後ろ(payload の位置の番号 = 変更の列の最大の番号)。答えの位置は 2 往復目の文の並び
+  ;; (追記の片付け → 行の表の文 → 番号の錠 → 変更 → 追記 → 覚え — numbered-statements)で数える。
+  (val inserts-at (+ (len swept) (len steps.rows) 1 (len steps.changes)))
+  (var inserts #())
+  (var appended #())
+  (for [#(one judged) (zip ask.appends decisions :strict True)]
+    (if (isinstance judged AppendReplay)
+        (:= appended (+ appended #(judged.sequence)))
+        (do (<- payload (positioned-payload (canonical-json {"body" one.body "idempotencyKey" one.idempotency-key}) writer head.epoch))
+            (<- insert (insert-positioned-event-statement store.prefix one.stream now-ms (get payload 0) (get payload 1) origin-host head.epoch))
+            (:= appended (+ appended #((InsertAt :index (+ inserts-at (len inserts))))))
+            (:= inserts (+ inserts #(insert))))))
+  (<- remembers (remember-rows-events-statements store ask head.epoch stageds appended now-ms))
+  (<- numbered (numbered-statements store steps (+ inserts remembers)))
+  (<- rows (batch-rows store.database (+ swept numbered) True))
+  ;; 束の i 番目の変更の文の答えの位置: 追記の片付けと行の表の文と番号の錠の後、行の片付けの変更の後の i 番目。
+  (val first (+ (len swept) (len steps.rows) 1 (len cleanup.changes)))
+  (var written #())
+  (for [#(index staged) (enumerate stageds)]
+    (<- answered (written-of staged rows (+ first index) head.epoch))
+    (:= written (+ written #(answered))))
+  (WrittenAndAppended (WrittenRows written)
+                      (tuple (gfor item appended
+                                   (if (isinstance item InsertAt) (Appended (int (get (get rows item.index) 0 0)) False) (Appended item True))))))
 
 
 (defk table-expiries [store tables now-ms]
@@ -2212,6 +2358,21 @@
     (<- topics (notice-topics #() #(stream)))
     (<- unit (stream-unit stream))
     (<- answer (reached (appended store gated origin-host writer effect (epoch-ms now) #(unit) topics)))
+    (resume answer))
+  (PutRowsAppendEvents [writes appends]
+    ;; 行の束と追記の束を 1 つの書きの錠の transaction で 2 往復で積み、触る表と列の名を合図する(put-rows-append-events-locked)。錠の単位は
+    ;; 触る表と列の全部(名の順 — writer-locks)。
+    (<- now (GetTime))
+    (val tables (tuple (gfor write writes write.table)))
+    (val streams (tuple (gfor one appends one.stream)))
+    (<- topics (notice-topics tables streams))
+    (<- table-locks (table-units tables))
+    (var units table-locks)
+    (for [stream (sorted (set streams))]
+      (<- unit (stream-unit stream))
+      (:= units (+ units #(unit))))
+    (<- answer (reached (batched-writing store gated "put-rows-append-events" units topics
+                                         (put-rows-append-events-locked store origin-host writer effect (epoch-ms now)))))
     (resume answer))
   (AppendEvents [appends]
     ;; 束の追記を 1 つの書きの錠の transaction で 2 往復で積み、束が触る列の名を合図する(append-events-locked)。

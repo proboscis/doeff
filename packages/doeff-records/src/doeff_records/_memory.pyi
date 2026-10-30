@@ -28,6 +28,7 @@ from doeff_records._effects import (
     ListRows,
     PutRow,
     PutRows,
+    PutRowsAppendEvents,
     ReadBatch,
     ReadEventByKey,
     ReadEvents,
@@ -71,6 +72,10 @@ from doeff_records._values import (
     Unreachable,
     Written,
     WrittenRows,
+    WrittenAndAppended,
+    AppendRefused,
+    StreamDecl,
+    WatchCursor,
 )
 
 _Answer = TypeVar("_Answer")
@@ -158,6 +163,8 @@ _StoreAnswer = (
     | WrittenRows
     | RowsConflict
     | RowsRefused
+    | WrittenAndAppended
+    | AppendRefused
     | Changes
     | Appended
     | AppendedEvents
@@ -196,6 +203,15 @@ def memory_append_one(
 def memory_append_events(
     store: MemoryStore, writer: str, ask: AppendEvents, faults: tuple[StoreFault | None, ...], now_ms: int
 ) -> AppendedEvents: ...
+# 追記 1 つの判じと積み(AppendEvent と PutRowsAppendEvents が共に使う — card ki-e17ba3b32dea)。
+def judged_append(
+    store: MemoryStore, decl: StreamDecl, stream: str, idempotency_key: str, body: object, now_ms: int
+) -> object: ...
+def memory_store_event(
+    store: MemoryStore, writer: str, decl: StreamDecl, stream: str, idempotency_key: str, body: object,
+    position: WatchCursor | None, now_ms: int
+) -> Appended: ...
+def memory_put_rows_append_events(store: MemoryStore, writer: str, ask: PutRowsAppendEvents, now_ms: int) -> object: ...
 def memory_read_events(store: MemoryStore, ask: ReadEvents, now_ms: int) -> Events: ...
 def memory_read_stream_end(store: MemoryStore, ask: ReadStreamEnd, now_ms: int) -> StreamEnd | StreamEmpty: ...
 def memory_read_event_by_key(store: MemoryStore, ask: ReadEventByKey, now_ms: int) -> Event | EventAbsent | EventRetired: ...
@@ -222,6 +238,11 @@ def answered(
 def append_faults(store: MemoryStore, appends: tuple[EventAppend, ...]) -> Program[tuple[StoreFault | None, ...], object]: ...
 def answered_appends(store: MemoryStore, writer: str, ask: AppendEvents) -> Program[AppendedEvents | Unreachable, object]: ...
 def answered_reads(store: MemoryStore, ask: ReadBatch) -> Program[BatchRead | Unreachable, object]: ...
+# 行と追記の束の故障の当て方と答え(card ki-e17ba3b32dea — 書き全体と追記ごとに当て、着けない故障は何も書かない)。
+def rows_events_fault_answer(ask: PutRowsAppendEvents, at: int, fault: StoreFault) -> object: ...
+def answered_rows_events(
+    store: MemoryStore, writer: str, ask: PutRowsAppendEvents
+) -> Program[WrittenAndAppended | RowsConflict | RowsRefused | AppendRefused | Refused | Unreachable, object]: ...
 # 書きの節の形(保持の回収の後に operation)と読みの節の形(回収しない — 読みの関数が期限を見る・#3561)。
 def at_now(store: MemoryStore, operation: Callable[[int], _StoreAnswer]) -> Program[_StoreAnswer, object]: ...
 def read_at_now(store: MemoryStore, operation: Callable[[int], _StoreAnswer]) -> Program[_StoreAnswer, object]: ...

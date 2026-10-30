@@ -334,6 +334,9 @@ def find_event_statement(prefix: str, stream: str, idempotency_key: str) -> _Pro
 def insert_event_statement(prefix: str, stream: str, at: int, payload: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
     ...
 
+def insert_positioned_event_statement(prefix: str, stream: str, at: int, head: str, tail: str, origin_host: str, epoch: int) -> _Program[Statement, object]:
+    ...
+
 def insert_unused_event_statement(prefix: str, stream: str, at: int, payload: str, origin_host: str, idempotency_key: str) -> _Program[Statement, object]:
     ...
 
@@ -381,6 +384,9 @@ def find_write_key_statement(prefix: str, idempotency_key: str) -> _Program[Stat
     ...
 
 def remember_write_statement(prefix: str, idempotency_key: str, body_digest: str, answer: str, remembered_at: int) -> _Program[Statement, object]:
+    ...
+
+def remember_rows_events_statement(prefix: str, idempotency_key: str, body_digest: str, parts: tuple[str, ...], lookups: tuple[tuple, ...], remembered_at: int) -> _Program[Statement, object]:
     ...
 
 def forget_write_keys_statement(prefix: str, forget_before: int, limit: int) -> _Program[Statement, object]:

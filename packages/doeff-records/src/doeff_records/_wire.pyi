@@ -47,6 +47,8 @@ from doeff_records._values import EventAbsent as EventAbsent
 from doeff_records._values import EventRetired as EventRetired
 from doeff_records._values import BatchRead as BatchRead
 from doeff_records._values import stored_text as stored_text
+from doeff_records._values import WrittenAndAppended as WrittenAndAppended
+from doeff_records._values import AppendRefused as AppendRefused
 from doeff_records._effects import ReadRow as ReadRow
 from doeff_records._effects import ListRows as ListRows
 from doeff_records._effects import PutRow as PutRow
@@ -62,6 +64,7 @@ from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
 from doeff_records._effects import CountRows as CountRows
+from doeff_records._effects import PutRowsAppendEvents as PutRowsAppendEvents
 PATH_PREFIX: str
 WRITER_HEADER: str
 OP_READ_ROW: str
@@ -77,6 +80,7 @@ OP_READ_EVENT_BY_KEY: str
 OP_APPEND_EVENTS: str
 OP_READ_BATCH: str
 OP_COUNT_ROWS: str
+OP_PUT_ROWS_APPEND_EVENTS: str
 OPERATIONS: tuple[str, ...]
 BATCH_READ_OPERATIONS: tuple[str, ...]
 WATCH_MAX_SECONDS: float
@@ -124,8 +128,8 @@ CALLER_UNNAMED: str
 CALLER_UNDECLARED: str
 METRIC_WORD_UNSAFE: Incomplete
 ANSWER_KINDS: dict[str, tuple[str, ...]]
-PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey | AppendEvents | ReadBatch | CountRows
-WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired | AppendedEvents | BatchRead | Count
+PublicEffect: TypeAlias = ReadRow | ListRows | PutRow | WatchChanges | AppendEvent | ReadEvents | PutRows | ReadStreamEnd | WatchEvents | ReadEventByKey | AppendEvents | ReadBatch | CountRows | PutRowsAppendEvents
+WireAnswer: TypeAlias = Row | Missing | Page | Written | Conflict | Refused | NotIndexed | Reset | Changes | Appended | Events | WrittenRows | RowsConflict | RowsRefused | StreamEnd | StreamEmpty | EventsMoved | EventsQuiet | Event | EventAbsent | EventRetired | AppendedEvents | BatchRead | Count | WrittenAndAppended | AppendRefused
 
 class WireMalformed(ValueError):
     ...
@@ -245,6 +249,9 @@ def row_write_from(value: JsonValue) -> _Program[RowWrite, object]:
 def row_writes_from(body: JsonValue) -> _Program[tuple, object]:
     ...
 
+def row_write_items(value: JsonValue) -> _Program[tuple, object]:
+    ...
+
 def event_append_json(one: EventAppend) -> _Program[dict, object]:
     ...
 
@@ -252,6 +259,9 @@ def event_append_from(value: JsonValue) -> _Program[EventAppend, object]:
     ...
 
 def event_appends_from(body: JsonValue) -> _Program[tuple, object]:
+    ...
+
+def event_append_items(value: JsonValue) -> _Program[tuple, object]:
     ...
 
 def batch_reads_from(body: JsonValue) -> _Program[tuple, object]:
@@ -338,6 +348,9 @@ def appended_events_from(value: JsonValue) -> _Program[AppendedEvents, object]:
     ...
 
 def batch_read_from(value: JsonValue) -> _Program[BatchRead, object]:
+    ...
+
+def written_and_appended_from(value: JsonValue) -> _Program[WrittenAndAppended, object]:
     ...
 
 def rows_conflict_from(value: JsonValue) -> _Program[RowsConflict, object]:

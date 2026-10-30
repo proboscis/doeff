@@ -247,6 +247,13 @@ class Event:
     body: object
     writer: str
     at: int
+    position: WatchCursor | None = None
+
+@dataclass(frozen=True)
+class WrittenAndAppended:
+    rows: WrittenRows
+    appends: tuple[Appended, ...]
+    replayed: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class RetiredKey:
@@ -257,7 +264,7 @@ class RetiredKey:
 @dataclass(frozen=True, kw_only=True)
 class RememberedWrite:
     body_digest: str
-    answer: Written | WrittenRows
+    answer: Written | WrittenRows | WrittenAndAppended
 
 @dataclass(frozen=True)
 class Events:
@@ -317,6 +324,13 @@ class RowsRefused:
     reason: str
 
 @dataclass(frozen=True)
+class AppendRefused:
+    index: int
+    stream: str
+    idempotency_key: str
+    reason: str
+
+@dataclass(frozen=True)
 class Unreachable:
     detail: str
 
@@ -349,5 +363,6 @@ ReadStreamEndAnswer: TypeAlias = StreamEnd | StreamEmpty | Unreachable
 ReadEventByKeyAnswer: TypeAlias = Event | EventAbsent | EventRetired | Unreachable
 PutRowsAnswer: TypeAlias = WrittenRows | RowsConflict | RowsRefused | Unreachable
 AppendEventsAnswer: TypeAlias = AppendedEvents | Unreachable
+PutRowsAppendEventsAnswer: TypeAlias = WrittenAndAppended | RowsConflict | RowsRefused | AppendRefused | Unreachable
 ReadBatchAnswer: TypeAlias = BatchRead | Unreachable
 
