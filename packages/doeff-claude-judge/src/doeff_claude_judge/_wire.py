@@ -246,11 +246,11 @@ def _unexpected_keys(got: Mapping[str, object], expected: list[str]) -> list[str
 
 
 def _read_noul(name: str, raw: object) -> Answer | MalformedAnswer:
-    """noul の欄の答えを、確率を値のまま持つ Answer にするため(確信度は doeff-jev の noul と同じ 0.5 からの距離 × 2)。"""
+    """noul の欄の答えを、確率を値のまま持つ Answer にするため(確信度は doeff-jev の noul と同じ Answer.noul の式)。"""
     value = _probability(raw)
     if value is None:
         return MalformedAnswer(f"問い {name} の答えが 0〜1 の数でない: {raw!r}", name)
-    return Answer(kind="noul", value=value, confidence=abs(value - 0.5) * 2, raw={"answer": raw})
+    return Answer.noul(value, raw={"answer": raw})
 
 
 def _read_choice(name: str, option_ids: list[str], raw: object) -> Answer | MalformedAnswer:
