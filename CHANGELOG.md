@@ -50,6 +50,20 @@
   `CompletionRequest`, `EmbeddingRequest`, `OpenAIModel`; doeff-openrouter `APICallMetadata`; doeff-seedream
   `CostEstimate`; doeff-validation `CheckArgument`, `CheckError`, `CheckFailure`, `EvaluatedArgument` (the
   failures a `ValidationException` holds — the Hy `check` expansion reads them from `doeff_validation._failures`).
+- More effects of the smaller packages declare their answer types (ADR-DOE-API-001 R2), so a type checker reads the
+  value a `yield` gives: the doeff-agentic workflow, session, environment, message and status effects (for example
+  `AgenticCreateSession` answers `AgenticSessionHandle`, `AgenticNextEvent` answers `AgenticEvent |
+  AgenticEndOfEvents`), doeff-time `RaceWithin` and `WaitTicks` (`RaceOutcome[T]`, `TicksOutcome[T]`), doeff-git
+  `CreatePR` (`PRHandle`), doeff-notify `Notify` (`NotificationResult`), doeff-openai `CalculateCost` (`CostInfo`),
+  doeff-image `ImageGenerate` and `ImageEdit` (`ImageResult`), doeff-seedream `SeedreamGenerate`
+  (`SeedreamImageEditResult`), doeff-docker `ShellRun` (`ShellRunResult`) and doeff-system-one `Judge` (`Verdict`).
+  doeff-claude-code `ClaudeAnswerPermission.answer` is typed `PermissionAnswer`.
+- **Breaking:** more names that no effect answers or carries are no longer exported by their import roots
+  (ADR-DOE-API-001 R1): doeff-git `BranchRef`; doeff-llm `CostInfo`, `TokenUsage`; doeff-openai `StreamChunk`;
+  doeff-openrouter `CostInfo`, `TokenUsage`; doeff-gemini `TokenUsage`, `GeminiImageEditResult` (what
+  `edit_image__gemini` returns); doeff-claude-judge `MalformedAnswer`; doeff-seedream `ImageResult` (import it from
+  doeff-image). No other repository imports them from the roots; they stay in each package's `_types` (`_wire` for
+  `MalformedAnswer`).
 - **Breaking (doeff-events):** the import root no longer exports `GAP_NOTICE`, the wire name of the gap notice
   (ADR-DOE-API-001 R1 — a constant is not an effect or a handler). Write `Announce.gap(channel, source)` where you
   passed it to `Announce`, and `notice.is_gap` (or `effect.is_gap` on an `Announce`) where you compared a name with

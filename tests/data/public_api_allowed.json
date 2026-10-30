@@ -179,6 +179,13 @@
   {
    "package": "doeff-agentic",
    "module": "doeff_agentic",
+   "name": "AgenticEndOfEvents",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
    "name": "AgenticEnvironmentHandle",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -214,7 +221,21 @@
   {
    "package": "doeff-agentic",
    "module": "doeff_agentic",
+   "name": "AgenticEvent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
    "name": "AgenticMessage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
+   "name": "AgenticMessageHandle",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -223,6 +244,13 @@
    "module": "doeff_agentic",
    "name": "AgenticServerError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
+   "name": "AgenticSessionHandle",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -242,6 +270,13 @@
   {
    "package": "doeff-agentic",
    "module": "doeff_agentic",
+   "name": "AgenticSessionStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
    "name": "AgenticTimeoutError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -256,8 +291,22 @@
   {
    "package": "doeff-agentic",
    "module": "doeff_agentic",
+   "name": "AgenticWorkflowHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
    "name": "AgenticWorkflowNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
+   "name": "AgenticWorkflowStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -5108,6 +5157,13 @@
    "package": "doeff-claude-code",
    "module": "doeff_claude_code.values",
    "name": "McpStdio",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "PermissionAnswer",
    "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -10782,6 +10838,20 @@
    "決め": "ki-f20b18c2aad9"
   },
   {
+   "package": "doeff-docker",
+   "module": "doeff_docker.effects",
+   "name": "ShellRunResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-docker",
+   "module": "doeff_docker.handlers.shell",
+   "name": "ShellRunResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-domain",
    "module": "(submodule)",
    "name": "doeff_domain.macros",
@@ -11533,7 +11603,28 @@
   {
    "package": "doeff-gemini",
    "module": "doeff_gemini",
+   "name": "CostInfo",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini",
+   "name": "GeminiCallResult",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini",
    "name": "GeminiCostEstimate",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-gemini",
+   "module": "doeff_gemini",
+   "name": "ImageResult",
    "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
@@ -11563,6 +11654,13 @@
    "module": "doeff_git",
    "name": "MergeStrategy",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-git",
+   "module": "doeff_git",
+   "name": "PRHandle",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -11965,6 +12063,13 @@
    "決め": "lt-796ZF4G6CQ6TSHS5JDDRP09P1K"
   },
   {
+   "package": "doeff-image",
+   "module": "doeff_image",
+   "name": "ImageResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-indexer",
    "module": "(console script)",
    "name": "doeff-indexer",
@@ -11995,8 +12100,22 @@
   {
    "package": "doeff-notify",
    "module": "doeff_notify",
+   "name": "NotificationResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-notify",
+   "module": "doeff_notify",
    "name": "Urgency",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai",
+   "name": "CostInfo",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -12011,6 +12130,13 @@
    "module": "doeff_openai",
    "name": "PricingError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-openai",
+   "module": "doeff_openai",
+   "name": "TokenUsage",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -13953,6 +14079,27 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-seedream",
+   "module": "doeff_seedream",
+   "name": "SeedreamImage",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-seedream",
+   "module": "doeff_seedream",
+   "name": "SeedreamImageEditResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
+   "name": "Answer",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
    "name": "Image",
@@ -13983,6 +14130,13 @@
   {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
+   "name": "Verdict",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
    "name": "judge_many",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -13992,6 +14146,20 @@
    "module": "doeff_system_one.types",
    "name": "Kind",
    "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-time",
+   "module": "doeff_time",
+   "name": "RaceOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-time",
+   "module": "doeff_time",
+   "name": "TicksOutcome",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {

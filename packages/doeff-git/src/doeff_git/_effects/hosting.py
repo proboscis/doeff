@@ -9,7 +9,7 @@ from doeff_git._types import MergeStrategy, PRHandle
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreatePR(EffectBase):
+class CreatePR(EffectBase[PRHandle]):
     """Create a pull request for a branch."""
 
     work_dir: Path

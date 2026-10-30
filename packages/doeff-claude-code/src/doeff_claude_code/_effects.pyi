@@ -15,6 +15,7 @@ from doeff_claude_code._values import TurnInput as TurnInput
 from doeff_claude_code._values import Allow as Allow
 from doeff_claude_code._values import Deny as Deny
 from doeff_claude_code._values import checked_session_id as checked_session_id
+from doeff_claude_code._values import PermissionAnswer as PermissionAnswer
 from doeff_claude_code._values import FreshSession as FreshSession
 from doeff_claude_code._values import ResumeSession as ResumeSession
 from doeff_claude_code._values import ForkSession as ForkSession
@@ -166,7 +167,7 @@ class ClaudeReadTurnEvents(EffectBase[TurnEventPage | UnknownTurn]):
 class ClaudeAnswerPermission(EffectBase[Answered | NoSuchRequest]):
     turn: ClaudeTurn
     request_id: str
-    answer: Allow | Deny
+    answer: PermissionAnswer
 
     def __post_init__(self) -> None:
         ...
