@@ -40,7 +40,7 @@
 (import doeff_core_effects.http_server_effects [HttpAddress])
 (import doeff_core_effects.postgres_sql [DEFAULT-TIMEOUTS PostgresConnections PostgresDatabase PostgresTimeouts postgres-sql-handler])
 (import doeff_core_effects.sql_effects [SqlQuery SqlTransaction SqlFailed SqlNotify])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import doeff_time [SimClock sim-time-handler async-time-handler])
 (import doeff_records [RecordsSchema Row Page NotIndexed ExpectAbsent Written Unreachable])
 (import doeff_records [ReadRow ListRows PutRow])

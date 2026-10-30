@@ -12,10 +12,10 @@ from doeff_core_effects import await_handler as await_handler
 from doeff_core_effects import state as state
 from doeff_core_effects import Spawn as Spawn
 from doeff_core_effects import scheduled as scheduled
-from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
+from doeff_core_effects import ReadEnvironment as ReadEnvironment
 from doeff_core_effects import ReadText as ReadText
 from doeff_core_effects import FileFailed as FileFailed
-from doeff_core_effects.stop_signal_handlers import os_signal_stop_handler as os_signal_stop_handler
+from doeff_core_effects import os_signal_stop_handler as os_signal_stop_handler
 from doeff_core_effects.aiohttp_http_server import aiohttp_http_server as aiohttp_http_server
 from doeff_core_effects.http_server_effects import HttpAddress as HttpAddress
 from doeff_core_effects.postgres_sql import DEFAULT_TIMEOUTS as DEFAULT_TIMEOUTS

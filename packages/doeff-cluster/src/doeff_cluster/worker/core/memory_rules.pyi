@@ -5,7 +5,7 @@ from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from bisect import bisect_left as bisect_left
 from bisect import bisect_right as bisect_right
-from doeff_core_effects.proc_table_effects import ProcRow as ProcRow
+from doeff_core_effects import ProcRow as ProcRow
 MIB: int
 
 class MemoryLevel(StrEnum):

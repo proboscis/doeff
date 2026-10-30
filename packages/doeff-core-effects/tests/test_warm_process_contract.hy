@@ -10,11 +10,10 @@
 ;;;   * 待ちの子との約束の 1 行は、頼みも答えも往復する(形の違う 1 行は読めない断り)
 (require doeff-hy.macros [defk deftest <- val var])
 (import doeff_hy.wire [Malformed])
-(import doeff_core_effects.process_effects [EnvEntry ProcessSignal RunProcess])
-(import doeff_core_effects.warm_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited
-                                         WarmLost WarmSignaled WarmGone warm-socket-missing warm-answer-late warm-answer-unreadable
-                                         warm-lost warm-gone])
-(import doeff_core_effects.os_warm_process [WarmRequestWire warm-request-line warm-request-of warm-answer-line warm-answer-of])
+(import doeff_core_effects [EnvEntry ProcessSignal RunProcess])
+(import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WarmForked WarmRefused WarmRunning WarmExited WarmLost WarmSignaled WarmGone]
+        doeff_core_effects._warm_effects [warm-socket-missing warm-answer-late warm-answer-unreadable warm-lost warm-gone])
+(import doeff_core_effects._os_warm_process [WarmRequestWire warm-request-line warm-request-of warm-answer-line warm-answer-of])
 (import warm_contract_handlers [WarmPaths WarmWorldPaths REFUSAL EXIT-3 SLEEPER VANISH])
 
 (val SECRET "doeff-warm-secret-value")

@@ -15,7 +15,8 @@ import sys
 import pytest
 
 #: 子の古い path と新しい path(card ki-c09b3b527fad で移した中核の 10 個 — storage は下の module も・card ki-32623e1651c6 で
-#: 移した計算・VM・乱数・測りの 23 個・card ki-375e0a35b7a0 で移した file・memo・cache の 11 個)。
+#: 移した計算・VM・乱数・測りの 23 個・card ki-375e0a35b7a0 で移した file・memo・cache の 11 個・card ki-8d33df2c82df で移した
+#: process の 19 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -63,6 +64,25 @@ MOVED = {
     "doeff_core_effects.cache_handlers": "doeff_core_effects._cache_handlers",
     "doeff_core_effects.cache_policy": "doeff_core_effects._cache_policy",
     "doeff_core_effects.cache": "doeff_core_effects._cache",
+    "doeff_core_effects.process_effects": "doeff_core_effects._process_effects",
+    "doeff_core_effects.os_process": "doeff_core_effects._os_process",
+    "doeff_core_effects.scripted_process": "doeff_core_effects._scripted_process",
+    "doeff_core_effects.process_exit": "doeff_core_effects._process_exit",
+    "doeff_core_effects.process_latest": "doeff_core_effects._process_latest",
+    "doeff_core_effects.process_meter": "doeff_core_effects._process_meter",
+    "doeff_core_effects.process_stat": "doeff_core_effects._process_stat",
+    "doeff_core_effects.pidfd_exit": "doeff_core_effects._pidfd_exit",
+    "doeff_core_effects.kqueue_exit": "doeff_core_effects._kqueue_exit",
+    "doeff_core_effects.darwin_proc": "doeff_core_effects._darwin_proc",
+    "doeff_core_effects.darwin_volume": "doeff_core_effects._darwin_volume",
+    "doeff_core_effects.proc_table_effects": "doeff_core_effects._proc_table_effects",
+    "doeff_core_effects.os_proc_table": "doeff_core_effects._os_proc_table",
+    "doeff_core_effects.scripted_proc_table": "doeff_core_effects._scripted_proc_table",
+    "doeff_core_effects.warm_effects": "doeff_core_effects._warm_effects",
+    "doeff_core_effects.os_warm_process": "doeff_core_effects._os_warm_process",
+    "doeff_core_effects.scripted_warm_process": "doeff_core_effects._scripted_warm_process",
+    "doeff_core_effects.stop_signal_effects": "doeff_core_effects._stop_signal_effects",
+    "doeff_core_effects.stop_signal_handlers": "doeff_core_effects._stop_signal_handlers",
 }
 
 #: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
@@ -85,6 +105,12 @@ LAZY_NAMES = {
     "MemoGet": "doeff_core_effects._memo_effects",
     "memo_rewriters": "doeff_core_effects._memo_handlers",
     "CachePolicy": "doeff_core_effects._cache_policy",
+    "RunProcess": "doeff_core_effects._process_effects",
+    "subprocess_handler": "doeff_core_effects._os_process",
+    "ProcessScript": "doeff_core_effects._scripted_process",
+    "ForkFromWarm": "doeff_core_effects._warm_effects",
+    "WarmScript": "doeff_core_effects._scripted_warm_process",
+    "StopBell": "doeff_core_effects._stop_signal_effects",
 }
 
 #: `import doeff` が読まない module(入口の遅延の名だけが読む)。
@@ -126,6 +152,25 @@ NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._cache_handlers",
     "doeff_core_effects._cache_policy",
     "doeff_core_effects._cache",
+    "doeff_core_effects._process_effects",
+    "doeff_core_effects._os_process",
+    "doeff_core_effects._scripted_process",
+    "doeff_core_effects._process_exit",
+    "doeff_core_effects._process_latest",
+    "doeff_core_effects._process_meter",
+    "doeff_core_effects._process_stat",
+    "doeff_core_effects._pidfd_exit",
+    "doeff_core_effects._kqueue_exit",
+    "doeff_core_effects._darwin_proc",
+    "doeff_core_effects._darwin_volume",
+    "doeff_core_effects._proc_table_effects",
+    "doeff_core_effects._os_proc_table",
+    "doeff_core_effects._scripted_proc_table",
+    "doeff_core_effects._warm_effects",
+    "doeff_core_effects._os_warm_process",
+    "doeff_core_effects._scripted_warm_process",
+    "doeff_core_effects._stop_signal_effects",
+    "doeff_core_effects._stop_signal_handlers",
 )
 
 

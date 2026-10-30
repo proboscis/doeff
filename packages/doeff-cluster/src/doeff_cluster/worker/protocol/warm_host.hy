@@ -15,15 +15,14 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [FileFailed MakeDirectory RemoveTree ReadText]
         doeff_core_effects._file_effects [file-done])
-(import doeff_core_effects.process_effects [EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted
-                                            ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
+(import doeff_core_effects [EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
                                                   ForgetWarmChild StopProgress StopStage WakeSet WorkerWakes])
 (import doeff_cluster.worker.core.worker_due [wakes-with])
 (import doeff_cluster.worker.core.warm_rules [refusals-after])
 (import doeff_cluster.shared.intent.due_model [DueNever])
-(import doeff_core_effects.process_effects [AwaitProcessExit])
+(import doeff_core_effects [AwaitProcessExit])
 (import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster.worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster.worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])

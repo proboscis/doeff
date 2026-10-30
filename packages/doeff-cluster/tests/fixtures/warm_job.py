@@ -22,7 +22,7 @@ import sys
 
 from doeff import ReadVmLiveCounts, run
 from doeff_core_effects import vm_probe_handler
-from doeff_core_effects.os_warm_process import own_thread_count
+from doeff_core_effects._os_warm_process import own_thread_count
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}
 LINUX = sys.platform.startswith("linux")

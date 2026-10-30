@@ -16,7 +16,7 @@
 (import dataclasses [dataclass])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_core_effects [CreatePromise CompletePromise Promise])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])

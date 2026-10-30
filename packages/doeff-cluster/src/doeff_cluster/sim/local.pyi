@@ -36,9 +36,9 @@ from doeff_core_effects import Task as Task
 from doeff_core_effects import Future as Future
 from doeff_core_effects import TaskCancelledError as TaskCancelledError
 from doeff_core_effects import Race as Race
-from doeff_core_effects.stop_signal_effects import AwaitStop as AwaitStop
-from doeff_core_effects.stop_signal_effects import StopBell as StopBell
-from doeff_core_effects.stop_signal_effects import StopRequested as StopRequested
+from doeff_core_effects import AwaitStop as AwaitStop
+from doeff_core_effects import StopBell as StopBell
+from doeff_core_effects import StopRequested as StopRequested
 from doeff_core_effects._world_phases import mark_world_phase as mark_world_phase
 from doeff_events import ArmedTimer as ArmedTimer
 from doeff_events import ArmedTimers as ArmedTimers
@@ -74,9 +74,9 @@ from doeff_cluster.coordinator.core.cluster_policy import fresh_task_prefix as f
 from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
 from doeff_cluster.coordinator.entry.main import load_state as load_state
 from doeff_cluster.coordinator.entry.main import with_running_commit as with_running_commit
-from doeff_core_effects.process_effects import EnvEntry as EnvEntry
-from doeff_core_effects.scripted_process import ProcessScript as ProcessScript
-from doeff_core_effects.scripted_process import scripted_process_handler as scripted_process_handler
+from doeff_core_effects import EnvEntry as EnvEntry
+from doeff_core_effects import ProcessScript as ProcessScript
+from doeff_core_effects import scripted_process_handler as scripted_process_handler
 from doeff_cluster.foundation.coordinator_http import RESEND_PAUSE_SECONDS as RESEND_PAUSE_SECONDS
 from doeff_cluster.shared.core.resend import IDEMPOTENT_DEADLINE_SECONDS as IDEMPOTENT_DEADLINE_SECONDS
 from doeff_cluster.foundation.coordinator_inbox import StopState as StopState

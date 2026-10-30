@@ -4,7 +4,7 @@
 ;;   Program の job … 詰めた Program の file を引数(--program)と宿の契約の環境変数で渡す。
 (require doeff-hy.macros [deftest <- val])
 (import json)
-(import doeff_core_effects.process_effects [EnvEntry EnvMode])
+(import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [CodeLayout WorkerPolicy])
 (import doeff_cluster.worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])

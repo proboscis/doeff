@@ -23,7 +23,7 @@
 (import doeff_core_effects [reader state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.worker.intent.worker_model [CodeState PrepareEnv SweepEnvs])

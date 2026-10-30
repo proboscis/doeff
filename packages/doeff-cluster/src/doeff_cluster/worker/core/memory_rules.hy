@@ -33,7 +33,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
 (import bisect [bisect-left bisect-right])
-(import doeff_core_effects.proc_table_effects [ProcRow])
+(import doeff_core_effects [ProcRow])
 
 ;; byte の単位(log の値は MiB)。
 (val MIB (* 1024 1024))

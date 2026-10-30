@@ -159,6 +159,11 @@ mod tests {
             ("os_file", "os_file_handler"),
             ("cache_handlers", "sqlite_cache_handler"),
             ("memo_handlers", "sqlite_memo_handler"),
+            // process の子も同じ(card ki-8d33df2c82df)。
+            ("os_process", "subprocess_handler"),
+            ("stop_signal_handlers", "os_signal_stop_handler"),
+            ("process_meter", "process_meter_handler"),
+            ("process_latest", "process_latest_handler"),
         ] {
             for name in [
                 format!("doeff_core_effects._{child}.{handler}"),

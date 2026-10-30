@@ -65,7 +65,7 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/process_effects.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_process_effects.hy",
       "reason": "registered-with-legacy",
       "rule": "pure-io-import",
       "subject": "os"
@@ -212,7 +212,7 @@
     },
     {
       "count": 4,
-      "path": "packages/doeff-core-effects/doeff_core_effects/process_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_process_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -233,7 +233,7 @@
     },
     {
       "count": 6,
-      "path": "packages/doeff-core-effects/doeff_core_effects/scripted_process.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_scripted_process.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -513,63 +513,63 @@
     },
     {
       "count": 2,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "add"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "drained"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "find"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "forget"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "give"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "start"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "take"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/os_process.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_os_process.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "texts"
@@ -618,21 +618,21 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/process_latest.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_process_latest.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "latest_board"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_process_meter.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "gc_pause_watch"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/process_meter.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_process_meter.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "meter_place"
@@ -961,21 +961,21 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_stop_signal_handlers.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_stop_signal_handlers.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "forget"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/stop_signal_handlers.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_stop_signal_handlers.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "park"

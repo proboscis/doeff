@@ -10,7 +10,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass field])  ; defrecord の展開が名指す
 (import datetime [datetime timedelta])
-(import doeff_core_effects.stop_signal_effects [StopRequested])
+(import doeff_core_effects [StopRequested])
 (import doeff_events [ArmTimer TimerFired WaitForEvent EventBus subscribed-event-handler])
 (import doeff_hy.json_value [OpaqueJson])
 (import doeff_time [GetTime])

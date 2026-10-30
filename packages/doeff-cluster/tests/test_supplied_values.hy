@@ -24,7 +24,7 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.foundation.host_contract [environ-table-reader])
 (import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure])
 (import doeff_cluster.foundation.in_cluster_api [CLUSTER-API SERVICE-ACCOUNT-CA-PATH ClusterCaMissing cluster-ca-answer in-cluster-api-routed])

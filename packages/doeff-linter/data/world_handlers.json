@@ -68,12 +68,28 @@
    "why": "os_file_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-375e0a35b7a0 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
+   "handler": "doeff_core_effects._os_process:subprocess-handler",
+   "touches": [
+    "process",
+    "env"
+   ],
+   "why": "subprocess.run・os.environ・socket.gethostname(_os_process.hy:73)"
+  },
+  {
+   "handler": "doeff_core_effects:subprocess_handler",
+   "touches": [
+    "process",
+    "env"
+   ],
+   "why": "subprocess_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-8d33df2c82df)"
+  },
+  {
    "handler": "doeff_core_effects.os_process:subprocess-handler",
    "touches": [
     "process",
     "env"
    ],
-   "why": "subprocess.run・os.environ・socket.gethostname(os_process.hy:73)"
+   "why": "subprocess_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-8d33df2c82df の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
@@ -121,11 +137,25 @@
    "why": "Executor の thread で psycopg"
   },
   {
-   "handler": "doeff_core_effects.stop_signal_handlers:os-signal-stop-handler",
+   "handler": "doeff_core_effects._stop_signal_handlers:os-signal-stop-handler",
    "touches": [
     "process"
    ],
    "why": "signal.signal で SIGINT・SIGTERM を捕まえる"
+  },
+  {
+   "handler": "doeff_core_effects:os_signal_stop_handler",
+   "touches": [
+    "process"
+   ],
+   "why": "os_signal_stop_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-8d33df2c82df)"
+  },
+  {
+   "handler": "doeff_core_effects.stop_signal_handlers:os-signal-stop-handler",
+   "touches": [
+    "process"
+   ],
+   "why": "os_signal_stop_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-8d33df2c82df の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects._thread_pool_compute:thread-pool-compute-handler",
@@ -152,19 +182,49 @@
    "why": "thread_pool_compute_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-32623e1651c6 の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
+   "handler": "doeff_core_effects._process_meter:process-meter-handler",
+   "touches": [
+    "thread",
+    "clock"
+   ],
+   "why": "process に 1 つの計器の置き場を threading.Lock で別の run・thread と共有し、gc.callbacks に繋いだ callback が time.monotonic で GC の停止を測る(_process_meter.hy)"
+  },
+  {
+   "handler": "doeff_core_effects:process_meter_handler",
+   "touches": [
+    "thread",
+    "clock"
+   ],
+   "why": "process_meter_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-8d33df2c82df)"
+  },
+  {
    "handler": "doeff_core_effects.process_meter:process-meter-handler",
    "touches": [
     "thread",
     "clock"
    ],
-   "why": "process に 1 つの計器の置き場を threading.Lock で別の run・thread と共有し、gc.callbacks に繋いだ callback が time.monotonic で GC の停止を測る(process_meter.hy)"
+   "why": "process_meter_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-8d33df2c82df の stage 3 の card ki-127f9cd053e0 が消す)"
+  },
+  {
+   "handler": "doeff_core_effects._process_latest:process-latest-handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(_process_latest.hy)"
+  },
+  {
+   "handler": "doeff_core_effects:process_latest_handler",
+   "touches": [
+    "thread"
+   ],
+   "why": "process_latest_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-8d33df2c82df)"
   },
   {
    "handler": "doeff_core_effects.process_latest:process-latest-handler",
    "touches": [
     "thread"
    ],
-   "why": "process に 1 つの最新の値の置き場を別の run・thread と共有する(process_latest.hy)"
+   "why": "process_latest_handler の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(card ki-8d33df2c82df の stage 3 の card ki-127f9cd053e0 が消す)"
   },
   {
    "handler": "doeff_core_effects._gc_freeze:gc-freeze-handler",

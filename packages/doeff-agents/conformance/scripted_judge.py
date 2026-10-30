@@ -22,8 +22,8 @@ import time
 from pathlib import Path
 
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import ReadEnvironment
 
 TABLE_VARIABLE = "CONFORMANCE_JUDGE_TABLE"
 JOURNAL_VARIABLE = "CONFORMANCE_JUDGE_JOURNAL"

@@ -18,7 +18,7 @@
 (import doeff_core_effects [DiskUsage ReadDiskUsage])
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import tests.state_rows [table-from-rows])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

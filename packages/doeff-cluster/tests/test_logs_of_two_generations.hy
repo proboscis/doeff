@@ -23,10 +23,11 @@
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [MemoryFiles ReadMemoryFiles AppendText WriteText]
         doeff_core_effects._file_effects [file-done])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess timed-out-outcome])
-(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
-(import doeff_core_effects.scripted_warm_process [WarmScript WarmSocket WarmRun scripted-warm-process-handler])
-(import doeff_core_effects.warm_effects [ForkFromWarm])
+(import doeff_core_effects [EnvEntry ProcessOutcome RunProcess]
+        doeff_core_effects._process_effects [timed-out-outcome])
+(import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
+(import doeff_core_effects [WarmScript WarmSocket WarmRun scripted-warm-process-handler])
+(import doeff_core_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.intent.worker_model [StartJob StartWarmChild WarmLaunch])

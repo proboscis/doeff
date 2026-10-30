@@ -33,8 +33,8 @@ from pathlib import Path
 from typing import IO
 
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import environment_mapping
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects._process_effects import environment_mapping
 
 #: 宿の本物の CLI の名前。隔離した PATH の先頭に同名の「罠」を置き、呼ばれたら記録して非 0 で落ちる。
 REAL_AGENT_CLIS: tuple[str, ...] = ("claude", "codex")

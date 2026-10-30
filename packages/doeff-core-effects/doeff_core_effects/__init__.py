@@ -215,10 +215,63 @@ if TYPE_CHECKING:
     from doeff_core_effects._os_file import offloaded_lock_handler as offloaded_lock_handler
     from doeff_core_effects._os_file import offloaded_tree_handler as offloaded_tree_handler
     from doeff_core_effects._os_file import os_file_handler as os_file_handler
+    from doeff_core_effects._os_proc_table import ProcTableUnavailable as ProcTableUnavailable
+    from doeff_core_effects._os_proc_table import os_proc_table_handler as os_proc_table_handler
+    from doeff_core_effects._os_process import (
+        metered_offloaded_subprocess_handler as metered_offloaded_subprocess_handler,
+    )
+    from doeff_core_effects._os_process import (
+        offloaded_subprocess_handler as offloaded_subprocess_handler,
+    )
+    from doeff_core_effects._os_process import subprocess_handler as subprocess_handler
     from doeff_core_effects._os_random import os_random_handler as os_random_handler
+    from doeff_core_effects._os_warm_process import HeldInput as HeldInput
+    from doeff_core_effects._os_warm_process import WarmProcUnavailable as WarmProcUnavailable
+    from doeff_core_effects._os_warm_process import input_written as input_written
+    from doeff_core_effects._os_warm_process import (
+        os_warm_process_handler as os_warm_process_handler,
+    )
     from doeff_core_effects._outcomes import AbsentAsToken as AbsentAsToken
     from doeff_core_effects._outcomes import BoundAbsent as BoundAbsent
     from doeff_core_effects._outcomes import absent_raises as absent_raises
+    from doeff_core_effects._proc_table_effects import ProcRow as ProcRow
+    from doeff_core_effects._proc_table_effects import ReadProcTable as ReadProcTable
+    from doeff_core_effects._proc_table_effects import SignalPid as SignalPid
+    from doeff_core_effects._process_effects import AwaitProcessExit as AwaitProcessExit
+    from doeff_core_effects._process_effects import ChildLifetime as ChildLifetime
+    from doeff_core_effects._process_effects import EnvEntry as EnvEntry
+    from doeff_core_effects._process_effects import EnvMode as EnvMode
+    from doeff_core_effects._process_effects import ExecutableAt as ExecutableAt
+    from doeff_core_effects._process_effects import InterpreterFacts as InterpreterFacts
+    from doeff_core_effects._process_effects import ModuleFound as ModuleFound
+    from doeff_core_effects._process_effects import ModuleNotFound as ModuleNotFound
+    from doeff_core_effects._process_effects import PollProcess as PollProcess
+    from doeff_core_effects._process_effects import ProcessAlive as ProcessAlive
+    from doeff_core_effects._process_effects import ProcessEnded as ProcessEnded
+    from doeff_core_effects._process_effects import ProcessExited as ProcessExited
+    from doeff_core_effects._process_effects import ProcessInputWritten as ProcessInputWritten
+    from doeff_core_effects._process_effects import ProcessNotChild as ProcessNotChild
+    from doeff_core_effects._process_effects import ProcessNotStarted as ProcessNotStarted
+    from doeff_core_effects._process_effects import ProcessOutcome as ProcessOutcome
+    from doeff_core_effects._process_effects import ProcessRunning as ProcessRunning
+    from doeff_core_effects._process_effects import ProcessSignal as ProcessSignal
+    from doeff_core_effects._process_effects import ProcessSignalled as ProcessSignalled
+    from doeff_core_effects._process_effects import ProcessStarted as ProcessStarted
+    from doeff_core_effects._process_effects import ReadEnvironment as ReadEnvironment
+    from doeff_core_effects._process_effects import ReadInterpreter as ReadInterpreter
+    from doeff_core_effects._process_effects import ReadMachineName as ReadMachineName
+    from doeff_core_effects._process_effects import ResolveModule as ResolveModule
+    from doeff_core_effects._process_effects import RunProcess as RunProcess
+    from doeff_core_effects._process_effects import SignalProcess as SignalProcess
+    from doeff_core_effects._process_effects import StartProcess as StartProcess
+    from doeff_core_effects._process_effects import StopProcess as StopProcess
+    from doeff_core_effects._process_effects import WorkingDirectory as WorkingDirectory
+    from doeff_core_effects._process_effects import WriteProcessInput as WriteProcessInput
+    from doeff_core_effects._process_exit import ExitEnd as ExitEnd
+    from doeff_core_effects._process_exit import ExitWaitUnavailable as ExitWaitUnavailable
+    from doeff_core_effects._process_exit import process_exit_handler as process_exit_handler
+    from doeff_core_effects._process_latest import process_latest_handler as process_latest_handler
+    from doeff_core_effects._process_meter import process_meter_handler as process_meter_handler
     from doeff_core_effects._python_bytecode import SourceNotCompiled as SourceNotCompiled
     from doeff_core_effects._random_effects import RandomBytes as RandomBytes
     from doeff_core_effects._rooted_file import rooted_file_handler as rooted_file_handler
@@ -251,17 +304,56 @@ if TYPE_CHECKING:
     from doeff_core_effects._scripted_freeze import (
         scripted_freeze_handler as scripted_freeze_handler,
     )
+    from doeff_core_effects._scripted_proc_table import (
+        scripted_proc_table_handler as scripted_proc_table_handler,
+    )
+    from doeff_core_effects._scripted_process import ProcessScript as ProcessScript
+    from doeff_core_effects._scripted_process import ScriptedCommand as ScriptedCommand
+    from doeff_core_effects._scripted_process import scripted_command_peer as scripted_command_peer
+    from doeff_core_effects._scripted_process import (
+        scripted_process_handler as scripted_process_handler,
+    )
+    from doeff_core_effects._scripted_warm_process import WarmRun as WarmRun
+    from doeff_core_effects._scripted_warm_process import WarmScript as WarmScript
+    from doeff_core_effects._scripted_warm_process import WarmSocket as WarmSocket
+    from doeff_core_effects._scripted_warm_process import WarmSocketAnswer as WarmSocketAnswer
+    from doeff_core_effects._scripted_warm_process import (
+        scripted_warm_process_handler as scripted_warm_process_handler,
+    )
     from doeff_core_effects._seeded_random import seeded_random_handler as seeded_random_handler
     from doeff_core_effects._stack_dump_effects import ArmStackDump as ArmStackDump
     from doeff_core_effects._stack_dump_effects import DisarmStackDump as DisarmStackDump
     from doeff_core_effects._stack_dump_effects import ReadStackDumps as ReadStackDumps
     from doeff_core_effects._stack_dump_effects import StackDumpLedger as StackDumpLedger
+    from doeff_core_effects._stop_signal_effects import AwaitStop as AwaitStop
+    from doeff_core_effects._stop_signal_effects import RaiseStop as RaiseStop
+    from doeff_core_effects._stop_signal_effects import StopBell as StopBell
+    from doeff_core_effects._stop_signal_effects import StopRequested as StopRequested
+    from doeff_core_effects._stop_signal_handlers import (
+        os_signal_stop_handler as os_signal_stop_handler,
+    )
+    from doeff_core_effects._stop_signal_handlers import (
+        scripted_stop_handler as scripted_stop_handler,
+    )
     from doeff_core_effects._storage import DurableStorage as DurableStorage
     from doeff_core_effects._storage.memory import InMemoryStorage as InMemoryStorage
     from doeff_core_effects._storage.sqlite import SQLiteStorage as SQLiteStorage
     from doeff_core_effects._thread_pool_compute import (
         thread_pool_compute_handler as thread_pool_compute_handler,
     )
+    from doeff_core_effects._warm_effects import AwaitWarmChildExit as AwaitWarmChildExit
+    from doeff_core_effects._warm_effects import ForkFromWarm as ForkFromWarm
+    from doeff_core_effects._warm_effects import PollWarmChild as PollWarmChild
+    from doeff_core_effects._warm_effects import SignalWarmChild as SignalWarmChild
+    from doeff_core_effects._warm_effects import WarmExited as WarmExited
+    from doeff_core_effects._warm_effects import WarmForked as WarmForked
+    from doeff_core_effects._warm_effects import WarmGone as WarmGone
+    from doeff_core_effects._warm_effects import WarmInputWritten as WarmInputWritten
+    from doeff_core_effects._warm_effects import WarmLost as WarmLost
+    from doeff_core_effects._warm_effects import WarmRefused as WarmRefused
+    from doeff_core_effects._warm_effects import WarmRunning as WarmRunning
+    from doeff_core_effects._warm_effects import WarmSignaled as WarmSignaled
+    from doeff_core_effects._warm_effects import WriteWarmChildInput as WriteWarmChildInput
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -415,6 +507,82 @@ _LAZY_EXPORTS = {
     "CacheLifecycle": "doeff_core_effects._cache_policy",
     "CachePolicy": "doeff_core_effects._cache_policy",
     "CacheStorage": "doeff_core_effects._cache_policy",
+    "AwaitProcessExit": "doeff_core_effects._process_effects",
+    "ChildLifetime": "doeff_core_effects._process_effects",
+    "EnvEntry": "doeff_core_effects._process_effects",
+    "EnvMode": "doeff_core_effects._process_effects",
+    "ExecutableAt": "doeff_core_effects._process_effects",
+    "InterpreterFacts": "doeff_core_effects._process_effects",
+    "ModuleFound": "doeff_core_effects._process_effects",
+    "ModuleNotFound": "doeff_core_effects._process_effects",
+    "PollProcess": "doeff_core_effects._process_effects",
+    "ProcessAlive": "doeff_core_effects._process_effects",
+    "ProcessEnded": "doeff_core_effects._process_effects",
+    "ProcessExited": "doeff_core_effects._process_effects",
+    "ProcessInputWritten": "doeff_core_effects._process_effects",
+    "ProcessNotChild": "doeff_core_effects._process_effects",
+    "ProcessNotStarted": "doeff_core_effects._process_effects",
+    "ProcessOutcome": "doeff_core_effects._process_effects",
+    "ProcessRunning": "doeff_core_effects._process_effects",
+    "ProcessSignal": "doeff_core_effects._process_effects",
+    "ProcessSignalled": "doeff_core_effects._process_effects",
+    "ProcessStarted": "doeff_core_effects._process_effects",
+    "ReadEnvironment": "doeff_core_effects._process_effects",
+    "ReadInterpreter": "doeff_core_effects._process_effects",
+    "ReadMachineName": "doeff_core_effects._process_effects",
+    "ResolveModule": "doeff_core_effects._process_effects",
+    "RunProcess": "doeff_core_effects._process_effects",
+    "SignalProcess": "doeff_core_effects._process_effects",
+    "StartProcess": "doeff_core_effects._process_effects",
+    "StopProcess": "doeff_core_effects._process_effects",
+    "WorkingDirectory": "doeff_core_effects._process_effects",
+    "WriteProcessInput": "doeff_core_effects._process_effects",
+    "metered_offloaded_subprocess_handler": "doeff_core_effects._os_process",
+    "offloaded_subprocess_handler": "doeff_core_effects._os_process",
+    "subprocess_handler": "doeff_core_effects._os_process",
+    "ProcessScript": "doeff_core_effects._scripted_process",
+    "ScriptedCommand": "doeff_core_effects._scripted_process",
+    "scripted_command_peer": "doeff_core_effects._scripted_process",
+    "scripted_process_handler": "doeff_core_effects._scripted_process",
+    "ExitEnd": "doeff_core_effects._process_exit",
+    "ExitWaitUnavailable": "doeff_core_effects._process_exit",
+    "process_exit_handler": "doeff_core_effects._process_exit",
+    "process_latest_handler": "doeff_core_effects._process_latest",
+    "process_meter_handler": "doeff_core_effects._process_meter",
+    "ProcRow": "doeff_core_effects._proc_table_effects",
+    "ReadProcTable": "doeff_core_effects._proc_table_effects",
+    "SignalPid": "doeff_core_effects._proc_table_effects",
+    "ProcTableUnavailable": "doeff_core_effects._os_proc_table",
+    "os_proc_table_handler": "doeff_core_effects._os_proc_table",
+    "scripted_proc_table_handler": "doeff_core_effects._scripted_proc_table",
+    "AwaitWarmChildExit": "doeff_core_effects._warm_effects",
+    "ForkFromWarm": "doeff_core_effects._warm_effects",
+    "PollWarmChild": "doeff_core_effects._warm_effects",
+    "SignalWarmChild": "doeff_core_effects._warm_effects",
+    "WarmExited": "doeff_core_effects._warm_effects",
+    "WarmForked": "doeff_core_effects._warm_effects",
+    "WarmGone": "doeff_core_effects._warm_effects",
+    "WarmInputWritten": "doeff_core_effects._warm_effects",
+    "WarmLost": "doeff_core_effects._warm_effects",
+    "WarmRefused": "doeff_core_effects._warm_effects",
+    "WarmRunning": "doeff_core_effects._warm_effects",
+    "WarmSignaled": "doeff_core_effects._warm_effects",
+    "WriteWarmChildInput": "doeff_core_effects._warm_effects",
+    "HeldInput": "doeff_core_effects._os_warm_process",
+    "WarmProcUnavailable": "doeff_core_effects._os_warm_process",
+    "input_written": "doeff_core_effects._os_warm_process",
+    "os_warm_process_handler": "doeff_core_effects._os_warm_process",
+    "WarmRun": "doeff_core_effects._scripted_warm_process",
+    "WarmScript": "doeff_core_effects._scripted_warm_process",
+    "WarmSocket": "doeff_core_effects._scripted_warm_process",
+    "WarmSocketAnswer": "doeff_core_effects._scripted_warm_process",
+    "scripted_warm_process_handler": "doeff_core_effects._scripted_warm_process",
+    "AwaitStop": "doeff_core_effects._stop_signal_effects",
+    "RaiseStop": "doeff_core_effects._stop_signal_effects",
+    "StopBell": "doeff_core_effects._stop_signal_effects",
+    "StopRequested": "doeff_core_effects._stop_signal_effects",
+    "os_signal_stop_handler": "doeff_core_effects._stop_signal_handlers",
+    "scripted_stop_handler": "doeff_core_effects._stop_signal_handlers",
 }
 
 

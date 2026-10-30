@@ -29,8 +29,8 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [memory-file-handler])
-(import doeff_core_effects.proc_table_effects [ProcRow ReadProcTable])
-(import doeff_core_effects.scripted_proc_table [scripted-proc-table-handler])
+(import doeff_core_effects [ProcRow ReadProcTable])
+(import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind job-uses kill-units

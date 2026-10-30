@@ -25,9 +25,10 @@
 (import doeff_core_effects [MemoryFiles])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler offloaded-subprocess-handler])
-(import doeff_core_effects.process_effects [EnvEntry ProcessOutcome RunProcess InterpreterFacts ModuleFound timed-out-outcome])
-(import doeff_core_effects.scripted_process [ScriptedCommand ProcessScript scripted-process-handler])
+(import doeff_core_effects [subprocess-handler offloaded-subprocess-handler])
+(import doeff_core_effects [EnvEntry ProcessOutcome RunProcess InterpreterFacts ModuleFound]
+        doeff_core_effects._process_effects [timed-out-outcome])
+(import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 
 (val SUBPROCESS "subprocess")
 (val OFFLOADED-SUBPROCESS "offloaded-subprocess")

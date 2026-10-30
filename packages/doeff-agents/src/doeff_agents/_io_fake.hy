@@ -21,7 +21,7 @@
 (import collections.abc [Iterable Mapping])
 (import doeff [EffectBase Program])
 (import doeff_core_effects [PathKind])
-(import doeff_core_effects.process_effects [not-started-outcome start-refusal executable-file-answer])
+(import doeff_core_effects._process_effects [not-started-outcome start-refusal executable-file-answer])
 (import doeff_time [DelayEffect])
 (import doeff_agents._io_effects [
   ProcessOutcome
@@ -150,7 +150,7 @@
   {:pre [(: world FakeIoWorld) (: path str)] :post [(: % bool)] :tags {:context "driver-io" :role "judgment"}}
   "ExecutableAt に記憶の中の file 系で答えるため: 種類は dir の集合が先(dir は名簿に在っても dir)、次に file か名簿(executables — 名簿の
    path は実行できる file の代役)、どれでもなければ無い物。実行の許しは名簿に在るか、実行の bit の在る mode で置いたこと。判断は本物と同じ
-   executable-file-answer(doeff_core_effects.process_effects)。"
+   executable-file-answer(doeff_core_effects._process_effects)。"
   (val kind (cond
               (in path world.dirs) PathKind.DIRECTORY
               (or (in path world.files) (in path world.executables)) PathKind.FILE

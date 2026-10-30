@@ -10,8 +10,8 @@ module was exempted from the rule before, #2861).
 """
 
 from doeff import run, with_handlers
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry, ReadEnvironment
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import EnvEntry, ReadEnvironment
 
 
 def _setting(name: str) -> str | None:

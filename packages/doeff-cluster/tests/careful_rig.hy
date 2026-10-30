@@ -19,7 +19,7 @@
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject RuntimeEnv EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key])

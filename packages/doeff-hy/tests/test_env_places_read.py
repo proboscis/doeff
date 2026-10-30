@@ -1,4 +1,4 @@
-"""doeff-hy-check の置き場の読み(doeff_hy.env_places)が、process 全般の答え手の module doeff_core_effects.os_process を
+"""doeff-hy-check の置き場の読み(doeff_hy.env_places)が、process 全般の答え手の module doeff_core_effects._os_process を
 読み込まない事(card acp:kanban-issue:ki-efa3d187b136)。
 
 env_places は環境変数 2 つ($DOEFF_HY_CHECK_CACHE・$XDG_CACHE_HOME — 今は pyright の thread の数 $DOEFF_HY_CHECK_PYRIGHT_THREADS も)を
@@ -19,7 +19,7 @@ PROBE: str = (
     "print(env_places.check_cache_setting())\n"
     "print(env_places.cache_home())\n"
     "print(env_places.pyright_threads_setting())\n"
-    "print('doeff_core_effects.os_process' in sys.modules)\n"
+    "print('doeff_core_effects._os_process' in sys.modules)\n"
 )
 
 

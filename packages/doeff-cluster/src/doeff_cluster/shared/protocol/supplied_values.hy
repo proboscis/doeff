@@ -50,7 +50,7 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [AcquireLock DirEntry FileFailed ListDirectory LockHeld MakeDirectory ReadText ReleaseLock RemoveTree WriteBytes])
 (import doeff_core_effects.http_effects [HttpFailed HttpRequest HttpResponse])
-(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing
                                                    WorkerFactName])
 

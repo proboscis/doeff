@@ -14,7 +14,7 @@
 (import doeff [EffectBase Program run with-handlers])
 (import doeff_core_effects [await-handler slog-handler])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])

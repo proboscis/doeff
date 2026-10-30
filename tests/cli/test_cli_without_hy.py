@@ -107,11 +107,11 @@ def test_doeff_run_works_without_hy(
 HY_MODULE = "(import doeff [Pure])\n(setv answer-program (Pure 42))\n"
 USES_HY_MODULE = """
 from doeff import Pure
-from doeff_core_effects.os_process import subprocess_handler  # noqa: F401 - a .hy module of doeff-core-effects
+from doeff_core_effects._os_process import subprocess_handler  # noqa: F401 - a .hy module of doeff-core-effects
 
 answer_program = Pure(42)
 """
-CODE_USES_HY_MODULE = "import doeff_core_effects.os_process\nPure(42)"
+CODE_USES_HY_MODULE = "import doeff_core_effects._os_process\nPure(42)"
 HY_EXTRA_LINE = 'pip install "doeff[hy]"'
 
 

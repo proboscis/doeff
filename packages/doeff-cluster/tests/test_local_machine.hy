@@ -37,8 +37,8 @@
 (import doeff_core_effects.http_handlers [http-production-handler])
 (import doeff_core_effects [WriteText FileFailed])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.process_effects [StopProcess ProcessExited])
+(import doeff_core_effects [subprocess-handler])
+(import doeff_core_effects [StopProcess ProcessExited])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopCoordinator Redeclare Crash
                                                      AwaitReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen

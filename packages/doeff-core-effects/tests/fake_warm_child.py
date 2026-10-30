@@ -19,10 +19,10 @@ import sys
 
 import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
 from doeff import run
-from doeff_core_effects.os_warm_process import WarmRequestWire, proc_stat_of, warm_answer_line, warm_request_of
-from doeff_core_effects.process_stat import ProcStat
+from doeff_core_effects._os_warm_process import WarmRequestWire, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_core_effects._process_stat import ProcStat
 from doeff_core_effects import scheduled
-from doeff_core_effects.warm_effects import WarmForked, WarmRefused
+from doeff_core_effects import WarmForked, WarmRefused
 from doeff_hy.wire import Malformed
 
 

@@ -6,7 +6,7 @@
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import dataclasses)
-(import doeff_core_effects.process_effects [RunProcess StartProcess])
+(import doeff_core_effects [RunProcess StartProcess])
 (import doeff_cluster.worker.core.job_cgroup [placed-argv])
 
 
