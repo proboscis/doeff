@@ -98,7 +98,8 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 (defsystem my-system [foundation]
   "書き手の系"
   (my-writer (my-writer foundation 5.0)
-    :needs #{"cluster-net"} :replicas 1 :readiness {"windowSeconds" 30} :update "handoff" :environ {"WRITER_MODE" "apply"}))
+    :needs #{"cluster-net"} :replicas 1 :peak-mib 300 :settle-mib 120
+    :readiness {"windowSeconds" 30} :update "handoff" :environ {"WRITER_MODE" "apply"}))
 ```
 
 - job は Program の値 1 つです。`defsystem` の各行は `(名 (関数 引数…) :キー literal …)` で、引数は系の引数(土台)か literal だけ
@@ -109,6 +110,11 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - `:replicas` は job の望む台数(`0` = 取り下げ・`1` = 動かす)で、必ず書きます(省けば展開の時点で `SyntaxError`)。宣言し直しは
   Service の台数をこの値にするので、coordinator の Service の台数を手で替えても、次の宣言し直しで job の値に戻ります。取り下げは
   `:replicas 0` に書き換えた系を宣言し直す事です。
+- `:peak-mib` / `:settle-mib` は job の起動の memory の山と落ち着いた値(MiB の 0 以上の整数・落ち着きは山以下)で、必ず書きます
+  (省けば展開の時点で `SyntaxError` — 既定の値はありません)。静的な記述と宣言の行に `peakMiB`・`settleMiB` で載り、coordinator は
+  欄の無い宣言を 400 で断ります。process の形ではないので、数を直して宣言し直しても job は入れ替わりません。
+- `:single-host "<訳>"` は job を 1 台の worker に縛ってよい訳で、任意です(空の文字列は断ります)。書いた job は N+1 の照らしの
+  「置ける worker が 2 台以上」を当てません。宣言の行に `singleHost` で載ります。
 - `:reads` / `:writes` は job が外の置き場から読む・書く物の文字列の集合で、任意です(綴りは `<置き場>:<名>` — `:` がちょうど 1 つ・
   両側が空でない。空の集合 `#{}` は「読み書きしない」の宣言)。静的な記述 `__doeff_system__` の job にだけ載り、Job と宣言の行には
   載りません。置き場の名と、欄を要る系は使い手の repo の doeff-linter の規則が決めます。
@@ -147,7 +153,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - task・切り離した task・温める頼みも同じ `needs` を持ち、空の needs は断ります。
 - 1 台の worker が止まった時、他に置ける worker が在る常駐の job は coordinator が移しますが、移る先の枠と memory は置く時に照らしません。
   宣言の側は `coordinator/core/failover_policy` の `failover-refusals`(N+1 の判断)で前もって照らします: どの job も置ける worker が
-  2 台以上ある(機体ごとの job と例外の表を除く)・どの worker も置ける job の全部を枠(`job-room-of`)に数えて入る・移ってくる job の
+  2 台以上ある(機体ごとの job と、1 台に縛る訳を `:single-host "<訳>"` で宣言した job を除く)・どの worker も置ける job の全部を枠(`job-room-of`)に数えて入る・移ってくる job の
   起動の山が memory の予算に入る・離す組の両方を置ける worker が無い。答えは破りの文の列(空 = 通る)です。
 
 ### 常駐の job の口(Service の selector)

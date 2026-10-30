@@ -52,7 +52,7 @@
 ;; stop-grace 10 秒より長い)。needs は cluster-net だけ(筋書きの worker は 1 台なので、他の worker へ移せない)。
 (defsystem working-hosts [#^ Callable foundation]
   "見本の系: handoff で入れ替える、12 秒の仕事を持つ service(退いた旧の寿命の上限 600 秒)"
-  (host (working-program foundation "work" 12.0) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (host (working-program foundation "work" 12.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
         :readiness {"windowSeconds" 5 "retiredSeconds" 600}))
 
 
@@ -82,7 +82,7 @@
 ;; 盤の行の頭は KEEP-PREFIX と同じ "keep"。needs は cluster-net だけ(筋書きの worker は 1 台なので、他の worker へ移せない)。
 (defsystem keeping-hosts [#^ Callable foundation]
   "見本の系: recreate で入れ替える、止められるまで動き続ける service"
-  (keeper (keeping-program foundation "keep") :replicas 1 :needs #{"cluster-net"} :update "recreate"))
+  (keeper (keeping-program foundation "keep") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "recreate"))
 
 
 ;; --- 退く知らせを待たない handoff の service(退いた process の寿命の上限を宣言しない): 止められるまで動き続ける。起きた刻を盤に書く。 ----
@@ -92,7 +92,7 @@
 
 (defsystem serving-hosts [#^ Callable foundation]
   "見本の系: handoff で入れ替える、退く知らせを待たずに止められるまで動き続ける service(退いた旧の寿命の上限を宣言しない)"
-  (server (keeping-program foundation "serve") :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (server (keeping-program foundation "serve") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5}))
 
 
@@ -148,23 +148,23 @@
 ;; 仕事は 30 秒・退いた旧の寿命の上限は 10 秒(仕事の途中で寿命が切れる)。版 2 は仕事の秒を変えた物(入れ替わる)。
 (defsystem holding-hosts [#^ Callable foundation]
   "見本の系: handoff で入れ替える、30 秒の仕事を持ち、退く間は退きの保ちを持つ service(退いた旧の寿命の上限 10 秒)"
-  (holder (holding-program foundation "hold" 30.0 True) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (holder (holding-program foundation "hold" 30.0 True) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "retiredSeconds" 10}))
 
 
 (defsystem holding-hosts-v2 [#^ Callable foundation]
   "holding-hosts の版 2(仕事の秒を変えた — 入れ替わる)"
-  (holder (holding-program foundation "hold" 31.0 True) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (holder (holding-program foundation "hold" 31.0 True) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "retiredSeconds" 10}))
 
 
 (defsystem unheld-hosts [#^ Callable foundation]
   "対照の系: holding-hosts と同じ仕事と寿命の上限で、退きの保ちを取らない service"
-  (holder (holding-program foundation "hold" 30.0 False) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (holder (holding-program foundation "hold" 30.0 False) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "retiredSeconds" 10}))
 
 
 (defsystem unheld-hosts-v2 [#^ Callable foundation]
   "unheld-hosts の版 2(仕事の秒を変えた — 入れ替わる)"
-  (holder (holding-program foundation "hold" 31.0 False) :replicas 1 :needs #{"cluster-net"} :update "handoff"
+  (holder (holding-program foundation "hold" 31.0 False) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
           :readiness {"windowSeconds" 5 "retiredSeconds" 10}))

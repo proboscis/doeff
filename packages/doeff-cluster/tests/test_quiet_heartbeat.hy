@@ -36,7 +36,7 @@
   "worker w が名乗り、Service s0 が w に置かれ、w が s0 を running と報告した状態(時刻 1000)を、検の出発点として組むため。"
   (<- named dict (beat-body "w" []))
   (val first (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} named)) 0 T))
-  (val second (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "revision" "r" "needs" ["net"]}]}
+  (val second (responded (get first 0) (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "s0" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "revision" "r" "needs" ["net"]}]}
                                                      :actor "test"))
                          0 T))
   (<- reporting dict (beat-body "w" [{"name" "s0" "phase" "running" "revision" "r"}]))

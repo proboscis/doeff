@@ -17,7 +17,7 @@
 
 (setv T (ClusterTiming))
 (setv V {"python" "3.14.0"})
-(setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN})
+(setv SPEC {"revision" "r1" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100})
 (setv STATUSES-SEEN
       (+ "{\"w1\": {\"at\": 1000, \"endpoint\": null, \"jobs\": [{\"name\": \"a\", \"phase\": \"running\", \"desiredRevision\": \"r1\", "
          "\"runningRevision\": \"r1\", \"pid\": 41, \"attempts\": 0, \"detail\": \"\", \"failures\": null, \"lastExitCode\": null, "
@@ -202,7 +202,7 @@
   (assert (= status 409) body)
   (assert (is s3 s2))
   ;; 版の無い行で既存を変えようとすると 409
-  (<- reply-19 (call s2 "PUT" "/jobs" {"jobs" [{"name" "shadow-a" "revision" "rX" "needs" ["net"] "run" SAMPLE-RUN}]}
+  (<- reply-19 (call s2 "PUT" "/jobs" {"jobs" [{"name" "shadow-a" "revision" "rX" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}]}
                             :actor "c-coord"))
   (:= status (get reply-19 1))
   (assert (= status 409))
@@ -219,7 +219,7 @@
 
 
 (deftest test-legacy-state-file-is-adopted-with-versions-and-a-legacy-owner
-  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" ["net"] "pin" None "run" SAMPLE-RUN}]
+  (setv legacy {"jobs" [{"name" "turn-runner" "revision" "r" "needs" ["net"] "pin" None "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}]
                 "assignments" {} "workers" [] "tasks" [] "nextTask" 1 "board" {"k" 1}}) ; 改名の前の file の形
   (setv s (adopt-legacy (! (state-from-json legacy 1000)) 1000 T))
   (assert (= (. (get s.jobs 0) owner) LEGACY-OWNER))
@@ -231,14 +231,14 @@
   ;; 所有者の欄は誰が宣言したかの記録で、送り手が誰でも本文の owner で書き換えられる(所有者と送り手の照合は 2026-10-05 に外した —
   ;; 名乗りを確かめないので守りにならない)。失敗ケース: update-resource に照合して断る分岐を戻すと、2 つ目の PUT が 403 になり赤。
   (<- reply-20 (call s "PUT" "/resources/Service/turn-runner"
-                             {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-lab"} "resourceVersion" (! (rv s "Service" "turn-runner"))}
+                             {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "owner" "c-lab"} "resourceVersion" (! (rv s "Service" "turn-runner"))}
                              :actor "c-lab"))
   (val s2 (get reply-20 0))
   (var status (get reply-20 1))
   (assert (= status 200))
   (assert (= (. (get s2.jobs 0) owner) "c-lab"))
   (<- reply-21 (call s2 "PUT" "/resources/Service/turn-runner"
-                            {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "owner" "c-other"} "resourceVersion" (! (rv s2 "Service" "turn-runner"))}
+                            {"spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "owner" "c-other"} "resourceVersion" (! (rv s2 "Service" "turn-runner"))}
                             :actor "c-other"))
   (val s3 (get reply-21 0))
   (:= status (get reply-21 1))
@@ -336,7 +336,7 @@
   ;; 2026-09-24 05:11:12 の実弾の形: 版は同じで設定だけを変えた。止めた前の process の Ready の報告(同じ worker・同じ版)が window に
   ;; 残っていても数えない。新しい process が最初に報告するまで NotReady。
   ;; 設定は Program の job では宣言の :environ(子の環境変数 — spec-hash に入る)で渡す(ADR-DOE-CLUSTER-001 改訂 1 の G)。
-  (setv dry (| SPEC {"readiness" {"windowSeconds" 120} "run" SAMPLE-RUN "environ" {"APPLY" "0"}})
+  (setv dry (| SPEC {"readiness" {"windowSeconds" 120} "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "environ" {"APPLY" "0"}})
         wet (| dry {"environ" {"APPLY" "1"}}))
   (assert (!= (! (hash-of dry)) (! (hash-of wet))))
   (<- reply-26 (call (ClusterState :started-ms -1000000) "POST" "/resources/Service" {"name" "w" "spec" dry} :now 1000))

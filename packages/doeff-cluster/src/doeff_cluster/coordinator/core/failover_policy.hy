@@ -4,8 +4,8 @@
 ;;; 移る先が在るか・移った後に枠と memory に入るかは置く時に照らさない(移る先は担う数の少ない順に選び、memory は見ない)ので、
 ;;; 宣言の側がこの判断で前もって照らす。照らす規則は 4 つ(1 件目で止めず、破りをみな文にする):
 ;;;   1. 置き先: 機体ごとの job(per-machine? — needs が雛形の能力だけか、それに機体の印 host-<機体> を 1 つ足して機体ごとに広げた
-;;;      物 — 置ける worker のそれぞれに 1 つずつ動く)と例外の表の job を除き、どの常駐の job も置ける worker が 2 台以上ある。言い換えると、
-;;;      どの 1 台を止めても、その機体にしか置けない job が 0。
+;;;      物 — 置ける worker のそれぞれに 1 つずつ動く)と、1 台に縛る訳を宣言した job(job の :single-host — ResidentJob.single-host)を
+;;;      除き、どの常駐の job も置ける worker が 2 台以上ある。言い換えると、どの 1 台を止めても、その機体にしか置けない job が 0。
 ;;;   2. 枠: どの worker も、置ける常駐の job の全部(と handoff の job が在れば surge 1)を自分の枠に数えて job-room-of が 0 以上。
 ;;;      移った job は元の機体が戻っても戻らないので、「今どこに在るか」でなく「置けるか」で数える — この数え方なら、どの置き方の後の
 ;;;      どの 1 台の停止でも枠が足りる。等号は求めない(予備の枠を持ってよい)。枠の式は写さず job-room-of を呼ぶ。
@@ -17,7 +17,7 @@
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster.coordinator.intent.cluster_model [WorkerLoad])
-(import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob ExemptJob KeptApart JobTakers DownSpike])
+(import doeff_cluster.coordinator.intent.failover_model [FailoverWorker ResidentJob KeptApart JobTakers DownSpike])
 (import doeff_cluster.coordinator.core.cluster_policy [placeable job-room-of])
 (import doeff_cluster.shared.core.capabilities [HOST-PREFIX])
 
@@ -55,10 +55,10 @@
   (val job placed.job)
   (cond
     (not placed.takers)
-      (.format "job {}(needs {})はどの worker にも置けない — 置ける worker を 2 台以上にするか、訳を例外の表に書く"
+      (.format "job {}(needs {})はどの worker にも置けない — 置ける worker を 2 台以上にするか、1 台に縛る訳を job の宣言に :single-host \"<訳>\" で書く"
                job.name (list job.needs))
     (= (len placed.takers) 1)
-      (.format "worker {} を止めると、{} にしか置けない job {}(needs {})が置き先を失う — 置ける worker を 2 台以上にするか、1 台に縛る訳を例外の表に書く"
+      (.format "worker {} を止めると、{} にしか置けない job {}(needs {})が置き先を失う — 置ける worker を 2 台以上にするか、1 台に縛る訳を job の宣言に :single-host \"<訳>\" で書く"
                (get placed.takers 0) (get placed.takers 0) job.name (list job.needs))
     True None))
 
@@ -127,18 +127,18 @@
                         w.info.name pair.first pair.second w.info.name))))
 
 
-(defk failover-refusals [workers jobs template exempt apart]
+(defk failover-refusals [workers jobs template apart]
   {:pre [(: workers (get tuple #(FailoverWorker ...))) (: jobs (get tuple #(ResidentJob ...))) (: template (get tuple #(str ...)))
-         (: exempt (get tuple #(ExemptJob ...))) (: apart (get tuple #(KeptApart ...)))
+         (: apart (get tuple #(KeptApart ...)))
          (all (gfor w workers (isinstance w FailoverWorker))) (all (gfor j jobs (isinstance j ResidentJob)))
-         (all (gfor e exempt (isinstance e ExemptJob))) (all (gfor a apart (isinstance a KeptApart)))
+         (all (gfor a apart (isinstance a KeptApart)))
          (= (len (set (gfor w workers w.info.name))) (len workers)) (= (len (set (gfor j jobs j.name))) (len jobs))]
    :post [(: % (get tuple #(str ...)))] :tags {:context "coordinator" :role "judgment"}}
   "どの 1 台の worker が止まっても、その機体の常駐の job が残りの worker の枠と memory に入るか(頭の註の規則 1〜4)を判じるため。
    workers = 照らす worker(名は重ならない)・jobs = 常駐の job(名は重ならない)・template = 雛形の能力(どの機体の worker も名乗る能力 —
-   needs がこれだけの job は機体ごとの job)・exempt = 規則 1 を当てない job と 1 台に縛る訳・apart = 同じ機体に置いてはいけない job の対。
+   needs がこれだけの job は機体ごとの job)・apart = 同じ機体に置いてはいけない job の対。規則 1 を当てない job は、job の値の
+   single-host(1 台に縛る訳 — job の宣言の :single-host)が持つ。
    答え = 破りの文の列(空 = 通る — 規則 1・各 worker の規則 2 と 3・規則 4 の順)。1 件目で止めない。"
-  (val exempt-names (frozenset (gfor e exempt e.job)))
   (var placed #())
   (for [j jobs]
     (when (> j.replicas 0)
@@ -146,7 +146,7 @@
       (:= placed (+ placed #(p)))))
   (var out #())
   (for [p placed]
-    (when (and (not p.per-machine) (not-in p.job.name exempt-names))
+    (when (and (not p.per-machine) (is p.job.single-host None))
       (<- text (| str None) (place-refusal p))
       (when (is-not text None) (:= out (+ out #(text))))))
   (for [w workers]

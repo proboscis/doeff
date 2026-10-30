@@ -25,7 +25,7 @@
 (val pytestmark pytest.mark.realtime)
 
 (setv POLICY (WorkerPolicy :code-retry-ms 30000)
-      S1 (spec-of-declaration {"name" "w" "revision" "rev1" "run" SAMPLE-RUN "update" "handoff"})
+      S1 (spec-of-declaration {"name" "w" "revision" "rev1" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "update" "handoff"})
       S2 (replace S1 :revision "rev2")
       READY1 (CodeView "rev1" CodeState.READY "/c/rev1")
       READY2 (CodeView "rev2" CodeState.READY "/c/rev2"))

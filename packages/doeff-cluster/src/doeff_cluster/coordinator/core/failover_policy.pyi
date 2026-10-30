@@ -4,7 +4,6 @@ from doeff import Program as _Program
 from doeff_cluster.coordinator.intent.cluster_model import WorkerLoad as WorkerLoad
 from doeff_cluster.coordinator.intent.failover_model import FailoverWorker as FailoverWorker
 from doeff_cluster.coordinator.intent.failover_model import ResidentJob as ResidentJob
-from doeff_cluster.coordinator.intent.failover_model import ExemptJob as ExemptJob
 from doeff_cluster.coordinator.intent.failover_model import KeptApart as KeptApart
 from doeff_cluster.coordinator.intent.failover_model import JobTakers as JobTakers
 from doeff_cluster.coordinator.intent.failover_model import DownSpike as DownSpike
@@ -37,5 +36,5 @@ def memory_refusal(worker: FailoverWorker, here: tuple, workers: tuple) -> _Prog
 def apart_refusals(pair: KeptApart, placed: tuple, workers: tuple) -> _Program[tuple[str, ...], object]:
     ...
 
-def failover_refusals(workers: tuple[FailoverWorker, ...], jobs: tuple[ResidentJob, ...], template: tuple[str, ...], exempt: tuple[ExemptJob, ...], apart: tuple[KeptApart, ...]) -> _Program[tuple[str, ...], object]:
+def failover_refusals(workers: tuple[FailoverWorker, ...], jobs: tuple[ResidentJob, ...], template: tuple[str, ...], apart: tuple[KeptApart, ...]) -> _Program[tuple[str, ...], object]:
     ...

@@ -27,6 +27,9 @@ def job(
     readiness: dict[str, float] | None = None,
     update: str = "recreate",
     environ: dict[str, str] | None = None,
+    peak_mib: int,
+    settle_mib: int,
+    single_host: str | None = None,
 ) -> Job: ...
 def system_of(name: str, jobs: tuple[Job, ...], *, task_limits: tuple[GroupLimit, ...] = ...) -> System: ...
 def system_declaration(

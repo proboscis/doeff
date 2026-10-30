@@ -6,7 +6,7 @@
 (import doeff_hy._wire [parse Malformed])
 (import doeff_cluster.shared.intent.protocol [Request ClusterTiming BodyInvalid])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
-(import doeff_cluster.coordinator.core.cluster_policy [job-from-json])
+(import doeff_cluster.coordinator.core.cluster_policy [declared-job-from-json])
 (import doeff_cluster.coordinator.core.cluster_rules [required-field])
 (import doeff_cluster.coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed BodyUnreadable ReadBody RequestBody])
 (import doeff_cluster.coordinator.core.api_policy [respond])
@@ -38,11 +38,11 @@
 (defk service-body-of [body parts]
   {:pre [(: body ResourceBody) (: parts tuple)] :post [(: % (| ServiceBody BodyMalformed))] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "Service の資源の本文 → 宣言の型(#2448 — 前は core の資源の判断が spec の JSON を job-from-json で読んでいた)。名は PUT なら path の名・POST なら
-   本文の name。宣言の行が読めなければ BodyMalformed(400)。所有者は本文の owner のまま運び、決めるのは判断。"
+   本文の name。宣言の行が読めなければ(memory の欄 peakMiB・settleMiB の無い宣言を含む — declared-job-from-json)BodyMalformed(400)。所有者は本文の owner のまま運び、決めるのは判断。"
   (val name (if (= (len parts) 3) (get parts 2) body.name))
   (val spec (dict (or body.spec {})))
   (try
-    (ServiceBody :name name :job (job-from-json (| spec {"name" (or name "")})) :owner (.get spec "owner")
+    (ServiceBody :name name :job (declared-job-from-json (| spec {"name" (or name "")})) :owner (.get spec "owner")
                  :resource-version body.resource-version)
     (except [error BodyInvalid]
       (BodyMalformed :reason (str error)))))
@@ -51,12 +51,12 @@
 (defk legacy-row-of [row]
   {:pre [(: row dict)] :post [(: % LegacyJobRow)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
   "旧い PUT /jobs の行 1 つ → 宣言の型。名の無い・空の行は BodyInvalid。replicas と readiness は行に在るかを印に残す(無ければ判断が今の
-   宣言の値で埋める)。"
+   宣言の値で埋める)。memory の欄は今の宣言で埋めず、無い行は断る(送り手の書く口 — declared-job-from-json)。"
   (val name (required-field row "name"))
   (when (not (and (isinstance name str) name))
     (raise (BodyInvalid (.format "jobs の行の名前は空でない文字列: {!r}" name))))
   (LegacyJobRow :name name :version (.get row "resourceVersion") :owner (.get row "owner")
-                :job (job-from-json (dfor #(k v) (.items row) :if (!= k "resourceVersion") k v))
+                :job (declared-job-from-json (dfor #(k v) (.items row) :if (!= k "resourceVersion") k v))
                 :replicas-given (in "replicas" row) :readiness-given (in "readiness" row)))
 
 

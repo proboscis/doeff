@@ -8,6 +8,8 @@
 (import doeff_cluster.coordinator.protocol.request_bodies [body-of responded])
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
+(import doeff_cluster.coordinator.core.cluster_policy [job-to-json])
+(import doeff_cluster.coordinator.protocol.state_json [read-service-rows])
 (import tests.program_rows [SAMPLE-RUN])
 
 (val T (ClusterTiming))
@@ -136,7 +138,7 @@
 (deftest test-a-resource-declaration-envelope-is-read-into-its-type
   ;; 資源の宣言の包み(name・spec・resourceVersion)— object でない spec・数の名・文字列の版は判断の前に 400。Service の spec は宣言の型
   ;; (ServiceBody の job)に読む — 名は POST なら本文の name・PUT なら path の名。読めない宣言も判断の前に 400(#2448)。
-  (val spec {"revision" "r" "run" SAMPLE-RUN "needs" ["net"]})
+  (val spec {"revision" "r" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "needs" ["net"]})
   (<- made (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" spec}))))
   (assert (= #(made.name made.job.spec.name made.job.spec.revision made.resource-version) #("web" "web" "r" None)) made)
   (<- edited (body-of (! (http-request "PUT" "/resources/Service/web" {} {"spec" spec "resourceVersion" 3}))))
@@ -170,7 +172,7 @@
 (deftest test-the-old-jobs-body-is-read-into-its-type
   ;; 旧い PUT /jobs の本文(jobs の行の列と送り手)— 列でない jobs は判断の前に 400。
   ;; 行は宣言の型(LegacyJobRow)に読み、replicas と readiness が行に在ったかを残す。名の無い行・読めない行も判断の前に 400(#2448)。
-  (<- jobs (body-of (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "a" "revision" "r" "run" SAMPLE-RUN "needs" ["net"] "resourceVersion" 4}]
+  (<- jobs (body-of (! (http-request "PUT" "/jobs" {} {"jobs" [{"name" "a" "revision" "r" "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100 "needs" ["net"] "resourceVersion" 4}]
                                                     "actor" "me"}))))
   (val row (get jobs.rows 0))
   (assert (= #((len jobs.rows) jobs.actor row.name row.version row.replicas-given row.readiness-given) #(1 "me" "a" 4 False False)) jobs)
@@ -178,3 +180,33 @@
   (assert (in "name" nameless.reason) nameless)
   (<- single (body-of (! (http-request "PUT" "/jobs" {} {"jobs" {"name" "a"}}))))
   (assert (in "jobs" single.reason) single))
+
+
+(deftest test-a-declared-service-without-its-memory-is-refused-but-a-stored-row-without-it-loads
+  ;; 送り手の書く宣言(Service の資源の POST・PUT と旧い PUT /jobs)は memory の欄 peakMiB・settleMiB を必ず持つ — 欠けた・型の違う・
+  ;; 山を越える宣言は判断の前に 400 で、job と欄を名指して断る(既定の値で埋めない — card ki-2acb63aec0fd)。保存の読み直しは
+  ;; 旧い coordinator が欄の無いまま保存した行を断らず、memory を None で読む(断ると RefusedJob になり job が止まる)。
+  (val bare {"revision" "r" "run" SAMPLE-RUN "needs" ["net"]})
+  (<- made (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" bare}))))
+  (assert (isinstance made BodyMalformed) made)
+  (assert (in "Service web" made.reason) made)
+  (assert (in "peakMiB・settleMiB は 0 以上の整数" made.reason) made)
+  (val answer (responded (ClusterState) (! (http-request "PUT" "/resources/Service/web" {} {"spec" (| bare {"peakMiB" 200})})) 1000 T))
+  (assert (= (get answer 1) 400) answer)
+  (assert (in "settleMiB" (get answer 2 "error")) answer)
+  (<- over (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" (| bare {"peakMiB" 100 "settleMiB" 200})}))))
+  (assert (in "settleMiB 200 が peakMiB 100 を越える" over.reason) over)
+  (<- blank (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" (| bare {"peakMiB" 200 "settleMiB" 100 "singleHost" ""})}))))
+  (assert (in "singleHost" blank.reason) blank)
+  (<- legacy (body-of (! (http-request "PUT" "/jobs" {} {"jobs" [(| bare {"name" "a"})] "actor" "me"}))))
+  (assert (isinstance legacy BodyMalformed) legacy)
+  (assert (in "Service a" legacy.reason) legacy)
+  (<- full (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" (| bare {"peakMiB" 900 "settleMiB" 400
+                                                                                                    "singleHost" "移す途中"})}))))
+  (assert (= #(full.job.peak-mib full.job.settle-mib full.job.single-host) #(900 400 "移す途中")) full)
+  (assert (= (get (job-to-json full.job) "peakMiB") 900) full)
+  (val stored (read-service-rows [(| bare {"name" "old"})]))
+  (val jobs (get stored 0))
+  (assert (= (len (.rows (get stored 1))) 0) stored)
+  (assert (= #((. (get jobs 0) peak-mib) (. (get jobs 0) settle-mib) (. (get jobs 0) single-host)) #(None None None)) jobs)
+  (assert (not-in "peakMiB" (job-to-json (get jobs 0))) jobs))
