@@ -33,11 +33,13 @@
 ;; --- まねた環境 -------------------------------------------------------------------------------
 
 (defclass ScriptedRecordInbox []
-  "まねた受付の箱(RecordInbox と同じ arm・taken の口 — 本番の http-requests がそのまま読む)。pending = 先に並べた生の要求(RawRequest の
-   list — 返事は各要求の ReplySlot に置かれる)。並べた物を渡し終えた後の取りで停止の合図 stop を立てる(記録の service の Program は
-   次の周回の頭で止まる)。待たない(arm は常に「並んでいる」と答え、要求が無ければすぐ空を返す — 時計は組の外側の sim の時計)。"
+  "まねた受付の箱(RecordInbox と同じ arm・taken・reached の口 — 本番の http-requests がそのまま読む。口の形は shared/protocol/inbox.hy の
+   InboxQueue)。pending = 先に並べた生の要求(RawRequest の list — 返事は各要求の ReplySlot に置かれる)。並べた物を渡し終えた後の取りで
+   停止の合図 stop を立てる(記録の service の Program は次の周回の頭で止まる)。待たない(arm は常に「並んでいる」と答え、要求が無ければ
+   すぐ空を返す — 時計は組の外側の sim の時計)。reached = Service に載った印(本番の箱は外からの最初の接続で立つ)。まねた箱の要求は
+   作った時に既に届いているので、初めから立てる。"
   (defn #^ None __init__ [self #^ list pending #^ StopState stop]
-    (setv self.pending pending self.stop stop)
+    (setv self.pending pending self.stop stop self.reached True)
     None)
 
   (defn #^ bool arm [self #^ (| float None) timeout #^ ExternalPromise bell]
