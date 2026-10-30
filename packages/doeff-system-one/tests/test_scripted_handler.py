@@ -2,11 +2,10 @@
 
 from doeff_core_effects import await_handler, scheduled, slog_discard_handler, try_handler
 from doeff_system_one import (
+    Answer,
     JudgeError,
     Question,
     ScriptedJudgeState,
-    answer_choice,
-    answer_noul,
     judge_many,
     scripted_judge_handler,
 )
@@ -22,7 +21,7 @@ def _run(program, *layers):
 
 def test_program_reads_verdict_from_scripted_answers() -> None:
     state = ScriptedJudgeState()
-    handler = scripted_judge_handler({"vague": answer_noul(0.9), "kind": answer_choice("実装", 0.8)}, state)
+    handler = scripted_judge_handler({"vague": Answer.noul(0.9), "kind": Answer(kind="choice", value="実装", confidence=0.8)}, state)
 
     @do
     def flow():
@@ -50,7 +49,7 @@ def test_scripted_error_reaches_the_program_as_judge_error() -> None:
 
 
 def test_missing_scripted_answer_is_malformed() -> None:
-    handler = scripted_judge_handler({"other": answer_noul(0.5)})
+    handler = scripted_judge_handler({"other": Answer.noul(0.5)})
 
     @do
     def flow():
@@ -64,7 +63,7 @@ def test_missing_scripted_answer_is_malformed() -> None:
 def test_judge_many_keeps_input_order_and_runs_each_state() -> None:
     state = ScriptedJudgeState()
     handler = scripted_judge_handler(lambda effect: __import__("doeff_system_one").Verdict(
-        answers={"p": answer_noul(float(effect.state))}, model="scripted"), state)
+        answers={"p": Answer.noul(float(effect.state))}, model="scripted"), state)
 
     @do
     def flow():
@@ -76,7 +75,7 @@ def test_judge_many_keeps_input_order_and_runs_each_state() -> None:
 
 
 def test_ok_outcome_wraps_verdict() -> None:
-    handler = scripted_judge_handler({"q": answer_noul(0.2)})
+    handler = scripted_judge_handler({"q": Answer.noul(0.2)})
 
     @do
     def flow():

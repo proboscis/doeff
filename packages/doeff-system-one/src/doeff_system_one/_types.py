@@ -82,7 +82,7 @@ class Answer:
     """問い 1 つへの答え。
 
     value: choice = 選ばれた候補の id / noul = はいの確率 / score = 段階の期待値。
-    confidence: 分布の集中度(無い時は None)。noul は 0.5 からの距離 × 2 で代用する。
+    confidence: 分布の集中度(無い時は None)。noul は 0.5 からの距離 × 2 で代用する(Answer.noul が作る)。
     """
 
     kind: Kind
@@ -90,6 +90,13 @@ class Answer:
     confidence: float | None
     probabilities: Mapping[str, float] | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def noul(cls, probability: float, *, probabilities: Mapping[str, float] | None = None,
+             raw: Mapping[str, Any] | None = None) -> "Answer":
+        """はいの確率から noul の答えを作る(確信度 = 0.5 からの距離 × 2 — 判定器の handler と台本が同じ式を読むため)。"""
+        return cls(kind="noul", value=probability, confidence=abs(probability - 0.5) * 2,
+                   probabilities=probabilities, raw={} if raw is None else raw)
 
 
 @dataclass(frozen=True)
@@ -140,15 +147,3 @@ class JudgeUsageLimited(JudgeError):
         self.window = window
         self.resets_at = resets_at
 
-
-def answer_choice(value: str, confidence: float | None = 1.0,
-                  probabilities: Mapping[str, float] | None = None) -> Answer:
-    return Answer(kind="choice", value=value, confidence=confidence, probabilities=probabilities)
-
-
-def answer_noul(probability: float) -> Answer:
-    return Answer(kind="noul", value=probability, confidence=abs(probability - 0.5) * 2)
-
-
-def answer_score(value: float, confidence: float | None = 1.0) -> Answer:
-    return Answer(kind="score", value=value, confidence=confidence)
