@@ -36,9 +36,11 @@ Python の版ごとに:
 8. 紹介の記事「Testing Python code without mocks」が `pip install doeff` で走ると書く例の dir(examples/testing_without_mocks)を
    写した dir で、script が記事の見せる行をその順に印字し、標準エラーに何も出さない事と、その dir の pytest が通る事を確かめる。
    fanout.py は、3 つの取り寄せが並行に走った(1 つずつなら掛かる 0.6 秒より短い)事も見る。7 と同じく pytest を足すので最後に
-   置く(card ki-eeaca7016c66)。
+   置く(card ki-eeaca7016c66)。--pypi の時だけ走らせる: 例の dir は PyPI の版に留めて書き、値の形の版が PyPI に出るまで書き
+   換えない(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の API が変わるたびに落ちる(card ki-5ea7c639b693)。
 
-CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install)が走らせる。
+CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install と
+.github/workflows/core-install-macos-windows.yml)が、--pypi 無しで 1〜7 を走らせる。
 
 --pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
 doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。3 の後に、この checkout(CI では GitHub の main)の
@@ -293,7 +295,7 @@ _FANOUT_TITLES = (
     "['a.example', 'b.example', 'c.example']",
     "['A.EXAMPLE', 'B.EXAMPLE', 'C.EXAMPLE']",
 )
-# 記事の囲みと同じ行(開発の環境で同じ行を比べる検は tests/test_examples_run.py の ARTICLE_STDOUT)。記事は fanout.py の切り替えを
+# 記事の囲みと同じ行(記事の例の印字を比べるのはこの表 1 か所 — card ki-5ea7c639b693)。記事は fanout.py の切り替えを
 # DOEFF_SCHEDULER=rust と書くので、その選びでも走らせる。
 ARTICLE_SCRIPTS = (
     ArticleScript(
@@ -1252,7 +1254,8 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         *check_demo(installed, place, timeout),
         # venv に pytest を足すので最後に置く。
         *check_llm_example(installed, place, timeout),
-        *check_article_examples(installed, place, timeout),
+        # 8 は走らせない — 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の
+        # API が変わるたびに落ちる。確かめは --pypi だけが持つ(card ki-5ea7c639b693)。
     ]
 
 

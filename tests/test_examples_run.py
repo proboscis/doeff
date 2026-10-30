@@ -27,9 +27,9 @@ README の命令 `pytest examples/github_repo` を pytest の外の plugin 無�
 例の dir に留め、repo の根の conftest を読ませない — clone して `pip install "doeff[http]" pytest` だけを入れた人の形)。
 
 dir に分けた例 examples/testing_without_mocks/(紹介の記事「Testing Python code without mocks」の file の全部 — card
-ki-eeaca7016c66)は、file が互いを import するので直下の例の検に入れない。script ごとに記事の囲みと同じ行の全部を印字する事
-(ARTICLE_STDOUT)と、dir の `pytest` が pytest だけで通る事を見る。核だけの新しい venv で同じ事を見るのは
-tools/verify_core_install.py。
+ki-eeaca7016c66)は、ここでは走らせない。記事の読み手は `pip install doeff` で入る PyPI の版で走らせ、ADR-DOE-API-002 R3 は
+この dir を値の形の版が PyPI に出るまで書き換えないので、repo の版で走らせると repo の API が変わるたびに落ちる。印字と dir の
+`pytest` の確かめは、PyPI の版で毎日走らせる tools/verify_core_install.py --pypi の項 8 だけが持つ(card ki-5ea7c639b693)。
 """
 
 from __future__ import annotations
@@ -271,101 +271,3 @@ def test_github_repo_example_tests_run_with_pytest_alone(deadline_scale_factor: 
     summary = completed.stdout.splitlines()[-1]  # -q の最後の行: `4 passed in …s`
     assert summary.startswith("4 passed"), completed.stdout
 
-
-ARTICLE_EXAMPLES = EXAMPLES / "testing_without_mocks"
-# 紹介の記事「Testing Python code without mocks」の例(dir に分けた例 — card ki-eeaca7016c66)。script ごとの標準出力の行の
-# 全部で、記事の囲みと同じ行。fanout.py の最後の行は掛かった秒なので比べない(並行に走った事は核だけの venv の確かめ
-# tools/verify_core_install.py が見る — 同じ行を ARTICLE_SCRIPTS に写して持つ)。
-ARTICLE_STDOUT: dict[str, tuple[str, ...]] = {
-    "production.py": ("SMTP -> grace@example.com: Welcome, Grace!", "Welcome, Grace!"),
-    "trace.py": (
-        "effect: LoadUser(user_id=1)",
-        "effect: SendMail(to='grace@example.com', body='Welcome, Grace!')",
-        "SMTP -> grace@example.com: Welcome, Grace!",
-        "Welcome, Grace!",
-    ),
-    "retry.py": ("38.0",),
-    "record_replay.py": ("True 2 0",),
-    "fanout.py": (
-        "['a.example', 'b.example', 'c.example']",
-        "['A.EXAMPLE', 'B.EXAMPLE', 'C.EXAMPLE']",
-    ),
-}
-ARTICLE_TIMED = "fanout.py"
-# 例の dir が書く旧い呼びと、repo の版でその呼びが出す DeprecationWarning の文の頭。ADR-DOE-API-002 R3 は、この dir を PyPI の版で
-# 毎日走らせる物として、値の形を持つ版が PyPI に出るまで書き換えない(PyPI の 0.8.0 の await_handler は factory で、値の形で書くと
-# 記事の読み手の `pip install doeff` で落ちる)とし、同じ R3 が旧い呼びを 1 つの版の間 DeprecationWarning つきで残す。そこで
-# repo の版で走らせるこの検は、その 1 つの警告だけを許して捨て、ほかの警告(sqlite3 の ResourceWarning など)は誤りのままにする。
-# 例を値の形に書き換えたら、ここから行を消す(test_article_former_calls_are_still_written が、書き換えた後に行が残るのを赤にする)。
-ARTICLE_FORMER_CALLS: dict[str, tuple[str, str]] = {
-    "fanout.py": ("await_handler()", "await_handler() is deprecated"),
-}
-# 他の file が import するだけで、何も印字しない module。
-ARTICLE_MODULES = ("infra.py", "plain_app.py", "welcome.py")
-
-
-@pytest.mark.parametrize("name", sorted(ARTICLE_STDOUT))
-def test_article_example_prints_what_the_article_shows(
-    name: str, deadline_scale_factor: float
-) -> None:
-    # 読み手と同じく例の dir で `python <名>` と打つ(例は同じ dir の file を import する)。警告も誤りにする — 記事は印字を
-    # 囲みのまま見せ、3.13 からの sqlite3 の閉じ忘れの ResourceWarning も印字に混ざる。ARTICLE_FORMER_CALLS の旧い呼びの
-    # DeprecationWarning だけは捨てる(後に書いた -W が先に効く)。
-    former = ARTICLE_FORMER_CALLS.get(name)
-    tolerated = ["-W", f"ignore:{former[1]}:DeprecationWarning"] if former else []
-    completed = subprocess.run(
-        with_settings([sys.executable, "-W", "error", *tolerated, name], {"DOEFF_PROFILE": None}),
-        cwd=ARTICLE_EXAMPLES,
-        capture_output=True,
-        text=True,
-        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
-        check=False,
-    )
-    assert (completed.returncode, completed.stderr) == (0, ""), (
-        f"examples/testing_without_mocks/{name} が終了コード {completed.returncode} で終わった:\n"
-        f"{completed.stderr[-3000:]}"
-    )
-    printed = completed.stdout.splitlines()
-    shown = printed[:-1] if name == ARTICLE_TIMED else printed
-    assert shown == list(ARTICLE_STDOUT[name]), completed.stdout
-
-
-def test_article_example_tests_run_with_pytest_alone(deadline_scale_factor: float) -> None:
-    # 例の dir の README が書く `pytest` を、`pip install doeff pytest` だけを入れた人と同じく、pytest の外の plugin 無しで
-    # 走らせる(例の dir の pytest.ini が repo の根の conftest.py を読ませない — github_repo と同じ)。
-    completed = subprocess.run(
-        with_settings(
-            [sys.executable, "-m", "pytest", "-q", "-W", "error", "-p", "no:cacheprovider"],
-            {"DOEFF_PROFILE": None, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": None},
-        ),
-        cwd=ARTICLE_EXAMPLES,
-        capture_output=True,
-        text=True,
-        timeout=CHILD_DEADLINE_SECONDS * deadline_scale_factor,
-        check=False,
-    )
-    assert completed.returncode == 0, (
-        f"examples/testing_without_mocks の pytest が終了コード {completed.returncode} で落ちた:\n"
-        f"{completed.stdout[-3000:]}\n{completed.stderr[-3000:]}"
-    )
-    summary = completed.stdout.splitlines()[-1]
-    assert re.fullmatch(r"7 passed in \S+", summary), completed.stdout
-
-
-def test_article_stdout_names_every_script_of_the_article() -> None:
-    scripts = sorted(
-        path.name
-        for path in ARTICLE_EXAMPLES.glob("*.py")
-        if not path.name.startswith("test_") and path.name not in ARTICLE_MODULES
-    )
-    assert scripts == sorted(ARTICLE_STDOUT)
-    assert all((ARTICLE_EXAMPLES / name).is_file() for name in ARTICLE_MODULES)
-
-
-def test_article_former_calls_are_still_written() -> None:
-    # 許した警告は、例がまだ旧い呼びを書いている間だけ要る。例を値の形へ書き換えたのに許しが残ると、旧い呼びが戻っても気づかない。
-    assert set(ARTICLE_FORMER_CALLS) <= set(ARTICLE_STDOUT)
-    for name, (call, _) in ARTICLE_FORMER_CALLS.items():
-        assert call in (ARTICLE_EXAMPLES / name).read_text(), (
-            f"examples/testing_without_mocks/{name} はもう {call} を書かない — ARTICLE_FORMER_CALLS から行を消す"
-        )

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import re
 import subprocess
@@ -365,17 +366,25 @@ def test_the_article_tests_pass_only_when_every_test_passes_cleanly(
     assert (tool.article_tests_failure(result) is None) is passes
 
 
-def test_the_article_check_expects_the_lines_the_examples_print() -> None:
-    # 道具は doeff を import できず、例の印字の行を写して持つ — 写しが、開発の環境で例の印字と比べる行とずれない事と、記事の
-    # script の全部を走らせ、記事の書く切り替え DOEFF_SCHEDULER=rust でも fanout.py を走らせる事。
-    from tests.test_examples_run import ARTICLE_STDOUT, ARTICLE_TIMED
+# 記事の例の dir の、他の file が import するだけで何も印字しない module。
+ARTICLE_MODULES = ("infra.py", "plain_app.py", "welcome.py")
 
-    assert {script.name: script.lines for script in tool.ARTICLE_SCRIPTS} == ARTICLE_STDOUT
-    assert {script.name for script in tool.ARTICLE_SCRIPTS if script.timed} == {ARTICLE_TIMED}
+
+def test_the_article_check_runs_every_script_of_the_article() -> None:
+    # 記事の例の印字を比べるのは道具の ARTICLE_SCRIPTS だけ(card ki-5ea7c639b693)— 表が dir の script の全部を名指し、記事の
+    # 書く切り替え DOEFF_SCHEDULER=rust でも fanout.py を走らせる事。例の dir に script を足して表に書き忘れると赤になる。
+    directory = ROOT / tool.ARTICLE_EXAMPLE_DIRECTORY
+    scripts = sorted(
+        path.name
+        for path in directory.glob("*.py")
+        if not path.name.startswith("test_") and path.name not in ARTICLE_MODULES
+    )
+    assert sorted({script.name for script in tool.ARTICLE_SCRIPTS}) == scripts
+    assert all((directory / name).is_file() for name in ARTICLE_MODULES)
+    assert {script.name for script in tool.ARTICLE_SCRIPTS if script.timed} == {"fanout.py"}
     assert [script.label() for script in tool.ARTICLE_SCRIPTS if script.scheduler] == [
         "DOEFF_SCHEDULER=rust fanout.py"
     ]
-    directory = ROOT / tool.ARTICLE_EXAMPLE_DIRECTORY
     assert (directory / "pytest.ini").is_file()
 
 
@@ -620,6 +629,15 @@ def test_the_error_line_is_the_exception_or_the_one_line_reason(
     assert tool.error_line(failure) == (failure if line is None else line)
 
 
+_STAGES = (
+    "check_public_names",
+    "check_extra_uses",
+    "check_demo",
+    "check_llm_example",
+    "check_article_examples",
+)
+
+
 def _check_python_titles(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object
 ) -> list[str]:
@@ -634,16 +652,34 @@ def _check_python_titles(
     monkeypatch.setattr(tool, "install", lambda *_: installed)
     monkeypatch.setattr(tool, "install_problems", lambda *_: [])
     monkeypatch.setattr(tool, "check_readmes", check_readmes)
-    for stage in (
-        "check_public_names",
-        "check_extra_uses",
-        "check_demo",
-        "check_llm_example",
-        "check_article_examples",
-    ):
+    for stage in _STAGES:
         monkeypatch.setattr(tool, stage, lambda *_: [])
     assert tool.check_python("3.12", tmp_path, 60, source) == []
     return titles
+
+
+def _stages_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object) -> list[str]:
+    """check_python が呼んだ段の名を、その順に読む — 各段の写しは自分の名を落ちた訳として返す(訳の列は呼んだ順に並ぶ)。"""
+    installed = _venv_with_readmes(_OLD_README)
+    monkeypatch.setattr(tool, "install", lambda *_: installed)
+    monkeypatch.setattr(tool, "install_problems", lambda *_: [])
+    monkeypatch.setattr(
+        tool, "check_readmes", lambda readmes, *_: tool.ReadmeTally(readmes.title, 0, (), ())
+    )
+    for stage in _STAGES:
+        monkeypatch.setattr(tool, stage, functools.partial(lambda name, *_: [name], stage))
+    return tool.check_python("3.12", tmp_path, 60, source)
+
+
+def test_only_the_pypi_check_runs_the_article_examples(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版では走らせない(card ki-5ea7c639b693)。
+    # --pypi は venv に pytest を足すので最後に走らせる。
+    checkout_stages = _stages_run(monkeypatch, tmp_path / "checkout", tool.Checkout())
+    pypi_stages = _stages_run(monkeypatch, tmp_path / "pypi", tool.PyPI(None))
+    assert "check_article_examples" not in checkout_stages
+    assert pypi_stages[-1] == "check_article_examples"
 
 
 def test_the_pypi_check_runs_the_github_readmes_besides_the_wheel_ones(
