@@ -141,7 +141,7 @@ def test_agentd_only_worker_route_rule_detects_conductor_handler_bypass() -> Non
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     check_ids = _semgrep_rule_ids(
         REPO_ROOT / ".semgrep.yaml",
-        "packages/doeff-conductor/src/doeff_conductor/_handlers/agent_handler.py",
+        "packages/doeff-conductor/src/doeff_conductor/_handlers/_agent_handler.py",
         cwd=fixture_root,
     )
 

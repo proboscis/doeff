@@ -136,4 +136,7 @@ from doeff_agents._effects.agent import SessionOnHomeCredential as SessionOnHome
 from doeff_agents._effects.agent import (
     ReplacementCredentialUnavailable as ReplacementCredentialUnavailable,
 )
-from doeff_agents._effects.agent import agent as agent
+
+# 関数 agent はここで出さない: 子の module agent と同じ名で、移した package の古い path doeff_agents.effects.agent の
+# import がこの package の属性 agent を module で上書きする(ADR-DOE-API-001 R34・card ki-d3a096ce3eaa)。
+# 根の入口 doeff_agents が定義の module doeff_agents._effects.agent から出す。

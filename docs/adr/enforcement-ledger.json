@@ -595,6 +595,7 @@
     "ADR-DOE-API-001 test-adr-doe-api-001-a-public-submodule-turns-the-guard-red-and-a-moved-name-does-not",
     "ADR-DOE-API-001 test-adr-doe-api-001-a-submodule-named-like-an-entry-name-turns-the-guard-red",
     "ADR-DOE-API-001 test-adr-doe-api-001-an-added-outlier-turns-the-guard-red",
+    "ADR-DOE-API-001 test-adr-doe-api-001-an-inner-package-entry-name-like-its-child-turns-the-guard-red",
     "ADR-DOE-API-001 test-adr-doe-api-001-only-a-macro-or-a-command-can-be-allowed-as-one",
     "ADR-DOE-API-001 test-adr-doe-api-001-only-a-program-helper-can-be-allowed-as-one",
     "ADR-DOE-API-001 test-adr-doe-api-001-the-known-table-is-well-formed-and-only-shrinks",
