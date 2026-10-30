@@ -1,24 +1,30 @@
 # releases.py
 import json
 from collections import Counter
+from dataclasses import dataclass, field
 
-from doeff import Resume, ResumeThrow, do, handler, run
-from doeff_core_effects import HttpRequest, HttpResponse
+from doeff import EffectBase, Resume, ResumeThrow, do, handler, run
 
 GITHUB = "https://api.github.com"
+
+
+@dataclass(frozen=True)
+class HttpRequest(EffectBase):  # "send this request"; its handler answers with the body
+    method: str
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @do
 def latest_releases(repos: list[str], token: str, api: str = GITHUB):  # asks; never sends
     tags = {}
     for repo in repos:
-        response = yield HttpRequest(
+        body = yield HttpRequest(
             "GET",
             f"{api}/repos/{repo}/releases/latest",
             headers={"Authorization": f"Bearer {token}"},
         )
-        response.raise_for_status()
-        tags[repo] = json.loads(response.text)["tag_name"]
+        tags[repo] = json.loads(body)["tag_name"]
     return tags
 
 
@@ -32,8 +38,7 @@ sent: Counter[str] = Counter()  # how many times each URL was sent
 def github(effect: HttpRequest, k):  # every request that reaches it counts as sent
     sent[effect.url] += 1
     repo = effect.url.removeprefix(f"{GITHUB}/repos/").removesuffix("/releases/latest")
-    body = json.dumps({"tag_name": TAGS[repo]})
-    return (yield Resume(k, HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)))
+    return (yield Resume(k, json.dumps({"tag_name": TAGS[repo]})))
 
 
 def recording(tape: dict):  # perform each request outward and keep its answer
