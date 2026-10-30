@@ -2,10 +2,10 @@
  "説明": [
   "subpackage の公開 API は effect と handler だけ、の決まりが名ごとに許した、effect と handler の外の名の表(tests/test_public_api_known_violations.py が読む)。外れと境界は既知の違反の表 tests/data/public_api_known_violations.json に在り、許した名はこの表だけに置く(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。",
   "1 行 = 許した名 1 つ: package(packages/ の下の dir)・module(名を出す module)・name・組・決め。鍵 (package, module, name) は目録の行と同じで、行は鍵の順に並べ、重ねない。違反の表と同じ鍵を置かない。",
-  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R31 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R31 — console script と Rust の実行 file の行)・「許した物 — 換算の関数」(R35 — 値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない関数)・「許した物 — ADR を書く関数」(R14 — Hy の macro の module が出す関数)・「許した物 — effect の答えの型」(R2 — class と型の別名)・「許した物 — 例外の型」(R2 — その package が定義した BaseException の子の class)の 7 つで、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
+  "組 = 目録で形を確かめる許す組(test の ALLOWED_GROUPS)の 1 つ。今は組「許した物 — program の helper」(ADR-DOE-API-001 R18 — program を返し、中で handler を被せず effect に答えない関数)・「許した物 — Hy の macro」(R14・R15・R31 — Hy の macro の名と、Hy の macro だけを出す公開の submodule の行)・「許した物 — CLI コマンド」(R7・R31 — console script と Rust の実行 file の行)・「許した物 — 換算の関数」(R35 — 値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を読まない関数)・「許した物 — ADR を書く関数」(R14 — Hy の macro の module が出す関数)・「許した物 — effect の答えの型」(R2 — class と型の別名)・「許した物 — 例外の型」(R2 — その package が定義した BaseException の子の class)・「許した物 — effect の値の型」(R2 — 同じ package が見せる effect の class の欄の注釈に、型引数を含めて出る class と型の別名。package が定義した値の型の欄も辿る — 目録の value_types)の 8 つで、test は目録の形が組に合わない名を赤にする。形を確かめない組は置けない。",
   "決め = 許した決めの id(card ki-… か依頼 lt-… か利用者の発言 ci-…)。この表は決めの id つきで足せる(違反の表と違い減るだけでない)。決めの id の無い行は test が赤にする。",
   "名を submodule から入口へ移した行は、違反の表と同じく表の module を書き換えずに同じ行と読む。表に在るのに目録に無い名は赤 — 直した名と隠した submodule の名は表から消す(tools/hide_submodules.py finish が隠した子の行を消す)。",
-  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)。"
+  "今の行の決め: doeff-traverse の sequence・try_call は答え lt-R3TYRMMEM7YN0G9J9D2RZMVX3X(R18)、同じ形の doeff-core-effects の closing_links・doeff-validation の validate は card ki-f20b18c2aad9、外の repo か doeff の別 package が使う 155 名(271 行)は答え lt-7EK027YNFXTP27QE60J7Q686CZ(R25・card ki-9261e8b524d8)、doeff-conductor・doeff-events・doeff-domain の macro の module と macro 15 名と doeff-hy の CLI doeff-hy-check は持ち主の決め card ki-d80c9c978b35(R31)、doeff-time の epoch_ms_of は答え lt-YB2AMVK3D876GN4RM1SB3T24AR(R35・card ki-a2ac882abeb7)、effect と handler が投げる例外の型 129 名(16 package の 247 行 — 前の既知の表の組「境界 — 例外の型」)は答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-03aa4c49f7e0)、effect の値の型 108 名(323 行 — 前の既知の表の組「境界 — effect の値の型」の 95 名 298 行と「足した名」の 25 行)は同じ答え lt-85SHMNQG7HG4AYHBER6V2BAKX6(R2・card ki-5401da404e8e)。"
  ],
  "許した物": [
   {
@@ -66,9 +66,30 @@
   },
   {
    "package": "doeff-adr",
+   "module": "doeff_adr.registry",
+   "name": "EnforcementMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-adr",
+   "module": "doeff_adr.registry",
+   "name": "FixtureSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-adr",
    "module": "doeff_adr.semgrep_hy",
    "name": "HyScanExpansionError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
+   "name": "AgentConfig",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -104,6 +125,13 @@
    "module": "doeff_agentic",
    "name": "AgenticEnvironmentNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agentic",
+   "module": "doeff_agentic",
+   "name": "AgenticEnvironmentType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -228,8 +256,71 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents",
+   "name": "AgentSessionLifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentTask",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "EventRecord",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "HandlerMadeContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "JSONSchema",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "RecordStep",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -265,6 +356,48 @@
    "module": "doeff_agents",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents",
+   "name": "TurnInputMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.adapters",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.adapters.base",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.adapters.claude",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.adapters.codex",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.adapters.gemini",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -319,8 +452,78 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects",
+   "name": "AgentSessionLifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentTask",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "EventRecord",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "HandlerMadeContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "InputImage",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "JSONSchema",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "RecordStep",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -356,6 +559,13 @@
    "module": "doeff_agents.effects",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects",
+   "name": "TurnInputMode",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -410,8 +620,78 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.effects.agent",
+   "name": "AgentSessionLifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentTask",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "EventRecord",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "HandlerMadeContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "InputImage",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "JSONSchema",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "RecordStep",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -447,6 +727,13 @@
    "module": "doeff_agents.effects.agent",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.effects.agent",
+   "name": "TurnInputMode",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -454,6 +741,13 @@
    "module": "doeff_agents.handlers.claude",
    "name": "AgentCapabilityUnsupportedError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.claude",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -472,6 +766,13 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.handlers.codex",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.handlers.daemon",
    "name": "AgentError",
    "組": "許した物 — 例外の型",
@@ -489,6 +790,13 @@
    "module": "doeff_agents.handlers.daemon",
    "name": "AgentNotAvailableError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.daemon",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -536,6 +844,20 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "HandlerMadeContextId",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -573,6 +895,13 @@
    "module": "doeff_agents.handlers.headless",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless",
+   "name": "TurnInputMode",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -599,6 +928,13 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.headless_codex",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
    "name": "NoTurnInFlightError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -636,6 +972,13 @@
    "module": "doeff_agents.handlers.headless_codex",
    "name": "TurnInFlightError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.headless_codex",
+   "name": "TurnInputMode",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -690,6 +1033,27 @@
   {
    "package": "doeff-agents",
    "module": "doeff_agents.handlers.production",
+   "name": "AgentSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "AgentTask",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.production",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -703,6 +1067,20 @@
   },
   {
    "package": "doeff-agents",
+   "module": "doeff_agents.handlers.session_store",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.handlers.testing",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
    "module": "doeff_agents.handlers.testing",
    "name": "SessionAlreadyExistsError",
    "組": "許した物 — 例外の型",
@@ -713,6 +1091,27 @@
    "module": "doeff_agents.handlers.testing",
    "name": "SessionNotFoundError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "AgentSessionQuery",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-agents",
+   "module": "doeff_agents.session_store_sql",
+   "name": "AgentType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -738,10 +1137,192 @@
   },
   {
    "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "AskHost",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "AutocompactAuto",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "AutocompactTokens",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "BypassAll",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "ClaudeHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "ClaudeSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "DenyUnlisted",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "HomeSettings",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "McpSse",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "McpStdio",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "PrintContent",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.argv",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.credential_home",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
    "module": "doeff_claude_code.credential_home",
    "name": "credential_document",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.decision",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.decision",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.decision",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.decision",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.decision",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "Allow",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "Deny",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "ImageAttachment",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "PrintContent",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.dialogue",
+   "name": "TurnInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-claude-code",
@@ -752,10 +1333,220 @@
   },
   {
    "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "Allow",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ClaudeHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ClaudeSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "Deny",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "PrintContent",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.effects",
+   "name": "TurnInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "ClaudeSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "LinkFromHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "Rebuilt",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.fake",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
    "module": "doeff_claude_code.fake",
    "name": "stderr_tail_within",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ClaudeHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ClaudeSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "LinkFromHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "Rebuilt",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.handler",
+   "name": "TurnInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.lines",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-claude-code",
@@ -777,6 +1568,160 @@
    "name": "stderr_tail_within",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "Allow",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "AskHost",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "AutocompactAuto",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "AutocompactTokens",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "BypassAll",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ClaudeHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ClaudeSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ClaudeTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "Deny",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "DenyUnlisted",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ForkSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "FreshSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "HomeSettings",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ImageAttachment",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "LentCredential",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "LinkFromHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "McpSse",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "McpStdio",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "PrintContent",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "Rebuilt",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "ResumeSession",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-claude-code",
+   "module": "doeff_claude_code.values",
+   "name": "TurnInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-cluster",
@@ -867,6 +1812,20 @@
    "module": "doeff_cluster.coordinator.core.cluster_rules",
    "name": "BodyInvalid",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.failover_room",
+   "name": "RoomState",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.failover_room",
+   "name": "WorkerInfo",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -986,6 +1945,13 @@
    "module": "doeff_cluster.coordinator.intent.due_model",
    "name": "CoordinatorUnsettled",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.intent.failover_model",
+   "name": "WorkerInfo",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1445,6 +2411,34 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.kube_service_model",
+   "name": "KubeIngress",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.kube_service_model",
+   "name": "KubeService",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.kube_service_model",
+   "name": "KubeServicePort",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.kube_service_model",
+   "name": "KubeServiceType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.intent.protocol",
    "name": "BodyInvalid",
    "組": "許した物 — 例外の型",
@@ -1620,6 +2614,27 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.kube_services",
+   "name": "KubeIngress",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.kube_services",
+   "name": "KubeService",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.kube_services",
+   "name": "KubeServiceType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.meter_report",
    "name": "with_meter_report",
    "組": "許した物 — program の helper",
@@ -1746,6 +2761,20 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_services",
+   "name": "KubeIngress",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.k8s_services",
+   "name": "KubeService",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.sim.k8s_supplied",
    "name": "answer_of",
    "組": "許した物 — program の helper",
@@ -1782,6 +2811,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.sim.local",
+   "name": "RoomState",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
    "name": "SimDeadlockError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -1798,6 +2834,13 @@
    "module": "doeff_cluster.sim.local",
    "name": "WorkerDied",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "WorkerRoom",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -1946,6 +2989,13 @@
    "name": "child_environment",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.pod_label_rules",
+   "name": "JobSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-cluster",
@@ -2235,6 +3285,174 @@
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
   },
   {
+   "package": "doeff-codex",
+   "module": "doeff_codex.effects",
+   "name": "CodexInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.effects",
+   "name": "CodexSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.effects",
+   "name": "CodexTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.effects",
+   "name": "FreshThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.effects",
+   "name": "ResumeThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.fake",
+   "name": "CodexInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.fake",
+   "name": "CodexSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.fake",
+   "name": "CodexTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.fake",
+   "name": "FreshThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.fake",
+   "name": "ResumeThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.handler",
+   "name": "CodexInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.handler",
+   "name": "CodexSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.handler",
+   "name": "CodexTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.handler",
+   "name": "FreshThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.handler",
+   "name": "ResumeThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.rpc",
+   "name": "SandboxMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "CodexHome",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "CodexImage",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "CodexInput",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "CodexSessionSpec",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "CodexTurn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "FreshThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "ResumeThread",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-codex",
+   "module": "doeff_codex.values",
+   "name": "SandboxMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-conductor",
    "module": "(submodule)",
    "name": "doeff_conductor.macros",
@@ -2246,6 +3464,13 @@
    "module": "doeff_conductor",
    "name": "AgentError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "AgentTask",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2433,8 +3658,22 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "ExternalPromiseCancelCallbackError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "Future",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2447,6 +3686,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "Promise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "SchedulerDeadlockError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -2454,8 +3700,64 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "Task",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "TaskCancelledError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpAddress",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpBodyBytes",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpBodyFileRange",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpHeader",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpNoBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_http_server",
+   "name": "HttpProbe",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.aiohttp_ws_client",
+   "name": "HttpHeader",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2475,8 +3777,78 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.apart_call",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.apart_call",
    "name": "TaskCancelledError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_effects",
+   "name": "CacheLifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_effects",
+   "name": "CachePolicy",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_effects",
+   "name": "CacheStorage",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_policy",
+   "name": "CacheLifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_policy",
+   "name": "CachePolicy",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.cache_policy",
+   "name": "CacheStorage",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.channel_effects",
+   "name": "Channel",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.channel_effects",
+   "name": "Promise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.clickhouse_http_sql",
+   "name": "SqlColumnType",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2531,6 +3903,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.file_effects",
+   "name": "LockHeld",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.file_effects",
    "name": "file_done",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -2558,6 +3937,69 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpAddress",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpBodyBytes",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpBodyFileRange",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpHeader",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpNoBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "HttpProbe",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "ScriptedBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.http_server_effects",
+   "name": "WsShortcut",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.inline_compute",
    "name": "computed",
    "組": "許した物 — program の helper",
@@ -2565,10 +4007,73 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_effects",
+   "name": "Lifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_effects",
+   "name": "MemoPolicy",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_effects",
+   "name": "RecomputeCost",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_handlers",
+   "name": "RecomputeCost",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_policy",
+   "name": "Lifecycle",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_policy",
+   "name": "MemoPolicy",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memo_policy",
+   "name": "RecomputeCost",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_file",
+   "name": "LockHeld",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.memory_file",
    "name": "compiled_pyc",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.memory_latest",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -2601,6 +4106,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.os_file",
+   "name": "LockHeld",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_file",
    "name": "offloaded",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -2610,6 +4122,34 @@
    "module": "doeff_core_effects.os_proc_table",
    "name": "ProcTableUnavailable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_proc_table",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "ChildLifetime",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "EnvMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_process",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2664,6 +4204,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.os_warm_process",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.os_warm_process",
    "name": "WarmProcUnavailable",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -2698,6 +4245,41 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.outcomes",
+   "name": "AbsentAsToken",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "SqlColumnType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "SqlLock",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.postgres_sql",
+   "name": "SqlParam",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.postgres_sql",
    "name": "TaskCancelledError",
    "組": "許した物 — 例外の型",
@@ -2716,6 +4298,34 @@
    "name": "offloaded",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.proc_table_effects",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "ChildLifetime",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "EnvMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_effects",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -2775,6 +4385,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.process_latest",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.python_bytecode",
    "name": "checked_hash_pyc",
    "組": "許した物 — program の helper",
@@ -2789,9 +4406,37 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.rooted_file",
+   "name": "LockHeld",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler",
    "name": "ExternalPromiseCancelCallbackError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler",
+   "name": "Future",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler",
+   "name": "Promise",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2818,8 +4463,85 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scheduler",
+   "name": "Task",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler",
    "name": "TaskCancelledError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scheduler_channel",
+   "name": "Channel",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpBodyBytes",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpBodyFileRange",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpHeader",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpNoBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "HttpProbe",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "ScriptedBody",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_http_server",
+   "name": "WsShortcut",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "EnvMode",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_process",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2859,6 +4581,13 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.scripted_warm_process",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_ws_client",
    "name": "closing_links",
    "組": "許した物 — program の helper",
@@ -2874,8 +4603,64 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.sql_effects",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlColumn",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlColumnType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlIndex",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlLock",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlParam",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlTable",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
    "name": "SqlTransactionMisuse",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sql_effects",
+   "name": "SqlValue",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -2909,6 +4694,34 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.sqlite_sql",
+   "name": "SqlColumnType",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "SqlParam",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "SqlTable",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
+   "name": "SqlValue",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.sqlite_sql",
    "name": "sqlite_connection",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -2936,10 +4749,38 @@
   },
   {
    "package": "doeff-core-effects",
+   "module": "doeff_core_effects.stop_signal_handlers",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.thread_pool_compute",
+   "name": "ExternalPromise",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
    "module": "doeff_core_effects.thread_pool_compute",
    "name": "computed",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.warm_effects",
+   "name": "ProcessSignal",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects.ws_client_effects",
+   "name": "HttpHeader",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-core-effects",
@@ -2954,6 +4795,13 @@
    "name": "doeff_domain.macros",
    "組": "許した物 — Hy の macro",
    "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
+   "name": "Domain",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-domain",
@@ -2986,8 +4834,22 @@
   {
    "package": "doeff-domain",
    "module": "doeff_domain",
+   "name": "DomainLaw",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
    "name": "DomainRegistrationError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
+   "name": "DomainTerm",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3019,6 +4881,20 @@
    "決め": "ki-d80c9c978b35"
   },
   {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer",
+   "name": "FoldCarried",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-effect-analyzer",
+   "module": "doeff_effect_analyzer",
+   "name": "SuppliedDeclaration",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
    "package": "doeff-events",
    "module": "(submodule)",
    "name": "doeff_events.macros",
@@ -3028,8 +4904,22 @@
   {
    "package": "doeff-events",
    "module": "doeff_events",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
    "name": "BrokerConnectionsExhausted",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3059,6 +4949,48 @@
    "name": "restore_broker",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects",
+   "name": "FileWatch",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects.files",
+   "name": "FileWatch",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects.notices",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.effects.notices",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-events",
@@ -3126,9 +5058,30 @@
   {
    "package": "doeff-events",
    "module": "doeff_events.handlers.memory_files",
+   "name": "FileWatch",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_files",
    "name": "announce_file_change",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_notices",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.memory_notices",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-events",
@@ -3147,6 +5100,20 @@
   {
    "package": "doeff-events",
    "module": "doeff_events.handlers.notice_events",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.notice_events",
    "name": "NoticeSourceUnreachable",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3156,6 +5123,20 @@
    "module": "doeff_events.handlers.notice_events",
    "name": "UnroutedNotice",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.os_files",
+   "name": "FileWatch",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.handlers.redis_notices",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3174,10 +5155,24 @@
   },
   {
    "package": "doeff-events",
+   "module": "doeff_events.handlers.redis_notices",
+   "name": "ChannelSubscription",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-events",
    "module": "doeff_events.macros",
    "name": "event_loop",
    "組": "許した物 — Hy の macro",
    "決め": "ki-d80c9c978b35"
+  },
+  {
+   "package": "doeff-events",
+   "module": "doeff_events.notice_laws",
+   "name": "Announcement",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-gemini",
@@ -3198,6 +5193,13 @@
    "module": "doeff_git",
    "name": "GitCommandError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-git",
+   "module": "doeff_git",
+   "name": "MergeStrategy",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3636,9 +5638,44 @@
   },
   {
    "package": "doeff-records",
+   "module": "doeff_records.effects",
+   "name": "EventAppend",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.effects",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.effects",
+   "name": "RowWrite",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.effects",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
    "module": "doeff_records.event_source",
    "name": "SignalSourceUnreachable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.event_source",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3661,6 +5698,20 @@
    "name": "ride_out_stall",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.faults",
+   "name": "StoreFault",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.faults",
+   "name": "StoreOperation",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3721,6 +5772,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.http_server",
+   "name": "MarkBook",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
+   "name": "RequestMark",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.http_server",
    "name": "list_rows_metrics",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -3752,6 +5817,34 @@
    "name": "store_reach",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "EventAppend",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "RowWrite",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.laws",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3794,6 +5887,55 @@
    "name": "records_settings",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.maintenance",
+   "name": "ExpiredCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "EventAppend",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "ExpiredCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "StoreFault",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "StoreOperation",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.memory",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3861,6 +6003,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.pg",
+   "name": "ExpiredCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
    "name": "RecordsSqlFailed",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3870,6 +6026,13 @@
    "module": "doeff_records.pg",
    "name": "StoreUnreachable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -3896,6 +6059,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.pg_sql",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.pg_sql",
    "name": "migrate_lock_key",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -3913,6 +6083,13 @@
    "name": "writer_lock_key",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.request_timing",
+   "name": "RequestMark",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-records",
@@ -3945,6 +6122,20 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.typed",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.typed",
    "name": "list_typed",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
@@ -3966,6 +6157,13 @@
   {
    "package": "doeff-records",
    "module": "doeff_records.values",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.values",
    "name": "UndeclaredField",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -3979,9 +6177,44 @@
   },
   {
    "package": "doeff-records",
+   "module": "doeff_records.values",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "EventAppend",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "ListCursor",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "RowWrite",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
    "module": "doeff_records.wire",
    "name": "UndeclaredTable",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-records",
+   "module": "doeff_records.wire",
+   "name": "WatchCursor",
+   "組": "許した物 — effect の値の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -4050,6 +6283,13 @@
   {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
+   "name": "Image",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
    "name": "JudgeError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -4064,9 +6304,23 @@
   {
    "package": "doeff-system-one",
    "module": "doeff_system_one",
+   "name": "Question",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one",
    "name": "judge_many",
    "組": "許した物 — program の helper",
    "決め": "lt-7EK027YNFXTP27QE60J7Q686CZ"
+  },
+  {
+   "package": "doeff-system-one",
+   "module": "doeff_system_one.types",
+   "name": "Kind",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-time",
@@ -4095,6 +6349,13 @@
    "name": "try_call",
    "組": "許した物 — program の helper",
    "決め": "lt-R3TYRMMEM7YN0G9J9D2RZMVX3X"
+  },
+  {
+   "package": "doeff-traverse",
+   "module": "doeff_traverse.effects",
+   "name": "ItemOutcomeKind",
+   "組": "許した物 — effect の値の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
    "package": "doeff-validation",
