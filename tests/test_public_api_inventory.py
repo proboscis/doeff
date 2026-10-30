@@ -235,7 +235,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("flow_wrapped", "other", "handler を被せる program を返す関数"),
         ("flow_answering", "other", "effect に答える program を返す関数"),
         ("flow_with_handlers", "other", "handler を被せる program を返す関数"),
-        ("size", "other", "関数"),
+        ("size", "other", "換算の関数"),
         ("LIMIT", "other", "定数"),
         ("SessionHandler", "unclassified", "class"),
         ("PongEffect", "unclassified", "class"),

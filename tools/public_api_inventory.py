@@ -128,6 +128,11 @@ PROGRAM_HELPER = "program の helper"
 #: The forms of a function that returns a program and whose body goes past a helper's.
 HELPER_INSTALLS = "handler を被せる program を返す関数"
 HELPER_ANSWERS = "effect に答える program を返す関数"
+#: The form of a plain function that turns a value into a value (ADR-DOE-API-001 R35): its body makes no
+#: effect, handler or program and reads no clock, environment, file, process or randomness.
+CONVERSION = "換算の関数"
+#: The form of a plain function with a value's return type whose body goes past a conversion's.
+PLAIN_FUNCTION = "関数"
 #: The form of a public Hy macro's row (a macro module shows only these — ADR-DOE-API-001 R14・R15・R31).
 MACRO_FORM = "Hy の macro"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
@@ -136,6 +141,48 @@ RUST_EXECUTABLE = "Rust の実行 file"
 # What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
 _INSTALL_NAMES = ("WithHandler", "WithHandlerType", "with_handlers")
 _ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
+# What a conversion's body must not read, by name (a global or an attribute): a program's or an effect's
+# making, a clock, the environment, a file, a process, randomness and the console (ADR-DOE-API-001 R35).
+_WORLD_NAMES = frozenset(
+    {
+        *_INSTALL_NAMES,
+        *_ANSWER_NAMES,
+        "Perform",
+        "now",
+        "utcnow",
+        "today",
+        "time",
+        "time_ns",
+        "monotonic",
+        "monotonic_ns",
+        "perf_counter",
+        "perf_counter_ns",
+        "sleep",
+        "environ",
+        "getenv",
+        "open",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+        "system",
+        "popen",
+        "Popen",
+        "run",
+        "check_output",
+        "socket",
+        "urlopen",
+        "random",
+        "randint",
+        "choice",
+        "urandom",
+        "uuid1",
+        "uuid4",
+        "print",
+        "input",
+    }
+)
+_COROUTINE_FLAGS = inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR
 # What a factory call may write under: pointed at a scratch dir while a factory is called.
 _HOME_VARIABLES = ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 # The generic collections a function may return a handler stack in.
@@ -712,6 +759,8 @@ class _Classifier:
         self._reached_bodies: dict[int, _Read[tuple[types.FunctionType, ...]]] = {}
         self._body_breaches: dict[int, _Read[_Breach | None]] = {}
         self._breach_forms: dict[tuple[str, int], _Read[str | None]] = {}
+        # A body's first read past a conversion's (ADR-DOE-API-001 R35), made once per child.
+        self._conversion_breaches: dict[int, _Read[_Breach | None]] = {}
 
     def is_effect_class(self, obj: object) -> bool:
         """Whether a value is an effect type (a subclass of ``EffectBase``)."""
@@ -819,7 +868,9 @@ class _Classifier:
                 else f"戻りの型 {_annotation_text(annotation)} では決まらず、return の形からも決まらない"
             )
             return self._returns_kind(function) or Verdict("unclassified", "関数", unknown)
-        return Verdict("other", "関数", f"戻りの型 {_annotation_text(annotation)}")
+        return self._conversion_verdict(
+            function, Verdict("other", PLAIN_FUNCTION, f"戻りの型 {_annotation_text(annotation)}")
+        )
 
     def _called_factory(self, obj: object, read: Verdict) -> Verdict:
         """The verdict on a function read as a factory, checked by calling it (ADR-DOE-API-001 R3).
@@ -879,6 +930,62 @@ class _Classifier:
         return Verdict(
             "other", breach.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
         )
+
+    def _conversion_verdict(self, function: object, read: Verdict) -> Verdict:
+        """The verdict on a plain function with a value's return type: a conversion or not (ADR-DOE-API-001 R35).
+
+        A conversion turns a value into a value: it is no generator or coroutine, and nothing its body
+        reads — and the bodies of the functions of its own package it reads, followed through — makes
+        an effect, a handler or a program, or reads a clock, the environment, a file, a process,
+        randomness or the console by name. A body that cannot be read (not a Python function) keeps
+        the verdict ``read`` gave.
+        """
+        if not isinstance(function, types.FunctionType):
+            return read
+        breaches = (
+            found
+            for current in self._package_bodies(function)
+            if (found := self._conversion_breach(current)) is not None
+        )
+        breach = next(breaches, None)
+        if breach is None:
+            return Verdict(
+                "other",
+                CONVERSION,
+                f"{read.reason}・中で effect も handler も program も作らず、"
+                "時計・環境・file・process・乱数を読まない",
+            )
+        return Verdict(
+            read.kind, read.form, f"{read.reason}・{breach.where} が {breach.name} を読む"
+        )
+
+    def _conversion_breach(self, function: types.FunctionType) -> _Breach | None:
+        """The first name (in name order) one body reads that takes it past a conversion's (judged once per body)."""
+        key = id(function)
+        if key not in self._conversion_breaches:
+            if function.__code__.co_flags & _COROUTINE_FLAGS:
+                found = _Breach(PLAIN_FUNCTION, function.__qualname__, "yield")
+            else:
+                found = next(
+                    (
+                        _Breach(PLAIN_FUNCTION, function.__qualname__, name)
+                        for name in sorted(_code_names(function.__code__))
+                        if self._goes_past_a_conversion(
+                            name, function.__globals__.get(name, _MISSING)
+                        )
+                    ),
+                    None,
+                )
+            self._conversion_breaches[key] = _Read(function, found)
+        return self._conversion_breaches[key].answer
+
+    def _goes_past_a_conversion(self, name: str, value: object) -> bool:
+        """Whether one name a body reads takes it past a conversion's: a name of the world, or a value that makes an effect, a handler or a program."""
+        if name in _WORLD_NAMES:
+            return True
+        if value is _MISSING:
+            return False
+        return self._called_kind(value) is not None or _is_program_function(value)
 
     def _package_bodies(self, function: types.FunctionType) -> tuple[types.FunctionType, ...]:
         """A function and the functions of its own package its body reads, followed through (each once).
@@ -1173,7 +1280,7 @@ def _takes_effect_and_k(function: object) -> bool:
 
 @dataclass(frozen=True)
 class _Breach:
-    """What takes a program function's body past a helper's: the form it gives, who reads it, the name read."""
+    """What takes a function's body past a helper's or a conversion's: the form it gives, who reads it, the name read."""
 
     form: str
     where: str

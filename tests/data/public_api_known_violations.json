@@ -13553,11 +13553,6 @@
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — 内側の module へ移す": {
-     "doeff_time": [
-      "epoch_ms_of"
-     ]
-    },
     "境界 — effect の結果の型": {
      "doeff_time": [
       "RaceOutcome",

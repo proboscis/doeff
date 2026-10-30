@@ -31,7 +31,9 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
    Hy の macro」(R14・R15・R31 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
    macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
-   組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行だけ。
+   組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行だけ。組「許した物 — 換算の
+   関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
+   program を作る・時計や環境や file を読む・generator の関数を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -82,12 +84,16 @@ HELPER_GROUP = "許した物 — program の helper"
 MACRO_GROUP = "許した物 — Hy の macro"
 #: 決まりが許した CLI コマンドの組(ADR-DOE-API-001 R7・R31)— console script と Rust の実行 file の行だけを置ける。
 COMMAND_GROUP = "許した物 — CLI コマンド"
+#: 決まりが名ごとに許した換算の関数の組(ADR-DOE-API-001 R35)— 目録の形が換算の関数の名だけを置ける。
+CONVERSION_GROUP = "許した物 — 換算の関数"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
     MACRO_GROUP: "Hy の macro と、Hy の macro だけを出す公開の submodule(macro の module)だけを置ける"
     "(ADR-DOE-API-001 R14・R15・R31)",
     COMMAND_GROUP: "console script と Rust の実行 file だけを置ける(ADR-DOE-API-001 R7・R31)",
+    CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
+    "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -238,6 +244,8 @@ def fits_allowed_group(group: str, row: Mapping[str, Any], package: Mapping[str,
     """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。"""
     if group == HELPER_GROUP:
         return row["form"] == tool.PROGRAM_HELPER
+    if group == CONVERSION_GROUP:
+        return row["form"] == tool.CONVERSION
     if group == MACRO_GROUP:
         return row["form"] == tool.MACRO_FORM or (
             row["module"] == SUBMODULE and _is_macro_module(package, row["name"])
@@ -1129,7 +1137,7 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
         ),
         ("pinging_wrapped", tool.HELPER_INSTALLS, "_install が ping_handler を読む"),
         ("answering", tool.HELPER_ANSWERS, "answering が Resume を読む"),
-        ("helper", "関数", "戻りの型 int"),
+        ("helper", tool.CONVERSION, "戻りの型 int"),
     ]
     for name, form, said in past_a_helper:
         with pytest.raises(AssertionError, match=re.escape(HELPER_GROUP)) as failure:
@@ -1142,6 +1150,84 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
         match=r"許した物の表に在るのに目録に無い名が 1 個[\s\S]*doeff_fixture_api\.gone",
     ):
         check_package(package, *tables(["gone", "pinging"]))
+
+
+CONVERSIONS = '''
+
+import time
+from datetime import datetime, timedelta, timezone
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_ONE_MS = timedelta(milliseconds=1)
+
+
+def _aware(at: datetime) -> datetime:
+    if at.tzinfo is None:
+        raise ValueError("at must be timezone-aware")
+    return at
+
+
+def ms_of(at: datetime) -> int:
+    """A conversion: a value in, a value out (the function of its package it reads is one too)."""
+    return (_aware(at) - _EPOCH) // _ONE_MS
+
+
+def _stamp() -> float:
+    return time.time()
+
+
+def ms_now() -> int:
+    """Past a conversion: the function of its package it calls reads the clock."""
+    return int(_stamp() * 1000)
+
+
+def ms_today() -> int:
+    """Past a conversion: reads the clock by an attribute."""
+    return (datetime.now(timezone.utc) - _EPOCH) // _ONE_MS
+
+
+def pinged(n: int) -> int:
+    """Past a conversion: makes an effect."""
+    PingEffect()
+    return n
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) -> None:
+    """許した物の表の組「許した物 — 換算の関数」に置けるのは、目録の形が換算の関数の名だけ(ADR-DOE-API-001 R35)。
+
+    値を受けて値を返すだけの関数(中で読む同じ package の関数も同じ)は、許した物の表に置けば緑・どちらの表にも無ければ
+    外れのまま赤。中の同じ package の関数が時計を読む・属性で時計を読む・effect を作る関数を置くと赤(組と名と形と読む名を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + CONVERSIONS)
+    package = _read_fixture(repo)
+    forms = {row["name"]: row["form"] for row in package["exports"]}
+    assert forms["ms_of"] == tool.CONVERSION
+    rest = ["ms_now", "ms_today", "pinged"]
+
+    def tables(conversions: list[str]) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted(set(rest) - set(conversions))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): CONVERSION_GROUP for name in conversions},
+            "lt-YB2AMVK3D876GN4RM1SB3T24AR",
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(["ms_of"]))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.ms_of"):
+        check_package(package, *tables([]))
+
+    past_a_conversion = [
+        ("ms_now", "_stamp が time を読む"),
+        ("ms_today", "ms_today が now を読む"),
+        ("pinged", "pinged が PingEffect を読む"),
+    ]
+    for name, said in past_a_conversion:
+        with pytest.raises(AssertionError, match=re.escape(CONVERSION_GROUP)) as failure:
+            check_package(package, *tables(["ms_of", name]))
+        assert f"{FIXTURE_ROOT}.{name}({tool.PLAIN_FUNCTION}・" in str(failure.value)
+        assert said in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。
@@ -1210,14 +1296,14 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     check_package(package, *tables({}))
     misplaced = [
         ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(公開の submodule)(公開の submodule・"),
-        ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper(関数・"),
+        ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
         (
             ("(console script)", "fixture-command"),
             MACRO_GROUP,
             f"(console script).fixture-command({tool.CONSOLE_SCRIPT}・",
         ),
         ((macros, "ping!"), COMMAND_GROUP, f"{macros}.ping!({tool.MACRO_FORM}・"),
-        ((FIXTURE_ROOT, "helper"), COMMAND_GROUP, f"{FIXTURE_ROOT}.helper(関数・"),
+        ((FIXTURE_ROOT, "helper"), COMMAND_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
     ]
     for key, group, said in misplaced:
         with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
