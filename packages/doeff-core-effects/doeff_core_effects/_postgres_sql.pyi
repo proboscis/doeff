@@ -12,6 +12,7 @@ from typing import Protocol as Protocol
 from typing import runtime_checkable as runtime_checkable
 from dataclasses import dataclass as dataclass
 from dataclasses import field as field
+from dataclasses import replace as with_fields
 from doeff import Program as Program
 from doeff_hy._wire import Malformed as Malformed
 from doeff_hy._wire import dump_json as dump_json
@@ -91,6 +92,14 @@ class RaisedNotices:
     topics: dict = ...
     sent: bool = False
 
+@dataclass(frozen=True, kw_only=True)
+class PostgresTallies:
+    opened: int
+    broken: int
+    pipeline: int
+    large: int
+    rollback: int
+
 class PostgresConnections:
     size: Incomplete
     timeouts: Incomplete
@@ -100,8 +109,16 @@ class PostgresConnections:
     permits: Incomplete
     listeners: Incomplete
     listeners_lock: Incomplete
+    counts: Incomplete
+    counts_lock: Incomplete
 
     def __init__(self, databases: tuple, *, size: Incomplete=..., timeouts: Incomplete=...) -> None:
+        ...
+
+    def counted(self, tally: str) -> None:
+        ...
+
+    def tallies(self) -> PostgresTallies:
         ...
 
     def listener(self, name: str, channel: str) -> PostgresListener:

@@ -7,7 +7,7 @@
 ;;;     返す時に捨てる / rollback する。目安(LARGE-CARRY-BYTES)を越える値(送った引数の組か行 1 つ・受けた行 1 つ)を通した接続も返す時に
 ;;;     捨てる — libpq は接続ごとの送りと受けの buffer を通した一番大きな message まで伸ばして閉じるまで縮めないので、空きの列に戻すと大きな
 ;;;     本文 1 つで数十 MB を抱え続ける(card ki-1368e0d6b801)。SqlQuery の binary は答えの行を binary の形で受け、bytea を 16 進の 2 倍に
-;;;     しない(大きな本文の読み)。
+;;;     しない(大きな本文の読み)。貸し出しは開いた接続と、訳ごとに閉じた接続を数える(tallies — card ki-004d4af4d6d3)。
 ;;;   - 接続の上限(PostgresTimeouts・agora-redesign #1479): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
 ;;;     (tcp_user_timeout)・文の上限(statement_timeout)を持つ。DB の pod が入れ替わると空きの接続は相手の居ない TCP のまま残り、上限が
 ;;;     無いと次の文が kernel の再送の限り(数十分)固まって許可を持ち続ける — 上限があれば文は OperationalError で落ち、SqlUnreachable を
@@ -67,7 +67,7 @@
 (import collections.abc [Callable])
 (import contextlib [AbstractContextManager])
 (import typing [Protocol runtime-checkable])
-(import dataclasses [dataclass field])
+(import dataclasses [dataclass field replace :as with-fields])
 (import doeff [Program])
 (import doeff_hy._wire [Malformed dump-json parse-json])
 (import doeff_core_effects._offloaded_call [ReusedThreads :as _ReusedThreads offloaded run-detached keep-nothing])
@@ -100,8 +100,11 @@
 
 ;; 大きな値を通した接続を返す時に閉じる目安(bytes — 文 1 つ・往復 1 回の、送った引数と行・受けた行の str / bytes の長さの和)。libpq の接続は
 ;; 送りと受けの buffer を通した一番大きな message の次の 2 の冪まで伸ばし、閉じるまで縮めない — 空きの列に戻すと、大きな本文 1 つで接続ごとに
-;; 数十 MB を抱え続ける(card ki-1368e0d6b801・調べは ki-f62011080c16)。目安の下の値だけを通した接続の buffer は 1 本 数 MB に留まる。
-(val LARGE-CARRY-BYTES (* 256 1024))
+;; 数十 MB を抱え続ける(card ki-1368e0d6b801・調べは ki-f62011080c16)。目安の下の値だけを通した接続の buffer は送りと受けの各 1 MiB まで
+;; (1 本 2 MiB・貸し出しの上限 8 本で 16 MiB)に留まる。目安を 256 KiB から 512 KiB へ上げた(card ki-004d4af4d6d3): 記録の service の
+;; 本文を切った行(turn-memory-part・worktree-diff — 本文の切片 256 KiB に欄の名を足して 1 行 約 262,260 bytes)が 256 KiB をわずかに
+;; 越え、それを読み書きする要求ごとに接続を閉じて開き直していた(agora-records-twin で 30 秒に 242 本・pg の thread の標本の 13% が接続の開き)。
+(val LARGE-CARRY-BYTES (* 512 1024))
 ;; 目安を越える値を通した接続の印(release が空きの列に戻さず閉じる)。接続が消えれば印も消える(弱い参照)。
 (val CARRIED-LARGE (weakref.WeakSet))
 ;; 束ねた transaction の文を名つきの prepared statement にした覚え(接続 → PreparedBook — postgres-flush の註)。接続を捨てれば覚えも消える。
@@ -162,6 +165,17 @@
   (setv #^ dict topics (field :default-factory dict))
   (setv #^ bool sent False))
 
+(defrecord PostgresTallies
+  "接続の貸し出しが数えた出来事(PostgresConnections.tallies — card ki-004d4af4d6d3): opened = 開いた接続・返す時に閉じた接続の訳ごとの数
+   (broken = 切れていた・pipeline = pipeline mode のまま・large = 目安を越える値を通した〔CARRIED-LARGE〕・rollback = transaction の途中で
+   返り rollback に落ちた)。"
+  (#^ int opened)
+  (#^ int broken)
+  (#^ int pipeline)
+  (#^ int large)
+  (#^ int rollback))
+
+
 (defclass PostgresConnections []
   "接続の貸し出し(頭の註)。資源なので値の型ではない(中身を書き換え、同一性で扱う)。size = database ごとに同時に貸す接続の上限
    (pooled-postgres-sql-handler が scheduler の許可の数として読む)・timeouts = 開く接続に付ける上限・origin = この貸し出しが出す合図の
@@ -182,7 +196,19 @@
           self.idle (dfor d databases d.name (Queue))
           self.permits (dfor d databases d.name (threading.BoundedSemaphore size))
           self.listeners {}
-          self.listeners-lock (threading.Lock)))
+          self.listeners-lock (threading.Lock)
+          self.counts (PostgresTallies :opened 0 :broken 0 :pipeline 0 :large 0 :rollback 0)
+          self.counts-lock (threading.Lock)))
+
+  (defn #^ None counted [self #^ str tally]  ; defk にできない: 借りと返しの thread が同期に呼ぶ数え(VM の外の錠)
+    "出来事 tally(PostgresTallies の欄の名の 1 つ)を 1 つ数えるため。"
+    (with [_ self.counts-lock]
+      (setv self.counts (with-fields self.counts #** {tally (+ (getattr self.counts tally) 1)}))))
+
+  (defn #^ PostgresTallies tallies [self]  ; defk にできない: 計器と検が thread の間で読む資源の数(VM の外の錠)
+    "開いた接続と、訳ごとに閉じた接続の数を読むため。"
+    (with [_ self.counts-lock]
+      self.counts))
 
   ;; 答えの型は文字列の前方参照で書く: PostgresListener はこの class より後で定義し、Python 3.13 までは注記を定義の時に評価するので、
   ;; 裸の名は module の読み込みを NameError で落とす(注記を遅れて評価する PEP 649 は 3.14 から)。
@@ -252,6 +278,7 @@
                                             #** (.connection-options self name)))
           (.register-loader connection.adapters "json" TextLoader)
           (.register-loader connection.adapters "jsonb" TextLoader)
+          (.counted self "opened")
           connection))
       (except [BaseException]
         (.release (get self.permits name))
@@ -259,19 +286,24 @@
 
   (defn release [self #^ str name connection]  ; defk にできない: 資源の返却(with / finally から呼ぶ)
     "借りた接続を返すため(切れていれば捨てる・pipeline mode のまま残っていれば捨てる — 頭の註・目安を越える値を通していれば捨てる —
-     CARRIED-LARGE・transaction の途中なら rollback し、できなければ捨てる)。"
+     CARRIED-LARGE・transaction の途中なら rollback し、できなければ捨てる)。捨てた訳を数える(tallies)。"
     (import psycopg)
     (try
-      (cond
-        (or connection.closed connection.broken) (.close connection)
-        (!= connection.pgconn.pipeline-status psycopg.pq.PipelineStatus.OFF) (.close connection)
-        (in connection CARRIED-LARGE) (.close connection)
-        (!= connection.info.transaction-status psycopg.pq.TransactionStatus.IDLE)
-          (try
-            (.rollback connection)
-            (.put (get self.idle name) connection)
-            (except [psycopg.Error] (.close connection)))
-        True (.put (get self.idle name) connection))
+      (setv dropped
+            (cond
+              (or connection.closed connection.broken) "broken"
+              (!= connection.pgconn.pipeline-status psycopg.pq.PipelineStatus.OFF) "pipeline"
+              (in connection CARRIED-LARGE) "large"
+              (!= connection.info.transaction-status psycopg.pq.TransactionStatus.IDLE)
+                (try
+                  (.rollback connection)
+                  None
+                  (except [psycopg.Error] "rollback"))
+              True None))
+      (if (is dropped None)
+          (.put (get self.idle name) connection)
+          (do (.close connection)
+              (.counted self dropped)))
       (finally (.release (get self.permits name)))))
 
   (defn close [self]  ; defk にできない: 組み立ての側が止める時に呼ぶ資源の後始末

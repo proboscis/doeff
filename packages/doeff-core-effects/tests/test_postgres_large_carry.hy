@@ -185,6 +185,10 @@
     (val plain (PostgresConnections #((PostgresDatabase :name DB :dsn dsn)) :size 1))
     (try
       (<- direct (with-handler [(postgres-sql-handler plain)] (carried tap)))
+      ;; 閉じた接続は訳 large で数える(card ki-004d4af4d6d3)。上限 1 本の貸し出しなので、閉じるたびに次の借りが 1 本開く(最後の要求の
+      ;; 接続が閉じられていれば、開いた数と閉じた数は同じ)。
+      (val tallies (.tallies plain))
+      (assert (and (> tallies.large 0) (<= tallies.large tallies.opened (+ tallies.large 1))) tallies)
       (finally (.close plain)))
     (val shared (PostgresConnections #((PostgresDatabase :name DB :dsn dsn)) :size 1))
     (try
