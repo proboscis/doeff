@@ -387,7 +387,8 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
-        from doeff_agents import SessionBackend, default_session_backend
+        from doeff_agents import SessionBackend
+        from doeff_agents._session_backend import default_session_backend
         from doeff_core_effects import (
             await_handler,
             lazy_ask,

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from doeff_agents import ClaudeRuntimePolicy
 from doeff_agents import ClaudeLaunchEffect
 from doeff_agents._handlers import production
-from doeff_agents import SessionConfig
+from doeff_agents._session_backend import SessionConfig
 from doeff_agents import AgentType
 from doeff_agents._adapters.base import InjectionMethod, LaunchParams
 from doeff import Pure

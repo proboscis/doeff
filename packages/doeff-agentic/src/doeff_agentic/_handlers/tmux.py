@@ -102,7 +102,7 @@ def _resolve_default_backend():
 
 def _session_config(session_name: str, work_dir: Path | None = None):
     try:
-        from doeff_agents import SessionConfig
+        from doeff_agents._session_backend import SessionConfig
     except ImportError as exc:
         raise AgenticServerError(
             "tmux backend requires doeff-agents. "
