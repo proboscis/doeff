@@ -1,16 +1,13 @@
 """Git effects for doeff-conductor."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from doeff_git import CreatePR as GitCreatePR
 from doeff_git import GitCommit, GitDiff, GitPull, GitPush
 from doeff_git import MergePR as GitMergePR
 
 from doeff_conductor._effects.base import ConductorEffectBase
-
-if TYPE_CHECKING:
-    from doeff_conductor._types import MergeStrategy, PRHandle, Workspace
+from doeff_conductor._types import MergeStrategy, PRHandle, Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -28,7 +25,7 @@ class Commit(ConductorEffectBase):
             return sha
     """
 
-    workspace: "Workspace"  # Workspace to commit in
+    workspace: Workspace  # Workspace to commit in
     message: str  # Commit message
     all: bool = True  # Stage all changes (git add -A)
     skip_if_clean: bool = False  # Clean tree: return HEAD SHA instead of failing
@@ -49,7 +46,7 @@ class Push(ConductorEffectBase):
             yield Push(workspace=workspace)
     """
 
-    workspace: "Workspace"  # Workspace to push from
+    workspace: Workspace  # Workspace to push from
     remote: str = "origin"  # Remote name
     force: bool = False  # Force push
     set_upstream: bool = True  # Set upstream tracking
@@ -76,7 +73,7 @@ class CreatePR(ConductorEffectBase):
             return pr
     """
 
-    workspace: "Workspace"  # Workspace with changes
+    workspace: Workspace  # Workspace with changes
     title: str  # PR title
     body: str | None = None  # PR body
     target: str = "main"  # Target branch
@@ -93,8 +90,8 @@ class MergePR(ConductorEffectBase):
     Yields: bool (True if merged successfully)
     """
 
-    pr: "PRHandle"  # PR to merge
-    strategy: "MergeStrategy | None" = None  # Merge strategy (default: merge)
+    pr: PRHandle  # PR to merge
+    strategy: MergeStrategy | None = None  # Merge strategy (default: merge)
     delete_branch: bool = True  # Delete source branch after merge
 
 

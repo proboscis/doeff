@@ -12,12 +12,9 @@ site-local worktree across process restarts.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from doeff_conductor._effects.base import ConductorEffectBase
-
-if TYPE_CHECKING:
-    from doeff_conductor._types import Issue, MergeStrategy, Workspace
+from doeff_conductor._types import Issue, MergeStrategy, Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,7 +32,7 @@ class CreateWorkspace(ConductorEffectBase):
     workspace_id: str
     repo: str = "default"
     from_ref: str | None = None
-    issue: "Issue | None" = None
+    issue: Issue | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -52,8 +49,8 @@ class MergeWorkspaces(ConductorEffectBase):
     """
 
     workspace_id: str
-    workspaces: "tuple[Workspace, ...]"
-    strategy: "MergeStrategy | None" = None
+    workspaces: tuple[Workspace, ...]
+    strategy: MergeStrategy | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,5 +60,5 @@ class DeleteWorkspace(ConductorEffectBase):
     Yields: bool
     """
 
-    workspace: "Workspace"
+    workspace: Workspace
     force: bool = False

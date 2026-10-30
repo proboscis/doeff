@@ -17,12 +17,10 @@ The ``conductor`` CLI commands are programs of these effects.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from doeff_conductor._effects.base import ConductorEffectBase
-
-if TYPE_CHECKING:
-    from doeff_conductor._types import Issue, WorkflowStatus
+from doeff_conductor._types import Issue, WorkflowStatus
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,7 +35,7 @@ class ListWorkflows(ConductorEffectBase):
             return (yield ListWorkflows(status=(WorkflowStatus.RUNNING,)))
     """
 
-    status: "tuple[WorkflowStatus, ...]" = ()  # Keep only these statuses; empty keeps all
+    status: tuple[WorkflowStatus, ...] = ()  # Keep only these statuses; empty keeps all
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,7 +57,7 @@ class RunWorkflow(ConductorEffectBase):
     """
 
     template_or_file: str  # Template name or path to a workflow file
-    issue: "Issue | None" = None  # Issue passed to the workflow
+    issue: Issue | None = None  # Issue passed to the workflow
     # Workflow keyword parameters: the JSON object of ``--params``, passed through as is
     params: Mapping[str, Any] | None = None
     run_id: str | None = None  # Stable workflow id for resume/replay runs
