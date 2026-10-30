@@ -1145,7 +1145,12 @@ class TurnCredentialUnavailable:
 
 
 @dataclass(frozen=True, kw_only=True)
-class RedeemTurnCredentialEffect(AgentEffectBase):
+class RedeemTurnCredentialEffect(
+    AgentEffectBase,
+    EffectBase[
+        TurnCredential | CodexTurnCredential | HomeTurnCredential | TurnCredentialUnavailable
+    ],
+):
     """Redeem a turn credential reference for the credential itself (issue #979).
 
     Emitted by a launch handler that can place a turn credential, when
@@ -1260,7 +1265,7 @@ class EventRecord:
 
 
 @dataclass(frozen=True, kw_only=True)
-class LaunchEffect(AgentEffectBase):
+class LaunchEffect(AgentEffectBase, EffectBase[SessionHandle]):
     """Launch a new agent session.
 
     User-facing effect — flat fields, no config wrapper.
@@ -1372,7 +1377,7 @@ class LaunchEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class LaunchSessionEffect(AgentEffectBase):
+class LaunchSessionEffect(AgentEffectBase, EffectBase[SessionHandle]):
     """L2 Launch: idempotently create or re-adopt a deterministic session.
 
     Yields: SessionHandle
@@ -1382,7 +1387,7 @@ class LaunchSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AwaitResultEffect(AgentEffectBase):
+class AwaitResultEffect(AgentEffectBase, EffectBase[AwaitOutcome]):
     """L2 AwaitResult: await a schema result channel in one step.
 
     Yields: AwaitOutcome
@@ -1393,7 +1398,7 @@ class AwaitResultEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class FollowUpEffect(AgentEffectBase):
+class FollowUpEffect(AgentEffectBase, EffectBase[SessionHandle]):
     """L2 FollowUp: continue an existing session or adapter-private retry.
 
     ``mode`` chooses next turn or injection into the running turn;
@@ -1427,7 +1432,7 @@ class FollowUpEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StopSessionEffect(AgentEffectBase):
+class StopSessionEffect(AgentEffectBase, EffectBase[None]):
     """L2 Stop: idempotent abort.
 
     Yields: None
@@ -1438,7 +1443,7 @@ class StopSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ReleaseSessionEffect(AgentEffectBase):
+class ReleaseSessionEffect(AgentEffectBase, EffectBase[None]):
     """L2 Release: reclaim handler resources after a session is no longer used.
 
     Yields: None
@@ -1448,7 +1453,7 @@ class ReleaseSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgentEffect(AgentEffectBase):
+class AgentEffect(AgentEffectBase, EffectBase[object]):
     """Schema-validated worker invocation.
 
     Yields: the validated structured result object.
@@ -1463,7 +1468,7 @@ class AgentEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class MonitorEffect(AgentEffectBase):
+class MonitorEffect(AgentEffectBase, EffectBase[Observation]):
     """Check and update session status (single poll).
 
     Yields: Observation
@@ -1473,7 +1478,7 @@ class MonitorEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CaptureEffect(AgentEffectBase):
+class CaptureEffect(AgentEffectBase, EffectBase[str]):
     """Capture current pane output.
 
     Yields: str
@@ -1484,7 +1489,7 @@ class CaptureEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SendEffect(AgentEffectBase):
+class SendEffect(AgentEffectBase, EffectBase[None]):
     """Send a message or keys to the session.
 
     Yields: None
@@ -1497,7 +1502,7 @@ class SendEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StopEffect(AgentEffectBase):
+class StopEffect(AgentEffectBase, EffectBase[None]):
     """Stop (kill) an agent session.
 
     Yields: None
@@ -1507,7 +1512,7 @@ class StopEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class InterruptEffect(AgentEffectBase):
+class InterruptEffect(AgentEffectBase, EffectBase[bool]):
     """Stop the running turn only; the session and its context stay.
 
     The turn's end arrives as ``AgentTurnInterrupted`` through ``Events`` /
@@ -1531,7 +1536,7 @@ class InterruptEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EventsEffect(AgentEffectBase):
+class EventsEffect(AgentEffectBase, EffectBase[AgentEventPage]):
     """Read the session's turn events after ``after_seq``.
 
     Waits up to ``wait_seconds`` for a new event or for the session to go
@@ -1548,7 +1553,7 @@ class EventsEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class WarmSessionEffect(AgentEffectBase):
+class WarmSessionEffect(AgentEffectBase, EffectBase[bool]):
     """Start the session's agent runtime before its next input and keep it waiting.
 
     Pays the runtime's start-up time (process start until it can take input)
@@ -1616,7 +1621,7 @@ ReplaceSessionCredentialOutcome = (
 
 
 @dataclass(frozen=True, kw_only=True)
-class ReplaceSessionCredentialEffect(AgentEffectBase):
+class ReplaceSessionCredentialEffect(AgentEffectBase, EffectBase[ReplaceSessionCredentialOutcome]):
     """Replace the turn credential of a session's live agent process (card
     acp:kanban-issue:ki-4ffdafa021e5).
 
@@ -1645,7 +1650,7 @@ class ReplaceSessionCredentialEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ExportContextEffect(AgentEffectBase):
+class ExportContextEffect(AgentEffectBase, EffectBase[str | None]):
     """Take an opaque copy of an agent runtime context out of this runtime.
 
     ``context_id`` is the value a turn end carried as ``resume_from``;
@@ -1696,7 +1701,7 @@ class ExportContextEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetAgentSessionEffect(AgentEffectBase):
+class GetAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot | None]):
     """Read a persisted session snapshot by public session id.
 
     Yields: AgentSessionSnapshot | None
@@ -1706,7 +1711,7 @@ class GetAgentSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListAgentSessionsEffect(AgentEffectBase):
+class ListAgentSessionsEffect(AgentEffectBase, EffectBase[tuple[AgentSessionSnapshot, ...]]):
     """List persisted session snapshots.
 
     Yields: tuple[AgentSessionSnapshot, ...]
@@ -1716,7 +1721,7 @@ class ListAgentSessionsEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class PutAgentSessionEffect(AgentEffectBase):
+class PutAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot]):
     """Persist a session snapshot, replacing the row with the same session id.
 
     The write half of the session store (agora-redesign #608). The handler is
@@ -1730,7 +1735,7 @@ class PutAgentSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ObserveAgentSessionEffect(AgentEffectBase):
+class ObserveAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot]):
     """Observe a session by id and persist the resulting snapshot.
 
     Yields: AgentSessionSnapshot
@@ -1741,7 +1746,7 @@ class ObserveAgentSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AttachAgentSessionEffect(AgentEffectBase):
+class AttachAgentSessionEffect(AgentEffectBase, EffectBase[None]):
     """Attach to a session by id using the active backend.
 
     Yields: None
@@ -1751,7 +1756,7 @@ class AttachAgentSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CancelAgentSessionEffect(AgentEffectBase):
+class CancelAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot]):
     """Cancel a running session by id and persist the resulting status.
 
     Yields: AgentSessionSnapshot
@@ -1761,7 +1766,7 @@ class CancelAgentSessionEffect(AgentEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CleanupAgentSessionEffect(AgentEffectBase):
+class CleanupAgentSessionEffect(AgentEffectBase, EffectBase[AgentSessionSnapshot]):
     """Clean up backend resources for a session by id.
 
     Yields: AgentSessionSnapshot
