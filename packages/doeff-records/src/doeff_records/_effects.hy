@@ -20,6 +20,7 @@
 ;;; 凍らせる(dict を渡してもよい — where-any の組の配列は tuple になる)。
 (require doeff-hy.macros [defeffect])
 (import collections [Counter])
+(import collections.abc [Mapping])
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenMap freeze-json])
@@ -60,12 +61,32 @@
   limit)
 
 
+(defn #^ None check-free-of-nul [#^ object value #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+  "書きの値(行の鍵・欄の値・出来事の本文・冪等キー)の文字列と object の名に NUL 文字(U+0000)が無い事を作る時に検めるため。
+   PostgreSQL の jsonb と text は NUL を持てず(jsonb は 22P05・text は 22021 で文が落ちる)、落ちた文の後始末は同じ接続のほかの書きまで
+   巻き込む — 置き場まで渡さずに書き手の誤り(ValueError — HTTP の口では 400 malformed)として断り、memory の置き場の模擬も同じ所で断る。"
+  (setv pending [value])
+  (while pending
+    (setv item (.pop pending))
+    (match item
+      (str)
+        (when (in "\u0000" item)
+          (setv at (.index item "\u0000"))
+          (raise (ValueError (.format "{} の文字列は NUL 文字(U+0000)を含めない(PostgreSQL の jsonb と text が持てない — 書き手が除く): {!r}"
+                                      what (cut item (max 0 (- at 40)) (+ at 40))))))
+      (Mapping) (do (.extend pending (.keys item)) (.extend pending (.values item)))
+      (| (tuple) (list)) (.extend pending item)
+      _ None)))
+
+
 (defn #^ None check-row-write [#^ object write #^ str what]  ; defk にできない: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
   "1 行の書きの欄(table・key・value・expect)を作る時に検め、value を深く凍らせる — PutRow と RowWrite の検めを 1 つにするため。"
   (checked-table-name write.table (+ what ".table"))
   (checked-key write.key (+ what ".key"))
+  (check-free-of-nul write.key (+ what ".key"))
   (freeze-field write "value" (+ what ".value"))
   (for [name write.value] (checked-field-name name (+ what ".value の欄")))
+  (check-free-of-nul write.value (+ what ".value"))
   (when (not (isinstance write.expect #(ExpectAbsent ExpectVersion ExpectAny)))
     (raise (TypeError (+ what ".expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
@@ -325,7 +346,9 @@
   (object.__setattr__ append "body" (freeze-json append.body))
   (checked-table-name append.stream (+ what ".stream"))
   (when (not (and (isinstance append.idempotency-key str) append.idempotency-key))
-    (raise (ValueError (+ what ".idempotency_key は空でない文字列")))))
+    (raise (ValueError (+ what ".idempotency_key は空でない文字列"))))
+  (check-free-of-nul append.idempotency-key (+ what ".idempotency_key"))
+  (check-free-of-nul append.body (+ what ".body")))
 
 
 (defn #^ bool checked-event-append [#^ object append #^ str what]  ; defk にできない: defeffect の :pre が作る時に同期に呼ぶ検め

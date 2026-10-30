@@ -224,7 +224,8 @@ operator の主体の名の tuple。`operator_paths` の欄の書き手に opera
 | `GET /served` | — | `{commits: {<repo>: <sha>} \| null, instance: <世代> \| null, schemaDigests: {<表>: <sha256>}}` — 身元も表の用意も置き場も問わない(#2742) |
 
 - effect の答えの失敗(`Conflict`・`Refused`・`NotIndexed`・`Reset`・`Missing`・`RowsConflict`・`RowsRefused`)は 200 の本文の値。HTTP の断りは
-  `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値)・
+  `{error, reason}` で、`400 malformed`(知らないキー・足りないキー・型の違う値・書きの行の鍵・欄の値・出来事の本文・冪等キーの文字列か object の名に
+  NUL 文字 U+0000 — PostgreSQL の jsonb と text が持てないので、書きの effect が作る時に断り、memory の置き場も同じ所で断る。書き手が除く)・
   `404 not-found`(宣言に無い表・知らない route)・`503 store-unavailable`(置き場に届かない = `Unreachable`)・`500 internal`。
 - 綴り(JSON の欄の名・`kind`・位置と期待の形)の正本は `doeff_records._wire`。口と client は両方これを呼ぶ。
 - 書き手の名: 口は呼び手を断らない(#2988)。呼び手が `X-Records-Writer: <名>`(綴りの正本 = `doeff_records._wire.WRITER_HEADER`)で名乗れば、確かめずにその名を使う。
