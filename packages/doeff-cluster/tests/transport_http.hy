@@ -63,8 +63,8 @@
   (import doeff [with-handlers])
   (import doeff_core_effects [slog-discard-handler])
   (import doeff_time [SimClock sim-time-handler])
-  (import doeff_cluster.worker.intent.worker_model [ReleaseLeases])
-  (import doeff_cluster.worker.protocol.lease_release [lease-release])
+  (import doeff_cluster [ReleaseLeases])
+  (import doeff_cluster [lease-release])
   (<- (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
                       (lease-release (route-cell) TEST-ROUTE)]
                      (ReleaseLeases job instance)))

@@ -5,20 +5,21 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
 (import dataclasses [replace])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StopProgress
-  StartJob JobNotStarted JobRecord SignalJob Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild ForgetWarmChild]
+(import doeff_cluster [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StartJob JobRecord SignalJob StartWarmChild StopWarmChild ForgetWarmChild]
+        doeff_cluster._worker.intent.worker_model [StopProgress JobNotStarted Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch]
         doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
         doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind]
         doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
-        doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.core.policy [plan statuses warm-child-step warm-child-actions records-after])
-(import doeff_cluster.worker.core.worker_due [plan-due])
+        doeff_cluster [code-key])
+(import doeff_cluster [plan statuses records-after]
+        doeff_cluster._worker.core.policy [warm-child-step warm-child-actions])
+(import doeff_cluster._worker.core.worker_due [plan-due])
 (import doeff_cluster.shared.intent.due_model [DueAt])
-(import doeff_cluster.worker.core.warm_rules [refusals-after])
-(import doeff_cluster.worker.protocol.heartbeat [status-row])
-(import doeff_cluster.worker.core.policy :as policy-module)
-(import doeff_cluster.worker.core.warm_rules :as warm-rules-module)
-(import doeff_cluster.worker.core.invariants [warm-fork-uses-its-own-root warm-child-state-leaves-running-tasks
+(import doeff_cluster._worker.core.warm_rules [refusals-after])
+(import doeff_cluster._worker.protocol.heartbeat [status-row])
+(import doeff_cluster._worker.core.policy :as policy-module)
+(import doeff_cluster._worker.core.warm_rules :as warm-rules-module)
+(import doeff_cluster._worker.core.invariants [warm-fork-uses-its-own-root warm-child-state-leaves-running-tasks
   warm-fork-only-before-any-vm])
 (import tests.env_fixtures [LOCK env-of])
 
@@ -39,7 +40,7 @@
   "root のキー key(\"env-\" を除いた所が宣言の env-key)の実行環境で走る job の宣言を組むため。entries = 宣言の bytecodeEntries。"
   (<- env RuntimeEnv (env-of "app" "lib" LOCK))
   (<- value dict (runtime-env->json (replace env :bytecode-entries entries)))
-  (JobSpec name "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once once
+  (JobSpec name "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once once
            :runtime-env (json.dumps value :sort-keys True) :env-key (cut key 4 None)))
 
 
@@ -382,9 +383,10 @@
 ;; 30 回のうち 23 回・回収から起動まで 5.8〜23.3 秒)を待ち、その間 job の仕事が止まった。待ちの子が準備済みになるまで旧を動かしたままにし、
 ;; 準備済みになった周期に旧を止め、止め終えた次の周期に待ちの子から分けて起こす。直す前は検めの後すぐ旧を止めていた。
 
-(import doeff_cluster.worker.intent.worker_model [ProbeView ProbeState StartHold SpecChanged Outcome ReapJob]
+(import doeff_cluster [ProbeView ProbeState ReapJob]
+        doeff_cluster._worker.intent.worker_model [StartHold SpecChanged Outcome]
         doeff_cluster.shared.core.job_rules [spec-hash]
-        doeff_cluster.worker.core.policy [start-holds JobHold])
+        doeff_cluster._worker.core.policy [start-holds JobHold])
 
 (defk service-on [name key revision]
   {:pre [(: name str) (: key str) (: revision str)] :post [(: % JobSpec)] :tags {:context "doeff-cluster-test" :role "entry"}}

@@ -36,7 +36,7 @@
 (import doeff_cluster._coordinator.entry.handler_sets [memory-notices production-handlers redis-notices])
 (import doeff_events [MemoryBroker])
 ;; 自分の行の送り(card ki-0b0ab40048b9 — worker の process 自身の行と同じ部品)。
-(import doeff_cluster.worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES SHIP-LIMITS coordinator-log-plan process-lines])
+(import doeff_cluster._worker.entry.line_stamp [COORDINATOR-LOG-ENV-NAMES SHIP-LIMITS coordinator-log-plan process-lines])
 ;; 止まる時に残りの行を送る上限(秒 — 盲検 A・card ki-0b0ab40048b9): 止まる直前の行が Pod の入れ替えの後に一番要る。既定(shim の 0.5 秒)
 ;; では、POST の答えを待つ間に止まると後ろの行が消えた。1 回の POST の待ちの上限(ShipLimits.post_seconds 5 秒)2 回分 = 飛んでいる
 ;; POST と残りの POST。Pod の止めの猶予(宣言に書かない既定 30 秒)の内に収まり、送り先が答えない時だけ入れ替えの止まりを最大この秒延ばす。

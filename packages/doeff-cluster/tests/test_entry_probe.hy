@@ -9,13 +9,13 @@
 (import sys)
 (import time)
 (import pathlib [Path])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView ProbeState ProbeView ProbeStatus JobRecord
- WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [probed-job probe-args probe-refusal])
-(import doeff_cluster.worker.protocol.observations [ObserveProbes])
-(import doeff_cluster.worker.core.policy [plan statuses])
-(import doeff_cluster.worker.protocol.heartbeat [status-row] doeff_cluster.worker.core.probe_rules [probe-reason])
+(import doeff_cluster [CodeState CodeView ProcessView WorldView ProbeState ProbeView JobRecord WorkerPolicy PrepareCode StartJob RetireJob ProbeEntry ForgetProbes]
+        doeff_cluster._worker.intent.worker_model [ProbeStatus] doeff_cluster.shared.intent.job_model [JobSpec JobPhase] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster._worker.core.worker_rules [probed-job probe-args probe-refusal])
+(import doeff_cluster [ObserveProbes])
+(import doeff_cluster [plan statuses])
+(import doeff_cluster._worker.protocol.heartbeat [status-row] doeff_cluster._worker.core.probe_rules [probe-reason])
 (import tests.probe_rig [probe-settings observed run-probes])
-(import doeff_cluster.worker.core.shim_timing [shim-deadline-ms])
+(import doeff_cluster._worker.core.shim_timing [shim-deadline-ms])
 (import tests.program_rows [SAMPLE-RUN SAMPLE-PROGRAM])
 (import doeff_cluster [spec-of-declaration]
         doeff_cluster._coordinator.core.cluster_policy [JOB-ENTRY LIVE-PHASES])

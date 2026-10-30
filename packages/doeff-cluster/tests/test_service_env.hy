@@ -26,17 +26,19 @@
 (import doeff_cluster [process-versions])
 (import doeff_cluster._coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
-(import doeff_cluster.worker.protocol.declared [declared-job-spec] doeff_cluster.worker.core.launch [spec-program-file JobLaunch] doeff_cluster.worker.core.probe_rules [probe-targets probe-command])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout ProbeView WorkerPolicy])
-(import doeff_cluster.worker.core.shim_timing [shim-spans])
-(import doeff_cluster.worker.protocol.probes [ProbeSettings])
+(import doeff_cluster._worker.protocol.declared [declared-job-spec] doeff_cluster._worker.core.launch [spec-program-file JobLaunch] doeff_cluster._worker.core.probe_rules [probe-targets probe-command])
+(import doeff_cluster [CodeLayout ProbeView WorkerPolicy])
+(import doeff_cluster [shim-spans])
+(import doeff_cluster._worker.protocol.probes [ProbeSettings])
 (import tests.probe_rig [probe-settings run-probes observed])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [runtime-env-of-context])
-(import doeff_cluster.worker.intent.worker_model [CodeView ProbeEntry ProbeState StartJob ReapJob Outcome CodeState] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster.worker.core.worker_rules [ENV-KEY-PREFIX code-key])
+(import doeff_cluster [CodeView ProbeEntry ProbeState StartJob ReapJob CodeState]
+        doeff_cluster._worker.intent.worker_model [Outcome] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash] doeff_cluster [code-key]
+                                                                                                                                                                                                                      doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import tests.careful_rig [Rig make-rig push-commit app-files declare prepare LOCK HY DEADLINE-SECONDS])
 (import tests.host_rig [job-ended run-on-host])
-(import doeff_cluster.worker.protocol.process_host [job-work-dir])
+(import doeff_cluster._worker.protocol.process_host [job-work-dir])
 
 (val SHA-A (* "a" 40))
 (val SHA-B (* "b" 40))
@@ -116,7 +118,7 @@
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
   (<- key str (env-key declared-env (current-platform)))
-  (val wire {"name" "quiet" "entry" "doeff_cluster.worker.entry.job_entry" "args" ["service"] "revision" "rev-1" "once" False
+  (val wire {"name" "quiet" "entry" "doeff_cluster._worker.entry.job_entry" "args" ["service"] "revision" "rev-1" "once" False
              "runtimeEnv" env-json})
   (<- spec (declared-job-spec wire False))
   ;; 版は宣言のまま(coordinator の版と同じ)・root の置き場の鍵は worker が計算した env のキー。
@@ -148,7 +150,7 @@
   ;; 検めると、root に無い module を worker の venv が読めて誤って通る。
   (<- declared-env RuntimeEnv (sample-env))
   (<- env-json dict (runtime-env->json declared-env))
-  (val spec (JobSpec "quiet" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
+  (val spec (JobSpec "quiet" "doeff_cluster._worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64) :versions #()))
   ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
   (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec)) :hy-command "/worker/bin/hy"
@@ -161,8 +163,8 @@
   (assert (= #((get environment "VIRTUAL_ENV") (.startswith (get environment "PATH") "/state/roots/env-k/app/.venv/bin"))
              #("/state/roots/env-k/app/.venv" True)) environment)
   ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
-  (assert (= (probe-targets spec) ["doeff_cluster.worker.entry.job_entry"]))
-  (assert (in "doeff_cluster.worker.entry.job_entry" argv) argv)
+  (assert (= (probe-targets spec) ["doeff_cluster._worker.entry.job_entry"]))
+  (assert (in "doeff_cluster._worker.entry.job_entry" argv) argv)
   (assert (not-in "/worker/bin/hy" argv) "worker の hy では検めない")
   (assert (not-in "PYTHONPATH" environment) "PYTHONPATH を置かない")
   (assert (= cwd (str tmp-path)) cwd))

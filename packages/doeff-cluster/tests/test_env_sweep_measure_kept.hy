@@ -25,11 +25,12 @@
 (import doeff_core_effects [MeasureTree])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.intent.worker_model [SweepEnvs])
-(import doeff_cluster.worker.protocol.observations [ObserveEnvs])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG env-host])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo kept-bytes sweep-choice sweep-target roots-bytes])
+(import doeff_cluster [SweepEnvs])
+(import doeff_cluster [ObserveEnvs])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [env-host]
+        doeff_cluster._worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG])
+(import doeff_cluster._worker.core.env_upkeep [RootInfo kept-bytes sweep-choice sweep-target roots-bytes])
 
 ;; 同じ project の完成マーカー(worker が作った root と読まれる形 — 名は 24 字の 16 進)。
 (val MARKER {"env" {"project" {"repo" "r" "path" "p"} "repos" [{"name" "r" "url" "https://example.invalid/r"}]}})

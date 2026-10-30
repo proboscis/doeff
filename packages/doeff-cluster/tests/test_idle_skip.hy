@@ -32,7 +32,7 @@
 (import doeff_cluster._coordinator.protocol.request_queue [RequestQueue nudge-takers])
 (import doeff_cluster [sim-cluster ProcessesOf SharedRows StopCoordinator CoordinatorRuns KillWorker ReadCoordinator ClientLink SimWorker Redeclare CoordinatorSteps]
         doeff_cluster._sim.local [SimLink CoordinatorStep])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster [WorkerPolicy])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedAwaited DetachedSucceeded])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])

@@ -6,9 +6,10 @@
 (import json)
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout WorkerPolicy])
-(import doeff_cluster.worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
+(import doeff_cluster [CodeLayout WorkerPolicy])
+(import doeff_cluster._worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans])
 
 (val BASE {"PATH" "/usr/bin" "HOME" "/home/w" "LC_ALL" "C.UTF-8" "SECRET_TOKEN" "x" "VIRTUAL_ENV" "/venv"})
 (val RUNTIME (json.dumps {"project" {"repo" "app" "path" "."} "envVars" [{"name" "DECLARED" "value" "1"}]}))
@@ -26,7 +27,7 @@
   (assert (= (float (get plan.argv 4)) (/ shim.shim-grace-ms 1000)) plan.argv)
   ;; job の log は 1 行ごとに壁の時計の刻を付ける(shim の旗 --stamp-lines・#3714)。
   (assert (= (+ (cut plan.argv 0 4) (cut plan.argv 5 None))
-             #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--" "/bin/hy" "-m" "app.main"
+             #("/py" "-B" "-m" "doeff_cluster._worker.entry.shim" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--" "/bin/hy" "-m" "app.main"
                "service"))
           plan.argv)
   (assert (= plan.cwd "/cache/rev1") plan.cwd)
@@ -38,7 +39,7 @@
 
 
 (deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
-  (val spec (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
+  (val spec (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
   (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
@@ -53,7 +54,7 @@
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
   (assert (= (cut plan.argv 5 9) #("--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) plan.argv)
   ;; 本体は uv run を挟まずに root の venv の hy を直に起こす(card ki-869cdf21ec85)。
-  (assert (= (cut plan.argv 9 None) #("/roots/env-k1/app/.venv/bin/hy" "-m" "doeff_cluster.worker.entry.job_entry"
+  (assert (= (cut plan.argv 9 None) #("/roots/env-k1/app/.venv/bin/hy" "-m" "doeff_cluster._worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
@@ -88,5 +89,5 @@
   ;; 運ぶ(#3714)— 旗は命令の頭の猶予と区切りの間。job は退きの知らせの pipe を受け(--notice-env と環境変数の名 — #3672)、検めは受けない。
   (<- job (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines True :notice-env "DOEFF_NOTICE_FD"))
   (<- probe (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines False :notice-env None))
-  (assert (= job #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "0.5" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) job)
-  (assert (= probe #("/py" "-B" "-m" "doeff_cluster.worker.entry.shim" "0.5" "--")) probe))
+  (assert (= job #("/py" "-B" "-m" "doeff_cluster._worker.entry.shim" "0.5" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) job)
+  (assert (= probe #("/py" "-B" "-m" "doeff_cluster._worker.entry.shim" "0.5" "--")) probe))

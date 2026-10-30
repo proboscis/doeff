@@ -21,7 +21,7 @@
 (import doeff_cluster.shared.protocol.inbox [http-request])
 (import doeff_cluster [sim-cluster ClientLink SimWorker ReadCoordinator DrainWorker StopCoordinator]
         doeff_cluster._sim.local [send-request SimLink])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons quitters])
 (import tests.env_fixtures [LOCK env-of])

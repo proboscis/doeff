@@ -6,7 +6,7 @@
 命令の module の名をこの名へ差し替える)
 """
 
-from doeff_cluster.worker.entry.shim import NotAdopting, main
+from doeff_cluster._worker.entry.shim import NotAdopting, main
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "main"}
 

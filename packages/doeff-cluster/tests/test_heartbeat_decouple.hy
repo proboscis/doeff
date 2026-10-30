@@ -15,7 +15,7 @@
 (import doeff_cluster._sim.local :as local)
 (import doeff_cluster [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf WatchFailuresOf]
         doeff_cluster._sim.local [HostTruth])
-(import doeff_cluster.worker.core.beat_policy [WatchReading])
+(import doeff_cluster._worker.core.beat_policy [WatchReading])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedLost])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])

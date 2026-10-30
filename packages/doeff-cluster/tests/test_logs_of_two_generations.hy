@@ -29,11 +29,14 @@
 (import doeff_core_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [StartJob StartWarmChild WarmLaunch])
-(import doeff_cluster.worker.core.places [WorkerPlaces worker-places])
-(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place])
-(import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
-(import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
+(import doeff_cluster [StartJob StartWarmChild]
+        doeff_cluster._worker.intent.worker_model [WarmLaunch])
+(import doeff_cluster._worker.core.places [WorkerPlaces worker-places])
+(import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [HostSettings])
+(import doeff_cluster [warm-host]
+        doeff_cluster._worker.protocol.warm_host [WarmSettings])
 (import tests.host_rig [host-settings])
 (import tests.test_warm_host [task-spec-on])
 
@@ -104,7 +107,7 @@
   (val script (ProcessScript :commands #((ScriptedCommand :name (. (Path host.python) name) :run speaker)
                                          (ScriptedCommand :name "uv" :run speaker))
                              :env SCRIPT-ENV))
-  (val forks (WarmScript :sockets #((WarmSocket :path place.socket)) :runs #((WarmRun :entry "doeff_cluster.worker.entry.job_entry"))))
+  (val forks (WarmScript :sockets #((WarmSocket :path place.socket)) :runs #((WarmRun :entry "doeff_cluster._worker.entry.job_entry"))))
   (val after (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler world) (scripted-process-handler script)
                                   (scripted-warm-process-handler forks) (forked-child-speaks generation.line generation.exit-code)
                                   (warm-host warm) (process-host host)]

@@ -332,7 +332,7 @@ rules:
         - "**/doeff_cluster/shared/intent/service_model.hy"
         # code_prepare の import の静的な辿り(imported-names — #2027 で worker/core/code_plan.hy へ移した)は、import の記号(Hy の名)を
         # Python の module の名に直すのに hy.mangle を使う — 設定の鍵を引数の名に直す写しではない(日次 t69 の誤検出・#639)。
-        - "**/doeff_cluster/worker/core/code_plan.hy"
+        - "**/doeff_cluster/_worker/core/code_plan.hy"
         # defsystem の展開(2026-10-27 に doeff-hy から移した — card ki-f2107259b141)は、job の行の鍵(`:per-part` など)と Program の
         # 呼び出しの名の引数を、展開が書く関数の引数の名・CallShape の kwargs の鍵に直すのに hy.mangle を使う — 設定の鍵を引数の名に
         # 直す写しではない(run.config は通らない)。
@@ -5866,8 +5866,9 @@ rules:
       card ki-0b0ab40048b9(設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB の盲検 B の副の所見): coordinator の core(調停ループ・行を出す側)は
       行の送り先を知らない — 行は slog で出し、送りの配線は入口 coordinator/entry/main.hy だけが line_stamp の process_lines で持つ。
       code-quality の module doeff-cluster-coordinator は core の program.hy と入口の main.hy を 1 つに持ち、入口のための line_stamp の
-      許しが core にも効くので、core からの import をこの規則で断る。
-    pattern-regex: 'doeff_cluster\.worker\.entry\.line_stamp'
+      許しが core にも効くので、core からの import をこの規則で断る。区画 worker を _worker へ隠した後(card ki-3ff93cd3499e)の
+      綴り doeff_cluster._worker.entry.line_stamp も、移し替えの module を通る古い綴りも断る。
+    pattern-regex: 'doeff_cluster\._?worker\.entry\.line_stamp'
     paths:
       include:
         - /packages/doeff-cluster/src/doeff_cluster/_coordinator/core/**

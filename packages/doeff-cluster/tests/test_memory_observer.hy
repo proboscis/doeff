@@ -4,13 +4,13 @@
 (require doeff-hy.macros [defhandler deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with-handlers])
-(import doeff_cluster.worker.core.memory_rules [MemoryLevel])
-(import doeff_cluster.worker.intent.worker_model [EnvDisk ObserveWorld])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving])
-(import doeff_cluster.worker.protocol.memory_watch [MemoryCell])
-(import doeff_cluster.worker.protocol.memory_observer [memory-observer])
-(import doeff_cluster.worker.protocol.world [local-host])
+(import doeff_cluster._worker.core.memory_rules [MemoryLevel])
+(import doeff_cluster [ObserveWorld]
+        doeff_cluster._worker.intent.worker_model [EnvDisk])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving])
+(import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
+(import doeff_cluster [memory-observer])
+(import doeff_cluster [local-host])
 
 
 (defhandler nothing-else-observed

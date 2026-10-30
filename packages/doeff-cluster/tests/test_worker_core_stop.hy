@@ -8,10 +8,10 @@
 (import doeff_core_effects [RaiseStop])
 (import doeff_core_effects [scripted-stop-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.worker.intent.worker_model :as worker-model)
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld WorldView PublishStatus
-                                                  EnvReport])
-(import doeff_cluster.worker.core.program [run-worker])
+(import doeff_cluster._worker.intent.worker_model :as worker-model)
+(import doeff_cluster [WorkerPolicy ReadDesired ObserveWorld WorldView PublishStatus EnvReport]
+        doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs])
+(import doeff_cluster._worker.core.program [run-worker])
 (import tests.wake_fixtures [wakes-every])
 
 
@@ -43,5 +43,5 @@
 
 (deftest test-the-worker-own-stop-names-are-gone
   ;; 失敗ケース 2: 消した名の使い手は 0 — module worker/protocol/stop と、worker_model の WorkerStopRequested が無い。
-  (assert (is (importlib.util.find-spec "doeff_cluster.worker.protocol.stop") None))
+  (assert (is (importlib.util.find-spec "doeff_cluster._worker.protocol.stop") None))
   (assert (not (hasattr worker-model "WorkerStopRequested"))))

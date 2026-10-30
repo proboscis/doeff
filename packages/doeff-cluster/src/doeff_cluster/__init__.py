@@ -195,29 +195,29 @@ if TYPE_CHECKING:
         readiness_awaited as readiness_awaited,
     )
     from doeff_cluster.shared.protocol.inbox import http_request as http_request
-    from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
-    from doeff_cluster.worker.intent.worker_model import AwaitNextTick as AwaitNextTick
-    from doeff_cluster.worker.intent.worker_model import EnvReport as EnvReport
-    from doeff_cluster.worker.intent.worker_model import ForgetProbes as ForgetProbes
-    from doeff_cluster.worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
-    from doeff_cluster.worker.intent.worker_model import NoticeJob as NoticeJob
-    from doeff_cluster.worker.intent.worker_model import ObserveWorld as ObserveWorld
-    from doeff_cluster.worker.intent.worker_model import PrepareCode as PrepareCode
-    from doeff_cluster.worker.intent.worker_model import PrepareEnv as PrepareEnv
-    from doeff_cluster.worker.intent.worker_model import ProbeEntry as ProbeEntry
-    from doeff_cluster.worker.intent.worker_model import PublishStatus as PublishStatus
-    from doeff_cluster.worker.intent.worker_model import ReadDesired as ReadDesired
-    from doeff_cluster.worker.intent.worker_model import ReapJob as ReapJob
-    from doeff_cluster.worker.intent.worker_model import ReleaseLeases as ReleaseLeases
-    from doeff_cluster.worker.intent.worker_model import RetireJob as RetireJob
-    from doeff_cluster.worker.intent.worker_model import SignalJob as SignalJob
-    from doeff_cluster.worker.intent.worker_model import StartJob as StartJob
-    from doeff_cluster.worker.intent.worker_model import StartWarmChild as StartWarmChild
-    from doeff_cluster.worker.intent.worker_model import StopWarmChild as StopWarmChild
-    from doeff_cluster.worker.intent.worker_model import SweepEnvs as SweepEnvs
-    from doeff_cluster.worker.intent.worker_model import WorkerWakes as WorkerWakes
-    from doeff_cluster.worker.protocol.declared import declared_job_specs as declared_job_specs
-    from doeff_cluster.worker.protocol.declared import (
+    from doeff_cluster._worker.intent.retirement_model import AwaitRetirement as AwaitRetirement
+    from doeff_cluster._worker.intent.worker_model import AwaitNextTick as AwaitNextTick
+    from doeff_cluster._worker.intent.worker_model import EnvReport as EnvReport
+    from doeff_cluster._worker.intent.worker_model import ForgetProbes as ForgetProbes
+    from doeff_cluster._worker.intent.worker_model import ForgetWarmChild as ForgetWarmChild
+    from doeff_cluster._worker.intent.worker_model import NoticeJob as NoticeJob
+    from doeff_cluster._worker.intent.worker_model import ObserveWorld as ObserveWorld
+    from doeff_cluster._worker.intent.worker_model import PrepareCode as PrepareCode
+    from doeff_cluster._worker.intent.worker_model import PrepareEnv as PrepareEnv
+    from doeff_cluster._worker.intent.worker_model import ProbeEntry as ProbeEntry
+    from doeff_cluster._worker.intent.worker_model import PublishStatus as PublishStatus
+    from doeff_cluster._worker.intent.worker_model import ReadDesired as ReadDesired
+    from doeff_cluster._worker.intent.worker_model import ReapJob as ReapJob
+    from doeff_cluster._worker.intent.worker_model import ReleaseLeases as ReleaseLeases
+    from doeff_cluster._worker.intent.worker_model import RetireJob as RetireJob
+    from doeff_cluster._worker.intent.worker_model import SignalJob as SignalJob
+    from doeff_cluster._worker.intent.worker_model import StartJob as StartJob
+    from doeff_cluster._worker.intent.worker_model import StartWarmChild as StartWarmChild
+    from doeff_cluster._worker.intent.worker_model import StopWarmChild as StopWarmChild
+    from doeff_cluster._worker.intent.worker_model import SweepEnvs as SweepEnvs
+    from doeff_cluster._worker.intent.worker_model import WorkerWakes as WorkerWakes
+    from doeff_cluster._worker.protocol.declared import declared_job_specs as declared_job_specs
+    from doeff_cluster._worker.protocol.declared import (
         declared_reply_of_json as declared_reply_of_json,
     )
     from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
@@ -330,6 +330,108 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_memory as unplaced_memory
     from doeff_cluster._coordinator.protocol.store import wal_store as wal_store
     from doeff_cluster.shared.core.warm_rules import warm_key as warm_key
+    from doeff_cluster._worker.intent.worker_model import Action as Action
+    from doeff_cluster._worker.intent.drain_model import AskDrain as AskDrain
+    from doeff_cluster._worker.entry.code_prepare import BakeSources as BakeSources
+    from doeff_cluster._worker.entry.boot_wheel import BootWheelFailed as BootWheelFailed
+    from doeff_cluster._worker.intent.worker_model import CodeLayout as CodeLayout
+    from doeff_cluster._worker.intent.worker_model import CodeState as CodeState
+    from doeff_cluster._worker.intent.worker_model import CodeView as CodeView
+    from doeff_cluster._worker.intent.env_prepare_model import CompileTrees as CompileTrees
+    from doeff_cluster._worker.intent.drain_model import CoordinatorCall as CoordinatorCall
+    from doeff_cluster._worker.core.drain_client import (
+        DRAIN_DEADLINE_SECONDS as DRAIN_DEADLINE_SECONDS,
+    )
+    from doeff_cluster._worker.core.drain_client import (
+        DRAIN_INTERVAL_SECONDS as DRAIN_INTERVAL_SECONDS,
+    )
+    from doeff_cluster._worker.protocol.declared import DeclaredReply as DeclaredReply
+    from doeff_cluster._worker.protocol.declared import (
+        DeclaredReplyMalformed as DeclaredReplyMalformed,
+    )
+    from doeff_cluster._worker.entry.code_prepare import DiscardStoreEntry as DiscardStoreEntry
+    from doeff_cluster._worker.intent.env_prepare_model import DiskFree as DiskFree
+    from doeff_cluster._worker.intent.env_prepare_model import EnsureMirror as EnsureMirror
+    from doeff_cluster._worker.intent.env_prepare_model import (
+        EnsureNativeWheel as EnsureNativeWheel,
+    )
+    from doeff_cluster._worker.intent.env_prepare_model import EnvMarker as EnvMarker
+    from doeff_cluster._worker.intent.env_prepare_model import FetchCommit as FetchCommit
+    from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
+    from doeff_cluster._worker.intent.worker_model import HandoffAbandoned as HandoffAbandoned
+    from doeff_cluster._worker.intent.env_prepare_model import InstallWheels as InstallWheels
+    from doeff_cluster._worker.entry.line_stamp import JobLogShipper as JobLogShipper
+    from doeff_cluster._worker.entry.line_stamp import JobLogTarget as JobLogTarget
+    from doeff_cluster._worker.intent.worker_model import JobRecord as JobRecord
+    from doeff_cluster._worker.intent.worker_model import JobStatus as JobStatus
+    from doeff_cluster._worker.entry.code_prepare import MarkProgress as MarkProgress
+    from doeff_cluster._worker.intent.env_prepare_model import MaterializeTree as MaterializeTree
+    from doeff_cluster._worker.intent.env_prepare_model import PrepareNote as PrepareNote
+    from doeff_cluster._worker.intent.env_prepare_model import ProbeImports as ProbeImports
+    from doeff_cluster._worker.intent.worker_model import ProbeState as ProbeState
+    from doeff_cluster._worker.intent.worker_model import ProbeView as ProbeView
+    from doeff_cluster._worker.intent.worker_model import ProcessStartedMs as ProcessStartedMs
+    from doeff_cluster._worker.intent.worker_model import ProcessView as ProcessView
+    from doeff_cluster._worker.entry.line_stamp import QueuedLine as QueuedLine
+    from doeff_cluster._worker.intent.env_prepare_model import ReadCgroupMemory as ReadCgroupMemory
+    from doeff_cluster._worker.intent.env_prepare_model import (
+        ReadEditableRoots as ReadEditableRoots,
+    )
+    from doeff_cluster._worker.intent.env_prepare_model import ReadHyVersion as ReadHyVersion
+    from doeff_cluster._worker.entry.code_prepare import ReadSources as ReadSources
+    from doeff_cluster._worker.entry.code_prepare import ReadStoreEntries as ReadStoreEntries
+    from doeff_cluster._worker.intent.env_prepare_model import ReadVolume as ReadVolume
+    from doeff_cluster._worker.intent.worker_model import Retired as Retired
+    from doeff_cluster._worker.core.room_rules import RoomReading as RoomReading
+    from doeff_cluster._worker.core.room_rules import RoomState as RoomState
+    from doeff_cluster._worker.entry.line_stamp import SHIP_LIMITS as SHIP_LIMITS
+    from doeff_cluster._worker.intent.env_prepare_model import StageStarted as StageStarted
+    from doeff_cluster._worker.intent.worker_model import StopStage as StopStage
+    from doeff_cluster._worker.intent.env_prepare_model import SyncProject as SyncProject
+    from doeff_cluster._worker.core.room_rules import TEMPLATE_PROVIDES as TEMPLATE_PROVIDES
+    from doeff_cluster.shared.intent.remote_model import VersionMismatch as VersionMismatch
+    from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
+    from doeff_cluster._worker.core.room_rules import WorkerRoom as WorkerRoom
+    from doeff_cluster._worker.intent.worker_model import WorkerUnsettled as WorkerUnsettled
+    from doeff_cluster._worker.intent.worker_model import WorldView as WorldView
+    from doeff_cluster._worker.intent.env_prepare_model import WriteEnvMarker as WriteEnvMarker
+    from doeff_cluster._worker.intent.env_prepare_model import WriteImportRoots as WriteImportRoots
+    from doeff_cluster._worker.entry.code_prepare import WriteStoreEntry as WriteStoreEntry
+    from doeff_cluster._worker.core.drain_client import await_drained as await_drained
+    from doeff_cluster._worker.core.launch import child_environment as child_environment
+    from doeff_cluster._worker.entry.code_prepare import closure_reads as closure_reads
+    from doeff_cluster._worker.core.worker_rules import code_key as code_key
+    from doeff_cluster._worker.protocol.drain_requests import coordinator_calls as coordinator_calls
+    from doeff_cluster._worker.entry.line_stamp import coordinator_log_plan as coordinator_log_plan
+    from doeff_cluster._worker.entry.line_stamp import cut_lines as cut_lines
+    from doeff_cluster.shared.protocol.program_codec import decode_program as decode_program
+    from doeff_cluster._worker.core.drain_client import drain_outcome as drain_outcome
+    from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
+    from doeff_cluster._worker.core.worker_due import fence_due as fence_due
+    from doeff_cluster._worker.core.env_prepare import (
+        hyx_env_marker_XgreaterHthan_signXjson as hyx_env_marker_XgreaterHthan_signXjson,
+    )
+    from doeff_cluster._worker.entry.line_stamp import logs_body as logs_body
+    from doeff_cluster._worker.entry.retirement_notices import (
+        pipe_retirement_notices as pipe_retirement_notices,
+    )
+    from doeff_cluster._worker.core.policy import plan as plan
+    from doeff_cluster._worker.entry.code_prepare import pool_tool_baker as pool_tool_baker
+    from doeff_cluster._worker.core.policy import prepare_action as prepare_action
+    from doeff_cluster._worker.protocol.process_clock import process_clock as process_clock
+    from doeff_cluster._worker.protocol.process_host import process_host as process_host
+    from doeff_cluster._worker.entry.line_stamp import process_lines as process_lines
+    from doeff_cluster._worker.core.launch import program_file as program_file
+    from doeff_cluster._worker.core.launch import program_file_text as program_file_text
+    from doeff_cluster._worker.entry.code_prepare import progress_marks as progress_marks
+    from doeff_cluster._worker.core.drain_client import ready_of as ready_of
+    from doeff_cluster._worker.core.policy import records_after as records_after
+    from doeff_cluster._worker.core.worker_rules import retired_name as retired_name
+    from doeff_cluster._worker.core.room_rules import room_of_text as room_of_text
+    from doeff_cluster._worker.core.shim_timing import shim_spans as shim_spans
+    from doeff_cluster._worker.protocol.heartbeat import status_rows_json as status_rows_json
+    from doeff_cluster._worker.core.policy import statuses as statuses
+    from doeff_cluster._worker.entry.code_prepare import store_entries as store_entries
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
@@ -340,11 +442,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AwaitJobProcess": "doeff_cluster.shared.intent.cluster_control",
     "AwaitLeaseFree": "doeff_cluster.shared.intent.semaphore_model",
     "AwaitLeaseVacated": "doeff_cluster.shared.intent.semaphore_model",
-    "AwaitNextTick": "doeff_cluster.worker.intent.worker_model",
+    "AwaitNextTick": "doeff_cluster._worker.intent.worker_model",
     "AwaitProcessEnded": "doeff_cluster.shared.intent.process_model",
     "AwaitProcessStarted": "doeff_cluster._sim.local",
     "AwaitReadiness": "doeff_cluster.shared.intent.cluster_control",
-    "AwaitRetirement": "doeff_cluster.worker.intent.retirement_model",
+    "AwaitRetirement": "doeff_cluster._worker.intent.retirement_model",
     "AwaitRunnersChange": "doeff_cluster.shared.intent.detached_model",
     "AwaitServiceReady": "doeff_cluster.shared.intent.detached_model",
     "AwaitWarm": "doeff_cluster.shared.intent.warm_model",
@@ -367,10 +469,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "EndProcess": "doeff_cluster._sim.local",
     "EnsureKubeIngress": "doeff_cluster.shared.intent.kube_service_model",
     "EnsureKubeService": "doeff_cluster.shared.intent.kube_service_model",
-    "EnvReport": "doeff_cluster.worker.intent.worker_model",
+    "EnvReport": "doeff_cluster._worker.intent.worker_model",
     "FailRoute": "doeff_cluster._sim.local",
-    "ForgetProbes": "doeff_cluster.worker.intent.worker_model",
-    "ForgetWarmChild": "doeff_cluster.worker.intent.worker_model",
+    "ForgetProbes": "doeff_cluster._worker.intent.worker_model",
+    "ForgetWarmChild": "doeff_cluster._worker.intent.worker_model",
     "GitCheckout": "doeff_cluster._sim.checkout_git_script",
     "GitRemote": "doeff_cluster._sim.checkout_git_script",
     "GitRev": "doeff_cluster._sim.checkout_git_script",
@@ -397,9 +499,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "NoteProcess": "doeff_cluster._sim.local",
     "NoteScenarioWait": "doeff_cluster._sim.local",
     "NoteWatchFailure": "doeff_cluster._sim.local",
-    "NoticeJob": "doeff_cluster.worker.intent.worker_model",
+    "NoticeJob": "doeff_cluster._worker.intent.worker_model",
     "OBJECT_PATH": "doeff_cluster._sim.k8s_supplied",
-    "ObserveWorld": "doeff_cluster.worker.intent.worker_model",
+    "ObserveWorld": "doeff_cluster._worker.intent.worker_model",
     "OriginBranch": "doeff_cluster._sim.worktree_git_script",
     "PartsOf": "doeff_cluster._sim.local",
     "PauseDue": "doeff_cluster._sim.local",
@@ -407,9 +509,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PersistCrashDue": "doeff_cluster._sim.local",
     "PlanOf": "doeff_cluster._sim.local",
     "PreparationsOf": "doeff_cluster._sim.local",
-    "PrepareCode": "doeff_cluster.worker.intent.worker_model",
-    "PrepareEnv": "doeff_cluster.worker.intent.worker_model",
-    "ProbeEntry": "doeff_cluster.worker.intent.worker_model",
+    "PrepareCode": "doeff_cluster._worker.intent.worker_model",
+    "PrepareEnv": "doeff_cluster._worker.intent.worker_model",
+    "ProbeEntry": "doeff_cluster._worker.intent.worker_model",
     "ProcessNoticeRaised": "doeff_cluster._sim.local",
     "ProcessNoticeWait": "doeff_cluster._sim.local",
     "ProcessOutside": "doeff_cluster._sim.local",
@@ -417,10 +519,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ProcessStopRaised": "doeff_cluster._sim.local",
     "ProcessStopWait": "doeff_cluster._sim.local",
     "ProcessesOf": "doeff_cluster._sim.local",
-    "PublishStatus": "doeff_cluster.worker.intent.worker_model",
+    "PublishStatus": "doeff_cluster._worker.intent.worker_model",
     "PutHostTruth": "doeff_cluster._sim.local",
     "ReadCoordinator": "doeff_cluster._sim.local",
-    "ReadDesired": "doeff_cluster.worker.intent.worker_model",
+    "ReadDesired": "doeff_cluster._worker.intent.worker_model",
     "ReadDetachedQueue": "doeff_cluster.shared.intent.detached_model",
     "ReadDetachedTiming": "doeff_cluster.shared.intent.detached_model",
     "ReadGrant": "doeff_cluster._sim.k8s_supplied",
@@ -429,12 +531,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReadShared": "doeff_cluster.shared.intent.shared_model",
     "ReadWarmState": "doeff_cluster.shared.intent.warm_model",
     "ReadinessOf": "doeff_cluster.shared.intent.cluster_control",
-    "ReapJob": "doeff_cluster.worker.intent.worker_model",
+    "ReapJob": "doeff_cluster._worker.intent.worker_model",
     "ReceivedLines": "doeff_cluster._sim.test_recording_on_sim",
     "Redeclare": "doeff_cluster.shared.intent.cluster_control",
     "RelabelNode": "doeff_cluster._sim.local",
     "ReleaseDetached": "doeff_cluster.shared.intent.detached_model",
-    "ReleaseLeases": "doeff_cluster.worker.intent.worker_model",
+    "ReleaseLeases": "doeff_cluster._worker.intent.worker_model",
     "ReleaseRequest": "doeff_cluster._sim.local",
     "RemoteJob": "doeff_cluster.shared.intent.remote_model",
     "RemoteJobFailed": "doeff_cluster.shared.intent.remote_model",
@@ -446,7 +548,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReportReady": "doeff_cluster.shared.intent.readiness_model",
     "ReportsOf": "doeff_cluster._sim.local",
     "RestartService": "doeff_cluster.shared.intent.cluster_control",
-    "RetireJob": "doeff_cluster.worker.intent.worker_model",
+    "RetireJob": "doeff_cluster._worker.intent.worker_model",
     "RevivalOf": "doeff_cluster._sim.local",
     "RollBellOf": "doeff_cluster._sim.local",
     "RollWorker": "doeff_cluster._sim.local",
@@ -455,7 +557,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SIM_URL": "doeff_cluster._sim.local",
     "SettleDeployment": "doeff_cluster._sim.local",
     "SharedRows": "doeff_cluster._sim.local",
-    "SignalJob": "doeff_cluster.worker.intent.worker_model",
+    "SignalJob": "doeff_cluster._worker.intent.worker_model",
     "SimDeadlockError": "doeff_cluster._sim.local",
     "SimLivenessError": "doeff_cluster._sim.local",
     "SimOutside": "doeff_cluster._sim.local",
@@ -465,20 +567,20 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SimWorker": "doeff_cluster._sim.local",
     "StallCoordinator": "doeff_cluster._sim.local",
     "StallWorker": "doeff_cluster._sim.local",
-    "StartJob": "doeff_cluster.worker.intent.worker_model",
-    "StartWarmChild": "doeff_cluster.worker.intent.worker_model",
+    "StartJob": "doeff_cluster._worker.intent.worker_model",
+    "StartWarmChild": "doeff_cluster._worker.intent.worker_model",
     "StartWorker": "doeff_cluster._sim.local",
     "StepEnded": "doeff_cluster._sim.local",
     "StepWorkerWall": "doeff_cluster._sim.local",
     "StopCoordinator": "doeff_cluster.shared.intent.cluster_control",
     "StopElder": "doeff_cluster._sim.local",
     "StopRequestOf": "doeff_cluster._sim.local",
-    "StopWarmChild": "doeff_cluster.worker.intent.worker_model",
+    "StopWarmChild": "doeff_cluster._worker.intent.worker_model",
     "StopWorker": "doeff_cluster.shared.intent.cluster_control",
     "StopWorkers": "doeff_cluster._sim.local",
     "SubmitDetached": "doeff_cluster.shared.intent.detached_model",
     "SuppliedCluster": "doeff_cluster._sim.k8s_supplied",
-    "SweepEnvs": "doeff_cluster.worker.intent.worker_model",
+    "SweepEnvs": "doeff_cluster._worker.intent.worker_model",
     "TakeHeldRequests": "doeff_cluster._sim.local",
     "TrackedSpawn": "doeff_cluster._sim.local",
     "WaitsOf": "doeff_cluster._sim.local",
@@ -488,16 +590,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkerDied": "doeff_cluster._sim.local",
     "WorkerEnded": "doeff_cluster._sim.local",
     "WorkerOf": "doeff_cluster._sim.local",
-    "WorkerWakes": "doeff_cluster.worker.intent.worker_model",
+    "WorkerWakes": "doeff_cluster._worker.intent.worker_model",
     "WorkersStopping": "doeff_cluster._sim.local",
     "WriteRoomFile": "doeff_cluster._sim.local",
     "WriteShared": "doeff_cluster.shared.intent.shared_model",
     "answer_of": "doeff_cluster._sim.k8s_supplied",
     "business_wait_tap": "doeff_cluster._sim.local",
     "coordinator_answers": "doeff_cluster._sim.local",
-    "declared_job_specs": "doeff_cluster.worker.protocol.declared",
-    "declared_reply_of_json": "doeff_cluster.worker.protocol.declared",
-    "env_translation": "doeff_cluster.worker.protocol.env_translation",
+    "declared_job_specs": "doeff_cluster._worker.protocol.declared",
+    "declared_reply_of_json": "doeff_cluster._worker.protocol.declared",
+    "env_translation": "doeff_cluster._worker.protocol.env_translation",
     "environ_table_reader": "doeff_cluster._foundation.host_contract",
     "fence": "doeff_cluster._sim.local",
     "git_command": "doeff_cluster._sim.checkout_git_script",
@@ -530,7 +632,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "sim_world": "doeff_cluster._sim.local",
     "stand_in_store": "doeff_cluster._sim.test_recording_on_sim",
     "stopped": "doeff_cluster._sim.machine",
-    "tick_pauses": "doeff_cluster.worker.protocol.tick_pauses",
+    "tick_pauses": "doeff_cluster._worker.protocol.tick_pauses",
     "wall_sim_cluster": "doeff_cluster._sim.local",
     "worker_wall": "doeff_cluster._sim.local",
     "worktree_git_answer": "doeff_cluster._sim.worktree_git_script",
@@ -636,6 +738,129 @@ _LAZY_EXPORTS: dict[str, str] = {
     "unplaced_memory": "doeff_cluster._coordinator.core.cluster_policy",
     "wal_store": "doeff_cluster._coordinator.protocol.store",
     "warm_key": "doeff_cluster.shared.core.warm_rules",
+    "Action": "doeff_cluster._worker.intent.worker_model",
+    "AskDrain": "doeff_cluster._worker.intent.drain_model",
+    "BakeSources": "doeff_cluster._worker.entry.code_prepare",
+    "BootWheelFailed": "doeff_cluster._worker.entry.boot_wheel",
+    "CodeLayout": "doeff_cluster._worker.intent.worker_model",
+    "CodeState": "doeff_cluster._worker.intent.worker_model",
+    "CodeTimings": "doeff_cluster._worker.protocol.observations",
+    "CodeView": "doeff_cluster._worker.intent.worker_model",
+    "CompileSources": "doeff_cluster._worker.intent.code_model",
+    "CompileTrees": "doeff_cluster._worker.intent.env_prepare_model",
+    "CoordinatorCall": "doeff_cluster._worker.intent.drain_model",
+    "DRAIN_DEADLINE_SECONDS": "doeff_cluster._worker.core.drain_client",
+    "DRAIN_INTERVAL_SECONDS": "doeff_cluster._worker.core.drain_client",
+    "DeclaredReply": "doeff_cluster._worker.protocol.declared",
+    "DeclaredReplyMalformed": "doeff_cluster._worker.protocol.declared",
+    "DiscardStoreEntry": "doeff_cluster._worker.entry.code_prepare",
+    "DiskFree": "doeff_cluster._worker.intent.env_prepare_model",
+    "EnsureMirror": "doeff_cluster._worker.intent.env_prepare_model",
+    "EnsureNativeWheel": "doeff_cluster._worker.intent.env_prepare_model",
+    "EnvMarker": "doeff_cluster._worker.intent.env_prepare_model",
+    "FetchCommit": "doeff_cluster._worker.intent.env_prepare_model",
+    "FileSha256": "doeff_cluster.shared.intent.env_marker_model",
+    "HandoffAbandoned": "doeff_cluster._worker.intent.worker_model",
+    "ImportClosure": "doeff_cluster._worker.intent.code_model",
+    "InstallWheels": "doeff_cluster._worker.intent.env_prepare_model",
+    "JobLogShipper": "doeff_cluster._worker.entry.line_stamp",
+    "JobLogTarget": "doeff_cluster._worker.entry.line_stamp",
+    "JobRecord": "doeff_cluster._worker.intent.worker_model",
+    "JobStatus": "doeff_cluster._worker.intent.worker_model",
+    "LinkPycs": "doeff_cluster._worker.intent.code_model",
+    "MarkProgress": "doeff_cluster._worker.entry.code_prepare",
+    "MaterializeTree": "doeff_cluster._worker.intent.env_prepare_model",
+    "Note": "doeff_cluster._worker.intent.code_model",
+    "ObserveCode": "doeff_cluster._worker.protocol.observations",
+    "ObserveEnvDisk": "doeff_cluster._worker.protocol.observations",
+    "ObserveEnvs": "doeff_cluster._worker.protocol.observations",
+    "ObserveJobRoots": "doeff_cluster._worker.protocol.observations",
+    "ObserveLeaving": "doeff_cluster._worker.protocol.observations",
+    "ObserveMemoryKills": "doeff_cluster._worker.protocol.observations",
+    "ObserveMemoryTight": "doeff_cluster._worker.protocol.observations",
+    "ObserveProbes": "doeff_cluster._worker.protocol.observations",
+    "ObserveProcesses": "doeff_cluster._worker.protocol.observations",
+    "ObserveWarmChildren": "doeff_cluster._worker.protocol.observations",
+    "PrepareNote": "doeff_cluster._worker.intent.env_prepare_model",
+    "ProbeImports": "doeff_cluster._worker.intent.env_prepare_model",
+    "ProbeState": "doeff_cluster._worker.intent.worker_model",
+    "ProbeView": "doeff_cluster._worker.intent.worker_model",
+    "ProcessStartedMs": "doeff_cluster._worker.intent.worker_model",
+    "ProcessView": "doeff_cluster._worker.intent.worker_model",
+    "QueuedLine": "doeff_cluster._worker.entry.line_stamp",
+    "ReadCgroupMemory": "doeff_cluster._worker.intent.env_prepare_model",
+    "ReadEditableRoots": "doeff_cluster._worker.intent.env_prepare_model",
+    "ReadHyVersion": "doeff_cluster._worker.intent.env_prepare_model",
+    "ReadSources": "doeff_cluster._worker.entry.code_prepare",
+    "ReadStoreEntries": "doeff_cluster._worker.entry.code_prepare",
+    "ReadVolume": "doeff_cluster._worker.intent.env_prepare_model",
+    "Retired": "doeff_cluster._worker.intent.worker_model",
+    "RoomReading": "doeff_cluster._worker.core.room_rules",
+    "RoomState": "doeff_cluster._worker.core.room_rules",
+    "SHIP_LIMITS": "doeff_cluster._worker.entry.line_stamp",
+    "ScanTree": "doeff_cluster._worker.intent.code_model",
+    "StageStarted": "doeff_cluster._worker.intent.env_prepare_model",
+    "StopStage": "doeff_cluster._worker.intent.worker_model",
+    "SyncProject": "doeff_cluster._worker.intent.env_prepare_model",
+    "TEMPLATE_PROVIDES": "doeff_cluster._worker.core.room_rules",
+    "VersionMismatch": "doeff_cluster.shared.intent.remote_model",
+    "WorkerPolicy": "doeff_cluster._worker.intent.worker_model",
+    "WorkerRoom": "doeff_cluster._worker.core.room_rules",
+    "WorkerUnsettled": "doeff_cluster._worker.intent.worker_model",
+    "WorldView": "doeff_cluster._worker.intent.worker_model",
+    "WriteEnvMarker": "doeff_cluster._worker.intent.env_prepare_model",
+    "WriteImportRoots": "doeff_cluster._worker.intent.env_prepare_model",
+    "WriteMarker": "doeff_cluster._worker.intent.code_model",
+    "WriteStoreEntry": "doeff_cluster._worker.entry.code_prepare",
+    "await_drained": "doeff_cluster._worker.core.drain_client",
+    "beat_interval_ms": "doeff_cluster._worker.core.beat_policy",
+    "child_environment": "doeff_cluster._worker.core.launch",
+    "closure_reads": "doeff_cluster._worker.entry.code_prepare",
+    "code_host": "doeff_cluster._worker.protocol.code_store",
+    "code_key": "doeff_cluster._worker.core.worker_rules",
+    "coordinator_calls": "doeff_cluster._worker.protocol.drain_requests",
+    "coordinator_link": "doeff_cluster._worker.protocol.coordinator_link",
+    "coordinator_log_plan": "doeff_cluster._worker.entry.line_stamp",
+    "cut_lines": "doeff_cluster._worker.entry.line_stamp",
+    "decode_program": "doeff_cluster.shared.protocol.program_codec",
+    "drain_outcome": "doeff_cluster._worker.core.drain_client",
+    "drain_request": "doeff_cluster._worker.protocol.drain_requests",
+    "env_host": "doeff_cluster._worker.protocol.env_store",
+    "fence_due": "doeff_cluster._worker.core.worker_due",
+    "file_sha256": "doeff_cluster._worker.protocol.env_translation",
+    "hyx_env_marker_XgreaterHthan_signXjson": "doeff_cluster._worker.core.env_prepare",
+    "job_cgroup_placer": "doeff_cluster._worker.protocol.job_cgroup",
+    "lease_release": "doeff_cluster._worker.protocol.lease_release",
+    "leaving_observer": "doeff_cluster._worker.protocol.leaving_observer",
+    "local_host": "doeff_cluster._worker.protocol.world",
+    "logs_body": "doeff_cluster._worker.entry.line_stamp",
+    "lowered_priority_argv": "doeff_cluster._worker.core.env_rules",
+    "memory_observer": "doeff_cluster._worker.protocol.memory_observer",
+    "no_wakes": "doeff_cluster._worker.protocol.worker_wakes",
+    "pipe_retirement_notices": "doeff_cluster._worker.entry.retirement_notices",
+    "plan": "doeff_cluster._worker.core.policy",
+    "pod_job_labels": "doeff_cluster._worker.protocol.pod_labels",
+    "pool_tool_baker": "doeff_cluster._worker.entry.code_prepare",
+    "prepare_action": "doeff_cluster._worker.core.policy",
+    "probe_host": "doeff_cluster._worker.protocol.probes",
+    "process_clock": "doeff_cluster._worker.protocol.process_clock",
+    "process_host": "doeff_cluster._worker.protocol.process_host",
+    "process_lines": "doeff_cluster._worker.entry.line_stamp",
+    "program_file": "doeff_cluster._worker.core.launch",
+    "program_file_text": "doeff_cluster._worker.core.launch",
+    "progress_marks": "doeff_cluster._worker.entry.code_prepare",
+    "ready_of": "doeff_cluster._worker.core.drain_client",
+    "records_after": "doeff_cluster._worker.core.policy",
+    "retired_name": "doeff_cluster._worker.core.worker_rules",
+    "room_of_text": "doeff_cluster._worker.core.room_rules",
+    "shim_spans": "doeff_cluster._worker.core.shim_timing",
+    "silent_ms": "doeff_cluster._worker.core.heartbeat_rules",
+    "status_file": "doeff_cluster._worker.protocol.status_file",
+    "status_rows_json": "doeff_cluster._worker.protocol.heartbeat",
+    "statuses": "doeff_cluster._worker.core.policy",
+    "store_entries": "doeff_cluster._worker.entry.code_prepare",
+    "tree_files": "doeff_cluster._worker.protocol.tree_files",
+    "warm_host": "doeff_cluster._worker.protocol.warm_host",
 }
 
 

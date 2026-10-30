@@ -15,7 +15,7 @@
 (import doeff_time [SimClock])
 (import doeff_time [sim-time-handler])
 (import doeff_core_effects [CreatePromise Promise vm-probe-handler])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [tick-pauses])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.test_worker_wakes [quiet-host TickLog do-ticks])
 

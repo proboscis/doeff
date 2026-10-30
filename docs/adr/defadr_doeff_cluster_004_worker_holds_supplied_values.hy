@@ -22,9 +22,9 @@
           "packages/doeff-cluster/src/doeff_cluster/shared/protocol/supplied_values.hy"
           "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/_coordinator/protocol/replies.hy"
-          "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
-          "packages/doeff-cluster/src/doeff_cluster/worker/protocol/supplied_hold.hy"
-          "packages/doeff-cluster/src/doeff_cluster/worker/entry/main.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/coordinator_link.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/supplied_hold.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/entry/main.hy"
           "packages/doeff-cluster/src/doeff_cluster/_sim/k8s_supplied.hy"
           "packages/doeff-cluster/tests/test_supplied_held.hy"
           "docs/adr/defadr_doeff_cluster_004_worker_holds_supplied_values.hy"]

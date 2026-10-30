@@ -17,7 +17,7 @@
 (import importlib.util)
 (import doeff_core_effects [ReadText ReadBytes WriteText MakeDirectory]
         doeff_core_effects._file_effects [file-done])
-(import doeff_cluster.worker.intent.code_model [ScanTree ImportClosure] doeff_cluster.worker.core.code_plan [MARKER marker-problem cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree])
+(import doeff_cluster [ScanTree ImportClosure] doeff_cluster._worker.core.code_plan [MARKER marker-problem cache-rel] doeff_cluster._worker.core.code_prepare [prepare-tree])
 (import tests.file_contract_handlers [FilesRoot])
 
 (val PACKAGE #(#("pkg/__init__.py" "") #("pkg/m.py" "X = 1\n") #("pkg/n.py" "Y = 2\n")))

@@ -10,7 +10,7 @@
 ;; candidates=2・chosen=0。04:01 の空き 26755080192 byte と最低 26843545600 byte〔WORKER_ENV_MIN_FREE_GIB 25〕)。
 ;; 使われていない root 3 つは合わせて約 623M(1 つ約 208M)。
 (require doeff-hy.macros [deftest val])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally sweep-choice sweep-due sweep-wanted SWEEP-EVERY-MS])
+(import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally sweep-choice sweep-due sweep-wanted SWEEP-EVERY-MS])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "judgment"})
 

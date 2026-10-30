@@ -19,7 +19,7 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.worker.protocol.env_translation [editable-dirs hy-dist-version])
+(import doeff_cluster._worker.protocol.env_translation [editable-dirs hy-dist-version])
 (import doeff_core_effects [ListDirectory WriteText RemoveTree])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Task Gather])
@@ -27,8 +27,9 @@
 (import doeff_cluster.shared.intent.runtime_env_model [RepoCheckout NativeWheel PythonProject ToolRequirement EnvVar RuntimeEnv
                                                        RuntimeEnvInvalid InvalidKind EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.runtime_env_rules [env-key repo-source-material key-material runtime-env->json runtime-env-of-json])
-(import doeff_cluster.worker.core.env_upkeep [PrepareLimits prepare-overdue])
-(import doeff_cluster.worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster.worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH StageStarted MaterializeTree] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue])
+(import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
+                                                                             doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster._sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])

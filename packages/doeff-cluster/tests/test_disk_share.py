@@ -179,7 +179,7 @@ def _worker_after_gc(
     """image GC の線の 2 点で worker が名乗る語: 消し始める空き(high)で ok を名乗っていた worker と、消し終えた空き(low)で near を
     名乗っていた worker。"""
     import hy  # noqa: F401  — Hy の module を import できるようにする
-    from doeff_cluster.worker.core.env_upkeep import env_capacity
+    from doeff_cluster._worker.core.env_upkeep import env_capacity
 
     min_free = share.worker.min_free_gib * derive.GIB
     start = derive.free_at_usage(share.disk_bytes, gc.high_percent)
@@ -297,7 +297,7 @@ def test_worker_free_share_is_the_line_where_the_worker_returns_to_ok(
     """worker の分のうち空けておく量(最低 + near の幅 + 戻りの幅)は、near を名乗った worker が ok へ戻る線 — 空きがその量あれば、
     worker は ok を名乗り、1 byte 欠ければ near のまま。幅は worker の env_upkeep の定数から読む。"""
     import hy  # noqa: F401  — Hy の module を import できるようにする
-    from doeff_cluster.worker.core.env_upkeep import env_capacity
+    from doeff_cluster._worker.core.env_upkeep import env_capacity
 
     for share in declaration.nodes:
         min_free = share.worker.min_free_gib * derive.GIB
@@ -451,7 +451,7 @@ def test_native_worker_is_ok_where_the_image_gc_starts(
     """書いてある image GC の線で消し始める空き(high)では、機体直の worker も書いてある空きの最低のまま ok を名乗る — kubelet より先に
     near を名乗る帯が無い。"""
     import hy  # noqa: F401  — Hy の module を import できるようにする
-    from doeff_cluster.worker.core.env_upkeep import env_capacity
+    from doeff_cluster._worker.core.env_upkeep import env_capacity
 
     for share in _native_shares(declaration):
         min_free = int(_written_native_env(share)["WORKER_ENV_MIN_FREE_GIB"]) * derive.GIB

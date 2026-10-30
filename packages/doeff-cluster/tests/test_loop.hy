@@ -8,11 +8,10 @@
 (import doeff_core_effects [StopRequested])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage
-  WorkerPolicy WorkerState DesiredJobs DesiredUnreadable ReadDesired ObserveWorld
-  PublishStatus EnvReport PrepareCode StartJob JobStarted JobNotStarted SignalJob ReapJob] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker.core.program [run-worker])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage WorkerPolicy ReadDesired ObserveWorld PublishStatus EnvReport PrepareCode StartJob SignalJob ReapJob]
+        doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs DesiredUnreadable JobStarted JobNotStarted] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster._worker.core.program [run-worker])
+(import doeff_cluster [tick-pauses])
 (import tests.wake_fixtures [wakes-every])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)

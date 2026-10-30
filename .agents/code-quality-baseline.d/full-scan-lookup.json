@@ -114,35 +114,35 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_worker/core/bake_plan.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_upkeep.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 2,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_worker/core/policy.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 1,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_translation.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"
     },
     {
       "count": 3,
-      "path": "packages/doeff-cluster/src/doeff_cluster/worker/protocol/memory_watch.hy",
+      "path": "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/memory_watch.hy",
       "reason": "全件走査の検索(full-scan-lookup)の既存の違反 — 触った行に足した走査だけを赤にし、触った所から直す(2026-10-23 に code-quality 6ded6cf の規則で数えて登記・card ki-30e68e5da26d)",
       "rule": "full-scan-lookup",
       "subject": "hy:full-scan-lookup"

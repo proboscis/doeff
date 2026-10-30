@@ -24,15 +24,15 @@
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [StartJob SignalJob ReapJob Outcome StopStage Undeclared CodeView CodeState WorldView
-                                                 WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld EnvReport
-                                                 PublishStatus PrepareCode ReleaseLeases])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings STOP-TIMING-LOG process-host])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [StartJob SignalJob ReapJob StopStage CodeView CodeState WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode ReleaseLeases]
+        doeff_cluster._worker.intent.worker_model [Outcome Undeclared WorkerState DesiredJobs])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [HostSettings STOP-TIMING-LOG])
+(import doeff_cluster [tick-pauses])
 (import tests.wake_fixtures [wakes-every])
-(import doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable])
-(import doeff_cluster.worker.core.program [run-worker START-HOLD-LOG])
+(import doeff_cluster._worker.core.heartbeat_rules [desired-when-unreachable])
+(import doeff_cluster._worker.core.program [run-worker START-HOLD-LOG])
 (import tests.host_rig [host-settings])
 
 (val STATE "/state")

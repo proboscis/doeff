@@ -48,7 +48,7 @@
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.intent.runtime_env_model [CHILD-PROTOCOL])
-(import doeff_cluster.worker.protocol.env_translation [env-translation])
+(import doeff_cluster._worker.protocol.env_translation [env-translation])
 
 (val SOURCE-SUFFIXES #(".py" ".hy"))
 ;; 展開の複製で持ち越さない dir(venv は元の root の絶対 path を持ち、.pyc は元の root の Hy で作った物)。

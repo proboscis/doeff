@@ -12,10 +12,10 @@
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome RunProcess StartProcess])
 (import dataclasses)
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.core.job_cgroup [job-cgroup-procs placed-argv])
-(import doeff_cluster.worker.protocol.job_cgroup [job-cgroup-placer])
-(import doeff_cluster.worker.protocol.process_host [HostSettings shim-argv])
-(import doeff_cluster.worker.entry.main [CGROUP-DIR-VAR SERVICE-CGROUP-VAR cgroup-dir-environ job-cgroup-placed])
+(import doeff_cluster._worker.core.job_cgroup [job-cgroup-procs placed-argv])
+(import doeff_cluster [job-cgroup-placer])
+(import doeff_cluster._worker.protocol.process_host [HostSettings shim-argv])
+(import doeff_cluster._worker.entry.main [CGROUP-DIR-VAR SERVICE-CGROUP-VAR cgroup-dir-environ job-cgroup-placed])
 (import tests.host_rig [host-settings])
 
 ;; 機体の worker の本体が居る cgroup(unit の DelegateSubgroup=main — dotfiles の doeff-agent-worker.service)。
@@ -124,7 +124,7 @@
 
 
 (val SERVICE-PROCS (+ POD-DIR "/services/cgroup.procs"))
-(val SHIM-ARGV #("python" "-m" "doeff_cluster.worker.entry.shim" "--" "uv" "run" "hy"))
+(val SHIM-ARGV #("python" "-m" "doeff_cluster._worker.entry.shim" "--" "uv" "run" "hy"))
 
 
 (deftest test-only-a-resident-job-is-placed-in-the-service-cgroup [#^ Path tmp-path]
@@ -133,8 +133,8 @@
   ;; 逆に常駐の job を jobs の兄弟に残すと、task の上限の回収と OOM の対象に常駐の job が入る。
   (<- base HostSettings (host-settings tmp-path))
   (val placing (dataclasses.replace base :service-procs SERVICE-PROCS))
-  (val service (JobSpec "records" "doeff_cluster.worker.entry.job_entry" #() "r"))
-  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #() "r" :once True))
+  (val service (JobSpec "records" "doeff_cluster._worker.entry.job_entry" #() "r"))
+  (val task (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #() "r" :once True))
   (<- placed tuple (shim-argv placing service SHIM-ARGV))
   (assert (= placed (! (placed-argv SERVICE-PROCS SHIM-ARGV))) placed)
   (<- kept tuple (shim-argv placing task SHIM-ARGV))

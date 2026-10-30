@@ -6,7 +6,7 @@
 ;;     列を作る純粋な関数 bake-order と、準備の Program が焼きの効果へ渡す列(焼きの効果だけを記録の答え手に替える)の両方で確かめる。
 ;;   * 木ごとの引数の揃え方: --roots は木ごとに 1 つ。
 ;;   * 入口は判断の module bake_plan を package の名でなく自分の位置から求めた path で読む(root の版の doeff に依らないため)。
-;; 純粋な判断は package の名(doeff_cluster.worker.core.bake_plan)で import して検める。入口の Program へ渡す値と、Program の答えの型は
+;; 純粋な判断は package の名(doeff_cluster._worker.core.bake_plan)で import して検める。入口の Program へ渡す値と、Program の答えの型は
 ;; 入口が path で読んだ module(code_prepare.plan)の物を使う — 同じ file でも、path で読んだ module と package の module は別の module で、
 ;; record の class も別になる(isinstance の型の検めが通らない)。
 (require doeff-hy.macros [defhandler defk deftest <- val])
@@ -17,10 +17,10 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.worker.core.code_plan [MARKER cache-rel])
-(import doeff_cluster.worker.protocol.tree_files [tree-files])
-(import doeff_cluster.worker.core.bake_plan [BakeItem TreeArgs bake-order tree-arguments])
-(import doeff_cluster.worker.entry.code_prepare [BAKE-PLAN BakeSources bake-trees closure-reads plan pool-tool-baker prepare-trees
+(import doeff_cluster._worker.core.code_plan [MARKER cache-rel])
+(import doeff_cluster [tree-files])
+(import doeff_cluster._worker.core.bake_plan [BakeItem TreeArgs bake-order tree-arguments])
+(import doeff_cluster._worker.entry.code_prepare [BAKE-PLAN BakeSources bake-trees closure-reads plan pool-tool-baker prepare-trees
                                                progress-marks])
 
 
@@ -114,6 +114,6 @@
 (deftest test-the-entry-reads-the-bake-plan-by-its-own-path
   ;; 入口は判断の module を自分の位置の bake_plan.hy から、package と重ならない名で読む — package の名で import する形に戻すと、準備する
   ;; root の版の doeff の物を読み、この module を持たない古い版の root で落ちる。
-  (val beside (/ (. (Path __file__) (resolve) parent parent) "src" "doeff_cluster" "worker" "core" "bake_plan.hy"))
+  (val beside (/ (. (Path __file__) (resolve) parent parent) "src" "doeff_cluster" "_worker" "core" "bake_plan.hy"))
   (assert (= #((Path plan.__file__) (Path BAKE-PLAN)) #(beside beside)) #(plan.__file__ BAKE-PLAN))
   (assert (= plan.__name__ "doeff_cluster_worker_bake_plan") plan.__name__))

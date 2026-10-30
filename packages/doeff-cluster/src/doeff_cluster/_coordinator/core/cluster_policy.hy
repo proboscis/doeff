@@ -40,6 +40,9 @@
 (import doeff_cluster.shared.core.readiness_rules [readiness-refusal retired-lifetime-ms retired-limit-of])
 (import doeff_cluster._coordinator.core.program_policy [PROGRAM-GRACE-MS program-refs])
 
+;; 送る名は区画を _worker へ隠す前の path のまま(card ki-3ff93cd3499e): 子は job の root の版の doeff で `hy -m <名>` として起き、
+;; _worker の無い古い版の root でも解ける名が要る(新しい版の root では移し替えの module worker.py が _worker の module を返す)。
+;; 移し替えの module を消す段 3 の前に、root の版の下限と合わせて替える(#2112 と同じ順)。
 (setv JOB-ENTRY "doeff_cluster.worker.entry.job_entry")
 (setv MAX-EVENTS 200)
 

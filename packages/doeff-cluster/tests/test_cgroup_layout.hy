@@ -16,8 +16,8 @@
 (import time)
 (import pathlib [Path])
 (import pytest)
-(import doeff_cluster.worker.core.job_cgroup [placed-argv])
-(import doeff_cluster.worker.entry.main [CGROUP-DIR-VAR])
+(import doeff_cluster._worker.core.job_cgroup [placed-argv])
+(import doeff_cluster._worker.entry.main [CGROUP-DIR-VAR])
 
 (val BOOT-SH (str (/ (. (Path __file__) (resolve) parent parent) "deploy" "boot.sh")))
 (val LAYOUT "worker:memory.min=2G services:memory.min=24G jobs:memory.max=36G commands:memory.max=28G")

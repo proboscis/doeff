@@ -37,13 +37,14 @@
 (import doeff_time [Delay GetMonotonic GetTimeEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [monotonic-ms-of])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld EnvReport
-                                                 PublishStatus AwaitNextTick])
-(import doeff_cluster.worker.core.heartbeat_rules [silent-ms])
-(import doeff_cluster.worker.core.program [run-worker])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
-(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
-(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link RESEND-AFTER-MS])
+(import doeff_cluster [WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus AwaitNextTick]
+        doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs])
+(import doeff_cluster [silent-ms])
+(import doeff_cluster._worker.core.program [run-worker])
+(import doeff_cluster [tick-pauses])
+(import doeff_cluster [no-wakes])
+(import doeff_cluster [coordinator-link]
+        doeff_cluster._worker.protocol.coordinator_link [LinkState RESEND-AFTER-MS])
 (import tests.link_rig [LINK-ROUTE])
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.transport_http [route-cell])

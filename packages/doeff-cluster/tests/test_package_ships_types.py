@@ -13,7 +13,7 @@ package の置き方)。Hy の module の型は今までどおり隣の .pyi が
 
 from pathlib import Path
 
-ENTRY = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "worker" / "entry"
+ENTRY = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "_worker" / "entry"
 
 
 def test_the_worker_entry_modules_ship_their_types() -> None:

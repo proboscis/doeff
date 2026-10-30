@@ -9,9 +9,10 @@
 (import json)
 (import doeff [with_handlers])
 (import doeff_core_effects [ReadText ListDirectory])
-(import doeff_cluster.worker.protocol.status_file [status-file status-json])
-(import doeff_cluster.worker.intent.worker_model [JobStatus PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.worker.protocol.observations [CodeTimings])
+(import doeff_cluster [status-file]
+        doeff_cluster._worker.protocol.status_file [status-json])
+(import doeff_cluster [JobStatus PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster [CodeTimings])
 (import tests.file_contract_handlers [FilesRoot])
 
 (val TIMINGS {"rev-1" 1.5})

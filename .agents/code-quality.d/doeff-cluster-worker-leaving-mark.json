@@ -17,10 +17,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-leaving-mark",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/leaving_mark.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/leaving_mark.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/leaving_mark.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/leaving_mark.hy"
       ],
       "responsibility": "Pod の止まりの印(AL-D2p)の書き手・path・形: preStop の drain の入口が世代の file の隣に世代つきの印を書く口(leaving-mark-written)と、印の世代がこの process の世代と同じかを読む口(leaving-mark-read)。依存してよいのは preStop の入口(doeff-cluster-drain-main)と観測の答え手(doeff-cluster-worker-leaving-observer)だけ — worker の入口が 2 人目の書き手にならない(設計検証 lt-C071SZK8EQTX19F3YV1MSWT53X の盲検 B)。",
       "typed": true

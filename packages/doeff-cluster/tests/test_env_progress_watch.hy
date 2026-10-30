@@ -11,8 +11,8 @@
 (import doeff_core_effects [PathKind PathStat StatPath WriteText ReadText RemoveTree])
 (import doeff_core_effects [StartProcess PollProcess ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
-(import doeff_cluster.worker.core.env_upkeep [PrepareLimits prepare-overdue])
-(import doeff_cluster.worker.protocol.env_translation [run-watched CommandResult])
+(import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue])
+(import doeff_cluster._worker.protocol.env_translation [run-watched CommandResult])
 
 (val CHILD-SECONDS 1500.0)
 (val POLL-SECONDS 5.0)

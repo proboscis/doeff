@@ -15,12 +15,13 @@
 (import doeff_cluster [tick])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv DRAIN SURGE])
-(import doeff_cluster.worker.core.drain_client [await-drained worker-ready drain-outcome ready-of] doeff_cluster.worker.intent.drain_model [CoordinatorCall AskDrain])
-(import doeff_cluster.worker.protocol.drain_requests [drain-request])
+(import doeff_cluster [await-drained drain-outcome ready-of]
+        doeff_cluster._worker.core.drain_client [worker-ready] doeff_cluster [CoordinatorCall AskDrain])
+(import doeff_cluster [drain-request])
 (import doeff [run with-handlers])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
-(import doeff_cluster.worker.protocol.coordinator_link [ready-file-written])
+(import doeff_cluster._worker.protocol.coordinator_link [ready-file-written])
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import tests.env_fixtures [LOCK env-of])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
@@ -28,7 +29,7 @@
 (import doeff [run])
 (import os)
 (import subprocess)
-(import doeff_cluster.worker.entry.drain_main [read-boot])
+(import doeff_cluster._worker.entry.drain_main [read-boot])
 (import pathlib [Path])
 (import pytest)
 
@@ -855,7 +856,7 @@
   (assert (is (! (with-handlers [os-file-handler] (read-boot (str path)))) None) "起動の前(file が無い)は世代を知らない")
   ;; 書く口は worker の入口 main の boot-file-written(起動の時に世代を 1 度だけ決めて書く — #2427 で CoordinatorLink から移した・
   ;; #3014 で file の effect にした — 答え手は main と同じ os-file-handler)。path が無ければ書かない。
-  (import doeff_cluster.worker.entry.main [boot-file-written])
+  (import doeff_cluster._worker.entry.main [boot-file-written])
   (! (with-handlers [os-file-handler] (boot-file-written None "b-0000")))
   (assert (not (.exists path)) "path が無ければ書かない")
   (! (with-handlers [os-file-handler] (boot-file-written (str path) "b-1234")))
