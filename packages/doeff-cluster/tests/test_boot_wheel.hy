@@ -82,7 +82,7 @@
                     "worker/core/boot_helper.hy" "(setv answer 1)\n"
                     "worker/entry/drain_main.hy" "(setv V 1)\n"
                     "coordinator/entry/main.hy" "(setv V 1)\n"
-                    "record_store/entry/main.hy" "(setv V 1)\n"
+                    "_record_store/entry/main.hy" "(setv V 1)\n"
                     "worker/entry/env_tool.hy" "(setv V 1)\n"
                     "worker/entry/job_entry.hy" "(setv V 1)\n"
                     "worker/entry/shim.py" "V = 1\n"

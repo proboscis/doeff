@@ -165,7 +165,7 @@
 ;;;   WC3 warm-fork-only-before-any-vm(同・#3646)— task を分けるのは、分かれ元の待ちの子の準備完了の印が「thread 1 つ・生きた VM 0」の時
 ;;;   だけ。守りは warm_rules の warm-mark-clean の 1 か所(待ちの子の入口は印を書くだけ)。失敗ケース =
 ;;;   test-counting-a-mark-with-a-live-vm-as-ready-breaks-wc3(印の VM を見ない形に壊すと WC3 が破りを名指す)。
-;;;   R1 prune-keeps-runs-whole(doeff_cluster.record_store.core.invariants:prune-keeps-runs-whole)— record-store の保持は run を丸ごと消すか
+;;;   R1 prune-keeps-runs-whole(doeff_cluster._record_store.core.invariants:prune-keeps-runs-whole)— record-store の保持は run を丸ごと消すか
 ;;;   丸ごと残し、run の途中だけを残さない(再生は run の始まりから走らせる)。確かめるのは tests/test_record_files_contract.hy の
 ;;;   test-prune-removes-or-keeps-each-run-whole(区切りを複数持つ run の消す前と後の text を判断に渡す — 本物と memory の file system の両方)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-remove-that-leaves-part-of-a-run-breaks-r1(保持が使う file system の RemoveTree の答え手を
@@ -257,5 +257,5 @@
 (defservice record-store "effect の記録の置き場(run ごと・区切りごとの file に追記し、読み・一覧・圧縮・保持を答える)"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
    :layers [core intent protocol entry]
-   :entry-modules ["doeff_cluster.record_store.entry.main"]
-   :invariants ["doeff_cluster.record_store.core.invariants:prune-keeps-runs-whole"]})
+   :entry-modules ["doeff_cluster._record_store.entry.main"]
+   :invariants ["doeff_cluster._record_store.core.invariants:prune-keeps-runs-whole"]})

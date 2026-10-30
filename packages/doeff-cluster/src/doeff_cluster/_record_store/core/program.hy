@@ -20,7 +20,7 @@
 (import doeff_core_effects [slog])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [Request Reply PlainText CoordinatorStopRequested NextRequests])
-(import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
+(import doeff_cluster._record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 
 
 (setv NAME-PATTERN (re.compile r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"))

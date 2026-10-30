@@ -19,8 +19,8 @@
 (import doeff_cluster.shared.intent.service_model [System])
 (import doeff_cluster.foundation.coordinator_inbox [StopState ReplySlot RawRequest])
 (import doeff_cluster.shared.protocol.inbox [InboxQueue])
-(import doeff_cluster.record_store.entry.main [record-store-on])
-(import doeff_cluster.record_store.entry.handler_sets [ScriptedRecordInbox emulated-handlers])
+(import doeff_cluster._record_store.entry.main [record-store-on])
+(import doeff_cluster._record_store.entry.handler_sets [ScriptedRecordInbox emulated-handlers])
 (import doeff_cluster._sim.local [sim-cluster SimCoordinatorRun CoordinatorRuns ReadCoordinator])
 
 ;; 仮想の時計の起点(sim-cluster の既定の起点と同じ桁の、どこかの日)。
