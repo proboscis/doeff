@@ -16,7 +16,6 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from doeff_notify import (
     Acknowledge,
-    Channel,
     NotificationCapture,
     NotificationResult,
     Notify,
@@ -27,6 +26,7 @@ from doeff_notify import (
 )
 from doeff_notify import testing_handler as build_testing_handler
 from doeff_notify._handlers.testing import collected_notifications
+from doeff_notify._types import Channel
 
 from doeff import Effect, Pass, Resume, Tell, WriterTellEffect, do, run
 

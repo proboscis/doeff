@@ -19,7 +19,7 @@ class Notify(NotificationEffectBase):
 
     message: str
     title: str | None = None
-    urgency: str = Urgency.LOW
+    urgency: Urgency = Urgency.LOW
     channel: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: tuple[str, ...] = ()

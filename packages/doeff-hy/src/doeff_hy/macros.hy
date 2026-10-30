@@ -2744,10 +2744,12 @@ defmcp-tool {name}: third argument must be a parameter list [...].
   (if (_static-view?)
       `(do (import doeff-hy._static-types [do :as _doeff_validation_do])
            (import doeff-validation :as _doeff_validation)
-           (import doeff-validation._api :as _doeff_validation_api))
+           (import doeff-validation._api :as _doeff_validation_api)
+           (import doeff-validation._failures :as _doeff_validation_failures))
       `(do ~(_runtime-do-import '_doeff_validation_do)
            (import doeff-validation :as _doeff_validation)
-           (import doeff-validation._api :as _doeff_validation_api))))
+           (import doeff-validation._api :as _doeff_validation_api)
+           (import doeff-validation._failures :as _doeff_validation_failures))))
 
 
 (defn _validation-predicate [op params]
@@ -2767,11 +2769,11 @@ defmcp-tool {name}: third argument must be a parameter list [...].
    (! …) の印がある引数は、印を doeff-hy の規則(ADR-DOE-HY-003)で yield に書き換えた小さな Program を
    thunk が作り、項目の中で実行する。印の無い引数は普通の値として評価する(Program の値もそのまま比べる)。"
   (if (_validation-contains-bang form)
-      `(_doeff_validation.CheckArgument
+      `(_doeff_validation_failures.CheckArgument
          ~(_validation-source form)
          (fn [] ((_doeff_validation_do (fn [] (return ~(_expand-bangs form "check"))))))
          True)
-      `(_doeff_validation.CheckArgument ~(_validation-source form) (fn [] ~form) False)))
+      `(_doeff_validation_failures.CheckArgument ~(_validation-source form) (fn [] ~form) False)))
 
 
 (defn _validation-check-spec [args]
@@ -2823,14 +2825,14 @@ defmcp-tool {name}: third argument must be a parameter list [...].
              ~@(lfor #(p o) (zip params operands)
                  `(do
                     (setv ~p ~(if (_validation-contains-bang o) (_expand-bangs o owner) o))
-                    (.append ~evaluated (_doeff_validation.EvaluatedArgument ~(_validation-source o) ~p))))
+                    (.append ~evaluated (_doeff_validation_failures.EvaluatedArgument ~(_validation-source o) ~p))))
              (when (not (_doeff_validation_api.judge (~(_validation-predicate op params) ~@params)))
                (.append ~failures
-                        (_doeff_validation.CheckFailure ~expression (tuple ~evaluated) ~reason)))
+                        (_doeff_validation_failures.CheckFailure ~expression (tuple ~evaluated) ~reason)))
              (except [~error Exception]
                (.append ~failures
-                        (_doeff_validation.CheckError ~expression (tuple ~evaluated) ~error
-                                                          ~reason))))))))
+                        (_doeff_validation_failures.CheckError ~expression (tuple ~evaluated) ~error
+                                                                   ~reason))))))))
   [(_validation-imports)
    `(setv ~failures [])
    #* per-check

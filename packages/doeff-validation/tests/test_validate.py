@@ -13,12 +13,11 @@ from doeff_core_effects import scheduled
 from doeff_traverse import parallel, parallel_fail_fast, sequential
 from doeff_validation import (
     Check,
-    CheckError,
-    CheckFailure,
     Perform,
     ValidationException,
     validate,
 )
+from doeff_validation._failures import CheckError, CheckFailure
 
 from doeff import EffectGenerator, Program, do, run
 from doeff.program import ProgramHandler
