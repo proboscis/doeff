@@ -197,6 +197,43 @@ def test_the_next_record_keeps_carried_rows_and_names_refresh_mismatches() -> No
     assert json.loads(text)["summary"]["refresh_mismatches"] == 1
 
 
+def test_a_partial_record_keeps_only_finished_and_still_valid_files() -> None:
+    """組ごとの途中の文書は、当て終えた file の今回の診断・運んだ file・まだ当てていない見直しの file の前の記録を持ち、まだ当てていない
+    変わった・新しい file を持たない(次の回は new として当てる)。数は当て終えた file だけ。"""
+    previous = CarryRecord(
+        "f",
+        2,
+        (
+            _carried("a.hy", "1", 2, "a1"),
+            _carried("b.hy", "2", 1, "b1"),
+            _carried("c.hy", "3", 2, "c1"),
+        ),
+    )
+    inputs = (
+        FileInputs("a.hy", "1"),
+        FileInputs("b.hy", "2"),
+        FileInputs("c.hy", "9"),
+        FileInputs("d.hy", "4"),
+    )
+    plan = plan_carry(previous, "f", inputs, 4)  # 見直しは ceil(4 / 4) = 1 本 — 当てた回の一番古い b
+    assert {c.path: c.reason for c in plan.checking} == {
+        "c.hy": "changed",
+        "d.hy": "new",
+        "b.hy": "refresh",
+    }
+    fresh = (FileRows("c.hy", (CarriedRow(1, 1, "error", "rule", "c2"),)),)
+    record, summary = next_record(plan, "f", inputs, fresh, frozenset({"c.hy"}))
+    by_path = {f.path: f for f in record.files}
+    assert sorted(by_path) == ["a.hy", "b.hy", "c.hy"]
+    assert by_path["a.hy"] == previous.files[0]
+    assert by_path["b.hy"] == previous.files[1]  # まだ見直していない — 前の記録のまま
+    assert ([r.message for r in by_path["c.hy"].rows], by_path["c.hy"].checked) == (["c2"], 3)
+    assert (summary.checked, summary.carried, summary.mismatched) == (1, 1, ())
+    # 次の回は、まだ当てていなかった d を new として当て、当て終えた c は運ぶ。
+    after = plan_carry(record, "f", inputs, 0)
+    assert {c.path: c.reason for c in after.checking} == {"d.hy": "new"}
+
+
 def test_the_carry_file_round_trips_and_a_broken_one_is_unreadable(tmp_path: Path) -> None:
     """書いた運びの file は同じ記録に読める。壊れた file・版の違う file は CarryUnreadableError(黙って空と読まない)。"""
     record = CarryRecord("f", 5, (_carried("a.hy", "1", 5, "m"),))
@@ -598,6 +635,45 @@ def test_the_second_run_checks_only_changed_files_and_carries_the_rest(
     assert log.read_text(encoding="utf-8").splitlines()[-1] == "base.py user.py"
     summary = json.loads(carry.read_text(encoding="utf-8"))["summary"]
     assert (summary["checked"], summary["carried"], summary["reasons"]["changed"]) == (2, 2, 2)
+
+
+def test_groups_check_the_same_files_and_a_cut_run_keeps_the_finished_groups(
+    entry: Path, tmp_path: Path
+) -> None:
+    """--carry-group は当てる file を組に分けて pyright に当て、答えは分けない時と同じ。2 つ目の組で pyright が倒れても、運びの file は
+    1 つ目の組の診断を持ち、次の回はまだ当てていない file だけを当てる。"""
+    log = tmp_path / "pyright.log"
+    pyright = _fake_pyright(tmp_path, log)
+    carry = tmp_path / "carry.json"
+    common = ("--pyright", str(pyright), "--carry", str(carry), "--carry-refresh-runs", "0")
+    _, whole, _ = _run(entry, *common)
+    carry.unlink()
+    code, grouped, err = _run(entry, *common, "--carry-group", "2")
+    assert code == 1, err
+    assert log.read_text(encoding="utf-8").splitlines()[-2:] == ["__init__.py alone.py", "base.py user.py"]
+    assert _pyright_errors(grouped) == _pyright_errors(whole)
+    assert "pyright に当てた .hy 4 本" in err
+    # 2 つ目の組で倒れる pyright — 1 つ目の組の 2 本だけが運びの file に残る。
+    carry.unlink()
+    broken = tmp_path / "broken-pyright"
+    broken.write_text(
+        "#!/bin/sh\n"
+        f"if [ -e {shlex.quote(str(tmp_path / 'once'))} ] && [ \"$1\" != --version ]; then echo broken; exit 3; fi\n"
+        f"[ \"$1\" != --version ] && touch {shlex.quote(str(tmp_path / 'once'))}\n"
+        f'exec {shlex.quote(str(pyright))} "$@"\n',
+        encoding="utf-8",
+    )
+    broken.chmod(0o755)
+    code, _, err = _run(
+        entry, "--pyright", str(broken), "--carry", str(carry), "--carry-refresh-runs", "0", "--carry-group", "2"
+    )
+    assert code == 2
+    assert "pyright の出力を読めない" in err
+    kept = read_carry(carry)
+    assert kept is not None
+    assert sorted(f.path for f in kept.files) == ["pkg/__init__.hy", "pkg/alone.hy"]
+    _run(entry, *common, "--carry-group", "2")
+    assert log.read_text(encoding="utf-8").splitlines()[-1] == "base.py user.py"
 
 
 def test_an_unreadable_carry_file_checks_everything_and_is_replaced(
