@@ -82,3 +82,32 @@ def test_wheels_are_checked_and_run_before_the_upload() -> None:
     assert "manylinux" in command
     assert "x86_64" in command
     assert verify in _needs(jobs["publish"]), "upload が配置の検を待たない"
+
+
+def test_the_upload_waits_for_a_check_that_all_fifteen_wheels_exist() -> None:
+    # 0.2.0 の最初の手動実行は 10 個しか組まれなかったが、全部の job と配置の検が通った。組む wheel の一覧(--expect-all)を
+    # 公開の前の job が持たないと、同じ足りなさが次の公開でも黙って通る。
+    jobs = _jobs()
+    command = next(
+        step["run"]
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if TOOL_PATH in step.get("run", "")
+    )
+    assert "--expect-all" in command
+
+
+def test_a_job_that_names_python_3_13t_pins_a_maturin_that_accepts_it() -> None:
+    # maturin 1.14 以降は `-i python3.13t` を「free-threaded は 3.14 から」と拒否する(1.13.0・1.13.1 は受け付ける)。
+    # 拒否する版を固定した job は、3.13 向けの wheel を組めずに落ちるか、黙って足りなくなる。
+    names_313t = [
+        (name, step)
+        for name, job in _jobs().items()
+        for step in _steps_using(job, MATURIN_ACTION)
+        if "python3.13t" in str(step.get("with", {}).get("args", ""))
+    ]
+    assert names_313t, "python3.13t を名指す job が無い(3.13 向けの wheel が組まれない)"
+    too_new = [
+        name for name, step in names_313t if _versions(step["with"]["maturin-version"]) >= (1, 14, 0)
+    ]
+    assert too_new == [], f"maturin 1.14 以降を固定した job が python3.13t を名指している: {too_new}"

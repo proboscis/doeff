@@ -15,7 +15,10 @@ PyPI の 0.1.3 の Linux x86_64 の wheel は、命令の binary を `python/doe
 - 入れた後の動き(`--smoke` の 1 つの wheel): 新しい venv に pip で入れ、`doeff-indexer --help` が通り、
   `find-interpreters` が `Program` の語も型の注釈も無い file の `# doeff: interpreter` を見つける。
 
-使い方: python tools/verify_indexer_wheel.py [--smoke <この機体で動く wheel>] <wheel>...
+- 一覧(`--expect-all`): 公開する 15 個(通常の abi3・free-threaded の 3.13・3.14 の 3 種類 × Linux の 2 つ・macOS の 2 つ・
+  Windows)が全部そろう。0.2.0 の手動実行で 3.13 向けの 5 個が組まれず 10 個になっても、job も配置の検も通ったため。
+
+使い方: python tools/verify_indexer_wheel.py [--expect-all] [--smoke <この機体で動く wheel>] <wheel>...
 (標準ライブラリだけ — repo を checkout しただけの python で走るので、upload の前の CI の job からも呼べる)
 """
 
@@ -35,6 +38,11 @@ SAMPLE_FILE = "markers_only.py"
 SAMPLE = "from doeff import run\n\ndef my_interpreter(program):  # doeff: interpreter\n    return run(program)\n"
 SAMPLE_INTERPRETER = "my_interpreter"
 EXECUTABLE_BITS = 0o111
+# 公開する wheel の一覧: 3 つの種類 × 5 つの OS = 15 個(PyPI の 0.1.3 と同じ数)。種類は (python tag, abi tag)。
+# 0.2.0 の最初の手動実行は、maturin 1.15 が free-threaded の 3.13 の指定を拒否して 3.13 向けの 5 個が組まれず、10 個になった。
+# それでも job は全部通り、配置の検も通った — 組む wheel の一覧を CI が持たなかったため。
+EXPECTED_KINDS = (("cp310", "abi3"), ("cp313", "cp313t"), ("cp314", "cp314t"))
+EXPECTED_PLATFORMS = ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "windows-x86_64")
 
 
 def _is_windows(wheel: Path) -> bool:
@@ -68,6 +76,37 @@ def layout_problems(wheel: Path) -> list[str]:
         else ()
     )
     return [*missing, *empty, *not_executable, *misplaced]
+
+
+def _platform_of(wheel: Path) -> str | None:
+    """wheel の名の最後の部(platform tag)から、一覧の OS の名を読む(読めなければ None)。"""
+    tag = wheel.stem.split("-")[-1]
+    if tag.startswith("win_amd64"):
+        return "windows-x86_64"
+    if tag.startswith("macosx"):
+        return "macos-arm64" if tag.endswith("arm64") else "macos-x86_64" if tag.endswith("x86_64") else None
+    if "manylinux" in tag or tag.startswith("linux"):
+        return "linux-aarch64" if "aarch64" in tag else "linux-x86_64" if "x86_64" in tag else None
+    return None
+
+
+def missing_wheels(wheels: list[Path]) -> list[str]:
+    """公開する 15 個(種類 × OS)のうち、渡された wheel に無い物を 1 行ずつ返す(空なら全部ある)。
+
+    数えるのは種類 × OS で、file の数ではない: macOS と Windows の free-threaded の job が通常の job と同じ abi3 の wheel を
+    組んだ時、名の同じ wheel は 1 つの種類として数えられ、free-threaded の種類は足りないまま残る。
+    """
+    present = set()
+    for wheel in wheels:
+        parts = wheel.stem.split("-")
+        if len(parts) >= 5:
+            present.add((parts[2], parts[3], _platform_of(wheel)))
+    return [
+        f"{platform} の {python}-{abi} の wheel が無い"
+        for python, abi in EXPECTED_KINDS
+        for platform in EXPECTED_PLATFORMS
+        if (python, abi, platform) not in present
+    ]
 
 
 def _venv_tool(venv: Path, name: str) -> Path:
@@ -134,9 +173,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--smoke", type=Path, help="新しい venv に入れて命令を撃つ wheel(この機体で動く 1 つ)"
     )
+    parser.add_argument(
+        "--expect-all",
+        action="store_true",
+        help="公開する 15 個(種類 × OS)が全部そろうかも確かめる(公開の前の job が付ける)",
+    )
     args = parser.parse_args(argv)
 
     layout = [problem for wheel in args.wheels for problem in layout_problems(wheel)]
+    if args.expect_all:
+        layout = [*missing_wheels(args.wheels), *layout]
     if args.smoke is None:
         smoke: list[str] = []
     else:

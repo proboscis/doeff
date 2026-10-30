@@ -88,10 +88,12 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
-          maturin-version: v1.15.0
+          # maturin 1.14 and later reject `-i python3.13t` ("only supported on 3.14 and later"); 1.13.1 accepts it.
+          # Only the free-threaded jobs use 1.13.1; the layout fix (an `include`d file under the python source)
+          # is in 1.13.0 and later, and verify-wheels checks that all 15 wheels exist.
+          maturin-version: v1.13.1
           target: ${{ matrix.target }}
-          # pyo3 0.28 supports free-threaded Python only from 3.14, so maturin 1.13+ rejects python3.13t.
-          args: --release --out dist -i python3.14t
+          args: --release --out dist -i python3.13t python3.14t
           working-directory: packages/doeff-indexer
           manylinux: auto
           before-script-linux: |
@@ -159,7 +161,9 @@ jobs:
       - name: Setup free-threaded Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.14t
+          python-version: |
+            3.13t
+            3.14t
       - name: Build native binary
         working-directory: packages/doeff-indexer
         run: |
@@ -169,11 +173,12 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
-          maturin-version: v1.15.0
+          # See build-linux-freethreaded: 1.13.1 accepts python3.13t, 1.14 and later do not. 1.13.x does not find
+          # free-threaded interpreters with --find-interpreter, and --find-interpreter would also find the runner's
+          # regular Pythons and build the abi3 wheel again, so both interpreters are named.
+          maturin-version: v1.13.1
           target: ${{ matrix.target }}
-          # --find-interpreter also finds the runner's regular Pythons and builds the same abi3 wheel as the
-          # non-free-threaded job; naming the free-threaded interpreter builds the cp314t wheel.
-          args: --release --out dist -i python3.14t
+          args: --release --out dist -i python3.13t python3.14t
           working-directory: packages/doeff-indexer
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -224,7 +229,9 @@ jobs:
       - name: Setup free-threaded Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.14t
+          python-version: |
+            3.13t
+            3.14t
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build native binary
@@ -237,8 +244,9 @@ jobs:
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
-          maturin-version: v1.15.0
-          args: --release --out dist -i python3.14t
+          # See build-macos-freethreaded.
+          maturin-version: v1.13.1
+          args: --release --out dist -i python3.13t python3.14t
           working-directory: packages/doeff-indexer
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -272,6 +280,9 @@ jobs:
   # project root; 1.13 and later put it under the python source. The maturin-version pins above keep
   # the layout from changing with the day's "latest"; this job checks the layout of every wheel and
   # installs the Linux x86_64 one to run the command, so a wrong wheel stops here, before the upload.
+  # --expect-all also fails when any of the 15 wheels (abi3, free-threaded 3.13 and 3.14, each for Linux
+  # x86_64 and aarch64, macOS x86_64 and arm64, and Windows) is missing; the first 0.2.0 dry run built only
+  # 10 and every check still passed.
   verify-wheels:
     name: Check the wheels install and run
     needs: [build-linux, build-linux-freethreaded, build-macos, build-macos-freethreaded, build-windows, build-windows-freethreaded]
@@ -289,6 +300,7 @@ jobs:
       - name: Check every wheel and run the command from the Linux x86_64 one
         run: >-
           python3 tools/verify_indexer_wheel.py
+          --expect-all
           --smoke dist/doeff_indexer-*-cp310-abi3-manylinux*_x86_64*.whl
           dist/*.whl
 
