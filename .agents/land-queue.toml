@@ -174,7 +174,22 @@ outside = [
 # 2026-10-02(agora-redesign #2589): 日次の全体検証の予算を別の鍵 full_timeout_s へ移した(merge-queue L195 で予算と窓の門の上限を別の
 # 鍵に分けた)。値はそのまま。窓の門の上限 timeout_s は宣言せず merge-queue の既定 600 秒(門は衝突の走査で数秒)に任せる。
 # 戻し方 = 鍵の名を timeout_s へ戻す。
-full_timeout_s = 9000
+# 2026-10-30(card acp:kanban-issue:ki-e2c345b1e593・依頼 lt-7EZB3BHKT3GHTM18RNN15XY688・戻せる): full_timeout_s を 9000 → 13500 に上げた。
+# ⇒ なぜ: 10-28 19:06 UTC〜10-30 07:06 UTC の 9 回のうち 6 回が 9000 秒に尽き(5 回は packages・1 回は hy-floor を切られ、後ろの段を撃たない)、
+#   10-30 07:06 の回は後段([verify] after — 処理ステージと同じ予算の中で撃つ・merge-queue verify.hy の run-after-steps)も「全体の時間の
+#   上限に達したので撃っていない」になった。走り切った 3 回の合計は 8489〜8875 秒で、後段に残る秒は約 120〜510 秒しかなかった。段の所要
+#   (秒・log の「所要」の行)= root 2069〜4319・packages 4451〜5318(走り切った回 — 切られた回は 4202〜5493 で切れた)・hy-floor 786〜1043・
+#   rust 372〜399・build と lint は 10 秒以下か、
+#   Rust と linter を組み直した回は約 450〜630 秒ずつ。root は同じ約 4700 本で 2064 秒の回と 4310 秒の回があり、遅い検の一覧も同じ検が
+#   2〜3 倍遅い — 検の増えではなく atlas の混み(clickhouse などと同じ機体・deadline scale x2.6〜7.5)で振れる。重い回の見積もりは
+#   build 618 + lint 627 + vscode 34 + root 4319 + packages 5493 + hy-floor 1043 + rust 399 ≒ 12500 秒で、13500 はそれに後段と検の増えの
+#   約 1000 秒を足した値。
+# ⇒ 収まる所: agora-controllers の予定の表の doeff の行の期限 14400 秒(controllers/daily_verify/protocol/schedule.hy — 日次の task が検証の
+#   本体を包む timeout)より 900 秒短く、4 時間ごとの次の回にも重ならない。R6 の deftest は下限 7200 だけを見る。
+# ⇒ 取らなかった案: 後段に別の予算を持たせる(merge-queue の run-after-steps)は、上限が同じ 4 時間の枠の中なので、この値を上げるのと
+#   同じ秒を取り合う。段を短くする(packages は package ごとに 1 本ずつ直列で走る)は別の変更で測る。
+# ⇒ 戻し方: 9000 へ戻す。
+full_timeout_s = 13500
 
 # R-7a95702d focus mode(operator の指示 2026-08-17 — merge queue は 10 分以内に収め、
 # 2700 秒の門は認めない。先例 = agora D568 出荷 B / ACP 同日切替)。
