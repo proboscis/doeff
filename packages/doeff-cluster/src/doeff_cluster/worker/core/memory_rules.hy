@@ -234,7 +234,7 @@
 (defk proc-tree-of [rows]
   {:pre [(: rows tuple)] :post [(: % ProcTree)] :tags {:context "worker" :role "judgment"}}
   "表の行を、木をたどる並びつきの形にするため(ProcTree の註)。同じ pid の行が 2 つ在れば後の行を使う(pid ごとに 1 行なら、根の外の
-   行は親が 1 つで、木をたどって 2 度は届かない — walk-of の註)。"
+   行は親が 1 つで、木をたどって 2 度は届かない — _walk-of の註)。"
   (val unique (.values (dfor r rows r.pid r)))
   (val by-pid (tuple (sorted unique :key (attrgetter "pid"))))
   (val by-parent (sorted unique :key (attrgetter "ppid" "pid")))
@@ -249,7 +249,7 @@
   (if (and (< at (len tree.pids)) (= (get tree.pids at) pid)) (get tree.by-pid at) None))
 
 
-(defrecord TreeWalk
+(defrecord _TreeWalk
   "row を頭とする木を 1 度たどった結末: members = 木の process(頭が先の深さ優先・兄弟は pid の昇順)・sizes = members の各々を頭と
    する木の rss の和・counts = その木の process の数・kids = その子の members の位置(pid の昇順)— どれも members と同じ位置。
    深さ優先の順なので、位置 i を頭とする木は members の i から counts[i] 個の連なり — 子の木を数え直さずに大きさと process を
@@ -261,9 +261,9 @@
   (#^ (get tuple #(tuple ...)) kids))
 
 
-(defk walk-of [tree row]
-  {:pre [(: tree ProcTree) (: row ProcRow)] :post [(: % TreeWalk)] :tags {:context "worker" :role "judgment"}}
-  "row を頭とする木を、木の process の数に比例する手間で数えるため(TreeWalk の註)。深さごとの段を上から作り(段 = その深さの行・
+(defk _walk-of [tree row]
+  {:pre [(: tree ProcTree) (: row ProcRow)] :post [(: % _TreeWalk)] :tags {:context "worker" :role "judgment"}}
+  "row を頭とする木を、木の process の数に比例する手間で数えるため(_TreeWalk の註)。深さごとの段を上から作り(段 = その深さの行・
    行ごとの子の数・次の段 — 次の段はこの段の行の子を順に繋いだ物なので、行 i の子は次の段の starts[i] から starts[i+1] の前まで)、
    下の段から木の大きさと数を足し上げ、上の段から深さ優先の位置を振り(子の位置 = 親の位置 + 1 + 前の兄弟の木の数)、位置の順に
    並べる。1 歩ごとに dict を引かず、段の列の切り出しで数える(10 万行で 1 秒を越えないため)。根へ戻る子は除く — 根の ppid が
@@ -302,52 +302,52 @@
   (val positions (flat placed))
   (val order (sorted (range (len positions)) :key (. positions __getitem__)))
   (val ordered (fn [column] (tuple (map (. column __getitem__) order))))
-  (TreeWalk :members (ordered (flat (gfor level levels (get level 0))))
+  (_TreeWalk :members (ordered (flat (gfor level levels (get level 0))))
             :sizes (ordered (flat (gfor t (cut tallies 0 -1) (get t 0))))
             :counts (ordered (flat (gfor t (cut tallies 0 -1) (get t 1))))
             :kids (ordered (flat kid-places))))
 
 
-(defrecord JobWalk
-  "job 1 つの根と、その木を 1 度たどった結末(root = JobRoot・walk = TreeWalk)。"
+(defrecord _JobWalk
+  "job 1 つの根と、その木を 1 度たどった結末(root = JobRoot・walk = _TreeWalk)。"
   (#^ JobRoot root)
-  (#^ TreeWalk walk))
+  (#^ _TreeWalk walk))
 
 
-(defk job-walks [rows roots]
+(defk _job-walks [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "表を木の形にし、job の根ごとに木を 1 度だけたどるため(JobWalk の列 — roots の順)。見張りの 1 回はこれを uses-of と units-of で
+  "表を木の形にし、job の根ごとに木を 1 度だけたどるため(_JobWalk の列 — roots の順)。見張りの 1 回はこれを _uses-of と _units-of で
    分けて使い、表を並べ直す・木をたどるのを 1 度で済ませる。表に根の無い job(読む間に終わった)は入れない。"
   (<- tree ProcTree (proc-tree-of rows))
   (<- found tuple (sequence (gfor root roots (row-of tree root.pid))))
   (val present (tuple (gfor #(root r) (zip roots found) :if (is-not r None) #(root r))))
-  (<- walked tuple (sequence (gfor #(_ r) present (walk-of tree r))))
-  (tuple (gfor #(#(root _) walk) (zip present walked) (JobWalk :root root :walk walk))))
+  (<- walked tuple (sequence (gfor #(_ r) present (_walk-of tree r))))
+  (tuple (gfor #(#(root _) walk) (zip present walked) (_JobWalk :root root :walk walk))))
 
 
-(defk uses-of [walks]
+(defk _uses-of [walks]
   {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "job ごとの memory の今(JobUse)を、根の木の rss の和で数えるため(walks = job-walks の答え)。大きい順。"
+  "job ごとの memory の今(JobUse)を、根の木の rss の和で数えるため(walks = _job-walks の答え)。大きい順。"
   (tuple (sorted (gfor w walks (JobUse :job w.root.name :pid w.root.pid :bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)))
                  :key (fn [use] #((- use.bytes) use.job)))))
 
 
 (defk job-uses [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "job ごとの memory の今(JobUse)を、表と根から数えるため(job-walks と uses-of の組)。"
-  (<- walks tuple (job-walks rows roots))
-  (<- uses tuple (uses-of walks))
+  "job ごとの memory の今(JobUse)を、表と根から数えるため(_job-walks と _uses-of の組)。"
+  (<- walks tuple (_job-walks rows roots))
+  (<- uses tuple (_uses-of walks))
   uses)
 
 
 (defrecord Gathering
-  "常駐の job の木を下りた結末(頭の註): point = 集まりの点・sides = 下りなかった兄弟(根から順)— どちらも TreeWalk の位置。"
+  "常駐の job の木を下りた結末(頭の註): point = 集まりの点・sides = 下りなかった兄弟(根から順)— どちらも _TreeWalk の位置。"
   (#^ int point)
   (#^ (get tuple #(int ...)) sides))
 
 
 (defk gathering-of [walk]
-  {:pre [(: walk TreeWalk)] :post [(: % Gathering)] :tags {:context "worker" :role "judgment"}}
+  {:pre [(: walk _TreeWalk)] :post [(: % Gathering)] :tags {:context "worker" :role "judgment"}}
   "常駐の job の集まりの点を求めるため(頭の註): いちばん大きい子の木が今の木の DOMINANT-SHARE 以上で、今の process 自身の rss 以上の間は
    その子へ下り、下りなかった兄弟を残す。子の木の大きさは walk の数え済みの物を引く(下りるたびに子の木をたどり直さない)。"
   (val down (fn [here]
@@ -364,7 +364,7 @@
 
 
 (defk units-of-job [walk root]
-  {:pre [(: walk TreeWalk) (: root JobRoot)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  {:pre [(: walk _TreeWalk) (: root JobRoot)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "job 1 つの止める単位を並べるため(頭の註)。根(walk の頭)は単位に入れない。"
   (<- task bool (task-root? root))
   (val members walk.members)
@@ -386,9 +386,9 @@
                                 :members (cut members at (+ at (get walk.counts at))))))))
 
 
-(defk units-of [walks]
+(defk _units-of [walks]
   {:pre [(: walks tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "全 job の止める単位を、大きい順に並べるため(walks = job-walks の答え・同じ大きさは job の名・頭の pid の順)。"
+  "全 job の止める単位を、大きい順に並べるため(walks = _job-walks の答え・同じ大きさは job の名・頭の pid の順)。"
   (<- found tuple (sequence (gfor w walks (units-of-job w.walk w.root))))
   ;; 大きい順(同じ大きさは job の名・頭の pid の順)— 安定な並べ替えを 2 度(下位の鍵から)。
   (tuple (sorted (sorted (chain.from-iterable found) :key (attrgetter "job" "head.pid")) :key (attrgetter "bytes") :reverse True)))
@@ -396,9 +396,9 @@
 
 (defk kill-units [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "全 job の止める単位を、表と根から並べるため(job-walks と units-of の組)。"
-  (<- walks tuple (job-walks rows roots))
-  (<- units tuple (units-of walks))
+  "全 job の止める単位を、表と根から並べるため(_job-walks と _units-of の組)。"
+  (<- walks tuple (_job-walks rows roots))
+  (<- units tuple (_units-of walks))
   units)
 
 

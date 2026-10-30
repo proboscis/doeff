@@ -2100,6 +2100,244 @@
    "name": "validate",
    "組": "許した物 — program の helper",
    "決め": "ki-f20b18c2aad9"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "(submodule)",
+   "name": "doeff_cluster.shared.entry.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "(submodule)",
+   "name": "doeff_hy.handle",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "(submodule)",
+   "name": "doeff_hy.macros",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "(submodule)",
+   "name": "doeff_hy.record",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.handle",
+   "name": "defhandler",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.handle",
+   "name": "handle",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.handle",
+   "name": "with_handler",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "<-",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "<->",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "absent_as",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "check",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defeffect",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "deff",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defk",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defmcp_tool",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defp",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defpipeline",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "defpp",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "deftest",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "do!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "fnk",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "for/do",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "lazy",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "on_raise",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "session",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "set!",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "traverse",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "val",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "validate",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.macros",
+   "name": "var",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record",
+   "name": "defenum",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record",
+   "name": "defrecord",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-hy",
+   "module": "doeff_hy.record",
+   "name": "defwire",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.entry.macros",
+   "name": "defsystem",
+   "組": "許した物 — Hy の macro",
+   "決め": "ki-838cd4565b33"
   }
  ]
 }
