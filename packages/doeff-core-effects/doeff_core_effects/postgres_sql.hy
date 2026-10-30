@@ -106,6 +106,9 @@
 (val CARRIED-LARGE (weakref.WeakSet))
 ;; 束ねた transaction の文を名つきの prepared statement にした覚え(接続 → PreparedBook — postgres-flush の註)。接続を捨てれば覚えも消える。
 ;; 覚える文の数は接続ごとに PREPARED-MAX まで(越えた文は名を付けずに流す — 文の綴りは宣言から決まる有限の組だが、上限で守る)。
+;; 接続の上の名の置き場の持ち主はこの覚え 1 つ: psycopg の自動の prepare は止めてあり(PostgresConnections.acquire)、名を消す文
+;; (DEALLOCATE・DISCARD)を流す道は持たない — 足すと覚えの知らない消しになり、その接続の次の往復が 26000 で落ちる(card ki-2c5646a8a2c1)。
+;; 速さのために名つきにしたい文は、psycopg の prepare を戻さず、この覚えの道(postgres-flush)へ寄せる。
 (val PREPARED (weakref.WeakKeyDictionary))
 (val PREPARED-LOCK (threading.Lock))
 (val PREPARED-MAX 256)
@@ -241,7 +244,11 @@
       (try
         (.get-nowait (get self.idle name))
         (except [Empty]
-          (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True
+          ;; 接続の上の prepared statement の名の持ち主は doeff 1 つ(PREPARED の註): psycopg の自動の prepare を止める
+          ;; (prepare_threshold=None)。psycopg に名を持たせると、cursor の道で同じ文を 6 回目から _pg3_N として用意し、ROLLBACK(や DROP・
+          ;; ALTER)を見ると自分の覚えを捨てて DEALLOCATE ALL を送り、doeff_pq_N も消す — PreparedBook は知らないので、その接続は閉じるまで
+          ;; 束ねた往復が 26000 で落ちる(agora card ki-2c5646a8a2c1)。
+          (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True :prepare-threshold None
                                             #** (.connection-options self name)))
           (.register-loader connection.adapters "json" TextLoader)
           (.register-loader connection.adapters "jsonb" TextLoader)
@@ -810,8 +817,8 @@
    送り切り、sync までの答えを順に受ける(card ki-f7a1ef77251f — cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
    待ちを作り、本番の free-threaded の Python の psycopg〔C の拡張の無い pure-python の libpq の口〕で文 1 つに約 0.25 ms の CPU を使い、
    DB は文が 1 つ届くごとに起きて次の文を待った〔pipeline の中の ClientRead〕。手元の 8 文の往復で client の CPU 2.09 → 0.62 ms)。
-   文は接続ごとに名つきの prepared statement にして使い回す(PREPARED — 初めての文は同じ往復で用意してから流す。cursor の道でも psycopg が
-   5 回目から用意していた。名を付けないと server が毎回 plan を組み、索引 76 本の表の行の錠つきの読みで 1 回 約 0.4 ms)。
+   文は接続ごとに名つきの prepared statement にして使い回す(PREPARED — 初めての文は同じ往復で用意してから流す。名を付けないと server が
+   毎回 plan を組み、索引 76 本の表の行の錠つきの読みで 1 回 約 0.4 ms。cursor の道は名を付けない — psycopg の自動の prepare は止めてある)。
    引数の書き換えと値の写し・答えの値の読みは cursor と同じ psycopg の部品(step-queries・results-answer)。pipeline mode は答えを sync まで
    受け切った後に出る(落ちた往復でも — 送りか受けの途中で接続が切れて出られずに残った接続は、返す時に捨てる)。"
   (import psycopg)
