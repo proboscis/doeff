@@ -31,7 +31,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
    Hy の macro」(R14・R15・R31 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
    macro だけを出す公開の submodule(macro の module)の行だけ: macro でない名・macro の外の名も出す submodule を置くと赤。
-   組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行だけ。組「許した物 — 換算の
+   組「許した物 — CLI コマンド」(R7・R31)に置けるのは console script と Rust の実行 file の行のうち、ADR の条が名を挙げた物
+   (ADR_COMMANDS — 条の文がその名を挙げる事も確かめる)だけ: ADR に無い命令を置くと赤。組「許した物 — pytest の plugin の
+   登録」(R10・R33)に置けるのは pytest11 の entry point の行と、その entry point が読む module が出す名だけ、組「許した物 —
+   起動の口」(R36)に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ。組「許した物 — 換算の
    関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
    program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「許した物 — 例外の型」(R2 — effect と handler が
    投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
@@ -98,19 +101,45 @@ ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
 ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
 #: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
 EXCEPTION_GROUP = "許した物 — 例外の型"
+#: 決まりが許した pytest の plugin の登録の組(ADR-DOE-API-001 R10・R33)— pytest11 の entry point の行と、その entry point が
+#: 読む module(plugin の module)が出す名(使い手の検が書く宣言)だけを置ける。
+PLUGIN_GROUP = "許した物 — pytest の plugin の登録"
+#: 決まりが許した起動の口の組(ADR-DOE-API-001 R36)— package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける。
+STARTUP_GROUP = "許した物 — 起動の口"
+#: 目録の pytest11 の entry point の行の形(tools/public_api_inventory.py の _metadata_rows)。
+PYTEST_PLUGIN_FORM = "entry point(pytest11)"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
     MACRO_GROUP: "Hy の macro と、Hy の macro だけを出す公開の submodule(macro の module)だけを置ける"
     "(ADR-DOE-API-001 R14・R15・R31)",
-    COMMAND_GROUP: "console script と Rust の実行 file だけを置ける(ADR-DOE-API-001 R7・R31)",
+    COMMAND_GROUP: "ADR-DOE-API-001 の条が名を挙げて残すと決めた console script と Rust の実行 file だけを置ける"
+    "(ADR_COMMANDS — R7・R23・R24・R27・R28・R31・R33)",
     CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
     ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
     EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
     "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
+    PLUGIN_GROUP: "pytest11 の entry point の行と、その entry point が読む module(plugin の module)が出す名だけを置ける"
+    "(ADR-DOE-API-001 R10・R33)",
+    STARTUP_GROUP: "package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける(ADR-DOE-API-001 R36)",
 }
+#: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンド(package の dir から、console script か Rust の実行 file の名から
+#: 名を挙げた条へ)。組「許した物 — CLI コマンド」はここに在る名だけを置け、条の文がその名を挙げる事を
+#: test_every_command_the_guard_allows_is_named_by_its_rule が確かめる — ADR に無い命令を足すと赤。
+ADR_COMMANDS: dict[str, dict[str, str]] = {
+    "doeff-adr": {"doeff-adr": "R33"},
+    "doeff-agentic": {"doeff-agentic": "R28", "doeff-agentic-tui": "R7"},
+    "doeff-agents": {"doeff-agents": "R7"},
+    "doeff-conductor": {"conductor": "R7"},
+    "doeff-effect-analyzer": {"doeff-effects": "R24"},
+    "doeff-flow": {"doeff-flow": "R7"},
+    "doeff-hy": {"doeff-hy-check": "R31"},
+    "doeff-indexer": {"doeff-indexer": "R27"},
+    "doeff-linter": {"doeff-linter": "R23"},
+}
+ADR_FILE = ROOT / "docs" / "adr" / "defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy"
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
 #: 決めの id: card(ki-)・依頼(lt-)・利用者の発言(ci-)。
@@ -268,14 +297,36 @@ def defined_by(row: Mapping[str, Any], package: Mapping[str, Any]) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class GroupFacts:
+    """組の形の確かめに要る、目録の行の外の事実(package 1 つの分)。"""
+
+    #: 許した物の表で組「ADR を書く関数」に置いた (module, 名)。
+    writers: frozenset[Key] = frozenset()
+    #: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンドの名(ADR_COMMANDS のその package の分)。
+    commands: frozenset[str] = frozenset()
+    #: pytest11 の entry point が読む module(tools/public_api_inventory.py の plugin_modules)。
+    plugin_modules: frozenset[str] = frozenset()
+    #: package が配る .pth が起動ごとに呼ぶ (module, 名)(tools/public_api_inventory.py の startup_calls)。
+    startup_calls: frozenset[Key] = frozenset()
+
+
+#: 目録の行の外の事実を何も持たない組の確かめ(既定)。
+NO_FACTS = GroupFacts()
+
+
 def fits_allowed_group(
     group: str,
     row: Mapping[str, Any],
     package: Mapping[str, Any],
-    writers: frozenset[Key] = frozenset(),
+    facts: GroupFacts = NO_FACTS,
 ) -> bool:
-    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。writers = 許した物の表で組「ADR を書く関数」に
-    置いた (module, 名)。"""
+    """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。"""
+    writers = facts.writers
+    if group == PLUGIN_GROUP:
+        return row["form"] == PYTEST_PLUGIN_FORM or row["module"] in facts.plugin_modules
+    if group == STARTUP_GROUP:
+        return (row["module"], row["name"]) in facts.startup_calls
     if group == HELPER_GROUP:
         return row["form"] == tool.PROGRAM_HELPER
     if group == CONVERSION_GROUP:
@@ -290,7 +341,11 @@ def fits_allowed_group(
         return row["form"] in ("class", "型")
     if group == EXCEPTION_GROUP:
         return row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package)
-    return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
+    return (
+        group == COMMAND_GROUP
+        and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
+        and row["name"] in facts.commands
+    )
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
@@ -419,12 +474,15 @@ def check_package(
     table: KnownTable,
     allowed: AllowedTable = NOTHING_ALLOWED,
     repo: Path = ROOT,
+    commands: Mapping[str, Mapping[str, str]] = ADR_COMMANDS,
 ) -> None:
     """目録の 1 package を既知の表(違反の表)と許した物の表と突き合わせる。どちらの表にも無い外れと、表に在るのに目録に
     無い名(表ごと)を名指して止める。
 
     名を submodule から入口へ移した行(moved_to_root)は、表の submodule の行と同じ行と読む。許した物の表の名は、目録の形が
-    置いた組の形に合わなければ組ごとに名指して止める(fits_allowed_group — 入口へ移した行は入口の行の形で見る)。
+    置いた組の形に合わなければ組ごとに名指して止める(fits_allowed_group — 入口へ移した行は入口の行の形で見る)。CLI コマンドの
+    組は commands(ADR の条が名を挙げた命令 — 既定は ADR_COMMANDS)に在る名だけ、plugin の登録と起動の口の組は repo の下の
+    package の pyproject.toml が置く物だけに合う。
     決まりの範囲の Rust の拡張を持つ package は、目録が import で読めなければ止める(unread_native_modules)。
     """
     directory = package["dir"]
@@ -443,12 +501,18 @@ def check_package(
     shown = {key: groups[key] for key in groups.keys() & found.keys()} | {
         root: groups[old] for root, old in moved if old in groups
     }
-    writers = frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP)
+    package_dir = repo / "packages" / directory
+    facts = GroupFacts(
+        writers=frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP),
+        commands=frozenset(commands.get(directory, {})),
+        plugin_modules=tool.plugin_modules(tool.read_layout(package_dir)),
+        startup_calls=tool.startup_calls(package_dir),
+    )
     misshapen = {
         group: [
             found[key]
             for key in sorted(shown)
-            if shown[key] == group and not fits_allowed_group(group, found[key], package, writers)
+            if shown[key] == group and not fits_allowed_group(group, found[key], package, facts)
         ]
         for group in ALLOWED_GROUPS
     }
@@ -1406,10 +1470,11 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     tmp_path: Path,
 ) -> None:
     """組「許した物 — Hy の macro」に置けるのは Hy の macro の名と macro だけを出す公開の submodule の行、組「許した物 — CLI
-    コマンド」に置けるのは console script の行だけ(ADR-DOE-API-001 R7・R14・R15・R31)。
+    コマンド」に置けるのは ADR の条が名を挙げた console script の行だけ(ADR-DOE-API-001 R7・R14・R15・R31)。
 
     macro の module(名に _ の無い submodule)と macro と console script を許した物の表に置けば緑。macro の外の名も出す
     submodule・macro でない関数・console script を macro の組に、macro と関数を CLI コマンドの組に置くと赤(組と名と形を名指す)。
+    ADR の条が名を挙げない console script を CLI コマンドの組に置くのも赤(test_a_command_the_adr_does_not_name_turns_red)。
     """
     repo = _fixture_tree(
         tmp_path,
@@ -1444,7 +1509,7 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
             {**placed, **moved}
         )
 
-    check_package(package, *tables({}))
+    check_package(package, *tables({}), commands=FIXTURE_COMMANDS)
     misplaced = [
         ((SUBMODULE, mixed), MACRO_GROUP, f"{mixed}(公開の submodule)(公開の submodule・"),
         ((FIXTURE_ROOT, "helper"), MACRO_GROUP, f"{FIXTURE_ROOT}.helper({tool.CONVERSION}・"),
@@ -1458,9 +1523,165 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     ]
     for key, group, said in misplaced:
         with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
-            check_package(package, *tables({key: group}))
+            check_package(package, *tables({key: group}), commands=FIXTURE_COMMANDS)
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[group] in str(failure.value)
+
+
+#: 使い捨ての package の console script を、ADR の条が名を挙げた命令と読む表(ADR_COMMANDS の形)。
+FIXTURE_COMMANDS = {FIXTURE_DIR: {"fixture-command": "R7"}}
+#: 条の文の名を引く使い捨ての ADR(R7 だけが fixture-command を挙げる)。
+FIXTURE_RULES = """
+    [(rule R7 "人が打つ CLI コマンド(fixture-command)は残す。")
+     (rule R8 "code は CLI コマンドのサブコマンドで process を起こさない(fixture-command-daemon は消した)。")]
+"""
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_command_the_adr_does_not_name_turns_red(tmp_path: Path) -> None:
+    """組「許した物 — CLI コマンド」に置けるのは ADR-DOE-API-001 の条が名を挙げた命令だけ(ADR_COMMANDS)— 使い捨ての package
+    の console script は、ADR の条が名を挙げれば緑・挙げなければ形が console script でも赤(名と形を名指す)。命令と条の組の表に
+    在っても、条の文がその名を挙げなければ赤(名の一部だけが合う別の名 fixture-command-daemon も挙げた事にしない)。"""
+    repo = _fixture_tree(tmp_path, {"__init__.py": EFFECTS_AND_HANDLERS})
+    (repo / "packages" / FIXTURE_DIR / "pyproject.toml").write_text(
+        textwrap.dedent(COMMAND_PYPROJECT), encoding="utf-8"
+    )
+    package = _read_fixture(repo)
+    command = ("(console script)", "fixture-command")
+    tables = _fixture_table({}), _fixture_grouped({command: COMMAND_GROUP})
+    check_package(package, *tables, commands=FIXTURE_COMMANDS)
+    with pytest.raises(AssertionError, match=re.escape(f"組「{COMMAND_GROUP}」")) as failure:
+        check_package(package, *tables, commands={})
+    assert f"(console script).fixture-command({tool.CONSOLE_SCRIPT}・" in str(failure.value)
+    assert ALLOWED_SHAPES[COMMAND_GROUP] in str(failure.value)
+
+    rules = adr_rules(textwrap.dedent(FIXTURE_RULES))
+    assert unnamed_commands(rules, FIXTURE_COMMANDS) == []
+    assert unnamed_commands(rules, {FIXTURE_DIR: {"fixture-command": "R8"}}) == [
+        f"{FIXTURE_DIR} の命令 fixture-command: 条 R8 の文がこの名を挙げない"
+    ]
+    assert unnamed_commands(rules, {FIXTURE_DIR: {"fixture-command": "R9"}}) == [
+        f"{FIXTURE_DIR} の命令 fixture-command: 条 R9 が ADR に無い"
+    ]
+
+
+def adr_rules(text: str) -> dict[str, str]:
+    """ADR の file の文から、条の id(R1 ほか)から条の文へ。"""
+    return {
+        match["id"]: match["text"]
+        for match in re.finditer(r'\(rule (?P<id>R\d+) "(?P<text>(?:[^"\\]|\\.)*)"', text)
+    }
+
+
+def unnamed_commands(
+    rules: Mapping[str, str], commands: Mapping[str, Mapping[str, str]]
+) -> list[str]:
+    """命令と条の組のうち、条が ADR に無いか、条の文がその名を挙げない物(名の前後が名の字でない所に在る時だけ挙げたと読む)。"""
+    return [
+        f"{directory} の命令 {name}: 条 {rule} が ADR に無い"
+        if rule not in rules
+        else f"{directory} の命令 {name}: 条 {rule} の文がこの名を挙げない"
+        for directory, named in sorted(commands.items())
+        for name, rule in sorted(named.items())
+        if rule not in rules
+        or re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", rules[rule]) is None
+    ]
+
+
+def test_every_command_the_guard_allows_is_named_by_its_rule() -> None:
+    """ADR_COMMANDS の命令は、どれも書いた条の文が名を挙げる(ADR-DOE-API-001 R7・R23・R24・R27・R28・R31・R33)— 条を改めずに
+    命令を足すと赤。"""
+    assert not (
+        problems := unnamed_commands(adr_rules(ADR_FILE.read_text(encoding="utf-8")), ADR_COMMANDS)
+    ), "\n".join(problems)
+
+
+#: pytest の plugin の登録と、起動の .pth と、plugin の module の外の名を持つ package の宣言。
+PLUGIN_PYPROJECT = (
+    FIXTURE_PYPROJECT
+    + f"""
+[project.entry-points.pytest11]
+fixture = "{FIXTURE_ROOT}"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/{FIXTURE_ROOT}.pth" = "{FIXTURE_ROOT}.pth"
+"""
+)
+PLUGIN_ROOT = '''
+
+def declare_slow(test, reason: str) -> None:
+    """A declaration the plugin reads off a test function."""
+    test.slow_reason = reason
+
+
+def install() -> None:
+    """What the .pth calls at every start of the venv's Python."""
+'''
+PLUGIN_TOOLS = '''
+def tool_helper(x: int) -> int:
+    """A plain function of a public submodule (not the plugin's module)."""
+    return x + 1
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_groups(
+    tmp_path: Path,
+) -> None:
+    """組「許した物 — pytest の plugin の登録」に置けるのは pytest11 の entry point の行と plugin の module が出す名、組「許した物 —
+    起動の口」に置けるのは package が配る .pth が起動ごとに呼ぶ名だけ(ADR-DOE-API-001 R10・R33・R36)。
+
+    使い捨ての package の pytest11 の登録と plugin の宣言と .pth が呼ぶ install は、それぞれの組に置けば緑。plugin の module の
+    外の名を plugin の組に、.pth が呼ばない名を起動の口の組に置くと赤(組と名と形を名指す)。.pth を配らなければ install も赤。
+    """
+    repo = _fixture_tree(
+        tmp_path,
+        {"__init__.py": EFFECTS_AND_HANDLERS + PLUGIN_ROOT, "tools.py": PLUGIN_TOOLS},
+    )
+    package_dir = repo / "packages" / FIXTURE_DIR
+    (package_dir / "pyproject.toml").write_text(textwrap.dedent(PLUGIN_PYPROJECT), encoding="utf-8")
+    (package_dir / "src" / f"{FIXTURE_ROOT}.pth").write_text(
+        f"import {FIXTURE_ROOT}; {FIXTURE_ROOT}.install()\n", encoding="utf-8"
+    )
+    package = _read_fixture(repo)
+    tools = f"{FIXTURE_ROOT}.tools"
+    forms = {(row["module"], row["name"]): row["form"] for row in package["exports"]}
+    assert forms[("(entry point)", "pytest11:fixture")] == PYTEST_PLUGIN_FORM
+    placed = {
+        ("(entry point)", "pytest11:fixture"): PLUGIN_GROUP,
+        (FIXTURE_ROOT, "declare_slow"): PLUGIN_GROUP,
+        (FIXTURE_ROOT, "install"): STARTUP_GROUP,
+    }
+    outliers = {tools: ["tool_helper"], SUBMODULE: [tools]}
+
+    def tables(moved: Mapping[Key, str]) -> tuple[KnownTable, AllowedTable]:
+        listed = {
+            module: [name for name in names if (module, name) not in moved]
+            for module, names in outliers.items()
+        }
+        return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
+            {**placed, **moved}, "ki-a07d4703a73b"
+        )
+
+    check_package(package, *tables({}), repo=repo)
+    misplaced = [
+        (
+            (tools, "tool_helper"),
+            PLUGIN_GROUP,
+            f"{tools}.tool_helper({forms[(tools, 'tool_helper')]}・",
+        ),
+        ((FIXTURE_ROOT, "declare_slow"), STARTUP_GROUP, f"{FIXTURE_ROOT}.declare_slow("),
+    ]
+    for key, group, said in misplaced:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{group}」")) as failure:
+            check_package(package, *tables({key: group}), repo=repo)
+        assert said in str(failure.value)
+        assert ALLOWED_SHAPES[group] in str(failure.value)
+
+    (package_dir / "src" / f"{FIXTURE_ROOT}.pth").unlink()
+    with pytest.raises(AssertionError, match=re.escape(f"組「{STARTUP_GROUP}」")) as failure:
+        check_package(package, *tables({}), repo=repo)
+    assert f"{FIXTURE_ROOT}.install(" in str(failure.value)
 
 
 def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:

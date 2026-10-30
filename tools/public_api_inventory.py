@@ -477,6 +477,44 @@ def read_layout(package_dir: Path) -> PackageLayout:
     )
 
 
+def plugin_modules(layout: PackageLayout) -> frozenset[str]:
+    """The modules the package's ``pytest11`` entry points load (pytest reads the plugin's names there)."""
+    return frozenset(
+        target.partition(":")[0] for target in layout.entry_points.get("pytest11", {}).values()
+    )
+
+
+def _called_names(line: str) -> Iterator[tuple[str, str]]:
+    """The ``(module, name)`` of each ``module.name(...)`` call in one ``.pth`` line ``site`` runs."""
+    for node in ast.walk(ast.parse(line)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            owner = ast.unparse(node.func.value)
+            if all(part.isidentifier() for part in owner.split(".")):
+                yield owner, node.func.attr
+
+
+def startup_calls(package_dir: Path) -> frozenset[tuple[str, str]]:
+    """The ``(module, name)`` the ``.pth`` files a package installs call at every start of the venv's Python.
+
+    hatch's ``force-include`` puts the ``.pth`` into site-packages; ``site`` runs each of its lines that
+    starts with ``import`` (doeff-hy's ``import doeff_hy_bytecode_guard; doeff_hy_bytecode_guard.install()``).
+    """
+    pyproject = package_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return frozenset()
+    included = _table(
+        _read_toml(pyproject), "tool", "hatch", "build", "targets", "wheel", "force-include"
+    )
+    return frozenset(
+        call
+        for source, target in included.items()
+        if str(target).endswith(".pth") and (package_dir / source).is_file()
+        for line in (package_dir / source).read_text(encoding="utf-8").splitlines()
+        if line.startswith(("import ", "import\t"))
+        for call in _called_names(line)
+    )
+
+
 def _module_name(prefix: str, relative: Path) -> str:
     """The import name of a module file or package dir below the package named ``prefix``."""
     *parents, last = relative.parts

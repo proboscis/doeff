@@ -18,11 +18,6 @@
   "doeff-adr": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-adr"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_adr.registry": [
       "EnforcementMode",
@@ -44,9 +39,6 @@
      ]
     },
     "境界 — pytest の plugin の登録": {
-     "(entry point)": [
-      "pytest11:doeff_adr"
-     ],
      "doeff_adr.pytest_plugin": [
       "DEFAULT_FILE_PATTERNS",
       "DoeffAdrHyFile"
@@ -57,11 +49,6 @@
   "doeff-agentic": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-agentic-tui"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_agentic": [
       "AgentConfig",
@@ -1549,11 +1536,6 @@
       "doeff_agents.sessionhost.turn",
       "doeff_agents.shell",
       "doeff_agents.tmux"
-     ]
-    },
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-agents"
      ]
     },
     "境界 — effect の値の型": {
@@ -9007,11 +8989,6 @@
       "GateOption"
      ]
     },
-    "境界 — CLI": {
-     "(console script)": [
-      "conductor"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_conductor": [
       "AgentTask",
@@ -10804,11 +10781,6 @@
   "doeff-effect-analyzer": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-effects"
-     ]
-    },
     "境界 — effect の結果の型": {
      "doeff_effect_analyzer.handler_effects": [
       "Coverage",
@@ -11130,11 +11102,6 @@
   "doeff-flow": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-flow"
-     ]
-    },
     "境界 — effect の値の型": {
      "doeff_flow": [
       "LiveTrace",
@@ -11215,9 +11182,6 @@
    "範囲": "決まりの範囲",
    "名": {
     "外れ — 内側の module へ移す": {
-     "doeff_hy_bytecode_guard": [
-      "install"
-     ],
      "doeff_hy_bytecode_guard.expansion_trees": [
       "MacroRecord"
      ],
@@ -11235,13 +11199,7 @@
   },
   "doeff-hy-pytest": {
    "範囲": "決まりの範囲",
-   "名": {
-    "境界 — pytest の plugin の登録": {
-     "(entry point)": [
-      "pytest11:doeff_hy"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-image": {
    "範囲": "決まりの範囲",
@@ -11255,13 +11213,7 @@
   },
   "doeff-indexer": {
    "範囲": "決まりの範囲",
-   "名": {
-    "境界 — CLI": {
-     "(console script)": [
-      "doeff-indexer"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-jev": {
    "範囲": "決まりの範囲",
@@ -11275,13 +11227,7 @@
   },
   "doeff-linter": {
    "範囲": "決まりの範囲",
-   "名": {
-    "境界 — CLI": {
-     "(実行 file)": [
-      "doeff-linter"
-     ]
-    }
-   }
+   "名": {}
   },
   "doeff-llm": {
    "範囲": "決まりの範囲",
@@ -13234,20 +13180,6 @@
    "決め": "ki-869cdf21ec85"
   },
   {
-   "package": "doeff-hy-pytest",
-   "module": "doeff_hy_pytest",
-   "name": "declare_process_tree_cpu",
-   "訳": "検ごとの宣言 declare_process_tree_cpu は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)",
-   "決め": "ki-ad38495b7c15"
-  },
-  {
-   "package": "doeff-hy-pytest",
-   "module": "doeff_hy_pytest",
-   "name": "declare_step_budget",
-   "訳": "検ごとの宣言 declare_step_budget は使い手の検が定義の隣に書く plugin の入力で、測りの中の module(旧 doeff_hy_pytest.budget)から入口へ移した(公開の名を plugin の登録と宣言 2 個の 3 個に絞る — 利用者の答え hy-pytest = in の lt-796ZF4G6CQ6TSHS5JDDRP09P1K)",
-   "決め": "ki-ad38495b7c15"
-  },
-  {
    "package": "doeff-agents",
    "module": "doeff_agents",
    "name": "EventRecord",
@@ -14919,13 +14851,6 @@
    "name": "FoldCarried",
    "訳": "effect CheckCoverage の欄 fold の値の型(運ばれた Program を出した所で数える運び手 — R2 の effect の値の型)。前の関数 runs_where_performed と、呼び手が渡した述語(include)の代わり(ADR-DOE-API-001 R24)",
    "決め": "lt-646XDCG0CJXMX7JP6558JD426W"
-  },
-  {
-   "package": "doeff-agentic",
-   "module": "(console script)",
-   "name": "doeff-agentic",
-   "訳": "Rust の CLI の実行 file doeff-agentic を Python の console script へ寄せた(利用者の答え lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1「消して寄せる」)。IDE の plugin が呼ぶ 6 動詞を同じ引数と JSON で答える。Rust の package は card ki-7b2e293a2db7 で消し、その package の (実行 file) の行も消した(ADR-DOE-API-001 R28)",
-   "決め": "ki-626bf91b0560"
   },
   {
    "package": "doeff-indexer",
