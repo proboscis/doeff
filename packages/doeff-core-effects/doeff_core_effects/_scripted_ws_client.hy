@@ -20,7 +20,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import doeff [EffectBase Program])
-(import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent WsLink WsConnectFailed
+(import doeff_core_effects._ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent WsLink WsConnectFailed
                                               WsText WsBinary WsLinkClosed WsFrame WsSent WsScript ScriptedWsEndpoint ScriptedWsText
                                               ScriptedWsBinary ScriptedWsClosed ScriptedWsFrame WsSentText WsSentClose
                                               NOT-IN-SCRIPT-REASON SCRIPT-EXHAUSTED-REASON link-name closed-answer closing-links])
@@ -87,6 +87,8 @@
 
 
 (defhandler scripted-ws-link-handler [#^ WsScript script]
+  "WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll・ReadWsSent に、呼び手の台本 WsScript で I/O なしに答える(頭の註)。
+   範囲の終わりに接続を閉じる closing-links は installer scripted-ws-client が被せる。"
   ;; 台本の接続(先頭の説明)。links = 開いている接続の列・ended = 終わった接続の WsLinkClosed の列(閉じた後の WsReceive / WsSend が同じ答えを
   ;; 返す)・sent = 送った文と閉じの記録・counter = 振った id の数(どれも session の値)。
   ;; 引数に残す理由: script は呼び手が組んだ凍った台本(繋ぎ先と届く frame)で、組み立ての外で差し替える相手がいない。

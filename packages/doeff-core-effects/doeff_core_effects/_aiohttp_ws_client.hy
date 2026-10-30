@@ -35,7 +35,7 @@
 (import doeff [EffectBase Program])
 (import doeff_core_effects._effects [Await])
 (import doeff_core_effects._http_server_effects [HttpHeader])
-(import doeff_core_effects.ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsText WsBinary
+(import doeff_core_effects._ws_client_effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll WsLink WsConnectFailed WsText WsBinary
                                               WsLinkClosed WsFrame WsSent link-name closed-answer closing-links])
 
 ;; 繋ぐまで(名前の引きと TCP の接続)の上限と、繋いだ後の handshake の答え(101)を待つ上限(秒)— 待ち受けの ws の中継と同じ 2 つの分け方。
@@ -142,6 +142,8 @@
 
 
 (defhandler aiohttp-ws-link-handler [#^ (get Callable #([] aiohttp.ClientSession)) client-factory]
+  "WsConnect・WsReceive・WsSend・WsDisconnect・WsDisconnectAll に、aiohttp の WebSocket の実 I/O で答える(頭の註)。範囲の終わりに
+   接続を閉じる closing-links は installer aiohttp-ws-client が被せる。組の外側に await-handler と state が要る。"
   ;; 本物の接続(先頭の説明)。open = 開いている接続の表(id → OpenLink)・ended = 終わった接続の答えの表(id → WsLinkClosed — 閉じた後の
   ;; WsReceive / WsSend が同じ答えを返す)。どちらも session の値の 1 つの dict: 節は Await の後も同じ表を参照し、参照してから書くまでに await を
   ;; 挟まない(session var の tuple にすると節の初めに取った値を await の後に書き戻し、並行の節の書きを消す)。counter = 振った id の数(session var

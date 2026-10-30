@@ -2,7 +2,7 @@
 
 This package used to import doeff_hy eagerly (effects.py pulled in the Hy HTTP
 effects), which registered Hy's import hook as a side effect of every
-``import doeff``; importing ``doeff_core_effects.http_effects`` or
+``import doeff``; importing ``doeff_core_effects._http_effects`` or
 ``._memo_handlers_impl`` directly relied on that. The hook is now registered on
 the first import of a ``.hy`` submodule instead (import floor of ``import doeff``
 47 → 28 MiB, measured 2026-09-23). Importing this module installs the finder.

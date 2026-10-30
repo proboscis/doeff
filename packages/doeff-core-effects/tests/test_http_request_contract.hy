@@ -11,7 +11,7 @@
 ;;; tests/effects/http_request_deftest_cases.hy、失敗の類の写し方は test_http_failures.hy。
 (require doeff-hy.macros [defk deftest <-])
 (import httpx)
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import http_contract_handlers [REFUSED WORLD])
 
 

@@ -17,9 +17,7 @@ import argparse
 import json
 from dataclasses import dataclass
 
-from doeff_core_effects import await_handler, scheduled
-from doeff_core_effects.http_effects import HttpRequest
-from doeff_core_effects.http_handlers import http_production_handler
+from doeff_core_effects import HttpRequest, await_handler, http_production_handler, scheduled
 
 from doeff import do, run
 

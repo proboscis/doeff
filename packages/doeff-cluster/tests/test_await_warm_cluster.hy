@@ -9,7 +9,7 @@
 (import urllib.parse [urlsplit])
 (import doeff [with_handlers])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (val WATCH-MAX-SECONDS (/ (. (ClusterTiming) watch-max-ms) 1000.0))  ; 待ちの上限の既定(ClusterTiming)

@@ -15,7 +15,7 @@
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import json)
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_time [Delay])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 

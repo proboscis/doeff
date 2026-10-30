@@ -435,13 +435,50 @@ if TYPE_CHECKING:
     from doeff_core_effects._stop_signal_handlers import (
         scripted_stop_handler as scripted_stop_handler,
     )
+    from doeff_core_effects._http_effects import HttpFailed as HttpFailed
+    from doeff_core_effects._http_effects import HttpFailureKind as HttpFailureKind
+    from doeff_core_effects._http_effects import HttpPhases as HttpPhases
+    from doeff_core_effects._http_host_gate import HostNotAllowed as HostNotAllowed
+    from doeff_core_effects._http_host_gate import http_host_gate as http_host_gate
+    from doeff_core_effects._ws_client_effects import ReadWsSent as ReadWsSent
+    from doeff_core_effects._ws_client_effects import ScriptedWsBinary as ScriptedWsBinary
+    from doeff_core_effects._ws_client_effects import ScriptedWsClosed as ScriptedWsClosed
+    from doeff_core_effects._ws_client_effects import ScriptedWsEndpoint as ScriptedWsEndpoint
+    from doeff_core_effects._ws_client_effects import ScriptedWsFrame as ScriptedWsFrame
+    from doeff_core_effects._ws_client_effects import ScriptedWsReply as ScriptedWsReply
+    from doeff_core_effects._ws_client_effects import ScriptedWsText as ScriptedWsText
+    from doeff_core_effects._ws_client_effects import WsBinary as WsBinary
+    from doeff_core_effects._ws_client_effects import WsConnect as WsConnect
+    from doeff_core_effects._ws_client_effects import WsConnectFailed as WsConnectFailed
+    from doeff_core_effects._ws_client_effects import WsConnectOutcome as WsConnectOutcome
+    from doeff_core_effects._ws_client_effects import WsDisconnect as WsDisconnect
+    from doeff_core_effects._ws_client_effects import WsDisconnectAll as WsDisconnectAll
+    from doeff_core_effects._ws_client_effects import WsFrame as WsFrame
+    from doeff_core_effects._ws_client_effects import WsLink as WsLink
+    from doeff_core_effects._ws_client_effects import WsLinkClosed as WsLinkClosed
+    from doeff_core_effects._ws_client_effects import WsReceive as WsReceive
+    from doeff_core_effects._ws_client_effects import WsScript as WsScript
+    from doeff_core_effects._ws_client_effects import WsSend as WsSend
+    from doeff_core_effects._ws_client_effects import WsSendOutcome as WsSendOutcome
+    from doeff_core_effects._ws_client_effects import WsSent as WsSent
+    from doeff_core_effects._ws_client_effects import WsSentClose as WsSentClose
+    from doeff_core_effects._ws_client_effects import WsSentRecord as WsSentRecord
+    from doeff_core_effects._ws_client_effects import WsSentText as WsSentText
+    from doeff_core_effects._ws_client_effects import WsText as WsText
+    from doeff_core_effects._ws_client_effects import closing_links as closing_links
+    from doeff_core_effects._aiohttp_ws_client import (
+        aiohttp_ws_link_handler as aiohttp_ws_link_handler,
+    )
+    from doeff_core_effects._scripted_ws_client import (
+        scripted_ws_link_handler as scripted_ws_link_handler,
+    )
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
     "HttpRequest": "doeff_core_effects._effects",
     "HttpResponse": "doeff_core_effects._effects",
-    "http_fixture_handler": "doeff_core_effects.http_handlers",
-    "http_production_handler": "doeff_core_effects.http_handlers",
+    "http_fixture_handler": "doeff_core_effects._http_handlers",
+    "http_production_handler": "doeff_core_effects._http_handlers",
     "ProcessStepBudget": "doeff_core_effects._scheduler",
     "SchedulerImplementation": "doeff_core_effects._scheduler",
     "SchedulerIndexDriftError": "doeff_core_effects._scheduler",
@@ -742,6 +779,39 @@ _LAZY_EXPORTS = {
     "StopRequested": "doeff_core_effects._stop_signal_effects",
     "os_signal_stop_handler": "doeff_core_effects._stop_signal_handlers",
     "scripted_stop_handler": "doeff_core_effects._stop_signal_handlers",
+    "HttpFailed": "doeff_core_effects._http_effects",
+    "HttpFailureKind": "doeff_core_effects._http_effects",
+    "HttpPhases": "doeff_core_effects._http_effects",
+    "HostNotAllowed": "doeff_core_effects._http_host_gate",
+    "http_host_gate": "doeff_core_effects._http_host_gate",
+    "ReadWsSent": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsBinary": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsClosed": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsEndpoint": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsFrame": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsReply": "doeff_core_effects._ws_client_effects",
+    "ScriptedWsText": "doeff_core_effects._ws_client_effects",
+    "WsBinary": "doeff_core_effects._ws_client_effects",
+    "WsConnect": "doeff_core_effects._ws_client_effects",
+    "WsConnectFailed": "doeff_core_effects._ws_client_effects",
+    "WsConnectOutcome": "doeff_core_effects._ws_client_effects",
+    "WsDisconnect": "doeff_core_effects._ws_client_effects",
+    "WsDisconnectAll": "doeff_core_effects._ws_client_effects",
+    "WsFrame": "doeff_core_effects._ws_client_effects",
+    "WsLink": "doeff_core_effects._ws_client_effects",
+    "WsLinkClosed": "doeff_core_effects._ws_client_effects",
+    "WsReceive": "doeff_core_effects._ws_client_effects",
+    "WsScript": "doeff_core_effects._ws_client_effects",
+    "WsSend": "doeff_core_effects._ws_client_effects",
+    "WsSendOutcome": "doeff_core_effects._ws_client_effects",
+    "WsSent": "doeff_core_effects._ws_client_effects",
+    "WsSentClose": "doeff_core_effects._ws_client_effects",
+    "WsSentRecord": "doeff_core_effects._ws_client_effects",
+    "WsSentText": "doeff_core_effects._ws_client_effects",
+    "WsText": "doeff_core_effects._ws_client_effects",
+    "closing_links": "doeff_core_effects._ws_client_effects",
+    "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
+    "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
 }
 
 

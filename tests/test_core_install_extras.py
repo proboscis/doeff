@@ -394,7 +394,7 @@ def test_the_import_reader_finds_the_hy_and_http_modules_of_core_effects() -> No
         "doeff_core_effects._effects": NOTHING,
         "doeff_core_effects._os_process": frozenset({DOEFF_HY}),
         "doeff_core_effects._cache": frozenset({DOEFF_HY}),
-        "doeff_core_effects.http_handlers": frozenset({DOEFF_HY, HTTPX}),
+        "doeff_core_effects._http_handlers": frozenset({DOEFF_HY, HTTPX}),
         "doeff_core_effects.HttpRequest": frozenset({DOEFF_HY}),
         "doeff_core_effects.http_production_handler": frozenset({DOEFF_HY, HTTPX}),
     }

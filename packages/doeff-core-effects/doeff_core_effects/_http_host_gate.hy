@@ -9,7 +9,7 @@
 ;;; 何の答えも作らない — 止めた要求を外へ出さないだけ。宛先の決めは呼び手が引数で渡す(この module は名を知らない)。
 (require doeff-hy.macros [defhandler val])
 (import urllib.parse [urlsplit])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest])
+(import doeff_core_effects._http_effects [HttpFailed HttpFailureKind HttpRequest])
 
 (val MODULE-TAGS {:context "http" :role "foundation"})
 

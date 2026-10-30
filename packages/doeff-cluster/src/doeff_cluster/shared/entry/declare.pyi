@@ -4,8 +4,8 @@ from doeff import Program as _Program
 from collections.abc import Mapping as Mapping
 from urllib.parse import quote as url_quote
 from doeff_core_effects import slog as slog
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_cluster.shared.protocol.declaration_requests import ServiceRead as ServiceRead
 from doeff_cluster.shared.protocol.declaration_requests import CONFLICT_REREADS as CONFLICT_REREADS
 from doeff_cluster.shared.protocol.declaration_requests import service_read as service_read

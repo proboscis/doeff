@@ -3,10 +3,10 @@
 from doeff import Program as _Program
 from dataclasses import dataclass as dataclass
 from dataclasses import replace as replace
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpFailureKind as HttpFailureKind
 from doeff_time import Delay as Delay
 from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
 ROUND_PAUSE_SECONDS: float

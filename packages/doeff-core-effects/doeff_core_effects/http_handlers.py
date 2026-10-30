@@ -1,24 +1,23 @@
-"""Compatibility exports for Hy HTTP handlers.
+# moved-submodule-shim: doeff_core_effects.http_handlers -> doeff_core_effects._http_handlers
+# moved-submodule-shim-names doeff_core_effects.http_handlers:
+#   CLIENT_KEEPALIVE_SECONDS http_client_factory http_fixture_handler http_production_handler
+"""Moved:``doeff_core_effects.http_handlers`` is now ``doeff_core_effects._http_handlers`` (ADR-DOE-API-001 R5).
 
-Without the extra ``http`` (Hy and httpx), importing this module fails with the
-line that installs it (extra_hints.py).
+Importing the old path gives the moved module itself, so ``mock.patch`` targets and isinstance checks on
+the old path act on the same objects, and ``python -m doeff_core_effects.http_handlers…`` runs the moved module. Deleted by
+``tools/hide_submodules.py finish`` once no repo reads the old path.
 """
 
-from doeff_core_effects._extra_hints import extra_needed
+import sys
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-with extra_needed("http", "the HTTP client handler is written in Hy and sends with httpx"):
-    import doeff_hy as _doeff_hy  # noqa: F401  # registers Hy import hooks
+if TYPE_CHECKING:
+    from doeff_core_effects._http_handlers import *  # noqa: F403  # nosemgrep: doeff-no-star-imports
 
-    from doeff_core_effects._http_handlers_impl import (
-        CLIENT_KEEPALIVE_SECONDS,
-        http_client_factory,
-        http_fixture_handler,
-        http_production_handler,
-    )
+if __name__ == "__main__":
+    import runpy
 
-__all__ = [
-    "CLIENT_KEEPALIVE_SECONDS",
-    "http_client_factory",
-    "http_fixture_handler",
-    "http_production_handler",
-]
+    runpy.run_module("doeff_core_effects._http_handlers", run_name="__main__", alter_sys=True)
+else:
+    sys.modules[__name__] = import_module("doeff_core_effects._http_handlers")

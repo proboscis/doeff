@@ -20,8 +20,12 @@ from typing import Any, Literal, cast
 import doeff_hy  # noqa: F401  # Hy の import hook(http の handler と検の部品は Hy)
 import pytest
 import tests.effects.http_request_support as http_support
-from doeff_core_effects import await_handler, scheduled
-from doeff_core_effects.http_handlers import http_fixture_handler, http_production_handler
+from doeff_core_effects import (
+    await_handler,
+    http_fixture_handler,
+    http_production_handler,
+    scheduled,
+)
 
 from doeff import EffectBase, Pass, Pure, Resume, do, handler, run, stacked_handlers, with_handlers
 
