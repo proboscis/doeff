@@ -125,24 +125,24 @@ def row_of(tree: ProcTree, pid: int) -> _Program[ProcRow | None, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
-class TreeWalk:
+class _TreeWalk:
     members: tuple[ProcRow, ...]
     sizes: tuple[int, ...]
     counts: tuple[int, ...]
     kids: tuple[tuple, ...]
 
-def walk_of(tree: ProcTree, row: ProcRow) -> _Program[TreeWalk, object]:
+def _walk_of(tree: ProcTree, row: ProcRow) -> _Program[_TreeWalk, object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)
-class JobWalk:
+class _JobWalk:
     root: JobRoot
-    walk: TreeWalk
+    walk: _TreeWalk
 
-def job_walks(rows: tuple, roots: tuple) -> _Program[tuple, object]:
+def _job_walks(rows: tuple, roots: tuple) -> _Program[tuple, object]:
     ...
 
-def uses_of(walks: tuple) -> _Program[tuple, object]:
+def _uses_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
 def job_uses(rows: tuple, roots: tuple) -> _Program[tuple, object]:
@@ -153,13 +153,13 @@ class Gathering:
     point: int
     sides: tuple[int, ...]
 
-def gathering_of(walk: TreeWalk) -> _Program[Gathering, object]:
+def gathering_of(walk: _TreeWalk) -> _Program[Gathering, object]:
     ...
 
-def units_of_job(walk: TreeWalk, root: JobRoot) -> _Program[tuple, object]:
+def units_of_job(walk: _TreeWalk, root: JobRoot) -> _Program[tuple, object]:
     ...
 
-def units_of(walks: tuple) -> _Program[tuple, object]:
+def _units_of(walks: tuple) -> _Program[tuple, object]:
     ...
 
 def kill_units(rows: tuple, roots: tuple) -> _Program[tuple, object]:
