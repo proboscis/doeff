@@ -36,6 +36,7 @@
 (import doeff_core_effects [Get Put])
 (import doeff_core_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SqlNotify SetSqlOutage SqlParam SqlRows SqlFailed SqlUnreachable SqlSchemaApplied SqlTransactionMisuse SqlTable SqlColumn SqlColumnType SqlIndex]
         doeff_core_effects._sql_effects [normalized-value normalized-rows split-statement])
+(import doeff_core_effects._sql_effects :as sd)
 (import doeff_core_effects._sql_transaction [TransactionFlush run-in-batched-transaction])
 (import doeff_core_effects [sqlite-sql-handler]
         doeff_core_effects._sqlite_sql [sqlite-statement sqlite-failure])
@@ -150,6 +151,42 @@
     (<- (sqlite-statement statement #((SqlParam :name "a" :value 1))))
     (assert False "覚えた文で params の欠けが通った")
     (except [ValueError])))
+
+
+(deftest test-split-memo-holds-at-most-its-part-limit-after-a-stream-of-value-count-statements
+  ;; 値の数だけ引数を並べる文(`IN (:k0, …)`)を値の数ごとに流しても、覚えが抱える部品(SqlText・SqlPlaceholder)は
+  ;; SPLIT-MEMO-PART-LIMIT の内に収まる(agora card ki-a1feff4314cc — 文の数だけで限った時は 4096 文 × 約 120 部品を抱えた)。
+  ;; 覚えは module の 1 つなので、流す前の中身を退けて空から流し、終わりに戻す(他の検の覚えを汚さない)。
+  (val saved #((dict sd.SPLIT-MEMO) (get sd.SPLIT-MEMO-PARTS 0)))
+  (.clear sd.SPLIT-MEMO)
+  (setv (get sd.SPLIT-MEMO-PARTS 0) 0)
+  (try
+    (val wide (+ "SELECT cid FROM events WHERE cid IN (" (.join ", " (gfor i (range 200) f":k{i}")) ")"))
+    (<- first (split-statement wide))
+    (<- again (split-statement wide))
+    (assert (= (len first) 401) (len first))
+    (assert (= first again) "覚えない文の割りが呼びごとに違う")
+    (assert (not-in wide sd.SPLIT-MEMO) "部品が数百の文を覚えた")
+    ;; agora-records の present-cold-keys の形: cid の数 × seq の数ごとに別の文(4096 文を越え、部品の総数は 30 万を越える)。
+    (val stream (lfor c (range 1 41) s (range 1 121)
+                      (+ "SELECT cid, record_seq, rev FROM events WHERE cid IN (" (.join ", " (gfor i (range c) f":cid{i}"))
+                         ") AND record_seq IN (" (.join ", " (gfor i (range s) f":seq{i}")) ")")))
+    (val fixed (lfor i (range 6000) f"SELECT body FROM events WHERE cid = :cid AND record_seq = :seq AND kind = 'k{i}'"))
+    (for [statement (+ stream fixed)]
+      (<- (split-statement statement)))
+    (val held (sum (gfor parts (.values sd.SPLIT-MEMO) (len parts))))
+    (assert (= held (get sd.SPLIT-MEMO-PARTS 0)) #(held (get sd.SPLIT-MEMO-PARTS 0)))
+    (assert (<= held sd.SPLIT-MEMO-PART-LIMIT) held)
+    (assert (<= (len sd.SPLIT-MEMO) sd.SPLIT-MEMO-LIMIT) (len sd.SPLIT-MEMO))
+    (assert (all (gfor parts (.values sd.SPLIT-MEMO) (<= (len parts) sd.SPLIT-MEMO-STATEMENT-PARTS))))
+    ;; 覚えた文の 2 度目は覚えた割りそのものを返す(上限で覚えを止めても、覚えた文の速さは落ちない)。
+    (val kept (next (iter sd.SPLIT-MEMO)))
+    (<- kept-again (split-statement kept))
+    (assert (is kept-again (get sd.SPLIT-MEMO kept)))
+    (finally
+      (.clear sd.SPLIT-MEMO)
+      (.update sd.SPLIT-MEMO (get saved 0))
+      (setv (get sd.SPLIT-MEMO-PARTS 0) (get saved 1)))))
 
 
 (deftest test-plain-rows-pass-through-and-other-values-are-still-normalized
