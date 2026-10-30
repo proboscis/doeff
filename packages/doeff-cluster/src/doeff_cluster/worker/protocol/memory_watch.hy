@@ -37,7 +37,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster.worker.core.memory_rules [MemoryLevel MemoryLimits NodeMemory ContainerMemory KillUnit JobUse JobSteady node-memory-of
-                                                cgroup-bytes-of memory-level job-uses kill-units steady-sizes spared-steady victim-of swarm-of])
+                                                cgroup-bytes-of memory-level job-walks uses-of units-of steady-sizes spared-steady victim-of swarm-of])
 
 (val MEMORY-WINDOW-LOG "worker: job ごとの memory")
 (val JOB-PEAK-LOG "worker: job の memory の最大")
@@ -343,10 +343,12 @@
       (setv cell.unread reading.reason))
     (return None))
   (setv cell.unread "")
-  (<- uses tuple (job-uses reading.rows reading.roots))
+  ;; 表を並べ直して木をたどるのは 1 回の読みに 1 度(job ごとの memory と止める単位で分けて使う)。
+  (<- walks tuple (job-walks reading.rows reading.roots))
+  (<- uses tuple (uses-of walks))
   (<- (noted-peaks cell uses reading.roots now-ms))
   (<- level MemoryLevel (memory-level reading.node settings.limits))
-  (<- units tuple (kill-units reading.rows reading.roots))
+  (<- units tuple (units-of walks))
   (when (!= level cell.level)
     (val node reading.node)
     (<- listed str (units-text units LEVEL-UNITS))

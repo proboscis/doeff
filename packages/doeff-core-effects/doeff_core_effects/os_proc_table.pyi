@@ -2,6 +2,9 @@
 
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
+from itertools import accumulate as accumulate
+from itertools import repeat as repeat
+from itertools import takewhile as takewhile
 from doeff_core_effects.process_effects import ProcessSignal as ProcessSignal
 from doeff_core_effects.proc_table_effects import ProcRow as ProcRow
 from doeff_core_effects.proc_table_effects import ReadProcTable as ReadProcTable
