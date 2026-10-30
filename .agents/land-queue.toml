@@ -138,7 +138,7 @@ full = [
   { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false },
   { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
   { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },
-  { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
+  { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_JOBS=4 PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false }
 ]
@@ -189,6 +189,8 @@ outside = [
 # ⇒ 取らなかった案: 後段に別の予算を持たせる(merge-queue の run-after-steps)は、上限が同じ 4 時間の枠の中なので、この値を上げるのと
 #   同じ秒を取り合う。段を短くする(packages は package ごとに 1 本ずつ直列で走る)は別の変更で測る。
 # ⇒ 戻し方: 9000 へ戻す。
+# 2026-10-30(card acp:kanban-issue:ki-dde4fe85a5ed・戻せる): packages の行に PACKAGE_JOBS=4 を渡し、package の session を 4 本まで同時に撃つ(scripts/run_package_sessions.sh)。
+#   直列 4451〜5318 秒のうち最長の doeff-cluster(約 2270 秒)が下限になる見立て。実測は変更後の日次の回の packages の秒で見る。戻すには PACKAGE_JOBS=4 を消す。
 full_timeout_s = 13500
 
 # R-7a95702d focus mode(operator の指示 2026-08-17 — merge queue は 10 分以内に収め、
