@@ -225,14 +225,17 @@
 
 
 (deftest test-boot-without-worker-task-reserve-does-not-start-the-worker [tmp-path]
-  ;; 配備の起動(deploy/boot.sh の ROLE=worker)も WORKER_TASK_RESERVE を既定の値で埋めない — 無ければ worker を起こさずに理由を出して
-  ;; 止まる(版の木の job を受けない worker の形 — CODE_REPO_URL 無し・空の bare repo を作るところまでは進む)。
+  ;; 配備の起動(deploy/boot.sh の ROLE=worker)も WORKER_TASK_RESERVE を既定の値で埋めない — 枠の file(WORKER_ROOM_FILE)も無ければ
+  ;; worker を起こさずに理由を出して止まる(版の木の job を受けない worker の形 — CODE_REPO_URL 無し・空の bare repo を作るところまでは進む)。
+  ;; 断りは文の言い回しでなく種類で確かめる: stderr の最後の行が boot の断りで、欠けた 2 つの入力の名を挙げる(worker の入口まで進んでいない)。
   (val done (subprocess.run ["sh" (str (/ PACKAGE-ROOT "deploy" "boot.sh"))]
                             :env {"PATH" (os.environ.get "PATH" "") "HOME" (str tmp-path) "ROLE" "worker" "WORK_DIR" (str tmp-path)
                                   "COORDINATOR_URL" "http://127.0.0.1:9" "WORKER_NAME" "w" "WORKER_CAPACITY" "2"}
                             :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
-  (assert (in "WORKER_TASK_RESERVE が無い" done.stderr) done.stderr))
+  (val refusal (get (.splitlines (.strip done.stderr)) -1))
+  (assert (.startswith refusal "boot: ") done.stderr)
+  (assert (and (in "WORKER_ROOM_FILE" refusal) (in "WORKER_TASK_RESERVE" refusal)) done.stderr))
 
 
 (defk old-task-rows []
