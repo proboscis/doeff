@@ -84,6 +84,49 @@ class SourceStarted:
     source: str
 
 
+@dataclass(frozen=True)
+class NoticeSent:
+    """What ``Publish`` of a routed event answers when the broker took it: ``receivers`` = how many subscribers the
+    broker handed the notice to. ``0`` means nobody was listening and nobody will ever receive it."""
+
+    receivers: int
+
+
+@dataclass(frozen=True)
+class NoticeGapMarked:
+    """What ``Publish`` of a ``MarkGap`` route answers when the event was not sent: ``channel`` is marked and its
+    gap will be told. ``detail`` = the broker's words, or why the event waits behind a gap being told."""
+
+    channel: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class NoticeDropped:
+    """What ``Publish`` of a ``Drop`` route answers when the broker could not take the event: it is gone. Also what
+    ``PublishGap`` of a ``Drop`` route answers: such a route keeps no gap."""
+
+    detail: str
+
+
+PublishAnswer = NoticeSent | NoticeGapMarked | NoticeDropped
+"""Everything ``Publish`` of a routed event answers (it never raises for a broker it cannot reach)."""
+
+
+@dataclass(frozen=True)
+class NoticeGapTold:
+    """What ``PublishGap`` of a ``MarkGap`` route answers when the gap was told: ``channel``'s gap notice reached
+    the broker (with every older gap of the body), and its connected readers are told ``SourceMissed``."""
+
+    channel: str
+
+
+GapAnswer = NoticeGapTold | NoticeGapMarked | NoticeDropped
+"""Everything ``PublishGap`` of a routed event answers (it never raises for a broker it cannot reach):
+``NoticeGapTold``, ``NoticeGapMarked`` (the broker could not take the gap notice — told later like the gap of a
+missed ``Publish``), or ``NoticeDropped`` (a ``Drop`` route)."""
+
+
 def _normalize_event_types(
     effect_name: str, event_types: tuple[type[Any], ...]
 ) -> tuple[type[Any], ...]:
@@ -102,8 +145,11 @@ def _normalize_event_types(
     return tuple(normalized)
 
 
-class PublishEffect(EffectBase):
+class PublishEffect(EffectBase[PublishAnswer | None]):
     """Publish an event to all listeners waiting on compatible event types.
+
+    The bus inside the process (``event_handler`` / ``subscribed_event_handler``) answers ``None``; an event of a type
+    ``notice_events_handler`` routes answers ``PublishAnswer`` (what the broker did with it).
 
     Every value is of the class ``publish_effect_type(type(event))`` — one subclass per exact event type — whether it
     is made by ``Publish(event)`` or by ``PublishEffect(event)``. A handler that answers the Publish of some event types
@@ -149,7 +195,7 @@ def publish_effect_type(event_type: type[Any]) -> type[PublishEffect]:
     return _PUBLISH_EFFECT_TYPES.setdefault(event_type, made)
 
 
-class PublishGapEffect(EffectBase):
+class PublishGapEffect(EffectBase[GapAnswer]):
     """Tell the receivers of ``event``'s channel that what ``event`` announces may have happened without the event:
     the sender cannot learn whether it did (the answer of its write did not come in time — the write may have
     landed). ``event`` is not sent; it is built as it would have been published, and only its route and channel are
@@ -159,7 +205,8 @@ class PublishGapEffect(EffectBase):
     who catch up once from their records): at once, behind the sends already queued, or — when the broker cannot
     take it — by marking the channel. A sender publishes it when it gives up on learning the outcome, so that a
     write that landed without its event is never left for the receivers' next start (agora card ki-a93fc14956e3).
-    An event of a type no wrapper routes has no channel to tell: the effect goes outward and nothing answers it.
+    An event of a type no wrapper routes has no channel to tell: the effect goes outward and nothing answers it. A
+    routed event answers ``GapAnswer``.
     """
 
     def __init__(self, event: Any):
@@ -224,7 +271,13 @@ WaitForEvents = wait_for_events
 
 
 __all__ = [
+    "GapAnswer",
+    "NoticeDropped",
+    "NoticeGapMarked",
+    "NoticeGapTold",
+    "NoticeSent",
     "Publish",
+    "PublishAnswer",
     "PublishEffect",
     "PublishGap",
     "PublishGapEffect",
