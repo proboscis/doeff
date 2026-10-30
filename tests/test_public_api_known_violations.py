@@ -43,7 +43,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「許した物 — effect の答えの型」(R2)に置けるのは、
    package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型と、答えの class の欄の型・子の class・
    答えの class だけを並べた型の別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の
-   答えにも出ない class を置くと赤。
+   答えにも出ない class を置くと赤。組「許した物 — program の形を組む作り手と型」(R37 — doeff-conductor の workflow を書く
+   agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の本体で、同じ package の class の値を返す
+   関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
+   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -113,6 +116,9 @@ VALUE_TYPE_GROUP = "許した物 — effect の値の型"
 PLUGIN_GROUP = "許した物 — pytest の plugin の登録"
 #: 決まりが許した起動の口の組(ADR-DOE-API-001 R36)— package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける。
 STARTUP_GROUP = "許した物 — 起動の口"
+#: 決まりが許した、program の形を表す値を組む作り手と、その返す値の型の組(ADR-DOE-API-001 R37 — doeff-conductor の
+#: workflow の言葉)。目録の形が作り手の名と、組の作り手が返す class だけを置ける。
+BUILDER_GROUP = "許した物 — program の形を組む作り手と型"
 #: 目録の pytest11 の entry point の行の形(tools/public_api_inventory.py の _metadata_rows)。
 PYTEST_PLUGIN_FORM = "entry point(pytest11)"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
@@ -135,6 +141,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     PLUGIN_GROUP: "pytest11 の entry point の行と、その entry point が読む module(plugin の module)が出す名だけを置ける"
     "(ADR-DOE-API-001 R10・R33)",
     STARTUP_GROUP: "package が配る .pth が venv の Python の起動ごとに呼ぶ名だけを置ける(ADR-DOE-API-001 R36)",
+    BUILDER_GROUP: "その package が見せる class の値を返し、中で effect も handler も program も作らず、時計・環境・file・"
+    "process・乱数を読まない関数(作り手)と、組の作り手が返す class だけを置ける(program の形を表す値の作り手とその型 — "
+    "ADR-DOE-API-001 R37)",
 }
 #: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンド(package の dir から、console script か Rust の実行 file の名から
 #: 名を挙げた条へ)。組「許した物 — CLI コマンド」はここに在る名だけを置け、条の文がその名を挙げる事を
@@ -320,10 +329,36 @@ class GroupFacts:
     plugin_modules: frozenset[str] = frozenset()
     #: package が配る .pth が起動ごとに呼ぶ (module, 名)(tools/public_api_inventory.py の startup_calls)。
     startup_calls: frozenset[Key] = frozenset()
+    #: 許した物の表で組「program の形を組む作り手と型」に置いた作り手が返す class(目録の道具の built_class の形)。
+    built: frozenset[str] = frozenset()
 
 
 #: 目録の行の外の事実を何も持たない組の確かめ(既定)。
 NO_FACTS = GroupFacts()
+
+
+def _is_plain_class(row: Mapping[str, Any]) -> bool:
+    """目録の行が、effect でも handler でも例外でもない素の class(作り手が値を返せる型)。"""
+    return row["kind"] == "other" and row["form"] == "class"
+
+
+def shown_classes(package: Mapping[str, Any]) -> frozenset[str]:
+    """package が見せる素の class の全部(目録の道具の built_class の形 — 名と定義の場所)。"""
+    return frozenset(
+        tool.built_class(row["name"], row["defined_at"])
+        for row in package["exports"]
+        if _is_plain_class(row)
+    )
+
+
+def fits_builder_group(
+    row: Mapping[str, Any], package: Mapping[str, Any], built: frozenset[str]
+) -> bool:
+    """目録の行 1 つが組「program の形を組む作り手と型」の形に合う(ADR-DOE-API-001 R37): 形が作り手で、返す class を package が
+    見せるか、素の class で、組に置いた作り手のどれかが返す(built)。"""
+    if row["form"] == tool.BUILDER:
+        return row.get("returns") in shown_classes(package)
+    return _is_plain_class(row) and tool.built_class(row["name"], row["defined_at"]) in built
 
 
 def fits_allowed_group(
@@ -361,6 +396,7 @@ def fits_allowed_group(
             row["form"] == PYTEST_PLUGIN_FORM or row["module"] in facts.plugin_modules
         ),
         STARTUP_GROUP: lambda: (row["module"], row["name"]) in facts.startup_calls,
+        BUILDER_GROUP: lambda: fits_builder_group(row, package, facts.built),
     }
     fits = shapes.get(group)
     return fits is not None and fits()
@@ -525,6 +561,11 @@ def check_package(
         commands=frozenset(commands.get(directory, {})),
         plugin_modules=tool.plugin_modules(tool.read_layout(package_dir)),
         startup_calls=tool.startup_calls(package_dir),
+        built=frozenset(
+            found[key]["returns"]
+            for key, group in shown.items()
+            if group == BUILDER_GROUP and found[key]["form"] == tool.BUILDER
+        ),
     )
     misshapen = {
         group: [
@@ -1461,6 +1502,143 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
             check_package(package, *tables([defined, key]))
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
+
+#: program の形を表す値の型と作り手(doeff-conductor の AgentSpec と agent! の形)と、作り手の形を越える物: effect を出す・
+#: 作る・中の同じ package の関数が環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、作り手の無い class。
+BUILDERS = '''
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class StepSpec:
+    """A value of a program's shape: what one step of a workflow does."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class _DraftSpec:
+    name: str
+
+
+@dataclass(frozen=True)
+class TraceNote:
+    """A class no builder returns."""
+
+    text: str
+
+
+def _normalized(name: str) -> str:
+    return name.strip().lower()
+
+
+def step(name: str) -> StepSpec:
+    """A builder: a value of its package's shown type in, nothing outside read (its package's function too)."""
+    return StepSpec(name=_normalized(name))
+
+
+def step_yielding(name: str) -> StepSpec:
+    """Past a builder: emits an effect."""
+    yield PingEffect()
+    return StepSpec(name=name)
+
+
+def step_pinged(name: str) -> StepSpec:
+    """Past a builder: makes an effect."""
+    PingEffect()
+    return StepSpec(name=name)
+
+
+def _home() -> str:
+    return os.environ["HOME"]
+
+
+def step_at_home() -> StepSpec:
+    """Past a builder: the function of its package it calls reads the environment."""
+    return StepSpec(name=_home())
+
+
+def step_from(path: str) -> StepSpec:
+    """Past a builder: reads a file."""
+    return StepSpec(name=Path(path).read_text())
+
+
+def draft(name: str) -> _DraftSpec:
+    """Past a builder: its package does not show the class it returns."""
+    return _DraftSpec(name=name)
+
+
+def step_count(name: str) -> int:
+    """Past a builder: a conversion — it returns no class of its package."""
+    return len(_normalized(name))
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_group(
+    tmp_path: Path,
+) -> None:
+    """許した物の表の組「許した物 — program の形を組む作り手と型」に置けるのは、目録の形が作り手で返す class をその package が
+    見せる名と、組の作り手が返す class だけ(ADR-DOE-API-001 R37)。
+
+    作り手(値を受けて同じ package の見せる class の値を返し、中で読む同じ package の関数も effect も I/O も読まない)とその型は、
+    許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。effect を出す(yield)・effect を作る・中の同じ package の関数が
+    環境を読む・file を読む関数、見せない class を返す関数、値の型の外を返す関数、組の作り手が返さない class(作り手の無い
+    class・作り手を組に置かずに型だけ置いた class)を置くと赤(組と名と形と読む名か返す class を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUILDERS)
+    package = _read_fixture(repo)
+    rows = {row["name"]: row for row in package["exports"]}
+    step_spec = tool.built_class("StepSpec", rows["StepSpec"]["defined_at"])
+    assert (rows["step"]["form"], rows["step"].get("returns")) == (tool.BUILDER, step_spec)
+    assert rows["draft"]["form"] == tool.BUILDER
+    assert rows["step_count"]["form"] == tool.CONVERSION
+    shapes = ["StepSpec", "step"]
+    rest = (
+        "TraceNote",
+        "draft",
+        "step_at_home",
+        "step_count",
+        "step_from",
+        "step_pinged",
+        "step_yielding",
+    )
+
+    def tables(names: list[str], known: Iterable[str] = ()) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted((set(rest) | set(known)) - set(names))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): BUILDER_GROUP for name in names},
+            "lt-D4KB5PAECAE921VNAFHQHX4W3G",
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(shapes))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.step\("):
+        check_package(package, *tables([]))
+
+    past_a_builder = [
+        ("step_yielding", f"{tool.PLAIN_FUNCTION}・", "step_yielding が yield を読む"),
+        ("step_pinged", f"{tool.PLAIN_FUNCTION}・", "step_pinged が PingEffect を読む"),
+        ("step_at_home", f"{tool.PLAIN_FUNCTION}・", "_home が environ を読む"),
+        ("step_from", f"{tool.PLAIN_FUNCTION}・", "step_from が read_text を読む"),
+        ("draft", f"{tool.BUILDER}・", "同じ package の class _DraftSpec("),
+        ("step_count", f"{tool.CONVERSION}・", "戻りの型 int"),
+        ("TraceNote", "class・class・", "class・class・"),
+    ]
+    for name, form, said in past_a_builder:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+            check_package(package, *tables([*shapes, name]))
+        assert f"{FIXTURE_ROOT}.{name}({form}" in str(failure.value)
+        assert said in str(failure.value)
+        assert ALLOWED_SHAPES[BUILDER_GROUP] in str(failure.value)
+
+    with pytest.raises(AssertionError, match=re.escape(f"組「{BUILDER_GROUP}」")) as failure:
+        check_package(package, *tables(["StepSpec"], known=["step"]))
+    assert f"{FIXTURE_ROOT}.StepSpec(class・class・" in str(failure.value)
+
 
 
 #: 欄に値の型を持つ effect の class 2 つ(dataclass と __init__ で書く class)と、どの effect の欄にも出ない class を持つ package。
