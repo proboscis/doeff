@@ -16,7 +16,7 @@
 (import zlib)
 (import doeff_core_effects [PathKind PathStat StatPath ReadBytes AppendText WriteBytes MakeDirectory ListDirectory RemoveTree]
         doeff_core_effects._file_effects [file-done])
-(import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
+(import doeff_cluster._record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
 
 ;; 区切りの頭の 1 行を探す読みの初めの byte 数(行の終わりが見つからなければ倍にして読み直す — 区切りを丸ごと読まない)。
 (val HEAD-READ-BYTES 65536)

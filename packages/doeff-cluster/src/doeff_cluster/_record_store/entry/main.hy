@@ -1,4 +1,4 @@
-;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster.record_store.entry.main --root DIR [--port 8080] [--retention-days 30]
+;;; effect の記録の置き場の入口(composition root)。hy -m doeff_cluster._record_store.entry.main --root DIR [--port 8080] [--retention-days 30]
 ;;; 入口の組み立ては 2 つに分ける: handler の組を選ぶ(handler_sets の production-handlers / emulated-handlers)と、
 ;;; その組の上で置き場の Program を回す(record-store-on)。模擬の環境は同じ record-store-on を emulated-handlers の上で回す。
 (require doeff-hy.macros [defk <- val])
@@ -8,9 +8,9 @@
 (import doeff [run with-handlers])
 (import doeff_core_effects [scheduled])
 (import doeff_cluster.foundation.coordinator_inbox [StopState stop-on-signals])
-(import doeff_cluster.record_store.core.program [store-loop])
+(import doeff_cluster._record_store.core.program [store-loop])
 (import doeff_cluster.foundation.record_inbox [RecordInbox])
-(import doeff_cluster.record_store.entry.handler_sets [production-handlers])
+(import doeff_cluster._record_store.entry.handler_sets [production-handlers])
 
 
 (defk record-store-on [handlers retention-ms idle-ms]

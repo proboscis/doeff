@@ -138,7 +138,7 @@ fi
 # 自己起動の root に bytecode を焼く範囲の入口(`,` で並べる・役で分けない): 下の役が root の venv の hy で起こす module の全部と、worker が
 # 同じ venv で起こす準備の process(env_tool)・shim・job の子の入口(job_entry)と、venv の .pth が interpreter の起動ごとに import する
 # doeff-hy の doeff_hy_bytecode_guard(どこからも import の文で辿れない)。焼くのはこの入口から import を辿った閉包だけ。
-BOOT_ENTRIES=doeff_cluster.worker.entry.main,doeff_cluster.worker.entry.drain_main,doeff_cluster.coordinator.entry.main,doeff_cluster.record_store.entry.main,doeff_cluster.worker.entry.env_tool,doeff_cluster.worker.entry.shim,doeff_cluster.worker.entry.job_entry,doeff_hy_bytecode_guard
+BOOT_ENTRIES=doeff_cluster.worker.entry.main,doeff_cluster.worker.entry.drain_main,doeff_cluster.coordinator.entry.main,doeff_cluster._record_store.entry.main,doeff_cluster.worker.entry.env_tool,doeff_cluster.worker.entry.shim,doeff_cluster.worker.entry.job_entry,doeff_hy_bytecode_guard
 # 焼く道具が焼き終えた木の根に置く完成の印(doeff_cluster/worker/core/code_plan.hy の MARKER と同じ名)。
 CODE_MARKER=.doeff-code-ready.json
 
@@ -834,7 +834,7 @@ case "$role" in
     exec hy -m doeff_cluster.coordinator.entry.main --state-file "$WORK_DIR/coord/state.json" --port "${LISTEN_PORT:-8080}" \
       --naming "$naming" "$@" ;;
   records)
-    exec hy -m doeff_cluster.record_store.entry.main --root "${RECORDS_ROOT:-/records}" --port "${LISTEN_PORT:-8080}" \
+    exec hy -m doeff_cluster._record_store.entry.main --root "${RECORDS_ROOT:-/records}" --port "${LISTEN_PORT:-8080}" \
       --retention-days "${RECORDS_RETENTION_DAYS:-30}" ;;
 esac
 # ROLE=worker

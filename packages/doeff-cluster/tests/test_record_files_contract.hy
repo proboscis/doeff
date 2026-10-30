@@ -17,9 +17,10 @@
 (import doeff [with_handlers])
 (import doeff_core_effects [ReadText ReadBytes ListDirectory RemoveTree]
         doeff_core_effects._file_effects [file-done])
-(import doeff_cluster.record_store.intent.record_store_model [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
-(import doeff_cluster.record_store.protocol.record_files [record-files HEAD-READ-BYTES])
-(import doeff_cluster.record_store.core.invariants [prune-keeps-runs-whole])
+(import doeff_cluster [AppendRecordLines ListRecordRuns ReadRecordRun CompactRecords PruneRecords])
+(import doeff_cluster [record-files]
+        doeff_cluster._record_store.protocol.record_files [HEAD-READ-BYTES])
+(import doeff_cluster._record_store.core.invariants [prune-keeps-runs-whole])
 (import tests.file_contract_handlers [FilesRoot])
 
 (val HEADER (json.dumps {"k" "run" "run" "r1" "startedMs" 1000} :ensure-ascii False))
