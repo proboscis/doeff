@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-cluster/src/doeff_cluster/worker/core/boot_timing.hy"
+    "packages/doeff-cluster/src/doeff_cluster/_worker/core/boot_timing.hy"
   ],
   "module_extensions": {
     "doeff-cluster-main": {
@@ -27,10 +27,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-boot-timing",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/boot_timing.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/boot_timing.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/boot_timing.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/boot_timing.hy"
       ],
       "responsibility": "worker の起動の内訳の計時(#3676): /proc の中身から process の始まりの刻を出す純関数・起動の 5 つの刻の並びと順の断言・最初の heartbeat の答えの後に出す 1 行。",
       "typed": true

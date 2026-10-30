@@ -26,9 +26,10 @@
 (import doeff_cluster [spec-of-declaration]
         doeff_cluster._coordinator.core.cluster_policy [job-from-json job-to-json])
 (import doeff_cluster._coordinator.protocol.replies [spec-json])
-(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-spec declared-job-specs]
-        doeff_cluster.worker.protocol.heartbeat [status-rows-json])
-(import doeff_cluster.worker.core.policy [plan records-after statuses])
+(import doeff_cluster [DeclaredReply declared-reply-of-json declared-job-specs]
+        doeff_cluster._worker.protocol.declared [declared-job-spec]
+        doeff_cluster [status-rows-json])
+(import doeff_cluster [plan records-after statuses])
 (import tests.test_handoff_deadline [Sim HANDOFF RECREATE V steps started])
 
 (val ENV-A (json.dumps {"format" 1 "importRoots" ["app/."] "repos" [{"name" "app" "url" "https://example.invalid/app.git" "commit" (* "a" 40)}]
@@ -42,7 +43,7 @@
   {:pre [(: revision str) (: content (| str None)) (: runtime-env (| str None))] :post [(: % JobSpec)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "版・中身の鍵・実行環境の宣言だけを変えた job の宣言を作るため。"
-  (JobSpec "writer-a" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "0123456789abcdef") revision
+  (JobSpec "writer-a" "doeff_cluster._worker.entry.job_entry" #("service" "--identity" "0123456789abcdef") revision
            :runtime-env runtime-env :content content))
 
 

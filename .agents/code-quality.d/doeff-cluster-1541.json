@@ -41,10 +41,10 @@
     "packages/doeff-cluster/src/doeff_cluster/shared/protocol/declaration_requests.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/declaring.hy",
     "packages/doeff-cluster/src/doeff_cluster/_sim/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_worker/core/program.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/job_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/_record_store/*/*.hy",
-    "packages/doeff-cluster/src/doeff_cluster/worker/*/*.hy",
+    "packages/doeff-cluster/src/doeff_cluster/_worker/*/*.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/core/service_rules.hy",
     "packages/doeff-cluster/src/doeff_cluster/shared/entry/service_build.hy"
   ],
@@ -89,10 +89,10 @@
       "layer": "pure",
       "name": "doeff-cluster-beat-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/beat_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/beat_policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/beat_policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/beat_policy.hy"
       ],
       "responsibility": "worker が heartbeat をいつ送るか・名指しの待ち(GET /watch)の問いと答えの読み(純粋な判断・I/O はしない)。",
       "typed": true
@@ -218,10 +218,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-code-prepare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy"
       ],
       "responsibility": "展開したコードの木の bytecode を、木の中だけに「実行時に source の hash を検める」方式で用意する。",
       "typed": true
@@ -424,10 +424,10 @@
       "layer": "pure",
       "name": "doeff-cluster-drain-client",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/drain_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/drain_client.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/drain_client.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/drain_client.hy"
       ],
       "responsibility": "worker の Pod の側から coordinator に drain を頼み、空くのを待つ Program(2026-09-25)。",
       "typed": true
@@ -444,10 +444,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-drain-main",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/drain_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/drain_main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/drain_main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/drain_main.hy"
       ],
       "responsibility": "worker の Pod の drain の入口(composition root・2026-09-25)。",
       "typed": true
@@ -524,10 +524,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-env-handlers",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_translation.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_translation.hy"
       ],
       "responsibility": "実行環境(root)の準備の要求を汎用の effect へ訳す handler(env-translation)と、準備の process の入口(2026-09-26・翻訳の形2026-09-27)。",
       "typed": true
@@ -544,10 +544,10 @@
       "layer": "effects",
       "name": "doeff-cluster-env-prepare",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_prepare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_prepare.hy"
       ],
       "responsibility": "実行環境(root)の準備の Program と、その effect(2026-09-26)。",
       "typed": true
@@ -559,10 +559,10 @@
       "layer": "pure",
       "name": "doeff-cluster-env-upkeep",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_upkeep.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_upkeep.hy"
       ],
       "responsibility": "実行環境の root の手入れの純粋な判断(2026-09-26・設計 worker-runtime-env.md 節 3.2 の期限・節 3.6 の掃除と disk の条件)。",
       "typed": true
@@ -720,10 +720,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-job-entry",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy"
       ],
       "responsibility": "worker が起動する子 process の入口(service と task)。",
       "typed": true
@@ -878,10 +878,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-main",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/main.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/main.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/main.hy"
       ],
       "responsibility": "doeff worker の composition root。",
       "typed": true
@@ -1390,10 +1390,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-shim",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/shim.py"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/shim.py"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/shim.py"
       ],
       "responsibility": "job と worker の間に挟む見張り。",
       "typed": true
@@ -1658,10 +1658,10 @@
       "layer": "pure",
       "name": "doeff-cluster-worker",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/program.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/program.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/program.hy"
       ],
       "responsibility": "worker の調整ループ。",
       "typed": true
@@ -1675,10 +1675,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/worker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/worker_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/worker_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/worker_model.hy"
       ],
       "responsibility": "doeff worker が管理する job の宣言・観測・判断・effect。",
       "typed": true
@@ -1696,10 +1696,10 @@
       "layer": "pure",
       "name": "doeff-cluster-worker-policy",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/policy.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/policy.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/policy.hy"
       ],
       "responsibility": "worker の純粋な判断。",
       "typed": true
@@ -1991,10 +1991,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/worker_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/worker_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/worker_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/worker_rules.hy"
       ],
       "responsibility": "worker の job の判断の小さな関数(木の鍵・READY の木の path・退いた process の名・入口の検めの対象と断り)。",
       "typed": true
@@ -2006,10 +2006,10 @@
       "layer": "domain",
       "name": "doeff-cluster-env-prepare-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/env_prepare_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/env_prepare_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/env_prepare_model.hy"
       ],
       "responsibility": "実行環境の root の準備の型・effect・定数 — 準備の Program が出し、worker の準備の係が答える。",
       "typed": true
@@ -2019,10 +2019,10 @@
       "layer": "domain",
       "name": "doeff-cluster-drain-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/drain_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/drain_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/drain_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/drain_model.hy"
       ],
       "responsibility": "worker の drain(preStop)の問いの effect(coordinator への 1 回の呼び出し)。",
       "typed": true
@@ -2050,10 +2050,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-heartbeat",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/heartbeat.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/heartbeat.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/heartbeat.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/heartbeat.hy"
       ],
       "responsibility": "worker が coordinator へ送る heartbeat の本文の形(本番の CoordinatorLink と sim の宿が同じ関数で作る)。",
       "typed": true
@@ -2070,10 +2070,10 @@
       "layer": "domain",
       "name": "doeff-cluster-worker-heartbeat-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/heartbeat_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/heartbeat_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/heartbeat_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/heartbeat_rules.hy"
       ],
       "responsibility": "heartbeat の返事と途絶の判断(温める表の行・終わった task・届かない拍の宣言)。",
       "typed": true
@@ -2098,10 +2098,10 @@
       "layer": "io",
       "name": "doeff-cluster-code-plan",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_plan.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_plan.hy"
       ],
       "responsibility": "展開したコードの木の bytecode の準備の純粋な判断(module 名・引き継ぐ組・焼く物・完成の印・import の静的な辿り)。",
       "typed": true
@@ -2111,10 +2111,10 @@
       "layer": "domain",
       "name": "doeff-cluster-code-model",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/code_model.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/intent/code_model.hy"
       ],
       "responsibility": "コードの木の bytecode の準備の effect(走査・引き継ぎ・焼き・閉包・完成の印・注記)。",
       "typed": true
@@ -2127,10 +2127,10 @@
       "layer": "io",
       "name": "doeff-cluster-code-prepare-program",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_prepare.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_prepare.hy"
       ],
       "responsibility": "コードの木の bytecode の準備の Program と、本物と模擬の答え手が通る判断。",
       "typed": true
@@ -2145,10 +2145,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-launch",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/launch.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/launch.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/launch.hy"
       ],
       "responsibility": "worker が job の子 process を起こす形の判断(命令の並び・cwd・子の環境変数・作業 dir と使った印)。",
       "typed": true
@@ -2167,10 +2167,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-process-host",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_host.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/process_host.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_host.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/process_host.hy"
       ],
       "responsibility": "worker の job の子 process の言い換え(StartJob・SignalJob・ReapJob・RetireJob・ObserveProcesses を汎用の子 process と file system の効果へ)。",
       "typed": true
@@ -2184,10 +2184,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-probe-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/probe_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/probe_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/probe_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/probe_rules.hy"
       ],
       "responsibility": "worker の入口の検めの判断(検めの本体・束の並べ方・結果の読みと行き先・検めの子の起こし方)。",
       "typed": true
@@ -2208,10 +2208,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-probes",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/probes.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/probes.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/probes.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/probes.hy"
       ],
       "responsibility": "worker の入口の検めの言い換え(ProbeEntry・ForgetProbes・ObserveProbes を汎用の子 process と file system の効果へ)。",
       "typed": true
@@ -2224,10 +2224,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-code-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/code_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_rules.hy"
       ],
       "responsibility": "worker の版ごとのコードの木の準備の sh の script を組む判断。",
       "typed": true
@@ -2246,10 +2246,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-code-store",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/code_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/code_store.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/code_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/code_store.hy"
       ],
       "responsibility": "worker の版ごとのコードの木の準備と観測を、汎用の子 process と file system の効果へ言い換える(#2466)",
       "typed": true
@@ -2263,10 +2263,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-status-file",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/status_file.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/status_file.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/status_file.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/status_file.hy"
       ],
       "responsibility": "worker の状態を外から覗ける JSON の file に置く(PublishStatus を file system の効果へ言い換える・#2466)",
       "typed": true
@@ -2279,10 +2279,10 @@
       "layer": "pure",
       "name": "doeff-cluster-worker-env-rules",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_rules.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/core/env_rules.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_rules.hy"
       ],
       "responsibility": "worker の実行環境の root の準備の判断(起こす順・頼みの形・答えの読み・期限切れの理由・掃除の下限 — #2467)",
       "typed": true
@@ -2306,10 +2306,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-env-store",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_store.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_store.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_store.hy"
       ],
       "responsibility": "worker の実行環境の root の準備・掃除・観測と heartbeat の名乗りを、汎用の子 process と file system の効果へ言い換える(#2467)",
       "typed": true
@@ -2323,10 +2323,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-tree-files",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tree_files.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/tree_files.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/tree_files.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/tree_files.hy"
       ],
       "responsibility": "コードの木の効果(走査・引き継ぎ・閉包・焼き・印・Note)を汎用の file の効果と slog へ言い換える(#2468)",
       "typed": true
@@ -2339,10 +2339,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-world",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/world.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/world.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/world.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/world.hy"
       ],
       "responsibility": "worker の世界の観測のまとめ(ObserveWorld に各言い換えの観測を問うて WorldView で答える — #2469)",
       "typed": true
@@ -2375,10 +2375,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-lease-release",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/lease_release.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/lease_release.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/lease_release.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/lease_release.hy"
       ],
       "responsibility": "終わった process の lease の返し(ReleaseLeases)を宛先の部品の上の HttpRequest へ言い換える(#2427)",
       "typed": true
@@ -2396,10 +2396,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-declared",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/declared.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/declared.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/declared.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/declared.hy"
       ],
       "responsibility": "coordinator の heartbeat の返事の job と task の行を JobSpec へ読む口(#2427)",
       "typed": true
@@ -2427,10 +2427,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-coordinator-link",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/coordinator_link.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/coordinator_link.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/coordinator_link.hy"
       ],
       "responsibility": "worker の coordinator への口(heartbeat・Program の取り寄せ・task の file・名指しの待ちを宛先の部品の上の HttpRequest と file の効果へ — #2427)",
       "typed": true
@@ -2440,10 +2440,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-observations",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/observations.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/observations.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/observations.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/observations.hy"
       ],
       "responsibility": "worker の言い換えどうしの問いの効果(コードの木・root・子 process・入口の検めの観測と焼きの秒 — #2031)",
       "typed": true
@@ -2669,10 +2669,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-env-tool",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/env_tool.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/env_tool.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/env_tool.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/env_tool.hy"
       ],
       "responsibility": "実行環境(root)1 つの準備の process の入口(worker が別の process として起こす)。",
       "typed": true
@@ -2688,10 +2688,10 @@
       "layer": "runtime",
       "name": "doeff-cluster-result-delivery",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/result_delivery.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/result_delivery.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/entry/result_delivery.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/entry/result_delivery.hy"
       ],
       "responsibility": "子 process の task の結果を終わる前に coordinator へ直に届ける入口の組み立て。",
       "typed": true

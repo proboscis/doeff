@@ -11,10 +11,12 @@
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy StartJob ReapJob Outcome])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-spans shim-deadline-ms shim-ends-before-the-kill])
-(import doeff_cluster.worker.entry.main [timing-checked])
+(import doeff_cluster [WorkerPolicy StartJob ReapJob]
+        doeff_cluster._worker.intent.worker_model [Outcome])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans ShimOutlastsTheKill shim-deadline-ms shim-ends-before-the-kill])
+(import doeff_cluster._worker.entry.main [timing-checked])
 (import tests.host_rig [host-settings run-on-host])
 (import tests.test_entry_probe [wait-pid assert-gone])
 

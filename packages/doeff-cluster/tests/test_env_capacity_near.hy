@@ -22,10 +22,11 @@
 (import doeff_time [sync-time-handler])
 (import tests.state_rows [table-from-rows])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.worker.core.env_upkeep [env-capacity NEAR-MARGIN-BYTES NEAR-RETURN-BYTES])
-(import doeff_cluster.worker.intent.worker_model [EnvReport])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings env-host])
+(import doeff_cluster._worker.core.env_upkeep [env-capacity NEAR-MARGIN-BYTES NEAR-RETURN-BYTES])
+(import doeff_cluster [EnvReport])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [env-host]
+        doeff_cluster._worker.protocol.env_store [EnvSettings])
 (import doeff_cluster [ClusterState WorkerInfo])
 (import doeff_cluster._coordinator.core.resource_policy [worker-row])
 

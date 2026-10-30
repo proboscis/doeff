@@ -26,12 +26,14 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [Delay sync-time-handler])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.worker.intent.worker_model [CodeState PrepareEnv SweepEnvs])
-(import doeff_cluster.worker.intent.env_prepare_model [EnvReady PrepareRequest])
-(import doeff_cluster.worker.protocol.observations [ObserveEnvs])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG PINS-DIR env-host])
-(import doeff_cluster.worker.protocol.env_translation [env-translation prepared-once])
+(import doeff_cluster [CodeState PrepareEnv SweepEnvs])
+(import doeff_cluster._worker.intent.env_prepare_model [EnvReady PrepareRequest])
+(import doeff_cluster [ObserveEnvs])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [env-host]
+        doeff_cluster._worker.protocol.env_store [EnvSettings SWEEP-LOG SWEEP-DONE-LOG PINS-DIR])
+(import doeff_cluster [env-translation]
+        doeff_cluster._worker.protocol.env_translation [prepared-once])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import tests.env_fixtures [LOCK env-of])
 

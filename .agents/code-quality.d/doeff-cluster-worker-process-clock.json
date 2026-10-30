@@ -1,6 +1,6 @@
 {
   "include": [
-    "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_clock.hy"
+    "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/process_clock.hy"
   ],
   "module_extensions": {
     "doeff-cluster-main": {
@@ -24,10 +24,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-process-clock",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/process_clock.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/process_clock.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/process_clock.hy"
       ],
       "responsibility": "process の始まりの刻の問い ProcessStartedMs を、/proc の file の読み(ReadText)と時計へ言い換える handler(#3676)。",
       "typed": true

@@ -4,11 +4,10 @@
 (require doeff-hy.macros [defhandler deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff [run with-handlers])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk ObserveWorld WarmChildView
- WorldView])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving ObserveMemoryTight ObserveMemoryKills])
-(import doeff_cluster.worker.protocol.world [local-host])
+(import doeff_cluster [CodeState CodeView ObserveWorld WorldView]
+        doeff_cluster._worker.intent.worker_model [EnvDisk WarmChildView])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveMemoryTight ObserveMemoryKills])
+(import doeff_cluster [local-host])
 
 (val CODE (CodeView "rev1" CodeState.READY :path "/c/rev1"))
 (val ENV (CodeView "env-0123" CodeState.PREPARING))

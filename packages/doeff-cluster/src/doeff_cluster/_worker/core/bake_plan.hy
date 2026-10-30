@@ -1,0 +1,306 @@
+;;; bytecode の準備の道具(worker/entry/code_prepare.hy)が全部の木を 1 回で用意する手順の純粋な判断と、その record — 命令の木ごとの引数の
+;;; 揃え・並列数・木をまたいだ import の閉包の歩み・import の名の保存先の entry の形(閉包の読みを source の中身で使い回す)・焼く順(大きい
+;;; 順)・焼きの道具への受け渡しの行・報告の行。I/O と効果は持たない。
+;;;
+;;; 読まれ方: 入口はこの file を package の import でなく、入口の file の位置から求めた path で読む(module 名 doeff_cluster_worker_bake_plan
+;;; — 入口は準備する root の venv の python で走るので、package で引くと root の版の doeff の物になり、この file を持たない古い版の root で
+;;; 落ちる)。だからこの file が import してよいのも、cluster で動く job の doeff の版から変わっていない部品(code_plan の module-name・
+;;; imported-names と doeff-hy の macro)と標準 library だけ。検は package の名で普通に import して判断を検める。
+(require doeff-hy.macros [defk val])
+(require doeff-hy.record [defrecord])
+(val MODULE-TAGS {:context "worker" :role "judgment"})
+(import bisect)
+(import json)
+(import math)
+(import posixpath)
+(import dataclasses [dataclass])  ; dataclass は defrecord の展開が使う
+(import doeff_cluster._worker.core.code_plan [imported-names module-name])
+
+
+;; --- record ------------------------------------------------------------------------------
+
+(defrecord TreeArgs
+  "命令の木 1 つの引数(揃えた後): named = --tree の綴り・roots = --roots の根(前が先)。"
+  (#^ str named)
+  (#^ tuple roots))
+
+
+(defrecord BakeTree
+  "焼く木 1 つ。named = 命令に書かれた木の綴り(報告の行の名 — 呼び手はこの綴りで木を引き当てる)・path = symlink を辿った絶対 path・
+   roots = 木の中の import の根(前が先)。"
+  (#^ str named)
+  (#^ str path)
+  (#^ tuple roots))
+
+
+(defrecord ModuleIndex
+  "木をまたいだ module の索引: names = module 名(名の順)・places = 同じ順の #(木の番号 相対 path)。同じ名が幾つもの source に在れば、
+   import の路の前の木(番号の小さい方)・同じ木の中では相対 path の名の順の先を採る。"
+  (#^ tuple names)
+  (#^ tuple places))
+
+
+(defrecord BakeItem
+  "焼く物 1 つ: tree = 木の path・rel = 木の中の相対 path・name = module 名・size = source の大きさ(byte — 焼く順を決める)。"
+  (#^ str tree)
+  (#^ str rel)
+  (#^ str name)
+  (#^ int size))
+
+
+(defrecord TreeOutcome
+  "木 1 つの結果(報告の行): 焼く計画の file のうち stored = 保存先の code から .pyc を書いた数・rebuilt = 焼いた数・reused = 在った .pyc が
+   今の source と macro に合い焼かずに残した数・failed = 焼けなかった数(stored + rebuilt + reused + failed = 焼く計画の数)・problem =
+   検めが通らない理由(印を置いていない)か None。"
+  (#^ str named)
+  (#^ int stored)
+  (#^ int rebuilt)
+  (#^ int reused)
+  (#^ int failed)
+  (#^ (| str None) problem))
+
+
+(defrecord BakeAnswer
+  "焼きの道具の答え: failed = 焼けなかった物の #(木の path 相対 path 理由) の列・stored = 保存先の code から .pyc を書いた物の
+   #(木の path 相対 path) の列・reused = 在った .pyc が今の source と今の環境の macro に合うので pool へ送らなかった物の
+   #(木の path 相対 path) の列(#3675)・unstored = 焼いた code を保存先へ書けなかった理由と、保存先の .pyc を木へ hardlink で置けなかった
+   理由(その .pyc は書いた — card ki-d51b7baa38bc)の列(重ねない)。"
+  (#^ tuple failed)
+  (#^ tuple stored)
+  (#^ tuple reused)
+  (#^ tuple unstored))
+
+
+(defrecord BakeSummary
+  "1 回の準備の結果: trees = 木ごとの TreeOutcome(命令の順)・経過の秒(scan-s = 木の走査・closure-s = 閉包の歩み・compile-s = 保存先の
+   引きと焼き)。"
+  (#^ tuple trees)
+  (#^ float scan-s)
+  (#^ float closure-s)
+  (#^ float compile-s))
+
+
+;; --- 命令の引数と並列数 ----------------------------------------------------------------------
+
+;; 焼きの並列数の既定の天井。cpu.max の無い pod(zeus の worker — node の 36 CPU が使える)では、使える CPU の数で焼くと 36 本並べ、
+;; 準備 1 回で 14 core(nice 10)を使って node の load 1 分を 170 まで上げ、同じ node の nice 0 の service が CPU を 34〜89% 待った
+;; (2026-10-12 06:50 JST の測り・card ki-4c2f5878e524)。上限の在る pod の worker(atlas 8・ほかは 2〜3)は今の並列数のまま。
+(val BAKE-JOBS-CEILING 8)
+
+(defk cpu-limit-of [cpu-max available]
+  {:pre [(: cpu-max (| str None)) (: available int)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "cgroup v2 の cpu.max の中身(\"<quota> <period>\" か \"max <period>\")と使える CPU の数から、焼きの並列数を決めるため(pod の上限を
+   越えないため — node の CPU の数で焼くと、上限 4 の pod で 16 並列になり周期の 97% が絞られた)。上限の無い pod でも BAKE-JOBS-CEILING
+   を越えない(同じ node の service の CPU を奪わないため)。"
+  (val parts (if cpu-max (.split cpu-max) []))
+  (val usable (if (and (= (len parts) 2) (!= (get parts 0) "max"))
+                  (min available (math.ceil (/ (int (get parts 0)) (int (get parts 1)))))
+                  available))
+  (max 1 (min BAKE-JOBS-CEILING usable)))
+
+
+(defk tree-arguments [trees roots]
+  {:pre [(: trees tuple) (: roots tuple)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
+  "木ごとに並べた命令の引数(--tree・--roots の値の列)を木の組(TreeArgs の列)に揃えるため(揃え方は入口の頭の註)。揃わなければ
+   使い方の誤りの文。"
+  (cond
+    (!= (len roots) (len trees))
+      (.format "--roots は --tree ごとに 1 つ書く(木 {} に --roots {})" (len trees) (len roots))
+    (any (gfor r roots (not (.strip r ","))))
+      "--roots の値が空(import の根を 1 つ以上 `,` で並べる)"
+    True
+      (tuple (gfor #(i tree) (enumerate trees)
+                   (TreeArgs :named tree :roots (tuple (gfor r (.split (get roots i) ",") :if r r)))))))
+
+
+(defk trees-import-path [trees]
+  {:pre [(: trees tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "焼く process の import の路の先頭に足す dir(木の順・木の中は根の順)を求めるため — 焼く source の macro が同じ木や別の木の module を
+   require するので、全部の木の根を足す。"
+  (tuple (gfor tree trees root tree.roots (posixpath.normpath (posixpath.join tree.path root)))))
+
+
+;; --- 木をまたいだ import の閉包 ------------------------------------------------------------------
+
+(defk module-index [trees sources]
+  {:pre [(: trees tuple) (: sources tuple)] :post [(: % ModuleIndex)] :tags {:context "worker" :role "judgment"}}
+  "木ごとの source の相対 path の列(sources — trees と同じ順)から、木をまたいだ module の索引を作るため(import の根の外の source は
+   module 名を持たないので入らない)。"
+  (val named (sorted (gfor #(i #(tree rels)) (enumerate (zip trees sources))
+                           rel rels
+                           :setv name (module-name rel tree.roots)
+                           :if (is-not name None)
+                           #(name i rel))))
+  (val firsts (tuple (gfor #(k entry) (enumerate named)
+                           :if (or (= k 0) (!= (get (get named (- k 1)) 0) (get entry 0)))
+                           entry)))
+  (ModuleIndex :names (tuple (gfor e firsts (get e 0))) :places (tuple (gfor e firsts #((get e 1) (get e 2))))))
+
+
+(defk closure-step [index frontier seen]
+  {:pre [(: index ModuleIndex) (: frontier frozenset) (: seen frozenset)] :post [(: % tuple)]
+   :tags {:context "worker" :role "judgment"}}
+  "閉包の 1 歩: frontier(import された名)と、その上の package の名(import a.b.c は a と a.b の __init__ も走らせる)のうち、どれかの
+   木の module に解け、まだ訪ねていない名を求めるため(名の順)。"
+  (tuple (sorted (sfor name frontier
+                       :setv parts (.split name ".")
+                       n (range 1 (+ (len parts) 1))
+                       :setv m (.join "." (cut parts 0 n))
+                       :setv at (bisect.bisect-left index.names m)
+                       :if (and (not-in m seen) (< at (len index.names)) (= (get index.names at) m))
+                       m))))
+
+
+(defk module-place [index name]
+  {:pre [(: index ModuleIndex) (: name str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "索引に在る module 名の置き場 #(木の番号 相対 path) を引くため(閉包の歩みが読む source を決める)。"
+  (get index.places (bisect.bisect-left index.names name)))
+
+
+(defk imported-modules [index found imports]
+  {:pre [(: index ModuleIndex) (: found tuple) (: imports tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "訪ねた module(found — 索引に在る名)の source が import する名(imports — 同じ順の、imported-names の答えの形 #(#(点の数 名
+   取り出す名の tuple) …) の列)を module 名に解くため。相対の名は module の package から解き、from a import x の a.x も入れる(x が
+   module でなければどの木にも解けず、次の歩みで落ちる)。"
+  (frozenset (gfor #(m named) (zip found imports)
+                   :setv rel (get (get index.places (bisect.bisect-left index.names m)) 1)
+                   :setv package (.split (if (.endswith rel #("__init__.py" "__init__.hy")) m (.join "." (cut (.split m ".") 0 -1))) ".")
+                   #(dots target names) named
+                   :setv base (if (> dots 0)
+                                  (.join "." (+ (cut package 0 (max 0 (- (len package) (- dots 1)))) (if target [target] [])))
+                                  target)
+                   :if base
+                   name (+ #(base) (tuple (gfor x names (+ base "." x))))
+                   name)))
+
+
+(defk closure-scopes [index seen count]
+  {:pre [(: index ModuleIndex) (: seen frozenset) (: count int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "閉包に入った module 名(seen)を、木ごとの相対 path の frozenset(木の番号の順・count 個)に分けるため。"
+  (val places (tuple (gfor m seen (get index.places (bisect.bisect-left index.names m)))))
+  (tuple (gfor i (range count) (frozenset (gfor p places :if (= (get p 0) i) (get p 1))))))
+
+
+;; --- import の名の保存先の entry(閉包の歩みの読みを source の中身で使い回す・#3694・#3858)----------------------------
+;; 閉包の歩みが訪ねた source ごとの import の名(imported-names の答え)を、doeff-hy の code_store の保存先に source の中身の鍵で置く(種類の
+;; 末尾 .imports)。次の準備は、版・木・root が違っても中身の同じ source の entry を使い、構文の読み(Hy の read-many と Python の
+;; ast.parse — 閉包の秒の大半)を中身の変わった file だけにする。前は木の根に表 1 つを残し、引き継ぎ元の木(--from)の表と変わった path の
+;; 一覧(--changed)で使い回したので、引き継ぎ元の無い root(新しい worker・空の /work・テストの 1 台)は全部を読み直した。
+
+;; entry の形の印(形か imported-names の読み方を変えたら末尾の番号を上げる — 古い entry は当たらなくなる)。
+(val IMPORTS-TAG "doeff-cluster/import-names/1")
+
+
+(defk imports-key-parts [rel hy-version]
+  {:pre [(: rel str) (: hy-version str)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "source 1 つの import の名の entry の鍵の欄(code_store の content-key へ source の中身と渡す)— Python の source は ast の読み、Hy の
+   source は Hy の読み手の版で読みが変わりうるので、Hy の版も入れる。"
+  (if (.endswith rel ".py")
+      #(IMPORTS-TAG "py" "")
+      #(IMPORTS-TAG "hy" hy-version)))
+
+
+(defk imports-entry [imports]
+  {:pre [(: imports tuple)] :post [(: % bytes)] :tags {:context "worker" :role "judgment"}}
+  "import の名(imported-names の答えの形 #(#(点の数 名 取り出す名の tuple) …))を entry の中身(JSON の境界の 1 点)に綴るため。"
+  (.encode (json.dumps (lfor #(dots name names) imports [dots name (list names)]) :ensure-ascii False) "utf-8"))
+
+
+(defk imports-of-entry [data]
+  {:pre [(: data bytes)] :post [(: % (| tuple str))] :tags {:context "worker" :role "judgment"}}
+  "entry の中身を import の名の列に読むため。JSON でない・形が違う entry は理由の文(呼び手は名指して除き、構文を読み直して書き直す)。"
+  (var parsed None)
+  (var problem None)
+  (try
+    (:= parsed (json.loads (.decode data "utf-8")))
+    (except [error ValueError]
+      (:= problem (.format "JSON でない: {}" error))))
+  (var entries #())
+  (when (is problem None)
+    (match parsed
+      (list) (for [e parsed]
+               (match e
+                 [(int) (str) (list)] :if (all (gfor x (get e 2) (isinstance x str)))
+                   (:= entries (+ entries #(#((get e 0) (get e 1) (tuple (get e 2))))))
+                 _ (:= problem (.format "import の名の形が違う行: {!r}" e))))
+      _ (:= problem "import の名の列でない")))
+  (if (is problem None) entries problem))
+
+
+(defk scoped-sources [sources scope]
+  {:pre [(: sources (| list tuple)) (: scope (| frozenset None))] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "木の走査の source の列(sources)を、その木の焼く範囲(scope — 閉包の相対 path・None = 根の下を全部)に絞るため(焼く物と検めの対象)。"
+  (if (is scope None) (list sources) (lfor s sources :if (in s scope) s)))
+
+
+(defk tree-failures [failures tree]
+  {:pre [(: failures tuple) (: tree str)] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "1 回の焼きの焼けなかった物(#(木の path 相対 path 理由) の列)から、木 1 つの物を #(相対 path 理由) の列で取り出すため(検めと印に載せる)。"
+  (lfor f failures :if (= (get f 0) tree) #((get f 1) (get f 2))))
+
+
+(defk tree-count [listed tree]
+  {:pre [(: listed tuple) (: tree str)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
+  "1 回の用意の答えの #(木の path 相対 path) の列(保存先から書いた物・焼かずに残した物)のうち、木 1 つの物の数を求めるため(報告の行の
+   stored と reused)。"
+  (sum (gfor r listed :if (= (get r 0) tree) 1)))
+
+
+;; --- 焼く順と焼きの道具への受け渡し --------------------------------------------------------------
+
+(defk bake-order [items]
+  {:pre [(: items tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "焼く物(BakeItem の列)を、pool へ渡す順の #(木の path 相対 path module 名) の列にするため: source の大きい順(同じ大きさは木の path と
+   相対 path の順)。1 file の秒の偏りが大きく(中央値 0.17 秒・最大 6〜25 秒 — 大半は Hy の macro の展開で、大きい source ほど長い)、
+   遅い物を先に配ると、最後に 1 core だけが長い file を焼いて残りが遊ぶ時間が減る。"
+  (tuple (gfor item (sorted items :key (fn [i] #((- i.size) i.tree i.rel))) #(item.tree item.rel item.name))))
+
+
+(defk bake-argv [python tool jobs paths store-module store progress]
+  {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None)) (: progress (| str None))]
+   :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "焼きの道具(tool = worker 自身のコードの _foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
+   準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
+   code_store.py・store = 保存先の dir — None は保存先を使わない・progress = 進みの印の file — 道具が 1 つ用意するたびに時刻を進める・
+   None は印を触らない・card ki-6401ff10af71)。"
+  (+ #(python "-m" "hy" tool "--jobs" (str jobs) "--store-module" store-module)
+     (if (is store None) #() #("--store" store))
+     (if (is progress None) #() #("--progress" progress))
+     (tuple (gfor p paths a #("--path" p) a))))
+
+
+(defk bake-input [items]
+  {:pre [(: items tuple)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "焼く物(#(木の path 相対 path module 名) の列)を焼きの道具の標準入力(1 つ 1 行・tab で区切る・この順に焼く)にするため。"
+  (.join "" (gfor #(tree rel name) items (.format "{}\t{}\t{}\n" tree rel name))))
+
+
+(defk bake-answer [text]
+  {:pre [(: text str)] :post [(: % BakeAnswer)] :tags {:context "worker" :role "judgment"}}
+  "焼きの道具の標準出力(1 つ 1 行 — 焼けなかった物は `failed\\t<木の path>\\t<相対 path>\\t<理由>`・保存先の code から書いた物は
+   `stored\\t<木の path>\\t<相対 path>`・焼かずに残した物は `reused\\t<木の path>\\t<相対 path>`・保存先へ書けなかった理由は
+   `unstored\\t<理由>`)を BakeAnswer にするため。"
+  (val rows (tuple (gfor line (.splitlines text) (.split line "\t" 3))))
+  (BakeAnswer :failed (tuple (gfor r rows :if (and (= (len r) 4) (= (get r 0) "failed")) (tuple (cut r 1 None))))
+              :stored (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "stored")) (tuple (cut r 1 None))))
+              :reused (tuple (gfor r rows :if (and (= (len r) 3) (= (get r 0) "reused")) (tuple (cut r 1 None))))
+              :unstored (tuple (gfor line (.splitlines text) :if (.startswith line "unstored\t") (cut line (len "unstored\t") None)))))
+
+
+;; --- 報告の行 ------------------------------------------------------------------------------
+
+(defk tree-line [outcome]
+  {:pre [(: outcome TreeOutcome)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "木 1 つの報告の行を作るため(呼び手が木ごとの問題を読む形 — 問題の文の改行は空白にして 1 行に収める)。"
+  (.format "tree={} stored={} rebuilt={} reused={} failed={} problem={}" outcome.named outcome.stored outcome.rebuilt outcome.reused
+           outcome.failed
+           (if (is outcome.problem None) "-" (.replace outcome.problem "\n" " "))))
+
+
+(defk total-line [summary]
+  {:pre [(: summary BakeSummary)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "全体の報告の行を作るため(頭は stored=… rebuilt=… reused=… — 呼び手はこの行で合計を読む・秒は処理ごとに分けて名乗る)。"
+  (.format "stored={} rebuilt={} reused={} failed={} compile_s={} closure_s={} scan_s={}"
+           (sum (gfor t summary.trees t.stored)) (sum (gfor t summary.trees t.rebuilt)) (sum (gfor t summary.trees t.reused))
+           (sum (gfor t summary.trees t.failed))
+           (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)))

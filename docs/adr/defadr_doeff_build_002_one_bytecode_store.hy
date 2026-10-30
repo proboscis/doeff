@@ -25,10 +25,10 @@
 (val ENTRY "packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py")
 
 ;; worker の bytecode の準備の道具(入口を worker の版の file として path で読む所)と、起動の script(保存先の既定を置く所)。
-(val PREPARE-TOOL "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy")
+(val PREPARE-TOOL "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy")
 (val POOL-TOOL "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy")
 (val BOOT-SCRIPT "packages/doeff-cluster/deploy/boot.sh")
-(val UPKEEP "packages/doeff-cluster/src/doeff_cluster/worker/core/env_upkeep.hy")
+(val UPKEEP "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_upkeep.hy")
 
 ;; 保存先の entry を綴る形の目印(種類の末尾 .code・.imports の文字列 — 入口の外にこの綴りが在れば 2 つ目の保存先)。doeff-hy-check の
 ;; 展開の cache(doeff_hy/_static_cache — 型検査の展開・.json と .txt)は bytecode の保存先ではないので当たらない。
@@ -41,11 +41,11 @@
 (val PLACEMENT-TOKEN (re.compile r"[\"']__pycache__[\"']|[\"']\.pyc[\"']|\bpyc[-_]path\b|\bcache[-_]from[-_]source\b"))
 (val CLUSTER-SRC "packages/doeff-cluster/src/doeff_cluster")
 (val BYTECODE-TOOL-FILES #{"packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/worker/core/code_prepare.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
-                           "packages/doeff-cluster/src/doeff_cluster/worker/intent/code_model.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_prepare.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/_worker/core/code_plan.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/_worker/core/bake_plan.hy"
+                           "packages/doeff-cluster/src/doeff_cluster/_worker/intent/code_model.hy"
                            "packages/doeff-cluster/src/doeff_cluster/_sim/env_world.hy"})
 ;; 走査で降りない dir(作業木・venv・生成物)と、検と文書の置き場。
 (val SCAN-SKIP-PARTS #{".git" ".venv" ".worktrees" "node_modules" "target" "__pycache__" "tests" "conformance"})
@@ -127,9 +127,9 @@
   :status "accepted"
   :scope ["packages/doeff-hy/src/doeff_hy_bytecode_guard/_code_store.py"
           "packages/doeff-hy/src/doeff_hy_bytecode_guard/_loader_hooks.py"
-          "packages/doeff-cluster/src/doeff_cluster/worker/entry/code_prepare.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/entry/code_prepare.hy"
           "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"
-          "packages/doeff-cluster/src/doeff_cluster/worker/core/bake_plan.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_worker/core/bake_plan.hy"
           "packages/doeff-cluster/deploy/boot.sh"
           "docs/adr/defadr_doeff_build_002_one_bytecode_store.hy"]
   :problem
@@ -147,7 +147,7 @@
        :evidence "#3858 の調べ・手元の測りの完成マーカーの bytecode の欄")
      (fact
        "直す前の形: worker の準備は .pyc を root の木の中にだけ置き、次の版は完成済みの root の木から変わっていない file(git diff の外)の .pyc を hardlink で引き継いだ。閉包の歩みの import の名も、木の根に残す表を引き継ぎ元の木から使い回した。引き継ぎ元の選びは Python と Hy の版・同じ repo の完成済みの root に限るので、新しい worker・空の /work・root を消した後・テストの 1 台の cluster では全部を焼き直した。同じ中身の code の保存先は doeff-hy の import の口にだけ在り(DOEFF_HY_CODE_STORE)、準備の道具は使わなかった。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/core/env_prepare.hy の carry-source(この変更の前の版)・worker/entry/code_prepare.hy の --from と --changed")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/core/env_prepare.hy の carry-source(この変更の前の版)・worker/entry/code_prepare.hy の --from と --changed")
      (fact
        "測り(2026-10-12 09:0x JST・zeus・card ki-6828e9af04b4 — 調べは card ki-4c2f5878e524): 実行環境の準備は同じ版の source でも 1 回に 100〜600 本の Hy の bytecode を焼き直した(02:53 JST より前は 0〜10 本・bytecode の段 10〜40 秒 → 後は 30〜600 本・40〜550 秒。06 時台の 1 時間は 6 回で 2,763 本・1,366 秒)。鍵 1 つに entry 1 つの並びで、準備(worker の道具 — 記録の印 6)と作業木の import(DOEFF_HY_CODE_STORE を worker から継ぐ・doeff の版は作業木ごとに違う — 記録の印 5 など)が、同じ鍵の entry を互いに古いと見て焼き直し、上書きし合った。最新の root の Hy の source 1,094 本の entry を、その root の環境で照らすと、使える 797・記録の印 5 で使えない 295(どれも作業木が書いた)・digest が合わない 2。"
        :evidence "card ki-6828e9af04b4 の本文(所見)")]
@@ -224,7 +224,7 @@
        (assert (run (spells-store-layout "(val path (posixpath.join store (cut key 0 2) (+ (cut key 2 None) \".imports\")))\n")))
        (assert (not (run (spells-store-layout "# \".code\" の entry は code_store が綴る\n"))))
        (assert (not (run (spells-store-layout "return cache_dir / key[:2] / f\"{key}.json\"\n"))))
-       (val second "packages/doeff-cluster/src/doeff_cluster/worker/core/pyc_cache.hy")
+       (val second "packages/doeff-cluster/src/doeff_cluster/_worker/core/pyc_cache.hy")
        (assert (= (len (run (layout-violations (frozenset #{ENTRY second})))) 1))
        (assert (= (run (layout-violations (frozenset #{ENTRY}))) []))
        (assert (= (len (run (layout-violations (frozenset #{second})))) 2))
@@ -237,7 +237,7 @@
        (assert (run (spells-bytecode-placement "cache = importlib.util.cache_from_source(path)\n")))
        (assert (not (run (spells-bytecode-placement ";; 追跡しない物(.venv・__pycache__)は写さない\n"))))
        (assert (not (run (spells-bytecode-placement "\"追跡しない物(.venv・__pycache__・焼いた印)は写さない\"\n"))))
-       (val tree "packages/doeff-cluster/src/doeff_cluster/worker/protocol/env_translation.hy")
+       (val tree "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/env_translation.hy")
        (assert (= (len (run (placement-violations (frozenset #{tree "packages/doeff-cluster/src/doeff_cluster/_foundation/bytecode_pool.hy"})))) 1))
-       (assert (= (run (placement-violations (frozenset #{"packages/doeff-cluster/src/doeff_cluster/worker/core/code_plan.hy"}))) [])))]
+       (assert (= (run (placement-violations (frozenset #{"packages/doeff-cluster/src/doeff_cluster/_worker/core/code_plan.hy"}))) [])))]
   :plans [])

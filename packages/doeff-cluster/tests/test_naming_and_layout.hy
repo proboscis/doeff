@@ -10,7 +10,7 @@
 (import doeff_cluster [naming-from-json])
 (import os)
 (import pathlib [Path])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout])
+(import doeff_cluster [CodeLayout])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import tests.host_rig [host-settings job-ended run-on-host])
 (import tests.test_rollout [Sim FORWARD DEP])

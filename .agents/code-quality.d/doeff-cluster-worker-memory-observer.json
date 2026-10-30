@@ -21,10 +21,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-memory-observer",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/memory_observer.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/memory_observer.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/memory_observer.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/memory_observer.hy"
       ],
       "responsibility": "機体の memory の逼迫の観測(card ki-7b934e2538f9): worker の観測 ObserveMemoryTight に、機体の memory の見張りが言った様子(MemoryCell.level)が TIGHT か DANGER かで答える答え手(memory-observer)。worker の入口が並べる。",
       "typed": true

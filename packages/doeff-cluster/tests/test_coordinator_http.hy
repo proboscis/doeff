@@ -14,7 +14,7 @@
 (import doeff_cluster.shared.intent.protocol [NextRequests Reply])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
 (import tests.link_rig [LinkRig])
-(import doeff_cluster.worker.intent.worker_model [DesiredJobs DesiredUnreadable])
+(import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 
 
 (defk path-echoes [stop]

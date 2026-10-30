@@ -51,12 +51,15 @@
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout WarmLaunch WarmChildView StartWarmChild StopWarmChild StopStage WorkerPolicy])
-(import doeff_cluster.worker.protocol.observations [ObserveWarmChildren])
-(import doeff_cluster.worker.protocol.warm_host [WarmSettings warm-host])
-(import doeff_cluster.worker.core.launch [JobLaunch job-launch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
-(import doeff_cluster.worker.core.warm_rules [WarmPlace warm-place warm-child-ready warm-launch warm-key-of])
-(import doeff_cluster.worker.core.shim_timing [ShimSpans shim-spans])
+(import doeff_cluster [CodeLayout StartWarmChild StopWarmChild StopStage WorkerPolicy]
+        doeff_cluster._worker.intent.worker_model [WarmLaunch WarmChildView])
+(import doeff_cluster [ObserveWarmChildren])
+(import doeff_cluster [warm-host]
+        doeff_cluster._worker.protocol.warm_host [WarmSettings])
+(import doeff_cluster._worker.core.launch [JobLaunch job-launch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place warm-child-ready warm-launch warm-key-of])
+(import doeff_cluster [shim-spans]
+        doeff_cluster._worker.core.shim_timing [ShimSpans])
 (import tests.env_fixtures [LOCK env-of])
 
 ;; repo の根(root の project の symlink の指す先 — venv は <根>/.venv)と、この package の dir(冷えた道の cwd・待ちの子の起動の cwd —

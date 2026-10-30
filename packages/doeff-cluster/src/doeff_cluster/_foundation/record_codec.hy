@@ -153,11 +153,11 @@
       "doeff_cluster.shared.core.record_model" "doeff_cluster._foundation.record_log"
       "doeff_cluster.shared.protocol.record_handlers" "doeff_cluster._foundation.record_handlers"
       ;; worker の型(#2025 の 2 本目)— 観測・記録・effect の型と、拍と掃除の判断の型。
-      "doeff_cluster.worker_model" "doeff_cluster.worker.intent.worker_model"
-      "doeff_cluster.beat_policy" "doeff_cluster.worker.core.beat_policy"
-      "doeff_cluster.env_upkeep" "doeff_cluster.worker.core.env_upkeep"
+      "doeff_cluster.worker_model" "doeff_cluster._worker.intent.worker_model"
+      "doeff_cluster.beat_policy" "doeff_cluster._worker.core.beat_policy"
+      "doeff_cluster.env_upkeep" "doeff_cluster._worker.core.env_upkeep"
       ;; 実行環境の root の準備の型(#2025 の 3 本目)— FileSha256 だけは共有の置き場(MOVED-TYPES)。
-      "doeff_cluster.env_prepare" "doeff_cluster.worker.intent.env_prepare_model"
+      "doeff_cluster.env_prepare" "doeff_cluster._worker.intent.env_prepare_model"
       ;; record-store の effect の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-ff69baa69a6b)— 移し替えの module を消した後も引く。
       "doeff_cluster.record_store.intent.record_store_model" "doeff_cluster._record_store.intent.record_store_model"}
      ;; 土台の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-56d2dcf86f01)— 型の名は class を定義する module の名を書くので、class を
@@ -171,7 +171,18 @@
                   "intent.cluster_model" "intent.due_model" "intent.failover_model" "intent.kube_model" "intent.request_bodies"
                   "intent.worker_notices" "protocol.durable_kv" "protocol.kube" "protocol.request_queue" "protocol.store"
                   "protocol.wal_format" "protocol.worker_notices")
-           (+ "doeff_cluster.coordinator." name) (+ "doeff_cluster._coordinator." name))))
+           (+ "doeff_cluster.coordinator." name) (+ "doeff_cluster._coordinator." name))
+     ;; worker の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-3ff93cd3499e)— 同じく class を定義する module(worker の effect と観測の型
+     ;; worker_model・準備の型 env_prepare_model・宿の handler ほか)だけを並べる。移し替えの module を消した後も引く。
+     (dfor name #("core.account_token" "core.bake_plan" "core.beat_policy" "core.boot_timing" "core.env_prepare" "core.env_rules"
+                  "core.env_upkeep" "core.invariants" "core.launch" "core.memory_rules" "core.places" "core.pod_label_rules" "core.policy"
+                  "core.probe_rules" "core.program" "core.room_rules" "core.shim_timing" "core.warm_rules" "entry.boot_wheel"
+                  "entry.code_prepare" "entry.line_stamp" "entry.shim" "entry.warm_child" "intent.code_model" "intent.drain_model"
+                  "intent.env_prepare_model" "intent.retirement_model" "intent.worker_model" "protocol.code_store"
+                  "protocol.coordinator_link" "protocol.declared" "protocol.env_store" "protocol.env_translation" "protocol.memory_watch"
+                  "protocol.observations" "protocol.pod_labels" "protocol.probes" "protocol.process_host" "protocol.supplied_hold"
+                  "protocol.tick_pauses" "protocol.warm_host")
+           (+ "doeff_cluster.worker." name) (+ "doeff_cluster._worker." name))))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。
@@ -183,7 +194,7 @@
            (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster._record_store.intent.record_store_model:" name))
      ;; #2025 の 3 本目 — env_prepare の FileSha256 は送り手の宣言と入口の検めも出す共有の effect・drain_client の effect は worker/intent へ。
      {"doeff_cluster.env_prepare:FileSha256" "doeff_cluster.shared.intent.env_marker_model:FileSha256"
-      "doeff_cluster.drain_client:CoordinatorCall" "doeff_cluster.worker.intent.drain_model:CoordinatorCall"}))
+      "doeff_cluster.drain_client:CoordinatorCall" "doeff_cluster._worker.intent.drain_model:CoordinatorCall"}))
 
 (defn #^ (| type None) resolve-type [#^ str name]
   "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。

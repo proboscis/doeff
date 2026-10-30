@@ -134,7 +134,7 @@ class Margins:
 def worker_margins() -> Margins:
     """worker の env_upkeep の NEAR-MARGIN-BYTES・NEAR-RETURN-BYTES を読む(写さない — 幅を替えると分け前も替わる)。"""
     import hy  # noqa: F401  — Hy の module を import できるようにする
-    from doeff_cluster.worker.core import env_upkeep
+    from doeff_cluster._worker.core import env_upkeep
 
     return Margins(
         near_bytes=int(env_upkeep.NEAR_MARGIN_BYTES), return_bytes=int(env_upkeep.NEAR_RETURN_BYTES)

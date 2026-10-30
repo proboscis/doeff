@@ -16,7 +16,7 @@
 (import doeff_cluster.shared.intent.job_model [JobPhase])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
+(import doeff_cluster [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])
 (import tests.env_fixtures [LOCK env-of])

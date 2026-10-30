@@ -5,7 +5,8 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "foundation"})
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.due_model [DueAt])
-(import doeff_cluster.worker.intent.worker_model [WakeSet WorkerWakes])
+(import doeff_cluster [WorkerWakes]
+        doeff_cluster._worker.intent.worker_model [WakeSet])
 
 
 (defhandler wakes-every [#^ int every-ms]

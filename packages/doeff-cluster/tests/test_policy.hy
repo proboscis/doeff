@@ -2,9 +2,10 @@
 (require doeff-hy.record [defrecord])
 
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage JobStop
-  Outcome JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob SpecChanged Undeclared Retired CutOff WorkerStopping] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker.core.policy [plan ready-followups records-after statuses])
+(import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage JobRecord WorkerPolicy PrepareCode StartJob SignalJob ReapJob Retired]
+        doeff_cluster._worker.intent.worker_model [JobStop Outcome SpecChanged Undeclared CutOff WorkerStopping] doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
+(import doeff_cluster [plan records-after statuses]
+        doeff_cluster._worker.core.policy [ready-followups])
 
 (setv POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000)
       A1 (JobSpec "a" "jobs.a" #() "rev1")
@@ -107,7 +108,7 @@
   (assert (= (! (plan 11 #(A2) (! (world :codes #(READY1 READY2))) records POLICY)) #((StartJob A2 2 "/c/rev2")))))
 
 (deftest test-task-runs-once-and-is-reported-finished
-  (setv task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+  (setv task (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
   (assert (= (! (plan 0 #(task) (! (world)) {} POLICY)) #((StartJob task 1 "/c/rev1"))))
   ;; 終わった後は宣言に残っていても起動し直さない(worker の障害でも走らせ直さないのと同じ)
   (setv done {"task/t1" (JobRecord "task/t1" 1 100 Outcome.EXITED 0)})
@@ -151,7 +152,7 @@
 
 (deftest test-task-that-exits-with-code-0-is-not-counted-as-a-failure
   ;; 1 回だけ走って exit code 0 で終わった task は失敗ではない。記録の failures は 0 で、状態に failures・backoff を出さない。
-  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+  (val task (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
   (val start (! (plan 0 #(task) (! (world)) {} POLICY)))
   (val started (! (records-after 0 {} start POLICY)))
   (val reap (! (plan 1000 #(task) (! (world (replace (! (running task)) :exit-code 0))) started POLICY)))
@@ -165,7 +166,7 @@
 
 (deftest test-task-that-exits-with-a-nonzero-code-is-still-counted
   ;; exit code 1 で終わった task は今までどおり失敗に数え、状態に回数を出す(起こし直しはしない)。
-  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+  (val task (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
   (val started (! (records-after 0 {} (! (plan 0 #(task) (! (world)) {} POLICY)) POLICY)))
   (val reap (! (plan 1000 #(task) (! (world (replace (! (running task)) :exit-code 1))) started POLICY)))
   (val done (! (records-after 1000 started reap POLICY)))
@@ -237,7 +238,7 @@
 
 ;; --- 入れ替え(handoff・2026-09-24): 新が Ready と数えられてから旧を止める ---------------------------------------
 
-(import doeff_cluster.worker.intent.worker_model [RetireJob ReleaseLeases] doeff_cluster.worker.core.worker_rules [retired-name])
+(import doeff_cluster [RetireJob ReleaseLeases] doeff_cluster [retired-name])
 
 (setv H1 (replace A1 :handoff True)
       H2 (replace A1 :revision "rev2" :handoff True))
@@ -420,7 +421,7 @@
 
 ;; --- 止まりの始まった世代の守り(AL-D2p): Pod の preStop の drain が始まった worker は、handoff の job の新しい試行を起こさない ------
 
-(import doeff_cluster.worker.intent.worker_model [StartHold] doeff_cluster.worker.core.policy [start-holds])
+(import doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster._worker.core.policy [start-holds])
 
 (deftest test-a-leaving-generation-starts-no-new-trial-of-a-handoff-job-even-without-the-superseded-mark
   ;; 失敗ケース(10-11 の zeus の画面の process の群 — card ki-3a57786eba88): 止まり(preStop の drain)の始まった Pod の古い世代は、
@@ -531,8 +532,9 @@
 ;; (約 107 秒)と入口の検めを経て起動した(02:47:24)— 約 130 秒書けなかった。handoff と同じく、旧を動かしたまま準備と検めを進め、
 ;; 両方が済んでから旧を止める。止め終えた次の周期で新しい版をすぐ起動する。新旧の本体を同時には動かさない(検めは import だけ)。
 
-(import doeff_cluster.worker.intent.worker_model [ProbeEntry ProbeState ProbeView StartHold] doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.worker.core.policy [start-holds JobHold])
+(import doeff_cluster [ProbeEntry ProbeState ProbeView]
+        doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster._worker.core.policy [start-holds JobHold])
 
 ;; 入口の検めの対象の service の job(args の先頭が "service")・入れ替えの形は既定の recreate。
 (val R1 (JobSpec "s" "jobs.s" #("service") "rev1"))
@@ -605,12 +607,12 @@
   ;; 宣言から消えた job は、新しい版を待たずに今までどおりすぐ止める。task(once)は 1 度だけ走らせる物なので、宣言が変わっても新しい版を
   ;; 準備せず今までどおりすぐ止める。
   (assert (= (! (plan 0 #() (! (world (! (running R1)))) {} POLICY)) #((SignalJob "s" 10 StopStage.TERM (Undeclared)))))
-  (val task (JobSpec "task/t1" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+  (val task (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
   (assert (= (! (plan 0 #((replace task :revision "rev2")) (! (world (! (running task)))) {} POLICY))
              #((SignalJob "task/t1" 10 StopStage.TERM (SpecChanged))))))
 
 
-(import doeff_cluster.worker.intent.worker_model [PrepareEnv])
+(import doeff_cluster [PrepareEnv])
 
 (deftest test-preparing-beside-a-running-old-version-carries-the-policy-compile-jobs
   ;; 失敗ケース(2026-10-08): recreate の job の旧い process が動いている間の新しい版の準備(replace-step)は、方策の並べる数
@@ -709,7 +711,7 @@
 
 ;; --- 機体の memory の逼迫の間の task の見送り(card ki-7b934e2538f9): 見張りの様子が TIGHT か DANGER の間、task(once)を起こさない ------
 
-(val HEAVY (JobSpec "task/heavy" "doeff_cluster.worker.entry.job_entry" #("task") "rev1" :once True))
+(val HEAVY (JobSpec "task/heavy" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
 
 (deftest test-a-task-waits-while-the-machine-memory-is-tight-and-starts-when-it-eases
   ;; 失敗ケース: 見張りは機体の逼迫を log に残すだけで、worker は逼迫の間も日次の全体検証のような重い task(12〜16Gi の山を 3 本並べる宣言)を

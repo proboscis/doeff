@@ -11,14 +11,16 @@
 (import doeff [run])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView ProcessView WorldView StopStage StopProgress JobStop Outcome JobRecord
-                                                 WorkerPolicy ProbeState ProbeView WarmChildView WarmLaunch Undeclared])
+(import doeff_cluster [CodeState CodeView ProcessView WorldView StopStage JobRecord WorkerPolicy ProbeState ProbeView]
+        doeff_cluster._worker.intent.worker_model [StopProgress JobStop Outcome WarmChildView WarmLaunch Undeclared])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.worker.core.policy [plan statuses warm-child-step kept-when-cut-off?])
-(import doeff_cluster.worker.core.beat_policy [heartbeat-due])
-(import doeff_cluster.worker.core.heartbeat_rules [desired-after-silence])
-(import doeff_cluster.worker.core.env_upkeep [RootsTally PrepareLimits prepare-overdue sweep-due SWEEP-EVERY-MS])
-(import doeff_cluster.worker.core.worker_due [plan-due beat-due fence-due prepare-stop-due sweep-interval-due])
+(import doeff_cluster [plan statuses]
+        doeff_cluster._worker.core.policy [warm-child-step kept-when-cut-off?])
+(import doeff_cluster._worker.core.beat_policy [heartbeat-due])
+(import doeff_cluster._worker.core.heartbeat_rules [desired-after-silence])
+(import doeff_cluster._worker.core.env_upkeep [RootsTally PrepareLimits prepare-overdue sweep-due SWEEP-EVERY-MS])
+(import doeff_cluster [fence-due]
+        doeff_cluster._worker.core.worker_due [plan-due beat-due prepare-stop-due sweep-interval-due])
 
 (val POLICY (WorkerPolicy))
 (val A1 (JobSpec "a" "jobs.a" #() "rev1"))

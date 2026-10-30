@@ -5,9 +5,9 @@
 (import httpx)
 (import doeff [with-handlers])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.worker.entry.drain_main [coordinator-calls])
+(import doeff_cluster [coordinator-calls])
 (import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell])
-(import doeff_cluster.worker.intent.drain_model [CoordinatorCall])
+(import doeff_cluster [CoordinatorCall])
 (import tests.transport_http [transport-http TEST-ROUTE])
 
 (val LAN "http://lan")

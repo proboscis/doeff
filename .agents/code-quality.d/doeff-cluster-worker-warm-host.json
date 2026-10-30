@@ -20,10 +20,10 @@
       "layer": "io",
       "name": "doeff-cluster-worker-warm-host",
       "paths": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/warm_host.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/warm_host.hy"
       ],
       "public": [
-        "packages/doeff-cluster/src/doeff_cluster/worker/protocol/warm_host.hy"
+        "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/warm_host.hy"
       ],
       "responsibility": "worker の宿で待ちの子(#3646)を汎用の効果で起こし・観測し・止め・忘れる handler(StartWarmChild・ObserveWarmChildren・StopWarmChild・ForgetWarmChild)。",
       "typed": true

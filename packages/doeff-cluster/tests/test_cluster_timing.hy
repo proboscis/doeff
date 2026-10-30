@@ -9,8 +9,8 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly self-stop-ms timing-outlasts-the-self-stop])
 (import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
-(import doeff_cluster.worker.entry.main [timing-checked])
+(import doeff_cluster [WorkerPolicy])
+(import doeff_cluster._worker.entry.main [timing-checked])
 
 ;; 本番の時間の設定と worker の既定の停止の猶予。
 (val T (ClusterTiming))

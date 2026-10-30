@@ -51,7 +51,7 @@
 ;;;   同じ判断を途絶しても動かし続けてよい印の約束の在る job にも当てる: coordinator が沈黙した担い手への約束を外して他へ移す期限
 ;;;   (ClusterTiming.kept-reassign-after-ms)は、長い方の柵(keep-fence-ms)を柵にした止め切りより後。確かめるのは同じ file の
 ;;;   test-the-production-kept-reassign-outlasts-the-kept-self-stop・失敗ケースは test-moving-one-constant-past-the-kept-self-stop-is-named。
-;;;   C4b stopped-job-leaves-no-descendant(doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant — #2940 の 2 段目)— job を
+;;;   C4b stopped-job-leaves-no-descendant(doeff_cluster._worker.core.invariants:stopped-job-leaves-no-descendant — #2940 の 2 段目)— job を
 ;;;   止め切った後(止めの合図から停止の猶予 + KILL の猶予の後・worker が消えてから shim の期限の後・job が自分で終わったのを worker が観測
 ;;;   した時)、job の子孫は 1 つも生きていない — job が別の session・process group で起こした孫も(C4 の止め切りはこの条の上で意味を持つ)。
 ;;;   守るのは入れ物 shim(worker/entry/shim)の 1 か所: job を起こす前に自分を子孫の引き取り手(PR_SET_CHILD_SUBREAPER)にし、3 つの道で同じ
@@ -142,12 +142,12 @@
 ;;;   test-a-task-is-answered-within-the-limit(task の答えと 65 秒の見張りを競わせ、送った刻・答えた刻を判断に渡す)。失敗ケースは同じ file の
 ;;;   test-a-counterexample-worker-that-hides-its-abilities-breaks-c9(task を走らせられる worker が heartbeat で能力を名乗らない — claims-provides
 ;;;   = 空 — と、coordinator は「能力の合う worker が無い」の失敗で答え、C9 が名指す)。
-;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
+;;;   W1 handoff-keeps-a-ready-writer(doeff_cluster._worker.core.invariants:handoff-keeps-a-ready-writer)— 入れ替え(handoff)を宣言した Service
 ;;;   は、入れ替えの間も Ready の書き手が途切れない(旧は新が Ready になった後にだけ止める)。確かめるのは tests/test_local.hy の
 ;;;   test-redeclaring-a-handoff-service-stops-the-old-process-only-after-the-new-one-is-ready(世代ごとの最初の Ready と終わりを判断に渡す)。
 ;;;   失敗ケースは同じ file の test-a-counterexample-worker-that-stops-the-old-process-on-retire-breaks-w1(sim の宿の RetireJob の handler を
 ;;;   「外すと同時に旧を止める」形に壊した worker — SimWorker の retire-stops — で、同じ筋書きに W1 の空白が出る)。
-;;;   W2 retiring-process-hears-first(doeff_cluster.worker.core.invariants:retiring-process-hears-first — #3672)— 入れ替え(handoff)で退く
+;;;   W2 retiring-process-hears-first(doeff_cluster._worker.core.invariants:retiring-process-hears-first — #3672)— 入れ替え(handoff)で退く
 ;;;   process は、後を継ぐ世代の最初の Ready の報告と、自分が受ける止めの合図(SIGTERM)のどちらよりも前に、出来事で「退く」の知らせ
 ;;;   (worker/intent/retirement_model の AwaitRetirement の答え Retired)を受ける — 退く process が新しい仕事を取らずに今の仕事を終える
 ;;;   (drain する)時間を、止めの猶予の外に持てる。守りは worker が名から外す RetireJob の 1 か所(本番 = process-host が shim の標準入力へ
@@ -155,7 +155,7 @@
 ;;;   test-the-retiring-process-hears-it-before-the-new-ready-and-its-own-stop(知らせ・新の Ready・旧の止めの合図の刻を判断に渡す)。失敗
 ;;;   ケースは同じ file の test-a-counterexample-worker-that-does-not-tell-the-retiring-process-breaks-w2(RetireJob が観測だけ書いて知らせない
 ;;;   壊れた worker — SimWorker の silent-notices — で、同じ筋書きに W2 の破りが出る)。
-;;;   WC1 warm-fork-uses-its-own-root(doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root — #3646)— 待ちの子から分けて起こす
+;;;   WC1 warm-fork-uses-its-own-root(doeff_cluster._worker.core.invariants:warm-fork-uses-its-own-root — #3646)— 待ちの子から分けて起こす
 ;;;   task は、その task 自身の env の root の待ちの子からだけ分かれる(古い root・別の root の venv で走らない)。守りは warm_rules の
 ;;;   warm-key-of の 1 か所。確かめるのは tests/test_warm_child_policy.hy の判断の表(2 つの root の task を並べた行を含む)。失敗ケース =
 ;;;   test-a-fork-key-from-another-root-breaks-wc1(warm-key-of を別の root のキーを返す形に壊すと WC1 が破りを名指す)。
@@ -240,7 +240,7 @@
                 "doeff_cluster._coordinator.core.coordinator_invariants:declared-services-survive"]})
 
 ;; worker の条は W1(入れ替えの間も書き手が居続ける)・W2(退く process は新の Ready と自分の止めより前に退く知らせを受ける — #3672)と C4b(止め切りの後に job の子孫が残らない — #2940)。消す順などの条は後から足す。:entry-modules は worker の入口
-;; (doeff_cluster.worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
+;; (doeff_cluster._worker.entry.main — #2029 で移した。boot.sh もこの名で起こす — 旧い名 doeff_cluster.main は #2113 で消した)。層に分けた後は :entry-modules を外し、entry 層の dir の定義で「code を持つ service」を数える形に移る。
 ;; 層は移しの進みに合わせて足す: core(調整ループ・判断 — worker/core)・intent(観測・記録・effect の型 — worker/intent)・
 ;; protocol(heartbeat の本文の形と止めの印 — worker/protocol・#2026)・entry(worker の入口 main・drain の入口 drain_main(#2029)・子 process の入口
 ;; job_entry・見張り shim・実行環境の準備の入口 env_tool — worker/entry・#2028。bytecode の準備の道具 code_prepare(worker が file の path で起動する)も
@@ -248,14 +248,17 @@
 ;; #2025・#2026。
 (defservice worker "coordinator から job と task を受けて子 process として走らせる worker"
   {:system {:exempt "cluster そのものの process — cluster に置く job ではなく、自分の image の k8s Deployment として動く(doeff-cluster の coordinator と worker は自分の image を持ち続ける — operator の補足 2026-10-01)。defsystem にすると cluster が自分を job として置く循環になる"}
+   ;; 区画を _worker へ隠した(ADR-DOE-API-001 R15・card ki-3ff93cd3499e)ので dir も _worker(coordinator と同じ)。service の名は
+   ;; worker のまま。
+   :dir "_worker"
    :layers [core intent protocol entry]
-   :entry-modules ["doeff_cluster.worker.entry.main"]
-   :invariants ["doeff_cluster.worker.core.invariants:handoff-keeps-a-ready-writer"
-                "doeff_cluster.worker.core.invariants:retiring-process-hears-first"
-                "doeff_cluster.worker.core.invariants:stopped-job-leaves-no-descendant"
-                "doeff_cluster.worker.core.invariants:warm-fork-uses-its-own-root"
-                "doeff_cluster.worker.core.invariants:warm-child-state-leaves-running-tasks"
-                "doeff_cluster.worker.core.invariants:warm-fork-only-before-any-vm"]})
+   :entry-modules ["doeff_cluster._worker.entry.main"]
+   :invariants ["doeff_cluster._worker.core.invariants:handoff-keeps-a-ready-writer"
+                "doeff_cluster._worker.core.invariants:retiring-process-hears-first"
+                "doeff_cluster._worker.core.invariants:stopped-job-leaves-no-descendant"
+                "doeff_cluster._worker.core.invariants:warm-fork-uses-its-own-root"
+                "doeff_cluster._worker.core.invariants:warm-child-state-leaves-running-tasks"
+                "doeff_cluster._worker.core.invariants:warm-fork-only-before-any-vm"]})
 
 ;; record-store の条は R1(保持は run を丸ごと)。「追記して fsync してから返事」は file system の性質で、memory の置き場では確かめられない
 ;; ので条にしていない。層の dir(#2030): intent = effect の型・core = 置き場の Program と条・protocol = file の I/O の

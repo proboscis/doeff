@@ -196,23 +196,23 @@
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
                          ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer
                          AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
-(import doeff_cluster.worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
-(import doeff_cluster.worker.protocol.drain_requests [drain-request])
-(import doeff_cluster.worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster.worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster.worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
-(import doeff_cluster.worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
+(import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
+(import doeff_cluster._worker.protocol.drain_requests [drain-request])
+(import doeff_cluster._worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster._worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster._worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
+(import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
                       WATCH-RETRY-SECONDS WAKE-HOLD-SECONDS])
-(import doeff_cluster.worker.protocol.coordinator_link [watch-params with-bell RESEND-AFTER-MS])
-(import doeff_cluster.worker.core.heartbeat_rules [keep-marks-held desired-after-silence silent-ms])
+(import doeff_cluster._worker.protocol.coordinator_link [watch-params with-bell RESEND-AFTER-MS])
+(import doeff_cluster._worker.core.heartbeat_rules [keep-marks-held desired-after-silence silent-ms])
 ;; 周の間の待ち(AwaitNextTick)は本番の答え手 tick-pauses が宿の内側で答える。宿は起きる物の組(WorkerWakes)に、本番の送り手の口と
 ;; 同じ関数で組んだ期限と、宿の呼び鈴を入れて答える(#3871 の単位 5)。
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
-(import doeff_cluster.worker.core.worker_due [beat-due fence-due due-after])
+(import doeff_cluster._worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster._worker.core.worker_due [beat-due fence-due due-after])
 ;; 期限の早い方は別名で受ける — 世界の次の刻の earliest-due(この file の下)と取り違えないため。
 (import doeff_cluster.shared.core.due_policy [earliest-due :as earliest-wake])
 (import doeff_cluster._foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-table-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.core.run_context_rules [worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
-(import doeff_cluster.worker.entry.job_entry [decoded-program])
+(import doeff_cluster._worker.entry.job_entry [decoded-program])
 (import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
 (import doeff_cluster.shared.intent.readiness_model [ReportReady])
 (import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
@@ -240,16 +240,16 @@
 (import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
 (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
 (import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
-(import doeff_cluster.worker.core.warm_rules [refusals-after])
-(import doeff_cluster.worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
-;; worker の世代は入口の組み立て(doeff_cluster.worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
-(import doeff_cluster.worker.entry.main [worker-on])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
+(import doeff_cluster._worker.core.warm_rules [refusals-after])
+(import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
+;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
+(import doeff_cluster._worker.entry.main [worker-on])
+(import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob JobStarted SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick WakeSet WorkerWakes StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
                        ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
-(import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
+(import doeff_cluster._worker.intent.retirement_model [AwaitRetirement])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。
 (val NO-STATE-FILE "/nonexistent/doeff-sim/coordinator/state.json")

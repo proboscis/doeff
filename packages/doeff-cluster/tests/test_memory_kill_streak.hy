@@ -24,15 +24,15 @@
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster.shared.core.job_rules [spec-hash])
 (import doeff_cluster.shared.intent.job_model [JobSpec JobPhase])
-(import doeff_cluster.worker.core.memory_rules [JobRoot])
-(import doeff_cluster.worker.intent.worker_model [CodeState CodeView EnvDisk JobRecord ObserveWorld Outcome ProcessView ReapJob StartHold
-  StartJob WorkerPolicy WorldView])
-(import doeff_cluster.worker.core.policy [plan records-after start-holds statuses])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren
-  ObserveLeaving ObserveJobRoots])
-(import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
-(import doeff_cluster.worker.protocol.memory_observer [memory-observer])
-(import doeff_cluster.worker.protocol.world [local-host])
+(import doeff_cluster._worker.core.memory_rules [JobRoot])
+(import doeff_cluster [CodeState CodeView JobRecord ObserveWorld ProcessView ReapJob StartJob WorkerPolicy WorldView]
+        doeff_cluster._worker.intent.worker_model [EnvDisk Outcome StartHold])
+(import doeff_cluster [plan records-after statuses]
+        doeff_cluster._worker.core.policy [start-holds])
+(import doeff_cluster [ObserveProcesses ObserveCode ObserveEnvs ObserveEnvDisk ObserveProbes ObserveWarmChildren ObserveLeaving ObserveJobRoots])
+(import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
+(import doeff_cluster [memory-observer])
+(import doeff_cluster [local-host])
 (import tests.test_memory_watch [node-files row])
 
 (val POLICY (WorkerPolicy :stop-grace-ms 1000 :kill-grace-ms 500 :restart-backoff-ms 2000 :restart-backoff-max-ms 60000

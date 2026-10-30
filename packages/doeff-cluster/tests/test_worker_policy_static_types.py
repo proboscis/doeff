@@ -27,9 +27,9 @@ WORKER_BEAT_USERS = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.worker.core.drain_client [await-drained drain-outcome ready-of])
-(import doeff_cluster.worker.core.policy [plan records-after statuses])
-(import doeff_cluster.worker.intent.worker_model [JobRecord StartJob WarmLaunch WorkerPolicy WorldView])
+(import doeff_cluster._worker.core.drain_client [await-drained drain-outcome ready-of])
+(import doeff_cluster._worker.core.policy [plan records-after statuses])
+(import doeff_cluster._worker.intent.worker_model [JobRecord StartJob WarmLaunch WorkerPolicy WorldView])
 
 (defk probe-started [now desired world records warm]
   {:pre [(: now int) (: desired (get tuple #(JobSpec ...))) (: world WorldView) (: records (get dict #(str JobRecord)))

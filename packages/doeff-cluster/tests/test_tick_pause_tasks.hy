@@ -17,8 +17,9 @@
 (import doeff_core_effects [scripted-stop-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster.shared.intent.due_model [DueAt])
-(import doeff_cluster.worker.intent.worker_model [AwaitNextTick WakeSet WorkerPolicy])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [AwaitNextTick WorkerPolicy]
+        doeff_cluster._worker.intent.worker_model [WakeSet])
+(import doeff_cluster [tick-pauses])
 (import tests.clock_fixtures [wall-back])
 
 (val POLICY (WorkerPolicy))

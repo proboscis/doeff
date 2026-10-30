@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from doeff_cluster.worker.entry.line_stamp import FeedLimits, FileFeed, Stamped, stamp_of, stamped
+from doeff_cluster._worker.entry.line_stamp import FeedLimits, FileFeed, Stamped, stamp_of, stamped
 
 MODULE_TAGS = {"context": "doeff-cluster-test", "role": "program"}
 
@@ -39,7 +39,7 @@ LINUX_ONLY = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="shim の子孫の引き取りと /proc は Linux だけ — 範囲は Linux の worker"
 )
 
-SHIM = "doeff_cluster.worker.entry.shim"
+SHIM = "doeff_cluster._worker.entry.shim"
 # 刻の頭の形: ISO 8601 の日時・ms・時差(+09:00 など)・空白 1 つ。検は形を自分で綴る(部品の定義を写さない)。
 STAMP = re.compile(rb"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) ")
 END_LIMIT_SECONDS = 30.0

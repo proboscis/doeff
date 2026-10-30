@@ -36,8 +36,16 @@ from pathlib import Path
 
 import hy  # noqa: F401 — 許可表の module(Hy)を読むため
 import pytest
-from doeff_cluster.worker.core.launch import CHILD_ENV_ALLOWED
-from doeff_cluster.worker.entry.line_stamp import (
+from doeff_cluster._worker.core.launch import CHILD_ENV_ALLOWED
+from doeff_cluster import (
+    JobLogShipper,
+    JobLogTarget,
+    QueuedLine,
+    coordinator_log_plan,
+    cut_lines,
+    logs_body,
+)
+from doeff_cluster._worker.entry.line_stamp import (
     JOB_LOG_ATTRIBUTES_VAR,
     JOB_LOG_ENV_NAMES,
     JOB_LOG_OTLP_VAR,
@@ -47,15 +55,9 @@ from doeff_cluster.worker.entry.line_stamp import (
     CutLines,
     JobLogOff,
     JobLogRefused,
-    JobLogShipper,
-    JobLogTarget,
     OpenLine,
-    QueuedLine,
     ShipLimits,
-    coordinator_log_plan,
-    cut_lines,
     job_log_plan,
-    logs_body,
     worker_log_plan,
 )
 
@@ -71,7 +73,7 @@ LINUX_ONLY = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="shim の子孫の引き取りと /proc は Linux だけ — 範囲は Linux の worker"
 )
 
-SHIM = "doeff_cluster.worker.entry.shim"
+SHIM = "doeff_cluster._worker.entry.shim"
 PACKAGE = Path(__file__).resolve().parent.parent
 # 刻の頭の形: ISO 8601 の日時・ms・時差・空白 1 つ(tests/test_line_stamp.py と同じ形を検が自分で綴る)。
 STAMP = re.compile(rb"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}) ")
@@ -669,7 +671,7 @@ def test_a_job_forked_from_the_warm_child_ships_its_lines(
 
 WORKER_PROCESS = """
 import os, sys
-from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
 process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
 print("worker: 起動します boot=b0", file=sys.stderr, flush=True)
 print("worker: heartbeat の gap", flush=True)
@@ -749,7 +751,7 @@ def test_a_worker_whose_stdout_and_stderr_are_two_files_keeps_them_and_names_why
 
 OUTLIVING_DESCENDANT = """
 import os, subprocess, sys
-from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
 process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
 print("worker: 子を起こして終わる", file=sys.stderr, flush=True)
 # lifeline の見張りと同じ持ち方の子孫: 自分の session・stdout と stderr を指定しない(worker の fd 1・2 を継ぐ)・worker より長く生きる。
@@ -774,7 +776,7 @@ def test_a_descendant_that_outlives_the_worker_still_writes_to_the_file(tmp_path
 
 FLOODING_WORKER = """
 import os, sys
-from doeff_cluster.worker.entry.line_stamp import process_lines, worker_log_plan
+from doeff_cluster._worker.entry.line_stamp import process_lines, worker_log_plan
 process_lines(worker_log_plan(os.environ, "zeus-native", "b0"))
 for n in range(40_000):
     print(f"worker: burst line {n:06d}")

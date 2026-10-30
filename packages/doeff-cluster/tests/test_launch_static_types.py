@@ -17,14 +17,14 @@ from pathlib import Path
 import pytest
 
 import hy  # noqa: F401  # .hy の module(launch)を読む import hook を有効にする
-from doeff_cluster.worker.core import launch
+from doeff_cluster._worker.core import launch
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [deff])
 (import pathlib [Path])
-(import doeff_cluster.worker.core.launch [program-file program-file-text])
+(import doeff_cluster._worker.core.launch [program-file program-file-text])
 
 (deff placed [#^ Path program-dir #^ str sha #^ str blob #^ (get dict #(str str)) versions]
   {:pre [(: program-dir Path) (: sha str) (: blob str) (: versions dict)] :post [(: % Path)] :tags {:context "probe" :role "foundation"}}

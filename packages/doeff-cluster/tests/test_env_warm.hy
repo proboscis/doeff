@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.entry.service_build [system-of])
 (import doeff_cluster.shared.intent.warm_model [ReadWarmState WarmState WarmUnreachable WarmAnswer])
 (import doeff_cluster.shared.core.warm_rules [warm-key warm-state-of-json warm-runtime-env])
-(import doeff_cluster.worker.core.env_upkeep [RootInfo RootsTally PrepareLimits SWEEP-EVERY-MS sweep-choice sweep-due sweep-wanted
+(import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits SWEEP-EVERY-MS sweep-choice sweep-due sweep-wanted
                                               recent-per-project prepare-overdue env-capacity])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming Request PlainText])
 (import doeff_cluster [ClusterState WorkerInfo]
@@ -44,11 +44,12 @@
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed register-heartbeat heartbeat-reply load-of tasks-for])
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
-(import doeff_cluster.worker.intent.worker_model [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs WarmEnv StartWarmChild WarmChildView WarmChildMark
-                                    EnvDisk NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.worker.core.worker_rules [code-key])
-(import doeff_cluster.worker.core.policy [plan pinned-env-keys sweep-actions])
-(import doeff_cluster.worker.protocol.declared [task-spec])
-(import doeff_cluster.worker.core.bake_plan [BAKE-JOBS-CEILING cpu-limit-of])
+(import doeff_cluster [CodeView CodeState WorldView WorkerPolicy PrepareEnv StartJob SweepEnvs StartWarmChild]
+        doeff_cluster._worker.intent.worker_model [WarmEnv WarmChildView WarmChildMark EnvDisk NotYetRead DeclarationRead] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster [code-key])
+(import doeff_cluster [plan]
+        doeff_cluster._worker.core.policy [pinned-env-keys sweep-actions])
+(import doeff_cluster._worker.protocol.declared [task-spec])
+(import doeff_cluster._worker.core.bake_plan [BAKE-JOBS-CEILING cpu-limit-of])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])
 (import tests.env_fixtures [LOCK env-of])
 (import tests.detached_rig [slow-add])

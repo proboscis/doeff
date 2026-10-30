@@ -25,16 +25,16 @@
 (import tests.host_rig [host-settings])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.worker.intent.worker_model [ReapJob SignalJob Outcome StopStage Undeclared CodeView CodeState WorldView ProcessView
-                                                 JobRecord WorkerPolicy DesiredJobs ReadDesired ObserveWorld EnvReport PublishStatus
-                                                 PrepareCode ReleaseLeases])
-(import doeff_cluster.worker.core.policy [ExitNote exit-signal exit-notes])
-(import doeff_cluster.worker.core.worker_rules [retired-name])
-(import doeff_cluster.worker.protocol.observations [ObserveProcesses])
-(import doeff_cluster.worker.protocol.process_host [HostSettings process-host])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
+(import doeff_cluster [ReapJob SignalJob StopStage CodeView CodeState WorldView ProcessView JobRecord WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode ReleaseLeases]
+        doeff_cluster._worker.intent.worker_model [Outcome Undeclared DesiredJobs])
+(import doeff_cluster._worker.core.policy [ExitNote exit-signal exit-notes])
+(import doeff_cluster [retired-name])
+(import doeff_cluster [ObserveProcesses])
+(import doeff_cluster [process-host]
+        doeff_cluster._worker.protocol.process_host [HostSettings])
+(import doeff_cluster [tick-pauses])
 (import doeff_core_effects [StopRequested])
-(import doeff_cluster.worker.core.program [run-worker JOB-EXIT-LOG])
+(import doeff_cluster._worker.core.program [run-worker JOB-EXIT-LOG])
 
 ;; この file の後半の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の
 ;; 眠りを、検の眠りの規則(doeff-linter の DOEFF211)は当てない。

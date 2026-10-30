@@ -14,11 +14,12 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
-(import doeff_cluster.worker.intent.code_model [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster.worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster.worker.core.code_prepare [prepare-tree] doeff_core_effects._python_bytecode [compiled-pyc])
-(import doeff_cluster.worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.worker.intent.worker_model [CodeLayout CodeState CodeView PrepareCode])
-(import doeff_cluster.worker.protocol.observations [ObserveCode])
-(import doeff_cluster.worker.protocol.code_store [CodeSettings code-host])
+(import doeff_cluster [ScanTree LinkPycs CompileSources WriteMarker Note] doeff_cluster._worker.core.code_plan [MARKER tree-problem marker-problem marker-content cache-rel] doeff_cluster._worker.core.code_prepare [prepare-tree] doeff_core_effects._python_bytecode [compiled-pyc])
+(import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
+(import doeff_cluster [CodeLayout CodeState CodeView PrepareCode])
+(import doeff_cluster [ObserveCode])
+(import doeff_cluster [code-host]
+        doeff_cluster._worker.protocol.code_store [CodeSettings])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、

@@ -1,4 +1,4 @@
-"""待ちの子(doeff_cluster.worker.entry.warm_child)を本物の process で起こす検の、共通の起こし方。
+"""待ちの子(doeff_cluster._worker.entry.warm_child)を本物の process で起こす検の、共通の起こし方。
 
 待ちの子は Hy の module を前もって読む(569 module)。-B(.pyc を作業木に書かない)で env が探し道だけだと、Hy の code の置き場に届かず、
 起きるたびに全部を source から compile し直して 25〜33 秒かかり、準備を待つ期限と余裕が無くなる(card ki-2121cf77fe73)。
@@ -19,7 +19,7 @@ from pathlib import Path
 
 from doeff_hy_bytecode_guard._code_store import STORE_ENV, store_dir
 
-WARM = "doeff_cluster.worker.entry.warm_child"
+WARM = "doeff_cluster._worker.entry.warm_child"
 PACKAGE = Path(__file__).resolve().parent.parent
 # 温めた置き場での準備の目安(実測 1.2〜1.6 秒・冷たい compile は 25 秒以上)— 負荷の揺れを見て 10 秒。
 READY_SECONDS = 10.0

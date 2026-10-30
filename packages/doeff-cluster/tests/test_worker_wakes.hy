@@ -28,12 +28,13 @@
 (import tests.clock_fixtures [clock-ms wall-back])
 (import tests.link_rig [cell-of LINK-ROUTE])
 (import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
-(import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState WorldView DesiredJobs ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick
-                                                  WakeSet WorkerWakes WorkerUnsettled])
-(import doeff_cluster.worker.core.program [run-worker next-tick-due count-unsettled-ticks UNSETTLED-TICK-LIMIT])
-(import doeff_cluster.worker.protocol.tick_pauses [tick-pauses])
-(import doeff_cluster.worker.protocol.worker_wakes [no-wakes])
-(import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link RESEND-AFTER-MS])
+(import doeff_cluster [WorkerPolicy WorldView ReadDesired ObserveWorld PublishStatus EnvReport AwaitNextTick WorkerWakes WorkerUnsettled]
+        doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs WakeSet])
+(import doeff_cluster._worker.core.program [run-worker next-tick-due count-unsettled-ticks UNSETTLED-TICK-LIMIT])
+(import doeff_cluster [tick-pauses])
+(import doeff_cluster [no-wakes])
+(import doeff_cluster [coordinator-link]
+        doeff_cluster._worker.protocol.coordinator_link [LinkState RESEND-AFTER-MS])
 
 (val POLICY (WorkerPolicy))
 (val BEAT-MS 2500)

@@ -33,6 +33,6 @@ def test_the_core_importing_the_line_shipping_is_rejected() -> None:
 def test_the_entry_wires_the_shipping_and_the_core_stays_green() -> None:
     root = Path(__file__).resolve().parents[2]
     # 対照の前提: 入口には現に綴りが在る(無ければ下の緑は範囲の外れを示さない)。
-    assert "doeff_cluster.worker.entry.line_stamp" in (root / ENTRY).read_text(encoding="utf-8")
+    assert "doeff_cluster._worker.entry.line_stamp" in (root / ENTRY).read_text(encoding="utf-8")
     assert _hits(_semgrep_results(root / ".semgrep.yaml", ENTRY, cwd=root), RULE) == []
     assert _hits(_semgrep_results(root / ".semgrep.yaml", CORE, cwd=root), RULE) == []
