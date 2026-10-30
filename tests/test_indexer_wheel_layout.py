@@ -137,3 +137,65 @@ def test_the_build_entry_asks_for_maturin_from_the_layout_fix() -> None:
     ]["requires"]
     (maturin,) = [requirement for requirement in requires if requirement.startswith("maturin")]
     assert _versions(maturin.split(",")[0]) >= MATURIN_FLOOR, maturin
+
+
+# 公開する wheel の一覧: 3 つの種類 × 5 つの OS(PyPI の 0.1.3 は 15 個)。
+FULL_SET = [
+    f"doeff_indexer-0.2.0-{python}-{abi}-{platform}.whl"
+    for python, abi in (("cp310", "abi3"), ("cp313", "cp313t"), ("cp314", "cp314t"))
+    for platform in (
+        "manylinux_2_17_x86_64.manylinux2014_x86_64",
+        "manylinux_2_17_aarch64.manylinux2014_aarch64",
+        "macosx_10_12_x86_64",
+        "macosx_11_0_arm64",
+        "win_amd64",
+    )
+]
+
+
+def test_the_full_set_of_fifteen_wheels_has_nothing_missing() -> None:
+    assert len(FULL_SET) == 15
+    assert _tool().missing_wheels([Path(name) for name in FULL_SET]) == []
+
+
+def test_five_free_threaded_3_13_wheels_missing_are_each_named() -> None:
+    # 0.2.0 の最初の手動実行: free-threaded の 3.13 向けが 1 個も組まれず、10 個になった(それでも配置の検は通った)。
+    ten = [name for name in FULL_SET if "cp313t" not in name]
+    problems = _tool().missing_wheels([Path(name) for name in ten])
+    assert len(problems) == 5
+    assert all("cp313-cp313t" in problem for problem in problems)
+    assert any("linux-aarch64" in problem for problem in problems)
+    assert any("windows-x86_64" in problem for problem in problems)
+
+
+def test_a_wheel_built_twice_does_not_stand_for_another_kind() -> None:
+    # macOS と Windows の free-threaded の job が通常の job と同じ abi3 の wheel を組んだ時、名の同じ wheel が 2 個ではなく
+    # 種類の足りない状態として数えられる(一覧は種類 × OS で数え、file の数では数えない)。
+    same_as_abi3 = [name for name in FULL_SET if "cp314t" not in name] + [
+        name for name in FULL_SET if "abi3" in name and "macosx" in name
+    ]
+    problems = _tool().missing_wheels([Path(name) for name in same_as_abi3])
+    assert len(problems) == 5
+    assert all("cp314-cp314t" in problem for problem in problems)
+
+
+def test_main_with_expect_all_exits_nonzero_for_a_short_set(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wheels = [
+        _wheel(
+            tmp_path,
+            name,
+            {
+                "doeff_indexer/bin/doeff-indexer.exe"
+                if "win_amd64" in name
+                else "doeff_indexer/bin/doeff-indexer": PLAIN if "win_amd64" in name else EXECUTABLE
+            },
+        )
+        for name in FULL_SET
+        if "cp313t" not in name
+    ]
+    assert _tool().main(["--expect-all", *map(str, wheels)]) == 1
+    assert capsys.readouterr().err.count("cp313-cp313t") == 5
+    # 一覧を見ない呼び(配置だけ)は、同じ wheel で通る。
+    assert _tool().main([*map(str, wheels)]) == 0
