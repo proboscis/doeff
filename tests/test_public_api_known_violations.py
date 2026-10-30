@@ -41,9 +41,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「許した物 — effect の値の型」(R2)に置けるのは、
    同じ package が見せる effect の class の欄の注釈(型引数を含み、package が定義した値の型の欄を辿る — 目録の value_types)に
    出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。組「許した物 — effect の答えの型」(R2)に置けるのは、
-   package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型と、答えの class の欄の型・子の class・
-   答えの class だけを並べた型の別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の
-   答えにも出ない class を置くと赤。組「許した物 — program の形を組む作り手と型」(R37 — doeff-conductor の workflow を書く
+   package の effect の答えの型(EffectBase[T] の T か defeffect の :answer に出る型・本体が名指した型で答える待ちの effect が
+   自分の __doeff_bus_events__ に宣言した bus の event と、答えの class の欄の型・子の class・答えの class だけを並べた型の
+   別名 — 目録の answer_types)だけ: 答えを docstring だけに書いた effect の答えと、どの effect の答えにも出ない class を
+   置くと赤。組「許した物 — program の形を組む作り手と型」(R37 — doeff-conductor の workflow を書く
    agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の本体で、同じ package の class の値を返す
    関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
    class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「許した物 — handler の設定の型」(R2)に
@@ -137,8 +138,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
     ANSWER_TYPE_GROUP: "目録が package の effect の答えの型と読む class と型の別名だけを置ける(EffectBase[T] の T か defeffect の"
-    " :answer に出る型と、答えの class の欄の型・子の class — effect の答えの型 — ADR-DOE-API-001 R2)。答えを docstring だけに"
-    "書いた effect の答えは数えない — effect に答えの型を書く",
+    " :answer に出る型・本体が名指した型で答える待ちの effect が __doeff_bus_events__ に宣言した bus の event と、答えの class の"
+    "欄の型・子の class — effect の答えの型 — ADR-DOE-API-001 R2)。答えを docstring だけに書いた effect の答えは数えない — "
+    "effect に答えの型を書く",
     EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
     "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
     VALUE_TYPE_GROUP: "同じ package が見せる effect の class の欄の注釈(型引数を含む・package が定義した値の型の欄を辿る)に"
@@ -1863,6 +1865,73 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
             check_package(package, *tables([*answers, name]))
         assert f"{FIXTURE_ROOT}.{name}({forms[name]}・" in str(failure.value)
         assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
+
+
+#: 本体が名指した型で答える待ちの effect が bus の event を宣言し、宣言を継ぐだけの子の effect と、どの待ちも宣言しない
+#: event の class を持つ package の名。
+BUS_EVENTS = '''
+
+from dataclasses import dataclass
+from typing import Any, ClassVar
+
+
+@dataclass(frozen=True)
+class Cause:
+    """A field type of a bus event."""
+
+
+@dataclass(frozen=True)
+class Fired:
+    """An event the package's handler publishes on the bus: the wait declares it."""
+
+    cause: Cause
+
+
+@dataclass(frozen=True)
+class Undeclared:
+    """An event class no wait declares."""
+
+
+class AwaitEventEffect(EffectBase):
+    """Wait for the next event of the types the caller names: no one T to write."""
+
+    __doeff_bus_events__: ClassVar[tuple[type[Any], ...]] = (Fired,)
+
+
+class AwaitEventsEffect(AwaitEventEffect):
+    """A wait that inherits the declaration without declaring it itself."""
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
+    """本体が名指した型で答える待ちの effect は EffectBase[T] に 1 つの型を書けないので、package が bus に出す event を自分の
+    __doeff_bus_events__ に宣言し、目録はそれを待ちの答えの型と読む(ADR-DOE-API-001 R2・card ki-d94ee9f9f6ce)。
+
+    宣言した event とその欄の型は組「許した物 — effect の答えの型」に置けば緑・どちらの表にも無ければ外れのまま赤。宣言を
+    継ぐだけの子の effect は宣言を読み直さない(答えの場所は宣言した effect だけ)。どの待ちも宣言しない event の class を
+    置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + BUS_EVENTS)
+    package = _read_fixture(repo)
+    places = {shown["name"]: shown["answers"] for shown in package["answer_types"]}
+    assert places == {"Fired": ["AwaitEventEffect の bus の event"], "Cause": ["Fired.cause"]}
+    events = ["Cause", "Fired"]
+
+    def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted({"Undeclared"} - set(placed))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, "ki-d94ee9f9f6ce"
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(events))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Fired"):
+        check_package(package, *tables(["Cause"]))
+    with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
+        check_package(package, *tables([*events, "Undeclared"]))
+    assert f"{FIXTURE_ROOT}.Undeclared(class・" in str(failure.value)
+    assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
 #: 設定の型を引数に取る工場・欄で辿る設定の型・どの引数にも出ない class と関数を持つ package の名(注釈は字のまま)。

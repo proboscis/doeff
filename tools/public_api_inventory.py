@@ -75,8 +75,10 @@ It lists its effects' answer types too (``answer_types``, R2): the names it show
 named type alias an effect class it defines declares as its answer (the ``T`` of ``EffectBase[T]``, or
 ``defeffect``'s ``:answer``), followed through the fields and the subclasses of the answer classes the
 package defines itself (the cases a caller matches), and a type alias whose classes are all answer types.
-The allowed table's group ``許した物 — effect の答えの型`` may hold those names only. An effect that says
-its answer only in its docstring declares none.
+A wait whose answer is whichever event types its caller names has no one ``T``: the events its package
+defines for the bus are the ones it declares in its own ``__doeff_bus_events__``. The allowed table's group
+``許した物 — effect の答えの型`` may hold those names only. An effect that says its answer only in its
+docstring declares none.
 
     uv run python tools/public_api_inventory.py --json inventory.json --markdown inventory.md
     uv run python tools/public_api_inventory.py --package doeff-time --json -
@@ -163,6 +165,9 @@ EXCEPTION_CLASS = "例外の class"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
 RUST_EXECUTABLE = "Rust の実行 file"
+#: Where a wait whose answer is the event types its caller names declares the events its package defines for the bus
+#: (doeff-events' ``WaitForEventEffect`` — its answer types, R2).
+BUS_EVENTS_ATTRIBUTE = "__doeff_bus_events__"
 # What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
 _INSTALL_NAMES = ("WithHandler", "WithHandlerType", "with_handlers")
 _ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
@@ -288,7 +293,8 @@ class AnswerType(TypedDict):
     """One name a package shows that a caller reads out of an effect's answer (an effect's answer type).
 
     ``answers`` is where the type is reached: ``<effect class>`` (the effect declares it in its answer),
-    ``<class>.<field>`` (a field of an answer class) or ``<class> の子`` (ADR-DOE-API-001 R2 — ``answer_types``).
+    ``<effect class> の bus の event`` (a wait declares it in ``__doeff_bus_events__``), ``<class>.<field>`` (a field
+    of an answer class) or ``<class> の子`` (ADR-DOE-API-001 R2 — ``answer_types``).
     """
 
     module: str
@@ -2402,6 +2408,10 @@ def _declared_answer(effect: type) -> Iterator[_FieldType]:
 
     The answer is the ``T`` of ``EffectBase[T]`` (followed through generic parents) or ``defeffect``'s ``:answer``
     (``__doeff_answer__``). An effect that declares neither (its answer only in its docstring) yields none.
+
+    A wait whose answer is whichever event types its caller names (doeff-events' ``WaitForEvent``) has no one ``T``:
+    it declares the events its package defines for the bus in its own ``__doeff_bus_events__`` (not inherited), read
+    as its answers at ``<effect> の bus の event`` (ADR-DOE-API-001 R2 — card ki-d94ee9f9f6ce).
     """
     from doeff_vm._effect_types import effect_result_type
 
@@ -2414,6 +2424,11 @@ def _declared_answer(effect: type) -> Iterator[_FieldType]:
                 _FieldType(found, effect.__name__)
                 for found in _annotation_types(annotation, namespace)
             )
+    for event in vars(effect).get(BUS_EVENTS_ATTRIBUTE, ()):
+        yield from (
+            _FieldType(found, f"{effect.__name__} の bus の event")
+            for found in _annotation_types(event, namespace)
+        )
 
 
 def _read_out_of_answers(

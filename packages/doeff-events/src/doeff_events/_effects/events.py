@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, SupportsIndex
+from typing import Any, ClassVar, SupportsIndex
 
 from doeff import EffectBase
+from doeff_events._effects.timers import TimerFired
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,23 @@ GapAnswer = NoticeGapTold | NoticeGapMarked | NoticeDropped
 missed ``Publish``), or ``NoticeDropped`` (a ``Drop`` route)."""
 
 
+#: The events this package defines for the bus: the loop's stop watcher (``StopArrived``), ``notice_events_handler`` and
+#: the signal sources of other packages (``Source…``) and ``timer_handler`` (``TimerFired``) publish them, and a body
+#: receives them as the answer of ``WaitForEvent`` / ``WaitForEvents`` when it names their types. The wait answers
+#: whichever types the body names, so ``EffectBase[T]`` has no one ``T`` to write: each wait declares these in its
+#: ``__doeff_bus_events__``, which the inventory of the public API (tools/public_api_inventory.py — ``answer_types``)
+#: reads as its answers (ADR-DOE-API-001 R2 · agora card ki-d94ee9f9f6ce).
+_BUS_EVENTS: tuple[type[Any], ...] = (
+    StopArrived,
+    SourceFailed,
+    SourceStalled,
+    SourceResumed,
+    SourceMissed,
+    SourceStarted,
+    TimerFired,
+)
+
+
 def _normalize_event_types(
     effect_name: str, event_types: tuple[type[Any], ...]
 ) -> tuple[type[Any], ...]:
@@ -220,6 +238,8 @@ class PublishGapEffect(EffectBase[GapAnswer]):
 class WaitForEventEffect(EffectBase):
     """Wait for the next event matching any of the configured event types."""
 
+    __doeff_bus_events__: ClassVar[tuple[type[Any], ...]] = _BUS_EVENTS
+
     def __init__(self, event_types: tuple[type[Any], ...]):
         super().__init__()
         self.event_types = _normalize_event_types("WaitForEvent", event_types)
@@ -237,6 +257,8 @@ class WaitForEventsEffect(EffectBase):
     one by one and shows each partial state. ``WaitForEvents`` takes them all in one wait. A handler without a queue
     (``event_handler``) answers the one event it delivered as ``(event,)``.
     """
+
+    __doeff_bus_events__: ClassVar[tuple[type[Any], ...]] = _BUS_EVENTS
 
     def __init__(self, event_types: tuple[type[Any], ...]):
         super().__init__()
