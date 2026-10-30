@@ -73,7 +73,7 @@
   {:pre [(: state ClusterState) (: now int) (: statuses list)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(能力 net・版 V・世代 b1)の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" statuses} now))
+                         {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "boot" "b1" "statuses" statuses} now))
   answer)
 
 
@@ -290,7 +290,7 @@
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "能力 net・版 versions の worker name の heartbeat 1 回 → #(次の状態 status 返事)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" versions "boot" "b1" "statuses" []}
+                         {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" versions "boot" "b1" "statuses" []}
                          now))
   answer)
 

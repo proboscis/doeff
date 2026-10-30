@@ -80,7 +80,7 @@
 (defk heartbeat-of [name queued-ms]
   {:pre [(: name str) (: queued-ms int)] :post [(: % Request)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker name の POST /heartbeat の要求を作るため(受付の箱に queued-ms 並んでいた事にする)。"
-  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" VERSIONS}
+  (! (http-request "POST" "/heartbeat" {} {"name" name "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" VERSIONS}
                    :actor name :peer name :queued-ms queued-ms)))
 
 

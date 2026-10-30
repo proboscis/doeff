@@ -11,14 +11,15 @@
 
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
-(defk job [name [needs #()] [pin None]]
-  {:pre [(: name str) (: needs tuple) (: pin (| str None))] :post [(: % ClusterJob)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "要る能力 needs と置き先の指定 pin を持つ job の行を作るため。"
-  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin))
-(defk worker [name seen [capacity 10] #* provides]
-  {:pre [(: name str) (: seen int) (: capacity int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "最後の連絡が seen で能力 provides を持つ worker の記録を作るため。"
-  (WorkerInfo name (tuple (sorted provides)) capacity seen :task-reserve 0))
+(defk job [name [needs #()] [pin None] [settle 100]]
+  {:pre [(: name str) (: needs tuple) (: pin (| str None)) (: settle (| int None))] :post [(: % ClusterJob)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "要る能力 needs と置き先の指定 pin と落ち着いた memory settle(MiB — None = memory を知らない旧い保存の行)を持つ job の行を作るため。"
+  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin :peak-mib (if (is settle None) None (* 2 settle)) :settle-mib settle))
+(defk worker [name seen [room 10] #* provides]
+  {:pre [(: name str) (: seen int) (: room int) (: provides tuple)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "最後の連絡が seen で能力 provides と背景の枠 room を持つ worker の記録(memory は名乗らない)を作るため。"
+  (WorkerInfo name (tuple (sorted provides)) seen :task-reserve 0 :background-room room))
 
 (deftest test-spreads-and-respects-capabilities-and-pins
   (setv state (ClusterState
@@ -49,8 +50,9 @@
                             (! (table-from-rows {"gone" (Placement "gone" "mac" 1 0)}))))
   (assert (= (.size (! (jobs-placed 1000 state T))) 0)))
 
-(deftest test-capacity-and-jobs-for
-  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (worker "mac" 0 2))}))))
+(deftest test-memory-and-jobs-for
+  ;; memory の予算 250 MiB の worker に settle 100 の job 3 本: 2 本だけ置ける(card ki-2acb63aec0fd — 数でなく memory で数える)。
+  (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (replace (! (worker "mac" 0)) :memory-mib 250)}))))
   (setv result (! (jobs-placed 0 state T)))
   (assert (= (sorted (.keys result)) ["a" "b"]))
   (assert (= (lfor s (jobs-for (replace state :placements result) "mac") s.name) ["a" "b"])))
@@ -271,7 +273,7 @@
 (defk named [name node]
   {:pre [(: name str) (: node str)] :post [(: % dict)]}
   "company-machine を自分で名乗る worker の heartbeat の本文(node = 置かれた k8s の node)。"
-  {"name" name "provides" ["net" COMPANY] "capacity" 10 "taskReserve" 0 "versions" {} "boot" "b1" "node" node "statuses" []})
+  {"name" name "provides" ["net" COMPANY] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "b1" "node" node "statuses" []})
 
 (defk beat-as [state name node now]
   {:pre [(: state ClusterState) (: name str) (: node str) (: now int)] :post [(: % ClusterState)]}
@@ -532,7 +534,7 @@
   (<- observed-delta dict (durable-delta settled stamped))
   (assert (= observed-delta {}) observed-delta)
   ;; 反例の対照: 保存する欄(worker の記録)を書けば、同じ比べが版と差分を出す(比べが何も見ていないのではない)。
-  (val moved (replace observed :workers (! (rows-merged observed.workers {"at-home" (replace (.row observed.workers "at-home") :capacity 3)}))))
+  (val moved (replace observed :workers (! (rows-merged observed.workers {"at-home" (replace (.row observed.workers "at-home") :background-room 3)}))))
   (assert (> (. (stamp settled moved "c-test" later T) revision) settled.revision))
   (<- moved-delta dict (durable-delta settled moved))
   (assert (in "worker/at-home" moved-delta) moved-delta))
@@ -554,7 +556,7 @@
   (assert (is noop.meta created.meta))
   (assert (is noop.audit created.audit))
   ;; 変われば update の出来事が連番で足り、消えれば delete が記録される
-  (val updated (stamp created (replace created :workers (! (rows-merged created.workers {"at-home" (replace (.row created.workers "at-home") :capacity 3)}))) "c-test" later T))
+  (val updated (stamp created (replace created :workers (! (rows-merged created.workers {"at-home" (replace (.row created.workers "at-home") :background-room 3)}))) "c-test" later T))
   (val deleted (stamp updated (replace updated :workers (! (table-from-rows {}))) "c-test" later T))
   (assert (= (lfor e deleted.audit e.verb) ["create" "update" "delete"]) deleted.audit)
   (assert (= (lfor e deleted.audit e.seq) [1 2 3]))
@@ -600,48 +602,87 @@
   (assert (= #(quiet.revision quiet.audit-seq) #(first.revision first.audit-seq))))
 
 
-;; --- task のために空けておく数(task-reserve — #3489)------------------------------------------------------------------------
-;; worker は capacity のうち task のために空けておく数を名乗る。常駐の job と並べた置き先(surge)は capacity − task-reserve までしか置かず
-;; (job-room-of)、task は capacity 全体まで置ける(task-room-of — 予約を使い切ったら job の残りへはみ出してよい)。置けない task は
-;; 理由の閉じた語 TASK-NO-ROOM の固定の文で待つ。
+;; --- worker の枠(card ki-2acb63aec0fd — #3489 の task-reserve を引き継ぐ)----------------------------------------------------
+;; job の側は memory で数える: 置いた job と surge の settle の和 + 新しい job の settle ≤ memory-mib の時だけ置く(memory-misfit)。task の側は
+;; 予約(task-reserve)+ 背景の枠(background-room)− 置いた task(task-room-of)で、常駐の job の数に依らない。置けない job は memory の訳を、
+;; 置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
 
 (import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
-(import doeff_cluster.coordinator.core.cluster_policy [load-of job-room-of task-room-of task-unplaced-text durable-changed])
+(import doeff_cluster.coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind UnplacedKind])
+(import doeff_cluster.coordinator.core.cluster_policy [load-of memory-room-of memory-misfit task-room-of task-unplaced-text durable-changed
+                                                      unplaced-views])
 (import doeff_cluster.coordinator.core.drain_policy [advance-drains drain-view])
 (import doeff_cluster.coordinator.core.api_policy [tick])
 
-(defk reserved [name seen capacity reserve]
-  {:pre [(: name str) (: seen int) (: capacity int) (: reserve int)] :post [(: % WorkerInfo)] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "capacity のうち reserve を task のために空けておく worker の記録(最後の連絡 seen・能力なし・task と同じ版 python 3)を作るため。"
-  (replace (! (worker name seen capacity)) :task-reserve reserve :versions #((ComponentVersion "python" "3"))))
+(defk reserved [name seen room reserve [memory None]]
+  {:pre [(: name str) (: seen int) (: room int) (: reserve int) (: memory (| int None))] :post [(: % WorkerInfo)]
+   :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "背景の枠 room・task のために空けておく数 reserve・memory の予算 memory(None = 名乗らない)の worker の記録(最後の連絡 seen・能力なし・
+   task と同じ版 python 3)を作るため。"
+  (replace (! (worker name seen room)) :task-reserve reserve :memory-mib memory :versions #((ComponentVersion "python" "3"))))
 
-(deftest test-resident-jobs-stop-at-the-task-reserve-and-tasks-use-the-rest
-  ;; capacity 3・task-reserve 1 の worker に常駐の job を 3 本: 2 本だけ置き、残る 1 本の理由は「空きが無い」。job の側の空きは 0・task の
-  ;; 空きは 1 で、手番の task は空けておいた分へ置かれる。
-  (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 3 1))}))))
+(deftest test-a-job-over-the-memory-allowance-is-refused-by-name
+  ;; 失敗ケース(card ki-2acb63aec0fd の受入 c74f57d5e): memory の予算 250 MiB の worker に settle 100 の job を 3 本。2 本(名の順に a・b)を
+  ;; 置き、3 本目 c は置かずに、job・worker・settle の和・job の settle・予算を名指して断る。理由の文と GET /state の unplacedDetail が同じ訳を持つ。
+  (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 1 250))}))))
   (val placed (! (jobs-placed 0 state T)))
   (assert (= (sorted (.keys placed)) ["a" "b"]) placed)
   (val after (replace state :placements placed))
-  (assert (= (get (unplaced-jobs 0 after T) "c") "置ける worker に空きが無い") (unplaced-jobs 0 after T))
+  (val why "job c を worker mac に置くと、置いた job の settle の和 200 MiB + job の settle 100 MiB = 300 MiB が memory の予算 250 MiB を越える")
+  (assert (= (get (unplaced-jobs 0 after T) "c") (.format "置ける worker に空きが無い({})" why)) (unplaced-jobs 0 after T))
+  (val view (get (unplaced-views 0 after T) 0))
+  (assert (= #(view.service view.kind view.memory) #("c" UnplacedKind.NO-ROOM #(why))) view)
   (val load (load-of after placed))
   (val mac (.row after.workers "mac"))
-  (assert (= #((! (job-room-of mac load)) (! (task-room-of mac load))) #(0 1)) load)
-  (val tasks (! (tasks-placed 0 (replace after :tasks (! (table-from-rows {"t1" (! (task "t1" #()))}))) placed T)))
-  (assert (= #((. (.row tasks "t1") phase) (. (.row tasks "t1") worker)) #("assigned" "mac")) (.row tasks "t1")))
+  (assert (= #((! (memory-room-of mac load)) (! (task-room-of mac load))) #(50 1)) load)
+  ;; job の山(peak 200)は置く時に使わない: 予算 300 の worker なら c も入る(settle の和 300 ≤ 300)。
+  (val roomy (replace state :workers (! (table-from-rows {"mac" (! (reserved "mac" 0 0 1 300))}))))
+  (assert (= (sorted (.keys (! (jobs-placed 0 roomy T)))) ["a" "b" "c"])))
 
-(deftest test-tasks-may-spill-from-the-reserve-into-the-room-jobs-left
-  ;; 予約(1)を使い切った task は、常駐の job が使っていない残り(capacity 3 − 常駐 1 − 予約 1 = 1)へはみ出してよい — task の空きは
-  ;; capacity 全体から数える。3 本目は空きが無く待つ。
-  (val state (ClusterState #((! (job "a"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 3 1))})) (! (table-from-rows {"a" (Placement "a" "mac" 1 0)}))
-                           (! (table-from-rows {"t1" (! (task "t1" #())) "t2" (! (task "t2" #())) "t3" (! (task "t3" #()))}))))
-  (val tasks (! (tasks-placed 0 state state.placements T)))
-  (assert (= (lfor id ["t1" "t2" "t3"] (. (.row tasks id) phase)) ["assigned" "assigned" "queued"]) tasks))
+(deftest test-a-worker-without-memory-is-not-bound-and-a-job-without-memory-waits
+  ;; memory を名乗らない worker(枠の file の外の機体)は memory で縛らない: settle の和がどれだけでも置く。memory を知らない job(settleMiB の
+  ;; 無い旧い保存の行)は、memory を名乗らない worker にも新しく置かず、名指して宣言し直しを待つ。
+  (val jobs (tuple (gfor n (range 5) (! (job (.format "j{}" n) :settle 40000)))))
+  (val free (ClusterState (+ jobs #((! (job "old" :settle None)))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))))
+  (val placed (! (jobs-placed 0 free T)))
+  (assert (= (sorted (.keys placed)) ["j0" "j1" "j2" "j3" "j4"]) placed)
+  (val load (load-of (replace free :placements placed) placed))
+  (val mac (.row free.workers "mac"))
+  (assert (is (! (memory-room-of mac load)) None) load)
+  (assert (= (! (memory-misfit mac load (! (job "old" :settle None))))
+             "job old は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ"))
+  (assert (= (get (unplaced-jobs 0 (replace free :placements placed) T) "old")
+             "置ける worker に空きが無い(job old は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ)")))
+
+(defk room-beside-jobs [count]
+  {:pre [(: count int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "予約 1・背景の枠 2 の worker に常駐の job を count 本置き、task を 4 本積んだ世界の読みを知るため: #(置けた job の数 task の空き
+   task の phase の並び 待つ task の detail)。"
+  (val tasks (! (table-from-rows (dfor n (range 4) (.format "t{}" n) (! (task (.format "t{}" n) #()))))))
+  (val jobs (tuple (gfor n (range count) (! (job (.format "r{}" n))))))
+  (val state (ClusterState jobs (! (table-from-rows {"mac" (! (reserved "mac" 0 2 1))}))))
+  (<- placed Table (jobs-placed 0 state T))
+  (val after (replace state :placements placed :tasks tasks))
+  (<- room int (task-room-of (.row after.workers "mac") (load-of after placed)))
+  (<- put Table (tasks-placed 0 after placed T))
+  #((.size placed) room (sorted (gfor id ["t0" "t1" "t2" "t3"] (. (.row put id) phase)))
+    (next (gfor id ["t0" "t1" "t2" "t3"] :if (= (. (.row put id) phase) "queued") (. (.row put id) detail)) None)))
+
+(deftest test-resident-jobs-do-not-shrink-the-task-room
+  ;; 受入 ca5ce3521: 背景の仕事を同時に置ける数は常駐の job を足しても減らない。予約 1・背景の枠 2 の worker の task の空きは、常駐の job が
+  ;; 0 本でも 6 本でも 3 で、task を 4 本積むと 3 本置き 1 本は TASK-NO-ROOM で待つ(以前の形 — 手書きの capacity から job も引く — では
+  ;; 6 本の時に task の空きが減った)。
+  (val waits (! (task-unplaced-text TaskUnplacedKind.TASK-NO-ROOM)))
+  (val none (! (room-beside-jobs 0)))
+  (val six (! (room-beside-jobs 6)))
+  (assert (= none #(0 3 ["assigned" "assigned" "assigned" "queued"] waits)) none)
+  (assert (= six #(6 3 ["assigned" "assigned" "assigned" "queued"] waits)) six))
 
 (deftest test-a-task-without-room-waits-with-the-same-reason-on-every-reconcile
-  ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、常駐の job で capacity が埋まり task の空きが 0。
-  ;; task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに保存しない)。
-  (val full (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 2 0))}))
+  ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、予約も背景の枠も 0 で task の空きが 0(常駐の
+  ;; job は空きを使わない)。task は queued のまま、detail に TASK-NO-ROOM の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
+  ;; 保存しない)。
+  (val full (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))
                           (! (table-from-rows {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}))
                           (! (table-from-rows {"t1" (replace (! (task "t1" #())) :detached True)}))))
   (val once (! (tick full 1000 T)))
@@ -651,10 +692,7 @@
   (val twice (! (tick once 2000 T)))
   (assert (is (.row twice.tasks "t1") waiting) (.row twice.tasks "t1"))
   (assert (= twice.revision once.revision) #(once.revision twice.revision))
-  (assert (not (durable-changed once twice)))
-  ;; 常駐の job が 1 本消えて空きができたら置かれる。
-  (val freed (! (tick (replace twice :jobs #((! (job "a"))) :placements (! (table-from-rows {"a" (Placement "a" "mac" 1 0)}))) 3000 T)))
-  (assert (= #((. (.row freed.tasks "t1") phase) (. (.row freed.tasks "t1") worker)) #("assigned" "mac")) (.row freed.tasks "t1")))
+  (assert (not (durable-changed once twice))))
 
 (deftest test-a-task-on-a-draining-worker-only-still-waits-without-the-room-reason
   ;; 置ける先が drain 中の worker だけの task は、今までどおり理由を書かずに待つ(空きの話ではない — TASK-NO-ROOM にしない)。
@@ -663,31 +701,31 @@
   (val waiting (.row (! (tasks-placed 1000 state (table-of #()) T)) "t1"))
   (assert (= #(waiting.phase waiting.detail) #("queued" "")) waiting))
 
-(deftest test-a-surge-waits-while-the-job-side-is-full-and-leaves-the-task-reserve-open
-  ;; drain 中の atlas の上の入れ替えの job w を並べたいが、移せる先 zeus は job の側が満杯(capacity 2・task-reserve 1・常駐 1)。surge は
-  ;; job の側で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task のために空けておく分は空いたまま。予約が 0 なら同じ状態で zeus へ
-  ;; 並べる(予約が理由で待つことの対照)。
-  (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True)))
+(deftest test-a-surge-waits-while-the-memory-is-full-and-leaves-the-task-room-open
+  ;; drain 中の atlas の上の入れ替えの job w を並べたいが、移せる先 zeus は memory が満杯(予算 150 MiB・常駐 x の settle 100)。surge も
+  ;; memory で数えるので置かれず(入れ替えは空くまで待つ)、zeus の task の空き(予約 1)は空いたまま。予算が 200 なら同じ状態で zeus へ
+  ;; 並べる(memory が理由で待つことの対照)。
+  (val handoff-job (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True) :peak-mib 200 :settle-mib 100))
   (val state (ClusterState #(handoff-job (! (job "x")))
-                           (! (table-from-rows {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 2 1))}))
+                           (! (table-from-rows {"atlas" (! (reserved "atlas" 0 10 0)) "zeus" (! (reserved "zeus" 0 0 1 150))}))
                            (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "x" (Placement "x" "zeus" 1 0)}))
                            :drains (! (table-from-rows {"atlas" (Drain "atlas" 0 600000)}))))
   (val waited (advance-drains 1000 state T))
   (assert (= (.size waited.surges) 0) waited.surges)
   (val load (load-of waited waited.placements))
   (val zeus (.row waited.workers "zeus"))
-  (assert (= #((! (job-room-of zeus load)) (! (task-room-of zeus load))) #(0 1)) load)
+  (assert (= #((! (memory-room-of zeus load)) (! (task-room-of zeus load))) #(50 1)) load)
   (assert (in "w" (. (drain-view waited "atlas" 1000 T) blocked)) (drain-view waited "atlas" 1000 T))
   ;; 空きの無い zeus も能力の合う worker なので、w は待つ物に残る(移せないと確定しない — #3669)。
   (val full (drain-view waited "atlas" 1000 T))
   (assert (= #(full.remaining full.unmovable full.phase) #(#("w") #() DrainPhase.BLOCKED)) full)
-  (val open (replace state :workers (! (rows-merged state.workers {"zeus" (replace (.row state.workers "zeus") :task-reserve 0)}))))
+  (val open (replace state :workers (! (rows-merged state.workers {"zeus" (replace (.row state.workers "zeus") :memory-mib 200)}))))
   (assert (= (. (.row (. (advance-drains 1000 open T) surges) "w") worker) "zeus")))
 
 (deftest test-a-heartbeat-names-the-task-reserve-and-the-saved-rows-keep-it
   ;; heartbeat の taskReserve は worker の記録へ写り、保存の行(state file と durable の KV)も同じ値を持って読み直せる。この欄の無い保存の
   ;; 行(欄より前の版が書いた行)は読まない — 既定の値で埋めず、次の heartbeat の名乗りから作り直す(labels だけの旧い形の行と同じ)。
-  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "kept" "provides" ["net"] "capacity" 4 "taskReserve" 2})) 10)))
+  (val heard (! (register-heartbeat (ClusterState) (! (heartbeat-of {"name" "kept" "provides" ["net"] "backgroundRoom" 4 "taskReserve" 2})) 10)))
   (assert (= (. (.row heard.workers "kept") task-reserve) 2) (.row heard.workers "kept"))
   (val state (replace heard :workers (! (rows-merged heard.workers {"old" (! (reserved "old" 0 4 1))}))))
   (val data (! (state-to-json state)))
@@ -718,7 +756,7 @@
   {:pre [(: state ClusterState) (: boot str) (: boot-at (| int None)) (: rows list) (: now int)] :post [(: % ClusterState)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker atlas の世代 boot(起動の刻 boot-at — None は名乗らない)が job の行 rows を報告した heartbeat を 1 つ受けた後の状態を求めるため。"
-  (val body (| {"name" "atlas" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" {} "boot" boot "statuses" rows}
+  (val body (| {"name" "atlas" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" boot "statuses" rows}
                (if (is boot-at None) {} {"bootAt" boot-at})))
   (! (register-heartbeat state (! (heartbeat-of body)) now)))
 
@@ -808,7 +846,7 @@
 (defk saved-w []
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "読み直しても受け付けられる Service w(能力 net・Program の run を持つ)を宣言した coordinator の状態(worker はまだ居ない)。"
-  (ClusterState #((ClusterJob (JobSpec "w" "m" #() "rev") :needs #("net") :run SAMPLE-RUN))))
+  (ClusterState #((ClusterJob (JobSpec "w" "m" #() "rev") :needs #("net") :run SAMPLE-RUN :peak-mib 200 :settle-mib 100))))
 
 (defk restarts [state now]
   {:pre [(: state ClusterState) (: now int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
@@ -1006,7 +1044,7 @@
   ;; 外さず、その process の延長も通す(直す前は #3770 が外し、recreate の job の process が返しで LeaseLost で落ち、退き中の handoff の
   ;; process の lease の延長が断られて走っていた仕事が切れた)。新しい世代の process は、前の担い手が返すか期限が来るまで取れない。
   (val held (! (old-generation-holding)))
-  (val body {"name" "atlas" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
+  (val body {"name" "atlas" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" {} "boot" "b2" "bootAt" (+ BOOT-1 3000)
              "statuses" [] "overlapsElder" True})
   (val overlapping (! (register-heartbeat held (! (heartbeat-of body)) (+ BOOT-1 4000))))
   (assert (= (. (.row overlapping.workers "atlas") boot) "b2"))
@@ -1060,8 +1098,8 @@
   {:pre [] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "入れ替えの job w(寿命の上限 60 秒)と入れ替えでない job k を atlas に置いた coordinator の状態。w の退いた process 0-zzz が
    退きの保ちを持ち、同じ process が別の lease writer-lock も持つ。別の job other の process も保ちを持つ。"
-  (val w (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True :retired-ms 60000)))
-  (val k (ClusterJob (JobSpec "k" "m" #() "rev")))
+  (val w (ClusterJob (JobSpec "w" "m" #() "rev" :handoff True :retired-ms 60000) :peak-mib 200 :settle-mib 100))
+  (val k (ClusterJob (JobSpec "k" "m" #() "rev") :peak-mib 200 :settle-mib 100))
   (val placed (ClusterState #(w k) (! (table-from-rows {"atlas" (! (worker "atlas" HOLD-AT))}))
                             :placements (! (table-from-rows {"w" (Placement "w" "atlas" 1 0) "k" (Placement "k" "atlas" 1 0)}))))
   (val held (! (hold-asked placed "claim" (! (token-of "w" "0-zzz")) HOLD-AT)))
@@ -1232,15 +1270,15 @@
 (deftest test-forgetting-a-worker-counts-an-undetached-finished-row-busy_not-a-held-one
   ;; F4: 切り離していない終わった行の worker は忙しい(lease が切れるまで)。保持側(切り離した終わり)の worker は数えない。
   (val timing (ClusterTiming :worker-forget-ms (* 2 3600 1000)))
-  (val workers (! (table-from-rows {"keep" (WorkerInfo :name "keep" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0)
-                "free" (WorkerInfo :name "free" :provides #("cpu") :capacity 1 :last-seen-ms 0 :task-reserve 0)})))
+  (val workers (! (table-from-rows {"keep" (WorkerInfo :name "keep" :provides #("cpu") :background-room 1 :last-seen-ms 0 :task-reserve 0)
+                "free" (WorkerInfo :name "free" :provides #("cpu") :background-room 1 :last-seen-ms 0 :task-reserve 0)})))
   (val tasks {"u" (replace (! (split-task "u" "finished" :detached False :finished 100)) :worker "keep")
               "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "free")})
   (<- after ClusterState (forget-silent-workers (ClusterState :workers workers :tasks (! (table-from-rows tasks))) (* 3 3600 1000) timing))
   (assert (= (list (.keys after.workers)) ["keep"])))
 
 (deftest test-the-count-reads-skip-the-held-rows
-  (val workers (! (table-from-rows {"w" (WorkerInfo :name "w" :provides #("cpu") :capacity 4 :last-seen-ms 0 :task-reserve 0)})))
+  (val workers (! (table-from-rows {"w" (WorkerInfo :name "w" :provides #("cpu") :background-room 4 :last-seen-ms 0 :task-reserve 0)})))
   (val tasks {"p" (replace (! (split-task "p" "assigned" :detached False)) :worker "w")
               "h" (replace (! (split-task "h" "finished" :finished 100)) :worker "w")})
   (val state (ClusterState :workers workers :tasks (! (table-from-rows tasks))))

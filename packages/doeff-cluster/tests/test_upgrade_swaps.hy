@@ -24,7 +24,7 @@
 (val NEW "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
 (val NO-JOBS (system-of "upgrade-swaps" #()))
 (val ON-X (frozenset ["x-tool"]))
-(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :task-reserve 0 :capacity 1 :doeff-commit OLD))
+(val A (SimWorker :name "a" :provides (frozenset ["x-tool" "host-a"]) :task-reserve 0 :background-room 1 :doeff-commit OLD))
 (val POLL 0.5)
 (val LEASE 60.0)
 ;; 待ちの期限を短く(本番の既定は 5 時間 — 期限の内か外かを短い仮想の時間で測るため)。
@@ -33,7 +33,7 @@
 
 (defk worker-view [name]
   {:pre [(: name str)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "coordinator の状態の画面の worker 1 台(capacity・taskReserve・live を読むため)。"
+  "coordinator の状態の画面の worker 1 台(backgroundRoom・taskReserve・live を読むため)。"
   (<- state dict (ReadCoordinator "/state"))
   (get (get state "workers") name))
 
@@ -50,20 +50,20 @@
   (and replaced started))
 
 
-(defk replace-a-with-a-larger-capacity []
+(defk replace-a-with-a-larger-background-room []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "筋書き: 動いている a には差し替えを断られる → 作り直しで capacity 1 → 2・版 OLD → NEW にする → coordinator が新しい capacity を読む。"
-  (<- refused bool (ReplaceWorker "a" (replace A :capacity 2)))
+  "筋書き: 動いている a には差し替えを断られる → 作り直しで背景の枠 1 → 2・版 OLD → NEW にする → coordinator が新しい背景の枠を読む。"
+  (<- refused bool (ReplaceWorker "a" (replace A :background-room 2)))
   (<- before dict (worker-view "a"))
-  (<- swapped bool (swap-a (replace A :capacity 2 :doeff-commit NEW)))
+  (<- swapped bool (swap-a (replace A :background-room 2 :doeff-commit NEW)))
   (<- (Delay 5.0))
   (<- after dict (worker-view "a"))
   (<- now SimWorker (WorkerOf "a"))
-  #(refused swapped (get before "capacity") (get after "capacity") (get after "live") now.doeff-commit))
+  #(refused swapped (get before "backgroundRoom") (get after "backgroundRoom") (get after "live") now.doeff-commit))
 
 
 (deftest test-a-replaced-worker-comes-back-with-the-new-values
-  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (replace-a-with-a-larger-capacity) :workers #(A) :timing TIMING))
+  (<- seen tuple (sim-cluster :notice-broker (MemoryBroker) NO-JOBS (replace-a-with-a-larger-background-room) :workers #(A) :timing TIMING))
   (assert (= seen #(False True 1 2 True NEW)) seen))
 
 
@@ -95,7 +95,7 @@
 
 (defk queued-task-across-a-coordinator-restart []
   {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
-  "場面 (c): a(capacity 1)を 30 秒の task で埋め、次の task を queued にしてから coordinator を 10 秒止める。答え = 2 つの task の結末。"
+  "場面 (c): a(背景の枠 1)を 30 秒の task で埋め、次の task を queued にしてから coordinator を 10 秒止める。答え = 2 つの task の結末。"
   (<- (Delay 3.0))
   (<- (submit-detached-task (slow-add 30.0 1) :key "k-busy" :needs ON-X :lease-seconds LEASE))
   (<- (Delay 3.0))

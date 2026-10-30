@@ -1,8 +1,8 @@
-;; 1 台の worker が止まっても常駐の job が残りの worker の枠と memory に入るか(N+1)の判断 failover-refusals(card ki-4689c7008147)。
-;; 合成の世界で、規則ごとの反例を赤にし(1 台にしか置けない job・移る先の枠の不足・移る先の memory の不足・離す組を両方置ける worker・
-;; memory の予算の無い worker)、赤にしてはいけない物(機体ごとの job・1 台に縛る訳を宣言した job・replicas 0 の job)を赤にしない。
-;; 失敗ケース = 1 台に縛られた job を通す・予備の枠を持つ worker(等号でない枠)を赤にする・枠の式を写して job-room-of とずれる・
-;; 1 件目で止めて残りの破りを隠す。
+;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の判断 failover-refusals(card ki-4689c7008147)。
+;; 合成の世界で、規則ごとの反例を赤にし(1 台にしか置けない job・移る先の memory の不足・離す組を両方置ける worker・memory の予算の無い
+;; worker)、赤にしてはいけない物(機体ごとの job・1 台に縛る訳を宣言した job・replicas 0 の job)を赤にしない。数の枠の規則 2 は消した
+;; (card ki-2acb63aec0fd — job は memory で数える): job の数が多くても memory に入れば赤にしない。
+;; 失敗ケース = 1 台に縛られた job を通す・job の数で赤にする・1 件目で止めて残りの破りを隠す。
 (require doeff-hy.macros [defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import pathlib [Path])
@@ -15,11 +15,12 @@
 (val TEMPLATE #("host-facts"))
 
 
-(defk host [name pools [capacity 3] [memory 4000] [reserve 0]]
-  {:pre [(: name str) (: pools tuple) (: capacity int) (: memory (| int None)) (: reserve int)] :post [(: % FailoverWorker)]
+(defk host [name pools [memory 4000]]
+  {:pre [(: name str) (: pools tuple) (: memory (| int None))] :post [(: % FailoverWorker)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "機体の名の能力 host-<名> と雛形の能力と組の印 pools を名乗る、枠 capacity・予約 reserve・memory の予算 memory の worker を作るため。"
-  (FailoverWorker :info (WorkerInfo name (tuple (sorted #(f"host-{name}" #* TEMPLATE #* pools))) capacity 0 :task-reserve reserve)
+  "機体の名の能力 host-<名> と雛形の能力と組の印 pools を名乗る、memory の予算 memory の worker を作るため(task の枠は判断が読まない)。"
+  (FailoverWorker :info (WorkerInfo name (tuple (sorted #(f"host-{name}" #* TEMPLATE #* pools))) 0 :task-reserve 0 :background-room 0
+                                    :memory-mib memory)
                   :memory-mib memory))
 
 
@@ -49,26 +50,15 @@
           out))
 
 
-(deftest test-a-worker-that-cannot-take-every-job-it-may-receive-is-red
-  ;; 組 {a, b} に job が 3 つ。どの置き方の後のどの 1 台の停止でも残りの 1 台が 3 つを受けるので、各 worker の枠に 3 つを数える。
-  ;; 枠 2 は赤・枠 3 は通る・枠 5(予備を持つ — 等号でない)も通る。
-  (val jobs #((! (resident "p1" #("pool-x") :peak 0 :settle 0)) (! (resident "p2" #("pool-x") :peak 0 :settle 0))
-              (! (resident "p3" #("pool-x") :peak 0 :settle 0))))
-  (<- short (judged #((! (host "a" #("pool-x") :capacity 2)) (! (host "b" #("pool-x") :capacity 3))) jobs))
-  (assert (= short #("worker a: 置ける常駐の job 3(p1, p2, p3)+ surge 0 を数えると job の側の空きが -1(job-room-of)— どの 1 台が止まっても移る先の枠が足りるように、枠を 1 足すか置ける job を減らす"))
-          short)
-  (<- exact (judged #((! (host "a" #("pool-x") :capacity 3)) (! (host "b" #("pool-x") :capacity 5))) jobs))
-  (assert (= exact #()) exact))
-
-
-(deftest test-the-room-counts-the-task-reserve-and-one-surge-for-handoff-jobs
-  ;; 枠 4・予約 1 の worker に置ける job 2 つのうち 1 つが handoff: 2 + surge 1 = 3 = 4 − 1 で入る。予約を 2 にすると -1 で赤。
-  (val jobs #((! (resident "web" #("pool-x") :peak 0 :settle 0 :update "handoff")) (! (resident "api" #("pool-x") :peak 0 :settle 0))))
-  (<- fits (judged #((! (host "a" #("pool-x") :capacity 4 :reserve 1)) (! (host "b" #("pool-x") :capacity 4 :reserve 1))) jobs))
-  (assert (= fits #()) fits)
-  (<- tight (judged #((! (host "a" #("pool-x") :capacity 4 :reserve 2)) (! (host "b" #("pool-x") :capacity 4 :reserve 1))) jobs))
-  (assert (= tight #("worker a: 置ける常駐の job 2(web, api)+ surge 1 を数えると job の側の空きが -1(job-room-of)— どの 1 台が止まっても移る先の枠が足りるように、枠を 1 足すか置ける job を減らす"))
-          tight))
+(deftest test-many-jobs-within-the-memory-are-not-red-for-their-number
+  ;; 規則 2(数の枠)は消した(card ki-2acb63aec0fd): 組 {a, b} に落ち着き 10・山 20 の job が 40 本でも、memory に入れば(40 × 10 + 40 × 10
+  ;; = 800 ≤ 予算 800)赤にしない。予算を 1 減らすと memory の規則 3 が赤にする(数でなく memory が歯止め)。
+  (val jobs (tuple (gfor n (range 40) (! (resident (.format "p{:02}" n) #("pool-x") :peak 20 :settle 10)))))
+  (<- many (judged #((! (host "a" #("pool-x") :memory 800)) (! (host "b" #("pool-x") :memory 800))) jobs))
+  (assert (= many #()) many)
+  (<- short (judged #((! (host "a" #("pool-x") :memory 799)) (! (host "b" #("pool-x") :memory 800))) jobs))
+  (assert (= (len short) 1) short)
+  (assert (.startswith (get short 0) "worker a: 置ける常駐の job の落ち着いた値の和 400 MiB") short))
 
 
 (deftest test-a-worker-whose-memory-cannot-take-the-start-peak-of-the-moved-jobs-is-red
@@ -113,13 +103,12 @@
 
 
 (deftest test-every-breach-is-named-without-stopping-at-the-first
-  ;; 1 台に縛られた job・枠の不足・memory の不足・離す組が同じ世界に在れば、規則の順(置き先・worker ごとの枠と memory・離す組)にみな並ぶ。
-  (val workers #((! (host "a" #("pool-x") :capacity 0 :memory 100)) (! (host "b" #("pool-x")))))
+  ;; 1 台に縛られた job・memory の不足・離す組が同じ世界に在れば、規則の順(置き先・worker ごとの memory・離す組)にみな並ぶ。
+  (val workers #((! (host "a" #("pool-x") :memory 100)) (! (host "b" #("pool-x")))))
   (<- out (judged workers #((! (resident "solo" #("host-b"))) (! (resident "p1" #("pool-x"))))
                   :apart #((KeptApart :first "solo" :second "p1"))))
   (assert (= (lfor text out (.rstrip (get (.split text "—") 0)))
              ["worker b を止めると、b にしか置けない job solo(needs ['host-b'])が置き先を失う"
-              "worker a: 置ける常駐の job 1(p1)+ surge 0 を数えると job の側の空きが -1(job-room-of)"
               "worker a: 置ける常駐の job の落ち着いた値の和 300 MiB(p1 300)+ b が止まった時に移る job の起動の山の上乗せ 700 MiB(p1 +700)= 1000 MiB が memory の予算 100 MiB を越える"
               "worker b: 離す組の job solo・p1 を両方とも置ける"])
           out))
@@ -128,27 +117,26 @@
 ;; --- 赤にしない物 ---------------------------------------------------------------------------------------------------------
 
 (deftest test-a-per-machine-job-counts-once-on-every-worker-and-never-moves
-  ;; needs が雛形の能力だけの job は置ける worker のそれぞれに 1 つずつ動く: 1 台にしか置けなくても赤にせず、枠には各 worker に 1 つ
-  ;; 数え(枠 2 = 組の job 1 + 機体ごと 1 で入る・枠 1 は赤)、memory は落ち着きだけを数えて山の上乗せには数えない(他の機体へ移らない)。
+  ;; needs が雛形の能力だけの job は置ける worker のそれぞれに 1 つずつ動く: 1 台にしか置けなくても赤にせず、memory は落ち着きだけを
+  ;; 数えて山の上乗せには数えない(他の機体へ移らない — 予算 1100 = 落ち着き 100 + 300 + 組の job の山の上乗せ 700 で入る・1099 は赤)。
   (val jobs #((! (resident "facts" #("host-facts") :peak 5000 :settle 100)) (! (resident "p1" #("pool-x") :peak 1000 :settle 300))))
-  (<- out (judged #((! (host "a" #("pool-x") :capacity 2 :memory 1100)) (! (host "b" #("pool-x") :capacity 2 :memory 1100))) jobs))
+  (<- out (judged #((! (host "a" #("pool-x") :memory 1100)) (! (host "b" #("pool-x") :memory 1100))) jobs))
   (assert (= out #()) out)
-  (<- alone (judged #((! (host "a" #() :capacity 1 :memory 100))) #((! (resident "facts" #("host-facts") :peak 5000 :settle 100)))))
+  (<- alone (judged #((! (host "a" #() :memory 100))) #((! (resident "facts" #("host-facts") :peak 5000 :settle 100)))))
   (assert (= alone #()) alone)
-  (<- short (judged #((! (host "a" #("pool-x") :capacity 1 :memory 1100)) (! (host "b" #("pool-x") :capacity 2 :memory 1100))) jobs))
+  (<- short (judged #((! (host "a" #("pool-x") :memory 1099)) (! (host "b" #("pool-x") :memory 1100))) jobs))
   (assert (= (len short) 1) short)
-  (assert (.startswith (get short 0) "worker a: 置ける常駐の job 2(facts, p1)+ surge 0 を数えると job の側の空きが -1") short))
+  (assert (.startswith (get short 0) "worker a: 置ける常駐の job の落ち着いた値の和 400 MiB(facts 100, p1 300)") short))
 
 
 (deftest test-a-template-job-spread-per-machine-keeps-the-per-machine-mark
   ;; 雛形の job を機体ごとに広げた job(needs = 雛形の能力 + 機体の印 host-<機体> 1 つ)は雛形の機体ごとを継ぐ: 1 台にしか置けなくても規則 1
-  ;; で赤にしない(枠と memory には自分の機体の分を数える — 各 worker の枠 2 = 組の job 1 + 広げた job 1・memory 1100 = 落ち着き 300 + 100 +
-  ;; 組の job の山の上乗せ 700)。雛形の能力を持たず機体の印だけの job・機体の印を 2 つ持つ job・雛形の外の能力を足した job は機体ごとで
+  ;; で赤にしない(memory には自分の機体の分を数える — memory 1100 = 落ち着き 300 + 100 + 組の job の山の上乗せ 700)。雛形の能力を持たず機体の印だけの job・機体の印を 2 つ持つ job・雛形の外の能力を足した job は機体ごとで
   ;; ない(1 台に縛った job)。失敗ケース = 広げた job を 1 台に縛った job と読んで赤にする・印だけの job を機体ごとと読んで通す。
   (val jobs #((! (resident "facts-a" #("host-a" "host-facts") :peak 5000 :settle 100))
               (! (resident "facts-b" #("host-b" "host-facts") :peak 5000 :settle 100))
               (! (resident "p1" #("pool-x") :peak 1000 :settle 300))))
-  (<- out (judged #((! (host "a" #("pool-x") :capacity 2 :memory 1100)) (! (host "b" #("pool-x") :capacity 2 :memory 1100))) jobs))
+  (<- out (judged #((! (host "a" #("pool-x") :memory 1100)) (! (host "b" #("pool-x") :memory 1100))) jobs))
   (assert (= out #()) out)
   (<- spread bool (per-machine? #("host-a" "host-facts") TEMPLATE))
   (<- template bool (per-machine? #("host-facts") TEMPLATE))
@@ -164,39 +152,39 @@
 
 (deftest test-a-job-declaring-single-host-may-stay-on-one-worker-but-still-takes-its-room
   ;; 1 台に縛る訳を宣言した job(:single-host — card ki-2acb63aec0fd で手で持つ例外の表から job の宣言へ移した)は、置き先が 1 台でも
-  ;; 規則 1 で赤にしない。訳の無い同じ job は赤。枠と memory には数える(a の枠 1 に縛った job と組の job で 2 — 赤)。
-  ;; 失敗ケース = 訳を読まずに赤にする・訳の無い 1 台の job を通す・訳の在る job を枠から外す。
-  (val bound (! (resident "store" #("host-a") :peak 0 :settle 0 :single-host "機体の disk の data を持つ")))
-  (val jobs #(bound (! (resident "p1" #("pool-x") :peak 0 :settle 0))))
-  (<- bare (judged #((! (host "a" #("pool-x") :capacity 2)) (! (host "b" #("pool-x"))))
-                   #((! (resident "store" #("host-a") :peak 0 :settle 0)) (! (resident "p1" #("pool-x") :peak 0 :settle 0)))))
+  ;; 規則 1 で赤にしない。訳の無い同じ job は赤。memory には数える(a の予算 1000 に縛った job の落ち着き 500 と組の job 300 + b の停止で
+  ;; 移る組の job の上乗せ 300 = 1100 — 赤)。
+  ;; 失敗ケース = 訳を読まずに赤にする・訳の無い 1 台の job を通す・訳の在る job を memory から外す。
+  (val bound (! (resident "store" #("host-a") :peak 500 :settle 500 :single-host "機体の disk の data を持つ")))
+  (val jobs #(bound (! (resident "p1" #("pool-x") :peak 600 :settle 300))))
+  (<- bare (judged #((! (host "a" #("pool-x"))) (! (host "b" #("pool-x"))))
+                   #((! (resident "store" #("host-a") :peak 500 :settle 500)) (! (resident "p1" #("pool-x") :peak 600 :settle 300)))))
   (assert (= (len bare) 1) bare)
   (assert (.startswith (get bare 0) "worker a を止めると、a にしか置けない job store") bare)
   (assert (in ":single-host" (get bare 0)) bare)
-  (<- out (judged #((! (host "a" #("pool-x") :capacity 2)) (! (host "b" #("pool-x")))) jobs))
+  (<- out (judged #((! (host "a" #("pool-x"))) (! (host "b" #("pool-x")))) jobs))
   (assert (= out #()) out)
-  (<- full (judged #((! (host "a" #("pool-x") :capacity 1)) (! (host "b" #("pool-x")))) jobs))
+  (<- full (judged #((! (host "a" #("pool-x") :memory 1000)) (! (host "b" #("pool-x")))) jobs))
   (assert (= (len full) 1) full)
-  (assert (.startswith (get full 0) "worker a: 置ける常駐の job 2(store, p1)") full))
+  (assert (.startswith (get full 0) "worker a: 置ける常駐の job の落ち着いた値の和 800 MiB(store 500, p1 300)") full))
 
 
 (deftest test-a-job-with-zero-replicas-is-not-placed-and-not-counted
-  ;; replicas 0 の job は置かないので、1 台に縛られていても・離す組でも赤にせず、枠と memory にも数えない(枠 1 に組の job 1 だけ)。
+  ;; replicas 0 の job は置かないので、1 台に縛られていても・離す組でも赤にせず、memory にも数えない(予算 0 に落ち着き 0 の組の job 1 だけ)。
   (val jobs #((! (resident "parked" #("host-a") :replicas 0)) (! (resident "p1" #("pool-x") :peak 0 :settle 0))))
-  (<- out (judged #((! (host "a" #("pool-x") :capacity 1 :memory 0)) (! (host "b" #("pool-x") :capacity 1 :memory 0))) jobs
+  (<- out (judged #((! (host "a" #("pool-x") :memory 0)) (! (host "b" #("pool-x") :memory 0))) jobs
                   :apart #((KeptApart :first "parked" :second "p1"))))
   (assert (= out #()) out))
 
 
-;; --- 枠の式を写さない -----------------------------------------------------------------------------------------------------
+;; --- task の枠を読まない -------------------------------------------------------------------------------------------------
 
-(deftest test-the-judgment-asks-job-room-of-and-does-not-copy-the-room-formula
-  ;; 枠の空きの定義元は coordinator の job-room-of 1 つ(capacity − task-reserve − 置き先と surge)。この判断がその式を写すと、
-  ;; job-room-of の数え方が変わった時に宣言の側の照らしと coordinator の置き方がずれる。module は job-room-of を呼び、worker の枠と
-  ;; 予約の欄を自分で読まない。
+(deftest test-the-judgment-reads-no-task-room-and-no-job-count
+  ;; 規則 2 を消した後(card ki-2acb63aec0fd)、この判断は task の側の枠(task-reserve・background-room)も、数の空き(job-room-of —
+  ;; coordinator から消した)も読まない。読むと task の側の値で常駐の job を赤にし、coordinator の置き方(memory だけで job を数える)と
+  ;; ずれる。
   (val source (.read-text (/ (. (Path __file__) parent parent) "src" "doeff_cluster" "coordinator" "core" "failover_policy.hy")
                           :encoding "utf-8"))
   (val code (.join "\n" (gfor line (.splitlines source) (get (.split line ";") 0))))
-  (assert (re.search r"\(import doeff_cluster\.coordinator\.core\.cluster_policy \[[^\]]*\bjob-room-of\b" code) "job-room-of を import していない")
-  (assert (re.search r"\(<- room int \(job-room-of " code) "job-room-of を呼んでいない")
-  (assert (not (re.search r"\.capacity\b|task-reserve\b|task_reserve\b" code)) "worker の枠・予約の欄を読んでいる — 枠の式を写さず job-room-of を呼ぶ"))
+  (assert (not (re.search r"job-room-of|HANDOFF-SURGE|load-alone|room-refusal" code)) "数の枠の判断が残っている")
+  (assert (not (re.search r"\.capacity\b|task-reserve\b|task_reserve\b|background-room\b" code)) "worker の task の枠の欄を読んでいる"))

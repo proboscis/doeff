@@ -83,18 +83,19 @@
 ;;;   test-the-recreated-coordinator-places-no-new-job-on-a-dead-worker(作り直しの後に宣言し直して足した job の置き先と、死なせた worker の
 ;;;   届かなくなった時刻を判断に渡す)。失敗ケースは同じ file の test-a-counterexample-store-without-last-seen-breaks-l1(DropsLastSeen を差すと、
 ;;;   作り直した coordinator が足した job を死んだ worker へ置き、L1 が名指す)。
-;;;   C6 running-within-capacity(doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32)— どの瞬間も、
-;;;   worker の上で動く job の process の数は、その worker が本当に置ける数(capacity)を越えない。確かめるのは tests/test_local.hy の
-;;;   test-a-worker-runs-no-more-jobs-than-its-capacity(capacity 1 の worker に service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは
-;;;   同じ file の test-a-counterexample-worker-that-overstates-its-capacity-breaks-c6(heartbeat で capacity を多く名乗る壊れた worker — SimWorker
-;;;   の overstates-capacity — で 2 つ置かれて C6 が名指す)。
-;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489)—
-;;;   どの worker でも、常駐の job の置き先と並べた置き先(surge)の数の和は capacity − task-reserve(worker が名乗る task のために空けておく数)を
-;;;   越えない(常駐が枠を埋めても task の置き場が残る)。確かめるのは tests/test_local.hy の
-;;;   test-resident-jobs-leave-the-task-reserve-for-tasks(capacity 3・task-reserve 1 の worker に常駐の service 3 つと task を出す service の系を
-;;;   置き、GET /state の読みごとの常駐の数を判断に渡す)。失敗ケースは同じ file の
-;;;   test-a-counterexample-worker-that-hides-its-task-reserve-breaks-c17(heartbeat で task-reserve を 0 と名乗る壊れた worker — SimWorker の
-;;;   claims-task-reserve — で常駐が 3 つ置かれて C17 が名指す)。
+;;;   C6 running-within-capacity(doeff_cluster.coordinator.core.coordinator_invariants:running-within-capacity — #1976 の #32・card ki-2acb63aec0fd
+;;;   で memory の版へ)— どの瞬間も、worker の上で動く job の process の落ち着いた memory(宣言の settle-mib)の和は、その worker の本当の
+;;;   memory の予算を越えない。確かめるのは tests/test_local.hy の test-a-worker-runs-no-more-jobs-than-its-memory(予算 150 MiB の worker に
+;;;   settle 100 の service 2 つの系を置き、process の区間を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-overstates-its-memory-breaks-c6(heartbeat で memory の予算を多く名乗る壊れた worker — SimWorker の
+;;;   overstates-memory — で 2 つ置かれて C6 が名指す)。
+;;;   C17 jobs-stay-out-of-the-task-reserve(doeff_cluster.coordinator.core.coordinator_invariants:jobs-stay-out-of-the-task-reserve — #3489・
+;;;   card ki-2acb63aec0fd で task の側の版へ)— どの瞬間も、worker の上で動く task の数は、本当の予約(task-reserve)と背景の枠
+;;;   (background-room)の和を越えない(task の置き場は常駐の job の数に依らない)。確かめるのは tests/test_local.hy の
+;;;   test-tasks-run-in-the-reserve-beside-every-resident-job(予約 1・背景の枠 0 の worker に常駐の service 3 つと task を出す service の系を
+;;;   置き、3 つとも置かれて task が予約で走る — task の区間を判断に渡す)。失敗ケースは同じ file の
+;;;   test-a-counterexample-worker-that-overclaims-its-task-reserve-breaks-c17(本当は枠 0 の worker が heartbeat で予約を 1 と名乗る — SimWorker の
+;;;   claims-task-reserve — で task が置かれて C17 が名指す)。
 ;;;   C7 placed-only-where-eligible(doeff_cluster.coordinator.core.coordinator_invariants:placed-only-where-eligible — #1976 の #32)— 置き先の
 ;;;   worker は job の needs を本当に提供する。確かめるのは tests/test_local.hy の test-a-job-is-not-placed-on-a-worker-without-its-needs
 ;;;   (needs を提供しない worker だけの世界の置き先を判断に渡す)。失敗ケースは同じ file の

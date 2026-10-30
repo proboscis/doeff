@@ -50,7 +50,7 @@
 (defk state-of [tasks]
   {:pre [(: tasks dict)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "tasks と worker w だけを持つ状態を作るため。"
-  (ClusterState :workers (! (table-from-rows {"w" (WorkerInfo "w" #() 1 0 :task-reserve 0)}))
+  (ClusterState :workers (! (table-from-rows {"w" (WorkerInfo "w" #() 0 :task-reserve 0 :background-room 1)}))
                 :tasks (! (table-from-rows tasks))))
 
 (defk watch-lapse-decisions [monkeypatch]

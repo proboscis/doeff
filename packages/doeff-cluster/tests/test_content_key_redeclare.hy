@@ -185,7 +185,7 @@
   (for [a actions] (sim.apply a))
   (setv sim.records (! (records-after sim.now sim.records actions sim.policy)))
   (<- rows tuple (status-rows-json (tuple (! (statuses sim.now sim.desired (sim.world) sim.records sim.policy)))))
-  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
+  (val reply (sim.call "POST" "/heartbeat" {"name" "zeus" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" V "statuses" (list rows)}
                        :actor None))
   (val stripped (| reply {"jobs" (lfor j (get reply "jobs") (dfor #(k v) (.items j) :if (!= k "content") k v))}))
   (<- declared DeclaredReply (declared-reply-of-json stripped))

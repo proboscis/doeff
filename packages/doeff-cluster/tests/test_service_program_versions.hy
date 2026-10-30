@@ -75,7 +75,7 @@
   {:pre [(: state ClusterState) (: mine dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker w(版 mine)の heartbeat 1 回 → #(次の状態 worker が読んだ job の列)(本番の worker の拍と同じ読み — declared-job-specs)。"
   (<- answer tuple (call state "POST" "/heartbeat"
-                         {"name" "w" "provides" ["net"] "capacity" 10 "taskReserve" 0 "versions" mine "boot" "b1" "statuses" []} 5))
+                         {"name" "w" "provides" ["net"] "backgroundRoom" 10 "taskReserve" 0 "versions" mine "boot" "b1" "statuses" []} 5))
   (assert (= (get answer 1) 200) answer)
   (<- specs tuple (declared-job-specs (! (declared-reply-of-json (get answer 2)))))
   #((get answer 0) specs))

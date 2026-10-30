@@ -209,19 +209,19 @@
 
 
 (deftest test-a-worker-without-its-task-reserve-or-outside-its-range-does-not-start
-  ;; task のために空けておく数 --task-reserve は必ずの引数(既定の値は無い)。無ければ argparse の error、capacity を越える数は起動の
-  ;; 検めで止まり、どちらも理由を stderr に出す(coordinator に断られる名乗りで動き続けない)。
+  ;; task のために空けておく数 --task-reserve は必ずの引数(既定の値は無い)。無ければ argparse の error、負の背景の枠は起動の検めで
+  ;; 止まり、どちらも理由を stderr に出す(coordinator に断られる名乗りで動き続けない)。背景の枠の既定は 0(card ki-2acb63aec0fd)。
   (val missing (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
                                 "--name" "w" "--provides" "net" "--repo" "." "--state-dir" "/nonexistent"]
                                :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= missing.returncode 2) missing.stderr)
   (assert (in "--task-reserve" missing.stderr) missing.stderr)
   (val over (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster.worker.entry.main" "--coordinator" "http://127.0.0.1:9"
-                             "--name" "w" "--provides" "net" "--capacity" "2" "--task-reserve" "3" "--repo" "." "--state-dir" "/nonexistent"
+                             "--name" "w" "--provides" "net" "--background-room" "-1" "--task-reserve" "3" "--repo" "." "--state-dir" "/nonexistent"
                              "--env-roots-cap" "0" "--env-min-free" "0" "--code-store" "off" "--uv-cache" "/nonexistent/uv-cache"]
                             :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))
   (assert (= over.returncode 2) over.stderr)
-  (assert (in "--task-reserve 3 は 0 以上 --capacity 2 以下で名乗る" over.stderr) over.stderr))
+  (assert (in "--task-reserve 3・--background-room -1・--memory-mib None は 0 以上で名乗る" over.stderr) over.stderr))
 
 
 (deftest test-boot-without-worker-task-reserve-does-not-start-the-worker [tmp-path]
@@ -230,7 +230,7 @@
   ;; 断りは文の言い回しでなく種類で確かめる: stderr の最後の行が boot の断りで、欠けた 2 つの入力の名を挙げる(worker の入口まで進んでいない)。
   (val done (subprocess.run ["sh" (str (/ PACKAGE-ROOT "deploy" "boot.sh"))]
                             :env {"PATH" (os.environ.get "PATH" "") "HOME" (str tmp-path) "ROLE" "worker" "WORK_DIR" (str tmp-path)
-                                  "COORDINATOR_URL" "http://127.0.0.1:9" "WORKER_NAME" "w" "WORKER_CAPACITY" "2"}
+                                  "COORDINATOR_URL" "http://127.0.0.1:9" "WORKER_NAME" "w" "WORKER_BACKGROUND_ROOM" "2"}
                             :capture-output True :text True :timeout 120))
   (assert (= done.returncode 2) done.stderr)
   (val refusal (get (.splitlines (.strip done.stderr)) -1))
@@ -296,7 +296,7 @@
   (val state (! (state-from-kv kv 5000)))
   (assert (not-in "w1" (.keys state.workers)) "旧い形の worker の行は読まない")
   (<- beat tuple (call state "POST" "/heartbeat"
-                       {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "capacity" 1 "taskReserve" 0 "versions" {}
+                       {"name" "w1" "provides" ["agent" "host-w1"] "exclusive" ["host-w1"] "backgroundRoom" 1 "taskReserve" 0 "versions" {}
                         "statuses" [] "boot" "b1" "format" 1} 6000))
   (assert (= (get beat 1) 200) beat)
   (assert (in "w1" (.keys (. (get beat 0) workers))))

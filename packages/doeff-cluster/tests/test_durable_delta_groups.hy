@@ -31,11 +31,11 @@
 
 (deftest test-a-step-that-writes-one-field-builds-only-that-group [monkeypatch]
   ;; 1 欄(workers)だけ書いた歩: 組ごとに鍵を作る関数の呼ばれた回数を数え、workers の組だけが前後 1 回ずつ。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val served (get (responded s (! (http-request "POST" "/resources/Service" {} {"name" "a" "spec" {"revision" "r" "needs" ["net"] "run" SAMPLE-RUN "peakMiB" 200 "settleMiB" 100}}
                                               :actor "c-test")) 1500 T) 0))
-  (val changed (replace served :workers (! (table-from-rows (dfor #(k w) (.items served.workers) k (replace w :capacity (+ w.capacity 1)))))))
+  (val changed (replace served :workers (! (table-from-rows (dfor #(k w) (.items served.workers) k (replace w :background-room (+ w.background-room 1)))))))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
   (val got (! (dk.durable-delta served changed)))
@@ -47,7 +47,7 @@
 
 (deftest test-a-step-where-every-field-is-the-same-object-builds-nothing [monkeypatch]
   ;; 全部の欄が同じ object の歩(replace だけ)は、差分が空で、どの組の鍵も作らない。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
   (val spies (tuple (gfor g dk.SOURCE-GROUPS #(g.fields (Mock :wraps g.build)))))
   (.setattr monkeypatch dk "SOURCE_GROUPS" (tuple (gfor #(fields spy) spies (dk.SourceGroup :fields fields :build spy))))
@@ -56,11 +56,11 @@
 
 
 (deftest test-counterexample-a-new-field-object-with-changed-content-is-not-skipped
-  ;; 失敗ケース: 欄が別の object で中身が違う(capacity を 1 足した worker)— 差分に入り、丸ごとの直列化の差分と同じ。同じ object の
+  ;; 失敗ケース: 欄が別の object で中身が違う(backgroundRoom を 1 足した worker)— 差分に入り、丸ごとの直列化の差分と同じ。同じ object の
   ;; 判定が中身の変化を見逃さない。別の object で中身が同じ(作り直しただけ)なら差分に入らない。
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
-  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))))
+  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :background-room (+ w.background-room 1)))))))
   (val old (! (dk.durable-kv s)))
   (val new (! (dk.durable-kv changed)))
   (val by-full (| (dfor #(k v) (.items new) :if (!= (.get old k) v) k v) (dfor k old :if (not-in k new) k None)))
@@ -78,9 +78,9 @@
   ;; 進まない。deff に戻すと呼び手が写像を受けて落ちず、この検が赤になる。
   (import pytest)
   (val read-as-delta (fn [delta] (dict (.items delta))))
-  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "capacity" 2 "taskReserve" 0 "statuses" []}
+  (val s (get (responded (ClusterState) (! (http-request "POST" "/heartbeat" {} {"name" "atlas" "provides" ["net"] "backgroundRoom" 2 "taskReserve" 0 "statuses" []}
                                                        :actor "c-test")) 1000 T) 0))
-  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :capacity (+ w.capacity 1)))))))
+  (val changed (replace s :workers (! (table-from-rows (dfor #(k w) (.items s.workers) k (replace w :background-room (+ w.background-room 1)))))))
   (with [(pytest.raises AttributeError :match "items")]
     (read-as-delta (dk.durable-delta s changed))))
 

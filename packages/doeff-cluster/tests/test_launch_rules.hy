@@ -22,13 +22,17 @@
 
 (deftest test-a-worker-launch-becomes-the-boot-env-lines-in-boot-order
   (<- plain tuple (pairs-of (WorkerLaunch :name "w2" :provides #("agent" "host-w2" "boundary-personal") :exclusive #()
-                                          :capacity 19 :task-reserve 3 :doeff-commit SHA)))
+                                          :background-room 19 :task-reserve 3 :doeff-commit SHA)))
   ;; provides は書いた順のまま(名の順に並べ替えない — 宣言の行が順を持つ)・exclusive が空なら行を持たない。
   (assert (= plain #(#("WORKER_DOEFF_COMMIT" SHA) #("WORKER_NAME" "w2") #("WORKER_PROVIDES" "agent,host-w2,boundary-personal")
-                     #("WORKER_CAPACITY" "19") #("WORKER_TASK_RESERVE" "3")))
+                     #("WORKER_TASK_RESERVE" "3") #("WORKER_BACKGROUND_ROOM" "19")))
           plain)
+  ;; memory の予算は名乗る時だけ行を持つ(card ki-2acb63aec0fd — 0 も名乗る値)。
+  (<- sized tuple (pairs-of (WorkerLaunch :name "w2" :provides #("agent") :exclusive #() :background-room 0 :task-reserve 3
+                                          :doeff-commit SHA :memory-mib 0)))
+  (assert (= (cut sized -2 None) #(#("WORKER_BACKGROUND_ROOM" "0") #("WORKER_MEMORY_MIB" "0"))) sized)
   (<- dedicated tuple (pairs-of (WorkerLaunch :name "web" :provides #("webapp" "host-web") :exclusive #("webapp")
-                                              :capacity 2 :task-reserve 0 :doeff-commit SHA)))
+                                              :background-room 2 :task-reserve 0 :doeff-commit SHA)))
   (assert (in #("WORKER_EXCLUSIVE" "webapp") dedicated) dedicated)
   (<- coord tuple (coordinator-launch-env (CoordinatorLaunch :doeff-commit SHA)))
   (assert (= (tuple (gfor e coord #(e.name e.value))) #(#("WORKER_DOEFF_COMMIT" SHA)))))
@@ -37,10 +41,10 @@
 (deftest test-values-the-worker-refuses-at-boot-are-refused-at-declaration
   ;; 失敗ケース: worker の入口(main.hy)が起動の時に exit 2 で断る値を、宣言の値の時に断る — 断らないと、宣言が main に入り
   ;; Pod が作り直された後で初めて止まる。
-  (val base {"name" "w" "provides" #("verify") "exclusive" #() "capacity" 1 "task_reserve" 0 "doeff_commit" SHA})
-  (for [#(what change) #(#("reserve が capacity を越える" {"task_reserve" 2})
-                         #("reserve が負" {"task_reserve" -1})
-                         #("capacity が 0" {"capacity" 0 "task_reserve" 0})
+  (val base {"name" "w" "provides" #("verify") "exclusive" #() "background_room" 1 "task_reserve" 0 "doeff_commit" SHA})
+  (for [#(what change) #(#("reserve が負" {"task_reserve" -1})
+                         #("背景の枠が負" {"background_room" -1})
+                         #("memory の予算が負" {"memory_mib" -1})
                          #("版が短い sha" {"doeff_commit" "90fd9a81"})
                          #("provides が空" {"provides" #()})
                          #("名が空" {"name" ""}))]
@@ -48,21 +52,21 @@
       (WorkerLaunch #** (| base change))))
   (with [(pytest.raises ValueError)]
     (CoordinatorLaunch :doeff-commit "main"))
-  ;; 境界の値は通る(reserve = capacity)。
-  (assert (= (. (WorkerLaunch #** (| base {"capacity" 3 "task_reserve" 3})) task-reserve) 3)))
+  ;; 境界の値は通る(どれも 0・予約は背景の枠より大きくてよい)。
+  (assert (= (. (WorkerLaunch #** (| base {"background_room" 0 "task_reserve" 3 "memory_mib" 0})) task-reserve) 3)))
 
 
 (deftest test-the-desire-effects-carry-the-launch
-  (val launch (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :capacity 1 :task-reserve 0 :doeff-commit SHA))
+  (val launch (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :background-room 1 :task-reserve 0 :doeff-commit SHA))
   (assert (is (. (DesireWorker launch) launch) launch))
   (assert (= (. (DesireCoordinator (CoordinatorLaunch :doeff-commit SHA)) launch doeff-commit) SHA)))
 
 
 (deftest test-reading-the-lines-back-gives-the-same-launch
   ;; 模擬の Flux が Deployment の env から worker を作り直す読み(本番では boot.sh)は、宣言を書く写しと同じ表から引く — 往復で同じ値。
-  (for [launch #((WorkerLaunch :name "w2" :provides #("agent" "host-w2") :exclusive #() :capacity 19 :task-reserve 3 :doeff-commit SHA)
-                 (WorkerLaunch :name "web" :provides #("webapp" "host-web") :exclusive #("webapp") :capacity 2 :task-reserve 0
-                               :doeff-commit SHA))]
+  (for [launch #((WorkerLaunch :name "w2" :provides #("agent" "host-w2") :exclusive #() :background-room 19 :task-reserve 3 :doeff-commit SHA)
+                 (WorkerLaunch :name "web" :provides #("webapp" "host-web") :exclusive #("webapp") :background-room 2 :task-reserve 0
+                               :doeff-commit SHA :memory-mib 4096))]
     (<- env tuple (worker-launch-env launch))
     ;; 起動の値の外の行(ROLE など)が混ざっても読まない。
     (<- back WorkerLaunch (worker-launch-of-env (+ #((EnvEntry :name "ROLE" :value "worker")) env)))
@@ -74,7 +78,7 @@
 
 (deftest test-a-missing-line-is-refused-not-defaulted
   ;; 失敗ケース: 省けない行(取っておく数)が無い env を、既定の値で埋めて読まない。
-  (<- env tuple (worker-launch-env (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :capacity 1 :task-reserve 0
+  (<- env tuple (worker-launch-env (WorkerLaunch :name "w" :provides #("verify") :exclusive #() :background-room 1 :task-reserve 0
                                                  :doeff-commit SHA)))
   (val without (tuple (gfor e env :if (!= e.name "WORKER_TASK_RESERVE") e)))
   (with [(pytest.raises LaunchEnvMissing)]
@@ -87,5 +91,5 @@
   (assert (= (frozenset (gfor f COORDINATOR-LAUNCH-FIELDS f.field))
              (frozenset (gfor f (dataclasses.fields CoordinatorLaunch) f.name))))
   (<- names (get frozenset str) (worker-launch-names))
-  (assert (= names (frozenset #("WORKER_DOEFF_COMMIT" "WORKER_NAME" "WORKER_PROVIDES" "WORKER_EXCLUSIVE" "WORKER_CAPACITY"
-                                "WORKER_TASK_RESERVE")))))
+  (assert (= names (frozenset #("WORKER_DOEFF_COMMIT" "WORKER_NAME" "WORKER_PROVIDES" "WORKER_EXCLUSIVE" "WORKER_TASK_RESERVE"
+                                "WORKER_BACKGROUND_ROOM" "WORKER_MEMORY_MIB")))))

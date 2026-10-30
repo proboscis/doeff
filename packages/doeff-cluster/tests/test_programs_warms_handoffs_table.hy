@@ -50,7 +50,7 @@
 
 
 (deftest test-warms-for-does-not-offer-rows-to-a-draining-worker
-  (val worker (WorkerInfo "w1" #("net") 10 0 :task-reserve 0))
+  (val worker (WorkerInfo "w1" #("net") 0 :task-reserve 0 :background-room 10))
   (val warms (table-of #((TableWrite "live" LIVE-WARM) (TableWrite "old" OLD-WARM))))
   (val plain (ClusterState :workers (table-of #((TableWrite "w1" worker))) :warms warms))
   (assert (= (tuple (gfor o (warms-for plain "w1" 1000) o.key)) #("live")) "期限の内の行だけを配る")
