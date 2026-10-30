@@ -26,7 +26,7 @@ def test_plain_sim_run_emits_no_close_out_warning() -> None:
         yield Delay(10)
         return (yield GetTime())
 
-    program = scheduled()(program_handler(sim_time_handler(start_time=START))(body()))
+    program = scheduled(program_handler(sim_time_handler(start_time=START))(body()))
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -48,7 +48,7 @@ def test_a_positive_delay_below_one_tick_still_moves_the_clock() -> None:
         yield Delay(7.2e-08)
         return (yield GetTime()) - start
 
-    program = scheduled()(program_handler(sim_time_handler(start_time=START))(body()))
+    program = scheduled(program_handler(sim_time_handler(start_time=START))(body()))
     assert run(program).total_seconds() == 1e-06
 
 
@@ -69,5 +69,5 @@ def test_a_wait_loop_on_the_rest_of_its_timeout_terminates() -> None:
             assert steps < 10, "the virtual clock stopped moving"
         return steps
 
-    program = scheduled()(program_handler(sim_time_handler(start_time=START))(body()))
+    program = scheduled(program_handler(sim_time_handler(start_time=START))(body()))
     assert run(program) < 10

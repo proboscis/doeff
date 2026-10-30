@@ -7,6 +7,7 @@
 ;;; 範囲と境界の扱いは、依頼書 [id](6 問)と、名ごとに問い直した続きの書の答え(どれも 2026-10-27)に従う
 ;;; [removed]
 ;;; [removed]
+;;; [removed]
 ;;; ([id]・card [id])に従い R18 に足した。doeff-validation の check と perform を型にする事は持ち主の
 ;;; 答え 2026-10-29([id]・card [id])に従い R19 に足した。doeff-adr の get_adr は R20、adr_ids は R21、Semgrep の検の
 ;;; 2 つの関数は R22(答え [id]・[id]・card [id])。まだ問うていない道具の package 7 個のうち、答えの出た条で決まる
@@ -95,6 +96,9 @@
      (fact
        "公開の submodule(R5 の外れ)は、card [id] が既知の表に載せた 39 package の 731 行(決まりの範囲の 28 package に 410・範囲の答え待ちの 11 package に 321)。決まりの範囲の import の根のすぐ下の子は 267 個で、子を _<名> に替えれば下の module も隠れる。直しの分けは card [id](stage 1〜3 の 31 枚)。"
        :evidence "tests/data/public_api_known_violations.json の (submodule) の行(doeff ec6311c0a の目録)・artifact 2026-10-28-doeff-submodule-hide-split.html(doeff 37467d478138 で 733 行・第 1 層の子 265 — その後 doeff-agents と doeff-hy-pytest が submodule を減らした)")
+     (fact
+       [removed]
+       [removed]
      (fact
        [removed]
        [removed]
@@ -313,7 +317,7 @@
           "取り組み doeff-subpackages-effects-only の区切り 2〜4 の card (直し — doeff-agents・CLI コマンド・doeff-vm・doeff-hy の macro・writer_log・__version__・class の handler・submodule)"
           "R11・R13 の答えが来た後: 既知の表の範囲と組を答えに合わせる card、この ADR に条を足す card (持ち主が切る)"
           "R11: doeff-vm を doeff の中の部品として目録と既知の表から外し、doeff の外の file の import を表の test が見る card (card [id] — 済み)。doeff の外の repo の import doeff_vm を doeff の根へ書き換え、repo ごとに見張りを置く card (card [id])"
-          "R6: maybe・result・on_raise・absent_as を handler を返す工場の形に直す card (card [id])、外の repo の呼び手を書き換える card (card [id])、4 つの旧い形を消して既知の表から 4 名を消す card (card [id]) — 3 つとも済み。scheduled の旧い形を消して既知の表の組「外れ — handler を返す工場の形に直す」を空にする card (card [id])。maybe・result を handler の値に戻す card (card [id])"
+          "R6: maybe・result・on_raise・absent_as を handler を返す工場の形に直す card (card [id])、外の repo の呼び手を書き換える card (card [id])、4 つの旧い形を消して既知の表から 4 名を消す card (card [id]) — 3 つとも済み。scheduled を工場にせず印の付いた handler の値にして、既知の表の組「外れ — handler を返す工場の形に直す」を空にする card (card [id] — 済み。工場の形を入れた card [id] の物と書き換えの道具を消した)。maybe・result を handler の値に戻す card (card [id])"
           "R16: 利用者向けの docs と例の WithHandler を h1(h2(p)) に書き替える card (持ち主が切る)"
           "R18・R13 (d)・R25: 外れの組の helper の形の program 関数を許すかを問う依頼書 ([id] の問い helper-155) と、答えに合わせて 155 名の組を移す card (card [id]) — どちらも済み。段 1 で既に _ に残した 36 名を入口へ出し直す card と、入口でぶつかる同じ名の 4 組を直す card (持ち主が切る)"
           "R12・R18: 許した物を既知の表から許した物の表 tests/data/public_api_allowed.json へ分け、既知の表を空になれる形にする card (card [id]) — 済み。R2 の例外・effect の値・effect の結果・handler の設定の型と答えの出た CLI・macro・plugin を、目録が形を確かめる許す組にして許した物の表へ移す card (card [id]・[id]・[id]・[id]・[id])"])

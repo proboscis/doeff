@@ -160,7 +160,7 @@ def test_run_apart_is_a_handler_that_runs_the_program_apart() -> None:
         return 41 + 1
 
     assert _marked(run_apart)
-    assert run(scheduled()(run_apart(computed()))) == 42
+    assert run(scheduled(run_apart(computed()))) == 42
 
 
 def test_agentic_wraps_through_its_factory_and_doeff_stacked_handlers(tmp_path: Path) -> None:

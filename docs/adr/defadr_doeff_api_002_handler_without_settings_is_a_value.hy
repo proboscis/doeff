@@ -107,7 +107,7 @@
      (deftest test-adr-doe-api-002-await-handler-is-a-handler-value
        ;; R1・R3・R5: await_handler は印の付いた値で、program に当てて Await に答える。旧い await_handler() は警告を出して同じ値を返す。
        (assert (is (getattr await-handler "_doeff_is_handler_fn" False) True))
-       (assert (= (run ((scheduled) (await-handler (awaits-two)))) 2))
+       (assert (= (run (scheduled (await-handler (awaits-two)))) 2))
        (with [(pytest.warns DeprecationWarning :match "await_handler has no settings")]
          (val called (await-handler)))
        (assert (is called await-handler)))]

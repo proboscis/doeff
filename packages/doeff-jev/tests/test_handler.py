@@ -43,7 +43,7 @@ class HttpScript:
 
 def _judged(program, layers):
     """使い手の組み立てと同じ形: 積みを被せ、scheduler の下で doeff の run で回す。"""
-    return run(scheduled()(with_handlers(layers, program)))
+    return run(scheduled(with_handlers(layers, program)))
 
 
 def _run(program, target, script, journal=None, caller=""):

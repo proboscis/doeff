@@ -81,7 +81,7 @@ def flow():
 
 
 lender = fixed_credential_lender(JudgeCredential(access_token=token, expires_at=None))
-verdict = run(scheduled()(with_handlers(claude_judge_stack(target, lender=lender), flow())))
+verdict = run(scheduled(with_handlers(claude_judge_stack(target, lender=lender), flow())))
 ```
 
 家の設定 dir は判定だけの空の dir を勧める(借りた資格の dir は、家の設定 dir の中身への link を持つ)。

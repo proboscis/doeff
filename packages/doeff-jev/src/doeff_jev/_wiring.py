@@ -5,7 +5,7 @@
 効果は内側の handler から外へ流れる: program の Judge は memo が受け、外れなら jev が受けて
 HttpRequest を出し、それを HTTP の実体が捌く。
 
-走らせるのは使い手: program を `run(scheduled()(with_handlers(judge_stack(…), program)))` で回す
+走らせるのは使い手: program を `run(scheduled(with_handlers(judge_stack(…), program)))` で回す
 (ADR-DOE-API-001 R1 — この package は判定の effect Judge に答える handler と、その積みの工場だけを見せる)。
 """
 

@@ -27,12 +27,12 @@ def test_await_handler_is_a_marked_handler_value():
 
 def test_await_handler_answers_an_await_applied_to_the_program():
     """``await_handler(prog)`` under ``scheduled`` answers the Await."""
-    assert run(scheduled()(await_handler(_awaits(3)))) == 3
+    assert run(scheduled(await_handler(_awaits(3)))) == 3
 
 
 def test_await_handler_goes_in_a_stack_without_a_call():
     """``[await_handler, try_handler]`` — the stack takes the value as it is."""
-    assert run(scheduled()(with_handlers([await_handler, try_handler], _awaits(4)))) == 4
+    assert run(scheduled(with_handlers([await_handler, try_handler], _awaits(4)))) == 4
 
 
 def test_the_former_call_warns_and_answers_the_same_handler():
@@ -42,4 +42,4 @@ def test_the_former_call_warns_and_answers_the_same_handler():
     assert called is await_handler
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        assert run(scheduled()(await_handler()(_awaits(5)))) == 5
+        assert run(scheduled(await_handler()(_awaits(5)))) == 5
