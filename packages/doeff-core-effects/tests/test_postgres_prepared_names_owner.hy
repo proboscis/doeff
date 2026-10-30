@@ -4,7 +4,7 @@
 ;;; doeff_pq_N も消す — PreparedBook は知らないので、その接続の次の束ねた往復は 26000 で落ち続けた(merge-queue-ledger の put-row の 500)。
 ;;;   - 使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)へ、貸し出しの上限 1 本で繋ぐ(どの借りも同じ接続)。
 ;;;   - 2 つの PostgreSQL の答え手(postgres-sql-handler・pooled-postgres-sql-handler)の両方で、本番の経路を撃つ: 束ねた transaction で名を
-;;;     用意する → cursor の道で同じ文を psycopg の既定の閾値(5 回)を越えて流す → 束ねない transaction が落ちて ROLLBACK → 束ねた
+;;;     用意する → cursor の道で同じ文を psycopg の既定の閾値(5 回)を越えて流す → 束ねない transaction が文の上限(57014)で落ちて ROLLBACK → 束ねた
 ;;;     transaction をもう一度。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import concurrent.futures [ThreadPoolExecutor])
@@ -34,12 +34,12 @@
   (get answer.rows 0 0))
 
 
-(defk duplicate-insert []
+(defk timed-out []
   {:pre [] :post [(: % str)]
    :tags {:context "sql" :role "program"}}
-  "2 文目が一意の違反で落ちる program(transaction は ROLLBACK される)。"
-  (<- (SqlQuery DB "INSERT INTO named_rows (id, label) VALUES (1, 'x')" #()))
-  (<- (SqlQuery DB "INSERT INTO named_rows (id, label) VALUES (1, 'y')" #()))
+  "文の上限(statement_timeout)で落ちる program(本番の刈りの文の上限切れと同じ 57014 — transaction は ROLLBACK される)。"
+  (<- (SqlQuery DB "SET LOCAL statement_timeout = '50ms'" #()))
+  (<- (SqlQuery DB "SELECT pg_sleep(1)" #()))
   "来ない")
 
 
@@ -61,7 +61,7 @@
   (for [_ (range CURSOR-REPEATS)]
     (<- (counted)))
   (<- before (prepared-names))
-  (<- failed (SqlTransaction DB (duplicate-insert) None False))
+  (<- failed (SqlTransaction DB (timed-out) None False))
   (<- after (prepared-names))
   (<- again (SqlTransaction DB (counted) None True))
   {"first" first "before" before "failed" failed "after" after "again" again})
@@ -72,7 +72,7 @@
    :tags {:context "sql" :role "program"}}
   "rolled-back-path の答えを、名の持ち主の決まりに照らすため。"
   (assert (= (get seen "first") 0) seen)
-  (assert (isinstance (get seen "failed") SqlFailed) seen)
+  (assert (and (isinstance (get seen "failed") SqlFailed) (= (. (get seen "failed") sqlstate) "57014")) seen)
   ;; server の上の名は doeff の名だけ(psycopg は cursor の道で何度流しても名を付けない)。ROLLBACK の後も消えない。
   (assert (all (gfor name (get seen "before") (.startswith name "doeff_pq_"))) seen)
   (assert (get seen "before") seen)
