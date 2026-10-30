@@ -18,7 +18,7 @@ Usage:
         results = yield Gather(t1, t2)
         return results
 
-    run(scheduled()(main()))
+    run(scheduled(main()))
 """
 
 import functools
@@ -61,7 +61,6 @@ from doeff.program import handler as _program_handler
 
 if TYPE_CHECKING:
     from doeff import Program
-    from doeff.program import ProgramHandler
 
 _logger = logging.getLogger(__name__)
 
@@ -1314,83 +1313,30 @@ def resolve_implementation(
     return choice
 
 
-class _NoProgram:
-    """No program given to ``scheduled``: the factory form, ``scheduled()``."""
-
-
-_NO_PROGRAM = _NoProgram()
-
-
-@overload
-def scheduled(*, implementation: "SchedulerImplementation | None" = None) -> "ProgramHandler": ...
-
-
-@overload
 def scheduled(
     body_program: "Program[_T, Any]",
     *,
     implementation: "SchedulerImplementation | None" = None,
-) -> "Program[_T, Any]": ...
+) -> "Program[_T, Any]":
+    """The scheduler handler: ``scheduled(program)`` runs the program on a new scheduler.
 
-
-def scheduled(
-    body_program: "Program[_T, Any] | _NoProgram" = _NO_PROGRAM,
-    *,
-    implementation: "SchedulerImplementation | None" = None,
-) -> "ProgramHandler | Program[_T, Any]":
-    """The scheduler handler factory: ``scheduled()(program)``.
-
-    Like ``state()``, it returns a handler (ADR-DOE-API-001 R6 — a subpackage shows effects,
-    handlers and handler factories): ``scheduled(implementation="python")(program)``. Each program
-    the handler is applied to runs on a scheduler of its own: one handler applied twice gives two
-    runs that share no tasks.
+    It has neither settings nor state per call, so it is a handler value applied straight to the
+    program, not a handler factory (ADR-DOE-API-001 R6, ADR-DOE-API-002 R1 — like ``maybe`` and
+    ``result``): it carries the handler marker and is written ``scheduled(program)``.
 
     Both implementations handle the same effects with the same semantics
     (docs/25-rust-scheduler.md); ``implementation`` / ``$DOEFF_SCHEDULER``
-    choose between them for comparison and rollback. An ``implementation`` that
-    is not "python" or "rust" is refused here; ``$DOEFF_SCHEDULER`` is read when
-    the handler is applied to a program, so a test can switch it with ``monkeypatch.setenv``.
-
-    The old form ``scheduled(program)`` is ``scheduled()(program)``. It stays only while the
-    callers in doeff and in the repos that read doeff's main are rewritten by
-    ``tools/scheduled_factory_rewrite.py`` (agora card ki-f2c2f789f5bb), and is removed once that
-    tool counts no old form in any of them.
+    choose between them for comparison and rollback.
     """
-    if implementation is not None:
-        resolve_implementation(implementation)
-    if isinstance(body_program, _NoProgram):
-        return _scheduler_handler(implementation)
     # Each return is a call doeff-effect-analyzer follows to the scheduler's clauses
     # (handler_effects._returned_handlers): keep them calls of module functions.
-    return _run_scheduled(body_program, implementation)
-
-
-def _scheduler_handler(implementation: "SchedulerImplementation | None") -> "ProgramHandler":
-    """The handler ``scheduled(...)`` returns: each program it gets runs on a new scheduler."""
-
-    def install(program: "Program[_T, Any] | _NoProgram" = _NO_PROGRAM) -> "Program[_T, Any]":
-        if isinstance(program, _NoProgram):
-            raise TypeError(
-                "scheduled()() got no program: scheduled() is the scheduler handler. "
-                "Apply it to the program itself: scheduled()(program)"
-            )
-        return _run_scheduled(program, implementation)
-
-    install.__name__ = "scheduled"
-    install.__qualname__ = "scheduled"
-    install.__doc__ = scheduled.__doc__
-    install_meta = cast(Any, install)  # a function takes the marker attribute; no typed slot for it
-    install_meta._doeff_is_handler_fn = True
-    return cast("ProgramHandler", install)  # the marker is set on it just above
-
-
-def _run_scheduled(
-    body_program: "Program[_T, Any]", implementation: "SchedulerImplementation | None"
-) -> "Program[_T, Any]":
-    """Run ``body_program`` on a new scheduler of the implementation chosen now."""
     if resolve_implementation(implementation) == "rust":
         return _scheduled_rust(body_program)
     return _scheduled_python(body_program)
+
+
+# The handler marker (ADR-DOE-API-001 R3): a function takes the attribute; no typed slot for it.
+cast(Any, scheduled)._doeff_is_handler_fn = True
 
 
 @functools.cache

@@ -15,7 +15,7 @@ handler は値で、``sequential(prog)``・``[sequential, …]`` と書く。旧
 - ``rewrite``: 作業木を書き換える。書き換えない所(``手で直す``)は場所と訳を出して残す。``--dry-run`` は書かずに数だけ出す。
 - ``--path``(何度でも): 木からの相対の頭で、見る file を絞る。``--json <file>``(``-`` は stdout): 結果を JSON で書く。
 
-見る file・歴史の記録(書き換えない)・Hy の読み・markdown の囲みは tools/scheduled_factory_rewrite.py と同じ(その部品を借りる)。
+見る file・歴史の記録(書き換えない)・Hy の読み・markdown の囲みは tools/call_site_reading.py の部品を借りる。
 印 ``former-factory-call-rewrite: keep`` を書いた file(この道具の test — 旧い形をわざと書いた入力)は書き換えない。
 
 どの名が対象か: file の import が読む名(``from doeff_traverse import sequential as s``・``(import doeff-traverse [sequential])``・
@@ -46,26 +46,26 @@ from pathlib import Path
 
 
 def _borrowed() -> types.ModuleType:
-    """tools/scheduled_factory_rewrite.py(tools/ は package ではない)— Hy の読み・字の範囲・木の読みを借りる。"""
-    loaded = sys.modules.get("scheduled_factory_rewrite")
+    """tools/call_site_reading.py(tools/ は package ではない)— Hy の読み・字の範囲・木の読みを借りる。"""
+    loaded = sys.modules.get("call_site_reading")
     if loaded is not None:
         return loaded
     spec = importlib.util.spec_from_file_location(
-        "scheduled_factory_rewrite", Path(__file__).with_name("scheduled_factory_rewrite.py")
+        "call_site_reading", Path(__file__).with_name("call_site_reading.py")
     )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["scheduled_factory_rewrite"] = module
+    sys.modules["call_site_reading"] = module
     spec.loader.exec_module(module)
     return module
 
 
-_sfr = _borrowed()
-Edit = _sfr.Edit
-Site = _sfr.Site
-HyNode = _sfr.HyNode
-HyUnreadableError = _sfr.HyUnreadableError
+_reading = _borrowed()
+Edit = _reading.Edit
+Site = _reading.Site
+HyNode = _reading.HyNode
+HyUnreadableError = _reading.HyUnreadableError
 
 #: 素の handler になった名と、それを出す module(移し替えの module も)。ADR-DOE-API-002 R6 の card で 1 つずつ足す。
 FORMER_FACTORIES: Mapping[str, frozenset[str]] = {
@@ -161,7 +161,7 @@ class PythonNames:
         return (
             isinstance(node, ast.Attribute)
             and node.attr == self.target.name
-            and _sfr._dotted(node.value) in self.modules
+            and _reading.dotted(node.value) in self.modules
         )
 
 
@@ -189,7 +189,7 @@ def python_names(tree: ast.AST, target: Target) -> PythonNames:
 
 
 def _python_rebound(nodes: Sequence[ast.AST], names: frozenset[str]) -> str | None:
-    return next((r for node in nodes if (r := _sfr._rebinding(node, names)) is not None), None)
+    return next((r for node in nodes if (r := _reading.rebinding(node, names)) is not None), None)
 
 
 def python_sites(text: str, target: Target, assumed: bool = False) -> list[Site]:
@@ -203,7 +203,7 @@ def python_sites(text: str, target: Target, assumed: bool = False) -> list[Site]
         found = PythonNames(target, found.names | {target.name}, found.modules)
     if not found.names and not found.modules:
         return []
-    source = _sfr._PythonSource(text)
+    source = _reading.PythonSource(text)
     nodes = list(ast.walk(tree))
     called = {id(node.func): node for node in nodes if isinstance(node, ast.Call)}
     sites: list[Site] = []
@@ -236,7 +236,7 @@ def embedded_hy_sites(text: str, target: Target) -> list[Site]:
         tree = ast.parse(text)
     except SyntaxError:
         return []
-    source = _sfr._PythonSource(text)
+    source = _reading.PythonSource(text)
     found: list[Site] = []
     for node in ast.walk(tree):
         value = node.value if isinstance(node, ast.Constant) else None
@@ -246,12 +246,12 @@ def embedded_hy_sites(text: str, target: Target) -> list[Site]:
             inner = hy_sites(value, target)
         except HyUnreadableError:
             continue
-        head = _sfr._string_body(source, node)
+        head = _reading.string_body(source, node)
         if head is None:
             reason = "escape の在る文字列の中の Hy"
             found += [Site(MANUAL, node.lineno, reason=reason) for s in inner if s.form == OLD_CALL]
         else:
-            found += [s.moved(_sfr._line_of(text, head) - 1, head) for s in inner]
+            found += [s.moved(_reading.line_of(text, head) - 1, head) for s in inner]
     return found
 
 
@@ -297,8 +297,8 @@ def _hy_visit(nodes: Sequence[HyNode], atoms: frozenset[str]) -> Iterator[tuple[
     for node in nodes:
         if node.kind == "atom" and _mangled(node.text) in atoms:
             yield node.start, Site(VALUE, 0)
-        elif node.kind == "form" and _sfr._hy_head(node) != "import":
-            head = _sfr._hy_head(node)
+        elif node.kind == "form" and _reading.hy_head(node) != "import":
+            head = _reading.hy_head(node)
             if head is not None and _mangled(head) in atoms:
                 name, *args = node.children
                 if not args:
@@ -315,11 +315,11 @@ def _hy_visit(nodes: Sequence[HyNode], atoms: frozenset[str]) -> Iterator[tuple[
 
 def hy_sites(text: str, target: Target, assumed: bool = False) -> list[Site]:
     """Hy の text の中の、対象を読む所(行は text の行)。"""
-    nodes = _sfr.parse_hy(text)
+    nodes = _reading.parse_hy(text)
     imported = {
         name
-        for node in _sfr._walk(nodes)
-        if _sfr._hy_head(node) == "import"
+        for node in _reading.walk(nodes)
+        if _reading.hy_head(node) == "import"
         for name in _hy_import_names(node, target)
     }
     atoms = frozenset(_mangled(a) for a in imported) | (
@@ -328,14 +328,14 @@ def hy_sites(text: str, target: Target, assumed: bool = False) -> list[Site]:
     if not atoms:
         return []
     sites = [
-        Site(s.form, _sfr._line_of(text, offset), s.edits, s.reason)
+        Site(s.form, _reading.line_of(text, offset), s.edits, s.reason)
         for offset, s in _hy_visit(nodes, atoms)
     ]
     rebound = next(
         (
-            f"({_sfr._hy_head(node)} …) が {name} を名に使う"
-            for node in _sfr._walk(nodes)
-            for name in _sfr._bound_names(node)
+            f"({_reading.hy_head(node)} …) が {name} を名に使う"
+            for node in _reading.walk(nodes)
+            for name in _reading.bound_names(node)
             if _mangled(name) in atoms
         ),
         None,
@@ -352,18 +352,18 @@ def markdown_sites(text: str, target: Target) -> list[tuple[str, Site]]:
     """markdown の code の囲みの中の所(Python と Hy)。断片の例(読めない囲み)は数えない。"""
     assumed = target.package in text or target.package.replace("_", "-") in text
     found: list[tuple[str, Site]] = []
-    for lang, start, end in _sfr._fences(text):
+    for lang, start, end in _reading.fences(text):
         body = text[start:end]
         if not _mentions(body, target):
             continue
-        if lang in _sfr._PYTHON_FENCES:
+        if lang in _reading.PYTHON_FENCES:
             language = "markdown の Python"
             inner = [
                 s
                 for s in python_sites(body, target, assumed)
                 if not s.reason.startswith("Python として読めない")
             ]
-        elif lang in _sfr._HY_FENCES:
+        elif lang in _reading.HY_FENCES:
             language = "markdown の Hy"
             try:
                 inner = hy_sites(body, target, assumed)
@@ -371,7 +371,7 @@ def markdown_sites(text: str, target: Target) -> list[tuple[str, Site]]:
                 continue
         else:
             continue
-        lines = _sfr._line_of(text, start) - 1
+        lines = _reading.line_of(text, start) - 1
         found += [(language, s.moved(lines, start)) for s in inner]
     return found
 
@@ -383,10 +383,10 @@ def read_file(path: str, text: str, target: Target) -> list[tuple[str, Site]]:
     """file 1 つの中の対象の所(言語つき)。"""
     if not _mentions(text, target):
         return []
-    if path.endswith(_sfr.PYTHON_SUFFIXES):
+    if path.endswith(_reading.PYTHON_SUFFIXES):
         python = [("Python", s) for s in python_sites(text, target)]
         return python + [("Python の文字列の Hy", s) for s in embedded_hy_sites(text, target)]
-    if path.endswith(_sfr.HY_SUFFIXES):
+    if path.endswith(_reading.HY_SUFFIXES):
         try:
             return [("Hy", s) for s in hy_sites(text, target)]
         except HyUnreadableError as error:
@@ -398,11 +398,11 @@ def rewrite_text(path: str, text: str, target: Target, max_rounds: int = 8) -> t
     """file 1 つを書き換えた text と、書き換えた所の数。重なる所は外側を先に当て、読み直して繰り返す。"""
     done = 0
     for _ in range(max_rounds):
-        chosen = _sfr._disjoint(s for _, s in read_file(path, text, target))
+        chosen = _reading.disjoint(s for _, s in read_file(path, text, target))
         if not chosen:
             break
         done += len(chosen)
-        text = _sfr._apply(text, (edit for s in chosen for edit in s.edits))
+        text = _reading.apply_edits(text, (edit for s in chosen for edit in s.edits))
     return text, done
 
 
@@ -411,9 +411,9 @@ def census(
 ) -> list[FileReport]:
     reports = (
         FileReport(
-            path, _sfr.is_history(path), KEEP_MARK in text, tuple(read_file(path, text, target))
+            path, _reading.is_history(path), KEEP_MARK in text, tuple(read_file(path, text, target))
         )
-        for path, text in _sfr.tree_texts(tree, prefixes, rev)
+        for path, text in _reading.tree_texts(tree, prefixes, rev)
     )
     return [r for r in reports if r.sites]
 
@@ -423,7 +423,7 @@ def summary(reports: Sequence[FileReport]) -> dict[str, object]:
     live = [(r, lang, s) for r in reports if not r.left for lang, s in r.sites]
     by_section: dict[str, Counter[str]] = {}
     for report, _, site in live:
-        by_section.setdefault(_sfr.section_of(report.path), Counter())[site.form] += 1
+        by_section.setdefault(_reading.section_of(report.path), Counter())[site.form] += 1
     return {
         "sections": {section: dict(counts) for section, counts in sorted(by_section.items())},
         "languages": dict(sorted(Counter(f"{lang} / {s.form}" for _, lang, s in live).items())),

@@ -51,6 +51,10 @@
   `result(maybe(prog))` (in Hy, `(maybe body)` and `(result body)`) where you wrote `maybe()(prog)` and
   `((maybe) body)`. The former calls `maybe()` and `result()` still answer the same handler for one release, with a
   `DeprecationWarning`. `on_raise` and `absent_as` take settings and stay handler factories.
+- **doeff-core-effects:** `scheduled` is a handler applied straight to the program, `scheduled(prog)` (and
+  `scheduled(prog, implementation="python")`), for the same reason (ADR-DOE-API-001 R6, ADR-DOE-API-002): it carries
+  the handler marker, so it also stands in `with_handlers` and `stacked_handlers`. It is not a handler factory —
+  `scheduled()` without a program is a `TypeError`.
 - `examples/testing_without_mocks` and `publications/zenn-use-cases-v0` write each handler as `@handler` alone on its
   `def`, now that 0.8.0 is on PyPI, and the semgrep rule that refuses `@handler @do` covers them too.
 - **Breaking (doeff-hy):** the import root `doeff_hy_bytecode_guard` exports only `install` (what the

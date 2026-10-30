@@ -131,7 +131,7 @@ def test_a_fifty_thousand_character_document_is_judged_by_the_real_cli(tmp_path:
 
     started = time.monotonic()
     lender = fixed_credential_lender(_lent_credential(environment[CREDENTIALS_ENV]))
-    verdict = run(scheduled()(with_handlers(claude_judge_stack(target, lender=lender), flow())))
+    verdict = run(scheduled(with_handlers(claude_judge_stack(target, lender=lender), flow())))
     seconds = time.monotonic() - started
     record_property("seconds", round(seconds, 2))
     record_property("chars", len(document))

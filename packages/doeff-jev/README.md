@@ -44,7 +44,7 @@ stack = judge_stack(            # 宛先を渡さなければ、この process �
     cache=durable_cache(),      # 省くと process 内だけの cache
     caller="my-hook",
 )
-verdict = run(scheduled()(with_handlers(stack, is_japanese())))
+verdict = run(scheduled(with_handlers(stack, is_japanese())))
 ```
 
 宛先を決めて渡す時は `judge_stack(JevTarget(base_url, model, wire, api_key, source), …)`。
