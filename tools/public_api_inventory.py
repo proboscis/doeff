@@ -85,7 +85,7 @@ import tempfile
 import textwrap
 import types
 import typing
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,6 +138,8 @@ MACRO_FORM = "Hy の macro"
 #: The forms of a command's row: a console script and a Rust executable maturin's bin puts (R7).
 CONSOLE_SCRIPT = "console script"
 RUST_EXECUTABLE = "Rust の実行 file"
+#: The forms of a name that can be an effect's answer type (ADR-DOE-API-001 R2): a class, an Enum or a type alias.
+ANSWER_TYPE_FORMS = frozenset({"class", "Enum", "型"})
 # What a helper's body must not read, by name in doeff.program (and by name when read as an attribute).
 _INSTALL_NAMES = ("WithHandler", "WithHandlerType", "with_handlers")
 _ANSWER_NAMES = ("Resume", "ResumeThrow", "Transfer", "TransferThrow", "Pass")
@@ -253,6 +255,8 @@ class PackageInventory(TypedDict):
     notes: list[str]
     modules: list[ModuleRead]
     exports: list[ExportRow]
+    #: The ``[module, name]`` of the exports that are answer types of the package's effects (R2 — ``effect_answer_types``).
+    answer_types: list[list[str]]
     error: str | None
 
 
@@ -2061,6 +2065,164 @@ def submodule_rows(layout: PackageLayout) -> list[ExportRow]:
     ]
 
 
+def _subclasses(cls: type) -> Iterator[type]:
+    """Every class made so far that inherits ``cls`` (a class inheriting it twice comes twice)."""
+    for sub in type.__subclasses__(cls):
+        yield sub
+        yield from _subclasses(sub)
+
+
+def _own_effect_classes(effect_base: type, sources: _Sources) -> list[type]:
+    """Every subclass of ``EffectBase`` the package defines, among the classes made so far.
+
+    Read after the public modules are imported, so it holds the effect classes they show and the ones
+    their functions make (a function made with a bare ``-> EffectBase`` names none).
+    """
+    return [
+        cls
+        for cls in dict.fromkeys(_subclasses(effect_base))
+        if sources.is_own_module(cls.__module__)
+    ]
+
+
+def _module_globals(cls: type) -> dict[str, object]:
+    """The globals of a class's module, to evaluate the annotation text it holds."""
+    module = sys.modules.get(cls.__module__)
+    return vars(module) if module is not None else {}
+
+
+def _evaluated(annotation: object, scope: dict[str, object]) -> object:
+    """An annotation as a value: text (and a forward reference) is evaluated in ``scope``, the globals of
+    the module that wrote it; ``_MISSING`` when it cannot be (it then names no answer type)."""
+    text = annotation.__forward_arg__ if isinstance(annotation, typing.ForwardRef) else annotation
+    if not isinstance(text, str):
+        return annotation
+    try:
+        return eval(text, dict(scope))  # the annotation text of the package's own module
+    except Exception:  # an annotation that cannot be evaluated names no answer type
+        return _MISSING
+
+
+def _annotation_parts(
+    annotation: object, scope: dict[str, object], depth: int = 0
+) -> frozenset[object]:
+    """The types an annotation is made of: itself, the members of a union, the origin and arguments of a
+    generic, the value of a type alias (``type X = ...``) — the parts a type alias of an answer can equal."""
+    value = _evaluated(annotation, scope)
+    if depth > _FOLLOW_DEPTH or value is _MISSING or value is None or value is type(None):
+        return frozenset()
+    if isinstance(value, _TYPE_ALIAS_TYPES):
+        return frozenset({value}) | _annotation_parts(value.__value__, scope, depth + 1)
+    origin = typing.get_origin(value)
+    members = (
+        ()
+        if origin is typing.Literal
+        else (
+            typing.get_args(value)
+            if origin is not None
+            else (value if isinstance(value, tuple) else ())
+        )
+    )
+    itself = frozenset(
+        each for each in (value, origin) if isinstance(each, typing.Hashable) and each is not None
+    )
+    return itself | frozenset(
+        part
+        for member in members
+        for each in (member if isinstance(member, (list, tuple)) else (member,))
+        for part in _annotation_parts(each, scope, depth + 1)
+    )
+
+
+def _classes(parts: Iterable[object]) -> frozenset[type]:
+    """The classes among the parts of annotations (a parameterised generic is its origin's part, not a class)."""
+    return frozenset(
+        part for part in parts if isinstance(part, type) and typing.get_origin(part) is None
+    )
+
+
+def _class_annotations(cls: type) -> dict[str, object]:
+    """A class's own annotations; from Python 3.14 (read lazily) a name it cannot resolve stays a forward reference."""
+    try:
+        if sys.version_info >= (3, 14):
+            return inspect.get_annotations(cls, format=inspect.Format.FORWARDREF)
+        return inspect.get_annotations(cls)
+    except Exception:  # a class whose annotations cannot be read names no field type
+        return {}
+
+
+def _read_out_of(cls: type, sources: _Sources) -> frozenset[object]:
+    """The types a caller reads out of an answer class: its field types (its parents' too) and the
+    package's subclasses of it (the cases a caller matches)."""
+    fields = frozenset(
+        part
+        for each in cls.__mro__
+        if each is not object
+        for annotation in _class_annotations(each).values()
+        for part in _annotation_parts(annotation, _module_globals(each))
+    )
+    return fields | frozenset(
+        sub for sub in _subclasses(cls) if sources.is_own_module(sub.__module__)
+    )
+
+
+def _answers_reached(
+    answers: frozenset[object], frontier: frozenset[object], sources: _Sources
+) -> frozenset[object]:
+    """``answers`` with every type read out of the package's classes in ``frontier``, followed through."""
+    reached = (
+        frozenset(
+            part
+            for cls in _classes(frontier)
+            if sources.is_own_module(cls.__module__)
+            for part in _read_out_of(cls, sources)
+        )
+        - answers
+    )
+    return _answers_reached(answers | reached, reached, sources) if reached else answers
+
+
+def effect_answer_types(effect_base: type, sources: _Sources) -> frozenset[object]:
+    """The types in the answer types of the package's effects (ADR-DOE-API-001 R2), so that the allowed
+    table can allow by name only what a caller reads out of an effect's answer.
+
+    An effect's answer type is the ``T`` of ``EffectBase[T]`` (followed through generic parents) or the
+    ``:answer`` of ``defeffect`` (``__doeff_answer__``). Every type it is made of counts, and so do the types a
+    caller reads out of an answer: the field types of an answer class of the package and the package's
+    subclasses of an answer class, followed through. An effect that declares neither (its answer only in
+    its docstring) adds none.
+    """
+    from doeff_vm._effect_types import effect_result_type
+
+    declared = frozenset(
+        part
+        for effect in _own_effect_classes(effect_base, sources)
+        for annotation in (effect_result_type(effect), getattr(effect, "__doeff_answer__", None))
+        if annotation is not typing.Any
+        for part in _annotation_parts(annotation, _module_globals(effect))
+    )
+    return _answers_reached(declared, declared, sources)
+
+
+def answer_type_rows(rows: Iterable[ExportRow], answers: frozenset[object]) -> list[list[str]]:
+    """The ``[module, name]`` of the exported names that are answer types, for the allowed table's check
+    of the group of answer types (``tests/test_public_api_known_violations.py``)."""
+    return [
+        [row["module"], row["name"]]
+        for row in rows
+        if row["form"] in ANSWER_TYPE_FORMS
+        and _is_answer_type(_module_value(sys.modules[row["module"]], row["name"]), answers)
+    ]
+
+
+def _is_answer_type(value: object, answers: frozenset[object]) -> bool:
+    """An answer type, or a type alias of classes that are all answer types (``ReadRowAnswer = Row | Missing``)."""
+    if isinstance(value, typing.Hashable) and value in answers:
+        return True
+    named = _classes(_annotation_parts(value, {}))
+    return not isinstance(value, type) and bool(named) and named <= answers
+
+
 def probe_package(package_dir: Path) -> PackageInventory:
     """Import one package's public modules and type every exported name (run in a child process)."""
     layout = read_layout(package_dir)
@@ -2073,6 +2235,7 @@ def probe_package(package_dir: Path) -> PackageInventory:
         _read_module(name, path, classifier, sources, pins.get(name))
         for name, path in public_modules(layout)
     ]
+    answers = effect_answer_types(classifier.effect_base, sources)
     return PackageInventory(
         dir=package_dir.name,
         distribution=layout.distribution,
@@ -2084,6 +2247,10 @@ def probe_package(package_dir: Path) -> PackageInventory:
             *submodule_rows(layout),
             *_metadata_rows(layout),
         ],
+        answer_types=answer_type_rows(
+            (row for result in results if result.read["read"] != "text" for row in result.rows),
+            answers,
+        ),
         error=None,
     )
 
@@ -2130,6 +2297,7 @@ def _failed(package_dir: Path, message: str) -> PackageInventory:
         notes=list(layout.notes),
         modules=[],
         exports=[],
+        answer_types=[],
         error=message,
     )
 

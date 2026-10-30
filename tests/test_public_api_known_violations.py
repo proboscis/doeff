@@ -103,7 +103,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     CONVERSION_GROUP: "値を受けて値を返し、中で effect も handler も program も作らず、時計・環境・file・process・乱数を"
     "読まない関数だけを置ける(ADR-DOE-API-001 R35)",
     ADR_WRITER_GROUP: "Hy の macro の module が出す関数(関数か換算の関数)だけを置ける(ADR は defadr の本文で import して呼ぶ — ADR-DOE-API-001 R14)",
-    ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
+    ANSWER_TYPE_GROUP: "目録が package の effect の答えの型と読む class・Enum・型の別名だけを置ける(EffectBase[T] の T か"
+    " defeffect の :answer に出る class と、答えの class の欄の型・子の class — ADR-DOE-API-001 R2)。答えを docstring だけに"
+    "書いた effect の答えは数えない — effect に答えの型を書く",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -272,7 +274,7 @@ def fits_allowed_group(
     if group == ADR_WRITER_GROUP:
         return row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
     if group == ANSWER_TYPE_GROUP:
-        return row["form"] in ("class", "型")
+        return [row["module"], row["name"]] in package["answer_types"]
     return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
 
 
@@ -1293,6 +1295,94 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
             check_package(package, *tables(["ms_of", name]))
         assert f"{FIXTURE_ROOT}.{name}({tool.PLAIN_FUNCTION}・" in str(failure.value)
         assert said in str(failure.value)
+
+
+#: 答えを EffectBase[T] に書いた effect と docstring だけに書いた effect、どの effect の答えにも出ない class を持つ package の名。
+ANSWERS = '''
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Mood(Enum):
+    """A field type of an answer class."""
+
+    CALM = "calm"
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A member of ReadEffect's answer."""
+
+    mood: Mood
+
+
+@dataclass(frozen=True)
+class Calm(Reading):
+    """A case of the answer a caller matches."""
+
+
+@dataclass(frozen=True)
+class Refused:
+    """The other member of ReadEffect's answer."""
+
+
+ReadAnswer = Reading | Refused
+
+
+class ReadEffect(EffectBase[ReadAnswer]):
+    """An effect that declares its answer type."""
+
+
+@dataclass(frozen=True)
+class Echoed:
+    """The answer of EchoEffect, said in its docstring only."""
+
+
+class EchoEffect(EffectBase):
+    """An effect that names its answer in the docstring only.
+
+    Yields: Echoed
+    """
+
+
+@dataclass(frozen=True)
+class Settings:
+    """A class no effect answers."""
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
+    """許した物の表の組「許した物 — effect の答えの型」に置けるのは、目録が package の effect の答えの型と読む名だけ
+    (ADR-DOE-API-001 R2・card ki-17fb02cf904b)。
+
+    EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
+    緑・どちらの表にも無ければ外れのまま赤。答えを docstring だけに書いた effect の答えの class と、どの effect の答えにも
+    出ない class を置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + ANSWERS)
+    package = _read_fixture(repo)
+    forms = {row["name"]: row["form"] for row in package["exports"]}
+    assert (forms["ReadAnswer"], forms["Mood"], forms["Settings"]) == ("型", "Enum", "class")
+    answers = ["Calm", "Mood", "ReadAnswer", "Reading", "Refused"]
+    rest = ["Echoed", "Settings"]
+
+    def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
+        listed = sorted(set(rest) - set(placed))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, "ki-17fb02cf904b"
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(answers))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Reading"):
+        check_package(package, *tables([name for name in answers if name != "Reading"]))
+    for name in rest:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{ANSWER_TYPE_GROUP}」")) as failure:
+            check_package(package, *tables([*answers, name]))
+        assert f"{FIXTURE_ROOT}.{name}(class・" in str(failure.value)
+        assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。

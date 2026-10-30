@@ -10,7 +10,8 @@
   "範囲「範囲の答え待ち」= 基盤・道具の package(答えが出たら持ち主が card を切って範囲と組を直す)。今は 0 package — 最後の doeff-adr は答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ で「決まりの範囲」へ移した(ADR-DOE-API-001 R33・card ki-ae23c91f6e75)。",
   "doeff の中の部品(packages/doeff-vm — doeff の根の package だけが import する VM)は目録の範囲の外で、表に載せない(ADR-DOE-API-001 R11・card ki-9c326052f21c — 範囲「範囲の答え待ち」・組「境界 — 基盤・道具の package」の 64 行を消した)。doeff の外の file が部品の import の根を import しない事は、表を読む同じ test が見る。",
   "組「外れ — handler を返す工場の形に直す」は空になって消えた。2026-10-28 の決定(ci-TDTZ23GS70F1VFM0DV183G9VQQ〜ci-AFX0HEJAT7SAMANA3YCPKE9RJA・ADR-DOE-API-001 R6)で handler を返す工場として扱うと決めた名のうち、今の形が工場の構造に合わない物を置いた組だった(card ki-25eecd63bc57)。maybe・result・on_raise・absent_as は旧い形を消して表から消した(card ki-53be25c354e4)。scheduled は 2026-10-30 の方針(設定も呼びごとの状態も無い handler は工場にしない・ADR-DOE-API-001 R6・ADR-DOE-API-002 R1)で工場にせず、印 _doeff_is_handler_fn の付いた handler の値にした — 目録が handler と読むので表から消した(card ki-8187e8827ad9)。",
-  "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。"
+  "決まりが名ごとに許した名(組「許した物 — …」)はこの表に置かず、許した物の表 tests/data/public_api_allowed.json に決めの id つきで置く — この表は外れと境界だけを持ち、空になれる(ADR-DOE-API-001 R12・card ki-5b3b2320de40)。組「許した物 — program の helper」の 280 行はそこへ移した。",
+  "組「外れ — effect に答えの型を書く」は、機械の案で effect の結果の型と分けたが、package のどの effect も答えの型(EffectBase[T] の T か defeffect の :answer)に書いていない名 — 答えを docstring だけに書いた effect の答えと、どの effect の答えでもない名。直しは、答える effect に答えの型を書いて許した物の表の組「許した物 — effect の答えの型」へ移すか、どの effect も答えない名を内側の module へ移す(card ki-17fb02cf904b — 組「境界 — effect の結果の型」の 927 行のうち、目録が答えの型と読む 496 行を許した物の表へ移し、残る 431 行をこの組へ移した)。"
  ],
  "問い": "lt-6KJ8EG0YPWXCQ2GRC5XNSQVNQM",
  "packages": {
@@ -26,15 +27,6 @@
      "doeff_adr.registry": [
       "EnforcementMode",
       "FixtureSpec"
-     ]
-    },
-    "境界 — effect の結果の型": {
-     "doeff_adr": [
-      "AdrSpec",
-      "SemgrepSpec"
-     ],
-     "doeff_adr.registry": [
-      "AdrStatus"
      ]
     },
     "境界 — handler の設定の型": {
@@ -75,20 +67,15 @@
       "WatchUpdate"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_agentic": [
-      "AgentInfo",
-      "AgentStatus",
       "AgenticEndOfEvents",
-      "AgenticEnvironmentHandle",
       "AgenticEvent",
       "AgenticMessageHandle",
       "AgenticSessionHandle",
       "AgenticSessionStatus",
       "AgenticWorkflowHandle",
-      "AgenticWorkflowStatus",
-      "WorkflowInfo",
-      "WorkflowStatus"
+      "AgenticWorkflowStatus"
      ]
     },
     "境界 — handler の設定の型": {
@@ -1719,7 +1706,7 @@
       "MemorySessionRows"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_agents": [
       "AgentAccountLimit",
       "AgentAccountRefusal",
@@ -2820,217 +2807,7 @@
       "TurnInput"
      ]
     },
-    "境界 — effect の結果の型": {
-     "doeff_claude_code.decision": [
-      "SessionNotFound"
-     ],
-     "doeff_claude_code.dialogue": [
-      "AccountLimitHit",
-      "AccountRefusalHit",
-      "AssistantMessage",
-      "BackendLost",
-      "ClaudeLineKind",
-      "Completed",
-      "ControlResponse",
-      "Failed",
-      "HookNotice",
-      "Init",
-      "InputFate",
-      "Interrupted",
-      "ModelRefusalHit",
-      "ModelWindow",
-      "PermissionRequested",
-      "RateLimit",
-      "TurnResult",
-      "Usage"
-     ],
-     "doeff_claude_code.effects": [
-      "AccountLimitHit",
-      "Answered",
-      "AttachmentRefused",
-      "BackendLost",
-      "CarryRefused",
-      "ClaudeStreamLine",
-      "Closed",
-      "Completed",
-      "CredentialReplaced",
-      "ExportSessionOutcome",
-      "Failed",
-      "Idle",
-      "InputQueued",
-      "InterruptRequested",
-      "Interrupted",
-      "LaunchFailed",
-      "PrintAnswered",
-      "PrintFailed",
-      "PrintLimited",
-      "PrintOutcome",
-      "ReplaceCredentialOutcome",
-      "SessionClosed",
-      "SessionExported",
-      "SessionNotFound",
-      "SessionProcessDown",
-      "SessionStatus",
-      "SessionWarmed",
-      "StartTurnOutcome",
-      "TranscriptAbsent",
-      "TranscriptPresent",
-      "TurnEventPage",
-      "TurnRunning",
-      "TurnStarted",
-      "Usage",
-      "WarmSessionOutcome"
-     ],
-     "doeff_claude_code.fake": [
-      "AccountLimitHit",
-      "AccountRefusalHit",
-      "Answered",
-      "AssistantMessage",
-      "AttachmentRefused",
-      "BackendLost",
-      "CallClosed",
-      "ClaudeLineKind",
-      "ClaudeStreamLine",
-      "ClaudeTurnEnd",
-      "Closed",
-      "CompactBoundary",
-      "CompactEnded",
-      "CompactOutcome",
-      "CompactStarted",
-      "Completed",
-      "CredentialReplaced",
-      "DeltaKind",
-      "Failed",
-      "HookNotice",
-      "HookPhase",
-      "Idle",
-      "Init",
-      "InputFate",
-      "InputQueued",
-      "InterruptRequested",
-      "Interrupted",
-      "ModelRefusalHit",
-      "ModelUsage",
-      "ModelWindow",
-      "PartialMessage",
-      "PermissionRequested",
-      "PrintAnswered",
-      "PrintFailed",
-      "PrintLimited",
-      "RateLimit",
-      "SessionClosed",
-      "SessionExported",
-      "SessionNotFound",
-      "SessionProcessDown",
-      "SessionStatus",
-      "SessionWarmed",
-      "StopHookFeedback",
-      "SubagentTranscript",
-      "TaskEvent",
-      "ToolAnswer",
-      "ToolCall",
-      "ToolResult",
-      "TranscriptAbsent",
-      "TranscriptPresent",
-      "TurnEventPage",
-      "TurnResult",
-      "TurnRunning",
-      "TurnStarted",
-      "Usage"
-     ],
-     "doeff_claude_code.handler": [
-      "AgentToolResult",
-      "Answered",
-      "AttachmentRefused",
-      "BackendLost",
-      "CallOpened",
-      "CarryRefused",
-      "ClaudeStreamLine",
-      "Closed",
-      "Completed",
-      "CredentialReplaced",
-      "DeltaKind",
-      "Failed",
-      "Idle",
-      "Init",
-      "InputQueued",
-      "InterruptRequested",
-      "Interrupted",
-      "LaunchFailed",
-      "PartialMessage",
-      "RequestTiming",
-      "SessionClosed",
-      "SessionExported",
-      "SessionNotFound",
-      "SessionProcessDown",
-      "SessionStatus",
-      "SessionWarmed",
-      "SubagentTranscript",
-      "SubagentTranscriptProblem",
-      "TaskEvent",
-      "TimedPhase",
-      "ToolResult",
-      "TranscriptAbsent",
-      "TranscriptPresent",
-      "TurnEventPage",
-      "TurnResult",
-      "TurnRunning",
-      "TurnStarted"
-     ],
-     "doeff_claude_code.lines": [
-      "AccountLimitHit",
-      "AccountRefusalHit",
-      "AgentToolResult",
-      "AssistantMessage",
-      "BackendLost",
-      "CallClosed",
-      "CallOpened",
-      "ClaudeLineKind",
-      "ClaudeStreamLine",
-      "ClaudeTurnEnd",
-      "CompactBoundary",
-      "CompactEnded",
-      "CompactOutcome",
-      "CompactStarted",
-      "CompactTrigger",
-      "Completed",
-      "ControlResponse",
-      "DeltaKind",
-      "Failed",
-      "HookNotice",
-      "HookPhase",
-      "Init",
-      "InputFate",
-      "Interrupted",
-      "ModelRefusalHit",
-      "ModelUsage",
-      "ModelUsageGap",
-      "ModelWindow",
-      "Other",
-      "PartialMessage",
-      "PermissionRequested",
-      "RateLimit",
-      "RequestTiming",
-      "StopHookFeedback",
-      "SubagentCall",
-      "SubagentTranscript",
-      "SubagentTranscriptProblem",
-      "TaskEvent",
-      "ThinkingTokens",
-      "TimedPhase",
-      "ToolAnswer",
-      "ToolCall",
-      "ToolResult",
-      "TurnResult",
-      "Usage"
-     ],
-     "doeff_claude_code.print_once": [
-      "AccountLimitHit",
-      "PrintAnswered",
-      "PrintFailed",
-      "PrintLimited",
-      "TurnResult"
-     ],
+    "外れ — effect に答えの型を書く": {
      "doeff_claude_code.values": [
       "AutocompactWindow",
       "PermissionAnswer"
@@ -3063,7 +2840,7 @@
       "QueryImage"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_claude_judge": [
       "MalformedAnswer"
      ]
@@ -9194,83 +8971,6 @@
       "SandboxMode"
      ]
     },
-    "境界 — effect の結果の型": {
-     "doeff_codex.effects": [
-      "Answered",
-      "BackendLost",
-      "CodexEvent",
-      "InterruptRequested",
-      "LaunchFailed",
-      "RequestRefused",
-      "SessionClosed",
-      "StartTurnOutcome",
-      "Steered",
-      "ThreadUnknown",
-      "TurnEnded",
-      "TurnEventPage",
-      "TurnStarted"
-     ],
-     "doeff_codex.fake": [
-      "AgentMessageDone",
-      "BackendLost",
-      "CodexEvent",
-      "InterruptRequested",
-      "ItemStarted",
-      "ServerOverloadedHit",
-      "SessionClosed",
-      "Steered",
-      "TextDelta",
-      "ThreadUnknown",
-      "TurnEnded",
-      "TurnEventPage",
-      "TurnStarted",
-      "TurnStatus",
-      "UsageLimitHit"
-     ],
-     "doeff_codex.handler": [
-      "Answered",
-      "BackendLost",
-      "CodexEvent",
-      "InterruptRequested",
-      "LaunchFailed",
-      "RequestRefused",
-      "SessionClosed",
-      "Steered",
-      "ThreadUnknown",
-      "TurnEventPage",
-      "TurnStarted"
-     ],
-     "doeff_codex.limits": [
-      "TurnEnded",
-      "UsageLimitHit"
-     ],
-     "doeff_codex.lines": [
-      "AgentCall",
-      "AgentMessageDone",
-      "CommandRun",
-      "DynamicCall",
-      "FilePatch",
-      "ImageView",
-      "ItemDone",
-      "ItemStarted",
-      "McpCall",
-      "ReasoningDelta",
-      "ServerOverloadedHit",
-      "TextDelta",
-      "TokenCount",
-      "TokenUsage",
-      "ToolItem",
-      "ToolStatus",
-      "TurnEnded",
-      "TurnStarted",
-      "TurnStatus",
-      "UsageLimitHit",
-      "WebSearch"
-     ],
-     "doeff_codex.values": [
-      "CodexEvent"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_codex.fake": [
       "FakeCodexWorld",
@@ -9350,7 +9050,7 @@
       "Tier2ReviewRequest"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_conductor": [
       "AgentRef",
       "ExecResult",
@@ -10784,44 +10484,13 @@
       "WsText"
      ]
     },
-    "境界 — effect の結果の型": {
-     "doeff_core_effects": [
-      "Semaphore"
-     ],
-     "doeff_core_effects.aiohttp_http_server": [
-      "HttpBodyFailed",
-      "HttpBodyOutcome",
-      "HttpEvent",
-      "HttpRequestArrived",
-      "HttpServerClosed",
-      "WsBinaryArrived",
-      "WsClosed",
-      "WsOpened",
-      "WsSendReport",
-      "WsTextArrived"
-     ],
-     "doeff_core_effects.aiohttp_ws_client": [
-      "WsConnectFailed",
-      "WsLinkClosed"
-     ],
-     "doeff_core_effects.clickhouse_http_sql": [
-      "SqlFailed",
-      "SqlSchemaApplied",
-      "SqlUnreachable"
-     ],
+    "外れ — effect に答えの型を書く": {
      "doeff_core_effects.compute_effects": [
       "ComputeFailed",
       "Computed"
      ],
      "doeff_core_effects.effects": [
       "HttpResponse"
-     ],
-     "doeff_core_effects.file_effects": [
-      "Appended",
-      "DirEntry",
-      "DiskUsage",
-      "FileFailed",
-      "SourceNotCompiled"
      ],
      "doeff_core_effects.http_effects": [
       "HttpFailed",
@@ -10831,53 +10500,20 @@
       "HttpFailed"
      ],
      "doeff_core_effects.http_server_effects": [
-      "HttpBodyFailed",
-      "HttpBodyOutcome",
-      "HttpEvent",
-      "HttpProbeAnswer",
-      "HttpRequestArrived",
-      "HttpServed",
-      "HttpServerClosed",
-      "WsBinaryArrived",
-      "WsClosed",
-      "WsEvent",
-      "WsOpened",
-      "WsSendReport",
-      "WsTextArrived"
+      "HttpProbeAnswer"
      ],
      "doeff_core_effects.inline_compute": [
       "ComputeFailed",
       "Computed"
      ],
-     "doeff_core_effects.memory_file": [
-      "Appended",
-      "DirEntry",
-      "DiskUsage",
-      "FileFailed",
-      "SourceNotCompiled"
-     ],
-     "doeff_core_effects.memory_meter": [
-      "MeterSnapshot"
-     ],
      "doeff_core_effects.meter_effects": [
-      "MeterSnapshot",
       "SecondsObservation"
-     ],
-     "doeff_core_effects.meter_prometheus": [
-      "MeterSnapshot"
-     ],
-     "doeff_core_effects.os_file": [
-      "Appended",
-      "DirEntry",
-      "DiskUsage",
-      "FileFailed"
      ],
      "doeff_core_effects.os_proc_table": [
       "ProcRow"
      ],
      "doeff_core_effects.os_process": [
       "EnvEntry",
-      "FileFailed",
       "ModuleNotFound",
       "ProcessExited",
       "ProcessNotStarted",
@@ -10892,11 +10528,6 @@
       "WarmLost",
       "WarmRefused",
       "WarmSignaled"
-     ],
-     "doeff_core_effects.postgres_sql": [
-      "SqlFailed",
-      "SqlSchemaApplied",
-      "SqlUnreachable"
      ],
      "doeff_core_effects.proc_table_effects": [
       "ProcRow"
@@ -10914,37 +10545,11 @@
      "doeff_core_effects.process_exit": [
       "ProcessEnded"
      ],
-     "doeff_core_effects.process_meter": [
-      "MeterSnapshot"
-     ],
-     "doeff_core_effects.python_bytecode": [
-      "SourceNotCompiled"
-     ],
-     "doeff_core_effects.rooted_file": [
-      "Appended",
-      "DiskUsage",
-      "FileFailed"
-     ],
-     "doeff_core_effects.scheduler": [
-      "Semaphore"
-     ],
      "doeff_core_effects.scripted_http_server": [
-      "FileFailed",
-      "HttpBodyFailed",
-      "HttpBodyOutcome",
-      "HttpProbeAnswer",
-      "HttpRequestArrived",
-      "HttpServed",
-      "HttpServerClosed",
-      "WsBinaryArrived",
-      "WsClosed",
-      "WsOpened",
-      "WsSendReport",
-      "WsTextArrived"
+      "HttpProbeAnswer"
      ],
      "doeff_core_effects.scripted_process": [
       "EnvEntry",
-      "FileFailed",
       "ModuleNotFound",
       "ProcessExited",
       "ProcessNotStarted",
@@ -10961,23 +10566,7 @@
       "WarmSignaled"
      ],
      "doeff_core_effects.scripted_ws_client": [
-      "ScriptedWsClosed",
-      "WsConnectFailed",
-      "WsLinkClosed"
-     ],
-     "doeff_core_effects.sql_effects": [
-      "SqlFailed",
-      "SqlSchemaApplied",
-      "SqlUnreachable"
-     ],
-     "doeff_core_effects.sql_transaction": [
-      "SqlFailed",
-      "SqlUnreachable"
-     ],
-     "doeff_core_effects.sqlite_sql": [
-      "SqlFailed",
-      "SqlSchemaApplied",
-      "SqlUnreachable"
+      "ScriptedWsClosed"
      ],
      "doeff_core_effects.warm_effects": [
       "EnvEntry",
@@ -10990,12 +10579,7 @@
      ],
      "doeff_core_effects.ws_client_effects": [
       "ScriptedWsClosed",
-      "ScriptedWsReply",
-      "WsConnectFailed",
-      "WsConnectOutcome",
-      "WsLinkClosed",
-      "WsSendOutcome",
-      "WsSentRecord"
+      "ScriptedWsReply"
      ]
     },
     "境界 — handler の設定の型": {
@@ -11149,7 +10733,7 @@
   "doeff-docker": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_docker.effects": [
       "ShellRunResult"
      ],
@@ -11189,17 +10773,6 @@
     "境界 — CLI": {
      "(console script)": [
       "doeff-effects"
-     ]
-    },
-    "境界 — effect の結果の型": {
-     "doeff_effect_analyzer.handler_effects": [
-      "Coverage",
-      "Gap"
-     ],
-     "doeff_effect_analyzer.program_effects": [
-      "Basis",
-      "HandlerEffects",
-      "ProgramEffects"
      ]
     }
    }
@@ -11381,9 +10954,8 @@
       "NoticeSent"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_events": [
-      "BrokerUnreachable",
       "GapAnswer",
       "MarkGap",
       "NoticeDropped",
@@ -11398,16 +10970,13 @@
       "TimerFired"
      ],
      "doeff_events.effects": [
-      "BrokerUnreachable",
-      "FilesChanged",
       "SourceFailed",
       "SourceMissed",
       "SourceResumed",
       "SourceStalled",
       "SourceStarted",
       "StopArrived",
-      "TimerFired",
-      "WatchRefused"
+      "TimerFired"
      ],
      "doeff_events.effects.events": [
       "SourceFailed",
@@ -11415,13 +10984,6 @@
       "SourceStalled",
       "SourceStarted",
       "StopArrived"
-     ],
-     "doeff_events.effects.files": [
-      "FilesChanged",
-      "WatchRefused"
-     ],
-     "doeff_events.effects.notices": [
-      "BrokerUnreachable"
      ],
      "doeff_events.effects.timers": [
       "TimerFired"
@@ -11436,15 +10998,7 @@
       "NoticeGapMarked",
       "PublishAnswer"
      ],
-     "doeff_events.handlers.memory_files": [
-      "FilesChanged",
-      "WatchRefused"
-     ],
-     "doeff_events.handlers.memory_notices": [
-      "BrokerUnreachable"
-     ],
      "doeff_events.handlers.notice_events": [
-      "BrokerUnreachable",
       "GapAnswer",
       "MarkGap",
       "NoticeDropped",
@@ -11455,13 +11009,6 @@
       "SourceResumed",
       "SourceStalled",
       "SourceStarted"
-     ],
-     "doeff_events.handlers.os_files": [
-      "FilesChanged",
-      "WatchRefused"
-     ],
-     "doeff_events.handlers.redis_notices": [
-      "BrokerUnreachable"
      ],
      "doeff_events.handlers.timer": [
       "TimerFired"
@@ -11571,7 +11118,7 @@
       "UriContentPart"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_gemini": [
       "CostInfo",
       "GeminiCallResult",
@@ -11590,7 +11137,7 @@
       "MergeStrategy"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_git": [
       "BranchRef",
       "PRHandle"
@@ -11687,7 +11234,7 @@
   "doeff-image": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_image": [
       "ImageResult"
      ]
@@ -11732,7 +11279,7 @@
       "Message"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_llm": [
       "CostInfo",
       "TokenUsage"
@@ -11754,7 +11301,7 @@
       "Urgency"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_notify": [
       "NotificationResult"
      ]
@@ -11772,7 +11319,7 @@
       "OpenAIModel"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_openai": [
       "CostInfo",
       "StreamChunk",
@@ -11806,7 +11353,7 @@
       "APICallMetadata"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_openrouter.types": [
       "CostInfo",
       "TokenUsage"
@@ -13240,201 +12787,68 @@
       "WrittenRows"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_records.admission": [
-      "Event",
-      "ExpectAbsent",
-      "Missing",
-      "NotIndexed",
-      "Refused",
-      "Row",
-      "RowsRefused"
+      "ExpectAbsent"
      ],
      "doeff_records.effects": [
-      "Appended",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
-      "ExpectAbsent",
-      "NotIndexed",
-      "Refused",
-      "RowsRefused",
-      "Unreachable"
+      "ExpectAbsent"
      ],
      "doeff_records.event_source": [
-      "Changes",
-      "EventsMoved",
-      "NotIndexed",
-      "Page",
-      "Unreachable"
-     ],
-     "doeff_records.faults": [
-      "Refused",
-      "Unreachable"
-     ],
-     "doeff_records.http_client": [
-      "Changes",
-      "EventsMoved",
-      "Unreachable"
+      "Page"
      ],
      "doeff_records.http_server": [
-      "NotIndexed",
-      "Page",
-      "Unreachable",
-      "WaitsClosed"
+      "Page"
      ],
      "doeff_records.laws": [
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
       "ExpectAbsent",
       "ExpiredEvents",
-      "Missing",
-      "NotIndexed",
       "Page",
       "Pruned",
-      "Refused",
-      "RetiredEvents",
-      "Row",
-      "RowsRefused",
-      "Unreachable"
+      "RetiredEvents"
      ],
      "doeff_records.loop_work": [
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
-      "Missing",
-      "NotIndexed",
-      "Page",
-      "Refused",
-      "Row",
-      "RowsRefused"
+      "Page"
      ],
      "doeff_records.maintenance": [
-      "Event",
       "ExpiredEvents",
       "Pruned",
-      "RetiredEvents",
-      "Unreachable"
+      "RetiredEvents"
      ],
      "doeff_records.memory": [
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
       "ExpiredEvents",
-      "Missing",
-      "NotIndexed",
       "Page",
       "Pruned",
-      "Refused",
-      "RetiredEvents",
-      "Row",
-      "RowsRefused",
-      "Unreachable",
-      "WaitsClosed"
+      "RetiredEvents"
      ],
      "doeff_records.pg": [
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
       "ExpiredEvents",
-      "Missing",
-      "NotIndexed",
       "Page",
       "Pruned",
-      "Refused",
-      "RetiredEvents",
-      "Row",
-      "RowsRefused",
-      "Unreachable"
-     ],
-     "doeff_records.service": [
-      "Unreachable"
+      "RetiredEvents"
      ],
      "doeff_records.typed": [
       "ExpectAbsent",
-      "Missing",
-      "Page",
-      "Row"
+      "Page"
      ],
      "doeff_records.values": [
-      "AppendEventAnswer",
       "AppendEventsAnswer",
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
       "ExpectAbsent",
       "ListRowsAnswer",
-      "Missing",
-      "NotIndexed",
       "Page",
       "PutRowAnswer",
-      "PutRowsAnswer",
-      "ReadEventByKeyAnswer",
-      "ReadEventsAnswer",
-      "ReadRowAnswer",
-      "ReadStreamEndAnswer",
-      "Refused",
-      "Row",
       "RowChanged",
-      "RowRemoved",
-      "RowsRefused",
-      "Unreachable",
-      "WaitsClosed",
-      "WatchChangesAnswer",
-      "WatchEventsAnswer"
-     ],
-     "doeff_records.watching": [
-      "Changes",
-      "Events",
-      "EventsMoved",
-      "Unreachable",
-      "WaitsClosed"
+      "RowRemoved"
      ],
      "doeff_records.wire": [
-      "Appended",
       "AppendedEvents",
-      "Changes",
-      "Event",
-      "EventAbsent",
-      "EventRetired",
-      "Events",
-      "EventsMoved",
       "ExpectAbsent",
-      "Missing",
-      "NotIndexed",
-      "Page",
-      "Refused",
-      "Row",
-      "RowsRefused"
+      "Page"
      ]
     },
     "境界 — 例外の型": {
@@ -13503,7 +12917,7 @@
       "SeedreamImage"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_seedream": [
       "ImageResult",
       "SeedreamImageEditResult"
@@ -13526,7 +12940,7 @@
       "Kind"
      ]
     },
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_system_one": [
       "Answer",
       "Verdict",
@@ -13557,7 +12971,7 @@
   "doeff-time": {
    "範囲": "決まりの範囲",
    "名": {
-    "境界 — effect の結果の型": {
+    "外れ — effect に答えの型を書く": {
      "doeff_time": [
       "RaceOutcome",
       "TicksOutcome"
@@ -13588,17 +13002,6 @@
      ],
      "doeff_traverse.effects": [
       "ItemOutcomeKind"
-     ]
-    },
-    "境界 — effect の結果の型": {
-     "doeff_traverse.collection": [
-      "ItemResult"
-     ],
-     "doeff_traverse.effects": [
-      "ItemResult"
-     ],
-     "doeff_traverse.handlers": [
-      "ItemResult"
      ]
     },
     "境界 — handler の設定の型": {
@@ -15414,13 +14817,6 @@
    "name": "doeff-agentic",
    "訳": "Rust の CLI の実行 file doeff-agentic を Python の console script へ寄せた(利用者の答え lt-T9TTHBXF5YK0B1FBJGFCZF6CZ1「消して寄せる」)。IDE の plugin が呼ぶ 6 動詞を同じ引数と JSON で答える。Rust の package は card ki-7b2e293a2db7 で消し、その package の (実行 file) の行も消した(ADR-DOE-API-001 R28)",
    "決め": "ki-626bf91b0560"
-  },
-  {
-   "package": "doeff-indexer",
-   "module": "doeff_indexer",
-   "name": "SymbolInfo",
-   "訳": "effect FindSymbols の答えの 1 行の型(R2 の effect の結果の型)。前は Rust の拡張の class で、目録は doeff-indexer を環境に持たず字面で読んだので数えていなかった。索引を引く口を effect FindSymbols と handler rust_indexer にし(class Indexer は内側の拡張 doeff_indexer._native へ)、doeff-indexer を make sync の環境に入れて目録が import で読むようにした時に、Python の frozen dataclass として入口から見せた。R2 の型を目録の道具が許す物と数えるまで、R12 のとおりここに置く",
-   "決め": "lt-ZDN45RSNPV16BKSM997GGZ9CVB"
   },
   {
    "package": "doeff-cluster",
