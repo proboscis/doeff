@@ -43,7 +43,7 @@ def outside_any_job(monkeypatch: pytest.MonkeyPatch) -> None:
     1 件が、job の外で緑・中で赤)。読みは foundation の this-process-environ(DOEFF004)、外すのは MonkeyPatch(検の後に戻す)。
     """
     import hy  # noqa: F401  - Hy の module を import できるようにする
-    from doeff_cluster.foundation.process_versions import this_process_environ
+    from doeff_cluster._foundation.process_versions import this_process_environ
 
     environ = run(this_process_environ())
     for name in [name for name in environ if name.startswith(JOB_CONTEXT_PREFIXES)]:

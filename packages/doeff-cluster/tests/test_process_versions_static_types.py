@@ -17,7 +17,7 @@ from types import ModuleType
 import hy  # noqa: F401  # .hy の module の import hook(検だけを単独で走らせても読めるように)
 import pytest
 
-from doeff_cluster.foundation import process_versions
+from doeff_cluster._foundation import process_versions
 
 from tests.stub_names import name_mismatches
 
@@ -25,7 +25,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 MODULE = """\
 (require doeff-hy.macros [defk <- val])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster._foundation.process_versions [process-versions])
 
 (defk probe-bang [environ]
   {:pre [(: environ (get dict #(str str)))] :post [(: % str)] :tags {:context "probe" :role "entry"}}

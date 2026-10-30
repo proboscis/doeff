@@ -20,9 +20,9 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects [reader state])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT environ-table-reader os-environ-reader])
+(import doeff_cluster [HOST-CONTRACT environ-table-reader os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster [host-answers]
         doeff_cluster._sim.local [SimChild SimLink])

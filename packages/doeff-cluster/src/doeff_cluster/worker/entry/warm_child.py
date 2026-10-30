@@ -68,7 +68,7 @@ from doeff_core_effects._process_stat import ProcStat
 from doeff_core_effects import WarmForked, WarmRefused
 from doeff_hy._wire import Malformed
 
-from doeff_cluster.foundation.child_environ import replace_environ
+from doeff_cluster._foundation.child_environ import replace_environ
 from doeff_cluster.worker.entry.line_stamp import job_log_plan, stamped_lines
 from doeff_cluster.worker.entry.shim import NoticeRelay, become_subreaper, exit_status, notice_variable, open_relay, shim_code
 

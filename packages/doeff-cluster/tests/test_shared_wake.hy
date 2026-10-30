@@ -20,7 +20,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [ExternalPromise scheduled])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested])
@@ -132,8 +132,8 @@ from doeff import run, with_handlers
 from doeff_core_effects._handlers import await_handler
 from doeff_core_effects._scheduler import scheduled
 from doeff_time import async_time_handler
-from doeff_cluster.foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
-from doeff_cluster.foundation.record_inbox import RecordInbox
+from doeff_cluster._foundation.coordinator_inbox import RequestInbox, StopState, stop_on_signals
+from doeff_cluster._foundation.record_inbox import RecordInbox
 from doeff_cluster.shared.intent.protocol import NextRequests
 from doeff_cluster.shared.protocol.inbox import http_requests
 inbox = RecordInbox(0) if sys.argv[1] == 'records' else RequestInbox(0, 30.0)

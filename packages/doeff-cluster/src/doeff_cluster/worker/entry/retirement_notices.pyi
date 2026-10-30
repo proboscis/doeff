@@ -1,9 +1,9 @@
 # doeff_hy._static_stub が作った型の宣言 — 手で直さない(元 = retirement_notices.hy・作り直し = python -m doeff_hy._static_stub --write <この .pyi の隣の .hy>)
 
 from doeff_hy._static_types import Handler as _Handler
-from doeff_cluster.foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
-from doeff_cluster.foundation.notice_pipe import open_notice_box as open_notice_box
-from doeff_cluster.foundation.notice_pipe import next_notice as next_notice
+from doeff_cluster._foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
+from doeff_cluster._foundation.notice_pipe import open_notice_box as open_notice_box
+from doeff_cluster._foundation.notice_pipe import next_notice as next_notice
 from doeff_cluster.worker.intent.worker_model import Retired as Retired
 from doeff_cluster.worker.intent.worker_model import HandoffAbandoned as HandoffAbandoned
 from doeff_cluster.worker.intent.retirement_model import AwaitRetirement as AwaitRetirement

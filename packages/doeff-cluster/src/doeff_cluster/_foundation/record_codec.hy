@@ -145,13 +145,13 @@
                            "semaphore_model" "shared_model")
           (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name))
      ;; 記録の綴りと記録の handler(#2108)— 置き場が shared/intent でないので名ごとに書く。
-     {"doeff_cluster.effect_codec" "doeff_cluster.foundation.record_codec"
-      "doeff_cluster.record_model" "doeff_cluster.foundation.record_log"
-      "doeff_cluster.record_handlers" "doeff_cluster.foundation.record_handlers"
+     {"doeff_cluster.effect_codec" "doeff_cluster._foundation.record_codec"
+      "doeff_cluster.record_model" "doeff_cluster._foundation.record_log"
+      "doeff_cluster.record_handlers" "doeff_cluster._foundation.record_handlers"
       ;; 記録の綴り・形・handler を foundation へ(#2580)— shared/core と shared/protocol に在った間の名。
-      "doeff_cluster.shared.core.effect_codec" "doeff_cluster.foundation.record_codec"
-      "doeff_cluster.shared.core.record_model" "doeff_cluster.foundation.record_log"
-      "doeff_cluster.shared.protocol.record_handlers" "doeff_cluster.foundation.record_handlers"
+      "doeff_cluster.shared.core.effect_codec" "doeff_cluster._foundation.record_codec"
+      "doeff_cluster.shared.core.record_model" "doeff_cluster._foundation.record_log"
+      "doeff_cluster.shared.protocol.record_handlers" "doeff_cluster._foundation.record_handlers"
       ;; worker の型(#2025 の 2 本目)— 観測・記録・effect の型と、拍と掃除の判断の型。
       "doeff_cluster.worker_model" "doeff_cluster.worker.intent.worker_model"
       "doeff_cluster.beat_policy" "doeff_cluster.worker.core.beat_policy"
@@ -159,7 +159,12 @@
       ;; 実行環境の root の準備の型(#2025 の 3 本目)— FileSha256 だけは共有の置き場(MOVED-TYPES)。
       "doeff_cluster.env_prepare" "doeff_cluster.worker.intent.env_prepare_model"
       ;; record-store の effect の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-ff69baa69a6b)— 移し替えの module を消した後も引く。
-      "doeff_cluster.record_store.intent.record_store_model" "doeff_cluster._record_store.intent.record_store_model"}))
+      "doeff_cluster.record_store.intent.record_store_model" "doeff_cluster._record_store.intent.record_store_model"}
+     ;; 土台の区画を _ へ隠した(ADR-DOE-API-001 R15・card ki-56d2dcf86f01)— 型の名は class を定義する module の名を書くので、class を
+     ;; 定義する module(記録の例外 RecordedError・ClusterCaMissing、記録の形 Entry ほか)だけを並べる。移し替えの module を消した後も引く。
+     (dfor name #("coordinator_inbox" "in_cluster_api" "notice_pipe" "otlp_post" "process_environ" "process_versions" "record_codec"
+                  "record_handlers" "record_inbox" "record_log" "wal_store")
+           (+ "doeff_cluster.foundation." name) (+ "doeff_cluster._foundation." name))))
 
 ;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
 ;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。

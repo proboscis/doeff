@@ -443,7 +443,7 @@ class Poster(Protocol):
 def real_poster(endpoint: str) -> Poster:
     """本物の送り(foundation の OtlpPoster)を作るため。読み込みを送りの thread の始めまで遅らせる(http.client の読み込み 約 30 ms を、
     送らない shim と job の起動の道に載せない)。"""
-    from doeff_cluster.foundation.otlp_post import OtlpPoster
+    from doeff_cluster._foundation.otlp_post import OtlpPoster
 
     return OtlpPoster(endpoint)
 

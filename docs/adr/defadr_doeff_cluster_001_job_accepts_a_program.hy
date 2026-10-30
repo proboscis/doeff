@@ -71,7 +71,7 @@
        :evidence "agora-redesign #829(2026-09-27 の決定)")
      (fact
        "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/foundation/record_handlers.hy")
+       :evidence "packages/doeff-cluster/src/doeff_cluster/worker/entry/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/_foundation/record_handlers.hy")
      (fact
        "operator の問い 2026-09-27: 記録係に届く前に答えられた effect を記録係は知り得ない。handler の形ではこれをどう解くのが普通か(答えは R5b)。"
        :evidence "agora-redesign #829(2026-09-27 の決定)")
@@ -89,7 +89,7 @@
        :evidence "agora-redesign #833(2026-09-27 の決定)")
      (fact
        "再生が記録と食い違った時、今の再生の handler は ReplayDiverged を上げて止まる(再生の分岐)。"
-       :evidence "packages/doeff-cluster/src/doeff_cluster/foundation/record_log.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
+       :evidence "packages/doeff-cluster/src/doeff_cluster/_foundation/record_log.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
   :context
     [(interpretation
        "doeff の handler は動的な scope の式であり、Program の外に「handler の組」を別の値として持つと、同じ Program が実行器ごとに違う意味になる。handler を Program の中の with-handlers に置けば、job の意味は Program の値だけで決まり、手元の run・模擬・cluster の実行が同じ値を同じ意味で走らせる。")

@@ -9,7 +9,7 @@
 (import urllib.parse [urlsplit parse-qsl])
 ;; 生の要求の並べ方と返事の byte の書き方は coordinator の受付と同じ(RawRequest・json-reply)— 要求を解く・返事の本文を byte にする
 ;; のは shared/protocol/inbox.hy の http-requests(この module は intent の型を読まない・#2563)。
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox ReplySlot RawRequest json-reply])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox ReplySlot RawRequest json-reply])
 
 ;; 1 要求の本文の上限。記録係は 1 回の送りを 4 MB で区切る(HttpSink の max-post-bytes)ので、これを超えるのは 1 行が巨大な時だけ。
 ;; 上限が無い最初の版は、古い記録係(1 回 500 行)が起点の一覧を貯めて一度に送った数百 MB の本文を JSON で読み、memory が 1.9 GB に
