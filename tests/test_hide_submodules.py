@@ -1053,6 +1053,35 @@ def test_hide_refuses_a_child_named_like_a_name_the_entry_shows(
     )
 
 
+@pytest.mark.timeout(600)
+def test_hide_holds_a_name_like_its_child_inside_until_the_shim_is_gone(tmp_path: Path) -> None:
+    """``--hold`` の名は入口へ出さず ``_`` に残し、移し替えの module を置いて隠す — R34 の順の 1 段目(card ki-dc1f58c59bcc)。
+
+    子 ping_handler の handler ping_handler は入口へ出す種類なので、hold が無ければ R34 で断る。hold すると入口は同じ名を
+    出さず(古い path の import が入口の名を module で隠す事が起きない)、同じ子の他の名(effect Ping)は入口へ出す。
+    子の名でない名と、入口が既に束ねる名(tool)は hold できない。
+    """
+    repo = _write_repo(tmp_path / "repo", CLASH_FILES)
+    package_dir = repo / "packages" / CLASH_PACKAGE
+    with pytest.raises(SystemExit) as stranger:
+        tool.hide(package_dir, ["ping_handler"], None, None, None, [], hold=["Ping"])
+    assert "--hold は子と同じ名だけ" in str(stranger.value)
+    with pytest.raises(SystemExit) as bound:
+        tool.hide(package_dir, ["tool"], None, None, None, [], hold=["tool"])
+    assert "ADR-DOE-API-001 R34" in str(bound.value)
+    assert _git(repo, "status", "--porcelain") == ""
+    report = tool.hide(package_dir, ["ping_handler"], None, None, None, [], hold=["ping_handler"])
+    src = package_dir / "src" / CLASH_ROOT
+    assert [c["new"] for c in report.children] == [f"{CLASH_ROOT}._ping_handler"]
+    assert (src / "ping_handler.py").read_text(encoding="utf-8").startswith(
+        f"{tool.SHIM_MARK} {CLASH_ROOT}.ping_handler -> {CLASH_ROOT}._ping_handler\n"
+    )
+    assert report.entry_added == ("Ping",)
+    assert report.names["_ に残す"] == [f"{CLASH_ROOT}.ping_handler.ping_handler"]
+    assert f"{tool.HELD_NOTE}を _ に残した: {CLASH_ROOT}.ping_handler.ping_handler" in report.notes
+    assert '"ping_handler"' not in (src / "__init__.py").read_text(encoding="utf-8")
+
+
 def test_a_shim_does_not_guard_the_entry_name(tmp_path: Path) -> None:
     """移し替えの module は package の class を差し替えない — 入口の名を守る手当ては無く、同じ名の子は hide が断る(R34)。
 

@@ -52,6 +52,10 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 - 子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら、何も書かずに断る
   (ADR-DOE-API-001 R34)。古い path に移し替えの module を置くと、古い path の import が親の属性 ``<根>.<子>`` を module に
   束ね、入口の名を隠す(card ki-db44e4d3efe4 — 記録の service が起動の度に落ちた)。子の名か入口の名を先に替える。
+- ``--hold <名>``(``hide``・何度でも): 子と同じ名の名(入口がまだ出していない物)を、この stage では入口へ出さず ``_`` に
+  残す。R34 の順の 1 段目: 子を移して移し替えの module を残し、外の repo を ``_`` の path へ書き換え、``finish`` で移し替えの
+  module を消してから入口へ足す(card ki-dc1f58c59bcc — doeff_core_effects の http_host_gate)。子の名でない名と、入口が
+  既に束ねる名は断る。
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
 ``X as X``(``.py`` か ``.pyi`` の在る module の名だけ。``__all__`` は使わない — DOEFF021)。入口に ``_LAZY_EXPORTS`` と
@@ -2008,6 +2012,33 @@ def entry_name_clashes(children: Sequence[Child], fates: Sequence[NameFate]) -> 
     ]
 
 
+#: ``--hold`` で ``_`` に残した名の注。
+HELD_NOTE = "R34 の順で入口へ出すのを待つ子と同じ名(移し替えの module を消した後に入口へ足す)"
+
+
+def hold_names(
+    children: Sequence[Child], fates: Sequence[NameFate], held: Sequence[str]
+) -> list[NameFate]:
+    """``held`` の名を入口へ出さず ``_`` に残す(R34 の順の 1 段目 — 移し替えの module の在る間は子と同じ名を入口に置けない)。
+
+    子の名でない名は断る: 名を ``_`` に残す訳は子と同じ名の衝突だけ(ほかの名を入口から外すのは R5 の外れ)。入口が既に
+    束ねる名は残せない(``entry_name_clashes`` が断る)。
+    """
+    names = {child.name for child in children}
+    strangers = sorted(set(held) - names)
+    if strangers:
+        raise SystemExit(
+            f"--hold は子と同じ名だけ(R34 の順): {', '.join(strangers)} は子の名でない"
+            f"(子 = {', '.join(sorted(names))})"
+        )
+    return [
+        dataclasses.replace(fate, fate="underscore", source=None, note=HELD_NOTE)
+        if fate.name in held and fate.fate == "entry"
+        else fate
+        for fate in fates
+    ]
+
+
 def shown_at_hiding(
     package: dict[str, object],
     child: Child,
@@ -2371,6 +2402,7 @@ def _name_notes(fates: Sequence[NameFate]) -> tuple[str, ...]:
     ]
     unused = [f"{f.modules[0]}.{f.name}" for f in fates if f.note == UNUSED_ADDED_NOTE]
     macros = [f"{f.modules[0]}.{f.name}" for f in fates if f.fate == "macro"]
+    held = [f"{f.modules[0]}.{f.name}" for f in fates if f.note == HELD_NOTE]
     return (
         *(
             [
@@ -2385,6 +2417,7 @@ def _name_notes(fates: Sequence[NameFate]) -> tuple[str, ...]:
             if macros
             else []
         ),
+        *([f"{HELD_NOTE}を _ に残した: {', '.join(held)}"] if held else []),
     )
 
 
@@ -2396,11 +2429,13 @@ def hide(
     allowed_path: Path | None,
     underscore_only: Sequence[str],
     used_by: Sequence[Path] = (),
+    hold: Sequence[str] = (),
 ) -> Report:
     """stage 1: 子を ``_`` へ移し、移し替えの module を置き、入口へ名を足し、木の import を書き換える。
 
     ``used_by``(外の repo の木)を渡すと、その木が子の古い path から読む名を、表の組が「外れ」でも入口へ出し、
     読まない「足した名」を ``_`` に残す(ADR-DOE-API-001 R15 — 外の repo が使う名だけを入口から見せる)。
+    ``hold``(子と同じ名)は入口へ出さず ``_`` に残す(R34 の順の 1 段目 — ``hold_names``)。
     """
     tool = _inventory_tool()
     package_dir = package_dir.resolve()
@@ -2424,7 +2459,11 @@ def hide(
     allowed = _load_table(allowed_path or tree / DEFAULT_ALLOWED)
     groups, added = _table_groups(table, allowed, package_dir.name)
     used = used_names(package_dir, layout, children, used_by) if used_by else None
-    fates = decide_names(cast(list[ExportRow], package["exports"]), children, groups, added, used)
+    fates = hold_names(
+        children,
+        decide_names(cast(list[ExportRow], package["exports"]), children, groups, added, used),
+        hold,
+    )
     clashes = entry_name_clashes(children, fates)
     if clashes:
         raise SystemExit("\n".join(clashes))
@@ -2971,6 +3010,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             command.add_argument("--underscore-only", action="append", default=[])
         if stage == "hide":
             command.add_argument("--used-by", type=Path, action="append", default=[])
+            command.add_argument("--hold", action="append", default=[])
         if stage == "rewrite":
             command.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args(argv)
@@ -2987,6 +3027,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.allowed,
             arguments.underscore_only,
             arguments.used_by,
+            arguments.hold,
         )
     elif arguments.stage == "rewrite":
         report = rewrite(
