@@ -29,7 +29,7 @@
 (import doeff [Program with-handlers])
 (import doeff [UnhandledEffect])
 (import doeff_core_effects [reader await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_cluster [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])

@@ -13,7 +13,7 @@
 (import json)
 (import doeff [run with_handlers])
 (import doeff_core_effects [Ask])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest])
 (import doeff_cluster.shared.intent.job_call_model [CallJob JobAnswer JobField JobRequest JobUnreachable])
 (import doeff_cluster.shared.protocol.job_call_handlers [JobDestination job-call-sender job-target])
 (import tests.job_call_contract_handlers [ASKER-HEADER ELSEWHERE JSON-TYPE NOTES-API NOTES-ENVIRON NOTES-ROOT VERSION VERSION-HEADER])

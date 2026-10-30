@@ -164,6 +164,10 @@ mod tests {
             ("stop_signal_handlers", "os_signal_stop_handler"),
             ("process_meter", "process_meter_handler"),
             ("process_latest", "process_latest_handler"),
+            // http・ws の子も同じ(card ki-d4ba562a1367)。
+            ("http_handlers", "http_production_handler"),
+            ("http_handlers", "http_fixture_handler"),
+            ("aiohttp_ws_client", "aiohttp_ws_link_handler"),
         ] {
             for name in [
                 format!("doeff_core_effects._{child}.{handler}"),

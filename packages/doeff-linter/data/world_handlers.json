@@ -24,6 +24,20 @@
    "why": "httpx.AsyncClient で送る(_http_handlers_impl.hy:39)"
   },
   {
+   "handler": "doeff_core_effects._http_handlers:http-production-handler",
+   "touches": [
+    "http"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_core_effects:http_production_handler",
+   "touches": [
+    "http"
+   ],
+   "why": "http_production_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
+  },
+  {
    "handler": "doeff_core_effects.http_handlers:http-production-handler",
    "touches": [
     "http"
@@ -37,6 +51,22 @@
     "file"
    ],
    "why": "record で実送信・fixture の file を読み書き"
+  },
+  {
+   "handler": "doeff_core_effects._http_handlers:http-fixture-handler",
+   "touches": [
+    "http",
+    "file"
+   ],
+   "why": "上の再輸出の綴り"
+  },
+  {
+   "handler": "doeff_core_effects:http_fixture_handler",
+   "touches": [
+    "http",
+    "file"
+   ],
+   "why": "http_fixture_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.http_handlers:http-fixture-handler",
@@ -106,11 +136,32 @@
    "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-cd6a513ae4b5)"
   },
   {
+   "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-client",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ(installer — 被せる実物は下)"
+  },
+  {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
    "touches": [
     "network"
    ],
    "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ(installer — 被せる実物は下)"
+  },
+  {
+   "handler": "doeff_core_effects._aiohttp_ws_client:aiohttp-ws-link-handler",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp の ClientSession.ws_connect で WebSocket に繋ぐ"
+  },
+  {
+   "handler": "doeff_core_effects:aiohttp_ws_link_handler",
+   "touches": [
+    "network"
+   ],
+   "why": "aiohttp_ws_link_handler の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む)"
   },
   {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-link-handler",

@@ -14,7 +14,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff [run with-handlers])
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

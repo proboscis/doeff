@@ -17,7 +17,7 @@
 (import doeff_core_effects [SlogEffect])
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [state])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [GetTimeEffect])
 (import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])

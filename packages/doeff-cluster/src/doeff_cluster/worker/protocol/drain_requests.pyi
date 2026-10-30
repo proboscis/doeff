@@ -13,7 +13,7 @@ from typing import Protocol, TypeVar
 from doeff import WithHandlerType
 
 from doeff import Program
-from doeff_core_effects.http_effects import HttpFailed, HttpResponse
+from doeff_core_effects import HttpFailed, HttpResponse
 
 _A = TypeVar("_A")
 

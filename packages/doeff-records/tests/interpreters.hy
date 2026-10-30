@@ -46,7 +46,7 @@
 (import doeff_records [records-unwaited])
 (import doeff_records._service [RecordsService respond HttpRequest :as ServiceRequest])
 (import doeff_records._wire [WRITER-HEADER IDEMPOTENCY-HEADER])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_hy._frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 

@@ -4,7 +4,7 @@
 (import doeff [DoExpr with-handlers])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [await-handler slog-handler state])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster [os-environ-reader])

@@ -4,10 +4,10 @@ from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
 from dataclasses import dataclass as dataclass
 from doeff_core_effects import Ask as Ask
-from doeff_core_effects.http_effects import HttpFailed as HttpFailed
-from doeff_core_effects.http_effects import HttpFailureKind as HttpFailureKind
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpFailed as HttpFailed
+from doeff_core_effects import HttpFailureKind as HttpFailureKind
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_cluster.shared.intent.job_call_model import JobAnswer as JobAnswer
 from doeff_cluster.shared.intent.job_call_model import JobRequest as JobRequest
 from doeff_cluster.shared.intent.job_call_model import JobUnreachable as JobUnreachable

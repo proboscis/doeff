@@ -29,7 +29,7 @@
 (import doeff_core_effects [slog-handler state])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [ReadEnvironment])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])

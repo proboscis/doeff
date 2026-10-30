@@ -2,8 +2,8 @@
 
 from doeff import Program as _Program
 from urllib.parse import quote as url_quote
-from doeff_core_effects.http_effects import HttpRequest as HttpRequest
-from doeff_core_effects.http_effects import HttpResponse as HttpResponse
+from doeff_core_effects import HttpRequest as HttpRequest
+from doeff_core_effects import HttpResponse as HttpResponse
 from doeff_time import Delay as Delay
 from doeff_cluster.shared.intent.cluster_control import ServiceReadiness as ServiceReadiness
 from doeff_cluster.shared.intent.cluster_control import ServiceFailed as ServiceFailed

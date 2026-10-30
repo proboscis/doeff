@@ -20,8 +20,9 @@
 (import ssl)
 (import urllib.parse [SplitResult urlsplit])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest])
-(import doeff_core_effects.http_handlers [http-production-handler http-client-factory])
+(import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest])
+(import doeff_core_effects [http-production-handler]
+        doeff_core_effects._http_handlers [http-client-factory])
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 

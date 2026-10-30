@@ -12,8 +12,8 @@
 (import collections.abc [Callable])
 (import doeff [run with_handlers])
 (import doeff_core_effects [await-handler state])
-(import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse])
+(import doeff_core_effects [http-production-handler])
+(import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_core_effects [CountMetric MeterSettings MeterSnapshot ReadMeter]
         doeff_core_effects._meter_effects [EMPTY-METER counted])
 (import doeff_core_effects [memory-meter-handler])

@@ -4,7 +4,7 @@
 (require doeff-hy.macros [defhandler defk deff <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
-(import doeff_core_effects.http_effects [HttpResponse HttpFailed])
+(import doeff_core_effects [HttpResponse HttpFailed])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
 (import doeff_cluster.worker.intent.drain_model [AskDrain CoordinatorCall])
 (import doeff_cluster.worker.core.drain_client [worker-path])

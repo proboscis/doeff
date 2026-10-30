@@ -25,7 +25,7 @@
 (import sys)
 (import time)
 (import doeff [EffectBase Pass with-handlers])
-(import doeff_core_effects.http_effects [HttpRequest HttpResponse HttpFailed])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff.do [do])
 (import doeff.program [handler :as program-handler])
 (import doeff.handler_utils [reinstaller])

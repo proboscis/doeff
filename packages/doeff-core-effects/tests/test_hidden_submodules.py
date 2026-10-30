@@ -16,7 +16,7 @@ import pytest
 
 #: 子の古い path と新しい path(card ki-c09b3b527fad で移した中核の 10 個 — storage は下の module も・card ki-32623e1651c6 で
 #: 移した計算・VM・乱数・測りの 23 個・card ki-375e0a35b7a0 で移した file・memo・cache の 11 個・card ki-8d33df2c82df で移した
-#: process の 19 個)。
+#: process の 19 個・card ki-4fbed45b5863 と ki-d4ba562a1367 で移した http・ws の 6 個)。
 MOVED = {
     "doeff_core_effects.effects": "doeff_core_effects._effects",
     "doeff_core_effects.handlers": "doeff_core_effects._handlers",
@@ -83,6 +83,12 @@ MOVED = {
     "doeff_core_effects.scripted_warm_process": "doeff_core_effects._scripted_warm_process",
     "doeff_core_effects.stop_signal_effects": "doeff_core_effects._stop_signal_effects",
     "doeff_core_effects.stop_signal_handlers": "doeff_core_effects._stop_signal_handlers",
+    "doeff_core_effects.http_effects": "doeff_core_effects._http_effects",
+    "doeff_core_effects.http_handlers": "doeff_core_effects._http_handlers",
+    "doeff_core_effects.http_server_effects": "doeff_core_effects._http_server_effects",
+    "doeff_core_effects.ws_client_effects": "doeff_core_effects._ws_client_effects",
+    "doeff_core_effects.aiohttp_ws_client": "doeff_core_effects._aiohttp_ws_client",
+    "doeff_core_effects.scripted_ws_client": "doeff_core_effects._scripted_ws_client",
 }
 
 #: doeff と入口の両方が出す名(doeff が読み込みの時に `_effects` と `_scheduler` から結ぶ)。
@@ -111,6 +117,10 @@ LAZY_NAMES = {
     "ForkFromWarm": "doeff_core_effects._warm_effects",
     "WarmScript": "doeff_core_effects._scripted_warm_process",
     "StopBell": "doeff_core_effects._stop_signal_effects",
+    "HttpFailed": "doeff_core_effects._http_effects",
+    "WsConnect": "doeff_core_effects._ws_client_effects",
+    "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
+    "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
 }
 
 #: `import doeff` が読まない module(入口の遅延の名だけが読む)。
@@ -171,6 +181,12 @@ NOT_LOADED_BY_DOEFF = (
     "doeff_core_effects._scripted_warm_process",
     "doeff_core_effects._stop_signal_effects",
     "doeff_core_effects._stop_signal_handlers",
+    "doeff_core_effects._http_effects",
+    "doeff_core_effects._http_handlers",
+    "doeff_core_effects._http_server_effects",
+    "doeff_core_effects._ws_client_effects",
+    "doeff_core_effects._aiohttp_ws_client",
+    "doeff_core_effects._scripted_ws_client",
 )
 
 

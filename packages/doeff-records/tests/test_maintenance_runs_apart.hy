@@ -13,7 +13,7 @@
 (import doeff [with_handlers])
 (import doeff_core_effects [Spawn Gather])
 (import doeff_core_effects [await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_time [GetMonotonic async-time-handler])
 (import doeff_records [Missing Unreachable])
 (import doeff_records [ReadRow])

@@ -37,7 +37,7 @@
 (import doeff_cluster.worker.protocol.coordinator_link [LinkState coordinator-link lifeline-turn lifeline-settled])
 (import doeff_cluster.worker.core.beat_policy [LIFELINE-PERIOD-SECONDS])
 (import doeff_cluster._foundation.lifeline [LifelineSettings start-lifeline event-pause])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])

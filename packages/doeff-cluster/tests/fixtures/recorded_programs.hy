@@ -12,7 +12,7 @@
 (import doeff [with-handlers DoExpr EffectBase Program])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [state await-handler])
-(import doeff_core_effects.http_handlers [http-production-handler])
+(import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_cluster [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])

@@ -10,7 +10,7 @@ from doeff import EffectBase as EffectBase
 from doeff_core_effects import await_handler as await_handler
 from doeff_core_effects import slog_handler as slog_handler
 from doeff_core_effects import scheduled as scheduled
-from doeff_core_effects.http_handlers import http_production_handler as http_production_handler
+from doeff_core_effects import http_production_handler as http_production_handler
 from doeff_time import async_time_handler as async_time_handler
 from doeff_cluster._foundation.process_versions import this_process_versions as this_process_versions
 from doeff_cluster.shared.entry.declare import apply_declaration as apply_declaration

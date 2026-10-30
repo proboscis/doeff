@@ -25,9 +25,8 @@
 (import typing [TYPE_CHECKING])
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects [state await-handler])
-(import doeff_core_effects.ws_client_effects [ReadWsSent ScriptedWsBinary ScriptedWsClosed ScriptedWsEndpoint ScriptedWsReply ScriptedWsText
-                                              WsScript WsSentClose WsSentRecord])
-(import doeff_core_effects.scripted_ws_client [scripted-ws-client])
+(import doeff_core_effects [ReadWsSent ScriptedWsBinary ScriptedWsClosed ScriptedWsEndpoint ScriptedWsReply ScriptedWsText WsScript WsSentClose WsSentRecord])
+(import doeff_core_effects._scripted_ws_client [scripted-ws-client])
 (import pytest)
 
 ;; この file の待ちは実時間が対象(何が対象かは名簿 tests/realtime_tests.toml のこの file の行)— realtime を名乗る file の中の眠りを、
@@ -185,7 +184,7 @@
 (deff client-into [box]  ; defk にできない: aiohttp-ws-client の client-factory として繋ぐ coroutine の中(Program の外)で呼ばれる callback
   {:pre [(: box (get Queue aiohttp.ClientSession))] :post [(: % "aiohttp.ClientSession")] :tags {:context "ws-client-test" :role "foundation"}}
   "本物の答え手が作る client を数えるため: 既定の作り手(new-client-session)と同じ client を作り、箱へ置いてから渡す(検は後で閉じているかを読む)。"
-  (import doeff_core_effects.aiohttp_ws_client [new-client-session])
+  (import doeff_core_effects._aiohttp_ws_client [new-client-session])
   (setv session (new-client-session))
   (.put box session)
   session)
@@ -204,7 +203,7 @@
   {:pre [(: program Program)] :post [(: % "契約の Program の答え(型は Program ごと)")]
    :tags {:context "ws-client-test" :role "foundation"}}
   "本物の aiohttp-ws-client の下で program を走らせる。相手は走る間だけ聞く echo の待ち受け、dead は誰も聞いていない port。"
-  (import doeff_core_effects.aiohttp_ws_client [aiohttp-ws-client])
+  (import doeff_core_effects._aiohttp_ws_client [aiohttp-ws-client])
   (<- peer EchoPeer (start-echo-peer))
   (<- dead int (vacant-port))
   (val world (WsWorld :url (.format "ws://127.0.0.1:{}/ws" peer.listening.port) :slow (.format "ws://127.0.0.1:{}/slow" peer.listening.port)
