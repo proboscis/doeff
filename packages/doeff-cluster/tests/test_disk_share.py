@@ -15,8 +15,11 @@ Longhorn の disk の予約がその宣言から導かれている事の検(card
       (card ki-c37ae82751bf — 予約の欄だけを書いた Node から、Flux が手で入れた allowScheduling と札 warm を引き取って消した)。
   (6) 書いてある kubelet の image GC の drop-in の線で、kubelet は worker が near を名乗る前に消し始め、worker が ok へ戻る線の上まで
       消す(card ki-57ff91db1411 — atlas の手で置いた high 85・low 80 は worker の near の帯の中で止まり、near が続いた)。
+  (7) 同じ根の disk の機体直の worker(atlas-native)の env file は、Pod の worker と同じ空きの最低と宣言の roots の上限で、その roots と
+      state は worker の分に数える(card ki-705b0ad4893e — 宣言の外の 25 GiB では near の線が image GC の始まりより上に在った)。
 失敗ケース(赤になる事の検): 分け前の合計が disk を越える宣言・Longhorn の既定の予約(30%)のままの Node・綴りの誤った鍵・予約の欄だけを
-書く Node・文字で書いた longhornScheduling・Longhorn の欄の欠けた機体・atlas の手で置いた image GC の線。
+書く Node・文字で書いた longhornScheduling・Longhorn の欄の欠けた機体・atlas の手で置いた image GC の線・boot.sh の既定の roots の
+機体直の worker・自分の空きの最低を書いた機体直の worker。
 """
 
 from __future__ import annotations
@@ -407,3 +410,78 @@ def test_a_node_without_longhorn_over_its_disk_is_refused(
     found = derive.faults(over, margins)
     assert len(found) == 1, found
     assert found[0].startswith("atlas: 分け前の合計が disk を越える"), found
+
+
+# --- 機体直の worker(card ki-705b0ad4893e)----------------------------------------------------------------------------------------------
+
+
+def _native_shares(declaration: object) -> tuple[object, ...]:
+    """機体直の worker を宣言した機体(atlas — atlas-native)。"""
+    return tuple(share for share in declaration.nodes if share.native is not None)
+
+
+def _written_native_env(share: object) -> dict[str, str]:
+    """機体の dir に書いてある機体直の worker の env file の `名=値` の行(註と空行は除く)— 起動 script が読む物を読むため。"""
+    path = K8S / "nodes" / share.node / (share.native.name + derive.NATIVE_ENV_SUFFIX)
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    return dict(line.split("=", 1) for line in lines)
+
+
+def test_native_worker_env_is_the_declaration_and_shares_the_disk_line(
+    declaration: object,
+) -> None:
+    """書いてある機体直の worker の env file は、空きの最低 = 同じ根の disk の Pod の worker の minFreeGiB・roots の上限 = nativeWorker の
+    rootsGiB の 2 行だけ(atlas-native は宣言の外で boot.sh の既定 25 GiB を使い、near の線が kubelet の image GC の始まりより上に在った)。"""
+    shares = _native_shares(declaration)
+    assert [share.node for share in shares] == ["atlas"]
+    for share in shares:
+        assert _written_native_env(share) == {
+            "WORKER_ENV_MIN_FREE_GIB": str(share.worker.min_free_gib),
+            "WORKER_ENV_ROOTS_GIB": str(share.native.roots_gib),
+        }, share.node
+
+
+def test_native_worker_is_ok_where_the_image_gc_starts(
+    declaration: object, margins: object, doeff_interpreter: Callable[[object], object]
+) -> None:
+    """書いてある image GC の線で消し始める空き(high)では、機体直の worker も書いてある空きの最低のまま ok を名乗る — kubelet より先に
+    near を名乗る帯が無い。"""
+    import hy  # noqa: F401  — Hy の module を import できるようにする
+    from doeff_cluster.worker.core.env_upkeep import env_capacity
+
+    for share in _native_shares(declaration):
+        min_free = int(_written_native_env(share)["WORKER_ENV_MIN_FREE_GIB"]) * derive.GIB
+        start = derive.free_at_usage(share.disk_bytes, _written_image_gc(share.node).high_percent)
+        assert doeff_interpreter(env_capacity(start, min_free, "ok")) == "ok", share.node
+
+
+def test_native_worker_counts_in_the_worker_share(declaration: object, margins: object) -> None:
+    """機体直の worker の roots の上限と state は worker の分に数える — 外した宣言の残りは、ちょうどその量だけ大きい(空きの線は数え直さない)。"""
+    for share in _native_shares(declaration):
+        without = dataclasses.replace(share, native=None)
+        grown = derive.longhorn_bytes(without, margins) - derive.longhorn_bytes(share, margins)
+        assert grown == share.native.roots_gib * derive.GIB + share.native.state_bytes, share.node
+
+
+def test_native_worker_at_the_boot_default_roots_is_refused(
+    declaration: object, margins: object
+) -> None:
+    """失敗ケース: atlas-native の roots の上限を boot.sh の既定 20 GiB のまま数えた宣言は、分け前の合計が atlas の disk を越え、導かない。"""
+    (atlas,) = _native_shares(declaration)
+    swollen = dataclasses.replace(atlas, native=dataclasses.replace(atlas.native, roots_gib=20))
+    found = derive.faults(dataclasses.replace(declaration, nodes=(swollen,)), margins)
+    assert len(found) == 1, found
+    assert found[0].startswith("atlas: 分け前の合計が disk を越える"), found
+
+
+def test_a_native_worker_with_its_own_free_line_is_refused() -> None:
+    """失敗ケース: 機体直の worker に自分の空きの最低(minFreeGiB)を書いた宣言は、知らない鍵として読む所で断る — 同じ disk の線は 1 つ。"""
+    text = derive.SHARES.read_text(encoding="utf-8").replace(
+        "      name: atlas-native\n", "      name: atlas-native\n      minFreeGiB: 25\n"
+    )
+    with pytest.raises(ValueError, match="知らない鍵"):
+        derive.parse(text)
