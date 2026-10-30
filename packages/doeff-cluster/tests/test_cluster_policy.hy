@@ -642,7 +642,10 @@
 (deftest test-a-worker-without-memory-is-not-bound-and-a-job-without-memory-waits
   ;; memory を名乗らない worker(枠の file の外の機体)は memory で縛らない: settle の和がどれだけでも置く。memory を知らない job(settleMiB の
   ;; 無い旧い保存の行)は、memory を名乗らない worker にも新しく置かず、名指して宣言し直しを待つ。
-  (val jobs (tuple (gfor n (range 5) (! (job (.format "j{}" n) :settle 40000)))))
+  ;; (! …) は内包の中に置けない(内包は別の scope で yield できない)ので、for で 1 本ずつ作る。
+  (var jobs #())
+  (for [n (range 5)]
+    (:= jobs (+ jobs #((! (job (.format "j{}" n) :settle 40000))))))
   (val free (ClusterState (+ jobs #((! (job "old" :settle None)))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))))
   (val placed (! (jobs-placed 0 free T)))
   (assert (= (sorted (.keys placed)) ["j0" "j1" "j2" "j3" "j4"]) placed)
@@ -658,8 +661,14 @@
   {:pre [(: count int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "予約 1・背景の枠 2 の worker に常駐の job を count 本置き、task を 4 本積んだ世界の読みを知るため: #(置けた job の数 task の空き
    task の phase の並び 待つ task の detail)。"
-  (val tasks (! (table-from-rows (dfor n (range 4) (.format "t{}" n) (! (task (.format "t{}" n) #()))))))
-  (val jobs (tuple (gfor n (range count) (! (job (.format "r{}" n))))))
+  ;; (! …) は内包の中に置けない(内包は別の scope で yield できない)ので、for で 1 本ずつ作る。
+  (var rows {})
+  (for [n (range 4)]
+    (:= rows (| rows {(.format "t{}" n) (! (task (.format "t{}" n) #()))})))
+  (val tasks (! (table-from-rows rows)))
+  (var jobs #())
+  (for [n (range count)]
+    (:= jobs (+ jobs #((! (job (.format "r{}" n)))))))
   (val state (ClusterState jobs (! (table-from-rows {"mac" (! (reserved "mac" 0 2 1))}))))
   (<- placed Table (jobs-placed 0 state T))
   (val after (replace state :placements placed :tasks tasks))
