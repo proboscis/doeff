@@ -23,7 +23,7 @@
               m :if (= m PROBE) (+ world.root "/app/" PROBE "/__init__.py")
               m :if (= m NAMESPACE) (+ world.root "/app/" NAMESPACE "/")
               "json" (str (.resolve (Path json.__file__)))
-              "doeff_cluster" (+ (str (.resolve (Path (get (list doeff_cluster.__path__) 0)))) "/")
+              "doeff_cluster" (str (.resolve (Path doeff_cluster.__file__)))
               _ ""))
   (ModuleOrigin :module module :file file))
 
