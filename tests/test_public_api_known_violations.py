@@ -46,7 +46,10 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    答えにも出ない class を置くと赤。組「許した物 — program の形を組む作り手と型」(R37 — doeff-conductor の workflow を書く
    agent!・loop ほかと AgentSpec ほか)に置けるのは、目録の形が作り手(換算の形の本体で、同じ package の class の値を返す
    関数)で返す class をその package が見せる名と、組の作り手が返す class だけ: effect を出す・作る・I/O を読む関数・見せない
-   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。
+   class を返す関数・値の型の外を返す関数・組の作り手が返さない class を置くと赤。組「許した物 — handler の設定の型」(R2)に
+   置けるのは、その package が定義した型で、同じ package が見せる handler・handler の class・工場の引数の注釈(型引数を含み、
+   package が定義した設定の型の欄を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
+   標準の library の型を出し直した名を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -119,6 +122,8 @@ STARTUP_GROUP = "許した物 — 起動の口"
 #: 決まりが許した、program の形を表す値を組む作り手と、その返す値の型の組(ADR-DOE-API-001 R37 — doeff-conductor の
 #: workflow の言葉)。目録の形が作り手の名と、組の作り手が返す class だけを置ける。
 BUILDER_GROUP = "許した物 — program の形を組む作り手と型"
+#: 決まりが許した handler の設定の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる handler と工場の引数の型だけを置ける。
+SETTING_GROUP = "許した物 — handler の設定の型"
 #: 目録の pytest11 の entry point の行の形(tools/public_api_inventory.py の _metadata_rows)。
 PYTEST_PLUGIN_FORM = "entry point(pytest11)"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
@@ -144,6 +149,9 @@ ALLOWED_SHAPES: dict[str, str] = {
     BUILDER_GROUP: "その package が見せる class の値を返し、中で effect も handler も program も作らず、時計・環境・file・"
     "process・乱数を読まない関数(作り手)と、組の作り手が返す class だけを置ける(program の形を表す値の作り手とその型 — "
     "ADR-DOE-API-001 R37)",
+    SETTING_GROUP: "その package が定義した class と型の別名のうち、同じ package が見せる handler・handler の class・工場の"
+    "引数の注釈(型引数を含む・package が定義した設定の型の欄を辿る)に出る物だけを置ける(handler の設定の型 — "
+    "ADR-DOE-API-001 R2)。どの引数にも出ない型と、標準の library か別の package の型を出し直した名は置けない",
 }
 #: ADR-DOE-API-001 の条が名を挙げて残すと決めた CLI コマンド(package の dir から、console script か Rust の実行 file の名から
 #: 名を挙げた条へ)。組「許した物 — CLI コマンド」はここに在る名だけを置け、条の文がその名を挙げる事を
@@ -397,6 +405,11 @@ def fits_allowed_group(
         ),
         STARTUP_GROUP: lambda: (row["module"], row["name"]) in facts.startup_calls,
         BUILDER_GROUP: lambda: fits_builder_group(row, package, facts.built),
+        SETTING_GROUP: lambda: defined_by(row, package)
+        and any(
+            (shown["module"], shown["name"]) == (row["module"], row["name"])
+            for shown in package["settings"]
+        ),
     }
     fits = shapes.get(group)
     return fits is not None and fits()
@@ -1850,6 +1863,122 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
             check_package(package, *tables([*answers, name]))
         assert f"{FIXTURE_ROOT}.{name}({forms[name]}・" in str(failure.value)
         assert ALLOWED_SHAPES[ANSWER_TYPE_GROUP] in str(failure.value)
+
+
+#: 設定の型を引数に取る工場・欄で辿る設定の型・どの引数にも出ない class と関数を持つ package の名(注釈は字のまま)。
+SETTINGS = '''
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import Enum
+
+from doeff import EffectBase, Pass, handler
+from doeff.program import ProgramHandler
+
+
+class PingEffect(EffectBase):
+    """The one effect."""
+
+
+@handler
+def ping_handler(effect: PingEffect, k):
+    yield Pass()
+
+
+class Level(Enum):
+    """A setting type reached through Settings' field."""
+
+    LOW = "low"
+
+
+@dataclass(frozen=True)
+class Settings:
+    """A setting type: ping_handlers takes it."""
+
+    level: Level
+
+
+@dataclass(frozen=True)
+class Hint:
+    """A setting type: ping_handlers takes a sequence of it."""
+
+
+class Unrelated:
+    """A class no handler or factory takes."""
+
+
+def ping_handlers(settings: Settings, hints: Sequence[Hint] = ()) -> ProgramHandler:
+    """A handler factory: its parameters name the types it is built with."""
+    return ping_handler
+
+
+def helper(x: int) -> int:
+    """A plain function: neither an effect nor a handler."""
+    return x + 1
+'''
+#: 標準の library の class を __all__ で出し直し、工場の引数にも名指す submodule(package が定義した型でない)。
+REEXPORTED_SETTING = '''
+from pathlib import Path
+
+from doeff.program import ProgramHandler
+
+from doeff_fixture_api import ping_handler
+
+__all__ = ["Path", "rooted_ping_handlers"]
+
+
+def rooted_ping_handlers(root: Path) -> ProgramHandler:
+    """A handler factory whose parameter names a class the standard library defines."""
+    return ping_handler
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path: Path) -> None:
+    """許した物の表の組「許した物 — handler の設定の型」に置けるのは、その package が定義した型で、同じ package が見せる
+    handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2・
+    card ki-93b21540e519)。
+
+    工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)は、許した物の
+    表に置けば緑・どちらの表にも無ければ外れのまま赤。どの引数にも出ない class と関数と、標準の library の class Path を
+    submodule の __all__ で出し直した名(工場の引数に出るが package が定義した型でない)を置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_tree(tmp_path, {"__init__.py": SETTINGS, "rooted.py": REEXPORTED_SETTING})
+    package = _read_fixture(repo)
+    rooted = f"{FIXTURE_ROOT}.rooted"
+    places = {(shown["module"], shown["name"]): shown["parameters"] for shown in package["settings"]}
+    assert places == {
+        (FIXTURE_ROOT, "Settings"): ["ping_handlers(settings)"],
+        (FIXTURE_ROOT, "Hint"): ["ping_handlers(hints)"],
+        (FIXTURE_ROOT, "Level"): ["Settings.level"],
+        (rooted, "Path"): ["rooted_ping_handlers(root)"],
+    }
+    settings = [(FIXTURE_ROOT, "Hint"), (FIXTURE_ROOT, "Level"), (FIXTURE_ROOT, "Settings")]
+    rest = [(FIXTURE_ROOT, "Unrelated"), (FIXTURE_ROOT, "helper"), (rooted, "Path")]
+
+    def tables(placed: list[Key]) -> tuple[KnownTable, AllowedTable]:
+        listed = {
+            module: sorted(name for each, name in set(rest) - set(placed) if each == module)
+            for module in (FIXTURE_ROOT, rooted)
+        }
+        allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), "lt-85SHMNQG7HG4AYHBER6V2BAKX6")
+        known = {module: names for module, names in listed.items() if names} | {SUBMODULE: [rooted]}
+        return _fixture_table(known), allowed
+
+    check_package(package, *tables(settings))
+    with pytest.raises(AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Settings"):
+        check_package(package, *tables([key for key in settings if key[1] != "Settings"]))
+    said = {
+        (FIXTURE_ROOT, "Unrelated"): f"{FIXTURE_ROOT}.Unrelated(class・",
+        (FIXTURE_ROOT, "helper"): f"{FIXTURE_ROOT}.helper(換算の関数・",
+        (rooted, "Path"): f"{rooted}.Path(class・class・pathlib)",
+    }
+    for key in rest:
+        with pytest.raises(AssertionError, match=re.escape(f"組「{SETTING_GROUP}」")) as failure:
+            check_package(package, *tables([*settings, key]))
+        assert said[key] in str(failure.value)
+        assert ALLOWED_SHAPES[SETTING_GROUP] in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。
