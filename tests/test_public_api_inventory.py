@@ -98,6 +98,14 @@ def size() -> int:
     return 3
 
 
+class Step:
+    """A value of a program's shape."""
+
+
+def step() -> Step:
+    return Step()
+
+
 @do
 def raw_ping_program(effect, k):
     yield Pass()
@@ -236,6 +244,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("flow_answering", "other", "effect に答える program を返す関数"),
         ("flow_with_handlers", "other", "handler を被せる program を返す関数"),
         ("size", "other", "換算の関数"),
+        ("step", "other", "作り手"),
         ("LIMIT", "other", "定数"),
         ("SessionHandler", "unclassified", "class"),
         ("PongEffect", "unclassified", "class"),
