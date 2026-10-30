@@ -471,6 +471,7 @@ if TYPE_CHECKING:
         scripted_ws_link_handler as scripted_ws_link_handler,
     )
     from doeff_core_effects._http_host_gate import HostNotAllowed as HostNotAllowed
+    from doeff_core_effects._http_host_gate import http_host_gate as http_host_gate
 
 _LAZY_EXPORTS = {
     "HttpError": "doeff_core_effects._effects",
@@ -810,6 +811,7 @@ _LAZY_EXPORTS = {
     "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
     "HostNotAllowed": "doeff_core_effects._http_host_gate",
+    "http_host_gate": "doeff_core_effects._http_host_gate",
 }
 
 
