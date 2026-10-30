@@ -17,7 +17,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_cluster._coordinator.intent.failover_model [FailoverWorker ResidentJob KeptApart JobTakers DownSpike])
 (import doeff_cluster._coordinator.core.cluster_policy [placeable])
-(import doeff_cluster.shared.core.capabilities [HOST-PREFIX])
+(import doeff_cluster._shared.core.capabilities [HOST-PREFIX])
 
 (defk per-machine? [needs template]
   {:pre [(: needs (get tuple #(str ...))) (: template (get tuple #(str ...)))] :post [(: % bool)] :tags {:context "coordinator" :role "judgment"}}

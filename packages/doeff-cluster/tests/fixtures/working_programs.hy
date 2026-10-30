@@ -6,15 +6,15 @@
 ;;; 回す — 本番の turn-host が走っているターンを終えてから退くのと同じ)。退く知らせが来なければ止めの合図で止まる。
 ;;; 筋書きは盤の行から、どの世代の仕事が終わりまで回ったかを読む。
 (require doeff-hy.macros [defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import collections.abc [Callable])
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [Spawn Task])
 (import doeff_time [Delay])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.shared_model [WriteShared])
-(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [WriteShared])
+(import doeff_cluster [RunContext])
 (import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster [Retired HandoffAbandoned])
 (import doeff_cluster [AwaitRetirement])
@@ -101,8 +101,8 @@
 ;; 終わりまで回す形)。保ちを取らない版(hold = 偽)は、寿命の上限で止められる対照。土台は名前付きの lease の担い手を並べた物
 ;; (tests/fixtures/lease_programs.hy の lease-sim-foundation)。
 (import doeff_core_effects [AcquireSemaphore ReleaseSemaphore Semaphore Wait])
-(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore])
-(import doeff_cluster.shared.intent.readiness_model [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
+(import doeff_cluster [CreateNamedSemaphore])
+(import doeff_cluster [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
 
 (val HOLD-PREFIX "hold")
 

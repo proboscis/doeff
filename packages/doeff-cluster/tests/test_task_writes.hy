@@ -9,7 +9,7 @@
 (import dataclasses [replace :as dc-replace])
 (import unittest.mock [patch])
 (import contextlib [contextmanager])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])

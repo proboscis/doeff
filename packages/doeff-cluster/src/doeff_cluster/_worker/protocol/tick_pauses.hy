@@ -16,8 +16,8 @@
 (import doeff_core_effects [StopBell StopRequested])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_core_effects [AwaitWarmChildExit])
-(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.core.clock [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.core.heartbeat_rules [silent-ms])
 (import doeff_cluster._worker.intent.worker_model [AwaitNextTick WakeSet WorkerPolicy])
 

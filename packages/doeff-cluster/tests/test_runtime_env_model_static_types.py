@@ -18,15 +18,15 @@ from types import ModuleType
 import pytest
 
 import hy  # noqa: F401  # .hy の module(runtime_env_model)を読む import hook を有効にする
-from doeff_cluster.shared.core import runtime_env_rules
-from doeff_cluster.shared.intent import runtime_env_model
+from doeff_cluster._shared.core import runtime_env_rules
+from doeff_cluster._shared.intent import runtime_env_model
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.shared.intent.runtime_env_model [EnvVar RuntimeEnv RepoCheckout PythonProject])
-(import doeff_cluster.shared.core.runtime_env_rules [env-key])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvVar RuntimeEnv RepoCheckout PythonProject])
+(import doeff_cluster._shared.core.runtime_env_rules [env-key])
 
 (defk probe-environ [names]
   {:pre [(: names (get tuple #(str ...)))] :post [(: % (get tuple #(EnvVar ...)))] :tags {:context "probe" :role "judgment"}}

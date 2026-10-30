@@ -6,10 +6,10 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import hashlib)
 (import doeff_hy._table [TableWrite table-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [ProgramRow])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster [responded])

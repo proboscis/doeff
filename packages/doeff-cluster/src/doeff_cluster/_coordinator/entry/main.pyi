@@ -6,7 +6,7 @@ from dataclasses import replace as replace
 from doeff import run as run
 from doeff import with_handlers as with_handlers
 from doeff_time import sync_time_handler as sync_time_handler
-from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
 from doeff_core_effects import slog as slog
 from doeff_core_effects import FileFailed as FileFailed
 from doeff_core_effects import ListDirectory as ListDirectory
@@ -19,9 +19,9 @@ from doeff_core_effects import os_file_handler as os_file_handler
 from doeff_core_effects import subprocess_handler as subprocess_handler
 from doeff_core_effects import EnvEntry as EnvEntry
 from doeff_core_effects import ReadEnvironment as ReadEnvironment
-from doeff_cluster.shared.core.launch_rules import coordinator_commit_env_name as coordinator_commit_env_name
+from doeff_cluster._shared.core.launch_rules import coordinator_commit_env_name as coordinator_commit_env_name
 from doeff_core_effects import scheduled as scheduled
-from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming
+from doeff_cluster._shared.intent.protocol import ClusterTiming as ClusterTiming
 from doeff_cluster._coordinator.intent.cluster_model import ClusterState as ClusterState
 from doeff_cluster._coordinator.intent.cluster_model import ACCEPTED_FORMATS as ACCEPTED_FORMATS
 from doeff_cluster._coordinator.protocol.cluster_json import naming_from_json as naming_from_json

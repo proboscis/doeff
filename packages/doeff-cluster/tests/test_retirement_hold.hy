@@ -12,8 +12,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [System])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf SharedRows Redeclare])
 (import tests.fixtures.lease_programs [lease-sim-foundation])
 (import tests.fixtures.working_programs [HOLD-PREFIX holding-hosts holding-hosts-v2 unheld-hosts unheld-hosts-v2])

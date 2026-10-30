@@ -7,7 +7,7 @@
 (import enum [Enum StrEnum])
 (import json)
 (import doeff_core_effects [EnvEntry EnvMode])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
 (import doeff_cluster._worker.core.launch [JobLaunch child-environment env-project-dir project-hy uv-run-environ])
 

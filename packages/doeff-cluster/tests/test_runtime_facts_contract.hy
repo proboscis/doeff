@@ -11,8 +11,9 @@
 (import os)
 (import pathlib [Path])
 (import doeff_cluster)
-(import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts ReadRuntimeFacts RepoCommit RuntimeIdentity RuntimeIdentityMismatch])
-(import doeff_cluster.shared.core.runtime_identity [check-runtime-identity])
+(import doeff_cluster [ModuleOrigin ProcessFacts ReadRuntimeFacts RuntimeIdentityMismatch]
+        doeff_cluster._shared.intent.runtime_identity_model [IdentityFailureKind RepoCommit RuntimeIdentity])
+(import doeff_cluster [check-runtime-identity])
 (import tests.runtime_facts_contract_handlers [EnterScene FactsWorld MISSING-MODULE NAMESPACE PROBE Scene WorldSeen])
 
 

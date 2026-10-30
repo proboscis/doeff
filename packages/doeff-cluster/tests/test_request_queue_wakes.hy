@@ -14,9 +14,9 @@
 (import doeff [with-handlers Program])
 (import doeff_core_effects [Spawn Task Wait])
 (import doeff_time [Delay sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [NextRequests])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [NextRequests])
+(import doeff_cluster [http-request])
 (import doeff_cluster [queued-requests]
         doeff_cluster._coordinator.protocol.request_queue [RequestQueue enqueue-request])
 (import tests.clock_fixtures [clock-at count-delays])

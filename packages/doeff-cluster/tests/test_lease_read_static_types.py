@@ -20,7 +20,7 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 
 ROUTE_ERRORS = """\
 (require doeff-hy.macros [defk var])
-(import doeff_cluster.shared.protocol.coordinator_route [RouteRefused RouteUnreachable])
+(import doeff_cluster._shared.protocol.coordinator_route [RouteRefused RouteUnreachable])
 
 (defk probe-refuse [status body]
   {:pre [(: status int) (: body str)] :post [(: % str)] :tags {:context "probe" :role "protocol"}}
@@ -45,7 +45,7 @@ ROUTE_ERRORS = """\
 
 LIVE_HOLDERS = """\
 (require doeff-hy.macros [defk])
-(import doeff_cluster.shared.core.lease_rules [live-holders])
+(import doeff_cluster._shared.core.lease_rules [live-holders])
 
 (defk probe-live-tokens [rows key now-ms]
   {:pre [(: rows (get dict #(str (get dict #(str object))))) (: key str) (: now-ms int)] :post [(: % (get list str))]

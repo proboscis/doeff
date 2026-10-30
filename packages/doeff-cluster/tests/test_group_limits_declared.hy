@@ -9,7 +9,7 @@
 (import doeff_hy._table [Table table-of])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody ResourceBody])
@@ -18,10 +18,10 @@
 (import doeff_cluster [Refused]
         doeff_cluster._coordinator.core.resource_policy [create-resource update-resource stamp])
 (import doeff_cluster._coordinator.core.cluster_policy [resource-version-of])
-(import doeff_cluster.shared.intent.detached_model [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedUnknown DetachedUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-queue-of-state])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedUnknown DetachedUnreachable])
+(import doeff_cluster._shared.protocol.detached [detached-queue-of-state])
+(import doeff_cluster [submit-detached-task])
+(import doeff_cluster [system-of])
 (import doeff_cluster [sim-cluster SimWorker ReadCoordinator])
 (import tests.program_rows [program-placed task-body-of])
 (import tests.detached_rig [slow-add RIG-PROVIDES])

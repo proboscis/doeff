@@ -9,15 +9,15 @@
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite])
 (import doeff [run])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState WarmEntry ErrorReply])
 (import doeff_cluster._coordinator.core.cluster_policy [alive placeable needs-named tools-cover root-key-on draining-workers])
 (import doeff_cluster._coordinator.intent.request_bodies [WarmBody])
-(import doeff_cluster.shared.core.board_rules [BOARD-MAX-TTL-SECONDS])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnvInvalid])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
-(import doeff_cluster.shared.intent.warm_model [WarmState WarmFailure])
-(import doeff_cluster.shared.core.warm_rules [warm-key])
+(import doeff_cluster._shared.core.board_rules [BOARD-MAX-TTL-SECONDS])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnvInvalid])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json])
+(import doeff_cluster._shared.intent.warm_model [WarmState WarmFailure])
+(import doeff_cluster._shared.core.warm_rules [warm-key])
 
 
 (defn #^ WarmState warm-view [#^ ClusterState state #^ WarmEntry entry #^ int now #^ ClusterTiming timing]

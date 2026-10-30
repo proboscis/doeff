@@ -27,7 +27,7 @@ MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster._foundation.host_contract [environ-table-reader HOST-CONTRACT])
-(import doeff_cluster.shared.entry.host_reader [host-reader])
+(import doeff_cluster._shared.entry.host_reader [host-reader])
 
 (defk probe-host [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % int)] :tags {:context "probe" :role "foundation"}}

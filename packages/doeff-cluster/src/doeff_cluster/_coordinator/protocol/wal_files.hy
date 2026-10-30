@@ -17,7 +17,7 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [Appended AppendBytes MakeDirectory PathKind PathStat ReadBytes ReadText StatPath SyncDirectory TruncateFile WriteBytes]
         doeff_core_effects._file_effects [file-done])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
 
 ;; 置き場を別の volume へ移した後の古い置き場に置く印の file の名。
 (val MOVED-MARK "MOVED")

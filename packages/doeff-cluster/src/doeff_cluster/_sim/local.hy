@@ -159,39 +159,39 @@
 (import doeff_core_effects._world_phases [mark-world-phase])
 (import doeff_events [ArmedTimer ArmedTimers ArmedTimersEffect WaitForEventEffect WaitForEventsEffect])
 (import doeff_time [Delay GetMonotonic GetTimeEffect epoch-ms-of sim-time-handler async-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
-(import doeff_cluster.shared.core.timing_rules [scaled-timing])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
+(import doeff_cluster._shared.core.timing_rules [scaled-timing])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming Request Reply CoordinatorStopRequested PlainText])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ClusterNaming ENDED-PHASES]
-        doeff_cluster.shared.intent.protocol [NextRequests])
-(import doeff_cluster.shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
+        doeff_cluster._shared.intent.protocol [NextRequests])
+(import doeff_cluster._shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster._coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster._coordinator.core.program [run-coordinator])
 (import doeff_cluster._coordinator.entry.main [load-state with-running-commit])
 (import doeff_core_effects [EnvEntry])
 (import doeff_core_effects [ProcessScript scripted-process-handler])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
-(import doeff_cluster._foundation.coordinator_inbox [StopState] doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster._foundation.coordinator_inbox [StopState] doeff_cluster._shared.protocol.inbox [http-request])
 (import doeff_cluster._coordinator.entry.handler_sets [MemoryWalStore emulated-handlers])
 (import doeff_events [MemoryBroker EventBus WaitForEvent BrokerPatience broker-patience-handler subscribed-event-handler memory-notice-handler notice-events-handler])
 (import doeff_cluster._coordinator.intent.worker_notices [WorkerGone])
 (import doeff_cluster._coordinator.protocol.worker_notices [WORKER-NOTICE-READS])
 (import doeff_cluster._coordinator.protocol.store [Persist])
 (import doeff_cluster._coordinator.protocol.request_queue [RequestQueue enqueue-request nudge-takers await-answer])
-(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
+(import doeff_cluster._shared.core.promise_wait [promise-or-timeout])
 (import doeff_cluster._coordinator.protocol.kube [KubeMemory memory-relabel memory-settle])
 ;; 宣言の本文を組む body-of は別名で受ける — coordinator の要求の本文の解き(request_bodies.body-of)と取り違えないため。
-(import doeff_cluster.shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
+(import doeff_cluster._shared.protocol.declaration_requests [ServiceRead CONFLICT-REREADS service-read reread-after-conflict needed-programs
                                                              body-of :as service-body-of group-limit-write RestartPlan restart-read])
-(import doeff_cluster.shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
+(import doeff_cluster._shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
                    detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
-(import doeff_cluster.shared.core.capabilities [env-mapping])
-(import doeff_cluster.shared.core.detached_rules [task-placing-json task-notify-json])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
+(import doeff_cluster._shared.core.capabilities [env-mapping])
+(import doeff_cluster._shared.core.detached_rules [task-placing-json task-notify-json])
+(import doeff_cluster._shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
                          ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer
@@ -208,38 +208,38 @@
 (import doeff_cluster._worker.protocol.tick_pauses [tick-pauses])
 (import doeff_cluster._worker.core.worker_due [beat-due fence-due due-after])
 ;; 期限の早い方は別名で受ける — 世界の次の刻の earliest-due(この file の下)と取り違えないため。
-(import doeff_cluster.shared.core.due_policy [earliest-due :as earliest-wake])
+(import doeff_cluster._shared.core.due_policy [earliest-due :as earliest-wake])
 (import doeff_cluster._foundation.host_contract [HOST-CONTRACT SIM-PASSABLE environ-table-reader])
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.run_context_rules [worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
+(import doeff_cluster._shared.intent.run_context [RunContext])
+(import doeff_cluster._shared.core.run_context_rules [worker-context-environ process-context-environ context-of-environ runtime-env-of-context])
 (import doeff_cluster._worker.entry.job_entry [decoded-program])
-(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady])
-(import doeff_cluster.shared.protocol.remote [task-submit-body outcome-of settled-value])
-(import doeff_cluster.shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed])
-(import doeff_cluster.shared.protocol.program_codec [encode-program encode-outcome])
-(import doeff_cluster.shared.core.remote_rules [failed-from program-sha])
+(import doeff_cluster._shared.intent.metrics_model [ReportMetrics])
+(import doeff_cluster._shared.intent.readiness_model [ReportReady])
+(import doeff_cluster._shared.protocol.remote [task-submit-body outcome-of settled-value])
+(import doeff_cluster._shared.intent.remote_model [RemoteJob RemoteJobFailed TaskSucceeded TaskFailed])
+(import doeff_cluster._shared.protocol.program_codec [encode-program encode-outcome])
+(import doeff_cluster._shared.core.remote_rules [failed-from program-sha])
 (import doeff_cluster._foundation.process_versions [process-versions])
-(import doeff_cluster.shared.protocol.task_result [task-result-request task-id-of-job])
-(import doeff_cluster.shared.protocol.service_report [report-request])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
-(import doeff_cluster.shared.core.native_wheel [current-platform])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated SEMAPHORE-PREFIX])
+(import doeff_cluster._shared.protocol.task_result [task-result-request task-id-of-job])
+(import doeff_cluster._shared.protocol.service_report [report-request])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster._shared.core.native_wheel [current-platform])
+(import doeff_cluster._shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated SEMAPHORE-PREFIX])
 (import doeff_hy._wire [parse :as parse-wire])
-(import doeff_cluster.shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
-(import doeff_cluster.shared.entry.service_build [system-declaration])
-(import doeff_cluster.shared.intent.service_model [System Declaration])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness Redeclare RestartService ServiceRestarted RestartRefused ReadinessOf Crash KillWorker StopWorker
+(import doeff_cluster._shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
+(import doeff_cluster._shared.entry.service_build [system-declaration])
+(import doeff_cluster._shared.intent.service_model [System Declaration])
+(import doeff_cluster._shared.intent.cluster_control [ServiceReadiness Redeclare RestartService ServiceRestarted RestartRefused ReadinessOf Crash KillWorker StopWorker
                                                      StopCoordinator CrashCoordinator AwaitReadiness ServiceFailed
                                                      ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 ;; 準備の状態の読みと待ちの判断は本番の境界の handler と同じ 1 つ(写しを 2 か所に持たない — #3668 の (a))。
-(import doeff_cluster.shared.protocol.coordinator_reads [readiness-of-body readiness-wait-answer])
-(import doeff_cluster.shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer
+(import doeff_cluster._shared.protocol.coordinator_reads [readiness-of-body readiness-wait-answer])
+(import doeff_cluster._shared.protocol.board_requests [board-read-request board-write-request lease-request lease-wait-request lease-wait-answer
                                                      lease-vacate-request lease-vacate-answer])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
-(import doeff_cluster.shared.core.warm_rules [warm-state-of-json warm-wait-answer])
+(import doeff_cluster._shared.intent.shared_model [ReadShared WriteShared ANY])
+(import doeff_cluster._shared.intent.warm_model [WarmRuntimeEnv ReadWarmState WarmState WarmAnswer AwaitWarm WarmReady WarmFailed WarmWaitExpired])
+(import doeff_cluster._shared.core.warm_rules [warm-state-of-json warm-wait-answer])
 (import doeff_cluster._worker.core.warm_rules [refusals-after])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due])
 ;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
@@ -248,7 +248,7 @@
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob JobStarted SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick WakeSet WorkerWakes StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
-                       ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster.shared.intent.job_model [JobSpec] doeff_cluster.shared.core.job_rules [spec-hash])
+                       ForgetWarmChild NoticeJob Retired HandoffAbandoned] doeff_cluster._shared.intent.job_model [JobSpec] doeff_cluster._shared.core.job_rules [spec-hash])
 (import doeff_cluster._worker.intent.retirement_model [AwaitRetirement])
 
 ;; load-state は置き場がまだ無い時だけ以前の形の file を探す。sim は置き場(MemoryWalStore)が在る時だけ load-state を呼ぶので読まれない。

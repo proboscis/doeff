@@ -15,9 +15,9 @@
 (import doeff_core_effects [WarmScript WarmSocket WarmSocketAnswer WarmRun scripted-warm-process-handler])
 (import doeff_core_effects [ForkFromWarm])
 (import doeff_time [sync-time-handler])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [RuntimeEnv])
+(import doeff_cluster [runtime-env->json])
 (import doeff_cluster [StartWarmChild StopWarmChild ForgetWarmChild StopStage StartJob SignalJob ProcessView]
         doeff_cluster._worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch JobNotStarted])
 (import doeff_cluster [ObserveWarmChildren ObserveProcesses])

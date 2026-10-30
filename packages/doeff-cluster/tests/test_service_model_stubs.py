@@ -20,9 +20,9 @@ from pathlib import Path
 
 import hy  # .hy の module を読む import hook を有効にする(名の mangle と source の読みにも使う)
 import pytest
-from doeff_cluster.shared.core import service_rules
-from doeff_cluster.shared.entry import service_build
-from doeff_cluster.shared.intent import service_model
+from doeff_cluster._shared.core import service_rules
+from doeff_cluster._shared.entry import service_build
+from doeff_cluster._shared.intent import service_model
 
 PACKAGE = Path(__file__).resolve().parents[1]
 SOURCE = PACKAGE / "src"

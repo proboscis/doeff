@@ -1,5 +1,5 @@
 ;;; k8s の API server の、名の決まった ConfigMap・Secret の読み取りの相手役(模擬の環境)。job が要る値を参照で受ける部品
-;;; (doeff_cluster.shared.protocol.supplied_values の supplied-value・supplied-directory)が出す
+;;; (doeff_cluster._shared.protocol.supplied_values の supplied-value・supplied-directory)が出す
 ;;; `GET /api/v1/namespaces/<namespace>/configmaps/<名>` と `GET /api/v1/namespaces/<namespace>/secrets/<名>` に、API server と同じ意味で答える。
 ;;;
 ;;; 契約の出どころ(k8s の API の決まり):
@@ -28,8 +28,8 @@
 (import httpx [ConnectError])
 (import doeff_core_effects [ReadText])
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
-(import doeff_cluster.shared.core.supplied_spelling [OBJECT-SPELLING REF-SPELLING])
-(import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE text-field])
+(import doeff_cluster._shared.core.supplied_spelling [OBJECT-SPELLING REF-SPELLING])
+(import doeff_cluster._shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-TOKEN-FILE text-field])
 
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 

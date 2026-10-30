@@ -17,12 +17,12 @@
 (import json)
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import enum [StrEnum])  ; defenum の展開が名指す
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env-of-json])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster._worker.intent.worker_model [WorldView WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch WorkerPolicy])
 (import doeff_cluster._worker.core.worker_rules [code-key])
-(import doeff_cluster.shared.core.runtime_env [project-dir])
+(import doeff_cluster._shared.core.runtime_env [project-dir])
 
 
 (defn #^ bool forks-from-warm-child [#^ JobSpec spec]  ; defk にできない: 純粋な判断の start-on-ready-tree(Program の外の関数)が呼ぶ

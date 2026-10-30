@@ -7,11 +7,11 @@
 (import doeff [with-handlers])
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
 (import doeff_time [sim-time-handler])
-(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of route-order route-used
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteOptions RoutedReply route-of route-order route-used
                                                          routed-request resent-request])
 (import tests.clock_fixtures [clock-at clock-ms count-delays])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 (val LAN "http://lan:8080")
 (val NET "http://tailnet:8080")

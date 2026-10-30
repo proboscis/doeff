@@ -14,10 +14,11 @@
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff_time [Delay])
 (import doeff_hy._json_value [OpaqueJson])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared ANY])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseOp LeaseAnswer])
-(import doeff_cluster.shared.core.lease_rules [semaphore-key])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [ReadShared WriteShared]
+        doeff_cluster._shared.intent.shared_model [ANY])
+(import doeff_cluster [LeaseOp LeaseAnswer])
+(import doeff_cluster [semaphore-key])
+(import doeff_cluster [now-epoch-ms])
 (import tests.coordinator_contract_handlers [BoardSeen])
 
 (val TTL-MS 5000)

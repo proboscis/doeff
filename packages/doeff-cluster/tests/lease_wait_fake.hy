@@ -11,7 +11,7 @@
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import doeff_core_effects [CreatePromise CompletePromise Promise])
-(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
+(import doeff_cluster [promise-or-timeout])
 
 (val LEASE-FREED-REPLY {"revision" 0 "changed" True})
 

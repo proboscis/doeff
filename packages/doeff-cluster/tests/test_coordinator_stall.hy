@@ -15,8 +15,8 @@
 (import doeff_hy._table [TableWrite table-of])
 (import doeff [run])
 (import dataclasses [fields replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState BoardRow]
         doeff_cluster._coordinator.intent.cluster_model [Drain WarmEntry SupersededRun])
 (import doeff_cluster._coordinator.intent.due_model [StepPace Stall])

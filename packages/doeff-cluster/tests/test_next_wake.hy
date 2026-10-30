@@ -11,15 +11,16 @@
 (import doeff_hy._table [TableWrite table-of])
 (import dataclasses [replace])
 (import pytest)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState ClusterNaming BoardRow]
         doeff_cluster._coordinator.intent.cluster_model [Watcher WatchStep])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster._coordinator.core.watch_policy [watch-deadline])
 (import doeff_cluster [CoordinatorUnsettled])
 (import doeff_cluster [next-wake]
         doeff_cluster._coordinator.core.wake_policy [watchers-due after-step wait-seconds count-unsettled UNSETTLED-STEP-LIMIT])
-(import doeff_cluster.shared.intent.protocol [Request])
+(import doeff_cluster [Request])
 
 
 (val TIMING (ClusterTiming))

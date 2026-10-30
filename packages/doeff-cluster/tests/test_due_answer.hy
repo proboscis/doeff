@@ -10,10 +10,11 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff_hy._table [Table TableWrite table-of])
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState ClusterNaming WorkerInfo BoardRow]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [task-due liveness-due sweep-due]
         doeff_cluster._coordinator.core.cluster_policy [tasks-placed note-liveness liveness-deadline])
 (import doeff_cluster [tick tick-due])

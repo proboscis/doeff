@@ -9,9 +9,9 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.cluster_control [CrashCoordinator])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [CrashCoordinator])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [sim-cluster NextWorldDue CutWorker ProcessesOf CoordinatorRuns]
         doeff_cluster._sim.local [SimIntake SimPauses fresh-truth next-world-due])
 (import tests.fixtures.envs [sim-foundation])

@@ -11,7 +11,7 @@
 (import doeff_core_effects [ReadText ListDirectory])
 (import doeff_cluster [status-file]
         doeff_cluster._worker.protocol.status_file [status-json])
-(import doeff_cluster [JobStatus PublishStatus] doeff_cluster.shared.intent.job_model [JobPhase])
+(import doeff_cluster [JobStatus PublishStatus] doeff_cluster [JobPhase])
 (import doeff_cluster [CodeTimings])
 (import tests.file_contract_handlers [FilesRoot])
 

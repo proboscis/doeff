@@ -11,7 +11,7 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome RunProcess StartProcess])
 (import dataclasses)
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster._worker.core.job_cgroup [job-cgroup-procs placed-argv])
 (import doeff_cluster [job-cgroup-placer])
 (import doeff_cluster._worker.protocol.process_host [HostSettings shim-argv])

@@ -7,14 +7,15 @@
 (import dataclasses [replace])
 (import doeff_cluster [CodeView CodeState WorldView WorkerPolicy ProcessView StopStage StartJob JobRecord SignalJob StartWarmChild StopWarmChild ForgetWarmChild]
         doeff_cluster._worker.intent.worker_model [StopProgress JobNotStarted Undeclared WarmEnv WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch]
-        doeff_cluster.shared.intent.job_model [JobSpec JobPhase]
-        doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind]
-        doeff_cluster.shared.core.runtime_env_rules [runtime-env->json]
+        doeff_cluster [JobSpec JobPhase]
+        doeff_cluster [RuntimeEnv]
+        doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind]
+        doeff_cluster [runtime-env->json]
         doeff_cluster [code-key])
 (import doeff_cluster [plan statuses records-after]
         doeff_cluster._worker.core.policy [warm-child-step warm-child-actions])
 (import doeff_cluster._worker.core.worker_due [plan-due])
-(import doeff_cluster.shared.intent.due_model [DueAt])
+(import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster._worker.core.warm_rules [refusals-after])
 (import doeff_cluster._worker.protocol.heartbeat [status-row])
 (import doeff_cluster._worker.core.policy :as policy-module)
@@ -385,7 +386,7 @@
 
 (import doeff_cluster [ProbeView ProbeState ReapJob]
         doeff_cluster._worker.intent.worker_model [StartHold SpecChanged Outcome]
-        doeff_cluster.shared.core.job_rules [spec-hash]
+        doeff_cluster [spec-hash]
         doeff_cluster._worker.core.policy [start-holds JobHold])
 
 (defk service-on [name key revision]

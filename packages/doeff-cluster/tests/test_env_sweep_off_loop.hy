@@ -28,9 +28,9 @@
 (import doeff_core_effects [ProcessOutcome RunProcess timed-out-outcome])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ENV-MARKER])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeView CodeState WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode ReleaseLeases SweepEnvs]
         doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable EnvDisk])
 (import doeff_cluster [ObserveProcesses ObserveEnvDisk])

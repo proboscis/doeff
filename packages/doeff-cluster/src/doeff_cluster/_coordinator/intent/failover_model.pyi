@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass as dataclass
 from doeff_cluster._coordinator.intent.cluster_model import WorkerInfo as WorkerInfo
-from doeff_cluster.shared.intent.service_model import UPDATE_FORMS as UPDATE_FORMS
+from doeff_cluster._shared.intent.service_model import UPDATE_FORMS as UPDATE_FORMS
 
 @dataclass(frozen=True, kw_only=True)
 class FailoverWorker:

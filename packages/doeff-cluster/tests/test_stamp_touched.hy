@@ -11,7 +11,7 @@
 (import dataclasses [replace])
 (import doeff_hy._table [TableWrite])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.core.resource_policy :as resource-policy)

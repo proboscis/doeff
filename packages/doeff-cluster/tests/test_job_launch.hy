@@ -5,7 +5,7 @@
 (require doeff-hy.macros [deftest <- val])
 (import json)
 (import doeff_core_effects [EnvEntry EnvMode])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeLayout WorkerPolicy])
 (import doeff_cluster._worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])
 (import doeff_cluster [shim-spans]

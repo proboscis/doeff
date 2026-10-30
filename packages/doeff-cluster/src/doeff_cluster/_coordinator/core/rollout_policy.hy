@@ -35,7 +35,7 @@
 ;;; spec の検め(validate-target・validate-rollout-spec)は送り手の本文の誤りを BodyInvalid(400 — cluster_model)で断る。
 (require doeff-hy.macros [defk val])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
-(import doeff_cluster.shared.intent.protocol [BodyInvalid])
+(import doeff_cluster._shared.intent.protocol [BodyInvalid])
 (import dataclasses [replace])
 (import doeff_hy._table [Table])
 (import math)

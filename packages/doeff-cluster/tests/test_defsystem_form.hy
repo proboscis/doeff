@@ -7,7 +7,7 @@
 
 (val PRELUDE "
 (require doeff-hy.macros [defk <-])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (import collections.abc [Callable])
 (require doeff-hy.handle [defhandler])
 (defclass Ping [])
@@ -74,7 +74,7 @@
   (assert (= land.__doeff_tags__.role "entry"))
   ;; 系の関数の答えの型の注記は System — 型検査が系の値を System と読み、使い手の検査器が「公開の関数に答えの型が無い」と
   ;; 言わないため(#3366 — 注記の無い展開では、使い手の検査器の「公開の関数に型の注記が無い」の規則が全部の defsystem に当たった)。
-  (import doeff_cluster.shared.intent.service_model [System])
+  (import doeff_cluster [System])
   (assert (is (get land.__annotations__ "return") System) land.__annotations__))
 
 
@@ -145,8 +145,8 @@
 (deftest test-job-refuses-filled-names-outside-the-environ-or-with-a-default
   ;; 構成子 job は埋める名を Job の filled に載せ((empty) の名と埋める名の無い job は載せない)、埋める名が :environ に無い・既定の値を
   ;; 持つ形を断る(展開の外から呼ぶ時)。
-  (import doeff_cluster.shared.entry.service_build [job])
-  (import doeff_cluster.shared.intent.service_model [CallShape])
+  (import doeff_cluster [job])
+  (import doeff_cluster [CallShape])
   (val call (CallShape :function probe-program :args [] :kwargs {}))
   (val built (job "j" (probe-program) :call call :needs #{"n"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {"POLL" "5.0" "BROKER" "" "PROXY" ""}
                   :filled (frozenset ["BROKER"])))
@@ -328,7 +328,7 @@
              {"heavy" {"scope" "worker" "limit" 6 "perPart" False}
               "heavy-caller" {"scope" "cluster" "limit" 2 "perPart" True}})
           land.__doeff_system__)
-  (import doeff_cluster.shared.intent.detached_model [GroupLimit])
+  (import doeff_cluster [GroupLimit])
   (import sys types)
   ;; 系の値を作るには job の関数が module:qualname で引ける要る(identity)— 評価した名前空間を module として置いてから呼ぶ。
   (val module (types.ModuleType "defsystem_probe"))

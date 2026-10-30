@@ -20,8 +20,8 @@ needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyri
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_cluster.shared.intent.readiness_model [ReportReady ROLE-STANDBY])
-(import doeff_cluster.shared.protocol.readiness_handlers [ReadinessLog readiness-claims])
+(import doeff_cluster._shared.intent.readiness_model [ReportReady ROLE-STANDBY])
+(import doeff_cluster._shared.protocol.readiness_handlers [ReadinessLog readiness-claims])
 
 (defk probe-report []
   {:pre [] :post [(: % None)] :tags {:context "probe" :role "program"}}

@@ -23,8 +23,8 @@
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._frozen [freeze-json-text thaw-json])
 (import doeff_hy._table [Table TableWrite table-of])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [NextRequests])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.intent.protocol [NextRequests])
 (import doeff_cluster._coordinator.intent.cluster_model [DeploymentReading DeploymentSeen DeploymentUnreadable NodeLabelsSeen NodeLabelsUnreadable])
 (import doeff_cluster._coordinator.intent.kube_model [ScaleDeployment AnnotateDeployment KubeUnavailable FollowDeployments FollowNodes])
 

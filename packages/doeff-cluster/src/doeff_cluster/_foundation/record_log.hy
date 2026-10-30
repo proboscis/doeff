@@ -26,14 +26,15 @@
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue RestoredValue
-                                                canonical apply-delta delta-of resolve-refs resolve-type encode-value decode-value])
+                                                canonical apply-delta delta-of resolve-refs resolve-type current-type-name
+                                                with-current-type-names encode-value decode-value])
 
 (setv ROOT "root")
 
 ;; 旧い記録の綴りを今の綴りへ揃える(#2543・#2579 — 揃え方を知るのは read-recording だけ)。書きの条件を付けない印 ANY は、欄の無い値の型
 ;; (shared_model.AnyExpect)にする前は {"$any": 1} と綴っていた。今は値の汎用の綴り(encode-value の $c — 一致は tests/test_effect_record.hy が縛る)。
 (val LEGACY-ANY {"$any" 1})
-(val CURRENT-ANY {"$c" "doeff_cluster.shared.intent.shared_model:AnyExpect" "f" {}})
+(val CURRENT-ANY {"$c" "doeff_cluster._shared.intent.shared_model:AnyExpect" "f" {}})
 
 
 (defclass ReplayFinished [Exception]
@@ -193,16 +194,19 @@
     (cond
       (= kind "broken") (do (:= broken l) (break))
       (= kind "req")
-        (do (val args (refs (if (or (in "a" l) (in "ad" l)) (_resolve l arg-bases "e" "a" "ad" "ab" "ak") {})))
+        (do (val written (refs (if (or (in "a" l) (in "ad" l)) (_resolve l arg-bases "e" "a" "ad" "ab" "ak") {})))
             ;; 問いの引数は名 → 値の表。記録が壊れて別の形なら、Entry に入れる前にここで名指して断る。
-            (when (not (isinstance args dict))
-              (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type args)))))
-            (val mode (if (is mode-of-type None) (get l "m") (mode-of-type (get l "ty") l)))
+            (when (not (isinstance written dict))
+              (raise (ValueError (.format "出来事 {} の引数が表でない: {}" e (type written)))))
+            ;; 置き場を移す前に書いた行の型の名(問いの型と引数の中の $c・$e)は、今の置き場の名へ揃えて持つ — 再生は今の綴りの
+            ;; 文字列で比べる(区画を _ へ隠した ADR-DOE-API-001 R15 の前の記録も同じ再生になる・差分の元は揃える前の値)。
+            (val args (with-current-type-names written))
+            (val ty (current-type-name (get l "ty")))
+            (val mode (if (is mode-of-type None) (get l "m") (mode-of-type ty l)))
             ;; 旧い記録の行の引数を今の版の比べる形へ揃えて持つ(差分の元は揃える前の値)— 型ごとの関数を持たない汎用の正規化(#2579)。
             ;; 型の OpaqueJson の欄(形を書き手が決める JSON)は、今の codec が中の JSON の値で綴る。値が素の値だった旧い行
             ;; (tuple は $t・文字列でない鍵は $d)は JSON に運んだ値(list・文字列の鍵)に直して綴り直し、旧い ANY の綴りは今の綴りへ替える。
             ;; 欄が JSON でない値(ANY の $c)を持つ行はそのまま。今の形の行は同じ綴りに戻る。
-            (val ty (get l "ty"))
             (when (not-in ty opaque-fields)
               (val cls (resolve-type ty))
               (setv (get opaque-fields ty)

@@ -31,8 +31,8 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster"
 SERVICE_LIST_USERS = """\
 (require doeff-hy.macros [defk <-])
 (import doeff_hy._wire [Malformed parse-json])
-(import doeff_cluster.shared.intent.detached_model [ReadServices ServiceFact ServiceListWire ServicesUnreachable])
-(import doeff_cluster.shared.protocol.detached [service-facts-of-view])
+(import doeff_cluster._shared.intent.detached_model [ReadServices ServiceFact ServiceListWire ServicesUnreachable])
+(import doeff_cluster._shared.protocol.detached [service-facts-of-view])
 
 (defk probe-listed [text]
   {:pre [(: text str)] :post [(: % (get tuple #(ServiceFact ...)))] :tags {:context "probe" :role "foundation"}}
@@ -70,7 +70,7 @@ GENERIC_NAMES = frozenset({"list", "tuple", "dict", "set", "frozenset"})
 
 # 利用側が使う関数の宣言(module → 関数の名 → 期待する答えの型)。
 EXPECTED_RETURNS = {
-    "shared/protocol/detached": {
+    "_shared/protocol/detached": {
         "service_facts_of_view": "_Program[tuple[ServiceFact, ...], object]",
         "services_read": "_Program[tuple[ServiceFact, ...] | ServicesUnreachable, object]",
     },
@@ -114,7 +114,7 @@ def test_the_service_list_readers_declare_typed_answers(module: str, name: str) 
 
 def test_read_services_declares_its_answer_type() -> None:
     # effect の答えの型は基底の型の引数(`_doeff_effect_base[答え]`)— 利用側の `(<- services (ReadServices))` が答えの型を得る所。
-    declared = _declared("shared/intent/detached_model")
+    declared = _declared("_shared/intent/detached_model")
     classes = {node.name: node for node in declared.body if isinstance(node, ast.ClassDef)}
     aliases = {
         node.target.id: ast.unparse(node.value)

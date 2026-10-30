@@ -138,7 +138,7 @@ def test_the_wal_store_satisfies_the_byte_log_shape(tmp_path: Path) -> None:
 # 分解した先まで型つきで読めるか。
 LEASE_STEP = """\
 (require doeff-hy.macros [defk])
-(import doeff_cluster.shared.core.lease_rules [lease-op lease-full-until])
+(import doeff_cluster._shared.core.lease_rules [lease-op lease-full-until])
 
 (defk lease-claim-passes [row]
   {:pre [(: row (| (get dict #(str object)) None))] :post [(: % bool)] :tags {:context "probe" :role "judgment"}}

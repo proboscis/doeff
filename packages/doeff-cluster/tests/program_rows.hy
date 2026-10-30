@@ -11,9 +11,9 @@
 (import doeff_cluster._coordinator.core.program_policy [program-write])
 (import doeff_cluster._coordinator.intent.request_bodies [ProgramBody HeartbeatBody TaskBody BodyMalformed])
 (import doeff_cluster._coordinator.protocol.request_bodies [body-of])
-(import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.shared.intent.protocol [BodyInvalid])
-(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster [http-request])
+(import doeff_cluster [BodyInvalid])
+(import doeff_cluster [program-sha])
 
 ;; 置き場のキーの見本(64 桁の sha256 の形 — coordinator は /programs に在るかを Service の行の受け付けでは確かめない)。
 (val SAMPLE-PROGRAM (* "a" 64))

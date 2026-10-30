@@ -4,7 +4,7 @@
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
 (import doeff [EffectBase])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_core_effects [Spawn Task])
 (import doeff_cluster [sim-cluster SimOutside SimWorker ProcessOutside ProcessesOf KillWorker Crash KeepChild])
 (import tests.fixtures.envs [sim-foundation])

@@ -2,7 +2,7 @@
 ;;; job が持つ。取り下げ = 台数 0 の系の宣言し直し)。
 (require doeff-hy.macros [defk])
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster [System])
 
 
 (defk with-replicas [system replicas]

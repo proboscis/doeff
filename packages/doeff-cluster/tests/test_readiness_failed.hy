@@ -11,11 +11,11 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass])
 (import doeff_cluster [sim-cluster SimWorker])
-(import doeff_cluster.shared.intent.cluster_control [AwaitReadiness ServiceReadiness ServiceFailed ReadinessWaitExpired
-                                                     AwaitJobProcess JobProcessSeen JobProcessWaitExpired Crash])
-(import doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [AwaitReadiness ServiceReadiness ServiceFailed ReadinessWaitExpired AwaitJobProcess JobProcessSeen JobProcessWaitExpired Crash])
+(import doeff_cluster [JobPhase])
+(import doeff_cluster [RuntimeEnv]
+        doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [WorkerPolicy])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons])

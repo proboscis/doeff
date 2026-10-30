@@ -18,8 +18,8 @@ from doeff_hy._frozen import thaw_json as thaw_json
 from doeff_hy._table import Table as Table
 from doeff_hy._table import TableWrite as TableWrite
 from doeff_hy._table import table_of as table_of
-from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
-from doeff_cluster.shared.intent.protocol import NextRequests as NextRequests
+from doeff_cluster._shared.core.clock import now_epoch_ms as now_epoch_ms
+from doeff_cluster._shared.intent.protocol import NextRequests as NextRequests
 from doeff_cluster._coordinator.intent.cluster_model import DeploymentReading as DeploymentReading
 from doeff_cluster._coordinator.intent.cluster_model import DeploymentSeen as DeploymentSeen
 from doeff_cluster._coordinator.intent.cluster_model import DeploymentUnreadable as DeploymentUnreadable

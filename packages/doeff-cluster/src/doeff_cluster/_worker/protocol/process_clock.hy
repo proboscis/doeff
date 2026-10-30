@@ -4,7 +4,7 @@
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import doeff_core_effects [FileFailed ReadText])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._worker.intent.worker_model [ProcessStartedMs])
 (import doeff_cluster._worker.core.boot_timing [process-start-ms])
 

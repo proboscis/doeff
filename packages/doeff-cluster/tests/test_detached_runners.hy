@@ -24,15 +24,14 @@
 (import doeff_time [Delay SimClock sim-time-handler])
 (import os)
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown
-                                      DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable
-                                      RunnerFact RunnersUnreachable])
-(import doeff_cluster.shared.protocol.detached [detached-cluster service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable RunnerFact RunnersUnreachable])
+(import doeff_cluster [detached-cluster]
+        doeff_cluster._shared.protocol.detached [service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster [sim-cluster SimWorker KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
-(import doeff_cluster.shared.entry.service_build [system-of])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster [system-of])
+(import doeff_cluster [submit-detached-task])
 (import doeff_cluster._coordinator.core.coordinator_invariants [StoppedGeneration TaskPlacementSeen stopped-generation-gets-no-new-task])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop])
 

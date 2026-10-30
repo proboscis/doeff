@@ -4,7 +4,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import doeff [run])
 (import doeff_hy._wire [parse Malformed])
-(import doeff_cluster.shared.intent.protocol [Request ClusterTiming BodyInvalid])
+(import doeff_cluster._shared.intent.protocol [Request ClusterTiming BodyInvalid])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
 (import doeff_cluster._coordinator.core.cluster_policy [declared-job-from-json])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field])

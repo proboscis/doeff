@@ -23,8 +23,8 @@
 (import tests.stop_fixtures [stop-signal-never-comes])
 (import tests.wake_fixtures [wakes-every])
 (import tests.host_rig [host-settings])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [ReapJob SignalJob StopStage CodeView CodeState WorldView ProcessView JobRecord WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus PrepareCode ReleaseLeases]
         doeff_cluster._worker.intent.worker_model [Outcome Undeclared DesiredJobs])
 (import doeff_cluster._worker.core.policy [ExitNote exit-signal exit-notes])

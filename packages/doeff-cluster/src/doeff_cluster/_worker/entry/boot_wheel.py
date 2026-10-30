@@ -4,7 +4,7 @@ Rust の部品を組む・引く入口は doeff の build の口 tools/doeff_car
 持たず、実行環境の準備(worker の EnsureNativeWheel)と同じく `uv build --wheel` でその口を通るだけ: 口は source の中身の鍵で保存先
 ($WORK_DIR/state/wheels — env DOEFF_WHEEL_CACHE)を引き、無い時だけ組んで置く。入れる wheel は uv build が root の下の --out-dir
 (<root>/.native-wheels/doeff-vm/)に出した file。口が報告の file(env DOEFF_WHEEL_REPORT)に書く「組んだか」は観測だけ(書かれなければ
-「不明」)。uv の子の環境・--out-dir の置き場・錠・報告の読みの定義点は doeff_cluster.shared.core.native_wheel の 1 つ。
+「不明」)。uv の子の環境・--out-dir の置き場・錠・報告の読みの定義点は doeff_cluster._shared.core.native_wheel の 1 つ。
 
 標準ライブラリと native_wheel・foundation/process_environ だけを import する: boot.sh は doeff-vm を入れる前の venv(uv sync --no-install-package
 doeff-vm)の python でこれを起こす。
@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 
 from doeff_cluster._foundation.process_environ import child_environ
-from doeff_cluster.shared.core import native_wheel
+from doeff_cluster._shared.core import native_wheel
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の入口 shim.py と同じ。
 MODULE_TAGS = {"context": "worker", "role": "main"}

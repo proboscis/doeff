@@ -21,7 +21,7 @@
 (import doeff_core_effects [state])
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster [now-epoch-ms monotonic-ms-of])
 (import doeff_cluster [WorldView WorkerPolicy ReadDesired ObserveWorld EnvReport PublishStatus]
         doeff_cluster._worker.intent.worker_model [WorkerState DesiredJobs DesiredUnreadable HeartbeatSent])
 (import doeff_cluster._worker.core.program [worker-tick TICK-LAG-LOG HEARTBEAT-GAP-LOG])

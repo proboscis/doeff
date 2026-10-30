@@ -11,14 +11,14 @@
 (import doeff [EffectBase Program with-handlers])
 (import doeff_time [Delay])
 (import doeff_events [BrokerPatience EventBus MemoryBroker WaitForEvent broker-patience-handler memory-notice-handler notice-events-handler subscribed-event-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [WorkerBack WorkerGone])
 (import doeff_cluster [WORKER-NOTICE-READS])
-(import doeff_cluster.shared.intent.cluster_control [KillWorker])
+(import doeff_cluster [KillWorker])
 (import doeff_cluster [sim-cluster PartsOf SimWorker StallWorker StallCoordinator ReadCoordinator CoordinatorRuns CoordinatorSteps CutWorker]
         doeff_cluster._sim.local [SimParts])
-(import doeff_cluster.shared.intent.cluster_control [StopCoordinator])
+(import doeff_cluster [StopCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [pulses])
 

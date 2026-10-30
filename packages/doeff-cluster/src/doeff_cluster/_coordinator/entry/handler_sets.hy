@@ -24,7 +24,7 @@
 (import doeff_cluster._foundation.wal_store [WalStore] doeff_cluster._coordinator.protocol.store [durable-states wal-store])
 (import doeff_cluster._coordinator.protocol.replies [reply-bodies])
 (import doeff_cluster._coordinator.protocol.kube [KubeMemory MemoryFollows kube-memory])
-(import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster.shared.protocol.inbox [http-requests stop-flag] doeff_cluster._coordinator.protocol.faults [coordinator-faults])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState] doeff_cluster._shared.protocol.inbox [http-requests stop-flag] doeff_cluster._coordinator.protocol.faults [coordinator-faults])
 (import doeff_events [MemoryBroker broker-back-by-retry memory-notice-handler notice-events-handler redis-notice-handler])
 (import doeff_cluster._coordinator.protocol.worker_notices [WORKER-NOTICE-ROUTES])
 

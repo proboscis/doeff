@@ -15,11 +15,11 @@
 ;;; 送り手はその欄で、この問いを知らない旧い coordinator(vacate を読まずに素の空きの待ちと答える)を見分ける(watch-answer-body)。
 (require doeff-hy.macros [defk deff <- val var])
 (import dataclasses [astuple replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming Request])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState HeartbeatReply Watcher WatchRefusal WatchAnswer WatchStep])
 (import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster._coordinator.core.resource_policy [ready-instances])
-(import doeff_cluster.shared.core.lease_rules [lease-full-until outside-holders semaphore-key])
+(import doeff_cluster._shared.core.lease_rules [lease-full-until outside-holders semaphore-key])
 
 ;; 見え方に数えない返事の欄は版(revision — 版が進むたびに変わる)だけ。worker-mark が 0 にして比べる。
 ;; 温める表(warm)は見え方に入る: その worker に当たる行(cluster_policy.warms-for — 返事と同じ選び方)の鍵と宣言だけで、期限は

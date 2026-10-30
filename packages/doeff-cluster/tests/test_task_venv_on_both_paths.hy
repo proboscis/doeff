@@ -48,9 +48,9 @@
 (import doeff_core_effects [ForkFromWarm WarmForked WarmRefused AwaitWarmChildExit PollWarmChild WarmExited WarmRunning WarmLost])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster [HOST-CONTRACT])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [RuntimeEnv])
+(import doeff_cluster [runtime-env->json])
 (import doeff_cluster [CodeLayout StartWarmChild StopWarmChild StopStage WorkerPolicy]
         doeff_cluster._worker.intent.worker_model [WarmLaunch WarmChildView])
 (import doeff_cluster [ObserveWarmChildren])

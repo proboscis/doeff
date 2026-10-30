@@ -33,7 +33,7 @@ print(json.dumps(loaded))
 """
 
 ENTRY = "doeff_cluster._worker.entry.job_entry"
-FOUNDATION = "doeff_cluster.shared.entry.cluster_foundation"
+FOUNDATION = "doeff_cluster._shared.entry.cluster_foundation"
 
 # どの子も読まない module(名か、その名の下の module)。
 NEVER = ("rich", "pygments", "click", "httpx._main", "doeff_cluster._coordinator", "pydantic", "pydantic_core")

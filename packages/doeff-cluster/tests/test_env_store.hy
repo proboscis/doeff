@@ -19,7 +19,7 @@
 (import tests.transport_http [transport-http])
 (import doeff_cluster [coordinator-link])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster [ENV-MARKER])
 (import doeff_cluster [CodeState EnvReport ReadDesired]
         doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable])
 (import doeff_cluster [ObserveEnvs])
@@ -29,7 +29,7 @@
 (import doeff_cluster._worker.protocol.env_translation [request-of-json])
 (import doeff_cluster [env-marker->json])
 (import doeff_cluster [EnvMarker])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster [RuntimeEnv])
 (import tests.env_fixtures [LOCK env-of])
 
 (val READY-NAME "0123456789abcdef01234567")

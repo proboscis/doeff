@@ -15,9 +15,9 @@
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import pytest)
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterJob WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [WorkerReport Placement KeepMark Drain])
 (import doeff_cluster._coordinator.intent.request_bodies [StatusRow])

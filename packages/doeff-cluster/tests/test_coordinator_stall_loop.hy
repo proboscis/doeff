@@ -19,8 +19,8 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import doeff_events [MemoryBroker])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState ClusterNaming SaveState])
 (import doeff_cluster [run-coordinator]
         doeff_cluster._coordinator.core.program [STALL-LOG])

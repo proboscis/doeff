@@ -1,4 +1,4 @@
-;; 入口の検め(doeff_cluster/shared/core/runtime_identity.hy)の検。
+;; 入口の検め(doeff_cluster/_shared/core/runtime_identity.hy)の検。
 ;;
 ;;   * 宣言・印・キー・module の置き場が揃えば一致を答え、宣言の repo と commit と pid を返す。
 ;;   * env-vars だけ違う宣言が同じ root(同じキー)を使い回しても一致(キーの材料は root の中身を決める欄だけ)。
@@ -14,14 +14,16 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import json)
 (import doeff [with_handlers])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject EnvVar])
-(import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json env-key])
+(import doeff_cluster [RuntimeEnv RepoCheckout PythonProject EnvVar])
+(import doeff_cluster [runtime-env->json env-key])
 (import doeff_cluster [env-marker->json] doeff_cluster [EnvMarker])
-(import doeff_cluster.shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin ProcessFacts RootMarker RuntimeIdentity RuntimeIdentityMismatch RepoCommit])
-(import doeff_cluster.shared.intent.env_marker_model [BytecodeCounts TreeCounts])
-(import doeff_cluster.shared.core.runtime_identity [check-runtime-identity decode-marker marker-bytecode])
+(import doeff_cluster [ModuleOrigin ProcessFacts RuntimeIdentityMismatch]
+        doeff_cluster._shared.intent.runtime_identity_model [IdentityFailureKind RootMarker RuntimeIdentity RepoCommit])
+(import doeff_cluster._shared.intent.env_marker_model [BytecodeCounts TreeCounts])
+(import doeff_cluster [check-runtime-identity]
+        doeff_cluster._shared.core.runtime_identity [decode-marker marker-bytecode])
 (import doeff_hy._wire [Malformed])
-(import doeff_cluster.shared.protocol.runtime_facts [given-runtime-facts])
+(import doeff_cluster [given-runtime-facts])
 
 (val AC-COMMIT (* "a" 40))
 (val DF-COMMIT (* "d" 40))

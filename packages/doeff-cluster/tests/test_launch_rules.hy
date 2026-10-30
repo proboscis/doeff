@@ -6,9 +6,10 @@
 (import dataclasses)
 (import pytest)
 (import doeff_core_effects [EnvEntry])
-(import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch DesireWorker DesireCoordinator])
-(import doeff_cluster.shared.core.launch_rules [worker-launch-env coordinator-launch-env worker-launch-of-env coordinator-launch-of-env
-                                              LaunchEnvMissing WORKER-LAUNCH-FIELDS COORDINATOR-LAUNCH-FIELDS worker-launch-names])
+(import doeff_cluster [DesireWorker DesireCoordinator]
+        doeff_cluster._shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
+(import doeff_cluster [LaunchEnvMissing]
+        doeff_cluster._shared.core.launch_rules [worker-launch-env coordinator-launch-env worker-launch-of-env coordinator-launch-of-env WORKER-LAUNCH-FIELDS COORDINATOR-LAUNCH-FIELDS worker-launch-names])
 
 (val SHA "90fd9a81d97ddf1cf5ae13a4036fa615108abbe7")
 

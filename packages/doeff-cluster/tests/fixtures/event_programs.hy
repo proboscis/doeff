@@ -4,7 +4,7 @@
 ;;; event-handler を置き、柵は WaitForEventEffect と PublishEffect を外へ通す。
 ;;; 止めの合図の検(#3145)の service は、出来事の答え手(memory の購読者の bus)を本体の中に並べる — 柵の外の世界を要らない。
 (require doeff-hy.macros [defk <- val])
-(require doeff-cluster.shared.entry.macros [defsystem])
+(require doeff-cluster.macros [defsystem])
 (require doeff-hy.record [defrecord])
 (require doeff-events.macros [event-loop])
 (import collections.abc [Callable])
@@ -14,7 +14,7 @@
 (import doeff_events [ArmTimer TimerFired WaitForEvent EventBus subscribed-event-handler])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_time [GetTime])
-(import doeff_cluster.shared.intent.shared_model [WriteShared])
+(import doeff_cluster [WriteShared])
 
 
 (defrecord Ping

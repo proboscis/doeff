@@ -13,7 +13,7 @@
 (import doeff_hy._table [TableWrite])
 (import re)
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ProgramRow ProgramStored ErrorReply])
-(import doeff_cluster.shared.core.remote_rules [program-sha])
+(import doeff_cluster._shared.core.remote_rules [program-sha])
 (import doeff_cluster._coordinator.intent.request_bodies [ProgramBody])
 
 (setv PROGRAM-KEY (re.compile r"[0-9a-f]{64}"))

@@ -18,10 +18,11 @@
 (import os)
 (import dataclasses [replace])
 (import pytest)
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.core.job_rules [spec-hash spec-hash-matches content-refusal])
-(import doeff_cluster.shared.entry.service_build [job system-of system-declaration])
-(import doeff_cluster.shared.intent.service_model [CallShape System])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [spec-hash]
+        doeff_cluster._shared.core.job_rules [spec-hash-matches content-refusal])
+(import doeff_cluster [job system-of system-declaration])
+(import doeff_cluster [CallShape System])
 (import doeff_cluster [process-versions])
 (import doeff_cluster [spec-of-declaration]
         doeff_cluster._coordinator.core.cluster_policy [job-from-json job-to-json])

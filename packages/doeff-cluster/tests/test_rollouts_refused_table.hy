@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [RefusedJob RolloutRow RolloutStatus TaskRecord])
 (import doeff_cluster._coordinator.core.api_policy [plan-rollouts record-action])

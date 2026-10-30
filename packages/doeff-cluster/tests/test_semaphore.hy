@@ -13,12 +13,13 @@
 (import doeff [with_handlers Program run])
 (import doeff_core_effects [Spawn Gather Wait Cancel TaskCancelledError AcquireSemaphore ReleaseSemaphore Semaphore Task])
 (import doeff_time [Delay SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
+(import doeff_cluster [now-epoch-ms])
 (import tests.clock_fixtures [clock-at clock-ms])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.shared.intent.semaphore_model [CreateNamedSemaphore ClusterSemaphore LeaseLost])
-(import doeff_cluster.shared.core.lease_rules [semaphore-key claim renew release])
-(import doeff_cluster.shared.core.semaphore_handlers [named-semaphore-local cluster-semaphore SemaphoreSession])
+(import doeff_cluster [CreateNamedSemaphore ClusterSemaphore LeaseLost])
+(import doeff_cluster [semaphore-key]
+        doeff_cluster._shared.core.lease_rules [claim renew release])
+(import doeff_cluster [named-semaphore-local cluster-semaphore SemaphoreSession])
 
 
 ;; --- 業務の形の Program(scheduler の effect だけを使う) --------------------------------------
@@ -232,10 +233,10 @@
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
 (require doeff-hy.macros [defhandler])
-(import doeff_cluster.shared.intent.shared_model [ReadShared WriteShared])
-(import doeff_cluster.shared.intent.semaphore_model [HeldLease WriteFenced LeaseOp AwaitLeaseFree LeaseAnswer])
-(import doeff_cluster.shared.core.lease_rules [fence-verdict])
-(import doeff_cluster.shared.core.semaphore_handlers [leases-fence])
+(import doeff_cluster [ReadShared WriteShared])
+(import doeff_cluster [HeldLease WriteFenced LeaseOp AwaitLeaseFree LeaseAnswer])
+(import doeff_cluster._shared.core.lease_rules [fence-verdict])
+(import doeff_cluster [leases-fence])
 
 (defclass [(dataclass :frozen True)] FakeWrite [EffectBase]
   "柵の向こうの書き(本番では業務の書き先への書き)。"
@@ -630,7 +631,7 @@
 
 ;; --- lease の立場(待機の process の書きを捨てる — 2026-09-24)---------------------------------------------
 
-(import doeff_cluster.shared.intent.semaphore_model [LeaseStanding STANDBY HELD LOST])
+(import doeff_cluster [LeaseStanding STANDBY HELD LOST])
 
 (defk standing-story [log]
   {:pre [(: log list)] :post [(: % (type None))]}

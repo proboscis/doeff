@@ -33,7 +33,7 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import enum [StrEnum])  ; defenum の展開が使う
 (import json)
-(import doeff_cluster.shared.core.capabilities [HOST-PREFIX capabilities-of pool-refusal])
+(import doeff_cluster._shared.core.capabilities [HOST-PREFIX capabilities-of pool-refusal])
 
 ;; 枠の file を読み直す間。kubelet が ConfigMap の変更を Pod の file へ写すのに 1 分前後かかるので、拍ごとに読まなくても遅れは増えない。
 (val READ-EVERY-MS (* 10 1000))

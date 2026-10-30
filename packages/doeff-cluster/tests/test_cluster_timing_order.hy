@@ -14,9 +14,10 @@
 (import tests.state_rows [table-from-rows])
 (import doeff_events [MemoryBroker])
 (import pytest)
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.core.timing_rules [scaled-timing])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster._shared.core.timing_rules [scaled-timing])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [ClusterState WorkerInfo])
 (import doeff_cluster [liveness-due]
         doeff_cluster._coordinator.core.cluster_policy [forget-silent-workers note-liveness])

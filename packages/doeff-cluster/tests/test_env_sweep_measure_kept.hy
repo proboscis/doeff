@@ -24,7 +24,7 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [MeasureTree])
 (import doeff_time [Delay sync-time-handler])
-(import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster [ENV-MARKER])
 (import doeff_cluster [SweepEnvs])
 (import doeff_cluster [ObserveEnvs])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])

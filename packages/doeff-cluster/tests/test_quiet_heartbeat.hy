@@ -3,8 +3,8 @@
 ;; 回した答えと同じで、変化のある heartbeat(報告の行が変わる・沈黙から戻る)は早道に入らない。
 (require doeff-hy.macros [defk deftest <- val])
 (import doeff [run])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterState])
 (import doeff_cluster [tick]
         doeff_cluster._coordinator.core.api_policy [respond quiet-heartbeat])

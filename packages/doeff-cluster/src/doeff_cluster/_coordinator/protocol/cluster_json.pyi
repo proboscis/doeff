@@ -9,14 +9,14 @@ from doeff_cluster._coordinator.intent.cluster_model import HandoffWatch as Hand
 from doeff_cluster._coordinator.intent.cluster_model import ClusterNaming as ClusterNaming
 from doeff_cluster._coordinator.intent.cluster_model import TaskRecord as TaskRecord
 from doeff_cluster._coordinator.intent.cluster_model import ENDED_PHASES as ENDED_PHASES
-from doeff_cluster.shared.intent.detached_model import DetachedEnded as DetachedEnded
-from doeff_cluster.shared.intent.detached_model import OUTBOX_ENDED as OUTBOX_ENDED
-from doeff_cluster.shared.core.capabilities import POOL_PREFIX as POOL_PREFIX
-from doeff_cluster.shared.core.capabilities import capabilities_of as capabilities_of
-from doeff_cluster.shared.core.capabilities import environ_pairs as environ_pairs
-from doeff_cluster.shared.core.detached_rules import task_limits_refusal as task_limits_refusal
-from doeff_cluster.shared.core.detached_rules import task_limits_of as task_limits_of
-from doeff_cluster.shared.core.detached_rules import task_limits_json as task_limits_json
+from doeff_cluster._shared.intent.detached_model import DetachedEnded as DetachedEnded
+from doeff_cluster._shared.intent.detached_model import OUTBOX_ENDED as OUTBOX_ENDED
+from doeff_cluster._shared.core.capabilities import POOL_PREFIX as POOL_PREFIX
+from doeff_cluster._shared.core.capabilities import capabilities_of as capabilities_of
+from doeff_cluster._shared.core.capabilities import environ_pairs as environ_pairs
+from doeff_cluster._shared.core.detached_rules import task_limits_refusal as task_limits_refusal
+from doeff_cluster._shared.core.detached_rules import task_limits_of as task_limits_of
+from doeff_cluster._shared.core.detached_rules import task_limits_json as task_limits_json
 
 def handoff_watch_from_json(data: dict) -> HandoffWatch:
     ...

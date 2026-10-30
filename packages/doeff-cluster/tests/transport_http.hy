@@ -8,13 +8,13 @@
 (import httpx)
 (import doeff [run])
 (import doeff_core_effects [HttpRequest HttpResponse HttpFailed HttpFailureKind])
-(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions])
 (import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
-(import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
+(import doeff_cluster._shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import os)
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.protocol.detached [DetachedSender])
+(import doeff_cluster [RuntimeEnv])
+(import doeff_cluster._shared.protocol.detached [DetachedSender])
 
 ;; 検の coordinator の宛先(MockTransport は宛先を見ない)と、口の送り方(本番の組み立てと同じ値)。
 (val COORDINATOR-URL "http://coordinator")

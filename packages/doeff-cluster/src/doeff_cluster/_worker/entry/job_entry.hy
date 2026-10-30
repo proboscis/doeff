@@ -37,14 +37,14 @@
 (import doeff_core_effects [FileFailed ReadText WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded TaskFailed VersionMismatch RemoteJobFailed])
-(import doeff_cluster.shared.core.remote_rules [version-diffs diffs-text failed-from])
-(import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
+(import doeff_cluster._shared.intent.remote_model [TaskSucceeded TaskFailed VersionMismatch RemoteJobFailed])
+(import doeff_cluster._shared.core.remote_rules [version-diffs diffs-text failed-from])
+(import doeff_cluster._shared.protocol.program_codec [decode-program encode-outcome])
 (import doeff_cluster._foundation.process_versions [this-process-versions])
 ;; 子の文脈の型と読みは入口でない module に 1 つだけ置く(shared/intent/run_context の頭の註 — ここは import して、今の名を引けるように残す)。
-(import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.shared.core.run_context_rules [runtime-env-of-context])
-(import doeff_cluster.shared.entry.run_context_env [context-from-env])
+(import doeff_cluster._shared.intent.run_context [RunContext])
+(import doeff_cluster._shared.core.run_context_rules [runtime-env-of-context])
+(import doeff_cluster._shared.entry.run_context_env [context-from-env])
 ;; 結果の届け(worker/entry/result_delivery — 本物の HTTP の handler と httpx を読む)は task の道だけが要るので、run-task の中で読む。
 ;; 頭で読むと、届けを使わない service の子まで起動で読んでいた。
 

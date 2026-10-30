@@ -8,18 +8,18 @@ from datetime import datetime as datetime
 import re as re
 from doeff_time import GetMonotonic as GetMonotonic
 from doeff_time import GetTime as GetTime
-from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
-from doeff_cluster.shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
-from doeff_cluster.shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
-from doeff_cluster.shared.intent.runtime_env_model import SUPPORTED_CHILD_PROTOCOLS as SUPPORTED_CHILD_PROTOCOLS
-from doeff_cluster.shared.core.runtime_env_rules import env_failure as env_failure
-from doeff_cluster.shared.core.runtime_env_rules import root_split as root_split
-from doeff_cluster.shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
-from doeff_cluster.shared.core.runtime_env_rules import repo_source_material as repo_source_material
-from doeff_cluster.shared.core.runtime_env import project_dir as project_dir
-from doeff_cluster.shared.core.native_wheel import wheel_out_dir as wheel_out_dir
+from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
+from doeff_cluster._shared.intent.runtime_env_model import RepoCheckout as RepoCheckout
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailureKind as EnvFailureKind
+from doeff_cluster._shared.intent.runtime_env_model import CHILD_PROTOCOL as CHILD_PROTOCOL
+from doeff_cluster._shared.intent.runtime_env_model import SUPPORTED_CHILD_PROTOCOLS as SUPPORTED_CHILD_PROTOCOLS
+from doeff_cluster._shared.core.runtime_env_rules import env_failure as env_failure
+from doeff_cluster._shared.core.runtime_env_rules import root_split as root_split
+from doeff_cluster._shared.core.runtime_env_rules import hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson
+from doeff_cluster._shared.core.runtime_env_rules import repo_source_material as repo_source_material
+from doeff_cluster._shared.core.runtime_env import project_dir as project_dir
+from doeff_cluster._shared.core.native_wheel import wheel_out_dir as wheel_out_dir
 from doeff_cluster._worker.intent.env_prepare_model import PrepareRequest as PrepareRequest
 from doeff_cluster._worker.intent.env_prepare_model import StageTime as StageTime
 from doeff_cluster._worker.intent.env_prepare_model import StagePart as StagePart
@@ -55,8 +55,8 @@ from doeff_cluster._worker.intent.env_prepare_model import ReadHyVersion as Read
 from doeff_cluster._worker.intent.env_prepare_model import CompileTrees as CompileTrees
 from doeff_cluster._worker.intent.env_prepare_model import ProbeImports as ProbeImports
 from doeff_cluster._worker.intent.env_prepare_model import WriteEnvMarker as WriteEnvMarker
-from doeff_cluster.shared.intent.env_marker_model import ENV_MARKER_FORMAT as ENV_MARKER_FORMAT
-from doeff_cluster.shared.intent.env_marker_model import FileSha256 as FileSha256
+from doeff_cluster._shared.intent.env_marker_model import ENV_MARKER_FORMAT as ENV_MARKER_FORMAT
+from doeff_cluster._shared.intent.env_marker_model import FileSha256 as FileSha256
 
 def absolute_roots(env: RuntimeEnv, root: str) -> _Program[tuple, object]:
     ...

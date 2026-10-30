@@ -1,4 +1,4 @@
-;; job の宣言の指紋 spec-hash(doeff_cluster.shared.core.job_rules)の値と、値ごとに 1 度だけ計って値の中に覚える形(JobSpec.fingerprint — #3774)。
+;; job の宣言の指紋 spec-hash(doeff_cluster._shared.core.job_rules)の値と、値ごとに 1 度だけ計って値の中に覚える形(JobSpec.fingerprint — #3774)。
 ;;
 ;; - 指紋の値は覚える形にする前と同じ(固定の値の指紋が、前の版で計った文字列と一致する)。
 ;; - 覚えた指紋は古くならない: 比べる欄を 1 つ替えた値は別の指紋になり、同じ欄で新しく作った値の指紋と一致する。
@@ -8,8 +8,8 @@
 (import dataclasses [replace])
 (import hashlib)
 (import json)
-(import doeff_cluster.shared.intent.job_model [JobSpec])
-(import doeff_cluster.shared.core.job_rules [spec-hash])
+(import doeff_cluster [JobSpec])
+(import doeff_cluster [spec-hash])
 
 
 (val BASE (JobSpec "svc" "pkg.entry" #("service" "--identity" "abc") "rev1"))

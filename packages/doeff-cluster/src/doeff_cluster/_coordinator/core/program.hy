@@ -39,8 +39,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import dataclasses [replace])
 (import doeff_time [GetMonotonic])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested ServiceReached Request])
+(import doeff_cluster._shared.core.clock [now-epoch-ms datetime-of-epoch-ms monotonic-ms-of])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming NextRequests Reply CoordinatorStopRequested ServiceReached Request])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ErrorReply ClusterNaming SaveState Fault CoordinatorFault Watcher WatchRefusal WatchAnswer WatchStep
                                                        DeploymentUnreadable NodeLabelsUnreadable])
 (import doeff_cluster._coordinator.core.watch_policy [watch-of settle-watch watch-answer-body])
@@ -55,7 +55,7 @@
 (import doeff_core_effects [Spawn])
 (import doeff_events [Publish NoticeSent NoticeGapMarked NoticeDropped])
 (import doeff_cluster._coordinator.core.cluster_policy [liveness-moves liveness-now note-liveness])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._coordinator.core.wake_policy [next-wake after-step wait-seconds planned-wake-ms count-unsettled])
 (import doeff_cluster._coordinator.core.detached_policy [outbox-noted queued-noticed])
 

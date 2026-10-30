@@ -20,9 +20,9 @@
 (import doeff_core_effects [scheduled])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay GetTimeEffect SimClock sim-time-handler])
-(import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
+(import doeff_cluster [http-request])
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
 (import doeff_cluster [ClusterState ClusterNaming SaveState])
 (import doeff_cluster [run-coordinator]

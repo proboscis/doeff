@@ -3,8 +3,8 @@
 ;;; (前の形で検が WorkerPolicy の tick-seconds に渡していた刻みと同じ間で周が回る)。
 (require doeff-hy.macros [defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "foundation"})
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.due_model [DueAt])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [WorkerWakes]
         doeff_cluster._worker.intent.worker_model [WakeSet])
 

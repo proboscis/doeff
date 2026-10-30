@@ -20,8 +20,8 @@ from types import ModuleType
 
 import hy  # noqa: F401  # .hy の module の import hook(3 つとも .hy の module — 検だけを単独で走らせても読めるように)
 import pytest
-from doeff_cluster.shared.intent import metrics_model, protocol
-from doeff_cluster.shared.protocol import meter_report
+from doeff_cluster._shared.intent import metrics_model, protocol
+from doeff_cluster._shared.protocol import meter_report
 
 from tests.stub_names import name_mismatches
 
@@ -32,9 +32,9 @@ MODULE = """\
 (import doeff [Program EffectBase with-handlers])
 (import doeff_core_effects._meter_effects [MeterSettings])
 (import doeff_core_effects._memory_meter [memory-meter-handler])
-(import doeff_cluster.shared.intent.metrics_model [ReportMetrics])
-(import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.shared.protocol.meter_report [with-meter-report])
+(import doeff_cluster._shared.intent.metrics_model [ReportMetrics])
+(import doeff_cluster._shared.intent.protocol [PlainText])
+(import doeff_cluster._shared.protocol.meter_report [with-meter-report])
 
 (defk probe-reported [body]
   {:pre [(: body (| Program EffectBase))] :post [(: % int)] :tags {:context "probe" :role "foundation"}}

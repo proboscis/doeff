@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import datetime [datetime timedelta])
 (import doeff_time [DelayEffect GetTimeEffect SimClock epoch-ms-of])
-(import doeff_cluster.shared.core.clock [datetime-of-epoch-ms])
+(import doeff_cluster [datetime-of-epoch-ms])
 
 
 (defk clock-at [ms]

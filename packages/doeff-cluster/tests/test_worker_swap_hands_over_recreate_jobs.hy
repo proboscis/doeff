@@ -19,8 +19,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [PlainText])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [PlainText])
 (import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf RollWorker DrainGeneration StopElder ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.working_programs [keeping-hosts])

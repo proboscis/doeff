@@ -17,7 +17,7 @@
 (import pathlib [Path])
 (import doeff_core_effects._os_process [STARTED-CHILDREN])
 (import doeff_core_effects [StartProcess])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [WorkerPolicy StartJob SignalJob ReapJob StopStage ProcessView]
         doeff_cluster._worker.intent.worker_model [Outcome Undeclared])
 (import doeff_cluster [ObserveProcesses])

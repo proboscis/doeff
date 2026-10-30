@@ -6,7 +6,7 @@
 (import doeff [with-handlers])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster [coordinator-calls])
-(import doeff_cluster.shared.protocol.coordinator_route [CoordinatorRoute RouteCell])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell])
 (import doeff_cluster [CoordinatorCall])
 (import tests.transport_http [transport-http TEST-ROUTE])
 

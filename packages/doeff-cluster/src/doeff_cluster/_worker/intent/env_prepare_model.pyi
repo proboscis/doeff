@@ -3,9 +3,9 @@
 from dataclasses import dataclass as dataclass
 from enum import StrEnum as StrEnum
 from doeff import EffectBase as EffectBase
-from doeff_cluster.shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailure as EnvFailure
-from doeff_cluster.shared.intent.env_marker_model import BytecodeCounts as BytecodeCounts
+from doeff_cluster._shared.intent.runtime_env_model import RuntimeEnv as RuntimeEnv
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailure as EnvFailure
+from doeff_cluster._shared.intent.env_marker_model import BytecodeCounts as BytecodeCounts
 ROOTS_PTH: str
 
 @dataclass(frozen=True, kw_only=True)

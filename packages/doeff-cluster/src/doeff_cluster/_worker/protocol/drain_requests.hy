@@ -5,7 +5,7 @@
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import doeff_core_effects [HttpResponse HttpFailed])
-(import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
+(import doeff_cluster._shared.protocol.coordinator_route [RouteCell RouteOptions RoutedReply routed-request])
 (import doeff_cluster._worker.intent.drain_model [AskDrain CoordinatorCall])
 (import doeff_cluster._worker.core.drain_client [worker-path])
 

@@ -5,26 +5,26 @@
 ;;; 綴りはどれも defk で、呼び手は <- / ! で受ける(ADR-DOE-HY-004 R10 — 検と模擬の入口 responded は request_bodies.hy で run する)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
-(import doeff_cluster.shared.intent.protocol [Reply PlainText])
+(import doeff_cluster._shared.intent.protocol [Reply PlainText])
 (import dataclasses [asdict])
 (import json)
 (import collections.abc [Callable Iterable Mapping])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._coordinator.intent.cluster_model [EventsView StateReply StateView HeartbeatReply TaskOffer DrainPhase DrainProgress WorkerDrainView
                                                        ServiceObserved UnplacedView WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
                                                        DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
-(import doeff_cluster.shared.intent.warm_model [WarmState])
-(import doeff_cluster.shared.core.warm_rules [warm-state->json])
+(import doeff_cluster._shared.intent.warm_model [WarmState])
+(import doeff_cluster._shared.core.warm_rules [warm-state->json])
 (import doeff_hy._wire [dump])
-(import doeff_cluster.shared.intent.semaphore_model [LeaseAnswer])
+(import doeff_cluster._shared.intent.semaphore_model [LeaseAnswer])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json status-row-to-json])
 (import doeff_cluster._coordinator.protocol.state_json [audit-event-to-json])
-(import doeff_cluster.shared.core.detached_rules [group-limit-spec task-limits-json])
+(import doeff_cluster._shared.core.detached_rules [group-limit-spec task-limits-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
-(import doeff_cluster.shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster._shared.intent.detached_model [DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster._coordinator.protocol.cluster_json [ended-to-json])
 
 

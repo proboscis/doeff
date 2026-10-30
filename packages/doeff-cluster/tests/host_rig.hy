@@ -16,7 +16,7 @@
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [HOST-CONTRACT])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeLayout StartJob ReapJob ProcessView WorkerPolicy]
         doeff_cluster._worker.intent.worker_model [Outcome])
 (import doeff_cluster [ObserveProcesses])

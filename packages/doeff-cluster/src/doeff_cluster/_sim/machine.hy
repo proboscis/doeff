@@ -54,11 +54,11 @@
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster._foundation.process_versions [this-process-versions])
-(import doeff_cluster.shared.entry.declare [apply-declaration restart-service])
-(import doeff_cluster.shared.entry.service_build [system-declaration])
-(import doeff_cluster.shared.intent.protocol [PlainText])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
+(import doeff_cluster._shared.entry.declare [apply-declaration restart-service])
+(import doeff_cluster._shared.entry.service_build [system-declaration])
+(import doeff_cluster._shared.intent.protocol [PlainText])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
+(import doeff_cluster._shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
                                                      CrashCoordinator Redeclare RestartService ServiceRestarted RestartRefused Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
 (import doeff_cluster._sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
@@ -69,7 +69,7 @@
 (val PROBE-SECONDS 0.2)
 ;; coordinator の口の読み(準備の状態の読みと待ち・/state の読み)と、待ちの読み直しの間隔 WAIT-PROBE-SECONDS は、配備の cluster の handler と
 ;; 共有する部品(shared/protocol/coordinator_reads.hy — #3294 で移した)。job の process の待ちは、自分で起こした worker の行に絞るのでここに残す。
-(import doeff_cluster.shared.protocol.coordinator_reads [WAIT-PROBE-SECONDS readiness-read readiness-awaited state-of])
+(import doeff_cluster._shared.protocol.coordinator_reads [WAIT-PROBE-SECONDS readiness-read readiness-awaited state-of])
 ;; Redeclare が宣言の書きに載せる送り手の名(宣言の CLI の --actor と同じ役 — 出来事の記録に残る名)。
 (val MACHINE-ACTOR "local-machine")
 

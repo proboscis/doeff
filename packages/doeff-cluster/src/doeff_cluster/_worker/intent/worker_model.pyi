@@ -20,9 +20,9 @@ runtime_env_model.pyi と同じ形)。
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 
-from doeff_cluster.shared.intent.due_model import DueAt, DueNever, DueNow
-from doeff_cluster.shared.intent.job_model import JobPhase, JobSpec
-from doeff_cluster.shared.intent.runtime_env_model import EnvFailure
+from doeff_cluster._shared.intent.due_model import DueAt, DueNever, DueNow
+from doeff_cluster._shared.intent.job_model import JobPhase, JobSpec
+from doeff_cluster._shared.intent.runtime_env_model import EnvFailure
 from doeff_core_effects import Future
 from doeff_core_effects import AwaitProcessExit
 from doeff_core_effects import AwaitWarmChildExit

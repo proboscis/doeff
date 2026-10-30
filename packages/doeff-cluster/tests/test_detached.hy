@@ -30,34 +30,31 @@
 (import doeff_core_effects [Spawn Cancel Task TaskCancelledError])
 (import doeff_time [Delay SimClock sim-time-handler async-time-handler])
 (import tests.clock_fixtures [clock-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [ComponentVersion])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [http-request])
 (import doeff_cluster._coordinator.core.detached_policy [Reply submit-detached])
 (import doeff_cluster [tick])
 (import doeff_cluster [responded])
 (import tests.link_rig [LinkRig])
 
 (import doeff_cluster [JobStatus]
-        doeff_cluster._worker.intent.worker_model [DesiredJobs CutOff] doeff_cluster.shared.intent.job_model [JobPhase])
-(import doeff_cluster.shared.intent.remote_model [TaskSucceeded])
-(import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
-(import doeff_cluster.shared.core.remote_rules [failed-from])
+        doeff_cluster._worker.intent.worker_model [DesiredJobs CutOff] doeff_cluster [JobPhase])
+(import doeff_cluster [TaskSucceeded])
+(import doeff_cluster [decode-program]
+        doeff_cluster._shared.protocol.program_codec [encode-outcome])
+(import doeff_cluster._shared.core.remote_rules [failed-from])
 (import os)
 (import doeff_cluster [process-versions])
-(import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
-                                      DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
-                                      DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused
-                                      DetachedUnreachable DetachedAwaited DetachedUnrunnable
-                                      AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAcked])
-(import doeff_cluster.shared.protocol.detached [detached-cluster])
+(import doeff_cluster [SubmitDetached AwaitDetached CancelDetached ReleaseDetached DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused DetachedUnreachable DetachedAwaited DetachedUnrunnable AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAcked])
+(import doeff_cluster [detached-cluster])
 (import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster [sim-cluster SimWorker KillWorker ReadCoordinator])
 (import doeff_cluster [ProcessesOf])
-(import doeff_cluster.shared.entry.service_build [system-of])
+(import doeff_cluster [system-of])
 (import tests.detached_rig [slow-add RigWorker MemoryCoordinator worker-tick worker-loop RIG-PROVIDES])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
 
@@ -740,10 +737,10 @@
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster [load-state])
 (import doeff_cluster [WalStore])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster._worker.core.policy [kept-when-cut-off])
 (import doeff_cluster._worker.protocol.declared [task-spec])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster [submit-detached-task])
 
 (setv T (ClusterTiming) V {"python" "3.14.0" "doeff" "1"})
 
@@ -1402,8 +1399,8 @@
   ;; 要る能力を書かない本文(needs が無い・空)と旧い形の requires の本文は、POST /tasks・PUT /detached・POST /warm のどれでも
   ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
   (import tests.env_fixtures [LOCK env-of])
-  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
-  (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
+  (import doeff_cluster [RuntimeEnv])
+  (import doeff_cluster [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val reply-86 (! (beat (ClusterState) "w" 0)))
@@ -1440,9 +1437,9 @@
   ;; WarmRuntimeEnv は温める実行の環境そのものを欄 env(RuntimeEnv)に持つ — 旧い :env(import path の文字列)とは別の欄なので、
   ;; env は型が RuntimeEnv であることを確かめ、requires だけ無いことを確かめる。
   (import dataclasses [fields])
-  (import doeff_cluster.shared.intent.remote_model [RemoteJob])
-  (import doeff_cluster.shared.intent.warm_model [WarmRuntimeEnv])
-  (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])
+  (import doeff_cluster [RemoteJob])
+  (import doeff_cluster [WarmRuntimeEnv])
+  (import doeff_cluster [RuntimeEnv])
   (for [#(effect gone) [#(SubmitDetached ["env" "requires"]) #(RemoteJob ["env" "requires"]) #(WarmRuntimeEnv ["requires"])]]
     (val names (frozenset (gfor f (fields effect) f.name)))
     (assert (in "needs" names) #(effect.__name__ names))

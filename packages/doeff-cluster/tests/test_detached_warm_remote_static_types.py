@@ -20,19 +20,19 @@ from types import ModuleType
 import pytest
 
 import hy  # noqa: F401  # .hy の module を読む import hook を有効にする
-from doeff_cluster.shared.core import detached_rules, remote_rules, warm_rules
-from doeff_cluster.shared.intent import detached_model, remote_model, warm_model
+from doeff_cluster._shared.core import detached_rules, remote_rules, warm_rules
+from doeff_cluster._shared.intent import detached_model, remote_model, warm_model
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.shared.intent.detached_model [DetachedSubmitted DetachedUnreachable DetachedSubmitAnswer])
-(import doeff_cluster.shared.intent.warm_model [WarmAnswer WarmState WarmUnreachable])
-(import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv EnvVar])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
-(import doeff_cluster.shared.core.warm_rules [warm-runtime-env])
-(import doeff_cluster.shared.core.remote_rules [remote-job])
+(import doeff_cluster._shared.intent.detached_model [DetachedSubmitted DetachedUnreachable DetachedSubmitAnswer])
+(import doeff_cluster._shared.intent.warm_model [WarmAnswer WarmState WarmUnreachable])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvVar])
+(import doeff_cluster._shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster._shared.core.warm_rules [warm-runtime-env])
+(import doeff_cluster._shared.core.remote_rules [remote-job])
 
 (defk probe-body []
   {:pre [] :post [(: % int)] :tags {:context "probe" :role "program"}}

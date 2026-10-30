@@ -25,7 +25,7 @@ composition root で渡す。書き手の名は effect の引数ではなく、h
 | `ReadBatch(reads)` | 読みの束 = `ReadRow` か `ListRows` の空でない tuple(`READ_BATCH_MAX` 個まで・束の中の `ListRows` の `limit` の和は `LIST_LIMIT_MAX` まで — 外は作る時に `ValueError`・読みでない項は `TypeError`) | `BatchRead(items)`(束の順の、読みごとの答え — `ReadRow` は `Row` か `Missing`・`ListRows` は `Page` か `Reset` か `NotIndexed`) | `Unreachable`(束の全部が届かない — 読みの一部だけの答えは返さない) |
 
 lease(取る・延ばす・返す・書きの柵)はこの package に作らない。doeff-cluster の `LeaseOp` / `HeldLease`
-(`doeff_cluster.shared.intent.semaphore_model`)をそのまま使う。
+(`doeff_cluster._shared.intent.semaphore_model`)をそのまま使う。
 
 effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`from doeff_records import ReadRow, Row` /
 `(import doeff_records [ReadRow Row])`)。中身は名に `_` の付いた `doeff_records._effects`(effect)と

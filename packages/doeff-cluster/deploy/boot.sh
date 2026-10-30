@@ -38,7 +38,7 @@
 #   準備: `uv sync --locked --compile-bytecode --package doeff-cluster --no-install-package doeff-vm` した venv に doeff-vm の wheel を
 #   入れて、その venv の hy で起こす。wheel は実行環境の準備(worker)と同じく `uv build --wheel` で build の口(tools/doeff_cargo_backend.py
 #   — Rust の部品を組む・引く入口の 1 つ・ADR-DOE-BUILD-001)を通し、口の保存先($WORK_DIR/state/wheels — source の中身の鍵)の物を
-#   使い、無ければ口が組んで置く(python -m doeff_cluster._worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/shared/core/native_wheel.py
+#   使い、無ければ口が組んで置く(python -m doeff_cluster._worker.entry.boot_wheel — 呼びの約束の定義点は doeff_cluster/_shared/core/native_wheel.py
 #   の 1 つ)。doeff-vm の source が同じなら、起動も実行環境の準備も Rust を組み直さない。続けて root の中の source(venv に editable で入る
 #   dir)の bytecode を、実行環境の準備と同じ焼く道具(root の worker/entry/code_prepare.hy)で BOOT_ENTRIES の閉包だけ用意する(doeff_bake —
 #   source の中身で引く保存先 DOEFF_HY_CODE_STORE から書き、中身の変わった file だけを焼く)。
@@ -122,7 +122,7 @@ export DOEFF_HY_CODE_STORE="${DOEFF_HY_CODE_STORE:-$WORK_DIR/state/doeff-hy-code
 # 依存を件ごとに取り直さない・#3858)。
 export DOEFF_UV_CACHE_DIR="${DOEFF_UV_CACHE_DIR:-$WORK_DIR/state/uv-cache}"
 # Rust の wheel の保存先(build の口が source の中身の鍵で引く dir)。worker は --state-dir から同じ path を導いて自分の uv の子へ渡す
-# (doeff_cluster/shared/core/native_wheel.py の wheels_root — state の下の wheels)。ここでも export して起こす役の process に置き、worker が
+# (doeff_cluster/_shared/core/native_wheel.py の wheels_root — state の下の wheels)。ここでも export して起こす役の process に置き、worker が
 # job の子へ継ぐ(子の uv sync が doeff-vm を組み直さない・#3972)。worker の導く path と食い違わないように呼び手の値で上書きする。
 export DOEFF_WHEEL_CACHE="$WORK_DIR/state/wheels"
 # 知らない役は、展開も準備もせず名指しで断る(worker の起動へ落とさない — 走っている worker の Pod の中で役 prepare を、その役を

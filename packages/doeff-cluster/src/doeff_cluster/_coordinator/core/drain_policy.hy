@@ -31,7 +31,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_hy._table [TableWrite])
 (import dataclasses [replace])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState Drain Placement DrainPhase DrainProgress WorkerDrainView])
 (import doeff_cluster._coordinator.intent.request_bodies [DrainBody])
 (import doeff_cluster._coordinator.core.cluster_policy [alive eligible effective-needs can-take draining-workers load-of other-generation-boot handover-pending

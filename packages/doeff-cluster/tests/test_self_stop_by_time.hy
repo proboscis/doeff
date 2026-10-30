@@ -10,9 +10,9 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; defrecord の展開が名指す
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster._coordinator.core.coordinator_invariants [one-place-per-job ProcessSpan])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs])
 (import doeff_cluster._worker.core.heartbeat_rules [desired-after-silence])

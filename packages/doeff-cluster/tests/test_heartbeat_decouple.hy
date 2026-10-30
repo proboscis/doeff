@@ -10,14 +10,14 @@
 (import doeff_events [MemoryBroker])
 (import collections [Counter])
 (import doeff_time [Delay])
-(import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [now-epoch-ms])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster._sim.local :as local)
 (import doeff_cluster [sim-cluster SimWorker ReadCoordinator ProcessesOf Redeclare CutWorker FailRoute HostTruthOf WatchFailuresOf]
         doeff_cluster._sim.local [HostTruth])
 (import doeff_cluster._worker.core.beat_policy [WatchReading])
-(import doeff_cluster.shared.intent.detached_model [AwaitDetached DetachedSucceeded DetachedLost])
-(import doeff_cluster.shared.core.detached_rules [submit-detached-task])
+(import doeff_cluster [AwaitDetached DetachedSucceeded DetachedLost])
+(import doeff_cluster [submit-detached-task])
 (import tests.fixtures.envs [sim-foundation])
 (import tests.fixtures.sim_programs [beacons beacons-v2 pulses slow-task sim-task-foundation NET])
 

@@ -18,16 +18,14 @@
 (import doeff_core_effects [slog-discard-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster.shared.intent.cluster_control [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness AwaitJobProcess
-                                                     JobProcessWaitExpired Redeclare Crash KillWorker StopWorker StopCoordinator
-                                                     CrashCoordinator RestartService ServiceRestarted RestartRefused])
-(import doeff_cluster.shared.entry.deployed_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
-(import doeff_cluster.shared.protocol.coordinator_reads [job-pids-of])
-(import doeff_cluster.shared.protocol.detached [service-facts-of-json])
+(import doeff_cluster [ServiceReadiness ReadinessOf ReadinessWaitExpired AwaitReadiness AwaitJobProcess JobProcessWaitExpired Redeclare Crash KillWorker StopWorker StopCoordinator CrashCoordinator RestartService ServiceRestarted RestartRefused])
+(import doeff_cluster [DeployedCluster DeployedCannotAnswer deployed-cluster-answers])
+(import doeff_cluster._shared.protocol.coordinator_reads [job-pids-of])
+(import doeff_cluster._shared.protocol.detached [service-facts-of-json])
 (import tests.transport_http [transport-http COORDINATOR-URL])
 (import tests.detached_rig [MemoryCoordinator])
 (import tests.fixtures.machine_app [pings handoff-pings machine-foundation])
-(import doeff_cluster.shared.intent.service_model [System])
+(import doeff_cluster [System])
 (import tests.fixtures.replicas [with-replicas])
 
 ;; 配備の cluster の値(宛先 = 検の coordinator の口・送り手の名・宣言の版 — 版の木の道なので実行環境は無し・版の識別は宣言する

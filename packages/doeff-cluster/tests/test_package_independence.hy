@@ -19,10 +19,10 @@
 (setv ALLOWED-THIRD-PARTY (frozenset #("doeff" "hy" "httpx" "cloudpickle")))
 ;; package 名を書かない検査の対象 = 実行環境の宣言と準備の code(src/doeff_cluster からの path — 移した時はここも直す。
 ;; 無い path は検の赤にする: 移しで path が古くなると、検が黙ってその file を読まなくなるため)。
-(setv ENV-MODULES #("shared/intent/runtime_env_model.hy" "shared/intent/env_marker_model.hy" "shared/core/runtime_env.hy"
-                    "shared/core/runtime_env_rules.hy"
-                    "worker/intent/env_prepare_model.hy" "worker/core/env_prepare.hy" "_sim/env_world.hy"
-                    "worker/protocol/env_translation.hy" "worker/entry/env_tool.hy"))
+(setv ENV-MODULES #("_shared/intent/runtime_env_model.hy" "_shared/intent/env_marker_model.hy" "_shared/core/runtime_env.hy"
+                    "_shared/core/runtime_env_rules.hy"
+                    "_worker/intent/env_prepare_model.hy" "_worker/core/env_prepare.hy" "_sim/env_world.hy"
+                    "_worker/protocol/env_translation.hy" "_worker/entry/env_tool.hy"))
 
 (setv HY-IMPORT (re.compile r"\((?:import|require)\s+([A-Za-z_.][A-Za-z0-9_.\-]*)"))
 (setv HY-IMPORT-LIST (re.compile r"\(import\s+\[([^\]]*)\]"))

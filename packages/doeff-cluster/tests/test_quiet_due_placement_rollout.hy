@@ -7,8 +7,8 @@
 ;;   歩の後はその期限を判じ済みとして返さない。
 (require doeff-hy.macros [deftest defk <- val])
 (import doeff [run])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.protocol.inbox [http-request])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [http-request])
 (import doeff_cluster [ClusterNaming ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_cluster [responded])
@@ -19,7 +19,8 @@
 (import doeff_cluster._coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
 (import doeff_cluster._coordinator.core.rollout_policy [ready-timeout-from])
 (import doeff_cluster._coordinator.core.wake_policy [rollout-due])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNow DueNever])
+(import doeff_cluster [DueNow DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import tests.test_handoff_deadline [Sim HANDOFF steps])
 
 ;; 担い手の報告が古くならない・readiness の window が諦めの期限より長い時計と宣言(効く期限を諦めの 1 つにする)。

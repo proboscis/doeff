@@ -22,7 +22,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [scheduled])
-(import doeff_cluster.shared.core.promise_wait [promise-or-timeout])
+(import doeff_cluster [promise-or-timeout])
 (import doeff_time [Delay async-time-handler])
 (import doeff_cluster [ReadDesired]
         doeff_cluster._worker.intent.worker_model [DesiredJobs])

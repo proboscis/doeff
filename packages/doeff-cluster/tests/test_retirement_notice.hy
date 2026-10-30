@@ -10,10 +10,10 @@
 (import doeff_events [MemoryBroker])
 (import dataclasses [dataclass replace])  ; dataclass = defrecord の展開が名指す
 (import doeff_time [Delay])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
+(import doeff_cluster [ClusterTiming])
 (import doeff_cluster [sim-cluster SimWorker SimProcess Redeclare ReportsOf ProcessesOf SharedRows])
-(import doeff_cluster.shared.intent.service_model [System])
-(import doeff_cluster.shared.intent.job_model [JobSpec])
+(import doeff_cluster [System])
+(import doeff_cluster [JobSpec])
 (import doeff_cluster [ProcessView WorldView NoticeJob Retired HandoffAbandoned])
 (import doeff_cluster._worker.core.policy [notice-actions])
 (import doeff_cluster._worker.core.invariants [RetirementSeen retiring-process-hears-first])

@@ -12,8 +12,9 @@
 (import dataclasses [replace])
 (import doeff_time [Delay])
 (import doeff_core_effects [CreatePromise Promise])
-(import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.shared.intent.due_model [DueAt DueNever])
+(import doeff_cluster [ClusterTiming])
+(import doeff_cluster [DueNever]
+        doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster._worker.intent.worker_model [WakeSet])
 (import doeff_cluster._worker.protocol.coordinator_link [RESEND-AFTER-MS])
 (import doeff_cluster [sim-cluster SimWorker HostTruthOf ProcessesOf PreparationsOf SimPreparation]

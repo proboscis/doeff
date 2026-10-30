@@ -4,7 +4,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import collections.abc [Mapping])
 (import doeff_cluster._coordinator.intent.cluster_model [ComponentVersion ACCEPTED-FORMATS])
-(import doeff_cluster.shared.intent.protocol [BodyInvalid])
+(import doeff_cluster._shared.intent.protocol [BodyInvalid])
 
 
 (defn #^ (get tuple #(ComponentVersion ...)) component-versions-of [#^ dict versions]

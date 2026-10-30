@@ -23,9 +23,9 @@
 (import doeff_core_effects [HttpRequest HttpResponse])
 (import doeff_time [Delay GetTime SimClock sim-time-handler])
 (import doeff_cluster._foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.shared.intent.run_context [RunContext])
+(import doeff_cluster._shared.intent.run_context [RunContext])
 (import doeff_cluster._foundation.record_log [Recording read-recording ReplayDiverged])
-(import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder])
+(import doeff_cluster._shared.entry.boundary_recorder [boundary-recorder])
 (import doeff_cluster._foundation.record_handlers [ReplayState replay-report
                                                   RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 
