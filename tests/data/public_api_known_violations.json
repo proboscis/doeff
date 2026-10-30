@@ -15879,27 +15879,6 @@
    "決め": "[id]"
   },
   {
-   "package": "doeff-records",
-   "module": "doeff_records",
-   "name": "WrittenAndAppended",
-   "訳": "PutRowsAppendEvents(card [id])の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
-   "決め": "[id]"
-  },
-  {
-   "package": "doeff-records",
-   "module": "doeff_records",
-   "name": "AppendRefused",
-   "訳": "PutRowsAppendEvents(card [id])の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
-   "決め": "[id]"
-  },
-  {
-   "package": "doeff-records",
-   "module": "doeff_records",
-   "name": "PutRowsAppendEventsAnswer",
-   "訳": "PutRowsAppendEvents(card [id])の答えの型(R2 の effect の結果の型 — WrittenAndAppended は確定の答え・AppendRefused は追記の断り・PutRowsAppendEventsAnswer は答えの和)。名を足した commit be22b1754 が表を直さずに入ったので、表の test を緑にする同じ card が足した",
-   "決め": "[id]"
-  },
-  {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.cluster_policy",
    "name": "declared_job_from_json",
