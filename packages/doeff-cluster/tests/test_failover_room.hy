@@ -12,9 +12,9 @@
 (import doeff_cluster.worker.core.room_rules [TEMPLATE-PROVIDES])
 (import doeff_cluster.worker.protocol.heartbeat [heartbeat-body])
 
-(val ROOMS {"zeus" {"capacity" 40 "taskReserve" 6 "backgroundRoom" 4 "warmServices" True "memoryMiB" 60000}
-            "k3s-1" {"capacity" 2 "taskReserve" 0 "backgroundRoom" 0 "pools" ["pool-k3s-1-k3s-2"] "memoryMiB" 1792}
-            "atlas" {"capacity" 17 "taskReserve" 3 "backgroundRoom" 0 "pools" ["pool-b" "pool-a"] "memoryMiB" 8960}})
+(val ROOMS {"zeus" {"taskReserve" 6 "backgroundRoom" 4 "warmServices" True "memoryMiB" 60000}
+            "k3s-1" {"taskReserve" 0 "backgroundRoom" 0 "pools" ["pool-k3s-1-k3s-2"] "memoryMiB" 1792}
+            "atlas" {"taskReserve" 3 "backgroundRoom" 0 "pools" ["pool-b" "pool-a"] "memoryMiB" 8960}})
 
 
 (deftest test-every-row-becomes-a-worker-with-the-provides-it-announces
@@ -44,8 +44,8 @@
 
 (deftest test-a-row-the-worker-would-not-announce-stops-the-reading
   ;; worker が malformed と読む行は、既定の値で埋めずに名指して止まる。
-  (for [#(rows word) [[{"eos" {"capacity" 3}} "worker eos の行の taskReserve が 0 以上の整数でない"]
-                      [{"eos" {"capacity" 3 "taskReserve" 0 "memoryMiB" 3840}} "worker eos の行の backgroundRoom が 0 以上の整数でない"]
+  (for [#(rows word) [[{"eos" {"memoryMiB" 3840}} "worker eos の行の taskReserve が 0 以上の整数でない"]
+                      [{"eos" {"taskReserve" 0 "memoryMiB" 3840}} "worker eos の行の backgroundRoom が 0 以上の整数でない"]
                       [{"eos" {"taskReserve" 0 "backgroundRoom" 0 "memoryMiB" 3840 "pools" ["resident-roomy"]}} "worker eos の pools の"]
                       [{"eos" {"taskReserve" 0 "backgroundRoom" 0 "memoryMiB" -1}} "worker eos の行の memoryMiB が 0 以上の整数でない: -1"]]]
     (with [error (pytest.raises ValueError)]
