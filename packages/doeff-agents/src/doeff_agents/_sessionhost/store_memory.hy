@@ -45,7 +45,7 @@
   (setv #^ (get tuple #(StoredEvent ...)) events #()))
 
 
-(defclass [(dataclass :frozen True)] ReadMemorySessionRows [EffectBase]
+(defclass [(dataclass :frozen True)] ReadMemorySessionRows [(get EffectBase MemorySessionRows)]
   "memory の置き場の今の中身(MemorySessionRows)を読む(検と筋書きが置き場を覗くため — memory-session-store だけが答える)。")
 
 
