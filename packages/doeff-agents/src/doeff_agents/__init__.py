@@ -70,7 +70,9 @@ _LAZY_EXPORTS = {
     "StopEffect": "._effects",
     "StopSession": "._effects",
     "StopSessionEffect": "._effects",
-    "agent": "._effects",
+    # 関数 agent は定義の module から読む: _effects の属性 agent は、古い path doeff_agents.effects.agent の import が
+    # 同じ名の子の module で上書きする(ADR-DOE-API-001 R34・card ki-db44e4d3efe4)。
+    "agent": "._effects.agent",
     "AgentCapabilityUnsupportedError": "._effects",
     "AgentEvent": "._effects",
     "AgentEventPage": "._effects",

@@ -90,13 +90,6 @@
    "why": "aiohttp_http_server の入口の綴り(ADR-DOE-API-001 R5 — 使い手は入口から読む・card ki-cd6a513ae4b5)"
   },
   {
-   "handler": "doeff_core_effects.aiohttp_http_server:aiohttp-http-server",
-   "touches": [
-    "network"
-   ],
-   "why": "aiohttp_http_server の古い綴り — 移し替えの module が残る間、外の repo の :wraps と import が書く(42f897000 が消して agora-controllers の hook を止めた・card ki-cd6a513ae4b5)"
-  },
-  {
    "handler": "doeff_core_effects.aiohttp_ws_client:aiohttp-ws-client",
    "touches": [
     "network"
