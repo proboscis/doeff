@@ -16,28 +16,34 @@ If you write asyncio code, compare it with an `await client.get(url)` deep insid
 # releases.py (excerpt)
 import json
 from collections import Counter
+from dataclasses import dataclass, field
 
-from doeff import Resume, ResumeThrow, do, handler, run
-from doeff_core_effects import HttpRequest, HttpResponse
+from doeff import EffectBase, Resume, ResumeThrow, do, handler, run
 
 GITHUB = "https://api.github.com"
+
+
+@dataclass(frozen=True)
+class HttpRequest(EffectBase):  # "send this request"; its handler answers with the body
+    method: str
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @do
 def latest_releases(repos: list[str], token: str, api: str = GITHUB):  # asks; never sends
     tags = {}
     for repo in repos:
-        response = yield HttpRequest(
+        body = yield HttpRequest(
             "GET",
             f"{api}/repos/{repo}/releases/latest",
             headers={"Authorization": f"Bearer {token}"},
         )
-        response.raise_for_status()
-        tags[repo] = json.loads(response.text)["tag_name"]
+        tags[repo] = json.loads(body)["tag_name"]
     return tags
 ~~~
 
-`HttpRequest` is an effect from doeff's packages, and `HttpResponse` is the answer its handlers give. `latest_releases` sends nothing: it yields the request, and the handler of `HttpRequest` decides what happens. In production that is `http_production_handler()`, which sends it with httpx; the last section runs it against a local server. Until then, `github` answers the way the API does, from a dict, and counts every request that reaches it:
+`HttpRequest` is this post's own effect: a frozen dataclass that subclasses `EffectBase`, like the effects of [the first post](algebraic-effects-in-python.md). Its handler answers with the body of the response, as a string. `latest_releases` sends nothing: it yields the request, and the handler of `HttpRequest` decides what happens. The last section writes a handler that sends it over HTTP and runs it against a local server. Until then, `github` answers the way the API does, from a dict, and counts every request that reaches it:
 
 ~~~python
 # releases.py (excerpt)
@@ -51,8 +57,7 @@ sent: Counter[str] = Counter()  # how many times each URL was sent
 def github(effect: HttpRequest, k):  # every request that reaches it counts as sent
     sent[effect.url] += 1
     repo = effect.url.removeprefix(f"{GITHUB}/repos/").removesuffix("/releases/latest")
-    body = json.dumps({"tag_name": TAGS[repo]})
-    return (yield Resume(k, HttpResponse(200, {}, body.encode(), body, effect.url, 0.0)))
+    return (yield Resume(k, json.dumps({"tag_name": TAGS[repo]})))
 ~~~
 
 ## A recorder performs the effect again
@@ -80,12 +85,12 @@ sequenceDiagram
     participant github
     program->>record: yield HttpRequest(GET .../acme/server/...), paused as k
     record->>github: yield HttpRequest(GET .../acme/server/...)
-    github->>record: HttpResponse(200, ...)
+    github->>record: the body, {"tag_name": "v2.4.1"}
     Note over record: tape[("GET", url)] = answer
     record->>program: Resume(k, answer)
 ```
 
-The tape keys each request by its method and URL. Two `HttpRequest` values with the same fields are not equal: they compare by identity. So the recorder has to choose what makes two requests the same, and this one leaves the headers out. That choice comes back below, when the token in the header matters.
+The tape keys each request by its method and URL, not by the request itself. The request holds a dict, its headers, so it has no hash and cannot be a dict key, and two requests that differ only in the token are not equal. So the recorder has to choose what makes two requests the same, and this one leaves the headers out. That choice comes back below, when the token in the header matters.
 
 ## A player answers from the tape
 
@@ -142,15 +147,30 @@ LookupError: not recorded: GET https://api.github.com/repos/acme/docs/releases/l
 
 ## Keep the tape in a file
 
-The dict lives as long as the process. doeff's packages have the recorder and the player as one handler, `make_memo_rewriter`, with storage behind it:
+The dict lives as long as the process. doeff has the recorder and the player as one handler, `make_memo_rewriter`. It keeps its answers through three effects of its own, and a handler of a few lines answers them from a file:
 
 ~~~python
 # on_disk.py (excerpt)
-def recorded(program, database, network, key=content_address):
+def json_tape(path: Path):  # storage: MemoExists, MemoGet and MemoPut on a JSON file
+    @handler
+    def storage(effect: MemoExistsEffect | MemoGetEffect | MemoPutEffect, k):
+        tape = json.loads(path.read_text()) if path.exists() else {}
+        if isinstance(effect, MemoExistsEffect):
+            return (yield Resume(k, effect.key in tape))
+        if isinstance(effect, MemoGetEffect):
+            return (yield Resume(k, tape[effect.key]))
+        tape[effect.key] = effect.value
+        path.write_text(json.dumps(tape, indent=2))
+        return (yield Resume(k, None))
+
+    return storage
+
+
+def recorded(program, tape, network, key=content_address):
     program = make_memo_rewriter(HttpRequest, key_fn=key)(program)  # a hit from storage; a miss performed outward and kept
-    program = sqlite_memo_handler(database)(program)  # storage: MemoExists, MemoGet and MemoPut on a SQLite file
+    program = json_tape(tape)(program)  # storage: the answers kept in a JSON file
     program = network(program)  # only the misses get this far
-    return run(scheduled(await_handler()(slog_discard_handler(program))))
+    return run(scheduled(await_handler(slog_discard_handler(program))))
 
 
 @handler
@@ -163,11 +183,11 @@ From the inside out:
 | Handler | What it does |
 |---|---|
 | `make_memo_rewriter(HttpRequest, key_fn=key)` | computes a key for each `HttpRequest` and yields `MemoExists(key)`. On a hit, it yields `MemoGet(key)` and resumes `k` with the stored answer. On a miss, it performs the request outward like `record`, yields `MemoPut(key, answer)`, and resumes `k` |
-| `sqlite_memo_handler(database)` | answers `MemoExists`, `MemoGet` and `MemoPut` from a SQLite file |
-| `network` | gets only the misses: `github` here, `http_production_handler()` in production, `offline` in CI |
-| `slog_discard_handler`, `await_handler`, `scheduled` | `slog_discard_handler` drops the rewriter's log lines. `await_handler` and `scheduled` run the `Await` that the storage yields to read and write the file on a worker thread |
+| `json_tape(tape)` | answers `MemoExists`, `MemoGet` and `MemoPut` from a JSON file; their classes are `MemoExistsEffect`, `MemoGetEffect` and `MemoPutEffect` |
+| `network` | gets only the misses: `github` here, `send` in the last section, `offline` in CI |
+| `slog_discard_handler`, `await_handler`, `scheduled` | `slog_discard_handler` drops the rewriter's log lines. `await_handler` and `scheduled` run the `Await` that `send` yields in the last section, while a worker thread waits on the network |
 
-The storage is effects too. The rewriter knows nothing about SQLite: it yields `MemoGet` and `MemoPut`, and the next handler out decides where they go. Install `in_memory_memo_handler()` in place of `sqlite_memo_handler(database)`, and the same rewriter keeps its tape in memory.
+The storage is effects too. The rewriter knows nothing about files: it yields `MemoExists`, `MemoGet` and `MemoPut`, and the next handler out decides where they go. `json_tape` is all the storage there is. Answer the same three effects from a dict instead, and the same rewriter keeps its tape in memory.
 
 `offline` sits where the network would. A request the file answers never reaches it. Any other request raises `LookupError`, which arrives at the program's `yield` as before, and nothing is sent:
 
@@ -200,7 +220,7 @@ print(recorded(reported(latest_releases(REPOS, "ci-dummy")), tape, offline))
 LookupError: not recorded: GET https://api.github.com/repos/acme/server/releases/latest
 ~~~
 
-The default key, `content_address`, is a hash of the whole request, every field of it: method, URL, headers, params, body, timeouts and the rest. The token is in a header, so a request with another token is another request, and it misses. The hand-written tape above keyed by method and URL; give the rewriter the same key:
+The default key, `content_address`, is a hash of the whole request, every field of it: method, URL and headers. The token is in a header, so a request with another token is another request, and it misses. The hand-written tape above keyed by method and URL; give the rewriter the same key:
 
 ~~~python
 # on_disk.py (excerpt)
@@ -217,22 +237,34 @@ print(recorded(latest_releases(REPOS, "ci-dummy"), keyed, offline, method_and_ur
 {'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
 ~~~
 
-Choose the key per API. Whatever the key leaves out is not told apart on replay, so if the answers depend on `params` or on the body, put those in. With either key, the token is not in the file: the keys are `GET https://...` strings or hashes, and the stored answers are the responses. The responses are stored whole, though, and their headers and bodies can carry personal data. Read the file before you commit it.
+Choose the key per API. Whatever the key leaves out is not told apart on replay, so if the answers depend on a header, such as `Accept`, put it in. With either key, the token is not in the file: the keys are `GET https://...` strings or hashes, and the stored answers are the response bodies. The bodies are stored whole, though, and they can carry personal data. Read the file before you commit it.
 
 ## I/O: record from a live server, replay with it stopped
 
-So far `github` has answered from a dict. `live.py` starts a local HTTP server that answers like the GitHub API, records with `http_production_handler()`, stops the server, and replays from the file:
+So far `github` has answered from a dict. `send` sends each request over HTTP with urllib from the standard library. `live.py` starts a local HTTP server that answers like the GitHub API, records with `send`, stops the server, and replays from the file:
 
 ~~~python
 # live.py (excerpt)
+def fetch(request: Request) -> str:  # the blocking part: one request over HTTP, its body as text
+    with urlopen(request, timeout=10) as response:
+        return response.read().decode()
+
+
+@handler
+def send(effect: HttpRequest, k):  # sends with urllib on a worker thread, awaited through Await
+    request = Request(effect.url, method=effect.method, headers=effect.headers)
+    body = yield Await(asyncio.to_thread(fetch, request))
+    return (yield Resume(k, body))
+
+
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", 0), Releases)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     api = f"http://127.0.0.1:{server.server_port}"
     with tempfile.TemporaryDirectory() as directory:
-        tape = Path(directory) / "releases.sqlite"
-        print("-- live: httpx sends each request, and the file keeps each answer")
-        print(recorded(latest_releases(REPOS, "secret", api), tape, http_production_handler()))
+        tape = Path(directory) / "releases.json"
+        print("-- live: urllib sends each request, and the file keeps each answer")
+        print(recorded(latest_releases(REPOS, "secret", api), tape, send))
         print(f"served: {served.total()}")
         server.shutdown()
         server.server_close()
@@ -249,13 +281,13 @@ served: 2
 {'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}
 ~~~
 
-The first run goes over HTTP: `http_production_handler()` sends each `HttpRequest` with an `httpx.AsyncClient`, awaited through `Await`, and the server answers twice. The second run has no server to talk to, and the file answers. `latest_releases` is the same function as before, with `api` pointed at the local server, and it has no `async` anywhere; [the second post](yield-and-async.md) is about why. In your own repository, record once with `http_production_handler()` into a file you commit, and run CI with `offline` in its place and no token at all.
+The first run goes over HTTP, and the server answers twice. `urlopen` blocks, so `send` runs it on a worker thread with `asyncio.to_thread` and waits through `Await`, which `await_handler` answers. The second run has no server to talk to, and the file answers. `latest_releases` is the same function as before, with `api` pointed at the local server, and it has no `async` anywhere; [the second post](yield-and-async.md) is about why. In your own repository, record once with a handler like `send` into a file you commit, and run CI with `offline` in its place and no token at all.
 
 You may know this from VCR.py, which records cassettes by patching HTTP client libraries such as requests and httpx, or from `unittest.mock`, where a test swaps the client for a mock by name. Both work at the client: VCR.py knows the libraries it patches, and a mock knows the name it replaces. The recorder here works on effects. It does not know which client sends the request, and the same handler records any effect a program yields: [examples/testing_without_mocks/record_replay.py](https://github.com/proboscis/doeff/blob/main/examples/testing_without_mocks/record_replay.py) records a language model's answers, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#6-keep-the-answers-record-once-replay) records `Chat` and `Draw` with one recorder.
 
 ## Limits
 
-- The stored answers are pickled. Open only files you trust: loading a pickle can run code.
+- `json_tape` keeps what JSON can hold, so the answers here are bodies, as strings. An effect answered with an object, such as a response with a status and headers, needs a storage handler that encodes it. `json_tape` also reads the whole file for every effect and writes it for every new answer: fine for the tape of a test, slow for a large cache.
 - The default key hashes the pickled request, and a pickle's bytes change with Python: with doeff installed as below, a key made on Python 3.13 is not found on 3.14, whose pickle writes a newer protocol by default. Across doeff versions it is not promised either. A key of your own, such as `method_and_url`, is a plain string you control.
 - With no storage handler installed, the rewriter treats every request as a miss and performs it outward each time; no error says the storage is missing. A replay with `offline` in the network's place catches that: the miss raises.
 - The rewriter records by type: every `HttpRequest`, POST included, and a recorded POST is not sent again on replay. That is usually what a test wants. If some requests must always go out, write a recorder like `record` that passes those on with `Pass`.
@@ -264,13 +296,13 @@ You may know this from VCR.py, which records cassettes by patching HTTP client l
 ## Try it
 
 ~~~bash
-pip install "doeff[http]"   # CPython 3.11 to 3.14; the http extra brings HttpRequest and httpx
+pip install doeff   # CPython 3.11 to 3.14; nothing else is needed
 python releases.py
 python on_disk.py
 python live.py
 ~~~
 
-Every example in this post runs as shown with doeff 0.8.0. The complete files are in [examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay). The docs chapter [Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md) covers `CacheGet` and `CachePut`, which a program yields itself when it caches on purpose; the rewriter here keeps answers from outside, and the program never asks.
+Every example in this post runs as shown with `pip install doeff` and nothing else: no extra, no other package. The complete files are in [examples/record_and_replay](https://github.com/proboscis/doeff/tree/main/examples/record_and_replay). The docs chapter [Cache System](https://github.com/proboscis/doeff/blob/main/docs/07-cache-system.md) covers `CacheGet` and `CachePut`, which a program yields itself when it caches on purpose; the rewriter here keeps answers from outside, and the program never asks.
 
 The previous post, [Time as an effect](time-as-an-effect.md), made the clock a handler, so days of waiting run in milliseconds. The series started with [Algebraic effects for Python](algebraic-effects-in-python.md), which stacks handlers for time, concurrency, retries, budgets and I/O around one program.
 

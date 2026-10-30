@@ -1,5 +1,8 @@
-"""英語の記事 4 本目「Record and replay」(docs/articles/record-and-replay.md)の例が doeff でそのまま走り、記事が見せる通りに
-印字する事の検(取り組み doeff-publish・card ki-e86c66488895)。
+"""英語の記事 4 本目「Record and replay」(docs/articles/record-and-replay.md)の例が doeff だけで(subpackage も extra も
+入れずに)そのまま走り、記事が見せる通りに印字する事の検(取り組み doeff-publish・card ki-e86c66488895・本体だけで出す形は
+card ki-d86f13e78e21)。例は HttpRequest を自分の effect として書き、保存は make_memo_rewriter の 3 つの effect に答える
+JSON の handler、送り手は urllib を Await で待つ handler — doeff-core-effects の HttpRequest・http_production_handler・
+sqlite_memo_handler は Hy で書いてあり、extra の http・hy が要るので使わない。
 
 囲みは 1 本目・2 本目の記事(tests/test_docs_article_algebraic_effects.py・tests/test_docs_article_yield_and_async.py)と同じ
 書き方で読む:
@@ -11,16 +14,21 @@
 - text の囲みは、例の file の印字の 1 区切り(見出し「-- <鍵>: ...」の下)のどれかと同じ。逆に、どの区切りも記事のどこかの
   text の囲みが見せる(区切りを足して記事に書き忘れた時も赤にする)。
 
-例を走らせる interpreter は、既定で検を走らせている物(repo の doeff)。環境変数 DOEFF_ARTICLE_PYTHON に、PyPI の doeff だけを
-入れた環境の python を渡すと、同じ検を出した版で走らせる(記事は「doeff 0.8.0 でそのまま走る」と書く)。環境は残る dir に作る
-(`uv run --with` の環境は命令が終わると消えるので、その python の path は渡せない):
+例を走らせる interpreter は、既定で検を走らせている物(repo の doeff)。環境変数 DOEFF_ARTICLE_PYTHON に、doeff だけを
+入れた環境の python を渡すと、同じ検をその版で走らせる(記事は「pip install doeff だけでそのまま走る」と書く)。例は
+`await_handler(program)` の形を使い、この形は 0.8.0 の wheel に無い(main b8d242689 から)ので、出るまでは main から組んだ
+wheel を入れる。環境は残る dir に作る(`uv run --with` の環境は命令が終わると消えるので、その python の path は渡せない):
 
-    uv venv --python 3.12 /tmp/doeff-080 && uv pip install --python /tmp/doeff-080 'doeff[http]==0.8.0'
-    DOEFF_ARTICLE_PYTHON=/tmp/doeff-080/bin/python uv run pytest tests/test_docs_article_record_and_replay.py
+    uv build --package doeff --wheel --out-dir /tmp/doeff-main
+    uv build --package doeff-core-effects --wheel --out-dir /tmp/doeff-main
+    uv build --package doeff-vm --wheel --python 3.12 --out-dir /tmp/doeff-main
+    uv venv --python 3.12 /tmp/doeff-main/py && uv pip install --python /tmp/doeff-main/py --find-links /tmp/doeff-main doeff
+    DOEFF_ARTICLE_PYTHON=/tmp/doeff-main/py/bin/python uv run pytest tests/test_docs_article_record_and_replay.py
 
-本文の主張のうち、走らせて確かめられる物も見る: 再生の組の外に HttpRequest の handler が無い・HttpRequest は欄が同じでも等しくない・
-memo の層が出す effect の順・保存を記憶に置いても同じ・保存の handler が無いと毎回外へ出る・POST も記録して再生で送らない・
-file に token が残らない・既定の鍵が pickle の protocol で変わる・別の process が同じ file から再生する。
+本文の主張のうち、走らせて確かめられる物も見る: 再生の組の外に HttpRequest の handler が無い・HttpRequest は hash を持たず、
+token だけが違う 2 つは等しくない・memo の層が出す effect の順・同じ 3 つに辞書で答えれば記憶に置いても同じ・保存の handler が
+無いと毎回外へ出る・POST も記録して再生で送らない・file に token が残らない・既定の鍵が pickle の protocol で変わる・
+別の process が同じ file から再生する。
 
 本文の決まりも見る: AI が書いたと名乗る行が無い・IO の差し替えだけに読める語(swap・fake・mock・real I/O)が見出し「## I/O」の
 節の外に無い(軸は algebraic effects — 記事を IO の差し替えの話に縮めない)・前の回の記事と 1 本目の記事へ link する。
@@ -45,10 +53,8 @@ EXAMPLES = ROOT / "examples" / "record_and_replay"
 EXAMPLE_FILES = ("releases.py", "on_disk.py", "live.py")
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は約 1 秒(多くは doeff の import)。
 CHILD_DEADLINE_SECONDS = 50
-# 子の警告は誤りにする。ただし ResourceWarning は外す: SQLiteStorage は worker の thread ごとに接続を開き、close() は呼んだ
-# thread の接続だけを閉じるので、CPython 3.13 からの「閉じていない接続」の ResourceWarning が終わりに出る(読み手の既定の
-# 警告の設定では出ない — 記事の主張ではなく保存の側の振る舞い)。
-WARNINGS = ["-W", "error", "-W", "ignore::ResourceWarning"]
+# 子の警告は誤りにする(古い形の `await_handler()` の DeprecationWarning も、閉じ忘れの ResourceWarning も赤にする)。
+WARNINGS = ["-W", "error"]
 
 _FENCE = re.compile(r"^~~~(?P<language>\w*)\n(?P<body>.*?)^~~~$", re.MULTILINE | re.DOTALL)
 _HEADER = re.compile(r"# (?P<name>\w+\.py)(?P<excerpt> \(excerpt\))?")
@@ -203,19 +209,19 @@ _CLAIMS = """
 import contextlib, io, tempfile
 from pathlib import Path
 
-from doeff import Pass, do, handler, run
-from doeff_core_effects import HttpRequest
+from doeff import Pass, Resume, do, handler, run
 from doeff_core_effects.handlers import await_handler, slog_discard_handler
-from doeff_core_effects.memo_handlers import in_memory_memo_handler, make_memo_rewriter, sqlite_memo_handler
+from doeff_core_effects.memo_effects import MemoExistsEffect, MemoGetEffect, MemoPutEffect
+from doeff_core_effects.memo_handlers import make_memo_rewriter
 from doeff_core_effects.scheduler import scheduled
 
-from on_disk import method_and_url, offline, recorded
-from releases import REPOS, github, latest_releases, sent
+from on_disk import json_tape, method_and_url, offline, recorded
+from releases import REPOS, HttpRequest, github, latest_releases, sent
 
 def stacked(program, *handlers):
     for install in handlers:
         program = install(program)
-    return run(scheduled(await_handler()(slog_discard_handler(program))))
+    return run(scheduled(await_handler(slog_discard_handler(program))))
 
 # 再生の組の外には HttpRequest の handler が無い(本文「had replay passed a request on, ... UnhandledEffect」)。
 # run が stderr へ書く doeff の traceback は、ここでは読まない
@@ -226,9 +232,15 @@ try:
 except Exception as error:
     print("bare:", type(error).__name__, "HttpRequest" in str(error))
 
-# 欄が同じ HttpRequest は等しくない(本文「they compare by identity」)
+# 依頼そのものは tape の鍵にならない: headers が dict なので hash を持たず、token だけが違う 2 つは別の依頼
+# (本文「its headers are a dict, so it has no hash, and two requests that differ only in the token are not equal」)
 url = "https://api.github.com/repos/acme/server/releases/latest"
-print("equal:", HttpRequest("GET", url) == HttpRequest("GET", url))
+try:
+    hash(HttpRequest("GET", url))
+    print("hash: ok")
+except TypeError:
+    print("hash: TypeError")
+print("equal:", HttpRequest("GET", url, {"Authorization": "Bearer a"}) == HttpRequest("GET", url, {"Authorization": "Bearer b"}))
 
 # memo の層が保存の handler へ出す effect の順(本文の表の 1 行目 — log の Slog は除く)。通る effect を 1 つずつ印字する
 def watching(name):
@@ -242,13 +254,24 @@ def watching(name):
 directory = Path(tempfile.mkdtemp())
 for name, network in (("miss", github), ("hit", offline)):
     stacked(latest_releases(["acme/server"], "secret"), make_memo_rewriter(HttpRequest),
-            watching(name), sqlite_memo_handler(directory / "watched.sqlite"), network)
+            watching(name), json_tape(directory / "watched.json"), network)
 
-# 保存を記憶に置いても、同じ層が再生する(本文「Install in_memory_memo_handler() ...」)
-memory = in_memory_memo_handler()
+# 同じ 3 つに辞書で答えれば、同じ層が記憶から再生する(本文「Answer the same three from a dict ...」)
+def dict_tape(tape):
+    @handler
+    def storage(effect: MemoExistsEffect | MemoGetEffect | MemoPutEffect, k):
+        if isinstance(effect, MemoExistsEffect):
+            return (yield Resume(k, effect.key in tape))
+        if isinstance(effect, MemoGetEffect):
+            return (yield Resume(k, tape[effect.key]))
+        tape[effect.key] = effect.value
+        return (yield Resume(k, None))
+    return storage
+
+memory = {}
 sent.clear()
-first = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), memory, github)
-again = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), memory, offline)
+first = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), dict_tape(memory), github)
+again = stacked(latest_releases(REPOS, "secret"), make_memo_rewriter(HttpRequest), dict_tape(memory), offline)
 print("memory:", first == again, sent.total())
 
 # 保存の handler が無いと、毎回外へ出る(本文の限り「With no storage handler installed ...」)
@@ -260,18 +283,17 @@ print("no storage:", sent.total())
 # POST も記録し、再生では送らない(本文の限り「POST included」)
 @do
 def publish():
-    response = yield HttpRequest("POST", url)
-    return response.status
+    return (yield HttpRequest("POST", url))
 
 sent.clear()
-tape = directory / "post.sqlite"
-print("post:", recorded(publish(), tape, github), recorded(publish(), tape, offline), sent.total())
+tape = directory / "post.json"
+print("post:", recorded(publish(), tape, github) == recorded(publish(), tape, offline), sent.total())
 
 # file に token が残らない(本文「With either key, the token is not in the file」)
 for name, key in (("default", None), ("method_and_url", method_and_url)):
-    tape = directory / f"token-{name}.sqlite"
+    tape = directory / f"token-{name}.json"
     recorded(latest_releases(REPOS, "s3cr3t-token"), tape, github, *([key] if key else []))
-    stored = b"".join(path.read_bytes() for path in directory.glob(f"token-{name}.sqlite*"))
+    stored = tape.read_bytes()
     print(f"token in {name}:", b"s3cr3t-token" in stored, b"v2.4.1" in stored)
 
 # 既定の鍵は pickle した依頼の hash で、pickle の protocol が変われば鍵も変わる(本文の限り「a key made on Python 3.13 is not
@@ -284,8 +306,8 @@ print("key:", content_address(request) in by_protocol.values(), by_protocol[4] !
 """
 
 # 別の process が同じ file から再生する(本文「A test in another process, or in CI, replays from that file the same way」)
-_RECORD = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), sys.argv[1], github))"
-_REPLAY = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), sys.argv[1], offline))"
+_RECORD = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), Path(sys.argv[1]), github))"
+_REPLAY = "import sys; from on_disk import *; print(recorded(latest_releases(REPOS, 'secret'), Path(sys.argv[1]), offline))"
 
 
 def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
@@ -295,6 +317,7 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
     ]
     assert claims == [
         ("bare", "UnhandledEffect True"),
+        ("hash", "TypeError"),
         ("equal", "False"),
         # 記録に無い時: 在るかを問い、外へ出して、答えを置く。在る時: 在るかを問い、読む(HttpRequest は保存の handler へ届かない)
         ("miss", "MemoExistsEffect"),
@@ -304,7 +327,7 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
         ("hit", "MemoGetEffect"),
         ("memory", "True 2"),
         ("no storage", "4"),
-        ("post", "200 200 1"),
+        ("post", "True 1"),
         ("token in default", "False True"),
         ("token in method_and_url", "False True"),
         ("key", "True True"),
@@ -314,7 +337,7 @@ def test_the_claims_the_article_makes(deadline_scale_factor: float) -> None:
 def test_another_process_replays_from_the_same_file(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
-    tape = str(tmp_path / "releases.sqlite")
+    tape = str(tmp_path / "releases.json")
     recorded = _child(["-c", _RECORD, tape], deadline_scale_factor)
     replayed = _child(["-c", _REPLAY, tape], deadline_scale_factor)
     assert recorded == replayed == "{'acme/server': 'v2.4.1', 'acme/client': 'v1.9.0'}"
