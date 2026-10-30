@@ -9,13 +9,16 @@ from typing import TypeVar
 from doeff import Effect, EffectBase, Program
 
 E = TypeVar("E", bound="ConductorEffectBase")
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, kw_only=True)
-class ConductorEffectBase(EffectBase):
+class ConductorEffectBase(EffectBase[T]):
     """Base class for conductor effects.
 
-    Inherits from doeff's EffectBase for effect interpreter compatibility.
+    Inherits from doeff's EffectBase for effect interpreter compatibility. ``T`` is the effect's
+    answer: a subclass writes ``ConductorEffectBase[<answer>]`` so the answer is read from the
+    declaration (ADR-DOE-API-001 R2).
     """
 
     def intercept(

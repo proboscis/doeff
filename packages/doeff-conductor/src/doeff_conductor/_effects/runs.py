@@ -15,16 +15,28 @@ Effects for reading and changing the conductor's runs, answered by
 The ``conductor`` CLI commands are programs of these effects.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+from doeff import Program
 from doeff_conductor._effects.base import ConductorEffectBase
-from doeff_conductor._types import Issue, WorkflowStatus
+from doeff_conductor._types import Issue, WorkflowHandle, WorkflowStatus, Workspace
+
+if TYPE_CHECKING:
+    # Named by the quoted answer types of RenderMonitor, PlanWorkflow and ValidateWorkflow below: ruff does
+    # not read a string in a class's bases, and importing them at run time would load rich and the planner here.
+    from rich.console import RenderableType  # noqa: F401 - RenderMonitor's quoted answer
+
+    from doeff_conductor._verbs import (
+        BindingPlan,  # noqa: F401 - PlanWorkflow's quoted answer
+        ValidationSuiteReport,  # noqa: F401 - ValidateWorkflow's quoted answer
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListWorkflows(ConductorEffectBase):
+class ListWorkflows(ConductorEffectBase[list[WorkflowHandle]]):
     """List the workflows in the state directory, newest update first.
 
     Yields: list[WorkflowHandle]
@@ -39,7 +51,7 @@ class ListWorkflows(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetWorkflow(ConductorEffectBase):
+class GetWorkflow(ConductorEffectBase[WorkflowHandle | None]):
     """Get a workflow by ID or unique ID prefix.
 
     Yields: WorkflowHandle | None (None when no workflow matches)
@@ -50,7 +62,7 @@ class GetWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RunWorkflow(ConductorEffectBase):
+class RunWorkflow(ConductorEffectBase[WorkflowHandle]):
     """Run a workflow template or Hy workflow file to its end or its first open gate.
 
     Yields: WorkflowHandle (status done, blocked or error)
@@ -65,7 +77,7 @@ class RunWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResumeWorkflow(ConductorEffectBase):
+class ResumeWorkflow(ConductorEffectBase[WorkflowHandle]):
     """Resume a run from its snapshotted workflow source.
 
     Yields: WorkflowHandle
@@ -79,7 +91,7 @@ class ResumeWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StopWorkflow(ConductorEffectBase):
+class StopWorkflow(ConductorEffectBase[list[str]]):
     """Stop a workflow (or one agent of it) and mark it aborted.
 
     Yields: list[str] (the stopped agent or session names)
@@ -91,7 +103,7 @@ class StopWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AnswerGate(ConductorEffectBase):
+class AnswerGate(ConductorEffectBase[WorkflowHandle]):
     """Answer an open overseer gate and apply its closure-preserving option.
 
     Yields: WorkflowHandle (after proceed/extend/retry-agent resume, redirect or abort)
@@ -106,7 +118,7 @@ class AnswerGate(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListOpenGates(ConductorEffectBase):
+class ListOpenGates(ConductorEffectBase[list[dict[str, Any]]]):
     """List the open gates of one workflow, or of every workflow.
 
     Yields: list[dict[str, Any]]
@@ -116,7 +128,7 @@ class ListOpenGates(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListGates(ConductorEffectBase):
+class ListGates(ConductorEffectBase[list[dict[str, Any]]]):
     """List the open and answered gates of one workflow, each with its status.
 
     Yields: list[dict[str, Any]]
@@ -126,7 +138,7 @@ class ListGates(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ReadProgress(ConductorEffectBase):
+class ReadProgress(ConductorEffectBase[list[dict[str, Any]]]):
     """Read the progress events of a workflow after a sequence number.
 
     Yields: list[dict[str, Any]]
@@ -137,7 +149,7 @@ class ReadProgress(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class PlanWorkflow(ConductorEffectBase):
+class PlanWorkflow(ConductorEffectBase["BindingPlan"]):
     """Produce the overseer binding plan for a workflow file.
 
     With ``run_id`` the workflow source is first snapshotted under that run.
@@ -151,7 +163,7 @@ class PlanWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ValidateWorkflow(ConductorEffectBase):
+class ValidateWorkflow(ConductorEffectBase["ValidationSuiteReport"]):
     """Validate a workflow file's control flow under scenario-driven stubs.
 
     With ``run_id`` the overseer state is persisted under that run.
@@ -166,7 +178,7 @@ class ValidateWorkflow(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListWorkspaces(ConductorEffectBase):
+class ListWorkspaces(ConductorEffectBase[list[Workspace]]):
     """List materialized workspaces.
 
     Yields: list[Workspace]
@@ -176,7 +188,7 @@ class ListWorkspaces(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CleanupWorkspaces(ConductorEffectBase):
+class CleanupWorkspaces(ConductorEffectBase[list[Path]]):
     """Remove orphaned workspace materializations.
 
     Yields: list[Path] (the removed paths, or the paths a dry run would remove)
@@ -187,7 +199,7 @@ class CleanupWorkspaces(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RenderMonitor(ConductorEffectBase):
+class RenderMonitor(ConductorEffectBase["RenderableType"]):
     """Render one static frame of the read-only run monitor (ADR 0002).
 
     Yields: a Rich renderable
@@ -199,7 +211,7 @@ class RenderMonitor(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class OpenMonitor(ConductorEffectBase):
+class OpenMonitor(ConductorEffectBase[None]):
     """Open the interactive read-only run monitor until the user quits it (ADR 0002).
 
     Yields: None
@@ -211,7 +223,7 @@ class OpenMonitor(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class DescribeEnvironment(ConductorEffectBase):
+class DescribeEnvironment(ConductorEffectBase[dict[str, Any]]):
     """Describe profiles, role conventions, router policy and capabilities.
 
     Yields: dict[str, Any]
@@ -219,7 +231,7 @@ class DescribeEnvironment(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ListTemplates(ConductorEffectBase):
+class ListTemplates(ConductorEffectBase[dict[str, str]]):
     """List the workflow templates by name with their descriptions.
 
     Yields: dict[str, str]
@@ -227,7 +239,7 @@ class ListTemplates(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetTemplate(ConductorEffectBase):
+class GetTemplate(ConductorEffectBase[Callable[..., Program]]):
     """Get a workflow template's function, to call with the template's arguments.
 
     Yields: Callable[..., Program] (the template's ``@do`` function)
@@ -238,7 +250,7 @@ class GetTemplate(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetTemplateSource(ConductorEffectBase):
+class GetTemplateSource(ConductorEffectBase[str]):
     """Get a workflow template's source code.
 
     Yields: str
@@ -249,7 +261,7 @@ class GetTemplateSource(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ConductorStateDir(ConductorEffectBase):
+class ConductorStateDir(ConductorEffectBase[Path]):
     """The state directory the handler reads, for messages that name it.
 
     Yields: Path

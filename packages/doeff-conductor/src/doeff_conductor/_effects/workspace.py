@@ -14,11 +14,11 @@ site-local worktree across process restarts.
 from dataclasses import dataclass
 
 from doeff_conductor._effects.base import ConductorEffectBase
-from doeff_conductor._types import Issue, MergeStrategy, Workspace
+from doeff_conductor._types import Issue, MergeStrategy, MergeWorkspacesResult, Workspace
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreateWorkspace(ConductorEffectBase):
+class CreateWorkspace(ConductorEffectBase[Workspace]):
     """Ensure the logical workspace with this identity exists.
 
     Idempotent: re-emitting the same ``workspace_id`` re-adopts the existing
@@ -36,7 +36,7 @@ class CreateWorkspace(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class MergeWorkspaces(ConductorEffectBase):
+class MergeWorkspaces(ConductorEffectBase[MergeWorkspacesResult]):
     """Deterministically reconcile several workspaces.
 
     The merged workspace binds the same resume-stable identity discipline as
@@ -54,7 +54,7 @@ class MergeWorkspaces(ConductorEffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class DeleteWorkspace(ConductorEffectBase):
+class DeleteWorkspace(ConductorEffectBase[bool]):
     """Release a workspace's site-local materialization.
 
     Yields: bool

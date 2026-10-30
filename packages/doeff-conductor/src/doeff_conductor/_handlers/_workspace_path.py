@@ -6,6 +6,7 @@ handlers and the workspace journal installed inside it ask it for the path they 
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from doeff_conductor._effects.base import ConductorEffectBase
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True)
-class WorkspacePath(ConductorEffectBase):
+class WorkspacePath(ConductorEffectBase[Path]):
     """Ask for the site-local path that materializes a workspace.
 
     Yields: Path

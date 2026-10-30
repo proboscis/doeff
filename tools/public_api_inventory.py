@@ -2275,6 +2275,10 @@ def _annotation_types(annotation: object, namespace: dict[str, object]) -> Itera
     elif isinstance(annotation, _TYPE_ALIAS_TYPES):
         yield annotation
         yield from _annotation_types(cast(typing.TypeAliasType, annotation).__value__, namespace)
+    elif isinstance(annotation, list):
+        # The parameters of Callable[[A, B], R]: read them as the text form of the annotation reads them.
+        for parameter in annotation:
+            yield from _annotation_types(parameter, namespace)
     elif _is_type_like(annotation):
         yield annotation  # a module-level alias (Mode = Literal[...]) is shown by its value
         origin = typing.get_origin(annotation)
