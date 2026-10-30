@@ -117,7 +117,6 @@ if TYPE_CHECKING:
     from doeff_claude_code._values import AskHost as AskHost
     from doeff_claude_code._values import AutocompactAuto as AutocompactAuto
     from doeff_claude_code._values import AutocompactTokens as AutocompactTokens
-    from doeff_claude_code._values import AutocompactWindow as AutocompactWindow
     from doeff_claude_code._values import BypassAll as BypassAll
     from doeff_claude_code._values import ClaudeHome as ClaudeHome
     from doeff_claude_code._values import ClaudeSessionSpec as ClaudeSessionSpec
@@ -252,7 +251,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AskHost": "doeff_claude_code._values",
     "AutocompactAuto": "doeff_claude_code._values",
     "AutocompactTokens": "doeff_claude_code._values",
-    "AutocompactWindow": "doeff_claude_code._values",
     "BypassAll": "doeff_claude_code._values",
     "ClaudeHome": "doeff_claude_code._values",
     "ClaudeSessionSpec": "doeff_claude_code._values",
