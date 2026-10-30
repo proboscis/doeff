@@ -19,8 +19,8 @@
 (import doeff_time [async-time-handler])
 (import doeff_core_effects [ExternalPromise])
 (import doeff_cluster.shared.protocol.inbox [http-requests stop-flag])
-(import doeff_cluster.foundation.coordinator_inbox [StopState])
-(import doeff_cluster.foundation.record_inbox [RecordInbox])
+(import doeff_cluster._foundation.coordinator_inbox [StopState])
+(import doeff_cluster._foundation.record_inbox [RecordInbox])
 (import doeff_cluster._record_store.protocol.record_files [record-files])
 
 

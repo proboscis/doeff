@@ -43,7 +43,7 @@
 (import doeff_cluster.shared.protocol.program_codec [decode-program encode-outcome])
 (import doeff_cluster.shared.core.remote_rules [failed-from])
 (import os)
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached
                                       DetachedSubmitted DetachedSucceeded DetachedFailed DetachedLost DetachedCancelled
                                       DetachedVersionMismatch DetachedUnknown DetachedPending DetachedRefused
@@ -737,7 +737,7 @@
 (import doeff_cluster.coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster.coordinator.protocol.state_json [state-to-json state-from-json])
 (import doeff_cluster.coordinator.entry.main [load-state])
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster [WalStore])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.worker.core.policy [kept-when-cut-off])
 (import doeff_cluster.worker.protocol.declared [task-spec])

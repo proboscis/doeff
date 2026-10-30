@@ -12,8 +12,8 @@
 (require doeff-hy.macros [defhandler val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import doeff_core_effects [Ask])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT this-program-path])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster._foundation.host_contract [HOST-CONTRACT this-program-path])
+(import doeff_cluster._foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.entry.run_context_env [context-from-env])
 
 

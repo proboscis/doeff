@@ -17,7 +17,7 @@
 (import doeff_cluster.shared.intent.remote_model [UnsendableProgram VersionMismatch RemoteJobFailed TaskSucceeded TaskFailed])
 (import doeff_cluster.shared.protocol.program_codec [encode-program decode-program decode-outcome])
 (import doeff_cluster.shared.core.remote_rules [version-mismatch remote-job])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
 (import tests.link_rig [write-program-file])
 (import doeff_cluster [sim-cluster SharedRows ProcessesOf])

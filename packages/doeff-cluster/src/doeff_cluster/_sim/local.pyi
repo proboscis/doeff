@@ -77,9 +77,9 @@ from doeff_cluster.coordinator.entry.main import with_running_commit as with_run
 from doeff_core_effects import EnvEntry as EnvEntry
 from doeff_core_effects import ProcessScript as ProcessScript
 from doeff_core_effects import scripted_process_handler as scripted_process_handler
-from doeff_cluster.foundation.coordinator_http import RESEND_PAUSE_SECONDS as RESEND_PAUSE_SECONDS
+from doeff_cluster._foundation.coordinator_http import RESEND_PAUSE_SECONDS as RESEND_PAUSE_SECONDS
 from doeff_cluster.shared.core.resend import IDEMPOTENT_DEADLINE_SECONDS as IDEMPOTENT_DEADLINE_SECONDS
-from doeff_cluster.foundation.coordinator_inbox import StopState as StopState
+from doeff_cluster._foundation.coordinator_inbox import StopState as StopState
 from doeff_cluster.shared.protocol.inbox import http_request as http_request
 from doeff_cluster.coordinator.entry.handler_sets import MemoryWalStore as MemoryWalStore
 from doeff_cluster.coordinator.entry.handler_sets import emulated_handlers as emulated_handlers
@@ -200,9 +200,9 @@ from doeff_cluster.worker.core.worker_due import beat_due as beat_due
 from doeff_cluster.worker.core.worker_due import fence_due as fence_due
 from doeff_cluster.worker.core.worker_due import due_after as due_after
 from doeff_cluster.shared.core.due_policy import earliest_due as earliest_wake
-from doeff_cluster.foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
-from doeff_cluster.foundation.host_contract import SIM_PASSABLE as SIM_PASSABLE
-from doeff_cluster.foundation.host_contract import environ_table_reader as environ_table_reader
+from doeff_cluster._foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
+from doeff_cluster._foundation.host_contract import SIM_PASSABLE as SIM_PASSABLE
+from doeff_cluster._foundation.host_contract import environ_table_reader as environ_table_reader
 from doeff_cluster.shared.intent.run_context import RunContext as RunContext
 from doeff_cluster.shared.core.run_context_rules import worker_context_environ as worker_context_environ
 from doeff_cluster.shared.core.run_context_rules import process_context_environ as process_context_environ
@@ -222,7 +222,7 @@ from doeff_cluster.shared.protocol.program_codec import encode_program as encode
 from doeff_cluster.shared.protocol.program_codec import encode_outcome as encode_outcome
 from doeff_cluster.shared.core.remote_rules import failed_from as failed_from
 from doeff_cluster.shared.core.remote_rules import program_sha as program_sha
-from doeff_cluster.foundation.process_versions import process_versions as process_versions
+from doeff_cluster._foundation.process_versions import process_versions as process_versions
 from doeff_cluster.shared.protocol.task_result import task_result_request as task_result_request
 from doeff_cluster.shared.protocol.task_result import task_id_of_job as task_id_of_job
 from doeff_cluster.shared.protocol.service_report import report_request as report_request

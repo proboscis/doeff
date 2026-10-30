@@ -23,7 +23,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms datetime-of-epoch-ms])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
 (import doeff_cluster.shared.protocol.inbox [http-request])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState ClusterNaming SaveState])
 (import doeff_cluster.coordinator.core.program [run-coordinator HEARTBEAT-LAG-LOG])
 (import doeff_cluster.coordinator.entry.handler_sets [memory-notices])

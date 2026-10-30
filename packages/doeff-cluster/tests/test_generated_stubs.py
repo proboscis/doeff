@@ -111,7 +111,7 @@ def test_generated_stubs_are_what_the_tool_makes() -> None:
 # 使い手の repo の渡し方(置き場の口に WalStore を ByteLog として渡す)を写した検の module(#2972)。
 WAL_STORE_AS_BYTE_LOG = """\
 (require doeff-hy.macros [defk <-])
-(import doeff_cluster.foundation.wal_store [WalStore])
+(import doeff_cluster._foundation.wal_store [WalStore])
 (import doeff_cluster.coordinator.protocol.store [ByteLog])
 
 (defk seq-of [log]

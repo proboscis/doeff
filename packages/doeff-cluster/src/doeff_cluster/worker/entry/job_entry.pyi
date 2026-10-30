@@ -18,7 +18,7 @@ from doeff_cluster.shared.core.remote_rules import diffs_text as diffs_text
 from doeff_cluster.shared.core.remote_rules import failed_from as failed_from
 from doeff_cluster.shared.protocol.program_codec import decode_program as decode_program
 from doeff_cluster.shared.protocol.program_codec import encode_outcome as encode_outcome
-from doeff_cluster.foundation.process_versions import this_process_versions as this_process_versions
+from doeff_cluster._foundation.process_versions import this_process_versions as this_process_versions
 from doeff_cluster.shared.intent.run_context import RunContext as RunContext
 from doeff_cluster.shared.core.run_context_rules import runtime_env_of_context as runtime_env_of_context
 from doeff_cluster.shared.entry.run_context_env import context_from_env as context_from_env

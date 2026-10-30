@@ -23,7 +23,7 @@
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_time [Delay SimClock sim-time-handler])
 (import os)
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.detached_model [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown
                                       DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable

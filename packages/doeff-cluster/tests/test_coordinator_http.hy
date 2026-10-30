@@ -10,7 +10,7 @@
 (import doeff_core_effects [await-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_time [async-time-handler])
-(import doeff_cluster.foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
+(import doeff_cluster._foundation.coordinator_inbox [RequestInbox StopState stop-on-signals])
 (import doeff_cluster.shared.intent.protocol [NextRequests Reply])
 (import doeff_cluster.shared.protocol.inbox [http-requests])
 (import tests.link_rig [LinkRig])

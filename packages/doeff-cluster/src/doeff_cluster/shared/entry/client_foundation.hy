@@ -16,7 +16,7 @@
 (import doeff [Program EffectBase with-handlers])
 (import doeff_cluster.shared.entry.cluster_foundation [coordinator-route-options])
 (import types [MappingProxyType])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster._foundation.process_versions [process-versions])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv])

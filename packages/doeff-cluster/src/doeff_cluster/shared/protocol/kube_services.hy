@@ -12,7 +12,7 @@
 ;;;   kube-services-api    EnsureKubeService・EnsureKubeIngress の本番の答え手
 ;;;
 ;;; 仕組み: ConfigMap・Secret の読み(supplied_values)と同じく、doeff の汎用の effect(token の file の ReadText と HttpRequest)で問う。
-;;; 答え手の外側に、宛先が API server の要求を区画の CA で検める接続(doeff_cluster.foundation.in_cluster_api の in-cluster-api-routed)と
+;;; 答え手の外側に、宛先が API server の要求を区画の CA で検める接続(doeff_cluster._foundation.in_cluster_api の in-cluster-api-routed)と
 ;;; file の答え手を並べる(使い手の process の外側 — job の本番の土台)。
 ;;; 結末は API server の答えの status で読む: 201 = 作った・200 = 在った物に当て直した。ほかの status・届かない・token が読めない時は断る
 ;;; (断りの文に載せるのは種類と namespace と名・status・API server の断りの本文の先頭まで)。当て直しは force(持ち主の替わる欄も、この

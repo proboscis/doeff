@@ -1,0 +1,625 @@
+;;; effect の記録と再生(backtest)の符号化 — 型ごとの符号化と復号の定義点はこの file の 1 か所だけ。
+;;;
+;;; 記録は何日も残る長期保存なので cloudpickle ではなく JSON にする。値の符号化(encode-value / decode-value)は
+;;; JSON の値・tuple・bytes・時刻(timezone つきの datetime)・dataclass・例外・handle(Task / Semaphore / Promise)を型を落とさずに往復させ、知らない物は
+;;; 黙って落とさず UnencodableValue を投げる。effect の型の扱いは 2 つの置き場の順に引く(codec-of):
+;;;   1. 登録表 — register の 1 行(引数の形を関数で作る型・汎用の型)。
+;;;   2. 型の宣言 — 既定の形で足りる型は、class の本体に ClassVar `__record_spec__`(shared/intent/record_spec.hy の RecordSpec)を置く。
+;;;      codec は宣言の値を欄の名(SPEC-FIELDS)で読む(RecordSpec を import しない)。
+;;;      codec は型そのものの __dict__ だけを読み(子 class には継がない)、初めて見た時に宣言から登録を作って表に入れる(#2578)。
+;;; どちらにも無い型は UnrecordableEffect(記録の側はそこから先を記録できないと印を置く — record_handlers.hy)。
+;;; 記録できる型かは can-record が答える(使い手の repo の登録漏れの検の材料)。
+;;;
+;;; 登録の 1 行が決めること:
+;;;   mode       再生での扱い。read = 記録の答えを返す(問いは型・引数・順番まで記録と同じでなければ「分岐」で止める)・
+;;;              live = 再生でも本物の scheduler が解く(Spawn・Wait 等。順番だけ突き合わせる)・
+;;;              decision = 判断(書き込み)。実行せず記録と突き合わせ、違いを 1 件ずつ出して続ける・
+;;;              output = 報告(readiness・計器・盤の要約)。decision と同じく突き合わせて続けるが、判断の違いとは分けて数える。
+;;;   args       effect → 引数の JSON(比べる形)。既定は dataclass の欄を encode-value で。
+;;;   subject    decision / output の対を取る鍵(同じ型の中で「どの行への書きか」)。
+;;;   unexecuted 記録に対の無い decision / output(extra)に返す答え。書きの型は「着地した」(True)と宣言する — 業務の Program を
+;;;              本番が通らなかった競合・backoff の道へ逸らさず、読みを記録に揃えたまま次の判断の違いまで進めるため。
+;;;              同じ位置・同じ対の鍵で引数だけが違う書き(changed)には、記録の答え(本番の書きへの engine の答え = 同じ前提の世代の
+;;;              compare-and-set の結果)を返す。DIVERGE なら返さずに分岐として止める(答えの形が決まっていない型)。
+;;;   binds      答えを handle として名付ける種類(named-sem / sem / task / promise)。
+;;;   watch      答えが業務コードと handler が共有する可変の dict(Ask の計器の箱)なら真 — 記録は中身の変化を別の出来事で残す。
+;;;
+;;; 大きな値の内容参照(intern-json / resolve-refs・形の版 2): 値を下から畳み、canonical JSON が INTERN-MIN-CHARS 以上の節
+;;; (dict・list)を内容の hash の参照 {"$ref": h} に置き換え、中身は run の中で初めて出た時に 1 度だけ blob の行で書く。周期ごとに
+;;; 同じ一覧を読み直す controller(再同期)は、変わっていない行・頁が参照 1 つになる(実測は docs/experiment-log.md)。
+;;; 既出の記憶(BlobMemory)は新しく使った物から BLOB-MEMORY-MAX 個まで — 忘れた中身がまた出たら blob を書き直す(読む側は同じ h を
+;;; 同じ中身として扱うので、2 度在っても害は無い)。再生は run の始まりから読むので、区切りごとに中身を書き直さない
+;;; (書き直すと、区切りごとに一覧の全行 = 大きな一覧を読む書き手で約 130 MB を書くことになる)。
+;;;
+;;; 大きな値の差分(delta-of / apply-delta): 形の版 1 の記録が使った(同じ問いの前の答えとの差)。版 1 の記録を読むためと、
+;;; backtest の報告(記録 → 再生の差)のために残す。
+(require doeff-hy.macros [deff defk val])
+(val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
+(import base64)
+(import collections [OrderedDict])
+(import collections.abc [Callable])
+(import typing [ClassVar Protocol runtime-checkable])
+(import datetime [datetime])
+(import dataclasses)
+(import hashlib)
+(import importlib)
+(import json)
+(import math)
+(import doeff [EffectBase])
+(import doeff_core_effects [Ask])
+(import doeff_core_effects [Spawn Wait Gather Race Cancel CreatePromise CompletePromise FailPromise CreateSemaphore AcquireSemaphore ReleaseSemaphore Task Promise Future Semaphore])
+(import doeff_time [GetTimeEffect GetMonotonicEffect DelayEffect])
+(import doeff_hy._json_value [OpaqueJson])
+(import doeff_hy._frozen [FrozenMap])
+
+(setv FORMAT-VERSION 2)
+;; 読める形の版(1 = 差分・2 = 内容参照と問いと答えの 1 行)。
+(setv READABLE-FORMATS #(1 2))
+;; 版 1 の差分の閾値(canonical JSON の文字数)。
+(setv DELTA-MIN-CHARS 2048)
+;; この長さ(canonical JSON の文字数)以上の節を内容参照にする。参照 1 つ({"$ref": 24 桁})は約 35 文字なので、
+;; 閾値が小さすぎると blob の行の数だけが増える。
+(setv INTERN-MIN-CHARS 256)
+;; 既出の中身の記憶の上限(1 つ約 170 byte = 約 35 MB)。大きな一覧を読む書き手の行の数(約 16 万 — 2026-09-25 実測)より大きく取る。
+(setv BLOB-MEMORY-MAX 200000)
+
+;; JSON の値(記録の 1 行の中身)の型。
+(setv JsonValue (| None bool int float str list dict))
+
+(setv READ "read" LIVE "live" DECISION "decision" OUTPUT "output")
+(setv LOOSE #(DECISION OUTPUT))
+
+
+(defclass UnencodableValue [TypeError]
+  "記録の形(JSON)にできない値。記録を黙って落とさないために投げる。")
+
+(defclass UnrecordableEffect [TypeError]
+  "登録表にも型の宣言(__record_spec__)にも記録の形の無い effect の型。")
+
+(defclass MalformedRecordSpec [TypeError]
+  "型の宣言(__record_spec__)の値が記録の形の宣言として読めない(知らない mode・binds・unexecuted、args に無い欄の名など)。")
+
+(defclass _Diverge []
+  (defn #^ str __repr__ [self] "DIVERGE"))
+
+(setv DIVERGE (_Diverge))
+
+
+(defclass ReplayHandle []
+  "再生で記録の答えから作る handle(named semaphore 等)。業務コードは受け取って引数に戻すだけなので、同じ名を持つ札で足りる。"
+  (defn #^ None __init__ [self #^ str kind #^ str ref]
+    (setv self.kind kind self.ref ref))
+  (defn #^ bool __eq__ [self #^ object other]
+    (and (isinstance other ReplayHandle) (= #(self.kind self.ref) #(other.kind other.ref))))
+  (defn #^ int __hash__ [self] (hash #("ReplayHandle" self.kind self.ref)))
+  (defn #^ str __repr__ [self] (.format "ReplayHandle({!r}, {!r})" self.kind self.ref)))
+
+
+(defclass ReplaySemaphore [ReplayHandle Semaphore]
+  "semaphore の札(業務コードの契約が Semaphore の型を求めるので、その子にする)。"
+  (defn #^ None __init__ [self #^ str kind #^ str ref]
+    (ReplayHandle.__init__ self kind ref)
+    (Semaphore.__init__ self (.format "replay:{}" ref)))
+  (defn #^ bool __eq__ [self #^ object other] (ReplayHandle.__eq__ self other))
+  (defn #^ int __hash__ [self] (ReplayHandle.__hash__ self)))
+
+
+(defn #^ ReplayHandle handle-for [#^ str kind #^ str ref]
+  "記録の handle の印 → 再生の札。semaphore は Semaphore の子の札。"
+  (if (in kind #("named-sem" "sem")) (ReplaySemaphore kind ref) (ReplayHandle kind ref)))
+
+
+(defclass [runtime-checkable] DataclassValue [Protocol]
+  "記録から作り直した dataclass の値(どの dataclass も持つ __dataclass_fields__ で名指す — 記録で運ぶ型は実行時に resolve-type で引く)。
+   契約(decode-value の答え)が実行の時に isinstance で確かめるので runtime-checkable(__dataclass_fields__ を持つかだけを見る)。"
+  #^ (get ClassVar dict) __dataclass_fields__)
+
+
+;; 凍った写像の型と記録の印の表(doeff_hy._frozen の型の一族 — 1 か所の表。型が足されたらここに足し、encode-value と decode-value は
+;; この表だけを読む・型ごとの if を散らさない)。値は鍵と値の対の列で綴る(鍵が印の綴り $… でも素の dict の読みと混ざらない)。
+;; 以前は記録の形にできない型として断っていた — 業務の答えが記録の行の値(doeff-records の Row・Written の value)をそのまま運ぶと、
+;; 本番の記録係はその答えで記録を止め、strict の記録係は業務へ投げた(#3687 の続き)。
+(setv FROZEN-MARKS #(#("$fm" FrozenMap)))
+
+;; 記録から復元した値(decode-value の答え)の型 — encode-value が受けて印を付けた種類ちょうど(#1693 — 以前は object で宣言していた)。
+;; handle は再生の札 ReplayHandle になり、Task・Promise など生の handle には戻らない。
+(setv RestoredValue (| None bool int float str bytes datetime ReplayHandle list tuple dict FrozenMap BaseException DataclassValue))
+
+
+(defclass RecordedError [Exception]
+  "記録の例外の型を今の版で import できない時の代わり(型の名と文を持つ)。"
+  (defn #^ None __init__ [self #^ str type-name #^ str message]
+    (.__init__ (super) (.format "{}: {}" type-name message))
+    (setv self.type-name type-name self.message message)))
+
+
+;; --- 型の名 ------------------------------------------------------------------------------------
+
+(defn #^ str type-name [cls]
+  (.format "{}:{}" cls.__module__ cls.__qualname__))
+
+;; 置き場を移した module の旧い名 → 今の名(#2021 の決め 2a・#2105・#2106・#2107)。記録は移しの前に書いた型の名(module:qualname)を
+;; 持つので、読みだけがこの表で今の置き場を引く。書くのは今の名だけ(type-name)。旧い module に再輸出は残さない。
+(setv MOVED-MODULES
+  (| (dfor name #("runtime_env_model" "readiness_model" "metrics_model" "process_model" "remote_model" "warm_model" "detached_model" "service_model"
+                           "semaphore_model" "shared_model")
+          (+ "doeff_cluster." name) (+ "doeff_cluster.shared.intent." name))
+     ;; 記録の綴りと記録の handler(#2108)— 置き場が shared/intent でないので名ごとに書く。
+     {"doeff_cluster.effect_codec" "doeff_cluster._foundation.record_codec"
+      "doeff_cluster.record_model" "doeff_cluster._foundation.record_log"
+      "doeff_cluster.record_handlers" "doeff_cluster._foundation.record_handlers"
+      ;; 記録の綴り・形・handler を foundation へ(#2580)— shared/core と shared/protocol に在った間の名。
+      "doeff_cluster.shared.core.effect_codec" "doeff_cluster._foundation.record_codec"
+      "doeff_cluster.shared.core.record_model" "doeff_cluster._foundation.record_log"
+      "doeff_cluster.shared.protocol.record_handlers" "doeff_cluster._foundation.record_handlers"
+      ;; worker の型(#2025 の 2 本目)— 観測・記録・effect の型と、拍と掃除の判断の型。
+      "doeff_cluster.worker_model" "doeff_cluster.worker.intent.worker_model"
+      "doeff_cluster.beat_policy" "doeff_cluster.worker.core.beat_policy"
+      "doeff_cluster.env_upkeep" "doeff_cluster.worker.core.env_upkeep"
+      ;; 実行環境の root の準備の型(#2025 の 3 本目)— FileSha256 だけは共有の置き場(MOVED-TYPES)。
+      "doeff_cluster.env_prepare" "doeff_cluster.worker.intent.env_prepare_model"
+      ;; record-store の effect の区画を _ へ隠した(ADR-DOE-API-001 R15・card [id])— 移し替えの module を消した後も引く。
+      "doeff_cluster.record_store.intent.record_store_model" "doeff_cluster._record_store.intent.record_store_model"}
+     ;; 土台の区画を _ へ隠した(ADR-DOE-API-001 R15・card [id])— 型の名は class を定義する module の名を書くので、class を
+     ;; 定義する module(記録の例外 RecordedError・ClusterCaMissing、記録の形 Entry ほか)だけを並べる。移し替えの module を消した後も引く。
+     (dfor name #("coordinator_inbox" "in_cluster_api" "notice_pipe" "otlp_post" "process_environ" "process_versions" "record_codec"
+                  "record_handlers" "record_inbox" "record_log" "wal_store")
+           (+ "doeff_cluster.foundation." name) (+ "doeff_cluster._foundation." name))))
+
+;; module の一部の型だけを別の module へ移した時の旧い名(module:qualname)→ 今の名。module ごと移した物は MOVED-MODULES。
+;; worker_model の JobSpec・JobPhase は coordinator と共有の型なので shared/intent/job_model へ(#2025)。
+(setv MOVED-TYPES
+  (| (dfor name #("JobSpec" "JobPhase")
+           (+ "doeff_cluster.worker_model:" name) (+ "doeff_cluster.shared.intent.job_model:" name))
+     ;; record-store の effect(#2030)— record_store.hy は置き場の Program と effect を一緒に持っていた。effect だけを intent へ分けた。
+     (dfor name #("AppendRecordLines" "ListRecordRuns" "ReadRecordRun" "CompactRecords" "PruneRecords")
+           (+ "doeff_cluster.record_store:" name) (+ "doeff_cluster._record_store.intent.record_store_model:" name))
+     ;; #2025 の 3 本目 — env_prepare の FileSha256 は送り手の宣言と入口の検めも出す共有の effect・drain_client の effect は worker/intent へ。
+     {"doeff_cluster.env_prepare:FileSha256" "doeff_cluster.shared.intent.env_marker_model:FileSha256"
+      "doeff_cluster.drain_client:CoordinatorCall" "doeff_cluster.worker.intent.drain_model:CoordinatorCall"}))
+
+(defn #^ (| type None) resolve-type [#^ str name]
+  "型の名 → class。import できないか、名が class を指さなければ None(呼び手は class として呼ぶので module や関数を返さない)。
+  置き場を移した型の旧い名は MOVED-TYPES、module の旧い名は MOVED-MODULES で今の名へ引く。"
+  (setv #(written qualname) (.split (.get MOVED-TYPES name name) ":" 1))
+  (setv module (.get MOVED-MODULES written written))
+  (try
+    (setv obj (importlib.import-module module))
+    (for [part (.split qualname ".")]
+      (setv obj (getattr obj part)))
+    (if (isinstance obj type) obj None)
+    (except [e [ImportError AttributeError ValueError]] None)))
+
+
+;; --- handle の名 --------------------------------------------------------------------------------
+
+(defclass HandleTable []
+  "handle(Task・Semaphore・Promise / Future)に記録の中の名を振る表。記録と再生が同じ規則で名付けるので、Wait(task) の引数が
+   両方で同じ JSON になる。by-id は object の id → (種類, 名)。object は keep に持って id の使い回しを防ぐ。
+   Promise と Future は scheduler の promise の番号で引く(Future は .future のたびに新しい object になる)。"
+  (defn #^ None __init__ [self]
+    (setv self.by-id {} self.keep [] self.promises {}))
+
+  ;; obj はどの値でもよい(handle でなければ名を振らない — 呼び手は Spawn などの答えをそのまま渡す)。
+  (defn #^ None bind [self #^ object obj #^ str kind #^ (| str None) ref]
+    (when (isinstance obj ReplayHandle) (return None))
+    (if (in kind #("promise"))
+        (setv (get self.promises (getattr obj "promise_id" None)) ref)
+        (do (setv (get self.by-id (id obj)) #(kind ref))
+            (.append self.keep obj)))
+    None)
+
+  (defn #^ (| tuple None) name-of [self #^ object obj]
+    (cond
+      (isinstance obj ReplayHandle) #(obj.kind obj.ref)
+      (isinstance obj #(Promise Future))
+        (do (setv ref (.get self.promises (getattr obj "promise_id" None)))
+            (if (is ref None) None #((if (isinstance obj Future) "future" "promise") ref)))
+      True (.get self.by-id (id obj)))))
+
+
+;; --- 値の符号化 ---------------------------------------------------------------------------------
+
+(defn _plain-key? [k]
+  (and (isinstance k str) (not (.startswith k "$"))))
+
+;; v はどの値でもよい(記録の形にできない型は UnencodableValue で断る — 受ける型を狭めると断る所が型の上に移るだけ)。
+;; 契約つきの deff は object の引数を受けないので defn のまま(綴りの 1 点と名乗れず、DOEFF172 の基点に残る — #2722)。
+(defn #^ JsonValue encode-value [#^ object v #^ (| HandleTable None) [handles None]]
+  "値 → JSON の値。型を落とさない(tuple・bytes・dataclass・例外・handle に印を付ける)。知らない物は UnencodableValue。"
+  (cond
+    (is v None) None
+    (isinstance v bool) v
+    (isinstance v int) (int v)
+    (isinstance v float) (if (math.isfinite v) v {"$f" (repr v)})
+    (isinstance v str) v
+    (isinstance v bytes) {"$b" (.decode (base64.b64encode v) "ascii")}
+    ;; 時刻(GetTime の答え)は ISO 8601 の文字列で。timezone を落とさない(timezone の無い時刻は GetTime が返さないので断る)。
+    (isinstance v datetime)
+      (if (is v.tzinfo None)
+          (raise (UnencodableValue (.format "timezone の無い時刻は記録の形にしない: {!r}" v)))
+          {"$dt" (.isoformat v)})
+    (isinstance v ReplayHandle) {"$h" v.kind "id" v.ref}
+    (and (is-not handles None) (is-not (setx named (.name-of handles v)) None))
+      {"$h" (get named 0) "id" (get named 1)}
+    (isinstance v #(Task Semaphore Promise Future))
+      (raise (UnencodableValue (.format "名の無い handle: {!r}" v)))
+    (isinstance v list) (lfor x v (encode-value x handles))
+    (isinstance v tuple) {"$t" (lfor x v (encode-value x handles))}
+    ;; 凍った写像(表 FROZEN-MARKS の型)は印つきの鍵と値の対の列で綴る(dict の枝より前 — Mapping であっても dict に化けさせない)。
+    ;; FrozenMap の鍵は作りが str に限る(doeff_hy/_frozen.hy:37)ので素のまま書く。
+    (setx frozen-mark (next (gfor #(mark cls) FROZEN-MARKS :if (isinstance v cls) mark) None))
+      {frozen-mark (lfor #(k x) (.items v) [k (encode-value x handles)])}
+    (isinstance v dict)
+      (if (all (gfor k v (_plain-key? k)))
+          (dfor #(k x) (.items v) k (encode-value x handles))
+          {"$d" (lfor #(k x) (.items v) [(encode-value k handles) (encode-value x handles)])})
+    (isinstance v BaseException) (encode-error v handles)
+    (and (dataclasses.is-dataclass v) (not (isinstance v type)))
+      {"$c" (type-name (type v))
+       "f" (dfor f (dataclasses.fields v) f.name (encode-value (getattr v f.name) handles))}
+    True (raise (UnencodableValue (.format "記録の形にできない値の型: {}" (type-name (type v)))))))
+
+(deff encode-error [#^ BaseException e #^ (| HandleTable None) [handles None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: e BaseException) (: handles (| HandleTable None))] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "例外 → JSON。型の名・args・文・JSON にできる属性(__ で始まる物を除く — doeff の traceback 等)。"
+  (setv args [])
+  (for [a e.args]
+    (.append args (try (encode-value a handles) (except [UnencodableValue] {"$repr" (repr a)}))))
+  (setv attrs {})
+  (for [#(k x) (.items (getattr e "__dict__" {}))]
+    (when (not (.startswith k "__"))
+      (try (setv (get attrs k) (encode-value x handles)) (except [UnencodableValue] None))))
+  {"$e" (type-name (type e)) "args" args "msg" (str e) "attrs" attrs})
+
+(deff decode-value [#^ JsonValue j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j JsonValue)] :post [(: % RestoredValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "encode-value の逆。handle は ReplayHandle(再生の札)になる。"
+  ;; 契約の確かめは入口の 1 度だけにし、節ごとの再帰は契約の無い局所の関数で回す(節ごとに確かめると大きな値で約 1.8 倍 — #2722)。
+  (defn #^ RestoredValue restored [#^ JsonValue j]
+    (cond
+      (isinstance j list) (lfor x j (restored x))
+      (not (isinstance j dict)) j
+      (in "$f" j) (float (get j "$f"))
+      (in "$b" j) (base64.b64decode (get j "$b"))
+      (in "$dt" j) (datetime.fromisoformat (get j "$dt"))
+      (in "$h" j) (handle-for (get j "$h") (get j "id"))
+      (in "$t" j) (tuple (lfor x (get j "$t") (restored x)))
+      ;; 凍った写像の印(表 FROZEN-MARKS)— 同じ型へ戻す。
+      (setx frozen (next (gfor #(mark cls) FROZEN-MARKS :if (in mark j) #(mark cls)) None))
+        (do (setv #(mark cls) frozen)
+            (cls (lfor #(k x) (get j mark) #(k (restored x)))))
+      (in "$d" j) (dfor #(k x) (get j "$d") (restored k) (restored x))
+      (in "$e" j) (decode-error j)
+      (in "$repr" j) (get j "$repr")
+      (in "$c" j) (do (setv cls (resolve-type (get j "$c")))
+                      (when (is cls None)
+                        (raise (UnencodableValue (+ "記録の dataclass を import できない: " (get j "$c")))))
+                      (cls #** (dfor #(k x) (.items (get j "f")) k (restored x))))
+      ;; 素の dict は encode-value が「$ で始まらない文字列の鍵だけ」の時に限って書く(他は $d)。知らない $ の鍵は読めない印 —
+      ;; 素の dict として黙って返さない(#2581)。
+      (not (all (gfor k j (_plain-key? k))))
+        (raise (UnencodableValue (+ "記録の値の印を読めない: " (canonical j))))
+      True (dfor #(k x) (.items j) k (restored x))))
+  (restored j))
+
+(deff decode-error [#^ dict j]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j dict)] :post [(: % BaseException)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "記録の例外を同じ型・同じ args・同じ属性で作り直す(__init__ は呼ばない — 独自の __init__ を持つ例外も同じ物になる)。
+   型を import できなければ RecordedError(型の名と文)。"
+  (setv cls (resolve-type (get j "$e")))
+  (when (or (is cls None) (not (isinstance cls type)) (not (issubclass cls BaseException)))
+    (return (RecordedError (get j "$e") (get j "msg"))))
+  (setv obj (.__new__ cls cls))
+  (BaseException.__init__ obj #* (lfor a (get j "args") (decode-value a)))
+  (for [#(k x) (.items (.get j "attrs" {}))]
+    (try (setattr obj k (decode-value x)) (except [Exception] None)))
+  obj)
+
+(defn #^ str canonical [#^ JsonValue j]
+  "JSON の値の比べる形(鍵の順を揃えた文字列)。"
+  (json.dumps j :sort-keys True :ensure-ascii False :separators #("," ":")))
+
+(defn #^ str short-hash [#^ str text]
+  (cut (.hexdigest (hashlib.sha1 (.encode text "utf-8"))) 0 16))
+
+
+;; --- 差分(大きな値) ---------------------------------------------------------------------------
+
+(deff _list-ops [prev new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: prev list) (: new list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "prev の list から new の list を作る手順: [\"r\" 始め 長さ](prev の連続した区間)と [\"v\" 値](新しい項)。"
+  (setv index {})
+  (for [#(i x) (enumerate prev)]
+    (.append (.setdefault index (canonical x) []) i))
+  (setv ops [] run-start None run-len 0)
+  (defn #^ None flush []
+    (nonlocal run-start run-len)
+    (when (> run-len 0) (.append ops ["r" run-start run-len]))
+    (setv run-start None run-len 0))
+  (for [x new]
+    (setv candidates (.get index (canonical x) []))
+    (setv want (if (is run-start None) None (+ run-start run-len)))
+    (cond
+      (and (is-not want None) (in want candidates)) (+= run-len 1)
+      candidates (do (flush) (setv run-start (get candidates 0) run-len 1))
+      True (do (flush) (.append ops ["v" x]))))
+  (flush)
+  ops)
+
+(deff delta-of [#^ JsonValue prev #^ JsonValue new]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: prev JsonValue) (: new JsonValue)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "JSON の値 prev から new への差分(どの節も印付きの dict)。"
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ dict delta [#^ JsonValue prev #^ JsonValue new]
+    (cond
+      (= (canonical prev) (canonical new)) {"$=" 1}
+      (and (isinstance prev dict) (isinstance new dict))
+        {"$o" (dfor #(k x) (.items new) k (if (in k prev) (delta (get prev k) x) {"$v" x}))
+         "$del" (lfor k prev :if (not-in k new) k)}
+      (and (isinstance prev list) (isinstance new list)) {"$a" (_list-ops prev new)}
+      True {"$v" new}))
+  (delta prev new))
+
+(deff apply-delta [#^ JsonValue prev #^ dict delta]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: prev JsonValue) (: delta dict)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "delta-of の逆 — 形の版 1 の記録の値を、前の値と差分から戻す。"
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue applied [#^ JsonValue prev #^ dict delta]
+    (cond
+      (in "$=" delta) prev
+      (in "$v" delta) (get delta "$v")
+      ;; dict の差分は前の値も dict、list の差分は前の値も list のはず(違えば下の「読めない」で断る)。
+      (and (in "$o" delta) (isinstance prev dict))
+        (do (setv out (dfor #(k x) (.items prev) :if (not-in k (get delta "$del")) k x))
+            (for [#(k d) (.items (get delta "$o"))]
+              (setv (get out k) (applied (.get prev k) d)))
+            ;; 鍵の順は new の順に揃える(比べる形は順を見ないが、復号した dict の順も元に近づける)
+            (dfor k (get delta "$o") k (get out k)))
+      (and (in "$a" delta) (isinstance prev list))
+        (do (setv out [])
+            (for [op (get delta "$a")]
+              (if (= (get op 0) "r")
+                  (.extend out (cut prev (get op 1) (+ (get op 1) (get op 2))))
+                  (.append out (get op 1))))
+            out)
+      True (raise (ValueError (+ "差分の形を読めない: " (canonical delta))))))
+  (applied prev delta))
+
+
+;; --- 内容参照(大きな値) ---------------------------------------------------------------------
+
+(defn #^ str content-hash [#^ str text]
+  "内容参照の鍵(blake2b 96 bit の 16 進 24 桁)。"
+  (.hexdigest (hashlib.blake2b (.encode text "utf-8") :digest-size 12)))
+
+(defclass BlobMemory []
+  "既出の中身の hash の記憶(新しく使った物から max-size 個)。in で引くと使った印を付け直す。"
+  (defn #^ None __init__ [self #^ int [max-size BLOB-MEMORY-MAX]]
+    (setv self.max-size max-size self.order (OrderedDict)))
+  (defn #^ bool __contains__ [self #^ str h]
+    (when (in h self.order)
+      (.move-to-end self.order h)
+      (return True))
+    False)
+  (defn #^ None add [self #^ str h]
+    (setv (get self.order h) True)
+    (while (> (len self.order) self.max-size)
+      (.popitem self.order :last False))
+    None)
+  (defn #^ int __len__ [self] (len self.order)))
+
+(deff intern-json [#^ JsonValue j #^ BlobMemory seen #^ Callable emit #^ int [min-chars INTERN-MIN-CHARS]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な綴り
+  {:pre [(: j JsonValue) (: seen BlobMemory) (: emit Callable) (: min-chars int)] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "JSON の値 j を下から畳む: canonical が min-chars 以上の dict / list の節を {\"$ref\": h} に置き換え、seen に無い h なら
+   (emit h 畳んだ節)を呼んで中身を書かせ、seen に足す。子が先に畳まれるので、親の比べる形の長さは子の参照の長さで測る。
+   答え = 畳んだ値(小さければ j と同じ形)。"
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue folded [#^ JsonValue j]
+    (setv form (cond
+                 (isinstance j dict) (dfor #(k v) (.items j) k (folded v))
+                 (isinstance j list) (lfor v j (folded v))
+                 True j))
+    (when (not (isinstance form #(dict list)))
+      (return form))
+    (setv text (canonical form))
+    (when (< (len text) min-chars)
+      (return form))
+    (setv h (content-hash text))
+    (when (not-in h seen)
+      (.add seen h)
+      (emit h form))
+    {"$ref" h})
+  (folded j))
+
+(deff resolve-refs [#^ JsonValue j #^ dict blobs #^ (| dict None) [memo None]]  ; defk にできない: 記録係・再生係(handler)と再生の読み(Program の外)が呼ぶ純粋な読み
+  {:pre [(: j JsonValue) (: blobs dict) (: memo (| dict None))] :post [(: % JsonValue)] :tags {:context "doeff-cluster" :role "foundation" :reads "json"}}
+  "intern-json の逆。blobs = h → 畳んだ節(blob の行の v)。無い参照は ValueError(記録が欠けている)。"
+  (setv memo (if (is memo None) {} memo))
+  ;; 契約の確かめは入口の 1 度だけ(節ごとの再帰は局所の関数 — decode-value と同じ理由)。
+  (defn #^ JsonValue resolved [#^ JsonValue j]
+    (cond
+      (isinstance j list) (lfor v j (resolved v))
+      (not (isinstance j dict)) j
+      (and (= (len j) 1) (in "$ref" j))
+        (do (setv h (get j "$ref"))
+            (when (not-in h memo)
+              (when (not-in h blobs)
+                (raise (ValueError (+ "内容参照の中身(blob)が記録に無い: " h))))
+              (setv (get memo h) (resolved (get blobs h))))
+            ;; 同じ参照は同じ object を共有する(読む側は JSON の値として読むだけ — 業務コードへ渡す値は decode-value が新しく作る)。
+            (get memo h))
+      True (dfor #(k v) (.items j) k (resolved v))))
+  (resolved j))
+
+
+;; --- effect の登録 -----------------------------------------------------------------------------
+
+(defclass EffectCodec []
+  ;; unexecuted = 記録に対の無い書きへ返す答え(どの値でもよい — True・None・書きの型が決めた答えの record)か DIVERGE(返さずに分岐として止める)。
+  ;; arg-names = args の関数を持たない型の、記録の引数に載せる欄の名(型の宣言の args — None = dataclass の全部の欄)。
+  (defn #^ None __init__ [self #^ type cls #^ (| str Callable) mode #^ (| Callable None) [args None] #^ (| Callable None) [subject None]
+                  #^ object [unexecuted DIVERGE] #^ (| str None) [binds None] #^ bool [watch False]
+                  #^ (| tuple None) [arg-names None]]
+    (setv self.cls cls self.name (type-name cls) self.mode mode self.args-fn args self.subject-fn subject
+          self.unexecuted unexecuted self.binds binds self.watch watch self.arg-names arg-names)))
+
+
+(defk _fields-args [asked handles]
+  {:pre [(: asked EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "登録に args の関数が無い型の effect asked について、記録の引数(欄の名 → 記録の形の値)を欄から綴るため。"
+  ;; 欄の名は登録の arg-names(型の宣言の args)か、無ければ dataclass の全部の欄。
+  ;; OpaqueJson の欄(形を書き手が決める JSON — 盤の書きの値など)は、包みの型の綴りでなく中の JSON の値で綴る(#2579)。
+  ;; 比べる形が書き手の包み方に依らず、値が素の JSON の値だった旧い記録の行とも同じ綴りになる(旧い行の揃えは record_log.read-recording)。
+  (val names (. (codec-of asked) arg-names))
+  (dfor name (if (is names None) (gfor f (dataclasses.fields asked) f.name) names)
+        :setv v (getattr asked name)
+        name (encode-value (if (isinstance v OpaqueJson) (json.loads v.text) v) handles)))
+
+;; v はどの値でもよい(encode-value と同じ理由で defn のまま — #2722)。
+(defn _loose-value [v handles]
+  "live の effect の引数・答えは順番の突き合わせと報告にしか使わないので、JSON にできない値は repr の印にする。"
+  (try (encode-value v handles) (except [UnencodableValue] {"$repr" (repr v)})))
+
+(defn _handle-mode [attr]
+  "semaphore の effect: 名前付き(記録の札・cluster の lease)なら read、scheduler の手元の semaphore なら live。"
+  (fn [effect handles]
+    (setv named (.name-of handles (getattr effect attr)))
+    (if (and (is-not named None) (= (get named 0) "named-sem")) READ LIVE)))
+
+;; 宣言の属性の名(effect の class の ClassVar — shared/intent/record_spec.hy)。
+(setv SPEC-ATTRIBUTE "__record_spec__")
+;; codec が読む宣言の欄の名(RecordSpec の欄と同じ — 一致は tests/test_effect_record.hy が縛る)。
+(setv SPEC-FIELDS #("mode" "binds" "subject" "args" "unexecuted"))
+;; 宣言の欄の値の綴り(StrEnum の値)→ 登録の値。DIVERGE はこの codec の印なので、宣言の語彙からここで写す。
+(setv _SPEC-MODES #(READ LIVE DECISION OUTPUT))
+(setv _SPEC-BINDS #("named-sem" "sem" "task" "promise"))
+(setv _SPEC-UNEXECUTED {"diverge" DIVERGE "landed" True "nothing" None})
+
+(setv _REGISTRY {})
+;; 型の宣言から作った登録(型 → 登録)。登録表(register)とは分けて持つ — registered-types は register の行だけを答える。
+(setv _DECLARED {})
+
+(defn #^ EffectCodec register [#^ EffectCodec codec]
+  ;; 登録表と型の宣言の両方を持つ型は、どちらが効くかを読み手が取り違えるので登録の時に止める。
+  (when (in SPEC-ATTRIBUTE (vars codec.cls))
+    (raise (MalformedRecordSpec (.format "{} は記録の宣言(__record_spec__)を持つので登録表に足さない(片方だけにする)" codec.name))))
+  (setv (get _REGISTRY codec.cls) codec)
+  codec)
+
+;; --- 型の宣言(__record_spec__)を読む ----------------------------------------------------------------
+;; 宣言の値は欄の名(SPEC-FIELDS)と値の綴り(StrEnum の値)で読む(RecordSpec を import しない)。
+
+(deff _spec-subject [#^ str field]  ; defk にできない: 記録係・再生係が登録の subject として呼ぶ callback を作る
+  {:pre [(: field str)] :post [(: % Callable)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "宣言の subject(記録の引数の欄の名)→ 対の鍵を作る関数(その欄の値の文字列)。"
+  (fn [args] (str (.get args field))))
+
+(deff _codec-from-spec [#^ type cls]  ; defk にできない: codec-of(記録係・再生係が Program の外で呼ぶ純粋な関数)が呼ぶ
+  {:pre [(: cls type)] :post [(: % EffectCodec)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "型の宣言の値 → 登録。宣言の欄を検め、読めない値は MalformedRecordSpec で型の名と欄を名指す(黙って既定の扱いへ倒さない)。"
+  (setv where (type-name cls)
+        spec (get (vars cls) SPEC-ATTRIBUTE))
+  (setv missing (lfor name SPEC-FIELDS :if (not (hasattr spec name)) name))
+  (when missing
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言に欄 {} が無い" where missing))))
+  (setv mode (str spec.mode)
+        binds spec.binds
+        subject spec.subject
+        args spec.args
+        unexecuted (str spec.unexecuted))
+  (when (not-in mode _SPEC-MODES)
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の mode が読めない: {!r}" where mode))))
+  (when (and (is-not binds None) (not-in (str binds) _SPEC-BINDS))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の binds が読めない: {!r}" where binds))))
+  (when (not-in unexecuted _SPEC-UNEXECUTED)
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の unexecuted が読めない: {!r}" where unexecuted))))
+  (when (not (or (is args None) (and (isinstance args tuple) (all (gfor n args (isinstance n str))))))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の args は欄の名の tuple か None: {!r}" where args))))
+  (when (and (is args None) (not (dataclasses.is-dataclass cls)))
+    (raise (MalformedRecordSpec (.format "{} は dataclass でないので、記録の宣言に args(欄の名)が要る" where))))
+  (setv names (if (is args None) (tuple (gfor f (dataclasses.fields cls) f.name)) args))
+  (when (and (is-not subject None) (not-in subject names))
+    (raise (MalformedRecordSpec (.format "{} の記録の宣言の subject {!r} が記録の引数の欄 {} に無い" where subject names))))
+  (EffectCodec cls mode
+               :arg-names args
+               :subject (if (is subject None) None (_spec-subject subject))
+               :unexecuted (get _SPEC-UNEXECUTED unexecuted)
+               :binds (if (is binds None) None (str binds))))
+
+(deff _declared-codec [#^ type cls]  ; defk にできない: codec-of と can-record(Program の外の純粋な関数)が呼ぶ
+  {:pre [(: cls type)] :post [(: % (| EffectCodec None))] :tags {:context "doeff-cluster" :role "foundation"}}
+  "型そのものの宣言(__dict__ の __record_spec__ — 親の宣言は継がない)から作った登録。初めて見た時に作って表に入れる。宣言が無ければ None。"
+  (setv codec (.get _DECLARED cls))
+  (when (is-not codec None)
+    (return codec))
+  (setv spec (.get (vars cls) SPEC-ATTRIBUTE))
+  (when (is spec None)
+    (return None))
+  (setv codec (_codec-from-spec cls))
+  (setv (get _DECLARED cls) codec)
+  codec)
+
+(deff can-record [#^ type cls]  ; defk にできない: 使い手の repo の登録漏れの検が Program の外で型ごとに問う
+  {:pre [(: cls type)] :post [(: % bool)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "その effect の型を記録できるか(登録表に在るか、型そのものが記録の形の宣言を持つか — 子 class は親の宣言では記録できない)。
+   宣言が読めなければ MalformedRecordSpec(記録できるとも、できないとも答えない)。"
+  (or (in cls _REGISTRY) (is-not (_declared-codec cls) None)))
+
+;; effect はどの値でもよい(登録の無い型は UnrecordableEffect で断る)。
+(defn #^ EffectCodec codec-of [#^ object effect]
+  "effect の登録。登録表 → 型の宣言の順に、型そのもので引く(子 class を親の登録・宣言で黙って扱わない)。無ければ UnrecordableEffect。"
+  (setv cls (type effect))
+  (setv codec (or (.get _REGISTRY cls) (_declared-codec cls)))
+  (when (is codec None)
+    ;; 親が宣言を持つなら、継がないことを添える(子の扱いは子の宣言が決める)。
+    (setv parents (lfor base (cut cls.__mro__ 1 None) :if (in SPEC-ATTRIBUTE (vars base)) (type-name base)))
+    (raise (UnrecordableEffect (.format "effect の型 {} は記録の登録表にも型の宣言(__record_spec__)にも無い{}" (type-name cls)
+                                        (if parents (.format "(親 {} の宣言は子 class に継がない)" (get parents 0)) "")))))
+  codec)
+
+(defn #^ str mode-of [#^ object effect #^ HandleTable handles]
+  (setv mode (. (codec-of effect) mode))
+  (if (callable mode) (mode effect handles) mode))
+
+(defk args-of [asked handles]
+  {:pre [(: asked EffectBase) (: handles HandleTable)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "foundation" :spells "json"}}
+  "effect asked の記録の引数(名 → 記録の形の値)を綴るため — 記録の handler が問いの行に書き、再生の handler が記録の行と比べる。
+   登録に args の関数があればそれで、無ければ欄から(_fields-args)。"
+  (val codec (codec-of asked))
+  (if (is codec.args-fn None) (! (_fields-args asked handles)) (codec.args-fn asked handles)))
+
+(defn #^ (| str None) subject-of [#^ object effect #^ dict args]
+  (setv codec (codec-of effect))
+  (if (is codec.subject-fn None) None (codec.subject-fn args)))
+
+(defn #^ list registered-types []
+  "登録済みの型の名の一覧(README とテストの材料)。"
+  (sorted (gfor c (.values _REGISTRY) c.name)))
+
+;; 汎用(doeff・worker の基盤)
+(register (EffectCodec Ask READ :args (fn [e h] {"key" (_loose-value e.key h)}) :watch True))
+;; 時計は doeff-time の 3 つ(GetTime / GetMonotonic / Delay)。再生では記録の答え(時刻・秒・None)を返し、眠らない。
+(for [cls [GetTimeEffect GetMonotonicEffect DelayEffect]]
+  (register (EffectCodec cls READ)))
+(register (EffectCodec AcquireSemaphore (_handle-mode "semaphore") :args (fn [e h] {"semaphore" (_loose-value e.semaphore h)})))
+(register (EffectCodec ReleaseSemaphore (_handle-mode "semaphore") :args (fn [e h] {"semaphore" (_loose-value e.semaphore h)})))
+(register (EffectCodec CreateSemaphore LIVE :args (fn [e h] {"permits" e.permits}) :binds "sem"))
+(register (EffectCodec Spawn LIVE :args (fn [e h] {"priority" e.priority "daemon" e.daemon}) :binds "task"))
+(register (EffectCodec Wait LIVE :args (fn [e h] {"on" (_loose-value e.task h)})))
+(register (EffectCodec Gather LIVE :args (fn [e h] {"on" (lfor t e.tasks (_loose-value t h))})))
+(register (EffectCodec Race LIVE :args (fn [e h] {"on" (lfor t e.tasks (_loose-value t h))})))
+(register (EffectCodec Cancel LIVE :args (fn [e h] {"on" (_loose-value e.task h)})))
+(register (EffectCodec CreatePromise LIVE :args (fn [e h] {}) :binds "promise"))
+(register (EffectCodec CompletePromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "value" (_loose-value e.value h)})))
+(register (EffectCodec FailPromise LIVE :args (fn [e h] {"promise" (_loose-value e.promise h) "error" (_loose-value e.error h)})))
+
+;; 盤の読み書き・lease の問い・名前付きの semaphore・readiness と計器の報告・process の gauge の読み(shared/intent の 8 型)は、型の宣言
+;; (__record_spec__)で記録する(#2578・#2579 — 登録表の行は持たない)。
+
+;; --- 業務コードの effect ------------------------------------------------------------------------------
+;; 業務の effect の型は、業務の側の module が import の時に register で足す(この package は業務の型を知らない)。
+;; 記録係と再生係は job の Program の中の境目に在り(shared/entry/boundary_recorder の boundary-recorder — ADR-DOE-CLUSTER-001 R5)、子の入口(job_entry)と
+;; 再生の道具(replay_main)は詰めた Program を解く時に、Program が参照する業務の module を import する。その module(か、それが import
+;; する module)で登録すれば、記録と再生の両方に届く。既定の形で足りる型は、登録の代わりに型の宣言(__record_spec__)を置けばよい。
+;; 登録も宣言も無い型は UnrecordableEffect。

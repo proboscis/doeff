@@ -49,7 +49,7 @@
           "packages/doeff-cluster/src/doeff_cluster/coordinator/core/rollout_policy.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/request_queue.hy"
           "packages/doeff-cluster/src/doeff_cluster/coordinator/protocol/kube.hy"
-          "packages/doeff-cluster/src/doeff_cluster/foundation/kube_client.hy"
+          "packages/doeff-cluster/src/doeff_cluster/_foundation/kube_client.hy"
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact

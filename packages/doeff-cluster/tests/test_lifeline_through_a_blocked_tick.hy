@@ -35,7 +35,7 @@
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.coordinator.intent.cluster_model [ClusterState TaskRecord])
 (import doeff_cluster.coordinator.core.cluster_policy [register-heartbeat tasks-placed])
-(import doeff_cluster.foundation.lifeline [LifelineSettings start-lifeline])
+(import doeff_cluster._foundation.lifeline [LifelineSettings start-lifeline])
 (import doeff_cluster.worker.intent.worker_model [WorldView WorkerPolicy WorkerState ObserveWorld EnvReport PublishStatus])
 (import doeff_cluster.worker.core.beat_policy [LIFELINE-PERIOD-SECONDS])
 (import doeff_cluster.worker.core.program [run-worker HEARTBEAT-GAP-LOG])

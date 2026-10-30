@@ -1,4 +1,4 @@
-"""宿の契約の型の宣言(doeff_cluster/foundation/host_contract.pyi)の失敗ケース(#2197)。
+"""宿の契約の型の宣言(doeff_cluster/_foundation/host_contract.pyi)の失敗ケース(#2197)。
 
 host_contract.hy は Hy の module で型の宣言が無かったので、土台の組に environ の答え手を並べる使い手の strict に Unknown の赤が出ていた
 (host-reader は shared/entry/host_reader に在る — ここに 1 版残した古い host-reader は 2026-10-03 に消した・#2167)。
@@ -19,14 +19,14 @@ from pathlib import Path
 # host_contract は .hy の module — 先に hy を読んで import hook を有効にしてから読む(検だけを単独で走らせても読めるように)。
 import hy  # noqa: F401
 import pytest
-from doeff_cluster.foundation import host_contract
+from doeff_cluster._foundation import host_contract
 
 needs_pyright = pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright が無い")
 
 MODULE = """\
 (require doeff-hy.macros [defk <-])
 (import doeff [Program EffectBase with-handlers])
-(import doeff_cluster.foundation.host_contract [environ-table-reader HOST-CONTRACT])
+(import doeff_cluster._foundation.host_contract [environ-table-reader HOST-CONTRACT])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 
 (defk probe-host [body]

@@ -53,7 +53,7 @@
 (import doeff_core_effects [StartProcess StopProcess PollProcess SignalProcess ProcessSignal ProcessSignalled ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild EnvMode EnvEntry RunProcess ProcessOutcome])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_time [Delay async-time-handler])
-(import doeff_cluster.foundation.process_versions [this-process-versions])
+(import doeff_cluster._foundation.process_versions [this-process-versions])
 (import doeff_cluster.shared.entry.declare [apply-declaration restart-service])
 (import doeff_cluster.shared.entry.service_build [system-declaration])
 (import doeff_cluster.shared.intent.protocol [PlainText])

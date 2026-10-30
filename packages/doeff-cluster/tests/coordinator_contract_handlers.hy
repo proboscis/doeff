@@ -61,7 +61,7 @@
 (import doeff_core_effects [slog-handler])
 (import doeff_cluster.shared.protocol.remote [remote-cluster TaskSender])
 (import os)
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.protocol.detached [warm-cluster])
 (import doeff_cluster [sim-cluster SimWorker ClientLink PartsOf StopCoordinator coordinator-answers]
         doeff_cluster._sim.local [SimLink SimParts])
@@ -78,7 +78,7 @@
 (import doeff_cluster.shared.core.lease_rules [lease-full-until])
 (import doeff_cluster.coordinator.core.watch_policy [lease-row])
 (import tests.lease_wait_fake [lease-freed lease-waiters-rung LEASE-FREED-REPLY])
-(import doeff_cluster.foundation.coordinator_http [RESEND-PAUSE-SECONDS])
+(import doeff_cluster._foundation.coordinator_http [RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 (val COORDINATOR "http://coordinator")

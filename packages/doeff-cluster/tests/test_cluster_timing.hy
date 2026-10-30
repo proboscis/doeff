@@ -8,7 +8,7 @@
 (import pytest)
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.core.timing_rules [SelfStopSpans ReassignTooEarly self-stop-ms timing-outlasts-the-self-stop])
-(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS])
+(import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS])
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy])
 (import doeff_cluster.worker.entry.main [timing-checked])
 

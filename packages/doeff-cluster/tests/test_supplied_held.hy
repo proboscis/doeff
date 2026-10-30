@@ -23,7 +23,7 @@
 (import doeff_core_effects [memory-file-handler os-file-handler])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_time [sim-time-handler])
-(import doeff_cluster.foundation.host_contract [environ-table-reader])
+(import doeff_cluster [environ-table-reader])
 (import doeff_cluster.shared.intent.job_model [JobSpec])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedRef SuppliedValueUnavailable])

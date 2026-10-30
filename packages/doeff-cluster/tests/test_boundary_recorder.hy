@@ -30,17 +30,17 @@
 (import doeff [UnhandledEffect])
 (import doeff_core_effects [reader await-handler])
 (import doeff_core_effects.http_handlers [http-production-handler])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
+(import doeff_cluster [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.intent.run_context [RunContext])
 (import doeff_cluster.shared.protocol.program_codec [encode-program])
 (import doeff_cluster.shared.core.remote_rules [program-sha])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.shared.intent.shared_model [ReadShared])
 (import doeff_time [SimClock sim-time-handler])
 (import tests.board_fake [board-handlers])
-(import doeff_cluster.foundation.record_log [read-recording])
-(import doeff_cluster.foundation.record_handlers [MemorySink EffectLog open-log effect-recorder ReplayState replay-report
-                                       RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
+(import doeff_cluster._foundation.record_log [read-recording])
+(import doeff_cluster [effect-recorder]
+        doeff_cluster._foundation.record_handlers [MemorySink EffectLog open-log ReplayState replay-report RECORD-MODE-KEY RECORD-OTLP-KEY REPLAY-STATE-KEY])
 (import doeff_cluster.shared.entry.boundary_recorder [boundary-recorder recording-header])
 (import tests.fixtures.recorded_programs [ledger-program world-foundation ledger-translation-layer drifting-translation-layer])
 

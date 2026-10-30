@@ -137,8 +137,8 @@ if TYPE_CHECKING:
     from doeff_cluster.coordinator.core.program import run_coordinator as run_coordinator
     from doeff_cluster.coordinator.entry.main import load_state as load_state
     from doeff_cluster.coordinator.protocol.store import Persist as Persist
-    from doeff_cluster.foundation.host_contract import environ_table_reader as environ_table_reader
-    from doeff_cluster.foundation.process_versions import process_versions as process_versions
+    from doeff_cluster._foundation.host_contract import environ_table_reader as environ_table_reader
+    from doeff_cluster._foundation.process_versions import process_versions as process_versions
     from doeff_cluster.shared.core.clock import now_epoch_ms as now_epoch_ms
     from doeff_cluster.shared.core.run_context_rules import (
         runtime_env_of_context as runtime_env_of_context,
@@ -222,6 +222,39 @@ if TYPE_CHECKING:
     )
     from doeff_cluster.shared.protocol.inbox import http_requests as http_requests
     from doeff_cluster.shared.protocol.inbox import stop_flag as stop_flag
+    from doeff_cluster._foundation.in_cluster_api import CLUSTER_API as CLUSTER_API
+    from doeff_cluster._foundation.in_cluster_api import ClusterCaMissing as ClusterCaMissing
+    from doeff_cluster._foundation.record_codec import DECISION as DECISION
+    from doeff_cluster._foundation.record_codec import EffectCodec as EffectCodec
+    from doeff_cluster._foundation.foundation_check import FoundationClosure as FoundationClosure
+    from doeff_cluster._foundation.host_contract import HOST_CONTRACT as HOST_CONTRACT
+    from doeff_cluster._foundation.record_codec import MalformedRecordSpec as MalformedRecordSpec
+    from doeff_cluster._foundation.record_codec import READ as READ
+    from doeff_cluster._foundation.record_codec import RecordedError as RecordedError
+    from doeff_cluster._foundation.in_cluster_api import (
+        SERVICE_ACCOUNT_CA_PATH as SERVICE_ACCOUNT_CA_PATH,
+    )
+    from doeff_cluster._foundation.host_contract import SIM_PASSABLE as SIM_PASSABLE
+    from doeff_cluster._foundation.process_versions import SourceUnidentified as SourceUnidentified
+    from doeff_cluster._foundation.record_codec import UnencodableValue as UnencodableValue
+    from doeff_cluster._foundation.foundation_check import UnreadDeclaration as UnreadDeclaration
+    from doeff_cluster._foundation.record_codec import UnrecordableEffect as UnrecordableEffect
+    from doeff_cluster._foundation.wal_store import WalStore as WalStore
+    from doeff_cluster._foundation.foundation_check import foundation_closure as foundation_closure
+    from doeff_cluster._foundation.foundation_check import (
+        hyx_closedXquestion_markX as hyx_closedXquestion_markX,
+    )
+    from doeff_cluster._foundation.in_cluster_api import (
+        in_cluster_api_connected as in_cluster_api_connected,
+    )
+    from doeff_cluster._foundation.in_cluster_api import (
+        in_cluster_api_routed as in_cluster_api_routed,
+    )
+    from doeff_cluster._foundation.kube_client import kube_headers as kube_headers
+    from doeff_cluster._foundation.host_contract import os_environ_reader as os_environ_reader
+    from doeff_cluster._foundation.record_codec import register as register
+    from doeff_cluster._foundation.record_codec import registered_types as registered_types
+    from doeff_cluster._foundation.record_codec import type_name as type_name
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster.shared.intent.detached_model",
@@ -332,7 +365,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RemoteJobFailed": "doeff_cluster.shared.intent.remote_model",
     "ReplaceCoordinatorEnviron": "doeff_cluster._sim.local",
     "ReplaceWorker": "doeff_cluster._sim.local",
-    "ReplayDiverged": "doeff_cluster.foundation.record_log",
+    "ReplayDiverged": "doeff_cluster._foundation.record_log",
     "Reply": "doeff_cluster.shared.intent.protocol",
     "ReportMetrics": "doeff_cluster.shared.intent.metrics_model",
     "ReportReady": "doeff_cluster.shared.intent.readiness_model",
@@ -390,7 +423,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "declared_job_specs": "doeff_cluster.worker.protocol.declared",
     "declared_reply_of_json": "doeff_cluster.worker.protocol.declared",
     "env_translation": "doeff_cluster.worker.protocol.env_translation",
-    "environ_table_reader": "doeff_cluster.foundation.host_contract",
+    "environ_table_reader": "doeff_cluster._foundation.host_contract",
     "fence": "doeff_cluster._sim.local",
     "git_command": "doeff_cluster._sim.checkout_git_script",
     "heartbeat": "doeff_cluster._sim.local",
@@ -408,7 +441,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "observe_requests": "doeff_cluster._sim.local",
     "process_notices": "doeff_cluster._sim.local",
     "process_signals": "doeff_cluster._sim.local",
-    "process_versions": "doeff_cluster.foundation.process_versions",
+    "process_versions": "doeff_cluster._foundation.process_versions",
     "promise_or_timeout": "doeff_cluster.shared.core.promise_wait",
     "read_grant_of": "doeff_cluster._sim.k8s_supplied",
     "readiness_awaited": "doeff_cluster.shared.protocol.coordinator_reads",
@@ -436,6 +469,35 @@ _LAZY_EXPORTS: dict[str, str] = {
     "http_requests": "doeff_cluster.shared.protocol.inbox",
     "record_files": "doeff_cluster._record_store.protocol.record_files",
     "stop_flag": "doeff_cluster.shared.protocol.inbox",
+    "CLUSTER_API": "doeff_cluster._foundation.in_cluster_api",
+    "ClusterCaMissing": "doeff_cluster._foundation.in_cluster_api",
+    "DECISION": "doeff_cluster._foundation.record_codec",
+    "EffectCodec": "doeff_cluster._foundation.record_codec",
+    "FoundationClosure": "doeff_cluster._foundation.foundation_check",
+    "HOST_CONTRACT": "doeff_cluster._foundation.host_contract",
+    "MalformedRecordSpec": "doeff_cluster._foundation.record_codec",
+    "READ": "doeff_cluster._foundation.record_codec",
+    "RecordedError": "doeff_cluster._foundation.record_codec",
+    "RecordingInstaller": "doeff_cluster._foundation.record_handlers",
+    "ReplayFinished": "doeff_cluster._foundation.record_log",
+    "SERVICE_ACCOUNT_CA_PATH": "doeff_cluster._foundation.in_cluster_api",
+    "SIM_PASSABLE": "doeff_cluster._foundation.host_contract",
+    "SourceUnidentified": "doeff_cluster._foundation.process_versions",
+    "UnencodableValue": "doeff_cluster._foundation.record_codec",
+    "UnreadDeclaration": "doeff_cluster._foundation.foundation_check",
+    "UnrecordableEffect": "doeff_cluster._foundation.record_codec",
+    "WalStore": "doeff_cluster._foundation.wal_store",
+    "effect_recorder": "doeff_cluster._foundation.record_handlers",
+    "effect_replayer": "doeff_cluster._foundation.record_handlers",
+    "foundation_closure": "doeff_cluster._foundation.foundation_check",
+    "hyx_closedXquestion_markX": "doeff_cluster._foundation.foundation_check",
+    "in_cluster_api_connected": "doeff_cluster._foundation.in_cluster_api",
+    "in_cluster_api_routed": "doeff_cluster._foundation.in_cluster_api",
+    "kube_headers": "doeff_cluster._foundation.kube_client",
+    "os_environ_reader": "doeff_cluster._foundation.host_contract",
+    "register": "doeff_cluster._foundation.record_codec",
+    "registered_types": "doeff_cluster._foundation.record_codec",
+    "type_name": "doeff_cluster._foundation.record_codec",
 }
 
 

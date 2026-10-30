@@ -10,7 +10,7 @@
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [reader state env-var-ask])
 (import doeff_core_effects [scheduled])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT os-environ-reader])
+(import doeff_cluster [HOST-CONTRACT os-environ-reader])
 (import doeff_cluster.shared.entry.host_reader [host-reader])
 (import tests.fixtures.envs [scheduler-foundation])
 ;; 子の中で入口 doeff_cluster.worker.entry.job_entry は __main__ として読まれる(送る名 JOB-ENTRY — #2112)ので、ここで同じ file を

@@ -105,8 +105,8 @@
   "import sys, hy
 from doeff import run
 from doeff_core_effects._scheduler import scheduled
-from doeff_cluster.foundation.coordinator_inbox import StopState, stop_on_signals
-from doeff_cluster.foundation.record_inbox import RecordInbox
+from doeff_cluster._foundation.coordinator_inbox import StopState, stop_on_signals
+from doeff_cluster._foundation.record_inbox import RecordInbox
 from doeff_cluster._record_store.entry.handler_sets import production_handlers
 from doeff_cluster._record_store.entry.main import record_store_on
 stop = StopState()

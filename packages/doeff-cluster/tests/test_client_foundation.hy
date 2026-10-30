@@ -19,7 +19,8 @@
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster.shared.entry.client_foundation [with-detached-client])
-(import doeff_cluster.foundation.process_versions [process-versions RUNTIME-ENV-KEY-VAR])
+(import doeff_cluster [process-versions]
+        doeff_cluster._foundation.process_versions [RUNTIME-ENV-KEY-VAR])
 (import doeff_cluster.shared.intent.runtime_env_model [RuntimeEnv RepoCheckout PythonProject])
 (import doeff_cluster.shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster.shared.core.detached_rules [submit-detached-task])

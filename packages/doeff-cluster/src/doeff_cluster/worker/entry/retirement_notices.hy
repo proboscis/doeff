@@ -11,8 +11,8 @@
 ;;; 要る。sim の偽の宿は同じ効果に世界の受け手で答える(sim/local.hy の process-notices)。
 (require doeff-hy.macros [defhandler <- val var])
 (val MODULE-TAGS {:context "worker" :role "main"})
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
-(import doeff_cluster.foundation.notice_pipe [open-notice-box next-notice])
+(import doeff_cluster._foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster._foundation.notice_pipe [open-notice-box next-notice])
 (import doeff_cluster.worker.intent.worker_model [Retired HandoffAbandoned])
 (import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
 (import doeff_cluster.worker.protocol.process_host [stop-reason-word retirement-of-word])

@@ -15,7 +15,7 @@
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.intent.shared_model [WriteShared])
 (import doeff_cluster.shared.intent.run_context [RunContext])
-(import doeff_cluster.foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster.worker.intent.worker_model [Retired HandoffAbandoned])
 (import doeff_cluster.worker.intent.retirement_model [AwaitRetirement])
 (import tests.fixtures.retirement_programs [ready-beats])

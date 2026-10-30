@@ -2,7 +2,7 @@
 ;;; 公開の名に数えられるので、検の関数と InboxQueue の import を公開の外(tests/)へ置く(ADR-DOE-API-001 R1・R5)。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster.shared.protocol.inbox [InboxQueue])
-(import doeff_cluster.foundation.coordinator_inbox [StopState])
+(import doeff_cluster._foundation.coordinator_inbox [StopState])
 (import doeff_cluster._record_store.entry.handler_sets [ScriptedRecordInbox])
 
 

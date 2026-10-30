@@ -20,7 +20,7 @@
 (import doeff_cluster.shared.entry.declare [apply-declaration])
 (import tests.link_rig [LinkRig])
 (import doeff_cluster.worker.core.launch [spec-program-file])
-(import doeff_cluster.foundation.process_versions [process-versions])
+(import doeff_cluster [process-versions])
 (import doeff_cluster.worker.intent.worker_model [DesiredJobs] doeff_cluster.shared.intent.job_model [JobSpec])
 (import tests.fixtures.services [lab])
 (import tests.fixtures.envs [plain-foundation])

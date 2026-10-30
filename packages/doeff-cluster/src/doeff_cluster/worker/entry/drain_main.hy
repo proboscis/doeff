@@ -18,7 +18,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_time [sync-time-handler])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
+(import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteCell RouteOptions route-of])

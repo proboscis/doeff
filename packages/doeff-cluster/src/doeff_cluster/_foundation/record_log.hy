@@ -25,7 +25,7 @@
 (import typing [get-args])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_hy._table [Table TableWrite table-of])
-(import doeff_cluster.foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue RestoredValue
+(import doeff_cluster._foundation.record_codec [READ LIVE DECISION OUTPUT LOOSE READABLE-FORMATS JsonValue RestoredValue
                                                 canonical apply-delta delta-of resolve-refs resolve-type encode-value decode-value])
 
 (setv ROOT "root")

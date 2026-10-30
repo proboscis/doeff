@@ -1,5 +1,5 @@
 ;;; job が要る値を、worker の中の file の path でなく cluster の ConfigMap・Secret の参照で受ける部品(doeff_cluster.shared.protocol.supplied_values)
-;;; と、その要求を区画の CA で検める答え手(doeff_cluster.foundation.in_cluster_api の in-cluster-api-routed)の検 — 使い手の repo の job が
+;;; と、その要求を区画の CA で検める答え手(doeff_cluster._foundation.in_cluster_api の in-cluster-api-routed)の検 — 使い手の repo の job が
 ;;; 同じ定義元から値を受ける(使い手の repo に在った同じ部品をここへ移した)。
 ;;;
 ;;;   綴り              宣言の :environ の値の綴り「<種類>:<namespace>/<名>/<キー>」と「<種類>:<namespace>/<名>」を参照へ読む。path や、種類・
@@ -25,9 +25,10 @@
 (import doeff_core_effects.http_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [EnvEntry ReadEnvironment])
-(import doeff_cluster.foundation.host_contract [environ-table-reader])
-(import doeff_cluster.foundation.foundation_check [FoundationClosure foundation-closure])
-(import doeff_cluster.foundation.in_cluster_api [CLUSTER-API SERVICE-ACCOUNT-CA-PATH ClusterCaMissing cluster-ca-answer in-cluster-api-routed])
+(import doeff_cluster [environ-table-reader])
+(import doeff_cluster [FoundationClosure foundation-closure])
+(import doeff_cluster [CLUSTER-API SERVICE-ACCOUNT-CA-PATH ClusterCaMissing in-cluster-api-routed]
+        doeff_cluster._foundation.in_cluster_api [cluster-ca-answer])
 (import doeff_cluster.shared.intent.supplied_model [SuppliedKind SuppliedObjectRef SuppliedRef SuppliedValueUnavailable WorkerFactMissing])
 (import doeff_cluster.shared.protocol.supplied_values [KUBE-API SERVICE-ACCOUNT-CA-FILE SERVICE-ACCOUNT-TOKEN-FILE supplied-directory
                                                       supplied-object-ref-of supplied-ref-of supplied-ref-text supplied-setting supplied-value])

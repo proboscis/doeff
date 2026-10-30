@@ -13,7 +13,7 @@
 (import doeff_cluster.shared.protocol.task_result [delivered-task-result])
 (import doeff_cluster.shared.protocol.coordinator_route [RouteOptions])
 (import doeff_cluster.shared.intent.protocol [ClusterTiming])
-(import doeff_cluster.foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])
+(import doeff_cluster._foundation.coordinator_http [CONNECT-SECONDS PREFERRED-RECHECK-SECONDS RESEND-PAUSE-SECONDS default-actor])
 (import doeff_cluster.shared.core.resend [IDEMPOTENT-DEADLINE-SECONDS])
 
 
