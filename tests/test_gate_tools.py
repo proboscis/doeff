@@ -32,8 +32,8 @@ import shutil
 import tomllib
 from pathlib import Path
 
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry, EnvMode, ProcessOutcome, RunProcess
+from doeff_core_effects import subprocess_handler
+from doeff_core_effects import EnvEntry, EnvMode, ProcessOutcome, RunProcess
 
 from doeff import run, with_handlers
 

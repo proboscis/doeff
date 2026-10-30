@@ -2,8 +2,8 @@
 
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
-from doeff_core_effects.process_effects import ProcessOutcome as ProcessOutcome
-from doeff_core_effects.process_effects import RunProcess as RunProcess
+from doeff_core_effects import ProcessOutcome as ProcessOutcome
+from doeff_core_effects import RunProcess as RunProcess
 from doeff_core_effects import PathKind as PathKind
 from doeff_core_effects import PathStat as PathStat
 from doeff_core_effects import FileFailed as FileFailed

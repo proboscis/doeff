@@ -3,7 +3,7 @@
 ;;; doeff-core-effects の検(test_process_file_effects.hy)から移した(agora-redesign #2837): 確かめるのは doeff-agents の re-export で、
 ;;; 下の package の検が上の package を import すると層の向きが逆になる。
 (require doeff-hy.macros [deftest])
-(import doeff_core_effects.process_effects [ExecutableAt ProcessOutcome RunProcess])
+(import doeff_core_effects [ExecutableAt ProcessOutcome RunProcess])
 (import doeff_agents._io_effects :as agents)
 
 

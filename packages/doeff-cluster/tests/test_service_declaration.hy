@@ -19,7 +19,7 @@
 (import pytest)
 (import doeff [with-handlers])
 (import doeff_core_effects [reader listen-handler slog-discard-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
+(import doeff_core_effects [subprocess-handler])
 (import doeff_cluster.shared.intent.service_model :as service-model)
 (import doeff_cluster.shared.core.service_rules :as service-rules)
 (import doeff_cluster.shared.core.service_rules [identity-of describe-identity job-named])

@@ -12,7 +12,7 @@ from itertools import islice as islice
 from itertools import repeat as repeat
 from itertools import takewhile as takewhile
 from doeff_traverse import sequence as sequence
-from doeff_core_effects.proc_table_effects import ProcRow as ProcRow
+from doeff_core_effects import ProcRow as ProcRow
 MIB: int
 
 class MemoryLevel(StrEnum):

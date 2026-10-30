@@ -21,8 +21,8 @@
 (import dataclasses [dataclass])
 (import fnmatch)
 (import functools [partial])
-(import doeff_core_effects.process_effects [ProcessOutcome RunProcess])
-(import doeff_core_effects.scripted_process [ScriptedCommand])
+(import doeff_core_effects [ProcessOutcome RunProcess])
+(import doeff_core_effects [ScriptedCommand])
 
 ;; 本物の git と同じ exit(checkout でない = 128・使い方の誤り = 129・無い remote = 2・--verify で解けない rev = 1)。
 (val NOT-A-REPOSITORY 128)

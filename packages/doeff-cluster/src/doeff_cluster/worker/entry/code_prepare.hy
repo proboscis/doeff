@@ -83,8 +83,8 @@
 (import doeff_core_effects [FileFailed PathStat ReadText StatPath]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler])
-(import doeff_core_effects.os_process [subprocess-handler])
-(import doeff_core_effects.process_effects [InterpreterFacts ProcessOutcome ReadInterpreter RunProcess])
+(import doeff_core_effects [subprocess-handler])
+(import doeff_core_effects [InterpreterFacts ProcessOutcome ReadInterpreter RunProcess])
 (import doeff_cluster.worker.core.code_plan [compile-plan marker-content tree-problem])
 (import doeff_cluster.worker.intent.code_model [ScanTree WriteMarker Note])
 (import doeff_cluster.worker.protocol.tree_files [tree-files])

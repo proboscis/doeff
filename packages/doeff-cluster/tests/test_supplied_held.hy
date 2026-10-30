@@ -21,7 +21,7 @@
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects [Listen MemoryFile MemoryFiles ReadMemoryFiles SlogEffect listen-handler slog-discard-handler state])
 (import doeff_core_effects [memory-file-handler os-file-handler])
-(import doeff_core_effects.process_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_time [sim-time-handler])
 (import doeff_cluster.foundation.host_contract [environ-table-reader])
 (import doeff_cluster.shared.intent.job_model [JobSpec])

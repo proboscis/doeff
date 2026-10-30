@@ -8,9 +8,9 @@
 (import doeff [run with_handlers])
 (import doeff [UnhandledEffect])
 (import doeff_core_effects [state])
-(import doeff_core_effects.stop_signal_effects [AwaitStop RaiseStop])
+(import doeff_core_effects [AwaitStop RaiseStop])
 (import doeff_core_effects [CreatePromise SchedulerDeadlockError Spawn Wait scheduled])
-(import doeff_core_effects.stop_signal_handlers [os-signal-stop-handler scripted-stop-handler])
+(import doeff_core_effects [os-signal-stop-handler scripted-stop-handler])
 
 
 (defk raise-under-os []

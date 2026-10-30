@@ -5,8 +5,8 @@
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import importlib.util)
 (import doeff_core_effects [slog-discard-handler state])
-(import doeff_core_effects.stop_signal_effects [RaiseStop])
-(import doeff_core_effects.stop_signal_handlers [scripted-stop-handler])
+(import doeff_core_effects [RaiseStop])
+(import doeff_core_effects [scripted-stop-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster.worker.intent.worker_model :as worker-model)
 (import doeff_cluster.worker.intent.worker_model [WorkerPolicy WorkerState DesiredJobs ReadDesired ObserveWorld WorldView PublishStatus

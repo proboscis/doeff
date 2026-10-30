@@ -64,7 +64,7 @@ def _read(name: str) -> str | None:
     """環境変数 1 つの素の値(無ければ None)— 設定の Ask を、環境変数から答える foundation の答え手 env_var_ask(接頭辞なし)の
     下で問う。無ければ外側の reader の既定 None が答える。
 
-    以前は ReadEnvironment を process 全般の答え手 subprocess_handler(doeff_core_effects.os_process)の下で問うていた。読むのは
+    以前は ReadEnvironment を process 全般の答え手 subprocess_handler(doeff_core_effects._os_process)の下で問うていた。読むのは
     変数 1 つなのに、子 process・thread・signal の答え手を持つ大きな Hy の module とその Hy の bytecode の確かめを読み込み、
     doeff-hy-check の子 process 1 回ごとに 1.8〜4.7 秒かかった(card acp:kanban-issue:ki-efa3d187b136)。env_var_ask は Python の
     foundation の module(doeff_core_effects._handlers — 層の宣言で環境変数の読みを許された所)に在り、読み込みは 0.3 秒前後。

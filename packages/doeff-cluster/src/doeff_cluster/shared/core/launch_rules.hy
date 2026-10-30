@@ -9,7 +9,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import dataclasses [dataclass])
 (import enum [StrEnum])
-(import doeff_core_effects.process_effects [EnvEntry])
+(import doeff_core_effects [EnvEntry])
 (import doeff_cluster.shared.intent.launch_model [WorkerLaunch CoordinatorLaunch])
 
 

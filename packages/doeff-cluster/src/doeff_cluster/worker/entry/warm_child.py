@@ -21,7 +21,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
                 worker/core/job_cgroup の service の類)。書けなければ A は入口を起こさずに終わり、待ちの子は断りを答える。
   noticeEnv   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(入れ物 shim の --notice-env と同じ)。
 待ちの子は service の頼みを受けられる事を準備完了の印の serviceForks で名乗る(worker はこの印の無い版の待ちの子へ service を頼まない)。
-頼みと答えの 1 行は doeff_core_effects.os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
+頼みと答えの 1 行は doeff_core_effects._os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
 同じ module の warm-request-of・warm-answer-line を使う(綴りを 2 つ持たない)。
 
 守る事(この形を決めた時の条件・2026-10-05):
@@ -62,9 +62,10 @@ from typing import NoReturn
 import hy  # noqa: F401 — Hy の importer を据える(入口と、前もって読む module の多くは Hy)
 from doeff import ReadVmLiveCounts, run
 from doeff_core_effects import vm_probe_handler
-from doeff_core_effects.os_warm_process import WarmRequestWire, own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
-from doeff_core_effects.process_stat import ProcStat
-from doeff_core_effects.warm_effects import WarmForked, WarmRefused
+from doeff_core_effects import own_thread_count, proc_stat_of, warm_answer_line, warm_request_of
+from doeff_core_effects._os_warm_process import WarmRequestWire
+from doeff_core_effects._process_stat import ProcStat
+from doeff_core_effects import WarmForked, WarmRefused
 from doeff_hy._wire import Malformed
 
 from doeff_cluster.foundation.child_environ import replace_environ

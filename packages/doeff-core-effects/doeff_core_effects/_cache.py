@@ -22,8 +22,8 @@ from frozendict import (
 from doeff import UnhandledEffect, do, run, with_handlers
 from doeff_core_effects._memo_effects import MemoExists, MemoGet, MemoPut
 from doeff_core_effects._memo_policy import Lifecycle, MemoPolicy, ensure_memo_policy
-from doeff_core_effects.os_process import subprocess_handler
-from doeff_core_effects.process_effects import ReadEnvironment
+from doeff_core_effects._os_process import subprocess_handler
+from doeff_core_effects._process_effects import ReadEnvironment
 
 T = TypeVar("T")
 

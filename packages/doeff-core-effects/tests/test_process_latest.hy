@@ -11,7 +11,8 @@
 (import doeff [run with_handlers])
 (import doeff_core_effects [state])
 (import doeff_core_effects [PublishLatest ReadLatest AwaitLatest])
-(import doeff_core_effects.process_latest [process-latest-handler BELLS])
+(import doeff_core_effects [process-latest-handler]
+        doeff_core_effects._process_latest [BELLS])
 (import doeff_core_effects [scheduled Spawn Wait Cancel CreatePromise CompletePromise])
 
 

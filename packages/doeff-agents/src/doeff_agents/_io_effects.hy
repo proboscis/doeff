@@ -27,7 +27,7 @@
 (import doeff [EffectBase])
 ;; 汎用の子 process の effect と答えの型は doeff-core-effects に 1 つ(agora-redesign #802 便 1)— この module は同じ型を re-export する
 ;; (driver 層の使い手と検は今までどおり doeff_agents._io_effects から読める)。
-(import doeff_core_effects.process_effects [ProcessOutcome RunProcess ExecutableAt])
+(import doeff_core_effects [ProcessOutcome RunProcess ExecutableAt])
 
 
 ;; ---------------------------------------------------------------------------

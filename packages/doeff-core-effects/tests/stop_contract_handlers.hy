@@ -17,8 +17,9 @@
 (import signal)
 (import doeff [EffectBase Program with_handlers])
 (import doeff_core_effects [state])
-(import doeff_core_effects.stop_signal_effects [RaiseStop])
-(import doeff_core_effects.stop_signal_handlers [STOP-SIGNALS os-signal-stop-handler scripted-stop-handler])
+(import doeff_core_effects [RaiseStop])
+(import doeff_core_effects [os-signal-stop-handler scripted-stop-handler]
+        doeff_core_effects._stop_signal_handlers [STOP-SIGNALS])
 
 (val OS-SIGNAL "os-signal")
 (val SCRIPTED "scripted")

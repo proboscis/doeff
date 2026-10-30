@@ -4,8 +4,8 @@ from doeff import Program as _Program
 from collections.abc import Mapping as Mapping
 from dataclasses import dataclass as dataclass
 from pathlib import Path as Path
-from doeff_core_effects.process_effects import EnvEntry as EnvEntry
-from doeff_core_effects.process_effects import EnvMode as EnvMode
+from doeff_core_effects import EnvEntry as EnvEntry
+from doeff_core_effects import EnvMode as EnvMode
 from doeff_cluster.shared.core.run_context_rules import process_context_environ as process_context_environ
 from doeff_cluster.shared.intent.job_model import JobSpec as JobSpec
 from doeff_cluster.shared.intent.runtime_env_model import WITHHELD_ENV_NAMES as WITHHELD_ENV_NAMES

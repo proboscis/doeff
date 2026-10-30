@@ -20,7 +20,8 @@
 (import pathlib [Path])
 
 (import doeff [Program run])
-(import doeff_core_effects.os_process [run-subprocess os-executable-at])
+(import doeff_core_effects [os-executable-at]
+        doeff_core_effects._os_process [run-subprocess])
 (import doeff_time [sync-time-handler])
 (import doeff_agents._io_effects [
   ProcessOutcome
@@ -159,7 +160,7 @@
                 #())))
 
   (RunProcess [argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output]
-    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の run-subprocess — agora-redesign #802 便 1・#2184)。
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects._os_process の run-subprocess — agora-redesign #802 便 1・#2184)。
     (<- outcome (run-subprocess argv stdin timeout cwd env env-mode output-path env-drop process-group stop-grace stream-output))
     (resume outcome))
 
@@ -178,7 +179,7 @@
     (resume (_unix-connect-probe-io socket-path timeout)))
 
   (ExecutableAt [path]
-    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects.os_process の os-executable-at — dir・無い path は False)。
+    ;; 実装は汎用の subprocess-handler と同じ 1 つ(doeff_core_effects._os_process の os-executable-at — dir・無い path は False)。
     (<- found (os-executable-at path))
     (resume found))
 

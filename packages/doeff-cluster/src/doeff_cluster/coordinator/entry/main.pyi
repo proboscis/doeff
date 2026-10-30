@@ -16,9 +16,9 @@ from doeff_core_effects import StatPath as StatPath
 from doeff_core_effects._file_effects import file_done as file_done
 from doeff_core_effects import slog_handler as slog_handler
 from doeff_core_effects import os_file_handler as os_file_handler
-from doeff_core_effects.os_process import subprocess_handler as subprocess_handler
-from doeff_core_effects.process_effects import EnvEntry as EnvEntry
-from doeff_core_effects.process_effects import ReadEnvironment as ReadEnvironment
+from doeff_core_effects import subprocess_handler as subprocess_handler
+from doeff_core_effects import EnvEntry as EnvEntry
+from doeff_core_effects import ReadEnvironment as ReadEnvironment
 from doeff_cluster.shared.core.launch_rules import coordinator_commit_env_name as coordinator_commit_env_name
 from doeff_core_effects import scheduled as scheduled
 from doeff_cluster.shared.intent.protocol import ClusterTiming as ClusterTiming

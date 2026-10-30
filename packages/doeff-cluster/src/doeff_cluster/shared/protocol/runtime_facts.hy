@@ -10,7 +10,7 @@
 (require doeff-hy.macros [defhandler defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "protocol"})
 (import posixpath)
-(import doeff_core_effects.process_effects [ReadEnvironment ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound])
+(import doeff_core_effects [ReadEnvironment ReadInterpreter ResolveModule InterpreterFacts ModuleFound ModuleNotFound])
 (import doeff_core_effects [StatPath ReadText PathKind PathStat FileFailed])
 (import doeff_cluster.shared.intent.env_marker_model [ENV-MARKER])
 (import doeff_cluster.shared.intent.runtime_identity_model [ModuleOrigin ProcessFacts ReadRuntimeFacts])
