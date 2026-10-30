@@ -7,7 +7,7 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler])
+(import doeff_core_effects [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])

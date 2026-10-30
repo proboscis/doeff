@@ -27,8 +27,9 @@
 (import time)
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled])
-(import doeff_core_effects.sql_effects [SqlQuery SqlParam SqlRows])
-(import doeff_core_effects.postgres_sql [postgres-sql-handler postgres-statement])
+(import doeff_core_effects [SqlQuery SqlParam SqlRows])
+(import doeff_core_effects [postgres-sql-handler]
+        doeff_core_effects._postgres_sql [postgres-statement])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_records [ExpectAbsent Written])
 (import doeff_records [PutRow])

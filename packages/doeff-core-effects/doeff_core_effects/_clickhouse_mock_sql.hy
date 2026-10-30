@@ -11,10 +11,10 @@
 ;;; 使う道は取らなかった訳は card の発言に書いた。
 (require doeff-hy.macros [defhandler defk <- val var])
 (import sqlite3)
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlTable checked-rows checked-identifier])
-(import doeff_core_effects.clickhouse_http_sql [clickhouse-schema-statements _clickhouse-transaction-refusal])
-(import doeff_core_effects.sqlite_sql [with-connection connection-of outage-marked sqlite-answer-query sqlite-answer-insert
+(import doeff_core_effects._clickhouse_http_sql [clickhouse-schema-statements _clickhouse-transaction-refusal])
+(import doeff_core_effects._sqlite_sql [with-connection connection-of outage-marked sqlite-answer-query sqlite-answer-insert
                                        sqlite-answer-tables])
 
 

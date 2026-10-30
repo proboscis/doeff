@@ -15,17 +15,19 @@ from doeff_core_effects import (
     AcquireSemaphore,
     Cancel,
     CreateExternalPromise,
+    PostgresConnections,
+    PostgresDatabase,
     ReleaseSemaphore,
     SchedulerIntrospection,
     Spawn,
+    SqlQuery,
+    SqlTransaction,
     TaskCancelledError,
     Wait,
+    pooled_postgres_sql_handler,
     scheduled,
     state,
 )
-from doeff_core_effects.pooled_postgres_sql import pooled_postgres_sql_handler
-from doeff_core_effects.postgres_sql import PostgresConnections, PostgresDatabase
-from doeff_core_effects.sql_effects import SqlQuery, SqlTransaction
 
 from doeff import do, run, with_handlers
 
@@ -431,7 +433,7 @@ def admission_handle(key):
 
     stored = yield Get(
         session_key(
-            "doeff_core_effects.pooled_postgres_sql",
+            "doeff_core_effects._pooled_postgres_sql",
             "pooled-postgres-sql-handler",
             "transaction-permits",
         )
@@ -474,7 +476,7 @@ def confirmed_pool_cancel(batched, gate, observer):
     yield until(gate.waiting)
     stored = yield Get(
         session_key(
-            "doeff_core_effects.pooled_postgres_sql", "pooled-postgres-sql-handler", "permits"
+            "doeff_core_effects._pooled_postgres_sql", "pooled-postgres-sql-handler", "permits"
         )
     )
     pool_id = stored.value["probe"].sem_id

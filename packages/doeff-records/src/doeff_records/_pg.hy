@@ -116,8 +116,7 @@
 (import doeff_time [Delay GetMonotonic GetTime WaitWithin])
 (import doeff_core_effects [ExternalPromise TaskCancelledError CreateSemaphore AcquireSemaphore ReleaseSemaphore])
 (import doeff_core_effects [ObserveSecondsBatch])
-(import doeff_core_effects.sql_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed
-                                        SqlUnreachable SqlLock])
+(import doeff_core_effects [SqlQuery SqlBatch SqlTransaction SqlNotify SqlHangNotice SqlDropNotice SqlRows SqlFailed SqlUnreachable SqlLock])
 (import doeff_records._request_timing [lock-observations])
 (import doeff_records._loop_work [off-loop])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Page Written WrittenRows RowChanged

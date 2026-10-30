@@ -49,7 +49,7 @@
 (import concurrent.futures [Future])
 (import dataclasses [dataclass field])
 (import doeff [Program])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlTransaction SqlEnsureTables SqlRows SqlFailed SqlUnreachable
                                         SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params param-value
                                         checked-identifier checked-identifiers checked-rows normalized-rows])
 (import doeff_core_effects._offloaded_call [ThreadPerCall offloaded run-detached keep-nothing])

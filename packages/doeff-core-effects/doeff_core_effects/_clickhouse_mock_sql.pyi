@@ -3,26 +3,26 @@
 from doeff import Program as _Program
 from doeff_hy._static_types import Handler as _Handler
 import sqlite3 as sqlite3
-from doeff_core_effects.sql_effects import SqlQuery as SqlQuery
-from doeff_core_effects.sql_effects import SqlInsertRows as SqlInsertRows
-from doeff_core_effects.sql_effects import SqlTransaction as SqlTransaction
-from doeff_core_effects.sql_effects import SqlEnsureTables as SqlEnsureTables
-from doeff_core_effects.sql_effects import SetSqlOutage as SetSqlOutage
-from doeff_core_effects.sql_effects import SqlRows as SqlRows
-from doeff_core_effects.sql_effects import SqlFailed as SqlFailed
-from doeff_core_effects.sql_effects import SqlUnreachable as SqlUnreachable
-from doeff_core_effects.sql_effects import SqlSchemaApplied as SqlSchemaApplied
-from doeff_core_effects.sql_effects import SqlTable as SqlTable
-from doeff_core_effects.sql_effects import checked_rows as checked_rows
-from doeff_core_effects.sql_effects import checked_identifier as checked_identifier
-from doeff_core_effects.clickhouse_http_sql import clickhouse_schema_statements as clickhouse_schema_statements
-from doeff_core_effects.clickhouse_http_sql import _clickhouse_transaction_refusal as _clickhouse_transaction_refusal
-from doeff_core_effects.sqlite_sql import with_connection as with_connection
-from doeff_core_effects.sqlite_sql import connection_of as connection_of
-from doeff_core_effects.sqlite_sql import outage_marked as outage_marked
-from doeff_core_effects.sqlite_sql import sqlite_answer_query as sqlite_answer_query
-from doeff_core_effects.sqlite_sql import sqlite_answer_insert as sqlite_answer_insert
-from doeff_core_effects.sqlite_sql import sqlite_answer_tables as sqlite_answer_tables
+from doeff_core_effects._sql_effects import SqlQuery as SqlQuery
+from doeff_core_effects._sql_effects import SqlInsertRows as SqlInsertRows
+from doeff_core_effects._sql_effects import SqlTransaction as SqlTransaction
+from doeff_core_effects._sql_effects import SqlEnsureTables as SqlEnsureTables
+from doeff_core_effects._sql_effects import SetSqlOutage as SetSqlOutage
+from doeff_core_effects._sql_effects import SqlRows as SqlRows
+from doeff_core_effects._sql_effects import SqlFailed as SqlFailed
+from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
+from doeff_core_effects._sql_effects import SqlSchemaApplied as SqlSchemaApplied
+from doeff_core_effects._sql_effects import SqlTable as SqlTable
+from doeff_core_effects._sql_effects import checked_rows as checked_rows
+from doeff_core_effects._sql_effects import checked_identifier as checked_identifier
+from doeff_core_effects._clickhouse_http_sql import clickhouse_schema_statements as clickhouse_schema_statements
+from doeff_core_effects._clickhouse_http_sql import _clickhouse_transaction_refusal as _clickhouse_transaction_refusal
+from doeff_core_effects._sqlite_sql import with_connection as with_connection
+from doeff_core_effects._sqlite_sql import connection_of as connection_of
+from doeff_core_effects._sqlite_sql import outage_marked as outage_marked
+from doeff_core_effects._sqlite_sql import sqlite_answer_query as sqlite_answer_query
+from doeff_core_effects._sqlite_sql import sqlite_answer_insert as sqlite_answer_insert
+from doeff_core_effects._sqlite_sql import sqlite_answer_tables as sqlite_answer_tables
 
 def without_count(answer: SqlRows | SqlFailed | SqlUnreachable) -> _Program[SqlRows | SqlFailed | SqlUnreachable, object]:
     ...

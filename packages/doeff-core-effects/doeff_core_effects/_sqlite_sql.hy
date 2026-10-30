@@ -16,11 +16,11 @@
 (import sqlite3)
 (import dataclasses [dataclass])
 (import doeff [Program])
-(import doeff_core_effects.sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed
                                         SqlUnreachable SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params
                                         param-value checked-identifier checked-identifiers checked-rows normalized-rows SqlTable SqlParam
                                         SqlValue])
-(import doeff_core_effects.sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
+(import doeff_core_effects._sql_transaction [TransactionFlush run-in-transaction run-in-batched-transaction stray-batch])
 
 ;; 例外の類 → SQLSTATE の類(psycopg が SQLSTATE から類を選ぶ表の逆 — agora-controllers services/record/handlers_wire.hy の
 ;; DRIVER-CLASS-SQLSTATES と同じ類)。OperationalError は文で分ける(sqlite-failure)。

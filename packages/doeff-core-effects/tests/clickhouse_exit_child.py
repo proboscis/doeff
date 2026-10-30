@@ -14,14 +14,15 @@ import sys
 import hy  # noqa: F401  - doeff_core_effects の Hy の module を読むため
 from doeff_core_effects import (
     AwaitStop,
+    ClickHouseDatabase,
     Spawn,
+    SqlQuery,
     StopRequested,
+    clickhouse_http_sql_handler,
     os_signal_stop_handler,
     scheduled,
     state,
 )
-from doeff_core_effects.clickhouse_http_sql import ClickHouseDatabase, clickhouse_http_sql_handler
-from doeff_core_effects.sql_effects import SqlQuery
 
 from doeff import do, run, with_handlers
 

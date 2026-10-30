@@ -49,12 +49,11 @@
 ;; 導出には __doeff_body__ を持つ defhandler 製の実物を挙げる(_http-production-handler と同じ)。
 (import doeff_core_effects [aiohttp-ws-link-handler])
 (import doeff_core_effects [scripted-ws-link-handler])
-(import doeff_core_effects.sql-effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice
-                                        SqlTransaction SqlBatch SetSqlOutage])
-(import doeff_core_effects.postgres-sql [postgres-sql-handler])
-(import doeff_core_effects.pooled-postgres-sql [pooled-postgres-sql-handler])
-(import doeff_core_effects.clickhouse-http-sql [clickhouse-http-sql-handler])
-(import doeff_core_effects.sqlite-sql [sqlite-sql-handler])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice SqlTransaction SqlBatch SetSqlOutage])
+(import doeff_core_effects [postgres-sql-handler])
+(import doeff_core_effects [pooled-postgres-sql-handler])
+(import doeff_core_effects [clickhouse-http-sql-handler])
+(import doeff_core_effects [sqlite-sql-handler])
 (import doeff_core_effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory ProcessAlive ReadInterpreter ReadMachineName ResolveModule StartProcess PollProcess StopProcess SignalProcess WriteProcessInput])
 ;; offloaded-subprocess-handler は factory metered-offloaded-subprocess-handler に計器 None を渡した値で __doeff_body__ を持たない —
 ;; 導出には factory を挙げる(agora-redesign #2847)。

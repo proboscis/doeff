@@ -9557,7 +9557,6 @@
       "CLICKHOUSE_COLUMN_TYPES",
       "CLICKHOUSE_THREADS",
       "CLICKHOUSE_TYPES",
-      "ClickHouseDatabase",
       "ClickHouseHeader",
       "ClickHouseKill",
       "ClickHouseParam",
@@ -9838,7 +9837,6 @@
       "pidfd_of"
      ],
      "doeff_core_effects.pooled_postgres_sql": [
-      "PostgresConnections",
       "hung_notice",
       "notified",
       "offloaded_statement",
@@ -9865,12 +9863,9 @@
       "NoticeWire",
       "POSTGRES_TYPES",
       "PipelineConnection",
-      "PostgresConnections",
-      "PostgresDatabase",
       "PostgresListener",
       "PostgresStatement",
       "PostgresStep",
-      "PostgresTimeouts",
       "RaisedNotices",
       "StatementCursor",
       "TransactionDriver",
@@ -10057,9 +10052,6 @@
      ],
      "doeff_core_effects.sqlite_file_sql": [
       "JOURNAL_MODE",
-      "SqliteConnection",
-      "SqliteFile",
-      "SqliteFiles",
       "connection_of",
       "outage_marked",
       "sqlite_answer_insert",
@@ -10076,7 +10068,6 @@
       "OPERATIONAL_SQLSTATE",
       "SQLITE_CLASS_SQLSTATES",
       "SQLITE_TYPES",
-      "SqliteConnection",
       "SqliteStatement",
       "TransactionFlush",
       "connection_of",
@@ -10329,6 +10320,7 @@
       "SPLIT_MEMO",
       "SPLIT_MEMO_LIMIT",
       "SQL_VALUE_TYPES",
+      "T",
       "TOKEN",
       "checked_identifier",
       "checked_identifiers",
@@ -10343,6 +10335,7 @@
      ],
      "doeff_core_effects.sql_transaction": [
       "ScopeReceived",
+      "T",
       "TransactionAborted",
       "TransactionMisused",
       "TransactionProgress",
@@ -10746,12 +10739,10 @@
       "SqlRows",
       "SqlTable",
       "SqlText",
-      "SqlValue",
-      "T"
+      "SqlValue"
      ],
      "doeff_core_effects.sql_transaction": [
-      "SqlRows",
-      "T"
+      "SqlRows"
      ],
      "doeff_core_effects.sqlite_sql": [
       "SqlColumnType",
@@ -11011,6 +11002,9 @@
      "doeff_core_effects.aiohttp_http_server": [
       "WebEdge"
      ],
+     "doeff_core_effects.clickhouse_http_sql": [
+      "ClickHouseDatabase"
+     ],
      "doeff_core_effects.faulthandler_stack_dump": [
       "StackDumpLedger"
      ],
@@ -11034,6 +11028,14 @@
      ],
      "doeff_core_effects.meter_effects": [
       "MeterSettings"
+     ],
+     "doeff_core_effects.pooled_postgres_sql": [
+      "PostgresConnections"
+     ],
+     "doeff_core_effects.postgres_sql": [
+      "PostgresConnections",
+      "PostgresDatabase",
+      "PostgresTimeouts"
      ],
      "doeff_core_effects.process_exit": [
       "ExitEnd"
@@ -11061,6 +11063,14 @@
      ],
      "doeff_core_effects.scripted_ws_client": [
       "WsScript"
+     ],
+     "doeff_core_effects.sqlite_file_sql": [
+      "SqliteConnection",
+      "SqliteFile",
+      "SqliteFiles"
+     ],
+     "doeff_core_effects.sqlite_sql": [
+      "SqliteConnection"
      ],
      "doeff_core_effects.stack_dump_effects": [
       "StackDumpLedger"

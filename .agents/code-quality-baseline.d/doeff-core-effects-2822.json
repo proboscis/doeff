@@ -30,14 +30,14 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/pooled_postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_pooled_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "hy-string-contract",
       "subject": "hy:string-contract"
     },
     {
       "count": 11,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "hy-string-contract",
       "subject": "hy:string-contract"
@@ -247,21 +247,21 @@
     },
     {
       "count": 9,
-      "path": "packages/doeff-core-effects/doeff_core_effects/sql_effects.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_sql_effects.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 3,
-      "path": "packages/doeff-core-effects/doeff_core_effects/sqlite_file_sql.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_sqlite_file_sql.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     },
     {
       "count": 18,
-      "path": "packages/doeff-core-effects/doeff_core_effects/sqlite_sql.pyi",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_sqlite_sql.pyi",
       "reason": "registered-with-legacy",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
@@ -576,42 +576,42 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "__init__"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "acquire"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "close"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "connection_options"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "names"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/postgres_sql.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_postgres_sql.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "release"
@@ -947,14 +947,14 @@
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_sql_transaction.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "scope"
     },
     {
       "count": 1,
-      "path": "packages/doeff-core-effects/doeff_core_effects/sql_transaction.hy",
+      "path": "packages/doeff-core-effects/doeff_core_effects/_sql_transaction.hy",
       "reason": "registered-with-legacy",
       "rule": "untyped-boundary",
       "subject": "transaction_scope"
