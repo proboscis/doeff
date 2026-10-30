@@ -35,7 +35,9 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    関数」(R35 — effect の答えを他の物差しへ換える関数)に置けるのは、目録の形が換算の関数の名だけ: 中で effect・handler・
    program を作る・時計や環境や file を読む・generator の関数を置くと赤。組「許した物 — 例外の型」(R2 — effect と handler が
    投げる例外の型)に置けるのは、目録の形が例外の class(BaseException の子)で、その package が定義した名だけ: 例外でない
-   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。
+   class・関数・別の package か標準の library の例外を出し直した名を置くと赤。組「許した物 — effect の値の型」(R2)に置けるのは、
+   同じ package が見せる effect の class の欄の注釈(型引数を含み、package が定義した値の型の欄を辿る — 目録の value_types)に
+   出る class と型の別名だけ: どの effect の欄にも出ない class を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
    出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
@@ -65,7 +67,7 @@ import re
 import subprocess
 import sys
 import textwrap
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -98,6 +100,8 @@ ADR_WRITER_GROUP = "許した物 — ADR を書く関数"
 ANSWER_TYPE_GROUP = "許した物 — effect の答えの型"
 #: 決まりが許した例外の型の組(ADR-DOE-API-001 R2 — effect と handler が投げ、呼び手が受ける例外の class)。
 EXCEPTION_GROUP = "許した物 — 例外の型"
+#: 決まりが許した effect の値の型の組(ADR-DOE-API-001 R2)— 同じ package が見せる effect の class の欄の型だけを置ける。
+VALUE_TYPE_GROUP = "許した物 — effect の値の型"
 #: 許した物の組ごとの、置ける物(目録で確かめる形 — 形の合わない名を名指す文に出す)。確かめの無い組は置けない。
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "program を返し、中で handler を被せず effect に答えない関数だけを置ける(ADR-DOE-API-001 R18)",
@@ -110,6 +114,8 @@ ALLOWED_SHAPES: dict[str, str] = {
     ANSWER_TYPE_GROUP: "class と型の別名だけを置ける(effect の答えの型 — ADR-DOE-API-001 R2)。名は表の列で挙げる",
     EXCEPTION_GROUP: "その package が定義した BaseException の子の class だけを置ける(effect と handler が投げる例外の型 — "
     "ADR-DOE-API-001 R2)。別の package か標準の library の例外を出し直した名は置けない",
+    VALUE_TYPE_GROUP: "同じ package が見せる effect の class の欄の注釈(型引数を含む・package が定義した値の型の欄を辿る)に"
+    "出る class と型の別名だけを置ける(effect の値の型 — ADR-DOE-API-001 R2)",
 }
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
@@ -276,21 +282,26 @@ def fits_allowed_group(
 ) -> bool:
     """目録の行 1 つが許した物の組の形に合う(組ごとの形は ALLOWED_SHAPES の文)。writers = 許した物の表で組「ADR を書く関数」に
     置いた (module, 名)。"""
-    if group == HELPER_GROUP:
-        return row["form"] == tool.PROGRAM_HELPER
-    if group == CONVERSION_GROUP:
-        return row["form"] == tool.CONVERSION
-    if group == MACRO_GROUP:
-        return row["form"] == tool.MACRO_FORM or (
-            row["module"] == SUBMODULE and _is_macro_module(package, row["name"], writers)
-        )
-    if group == ADR_WRITER_GROUP:
-        return row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
-    if group == ANSWER_TYPE_GROUP:
-        return row["form"] in ("class", "型")
-    if group == EXCEPTION_GROUP:
-        return row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package)
-    return group == COMMAND_GROUP and row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE)
+    shapes: dict[str, Callable[[], bool]] = {
+        HELPER_GROUP: lambda: row["form"] == tool.PROGRAM_HELPER,
+        CONVERSION_GROUP: lambda: row["form"] == tool.CONVERSION,
+        MACRO_GROUP: lambda: (
+            row["form"] == tool.MACRO_FORM
+            or (row["module"] == SUBMODULE and _is_macro_module(package, row["name"], writers))
+        ),
+        ADR_WRITER_GROUP: lambda: (
+            row["form"] in ("関数", tool.CONVERSION) and row["module"].endswith(".macros")
+        ),
+        ANSWER_TYPE_GROUP: lambda: row["form"] in ("class", "型"),
+        EXCEPTION_GROUP: lambda: row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package),
+        VALUE_TYPE_GROUP: lambda: any(
+            (shown["module"], shown["name"]) == (row["module"], row["name"])
+            for shown in package["value_types"]
+        ),
+        COMMAND_GROUP: lambda: row["form"] in (tool.CONSOLE_SCRIPT, tool.RUST_EXECUTABLE),
+    }
+    fits = shapes.get(group)
+    return fits is not None and fits()
 
 
 def outside_rows(package: Mapping[str, Any]) -> dict[Key, Mapping[str, Any]]:
@@ -1379,6 +1390,96 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
             check_package(package, *tables([defined, key]))
         assert said in str(failure.value)
         assert ALLOWED_SHAPES[EXCEPTION_GROUP] in str(failure.value)
+
+
+#: 欄に値の型を持つ effect の class 2 つ(dataclass と __init__ で書く class)と、どの effect の欄にも出ない class を持つ package。
+VALUE_TYPES = '''
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from doeff import EffectBase, Pass, handler
+
+
+class Mode(Enum):
+    """A value type reached through Payload's field."""
+
+    FAST = "fast"
+
+
+@dataclass(frozen=True)
+class Payload:
+    """A value type: SendEffect's field is a list of it."""
+
+    mode: Mode
+    text: str
+
+
+class Hint:
+    """A value type: NoteEffect's __init__ takes it."""
+
+
+class Unrelated:
+    """A class no effect's field is typed with."""
+
+
+@dataclass(frozen=True)
+class SendEffect(EffectBase):
+    """An effect written as a dataclass."""
+
+    payloads: list[Payload]
+
+
+class NoteEffect(EffectBase):
+    """An effect written with __init__."""
+
+    def __init__(self, *, hint: Hint | None = None) -> None:
+        super().__init__()
+        self.hint = hint
+
+
+@handler
+def send_handler(effect: SendEffect, k):
+    yield Pass()
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path: Path) -> None:
+    """許した物の表の組「許した物 — effect の値の型」に置けるのは、同じ package が見せる effect の class の欄の注釈に出る class
+    と型の別名だけ(ADR-DOE-API-001 R2)。
+
+    dataclass の effect の欄の型引数(list[Payload])・__init__ で書く effect の引数(Hint | None)・package が定義した値の型の欄
+    (Payload.mode の Mode)に出る class は、許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。どの effect の欄にも
+    出ない class Unrelated を置くと赤(組と名と形を名指す)。
+    """
+    repo = _fixture_repo(tmp_path, VALUE_TYPES)
+    package = _read_fixture(repo)
+    places = {shown["name"]: shown["fields"] for shown in package["value_types"]}
+    assert places == {
+        "Payload": ["SendEffect.payloads"],
+        "Mode": ["Payload.mode"],
+        "Hint": ["NoteEffect.hint"],
+    }
+    value_types = ["Hint", "Mode", "Payload"]
+
+    def tables(placed: list[str], listed: list[str]) -> tuple[KnownTable, AllowedTable]:
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in placed},
+            "lt-85SHMNQG7HG4AYHBER6V2BAKX6",
+        )
+        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+
+    check_package(package, *tables(value_types, ["Unrelated"]))
+    with pytest.raises(
+        AssertionError, match=r"許した物の表に無い[\s\S]*doeff_fixture_api\.Payload"
+    ):
+        check_package(package, *tables(["Hint", "Mode"], ["Unrelated"]))
+    with pytest.raises(AssertionError, match=re.escape(f"組「{VALUE_TYPE_GROUP}」")) as failure:
+        check_package(package, *tables([*value_types, "Unrelated"], []))
+    assert f"{FIXTURE_ROOT}.Unrelated(class・" in str(failure.value)
+    assert ALLOWED_SHAPES[VALUE_TYPE_GROUP] in str(failure.value)
 
 
 #: macro だけを出す module と、macro の外の名も出す module(Hy)と、console script を 1 つ持つ package の宣言。

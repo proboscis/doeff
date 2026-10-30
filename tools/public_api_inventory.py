@@ -60,6 +60,13 @@ Kinds:
 Each package is imported in its own child process, so one package's import side effects and
 failures stay out of the others.
 
+Besides the rows, each package lists its effects' value types (``value_types``, ADR-DOE-API-001 R2): the
+names it shows that are a class or a named type alias written in a field annotation of an effect class
+it shows (a dataclass field or an ``__init__`` parameter, type arguments included), followed through the
+fields of the value types the package defines itself. The allowed table's group
+``許した物 — effect の値の型`` may hold those names only. A field typed ``object`` or a bare ``tuple`` says
+nothing, so the value types it carries are not found.
+
     uv run python tools/public_api_inventory.py --json inventory.json --markdown inventory.md
     uv run python tools/public_api_inventory.py --package doeff-time --json -
 """
@@ -68,8 +75,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import collections
 import contextlib
+import dataclasses
 import enum
 import functools
 import importlib
@@ -246,6 +255,17 @@ class ModuleRead(TypedDict):
     error: str | None
 
 
+class ValueType(TypedDict):
+    """One name a package shows that is the type of a field of an effect class it shows (an effect's value type).
+
+    ``fields`` is where the type is written: ``<effect class>.<field>`` (ADR-DOE-API-001 R2 — ``value_types``).
+    """
+
+    module: str
+    name: str
+    fields: list[str]
+
+
 class PackageInventory(TypedDict):
     """The public API of one package dir (the JSON the child process hands the parent)."""
 
@@ -255,6 +275,7 @@ class PackageInventory(TypedDict):
     notes: list[str]
     modules: list[ModuleRead]
     exports: list[ExportRow]
+    value_types: list[ValueType]
     error: str | None
 
 
@@ -2063,6 +2084,175 @@ def submodule_rows(layout: PackageLayout) -> list[ExportRow]:
     ]
 
 
+def _own_annotations(obj: object) -> dict[str, object]:
+    """The annotations a class or function writes itself, without evaluating them (a name not bound stays a reference).
+
+    Python 3.14 keeps them in ``__annotate__`` (``annotationlib``); before, in ``__annotations__``.
+    """
+    try:
+        import annotationlib
+    except ImportError:
+        return dict(cast(dict[str, object], vars(obj).get("__annotations__", {})))
+    try:
+        return dict(annotationlib.get_annotations(obj, format=annotationlib.Format.FORWARDREF))
+    except Exception:  # an annotation whose names fail to resolve is read as no annotation
+        return {}
+
+
+def _class_fields(cls: type) -> list[tuple[str, object]]:
+    """A class's fields and their types as written: a dataclass's fields, otherwise its annotations and the
+    parameters of the ``__init__`` it defines in Python (bases first — an effect class written with ``__init__``).
+
+    ``ClassVar`` annotations (``__doeff_answer__`` — the effect's answer type) are not fields.
+    """
+    if dataclasses.is_dataclass(cls):
+        return [(field.name, field.type) for field in dataclasses.fields(cls)]
+    written = {
+        name: annotation
+        for base in reversed(cls.__mro__)
+        for source in (base, base.__dict__.get("__init__"))
+        if isinstance(source, (type, types.FunctionType))
+        for name, annotation in _own_annotations(source).items()
+        if name != "return"
+    }
+    return [
+        (name, annotation)
+        for name, annotation in written.items()
+        if not (
+            typing.get_origin(annotation) is typing.ClassVar
+            or (isinstance(annotation, str) and re.match(r"(typing\.)?ClassVar\b", annotation))
+        )
+    ]
+
+
+def _resolved_name(expression: ast.expr, namespace: dict[str, object]) -> object:
+    """The value a dotted name in an annotation text names in the namespace (``_MISSING`` when it names none)."""
+    if isinstance(expression, ast.Name):
+        if expression.id in namespace:
+            return namespace[expression.id]
+        return getattr(builtins, expression.id, _MISSING)
+    if isinstance(expression, ast.Attribute):
+        owner = _resolved_name(expression.value, namespace)
+        return _MISSING if owner is _MISSING else getattr(owner, expression.attr, _MISSING)
+    return _MISSING
+
+
+def _expression_types(node: ast.expr, namespace: dict[str, object]) -> Iterator[object]:
+    """The values the names in one node of an annotation text name (a forward reference inside it is read too)."""
+    named = _resolved_name(node, namespace)
+    if named is not _MISSING:
+        yield from _annotation_types(named, namespace)
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield from _text_types(node.value, namespace)
+    elif not (
+        isinstance(node, ast.Subscript) and _resolved_name(node.value, namespace) is typing.Literal
+    ):
+        for child in ast.iter_child_nodes(node):  # Literal's arguments are values, not types
+            if isinstance(child, ast.expr):
+                yield from _expression_types(child, namespace)
+
+
+def _text_types(text: str, namespace: dict[str, object]) -> Iterator[object]:
+    """The values the names in an annotation text name (one the module's globals cannot evaluate as a whole)."""
+    try:
+        tree = ast.parse(text.strip(), mode="eval")
+    except SyntaxError:
+        return
+    yield from _expression_types(tree.body, namespace)
+
+
+def _annotation_types(annotation: object, namespace: dict[str, object]) -> Iterator[object]:
+    """The classes and named type aliases an annotation is made of, its type arguments included."""
+    if isinstance(annotation, str):
+        yield from _text_types(annotation, namespace)
+    elif isinstance(annotation, typing.ForwardRef):
+        yield from _text_types(annotation.__forward_arg__, namespace)
+    elif isinstance(annotation, type) and typing.get_origin(annotation) is None:
+        yield annotation
+    elif isinstance(annotation, _TYPE_ALIAS_TYPES):
+        yield annotation
+        yield from _annotation_types(cast(typing.TypeAliasType, annotation).__value__, namespace)
+    elif _is_type_like(annotation):
+        yield annotation  # a module-level alias (Mode = Literal[...]) is shown by its value
+        origin = typing.get_origin(annotation)
+        if origin is not typing.Literal:
+            if origin is not None:
+                yield from _annotation_types(origin, namespace)
+            for argument in typing.get_args(annotation):
+                yield from _annotation_types(argument, namespace)
+
+
+@dataclass(frozen=True)
+class _FieldType:
+    """One type a field is written with, and where: ``<class>.<field>``."""
+
+    found: object
+    place: str
+
+
+def _field_types(cls: type, label: str) -> Iterator[_FieldType]:
+    """Each type a class's fields are written with (``label`` names the class in the places)."""
+    owner = sys.modules.get(cls.__module__)
+    namespace = {**(owner.__dict__ if owner is not None else {}), **vars(cls)}
+    for field, annotation in _class_fields(cls):
+        for found in _annotation_types(annotation, namespace):
+            yield _FieldType(found, f"{label}.{field}")
+
+
+def _reached_field_types(
+    classes: Sequence[tuple[type, str]], roots: tuple[str, ...], seen: frozenset[int]
+) -> tuple[_FieldType, ...]:
+    """The field types of the classes, followed through the fields of the classes the package defines (each once)."""
+    if not classes:
+        return ()
+    found = tuple(field_type for cls, label in classes for field_type in _field_types(cls, label))
+    own = {
+        id(each.found): (cast(type, each.found), cast(type, each.found).__name__)
+        for each in found
+        if isinstance(each.found, type)
+        and each.found.__module__.split(".", 1)[0] in roots
+        and id(each.found) not in seen
+    }
+    return found + _reached_field_types(list(own.values()), roots, seen | own.keys())
+
+
+def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[ValueType]:
+    """The names a package shows that its effect classes' fields are typed with (ADR-DOE-API-001 R2 — effect の値の型).
+
+    The types are read from the field annotations of every effect class the package shows, type arguments
+    included (``list[Message]``, ``Mode | None``), and followed through the fields of the value types the
+    package defines itself (an ``AgentConfig`` field typed ``AgentMode`` makes ``AgentMode`` a value type too).
+    A name the package shows is a value type when its value is one of those types (the same object).
+    Run in the child process, after the package's modules are imported.
+    """
+    values = {
+        (row["module"], row["name"]): _module_value(sys.modules[row["module"]], row["name"])
+        for row in exports
+        if row["module"] in sys.modules
+    }
+    effects = {
+        id(value): (value, row["name"])
+        for row in exports
+        if row["kind"] == "effect"
+        and isinstance(value := values.get((row["module"], row["name"]), _MISSING), type)
+    }
+    reached = _reached_field_types(
+        sorted(effects.values(), key=lambda pair: pair[1]), roots, frozenset(effects)
+    )
+    places = {
+        key: sorted({each.place for each in group})
+        for key, group in itertools.groupby(
+            sorted(reached, key=lambda each: id(each.found)), key=lambda each: id(each.found)
+        )
+    }
+    return [
+        ValueType(module=row["module"], name=row["name"], fields=places[id(value)])
+        for row in exports
+        if row["kind"] in ("other", "unclassified")
+        and id(value := values.get((row["module"], row["name"]), _MISSING)) in places
+    ]
+
+
 def probe_package(package_dir: Path) -> PackageInventory:
     """Import one package's public modules and type every exported name (run in a child process)."""
     layout = read_layout(package_dir)
@@ -2075,17 +2265,15 @@ def probe_package(package_dir: Path) -> PackageInventory:
         _read_module(name, path, classifier, sources, pins.get(name))
         for name, path in public_modules(layout)
     ]
+    rows = [row for result in results for row in result.rows]
     return PackageInventory(
         dir=package_dir.name,
         distribution=layout.distribution,
         import_roots=[root.name for root in layout.roots],
         notes=list(layout.notes),
         modules=[result.read for result in results],
-        exports=[
-            *(row for result in results for row in result.rows),
-            *submodule_rows(layout),
-            *_metadata_rows(layout),
-        ],
+        exports=[*rows, *submodule_rows(layout), *_metadata_rows(layout)],
+        value_types=value_types(rows, tuple(root.name for root in layout.roots)),
         error=None,
     )
 
@@ -2132,6 +2320,7 @@ def _failed(package_dir: Path, message: str) -> PackageInventory:
         notes=list(layout.notes),
         modules=[],
         exports=[],
+        value_types=[],
         error=message,
     )
 
