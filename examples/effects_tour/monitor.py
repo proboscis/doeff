@@ -8,9 +8,9 @@ from itertools import count
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run
 from doeff_core_effects.handlers import await_handler
 from doeff_core_effects.scheduler import (
-    PRIORITY_IDLE,
     CompletePromise,
     CreatePromise,
+    TaskPriority,
     Wait,
     scheduled,
 )
@@ -108,7 +108,7 @@ def virtual_clock(start: datetime):  # waits take no time
         heapq.heappush(sleepers, (wake_up, next(order), promise))
         if not advancing:
             advancing = True
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)
         yield Wait(promise.future)
         return (yield Resume(k, None))
 

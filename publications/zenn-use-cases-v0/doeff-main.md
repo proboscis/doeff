@@ -122,9 +122,9 @@ from itertools import count  # 同じ刻に起きる待ちを、頼んだ順に�
 from doeff import Await, EffectBase, Gather, Pass, Resume, Spawn, Transfer, do, handler, run  # doeffの中核の名前を使う。
 from doeff_core_effects.handlers import await_handler  # Awaitに答える参考のハンドラ。
 from doeff_core_effects.scheduler import (  # タスクの参考のハンドラと、タスクを待たせる道具。
-    PRIORITY_IDLE,  # 他のタスクが全部待っている時だけ走る優先度。
     CompletePromise,  # 約束を果たし、待つタスクを起こすエフェクト。
     CreatePromise,  # 約束を1つ作るエフェクト。
+    TaskPriority,  # タスクの優先度。IDLEは他のタスクが全部待っている時だけ走る。
     Wait,  # 約束が果たされるまでタスクを待たせるエフェクト。
     scheduled,  # SpawnとGatherに答える参考のハンドラ。
 )
@@ -227,7 +227,7 @@ def virtual_clock(start: datetime):  # 待ちに時間がかからない時計�
         heapq.heappush(sleepers, (wake_up, next(order), promise))  # 待つ列に入れる。
         if not advancing:  # 時計を進めるタスクが無ければ、
             advancing = True  # 走っている印を付け、
-            yield Spawn(advance(), priority=PRIORITY_IDLE, daemon=True)  # 低い優先度で起こす。
+            yield Spawn(advance(), priority=TaskPriority.IDLE, daemon=True)  # 低い優先度で起こす。
         yield Wait(promise.future)  # 約束が果たされるまで、このタスクを待たせる。
         return (yield Resume(k, None))  # 起きたら再開する。
 

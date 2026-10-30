@@ -37,7 +37,7 @@ as it is. Numbers were re-read on 2026-10-27 (JST) unless a row says otherwise.
 | Item | Value | Source |
 |---|---|---|
 | What | the article's own effects `Delay` and `GetTime`, and two handlers in `examples/effects_tour/monitor.py`: `virtual_clock(start)` (about 20 lines) and `wall_clock` (waits with `asyncio.sleep` through `Await`) | examples/effects_tour/monitor.py |
-| Needs | doeff 0.8.0 only; the virtual clock uses `CreatePromise`, `Spawn` at `PRIORITY_IDLE`, `Wait` and `CompletePromise` from `doeff_core_effects.scheduler` | examples/effects_tour/monitor.py |
+| Needs | doeff 0.8.0 only; the virtual clock uses `CreatePromise`, `Spawn` at `TaskPriority.IDLE`, `Wait` and `CompletePromise` from `doeff_core_effects.scheduler` | examples/effects_tour/monitor.py |
 | Virtual clock | moves only when every task is waiting, then jumps to the earliest wake-up; waits at the same instant wake in the order they were asked | examples/effects_tour/monitor.py, docs/20-why-effects-over-di.md |
 | Concurrency | under `wall_clock`, three tasks waiting 1 s, 1 s and 0.5 s at once finished in 1.04 s | run on doeff 0.8.0 from PyPI, 2026-10-30 |
 | Not in the post | doeff-time, the package of time effects in the repo, is not used or named in the launch week | — |
