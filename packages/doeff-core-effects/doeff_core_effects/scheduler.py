@@ -8,7 +8,7 @@
 #   ROOT_CLOSE_OUT_GRACE_SECONDS Race ReleaseSemaphore STALL_LOG_WAITERS_SHOWN
 #   SchedulerDeadlockError SchedulerImplementation SchedulerIndexDriftError SchedulerIntrospection
 #   Semaphore Spawn SpentStepBudget StepBudget StepBudgetExceeded Task TaskCancelledError
-#   TaskCompleted TraceSink UNRETRIEVED_EXCEPTIONS_NAMED VmWork Wait arm_step_budget
+#   TaskCompleted UNRETRIEVED_EXCEPTIONS_NAMED Wait arm_step_budget
 #   disarm_step_budget resolve_implementation scheduled scheduler_trace_sink set_scheduler_trace
 """Moved: ``doeff_core_effects.scheduler`` is now ``doeff_core_effects._scheduler`` (ADR-DOE-API-001 R5).
 
