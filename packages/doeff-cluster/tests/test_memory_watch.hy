@@ -36,7 +36,7 @@
 (import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster.shared.core.clock [now-epoch-ms])
-(import doeff_cluster.worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind job-uses kill-units
+(import doeff_cluster.worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _kill-units
                                                 spared-steady steady-sizes victim-of])
 (import doeff_cluster.worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster.worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
@@ -269,7 +269,7 @@
   (<- body ProcRow (row 32 31 100 "python"))
   (<- child ProcRow (row 33 32 50 "node"))
   (<- tool ProcRow (row 34 33 3000 "cargo"))
-  (<- units tuple (kill-units #(shim uv body child tool) #((JobRoot :name "solo" :pid 30))))
+  (<- units tuple (_kill-units #(shim uv body child tool) #((JobRoot :name "solo" :pid 30))))
   (assert (= (tuple (gfor u units #(u.kind u.head.pid (len u.members) (// u.bytes MIB)))) #(#(UnitKind.LEAF 34 1 3000))) units)
   (<- victim (| KillUnit None) (victim-of units #() #() (MemoryLimits)))
   (assert (= victim.head.pid 34) victim))
@@ -283,10 +283,10 @@
   (<- small ProcRow (row 42 41 300 "node"))
   (<- big ProcRow (row 43 41 700 "node"))
   (val roots #((JobRoot :name "svc" :pid 40)))
-  (<- alone tuple (kill-units #(shim body small) roots))
+  (<- alone tuple (_kill-units #(shim body small) roots))
   (<- body-first (| KillUnit None) (victim-of alone #() #() (MemoryLimits)))
   (assert (= #(body-first.kind body-first.head.pid) #(UnitKind.BODY 41)) alone)
-  (<- with-big tuple (kill-units #(shim body small big) roots))
+  (<- with-big tuple (_kill-units #(shim body small big) roots))
   (<- branch-first (| KillUnit None) (victim-of with-big #() #() (MemoryLimits)))
   (assert (= #(branch-first.kind branch-first.head.pid) #(UnitKind.BRANCH 43)) with-big))
 
@@ -300,7 +300,7 @@
   (<- child-a ProcRow (row 53 52 900 "node"))
   (<- child-b ProcRow (row 54 52 800 "node"))
   (<- orphan ProcRow (row 55 50 600 "node"))
-  (<- units tuple (kill-units #(shim uv body child-a child-b orphan) #((JobRoot :name "svc" :pid 50))))
+  (<- units tuple (_kill-units #(shim uv body child-a child-b orphan) #((JobRoot :name "svc" :pid 50))))
   (assert (= (tuple (gfor u units #(u.kind u.head.pid (// u.bytes MIB))))
              #(#(UnitKind.BODY 52 3000) #(UnitKind.BRANCH 53 900) #(UnitKind.BRANCH 54 800) #(UnitKind.BRANCH 55 600)))
           units)
@@ -323,8 +323,8 @@
 (defk resident-victim [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % (| KillUnit None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "dispatch の平常の大きさ(965 MiB)を持つ見張りが、表 rows・根 roots の時に止める単位を選ぶため。"
-  (<- units tuple (kill-units rows roots))
-  (<- uses tuple (job-uses rows roots))
+  (<- units tuple (_kill-units rows roots))
+  (<- uses tuple (_job-uses rows roots))
   (<- victim (| KillUnit None) (victim-of units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
   victim)
 
@@ -336,8 +336,8 @@
   (<- victim (| KillUnit None) (resident-victim rows roots))
   (assert (is victim None) victim)
   ;; 止めなかった job を名指す。
-  (<- units tuple (kill-units rows roots))
-  (<- uses tuple (job-uses rows roots))
+  (<- units tuple (_kill-units rows roots))
+  (<- uses tuple (_job-uses rows roots))
   (<- spared tuple (spared-steady units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
   (assert (= (tuple (gfor s spared s.job)) #("dispatch")) spared))
 
@@ -361,8 +361,8 @@
   ;; 平常の大きさがまだ無い job(起こしてから最大の行の間が 1 つも閉じていない)は、前と同じく止める候補。
   (val roots #((JobRoot :name "dispatch" :pid 60)))
   (<- rows tuple (resident-rows 950))
-  (<- units tuple (kill-units rows roots))
-  (<- uses tuple (job-uses rows roots))
+  (<- units tuple (_kill-units rows roots))
+  (<- uses tuple (_job-uses rows roots))
   (<- victim (| KillUnit None) (victim-of units uses #() (MemoryLimits)))
   (assert (= victim.head.pid 62) victim))
 
