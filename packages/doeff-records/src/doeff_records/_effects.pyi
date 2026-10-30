@@ -29,6 +29,8 @@ from doeff_records._values import (
     ListRowsAnswer,
     PutRowAnswer,
     PutRowsAnswer,
+    PutRowsAppendEventsAnswer,
+    WrittenAndAppended,
     ReadBatchAnswer,
     ReadEventByKeyAnswer,
     ReadEventsAnswer,
@@ -110,7 +112,8 @@ class PutRows(EffectBase[PutRowsAnswer]):
     # `<-` が束ねる名の型 = 答えから :failure(RowsRefused・Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/_static_types.pyi の BoundRun)。
     def __iter__(self) -> Generator[Any, Any, WrittenRows | RowsConflict]: ...
 
-def write_parts(ask: PutRow | PutRows) -> tuple[PutRow | RowWrite, ...]: ...
+def write_parts(ask: PutRow | PutRows | PutRowsAppendEvents) -> tuple[PutRow | RowWrite, ...]: ...
+def append_parts(ask: PutRow | PutRows | PutRowsAppendEvents) -> tuple[EventAppend, ...] | None: ...
 
 @dataclass(frozen=True)
 class WatchChanges(EffectBase[WatchChangesAnswer]):
@@ -139,6 +142,14 @@ class EventAppend:
 @dataclass(frozen=True)
 class AppendEvents(EffectBase[AppendEventsAnswer]):
     appends: tuple[EventAppend, ...]
+
+@dataclass(frozen=True)
+class PutRowsAppendEvents(EffectBase[PutRowsAppendEventsAnswer]):
+    writes: tuple[RowWrite, ...]
+    appends: tuple[EventAppend, ...]
+    idempotency_key: str | None = None
+    # `<-` が束ねる名の型 = 答えから :failure(RowsRefused・AppendRefused・Unreachable)を除いた物(_effects.hy の defeffect と同じ — doeff_hy/_static_types.pyi の BoundRun)。
+    def __iter__(self) -> Generator[Any, Any, WrittenAndAppended | RowsConflict]: ...
 
 @dataclass(frozen=True)
 class WatchEvents(EffectBase[WatchEventsAnswer]):

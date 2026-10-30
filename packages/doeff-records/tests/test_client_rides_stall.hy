@@ -21,7 +21,7 @@
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent Unreachable])
-(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows])
+(import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows PutRowsAppendEvents])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA LawHarness MAKER as-writer])
 (import doeff_records [MemoryStore memory-records-handler])
@@ -37,7 +37,8 @@
 (val PATIENCE (RequestPatience :seconds 60.0))
 (val SHORT-PATIENCE (RequestPatience :seconds 10.0))
 ;; 要求と答えの公開 effect の和(止まりの間に撃つ要求の型)。
-(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows))
+(val RequestAsk (| ReadRow ListRows PutRow PutRows AppendEvent AppendEvents ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows
+                   PutRowsAppendEvents))
 
 
 (defk part [id]
@@ -51,12 +52,14 @@
   "要求と答えの公開 effect を 1 つずつ作るため(止まりの間に撃つ要求の表 — 種類は公開 effect の一覧の要求と答えの全部)。"
   (<- p8 FrozenMap (part "p8"))
   (<- p9 FrozenMap (part "p9"))
+  (<- p7 FrozenMap (part "p7"))
   #((ReadRow "parts" #("p1"))
     (ListRows "parts")
     (PutRow "parts" #("p9") p9 (ExpectAbsent))
     (PutRows #((RowWrite "parts" #("p8") p8 (ExpectAbsent))))
     (AppendEvent "journal" "stall-k1" {"n" 1})
     (AppendEvents #((EventAppend "pairs" "cause:stall-k2" {"n" 2}) (EventAppend "journal" "stall-k2" {"n" 2})))
+    (PutRowsAppendEvents #((RowWrite "parts" #("p7") p7 (ExpectAbsent))) #((EventAppend "journal" "stall-k3" {"n" 3})))
     (ReadEvents "journal")
     (ReadStreamEnd "journal")
     (CountRows "parts")

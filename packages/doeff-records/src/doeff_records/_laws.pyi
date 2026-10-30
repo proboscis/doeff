@@ -58,6 +58,8 @@ from doeff_records._values import RememberNoKeys as RememberNoKeys
 from doeff_records._values import WRITE_KEY_MEMORY_SECONDS as WRITE_KEY_MEMORY_SECONDS
 from doeff_records._values import BatchRead as BatchRead
 from doeff_records._values import Count as Count
+from doeff_records._values import WrittenAndAppended as WrittenAndAppended
+from doeff_records._values import AppendRefused as AppendRefused
 from doeff_records._effects import ReadRow as ReadRow
 from doeff_records._effects import ListRows as ListRows
 from doeff_records._effects import PutRow as PutRow
@@ -73,6 +75,7 @@ from doeff_records._effects import ReadStreamEnd as ReadStreamEnd
 from doeff_records._effects import ReadEventByKey as ReadEventByKey
 from doeff_records._effects import ReadBatch as ReadBatch
 from doeff_records._effects import CountRows as CountRows
+from doeff_records._effects import PutRowsAppendEvents as PutRowsAppendEvents
 from doeff_records._faults import AdvanceStoreEpoch as AdvanceStoreEpoch
 from doeff_records._maintenance import SweepExpired as SweepExpired
 from doeff_records._maintenance import PruneChanges as PruneChanges
@@ -332,6 +335,18 @@ def law_another_key_is_judged_by_its_expectation(harness: LawHarness) -> _Progra
     ...
 
 def law_write_keys_are_forgotten_after_their_memory(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def unchanged_since(harness: LawHarness, mark: Page, law: str, what: str) -> _Program[Changes, object]:
+    ...
+
+def law_rows_and_events_are_written_together_or_not_at_all(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_a_keyed_rows_and_events_write_replays_its_answer(harness: LawHarness) -> _Program[list[object], object]:
+    ...
+
+def law_events_written_with_rows_name_the_rows_position(harness: LawHarness) -> _Program[list[object], object]:
     ...
 
 def ascending_pages(harness: LawHarness, where: FrozenMap, limit: int) -> _Program[list[object], object]:
