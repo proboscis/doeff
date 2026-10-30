@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 
 from doeff_conductor import (
-    AgentRef,
     ExecResult,
     Issue,
     IssueStatus,
@@ -15,6 +14,7 @@ from doeff_conductor import (
     WorkflowStatus,
     Workspace,
 )
+from doeff_conductor._types import AgentRef
 
 
 class TestIssue:

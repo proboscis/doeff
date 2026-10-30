@@ -8095,36 +8095,6 @@
   "doeff-conductor": {
    "範囲": "決まりの範囲",
    "名": {
-    "外れ — effect に答えの型を書く": {
-     "doeff_conductor": [
-      "AgentRef",
-      "ExecResult",
-      "IssueStatus",
-      "MergeConflict",
-      "MergeStatus",
-      "MergeWorkspacesResult",
-      "PRHandle",
-      "RemainingReviewBudget",
-      "ReviewItem",
-      "ReviewRoutingResult",
-      "ReviewVerdict",
-      "ReviewerAgentLost",
-      "WorkflowHandle",
-      "WorkflowStatus"
-     ],
-     "doeff_conductor.effects": [
-      "BudgetCounterEntry",
-      "CalibrationEscapeRecord",
-      "ReviewBudgetStatus",
-      "Tier1ReviewResult"
-     ],
-     "doeff_conductor.effects.review": [
-      "BudgetCounterEntry",
-      "CalibrationEscapeRecord",
-      "ReviewBudgetStatus",
-      "Tier1ReviewResult"
-     ]
-    },
     "境界 — handler の設定の型": {
      "doeff_conductor": [
       "DefaultReviewRouter",

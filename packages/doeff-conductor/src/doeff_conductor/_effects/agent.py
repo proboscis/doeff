@@ -92,7 +92,7 @@ class AgentTask:
 
 
 @dataclass(frozen=True)
-class AgentEffect(ConductorEffectBase):
+class AgentEffect(ConductorEffectBase[object]):
     """Run an agent and return its validated artifact object."""
 
     task: AgentTask

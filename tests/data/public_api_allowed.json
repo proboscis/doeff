@@ -7522,6 +7522,13 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "ExecResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "GitCommandError",
    "組": "許した物 — 例外の型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
@@ -7557,8 +7564,29 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "IssueStatus",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "JournalCorruptionError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "MergeConflict",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "MergeStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
@@ -7571,8 +7599,36 @@
   {
    "package": "doeff-conductor",
    "module": "doeff_conductor",
+   "name": "MergeWorkspacesResult",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
    "name": "PRError",
    "組": "許した物 — 例外の型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "PRHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "WorkflowHandle",
+   "組": "許した物 — effect の答えの型",
+   "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+  },
+  {
+   "package": "doeff-conductor",
+   "module": "doeff_conductor",
+   "name": "WorkflowStatus",
+   "組": "許した物 — effect の答えの型",
    "決め": "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
   },
   {
