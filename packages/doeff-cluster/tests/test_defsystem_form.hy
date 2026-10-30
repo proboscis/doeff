@@ -110,21 +110,22 @@
   (assert (= (get job "environ") {"POLL" "5.0" "BROKER" "" "PROXY" "" "ADDRESS" ""}) job)
   (assert (= (get job "filled") ["ADDRESS" "BROKER"]) job)
   (assert (= (get job "empty") ["PROXY"]) job)
-  ;; 印の無い job の記述は鍵 "filled" も "empty" も持たない。印の無い空の文字列は型を決めていない既定として受け、どちらにも載らない
-  ;; (使い手が断れる形 — 頭の註)。
+  ;; 印の無い job の記述は鍵 "filled" も "empty" も持たない。
   (<- plain (evaluate "
 (defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
 (defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"POLL\" \"5.0\"}))
 "))
   (val described (get (. (get plain "s") __doeff_system__) "jobs" 0))
-  (assert (and (not-in "filled" described) (not-in "empty" described)) described)
-  (<- bare (evaluate "
-(defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)
-(defsystem s [foundation] (job (notice foundation) :needs #{\"n\"} :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"BROKER\" \"\"}))
-"))
-  (val unmarked (get (. (get bare "s") __doeff_system__) "jobs" 0))
-  (assert (= (get unmarked "environ") {"BROKER" ""}) unmarked)
-  (assert (and (not-in "filled" unmarked) (not-in "empty" unmarked)) unmarked))
+  (assert (and (not-in "filled" described) (not-in "empty" described)) described))
+
+
+(deftest test-defsystem-refuses-an-unmarked-empty-default
+  ;; 反例: 印の無い空の文字列(空白だけも)は型を決めていない既定 — 展開の時に名を名指して断り、(filled) か (empty) で書けと言う(頭の註)。
+  (<- bare (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"POLL\" \"5.0\" \"BROKER\" \"\"}))"))
+  (assert (in ":environ の BROKER の既定が印の無い空の文字列" bare) bare)
+  (assert (and (in "(filled)" bare) (in "(empty)" bare)) bare)
+  (<- blank (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :environ {\"PROXY\" \"  \"}))"))
+  (assert (in ":environ の PROXY の既定が印の無い空の文字列" blank) blank))
 
 
 (defk probe-program []

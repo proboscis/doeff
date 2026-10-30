@@ -15,10 +15,9 @@
 ;;;   宣言の組み立てがその値を数として読む・readiness_model の註)の dict、:environ は
 ;;;   文字列の鍵の dict で、値は 2 つの型のどちらか — 既定の値(空でない文字列の literal か、空を「無し」と読む名の印 `(empty)`)か、
 ;;;   宣言の時に埋める名の印 `(filled)`(既定を持たず、宣言する者が上書きで値を渡す — 静的な記述の job の "filled" と Job の filled に載る)。
-;;;   空を「無し」と読む名は静的な記述の job の "empty" に載る。印の無い空の文字列の literal "" は、型を決めていない既定として今は受け、
-;;;   静的な記述の "filled" にも "empty" にも載らない — 使い手が印の無い "" を断れる(「既定を空にした」事実と「宣言の時に埋める」印を
-;;;   別の所で持つと、印の書き漏れが宣言する者の確かめの穴になる・card ki-02e836a9c628)。:update は "recreate" か "handoff"。外れれば
-;;;   展開の時の SyntaxError。
+;;;   空を「無し」と読む名は静的な記述の job の "empty" に載る。印の無い空の文字列の literal "" (空白だけの文字列も)は型を決めていない
+;;;   既定なので断る(「既定を空にした」事実と「宣言の時に埋める」印を別の所で持つと、印の書き漏れが宣言する者の確かめの穴になる・
+;;;   card ki-02e836a9c628・ki-27e468fa49e9)。:update は "recreate" か "handoff"。外れれば展開の時の SyntaxError。
 ;;;   :replicas は job の望む台数(0 = 取り下げ・1 = 動かす)の整数の literal で、**必ず書く** — coordinator の Service は job 1 つに 1 つで、
 ;;;   台数は job の性質。宣言し直しはこの値を書く(宣言の道具の引数で台数を持たない — 持つと、取り下げてあった Service へ台数を書かずに
 ;;;   宣言し直した時に job が起きない取り違えが起きる)。
@@ -104,11 +103,15 @@
 
 (defn #^ (get tuple #(Dict (get list str) (get list str))) environ-values [#^ Object form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数
   "job の :environ の dict の literal を検め、#(既定の値の dict の form 宣言の時に埋める名の list 空を「無し」と読む名の list) を返すため
-   (頭の註 — 値は文字列・(filled)・(empty) のどれか)。既定の値の dict では (filled) と (empty) を空の文字列にする(job の構成子と静的な
+   (頭の註 — 値は空でない文字列・(filled)・(empty) のどれか)。既定の値の dict では (filled) と (empty) を空の文字列にする(job の構成子と静的な
    記述が読む値)。"
   (setv pairs (string-dict form where ":environ" #(String Expression) "文字列か (filled) か (empty)")
         marks {FILLED-MARK [] EMPTY-MARK []})
   (for [#(k v) pairs]
+    (when (and (isinstance v String) (not (.strip v)))
+      (raise (SyntaxError (.format (+ "{}: :environ の {} の既定が印の無い空の文字列 {} — 宣言の時に埋める名は (filled)、"
+                                      "空を「無し」と読む名は (empty) と書く")
+                                   where (str k) (hy.repr v)))))
     (when (isinstance v Expression)
       (when (not (and (= (len v) 1) (isinstance (get v 0) Symbol) (in (str (get v 0)) marks)))
         (raise (SyntaxError (.format "{}: :environ の {} の値は文字列か (filled) か (empty): {}" where (str k) (hy.repr v)))))
