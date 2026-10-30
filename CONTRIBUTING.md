@@ -112,11 +112,6 @@ The [Repository map](README.md#repository-map) in the README lists the rest of t
 Commit messages start with a short summary in the imperative mood (`Add doeff --version`,
 `Fix cache key for nested programs`). Use the body to say why the change is needed.
 
-## License
-
-doeff is released under the [MIT License](LICENSE). By sending a contribution, you agree that it is
-released under the same license.
-
 ## Performance Benchmarks
 
 Rust VM dispatch micro-benchmarks live in `packages/doeff-vm-core/benches/` and
@@ -157,3 +152,8 @@ performance:
 ```bash
 make bench-smoke
 ```
+
+## License
+
+doeff is released under the [MIT License](LICENSE). By sending a contribution, you agree that it is
+released under the same license.
