@@ -54,7 +54,6 @@ class KnownExit:
 class WorkerInfo:
     name: str
     provides: tuple[str, ...]
-    capacity: int
     last_seen_ms: int
     versions: tuple[ComponentVersion, ...] = ...
     boot: str | None = None
@@ -77,12 +76,14 @@ class WorkerInfo:
     seen_mark: int | None = None
     _: KW_ONLY
     task_reserve: int
+    background_room: int
     known_exits: tuple[KnownExit, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerLoad:
     jobs: int
     tasks: int
+    settle_mib: int
 
 @dataclass(frozen=True)
 class EnvFailed:
@@ -289,6 +290,7 @@ class UnplacedView:
     missing: tuple[str, ...]
     pin: str | None
     since_ms: int
+    memory: tuple[str, ...] = ...
 
 @dataclass(frozen=True, kw_only=True)
 class StateView:

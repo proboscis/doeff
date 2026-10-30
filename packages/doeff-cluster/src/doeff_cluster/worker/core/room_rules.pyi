@@ -13,13 +13,17 @@ class RoomState(StrEnum):
     UNREADABLE = 'unreadable'
     MALFORMED = 'malformed'
 TEMPLATE_PROVIDES: tuple[str, ...]
+ROOM_FIELDS: tuple[str, ...]
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerRoom:
-    capacity: int
     task_reserve: int
+    background_room: int
+    memory_mib: int | None
     pools: tuple[str, ...] = ...
-    memory_mib: int | None = None
+
+    def __post_init__(self) -> None:
+        ...
 
 @dataclass(frozen=True, kw_only=True)
 class RoomReading:
@@ -31,9 +35,6 @@ def room_of_text(text: str, name: str) -> _Program[RoomReading, object]:
     ...
 
 def row_pools(row: dict, name: str) -> _Program[tuple[str, ...] | str, object]:
-    ...
-
-def row_memory(row: dict, name: str) -> _Program[int | str | None, object]:
     ...
 
 def launch_provides(node: str, extra: tuple[str, ...]) -> _Program[tuple[str, ...], object]:

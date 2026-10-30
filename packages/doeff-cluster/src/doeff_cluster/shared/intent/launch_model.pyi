@@ -9,9 +9,10 @@ class WorkerLaunch:
     name: str
     provides: tuple[str, ...]
     exclusive: tuple[str, ...]
-    capacity: int
     task_reserve: int
+    background_room: int
     doeff_commit: str
+    memory_mib: int | None = None
 
     def __post_init__(self) -> None:
         ...

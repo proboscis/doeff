@@ -6,7 +6,7 @@
 ;;; sim-cluster(local.hy・1 process の中の本物の coordinator と、偽の機体の上の本物の worker)と同じ入口の形で、違いは土台の handler の組
 ;;; だけ: ここでは本物の process・本物の HTTP・本物の時計。起こし方は配備と同じ deploy/boot.sh を、配備と同じ環境変数(ROLE・LISTEN_PORT・
 ;;; WORK_DIR・COORDINATOR_URL・WORKER_NAME・WORKER_PROVIDES ほか)で起こす — 2 つ目の起こし方を作らない。worker の顔ぶれは sim と同じ値
-;;; (SimWorker の name・provides・exclusive・capacity・task-reserve・node)で渡し、命令の引数を足さない。
+;;; (SimWorker の name・provides・exclusive・task-reserve・background-room・memory-mib・node)で渡し、命令の引数を足さない。
 ;;;
 ;;; 筋書きが出せる effect(machine-answers が答える):
 ;;;   ReadCoordinator path        coordinator の口の GET の本文(sim と同じ)。
@@ -88,7 +88,7 @@
 (defrecord LocalMachine
   "手元の 1 台の cluster の置き方。work-dir = 作業の dir の親(coordinator は coordinator/・worker は workers/<名>/ — 出力の log も
    その下)・port = coordinator の受け口(127.0.0.1)・workers = worker の顔ぶれ(sim と同じ SimWorker — name・provides・exclusive・
-   capacity・node を使う)・boot-seconds = coordinator と worker の起き上がりを待つ上限の秒・stop-grace = 止める時に SIGTERM から
+   task-reserve・background-room・memory-mib・node を使う)・boot-seconds = coordinator と worker の起き上がりを待つ上限の秒・stop-grace = 止める時に SIGTERM から
    SIGKILL までの猶予の秒。job の code の道(#3040): code-repo = 版の木の git(worker の CODE_REPO_URL — 配備と同じ名。空 = 版の木を
    持たない worker)・revision = Redeclare が宣言に書く版(code-repo の commit — sim-cluster の revision と同じ役)・runtime-env =
    Redeclare が宣言に載せる実行環境(repo と commit と uv の lock — sim-cluster の runtime-env と同じ役。None = 版の木の道。#3042):
@@ -216,8 +216,10 @@
     (EnvEntry :name "WORKER_NAME" :value worker.name)
     (EnvEntry :name "WORKER_PROVIDES" :value (.join "," (sorted worker.provides)))
     (EnvEntry :name "WORKER_EXCLUSIVE" :value (.join "," (sorted worker.exclusive)))
-    (EnvEntry :name "WORKER_CAPACITY" :value (str worker.capacity))
     (EnvEntry :name "WORKER_TASK_RESERVE" :value (str worker.task-reserve))
+    (EnvEntry :name "WORKER_BACKGROUND_ROOM" :value (str worker.background-room))
+    ;; 空 = 名乗らない(boot.sh は空の名を無い名として読む — memory で縛られない worker)。
+    (EnvEntry :name "WORKER_MEMORY_MIB" :value (if (is worker.memory-mib None) "" (str worker.memory-mib)))
     (EnvEntry :name "NODE_NAME" :value worker.node)
     (EnvEntry :name "WORK_DIR" :value (str home))
     (EnvEntry :name "CODE_REPO_URL" :value machine.code-repo)
