@@ -2767,7 +2767,7 @@ fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
         (
             "app/billing/entry/main.hy",
             tags("billing", "entry")
-                + "(import doeff_cluster.foundation.host_contract [environ-table-reader os-environ-reader])\n\
+                + "(import doeff_cluster._foundation.host_contract [environ-table-reader os-environ-reader])\n\
                    (defk run [body] (with-handlers [(os-environ-reader)] body))\n\
                    (defk run-on-table [body] (with-handlers [(environ-table-reader {\"NAME\" \"value\"})] body))\n",
         ),
@@ -2777,7 +2777,7 @@ fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
     assert_eq!(
         keys(&report, "DOEFF131"),
-        vec!["app/billing/entry/main.hy::DOEFF131::run::world::doeff_cluster.foundation.host_contract:os-environ-reader"],
+        vec!["app/billing/entry/main.hy::DOEFF131::run::world::doeff_cluster._foundation.host_contract:os-environ-reader"],
         "{}",
         report
     );

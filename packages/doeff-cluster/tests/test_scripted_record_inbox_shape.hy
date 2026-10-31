@@ -1,5 +1,5 @@
-;;; まねた受付の箱の形の検 — 模擬の環境の入口の検(_sim/test_entries_on_sim)から分けた。_sim の module は移し替えの層 doeff_cluster.sim で
-;;; 公開の名に数えられるので、検の関数と InboxQueue の import を公開の外(tests/)へ置く(ADR-DOE-API-001 R1・R5)。
+;;; まねた受付の箱の形の検 — 模擬の環境の入口の検(_sim/test_entries_on_sim)から分けた。_sim の module は区画を隠す間、古い path の層で
+;;; 公開の名に数えられたので、検の関数と InboxQueue の import を公開の外(tests/)へ置いた(ADR-DOE-API-001 R1・R5)。
 (require doeff-hy.macros [deftest val])
 (import doeff_cluster._shared.protocol.inbox [InboxQueue])
 (import doeff_cluster._foundation.coordinator_inbox [StopState])
