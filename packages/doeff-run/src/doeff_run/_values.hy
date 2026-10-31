@@ -17,6 +17,10 @@
 
 ;; run の名: docker の container 名と k8s の資源名(RFC 1123 の label)の両方が受ける形 — 小文字・数字・- の 1〜63 字で、前後は - でない。
 (val RUN-NAME (re.compile r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?"))
+;; named volume の名: 英数字で始まる 2 字以上の英数字と _ . -(docker の named volume の名の規則。この形でない source を docker は
+;; bind mount の path に読む)。volume の効果(VolumeEnsure・VolumeStatus)が作る前に照らす名の形で、この形に合わない名は backend に
+;; 渡さず UNSUPPORTED で断る。
+(val VOLUME-NAME (re.compile r"[A-Za-z0-9][A-Za-z0-9_.-]+"))
 ;; 環境変数の名: shell が受ける名。
 (val ENV-NAME (re.compile r"[A-Za-z_][A-Za-z0-9_]*"))
 ;; image の名: 空白・NUL を含まない 1 語(tag か digest つきの参照 — digest で指すかは使い手が決める)。
@@ -54,6 +58,12 @@
   (#^ str target)
   (setv #^ bool read-only False))
 
+
+(defn #^ (| str None) volume-name-refusal [#^ str name]
+  "volume の名が VOLUME-NAME の形でない時の断りの 1 行(合えば None)。backend を呼ぶ前に照らす。"
+  (when (VOLUME-NAME.fullmatch name)
+    (return None))
+  (.format "volume の名 {!r} は named volume の名でない(英数字で始まる 2 字以上の英数字と _ . - — 他の形は path と読まれる)" name))
 
 (defn #^ (get FrozenMap str) checked-env [#^ object value]
   "走らせる env の検め: 名が shell の名で、値が NUL を含まない文字列の写像を凍らせた FrozenMap(外れは TypeError・ValueError)。"

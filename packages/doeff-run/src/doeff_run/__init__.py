@@ -33,6 +33,15 @@ if TYPE_CHECKING:
     from doeff_run._effects import RunStop as RunStop
     from doeff_run._effects import RunStopOutcome as RunStopOutcome
     from doeff_run._effects import StopFailed as StopFailed
+    from doeff_run._effects import VolumeAbsent as VolumeAbsent
+    from doeff_run._effects import VolumeCreated as VolumeCreated
+    from doeff_run._effects import VolumeEnsure as VolumeEnsure
+    from doeff_run._effects import VolumeEnsureOutcome as VolumeEnsureOutcome
+    from doeff_run._effects import VolumeExisted as VolumeExisted
+    from doeff_run._effects import VolumePresent as VolumePresent
+    from doeff_run._effects import VolumeRefused as VolumeRefused
+    from doeff_run._effects import VolumeStatus as VolumeStatus
+    from doeff_run._effects import VolumeStatusOutcome as VolumeStatusOutcome
     from doeff_run._faults import RunVanish as RunVanish
     from doeff_run._docker import DockerRunHost as DockerRunHost
     from doeff_run._docker import docker_run_handler as docker_run_handler
@@ -69,6 +78,15 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RunStop": "doeff_run._effects",
     "RunStopOutcome": "doeff_run._effects",
     "StopFailed": "doeff_run._effects",
+    "VolumeAbsent": "doeff_run._effects",
+    "VolumeCreated": "doeff_run._effects",
+    "VolumeEnsure": "doeff_run._effects",
+    "VolumeEnsureOutcome": "doeff_run._effects",
+    "VolumeExisted": "doeff_run._effects",
+    "VolumePresent": "doeff_run._effects",
+    "VolumeRefused": "doeff_run._effects",
+    "VolumeStatus": "doeff_run._effects",
+    "VolumeStatusOutcome": "doeff_run._effects",
     "RunVanish": "doeff_run._faults",
     "DockerRunHost": "doeff_run._docker",
     "docker_run_handler": "doeff_run._docker",

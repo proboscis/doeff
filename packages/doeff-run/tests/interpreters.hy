@@ -10,11 +10,16 @@
 ;;;           負荷の実行 file は dir ごと PATH の先頭に載る。資源の上限と volume は守れない設定として断る handler なので、メモリの上限の
 ;;;           筋書きは OOM の筋書きでなく「断る」筋書きを通す(test_contract.hy)。検の終わりに host の走っている子を全部止める。
 ;;;
-;;; k3s の handler を足す card(Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
+;;; volume の筋書き(test_volume_contract.hy)が使う横の口は Settings.volumes-now(backend の volume の名を直に読む)と
+;; Settings.vanish-volume(backend から直に消す — DoeffRun に volume を消す効果は無い)。fake は世界の volumes、docker は docker の CLI
+;; (host の label で絞る・検の終わりに消す)、process は volume を持たない。
+;;
+;; k3s の handler を足す card(Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
 ;;; test_contract.hy の各 deftest の :interpreters に名を足す。筋書きと workloads.hy の約束は変えない — 同じ契約を通す事が目的。
 ;;;
 ;;; 筋書きは ScenarioSettings の effect で自分の宣言(負荷の image・時間の許容)を読む。
 (require doeff-hy.macros [defhandler])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import hashlib)
 (import os)
@@ -46,11 +51,16 @@
 
 (defclass [(dataclass :frozen True)] Settings []
   "筋書きが読む宣言: image = 契約の負荷 contract-workload が入った image / missing-image = 起動できない image の名 /
-   slack = 時間の比べの許容(秒 — 仮想の時計は刻み 1 マイクロ秒、壁の時計の handler はもっと広く)/ interpreter = 名。"
+   slack = 時間の比べの許容(秒 — 仮想の時計は刻み 1 マイクロ秒、壁の時計の handler はもっと広く)/ interpreter = 名 /
+   volumes-now = 今、handler の作った volume の名の集まりを backend から直に読む関数(DoeffRun を通さない横の口 — 作っていない事・
+   1 つだけ在る事の確かめ)/ vanish-volume = 名の volume を backend から直に消す関数(DoeffRun に volume を消す効果は無いので、消えた volume の
+   筋書きだけがこの口を使う)。"
   (#^ str image)
   (#^ str missing-image)
   (#^ float slack)
-  (#^ str interpreter))
+  (#^ str interpreter)
+  (#^ Callable volumes-now)
+  (#^ Callable vanish-volume))
 
 (defclass [(dataclass :frozen True)] ScenarioSettings [EffectBase])
 
@@ -80,32 +90,53 @@
     (run (scheduled (with_handlers [offloaded-subprocess-handler] (StopProcess :pid pid :stop-grace 0.0)))))
   None)
 
+(defn #^ frozenset docker-volumes [#^ DockerRunHost host]
+  "host が作った volume(label の印)の名の集まりを docker から直に読む(DoeffRun を通さない横の口)。"
+  (setv listed (subprocess.run ["docker" "volume" "ls" "--quiet" "--filter" (.format "label=doeff-run.host={}" host.host-id)]
+                               :check True :capture-output True :text True))
+  (frozenset (.split listed.stdout)))
+
+(defn #^ None remove-docker-volume [#^ str name]
+  "名の volume を docker から直に消す(消えた volume の筋書きと後始末だけ — DoeffRun に volume を消す効果は無い)。"
+  (subprocess.run ["docker" "volume" "rm" "--force" "--" name] :check True :capture-output True)
+  None)
+
 (defn #^ None remove-docker-runs [#^ DockerRunHost host]
-  "host が作った container(label の印)を全部消す(検の後始末)。"
+  "host が作った container と volume(label の印)を全部消す(検の後始末 — container を先に消す。volume は使っている container が居ると消せない)。"
   (setv listed (subprocess.run ["docker" "container" "ls" "--all" "--quiet" "--filter" (.format "label=doeff-run.host={}" host.host-id)]
                                :check True :capture-output True :text True))
   (setv ids (.split listed.stdout))
   (when ids
     (subprocess.run (+ ["docker" "container" "rm" "--force"] ids) :check True :capture-output True))
+  (for [volume (sorted (docker-volumes host))]
+    (remove-docker-volume volume))
   None)
 
+(defn #^ None no-volumes-to-vanish [#^ str name]
+  "volume を持たない backend の vanish-volume: 呼ばれたら筋書きの誤り。"
+  (raise (AssertionError (.format "この解釈器に volume は無い: {!r}" name))))
 
-(defn settings-for [#^ str name #^ Path tmp-path]
+
+(defn settings-for [#^ str name #^ Path tmp-path host]
   (cond
-    (= name FAKE) (Settings :image FAKE-IMAGE :missing-image FAKE-MISSING-IMAGE :slack 0.01 :interpreter name)
+    (= name FAKE)
+      (Settings :image FAKE-IMAGE :missing-image FAKE-MISSING-IMAGE :slack 0.01 :interpreter name
+                :volumes-now (fn [] (frozenset host.volumes)) :vanish-volume (fn [volume] (.discard host.volumes volume)))
     (= name DOCKER)
       (do
         (when (!= (os.environ.get DOCKER-GATE) "1")
           (pytest.skip (.format "docker の解釈器は {}=1 の時だけ走る(docker の在る機体 — zeus の検)" DOCKER-GATE)))
-        (Settings :image (docker-workload-image) :missing-image DOCKER-MISSING-IMAGE :slack 1.0 :interpreter name))
-    (= name PROCESS) (Settings :image PROCESS-IMAGE :missing-image PROCESS-MISSING-IMAGE :slack 1.0 :interpreter name)
+        (Settings :image (docker-workload-image) :missing-image DOCKER-MISSING-IMAGE :slack 1.0 :interpreter name
+                  :volumes-now (fn [] (docker-volumes host)) :vanish-volume remove-docker-volume))
+    (= name PROCESS)
+      (Settings :image PROCESS-IMAGE :missing-image PROCESS-MISSING-IMAGE :slack 1.0 :interpreter name
+                :volumes-now (fn [] (frozenset)) :vanish-volume no-volumes-to-vanish)
     True (raise (ValueError (.format "知らない解釈器: {!r}" name)))))
 
 (defn handlers-for [#^ str name #^ Settings settings host]
   (cond
     (= name FAKE)
-      [(sim-time-handler :clock (SimClock))
-       (fake-run-handler (FakeRunWorld :behavior-of (fn [spec] (fake-behavior-of spec settings.missing-image))))]
+      [(sim-time-handler :clock (SimClock)) (fake-run-handler host)]
     (= name DOCKER)
       [(sync-time-handler) offloaded-subprocess-handler (docker-run-handler host)]
     (= name PROCESS)
@@ -114,11 +145,15 @@
 
 (defn build-interpreter [#^ str name #^ Path tmp-path]
   "名 → Program を走らせる関数。名が plain の時は scheduler だけ(handler を要しない純関数の検)。docker は走らせた後に、その検の
-   container を全部消し、process は走っている子を全部止める。"
+   container と volume を全部消し、process は走っている子を全部止める。"
   (when (= name "plain")
     (return (fn [program] (run (scheduled program)))))
-  (setv settings (settings-for name tmp-path))
-  (setv host (cond (= name DOCKER) (DockerRunHost) (= name PROCESS) (process-host) True None))
+  (setv host (cond
+               (= name FAKE) (FakeRunWorld :behavior-of (fn [spec] (fake-behavior-of spec FAKE-MISSING-IMAGE)))
+               (= name DOCKER) (DockerRunHost)
+               (= name PROCESS) (process-host)
+               True None))
+  (setv settings (settings-for name tmp-path host))
   (setv stack (+ (handlers-for name settings host) [(scenario-settings settings)]))
   (fn [program]
     (try

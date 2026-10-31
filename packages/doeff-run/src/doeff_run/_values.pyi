@@ -8,6 +8,7 @@ from enum import StrEnum as StrEnum
 from doeff_hy._frozen import FrozenMap as FrozenMap
 from doeff_hy._frozen import frozen_map_of as frozen_map_of
 RUN_NAME: Incomplete
+VOLUME_NAME: Incomplete
 ENV_NAME: Incomplete
 IMAGE_NAME: Incomplete
 
@@ -35,6 +36,9 @@ class VolumeMount:
 
     def __post_init__(self) -> None:
         ...
+
+def volume_name_refusal(name: str) -> str | None:
+    ...
 
 def checked_env(value: object) -> FrozenMap[str]:
     ...
