@@ -131,7 +131,7 @@ def _mount_at(deployment: Manifest, path: str) -> dict[str, object]:
 
 # 機体ごとの worker を置く Node の全部(会社の機体には置かない)。zeus の worker は上に載る系の仕事も受け、ほかの機体の worker は
 # 機体の仕事(能力 host-<Node の名> と host-systemd-readable を要る job)だけを受ける。
-NODES = ("atlas", "eos", "k3s-0", "k3s-1", "k3s-2", "k3s-3", "zeus")
+NODES = ("atlas", "eos", "helios", "k3s-0", "k3s-1", "k3s-2", "k3s-3", "zeus")
 HOST_ONLY_NODES = tuple(node for node in NODES if node != "zeus")
 HOST_ONLY_PROVIDES = "host-$(NODE_NAME),host-systemd-readable"
 PREPARE_DIR = "/opt/worker-prepare"
@@ -151,6 +151,8 @@ HOST_ONLY_RESOURCES = {
     # atlas は上に載る系の日次の全体検証の task も受ける(1 本の上限は旧い専用の worker と同じ 16Gi 前後 — 2026-10-10 調整役 cisco-c8 の値)。
     "atlas": Resources(requests={"cpu": "500m", "memory": "1Gi"}, limits={"cpu": "8", "memory": "18Gi"}),
     "eos": Resources(requests={"cpu": "250m", "memory": "512Mi"}, limits={"cpu": "2", "memory": "4Gi"}),
+    # helios は組の印 pool-helios の常駐の job 24 本(起動の山の和 約 31GiB・落ち着いた値の和 約 16.5GiB — card ki-47015eb20680)を受ける。
+    "helios": Resources(requests={"cpu": "2", "memory": "4Gi"}, limits={"cpu": "12", "memory": "40Gi"}),
     "k3s-0": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
     "k3s-1": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
     "k3s-2": Resources(requests={"cpu": "100m", "memory": "256Mi"}, limits={"cpu": "2", "memory": "2Gi"}),
@@ -163,6 +165,7 @@ HOST_ONLY_RESOURCES = {
 # 置ける job は「今どこに在るか」でなく「置けるか」で数える — 移った job は元の機体が戻っても戻らないので、この数え方なら、どの置き方の後の
 # どの 1 台の停止でも、移る job が移る先の枠に入る(doeff-cluster の N+1 の判断 failover-refusals の規則 2)。組ごとの job の数は card の
 # 組の表から数えた: pool-atlas-eos 6・pool-atlas-k3s-0 2・pool-atlas-k3s-2 1・pool-atlas-k3s-3 4・pool-k3s-1-k3s-2 1。
+# pool-helios 24 は helios へ移す予定の上に載る系のコアの job の数(card ki-47015eb20680 — 移す前から置ける数で数える)。
 # atlas の task に空けておく 3 は上に載る系の日次の全体検証の task(:needs host-atlas — 同時に 3 本まで)の分。ほかの機体に task は来ない。
 # (前の版の予備の枠 — card ki-384c80df957f の atlas 1・k3s-0 1・k3s-2 1・k3s-3 1 — は、この数えの中に入る。)
 POOL_JOBS = {
@@ -171,6 +174,12 @@ POOL_JOBS = {
     "pool-atlas-k3s-2": 1,
     "pool-atlas-k3s-3": 4,
     "pool-k3s-1-k3s-2": 1,
+    "pool-helios": 24,
+}
+# 1 台だけが名乗ってよい組の印 → 1 台に縛る訳(訳の無い 1 台の組は赤 — test_every_pool_in_the_room_file_is_named_by_two_or_more_machines)。
+SINGLE_MACHINE_POOLS = {
+    # 利用者の決定(2026-10-31 20:14・20:15 JST): 上に載る系のコアの job は helios の worker で動かす。2 台目を名乗らせる時はここから消す。
+    "pool-helios": "上に載る系のコアの job を helios の 1 台で動かす(利用者の決定 2026-10-31)",
 }
 MACHINE_JOBS = 1
 ATLAS_TASK_RESERVE = 3
@@ -178,6 +187,7 @@ ATLAS_TASK_RESERVE = 3
 HOST_ONLY_POOLS = {
     "atlas": (ATLAS_TASK_RESERVE, ("pool-atlas-eos", "pool-atlas-k3s-0", "pool-atlas-k3s-2", "pool-atlas-k3s-3")),
     "eos": (0, ("pool-atlas-eos",)),
+    "helios": (0, ("pool-helios",)),
     "k3s-0": (0, ("pool-atlas-k3s-0",)),
     "k3s-1": (0, ("pool-k3s-1-k3s-2",)),
     "k3s-2": (0, ("pool-atlas-k3s-2", "pool-k3s-1-k3s-2")),
@@ -226,7 +236,7 @@ def worker(rendered: list[Manifest], request: pytest.FixtureRequest) -> Manifest
 
 
 def test_each_node_has_exactly_one_worker_named_after_it(rendered: list[Manifest]) -> None:
-    """worker は会社でない 7 つの機体にちょうど 1 つずつ。名は doeff-worker-<Node の名> で、selector は Node の名で互いの Pod を選ばない。"""
+    """worker は会社でない 8 つの機体にちょうど 1 つずつ。名は doeff-worker-<Node の名> で、selector は Node の名で互いの Pod を選ばない。"""
     workers = _deployments(rendered, "worker")
     assert sorted(_node(doc) or "" for doc in workers) == sorted(NODES)
     for doc in workers:
@@ -686,10 +696,10 @@ def test_the_room_file_has_one_valid_row_per_node() -> None:
 
 
 def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
-    """枠の file の置ける組の印(欄 pools)は、どれも 2 台以上の機体の行が名乗る。名は pool- で始まり、機体の行は同じ印を 2 度書かない
-    (card ki-17043e66bd83)。zeus の行は組を名乗らない(zeus の常駐の job は移さない)。
+    """枠の file の置ける組の印(欄 pools)は、1 台に縛る訳を SINGLE_MACHINE_POOLS に書いた組を除き、どれも 2 台以上の機体の行が名乗る。
+    名は pool- で始まり、機体の行は同じ印を 2 度書かない(card ki-17043e66bd83)。zeus の行は組を名乗らない(zeus の常駐の job は移さない)。
     反例: 1 台だけが名乗る組は、組の印で宣言した job を 1 台に縛る — その 1 台が止まると job は置き先を失う(2026-10-27 10:38 JST に
-    1 台にしか置けない job が約 16 分止まった)。"""
+    1 台にしか置けない job が約 16 分止まった)。訳を書いた組の job は、N+1 の判断の規則 1 を job の宣言の :single-host で外す。"""
     rows = {node: _mapping(row, node) for node, row in _room_rows().items()}
     pools_of = {
         node: [str(pool) for pool in _sequence(room.get("pools", []), f"{node} の pools")] for node, room in rows.items()
@@ -702,7 +712,8 @@ def test_every_pool_in_the_room_file_is_named_by_two_or_more_machines() -> None:
         for pool in {pool for pools in pools_of.values() for pool in pools}
     }
     assert "pools" not in rows["zeus"]
-    assert {pool: nodes for pool, nodes in members.items() if len(nodes) < 2} == {}
+    assert {pool: nodes for pool, nodes in members.items() if len(nodes) < 2 and pool not in SINGLE_MACHINE_POOLS} == {}
+    assert {pool: members.get(pool, []) for pool in SINGLE_MACHINE_POOLS if len(members.get(pool, [])) != 1} == {}
     assert sorted(members) == sorted(POOL_JOBS)
 
 
