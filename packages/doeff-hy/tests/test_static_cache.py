@@ -140,9 +140,10 @@ def test_an_entry_of_the_current_store_version_is_read_back(
 #: 覆わない(規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
 #: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
 #: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(規則は同じなので版は
-#: 上げず、前の hash 5b4612a4… を置き換えた)。
+#: 上げず、前の hash 5b4612a4… を置き換えた)。その後に docstring だけを書き換えた(移した module の名・tracker の id を
+#: 外した)ので、規則は同じまま hash 75e5ff36… を置き換えた。
 GENSYM_RULE_VERSIONS = {
-    "75e5ff36f3eb6481e3c6b03baa0a56172324c1a00aa783b7317c715746d301b4": 3,
+    "7981e4ad3c2b2d0f589750610b29f6d53a2dcbac75e1180c84876ed63736f0b5": 3,
 }
 
 
