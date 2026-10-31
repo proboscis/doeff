@@ -9,6 +9,7 @@ resources:
   - worker-cluster-admin.yaml
   - ../nodes/atlas
   - ../nodes/eos
+  - ../nodes/helios
   - ../nodes/k3s-0
   - ../nodes/k3s-1
   - ../nodes/k3s-2
