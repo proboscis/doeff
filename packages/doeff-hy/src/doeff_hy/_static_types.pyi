@@ -9,8 +9,8 @@
 - `_doeff_perform(e)`: `(<- x e)` の x の型 = e の答えの型(Python の `@effectful` の
   `x = perform(e)` と同じ形・docs/24-effectful-perform.md)。effect は `EffectBase[T]` の T、
   Program(defk を呼んだ結果など)は `Program[T, E]` の T。答えの分け方(:absent・:failure)を宣言した effect は T から
-  その要素を除いた型(下の `BoundRun`)、中継 `Perform(e)` は宣言を開かないので e の答えの全部(card ki-6c774adfb8c7)。
-  宣言は `Program[_T, object] -> _T` の 1 つだけで、`object -> Any` の受け皿を持たない(agora-redesign #3116・cisco-c8 2026-10-03 16:3x の決め):
+  その要素を除いた型(下の `BoundRun`)、中継 `Perform(e)` は宣言を開かないので e の答えの全部。
+  宣言は `Program[_T, object] -> _T` の 1 つだけで、`object -> Any` の受け皿を持たない(cisco-c8 2026-10-03 16:3x の決め):
   受け皿の overload が在ると、module の中で最初の評価が union の期待型の下(`(<- x (| int None) …)`)
   だった時に pyright 1.1.414 が以後の `_doeff_perform` を全部受け皿へ落とし、答えが Any になって
   束ねの型の食い違いを黙って通していた(順に依る — tests/test_static_check.py の
@@ -28,7 +28,7 @@ import pytest
 
 from doeff import K, Program, WithHandlerType
 
-# `do` は core の物をそのまま渡し、2 つ目の宣言を持たない(agora-redesign #2321)。for/do を使う module は展開が
+# `do` は core の物をそのまま渡し、2 つ目の宣言を持たない。for/do を使う module は展開が
 # 名指す `(import doeff [do :as _doeff-do])` を自分で書くので、doeff-hy-check が module の頭に置く `_doeff_do` の後に
 # 利用者の `_doeff_do` が来る。2 つの型が違うと pyright は後の方を取り、yield の無い関数の overload を持たない方で
 # defk の投影(本体の `<-` は `_doeff_perform` になり yield が無い)を読んで、defk を呼んだ答えが Unknown になっていた。
@@ -38,7 +38,7 @@ from doeff.do import do as do
 _T = TypeVar("_T")
 _Bound = TypeVar("_Bound")
 
-#: 答えの分け方(:absent・:failure)を宣言した effect の `__iter__` の返り値(card ki-6c774adfb8c7)。defeffect の型検査のための展開
+#: 答えの分け方(:absent・:failure)を宣言した effect の `__iter__` の返り値。defeffect の型検査のための展開
 #: (declarations.hy)と型の宣言の生成(static_stub.py)が、宣言した effect の class の `__iter__` をこの型に狭める — 型引数 = :answer の
 #: union から :absent と :failure の要素を除いた物。`Program[T, E]` は `__iter__` の返り値から T を読むので、`_doeff_perform(e)` は
 #: 追加の overload なしで `<-` の束ねた名の型(成功と :value の答え)を返す。実行時の `<-` は不在を Absent に・失敗を Raise に変えて
@@ -49,13 +49,13 @@ BoundRun: TypeAlias = Generator[Any, Any, _Bound]
 
 def _doeff_perform(effect: Program[_T, object], /) -> _T: ...
 
-# for/do・traverse の件の引数の型(agora-redesign #2321)。型検査のための展開(macros.hy の _traverse-form)は、
+# for/do・traverse の件の引数の型。型検査のための展開(macros.hy の _traverse-form)は、
 # 件ごとの関数の引数を `object` で受け、本体の前で `x = _doeff_traverse_item(items, 件)` と読み直す — 件は items の
 # 要素そのもの(Traverse の handler が items の各件を渡す)なので、答えは items の要素の型。
 def traverse_item(items: Iterable[_T], item: object, /) -> _T: ...
 
 # ---------------------------------------------------------------------------
-# deftest の展開の引数の型(agora-redesign #2214)
+# deftest の展開の引数の型
 # ---------------------------------------------------------------------------
 # 型検査のための展開では、deftest が作る関数の引数に注記を付ける。注記の名は doeff_hy/_static_view.py の
 # DEFTEST_FIXTURE_TYPES(fixture の名 → ここの型の名の表・唯一の定義元)が引き、doeff-hy-check が module の頭で
@@ -90,7 +90,7 @@ RecordProperty: TypeAlias = Callable[[str, object], None]
 DoctestNamespace: TypeAlias = dict[str, object]
 
 # ---------------------------------------------------------------------------
-# defhandler / handle の展開の型(agora-redesign #2279)
+# defhandler / handle の展開の型
 # ---------------------------------------------------------------------------
 # 型検査のための展開(doeff_hy/handle.hy)が、名を doeff_hy/_static_view.py の HANDLER_STATIC_NAMES から
 # `_doeff_<名>` として引く。実行時の展開は注記を付けず、節の終わり方の検めは clause_endings.hy から import する。
@@ -110,7 +110,7 @@ HandledScope: TypeAlias = WithHandlerType[HandledAnswer]
 
 class Handler(Protocol):
     """defhandler が作る関数 — 本文に答え手を被せる(答えの型は本文のまま)。型の宣言の生成(static_stub.py)が
-    defhandler の答えの型に使う(agora-redesign #2826)。"""
+    defhandler の答えの型に使う。"""
 
     def __call__(self, body: HandlerBody[HandledAnswer], /) -> HandledScope[HandledAnswer]: ...
 
@@ -123,7 +123,7 @@ def check_clause_endings_once(
 ) -> None: ...
 def fell_through(handler: str, effect_label: str, /) -> RuntimeError: ...
 
-# 総称の effect の節の型(card ki-fede97890f70)。節の effect は `object` で受け、節の `isinstance` が絞る。pyright は
+# 総称の effect の節の型。節の effect は `object` で受け、節の `isinstance` が絞る。pyright は
 # 総称 class の絞りの型引数を Unknown にする(`Race[Unknown]`・`Spawn[Unknown, Unknown]` — 絞る元の型を `EffectBase[Any]` にしても
 # 基底から解ける型引数だけが埋まり、`Spawn` の `_E` のように基底に無い型引数は Unknown のまま。型変数の既定値は isinstance の
 # 絞りでは使われない)ので、欄の読みと `typed_resume` / `typed_transfer` の引数が一部 Unknown の赤になる。

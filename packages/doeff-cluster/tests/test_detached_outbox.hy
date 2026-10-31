@@ -1,4 +1,4 @@
-;; 切り離した task の終わりの出口(card ki-e7945a2b2d00 — detached_model の頭の註の出口・detached_policy の出口の節)の純粋な判断の検。
+;; 切り離した task の終わりの出口(detached_model の頭の註の出口・detached_policy の出口の節)の純粋な判断の検。
 ;; 筋書き(3 つの組で送って終わらせて読む)は test_detached.hy の test-outbox-*。ここは 1 歩の前後の差から積む判断(ended-of・outbox-noted)・
 ;; 読みと受領の口(GET /outbox・DELETE /outbox/<id>)・受け口の notify の検め・保存の往復を確かめる。
 (require doeff-hy.macros [deftest defk <- val])
@@ -139,7 +139,7 @@
   (assert (= (.row restored.outbox "t9") row)))
 
 
-;; --- queued の期限超えの知らせ(card ki-4b6613f39c80 — detached_policy の queued-noticed)---------------------------------------
+;; --- queued の期限超えの知らせ(detached_policy の queued-noticed)---------------------------------------
 
 (val NOTICE-MS (. (ClusterTiming) queued-notice-ms))
 

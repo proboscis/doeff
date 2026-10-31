@@ -1,4 +1,4 @@
-//! 宣言が名指す定義を Hy の file の top level から探す共通の部品(DOEFF147・DOEFF159・DOEFF160・DOEFF161 — agora-redesign #1372・#1373)。
+//! 宣言が名指す定義を Hy の file の top level から探す共通の部品(DOEFF147・DOEFF159・DOEFF160・DOEFF161)。
 //!
 //! 定義 = file の top level の form のうち、頭の記号が `def` で始まり(defk・deff・defn・defclass・defrecord …)、2 つ目の記号を mangle
 //! した綴りが名を mangle した綴りと同じ物。索引(index_paths)は 2,000 行の file で秒のけたかかるので、読み取り器の木だけで探す。

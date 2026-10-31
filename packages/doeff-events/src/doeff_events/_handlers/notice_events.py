@@ -1,5 +1,5 @@
 """Events between processes: ``notice_events_handler`` wraps a business program so that its ``Publish`` and
-``WaitForEvent`` reach other processes through a notice broker (agora-redesign #3850).
+``WaitForEvent`` reach other processes through a notice broker.
 
 The business program keeps its shape — ``Publish(event)`` and ``WaitForEvent(types...)`` — and never names a
 channel. Channels live in the arguments of this factory: the source's name and the routes (one ``NoticeRoute``
@@ -21,8 +21,8 @@ What the wrapper does:
   means). An unrouted type goes on to the outer handler (the bus inside the process) as before, without calling
   the wrapper: its handler around the body declares the Publish classes of its routed types only
   (``publish_effect_type``), and the waits only when it reads channels, so the VM skips it for every other effect
-  (a wrapper costs no step for what it does not route — card ki-3724ab2e9a0f).
-- What the broker could not take (the one place a sender's failed notice is handled — agora-redesign #3864,
+  (a wrapper costs no step for what it does not route).
+- What the broker could not take (the one place a sender's failed notice is handled
   ADR-DOE-EVENTS-002 R5). ``Publish`` never raises for it; it answers one of a closed set: ``NoticeSent``, or,
   by the route's ``when_unsent``, ``NoticeGapMarked`` (``MarkGap`` — the channel is marked as having a gap) or
   ``NoticeDropped`` (``Drop`` — nothing is kept, for what is stale at once). What is kept is only the mark of a
@@ -35,7 +35,7 @@ What the wrapper does:
   next ``Publish`` told every gap, the task waiting for the return is stopped. When nothing can answer
   ``AwaitBrokerBack``, that task fails, the marks stay for the next ``Publish``, and the failure is raised when
   the body ends. When the body ends, the waiting task is stopped and the marks are gone.
-- What the sender cannot tell happened (agora card ki-a93fc14956e3). ``PublishGap(event)`` marks the channel
+- What the sender cannot tell happened. ``PublishGap(event)`` marks the channel
   ``event`` would travel on, without sending ``event``, and tells the marks at once through the same exit
   (answers ``NoticeGapTold``). What the broker cannot take stays marked like the gap of a missed ``Publish``
   (answers ``NoticeGapMarked``); a ``Drop`` route keeps nothing (``NoticeDropped``). A sender uses it when the
@@ -52,7 +52,7 @@ What the wrapper does:
   the program that names ``SourceStarted`` / ``SourceResumed`` in its subscription catches up once from its
   records each time it receives one — both are published only after the subscription is in place, so nothing
   announced after the program's catch-up read is missed.
-- Kept routes (``NoticeRoute(kept=True)`` — agora card ki-86d11cadf3be). Their events are sent with
+- Kept routes (``NoticeRoute(kept=True)``). Their events are sent with
   ``Announce(kept=True)`` (the broker keeps each in the channel's log) and their channels are read as the reader
   named ``source``: the source acknowledges each notice once its event is on the bus (``AckAnnouncement``), and
   the broker's handler hands out again a notice not acknowledged in time, and goes on from where the reader was
@@ -66,12 +66,12 @@ What the wrapper does:
   then ``SourceResumed`` and ``SourceStarted`` once the subscription is confirmed. The patience is the
   composition's: the source asks ``ReadBrokerPatience`` when an outage begins (like doeff-records' sources ask
   theirs), and an outer ``broker_patience_handler`` answers it (no default — a composition that placed none falls at
-  its first outage, naming the effect; agora card ki-6b3c298bfee1: the composition answers it from the same value as its other
+  its first outage, naming the effect; the composition answers it from the same value as its other
   stores' patience, so no second copy of the seconds is kept beside the routes).
 - Stopping. The source task and the task waiting for the return end by ``Cancel`` when the body ends; their waits
   have no time limit of their own. Then the subscription the source held is closed (``CloseSubscription``) — when
   the body ends normally, by an error, or by a cancel from outside — so a process that wraps body after body under
-  one broker handler holds no subscription of a body that ended (card ki-aa9497a3a412).
+  one broker handler holds no subscription of a body that ended.
   A cancel can land while the answer of a ``Spawn`` (the task's handle) is still queued, and the scheduler then drops
   the answer: the spawner never learns the task it made. The source task ends by itself when the wrapper has ended
   (``_Reading``); the tasks that wait for the broker's return (the watcher of an outage, the one telling the gaps)
@@ -431,11 +431,11 @@ def _subscribed_after_outage(plan: _Plan, first: BrokerUnreachable) -> "EffectGe
     ``AwaitBrokerBack`` — not a timer. Answers the new, confirmed subscription; past the patience raises
     ``NoticeSourceUnreachable``."""
     # Asked here, at the stall, like doeff-records' sources ask theirs: a composition with no answer falls naming the
-    # question when its broker first goes away (agora card ki-6b3c298bfee1).
+    # question when its broker first goes away.
     patience: float = yield _asked_patience(plan)
     since: datetime = yield GetTime()
     # Nothing else is seen until the broker is back or the patience is over: the stall's start is one line in the
-    # process's log (card ki-aa9497a3a412 — a full pool of connections stalled a source silently for 900 s).
+    # process's log (a full pool of connections stalled a source silently for 900 s).
     _logger.warning(
         "notice source %r stalled: the broker is unreachable (%s); waiting up to %s s for its return",
         plan.source,
@@ -460,7 +460,7 @@ def _first_subscription(plan: _Plan) -> "EffectGenerator[ChannelSubscription]":
     """Subscribe the channels before the body runs; a broker that is unreachable at the start is waited for like
     any outage, and its end is told like any outage's: ``SourceResumed`` once the broker confirmed the new
     subscription (``SourceStalled`` promises it — a program that keeps the stalled sources until their return
-    would otherwise hold this one as stalled until the process ends: agora card ki-b7aa8ddce32d). Answers once the
+    would otherwise hold this one as stalled until the process ends). Answers once the
     broker confirmed the subscription."""
     answer = yield plan.subscribing()
     if isinstance(answer, BrokerUnreachable):
@@ -749,7 +749,7 @@ def _run(plan: _Plan, body: "Program[_T]") -> "EffectGenerator[_T]":
     """Begin the subscription, tell the start once it is confirmed, tell the start gaps, run the source task beside
     the body (the body stays in this task, so a cancel from outside reaches it), and when the body ends — normally,
     by an error, or by a cancel — stop the source and the task waiting for the return, then close the subscription
-    the source held (card ki-aa9497a3a412: a process that wraps body after body holds one subscription at a time,
+    the source held (a process that wraps body after body holds one subscription at a time,
     not one per body). A wrapper that only sends has no source: nothing to subscribe, nothing to tell but its
     start gaps."""
     gaps = _Gaps()

@@ -1,4 +1,4 @@
-"""inspect.stack の軽い版(doeff_hy._light_stack)の契約(agora-redesign #1293)。"""
+"""inspect.stack の軽い版(doeff_hy._light_stack)の契約。"""
 import importlib.util
 import inspect
 import subprocess

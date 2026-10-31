@@ -19,7 +19,7 @@
 (import doeff_cluster [ReportReady])
 (import doeff_cluster [WriteShared])
 
-;; 版の入れ替えの検(tests/test_worker_version_swap.hy — card ki-6e83e03d146d)の盤の行の頭と、worker が子へ渡す版の環境変数の名
+;; 版の入れ替えの検(tests/test_worker_version_swap.hy)の盤の行の頭と、worker が子へ渡す版の環境変数の名
 ;; (検は WORKER_PASS_ENV にこの名を置く — 子は自分を走らせた worker の世代の版を読む)。
 (val SWAP-PREFIX "swap/")
 (val COMMIT-ENV "WORKER_DOEFF_COMMIT")
@@ -55,7 +55,7 @@
   (ping (ping-job foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"local"} :readiness {"windowSeconds" 5}))
 
 
-;; --- 版の入れ替えの検の系(card ki-6e83e03d146d)---------------------------------------------------------------------------
+;; --- 版の入れ替えの検の系---------------------------------------------------------------------------
 
 (defk generation-work-body [key seconds]
   {:pre [(: key str) (: seconds float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}

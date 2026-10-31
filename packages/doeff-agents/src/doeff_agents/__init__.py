@@ -69,7 +69,7 @@ _LAZY_EXPORTS = {
     "StopSession": "._effects",
     "StopSessionEffect": "._effects",
     # 関数 agent は定義の module から読む: package _effects は同じ名の子の module agent を持つので、名 agent を出さない
-    # (ADR-DOE-API-001 R34・card ki-db44e4d3efe4・ki-d3a096ce3eaa)。
+    # (ADR-DOE-API-001 R34)。
     "agent": "._effects.agent",
     "AgentCapabilityUnsupportedError": "._effects",
     "AgentEvent": "._effects",

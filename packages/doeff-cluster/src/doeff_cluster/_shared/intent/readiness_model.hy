@@ -38,7 +38,7 @@
 (val HANDOFF-TIMEOUT-SECONDS 300)
 (val READINESS-KEYS #("windowSeconds" "handoffTimeoutSeconds" "retiredSeconds" "retiredLimit"))
 
-;; 退きの保ち(card ki-e3531030eb37): 寿命の上限 retiredSeconds は、自分で終わらない退いた process(引き継ぎが来ない・固まった)を受け止める
+;; 退きの保ち: 寿命の上限 retiredSeconds は、自分で終わらない退いた process(引き継ぎが来ない・固まった)を受け止める
 ;; 物で、仕事の長さの上限ではない。退いた process が走っている仕事を終わりまで回す間は、この名の名前付きの lease を取って持つ
 ;; (CreateNamedSemaphore RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS → AcquireSemaphore・終えたら ReleaseSemaphore)。持つ間は、退いてから上限を
 ;; 越えても worker が止めない(coordinator が期限の内の持ち手の世代の名を worker への返事の JobSpec.retired-held に載せ、worker の

@@ -1,14 +1,14 @@
-;;; 汎用の file system の effect(agora-redesign #802 便 1・消費者 = #796 日次の全体検証・#795 webapp の組み立て)。業務の語を持たない土台の語彙で、
+;;; 汎用の file system の effect(消費者 = #796 日次の全体検証・#795 webapp の組み立て)。業務の語を持たない土台の語彙で、
 ;;; HttpRequest(http_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
 ;;;   os-file-handler      本物の file system(os_file.hy)
 ;;;   memory-file-handler  I/O なし — session の値に持つ file の置き場(memory_file.hy)。本物と同じ所で断る(親の dir が無い・file と dir の
-;;;                        取り違え・中身の在る dir への rename)。symlink も持つ(MakeSymlink — agora-redesign #4036)。
+;;;                        取り違え・中身の在る dir への rename)。symlink も持つ(MakeSymlink)。
 ;;;
 ;;; 失敗は値(FileFailed — path と理由)で答える(例外にしない — 呼び手が型で読む)。成功の答えは effect ごと:
 ;;;   StatPath       path の種類・実の path・大きさ・mtime。答え = PathStat(無い path は kind MISSING — 失敗ではない)。follow-symlinks = False は
 ;;;                  symlink を辿らずに kind SYMLINK で答える(os.lstat — 先が壊れていても)
 ;;;   ReadText / ReadBytes    file の中身(text は UTF-8・読めない byte は置き換え)。答え = str / bytes。ReadBytes の offset は読み始める
-;;;                  byte の位置(既定 0 — 追記される file を前に読んだ所から先だけ読む読み手のため・agora-redesign #3977。file の終わりより先は
+;;;                  byte の位置(既定 0 — 追記される file を前に読んだ所から先だけ読む読み手のため。file の終わりより先は
 ;;;                  空の bytes)・limit は offset から先の limit byte だけを読む(None = 終わりまで — 大きな file の頭の 1 行だけが要る読み手のため)
 ;;;   WriteText / WriteBytes  file を書く。replace = True は別名に書いてから置き換える(書きかけを読ませない)。mode は書いた後に与える。答え = None
 ;;;   AppendText     file の末尾に足す(無ければ作る)。答え = None
@@ -26,7 +26,7 @@
 ;;;   WalkTree       dir の下の全部(再帰)。答え = DirEntry の tuple(name = dir からの相対 path・/ 区切り・並べた順)
 ;;;   StatTree       dir の下の全部(再帰)を様子つきで。答え = EntryStat の tuple(name は WalkTree と同じ・種類と大きさと mtime は symlink を
 ;;;                  辿らない — os.lstat・一覧の後で様子を読む前に消えた物は StatPath の無い path と同じく kind MISSING)。木の file ごとの時刻を
-;;;                  1 つの呼びで読む書き手のため(card ki-0da6a0186492 — WalkTree の後に file ごとの StatPath を出すと、file の数だけ effect を出す)
+;;;                  1 つの呼びで読む書き手のため(WalkTree の後に file ごとの StatPath を出すと、file の数だけ effect を出す)
 ;;;   CopyFile       file 1 つを写す(写し先は上書き)。答え = None
 ;;;   CompilePythonSources  木の source(#(相対 path module 名) の列)を import が検める方式(PEP 552 の checked hash)の .pyc に焼いて
 ;;;                  __pycache__ へ置く(本物は jobs 個の process で並列・roots = 焼く間の import の根 — #2463)。答え = 焼けなかった物の
@@ -35,16 +35,16 @@
 ;;;   CopyTree       dir の中身を target の下へ重ねて写す(target は在ってよい・同じ名は上書き・symlink は symlink のまま)。答え = None
 ;;;   MakeSymlink    path に target を指す symlink を作る(os.symlink と同じ — path が在れば断る・target は相対なら link の在る dir から読む・
 ;;;                  先が無くても作る)。答え = None。dir の中身を別の木へ 1 手で付け替える書き手のため(別名の link を作って RenamePath で
-;;;                  置き換える — agora-redesign #4036)
+;;;                  置き換える)
 ;;;   RenamePath     path の名を変える(os.replace と同じ — 写し先の file は置き換え・中身の在る dir へは断る・symlink は辿らずに link 自身を
 ;;;                  動かし、置き換える)。答え = None
 ;;;   RemoveTree     file か dir を中身ごと消す(無ければ断る・symlink は link だけを消す)。答え = None
 ;;;   AcquireLock    錠の file を排他で取る(取れるまで待つ)。答え = LockHeld
 ;;;   ReleaseLock    取った錠を放す。答え = None
-;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る — agora-redesign #831)。答え = int
+;;;   ReadDiskFree   path を含む file system の空き(byte・無い path は在る親で測る)。答え = int
 ;;;   ReadDiskUsage  path を含む file system の総量と空き(byte・無い path は在る親で測る — #2504)。答え = DiskUsage
 ;;;                  空きは書ける量: Linux = statvfs の空き・macOS = statvfs の空きを床に、macOS が自動で空ける領域の一部も数える volume の
-;;;                  資源の key の空き(darwin_volume.hy — card ki-4ee952807ce0)
+;;;                  資源の key の空き(darwin_volume.hy)
 ;;;   MeasureTree    dir の下の file の大きさの合計(byte・symlink は辿らずリンク自身の大きさ・hardlink は重ねて数える — #2504)。答え = int
 ;;;
 ;;; memory の置き場の語彙(本物の file system には無い): MemoryFile / MemoryFiles = 置き場の初めの形と今の中身・ReadMemoryFiles = 今の中身を

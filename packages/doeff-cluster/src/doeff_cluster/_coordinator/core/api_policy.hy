@@ -11,7 +11,7 @@
 ;;;   PUT    /resources/<Kind>/<名>        書き換える {"spec", "resourceVersion"}。版が古ければ 409・版が無ければ 400
 ;;;   DELETE /resources/<Kind>/<名>?resourceVersion=&force=   消す(送り手が誰でも消せる。進行中の Rollout が扱う Service・進行中の Rollout は force でだけ消す。
 ;;;                                         NeedsOverride を消すと Service は宣言の needs で置き直される)
-;;;   Service の PUT で、版(spec.revision)を変えずに置き先(needs・pin)を変える書きは 409 で断り、NeedsOverride を案内する(2026-10-27・card ki-1523bc0aba4f)
+;;;   Service の PUT で、版(spec.revision)を変えずに置き先(needs・pin)を変える書きは 409 で断り、NeedsOverride を案内する(2026-10-27)
 ;;;   POST   /resources/Service/<名>/readiness   ReportReady の報告 {worker pid revision instance attempt specHash placement ready reason}
 ;;;   POST   /resources/Service/<名>/metrics     ReportMetrics の報告 {worker … placement metrics}(資源の状態は変えない)
 ;;;   GET    /metrics                            Prometheus の text: 今動いている process の計器(label service・worker)
@@ -74,12 +74,12 @@
   ;; 入れ替えの期限(2026-09-26): 最後に、入れ替えの Service の期限の見張りを進める(heartbeat の返事はこの後の状態から作る)。
   ;; 詰めた Program の置き場(改訂 1 の F): 参照の無くなった物を掃除する。
   ;; 生死の切り替わり(#1934): 最後に、生きていないと数える worker の名を今の時刻で求め直す(変われば Worker の status の live と版が進む)。
-  ;; 置き先の上書き(2026-10-27・card ki-1523bc0aba4f): 置き方の前に、期限の来た上書きと、上書きの needs を満たす生きた worker が 0 になった
+  ;; 置き先の上書き(2026-10-27): 置き方の前に、期限の来た上書きと、上書きの needs を満たす生きた worker が 0 になった
   ;; 上書きを外す(同じ拍で宣言の needs で置き直す — 外した拍と置き直す拍の間に Service が置き先の無いまま残らない)。
   (<- lifted ClusterState (lift-needs-overrides changed now timing))
   (<- placed ClusterState (reconcile now lifted timing))
   (val reconciled (note-liveness (sweep-programs (watch-handoffs now (advance-drains now placed timing) timing) now) now timing))
-  ;; 置き先の無い間の起点(card ki-53b8677f1374): 最後に、置き先が無いと最初に見た拍の刻を、この拍の置き先で求め直す(保存しない・版を進めない)。
+  ;; 置き先の無い間の起点: 最後に、置き先が無いと最初に見た拍の刻を、この拍の置き先で求め直す(保存しない・版を進めない)。
   (<- noted ClusterState (note-unplaced reconciled now))
   (stamp changed noted COORDINATOR now timing))
 
@@ -155,9 +155,9 @@
   "純粋: 読み直した状態 → #(時計をずらした状態 止まっていた長さ ms)。ずらすのは進行中の Rollout の段の起点(shift-clocks)と
    task の lease の期限と、worker の最後の連絡の時刻(と、その印 WorkerInfo.seen-mark)と、Ready を待っている入れ替えの期限の起点
    (HandoffWatch.since-ms — 止まっていた間は期限に数えない・2026-09-26)と、盤の lease の行(semaphore/<名>)の担い手の期限
-   (lease_rules.holders-shifted — 止まっていた間に延ばせなかった持ち主を切らない・行の版を 1 進める・card ki-3b7498747e4c)と、
+   (lease_rules.holders-shifted — 止まっていた間に延ばせなかった持ち主を切らない・行の版を 1 進める)と、
    頼み手が頼み直して延ばす期限 — 盤の TTL の行の expires-ms・drain の until-ms・温める表の行の until-ms — と、退いた世代の最後の報告の
-   刻(SupersededRun.seen-ms — 沈黙を lease で数える)(2026-10-16・card ki-d033e5f969cf の設計検証)。欄ごとの分け方は STALL-SHIFTED-FIELDS・
+   刻(SupersededRun.seen-ms — 沈黙を lease で数える)(2026-10-16)。欄ごとの分け方は STALL-SHIFTED-FIELDS・
    STALL-UNSHIFTED-FIELDS。生きていた時刻を知らない置き場(2026-09-25 より前)は 0。
    worker の最後の連絡の時刻は、止まる前の最後の印(alive-ms)の時点の沈黙を今から数え直した値になる: 止まる直前まで連絡のあった
    worker は起き直した直後も生きていて、その後に連絡が無ければ移し替えの期限の後に沈黙と判じる。止まる前から沈黙していた worker は
@@ -170,13 +170,13 @@
       #((replace (run (clocks-shifted state now gap)) :unreached-ms now) gap)))
 
 
-;; --- 起き直しの後、worker から届き得るようになるまで(2026-10-21・card ki-439a73dc075c) ------------------------------------
+;; --- 起き直しの後、worker から届き得るようになるまで(2026-10-21) ------------------------------------
 ;; 読み直しは止まっていた長さを「読み直した刻」までしか数えないが、worker の heartbeat が届き始めるのは Pod が Ready になり Service に
 ;; 載った刻から(readinessProbe の tcpSocket の周期 10 秒 — 受付を始めてから最大 10 秒 = lease と同じ長さ)。その差を沈黙に数えると、
 ;; ずらした最後の連絡が lease で切れ、配備のたびに全 worker が WorkerGone になって Service に載った直後に WorkerBack で戻った
-;; (rev 47 2026-10-17 15:24:57Z〜15:25:14Z の実測・card ki-a7f26191a164 の形 A)。起き直しから最初の heartbeat を受けるまでを止まりと
+;; (rev 47 2026-10-17 15:24:57Z〜15:25:14Z の実測)。起き直しから最初の heartbeat を受けるまでを止まりと
 ;; 同じく経過・沈黙に数えない(clocks-shifted でずらす)。
-;; 終える証拠(card ki-f9fd557e6ad0): 最初の heartbeat か、外からの最初の接続(ServiceReached — Pod が Ready になり Service に載った印)。
+;; 終える証拠: 最初の heartbeat か、外からの最初の接続(ServiceReached — Pod が Ready になり Service に載った印)。
 ;; worker の heartbeat だけを待つと、全 worker が止まりの間に死んでいた時に、死んだ worker を上限まで生きていると答える(条 L1・L2 — 死んだ
 ;; worker は lease の後に生きていると答えず、置き先にも選ばない)。coordinator の側からは「届かない worker」と「死んだ worker」を見分けられない
 ;; (止まる直前の連絡の古さは heartbeat の間隔と重なる)ので、見分ける材料は Service に載ったかどうかにする: 載った後は、生きた worker は
@@ -201,7 +201,7 @@
   (replace shifted :unreached-ms (if (< now limit) (max since now) None)))
 
 
-;; ClusterState の欄ごとの、止まっていた長さのずらし方の分け方(2026-10-16・card ki-d033e5f969cf の設計検証)。止まっていた間は、頼み手が
+;; ClusterState の欄ごとの、止まっていた長さのずらし方の分け方(2026-10-16)。止まっていた間は、頼み手が
 ;; 頼み直して延ばす期限も、沈黙を数える最後の連絡も進められないので、その長さを経過に数えない。新しい欄はどちらかに必ず入れる
 ;; (tests/test_coordinator_stall.hy が、どちらにも無い欄と、ずらすと言ってずらさない欄を断る — 期限を持つ機能を足す人に、止まりの後に
 ;; その期限が切れてよいかを決めさせる)。
@@ -257,17 +257,17 @@
                                                 (TableWrite k (replace w :since-ms (min now (+ w.since-ms gap)))))))
            :drains (.with-writes state.drains (tuple (gfor #(k d) (.items state.drains) (TableWrite k (replace d :until-ms (+ d.until-ms gap))))))
            :warms (.with-writes state.warms (tuple (gfor #(k w) (.items state.warms) (TableWrite k (replace w :until-ms (+ w.until-ms gap))))))
-           ;; 受け渡しの待ちの始まり(since-ms)も、Ready を待つ入れ替えの期限の起点と同じく止まっていた間を数えない(card ki-d8e594fe934d)。
+           ;; 受け渡しの待ちの始まり(since-ms)も、Ready を待つ入れ替えの期限の起点と同じく止まっていた間を数えない。
            :superseded-runs (tuple (gfor r state.superseded-runs
                                          (replace r :seen-ms (min now (+ r.seen-ms gap))
                                                     :since-ms (if (is r.since-ms None) None (min now (+ r.since-ms gap))))))
            :alive-ms now))
 
 
-;; --- coordinator が process の中で止まっていた時間(2026-10-16・card ki-d033e5f969cf) -----------------------------------
+;; --- coordinator が process の中で止まっていた時間(2026-10-16) -----------------------------------
 ;; 機体ごとの止まり(2026-10-13 02:22〜02:24 JST の atlas — containerd と kubelet が 3 分答えず、host の記録にも空白が在る)では、
 ;; coordinator は落ちずに止まり、起きた最初の歩で全 worker の最後の連絡が lease を越えていて、全員を沈黙と数えた(配る担当へ消えと
-;; 戻り 33 回・card ki-b4d94c618094)。起き直し(resume-after-downtime)と同じく、止まっていた長さは沈黙・経過に数えない。
+;; 戻り 33 回)。起き直し(resume-after-downtime)と同じく、止まっていた長さは沈黙・経過に数えない。
 ;; 止まりは「予定の外の長さ」で見分ける: 前の歩の長さ(判断の刻から受付を待ち始めるまで — 保存の fsync・k8s の書きを含む)+ 予定の
 ;; 起きる刻からの寝過ごし。予定どおりの眠り(worker の期限の刻まで待つ等)は数えない — 数えると、期限の刻に起きるたびに期限をずらし、
 ;; 本当に黙った worker を沈黙と判じない。期限なしの待ち(次に起きる刻が無い)は寝過ごしを測らず、前の歩の長さだけで見つける。
@@ -639,9 +639,9 @@
       (! (detached-reply state (cancel-detached state (get parts 1) now) request now timing))
     (and (= method "DELETE") (= head "detached") (= (len parts) 2))
       (! (detached-reply state (release-detached state (get parts 1)) request now timing))
-    ;; --- 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00 — detached_policy の出口の節)---
+    ;; --- 切り離した task の終わりの出口(2026-10-21 — detached_policy の出口の節)---
     (and (= method "GET") (= parts ["outbox"]))
-      ;; kinds = 読む行の種類(名乗らない読み手は終わりの行だけ — detached_model の行の種類・card ki-4b6613f39c80)。
+      ;; kinds = 読む行の種類(名乗らない読み手は終わりの行だけ — detached_model の行の種類)。
       (! (detached-reply state (outbox-read state (str (.get request.query "prefix" ""))
                                             (frozenset (gfor k (.split (str (.get request.query "kinds" OUTBOX-ENDED)) ",") :if k k)))
                          request now timing))

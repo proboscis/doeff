@@ -1,6 +1,6 @@
 """doeff-traverse の効果が答えの型(EffectBase[T])を宣言していることを、実行時と pyright の両方で確かめる。
 
-実測(agora-redesign #2039 → #2047): Traverse は型引数の無い EffectBase で、型の検査の上では答えが分からなかった。
+実測: Traverse は型引数の無い EffectBase で、型の検査の上では答えが分からなかった。
 agora の Hy の `(<- read (for/do …))` の read が object になり、`read.failed_items`・`read.valid_values` が
 pyright で赤だった(mail_claim_check.hy の attachments-plan・sendback_message.hy の answers-in-order)。
 for/do は Traverse の呼び出しに展開されるので、Traverse が答えの型を宣言すれば、束縛した値の欄が読める。
@@ -22,7 +22,7 @@ import pytest
 from doeff import Pure, do, effect_result_type, run, with_handlers
 from doeff_traverse import Collection, Fail, Inspect, Reduce, Skip, SortBy, Take, Traverse, Zip, fail_handler, sequential
 from doeff_traverse import ItemResult
-# pyright が検索 path を問うために起こす python を -B で起こす包み(素の sys.executable は checkout へ .pyc を書く・card ki-04d762c59dac)。
+# pyright が検索 path を問うために起こす python を -B で起こす包み(素の sys.executable は checkout へ .pyc を書く)。
 from doeff_hy._static_check import python_without_bytecode
 
 REPO = Path(__file__).resolve().parents[3]
@@ -97,7 +97,7 @@ def add(acc: int, item: int) -> Generator[Any, Any, int]:
 
 def widths(texts: list[str]) -> Generator[Any, Any, tuple[int, int, int]]:
     read = yield from Traverse(width, texts, label="width")
-    # 答えの Collection は f の答えの型(width の int)を有効な件の値に運ぶ(effects.pyi・agora-redesign #2321)
+    # 答えの Collection は f の答えの型(width の int)を有効な件の値に運ぶ(effects.pyi)
     assert_type(read, Collection[int])
     failed: list[ItemResult] = read.failed_items
     values: list[int] = read.valid_values

@@ -1,9 +1,9 @@
-"""doeff-conductor の検の走らせ方を決める環境変数の値(agora-redesign #2894)。
+"""doeff-conductor の検の走らせ方を決める環境変数の値。
 
 E2E の検を走らせるか(CONDUCTOR_E2E)と OpenCode の server の URL(CONDUCTOR_OPENCODE_URL)は、
 検を集める時点で pytest の外から渡す旗(README に書いてある走らせ方)。この module は変数の素の値を
 返すだけで、旗の読み方の判断は conftest.py に残す。読みは os.environ を直に読まず、ReadEnvironment の
-効果を本物の答え手 subprocess_handler の下で問う(agora-redesign #3012 — 環境変数の読みは foundation の
+効果を本物の答え手 subprocess_handler の下で問う(環境変数の読みは foundation の
 handler の中だけ)。
 """
 

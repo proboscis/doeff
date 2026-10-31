@@ -10,7 +10,7 @@
 ;;;   2 mirror    EnsureMirror / FetchCommit                 repo-unreachable・commit-missing(URL は断らない — 鍵の表に無い URL は鍵なしで clone)
 ;;;   3 展開      MaterializeTree                            同じ repo(名と url の正体)を持つ完成済みの root の木を repo ごとに hardlink で写し、
 ;;;                                                          変わった path だけ新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・
-;;;                                                          写し元が無ければ展開 — #3677・card ki-61eb8170b3b9
+;;;                                                          写し元が無ければ展開 — #3677
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
@@ -107,7 +107,7 @@
    root の宣言から読む)。無ければ None(木は mirror から展開する)。写し元は repo ごとに選び、lock の sha256・Python・組・native・import の
    根は比べない — 写すのは写し元の commit が追跡する file だけで、木の中身は repo と commit で決まる(venv・焼いた .pyc・native の組みの
    出力は追跡しない物なので、写し元の宣言が違っても新しい木へ渡らない)。直す前は環境の同一性(lock を含む元の鍵)で root を選び、
-   uv.lock が替わるたびに全部の木を展開し直した(card ki-61eb8170b3b9)。"
+   uv.lock が替わるたびに全部の木を展開し直した。"
   (<- wanted dict (repo-source-material repo))
   (var best None)
   (var best-order None)
@@ -152,7 +152,7 @@
    "hyVersion" marker.hy-version
    ;; buildMemoryBytes(組みの山の memory — 先の組みを始める前の memory の見積もりに worker の掃除の数えが読む・#3748)。null = 測れなかった。
    "buildMemoryBytes" marker.build-memory-bytes
-   ;; entryPlace(root の中で子の入口の解ける置き場 — worker が root へ送る子の入口と待ちの子の名を選ぶ・card ki-7a7a1dcb1933)。欄の
+   ;; entryPlace(root の中で子の入口の解ける置き場 — worker が root へ送る子の入口と待ちの子の名を選ぶ)。欄の
    ;; 無い印(足す前の worker の印)は job_model の LEGACY-ENTRY-PLACE と読む(worker/protocol/env_store の root-entry-place)。
    "entryPlace" marker.entry-place})
 
@@ -393,7 +393,7 @@
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
                   ;; 書いた file の数 = 焼いて置いた .pyc(rebuilt)と保存先の code から置いた .pyc(stored)(#3676・#3858 — どちらも
-                  ;; 保存先の中身の同じ file への hardlink で置き、置けない時だけ中身を書く・card ki-d51b7baa38bc)。焼かずに残した
+                  ;; 保存先の中身の同じ file への hardlink で置き、置けない時だけ中身を書く)。焼かずに残した
                   ;; .pyc(reused)は置いていないので足さない(#3675)。
                   (replace state :interpreter used :bytecode counts :written (+ counts.rebuilt counts.stored)))))))
 
@@ -445,7 +445,7 @@
               (env-failure EnvFailureKind.ENV-INCOMPATIBLE
                            (.format "import の根の名が根の外に解ける(名前の影): {}" (.join " " report.misplaced))))
           failure)
-      ;; 子の入口の置き場は完成の印に書き、worker が root へ送る名をそこから選ぶ(card ki-7a7a1dcb1933)— どの置き場にも入口の無い
+      ;; 子の入口の置き場は完成の印に書き、worker が root へ送る名をそこから選ぶ— どの置き場にも入口の無い
       ;; root は、子を起こせない root として断る。
       (is report.entry-place None)
       (do (<- failure EnvFailure

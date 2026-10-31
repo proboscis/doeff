@@ -58,12 +58,12 @@ NODE_KEYS = frozenset(
 )
 WORKER_KEYS = frozenset({"minFreeGiB", "rootsGiB", "stateBytes"})
 # 機体直の worker(nativeWorker — 在る機体だけ)の欄。空きの最低は持たない — 同じ根の disk の空きは 1 つなので、機体の worker の
-# minFreeGiB を使う(線を 2 つ置くと、片方だけが near を名乗る帯ができる — card ki-705b0ad4893e)。
+# minFreeGiB を使う(線を 2 つ置くと、片方だけが near を名乗る帯ができる)。
 NATIVE_KEY = "nativeWorker"
 NATIVE_KEYS = frozenset({"name", "rootsGiB", "stateBytes"})
 NATIVE_ENV_SUFFIX = ".env"
 # 導いた Longhorn の Node が書く欄の全部(Node の spec と disk の 1 つ)。Flux の server-side apply は kubectl の manager が持っていた欄を
-# 引き取ってから当て、宣言に無い欄を消す — 人が置き方を替える欄(置くか・退かせるか・札・予約)は、全部を宣言から書く(card ki-c37ae82751bf)。
+# 引き取ってから当て、宣言に無い欄を消す — 人が置き方を替える欄(置くか・退かせるか・札・予約)は、全部を宣言から書く。
 FLUX_NODE_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "disks"})
 FLUX_DISK_FIELDS = frozenset({"allowScheduling", "evictionRequested", "tags", "storageReserved"})
 

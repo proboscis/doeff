@@ -72,7 +72,7 @@
 (val HEARTBEAT-LAG-MS 5000)
 ;; 区間の名: Inbox = 受付の箱に並んでから取られるまで(前の歩でループが止まっていた待ち — 受付の箱が単調な時計で測る)・Respond = 歩の頭の
 ;; 調停と、まとまりの要求全部の判断・Rollout = Rollout の歩(k8s の台数の書きを含む — 走らなかった歩は 0)・SaveState = 生存の印と
-;; 保存(fsync)・Reply = 返事を置くまで。区間の長さは単調な時計(GetMonotonic)の差で計る(card ki-3d02b3888acb — 壁の時計は NTP などで
+;; 保存(fsync)・Reply = 返事を置くまで。区間の長さは単調な時計(GetMonotonic)の差で計る(壁の時計は NTP などで
 ;; 戻る・進むので、差が負や偽の長さになり、遅れの行が出ない・いちばん長い区間と別の区間を名指す・速い歩を遅いと名指す。worker の拍の
 ;; 遅れの計り #3825 と同じ)。壁の時計は歩の判断の now と、行を出す時の at だけ。単調な時計は要求を取った歩の頭と、heartbeat の在る歩でだけ
 ;; 要求の判断の後・Rollout の後(走った時)・保存の後・返事の後に読む(要求の無い歩は読まない)。計りだけの読みは GetMonotonic を直に出す
@@ -254,7 +254,7 @@
       #(#* result sender)))
 
 
-;; process の中の止まりの行の名(2026-10-16・card ki-d033e5f969cf — 名 + 欄 at = 止まりを見つけた歩の刻(ISO)・gap-ms = 経過に
+;; process の中の止まりの行の名(2026-10-16 — 名 + 欄 at = 止まりを見つけた歩の刻(ISO)・gap-ms = 経過に
 ;; 数えなかった長さ・busy-ms = 前の歩の長さ・overslept-ms = 予定の起きる刻からの寝過ごし)。機体ごとの止まり(2026-10-13 の atlas)の
 ;; 後に、coordinator が止まっていた事と、その長さだけ worker の沈黙・task の lease・Rollout の期限をずらした事を log から読めるように
 ;; する。保存の詰まり(busy-ms が大きい)と機体の止まり(overslept-ms が大きい)を読み分け、歩ごとに続けば止まりが続いていると分かる。
@@ -275,7 +275,7 @@
 
 
 
-;; 起き直しの後、worker から届くまでの長さを経過に数えなかった事の行の名(2026-10-21・card ki-439a73dc075c — 名 + 欄 at = 数えるのを
+;; 起き直しの後、worker から届くまでの長さを経過に数えなかった事の行の名(2026-10-21 — 名 + 欄 at = 数えるのを
 ;; 止めた歩の刻(ISO)・waited-ms = 読み直しからその歩までの長さ・by = 止めた訳(heartbeat = 最初の heartbeat を受けた・limit = 待ちの
 ;; 上限 api_policy.REACH-WAIT-MS を越えた)。配備の後に、Service に載るまでの長さと、その間に誰も消えたと数えなかった事を log から読む。
 (val REACH-LOG "coordinator: 起き直しの後、worker から届くまでを経過に数えなかった")
@@ -349,10 +349,10 @@
   ;; 返事の遅れの計りの起点: 要求を取った歩でだけ単調な時計を読む(区間は単調な時計の差で計る — HEARTBEAT-LAG-MS の註)。壁の時計の読みは
   ;; 判断の now の 1 つだけ。
   (<- taken-ms int (lap-ms (bool batch)))
-  ;; coordinator が process の中で止まっていた(機体ごとの止まり・保存の fsync の詰まり — card ki-d033e5f969cf)なら、調停の前にその
+  ;; coordinator が process の中で止まっていた(機体ごとの止まり・保存の fsync の詰まり)なら、調停の前にその
   ;; 長さだけ時計をずらす: 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず、job を移さない。保存(SaveState)は
   ;; 歩の前の状態との差を書くので、ずらした値も同じ 1 回で耐久になる。
-  ;; 起き直しの後まだ heartbeat を受けていない間(card ki-439a73dc075c — Pod が Service に載るまで worker から届かない)は、前の歩から
+  ;; 起き直しの後まだ heartbeat を受けていない間(Pod が Service に載るまで worker から届かない)は、前の歩から
   ;; 今までを同じく経過に数えない(reach-resumed — この間は止まりの検出を重ねない: 起点が前の歩の刻なので同じ長さを 2 度ずらす)。
   (<- resumed ClusterState (if (is state.unreached-ms None)
                                (stall-resumed state now (! (stall-of pace now timing)))
@@ -395,11 +395,11 @@
   (<- rolled-ms int (lap-ms measuring))
   (<- marked ClusterState (mark-alive next now))
   (:= next marked)
-  ;; 終わりの出口(card ki-e7945a2b2d00): この歩で終わりへ移った知らせ先つきの切り離した task を、保存の前に出口へ積む — 終わりへの道は
+  ;; 終わりの出口: この歩で終わりへ移った知らせ先つきの切り離した task を、保存の前に出口へ積む — 終わりへの道は
   ;; 歩の中の判断(tick・要求ごとの答え)に散っているが、どれもこの歩の前後の差に現れる(detached_policy.outbox-noted の註)。保存と同じ
   ;; 1 回で耐久になり、返事はその後なので、終わりを答えた task の出口の行が落ちた coordinator から消える事は無い。
   (:= next (outbox-noted state next now))
-  ;; queued の期限超え(card ki-4b6613f39c80): 知らせ先つきの task が queued のまま期限を越えた歩で、待ちの行を 1 度だけ積む(同じ保存で耐久)。
+  ;; queued の期限超え: 知らせ先つきの task が queued のまま期限を越えた歩で、待ちの行を 1 度だけ積む(同じ保存で耐久)。
   (<- overdue ClusterState (queued-noticed next now timing))
   (:= next overdue)
   (<- (SaveState state next))

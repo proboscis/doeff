@@ -1,4 +1,4 @@
-"""A handler a clause of its own installs again is that same handler (agora card ki-70117167ebf3).
+"""A handler a clause of its own installs again is that same handler.
 
 doeff-traverse's ``sequential`` reports each item's outcome under itself: its Traverse clause
 calls ``_report(_sequential_handler, …)``, which yields ``WithHandlerType(handler, …)``.  The

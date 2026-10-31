@@ -1,4 +1,4 @@
-;; Service の置き先の一時の上書き(資源 NeedsOverride — card ki-1523bc0aba4f)。
+;; Service の置き先の一時の上書き(資源 NeedsOverride)。
 ;;
 ;; 失敗ケース(直す前・2026-10-26 22:45〜23:21 JST): 復旧の手が Service 13 本の spec.needs を直の PUT で host-zeus から復旧の能力へ
 ;; 書き換え、worker の側(zeus の Deployment の能力の名乗り)だけが Flux の当て直しで戻った。coordinator は 13 本の置き先を黙って空にし、

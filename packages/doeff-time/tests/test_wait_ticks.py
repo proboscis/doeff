@@ -1,4 +1,4 @@
-"""WaitTicks — a future waited for across a run of ticks, without waking the waiter at each tick (agora-redesign #3066).
+"""WaitTicks — a future waited for across a run of ticks, without waking the waiter at each tick.
 
 - The answer is ``TicksOutcome(value, passed)``: the future's value and the ticks that passed before it, or
   ``TicksOutcome(None, count)`` once the last tick passes.

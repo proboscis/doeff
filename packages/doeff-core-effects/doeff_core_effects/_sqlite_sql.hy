@@ -1,4 +1,4 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の I/O なしの答え手 sqlite-sql-handler(agora-redesign #802 便 3)。stdlib の sqlite3 の memory の DB で
+;;; 汎用の SQL の effect(sql_effects.hy)の I/O なしの答え手 sqlite-sql-handler。stdlib の sqlite3 の memory の DB で
 ;;; 答える — 仮想の時計の模擬で、実 process も外の engine も起こさない。業務を知らない: 表は SqlEnsureTables で呼び手が宣言する。
 ;;;   - database の名ごとに `:memory:` の接続を 1 本(check_same_thread = False・自動 commit — transaction は BEGIN IMMEDIATE で明示)。
 ;;;     接続は session の値で、session の値の置き場(doeff_core_effects の state)は外側に要る。
@@ -26,7 +26,7 @@
 ;; DRIVER-CLASS-SQLSTATES と同じ類)。OperationalError は文で分ける(sqlite-failure)。
 (val SQLITE-CLASS-SQLSTATES {"IntegrityError" "23000" "DataError" "22000" "InterfaceError" "22000" "ProgrammingError" "42000"
                              "NotSupportedError" "0A000" "InternalError" "XX000"})
-;; 引数の bind で sqlite3 が出す例外のうち、sqlite3.Error の仲間でない物(agora-redesign #1234)。OverflowError = INTEGER(64 bit)の範囲外の
+;; 引数の bind で sqlite3 が出す例外のうち、sqlite3.Error の仲間でない物。OverflowError = INTEGER(64 bit)の範囲外の
 ;; 整数 — 本物の PostgreSQL は同じ値を 22003(numeric_value_out_of_range)で断る。値にしないと呼び手の Program へ例外が抜け、模擬と本物の
 ;; 答えが食い違う。
 (val BIND-ERRORS #(OverflowError))
@@ -59,7 +59,7 @@
   {:pre [(: statement str) (: params (of tuple SqlParam ...))] :post [(: % SqliteStatement)]
    :tags {:context "sql" :role "foundation"}}
   "中立の記法の文を sqlite の `?` の文へ書き換えるため(引数の名の食い違いは ValueError)。値は名から 1 度で引く表で `?` の順に並べる
-   (checked-params の後なので、文の引数の名は全部 params に在る — 引数 1 つごとに param-value を呼ぶ費用を省く・agora-redesign #2423)。"
+   (checked-params の後なので、文の引数の名は全部 params に在る — 引数 1 つごとに param-value を呼ぶ費用を省く)。"
   (<- parts (split-statement statement))
   (<- (checked-params parts params))
   (val by-name (dfor p params p.name p.value))
@@ -294,8 +294,7 @@
   {:tags {:context "sql" :role "foundation"}}
   (session var connections #())
   (session var unreachable #())
-  ;; 接続の置き場は開いた時だけ書き直す — with-connection は接続が在れば同じ tuple を返すので、毎回の書き(session の値の Put)は要らない
-  ;; (agora-redesign #2423)。
+  ;; 接続の置き場は開いた時だけ書き直す — with-connection は接続が在れば同じ tuple を返すので、毎回の書き(session の値の Put)は要らない。
   (SetSqlOutage [database down] :when (in database databases)
     (<- marked (outage-marked unreachable database down))
     (:= unreachable marked)

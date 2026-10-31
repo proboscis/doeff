@@ -35,16 +35,16 @@
                        "duration_ms" 2730})
 
 ;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す言い方と、その hook の stdout(hook が書く JSON — 助言は
-;; hookSpecificOutput.additionalContext・ki-d8b473480303)。本物の claude で助言を出すには hook を置く必要があるので、
+;; hookSpecificOutput.additionalContext)。本物の claude で助言を出すには hook を置く必要があるので、
 ;; 助言を当てにする検は替え玉の CLI と fake だけに置く。
 (setv ADVICE-PHRASE "Have the hook advise: {}.")
 ;; 入力に添付した画像(stream-json の user の content の image の block)を数えて答えさせる言い方と、替え玉の CLI が image の block 1 つを
-;; 本文へ写す印(card ki-0faa366b76c0 — 画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
+;; 本文へ写す印(画像が CLI の入力に入ったかを見るため)。本物の claude も画像を数えて答えられるが、
 ;; 印の綴りは替え玉の CLI だけの物なので、数を当てにする検は替え玉の CLI に置く。言い方の無い入力でも、文字が空で画像だけの入力は数えて答える
 ;; (利用者が画像だけを貼って送る形)。
 (val IMAGES-PHRASE "Count the attached images.")
 ;; 本体の会話の API の呼びを、本物の CLI 2.1.292 と同じく message_start(始まりの usage)→ assistant の行(出力は途中の値)→
-;; message_delta(最終の usage)の 3 段で流させる言い方(card ki-290ec664737d)。本物の claude は呼びの出力の値を選べないので、途中の値と
+;; message_delta(最終の usage)の 3 段で流させる言い方。本物の claude は呼びの出力の値を選べないので、途中の値と
 ;; 最終の値の違いを当てにする検は替え玉の CLI に置く。
 (val STREAMED-CALLS-PHRASE "Stream each call's usage.")
 (val IMAGE-MARK "[stub:image]")
@@ -83,8 +83,8 @@
    \"tool_input_deltas\" 道具の呼びの命令を書く差分の片の数(TOOL-INPUT-PIECES-PHRASE・無ければ 0 — #3746 (a))
    \"hook_feedback\" Stop hook が最初の答え(REJECTED-ANSWER)を差し戻す理由(HOOK-FEEDBACK-PHRASE・無ければ None — #4020)
    \"compact\" 答えの前に CLI が会話を 1 度自動で圧縮するか(COMPACT-PHRASE — 圧縮の行の compact_metadata は COMPACT-METADATA・#4189)
-   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None — ki-d8b473480303)
-   \"streamed_calls\" 本体の呼びを始まり・途中・終わりの 3 段で流すか(STREAMED-CALLS-PHRASE — 替え玉の CLI だけが読む・card ki-290ec664737d)}。
+   \"advice\" 答えの前に UserPromptSubmit の hook が返す助言(ADVICE-PHRASE・無ければ None)
+   \"streamed_calls\" 本体の呼びを始まり・途中・終わりの 3 段で流すか(STREAMED-CALLS-PHRASE — 替え玉の CLI だけが読む)}。
    memory = それまでの入力の本文(会話の記憶)。"
   (setv sleep (re.search r"sleep (\d+(?:\.\d+)?)" text))
   (setv touch (re.search r"touch (\S+)" text))

@@ -1,5 +1,5 @@
 """dataclass が型ごとに作る関数の source(``__create_fn__``)の compile を、source の中身で引く保存先(code_store)に覚え、次の process で
-compile し直さない(card ki-e77d44aa61e5)の検。
+compile し直さないの検。
 
 測り(2026-10-11・agora-controllers の test_emulated_screen.hy の読み込み): dataclass の作成 3798 型の費用のほぼ全部が、関数の
 source の exec(compile)だった。違う source は 769 通りで、前の process の code を使うと読み込みの CPU が中央値 3.71 → 3.02 秒。

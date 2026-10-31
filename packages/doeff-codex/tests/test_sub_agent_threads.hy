@@ -1,4 +1,4 @@
-;; 子の agent の thread の行の振り分けの検(card ki-c09b93b72bff)— codex 0.162.1 は子の agent(collabAgentToolCall の spawnAgent)を
+;; 子の agent の thread の行の振り分けの検— codex 0.162.1 は子の agent(collabAgentToolCall の spawnAgent)を
 ;; 同じ app-server の process の別の thread で走らせ、子のターンの始まりと終わり・答え・usage の行を、親の会話の行と同じ stdout に
 ;; 混ぜて出す(録った行 tests/recorded/codex-0.162.1/other-tools)。
 ;;

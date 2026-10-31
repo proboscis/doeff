@@ -565,7 +565,7 @@
                                     :if (is-not found None)
                                     (.group found 1))))
   (assert (in "doeff_hy_bytecode_guard" pth-imports) pth-imports)
-  ;; JOB-ENTRY は _worker の名(card ki-7a7a1dcb1933 — 古い版の root へは worker が root の完成の印の置き場の名へ替えて送る)。この
+  ;; JOB-ENTRY は _worker の名(古い版の root へは worker が root の完成の印の置き場の名へ替えて送る)。この
   ;; root の venv が走らせて焼くのは、その名の module そのもの(移し替えの module を通らない)。
   (val job-module (. (importlib.import-module JOB-ENTRY) __name__))
   (assert (= job-module JOB-ENTRY "doeff_cluster._worker.entry.job_entry") #("送る名が _worker の module でない" job-module JOB-ENTRY))

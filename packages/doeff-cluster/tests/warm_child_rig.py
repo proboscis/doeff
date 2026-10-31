@@ -1,7 +1,7 @@
 """待ちの子(doeff_cluster._worker.entry.warm_child)を本物の process で起こす検の、共通の起こし方。
 
 待ちの子は Hy の module を前もって読む(569 module)。-B(.pyc を作業木に書かない)で env が探し道だけだと、Hy の code の置き場に届かず、
-起きるたびに全部を source から compile し直して 25〜33 秒かかり、準備を待つ期限と余裕が無くなる(card ki-2121cf77fe73)。
+起きるたびに全部を source から compile し直して 25〜33 秒かかり、準備を待つ期限と余裕が無くなる。
 ここは env に温めた置き場(conftest の job_child_code_store が先に満たす)を渡し、準備を待つ期限を温めた置き場の目安の秒数にして、
 冷たい compile が戻った時は期限でなく原因の名(置き場が使われていない)で落とす。待ちの子を起こす検は fixture start_warm_child を通す
 (test_warm_child_rig.py が止める)。

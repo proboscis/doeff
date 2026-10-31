@@ -67,7 +67,7 @@
 
 
 ;; 束ねる式の値の位置に書くと、yield した時に VM が TypeError(yield got …)で落とす字面の値の形
-;; (agora-controllers の card ki-de00c871fa53 — `(<- x (if c None (f)))` が c の時に素の None を yield した)。
+;; (失敗例: `(<- x (if c None (f)))` が c の時に素の None を yield した)。
 (setv PLAIN-VALUE-SYMBOLS #{"None" "True" "False"})
 
 
@@ -127,7 +127,7 @@
    :tags {:context "doeff-hy-outcomes" :role "foundation"}}
   "束ね 1 つの式(R5・R6): `(open-bind expr)` の答えが `Pure` ならその値、それ以外は yield して VM の答え。
    open-bind は効果を出さない @do の呼び(本体に yield の無い defk など)をその場で呼んで答えの `Pure` を返すので、
-   その束ねは VM を往復しない(agora-redesign #844)。`Pure` を yield しても同じ答えなので、意味は yield する形と同じ。
+   その束ねは VM を往復しない。`Pure` を yield しても同じ答えなので、意味は yield する形と同じ。
    open-bind と `Pure` の引きを形の中に持つ — defhandler の節・利用者の defn など、どこに書いた `<-` / `!` でも名前が
    解けるように。形は文を持たない 1 つの式(条件式と代入式)にする — `!` は式の中のどこにでも書けるので、
    `(setv (get (! e) 鍵) 値)` のように代入の的の中にも来る。import の文を持つ `(do (import …) …)` では Hy が的を組めずに
@@ -135,13 +135,12 @@
    1 回・約 0.3µs(import の文と同じ桁・hy.I は 4µs — 2026-09-28 に測った)。
    helpers = module の globals に在る outcomes の module の名(defk の本体の束ね — defk が globals に置く
    `_doeff_outcomes`・HELPERS-NAME)。在れば `__import__` の代わりにその名で引く(1 回の束ねの `__import__` 約 0.2µs を
-   消す — agora-redesign #844 の案 a)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。
+   消す)。名が在ると分かっているのは defk の本体だけなので、ほかは None のまま。
    helpers は名の文字列で受け、差し込む所ごとに新しい Symbol を作る — 展開のあいだで 1 つの model を使い回すと、
-   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる(agora-redesign #1004)。
-   値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る
-   (card ki-de00c871fa53)。
+   locate-synthesized が付けた位置がそれに残り、後の束ねの行がずれる。
+   値の位置に字面の値を持つ式(`(if c None (f))` など)は、その枝で素の値を yield して実行の時に落ちるので、形を作る前に断る。
    bound = 答え(Pure か yield する Program)を持つ局所の名。呼び手が渡せば、束ねた後にその名を del して frame から外せる
-   (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた: agora card ki-d5fb19be03db)。
+   (_bind-yield — 名が Call を次の束ねまで持ち、長い loop で前の周の引数を生かし続けた)。
    渡さなければ gensym を作る(`!` の式の中 — 文を置けない)。"
   (let [refused (plain-value-refusal expr)]
     (when (is-not refused None)
@@ -221,7 +220,7 @@
              (fn [#^ object ~reason]
                ;; この match は defk の本体の欄の名の直し(doeff_hy/_match_fields.py)の後に展開で生まれるので、ここで直す —
                ;; 直さないと (AppendRefused :idempotency-key k) は属性 idempotency-key を引いて黙って当たらず、型検査の展開も
-               ;; ast.parse の SyntaxError で落ちた(agora-redesign card ki-6aa23021c532)。
+               ;; ast.parse の SyntaxError で落ちた。
                ~(mangle-match-fields
                   `(match ~reason
                      ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)

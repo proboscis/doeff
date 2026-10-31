@@ -1,7 +1,7 @@
-"""doeff-hy-check の運び(`--carry` — doeff_hy/_static_carry.py・agora-redesign card ki-cbd1c93cfe7c)の失敗ケース。
+"""doeff-hy-check の運び(`--carry` — doeff_hy/_static_carry.py)の失敗ケース。
 
-agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy 約 3,000 本を毎回全部 pyright に当て、上限 7,200 秒で 2 回続けて切れた
-(card ki-c16990fab50b)。運びは、前の回から入力の変わらない .hy を pyright に当てず、前の回の診断を運ぶ。運んだ答えが全部当てた答えと
+agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy 約 3,000 本を毎回全部 pyright に当て、上限 7,200 秒で 2 回続けて切れた。
+運びは、前の回から入力の変わらない .hy を pyright に当てず、前の回の診断を運ぶ。運んだ答えが全部当てた答えと
 違えば、型の赤を取りこぼす(直した赤が残る・新しい赤が出ない)ので、ここで留める:
 
 - 表面: 型を全部宣言した関数の本体と docstring は、使い手の入力に入らない。署名・型を宣言しない関数の本体・self の属性へ代入する

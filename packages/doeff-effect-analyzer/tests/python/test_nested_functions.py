@@ -2,7 +2,7 @@
 
 ``_clause_functions`` used to ``ast.walk`` the whole subtree at every nesting level and test
 each def it met against the parent's body — a node was read once per function enclosing it,
-which was a quarter of a closure test's analysis (agora-redesign #1586). ``_nested_functions``
+which was a quarter of a closure test's analysis. ``_nested_functions``
 must give the same defs in the same order, since the clauses are read in that order.
 """
 

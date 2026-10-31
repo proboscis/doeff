@@ -1,4 +1,4 @@
-"""defwire の自前の解き手の型の木 — 読む側・書く側・JSON Schema(card ki-923c16d33551・ki-f6551d717654・親 card ki-2e0dce8d1ebb)。
+"""defwire の自前の解き手の型の木 — 読む側・書く側・JSON Schema。
 
 JSON を defwire の型の値へ、pydantic を読まずに strict に解いて確かめ、同じ木で値を JSON へ書き、JSON Schema を出す。契約は設計の記録
 ``docs/design/defwire-decoder/design.md``(節 2 の型ごとの判じ方と書き出し・節 3 の共通の規則・節 3b の書き出しと JSON Schema・付録 B の
@@ -18,13 +18,13 @@ dump-json と同じ JSON を出す(違いは節 3b の表の 3 つ — どれも
 
 - 型の木は欄の型ごとの判じ手(``_Node``)の木。defwire の型は 1 つの ``_WireNode`` を型に覚え、入れ子の欄は子の判じ手を参照する
   (親ごとに組み直さない)。語彙の外の型・解けない前方参照・型の輪は、組む時に TypeError で断る(黙って通さない)。
-- wire.hy(parse・parse-json・dump・dump-json・json-schema)はこの木を呼ぶ(card ki-b7701d5fc0dd で pydantic の TypeAdapter から替えた —
+- wire.hy(parse・parse-json・dump・dump-json・json-schema)はこの木を呼ぶ(pydantic の TypeAdapter から替えた —
   照らしの test(doeff_hy/_wire_parity.py・tests/test_wire_parity.py)が doeff と agora-controllers の全 defwire の型で pydantic との
   不一致 0 を示した後)。
 - 表の行の型(素の defrecord)は ``row_codec_of`` が同じ判じ手で組む(欄は Python の名・知らない欄は読み捨て・書きは全部の欄 —
-  doeff-records の typed.hy が使う・設計の記録の節 6・card ki-138189339298)。
+  doeff-records の typed.hy が使う・設計の記録の節 6)。
 - decode と encode_json は先に速い道で読み書きする(入力を写し直さない・欄を並べ切った読み手と書き手を型ごとに 1 度組む・defrecord の
-  型は構築子を通さずに作る)。答えは今までの道と同じで、受けない所は今までの道へ戻る(card ki-c43f34494b42 — 節「判じ手」の註・
+  型は構築子を通さずに作る)。答えは今までの道と同じで、受けない所は今までの道へ戻る(節「判じ手」の註・
   tests/test_wire_codec_fast.py)。
 - この module は pydantic を import しない(標準の module と doeff_hy._json_value・doeff_hy._wire_malformed・doeff_hy._record_runtime だけを読む —
   ``tests/test_wire_codec.py`` と ``tests/test_wire_codec_write.py`` が import の閉包を確かめる)。
@@ -106,7 +106,7 @@ def _expected(values: tuple[str, ...]) -> str:
 # どの判じ手も、JSON を json.loads で読んだ素の値(dict・list・str・int・float・bool・None)を受ける。凍らせた値と OpaqueJson は
 # Codec.decode が先に素の値へ戻す(_plain)。decode は値を返すか _RefusedError を投げる。
 #
-# 速い道(fast — card ki-c43f34494b42): Codec は先に fast で読み、入力を _plain で写し直さない。fast は json.loads の素の値と、凍らせた
+# 速い道(fast): Codec は先に fast で読み、入力を _plain で写し直さない。fast は json.loads の素の値と、凍らせた
 # FrozenMap(写像)・tuple を、そのまま読む。それ以外の所(str や int の派生・OpaqueJson・set など)は、その所だけを _plain で写して
 # decode に渡す(_Node.fast — 今までの道と同じ判じ方)。孤立した surrogate・深すぎる入れ子は _SlowPathError で、Codec が今までの道で
 # 読み直す。fast が値を返すのは、入力の全部を読んで、どの所も今までの道と同じに判じた時だけ。断った時(_RefusedError)も Codec は
@@ -146,7 +146,7 @@ class _Node:
         return _inferred(value, raw)
 
     def text(self, value: object) -> str:
-        """この型の値を JSON の文字列へ直に書く(書き出しの速い道 — card ki-c43f34494b42): 答えは _json_text(encode(value, True)) と
+        """この型の値を JSON の文字列へ直に書く(書き出しの速い道): 答えは _json_text(encode(value, True)) と
         同じ文字列で、書き出しの JSON の値の木を作らない。ここは判じ手ごとの速い形に当たらない所 — その所だけ木を作って綴る。
         孤立した surrogate は確かめない(Codec.encode_json が書き終えた文字列で 1 度に確かめ、在れば今までの道で断る)。"""
         return _json_text(self.encode(value, True))

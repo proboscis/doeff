@@ -1,5 +1,4 @@
-"""bytecode の準備の道具(worker/entry/code_prepare.hy)の進みの印(--progress の file)は、焼きの途中でも 1 つ用意し終えるたびに進む
-(card ki-6401ff10af71)。
+"""bytecode の準備の道具(worker/entry/code_prepare.hy)の進みの印(--progress の file)は、焼きの途中でも 1 つ用意し終えるたびに進む。
 
 直す前は、印を進めるのは道具の走査の後・閉包の一回りごと・焼きの前と後だけで、焼き(_foundation/bytecode_pool.hy の pool)の間は
 印が止まったままだった。保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の zeus-native で約 2,400 本・

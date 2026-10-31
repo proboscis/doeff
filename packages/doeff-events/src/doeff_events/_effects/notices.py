@@ -1,4 +1,4 @@
-"""Effects of a notice broker: events that reach other processes at once and are not stored (agora-redesign #3850).
+"""Effects of a notice broker: events that reach other processes at once and are not stored.
 
 The lower layer is the broker's own operations, answered by ``memory_notice_handler`` (one process — the
 emulated environment and tests) or ``redis_notice_handler`` (Redis Pub/Sub):
@@ -16,7 +16,7 @@ A notice reaches the subscribers that are connected when it is announced, and no
 for a subscriber that subscribes later or is disconnected. A business program never uses these effects — it
 keeps ``Publish`` / ``WaitForEvent``, and ``notice_events_handler`` translates.
 
-A kept channel is the exception (agora card ki-86d11cadf3be — a notice a reader never handled left a conversation's
+A kept channel is the exception (a notice a reader never handled left a conversation's
 input waiting until the reader's next start). ``Announce(kept=True)`` keeps the notice in the channel's log
 (Redis Streams — ``XADD`` with a bounded length). A subscription that names a ``reader`` reads its kept channels
 from that log: the handler keeps, for each open subscription, the position it read up to in each kept channel and
@@ -35,12 +35,12 @@ from doeff import EffectBase
 
 # How long a handler waits for the acknowledgement of a kept channel's notice before it hands the notice out again
 # (the default of both handlers — the composition may name another). agora's target is a conversation's input taken
-# into a turn within 5 s of being placed (card ki-86d11cadf3be): 2 s leaves room for the reader's own work.
+# into a turn within 5 s of being placed: 2 s leaves room for the reader's own work.
 KEPT_REDELIVERY_SECONDS: Final = 2.0
 
 # The wire name of the fixed notice that tells a channel's gap (its body is the sender's source name). Callers make
 # and recognise it through the types — ``Announce.gap(channel, source)``, ``Announce.is_gap`` and
-# ``Announcement.is_gap`` — so the name itself stays inside (ADR-DOE-API-001 R1·R2, card ki-a2ac882abeb7).
+# ``Announcement.is_gap`` — so the name itself stays inside (ADR-DOE-API-001 R1·R2).
 _GAP_NOTICE: Final = "doeff-events:gap"
 
 
@@ -198,7 +198,7 @@ class AwaitBrokerBack(EffectBase[None]):
 class ProbeBroker(EffectBase["None | BrokerUnreachable"]):
     """Try whether the broker can be reached right now: only a connection, no data is read or written. Answers
     ``None`` when it can, ``BrokerUnreachable`` when it cannot. Asked only while somebody waits in
-    ``AwaitBrokerBack`` (agora-redesign #3864)."""
+    ``AwaitBrokerBack``."""
 
 
 @dataclass(frozen=True)
@@ -223,4 +223,4 @@ class ReadBrokerPatience(EffectBase["BrokerPatience"]):
     effect. A wrapper that only sends never asks it: nothing it waits for has a deadline. The answer comes from
     ``broker_patience_handler`` placed outside the wrapper (no default answer). It is its own question, not
     ``Ask`` (a reader of settings inside the composition could take it) and not a question of another package (the
-    composition answers it from the same value as its other stores' patience — agora card ki-6b3c298bfee1)."""
+    composition answers it from the same value as its other stores' patience)."""

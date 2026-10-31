@@ -1,21 +1,21 @@
-"""source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(agora-redesign #1753・
+"""source の中身で引く bytecode の保存先 — 引く・足す・使った印・壊れた entry の扱いの入口はこの module 1 つ(
 #2799・#3858)。
 
 使い手は 6 つで、どれもここだけを通る(保存先の並びと鍵の綴りの複製を作らない):
   - dataclass が型ごとに作る関数の source の compile(:mod:`doeff_hy_bytecode_guard._dataclass_code`): 文の中身で code を引き、
-    compile したら足す(card ki-e77d44aa61e5)。
+    compile したら足す。
   - import の読みの口(:mod:`doeff_hy_bytecode_guard._loader_hooks`): 作業木の .pyc が使えない Hy の module の code を、鍵に並ぶ entry の
     記録を照らして引き(:func:`current_code`)、compile したら今の環境の entry として足す(:func:`add_code`)。
   - .pyc の記録の照らしの source の読み(:mod:`doeff_hy_bytecode_guard._bound_source`): macro の閉包の digest の歩みが、辿れない大域を
-    覆う source の文の読み(中身と名で決まる純な読み)を引き、無ければ解いて足す(agora-redesign card ki-38508e6e56fd — 新しい
+    覆う source の文の読み(中身と名で決まる純な読み)を引き、無ければ解いて足す(新しい
     process の照らしが、同じ中身の source を毎回解き直していた)。
   - .pyc の記録の照らしの code の読み(:mod:`doeff_hy_bytecode_guard._macro_use`): macro の閉包の digest の歩みが読む関数の code の
     読み(名の表・文字列の定数・import・digest の形 — code の中身で決まる純な読み)を、歩み 1 つの entry に並べて引き、読み直した
-    時は足す(agora-redesign card ki-be596ac8276f)。
+    時は足す。
   - import の compile が展開した木(:mod:`doeff_hy_bytecode_guard._expansion_trees`): 変わった Hy の module を compile した process が、展開した
     木と展開が依った macro の記録を、その code の隣に足す(:func:`add_tree`)。doeff-effect-analyzer が同じ source を展開し直す前に、今の
     環境の macro で照らして引く(:func:`tree_entries`)。bytecode の保存先は worker の上の job が全部で共有するので、どの job が compile
-    しても、後から読む analyzer(日次の閉じの検)が同じ保存先から引ける(card ki-5c1fc605c17d)。
+    しても、後から読む analyzer(日次の閉じの検)が同じ保存先から引ける。
   - doeff-cluster の worker の bytecode の道具(worker/entry/code_prepare.hy と _foundation/bytecode_pool.hy): 版をまたいで、中身の同じ
     source の code(:func:`current_code`・:func:`add_code`)と import の名を引き、無い物だけを compile して足す。道具は準備する root の venv の python で走るので、root の版の
     doeff-hy でなく worker の版のこの file を path で読む — だから標準 library だけを import する(この package の他の module も読まない)。
@@ -28,10 +28,10 @@ script は既定を ``$WORK_DIR/state/doeff-hy-code-store`` に置く(日次の�
 読みと code の読み — 形は bound_source・macro_use が持つ)と ``.tree``(import の compile が展開した木と macro の記録 — 形は expansion_trees が持つ)。
 鍵は source の中身の sha256 と、中身の読みを変える物(:func:`code_key` の欄)
 だけで決まり、path と版(commit)に依らない。``.pyc``(worker の道具が木へ置く .pyc の中身そのもの)だけは鍵が中身の sha256 で、木の
-.pyc はこの file への hardlink(:func:`link_pyc` — card ki-d51b7baa38bc)。
+.pyc はこの file への hardlink(:func:`link_pyc`)。
 
 source の code(:func:`code_key` の鍵 — import の口と worker の道具)は、鍵 1 つの dir に macro の環境ごとの entry を幾つか持つ:
-``<dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code``(card ki-6828e9af04b4)。Hy の source は展開が依った macro の記録を code に持ち、
+``<dir>/<鍵の頭 2 字>/<鍵の残り>/<記録の指紋>.code``。Hy の source は展開が依った macro の記録を code に持ち、
 引いた側が今の環境の macro で照らす(照らしは呼び手 — :func:`current_code`)。記録の指紋(:func:`code_fingerprint`)は使えるかを決める
 物の全部なので、記録の同じ code は 1 つの entry を書き直し、記録の違う code(doeff の版の違う作業木の import と実行環境の準備)は並ぶ。
 鍵 1 つに entry 1 つの並び(鍵の印 2)では、版の違う書き手が同じ鍵の entry を互いに古いと見て compile し直し、上書きし合った(2026-10-12
@@ -39,7 +39,7 @@ zeus — 実行環境の準備は同じ版の source でも 1 回に 100〜600 �
 越えたら時刻の古い物から除く。足したばかりの entry は、鍵の他の entry より古い時刻に置く(:func:`add_code`)— 誰かが照らして使うまで
 並びの後ろに居て、上限を越えた時に先に除かれる。だから一度きりの環境(macro を直している作業木の検)の entry は互いを除き合い、使い
 続けている書き手の entry を押し出さない。上限を越える数の環境が同じ鍵を順に使っても、外れるのは上限を越えた分だけ(全部が外れる崖に
-ならない — 設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A)。
+ならない)。
 
 木(``.tree``)も同じ並び — 鍵 1 つの dir に macro の環境ごとの entry(名 = 記録の指紋)を持ち、足した entry を後ろに置き、上限は
 :data:`TREE_ENTRIES_PER_KEY` 個。木は同じ source の code の数倍の大きさ(2026-10-21 の実測、screen の job の import で compile した module:
@@ -64,8 +64,8 @@ from types import CodeType
 STORE_ENV = "DOEFF_HY_CODE_STORE"
 
 #: code の entry の鍵の印(形を変えたら末尾の番号を上げる — 古い鍵の entry は当たらなくなる)。2 = 鍵を compile した bytes そのものから
-#: 作る版(agora-redesign #2799)。1 の版の保存先には、compile の後に file を読み直した鍵の下に古い中身の code が入った entry が在り得る
-#: ので、新しい版からは引かない。3 = 鍵 1 つの dir に macro の環境ごとの entry を並べる版(card ki-6828e9af04b4)。2 の entry(鍵 1 つに
+#: 作る版。1 の版の保存先には、compile の後に file を読み直した鍵の下に古い中身の code が入った entry が在り得る
+#: ので、新しい版からは引かない。3 = 鍵 1 つの dir に macro の環境ごとの entry を並べる版。2 の entry(鍵 1 つに
 #: 1 つの file)は前の版の書き手だけが使い、新しい版からは引かない — 前の版の書き手と取り合わず、7 日使われなければ掃除が消す。
 CODE_TAG = "doeff-hy/code-store/3"
 
@@ -124,7 +124,7 @@ def store_dir() -> str | None:
 
 def store_is_named() -> bool:
     """保存先の dir を環境変数 STORE_ENV で名指しているか(``off`` と空は名指しでない)— 名指しの保存先は、木へ .pyc を書かない
-    設定でも足す(書かない設定は木への書きの決めで、木の外の保存先の決めではない・agora-redesign #3737)。名指しの無い既定の dir
+    設定でも足す(書かない設定は木への書きの決めで、木の外の保存先の決めではない)。名指しの無い既定の dir
     (利用者の cache)には、書かない設定では足さない。"""
     configured = os.environ.get(STORE_ENV, "").strip()
     return configured not in ("", "off")
@@ -380,7 +380,7 @@ def _stored_entry(path: str, *, touch: bool) -> StoredCode | None:
 def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
     """木の .pyc(target)を、保存先の中身の同じ file(種類 :data:`PYC_SUFFIX`・名は中身の sha256)への hardlink で置くため — 無ければ
     保存先へ書いてから。root ごとに同じ中身の .pyc を新しく書くと、root を消した後も macOS の local snapshot がその中身を 24 時間持ち、
-    作業 disk の空きが root の作り直しの数だけ減った(card ki-d51b7baa38bc)。答え = 置けなかった理由(呼び手は今どおり target へ中身を
+    作業 disk の空きが root の作り直しの数だけ減った。答え = 置けなかった理由(呼び手は今どおり target へ中身を
     書く — 別の file system・link の数の上限など)。置けたら None。
 
     hardlink の先を書き換えない: 保存先の file は一時の file から置き換えて作り、読み取り専用にする。木の .pyc を書き直す手(worker の
@@ -431,8 +431,8 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
 def entry_pyc(head: bytes, entry: StoredCode) -> bytes:
     """引いた entry から木へ置く .pyc の bytes を組むため — 頭(呼び手の方式の 16 byte — checked hash か timestamp)の後ろに entry の中身を
     そのまま並べる(marshal し直さない)。同じ entry と同じ頭からは root をまたいで同じ bytes になり、:func:`link_pyc` が保存先の 1 つの
-    file を分け合う。組み方を知るのはここだけ — 焼く道具も、.pyc を寄せる他の書き手も、この関数と :func:`link_pyc` を呼ぶ(設計検証
-    lt-4KTRWD3K1PH2VG5W5X294EZJP4 の盲検 A — 組み方が焼く道具にだけ在ると、2 つ目の書き手が marshal し直して分け合えなかった)。"""
+    file を分け合う。組み方を知るのはここだけ — 焼く道具も、.pyc を寄せる他の書き手も、この関数と :func:`link_pyc` を呼ぶ(
+    組み方が焼く道具にだけ在ると、2 つ目の書き手が marshal し直して分け合えなかった)。"""
     return head + entry.data
 
 

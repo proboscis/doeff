@@ -1,5 +1,5 @@
 ;; 本物の claude CLI(2.1.292 で確かめた)+ 偽の Messages API(tests/fake_messages_api.hy)で、借りた資格の差し替えが走っている CLI に
-;; 効くことを確かめる検 — card ki-4ffdafa021e5。本物の API・本物の資格には触らない(ANTHROPIC_BASE_URL は 127.0.0.1 の
+;; 効くことを確かめる検。本物の API・本物の資格には触らない(ANTHROPIC_BASE_URL は 127.0.0.1 の
 ;; 偽の API・token は偽の文字列・CLI の設定 dir は検の tmp の下)。
 ;;
 ;; 印 e2e・slow(日次と着地の門の -m "not e2e" では走らない)。CLI が無い環境では skip する: CLI = env DOEFF_CLAUDE_CODE_CLI の path、

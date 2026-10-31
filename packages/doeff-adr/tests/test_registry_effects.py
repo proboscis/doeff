@@ -1,8 +1,8 @@
 """登録簿に ADR を載せる・空にする・検の id を並べる・検を引く操作は effect RegisterAdr・ClearRegistry・EnforcementIds・
-GetEnforcement で、GetAdr と同じ handler の工場 adr_registry が答える(card ki-dab8943cf664)。
+GetEnforcement で、GetAdr と同じ handler の工場 adr_registry が答える。
 
-決め: 依頼書 lt-6SE07X4256P323ZGZVNSEF9M95 の問い adr-scope の答え lt-RA4FZ731JNZQ6JEGVAYD35XCAZ(doeff-adr を範囲に入れ、
-関数を GetAdr と同じ向きで直す・ADR-DOE-API-001 R32)。前の関数 register_adr・clear_registry・enforcement_ids・get_enforcement は
+決め: doeff-adr を範囲に入れ、関数を GetAdr と同じ向きで直す
+(ADR-DOE-API-001 R32)。前の関数 register_adr・clear_registry・enforcement_ids・get_enforcement は
 外の repo に呼び手が無かったので、移し替えの層を残さずに消した。
 
 adr_registry() は process の登録簿を読み書きし、adr_registry(specs=[…], enforcements={…}) は別の登録簿から答える(どちらかを

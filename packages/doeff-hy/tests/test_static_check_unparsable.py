@@ -3,7 +3,7 @@
 Hy 1.3.1 の match は型の pattern の欄の名を mangle しないので、defk の外の ``(A :foo-bar y)`` は ``case A(foo-bar=y)`` の木に
 なり、型検査の展開の ``ast.parse(ast.unparse(tree))`` が SyntaxError を出す。以前は project が HyLanguageError だけを 1 本の
 file の失敗にし、SyntaxError は展開の子の process から抜けて repo 全体の検査を落とした(agora-controllers の日次の
-hy-type-trend が 10-30 に 2 回 premise-unmet — agora-redesign card ki-6aa23021c532)。
+hy-type-trend が 10-30 に 2 回 premise-unmet)。
 
 - 直列でも子の process で並べても、その file を名指した診断(hy-expansion・match の行)になり、他の file の展開は揃う。
 - doeff-hy-check の入口は例外で落ちず、その file の診断を出して終わる。

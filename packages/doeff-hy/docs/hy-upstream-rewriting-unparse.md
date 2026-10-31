@@ -1,7 +1,7 @@
 # Hy 上流への報告の文面(未提出)
 
 doeff-hy は `doeff_hy/_ast_unparse.py` で当て物をしている。根は Hy 本体にあるので、下の文面を
-hylang/hy の issue として出す(提出は持ち主が判断する。2026-09-23 時点で同じ報告は見当たらず、
+hylang/hy の issue として出す(提出するかはこの repo の管理者が判断する。2026-09-23 時点で同じ報告は見当たらず、
 master の `hy/compat.py` も同じ形)。上流が直した版が出たら、`install()` は何もしなくなる
 (`ast.unparse` が `hy.compat.rewriting_unparse` でなくなる)ので、その時に当て物を消す。
 

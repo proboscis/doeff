@@ -1,11 +1,11 @@
-;;; 計器の memory の答え手 memory-meter-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
+;;; 計器の memory の答え手 memory-meter-handler(ADR-DOE-CORE-EFFECTS-004)— CountMetric・ObserveSeconds・
 ;;; ObserveSecondsBatch・SetGauge・ReadMeter に、1 つの run の中の状態(session の値)で答える。
 ;;;
 ;;; 何のためか: 模擬と検では、本物(process_meter.hy)と同じ契約で計器を確かめたいが、時計・gc・thread に触れたくない。計算は本物と同じ
 ;;; 純関数(meter_effects.hy の metered・gauged)で、違うのは置き場だけ(process に 1 つ → この run の中)。GC の停止は見ない(設定の
 ;;; gc-pause-name は読まない)。別の run とは共有しない。外側に state の handler が要る。
 ;;;
-;;; 書きの溜め(card ki-5c3e73834e73): 数えと秒の観測の書きは、置き場の溜まり(MeterHold の pending — 撃った順)に足すだけで答え、
+;;; 書きの溜め: 数えと秒の観測の書きは、置き場の溜まり(MeterHold の pending — 撃った順)に足すだけで答え、
 ;;; 読み(ReadMeter)の時か溜まりが METERED-WRITES 本に届いた時に、metered で 1 度に断面へ畳む。読みは必ず畳んでから答えるので、読み手が
 ;;; 見る断面は 1 つずつ積んだ断面と同じ(丸めまで — metered の註)。書きのたびに断面の写像を丸ごと写さない(要求ごとに秒の観測と数えを
 ;;; 積む記録の service で、断面の写しが scheduler の thread の CPU の 1 割ほどを占めていた)。gauge の置き換えは溜めずに断面へ書く(数えと

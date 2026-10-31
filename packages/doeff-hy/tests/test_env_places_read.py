@@ -1,5 +1,5 @@
 """doeff-hy-check の置き場の読み(doeff_hy._env_places)が、process 全般の答え手の module doeff_core_effects._os_process を
-読み込まない事(card acp:kanban-issue:ki-efa3d187b136)。
+読み込まない事。
 
 env_places は環境変数 2 つ($DOEFF_HY_CHECK_CACHE・$XDG_CACHE_HOME — 今は pyright の thread の数 $DOEFF_HY_CHECK_PYRIGHT_THREADS も)を
 読むだけなのに、ReadEnvironment に答える答え手として
@@ -48,7 +48,7 @@ def test_the_pyright_threads_setting_follows_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """pyright の thread の数の素の値も、doeff-hy-check の入口が os.environ を直に読まずにこの module から受ける(展開の子の数の
-    上限と同じ — card ki-1475765a3f18)。値の判じ(1 以上の整数か)は呼び手の pyright_threads。"""
+    上限と同じ)。値の判じ(1 以上の整数か)は呼び手の pyright_threads。"""
     monkeypatch.setenv("DOEFF_HY_CHECK_PYRIGHT_THREADS", "2")
     named = probe()
     assert named[2] == "2", named

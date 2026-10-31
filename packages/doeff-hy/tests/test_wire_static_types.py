@@ -1,4 +1,4 @@
-"""doeff_hy._wire の型(wire.pyi)の失敗ケース(agora-redesign #2282・#2279 の子)。
+"""doeff_hy._wire の型(wire.pyi)の失敗ケース(#2279 の子)。
 
 wire.hy は Hy の module で、型の宣言(wire.pyi)が無いと pyright は `parse`・`Malformed` を Unknown として読み、parse の答えを
 使う所の赤が書き手に直せない形で連なる。宣言が在れば:
@@ -100,7 +100,7 @@ def test_a_parsed_field_used_as_the_wrong_type_is_red(probe: Path) -> None:
     assert [e for e in errors if e[1] == 23 and e[0] == "reportOperatorIssue"], errors
 
 
-# defwire の値を dump に渡す検体(agora-redesign #2296)。dump / dump-json の引数は WireValue(`__doeff_wire__: ClassVar[WireShape]`
+# defwire の値を dump に渡す検体。dump / dump-json の引数は WireValue(`__doeff_wire__: ClassVar[WireShape]`
 # の Protocol)。defwire の展開は値を setattr で置き、型検査の展開はその記帳を外すので、型の本体に ClassVar の注記が無いと
 # defwire の型は WireValue を満たさないと読まれる。素の defrecord の値(wire の形を持たない)は赤のまま(stub は緩めない)。
 DUMP_MODULE = """\

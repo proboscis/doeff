@@ -1,5 +1,4 @@
-"""Which state of a kept channel's reader each open subscription holds — the one place both broker handlers keep it
-(agora card ki-86d11cadf3be).
+"""Which state of a kept channel's reader each open subscription holds — the one place both broker handlers keep it.
 
 A reader's state (its positions in the kept logs and the notices it holds without an acknowledgement) belongs to one
 open subscription at a time. Two subscriptions of the same reader name that are open together each get their own

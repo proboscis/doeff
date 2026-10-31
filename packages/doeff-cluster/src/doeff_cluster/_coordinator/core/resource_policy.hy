@@ -4,7 +4,7 @@
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
 ;;;   ここ 1 か所で付くので、版の付け忘れ・記録の漏れが起きない。
 ;;; - 書きの口: Service・Rollout・GroupLimit は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
-;;;   GroupLimit(2026-10-12・card ki-b0e8028c8c8d)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system?})。
+;;;   GroupLimit(2026-10-12)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system?})。
 ;;;   宣言の道具が書き、置き方はこの値で数える。spec の形は系の構成子と同じ規則(detached_rules.group-limit-refusal)で検める。
 ;;;   system = 組を宣言した系の名で、別の系からの書き直しは 409 で断る(組を宣言する系は 1 つ)。system は X-Actor と同じ信頼の水準の
 ;;;   名乗りで(照らす系の名簿は無い)、別の名の系が組を写した時(盲検 A)を止める物 — 同じ名を名乗る 2 つの宣言は区別しない。
@@ -12,9 +12,9 @@
 ;;;   一覧の丸ごとの上書きはしない。所有者(owner)は誰が宣言したかの記録で、書き・消しを断る照合には使わない(名乗りの X-Actor は
 ;;;   確かめないので守りにならない — 2026-10-05 に照合して断る分岐を外した)。force は進行中の Rollout が扱う資源を消す時だけに効く。
 ;;;   Service の PUT で、版(spec.revision)を変えずに置き先(needs・pin)を変える書きは 409 で断り、資源 NeedsOverride を案内する
-;;;   (2026-10-27・card ki-1523bc0aba4f — placement-rewrite-refusal)。宣言の道具は revision に宣言の版を入れるので、宣言は断られない。
+;;;   (2026-10-27 — placement-rewrite-refusal)。宣言の道具は revision に宣言の版を入れるので、宣言は断られない。
 ;;;   照らすのは版で、送り手の名乗りではない。
-;;; - NeedsOverride(2026-10-27・card ki-1523bc0aba4f)= Service 1 つの置き先の一時の上書き(名 = Service の名・spec = {needs reason
+;;; - NeedsOverride(2026-10-27)= Service 1 つの置き先の一時の上書き(名 = Service の名・spec = {needs reason
 ;;;   ttlSeconds} — 作る時だけ。版つきの書き直しは無い。延ばす・変えるのは DELETE してから作り直す)。宣言(Service の spec)は書き換えず、
 ;;;   置き先の判断が効く needs をこの行から決める(cluster_policy.effective-needs)。調停の拍ごとに(lift-needs-overrides — api_policy.settle が
 ;;;   置き方の前に呼ぶ)、期限の来た上書きと、上書きの needs を満たす生きた worker が 0 になった上書きを外し、同じ拍で宣言の needs で
@@ -173,7 +173,7 @@
   ;; 担い手の行の detail(入れ替えの途中・新の入口を読み込めない理由 — worker_policy.statuses)を添える: Service の status.readyReason
   ;; から「なぜ新が起きないか」が読める(2026-09-25)。
   (setv note (if row.detail (+ ":" row.detail) ""))
-  ;; 中身の鍵の在る宣言(card ki-81bf84ac6590)は、版の違いを指紋も違う時だけ断る: 読む code の変わらない版へ宣言し直されても process を
+  ;; 中身の鍵の在る宣言は、版の違いを指紋も違う時だけ断る: 読む code の変わらない版へ宣言し直されても process を
   ;; 起こし直さないので、前の版で起こした process が今の宣言の指紋で動いている。鍵の無い宣言は今どおり版の違いで断る。
   (when (and (!= row.running-revision job.spec.revision)
              (or (is job.spec.content None) (not (spec-hash-matches job.spec row.spec-hash))))
@@ -535,7 +535,7 @@
                (if (setx handoff-watch (.row state.handoffs job.spec.name))
                    {"handoff" (.status-json handoff-watch (handoff-timeout-ms job.readiness))}
                    {})
-               ;; 置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f — 資源 NeedsOverride)。在る間だけ載せる: 効いている needs・訳・期限・
+               ;; 置き先の一時の上書き(2026-10-27 — 資源 NeedsOverride)。在る間だけ載せる: 効いている needs・訳・期限・
                ;; 書き手。宣言の spec.needs は書き換えないので、今効く needs はこの欄で読む。置く・外す拍に出来事と resourceVersion が進む。
                (if (setx override (.row state.needs-overrides job.spec.name))
                    {"needsOverride" (needs-override-spec override)}
@@ -572,7 +572,7 @@
   "worker w の世代をまたぐ recreate の job の受け渡しの姿(AL-D2f): elder = 前の世代がまだ動かしている job・ready = 今の世代が
    起こせると報告した job・leaving = 前の世代の Pod の止まりが始まった(AL-D2k — 受け渡しはここから。印が付いた拍で版を進め、前の世代の
    名指しの待ちを起こす)。前の世代が動かしている job が無ければ None。
-   受け渡しを止めている間(card ki-d8e594fe934d — heartbeat の返事の handoverPending と同じ判断 cluster_policy.handover-blockers)は、
+   受け渡しを止めている間(heartbeat の返事の handoverPending と同じ判断 cluster_policy.handover-blockers)は、
    blocking = 止めている job ごとの名・入れ替えの形・今の世代の最後の結末、sinceMs = 待ちの始まりの刻、stalled = 始まりから
    HANDOVER-STALL-MS を越えた(読み手の知らせの材料 — 計器 doeff_worker_handover_stalled と同じ値)を載せる。"
   (setv runs (tuple (gfor r state.superseded-runs :if (and r.overlapped (= r.worker w.name)) r))
@@ -608,10 +608,10 @@
 (defn #^ dict worker-row [#^ ClusterState state #^ WorkerInfo w #^ int now #^ ClusterTiming timing]
   "worker 1 つの {spec status}。now = 温める表の行のうち、この worker に当たる行(期限の内)を選ぶ刻と、受け渡しの止まりを数える刻
    (timing の lease で前の世代の沈黙を数える — handover-of)。"
-  ;; spec.doeffCommit = 今の世代の process の doeff の版(card ki-6e83e03d146d — 名乗る worker だけ。名乗らない worker の spec の形・版は
+  ;; spec.doeffCommit = 今の世代の process の doeff の版(名乗る worker だけ。名乗らない worker の spec の形・版は
   ;; 以前と同じ)。版が替わった拍に版と出来事が進み、版の読み手が GET /watch で起きる。spec.memoryMiB = 枠の file の行の常駐の job の
-  ;; memory の予算(card ki-ced3c45980a5 — 名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。spec.backgroundRoom = 背景の
-  ;; 仕事を同時に置ける数(card ki-2acb63aec0fd — 手書きの capacity の代わり)。いまの task の空き(taskRoom)は task を置くたびに変わる観測
+  ;; memory の予算(名乗る worker だけ。名乗らない worker の spec の形・版は以前と同じ)。spec.backgroundRoom = 背景の
+  ;; 仕事を同時に置ける数(手書きの capacity の代わり)。いまの task の空き(taskRoom)は task を置くたびに変わる観測
   ;; なので spec に入れない(版が拍ごとに進む)— GET /state の workers の taskRoom で読む。
   {"spec" (| {"provides" (list w.provides) "exclusive" (list w.exclusive) "node" w.node "taskReserve" w.task-reserve
               "backgroundRoom" w.background-room
@@ -641,10 +641,10 @@
                ;; disk の条件(heartbeat の envCapacity — near = 準備の最低に近い・exhausted = 最低を割った)。ok でない間だけ載せる(ok の worker の
                ;; status の形・版は以前と同じ)。切り替わりの拍で版が進み、読み手が GET /resources/Worker で予告を読む。
                (if (!= w.env-capacity "ok") {"envCapacity" w.env-capacity} {})
-               ;; ServiceAccount の token の状態(heartbeat の accountToken — stale = kubelet の置き直しが遅れた・expired = 期限が切れた・
-               ;; card ki-d31166f84ad0)。envCapacity と同じく ok でない間だけ載せ、切り替わりの拍で版が進む(読み手が 401 の前に知る)。
+               ;; ServiceAccount の token の状態(heartbeat の accountToken — stale = kubelet の置き直しが遅れた・expired = 期限が切れた)。
+               ;; envCapacity と同じく ok でない間だけ載せ、切り替わりの拍で版が進む(読み手が 401 の前に知る)。
                (if (!= w.account-token "ok") {"accountToken" w.account-token} {})
-               ;; 枠の file の状態(heartbeat の roomFile — unreadable・malformed の間 worker は前に名乗った枠のまま・card ki-6828eda880ce)。
+               ;; 枠の file の状態(heartbeat の roomFile — unreadable・malformed の間 worker は前に名乗った枠のまま)。
                ;; 同じく ok でない間だけ載せる(読み手が枠の変更が効いていない事を知る)。
                (if (!= w.room-file "ok") {"roomFile" w.room-file} {})
                ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
@@ -877,7 +877,7 @@
                            ;; 版の判定(state は snapshot と同じ値)と、その理由・動いている版の列(2026-09-29)。
                            :version (version-state state name now timing)
                            :running (live-processes state name now timing)
-                           ;; 置き先が無ければ種類・足りない能力・いつから(card ki-53b8677f1374 — 外の見張りが Service の一覧から読む)。
+                           ;; 置き先が無ければ種類・足りない能力・いつから(外の見張りが Service の一覧から読む)。
                            :unplaced (let [job (next (gfor j (active-jobs state) :if (= j.spec.name name) j) None)]
                                        (if (and (is a None) (is-not job None)) (unplaced-view now state job timing) None))))
     (= kind "Worker")
@@ -953,7 +953,7 @@
   (group-limit-of name spec))
 
 
-;; --- Service の needs の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)-------------------------------
+;; --- Service の needs の一時の上書き(資源 NeedsOverride — 2026-10-27)-------------------------------
 
 ;; 上書きの期限の上限(秒 — 7 日)。上書きは復旧の間だけの物で、期限の無い上書き(git の宣言の外に残り続ける置き先)を受けない。
 (setv NEEDS-OVERRIDE-MAX-SECONDS (* 7 24 3600))
@@ -1106,7 +1106,7 @@
           (when (is current None) (refuse 404 (+ "無い Service: " name)))
           (check-version state key body.resource-version)
           ;; 版(revision)を変えない置き先(needs・pin)の書き換えは断り、一時の置き先の記録 NeedsOverride を案内する(2026-10-27・
-          ;; card ki-1523bc0aba4f — placement-rewrite-refusal)。上書きの間の宣言し直しは宣言だけを書き換え、上書きはそのまま効く。
+          ;; placement-rewrite-refusal)。上書きの間の宣言し直しは宣言だけを書き換え、上書きはそのまま効く。
           (setv refusal (run (placement-rewrite-refusal name current body.job)))
           (when refusal (refuse 409 refusal))
           ;; 所有者は本文の owner の記録(無ければ今の値)。送り手が誰でも書き換える — 名乗りを照合して断らない(2026-10-05)。
@@ -1130,7 +1130,7 @@
       (do (setv current (.row state.group-limits name))
           (when (is current None) (refuse 404 (+ "無い GroupLimit: " name)))
           (setv limit (checked-group-limit name body.spec))
-          ;; 組を宣言する系は 1 つ(設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 A — 別の系の宣言が黙って値を書き直し、宣言の順で同時数が
+          ;; 組を宣言する系は 1 つ(別の系の宣言が黙って値を書き直し、宣言の順で同時数が
           ;; 変わった)。版の照合は読んでから書くまでの他人の書きしか止めないので、持ち主の系を別に比べる。持ち主の無い組(system の無い
           ;; spec — 74ebb50b6 の宣言の道具が書いた組)は、最初に書き直した系が持つ。
           (when (and current.system (!= limit.system current.system))
@@ -1214,7 +1214,7 @@
     (setv readiness-problem (readiness-refusal job.readiness job.update))
     (when (is-not readiness-problem None)
       (raise (BodyInvalid readiness-problem)))
-    ;; 版を変えない置き先の書き換えは断る(資源の口の PUT と同じ placement-rewrite-refusal — 2026-10-27・card ki-1523bc0aba4f)。
+    ;; 版を変えない置き先の書き換えは断る(資源の口の PUT と同じ placement-rewrite-refusal — 2026-10-27)。
     (setv refusal (if have (run (placement-rewrite-refusal name have job)) None))
     (cond
       (is have None)

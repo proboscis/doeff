@@ -1,8 +1,7 @@
-"""doeff-hy-check(doeff_hy._static_check の main)が、展開と pyright の前に機体の検の枠を 1 つ取る失敗ケース(agora-redesign card
-ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
+"""doeff-hy-check(doeff_hy._static_check の main)が、展開と pyright の前に機体の検の枠を 1 つ取る失敗ケース(agora-redesign)。
 
 直す前は、会話が直に起動した doeff-hy-check(`uv run doeff-hy-check …`・`python -m doeff_hy._static_check …`)は枠を取らずに走った —
-枠に入っていたのは agora-controllers の手の入口(scripts/hy_type_check.hy の gate)の子だけだった(card ki-931f88d7815b の残る道)。
+枠に入っていたのは agora-controllers の手の入口(scripts/hy_type_check.hy の gate)の子だけだった。
 
 縁の検は機体の正本(~/dotfiles/agent/tests/machine_check_slots.py)を検体の home の下へ写し、隣に宣言(K = 1・置き場は検体の dir)を
 置く — 機体の本物の枠を埋めず、本物の保持者に待たされない。枠を持つ別の process は正本の命令の包み run。doeff-hy-check は本物の
@@ -10,9 +9,9 @@ ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
 (doeff だけを clone した機体)では skip。
 
 M-slot(doeff_hy._check_slot)と正本の間の契約は、口だけを持つ正本(INTERFACE_ONLY_CANON)で確かめる — 方策と持ち物は中を開かず正本の口へ
-渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し(設計検証 lt-TH2ZXPJ9QPXBB8EV6SNEWN1N89 の盲検 A・B)・
-1 枠の中の並走の数は正本の口 process_width が答え、口が無い・落ちた・形の違う答えでも取った枠は持ち続ける(設計検証
-lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。方策と持ち物を開かない形の機械の検は tests/test_check_slot_opacity.py。
+渡す・正本はどの名の環境変数も読める・正本の take の中の失敗は名乗って素通し・
+1 枠の中の並走の数は正本の口 process_width が答え、口が無い・落ちた・形の違う答えでも取った枠は持ち続ける。
+方策と持ち物を開かない形の機械の検は tests/test_check_slot_opacity.py。
 """
 
 import io
@@ -118,8 +117,8 @@ def _scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wait_s: float, proce
     canon = home / CANON_UNDER_HOME
     canon.parent.mkdir(parents=True)
     shutil.copy2(CANON, canon)
-    # 宣言の鍵は正本の policy_of が求める物を全部置く — 正本が processesPerSlot を求めるようになって(dotfiles 142108b9f・
-    # card ki-f8107ed7ccc8)、無い宣言は読めないと断られ枠を取らずに走った(card ki-2320b23ba160)。
+    # 宣言の鍵は正本の policy_of が求める物を全部置く — 正本が processesPerSlot を求めるようになって(dotfiles 142108b9f)、
+    # 無い宣言は読めないと断られ枠を取らずに走った。
     canon.with_name("machine_check_slots.json").write_text(
         json.dumps(
             {

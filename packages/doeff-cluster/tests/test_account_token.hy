@@ -1,4 +1,4 @@
-;; worker の ServiceAccount の token の古さを heartbeat で名乗る(card ki-d31166f84ad0)。
+;; worker の ServiceAccount の token の古さを heartbeat で名乗る。
 ;; 2026-10-24 の zeus では kubelet が投影の token の置き直しを止め(20:37:48Z に置いた token が最後)、exp 21:37:48Z の 81 秒後から Pod の中で
 ;; API server を呼ぶ物が全部 401 になった。止まった事は 401 が出るまで誰にも見えなかった。
 ;;   (1) token-state は発行(iat)から 55 分を越えた token を stale、exp を過ぎた token を expired と読む(10-24 の刻で確かめる)

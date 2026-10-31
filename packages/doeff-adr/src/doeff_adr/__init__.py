@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 
 
 #: 公開の名から、名を定義する module へ — 最初の利用の時にその module だけを読む(effect と handler は内側の module
-#: _effects・_semgrep_effects — card ki-24a2bca4339f・ki-2a549274055c・ki-54e559d3c0e7・ki-dab8943cf664)。
+#: _effects・_semgrep_effects)。
 _LAZY_EXPORTS: dict[str, str] = {
     "AdrIds": "doeff_adr._effects",
     "AdrSpec": "doeff_adr._registry",

@@ -1,4 +1,4 @@
-;;; offloaded-lock-handler(os_file.hy)の検(agora-redesign #3051)— 1 つの scheduler の上で、錠を持った task が待ちへ移った間に別の task が
+;;; offloaded-lock-handler(os_file.hy)の検— 1 つの scheduler の上で、錠を持った task が待ちへ移った間に別の task が
 ;;; 同じ錠を取りに来ても、scheduler の thread が塞がらない事。本物の錠の file(tmp の下)を使う。
 ;;;
 ;;;   (a) 錠を持つ task A が外の合図を待つ間に、task B が同じ錠を取りに来る。A は合図の後に錠を返し、B が取って返す。os-file-handler だけ

@@ -1,4 +1,4 @@
-;; 大きな transcript の差し替え(rotation.hy — card ki-d96c2ca8a5a1)の検: 切る位置の探し方・置き直しと前の file の残し方・
+;; 大きな transcript の差し替え(rotation.hy)の検: 切る位置の探し方・置き直しと前の file の残し方・
 ;; 差し替えない場合と、本番の handler の続き(替え玉の CLI が init の前に transcript の大きさに比例して待つ)が起動の期限を越えずに
 ;; 始まること。
 (require doeff-hy.macros [deftest defk <- val])
@@ -219,7 +219,7 @@
 
 (deftest test-without-the-rotation-the-same-resume-misses-the-launch-timeout [tmp-path]
   ;; 対照: 置き直さない host(上限 1 GiB)では、同じ transcript の続きは init の前に起動の期限を越えて LaunchFailed になる — 上の検が
-  ;; 守る失敗(card ki-d96c2ca8a5a1 の 206 MB の会話の形)。
+  ;; 守る失敗。
   (<- result (resumed-with (* 1024 MIB) tmp-path True))
   (val end result.end)
   (val size result.size)

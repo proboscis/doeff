@@ -4,8 +4,7 @@
 ;; (SessionRuntime.turns の TurnLog)に分かれ、重い方の寿命は読み手が読み終えるまでに結ばれる。閉じた会話は、読み手が終わりまで
 ;; 読んだ turn の記録を持たず、持つのは読み終えていない turn だけ。記録が無くなった閉じた会話は CodexHost に Continuation だけを残す。
 ;; 続き(ResumeThread)は Continuation の上で新しい process を起こし、出来事の seq と起こした数を続ける。
-;; これが崩れると、turn-host の本体の memory は codex の会話の数だけ重くなる(閉じた会話が 16 turn 分の道具の出力の全文を持ち続ける —
-;; zeus の turn-host の RSS の観測 card ki-94d58a92665a の残り 3 件の 3 つ目)。
+;; これが崩れると、turn-host の本体の memory は codex の会話の数だけ重くなる(閉じた会話が 16 turn 分の道具の出力の全文を持ち続ける)。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "codex-test" :role "program"})
 (require doeff-hy.record [defrecord])

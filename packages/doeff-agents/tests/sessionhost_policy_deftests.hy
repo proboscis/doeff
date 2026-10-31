@@ -1455,7 +1455,7 @@
   ;; 「CommandNonZeroExit + causeRetryable 由来の retry 意味論」
   ;; (ACP Observed.hs failureKindForCause の `_` 分岐)。
   ;; ADR-DOE-AGENTS-012 R47 の改訂・R-the-host-only-reads-the-drain-marker-once-002c
-  ;; (f271ae39・card acp:kanban-issue:ki-b5e0d04de958 D1): host の停止(TERM)の拍に排水の印が
+  ;; (f271ae39): host の停止(TERM)の拍に排水の印が
   ;; 在った行は host_drained(retryable=true — 計画された入れ替えで、別の host で走らせ直せる)。
   ;; 印の無い停止は cancelled(false)のまま。
   (assert (= TERMINAL-CAUSE-RETRYABLE

@@ -65,7 +65,7 @@
   (<- project str (root-project {"env" declared}))
   (assert (= project "git@x:r:p") project)
   (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "linux-x86_64"))
-  ;; Linux の準備は SCHED_IDLE と nice 10 で起きる(service より必ず後 — card ki-757b489f8a14)。
+  ;; Linux の準備は SCHED_IDLE と nice 10 で起きる(service より必ず後)。
   (assert (= (cut argv 0 9) #("chrt" "--idle" "0" "nice" "-n" "10" "/hy" "-m" "tool")) argv)
   ;; chrt の無い機体(macOS の worker)は nice 10 だけ。
   (<- mac-argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "darwin-arm64"))
@@ -107,7 +107,7 @@
 
 
 (deftest test-the-progress-mark-rides-into-the-compile-command-only-when-given
-  ;; 失敗ケース(2026-10-26・card ki-d3e585481618): 準備の process の進みの印は、bytecode の処理ステージの前と後にしか触られず、焼く道具が
+  ;; 失敗ケース(2026-10-26): 準備の process の進みの印は、bytecode の処理ステージの前と後にしか触られず、焼く道具が
   ;; disk の遅さで 600 秒を越えると、進んでいる準備が停滞として止められた。印の file を焼く道具へ `--progress <file>` で渡し、道具が
   ;; 閉包の一回りと焼きの前後に印を触る。印を書かない設定(空)は命令に足さない。
   (val trees #((BytecodeTree :tree "/s/roots/k/app" :roots #(".") :declared True)))

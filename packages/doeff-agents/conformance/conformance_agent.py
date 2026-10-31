@@ -47,7 +47,7 @@ def _received_environment() -> dict[str, str]:
     """The environment agentd launched this stand-in with, asked once through
     doeff's foundation handler (subprocess_handler answers ReadEnvironment from
     the process environment) instead of read from the process environment at each use. The
-    env contract above is unchanged (agora-redesign #3012)."""
+    env contract above is unchanged."""
     entries = run(with_handlers([subprocess_handler], ReadEnvironment((), ("",))))
     return {entry.name: entry.value for entry in entries}
 

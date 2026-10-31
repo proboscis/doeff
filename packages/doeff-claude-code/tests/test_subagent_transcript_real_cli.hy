@@ -1,5 +1,5 @@
 ;; 本物の claude CLI(2.1.292 で確かめた)+ 偽の Messages API(tests/fake_subagent_api.hy)で、背景の task を止めた本番と同じ引数の
-;; CLI が走らせた subagent の API の呼びを、handler が subagent の transcript から読む事を確かめる検 — card ki-e798888dce4e。本物の
+;; CLI が走らせた subagent の API の呼びを、handler が subagent の transcript から読む事を確かめる検。本物の
 ;; API・本物の資格には触らない(ANTHROPIC_BASE_URL は 127.0.0.1 の偽の API・token は偽の文字列・CLI の設定 dir は検の tmp の下)。
 ;; 起こす引数は本番の handler が組む物そのまま(argv.hy の launch-argv — --settings の env CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 を含む)。
 ;;
@@ -80,7 +80,7 @@
     (val transcript (get found 0))
     (assert (= #(transcript.parent-tool-use-id transcript.problem) #(AGENT-TOOL-USE-ID None)) (repr transcript))
     ;; 報せの行は答え終えを名乗る(status completed — handler が書き切ったかを transcript の閉じた呼びで判じる印)。total_tokens の値は
-    ;; 比べない(本番では最後の呼びの和より多い報せが在る — card ki-3d45f5857239)。
+    ;; 比べない(本番では最後の呼びの和より多い報せが在る)。
     (assert (any (gfor kind kinds (and (isinstance kind TaskEvent) (= #(kind.task-id kind.status kind.tool-use-id)
                                                                        #(transcript.agent-id "completed" AGENT-TOOL-USE-ID)))))
             kinds)
@@ -89,7 +89,7 @@
                (lfor call subagent-calls #(call.message-id call.model call.input call.output call.cache-write call.cache-read)))
             (repr #(transcript (.seen api))))
     (assert (all (gfor call transcript.calls (is-not call.at.tzinfo None))) (repr transcript))
-    ;; 呼びの要求の id(card ki-b99ace070bf0): 偽の API が答えの頭 request-id に置いた値を、本体の呼びは stream-json の assistant の
+    ;; 呼びの要求の id: 偽の API が答えの頭 request-id に置いた値を、本体の呼びは stream-json の assistant の
     ;; 行の request_id で、subagent の呼びは transcript の requestId で名乗る — CLI の telemetry の api_request が同じ呼びを名指す id。
     (assert (= (lfor call transcript.calls call.request-id) (lfor call subagent-calls call.request-id)) (repr transcript))
     (val main-calls (lfor call (.seen api) :if (.startswith call.role "main") call))

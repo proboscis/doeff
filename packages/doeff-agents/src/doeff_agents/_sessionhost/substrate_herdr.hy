@@ -592,7 +592,7 @@
    herdr-substrate の TmuxSendKeys の節だけ = handler の実装の helper で、
    待つ相手は本物の TUI が paste を受け終える実時間 — 仮想の時計で飛ばすと
    Enter が再描画に食われる。substrate.hy の tmux-send-keys-io と同じ扱い
-   (ADR-DOE-TIME-001 R2・card ki-3c3d85253c2c。:role foundation がその名乗りで、
+   (ADR-DOE-TIME-001 R2。:role foundation がその名乗りで、
    doeff-linter の DOEFF210 はこの名乗りの定義を program に数えない)。"
   (if (and literal text)
       (herdr-send-text-io socket-path pane-id text)

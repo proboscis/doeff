@@ -1,7 +1,7 @@
 """The subscription a wrapper's source holds ends with the wrapped body: by the body's normal end, by its error, by
 a cancel from outside (also one that lands while the start gaps are told, before the body runs), and after the
 source subscribed again past an outage; a cancel before the subscription is confirmed leaves none either, and so
-do readers that end all these ways in turn on one broker (card ki-aa9497a3a412 — a server that re-made its reader
+do readers that end all these ways in turn on one broker (a server that re-made its reader
 for every followed turn left one Redis subscription open per reader until redis-py's pool of connections was full).
 
 Read through the broker's own answer: ``Announce`` answers how many subscribers received the notice, so a

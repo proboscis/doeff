@@ -1,22 +1,22 @@
-;;; 汎用の file system の effect(file_effects.hy)の本物の答え手 os-file-handler(agora-redesign #802 便 1)。os・shutil・fcntl を呼んで値を
+;;; 汎用の file system の effect(file_effects.hy)の本物の答え手 os-file-handler。os・shutil・fcntl を呼んで値を
 ;;; 詰め替えるだけで、判断を持たない。失敗(OSError)は FileFailed の値で答える。
 ;;; 空きの読み(ReadDiskFree・ReadDiskUsage)は機体で読み手を選ぶ: Linux = statvfs・macOS = statvfs の空きを床にした volume の資源の key
-;;; の空き(darwin_volume.hy — statvfs は macOS が自動で空ける領域を使えない空きとして引く・card ki-4ee952807ce0)。
+;;; の空き(darwin_volume.hy — statvfs は macOS が自動で空ける領域を使えない空きとして引く)。
 ;;;
 ;;; 錠の取り(AcquireLock)は取れるまで待つ(fcntl.flock)。os-file-handler はその待ちを呼んだ thread で待つので、1 つの scheduler に task が
 ;;; 並ぶ process では、錠を持った task が待ち(子 process・HTTP)へ移った間に別の task が同じ錠を取りに来ると scheduler の thread ごと
-;;; 塞がり、錠を持つ task が戻れず錠を返せない(agora-redesign #3051 — 着地の service の口を 1 つの scheduler の Program にする時に見つけた)。
+;;; 塞がり、錠を持つ task が戻れず錠を返せない(着地の service の口を 1 つの scheduler の Program にする時に見つけた)。
 ;;; offloaded-lock-handler は錠の取りだけを呼び 1 つに thread 1 本(offloaded_call.hy の ThreadPerCall)で待ち、他の task を回し続ける —
 ;;; os-file-handler の内側に置き、外側に scheduled が要る。待つ task が取り消された後に取れた錠は、その場で返す(持ち主の無い錠を残さない)。
 ;;; offloaded-tree-handler は木の数え(MeasureTree)と消し(RemoveTree)と様子つきの歩き(StatTree)を同じく呼び 1 つに thread 1 本で待つ
-;;; (agora-redesign #3715 — worker の掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける。
-;;; card ki-0da6a0186492 — 掃除が 10 万の file の bytecode の保存先を歩く間も同じ)。置き場は offloaded-lock-handler と同じ(os-file-handler の
+;;; (worker の掃除が数千の file の木を数え・消す間、詰まった disk の上でも他の task(worker の調整ループ)を回し続ける。
+;;; 掃除が 10 万の file の bytecode の保存先を歩く間も同じ)。置き場は offloaded-lock-handler と同じ(os-file-handler の
 ;;; 内側・外側に scheduled)。
 ;;; offloaded-file-handler は tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・
-;;; ReadDiskFree)を同じく呼び 1 つに thread 1 本で待つ(card ki-97da6e8be47f — 本体の thread が disk の block 層の待ちで D 状態になると、同じ
+;;; ReadDiskFree)を同じく呼び 1 つに thread 1 本で待つ(本体の thread が disk の block 層の待ちで D 状態になると、同じ
 ;;; thread の背景の heartbeat も一緒に止まった。待つ間も本体は他の task を回す)。置き場は offloaded-tree-handler と同じ。
 ;;; 2026-10-18 に file 1 つと木の写しの効果(ReadBytes・WriteBytes・AppendText・CopyFile・CopyTree・WalkTree・LinkFile・MakeSymlink・
-;;; ReadDiskUsage)も受けるようにした(card ki-24ee30105583 — agora の turn-host が scheduler の thread で会話の記録を読み・写し、待ち行列の
+;;; ReadDiskUsage)も受けるようにした(agora の turn-host が scheduler の thread で会話の記録を読み・写し、待ち行列の
 ;;; 浅い詰まった disk の上で全部の手番が止まった)。追記の log の書き手の AppendBytes・TruncateFile・SyncDirectory も同じく受ける。受けないのは、錠の取り(offloaded-lock-handler — 取り消しの後の錠を返す後始末が要る)・
 ;;; 錠の返し(disk を待たない)・木の数えと消しと様子つきの歩き(offloaded-tree-handler — IO 優先度を下げる)・bytecode の作り(自分の
 ;;; process の組で回す)。
@@ -149,7 +149,7 @@
 (defk list-directory [path]
   {:pre [(: path str)] :post [(: % (| (get tuple #(DirEntry ...)) FileFailed))]}
   "dir の直下を名の順に並べるため。並べた後で種類を読む前に消えた名は飛ばす(並べた時点で在った名の写し — /proc のように並べる間に
-   名が消える dir で、消えた 1 つが並べ全体を FileFailed にしない・card ki-a6a20f777219)。"
+   名が消える dir で、消えた 1 つが並べ全体を FileFailed にしない)。"
   (try
     (tuple (lfor name (sorted (os.listdir path))
                  :setv seen (try (os.lstat (os.path.join path name)) (except [FileNotFoundError] None))
@@ -322,7 +322,7 @@
 
 (defk free-reader-for [system]
   {:pre [(: system str)] :post [(: % (| Callable None))]}
-  "機体(platform.system の名)の空きの読み直し手を選ぶため(card ki-4ee952807ce0): macOS(Darwin)は statvfs が引く macOS の自動で空ける
+  "機体(platform.system の名)の空きの読み直し手を選ぶため: macOS(Darwin)は statvfs が引く macOS の自動で空ける
    領域の一部も数える darwin-volume-free(darwin_volume.hy の頭の註)・他の機体(Linux)は None = statvfs の空きのまま。"
   (if (= system "Darwin") darwin-volume-free None))
 

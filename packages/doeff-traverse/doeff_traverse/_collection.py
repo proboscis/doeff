@@ -7,8 +7,7 @@ Users should NOT access items directly. Use Traverse, Reduce, Zip, Inspect.
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-#: 有効な件の値の型。型の宣言は collection.pyi が持ち、実行時は `Collection[T]` と書けるようにだけ Generic を継ぐ
-#: (agora-redesign #2321)。
+#: 有効な件の値の型。型の宣言は collection.pyi が持ち、実行時は `Collection[T]` と書けるようにだけ Generic を継ぐ。
 _V = TypeVar("_V", covariant=True)
 
 
@@ -76,8 +75,7 @@ class Collection(Generic[_V]):
 
         A failed item's value is its exception, except a skipped item (a When guard),
         whose value is the original item — so failed_items[i].value is only object.
-        Read this to raise or report the first failure with its type known
-        (agora-redesign #2047).
+        Read this to raise or report the first failure with its type known.
         """
         return [item.value for item in self._items if item.failed and isinstance(item.value, BaseException)]
 
@@ -93,7 +91,7 @@ class Collection(Generic[_V]):
         """Splice a Collection whose valid values are Collections into one Collection.
 
         for/do with nested From binds answers one item per combination, like a list
-        comprehension (card ki-7e6a11f56bd5): the outer Traverse answers a Collection of the
+        comprehension: the outer Traverse answers a Collection of the
         inner Collections, and the expansion flattens it here. An inner item keeps its
         value and failure, and its history follows the outer item's history. A failed or
         skipped outer item has no inner Collection and stays one item. Indices are

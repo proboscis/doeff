@@ -1,13 +1,13 @@
 ;;; HttpRequest の本物の答え手(http-production-handler)・記録と再生の答え手(http-fixture-handler)と、本物の client の作り方
 ;;; (http-client-factory)。
 ;;;
-;;; 使われない接続の持ち方の契約(agora-redesign #3688): client は使われない接続を CLIENT-KEEPALIVE-SECONDS(60 秒)まで持ち、相手の server は
+;;; 使われない接続の持ち方の契約: client は使われない接続を CLIENT-KEEPALIVE-SECONDS(60 秒)まで持ち、相手の server は
 ;;; それより長く持つ(server の切り > client の上限 — doeff の待ち受け aiohttp-http-server は IDLE-CONNECTION-SECONDS の 3630 秒・
 ;;; doeff-cluster の受け口は 120 秒)。だから server が先に閉じた接続へ client が書く形は、server の再起動などの時だけ起きる。その時、
 ;;; 相手の閉じ(FIN)が届いていれば httpcore は送る前にその接続を捨てて張り直す。送った後に閉じられた要求は httpx も httpcore も送り直さず、
 ;;; 送り直すかは HttpRequest の max-retries だけが決める(冪等でない書きは 0 回で出す)。
 ;;;
-;;; 同時に client へ渡す要求の数の契約(agora card ki-89809f7494aa): 答え手は client の範囲ごとに、scheduler の semaphore を 2 段持つ —
+;;; 同時に client へ渡す要求の数の契約: 答え手は client の範囲ごとに、scheduler の semaphore を 2 段持つ —
 ;;; 宛先(scheme・host・port)ごとの CLIENT-ORIGIN-MAX-IN-FLIGHT 本と、全部で CLIENT-MAX-CONNECTIONS 本(httpcore の接続の上限と同じ数)。
 ;;; 要求は宛先の許可・全体の許可の順に取ってから client へ渡し、溢れた要求は httpcore の列でなく scheduler の FIFO で待つ。httpcore 1.0.9 の
 ;;; AsyncConnectionPool は要求 1 つが終わるたびに「列の全部 × 接続の全部」を照らすので、列が数千になると await の橋の thread を使い切った
@@ -167,7 +167,7 @@
   [* #^ (get Callable #([] object)) [client-factory http-client-factory] #^ (get Callable #([float] object)) [sleep _asyncio-sleep]]
   "Handle HttpRequest with retry/backoff through one async HTTP client per covered scope: each time the handler value is
    installed around a program, a new client is made when that program starts and closed when it ends — the same value can
-   be installed around many scopes (agora-redesign #3415: a value made once and installed per request used to reuse the
+   be installed around many scopes (a value made once and installed per request used to reuse the
    client the first scope had already closed)."
   (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
     (_run-with-scoped-client client-factory sleep program))
@@ -284,7 +284,7 @@
               next-response))))))
 
 
-;; 区間を割る httpcore の trace の出来事の名(HttpRequest の trace-phases — agora card ki-ca4b41612e2e)。
+;; 区間を割る httpcore の trace の出来事の名(HttpRequest の trace-phases)。
 (val TRACE-CONNECT-STARTED "connection.connect_tcp.started")
 (val TRACE-CONNECT-COMPLETE "connection.connect_tcp.complete")
 (val TRACE-SEND-STARTED "http11.send_request_headers.started")
@@ -354,7 +354,7 @@
                                :url (str response.url)
                                :elapsed-seconds (.total-seconds response.elapsed)
                                :phases phases))
-    ;; httpx の応答と本文の流れの循環を外す(agora card ki-83d403d6e421)。httpx の client は応答に本文の流れを付け直し、その流れが応答を
+    ;; httpx の応答と本文の流れの循環を外す。httpx の client は応答に本文の流れを付け直し、その流れが応答を
     ;; 指し返す(Response.stream = BoundAsyncStream(..., response=self))ので、そのままでは応答と本文の bytes・str が参照の数で放されず、
     ;; cyclic GC の回まで残る。free-threading の CPython は GC の間隔を生きている物の数に応じて広げ、GC で放した memory を機体へ返さないので、
     ;; 大きい応答を周ごとに受ける job の常駐量が上がり続けた。本文は読み終えて上の答えに写したので、流れを空の流れ(公開の欄 stream)に替える。
@@ -403,9 +403,9 @@
   "Name a request by every field that can change its answer, so two requests that the production handler may answer
    differently never share one fixture: method, url, params and body, plus headers (names case-folded), the timeout, how
    many times a 5xx / transport failure is retried, whether redirects are followed, and whether a failure is answered as
-   a value. log-each-request is left out (it only adds log lines). Added the fields after params / body for
-   agora-redesign #1159 (the HttpRequest contract test found replay answering a header-only / retry-only /
-   redirect-only difference with the other request's recording)."
+   a value. log-each-request is left out (it only adds log lines). Added the fields after params / body when
+   the HttpRequest contract test found replay answering a header-only / retry-only /
+   redirect-only difference with the other request's recording."
   (<- params (| (get list (get tuple #(str object))) None) (_sorted-mapping request.params))
   (<- body-sha256 (| str None) (_body-sha256 request.body))
   (val payload {"method" request.method
@@ -465,7 +465,7 @@
   None)
 
 
-;; A fixture record is one of three answers, named by "answer" (agora-redesign #1159 — the fake answers what the
+;; A fixture record is one of three answers, named by "answer" (the fake answers what the
 ;; production handler answered, failures included):
 ;;   "response"  an HttpResponse's fields
 ;;   "failed"    the HttpFailed value (the request set failures-as-values and no response ever arrived)

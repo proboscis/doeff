@@ -1,4 +1,4 @@
-;;; 空きの読み(ReadDiskFree・ReadDiskUsage — os_file.hy)の機体ごとの読み手の選びと床の検(card ki-4ee952807ce0)。
+;;; 空きの読み(ReadDiskFree・ReadDiskUsage — os_file.hy)の機体ごとの読み手の選びと床の検。
 ;;;
 ;;;   - 読み直し手の選び: macOS(Darwin)= darwin-volume-free(CoreFoundation の Opportunistic の空き)・Linux = None(statvfs の空きのまま)。
 ;;;   - 床: 読み直しの答えが無い時と statvfs の空きより小さい答えは statvfs の空きのまま — 読み直しで今より小さく測らない。

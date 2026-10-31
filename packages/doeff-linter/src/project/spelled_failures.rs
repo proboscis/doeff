@@ -1,11 +1,11 @@
-//! DOEFF122 の失敗の型の宣言 — 1 file の実行で、型の名を字面に含む宣言の file だけから集める(card ki-58bfad2c13a1 の残り)。
+//! DOEFF122 の失敗の型の宣言 — 1 file の実行で、型の名を字面に含む宣言の file だけから集める。
 //!
 //! 1 file の検査が引くのは、match の腕の型 1 つ(書いた file の記号を `Scope::qualify` で解いた名)が失敗の型かだけ。それが要る file は稀(標本 150 file の
 //! 約 2%)だが、全体の実行と同じに repo の Hy の全部から宣言を集めると、冷えた作業木の最初の 1 回が 19〜27 秒かかる(hook の期限は 4 秒)。
 //! 宣言(`defrecord` の `:failure True` と `defeffect` の `:failure` / `:absent` の列)を持つ file は、型の名(解いた名の最後の段)の綴りを字面に必ず
 //! 含む(`spelling`)ので、`:failure` か `:absent` を綴り、型の名も綴る file だけを読み解く。答えは全体の実行(`failure_types_for`)が作る集合を引いた時と同じ。
 //!
-//! 宣言の file を探す repo の歩きは、変わっていない file の中身を読まない(card ki-40c8ca380713 — 冷えた作業木で repo の Hy の全部を読む待ちが 3 秒):
+//! 宣言の file を探す repo の歩きは、変わっていない file の中身を読まない(冷えた作業木で repo の Hy の全部を読む待ちが 3 秒):
 //! git の blob の id で綴りの覚え(`blob_spell` — 宣言の綴りを含むか・`(defeffect` を含むか・どの名を綴るかの Bloom filter)を引き、宣言の綴りを含む file
 //! でも、中身は名で引かれて覚えがその名を綴るかもしれないと言った時に初めて読む。
 

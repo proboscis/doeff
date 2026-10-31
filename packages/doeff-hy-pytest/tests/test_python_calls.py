@@ -1,4 +1,4 @@
-"""Python の呼び出しの数え(doeff_hy_pytest/_python_calls.py・agora-redesign #2854 の受入条 c4c2e04dc)の検。
+"""Python の呼び出しの数え(doeff_hy_pytest/_python_calls.py)の検。
 
 依頼書 B の受入条と失敗例を 1 つずつ潰す: 印の無い走りは枠を取らず set_events を呼ばない(受入条 2)・数えるのは歩数を宣言した
 検の call の間だけ(受入条 3・決定 3)・複数 thread で数を落とさない(受入条 4)・枠は 4 → 5 → 3 の順で 0〜2 を取らず、全部

@@ -1,4 +1,4 @@
-"""書き換えない表 Table(doeff_hy._table)の検 — 古い表は書きの後も古い行を読み、基の作り直しの後も変わらない(agora-redesign #2253)。
+"""書き換えない表 Table(doeff_hy._table)の検 — 古い表は書きの後も古い行を読み、基の作り直しの後も変わらない。
 
 失敗ケース: 基をその場で書き換える表(下の _InPlaceTable)だと、古い表を持つ読み手が新しい行を読む — 同じ検が赤になる。
 """
@@ -87,7 +87,7 @@ def test_table_is_not_a_mapping() -> None:
 
 
 def test_a_table_and_a_draft_refuse_truth_and_len_and_name_size() -> None:
-    """表と下書きを真偽・長さで読むと TypeError で断り、直し方の .size を名指す(agora-redesign #2755 = #2708 の I0b)。
+    """表と下書きを真偽・長さで読むと TypeError で断り、直し方の .size を名指す。
     数は size で読む(下書きの size は書きを当てた後の行の数)。"""
     empty = table_of(())
     full = _table(3)
@@ -118,7 +118,7 @@ def test_the_counterexample_a_table_without_bool_reads_true_when_empty() -> None
     assert silent.size() == 0 and bool(silent)  # 空なのに真 — 見落としが例外にならない
 
 
-# ------------------------------------------------------------------ 下書き TableDraft(agora-redesign #2254)
+# ------------------------------------------------------------------ 下書き TableDraft
 
 
 def test_a_draft_reads_its_own_writes_and_leaves_the_table_alone() -> None:
@@ -187,7 +187,7 @@ def test_the_counterexample_a_read_through_draft_misses_its_own_writes() -> None
     assert draft.row("k0") == 0  # 同じ拍の中で書いた行が読めない — TableDraft はこれを起こさない(上の検)
 
 
-# ------------------------------------------------------------------ 値の列 rows(agora-redesign #2254)
+# ------------------------------------------------------------------ 値の列 rows
 
 
 def test_rows_follow_the_keys_after_writes_and_removals() -> None:
@@ -206,7 +206,7 @@ def test_rows_follow_the_keys_after_writes_and_removals() -> None:
     assert len(table.rows()) == table.size() and len(draft.rows()) == draft.freeze().size()
 
 
-# ------------------------------------------------------------------ 値としての扱い(agora-redesign #2254)
+# ------------------------------------------------------------------ 値としての扱い
 
 
 def test_tables_compare_by_rows_not_by_layout() -> None:
@@ -253,7 +253,7 @@ def _random_writes(seed: int, keys: int, count: int) -> list[tuple[str, int | No
 
 
 def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
-    # agora-redesign #2412: with-writes と下書きの freeze は書きを 1 度に当てる。基の大きさ・書きの数を変え(作り直しの前と後の両方)、
+    # with-writes と下書きの freeze は書きを 1 度に当てる。基の大きさ・書きの数を変え(作り直しの前と後の両方)、
     # どの表も、列の順に 1 件ずつ当てた dict と同じ行を持つ。
     from doeff_hy._table import draft_of
 
@@ -281,7 +281,7 @@ def test_writes_applied_at_once_match_writes_applied_one_by_one() -> None:
                 assert all(got.row(k) == expected.get(k) for k in {k for k, _ in writes} | set(base)), (seed, base_rows, count)
 
 
-# ------------------------------------------------------------------ 速さの道(agora-redesign #2715 — #2708 の I0a・契約は変えない)
+# ------------------------------------------------------------------ 速さの道(#2708 の I0a・契約は変えない)
 
 
 class _UnreadableRow:
@@ -325,7 +325,7 @@ def test_items_pair_the_keys_with_the_rows() -> None:
     assert big._delta  # 大きな表は差分の層の道を通っている(items が差分を含めて組む事の確かめ)
 
 
-# ------------------------------------------------------------------ 基を分け合う表の比べ(card ki-46d8cc853aca — 盤の写しの比べが card の数に比例していた)
+# ------------------------------------------------------------------ 基を分け合う表の比べ(盤の写しの比べが card の数に比例していた)
 
 
 class _CountedRow:
@@ -417,7 +417,7 @@ def test_comparing_tables_agrees_with_comparing_their_rows_for_any_writes() -> N
             assert (left == longer) is (left_rows == _reference(left_rows, more)), (seed, base_rows, count)
 
 
-# ------------------------------------------------------------------ 行が違う鍵(card ki-8c4d01b4f5c2 — 画面が盤の変わった card の鍵を合図に載せる)
+# ------------------------------------------------------------------ 行が違う鍵(画面が盤の変わった card の鍵を合図に載せる)
 
 
 def _changed_reference(left: dict[str, int], right: dict[str, int]) -> tuple[str, ...]:
@@ -584,7 +584,7 @@ def test_copy_and_pickle_keep_the_rows_and_drop_the_flat_copy() -> None:
         assert back._flat is None or back._flat is not table._flat
 
 
-# ------------------------------------------------------------------ 系譜(agora card ki-6a5549018e73 — 子孫との比べは書きの数に比例する)
+# ------------------------------------------------------------------ 系譜(子孫との比べは書きの数に比例する)
 
 
 def _rows_looked_up(monkeypatch: pytest.MonkeyPatch, compare: Callable[[], object]) -> int:

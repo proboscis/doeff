@@ -3,12 +3,12 @@
 使い方: python run_example_failing_a_case.py <例の path>
 
 件の中の失敗は、Traverse が件の関数で作る Program の中で例外を上げる事で起こす — 例の source の文字列(handler の式・mock の値)
-を書き換える変異は、出力を変えない例の中の書き換えでも検の file を直させた(card ki-f8a58fb49dd9 の所見 4)。
+を書き換える変異は、出力を変えない例の中の書き換えでも検の file を直させた。
 
 この入口が依る traverse-lib の約束は 3 つ: Traverse は `Traverse(f, items, label=None)` で作られ、handler は件ごとに f を呼び、
 件の Program の中の例外を件の失敗として記録して先へ進む。3 つ目が守られる間、子は 0 で終わり、出力の比べ方だけが失敗を
 捕まえる。どれかが変われば子は 0 以外で終わるか印が 0 になり、test_examples_run.py の検が走る例の全部で赤になる
-(黙って緑にならない — 設計検証 lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の盲検 A)。その時は、この入口を新しい約束に合わせる。
+(黙って緑にならない)。その時は、この入口を新しい約束に合わせる。
 
 終わる時に、実行の印 — 件の関数を呼んだ数と、doeff の run で Program を走らせた数 — を標準エラーへ COUNTS_LINE の形で書く。
 名ではなく走った数なので、import するだけ・呼ばない関数の中・quote の中・doeff の外の同じ名(asyncio.run・例の中の run)は数えない。

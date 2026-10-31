@@ -1,4 +1,4 @@
-;;; 待ちの子の効果(warm_effects.hy)の I/O なしの答え手 scripted-warm-process-handler(agora-redesign #3646 の A3)。
+;;; 待ちの子の効果(warm_effects.hy)の I/O なしの答え手 scripted-warm-process-handler。
 ;;; 本物の socket と process を使わず、世界の値 WarmScript で答える。業務を知らない: 台本の中身は呼び手(検)が渡す。
 ;;;
 ;;;   ForkFromWarm     socket-path が WarmScript の sockets に無い = socket が無い断り。在る socket は answer の通りに答える:

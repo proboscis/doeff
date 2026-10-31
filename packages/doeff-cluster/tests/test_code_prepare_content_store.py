@@ -254,7 +254,7 @@ def _pycs(tree: Path) -> dict[str, Path]:
 
 
 def test_f_trees_baked_from_the_store_share_one_file_per_pyc(filled: _Store, tmp_path: Path) -> None:
-    """失敗ケース(f・card ki-d51b7baa38bc): 保存先の code から置く .pyc は、root をまたいで保存先の 1 つの file を分け合い、2 つ目の木は
+    """失敗ケース(f): 保存先の code から置く .pyc は、root をまたいで保存先の 1 つの file を分け合い、2 つ目の木は
     .pyc の新しい block を持たない(hardlink — 私有の byte 0)。直す前は木ごとに同じ中身を新しく書き、Mac の root 1 本で約 100 MB を書いて、
     root を消した後も local snapshot が 24 時間持った。"""
     second, third = tmp_path / "second", tmp_path / "third"
@@ -326,7 +326,7 @@ def _inodes(*dirs: Path) -> dict[tuple[int, int], int]:
 
 def test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options(
         filled: _Store, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """受入(card ki-d51b7baa38bc): 1 commit の差の root(木の写し + bytecode の焼き)が新しく書く byte(root と保存先に新しくできた実体の
+    """受入: 1 commit の差の root(木の写し + bytecode の焼き)が新しく書く byte(root と保存先に新しくできた実体の
     block)は、今の形(木を全部展開し、.pyc を全部書く)の 10 分の 1 以下。PATH の頭には macOS の BSD の cp と同じく GNU の書き方を断る cp を
     置く — 直す前の Mac は、木の写しが cp に断られて全部を展開し(10-17 19:53 JST の root は 2 つの repo の木とも展開)、.pyc を
     root ごとに新しく書いた(root 1 本 私有 429 MB)。"""
@@ -367,7 +367,7 @@ def test_h_a_one_commit_root_writes_a_tenth_or_less_where_cp_refuses_gnu_options
 def test_e_two_macro_versions_taking_turns_do_not_rebake_each_other(filled: _Store, tmp_path: Path) -> None:
     """失敗ケース(e): macro の中身の違う 2 つの書き手(実行環境の準備と、doeff の版の違う作業木の import の代役 — 使う側の source は同じ)が、
     同じ保存先で新しい木を交互に焼く。鍵 1 つに entry 1 つの並びでは、互いの entry を今の macro に合わないと見て使う側を焼き直し、同じ鍵を
-    上書きし合った(2026-10-12 zeus — 同じ版の準備でも 1 回に 100〜600 本・card ki-6828e9af04b4)。鍵 1 つに macro の環境ごとの entry を
+    上書きし合った(2026-10-12 zeus — 同じ版の準備でも 1 回に 100〜600 本)。鍵 1 つに macro の環境ごとの entry を
     持つ並びでは、2 巡目からはどちらも焼き直さず、import した値はそれぞれの macro の展開。"""
     five = tmp_path / "five-1"
     _write_four(five, filled.salt, macro_add=5)

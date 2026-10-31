@@ -1,5 +1,5 @@
 //! 宣言した file の集まりの本文を、註を落として読む共通の部品(DOEFF148 の :confined-spellings・DOEFF161 の :counted-spellings —
-//! agora-redesign #1373・#1436・#1437)。
+//! #1436・#1437)。
 //!
 //! 群の `:files`(repo の根に錨を下ろした glob)に当たり `:except` に当たらない file を集め、拡張子ごとの註を落とした本文を返す。
 //! 文字列は落とさない — 外の口の動詞 `"POST"` や route の綴り `"/api/intake"` は文字列で書かれるので、文字列を数えない DOEFF146

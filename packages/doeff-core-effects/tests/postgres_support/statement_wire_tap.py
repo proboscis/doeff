@@ -1,8 +1,8 @@
-"""検の補助: client と PostgreSQL の間に置く TCP の中継で、client が送った文を往復ごとに記録する(agora-redesign #3605)。
+"""検の補助: client と PostgreSQL の間に置く TCP の中継で、client が送った文を往復ごとに記録する。
 
 答え手が DB へ流す往復の列(往復ごとの文の並び)を、driver の呼び方ではなく wire の上で見るための道具。PostgreSQL の frontend の
 message を読むだけで、中身は書き換えずにそのまま server へ渡す(server の答えも読まずにそのまま client へ返し、bytes の数だけを数える —
-答えの行が wire の上で何 bytes になったかを見る検のため・card ki-1368e0d6b801)。
+答えの行が wire の上で何 bytes になったかを見る検のため)。
 
 - 往復 = client が Sync('S')か Simple Query('Q')を送るまでに送った文の並び。client はそこで server の答えを待つ(pipeline mode でも
   sync は出口の 1 度 — 答え手の postgres-flush)。文の無い Sync は往復に数えない。

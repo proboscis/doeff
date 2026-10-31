@@ -2,7 +2,7 @@
 
 py.typed の package では、`__init__.py` で import しただけの名は公開と見なされない(`__all__` か `import X as X` が要る)。
 README の Quick Start の `from doeff_core_effects import Ask, Get, Put, Tell` を写した人の editor と pyright が
-「"Ask" is not exported from module」(reportPrivateImportUsage)を出していた(card ki-02e317783af0 の抜け 1)。
+「"Ask" is not exported from module」(reportPrivateImportUsage)を出していた。
 
 この repo は `__all__` を置かない(doeff-linter の DOEFF021 — `doeff/__init__.py` も `X as X`)ので、頭の名は `X as X` で結ぶ。
 HTTP の名(`_LAZY_EXPORTS` — Hy の module で httpx を引く)は `__getattr__` で初めて読むので、`X as X` で結べない

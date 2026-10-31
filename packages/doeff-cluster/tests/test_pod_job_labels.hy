@@ -1,4 +1,4 @@
-;; worker が置かれた常駐の job を自分の Pod の label に付け外しする(card ki-a66bb71f4152)。常駐の job の置き先は coordinator の GET /state
+;; worker が置かれた常駐の job を自分の Pod の label に付け外しする。常駐の job の置き先は coordinator の GET /state
 ;; にしか出ず、k8s の Service は機体の label(doeff.dev/node)で 1 台を名指していた — job が別の機体へ移ると口が届かない。
 ;;   (1) 判断: label の鍵は job.doeff.dev/<job の名>・値は placed。task と label の名に成らない名は載せない。前置きの label だけを揃え、
 ;;       ほかの label には触らない。揃えるのは宣言の job が変わった拍と 60 秒ごと、失敗の後は 10 秒から倍にして 5 分まで待つ

@@ -1,4 +1,4 @@
-;;; worker の Pod の job の label の付け外し(card ki-a66bb71f4152 — 判断は worker/core/pod_label_rules)。答え手 pod-job-labels は worker の
+;;; worker の Pod の job の label の付け外し(判断は worker/core/pod_label_rules)。答え手 pod-job-labels は worker の
 ;;; 拍の宣言の読み ReadDesired を外側(coordinator への口 coordinator_link)へ渡し、その答えの宣言がこの worker に置いた常駐の job を
 ;;; 自分の Pod の label に写してから、宣言をそのまま返す。拍に乗る(新しい loop も watch も起こさない)— 揃えるのは宣言の job が変わった
 ;;; 拍と RESYNC-EVERY-MS ごと。

@@ -56,7 +56,7 @@
 (import doeff_core_effects [sqlite-sql-handler])
 (import doeff_core_effects [RunProcess ExecutableAt ReadEnvironment WorkingDirectory ProcessAlive ReadInterpreter ReadMachineName ResolveModule StartProcess PollProcess StopProcess SignalProcess WriteProcessInput])
 ;; offloaded-subprocess-handler は factory metered-offloaded-subprocess-handler に計器 None を渡した値で __doeff_body__ を持たない —
-;; 導出には factory を挙げる(agora-redesign #2847)。
+;; 導出には factory を挙げる。
 (import doeff_core_effects [subprocess-handler metered-offloaded-subprocess-handler])
 (import doeff_core_effects [scripted-process-handler])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput])
@@ -96,7 +96,7 @@
 
 ;; --- 生 Python handler の宣言(D5)。節を読めない handler(installer / factory)は、domain の :handlers に
 ;; Handles(handler, effect …) で置く — 宣言は domain の側に在り、core-effects の handler に何も付けない(関数 handles() の
-;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。宣言は「処理に参加する宣言」であり
+;; 後付けの注釈から型に替えた — ADR-DOE-API-001 R29)。宣言は「処理に参加する宣言」であり
 ;; 全域性の保証ではない。lazy-ask は doeff-reader と doeff-scope の 2 つで同じ宣言を置く。
 (setv _lazy-ask-handles (Handles lazy-ask Ask Local))
 
@@ -202,7 +202,7 @@
   :effects [MemoGetEffect MemoPutEffect MemoDeleteEffect MemoExistsEffect]
   :handlers [_memo-layer-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "4 effect 全てを _memo-layer-handler が被覆する(defhandler 構造導出)。MemoDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により MemoDeleteEffect 節(broadcast delete)が実装され解消済み。")
+  :docs "4 effect 全てを _memo-layer-handler が被覆する(defhandler 構造導出)。MemoDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、MemoDeleteEffect 節(broadcast delete)が実装され解消済み。")
 
 
 (defdomain doeff-cache
@@ -210,7 +210,7 @@
   :effects [CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect]
   :handlers [(Handles cache-handler CacheGetEffect CachePutEffect CacheDeleteEffect CacheExistsEffect)]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "4 effect 全てを cache-handler が被覆する(Handles の宣言)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、maintainer 裁定 A(2026-07-18)により CacheDeleteEffect 分岐が実装され解消済み。")
+  :docs "4 effect 全てを cache-handler が被覆する(Handles の宣言)。CacheDeleteEffect は 2026-07-17 実測のドリフト(未処理)だったが、CacheDeleteEffect 分岐が実装され解消済み。")
 
 
 (defdomain doeff-outcome
@@ -255,7 +255,7 @@
   :effects [WsConnect WsReceive WsSend WsDisconnect WsDisconnectAll ReadWsSent]
   :handlers [aiohttp-ws-link-handler scripted-ws-link-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "aiohttp-ws-link-handler(本物・extra http-server — 公開の installer は aiohttp-ws-client)と scripted-ws-link-handler(I/O なし・台本 — 公開の installer は scripted-ws-client)が答える。installer は program を closing-links で包み、範囲の終わりに WsDisconnectAll を出す。ReadWsSent は台本の答え手が送った文と閉じの記録を読む effect で、答えるのは scripted-ws-link-handler だけ。待ち受け側(doeff-http-server)の WsOpened / WsClose とは別の語彙(agora-redesign #4007 U0)。")
+  :docs "aiohttp-ws-link-handler(本物・extra http-server — 公開の installer は aiohttp-ws-client)と scripted-ws-link-handler(I/O なし・台本 — 公開の installer は scripted-ws-client)が答える。installer は program を closing-links で包み、範囲の終わりに WsDisconnectAll を出す。ReadWsSent は台本の答え手が送った文と閉じの記録を読む effect で、答えるのは scripted-ws-link-handler だけ。待ち受け側(doeff-http-server)の WsOpened / WsClose とは別の語彙。")
 
 
 (defdomain doeff-sql
@@ -297,8 +297,8 @@
   :effects [AwaitProcessExit AwaitWarmChildExit]
   :handlers [process-exit-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "process-exit-handler(本物 — 子の終わると読める fd〔Linux = pidfd・macOS = kqueue の EVFILT_PROC〕の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち
-         (agora-redesign #3871 の単位 1)。終わりを 1 度だけ読む PollProcess・PollWarmChild は、それぞれ doeff-process・doeff-warm-process の語彙。")
+  :docs "process-exit-handler(本物 — 子の終わると読める fd〔Linux = pidfd・macOS = kqueue の EVFILT_PROC〕の読みを event loop で待つ)が 2 effect 全てに答える。周期で問い直さずに終わりで起きる待ち。
+        終わりを 1 度だけ読む PollProcess・PollWarmChild は、それぞれ doeff-process・doeff-warm-process の語彙。")
 
 
 (defdomain doeff-channel
@@ -373,8 +373,8 @@
   :docs "os-random-handler(本物・os.urandom)と seeded-random-handler(I/O なし・種から決まる)が答える。")
 
 
-;; VM の数と switch の effect(card ki-27e8ea225b62 が doeff_vm の関数から effect にした — 宣言が無く、検 (c) が 2026-10-29 の
-;; 日次の検で赤だった)。vm_probe_handler は生 Python の handler で節を読めないので Handles で宣言する(card ki-03a7f0af2b64)。
+;; VM の数と switch の effect(doeff_vm の関数から effect にした — 宣言が無く、検 (c) が 2026-10-29 の
+;; 日次の検で赤だった)。vm_probe_handler は生 Python の handler で節を読めないので Handles で宣言する。
 (import doeff_core_effects [ReadVmLiveCounts ReadVmWorkCounts ReadVmScanCounts ReadInvariantChecks SetInvariantChecks
                             SetSchedulerStepBudgetArmed SetSchedulerTraceInstalled vm-probe-handler])
 

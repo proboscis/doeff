@@ -1,4 +1,4 @@
-;;; offloaded-tree-handler(os_file.hy)の検(agora-redesign #3715・card ki-0da6a0186492)— 木の数え(MeasureTree)と消し(RemoveTree)と
+;;; offloaded-tree-handler(os_file.hy)の検— 木の数え(MeasureTree)と消し(RemoveTree)と
 ;;; 様子つきの歩き(StatTree)を thread で待つ答え手が、os-file-handler と同じ答えを返す事と、数えや歩きが thread で待つ間も同じ scheduler の
 ;;; 別の task が回る事。本物の file(tmp の下)を使う。
 ;;; 数えを止めておく所は os.walk(measure-tree が呼ぶ)の差し替え — 検の殻の thread が合図を出すまで walk の頭で待つ。os-file-handler だけ
@@ -107,7 +107,7 @@
 
 
 (deftest test-the-offloaded-stat-tree-answers-like-the-os-file-handler [tmp-path]
-  ;; card ki-0da6a0186492: 様子つきの歩き(StatTree)も thread で待ち、答えは os-file-handler と同じ(名の順・file の大きさ・無い path の断り)。
+  ;; 様子つきの歩き(StatTree)も thread で待ち、答えは os-file-handler と同じ(名の順・file の大きさ・無い path の断り)。
   (<- root str (tree-at tmp-path))
   (<- direct tuple (with_handlers [os-file-handler] (StatTree (+ root "/t"))))
   (<- offloaded tuple (in-thread (walked-with-stats (+ root "/t"))))
@@ -120,7 +120,7 @@
 
 
 (deftest test-another-task-runs-while-a-tree-is-walked-with-stats [tmp-path monkeypatch]
-  ;; card ki-0da6a0186492: 様子つきの歩きは合図まで walk の頭で止まる。合図を出すのは同じ scheduler の別の task — 歩きが thread で待つ間に
+  ;; 様子つきの歩きは合図まで walk の頭で止まる。合図を出すのは同じ scheduler の別の task — 歩きが thread で待つ間に
   ;; 回れば終わる(頭の註と同じ形)。
   (<- root str (tree-at tmp-path))
   (val gate (threading.Event))

@@ -570,7 +570,7 @@ def test_module_val_binds_once_and_second_val_is_an_expansion_error() -> None:
 
 
 def test_module_val_and_var_take_a_type_annotation() -> None:
-    # 値の型が式から決まらない時(空の dict など)の注記 — `(val #^ 型 名前 式)`(agora-redesign #2939)。実行時は注記つきの代入。
+    # 値の型が式から決まらない時(空の dict など)の注記 — `(val #^ 型 名前 式)`。実行時は注記つきの代入。
     module = _module(
         MODULE_PRELUDE
         + """

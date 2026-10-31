@@ -1,4 +1,4 @@
-"""event-loop の macro の検(agora-redesign #3080・設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
+"""event-loop の macro の検(設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
 
 - 節ごとの結果: 購読者ごとの列(subscribed_event_handler)に出来事を流し、各節の本体の値が次の state になり、(stop 値) で抜ける。
   出来事ごとの記録(slog)が受けた順に残る。

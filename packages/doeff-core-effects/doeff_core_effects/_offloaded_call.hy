@@ -1,19 +1,19 @@
-;;; 塞ぐ呼び(driver の I/O など)を scheduler の thread の外で回し、撃った task だけが外から完了させる promise で待つ仕組み
-;;; (agora-redesign #1215)。PostgreSQL の答え手 2 つ — postgres-sql-handler(postgres_sql.hy)と pooled-postgres-sql-handler
+;;; 塞ぐ呼び(driver の I/O など)を scheduler の thread の外で回し、撃った task だけが外から完了させる promise で待つ仕組み。
+;;;PostgreSQL の答え手 2 つ — postgres-sql-handler(postgres_sql.hy)と pooled-postgres-sql-handler
 ;;; (pooled_postgres_sql.hy — #880 U2 で書いた仕組みをここへ移した)— が共に使う。
 ;;;   - offloaded = call を Executor の thread で回し、CreateExternalPromise + Wait で待つ(thread_pool_compute.hy と同じ作法)。待つのは撃った
 ;;;     task だけで、scheduler の他の task は回り続ける — scheduled の下で使う。待ちが取り消されたら Handoff が後始末をする: 始まっていない
 ;;;     仕事は外し、取り消しの前後に出来た答えは abandon(Executor で回す後始末 — 借りた接続を返す等)へ 1 度だけ回す。もう走っていて答えの
-;;;     まだ無い仕事には interrupt(Executor で回す止め方 — 走っている子 process を止める等・agora-redesign #2847)を 1 度だけ回す。止め方を
+;;;     まだ無い仕事には interrupt(Executor で回す止め方 — 走っている子 process を止める等)を 1 度だけ回す。止め方を
 ;;;     持たない仕事(既定の keep-going)は走り切り、答えは abandon へ回る。
 ;;;   - 答えは 1 枠の箱 Delivered に入れて promise を完了させ、待ち手へ渡す時に箱を空ける。scheduler は完了した promise の答えを、handle が
 ;;;     全部消えたと掃除(HANDLE_SWEEP_INTERVAL の id ごと — doeff #502)が見るまで表に持つ。答えそのもので完了させると、待ち手が手放した
-;;;     答え(ClickHouse の読みの行・file の中身)が掃除まで残り、Rust の版の表は gc からも見えない(agora card ki-8d1e57d431c1 — 読みの口
+;;;     答え(ClickHouse の読みの行・file の中身)が掃除まで残り、Rust の版の表は gc からも見えない(読みの口
 ;;;     の job が 3.5 時間で RssAnon 440→2464 MB になり、残る型は SqlRows だった)。await_handler の _AwaitedValue と同じ作法。
 ;;;   - ThreadPerCall = 呼び 1 つに thread 1 本を起こす Executor(持ち主も後始末も要らない既定)。thread の数に上限を置かないのは、呼びが
 ;;;     thread の中で別の資源(接続の許可)を待っても、その資源を持つ側の次の呼びが thread の空きを待って詰まらないため。同時の数の上限は
 ;;;     呼びが待つ資源の側(PostgresConnections の許可)が持つ。thread は daemon — 止まらない呼び(長い文)が process の終わりを止めない。
-;;;   - ReusedThreads = 呼びを空いた thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor(agora card ki-8fc4f9017572)。ThreadPerCall
+;;;   - ReusedThreads = 呼びを空いた thread へ渡し、空きが無い時だけ thread を 1 本起こす Executor。ThreadPerCall
 ;;;     と同じく上限を置かず daemon で、違いは呼びの後の thread を _IDLE-SECONDS の間待たせて次の呼びに使う事だけ。呼びごとに thread を起こすと
 ;;;     起こす待ち(呼び手の thread で数 ms)が文の数に比例し、預かり所の普段の CPU の 2 割を占めた。同時に走る thread の数は ThreadPerCall と
 ;;;     同じ(呼びの数の山)で、空きのまま _IDLE-SECONDS を過ぎた thread は終わる。thread は呼びを回し終えたら呼びと答えへの参照を捨ててから
@@ -174,9 +174,9 @@
     {:pre [(: self Handoff) (: pool Executor) (: abandon (get Callable #([object] None))) (: interrupt (get Callable #([] None)))]
      :post [(: % "None")]}
     ;; 錠は同じ thread から入り直せる RLock: give-up が錠を持ったまま始まっていない仕事を外すと、Future.cancel が同じ thread で完了の
-    ;; callback(deliver)を呼ぶ。入り直せない錠だと scheduler の thread がそこで止まり、run 全体が固まった(agora-redesign #2792 の検で発見)。
+    ;; callback(deliver)を呼ぶ。入り直せない錠だと scheduler の thread がそこで止まり、run 全体が固まった(発見)。
     ;; 仕事の Future は持たない: Future の完了の callback がこの係と promise を持つので、係が Future を持つと循環の参照になり、promise と
-    ;; abandon が抱える物(呼び鈴など)の handle が循環の回収(gc)まで消えず、scheduler の掃除がその行を消せなかった(agora-redesign #3532)。
+    ;; abandon が抱える物(呼び鈴など)の handle が循環の回収(gc)まで消えず、scheduler の掃除がその行を消せなかった。
     ;; Future は give-up の引数で受ける(取り消しの callback と待ちの後始末が持つ — どちらも promise が終われば手放される)。
     (setv self.pool pool
           self.abandon abandon

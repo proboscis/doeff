@@ -86,7 +86,7 @@ class PassedEffects(NamedTuple):
     ``keeps`` the types of the clauses before the catch-all (the handler still
     sees those, whatever their guards say). The VM skips the handler for such
     an effect without calling into Python — the complement of the annotation
-    filter, which cannot say "everything except X" (agora-redesign #2008).
+    filter, which cannot say "everything except X".
     """
 
     passes: tuple[type, ...]
@@ -95,7 +95,7 @@ class PassedEffects(NamedTuple):
 
 # Where handler_spec keeps a plain function's HandlerSpec. HandlerSpec (effect_types,
 # generator_function, tail_resume_lines, passed) is the VM's own type, so the VM reads
-# the kept spec here in place, without calling handler_spec (agora-redesign #2927).
+# the kept spec here in place, without calling handler_spec.
 _SPEC_ATTR = "__doeff_handler_spec__"
 _PASSES_ATTR = "__doeff_passes__"
 
@@ -289,7 +289,7 @@ _SHARED_BY_CODE: dict[int, _SharedResolution] = {}
 
 
 def _shared_parameter_types(function: types.FunctionType, index: int, annotation: object) -> Any:
-    """Resolve once per code — a handler made afresh for every example re-resolves nothing (agora-redesign #2422)."""
+    """Resolve once per code — a handler made afresh for every example re-resolves nothing."""
     code = function.__code__
     shared = _SHARED_BY_CODE.get(id(code))
     if (

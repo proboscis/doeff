@@ -1,4 +1,4 @@
-//! DOEFF143: 業務の効果に答える偽の handler を作らない(agora-redesign #1375 / #1367 / #1189 — 元は agora-controllers の一時の検
+//! DOEFF143: 業務の効果に答える偽の handler を作らない(#1367 / #1189 — 元は agora-controllers の一時の検
 //! business_fakes_rules.hy の判定 A と D・#682・#715・#780)。
 //!
 //! 偽物 = 模擬の根から届き、本番の入口から届かない定義の中の effect の節。その節が業務の効果(定義元の module が
@@ -7,28 +7,27 @@
 //! 入口から届く答え手が無い(`:unserved` に理由つきで載せた物を除く)。偽物が下の層の効果(`:lower-layer-modules`)に tap でなく
 //! 答えるのも DOEFF143(下の層の偽物は repo の外の正典 1 つだけ — 元の判定 C)。
 //!
-//! DOEFF157(agora-redesign #1377 — 元の判定 B): 検だけの偽物 = 検の file の定義から届き、本番の入口からも模擬の根からも届かない
+//! DOEFF157(元の判定 B): 検だけの偽物 = 検の file の定義から届き、本番の入口からも模擬の根からも届かない
 //! 定義の節。業務の効果か下の層の効果に tap でなく答え、外の世界の表にも反例の表にも無ければ critical。
 //!
 //! DOEFF158(#1377 — 元の判定 G): 本番の入口から届く節のうち、intent の層(`:assembly-shape :intent-layer`)の効果に tap でなく
 //! 答えるのは、翻訳の層(`:translation-layer`)の handler 1 つだけ。翻訳の層の外の答え手と、同じ効果に答える翻訳の handler の 2 つ目以降を出す。
 //!
-//! DOEFF206(agora-redesign #3405・#3407・#3406): intent の層の効果には検証環境(`:verification-environment`)でも本番の翻訳の handler が
+//! DOEFF206(#3407・#3406): intent の層の効果には検証環境(`:verification-environment`)でも本番の翻訳の handler が
 //! 答える。検証環境の dir の節が intent の効果に自前で答える(どれかの終わりが自前の値を返す — 片方の枝だけでも)所と、違反を通す表(外の世界の表・
-//! 下の層を通す表・検だけの偽物の表)の行が intent の効果を通す所を出す。登録簿で下げない(この種の違反は doeff-linter が見つける —
-//! 利用者の決定 2026-10-04)。
+//! 下の層を通す表・検だけの偽物の表)の行が intent の効果を通す所を出す。登録簿で下げない(この種の違反は doeff-linter が見つける)。
 //!
 //! 届く先は DOEFF133・136 と同じ定義の辺の図(呼び出し・参照・入れ子)を根から前向きに辿る。全体の実行だけ(repo 全体の図が要る)。
 //! 模擬の根・本番の入口・業務の module・表の置き場は repo の宣言 `:business-fakes` から読み、ここには repo の名前を置かない。
 //!
-//! 節の判じは `clause_shapes_in` の 1 か所だけ(agora-redesign #3834 — それまで DOEFF143 の広い読みと DOEFF206 の狭い読みが同じ節を
+//! 節の判じは `clause_shapes_in` の 1 か所だけ(それまで DOEFF143 の広い読みと DOEFF206 の狭い読みが同じ節を
 //! 別に判じていた)。節の形 `ClauseShape` は 2 つの欄を持つ: forwards = どれかの終わりが受けた効果をそのまま外へ渡す・answers = どれかの
 //! 終わりが自前の値を返す。この file の「tap」は forwards の在る節(観測・障害の注入 — 片方の枝でだけ出し直す節も含む)を指し、
 //! 偽物の判じ(DOEFF143・155・156・157・158)はそれを外す。反例の表の当たり(DOEFF143・157 の表の照らし・164・167)と DOEFF206 は
 //! answers の在る節に表の行を求める。
 //!
 //! 節の終わりを作る操作の名は、この file に書かない。名と終わり方の定義元は doeff-hy の表 `CLAUSE-OPS` 1 か所で、linter はそこから
-//! 書き出した `data/clause_ops.json`(`clause_ops::ClauseOps`)を読む(card ki-d3ef2a50cc04)。ここが持つのは終わり方ごとの判じ方だけ。
+//! 書き出した `data/clause_ops.json`(`clause_ops::ClauseOps`)を読む。ここが持つのは終わり方ごとの判じ方だけ。
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -122,7 +121,7 @@ fn read_forms(source: &str) -> Vec<Form> {
     Reader::new(source, 0, source.len()).read_all()
 }
 
-/// 効果の節 1 つの形 — DOEFF143・155・156・157・158・164・167・206 が共に使う、ただ 1 つの判じ(agora-redesign #3834)。
+/// 効果の節 1 つの形 — DOEFF143・155・156・157・158・164・167・206 が共に使う、ただ 1 つの判じ。
 /// 節の終わり(`resume`・`transfer`・`finish`・`reperform`・`pass`・`:when` の条件が偽の時の自動の reperform)を全部集め、2 つの欄に分ける。
 /// 1 つの節が両方を持つ事がある(片方の枝でだけ出し直す障害の注入・観測)。扱いは規則の側で決める: 表の行を要るかは `answers` で、
 /// 障害の注入・観測として偽物の判じから外すかは `forwards` で見る。
@@ -486,7 +485,7 @@ impl Clause {
     }
 
     /// 反例の表の当たりに数える節か — 本番の入口から届かず、自前で答える終わりを持ち(片方の枝だけでも)、鍵が表に在る。
-    /// DOEFF143・157 の表の照らしと DOEFF164・167 の反例の節が同じ条件を使う(agora-redesign #3834)。
+    /// DOEFF143・157 の表の照らしと DOEFF164・167 の反例の節が同じ条件を使う。
     pub fn counterexample_in(&self, produced: bool, counterexamples: &BTreeMap<String, String>) -> bool {
         self.shape.answers && !produced && counterexamples.contains_key(&self.key())
     }
@@ -593,8 +592,8 @@ pub fn judge(inputs: &Inputs, decl: &BusinessFakes) -> Vec<Verdict> {
     let mut translators: BTreeMap<&str, BTreeMap<(&str, &str), usize>> = BTreeMap::new();
     for (i, clause) in clauses.iter().enumerate() {
         // 本番から届かない節が自前で答える終わりを持ち、その鍵が反例の表に在れば、どの効果に答える節でも表の当たりに数える — 土台の効果
-        // (記録・時計・外の相手)に答える壊した handler も反例の表に載せられる(agora-redesign #1560 の定義 3)。片方の枝でだけ出し直す
-        // 節も当たりに数える(下の偽物の判じからは外れるが、表の行は要る — DOEFF206・164・167 と同じ読み・agora-redesign #3834)。
+        // (記録・時計・外の相手)に答える壊した handler も反例の表に載せられる。片方の枝でだけ出し直す
+        // 節も当たりに数える(下の偽物の判じからは外れるが、表の行は要る — DOEFF206・164・167 と同じ読み)。
         if clause.counterexample_in(produced[i], counterexamples) {
             hit_keys.insert(clause.key());
         }
@@ -773,7 +772,7 @@ mod tests {
         assert_eq!(python_isinstance_effects(relative, "app.screen.entry.values"), vec!["app.screen.effects.Log".to_string()]);
     }
 
-    /// 節の形の判じ(agora-redesign #3834): 終わりごとに「受けた効果をそのまま渡す」か「自前の値」かを分け、節の 2 つの欄にする。
+    /// 節の形の判じ: 終わりごとに「受けた効果をそのまま渡す」か「自前の値」かを分け、節の 2 つの欄にする。
     #[test]
     fn clause_shapes_split_forwarding_and_answering_endings() {
         let source = r#"
@@ -841,7 +840,7 @@ mod tests {
         assert_eq!(at("Own"), answers);
     }
 
-    /// 節の判じが読む操作の名は、同梱の表の行から来る(card ki-d3ef2a50cc04): 表の行ごとに、終わり方どおりの節の形になる。表に行を足せば
+    /// 節の判じが読む操作の名は、同梱の表の行から来る: 表の行ごとに、終わり方どおりの節の形になる。表に行を足せば
     /// この検が足した行も踏む。
     #[test]
     fn clause_shapes_follow_every_row_of_the_table() {
@@ -876,7 +875,7 @@ mod tests {
         }
     }
 
-    /// 表に行を足すだけで判じが追従する(再現 — card ki-d3ef2a50cc04): 続きへ例外を投げる操作(再開する終わり方)の行を足すと、それまで
+    /// 表に行を足すだけで判じが追従する(再現): 続きへ例外を投げる操作(再開する終わり方)の行を足すと、それまで
     /// 終わりに数えなかった節が自前の値を持つ。判じの側には何も足さない。足す名は、本物の表に後から入る名と重ならない作り物。
     #[test]
     fn a_row_added_to_the_table_is_followed_by_the_judgement() {
@@ -898,7 +897,7 @@ mod tests {
         );
     }
 
-    /// 節の判じが読む操作の名は、表の外のこの file に書かない — 表を介さずに名を足すと赤(card ki-d3ef2a50cc04)。書くのは文字列の literal
+    /// 節の判じが読む操作の名は、表の外のこの file に書かない — 表を介さずに名を足すと赤。書くのは文字列の literal
     /// (`"名"`)で、検の module と註は数えない。
     #[test]
     fn clause_operation_names_are_not_written_outside_the_table() {
@@ -912,7 +911,7 @@ mod tests {
         assert!(written.is_empty(), "表の操作の名を literal で書いている: {:?}", written);
     }
 
-    /// 片方の枝でだけ出し直す壊した handler(agora-redesign #3834 — kn-w37 の 7 件目の書き直す前の形)は、書き方が 3 つ在っても
+    /// 片方の枝でだけ出し直す壊した handler(kn-w37 の 7 件目の書き直す前の形)は、書き方が 3 つ在っても
     /// 同じ形 {forwards・answers} に判じ、DOEFF143・164・206 が同じ答えを出す: 反例の表に行が有れば どれも当たらず、無ければ 206 だけが当たる。
     #[test]
     fn one_branch_forwarding_is_judged_alike_by_every_rule() {
@@ -1074,7 +1073,7 @@ mod tests {
         assert_eq!(verdicts, vec![Verdict::IntentAnsweredOutside(2), Verdict::IntentAnsweredTwice(0, 2), Verdict::IntentAnsweredTwice(1, 2)]);
     }
 
-    /// agora-redesign #1560 の定義 3: 土台の効果(業務でも下の層でもない)に答える壊した handler も反例の表に載せられる。
+    /// 土台の効果(業務でも下の層でもない)に答える壊した handler も反例の表に載せられる。
     /// 本番から届く節は反例ではないので、表に在っても当たらない(腐り)。
     #[test]
     fn counterexamples_of_foundation_effects_are_hits() {

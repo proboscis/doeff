@@ -1,4 +1,4 @@
-"""World phase marks for the step budget (agora-redesign card ki-a27b195a3f92).
+"""World phase marks for the step budget.
 
 A simulated world (doeff-cluster's ``sim-main``) marks four events of its life: it ``begun``, it is
 ``up`` (every declared job started and the world settled), it began ``stopping`` and it ``ended``.

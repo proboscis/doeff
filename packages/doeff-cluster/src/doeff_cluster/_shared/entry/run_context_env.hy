@@ -3,7 +3,7 @@
 ;;; 名の綴りと読みの規則は doeff_cluster._shared.core.run_context_rules の context-of-environ(sim の宿は同じ規則を自分の dict に当てる)。
 ;;;
 ;;; 旧い入口 doeff_cluster.job_context(ここを再輸出していた)と、それを読んでいた foundation/host_contract の古い host-reader は
-;;; 2026-10-03 に消した(利用者の決め・#2167)。
+;;; 2026-10-03 に消した(#2167)。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "main"})
 (import doeff [run])

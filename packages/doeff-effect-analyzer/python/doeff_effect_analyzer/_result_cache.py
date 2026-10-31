@@ -2,7 +2,7 @@
 
 A closure test (does a job's Program leave any effect unanswered under its foundation?) reads
 hundreds of definitions and costs 1–7 s even with the expanded trees cached — spread over the
-whole reader, so no single part is worth cutting (agora-redesign #1586 / #1645). Its answer is a
+whole reader, so no single part is worth cutting (#1645). Its answer is a
 function of what the analysis reads: the sources of the modules it follows, and the runtime values
 (module attributes, handler marks, signatures, the foundation itself) that importing those modules
 made. So the answer is stored with the module name and the content digest of the modules it depends
@@ -20,17 +20,17 @@ on (``_depended_modules``):
 Before, the key was every module the process had loaded (#1645). A test session loads hundreds of
 test files a closure analysis never reads, and agora-controllers' daily run spreads 951 files over
 three sessions, so a change in any of them in four hours (and ``conftest`` / ``__mp_main__``, loaded
-alike from other files) made every closure test analyze in full — 20-60 s each (ki-30d28550680c).
+alike from other files) made every closure test analyze in full — 20-60 s each.
 A package's loaded submodules hang on it as attributes whoever imported them, so a submodule is
 reached from its package only when a module reached names it.
 
 An answer is reused when, for every module it names, the file this process loads that module from
 has the same content: the loaded module's file, or — for a module this process has not loaded — the
 file the import system would find, looked up without importing anything. A module this process
-loaded from a file with other content misses (agora-redesign #1864 — checkouts of one repo share the
+loaded from a file with other content misses (checkouts of one repo share the
 machine's cache and name their modules alike).
 
-The file's path is not part of the key (agora-redesign #3777). Before, each file was named by its
+The file's path is not part of the key. Before, each file was named by its
 path and stat and an identity had one answer, so a new worktree always ran the analysis in full,
 and two worktrees running the same test overwrote each other's answer (the screen job's closure
 test took 5–7 s whenever another worktree had run it last). Now a worktree whose files have the
@@ -44,7 +44,7 @@ stored) are read side by side. An answer reused after reading files is stored ag
 process's stats, so the next process in the same checkout reads none. An identity keeps the
 ``_KEPT`` answers used most recently; storing another drops the rest.
 
-What the key does not cover (agora-redesign #1645, ki-30d28550680c): a value decided at import time
+What the key does not cover: a value decided at import time
 from a file that is not a module (or from the environment); a module that rewrites other modules'
 values when imported but is not reached from them (a test's conftest patching a job's module) —
 before, such a module counted by its content only when the storing process had loaded it, never by
@@ -88,7 +88,7 @@ T = TypeVar("T")
 # v2: each file also names its module, so an answer from another checkout is not reused (#1864).
 # v3: each file is named by its content (its path and stat only spare reading it), and an identity
 #     is a directory of answers named by the contents they were computed under (#3777).
-# v4: the files are those of the modules the answer depends on, not every loaded module (ki-30d28550680c).
+# v4: the files are those of the modules the answer depends on, not every loaded module.
 # Entries of an older shape have another key and are never read (nothing deletes them).
 _FORMAT = "v4"
 
@@ -634,7 +634,7 @@ def _stat_of(filename: str) -> _Stat | None:
 _DIGESTS: dict[_Stat, str] = {}
 
 # How many files are read at once. A file not in the page cache waits on the disk: one at a time, the
-# 1,127 module files of the screen job's closure test took 16.3 s on a busy machine (agora-redesign #3777).
+# 1,127 module files of the screen job's closure test took 16.3 s on a busy machine.
 _READERS = 32
 
 

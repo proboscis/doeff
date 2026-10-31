@@ -54,7 +54,7 @@ def test_s12_claude_trust_preseeded_into_config_dir(tmp_path) -> None:
         assert project["hasTrustDialogAccepted"] is True, state
         assert project["hasCompletedProjectOnboarding"] is True, state
         # temp+rename discipline: no torn/leftover temp file
-        # card acp:kanban-issue:ki-62aa1f4e9c9c D9: tmp の名は書き手ごとに一意
+        # D9: tmp の名は書き手ごとに一意
         # (.claude.json.<mkstemp>.agentd-tmp)なので、綴り 1 つではなく glob で数える。
         assert not list(claude_config_dir.glob(".claude.json.*agentd-tmp"))
 

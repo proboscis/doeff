@@ -1,5 +1,4 @@
-"""dataclass が型ごとに作る関数の source(``__create_fn__``)の compile を、source の中身で引く保存先(:mod:`code_store`)に覚える
-(card ki-e77d44aa61e5)。
+"""dataclass が型ごとに作る関数の source(``__create_fn__``)の compile を、source の中身で引く保存先(:mod:`code_store`)に覚える。
 
 dataclasses は型ごとに関数(``__init__``・``__repr__``・``__eq__``・frozen の ``__setattr__`` など)の source の文を作り、``exec`` に
 渡して中で compile する。検の読み込み(agora-controllers の test_emulated_screen.hy・3798 型)では、dataclass の作成の費用のほぼ

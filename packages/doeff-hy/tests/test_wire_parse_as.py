@@ -1,4 +1,4 @@
-"""doeff_hy._wire の parse-as・parse-json-as の検(card ki-7c4609cd96c9)。
+"""doeff_hy._wire の parse-as・parse-json-as の検。
 
 parse-as は defwire でない語彙の型(入れ物 — dict[str, object]・list[str]・str | None・dict[str, OpaqueJson]・defwire の型の tuple)を
 parse と同じ型の木と厳しさで解く。pydantic の TypeAdapter で入れ物を直に解いていた読み手(agora-controllers)の移り先。確かめること:

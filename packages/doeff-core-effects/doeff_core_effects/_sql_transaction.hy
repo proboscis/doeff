@@ -1,8 +1,8 @@
 ;;; SqlTransaction の約束 3 つ(sql_effects.hy の頭の註)の実現を 1 か所に置く — PostgreSQL の答え手 2 つと sqlite の答え手 2 つが同じ手順を
-;;; 使う(agora-redesign #802 便 3)。手順は 2 つで、transaction を開く宣言(SqlTransaction の欄 batched)で選ぶ:
+;;; 使う。手順は 2 つで、transaction を開く宣言(SqlTransaction の欄 batched)で選ぶ:
 ;;;   run-in-transaction          既定(batched = False)。文 1 つを 1 回ずつ流す: BEGIN → 錠 → program の文を出た順に 1 つずつ → SqlNotify も
 ;;;                               出た時にその場で → COMMIT / ROLLBACK。SQL を出さない program でも BEGIN・錠・COMMIT を流す。
-;;;   run-in-batched-transaction  batched = True を選んだ transaction だけ(agora-redesign #3605 — 記録の service と DB が別の機体に在ると、DB への
+;;;   run-in-batched-transaction  batched = True を選んだ transaction だけ(記録の service と DB が別の機体に在ると、DB への
 ;;;                               往復 1 回が書き 1 回の待ちに乗る)。往復をまとめる: 下の「束ねた transaction」。
 ;;;
 ;;; 実現: 答え手は接続 1 本に束ねた scope(SqlQuery / SqlInsertRows 専用の handler)を program に被せて走らせる。effect.program をそのまま

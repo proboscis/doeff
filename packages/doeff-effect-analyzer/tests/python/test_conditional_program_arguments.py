@@ -1,6 +1,6 @@
 """A Program argument chosen by a conditional, handed on through a function that performs it.
 
-Regression target (card ki-e912b1821351): agora-controllers' messaging API answers a read through the shared
+Regression target: agora-controllers' messaging API answers a read through the shared
 read path ``replica-read-at``, handing it the Program that reads the records as
 ``(if asked.descendants (ask-chains-recorded …) (ask-reports-recorded …))``. The reader bound a parameter to
 a Program argument only when the argument was a Program call (or a name / element bound to one), so the

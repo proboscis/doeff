@@ -1,5 +1,5 @@
 ;; 記録の service が 500 internal(要求の task が答えを決める前か、答えを送る途中で落ちた)で答えた時の HTTP の client の失敗ケース
-;; (card ki-200a8499710f — _http_client.hy の頭の表の 500 internal)。
+;; (_http_client.hy の頭の表の 500 internal)。
 ;; 確かめること:
 ;;   要求の全部(要求と答えの 12 個と変化の待ち 2 つ)が、500 internal を例外でなく答えの値 Unreachable で返す — 結末の不明な答えの値は
 ;;   Unreachable だけで、どの要求の答えの型にも在る

@@ -20,7 +20,7 @@
   "worker 1 台の名乗りと自己起動の版。name = WORKER_NAME・provides = WORKER_PROVIDES(書いた順のまま — 宣言の行は順を保つ)・
    exclusive = WORKER_EXCLUSIVE(空なら行を持たない)・task-reserve = WORKER_TASK_RESERVE・background-room = WORKER_BACKGROUND_ROOM
    (背景の仕事を同時に置ける数)・memory-mib = WORKER_MEMORY_MIB(常駐の job の memory の予算 MiB — None なら行を持たず、worker は
-   memory を名乗らない・card ki-2acb63aec0fd)。数はどれも 0 以上(worker の入口 main.hy が起動の時に断るのと同じ範囲)・
+   memory を名乗らない)。数はどれも 0 以上(worker の入口 main.hy が起動の時に断るのと同じ範囲)・
    doeff-commit = WORKER_DOEFF_COMMIT(40 字の sha)。"
   (#^ str name)
   (#^ (get tuple #(str ...)) provides)

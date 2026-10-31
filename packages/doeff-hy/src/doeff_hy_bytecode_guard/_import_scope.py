@@ -2,14 +2,14 @@
 
 .pyc の記録の照らし(:mod:`doeff_hy_bytecode_guard._macro_use`)は、覚えた macro の digest が今も使えるかを、digest が依った
 file の状態(更新時刻・大きさ)で確かめる。照らしは Hy の module 1 つごとに走るので、確かめを照らしごとにすると、同じ file を
-読み込み 1 つの中で何百回も stat する(test_emulated_screen.hy の読み込みで照らし 797 回・stat 9,700 回 — agora-redesign card
-ki-be596ac8276f)。読みの口の包み(:mod:`doeff_hy_bytecode_guard._loader_hooks`)が一番外の module の本体の実行の間この覚えを置き、
+読み込み 1 つの中で何百回も stat する(test_emulated_screen.hy の読み込みで照らし 797 回・stat 9,700 回 — agora-redesign)。
+読みの口の包み(:mod:`doeff_hy_bytecode_guard._loader_hooks`)が一番外の module の本体の実行の間この覚えを置き、
 照らしはその中で file の状態を 1 度だけ読む — 読み込み 1 つを file の状態の 1 つの写しとして扱う。次の読み込みは読み直す。
 読み込みの外(道具が直に照らす)では、照らしが 1 回ごとに自分で置く。
 
 覚えは、置いた thread の中で、置いた口が閉じるまでだけ使う(:func:`current_scope`)。読み込みの中で起きた thread(free-threaded の
 3.14 では起こした側の context を継ぐ — ``sys.flags.thread_inherit_context``)と写した context は、ContextVar の値を読み込みの後も
-持ち続けるので、値があるだけでは今の読み込みの覚えと決まらない(設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録)。
+持ち続けるので、値があるだけでは今の読み込みの覚えと決まらない。
 
 起動時に読まれる包みから import されるので、標準 library の起動時に読み込み済みの module しか import しない。
 """

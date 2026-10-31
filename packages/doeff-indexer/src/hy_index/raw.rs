@@ -8,10 +8,10 @@
 //! - 組み込みは import されていない修飾の無い名前を、呼び出しの頭の位置でだけ数える(局所の変数 `open` を拾わない)。
 //! - method 名は弱い証拠で、context の module が file の import か定義の中の参照に見える時だけ数える。数えるのは値の上の
 //!   属性・method として書かれた区切り(`(.m x)`・`x.m`・`(. x m)`)だけで、名前の引き(局所の束縛・引数・定義の名)は
-//!   method の名と同じ綴りでも数えない(agora-redesign #798)。
+//!   method の名と同じ綴りでも数えない。
 //! - 経由は、同じ file か import で行き先が決まった呼び出しだけを、深さ 4 まで辿る(循環は止め、同じ証拠は 1 度)。
 //! - 呼び手が「止める」と渡した定義(実 I/O を担うと宣言した定義)には入らない — その先の生の副作用はその定義の責務なので、
-//!   呼び手の経由の証拠に数えない(agora-redesign #1902)。止める定義を通らない別の経路で届く証拠は今までどおり数える。
+//!   呼び手の経由の証拠に数えない。止める定義を通らない別の経路で届く証拠は今までどおり数える。
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -325,7 +325,7 @@ fn match_entry(
     match expanded {
         Expanded::Import(full) => (!skip_import && entry.patterns.iter().any(|p| p.matches(full)))
             .then(|| (evidence(full.clone(), RawEvidenceKind::Name, RawStrength::Strong), None)),
-        // 名前の引きは method の証拠にしない(局所の束縛の名 stat は .stat ではない — agora-redesign #798)。
+        // 名前の引きは method の証拠にしない(局所の束縛の名 stat は .stat ではない)。
         Expanded::Unbound(name) => (at_call_head && entry.builtins.iter().any(|b| b == name))
             .then(|| (evidence(name.clone(), RawEvidenceKind::Builtin, RawStrength::Strong), None)),
         Expanded::Local(_) => None,
@@ -336,7 +336,7 @@ fn match_entry(
 }
 
 /// method 名の一致と、それに要る context。呼びの引数(受け手を除く)が目録の上限より多い呼びは同じ名の別の型の method
-/// として数えない(agora-redesign #3014 — 文字列の `.replace`)。引数の分からない参照(呼びの頭でない)は数える。
+/// として数えない(文字列の `.replace`)。引数の分からない参照(呼びの頭でない)は数える。
 fn method_match(entry: &CompiledEntry, name: &str, call_arity: Option<usize>) -> Option<Vec<String>> {
     entry
         .methods

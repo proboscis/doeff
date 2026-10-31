@@ -1,4 +1,4 @@
-"""A function taken out of a table a module global holds, then called (card ki-827dc43fa730).
+"""A function taken out of a table a module global holds, then called.
 
 A judgment that dispatches by kind keeps its folds in a module-level table and calls the one
 that matches — ``(for [#(kind fold) FOLDERS] (when (= kind wanted) (<- (fold row))))`` — or

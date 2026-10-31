@@ -1,4 +1,4 @@
-//! 名指しの範囲の外(agora-redesign #2821)の検 — 根を `src` にした一時の package で binary を走らせ、根の外の Hy の file(`tests/`)を
+//! 名指しの範囲の外の検 — 根を `src` にした一時の package で binary を走らせ、根の外の Hy の file(`tests/`)を
 //! 名指した時に「対象の外」と名指して緑と分けることを確かめる(仕様 1 節「名指しの範囲の外」)。
 //!
 //! 失敗ケース: 根の外の検の file に違反(生の副作用)を書いて名指す — 以前は層の規則が file を判じず、終了コード 0 で何も出さなかった
@@ -155,7 +155,7 @@ fn the_commit_hook_reads_the_out_of_scope_list() {
     assert!(doeff_linter::commit_hook::out_of_scope_of(&serde_json::json!({"out_of_scope": null})).is_empty());
 }
 
-// ---- 歩く範囲に足す dir(設定の include — agora-redesign #2821 の案 A-1) ----
+// ---- 歩く範囲に足す dir(設定の include) ----
 
 /// 根 = src の package。`include` を書くと根の外の tests/ も歩き、定義の書き方の規則(ここでは critical の DOEFF126 だけ)が判じる。
 fn walked_package(include: bool, test_source: &str) -> tempfile::TempDir {

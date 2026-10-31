@@ -1,4 +1,4 @@
-//! DOEFF142: handler は接続の object や書き換える店を引数で受け取らない(agora-redesign #1189 / #1366 — 元は agora-controllers の
+//! DOEFF142: handler は接続の object や書き換える店を引数で受け取らない(#1366 — 元は agora-controllers の
 //! 一時の検 handler_arguments_rules.hy・#686)。
 //!
 //! defhandler の引数の並び `[ … ]` の 1 つずつを分ける:
@@ -388,7 +388,7 @@ fn class_takes(extension: &str) -> bool {
 }
 
 /// 1 file の実行の class の索引(答えは `class_index` と同じ)。repo の Hy と Python の file を、dir を開く待ちを重ねて歩き(`walk` は順に歩くので、冷えた
-/// 作業木で約 2000 の dir を 1 つずつ待つ)、変わっていない file の class は git の blob の id で引いて中身を読まない(`ChunkedFacts` — card ki-40c8ca380713)。
+/// 作業木で約 2000 の dir を 1 つずつ待つ)、変わっていない file の class は git の blob の id で引いて中身を読まない(`ChunkedFacts`)。
 /// 同じ中身でも Hy と Python では読み方が違うので、覚えの種類を分ける。
 pub fn class_index_by_blobs(root: &Path, overlay: Option<(&str, &str)>) -> ClassIndex {
     let hy = ChunkedFacts::<Vec<ClassFrozen>>::open(root, "class-frozen-hy", |rel| rel.ends_with(".hy") && hy_files::walks_to(&CLASS_WALK, rel));

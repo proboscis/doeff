@@ -1,4 +1,4 @@
-;;; 汎用の子 process の effect(process_effects.hy)の I/O なしの答え手 scripted-process-handler(agora-redesign #802 便 1)。本物の子 process を
+;;; 汎用の子 process の effect(process_effects.hy)の I/O なしの答え手 scripted-process-handler。本物の子 process を
 ;;; 起こさず、argv[0] の名(basename)ごとの台本(ScriptedCommand)で答える。台本は Program で、file system の effect(file_effects.hy)で置き場を
 ;;; 読み書きしてよい(外側の file の答え手 — 多くは memory-file-handler — が受ける)。業務を知らない: 台本の中身は呼び手が渡す。
 ;;;
@@ -6,13 +6,13 @@
 ;;;                     (process_effects.hy の not-started-outcome・start-refusal)。output-path は台本の出力をその file の末尾へ足し、足せなければ
 ;;;                     本物と同じく OSError を上げる。timeout は台本に任せる(台本が timed-out-outcome の答えを返してよい)。
 ;;;                     env が None の時は台本も None を受ける(呼び手の環境を継ぐ印 — 継いだ中身を読むのは台本の側)。
-;;;                     process-group・stop-grace・stream-output(agora-redesign #2184)は台本の要求にそのまま渡す(group と時間の経過は台本の
+;;;                     process-group・stop-grace・stream-output は台本の要求にそのまま渡す(group と時間の経過は台本の
 ;;;                     世界に無い — 止め方を答えに表すのは台本の側)。stream-output の output-path は、台本が終わってから出力を足す
 ;;;                     (届いた順に書く本物と、終わった後の file の中身は同じ)。
 ;;;                     本物との契約は tests/test_process_contract.hy。
 ;;;   ProcessAlive      ProcessScript の alive(生きている pid の表)に在るか。0 以下の pid は本物と同じく生きていない。
-;;;   StartProcess      出力の file を先に開き(空を足す — 開けなければ本物と同じ文の ProcessNotStarted)、台本を timeout 0 で 1 回走らせる
-;;;                     (agora-redesign #2223)。起こせない形の答えは ProcessNotStarted。時間切れの答え = 止めるまで走り続ける子、それ以外 =
+;;;   StartProcess      出力の file を先に開き(空を足す — 開けなければ本物と同じ文の ProcessNotStarted)、台本を timeout 0 で 1 回走らせる。
+;;;                    起こせない形の答えは ProcessNotStarted。時間切れの答え = 止めるまで走り続ける子、それ以外 =
 ;;;                     すぐ終わった子(終了 code を表に置く)。台本の出力(時間切れならそれまでの分)をそれぞれの file の末尾へ足し、
 ;;;                     SCRIPTED-FIRST-PID からの pid を配る。
 ;;;   PollProcess       表に無い pid = ProcessNotChild・走り続ける子 = ProcessRunning・終わった子 = ProcessExited(表から外す)。
@@ -25,8 +25,8 @@
 ;;;   ExecutableAt      種類は置き場(file の答え手)の StatPath — 置き場に無い path は台本に名(basename)が在れば実行できる file、無ければ無い物。
 ;;;                     実行の許しは台本に名が在ること。判断は本物と同じ executable-file-answer(dir は名が台本に在っても False)。
 ;;;   ReadEnvironment   ProcessScript の env から。
-;;;   ReadInterpreter   ProcessScript の interpreter(agora-redesign #2347)。
-;;;   ReadMachineName   ProcessScript の machine-name(agora-redesign #3050)。
+;;;   ReadInterpreter   ProcessScript の interpreter。
+;;;   ReadMachineName   ProcessScript の machine-name。
 ;;;   ResolveModule     ProcessScript の modules の表から名で引く。表に無い名は ModuleNotFound(#2347)。
 ;;;   WorkingDirectory  聞かれるたびに新しい空の dir(<work-root>/job-<n>)を作って答える — worker が job ごとに空の作業 dir を作って子を
 ;;;                     起こすのの代役(同じ VM で task を走らせる模擬では task ごとに 1 回聞かれる)。

@@ -1,5 +1,5 @@
 //! 定義の範囲の道具。規則の module(assembly_shape.rs など)が組み立ての project/mod.rs を読み戻さずに使えるよう、自分の module に
-//! 置く(読み戻すと依存の輪になる — agora-redesign #2121)。
+//! 置く(読み戻すと依存の輪になる)。
 
 use doeff_indexer::hy_index::Definition;
 

@@ -43,7 +43,7 @@
 
 (defrecord GitUrlRewrite
   "送り手の機体の git の設定 url.<base>.insteadOf <instead-of> 1 つ(remote の URL が instead-of で始まれば、その頭を base に替えて使う —
-   送り手の Pod の ~/.gitconfig が GitHub の URL を機体だけの ssh の別名へ書き換える形・ki-1ada4f0c8344)。"
+   送り手の Pod の ~/.gitconfig が GitHub の URL を機体だけの ssh の別名へ書き換える形)。"
   (#^ str base)
   (#^ str instead-of))
 

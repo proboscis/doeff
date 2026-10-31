@@ -14,7 +14,7 @@
 ;;;     (読んでから書くまでに誰かが spec を書いていれば 409 で止まる — 他の作業係の変更を消さない。版は状態の欄の変化でも進むので、
 ;;;     409 の後に読み直して spec が同じ — 変わったのは状態だけ — なら今の版で書き直す)。所有者はいまの値を保ち、台数は行の値
 ;;;     (job の :replicas)を書く — 手で台数だけを替えた Service も、宣言し直すと job の値へ戻る(#3487)。一覧に無い Service には触らない。
-;;;   - restart-service: 宣言を替えずに 1 つの Service だけを起こし直す(2026-10-13・card ki-0019be4b9939 — 手で replicas 1→0→1 にする「止めてから
+;;;   - restart-service: 宣言を替えずに 1 つの Service だけを起こし直す(2026-10-13 — 手で replicas 1→0→1 にする「止めてから
 ;;;     起こす」の替わり)。spec の環境変数 RESTART_MARK を 1 つ進めて書き、handoff の job は新を旧と並べて起こしてから旧を止める。
 ;;;
 ;;; 置き場(#2346): apply はここ(shared/entry・役 main)・要求の本文の形は doeff_cluster._shared.protocol.declaration_requests・

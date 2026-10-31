@@ -1,4 +1,4 @@
-//! Runtime switch for the per-step invariant checks (agora-redesign #980).
+//! Runtime switch for the per-step invariant checks.
 //!
 //! The checks used to be selected at compile time (cargo feature
 //! `invariant-checks`), so the same venv ran 15x slower or faster depending

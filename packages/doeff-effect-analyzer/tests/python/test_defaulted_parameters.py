@@ -1,6 +1,6 @@
 """A parameter the caller leaves at its default: None (a judgment the body calls only when it is set) or a function.
 
-Regression target (card ki-e912b1821351): agora-controllers' intake stream reads its rows through
+Regression target: agora-controllers' intake stream reads its rows through
 ``(read-intake fold * [kept None])``, whose fold calls ``(kept entry)`` only when ``kept`` is not None. A
 caller that leaves ``kept`` out (``(read-intake fold)``) left the parameter unbound, so the delivery jobs'
 and the durable keeper's closure checks showed ``yielded a call whose target is not a module-level name:
@@ -119,7 +119,7 @@ def test_a_judgment_left_at_its_default_function_runs_the_function(pkg: str) -> 
 @pytest.mark.parametrize("job", ["read_every_row_passing_none", "read_every_row_naming_none"])
 def test_a_judgment_the_caller_passes_as_none_performs_nothing(pkg: str, job: str) -> None:
     """A caller that writes None for the judgment (``(sieved-mirror-of table None fields)`` in
-    agora-controllers' ``mirror-of`` — agora card ki-8694f6cc9b39) is read as one leaving it at a
+    agora-controllers' ``mirror-of``) is read as one leaving it at a
     default None. Before, the written None was not a known value: the parameter stayed unbound and
     the keeper's closure check showed ``yielded a call whose target is not a module-level name: sieve``."""
     report = analyze_program(f"{pkg}.reads:{job}")

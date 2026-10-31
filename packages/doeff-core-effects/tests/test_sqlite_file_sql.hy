@@ -1,4 +1,4 @@
-;;; 既存の DB の file を開く SQL の答え手(sqlite_file_sql.hy — agora-redesign #2237 の前提)の失敗ケース。pytest の一時 dir の file の DB で:
+;;; 既存の DB の file を開く SQL の答え手(sqlite_file_sql.hy)の失敗ケース。pytest の一時 dir の file の DB で:
 ;;;   - 書いた行が、接続を閉じて開き直した後も読める(memory の DB ではなく file に在る)。
 ;;;   - 既存の file(先に stdlib の sqlite3 で表と行を作った物)の行をそのまま読める・無い file は作らずに断る。
 ;;;   - journal_mode が wal。

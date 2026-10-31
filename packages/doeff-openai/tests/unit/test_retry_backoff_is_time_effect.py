@@ -4,7 +4,7 @@ A program yields the time effect and the caller's time handler decides what a se
 wall clock in production, a virtual clock in tests. These tests run the retry path on a virtual
 clock and read how far it moved: two failed attempts wait 1 s each, so the clock moves 2 s and
 the test never sleeps. A program that awaits ``asyncio.sleep`` again leaves the virtual clock
-where it was and fails here (card ki-94380dba532f).
+where it was and fails here.
 """
 
 from collections.abc import Callable

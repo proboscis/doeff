@@ -1,4 +1,4 @@
-;; 追記 AppendEvent の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 — card ki-c23e1bcfff1b):
+;; 追記 AppendEvent の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17):
 ;; defeffect が Appended = 成功 / Refused = 失敗 / Unreachable = 失敗(不在と値は無し)と宣言し、呼び手の <- は
 ;;   - Appended を中身のまま束ねる
 ;;   - Refused を Raise(Refused) として逃がす(同じ冪等キーの別の本文・本文の上限超え — on-raise で値へ戻せる)

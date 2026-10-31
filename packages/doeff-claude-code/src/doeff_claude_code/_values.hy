@@ -47,7 +47,7 @@
 (val CREDENTIAL-FORBIDDEN-CHARS #("\r" "\n" "\x00"))
 
 (defclass [(dataclass :frozen True :kw-only True)] LentCredential []
-  "借りた claude の口座の資格(card ki-4ffdafa021e5): access-token = 上流へ送る access token(refresh token は運ばない —
+  "借りた claude の口座の資格: access-token = 上流へ送る access token(refresh token は運ばない —
    更新は貸し手だけが行う)/ expires-at = その token を使ってよい期限の刻(epoch 秒・汎用 — 誰から借りたかは知らない。None = 期限を
    知らない)/ subscription-type・rate-limit-tier = 貸し手が資格から読んだ契約の種類と階級(None = 観測していない)。
    handler はこれを、その資格で起こす process だけの設定 dir の .credentials.json に置く(credential_home.hy — 子の env には置かない)。

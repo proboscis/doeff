@@ -1,4 +1,4 @@
-;; 考えの block の始まりが、層 3 の出来事 AgentThinkingStartedEvent になる事の検(agora-redesign #4186)。
+;; 考えの block の始まりが、層 3 の出来事 AgentThinkingStartedEvent になる事の検。
 ;; 層 2 の行の型 → 層 3 の出来事を作る 1 か所(handlers/headless.hy の event-builders-of)を直に読む — CLI も session host も使わない。
 (require doeff-hy.macros [deftest val])
 (import datetime [datetime timezone])

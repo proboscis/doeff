@@ -30,9 +30,9 @@ dependencies = [
     "doeff>=0.8.0,<0.9",
     "doeff-core-effects>=0.8.0,<0.9",
     # 上限は doeff の uv.lock の hy の版ちょうど — doeff の検が確かめた版より新しい Hy を、doeff-hy を使う他の repo の lock に通さない。
-    # Hy を上げる便は、この上限と uv.lock を同じ commit で上げる(ADR-DOE-HY-008 R6・card ki-0ff168f4eaf5)。
+    # Hy を上げる便は、この上限と uv.lock を同じ commit で上げる(ADR-DOE-HY-008 R6)。
     # 下限は doeff-hy の検を走らせて緑だった最も古い版 1.3.0(merge-queue・code-quality の lock の版)— 1.2.0 では hy.eval に渡した
-    # 名前空間の中の require が落ち、doeff-hy の検 10 本が赤だった(card ki-96ca6c49fffd)。
+    # 名前空間の中の require が落ち、doeff-hy の検 10 本が赤だった。
     # doeff-hy を引かずに Hy を宣言する配布物(doeff-domain)は、この行と同じ版の指定を置く(R6 の検が突き合わせる)。
     "hy>=1.3.0,<=1.3.1",
     # pytest の plugin(Python 3.14 の Hy の ast.unparse の当て物を起動の時点で当てる)は別の配布物に置く —
@@ -42,7 +42,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# pydantic は本体の依存に置かない(card ki-5ddadb736f62・利用者の決定 2026-10-27 lt-SJK77NQZ8NSESDVVZ0P41407XQ)。defwire の解き手は
+# pydantic は本体の依存に置かない。defwire の解き手は
 # 自前の doeff_hy/_wire_codec.py で、job の道(入口・foundation・本体)は pydantic を読まない(.semgrep.yaml の doeff-job-path-imports-no-pydantic)。
 # pydantic を読むのは、自前の解き手を pydantic の解き手と照らす道具 doeff_hy._wire_parity だけ — 照らしの test を持つ project が
 # test の依存の群に doeff-hy[parity] を置く(validate_by_alias は 2.11 から)。
@@ -59,12 +59,11 @@ Changelog = "https://github.com/proboscis/doeff/blob/main/CHANGELOG.md"
 doeff-hy-check = "doeff_hy._static_check:main"
 
 [tool.hatch.build.targets.wheel]
-# doeff_hy_bytecode_guard: macro が変わった Hy の module の古い bytecode を使わない包み(agora-redesign #1292)。
+# doeff_hy_bytecode_guard: macro が変わった Hy の module の古い bytecode を使わない包み。
 # venv の全ての Python の起動時に .pth から入れる(pytest・本番の入口・索引のどれが最初に Hy の module を読んでも効く)。
 # doeff_hy の中に置かないのは、起動時に doeff_hy/__init__.py(Hy の import)を読まないため。
 # hy-stubs: hy の部分の stub(PEP 561 の stub だけの package・py.typed は partial)。Hy の展開が必ず出す `import hy`・
-# `import hy.models` を pyright strict が型の宣言なしと赤にしないため、doeff-hy-check を使う repo へ doeff-hy と一緒に配る
-# (agora-redesign #2313)。
+# `import hy.models` を pyright strict が型の宣言なしと赤にしないため、doeff-hy-check を使う repo へ doeff-hy と一緒に配る。
 packages = ["src/doeff_hy", "src/doeff_hy_bytecode_guard", "src/hy-stubs"]
 
 [tool.hatch.build.targets.wheel.force-include]

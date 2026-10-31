@@ -1,5 +1,5 @@
 //! 変えた file を直接・間接に import(Hy は require も)する検の file を、距離つきで選ぶ — 入口 `--affected-tests`
-//! (agora-redesign #2605 の 2 本目・2 便目)。登記の前の入口(doeff の scripts/run_changed_tests.py・agora の land の前の検)が、
+//! (2 便目)。登記の前の入口(doeff の scripts/run_changed_tests.py・agora の land の前の検)が、
 //! 契約の検の組と変えた検の後ろに、近い順で足す。
 //!
 //! 読み方:
@@ -11,7 +11,7 @@
 //!   名指す dir のどれか(repo の根も根)。名が識別子の dir は、自分の `pyproject.toml` を持っていても根にしない — agora-controllers の
 //!   `controllers/scheduling` は pyproject.toml を持つが、使い手は全部 repo の根からの名(`controllers.scheduling.protocol.…`)で
 //!   import する。根にすると module が `protocol.…` と名付けられて使い手と結ばず、逆依存の検が黙って 0 本になった(2026-10-05・
-//!   agora-redesign #3605 の後 — 入れ子の側の名で import する file は、linter を使う 4 つの repo で 0 件と数えてから外した)。
+//!   入れ子の側の名で import する file は、linter を使う 4 つの repo で 0 件と数えてから外した)。
 //!   `__init__` は package の名。`.pyi` は読まないが、
 //!   変えた path としては隣の module と同じ名になる(stub を変えれば、その module の使い手を選ぶ)。
 //! - import の先 `a.b.名` は、知っている module の名のうち最も長い接頭辞へ縮める(`from pkg import name` は `pkg/name.py` が

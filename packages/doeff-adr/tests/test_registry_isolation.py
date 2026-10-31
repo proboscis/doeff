@@ -1,7 +1,7 @@
 """登録簿を空にして使う test が、先に登録された ADR を消さないこと。
 
 収集で ADR の module を import すると、その ADR は収集の時点で登録簿に載る。後から走る test が登録簿を空にしたまま
-返すと、その ADR の条文の test が KeyError で落ちる(記録のキャッシュが冷えた時だけ出る順序の赤・agora-redesign #1211)。
+返すと、その ADR の条文の test が KeyError で落ちる(記録のキャッシュが冷えた時だけ出る順序の赤)。
 """
 
 from doeff_adr import AdrIds, AdrSpec, GetAdr, adr_registry

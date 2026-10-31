@@ -1,4 +1,4 @@
-;;; 置ける組の印を枠の file で worker に持たせ、Pod を作り直さずに置き先を替える事の失敗ケース(card ki-ced3c45980a5)。
+;;; 置ける組の印を枠の file で worker に持たせ、Pod を作り直さずに置き先を替える事の失敗ケース。
 ;;;
 ;;; 本物の coordinator と worker を模擬の cluster(仮想の時計)で回す。worker w1 は起動の引数の能力 cluster-net だけを持ち、枠の file を読む
 ;;; (本番の --room-file — SimWorker の reads-room)。job pooled は cluster-net と組の印 pool-a を要る:

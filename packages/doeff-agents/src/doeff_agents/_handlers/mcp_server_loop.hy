@@ -59,7 +59,7 @@
   (when (is tool None)
     (return #("tool" False f"unknown tool: {req.tool-name}")))
   ;; 引数は schema(doeff.mcp の表 MCP_JSON_TYPES)で検め、合わなければ handler を呼ばずに断る — handler の引数の
-  ;; 注記(defmcp-tool)が約束する型を、ここで真にする(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y・card ki-973b4e44d7bc)
+  ;; 注記(defmcp-tool)が約束する型を、ここで真にする
   (val decoded (.decode-arguments tool req.arguments))
   (when decoded.problems
     (return #("tool" False (.join "; " decoded.problems))))

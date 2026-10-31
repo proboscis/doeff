@@ -51,8 +51,8 @@
   {:pre [(: text str)] :post [(: % (| WarmChildMark WarmMarkUnreadable))] :tags {:context "worker" :role "protocol"}}
   "準備完了の印の file の中身(入口が書く JSON — threads と vmLive の欄・service の頼みを受けられる版の serviceForks の欄)を、判断が判じる
    印の形に読むため。形が違えば読めない印にする(準備済みに数えず、判断が待ちの子を止める — 黙って起こし中のまま待たない)。serviceForks の
-   欄が無いのは、その欄を書く前の版の待ちの子(service を頼まない — 偽)。orphanForks の欄(頼みの orphan-seconds を受けられる版 — card
-   ki-f69f2a6869aa)も同じく、無ければ書く前の版(偽)。"
+   欄が無いのは、その欄を書く前の版の待ちの子(service を頼まない — 偽)。orphanForks の欄(頼みの orphan-seconds を受けられる版)
+   も同じく、無ければ書く前の版(偽)。"
   (try
     (val value (json.loads text))
     (val threads (.get value "threads"))
@@ -92,7 +92,7 @@
   (<- (file-done (MakeDirectory place.dir :mode 0o700)))
   (<- (file-done (MakeDirectory settings.log-dir)))
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
-  ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(card ki-7a7a1dcb1933 — 待ちの子は root の版の doeff で起きる)。
+  ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
   (<- entry-place (| str None) (root-entry-place launch.root))
   (<- argv tuple (warm-child-argv settings.uv launch place entry-place))
   (<- log str (warm-log-path settings key))
@@ -147,7 +147,7 @@
   (StopWarmChild [key stage reason refused]
     ;; 待ちの子の group へだけ送る(分けた子 A は別の session — 走っている task に届かない・条 WC2)。止めた訳は観測の detail に残す。
     ;; 分けるのを断った子の止め(refused)は観測の fork-refused に残し、その後の KILL でも断りの訳を書き換えない(終わった後に断りの
-    ;; 数えと task の失敗の訳が読む — card ki-e1612a12d0c3)。
+    ;; 数えと task の失敗の訳が読む)。
     (val view (.get table key))
     (when (and view (is view.exit-code None))
       (<- (SignalProcess :pid view.pid :signal (if (= stage StopStage.TERM) ProcessSignal.TERM ProcessSignal.KILL)))

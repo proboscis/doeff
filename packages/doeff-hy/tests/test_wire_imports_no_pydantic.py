@@ -1,4 +1,4 @@
-"""doeff_hy._wire が pydantic を読まずに解き・書き・JSON Schema を出す事の検(card ki-b7701d5fc0dd)。
+"""doeff_hy._wire が pydantic を読まずに解き・書き・JSON Schema を出す事の検。
 
 wire.hy の 5 つの API(parse・parse-json・dump・dump-json・json-schema)は自前の解き手(doeff_hy/_wire_codec.py)を呼び、pydantic を
 import しない。defwire の展開(record.hy)が置く __pydantic_config__ も pydantic を読まずに作る設定の辞書。照らしの相手の pydantic は

@@ -16,7 +16,7 @@
 ;;; 状態の DB(state_5.sqlite ほか codex の sqlite — thread の一覧と rollout の置き場の索引)は家の外の元の CODEX_HOME に 1 つ持つ
 ;;; (起こす env の CODEX_SQLITE_HOME = 元 — 家を作らない process と同じ置き場)。空の DB の codex は起動の時に sessions の全部を読んで
 ;;; DB を埋める(state db backfill)ので、DB を家に置くと、起動のたびに記録の全部を読み直し、記録が育つと起動の待ちの上限を越える
-;;; (card ki-f316f508a6a5 — 10-19 に 5.0 GB を起動ごとに読み、Codex の会話の turn が起動できなくなった)。本物の codex 0.162.1 で
+;;; (10-19 に 5.0 GB を起動ごとに読み、Codex の会話の turn が起動できなくなった)。本物の codex 0.162.1 で
 ;;; 確かめた事(2026-10-19):
 ;;;   - DB が埋まっていれば、別の家から起こしても backfill をしない(6 本を同時に起こして、どれも約 2 秒で thread を開いた)。
 ;;;   - codex は DB の行に rollout の path を、家を通る形(<家>/sessions/…)で書く。家を消すとその path は無くなり、別の家からの

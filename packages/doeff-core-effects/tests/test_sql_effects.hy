@@ -1,4 +1,4 @@
-;;; 汎用の SQL の effect(sql_effects.hy — agora-redesign #802 便 3)の検。
+;;; 汎用の SQL の effect(sql_effects.hy)の検。
 ;;;   - I/O なしの答え手(sqlite-sql-handler)に、effect の約束を全部撃つ: 引数の書き換えと値の正規化・失敗の 2 型(SqlFailed の SQLSTATE の類・
 ;;;     SqlUnreachable)・transaction の約束 3 つ(最初の失敗で rollback して再開しない・禁じた effect と入れ子を断る・例外で rollback)・
 ;;;     DDL の宣言・宣言していない database を外側へ回す。
@@ -57,7 +57,7 @@
 (val POSTGRES-DSN (session-dsn "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val CLICKHOUSE-URL (os.environ.get "DOEFF_SQL_TEST_CLICKHOUSE_URL"))
 ;; 実 PG の検の skip(DSN か psycopg が無い)。DSN は env が無ければ conftest が立てた使い捨ての PostgreSQL の物
-;; (postgres_support/disposable_postgres.py — agora-redesign #2830)。立てられなかった時は、その理由を名指す。
+;; (postgres_support/disposable_postgres.py)。立てられなかった時は、その理由を名指す。
 (val POSTGRES-SKIP-REASON (session-postgres-skip-reason "DOEFF_SQL_TEST_POSTGRES_DSN"))
 (val POOLED-SKIP-REASON (cond POSTGRES-SKIP-REASON POSTGRES-SKIP-REASON
                               (is (importlib.util.find-spec "psycopg") None) "psycopg が無い(uv run --with psycopg で足す)"
@@ -140,7 +140,7 @@
 
 
 (deftest test-a-remembered-split-still-checks-each-call-and-keeps-values-in-order
-  ;; 同じ文の 2 度目は覚えた割り(同じ tuple)を使う — それでも呼びごとの params は検め、値は `?` の順に並ぶ(agora-redesign #2423)。
+  ;; 同じ文の 2 度目は覚えた割り(同じ tuple)を使う — それでも呼びごとの params は検め、値は `?` の順に並ぶ。
   (val statement "SELECT :b, :a, :b, ':a' -- :c")
   (<- first (split-statement statement))
   (<- again (split-statement statement))
@@ -155,7 +155,7 @@
 
 (deftest test-split-memo-holds-at-most-its-part-limit-after-a-stream-of-value-count-statements
   ;; 値の数だけ引数を並べる文(`IN (:k0, …)`)を値の数ごとに流しても、覚えが抱える部品(SqlText・SqlPlaceholder)は
-  ;; SPLIT-MEMO-PART-LIMIT の内に収まる(agora card ki-a1feff4314cc — 文の数だけで限った時は 4096 文 × 約 120 部品を抱えた)。
+  ;; SPLIT-MEMO-PART-LIMIT の内に収まる(文の数だけで限った時は 4096 文 × 約 120 部品を抱えた)。
   ;; 覚えは module の 1 つなので、流す前の中身を退けて空から流し、終わりに戻す(他の検の覚えを汚さない)。
   (val saved #((dict sd.SPLIT-MEMO) (get sd.SPLIT-MEMO-PARTS 0)))
   (.clear sd.SPLIT-MEMO)
@@ -190,7 +190,7 @@
 
 
 (deftest test-plain-rows-pass-through-and-other-values-are-still-normalized
-  ;; 値の型が閉じた集合そのものの行は写すだけ・それ以外の型が混じる行は今までどおり normalized-value を通る(agora-redesign #2423)。
+  ;; 値の型が閉じた集合そのものの行は写すだけ・それ以外の型が混じる行は今までどおり normalized-value を通る。
   (<- plain (normalized-rows [#(1 "a" 1.5 b"x" True None)]))
   (assert (= plain #(#(1 "a" 1.5 b"x" True None))) plain)
   (<- mixed (normalized-rows [#(1 (Decimal "2.5") (bytearray b"y"))]))
@@ -236,7 +236,7 @@
 (defk out-of-range [database]
   {:pre [(: database str)] :post [(: % tuple)]
    :tags {:context "sql" :role "program"}}
-  "INTEGER の範囲(64 bit)の外の整数を引数の bind と行の挿入の両方で渡す筋書き(agora-redesign #1234)。"
+  "INTEGER の範囲(64 bit)の外の整数を引数の bind と行の挿入の両方で渡す筋書き。"
   (<- (seeded database))
   (<- bound (SqlQuery database "INSERT INTO items (id, label) VALUES (:id, 'x')" #((SqlParam :name "id" :value (** 2 63)))))
   (<- inserted (SqlInsertRows database "items" #("id" "label") #(#((** 2 63) "y"))))
@@ -246,7 +246,7 @@
 
 (deftest test-sqlite-refuses-an-out-of-range-integer-like-postgres
   ;; 本物の PostgreSQL は bigint の範囲外を 22003(numeric_value_out_of_range)で断る。sqlite3 の bind は OverflowError(sqlite3.Error の仲間
-  ;; ではない)を出すので、答え手が値にしないと呼び手の Program へ例外が抜け、模擬と本物の答えが食い違う(agora-redesign #1234)。
+  ;; ではない)を出すので、答え手が値にしないと呼び手の Program へ例外が抜け、模擬と本物の答えが食い違う。
   (<- answers (with-handler [(state) (sqlite-sql-handler #(DB))] (out-of-range DB)))
   (val bound (get answers 0))
   (val inserted (get answers 1))
@@ -456,7 +456,7 @@
 
 (deftest test-postgres-connection-sqlstates-map-to-unreachable
   ;; 接続の例外(class 08 の全部)と 57P01・57P02・57P03(管理者による切断・crash による切断・起動中 / 停止中)は SQLSTATE を持っていても
-  ;; 届かない(agora-redesign #880 の裁定)。
+  ;; 届かない。
   (for [sqlstate ["08000" "08001" "08003" "08006" "08P01" "57P01" "57P02" "57P03"]]
     (<- answer (postgres-failure sqlstate #("OperationalError" "DatabaseError" "Error") "gone"))
     (assert (= answer (SqlUnreachable :reason "gone")) #(sqlstate answer)))
@@ -466,7 +466,7 @@
     (assert (= engine-answer (SqlFailed :sqlstate sqlstate :reason "engine")) #(sqlstate engine-answer))))
 
 
-;; --- 接続の上限(agora-redesign #1479)------------------------------------------------------------------------------------------
+;; --- 接続の上限------------------------------------------------------------------------------------------
 ;; DB の pod が入れ替わった後、上限の無い接続は相手の居ない TCP のまま文を待ち続け、記録の service が 44 分固まった。
 
 (deftest test-postgres-connections-carry-the-timeouts
@@ -533,8 +533,7 @@
         (.start (threading.Thread :target self.pipe :args #(a b) :daemon True)))))
 
   (defn #^ socket.socket connect-upstream [self]  ; defk にできない: 検の殻の socket を開く
-    "行き先へ繋ぐため。host が / で始まれば PostgreSQL の unix socket の dir へ繋ぐ(使い捨ての PostgreSQL は TCP で待ち受けない
-     — agora-redesign #2830)。"
+    "行き先へ繋ぐため。host が / で始まれば PostgreSQL の unix socket の dir へ繋ぐ(使い捨ての PostgreSQL は TCP で待ち受けない)。"
     (setv #(host port) self.target)
     (if (.startswith host "/")
       (do
@@ -600,8 +599,8 @@
 (defk locked-write-after-a-stalled-transaction [idle-milliseconds]
   {:pre [(: idle-milliseconds (| int None))] :post [(: % "SqlTransaction の答え")]
    :tags {:context "sql" :role "program"}}
-  "transaction の途中で止まった接続(BEGIN と錠の後に何もしない — 返す finally に届かなかった形)の横で、同じ錠の transaction を撃つため
-   (agora-redesign #1846)。idle-milliseconds = transaction の途中で何もしない上限(None = 付けない)。文の上限は 3 秒。"
+  "transaction の途中で止まった接続(BEGIN と錠の後に何もしない — 返す finally に届かなかった形)の横で、同じ錠の transaction を撃つため。
+  idle-milliseconds = transaction の途中で何もしない上限(None = 付けない)。文の上限は 3 秒。"
   (val timeouts (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
                                   :unacknowledged-milliseconds 15000 :statement-milliseconds 3000
                                   :idle-transaction-milliseconds idle-milliseconds))
@@ -618,7 +617,7 @@
 
 (deftest test-postgres-cuts-a-stalled-transaction-so-its-lock-is-freed
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 実 PG(agora-redesign #1846 の反例): 錠を持ったまま止まった transaction は、上限(0.5 秒)で engine が切って錠を外し、同じ錠の
+  ;; 実 PG: 錠を持ったまま止まった transaction は、上限(0.5 秒)で engine が切って錠を外し、同じ錠の
   ;; transaction が通る。上限の無い接続では錠が外れず、同じ錠の transaction は文の上限(3 秒)で 57014 に落ちる(2026-09-30 の着地の台帳の
   ;; 事故の形)。
   (<- freed (locked-write-after-a-stalled-transaction 500))
@@ -682,7 +681,7 @@
 
 
 (deftest test-clickhouse-waits-outlast-the-server-deadline
-  ;; 失敗ケース(card ki-42d653b1470f): 宣言が client の待ち(timeout 30 秒)だけを持ち、server へ期限を送らなかった。遅い問い合わせの
+  ;; 失敗ケース: 宣言が client の待ち(timeout 30 秒)だけを持ち、server へ期限を送らなかった。遅い問い合わせの
   ;; 途中で client が接続を捨て、ClickHouse 24.11 は離れた接続へ答えを書く所で落ちた。宣言は期限だけを持ち、待ちは期限から導く。
   (try
     (ClickHouseDatabase :name "cold" :url "http://127.0.0.1:9/" :database "archive" :user "reader" :password "" :timeout 30.0)
@@ -920,7 +919,7 @@
 
 
 (deftest test-clickhouse-waits-for-the-server-to-refuse-at-its-deadline
-  ;; 失敗ケース(card ki-42d653b1470f): client が 30 秒の待ちで接続を捨て、server は離れた接続へ答えを書く所で落ちた。client は期限を
+  ;; 失敗ケース: client が 30 秒の待ちで接続を捨て、server は離れた接続へ答えを書く所で落ちた。client は期限を
   ;; 送り、期限より長く待つので、server が期限で断った答えを、接続を保ったまま SqlFailed として受ける(KILL QUERY は撃たない)。
   (<- server (fake-clickhouse "deadline" False))
   (try
@@ -947,7 +946,7 @@
 
 
 (deftest test-clickhouse-kills-the-query-before-leaving-a-stuck-server
-  ;; 失敗ケース(card ki-42d653b1470f): 待ちを越えた client が socket を閉じるだけで離れ、server の問い合わせが走ったまま残った。
+  ;; 失敗ケース: 待ちを越えた client が socket を閉じるだけで離れ、server の問い合わせが走ったまま残った。
   ;; 待ちを越えたら、元の接続を閉じる前に別の接続で KILL QUERY を撃ち、元の接続で取り消しの答えを受ける。
   (<- server (fake-clickhouse "stuck" True))
   (try
@@ -983,7 +982,7 @@
   (assert (<= 1.4 elapsed 5.0) elapsed))
 
 
-;; --- process の終わりの読み終え(card ki-41b402ad072d)----------------------------------------------------------------------------
+;; --- process の終わりの読み終え----------------------------------------------------------------------------
 
 ;; SIGTERM で終わる子 process(問い合わせを撃つ・shape は file の註)。
 (val EXIT-CHILD (os.path.join (os.path.dirname (os.path.abspath __file__)) "clickhouse_exit_child.py"))
@@ -1089,7 +1088,7 @@
 
 
 (deftest test-clickhouse-reads-the-answer-before-a-stopped-service-ends
-  ;; 失敗ケース(card ki-41b402ad072d・10-24 08:23 JST): 止めの合図で service の Program が終わり、Python が終わると、daemon の往復の
+  ;; 失敗ケース(10-24 08:23 JST): 止めの合図で service の Program が終わり、Python が終わると、daemon の往復の
   ;; thread は待たれずに消え、OS が閉じた接続へ server が答えを書いて落ちた。終わりの読み終えが、答えを読み終えてから終わらせる。
   (<- watch (terminate-mid-round-trip "slow" "stop"))
   (assert (= watch.code 0) watch)
@@ -1219,7 +1218,7 @@
   (assert (< elapsed (+ 1.0 WAIT-MARGIN-SECONDS)) elapsed))
 
 
-;; --- scheduler を塞がない PostgreSQL の答え手(pooled-postgres-sql-handler — agora-redesign #880 U2)。実 PG が要る(環境変数が無ければ skip)---
+;; --- scheduler を塞がない PostgreSQL の答え手(pooled-postgres-sql-handler)。実 PG が要る(環境変数が無ければ skip)---
 
 (defk pause [seconds]
   {:pre [(: seconds float)] :post [(: % None)]
@@ -1255,7 +1254,7 @@
    :tags {:context "sql" :role "program"}}
   "許可(接続 1 本)を取り合う遅い問い合わせ 2 つの横で、別の task が刻めるかを見るため。2 つとも 1 秒眠るので、どちらが先に許可を
    取っても、後の方は先の方が許可を返すまで待ち、終わりの刻が 1 秒離れる(2 本の接続で並んで走れば、ほぼ同じ刻に終わる)。許可を取る
-   順は driver の thread の起き方で決まり、決まらない — 先に spawn した方が先に取る、を断言の前提にしない(agora-redesign #3532)。"
+   順は driver の thread の起き方で決まり、決まらない — 先に spawn した方が先に取る、を断言の前提にしない。"
   (<- slow (Spawn (finished-at "SELECT pg_sleep(1.0)")))
   (<- queued (Spawn (finished-at "SELECT pg_sleep(1.0)")))
   (<- seen (ticks 5 0.05))
@@ -1406,7 +1405,7 @@
 (deftest test-a-batched-transaction-cancelled-in-its-first-round-trip-sends-no-second
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
   (import psycopg)
-  ;; 束ねた transaction は往復の間に scheduler へ戻らず driver の thread の仕事 1 つで走る(card ki-7f9808c3c3d8)。それでも 1 往復目の間に
+  ;; 束ねた transaction は往復の間に scheduler へ戻らず driver の thread の仕事 1 つで走る。それでも 1 往復目の間に
   ;; 待ち手が去れば、2 往復目(行の書きと COMMIT)は流さずに ROLLBACK し、接続を transaction の外の形で返す(往復ごとに戻っていた時と同じ)。
   ;; 接続 1 本: 取り消しの後の問い合わせが通れば、許可と接続が返っている。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn (or POSTGRES-DSN ""))) :size 1))
@@ -1457,7 +1456,7 @@
 
 (deftest test-postgres-returns-the-connection-of-a-transaction-the-run-left-behind
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 根(agora-redesign #1859 / #2684): run の親が終わる時に途中の transaction の task を捨てると、接続を返す finally が走らず、
+  ;; 根(#2684): run の親が終わる時に途中の transaction の task を捨てると、接続を返す finally が走らず、
   ;; 接続は借りたまま・transaction の途中のまま残った(貸し出しの空き 0・許可の空き 0)。今は run の終わりに Cancel が届き、
   ;; finally が rollback して接続を返す。
   (import psycopg)
@@ -1517,7 +1516,7 @@
   (assert (isinstance pooled-answer SqlUnreachable) pooled-answer))
 
 
-;; --- postgres-sql-handler も scheduler を塞がない(agora-redesign #1215)。実 PG が要る(環境変数が無ければ skip)-------------------------
+;; --- postgres-sql-handler も scheduler を塞がない。実 PG が要る(環境変数が無ければ skip)-------------------------
 ;; 前は driver の呼びを scheduler の thread で同期に撃ったので、遅い文の間は同じ run の他の task(成果物の置き場の /healthz)も待った。
 
 (defk timed-sleep [seconds]
@@ -1581,7 +1580,7 @@
 (deftest test-postgres-connections-keep-the-dsn-options-and-add-the-statement-bound
   {:skip-if PSYCOPG-SKIP :skip-reason "psycopg が無い"}
   ;; DSN が options(-c search_path …)を名乗っていれば、文の上限の -c はそれに継ぎ足す(keyword で勝たせると DSN の -c が黙って消え、
-  ;; 表が名指した schema でなく public に作られた — agora-redesign #1771)。名乗らない database は文の上限だけ。
+  ;; 表が名指した schema でなく public に作られた)。名乗らない database は文の上限だけ。
   (val connections (PostgresConnections #((PostgresDatabase :name DB :dsn "postgresql://u@/d?host=%2Ftmp&options=-c%20search_path%3Ds1")
                                           (PostgresDatabase :name "plain" :dsn "postgresql://u@/d"))))
   (assert (= (get (.connection-options connections DB) "options") "-c search_path=s1 -c statement_timeout=60000 -c idle_in_transaction_session_timeout=30000")
@@ -1590,7 +1589,7 @@
           (.connection-options connections "plain")))
 
 
-;; --- 往復のまとめ(SqlBatch・BEGIN と COMMIT の相乗り — agora-redesign #3605)--------------------------------------------------------------
+;; --- 往復のまとめ(SqlBatch・BEGIN と COMMIT の相乗り)--------------------------------------------------------------
 
 (defk recorded-flush [flush]
   {:pre [(: flush TransactionFlush)] :post [(: % tuple)]
@@ -1884,7 +1883,7 @@
 
 (deftest test-pooled-postgres-drives-a-batched-transaction-in-one-job
   {:skip-if POOLED-SKIP :skip-reason POOLED-SKIP-REASON}
-  ;; 失敗ケース(card ki-7f9808c3c3d8): 束ねた transaction は、借りる・全部の往復と間の判定・返すを driver の仕事 1 つで回し、往復の間に
+  ;; 失敗ケース: 束ねた transaction は、借りる・全部の往復と間の判定・返すを driver の仕事 1 つで回し、往復の間に
   ;; scheduler の thread へ戻らない — 2 往復の書きも往復 1 回の transaction も pool に出す仕事は 1 つ(前は往復ごとに 1 つで 2 と 1 —
   ;; 1 往復目の答えから 2 往復目までの scheduler の待ちの間も置き場の書きの錠を持ち、混むほど錠を待つ書きが積もった)。
   ;; 答えと、接続が 1 本のまま返ることも見る。

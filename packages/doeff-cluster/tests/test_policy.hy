@@ -322,7 +322,7 @@
   (get (! (records-after now h.records (! (plan now #(H2) dead h.records POLICY)) POLICY)) "a"))
 
 (deftest test-retiring-a-process-that-ran-stably-counts-failures-from-zero
-  ;; 失敗ケース(card ki-3f4bbc55733a): 落ち続けた後に起こした process が stable-run-ms 以上動いてから入れ替えで名から外されても、記憶の
+  ;; 失敗ケース: 落ち続けた後に起こした process が stable-run-ms 以上動いてから入れ替えで名から外されても、記憶の
   ;; 続けて落ちた回数は前の落ち続けのまま残り、新の process は起動から stable-run-ms の間それを報告した(本番では 1 時間 48 分 安定して
   ;; 動いた後の入れ替えで 11 — 上に載る系の見張りが落ち続けと数えた)。名から外す時に、外す process が長く動いていれば 0 から数え直す。
   (val h (! (handed-off-after (* 108 60000))))
@@ -424,7 +424,7 @@
 (import doeff_cluster._worker.intent.worker_model [StartHold] doeff_cluster._worker.core.policy [start-holds])
 
 (deftest test-a-leaving-generation-starts-no-new-trial-of-a-handoff-job-even-without-the-superseded-mark
-  ;; 失敗ケース(10-11 の zeus の画面の process の群 — card ki-3a57786eba88): 止まり(preStop の drain)の始まった Pod の古い世代は、
+  ;; 失敗ケース(10-11 の zeus の画面の process の群): 止まり(preStop の drain)の始まった Pod の古い世代は、
   ;; 退かせた process(名 = <元の名>#retired-<世代>)が走っている間、coordinator の返事に handoff の job が載り続け、名が空いているので、
   ;; 印 supersededBy の欠けた拍ごとに新しい試行を起こした(群 1 で 45 回・群 2 で 58 回 — 前の process を止めずに並べた)。守りは worker の
   ;; 手元の観測(WorldView.leaving — preStop の入口が置いた印)で、coordinator の印に依らない。
@@ -447,7 +447,7 @@
 
 
 (deftest test-a-leaving-generation-does-not-swap-the-version-of-a-handoff-job
-  ;; 失敗ケース(設計検証 lt-C071SZK8EQTX19F3YV1MSWT53X の盲検 B の読み): 止まりの Pod で宣言の版が変わり、返事に版の据え置き
+  ;; 失敗ケース: 止まりの Pod で宣言の版が変わり、返事に版の据え置き
   ;; (hold-version — drain 中の印)も印 supersededBy も欠けると、handoff の入れ替え(handoff-actions)が新しい版の準備と入口の検めの後に
   ;; 今の process を退かせていた。次の拍の起こしは止まりで撃たない(start-step)ので、退いた process が走っている仕事を終えて自分で
   ;; 終わると、その Pod の job は誰も動かさない。止まる Pod は handoff の job の版を入れ替えない(準備・検め・退かせを撃たない)。
@@ -501,7 +501,7 @@
   (assert (= (! (plan 2000 #() (! (world old)) {} POLICY)) #((SignalJob (retired-name "a" "1-old") 10 StopStage.TERM (Retired))))))
 
 (deftest test-a-retired-process-holding-the-retirement-hold-outlives-its-lifetime
-  ;; 失敗ケース(card ki-e3531030eb37 — 10-16 04:28:49 JST の本番): 上に載る系の入れ替えの job の退いた process は、走っている仕事を
+  ;; 失敗ケース(10-16 04:28:49 JST の本番): 上に載る系の入れ替えの job の退いた process は、走っている仕事を
   ;; 終わりまで回す(仕事の長さに上限を置かない系)が、退いてから寿命の上限(retiredSeconds 6 時間)を越えた拍で SIGTERM され、6 時間 7 分
   ;; 走っていた仕事が切れた。退いた process が退きの保ち(名前付きの lease RETIREMENT-HOLD — coordinator が持ち手の世代の名を
   ;; JobSpec.retired-held に載せる)を持つ間は、上限を越えても止めない。保ちが無くなれば(返した・延ばしが止まって切れた)、次の拍で今どおり止める。
@@ -686,7 +686,7 @@
   (assert (= (! (plan 0 #() w {} POLICY :absent (WorkerStopping))) #((SignalJob "a" 10 StopStage.TERM (WorkerStopping))))))
 
 
-;; --- 前の世代が動かしている recreate の job(AL-D2f・card ki-76506cc96202): 同じ名の前の世代がまだ走っている間、新しい世代は coordinator の
+;; --- 前の世代が動かしている recreate の job(AL-D2f): 同じ名の前の世代がまだ走っている間、新しい世代は coordinator の
 ;;     印 elder-runs を受けた job を準備と入口の検めまで進めて起こさず、揃ったら状態の行を elder-runs にする。印が外れたら起こす。 --------
 
 (deftest test-a-job-the-elder-runs-is-prepared-but-not-started-until-the-mark-is-lifted
@@ -709,7 +709,7 @@
   (assert (= (! (plan 0 #(handoff) (! (world)) {} POLICY)) #((StartJob handoff 1 "/c/rev1")))))
 
 
-;; --- 機体の memory の逼迫の間の task の見送り(card ki-7b934e2538f9): 見張りの様子が TIGHT か DANGER の間、task(once)を起こさない ------
+;; --- 機体の memory の逼迫の間の task の見送り: 見張りの様子が TIGHT か DANGER の間、task(once)を起こさない ------
 
 (val HEAVY (JobSpec "task/heavy" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :once True))
 

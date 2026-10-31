@@ -1,9 +1,9 @@
-"""Timer handler: ``ArmTimer`` / ``DisarmTimer`` answered by one task over a queue of deadlines (agora-redesign #3076).
+"""Timer handler: ``ArmTimer`` / ``DisarmTimer`` answered by one task over a queue of deadlines.
 
 The handler keeps the armed deadlines in one queue, ordered by instant and then by arming order, and one task
 works the queue: it waits ``WaitWithin(wake, seconds)`` until the earliest deadline, publishes ``TimerFired``
 for every deadline that has come, and waits for the next one (cisco-c8 2026-10-03 15:1x — a task per deadline
-cost a ``Spawn``, a promise and a wait for every arming; agora-redesign #3054 / #3116). The clock handler owns
+cost a ``Spawn``, a promise and a wait for every arming). The clock handler owns
 the deadline, so the same timer handler runs on every clock — ``sim_time_handler`` puts it on its virtual time
 queue (when every task waits, the clock moves to the next deadline in one step, however far it is), and the
 wall-clock handlers sleep or start a timer.
@@ -20,7 +20,7 @@ The task fires only when the scheduler gives it a turn, so it can wake late. Wok
 come by the clock's time then, not only those up to the one it waited for. And a program's ``WaitForEvent(s)`` passes
 through this handler: while the task is parked, the deadlines strictly behind the clock are published first, then the
 wait goes on to the event handler — a subscriber queue that answers every wait from queued events never gives the task
-a turn, and a busy worker would never see its deadlines (card ki-7d2a9efa8320). On the virtual clock the task is woken
+a turn, and a busy worker would never see its deadlines. On the virtual clock the task is woken
 at its deadline before the clock moves on, so neither changes the order there.
 
 Install it inside the event handler and the clock handler (the timer task's ``Publish`` / ``WaitWithin`` /
@@ -30,7 +30,7 @@ A ``TimerFired`` is delivered as the event handler delivers any event. With the 
 that means only to the programs waiting for it at that moment: **a fire while no program waits is lost**, so a
 worker that is busy (in another wait, or processing) when its deadline passes never sees that deadline, nor the
 overdue ones published just before its wait. A worker must not rely on ``ArmTimer`` until its event handler keeps a
-queue per subscriber (agora-controllers docs/design/event-waits/README.md 2 (b) — agora-redesign #3075).
+queue per subscriber (agora-controllers docs/design/event-waits/README.md 2 (b)).
 """
 
 from collections.abc import Hashable
@@ -122,7 +122,7 @@ def timer_handler() -> ProgramHandler:
 
         A program's WaitForEvent(s) does this while the task is parked in its wait: the task runs only when the
         scheduler gets a turn, and a wait the subscriber queue answers at once never gives it one — a program kept busy
-        by queued events would never see its deadlines (card ki-7d2a9efa8320). Strictly behind: on the virtual clock
+        by queued events would never see its deadlines. Strictly behind: on the virtual clock
         the task is woken at its deadline before the clock moves on, so nothing fires here and the virtual clock's
         order is unchanged.
         """
@@ -204,7 +204,7 @@ def timer_handler() -> ProgramHandler:
             current = armed.get(effect.tag)
             if current is not None and current.at == effect.at:
                 # The same deadline is already armed: nothing changes (a worker re-arms its deadlines after every
-                # pass — agora-redesign #3054 C / cisco-c8 14:2x (c)).
+                # pass).
                 return (yield Transfer(k, None))
             armed[effect.tag] = _Arming(at=effect.at, order=next(orders))
             _ = yield queue_changed()

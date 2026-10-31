@@ -49,7 +49,7 @@ def _delay_span(seconds: float) -> timedelta:
     ``timedelta(seconds=s)`` rounds to whole microseconds, so a positive delay below half a
     microsecond became zero and the clock did not move. A wait loop that sleeps "the rest of
     its timeout" (e.g. doeff_records._watching.wait-for-changes) then slept the same sub-tick
-    remainder forever without advancing virtual time (agora-redesign #675, 2026-09-26: the
+    remainder forever without advancing virtual time (2026-09-26: the
     remainder 7.2e-08 s after float drift). A real sleep of a positive duration always lets at
     least that much time pass, so the sim rounds such a delay up to one tick.
     """
@@ -60,7 +60,7 @@ def _delay_span(seconds: float) -> timedelta:
 
 
 class _TickRun:
-    """A WaitTicks waiter's ticks on the virtual time queue (agora-redesign #3066): the spacing and the number
+    """A WaitTicks waiter's ticks on the virtual time queue: the spacing and the number
     of ticks, how many have passed, and the sequence of the tick queued now (withdrawn when the future wins).
     The clock driver advances it as each tick is taken off the queue; the waiting task reads ``passed``
     once it is answered."""
@@ -101,7 +101,7 @@ class SimTimeRuntime:
         self._clock = clock
         self._time_queue = TimeQueue()
         # Queued ticks of WaitTicks waiters, by queue sequence: such an entry's promise is the waiter's
-        # deadline, completed only at its last tick (agora-redesign #3066).
+        # deadline, completed only at its last tick.
         self._mut_tick_runs: dict[int, _TickRun] = {}
         self._mut_driver_running = False
         self._log_formatter = log_formatter
@@ -115,7 +115,7 @@ class SimTimeRuntime:
         A WaitTicks tick that is not the last is not completed: the next tick is queued the moment
         this one is taken off — where a waiter re-registering WaitWithin at each tick would queue it,
         since no other task runs between the pop and that waiter's re-registration — and the waiting
-        task is not woken (agora-redesign #3066)."""
+        task is not woken."""
 
         try:
             while not self._time_queue.empty():
@@ -162,9 +162,9 @@ class SimTimeRuntime:
 
         The deadline is a promise on this handler's time queue (like a Delay) raced against the
         future — no timer task is spawned, and a deadline the future beat is withdrawn from the
-        queue so the clock driver never advances to it (agora-redesign #2618). ``park`` races
+        queue so the clock driver never advances to it. ``park`` races
         an external promise without shielding the clock driver, so the deadline can pass while
-        the promise is pending (agora-redesign #3054).
+        the promise is pending.
         """
         deadline = yield CreatePromise()
         sequence = self._time_queue.push(self._clock.current_time + _delay_span(seconds), deadline)
@@ -197,7 +197,7 @@ class SimTimeRuntime:
     @do
     def _wait_ticks(self, future: "Future[object]", every: float, count: int, park: bool):
         """Answer ``future``'s value, or None once ``count`` ticks spaced ``every`` seconds pass first,
-        with how many ticks passed (agora-redesign #3066).
+        with how many ticks passed.
 
         One tick at a time is on the time queue: the clock driver takes it off and queues the next
         one at once, without waking this task (see _clock_driver), so a tick instant orders against
@@ -287,7 +287,7 @@ class SimTimeRuntime:
             @do
             def deferred():
                 _ = yield self._wait_for_time(effect.time)
-                # Wait(task) answers the scheduled program's value (agora-redesign #1159).
+                # Wait(task) answers the scheduled program's value.
                 return (yield effect.program)
 
             task = yield Spawn(deferred())

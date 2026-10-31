@@ -117,7 +117,7 @@
     (<- _ (drive (fs-write-text-atomic target "{\"ok\": true}" ".agentd-tmp")))
     (<- content (drive (fs-read-text target)))
     (assert (= content "{\"ok\": true}"))
-    ;; card acp:kanban-issue:ki-62aa1f4e9c9c D9: tmp の名は書き手ごとに一意なので、綴り 1 つでなく
+    ;; D9: tmp の名は書き手ごとに一意なので、綴り 1 つでなく
     ;; glob で数える(残骸ゼロの観測面は変えない)。
     (assert (= (glob.glob (+ target ".*agentd-tmp")) []))
     (assert (not (os.path.exists (+ target ".agentd-tmp"))))
@@ -332,7 +332,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; D8 / D9(card acp:kanban-issue:ki-62aa1f4e9c9c・盲検 A の反例)
+;; D8 / D9(盲検 A の反例)
 ;; ---------------------------------------------------------------------------
 
 (deftest test-fs-ensure-symlink-three-outcomes
@@ -374,7 +374,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; D8 の同拍 — 本物の 2 process(card acp:kanban-issue:ki-62aa1f4e9c9c・計画段の実測
+;; D8 の同拍 — 本物の 2 process(計画段の実測
 ;; evidence/symlink_install_race.log)
 ;; ---------------------------------------------------------------------------
 ;;

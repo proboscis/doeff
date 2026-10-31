@@ -197,7 +197,7 @@
   (assert (and got (all (gfor k got (.startswith k "worker/"))))))
 
 
-;;; 盤は Table[BoardRow](ki-900fccc19cd6 / T2): 1 行の書きは 1 行だけ作り直し、残りの行は同じ object のまま引き継ぐ。
+;;; 盤は Table[BoardRow](T2): 1 行の書きは 1 行だけ作り直し、残りの行は同じ object のまま引き継ぐ。
 
 (defn rebuilt-rows [before after]
   "after の盤で、before の盤と同じ object でない行の数(作り直した行・足した行)。"
@@ -255,7 +255,7 @@
   (assert (is (.row shifted.board "plain") untouched) "期限なしの行は同じ object"))
 
 
-;;; 盤の集計 board-tally は書きごとの足し引き(ki-ea1179b7565a / T2b): 全行から求めた値と一致し、書きは全行を読まない。
+;;; 盤の集計 board-tally は書きごとの足し引き(T2b): 全行から求めた値と一致し、書きは全行を読まない。
 
 (defk tally-matches-all-rows [state]
   {:pre [(: state ClusterState)] :post [(: % bool)] :tags {:context "doeff-cluster-test" :role "judgment"}}

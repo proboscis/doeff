@@ -1,4 +1,4 @@
-"""自前の書き手と JSON Schema(doeff_hy/_wire_codec.py — 書く側)の検(card ki-f6551d717654)。
+"""自前の書き手と JSON Schema(doeff_hy/_wire_codec.py — 書く側)の検。
 
 契約は設計の記録 docs/design/defwire-decoder/design.md(節 2 の表の「書き出し」の列・節 3b)。確かめること:
 

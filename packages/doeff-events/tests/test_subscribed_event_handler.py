@@ -1,5 +1,5 @@
 """memory の購読者ごとの列(subscribed_event_handler)の検 — 不変条件は event_signal_invariants の関数を memory の
-組み立て方で呼ぶ(agora-redesign #3075)。"""
+組み立て方で呼ぶ。"""
 
 from collections.abc import Hashable
 from dataclasses import dataclass
@@ -73,7 +73,7 @@ def test_queue_wakes_waiters_in_arrival_order_and_keeps_order() -> None:
     assert queue.offer(Unrelated("x")) is None
     assert queue.offer(Changed(("b",))) is second
     assert queue.offer(Changed(("c",))) is None
-    # 待ち手の居ない間の同じ型の合図は 1 つにまとまり、所は来た順のまま(agora-redesign #3079)。
+    # 待ち手の居ない間の同じ型の合図は 1 つにまとまり、所は来た順のまま。
     assert queue.offer(Changed(("d",))) is None
     assert queue.take((Changed,)) == Changed(("c", "d"))
     assert queue.take((Changed,)) is EMPTY
@@ -108,7 +108,7 @@ def test_wait_for_subtype_of_subscribed_type_is_inside() -> None:
     assert queue.outside((Unrelated, object)) == (Unrelated, object)
 
 
-# 待ち手の居ない間に溜まった同じ型の合図を 1 つにまとめる(agora-redesign #3079・設計 #3072 の 3 節 5)。
+# 待ち手の居ない間に溜まった同じ型の合図を 1 つにまとめる(設計 #3072 の 3 節 5)。
 # offer が常に末尾に積む形に戻すと、まとまる筋書き(1 本目と 3 本目)が赤になる。
 
 

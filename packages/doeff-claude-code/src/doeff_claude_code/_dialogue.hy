@@ -20,8 +20,8 @@
 ;;;   例外は入力を書かずに事前起動した process(ClaudeWarmSession)の最初の入力の前だけで、SessionStart の hook の開始と応答の行も
 ;;;   外とみなさない(quiet-before-first-input — この 2 種の行のほかは広げない。最初の入力の後の待ちは前と同じ)。
 ;;;   もう 1 つの例外は、model の手番の外で CLI が回す hook(Notification・SessionEnd — OUTSIDE-TURN-QUIET-HOOK-EVENTS)の開始と応答の
-;;;   行で、いつでも外とみなさない(quiet-outside-turn — CLI に全 hook の行を出させる --include-hook-events の後・
-;;;   ki-d8b473480303)。model の手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は外の出力のまま。
+;;;   行で、いつでも外とみなさない(quiet-outside-turn — CLI に全 hook の行を出させる --include-hook-events の後)。
+;;;   model の手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は外の出力のまま。
 ;;;   control_request で止めて注入が生き残った時は、生き残った入力の手番が同じ process で続く(continues)。
 ;;; - 手番の額(#883): result の行の total_cost_usd は会話の累積で、usage はその CLI の手番 1 回分(実測 2.1.283 —
 ;;;   同じ process の 2 つ目の result の行は 1 つ目の額との和を名乗り、--resume で起こした process は前の process が降りる時に
@@ -29,10 +29,10 @@
 ;;;   閉じた result の行の累積)、usage = 手番の途中に読んだ result の行の usage の和 — 額と usage を同じ行の集まりで数える。
 ;;;   起点が分からなければ額は None(次の手番からは読んだ行の累積で数え直す)。起点を次の process へ引き継ぐのは handler(spawn-turn)。
 ;;;   result の行の modelUsage も会話の累積(実測 2.1.292)なので、model ごとの使用量も同じ起点(cost-mark は額と model ごとの累積の組
-;;;   CostMark)からの差で手番の分へ直し、model ごとの額の和を手番の額と照合する(card ki-1d986d4f0007 — 起点・再起動・止めた手番の扱いは
+;;;   CostMark)からの差で手番の分へ直し、model ごとの額の和を手番の額と照合する(起点・再起動・止めた手番の扱いは
 ;;;   額と同じ 1 つの値が運ぶので、2 つの起点がずれない)。
 ;;;   control_request で止めて生き残った入力の手番が同じ process で続く時(continues)は、止めた区切りを閉じた result の行で起点を進めず、
-;;;   usage の和も持ち越す — 続いた手番の額と usage と model ごとの使用量は、止めた区切りの始まりの起点から数える(card ki-9246ea31f98d —
+;;;   usage の和も持ち越す — 続いた手番の額と usage と model ごとの使用量は、止めた区切りの始まりの起点から数える(
 ;;;   上の層はこの 2 つの区切りを 1 つの手番として読み、続いた手番の終わりの額だけを手番の額にする。止めた区切りの Interrupted は額の欄を
 ;;;   持たないので、額は二重に数えない)。
 ;;;
@@ -192,9 +192,8 @@
 (defn #^ bool input-already-read [#^ DialogueState state #^ str ref]
   "入力を名指した止めを出さずに済むか: 手番の途中で、CLI が入力の運命を名乗り(msg_lifecycle_v1)、名指した入力 ref がこの手番に入れた
    入力(turn-refs — 手番を始めた入力と足した注入)で、まだ読まれていない注入(queued)でない。止めはまだ読まれていない注入を先に読ませる
-   ための物で、読み終えた手番を止めると答えが途中で切れる(card ki-1c4cfde50ac5)。この手番に無い ref(止めの依頼の id など)と、運命を
-   名乗らない CLI では読んだかが分からないので偽(名指さない止めと同じに止める — 止めが黙って効かなくなる事を防ぐ・設計検証
-   lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。"
+   ための物で、読み終えた手番を止めると答えが途中で切れる。この手番に無い ref(止めの依頼の id など)と、運命を
+   名乗らない CLI では読んだかが分からないので偽(名指さない止めと同じに止める — 止めが黙って効かなくなる事を防ぐ)。"
   (and state.in-flight state.lifecycle (in ref state.turn-refs) (not-in ref (queued-refs state))))
 
 
@@ -208,8 +207,7 @@
   "result の行 → Completed | Failed。誤りの detail は CLI が名乗った文ちょうど(無ければ subtype)。
    usage = 手番の途中に読んだ result の行の usage の和(state.turn-usage — この行の分を足した後の状態を渡す)・
    cost-usd = この行の累積の額 − 手番の起点(state.cost-mark)。どちらかが分からない・差が負(CLI が起点の額から数えていない)なら None。
-   model-usage・model-usage-gap = この行の model ごとの累積を同じ起点からの増分へ直し、額と照合した結末(per-turn-model-usage —
-   card ki-1d986d4f0007)。"
+   model-usage・model-usage-gap = この行の model ごとの累積を同じ起点からの増分へ直し、額と照合した結末(per-turn-model-usage)。"
   (setv refs (result-input-refs result state))
   (setv total result.cost-usd mark state.cost-mark)
   (setv cost (if (or (is total None) (is mark None) (< total mark.total-usd)) None (- total mark.total-usd)))
@@ -231,8 +229,8 @@
                  :input-refs refs)))
 
 (defn interrupted-by-result [#^ Interrupted end #^ TurnResult result #^ DialogueState state]
-  "止めた手番 end を閉じた result の行で、止めるまでの消費(usage・額・model ごとの使用量と照合の訳)を end に載せるため(card
-   ki-47e64b7b642f — 前は起点だけをこの行へ進めて額を捨て、上の層は額の無い手番として単価で推定した)。数え方は CLI が終えた手番と
+  "止めた手番 end を閉じた result の行で、止めるまでの消費(usage・額・model ごとの使用量と照合の訳)を end に載せるため(
+   前は起点だけをこの行へ進めて額を捨て、上の層は額の無い手番として単価で推定した)。数え方は CLI が終えた手番と
    同じ end-of-result の 1 か所(この行の分を足した後の state を渡す)。"
   (setv priced (end-of-result result state))
   (replace end :usage priced.usage :cost-usd priced.cost-usd :model-usage priced.model-usage

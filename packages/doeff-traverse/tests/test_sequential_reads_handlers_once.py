@@ -1,4 +1,4 @@
-"""sequential が Traverse 1 回に内側の handler を読むのは、件を 1 つ目に走らせる時の 1 度だけである事の検(agora-redesign #2958)。
+"""sequential が Traverse 1 回に内側の handler を読むのは、件を 1 つ目に走らせる時の 1 度だけである事の検。
 
 Traverse の件は、Traverse を出した所と sequential の間に入っている handler(内側の handler)の下で走る。sequential は
 それを継続から読み(GetHandlers)、件ごとに入れ直す。前は件が 1 つも走らない Traverse(件 0・失敗した件だけの Collection)

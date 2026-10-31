@@ -1,4 +1,4 @@
-;;; programs・warms・handoffs の欄が表(Table)で、書き手が「変わった行だけの書き」であることの検(ki-72d10ecf9f39 — T6b)。
+;;; programs・warms・handoffs の欄が表(Table)で、書き手が「変わった行だけの書き」であることの検(T6b)。
 ;;;
 ;;; 時間では測らない。見る物は 3 つ: 残る行(鍵)、書きの無い拍で状態が元と同じ物(is)であること、保存の鍵と値。
 (require doeff-hy.macros [deftest val <- defk])

@@ -1,4 +1,4 @@
-"""doeff-hy-check の基点との比べ・strict・展開の cache(agora-redesign #2153)の失敗ケース。
+"""doeff-hy-check の基点との比べ・strict・展開の cache の失敗ケース。
 
 - strict: `:pre [(: args dict)]` の defk は型引数の無い dict として赤(reportMissingTypeArgument)。
 - `(| X None)` の取り違え: None になりうる値の属性を読むと赤(reportOptionalMemberAccess)。
@@ -6,7 +6,7 @@
 - 展開から記帳を外す: 型検査に見せる Python に `setattr(…, '__doeff_…__', …)`・`hy.macros.require` が残らず、
   strict で doeff-hy 自身の import の赤(重複・stub 無し・private な補助の名)が出ない。
 - 展開の cache: 2 度目は保存した展開を引き、診断は 1 度目と同じ。source を変えれば別の entry(引くか展開し直すかの失敗ケースは
-  test_static_cache.py — agora-redesign #3862)。
+  test_static_cache.py)。
 """
 
 import contextlib

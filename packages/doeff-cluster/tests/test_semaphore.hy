@@ -608,8 +608,8 @@
 
 
 (deftest test-a-cancelled-claim-whose-reply-is-late-gives-the-lease-back
-  ;; 取りの claim が盤に通った後、返事を待っている間に取りが取り消される(常駐の process の入れ替え・drain の時点 — 依頼
-  ;; lt-VDFSDNZKFS9ACQHW4R64AGK4N0 の盲検 A)。B は 1 秒に取りに行き、claim は盤に通るが返事が 20 秒遅れる。3 秒に B の取りを取り消す。
+  ;; 取りの claim が盤に通った後、返事を待っている間に取りが取り消される(常駐の process の入れ替え・drain の時点)。
+  ;; B は 1 秒に取りに行き、claim は盤に通るが返事が 20 秒遅れる。3 秒に B の取りを取り消す。
   ;; 次の持ち手 C は 4 秒に取りに行き、B の取り消しが同じ token で返した後なので、4 秒(試し直しの間の内)に取る。
   ;; 直す前: 取りは取り消しをそのまま上げ、盤に通った B の token が期限(1 秒 + 15 秒)まで残り、C は 16 秒の後に取った。
   (val clock (SimClock))

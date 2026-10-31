@@ -1,6 +1,6 @@
 ;;; worker が起動する子 process の入口(service と task)。その commit のコードを展開した木(か実行環境の root)の中で動く。
 ;;; #2028 で doeff_cluster/job_entry.hy からここへ移した。worker が送る名 JOB-ENTRY はこの入口の名(#2112)。旧い path の
-;;; doeff_cluster.job_entry(この入口へ渡すだけの file)は 2026-10-03 に消した(利用者の決め・#2167)— 旧い名を送る worker と、旧い
+;;; doeff_cluster.job_entry(この入口へ渡すだけの file)は 2026-10-03 に消した(#2167)— 旧い名を送る worker と、旧い
 ;;; doeff で宣言した Service の子は、この入口を持つ doeff で宣言し直すまで起動できない。
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.job_entry service --identity <指紋> --program PATH

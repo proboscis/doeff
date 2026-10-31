@@ -1,4 +1,4 @@
-;;; 全 thread の stack を書く見張りの memory の答え手 memory-stack-dump-handler(agora-redesign #2748)— ArmStackDump・DisarmStackDump・
+;;; 全 thread の stack を書く見張りの memory の答え手 memory-stack-dump-handler— ArmStackDump・DisarmStackDump・
 ;;; ReadStackDumps に、1 つの run の中の台帳(session の値)で答える。
 ;;;
 ;;; 何のためか: 模擬と検では、本物(faulthandler_stack_dump.hy)と同じ約束で「止まった時だけ・止まり 1 回に 1 度」書くかを確かめたいが、

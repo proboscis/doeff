@@ -1,4 +1,4 @@
-"""job の log の行を OTLP/HTTP でも送る刻つきの書き手(card ki-ae919abe5b26 — 取り決め job-log/1)の失敗ケース。
+"""job の log の行を OTLP/HTTP でも送る刻つきの書き手(取り決め job-log/1)の失敗ケース。
 
 worker の環境に送り先の基の URL(DOEFF_JOB_LOG_OTLP)が在る時だけ、shim と待ちの子から分かれた子 A の刻つきの書き手が、file へ書く行を
 OTLP/HTTP の logs としても送る。本物の process の検は、検の process の中に OTLP の受け手(HTTP の server)を立て、worker と同じ持ち方で
@@ -11,10 +11,10 @@ shim を起こす。外の世界(送り先)の代わりを渡す検は、送り�
 - 溜めが溢れても書き手は待たず、溢れた行は捨てて数える(届いた行の通し番号の飛びが捨てた行)
 - 送り先の値が使えなければ送らず、理由を 1 行 log に書く(job はそのまま走る)
 - 送り先の環境変数は、worker の環境から実行環境の job と待ちの子へ継ぐ許可表に在る
-- worker の process 自身の行(card ki-35923a5895b2)は job の名 worker/<worker の名>・試み 0・世代 boot で送り、捕まえない例外の
+- worker の process 自身の行は job の名 worker/<worker の名>・試み 0・世代 boot で送り、捕まえない例外の
   traceback も file と送り先の両方に届く。送り先が無い・stdout と stderr が別の file の時は出力の向きを替えない
-- worker の差し替えは Python の流れだけで、fd 1・2 は元の file のまま — worker より長く生きる子孫の行も file に残る(設計検証
-  lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 A)。worker の道で溜めが溢れても worker の write は送りに待たされない(盲検 B)
+- worker の差し替えは Python の流れだけで、fd 1・2 は元の file のまま — worker より長く生きる子孫の行も file に残る。
+  worker の道で溜めが溢れても worker の write は送りに待たされない(盲検 B)
 """
 
 import json
@@ -667,7 +667,7 @@ def test_a_job_forked_from_the_warm_child_ships_its_lines(
         shutil.rmtree(short, ignore_errors=True)
 
 
-# --- worker の process 自身の行(card ki-35923a5895b2 — 機体の systemd・launchd と同じ持ち方の本物の process)-----------------------
+# --- worker の process 自身の行(機体の systemd・launchd と同じ持ち方の本物の process)-----------------------
 
 WORKER_PROCESS = """
 import os, sys
@@ -786,14 +786,14 @@ for n in range(40_000):
 def test_a_flooding_worker_does_not_wait_for_a_silent_destination(tmp_path: Path, silent: Collector) -> None:
     """worker の道(process_lines が作る書き手と送り手 — 本番の上限)で、答えない送り先の下で溜めの上限(1 万行)の 4 倍の行を書いても、
     worker の write も終わりも送りに待たされない(溢れは捨てて数える)。file には全部の行が在る。待つ形にすると、塊ごとに待って
-    数十秒になる(設計検証 lt-8PQM3S5DDHCSJ92Q7X259K9HAW の盲検 B — 実測 27〜30 秒・待たない形は 1〜2 秒)。"""
+    数十秒になる(実測 27〜30 秒・待たない形は 1〜2 秒)。"""
     ran = worker_run(tmp_path, {JOB_LOG_OTLP_VAR: silent.base()}, same_file=True, script=FLOODING_WORKER)
     assert ran.code == 0, ran.out[-500:]
     assert ran.out.count(b"worker: burst line ") == 40_000
     assert ran.seconds < 10.0, ran.seconds
 
 
-# --- coordinator の process 自身の行(card ki-0b0ab40048b9 — Pod の log は Pod の入れ替えで消える)--------------------------------------
+# --- coordinator の process 自身の行(Pod の log は Pod の入れ替えで消える)--------------------------------------
 
 POD = {POD_NAME_VAR: "coordinator-5f-abc", POD_NAMESPACE_VAR: "lab-ns"}
 

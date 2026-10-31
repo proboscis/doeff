@@ -1,4 +1,4 @@
-;;; 乱数の契約テストの解釈器(composition root)— 同じ契約の Program を、乱数の答え手だけ替えて走らせる(agora-redesign #1544・
+;;; 乱数の契約テストの解釈器(composition root)— 同じ契約の Program を、乱数の答え手だけ替えて走らせる(
 ;;; #1107 の決め)。
 ;;;
 ;;;   os-random      本物: os-random-handler(os.urandom)

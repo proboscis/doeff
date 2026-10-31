@@ -1,4 +1,4 @@
-"""収集と wiring の走査の path の照合(agora-redesign #1551)— rootdir の下は文字列で切り、symlink・rootdir の外・名の頭が
+"""収集と wiring の走査の path の照合— rootdir の下は文字列で切り、symlink・rootdir の外・名の頭が
 rootdir と同じ兄弟の dir は今までの部分の比べと実の path の解決へ回ることを確かめる。"""
 
 import os

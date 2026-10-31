@@ -1,8 +1,8 @@
 ;;; Claude Code の OpenTelemetry の送り設定を、借りた家の settings.json へ据える綴りと純関数(2026-09-23)。
 ;;;
-;;; 何のために: operator 2026-09-23(会話 c-01M365WH4HZ03GNV2P5YZ5SGZJ)の決定 — 全機体・全アカウントの
+;;; 何のために: 全機体・全アカウントの
 ;;; Claude Code の通信ごとの数値(キャッシュの読み書き・費用・時間・エラー)を OTel で集め、会社用と
-;;; 個人用の 2 つの DB に溜める(card acp:kanban-issue:ki-b47afa9311a6)。人が起こす profile の家は dotfiles の
+;;; 個人用の 2 つの DB に溜める。人が起こす profile の家は dotfiles の
 ;;; agentcli.claude_telemetry が配るが、agentd の借りた家 <homes-root>/claude/<account> は sessionhost が
 ;;; 組むので、ここで同じ env の組を書く。手番の CLI は機体の env を継がない(policy.SPAWN-INHERITED-ENV-KEYS)
 ;;; ので、容器の env に置いても届かない — 家の settings.json の env が CLI に届く唯一の口。

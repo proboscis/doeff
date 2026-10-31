@@ -41,7 +41,7 @@
    答えを answer に差し替えるか(False = 置き場を変えずに answer を返す。読みは置き場を変えないのでどちらでも同じ)/ matching = effect を
    受けて当たるかを返す関数(None = 名と操作に当たる effect の全部)/ times = 当たる回数(None = 外すまで当たり続ける。数を持つ故障は
    当たるたびに 1 減り、尽きた拍に故障の列から外れる — lands と組むと「書きは確定したが答えが 1 度だけ切れた」形になり、撃ち直す
-   client の 2 度目の要求は置き場に届く・card ki-78c6d663491f)。"
+   client の 2 度目の要求は置き場に届く)。"
   (#^ frozenset names)
   (#^ StoreOperation operation)
   (#^ (| Refused Unreachable) answer)

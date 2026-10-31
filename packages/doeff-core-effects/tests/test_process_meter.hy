@@ -1,4 +1,4 @@
-;;; 本物の計器の答え手 process-meter-handler だけの性質(agora-redesign #1440)。契約の性質は test_meter_contract.hy。
+;;; 本物の計器の答え手 process-meter-handler だけの性質。契約の性質は test_meter_contract.hy。
 ;;;
 ;;;   * 同じ名前で入れた答え手どうしは、別の run でも別の thread でも 1 つの置き場を読み書きする(処理ループの run が書き、probe の別の run が読む)
 ;;;   * 名前が違えば置き場も別

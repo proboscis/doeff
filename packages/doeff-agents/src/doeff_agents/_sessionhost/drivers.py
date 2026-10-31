@@ -1,6 +1,6 @@
 """agent の種類ごとに起動する実行ファイルの名の定義元と、その在否の探索(ADR-DOE-AGENTS-012 R61)。
 
-card acp:kanban-issue:ki-f250d67a7157: pool の pod の host の PATH に codex が無いのに、node の行は
+pool の pod の host の PATH に codex が無いのに、node の行は
 固定の能力の表を申告し続け、codex の手番が ``LaunchFailed — [Errno 2] No such file or directory:
 'codex'`` で 35 通落ちた。起動の argv[0] は 3 か所の直書き(impls の argv builder)で、探索は
 ``subprocess.Popen(argv, env=子の env)`` が子の env の PATH で暗黙に行っていた — 名の定義も探索の

@@ -620,7 +620,7 @@
   [a1 a2 again other stranger big read tail])
 
 
-;; --- 法 7c: 追記の束は束の順の追記と同じ答え(card ki-48c34994ed15)----------------------------------------------
+;; --- 法 7c: 追記の束は束の順の追記と同じ答え----------------------------------------------
 
 (defk law-append-events-answer-like-appends-in-order [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
@@ -668,7 +668,7 @@
 (defk law-read-batch-answers-like-each-read [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "読みの束(ReadBatch — card ki-177a4f287c42)の法: 束の答えは、束の読みを 1 つずつ撃った答えを束の順に並べた物と同じ — 表をまたぐ鍵の
+  "読みの束(ReadBatch)の法: 束の答えは、束の読みを 1 つずつ撃った答えを束の順に並べた物と同じ — 表をまたぐ鍵の
    読み(在る行・無い行)・値の組の一覧(where-any)・頁の続きの位置・索引の無い欄の断り(NotIndexed)・版の違う位置の読み直し(Reset)が
    混ざっても、読みごとの答えは変わらない。複数の表から名指す鍵と値の組の行を読む読み手が、読みの数の往復を束 1 つの往復に替えても
    答えが変わらないため。どの置き場の組も同じ答えを返すことを確かめる。"
@@ -803,7 +803,7 @@
   [first moved idle ahead woke appended read])
 
 
-;; --- 法 8c: 並んで走る書きの番号は、読み手に積んだ順に見える(card ki-0306f5a614b4)---------------------------------
+;; --- 法 8c: 並んで走る書きの番号は、読み手に積んだ順に見える---------------------------------
 
 ;; 並んで走る書き手の数と 1 本ごとの書きの数・読み手が書きの間に読む回数(PostgreSQL の置き場では書き手の transaction が DB の中で並ぶ)。
 (val CONCURRENT-WRITERS 3)
@@ -984,7 +984,7 @@
 
 ;; --- 法 11: PutRows は全部か 0 ----------------------------------------------------------------------------------
 
-;; 消す前に送る(_maintenance.hy の頭の註・card ki-c32e43651f2e): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
+;; 消す前に送る(_maintenance.hy の頭の註): 刈りの上限 upto-seq は送り先に在ると確かめた番号で、
 ;; それを越えて消せば送っていない変更が失われる。
 (defk law-prune-stops-at-the-archived-seq [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
@@ -1010,7 +1010,7 @@
   [w1 w2 bounded kept again rest])
 
 
-;; 送りの読みは絞らない(_maintenance.hy の頭の註・card ki-e4ca6fc87109): 刈りは表を問わず番号で消すので、送りの読みが表や保持の期限で
+;; 送りの読みは絞らない(_maintenance.hy の頭の註): 刈りは表を問わず番号で消すので、送りの読みが表や保持の期限で
 ;; 絞れば、絞られた変更は送られずに刈られる。
 (defk law-change-log-reads-every-change [#^ LawHarness harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
@@ -1505,7 +1505,7 @@
   (+ appended [full short whole] full-checked short-checked whole-checked))
 
 
-;; --- 法 19〜21: 送ってから外す列(_maintenance.hy の頭の註の「出来事を送ってから外す」— card ki-707aad0f88e8)--------------------------
+;; --- 法 19〜21: 送ってから外す列(_maintenance.hy の頭の註の「出来事を送ってから外す」)--------------------------
 
 (defk expired-keys [harness at]
   {:pre [(: harness LawHarness) (: at datetime)] :post [(: % tuple)]
@@ -1542,7 +1542,7 @@
 (defk law-only-confirmed-events-are-retired [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "送ってから外す列の回収の法(card ki-707aad0f88e8): 期限を過ぎた出来事は回収(SweepExpired)では置き場から外れず、手入れの送りの関数が
+  "送ってから外す列の回収の法: 期限を過ぎた出来事は回収(SweepExpired)では置き場から外れず、手入れの送りの関数が
    送り先に在ると確かめた出来事だけが外れる — 送り先に届かない回は 1 つも外れず、確かめた番号に無い出来事は残る(出来事ごとの列 relays と
    組の列 relay-pairs の両方)。外れる前も後も読みには出ず、外した鍵は覚えている(同じ本文は前の番号・別の本文は断り)。"
   (val law "送ってから外す列の期限を過ぎた出来事は、送り先に在ると確かめた物だけが外れる")
@@ -1603,7 +1603,7 @@
 (defk law-retirement-keeps-the-read-boundary [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "送りの読みの境の法(card ki-707aad0f88e8): 手入れの回は刻 T の境で期限を過ぎた出来事を読んで送り、外しも同じ刻 T の境で行う —
+  "送りの読みの境の法: 手入れの回は刻 T の境で期限を過ぎた出来事を読んで送り、外しも同じ刻 T の境で行う —
    読みの後(送りの間)に新しく期限を過ぎた出来事は、送りの関数がその番号を答えても、同じ回では外れない。外しの effect に境 T と
    T の後に期限を過ぎた出来事の番号を直に渡しても外れない。"
   (val law "送りの読みの後に期限を過ぎた出来事は、同じ回の外しで外れない")
@@ -1642,7 +1642,7 @@
 (defk law-a-write-keeps-the-unarchived-event-it-touches [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "送ってから外す列の書きの法(card ki-707aad0f88e8): 期限を過ぎた鍵(出来事ごと)と期限を過ぎた組(組ごと)に触る追記は、出来事を
+  "送ってから外す列の書きの法: 期限を過ぎた鍵(出来事ごと)と期限を過ぎた組(組ごと)に触る追記は、出来事を
    置き場から外さない(送りの関数が確かめるまで残る)が、答えは前の形と同じ — 同じ本文は前の番号・別の本文は同じ文の断り。期限を過ぎた
    組に新しい鍵を積んでも組の古い出来事は読みに戻らず、鍵の引きは退いたと答える。送って外した後の答えも同じ(法 17 の送ってから外す形)。"
   (val law "送ってから外す列の期限を過ぎた鍵への追記は出来事を外さず、答えは前と同じ")
@@ -1679,7 +1679,7 @@
   (+ [beat ask side] (list before) [done read by-key end kept archived] (list after) [side-again end-after]))
 
 
-;; --- 法 22・23: 鍵の覚え方を限った列(_maintenance.hy の頭の註の「鍵の覚えを外す」— card ki-4ebaefac6668)---------------------------
+;; --- 法 22・23: 鍵の覚え方を限った列(_maintenance.hy の頭の註の「鍵の覚えを外す」)---------------------------
 
 (defk fresh-append? [answer earlier]
   {:pre [(: answer (| Appended Refused Unreachable)) (: earlier (| Appended Refused Unreachable))] :post [(: % bool)]}
@@ -1690,7 +1690,7 @@
 (defk law-keys-are-forgotten-after-their-memory [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "鍵の覚え方の法(card ki-4ebaefac6668): 覚えを長さで限った列(beats — RememberKeysFor)の置き場を去った出来事の鍵は、覚えた刻から長さの
+  "鍵の覚え方の法: 覚えを長さで限った列(beats — RememberKeysFor)の置き場を去った出来事の鍵は、覚えた刻から長さの
    間は覚えで答え(同じ本文は前の番号・別の本文は断り・鍵の引きは退いた)、長さの後の回収(SweepExpired)が覚えを外す — 外れた鍵の追記は
    新しい出来事で、鍵の引きは来ていない(EventAbsent)。覚えを残さない列(ticks — RememberNoKeys)は、置き場を去った鍵を覚えない —
    回収の後も、回収の前に書きが触って片付けた時も、同じ鍵の追記は新しい出来事(組で数える列 tick-pairs は、書きが片付けた組の他の鍵も
@@ -1739,7 +1739,7 @@
 (defk law-unarchived-keys-are-kept-until-retired [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
    :tags {:context "records" :role "program"}}
-  "送ってから外す列の鍵の覚えの法(card ki-4ebaefac6668): 覚え方を限った送ってから外す列(relay-beats — 長さ・relay-ticks — 残さない)の
+  "送ってから外す列の鍵の覚えの法: 覚え方を限った送ってから外す列(relay-beats — 長さ・relay-ticks — 残さない)の
    覚えは、送り先に届かない間は覚えの長さを過ぎても外れない(出来事も覚えも置き場に残り、答えは変わらない)。送り先に在ると確かめて
    出来事を外した後、残さない列の覚えは同じ外しで外れ(鍵の追記は新しい出来事)、長さの列の覚えは覚えた刻から長さの後の回収で外れる
    (書きが前に覚えた鍵は外しの後の最初の回収・外しの時に覚えた鍵は外した刻から長さの後)。"
@@ -1840,7 +1840,7 @@
   [start w1 refused conflict batch #* (get collected 0) head beyond epoch after-epoch])
 
 
-;; --- 法 25〜27: 行の書きの冪等キー(card ki-78c6d663491f)-----------------------------------------------------------
+;; --- 法 25〜27: 行の書きの冪等キー-----------------------------------------------------------
 
 (defk law-a-keyed-write-replays-its-answer [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]
@@ -1953,7 +1953,7 @@
   (! (unplaced-all [first kept inside forgot outside])))
 
 
-;; --- 法 28〜30: 行と出来事を 1 つの書きで積む(card ki-e17ba3b32dea)------------------------------------------------
+;; --- 法 28〜30: 行と出来事を 1 つの書きで積む------------------------------------------------
 
 (defk unchanged-since [harness mark law what]
   {:pre [(: harness LawHarness) (: mark Page) (: law str) (: what str)] :post [(: % Changes)]
@@ -2171,7 +2171,7 @@
 
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read と、PutRowsAppendEvents の
-;; 法 3 つ(card ki-e17ba3b32dea)は SHARED-LAWS に
+;; 法 3 つは SHARED-LAWS に
 ;; 入れない — SHARED-LAWS は前からの 6 つの effect だけで回る法の名簿で、PutRows・AppendEvents・ReadBatch・PutRowsAppendEvents を答えない handler の組(呼び手の系の
 ;; 写しの handler など)もこの名簿で答えを比べている。
 (setv LAWS {"stale-put-conflicts" law-stale-put-conflicts

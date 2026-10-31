@@ -174,7 +174,7 @@ fn import_direction_bad_and_good_in_hy_and_python() {
     assert_eq!(hy["adr"], "ADR-TEST");
     assert_eq!(hy["severity"], "error");
     assert_eq!(hy["registered"], false);
-    // 責務の境界の規則は宣言が無くても既定で critical(agora-redesign #1041)。
+    // 責務の境界の規則は宣言が無くても既定で critical。
     assert_eq!(hy["level"], "critical");
     // 位置は import の記号 send(1 行目の 27〜31 列)。
     assert_eq!(hy["range"]["start"], serde_json::json!({"line": 0, "character": 27}));
@@ -286,7 +286,7 @@ fn raw_side_effects_outside_allowed_layers() {
 
 #[test]
 fn python_env_reads_outside_allowed_layers() {
-    // agora-redesign #1907: 業務の層の `.py` の環境変数の読みも DOEFF106 に当たる(Hy の file だけでなく)。
+    // 業務の層の `.py` の環境変数の読みも DOEFF106 に当たる(Hy の file だけでなく)。
     let dir = repo(
         &[
             (
@@ -474,11 +474,11 @@ fn exit_codes_for_arguments_and_broken_config() {
     assert!(stderr.contains("--path"));
     let (code, report) = editor(dir.path());
     assert_eq!(code, 0, "{}", report);
-    // 鳴らない例(agora-redesign #1818): 知っている鍵だけの設定では DOEFF100 は出ない。
+    // 鳴らない例: 知っている鍵だけの設定では DOEFF100 は出ない。
     assert!(keys(&report, "DOEFF100").is_empty(), "{:?}", keys(&report, "DOEFF100"));
 
     // この binary の知らない鍵(設定が binary より新しい・書き違い)は lint 全体を止めず、その鍵だけを読まずに DOEFF100 の warning で
-    // 知らせる(agora-redesign #848 — 以前は終了コード 2 でエディタの違反の欄が空になった)。
+    // 知らせる(以前は終了コード 2 でエディタの違反の欄が空になった)。
     let newer = repo(&[], "[tool.doeff-linter.raw_side_effects.extra]\n");
     let (code, stdout, stderr) = run(newer.path(), &["--output-format", "editor-json", "--no-log"], None);
     assert_eq!(code, 0, "{}", stderr);
@@ -741,7 +741,7 @@ fn service_first_layout_judges_layers_and_service_boundaries() {
 
 #[test]
 fn named_paths_judge_definitions_only_in_the_named_files() {
-    // agora-redesign #1418: 命令の行で path を名指した実行(commit の hook)は、定義の規則を名指しの下の file だけで判じる。
+    // 命令の行で path を名指した実行(commit の hook)は、定義の規則を名指しの下の file だけで判じる。
     // 名指しの外の file を読まないことを、読めない file(UTF-8 でない)で確かめる — 全体の実行では「読めない」を名乗る。
     let dir = definition_repo(&[("app/a.hy", "(defn helper [x] x)\n"), ("app/b.hy", "(defn other [x] x)\n")], "");
     std::fs::write(dir.path().join("app/broken.hy"), [0xff_u8, 0xfe, 0x00]).unwrap();
@@ -835,7 +835,7 @@ fn defn_is_forbidden_deff_needs_a_reason_and_definitions_carry_tags() {
 
 #[test]
 fn defrecord_header_tags_are_read_and_required_only_when_configured() {
-    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}(agora-redesign #798)。頭の辞書は省ける形なので、
+    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}。頭の辞書は省ける形なので、
     // 既定の DOEFF112 は defrecord を数えない。require_on に足した repo では頭の辞書の :tags を必須にする。
     let source = r#"(defrecord ChatId "chat の id" {:tags {:context "chat" :role "type"} :check [(ok? value)]} #^ str value)
 (defrecord Span {:check [(<= start end)]} #^ int start #^ int end)
@@ -854,7 +854,7 @@ fn defrecord_header_tags_are_read_and_required_only_when_configured() {
 
 #[test]
 fn defwire_header_tags_are_read_like_defrecord() {
-    // doeff-hy の defwire(JSON の境目の型 — agora-redesign #840)は defrecord へ展開する。頭の辞書の :tags は定義のタグで、
+    // doeff-hy の defwire(JSON の境目の型)は defrecord へ展開する。頭の辞書の :tags は定義のタグで、
     // :names と :unknown は wire の形の鍵(タグではない)。require_on に defwire を足した repo ではタグの無い defwire を名指す。
     let source = r#"(defwire LandingRow "台帳の 1 行" {:tags {:context "chat" :role "type"} :names :camel :unknown :reject} #^ str lane-id)
 (defwire Bare {:names :camel} #^ str key)
@@ -1600,7 +1600,7 @@ fn smells_have_clean_counterparts_and_run_on_a_single_file() {
 
 #[test]
 fn only_the_assembly_layer_may_read_a_dependency_protocol() {
-    // operator の決定 2026-09-28 の案 A: 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
+    // 決まり: 組み立ての entry に限り、:depends-on に宣言した依存先の protocol(翻訳の handler)も読んでよい。
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
@@ -1655,7 +1655,7 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
 
 #[test]
 fn placed_layers_depend_only_on_placed_modules() {
-    // agora-redesign #1188: :placed-dependencies の層(service と shared)の module は、root の下の層の置き場の外の module を読まない。
+    // :placed-dependencies の層(service と shared)の module は、root の下の層の置き場の外の module を読まない。
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("architecture.hy"),
@@ -1723,7 +1723,7 @@ fn placed_layers_depend_only_on_placed_modules() {
     }
 }
 
-/// agora-redesign #2877: 別の file の defrecord で宣言の型が Program を名指す欄に置いた素の defk 呼びは拾わない(Program を運ぶ欄)。
+/// 別の file の defrecord で宣言の型が Program を名指す欄に置いた素の defk 呼びは拾わない(Program を運ぶ欄)。
 /// 同じ型の dict の欄に置いた素の呼びは今までどおり error(事実: doeff-records の start-records-server の :prepare)。
 #[test]
 fn defk_called_bare_into_a_program_field_of_a_record_is_not_an_answer() {
@@ -2026,7 +2026,7 @@ const TRANSLATION_FILES: [(&str, &str); 4] = [
 
 #[test]
 fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
-    // agora-redesign #956(#942 の決定 2): 層 protocol の handler は doeff の汎用の effect だけを出し、層 intent の型(業務の intent)を出さない。
+    // 層 protocol の handler は doeff の汎用の effect だけを出し、層 intent の型(業務の intent)を出さない。
     // 推論は import した defk の先まで辿る — 本体の名だけの判定(DOEFF201・check_business_fakes.hy)がすり抜ける形を塞ぐ。
     let dir = translation_repo(&TRANSLATION_FILES, "");
     let (code, report) = editor(dir.path());
@@ -2061,7 +2061,7 @@ fn a_translation_handler_that_emits_a_business_intent_is_an_error() {
 
 #[test]
 fn a_translation_handler_may_emit_another_services_public_intent() {
-    // agora-redesign #1134 の決め(DOEFF156 の「他の service の公開の効果」と揃える): 止めるのは handler と同じ service の intent だけ。
+    // 決め(DOEFF156 の「他の service の公開の効果」と揃える): 止めるのは handler と同じ service の intent だけ。
     // 他の service の intent(公開の契約)を出すのは翻訳の仕事 — 例: durable の翻訳が郵便の受付の intent を出す(#1508)。
     let files = [
         ("app/kanban/intent/board.hy", "(defclass ReadBoard [])\n"),
@@ -2164,7 +2164,7 @@ fn world_repo_with(files: &[(&str, String)], extra: &str, enable: &str) -> tempf
     dir
 }
 
-/// agora-redesign #1140(R1): 許可名簿を書いた repo では、生の I/O は名簿の定義の module だけに許し(層では許さない — entry も
+/// R1: 許可名簿を書いた repo では、生の I/O は名簿の定義の module だけに許し(層では許さない — entry も
 /// 名簿に無い foundation の module も当たる)、:wraps の doeff の実 I/O の handler を名指してよいのは名簿の定義だけ(DOEFF131)。
 #[test]
 fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
@@ -2214,7 +2214,7 @@ fn world_handler_list_limits_raw_io_and_wrapped_handlers() {
     assert_eq!(found["level"], "critical");
 }
 
-/// agora-redesign #1902: DOEFF107 の経由の辿りは許可名簿(:world-handlers)の定義に入らない。名簿の with-host も名簿に無い
+/// DOEFF107 の経由の辿りは許可名簿(:world-handlers)の定義に入らない。名簿の with-host も名簿に無い
 /// make-client も同じ生の副作用(httpx.AsyncClient)に届く — with-host は中で make-client を呼ぶ。`entry` は entry の module の本文。
 fn via_repo(entry: &str) -> tempfile::TempDir {
     let files = [
@@ -2263,7 +2263,7 @@ fn via_is_reported_when_an_undeclared_path_exists_beside_a_declared_one() {
     assert!(!found[0].contains("with-host"), "経路に名簿の定義を含めない: {:?}", found);
 }
 
-/// agora-redesign #1141(R2): 許可名簿の定義は実在し、層 foundation の module に在る(DOEFF132 — 位置は architecture.hy の名簿の要素)。
+/// R2: 許可名簿の定義は実在し、層 foundation の module に在る(DOEFF132 — 位置は architecture.hy の名簿の要素)。
 #[test]
 fn world_handler_list_entries_exist_in_the_foundation_layer() {
     let files = [
@@ -2294,7 +2294,7 @@ fn world_handler_list_entries_exist_in_the_foundation_layer() {
     assert_eq!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["range"]["start"]["line"], line);
 }
 
-/// agora-redesign #1142(R3): テストの種類は届く先から導く — 名簿の定義・:wraps の handler・生の I/O に(定義を辿って)届く deftest は
+/// R3: テストの種類は届く先から導く — 名簿の定義・:wraps の handler・生の I/O に(定義を辿って)届く deftest は
 /// 縁で :edge-mark の印が要り、届かない deftest は手元で印を持たない。食い違いは DOEFF133(critical)。
 #[test]
 fn test_kind_is_derived_from_what_the_test_reaches() {
@@ -2369,7 +2369,7 @@ fn test_kind_is_derived_from_what_the_test_reaches() {
     assert_eq!(two_steps["level"], "critical");
 }
 
-/// agora-redesign #1581: 縁の定義を値として検めるだけの名指し — 比べの form(is・is-not・=・!=・in・not-in)と assert(失敗の時の
+/// 縁の定義を値として検めるだけの名指し — 比べの form(is・is-not・=・!=・in・not-in)と assert(失敗の時の
 /// 表示の文を含む)の直接の被演算子(literal の列・組の中と、被演算子の dotted の属性の読みを含む)— は届かない(手元・当てない)。呼ぶ・他の定義へ渡す・比べの中で
 /// 呼んだ結果を比べる・比べの外で属性を読む名指しは今までどおり届く(縁・印が無いので当てる — 解釈器の定数が handler を
 /// `f.__module__` で名指す DOEFF137 の形を壊さない)。
@@ -2442,7 +2442,7 @@ fn a_defrecord_field_named_like_a_world_function_does_not_reach_it() {
     );
 }
 
-/// agora-redesign #1798: deftest が(Hy の定義を通して)名指す repo の中の Python の関数(`.py`)は、その中の子 process
+/// deftest が(Hy の定義を通して)名指す repo の中の Python の関数(`.py`)は、その中の子 process
 /// (`subprocess.run`・`os.system`)と、名前で決まる Python の呼び先(同じ module の関数・import した関数・class の構築と
 /// `self.m`)まで辿る — 届けば縁(印が要る)。型の注記と except の型の中の名は値の実行ではない(届かない)。Python の関数から
 /// Hy の定義へ戻る呼びも辿る。構文の壊れた Python の module は黙って手元にせず、報告の誤りに名乗る。
@@ -2504,7 +2504,7 @@ fn test_kind_follows_python_functions_into_their_subprocesses() {
     assert!(errors.iter().any(|e| e.as_str().unwrap().contains("tools/broken.py")), "構文の壊れた module を名乗る: {}", report);
 }
 
-/// agora-redesign #1363: 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
+/// 許可名簿の handler ごとに縁の検(空でない :interpreters を持ち、DOEFF133 と同じ図でその handler の定義に
 /// 届く deftest)が要る — 無ければ architecture.hy の名簿の要素で DOEFF137(critical・細目 = 名簿の綴り)。:interpreters の要素は
 /// file の外の定数の記号のまま(読み解かない)。理由つきの :contract-test (none …) の handler は判じない・理由の無い none は鳴る(#1796)。
 #[test]
@@ -2724,7 +2724,7 @@ fn test_kind_distinguishes_seeded_random_from_entropy() {
     ], "{report}");
 }
 
-/// agora-redesign #1209: 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
+/// 実 I/O の handler は doeff の目録(data/world_handlers.json)から知る — :wraps は目録に在る物だけ(外は設定の誤り)、
 /// 目録に在り :wraps に無い handler(subprocess-handler)を名簿の外で名指しても DOEFF131、:edge-touches から file を外すと file だけに
 /// 届くテストは手元(決定 B)。
 #[test]
@@ -2771,7 +2771,7 @@ fn world_catalog_widens_the_rules_and_edge_touches_narrow_the_edge() {
     );
 }
 
-/// agora-redesign #1536: environ の答え手は名で実 I/O が決まる — この process の os.environ を読む os-environ-reader は目録の env で、
+/// environ の答え手は名で実 I/O が決まる — この process の os.environ を読む os-environ-reader は目録の env で、
 /// 名簿の外の定義が並べると DOEFF131。渡された値の表だけに答える environ-table-reader は目録に無く、同じ所で並べても当たらない
 /// (模擬の宿が値の表で答える形を誤検出しない)。以前は 1 つの名 environ-reader が既定の引数の時だけ os.environ を読み、目録に載せられなかった。
 #[test]
@@ -2797,7 +2797,7 @@ fn os_environ_reader_is_a_world_handler_and_the_table_reader_is_not() {
     );
 }
 
-/// agora-redesign #1144(R6): テストは deftest だけ — :test-forms の綴りの型で選んだ file の、Python の def test_*・module ごとの skip・
+/// R6: テストは deftest だけ — :test-forms の綴りの型で選んだ file の、Python の def test_*・module ごとの skip・
 /// pytest の外の check script・deftest の runner を file ごとに 1 件 DOEFF135(critical)で出す。deftest だけの file は当てない。
 #[test]
 fn test_forms_other_than_deftest_are_red() {
@@ -2806,7 +2806,7 @@ fn test_forms_other_than_deftest_are_red() {
         ("app/billing/tests/test_good.hy", "(deftest test-one (assert True))\n".to_string()),
         ("app/billing/tests/test_python.py", "import pytest\n\ndef helper():\n    pass\n\ndef test_a():\n    assert True\n\nclass TestB:\n    def test_b(self):\n        assert True\n".to_string()),
         ("app/billing/tests/test_skipped.hy", "(import pytest)\n(pytest.skip \"doeff 側の不足\" :allow-module-level True)\n(deftest test-x (assert True))\n".to_string()),
-        // agora-redesign #1426: 束ねの名と skip の印が別の行に在る複数行の pytestmark(agora の test_local_agora_e2e.hy の形)。
+        // 束ねの名と skip の印が別の行に在る複数行の pytestmark(agora の test_local_agora_e2e.hy の形)。
         (
             "app/billing/tests/test_marked_multiline.hy",
             "(import pytest)\n;; module ごとの skip は pytestmark の印で書く(註の中の語は当てない)。\n(val pytestmark\n  (pytest.mark.skip :reason (+ \"理由の 1 行目(括弧も在る)\"\n                              \"理由の 2 行目\")))\n(deftest test-x (assert True))\n"
@@ -2852,7 +2852,7 @@ fn test_forms_other_than_deftest_are_red() {
     assert_eq!(python["level"], "critical");
 }
 
-/// agora-redesign #1147: 許可名簿の規則(DOEFF106・131)は層の置き場の外の file(層の外の dir・:root の外で :raw-io-roots に挙げた dir)にも当たる。
+/// 許可名簿の規則(DOEFF106・131)は層の置き場の外の file(層の外の dir・:root の外で :raw-io-roots に挙げた dir)にも当たる。
 /// 検の file と :raw-io-roots の外(scripts/)は当てない。
 #[test]
 fn world_handler_rules_cover_files_outside_the_layers() {
@@ -2886,7 +2886,7 @@ fn world_handler_rules_cover_files_outside_the_layers() {
     assert!(found["message"].as_str().unwrap().contains("層の置き場の外"), "{}", found["message"]);
     assert_eq!(found["level"], "critical");
 
-    // agora-redesign #2163: 1 file の実行(--stdin)も層の置き場の外の file に 106・131 を当て、全体の実行と同じ当たりを出す — 1 file の
+    // 1 file の実行(--stdin)も層の置き場の外の file に 106・131 を当て、全体の実行と同じ当たりを出す — 1 file の
     // 実行がこの 2 つを判じると名乗る(judged_rules)ので、エディタは全体の結果をこの結果で差し替える。
     let main = dir.path().join("services/record/main.hy");
     let text = std::fs::read_to_string(&main).unwrap();
@@ -2898,7 +2898,7 @@ fn world_handler_rules_cover_files_outside_the_layers() {
     assert!(judged.contains(&"DOEFF106") && judged.contains(&"DOEFF131"), "{:?}", judged);
 }
 
-/// agora-redesign #1143(R5): service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かなければ
+/// R5: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かなければ
 /// defservice の位置で DOEFF136(critical)。模擬の環境のテストが組み立てを呼ぶ service と、entry の層を持たない service は当てない。
 /// service の中のテスト(app/ledger/tests)が呼んでいても、模擬の環境の外なので数えない。billing は defsystem を挟んで届く(defsystem も呼び出しの持ち主)。
 #[test]
@@ -2923,7 +2923,7 @@ fn services_not_run_on_the_sim_are_red() {
     assert_eq!(found["severity"], "error", "{}", found);
 }
 
-/// agora-redesign #1559(#1155 の K1): code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants(`module:関数` の列)を
+/// code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants(`module:関数` の列)を
 /// 宣言していない・名指した関数が実在しない・その関数の :role が judgment でない時、defservice の位置で DOEFF163(critical)。
 /// entry の層を持たない service と、entry の層に定義の無い service は当てない。登録簿に載った欠けは warning に下がる。
 #[test]
@@ -2986,7 +2986,7 @@ fn services_without_declared_invariants_are_red() {
     assert_eq!(known["registered"], true, "{}", known);
 }
 
-/// agora-redesign #2187(DOEFF136 と対): code を持つ service は defservice に :system(cluster に置く系の defsystem)を宣言し、その系は
+/// DOEFF136 と対: code を持つ service は defservice に :system(cluster に置く系の defsystem)を宣言し、その系は
 /// entry の層に在る defsystem で、引数は型つきの土台 1 つ(土台を受ける job の関数の引数の型が素の Callable・写像・組でない)。
 /// 鳴る例: 宣言なし・定義なし・defsystem でない・引数 2 つ・土台の型が Callable・型なし・entry の外・他の service の entry の系・空の理由の例外。
 /// 鳴る例(part-of): 指す系が無い・指す物が defsystem でない。
@@ -3064,7 +3064,7 @@ fn services_without_a_declared_system_are_red() {
             "architecture.hy::DOEFF173::helpers::app.billing.entry.system:nowhere",
             "architecture.hy::DOEFF173::jobs::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::ledger",
-            // entry の層を持たない service も数える(agora-redesign #2221 — custody の形)。vault(part-of)と parts(理由つきの例外)は鳴らない。
+            // entry の層を持たない service も数える(custody の形)。vault(part-of)と parts(理由つきの例外)は鳴らない。
             "architecture.hy::DOEFF173::notes",
             "architecture.hy::DOEFF173::orders::app.orders.entry.main:take",
             "architecture.hy::DOEFF173::orders::app.orders.entry.system:gone",
@@ -3149,7 +3149,7 @@ fn access_repo(outside: Option<&str>) -> tempfile::TempDir {
     dir
 }
 
-/// agora-redesign #3493・#3496(この種の違反は doeff-linter が見つける — 利用者の決定 2026-10-04): 本番の系の job が
+/// この種の違反は doeff-linter が見つける — 本番の系の job が
 /// 読む組に、本番の job の :writes も :outside-writers の行も無ければ赤(新しい入口の画面が、本番に書き手の無い会話の記録を読んでいた形)。
 /// 本番の系の job に欄が無ければ赤。本番の系でない模擬の系は数えない。
 #[test]
@@ -3180,7 +3180,7 @@ fn production_reads_without_a_writer_are_red() {
     );
 }
 
-/// DOEFF207 の job でない書き手の見本(agora-redesign #3501): 本番の系 orders の job が record:turn を読み、task の Program run-task
+/// DOEFF207 の job でない書き手の見本: 本番の系 orders の job が record:turn を読み、task の Program run-task
 /// (app/orders/core/run.hy)が契約の `:writes` で書くと名乗る。`reached` = job が run-task を呼ぶか(本番の入口から届くか)・
 /// `declares` = run-task が :writes を書くか。本番の入口は :business-fakes の宣言(DOEFF143 と同じ)で決まる。
 fn task_writer_repo(reached: bool, declares: bool) -> tempfile::TempDir {
@@ -3208,7 +3208,7 @@ fn task_writer_repo(reached: bool, declares: bool) -> tempfile::TempDir {
 }
 
 /// 本番の入口(系の job の Program)から届く task の Program が :writes で名乗れば、その組の読みは緑。名乗りを外すと赤
-/// (task の code から書きが消えて名乗りも消えた形・agora-redesign #3501)。
+/// (task の code から書きが消えて名乗りも消えた形)。
 #[test]
 fn a_reached_function_that_declares_its_writes_is_a_writer() {
     let (_, report) = editor(task_writer_repo(true, true).path());
@@ -3287,7 +3287,7 @@ fn record_wait_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者の決定 2026-10-06(記録を書いて記録を待つ設計を linter で禁じ、記録と起動を分ける・agora-redesign #3834):
+/// 記録を書いて記録を待つ設計を linter で禁じ — 記録と起動を分ける:
 /// 本番の code が記録の変更を出来事の源にする所(合図の源の結び)と、記録の効果の
 /// handler の外で秒が 0 でない記録の変更の待ちを出す所は赤。待たずに 1 回読む(秒 0)・模擬・検・doeff-records の中・記録の効果に答える
 /// handler の中・match の pattern は当たらない。
@@ -3389,7 +3389,7 @@ fn timed_refetch_repo(declared: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者の決定 2026-10-06(取りに行く繰り返しは全部直す対象で最後の手段に限る・agora-redesign #3834):
+/// 取りに行く繰り返しは全部直す対象で最後の手段に限る:
 /// 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し
 /// 取りに行く所は赤 — 今 + 秒の ArmTimer・Delay・補助の定義に包んだ形・:poll-seconds。期限の待ち・変わりを待つ上限の秒・1 度だけの期限・
 /// 閉じた語彙の理由を書いた所は通る。母集団は services/record と doeff の package(doeff-core-effects・doeff-traverse・doeff-records)も含む。
@@ -3448,7 +3448,7 @@ fn register_key(root: &Path, key: &str) {
     std::fs::write(registry.join("known.txt"), format!("{}\n既知の当たりとして載せてみる(下がらない事の見本)\n", key)).unwrap();
 }
 
-/// agora-redesign #3834: DOEFF208・209 の鍵を登録簿に載せても、当たりは error・critical・登録の外のまま(既知の一覧で通す形にしない —
+/// DOEFF208・209 の鍵を登録簿に載せても、当たりは error・critical・登録の外のまま(既知の一覧で通す形にしない —
 /// DOEFF206 の intent_fakes_in_verification_are_not_lowered_by_the_registry と同じ形)。
 #[test]
 fn record_waits_and_polling_are_not_lowered_by_the_registry() {
@@ -3478,7 +3478,7 @@ fn named_against_baseline(root: &Path, baseline: &Path, named: &[&str]) -> (i32,
     (code, fresh)
 }
 
-/// agora-redesign #3834(cisco-c8 の可・規則 A の入口の形): 既知の一覧を持たない規則(登録簿で下げない規則 — DOEFF206〜209)の critical は、
+/// cisco-c8 の可 — 規則 A の入口の形: 既知の一覧を持たない規則(登録簿で下げない規則 — DOEFF206〜209)の critical は、
 /// 名指しの path(変えた file)に在れば、基点の報告に同じ鍵が在っても new_critical に入る(基点の差でも登録簿でも下がらない)。名指していない
 /// file の当たりは入らない。名指しの無い全体の実行は基点の差だけ(全体の数は日次で出す)。
 #[test]
@@ -3511,7 +3511,7 @@ fn rules_without_a_registry_block_their_hits_in_named_files_even_when_the_baseli
     assert_eq!(code, 4);
 }
 
-/// agora-redesign #1978: 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
+/// 層の dir(`<root>/<dir>/entry/`)を持たない repo(merge-queue のように機能の dir で分けた repo)は、defservice の
 /// `:entry-modules` で code の在りかを宣言する。宣言した service は DOEFF163 の母集団に入る — 宣言の無い形では entry の dir が無いので
 /// 母集団が 0 になり、条を消しても鳴らなかった。
 fn entry_module_repo(queue: &str) -> tempfile::TempDir {
@@ -3561,7 +3561,7 @@ fn an_entry_module_without_a_file_is_red() {
     assert!(found["message"].as_str().unwrap().contains("Hy の file(app/queue/mian.hy)が無い"), "{}", found["message"]);
 }
 
-/// agora-redesign #1977: monorepo の package(`pkg/pyproject.toml` と `pkg/src/cluster/…`)で、設定の `root = "src"` が module の名を
+/// monorepo の package(`pkg/pyproject.toml` と `pkg/src/cluster/…`)で、設定の `root = "src"` が module の名を
 /// import の名(`cluster.coord`)に揃える。architecture.hy は package の根(根の外)に置き、設定の `architecture` で名指す。
 /// `invariants` を書くかと `root` を書くかで 3 通りを作る。
 fn package_repo(invariants: bool, root: bool) -> tempfile::TempDir {
@@ -3625,7 +3625,7 @@ fn a_package_without_the_source_root_setting_cannot_find_its_modules() {
     );
 }
 
-/// agora-redesign #1560(K2): entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
+/// K2: entry の層を持つ service ごとに、壊した handler の反例(反例の表の節に届き、その service の entry にも届く
 /// deftest)が無ければ defservice の位置で DOEFF164(critical)。billing は自分の業務の効果の壊した handler を自分の検で回す(有り)。
 /// stock は土台の効果(どの service の dir の下にも無い効果)の壊した handler を模擬の検で回す(有り — 表の当たりにも数え、腐りにしない)。
 /// ledger は模擬の検が entry に届くが反例が無い(赤)。notes は entry の層を持たない(数えない)。
@@ -3674,7 +3674,7 @@ fn services_without_a_counterexample_are_red() {
     assert!(keys(&report, "DOEFF143").iter().all(|k| !k.contains("counterexample-unused")), "{}", report);
 }
 
-/// agora-redesign #1918: :business-fakes の :unserved(違反を固定する縮める向きの表)の無い dir は空の表として読む(知らせ 1 行・errors に
+/// :business-fakes の :unserved(違反を固定する縮める向きの表)の無い dir は空の表として読む(知らせ 1 行・errors に
 /// しない — 最後の行を消すと git は空の dir を持たない)。宣言の一覧(:counterexamples)の無い dir は今までどおり読めない(errors)。
 #[test]
 fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadable() {
@@ -3695,9 +3695,9 @@ fn an_absent_unserved_table_is_empty_but_an_absent_declaration_list_is_unreadabl
     assert!(stderr.contains("知らせ") && stderr.contains("tables/EXTERNAL-UNSERVED"), "空と読んだ事を知らせる: {}", stderr);
 }
 
-/// agora-redesign #1818(#1810 の子): DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
+/// DOEFF143(模擬の偽物)と DOEFF157(検だけの偽物)を規則の ID で名指して確かめる。
 /// 模擬の環境の fake-charge と検の file の test-charge は業務の効果 Charge に tap でなく答える(鳴る例)。同じ置き場の、受けた効果を
-/// そのまま渡す tap の handler(出し直しの答えを resume する watch-charge・reperform する watch-refund — agora-redesign #3834 から
+/// そのまま渡す tap の handler(出し直しの答えを resume する watch-charge・reperform する watch-refund
 /// `(resume (Charge))` は効果の値そのものを答える節に読む)と、反例の表に在るわざと壊した handler(broken-refund・broken-charge)は鳴らない(鳴らない例)。
 #[test]
 fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are_not() {
@@ -3744,7 +3744,7 @@ fn simulation_fakes_and_test_only_fakes_are_red_but_taps_and_counterexamples_are
     assert_eq!(violation(&report, test_only)["severity"], "error");
 }
 
-/// agora-redesign #1713: DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
+/// DOEFF164 は service に反例が 1 本あれば緑。DOEFF167 は defservice の :clauses の条ごとに、反例の表の行の
 /// `breaks: <service>::<条>` で名乗る壊した handler の反例(節に届く deftest が service の entry にも届く)か、:clause-exemptions の理由を求める。
 /// billing: B1 は反例が有る・B2 は名乗る行が無い(赤)・B3 は理由つきで外した。stock: 土台の効果の反例が S1 を名乗る(有り — 陽性対照)。
 /// ledger: :clauses を書かない(service の名で赤)。notes は entry の層を持たない(数えない)。B9 を名乗る行は設定の誤り。
@@ -3826,7 +3826,7 @@ fn clauses_without_a_counterexample_are_red() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
 }
 
-/// agora-redesign #1987: 層の dir を持たない repo の service(`:entry-modules` で入口を宣言 — merge-queue の形)も、DOEFF164・167 の母集団に
+/// 層の dir を持たない repo の service(`:entry-modules` で入口を宣言 — merge-queue の形)も、DOEFF164・167 の母集団に
 /// 入り、反例の節に届く deftest がその入口の module に届けば有り。以前は entry の層の dir だけを母集団にしたので、`:entry-modules` の
 /// service は数えられず(反例の行を消しても鳴らない)、条と反例の結びを確かめられなかった。
 /// `row` = 反例の表の行を置くか。
@@ -3876,7 +3876,7 @@ fn an_entry_module_service_without_its_counterexample_is_red() {
     assert_eq!(keys(&report, "DOEFF167"), vec!["architecture.hy::DOEFF167::queue::Q1"], "{}", report);
 }
 
-/// agora-redesign #1562(K4): intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
+/// K4: intent の効果の網羅の欠け(DOEFF165・K3 の表)は critical で失敗にする。今ある欠けは登録簿
 /// (1 鍵 1 file の dir)に載せ、載った欠けは warning に下がる。Charge と Refund はどちらも検から出さず答え手も無い(欠け)—
 /// Refund だけが登録簿に載っている。Settle は 3 列がすべて埋まり出ない(鳴らない例・#1818)。
 #[test]
@@ -3884,7 +3884,7 @@ fn intent_effect_coverage_gaps_are_red_unless_registered() {
     let intent = |name: &str| {
         format!("(defeffect {} \"{}\" {{:fields [amount] :answer int :tags {{:context \"billing\" :role \"intent\"}}}})\n", name, name)
     };
-    // 鳴らない例(agora-redesign #1818): Settle は 3 列がすべて埋まる — deftest が出し、翻訳の層(ここでは entry)の settle-reads が
+    // 鳴らない例: Settle は 3 列がすべて埋まる — deftest が出し、翻訳の層(ここでは entry)の settle-reads が
     // 模擬の根(組み立ての層の file)からも本番の入口(組の file の production-handlers)からも届く。
     let files = [
         ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
@@ -3977,7 +3977,7 @@ fn intent_fake_repo(files: &[(&str, String)], registry: Option<(&str, &str)>) ->
     dir
 }
 
-/// agora-redesign #3405・#3407(DOEFF206 の (a)): 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を
+/// DOEFF206 の (a): 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を
 /// 通せば、その行の file の位置で critical。土台(foundation)の効果を通す行は鳴らない。
 #[test]
 fn tables_passing_intent_effects_are_critical_at_the_row() {
@@ -4009,7 +4009,7 @@ fn tables_passing_intent_effects_are_critical_at_the_row() {
     assert!(violation(&report, external)["message"].as_str().unwrap().contains("intent の層の効果 app.billing.intent.effects.Charge を通す"), "{}", report);
 }
 
-/// agora-redesign #3405・#3407(DOEFF206 の (b)): 検証環境の dir の handler が intent の層の効果に自前で答えれば critical。
+/// DOEFF206 の (b): 検証環境の dir の handler が intent の層の効果に自前で答えれば critical。
 /// 鳴らない例: 出し直した答えをそのまま resume する tap(受けた effect の別名の出し直しを含む)・反例の表に鍵の在る壊した節・土台の効果に答える節・検証環境の外(本番の側)の同じ節。
 /// 鳴る例: 自前の値・出し直した答えを変えて resume・枝の 1 つで自前の値を渡す節。
 #[test]
@@ -4048,7 +4048,7 @@ fn verification_handlers_answering_intent_effects_are_critical_except_pass_throu
     assert!(found["message"].as_str().unwrap().contains("自前で答える"), "{}", found);
 }
 
-/// agora-redesign #3405(DOEFF206): 登録簿(既知の当たりの表)に鍵を載せても DOEFF206 の当たりは下がらない — error・critical・registered でない。
+/// DOEFF206: 登録簿(既知の当たりの表)に鍵を載せても DOEFF206 の当たりは下がらない — error・critical・registered でない。
 #[test]
 fn intent_fakes_in_verification_are_not_lowered_by_the_registry() {
     let files = [(
@@ -4086,7 +4086,7 @@ fn retired_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     dir
 }
 
-/// agora-redesign #1193(C11): 使わないと決めた語は語ごとに 1 件ずつ当たり(反例 = 各語 1 本)、別の語の一部・規則を述べる行・宣言の外の
+/// C11: 使わないと決めた語は語ごとに 1 件ずつ当たり(反例 = 各語 1 本)、別の語の一部・規則を述べる行・宣言の外の
 /// file・:except の file は当たらない。意味の綴りは正規表現で、定義の名の群は定義の名だけを見る。新しい当たりは critical。
 #[test]
 fn retired_words_hit_once_per_word_and_skip_rule_lines() {
@@ -4125,7 +4125,7 @@ fn retired_words_hit_once_per_word_and_skip_rule_lines() {
     assert!(names["message"].as_str().unwrap().contains("定義の名 ConversationSlice"), "{}", names["message"]);
 }
 
-/// agora-redesign #1794(#1762 の決定 Q2-3): `:in lines` は実際に使う code の中の綴りだけを数える — Hy の記号・欄名・command の
+/// `:in lines` は実際に使う code の中の綴りだけを数える — Hy の記号・欄名・command の
 /// 文字列・ほかの文字列と Python・shell の code は鳴り、註(Hy の `;`・Python と shell の `#`)・定義の docstring・`.md` の本文は鳴らない。
 #[test]
 fn retired_words_count_code_not_comments_docstrings_or_markdown() {
@@ -4162,7 +4162,7 @@ fn retired_words_count_code_not_comments_docstrings_or_markdown() {
     assert_eq!(symbol["range"]["start"]["line"], 1, "註の行でなく code の行: {}", symbol);
 }
 
-/// agora-redesign #1369: `:in paths` の群は file の名(最後の `.` より前)だけを見る — 退役した名の file は語ごとに 1 件、中身・dir の名・
+/// `:in paths` の群は file の名(最後の `.` より前)だけを見る — 退役した名の file は語ごとに 1 件、中身・dir の名・
 /// 別の語の一部は当たらない。:rule-lines は :in lines の時だけ効くので、:in paths と組むと宣言の問題になる。
 #[test]
 fn retired_paths_hit_the_file_name_only() {
@@ -4199,7 +4199,7 @@ fn retired_paths_hit_the_file_name_only() {
     assert_ne!(code, 0, "宣言の誤りは走らせずに止まる");
 }
 
-/// agora-redesign #1193(C11): 退役した呼びは呼びごとに 1 件ずつ当たり(反例 = 各呼び 1 本)、註・文字列・読み捨てた form・:except の
+/// C11: 退役した呼びは呼びごとに 1 件ずつ当たり(反例 = 各呼び 1 本)、註・文字列・読み捨てた form・:except の
 /// テストの file・値として名指すだけの所は当たらない。
 #[test]
 fn retired_calls_hit_once_per_call() {
@@ -4224,7 +4224,7 @@ fn retired_calls_hit_once_per_call() {
     assert_eq!(now["range"]["start"]["character"], 16, "位置は呼びの頭の記号: {}", now);
 }
 
-/// agora-redesign #1193 の条件: file 1 つで判じられる規則は、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。
+/// 条件: file 1 つで判じられる規則は、名指しの path が在ればその下の file だけを読む(repo 全体を読まない)。
 /// 全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ file の母集団を見分ける。
 #[test]
 fn retired_rules_read_only_the_named_files() {
@@ -4286,7 +4286,7 @@ fn contract_repo(files: &[(&str, String)], contract_files: &str, contracts: &[(&
     dir
 }
 
-/// agora-redesign #1893(案 2): :contract-files の契約の綴り(キーの名・enum の値)に在る語は、Hy の文字列で中身がその語ちょうどの物・
+/// 案 2: :contract-files の契約の綴り(キーの名・enum の値)に在る語は、Hy の文字列で中身がその語ちょうどの物・
 /// defwire の欄の定義の名・Python の文字列で中身がその語ちょうどの物だけを数えない。同じ綴りの内部の名(変数・defrecord の欄・loop の
 /// 変数・Python の名)と、契約に無い語(letter)の文字列は当たる。hint は登録簿を勧めず、契約の file を確かめさせる。
 #[test]
@@ -4329,7 +4329,7 @@ fn retired_words_skip_contract_strings_and_wire_fields_only() {
     assert!(violation(&report, "app/billing/inner.hy::DOEFF150::mail")["hint"].as_str().unwrap().contains(":contract-files"));
 }
 
-/// agora-redesign #1893: :contract-files の file が無い・JSON でない・契約の綴りが 1 つも無い・:in lines でない群に書いた時は、黙って空に
+/// :contract-files の file が無い・JSON でない・契約の綴りが 1 つも無い・:in lines でない群に書いた時は、黙って空に
 /// せず位置つきの宣言の誤りにし、走らせずに止まる。
 #[test]
 fn contract_files_misreadings_are_config_errors() {
@@ -4380,7 +4380,7 @@ fn typed_repo(files: &[(&str, String)]) -> tempfile::TempDir {
     dir
 }
 
-/// agora-redesign #1191: 公開面の型の注記の素の写像・素の組は、欄・戻り値・:post・答えの組の 4 種類の鍵で 1 か所 1 件ずつ当たる。
+/// 公開面の型の注記の素の写像・素の組は、欄・戻り値・:post・答えの組の 4 種類の鍵で 1 か所 1 件ずつ当たる。
 /// 内部の名・入れ子の関数・:except の file・宣言の外の file は当たらない。直した形(欄の名前と型を持つ record)は何も出さない。
 #[test]
 fn typed_values_red_on_counterexamples_and_empty_on_typed_forms() {
@@ -4425,7 +4425,7 @@ fn typed_values_red_on_counterexamples_and_empty_on_typed_forms() {
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report);
 }
 
-/// agora-redesign #1191: .hy で kw-only の record を kw_only=True の無い @dataclass で宣言する .pyi は class ごとに 1 件。直した .pyi・
+/// .hy で kw-only の record を kw_only=True の無い @dataclass で宣言する .pyi は class ごとに 1 件。直した .pyi・
 /// 同じ名の .hy の無い .pyi・@dataclass の無い class は当たらない。
 #[test]
 fn record_stubs_red_when_kw_only_record_stub_lacks_kw_only() {
@@ -4448,7 +4448,7 @@ fn record_stubs_red_when_kw_only_record_stub_lacks_kw_only() {
     assert!(keys(&fixed, "DOEFF145").is_empty(), "{}", fixed);
 }
 
-/// agora-redesign #1191 の条件: DOEFF144・145 は file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を
+/// 条件: DOEFF144・145 は file 1 つで判じるので、名指しの path が在ればその下の file だけを読む(repo 全体を
 /// 読まない)。全体の実行は宣言の file を全部読む — 読めない file(UTF-8 でない)が理由に出るかどうかで、読んだ母集団を見分ける。
 #[test]
 fn typed_value_rules_read_only_the_named_files() {
@@ -4531,7 +4531,7 @@ fn record_stubs_except_is_honoured() {
     assert!(keys(&excepted, "DOEFF145").is_empty(), "{}", excepted);
 }
 
-/// agora-redesign #1192・#1371(DOEFF146): :single-point-vocabulary の :except の外でその群の語彙(正規表現)を読んでいる file を
+/// DOEFF146: :single-point-vocabulary の :except の外でその群の語彙(正規表現)を読んでいる file を
 /// 群ごとに 1 件、critical で出す。:except の file 自身は当てない。
 #[test]
 fn vocabulary_outside_its_single_point_is_red() {
@@ -4585,7 +4585,7 @@ fn single_point_vocabulary_requires_patterns_files_except_and_instead() {
     assert!(all.contains("vocabulary-scope a に :instead(直し方)が無い"), "{}", all);
 }
 
-/// agora-redesign #1373・#1436(DOEFF148): :confined-spellings の綴りを :except の外の file が書いていれば、file と群ごとに 1 件、
+/// DOEFF148: :confined-spellings の綴りを :except の外の file が書いていれば、file と群ごとに 1 件、
 /// critical で出す。文字列の中は数え(外の口の動詞・route の綴り)、註は数えない。Python の file も読む。:files に当たる file が
 /// 無い群は architecture.hy の位置で missing。
 #[test]
@@ -4651,7 +4651,7 @@ fn confined_spelling_requires_patterns_files_and_why() {
 }
 
 /// 群の綴りに結んだ名も群の綴り(:names-bound-in — agora-controllers の群 web-push-private-key が秘密キーの参照の名を正規表現の写しで
-/// 持ち、キーの入れ替えの旧いキーの参照の名を他の file で読んでも赤にならなかった・設計検証 lt-T1R7826ZQ8C78H02ZGKEASNRF0 の盲検 A)。
+/// 持ち、キーの入れ替えの旧いキーの参照の名を他の file で読んでも赤にならなかった)。
 /// 失敗ケース: 宣言の :environ に足した新しい参照の名を core が文字列で読む・翻訳の val の名で読む・Python が mangle した名で読む・
 /// 翻訳が参照の名を並べた列の名で読むと、architecture.hy を書き換えずに赤。名を写しで持つ群(bill-key-copied)は同じ 4 つを通す。
 /// 群の綴りに当たらない値に結んだ名と、関数の中の束縛の名は数えない。
@@ -4753,7 +4753,7 @@ fn names_bound_in_must_be_hy_files_the_group_lets_write() {
     assert!(all.contains("confined-spelling c の :names-bound-in が空"), "{}", all);
 }
 
-/// agora-redesign #1373・#1437(DOEFF161): :counted-spellings の当たりの数が :count / :at-least に合わなければ 1 件、critical で出す。
+/// DOEFF161: :counted-spellings の当たりの数が :count / :at-least に合わなければ 1 件、critical で出す。
 /// :within は名指した定義ごとに数え、無い定義は missing。Hy の註は数えず、yaml は拡張子を問わずそのまま読む。
 #[test]
 fn spelling_count_differs_is_red() {
@@ -4820,7 +4820,7 @@ fn counted_spelling_requires_pattern_files_one_count_and_why() {
     assert!(all.contains("counted-spelling c の :count は 0 以上の整数"), "{}", all);
 }
 
-/// agora-redesign #1374(DOEFF149): :field-holders の型の欄を持つ class が :holders と違えば、一覧の外の持ち手は class の位置で、欄を
+/// DOEFF149: :field-holders の型の欄を持つ class が :holders と違えば、一覧の外の持ち手は class の位置で、欄を
 /// 持たない一覧の class と :classes の無い class は architecture.hy の位置で、critical で出す。docstring・method の中・既定値の文字列は数えない。
 #[test]
 fn field_holders_differ_is_red() {
@@ -4883,7 +4883,7 @@ fn field_holders_requires_type_files_holders_and_why() {
     assert!(all.contains("field-holders b の :holders の B が :classes に無い"), "{}", all);
 }
 
-/// agora-redesign #1373・#1438(DOEFF162): :effect-census の :files で EffectBase を継ぐ class の宣言が :effects の一覧と食い違えば、
+/// DOEFF162: :effect-census の :files で EffectBase を継ぐ class の宣言が :effects の一覧と食い違えば、
 /// 食い違いごとに 1 件、critical で出す(一覧の外・2 度の宣言・宣言の無い一覧の effect)。
 #[test]
 fn effect_outside_census_is_red() {
@@ -4931,7 +4931,7 @@ fn effect_census_requires_files_effects_and_why() {
     assert!(all.contains("effect-census a に :why(なぜ一覧で閉じるか)が無い"), "{}", all);
 }
 
-/// agora-redesign #1312・#1410: 記録の client は HttpRequest の effect を出すだけ — 実 HTTP は HttpRequest に
+/// 記録の client は HttpRequest の effect を出すだけ — 実 HTTP は HttpRequest に
 /// 答える本物の handler(目録の http-production-handler)の側で数える。通常の client と表で絞る client は目録に載せない。
 /// RecordsEndpoint を値として名指すだけ(型の注釈)の所も数えない。
 #[test]
@@ -4976,7 +4976,7 @@ fn records_client_is_counted_by_its_outer_http_handler() {
     }
 }
 
-/// agora-redesign #1410: 移行の間だけ残した目録の行は撤去済み。効果を出すだけの記録 client を
+/// 移行の間だけ残した目録の行は撤去済み。効果を出すだけの記録 client を
 /// 実 I/O の :wraps に挙げる古い宣言は、通常の「目録に無い」設定エラーで止める。
 #[test]
 fn records_clients_cannot_be_declared_as_world_handler_wraps() {
@@ -4991,7 +4991,7 @@ fn records_clients_cannot_be_declared_as_world_handler_wraps() {
     }
 }
 
-/// agora-redesign #1368(C7b): 決めた材料だけで判じる定義(:blind-definitions)— 宣言した定義から呼び出しで届く定義が、helper と別の
+/// C7b: 決めた材料だけで判じる定義(:blind-definitions)— 宣言した定義から呼び出しで届く定義が、helper と別の
 /// module を越えても、使わない語を読めば赤(届いた定義と語ごとに 1 件)。註の中の語・届かない定義の語は数えない。:no-imports なら module の
 /// import は赤で、:allow-requires の macro の require は許す。名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
 #[test]
@@ -5051,7 +5051,7 @@ fn blind_declaration_misreadings_are_config_errors() {
     assert!(all.contains("blind の no-colon は \"module.path:名\" の綴り"), "{}", all);
 }
 
-/// agora-redesign #1413(#1372 の孫 1): 呼んでよい頭を決めた定義(:allowed-heads)— 定義の中(入れ子を含む)の `( … )` の頭が一覧の
+/// 呼んでよい頭を決めた定義(:allowed-heads)— 定義の中(入れ子を含む)の `( … )` の頭が一覧の
 /// 外なら、頭ごとに 1 件(最初に現れた所)。文字列・註・`#_`・tuple の中の綴りは頭に数えない。同じ module のほかの定義の頭は見ない。
 /// 名指す定義が無ければ architecture.hy の位置で赤(母集団 0 を緑にしない)。
 #[test]
@@ -5119,7 +5119,7 @@ fn allowed_heads_pass_when_listed_and_misreadings_are_config_errors() {
     assert!(all.contains("allowed-heads の no-colon は \"module.path:名\" の綴り"), "{}", all);
 }
 
-/// agora-redesign #1414(#1372 の孫 2): 頭を呼んでよい場所と回数(:call-sites)。正しい形なら緑。場所の外の呼び・回数の食い違い・直ぐ外の
+/// 頭を呼んでよい場所と回数(:call-sites)。正しい形なら緑。場所の外の呼び・回数の食い違い・直ぐ外の
 /// form の食い違い・分岐の外の呼び・消えた場所・当たる file の無い宣言は、それぞれの鍵で赤(:except の file と註・文字列の中は数えない)。
 #[test]
 fn call_sites_confine_where_a_head_is_called() {
@@ -5216,7 +5216,7 @@ fn call_site_counts_and_misreadings() {
     assert!(all.contains("call-site d が 2 度宣言されている"), "{}", all);
 }
 
-/// agora-redesign #1390: 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
+/// 系の値(defsystem の定義と :systems の :carriers の引数)が運ぶ土台は、系を回す入口(:systems の :runners)に
 /// 届く検からだけ届く — 系の値を読むだけの検と、道具で組むだけの検は手元。土台を直に呼ぶ検は今までどおり縁。
 #[test]
 fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
@@ -5261,7 +5261,7 @@ fn a_system_value_reaches_the_world_only_when_a_runner_runs_it() {
     );
 }
 
-/// agora-redesign #1372・#1415(DOEFF160): :broad-catches の :files の Hy・Python の file の広い例外の捕捉は、:carriers の定義の中で
+/// DOEFF160: :broad-catches の :files の Hy・Python の file の広い例外の捕捉は、:carriers の定義の中で
 /// 例外を名で束縛して :event の出来事へ渡す物だけ — 外の捕捉は file ごとに、名を渡さない境界は境界ごとに 1 件、critical で出す。
 #[test]
 fn broad_catches_are_confined_to_declared_carriers() {
@@ -5375,7 +5375,7 @@ fn stale_registry_repo(dir_keys: &[&str], listed: &str, enable: &str) -> tempfil
 fn registry_keys_that_no_longer_hit_are_errors_only_for_rules_judged_on_the_whole_repo() {
     let enable = "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"";
     // 今も当たる鍵(law の名・規則の ID)・当たらなくなった鍵(dir の file と list の行)・enable に無い規則の鍵・規則を引けない他の検の鍵。
-    // enable に無い規則(DOEFF119)も、鍵が名指すので同じ実行で当てて判じる(agora-redesign #1999 — 前は判じずに見逃した)。
+    // enable に無い規則(DOEFF119)も、鍵が名指すので同じ実行で当てて判じる(前は判じずに見逃した)。
     let dir = stale_registry_repo(
         &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone", "app/core/x.hy::DOEFF119::Old"],
         "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
@@ -5419,7 +5419,7 @@ fn judged_rules(report: &Value) -> Vec<String> {
 
 #[test]
 fn a_single_file_run_names_the_rules_it_judged_and_leaves_out_rules_judged_only_on_the_whole_repo() {
-    // agora-redesign #2163: 1 file の実行(--stdin --path)は DOEFF166 を判じない — judged_rules に載せず、エディタはその違反を全体の
+    // 1 file の実行(--stdin --path)は DOEFF166 を判じない — judged_rules に載せず、エディタはその違反を全体の
     // 実行の結果のまま残す。全体の実行は載せる。どちらの実行も、出した違反の規則は全部 judged_rules に在る。
     let dir = stale_registry_repo(&["app/core/x.hy::bare-needs-reason::gone"], "", "\"DOEFF110\", \"DOEFF111\", \"DOEFF166\"");
     let (_, whole) = editor(dir.path());
@@ -5461,7 +5461,7 @@ fn editor_enabling(root: &Path, rules: &str) -> (i32, Value) {
 #[test]
 fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled() {
     // `--enable DOEFF166` だけでも、登録簿の行が名指す規則(DOEFF110・law bare-needs-reason の DOEFF111)を同じ実行で当てて
-    // 当たらない行を error にする。直す前は名指す規則が走らず、166 は黙って 0 件だった(agora-redesign #1999・#1992 の見逃し)。
+    // 当たらない行を error にする。直す前は名指す規則が走らず、166 は黙って 0 件だった(#1992 の見逃し)。
     let dir = stale_registry_repo(
         &["app/core/x.hy::bare-needs-reason::bare", "app/core/x.hy::bare-needs-reason::gone"],
         "app/core/x.hy::DOEFF110::helper\napp/core/x.hy::DOEFF110::removed\nlayer/imports.hy::some-other-checker::x\n",
@@ -5489,7 +5489,7 @@ fn registry_rows_are_judged_by_the_rules_they_name_even_when_only_166_is_enabled
     assert_eq!(keys(&with_166, "DOEFF166"), keys(&report, "DOEFF166"));
 }
 
-/// DOEFF142 の宣言(:handler-arguments)を architecture.hy に足した一時の repo(agora-redesign #1809・決定 C の失敗ケースの検)。
+/// DOEFF142 の宣言(:handler-arguments)を architecture.hy に足した一時の repo(決定 C の失敗ケースの検)。
 fn handler_argument_repo(source: &str) -> tempfile::TempDir {
     let files = [("app/billing/protocol/answer.hy", tags("billing", "protocol") + source)];
     let dir = world_repo_with(&files, "", "[\"DOEFF142\"]");
@@ -5501,7 +5501,7 @@ fn handler_argument_repo(source: &str) -> tempfile::TempDir {
     dir
 }
 
-/// agora-redesign #1809(DOEFF142): defhandler の引数が client・可変の店を取れば赤(鳴る例)。frozen の record の設定を取る handler と、
+/// DOEFF142: defhandler の引数が client・可変の店を取れば赤(鳴る例)。frozen の record の設定を取る handler と、
 /// 残す理由の註(:keep-mark)を書いた handler は鳴らない(鳴らない例)。
 #[test]
 fn handler_arguments_that_hold_a_client_or_a_store_are_red() {
@@ -5523,7 +5523,7 @@ fn handler_arguments_that_hold_a_client_or_a_store_are_red() {
     assert!(keys(&report, "DOEFF142").is_empty(), "{:?}\n{}", keys(&report, "DOEFF142"), report);
 }
 
-/// DOEFF155・158 の宣言(:business-fakes と :assembly-shape)を書いた一時の repo(agora-redesign #1809)。請求の service の層は
+/// DOEFF155・158 の宣言(:business-fakes と :assembly-shape)を書いた一時の repo。請求の service の層は
 /// core・intent・protocol(翻訳の層)・entry(組み立ての層)。本番の入口 = 組の file(app/*/entry/handler_sets.hy)の名が production で
 /// 始まる定義。intent の効果は Charge と Refund(app/billing/intent/effects.hy)。
 fn assembly_repo(files: &[(&str, String)], enable: &str) -> tempfile::TempDir {
@@ -5569,7 +5569,7 @@ fn production_set(imports: &str, handlers: &str) -> String {
     tags("billing", "entry") + &format!("{}\n(defk production-handlers [] [{}])\n", imports, handlers)
 }
 
-/// agora-redesign #1809(DOEFF158): 本番の入口から届く intent の効果の答え手が、翻訳の層の外に在れば赤・翻訳の層に 2 つ在れば両方赤
+/// DOEFF158: 本番の入口から届く intent の効果の答え手が、翻訳の層の外に在れば赤・翻訳の層に 2 つ在れば両方赤
 /// (鳴る例)。翻訳の層の handler 1 つだけが答えれば鳴らない(鳴らない例)。
 #[test]
 fn intent_answerers_outside_or_doubled_in_the_translation_layer_are_red() {
@@ -5612,7 +5612,7 @@ fn translation_module() -> String {
     charge_handler("protocol", "charge-reads") + "(require doeff-hy.macros [val])\n(val TRANSLATION-HANDLERS [charge-reads])\n"
 }
 
-/// agora-redesign #1809(DOEFF155): 組み立ての層に退役した組み立ての関数(:retired-function)が残る・翻訳の列の 1 点が翻訳の列でない
+/// DOEFF155: 組み立ての層に退役した組み立ての関数(:retired-function)が残る・翻訳の列の 1 点が翻訳の列でない
 /// handler を並べる、のどちらも赤(鳴る例)。翻訳の列の 1 点が翻訳の層の定数の列だけを並べれば鳴らない(鳴らない例)。
 #[test]
 fn assembly_shape_breaks_are_red() {
@@ -5658,7 +5658,7 @@ fn assembly_shape_breaks_are_red() {
     assert!(keys(&report, "DOEFF155").is_empty(), "{:?}\n{}", keys(&report, "DOEFF155"), report);
 }
 
-/// agora-redesign #3408(DOEFF155・#3406 の層 3 — 模擬の組み立ての翻訳の handler は本番と同じ物): 翻訳の列の 1 点が列を引数で受ける・
+/// DOEFF155 — 模擬の組み立ての翻訳の handler は本番と同じ物: 翻訳の列の 1 点が列を引数で受ける・
 /// 検証環境(:verification-environment)か検の file が翻訳の列を 1 点の外で開いて並べる、のどちらも赤(鳴る例)。模擬と検が本番の
 /// 1 点を呼べば鳴らない(鳴らない例)。
 #[test]
@@ -5751,7 +5751,7 @@ fn translation_point() -> String {
 
 const LEGACY_EFFECTS: &str = "(import doeff [EffectBase])\n(defclass LegacyRow [EffectBase])\n";
 
-/// agora-redesign #1818(#1810 の子): DOEFF156(答えの置き場)を規則の ID で名指して確かめる。鳴る例 = 翻訳の handler が intent の効果を
+/// DOEFF156(答えの置き場)を規則の ID で名指して確かめる。鳴る例 = 翻訳の handler が intent の効果を
 /// 出し直す(refund-reads → Charge)・出し直した効果に答える同じ列の handler が内側に在る(charge-reads の LegacyRow に答える legacy-reads が
 /// 後ろ)・組の file の組の関数が並べる土台の handler が業務の効果に答える。鳴らない例 = 同じ列の外側(前)の handler が答える intent でない
 /// 効果の出し直し(単体テストの is_shape() == false の行の「出し直してよい」側)。
@@ -5807,7 +5807,7 @@ fn declare_boundary_parts(dir: &tempfile::TempDir, parts: &str) {
     std::fs::write(&arch_path, text).unwrap();
 }
 
-/// agora-redesign #1797: 境目の部品(:boundary-parts)の module の中では、宣言した :touches の種類の生の副作用を DOEFF106 で当てない
+/// 境目の部品(:boundary-parts)の module の中では、宣言した :touches の種類の生の副作用を DOEFF106 で当てない
 /// — 種類の外の生の副作用と、宣言の無い module は今どおり当たる。層の中の file と層の置き場の外の file の両方で同じ。
 #[test]
 fn boundary_parts_allow_only_the_declared_touches() {
@@ -5834,7 +5834,7 @@ fn boundary_parts_allow_only_the_declared_touches() {
     );
 }
 
-/// agora-redesign #1894: 境目の部品(:boundary-parts)の module の中では、:touches に宣言した触れる先の生の呼び(time.time → clock)を
+/// 境目の部品(:boundary-parts)の module の中では、:touches に宣言した触れる先の生の呼び(time.time → clock)を
 /// DOEFF151 でも当てない(DOEFF106 と同じ写し方 — 生の時計を通す所は部品の宣言 1 か所)。反例 = 宣言の無い module・:touches に
 /// clock の無い部品・層の置き場の外の宣言の無い file の time.time と、部品の中でも生の副作用でない呼び(効果の Now)は当たる。
 /// 1 file の実行(保存前の中身を stdin で渡す editor の形)も同じ宣言を読む。
@@ -5871,7 +5871,7 @@ fn retired_calls_skip_only_the_raw_calls_a_boundary_part_declares() {
     assert_eq!(keys(&single, "DOEFF151"), vec!["app/billing/entry/bench.hy::DOEFF151::Now"], "1 file の実行も部品の宣言を読む: {}", single);
 }
 
-/// agora-redesign #1906: 宣言(:environment-branches)の :layers の層の Hy の定義が、環境の名の値と比べる・dry-run の印で分岐すると
+/// 宣言(:environment-branches)の :layers の層の Hy の定義が、環境の名の値と比べる・dry-run の印で分岐すると
 /// DOEFF168 が critical で当たる。反例 = 環境の名でない値との比較と、:layers に無い層(entry)の同じ形は当たらない。
 #[test]
 fn environment_branches_hit_only_in_the_declared_business_layers() {
@@ -5899,7 +5899,7 @@ fn environment_branches_hit_only_in_the_declared_business_layers() {
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
-/// agora-redesign #2036: match の class pattern の keyword の欄の名に `-` が在れば、層の置き場のどの Hy の file でも critical で当てる
+/// match の class pattern の keyword の欄の名に `-` が在れば、層の置き場のどの Hy の file でも critical で当てる
 /// (Hy が keyword を属性名へ mangle しないので決して当たらない節)。`_` で書いた欄・位置引数の pattern・節の本体の keyword は当てない。
 /// defk の form の中は doeff-hy が欄の名を属性名へ直す(doeff_hy/match_fields.py)ので当てない。
 #[test]
@@ -5922,7 +5922,7 @@ fn hyphenated_fields_in_match_class_patterns_hit_in_every_layer() {
     assert_eq!(hit["level"], "critical", "{}", hit);
 }
 
-/// agora-redesign #2143: 値を型だけで渡す層(層の :wire-free True — ここでは core)では、defwire の宣言(DOEFF170)と、:pre / :post と
+/// 値を型だけで渡す層(層の :wire-free True — ここでは core)では、defwire の宣言(DOEFF170)と、:pre / :post と
 /// defrecord の欄の型の写像(型つきの写像も)・中身の型の無い組(DOEFF171)を critical で当てる。宣言の無い層(entry)の同じ形・型つきの
 /// defrecord と同じ型の列・宣言を外した repo は当てない(判定は層の宣言から入る)。
 #[test]
@@ -5968,7 +5968,7 @@ fn wire_free_layer_forbids_defwire_and_maps() {
     assert!(keys(&report, "DOEFF170").is_empty() && keys(&report, "DOEFF171").is_empty(), "{}", report);
 }
 
-/// agora-redesign #2203: 値を型だけで渡す層の Python の file の欄(dataclass の欄の注記)も DOEFF171 が当てる(以前は Hy の file だけを数え、
+/// 値を型だけで渡す層の Python の file の欄(dataclass の欄の注記)も DOEFF171 が当てる(以前は Hy の file だけを数え、
 /// core の .py の Mapping[ の欄を黙って見逃していた)。失敗ケース 3 つ: core の .py の写像の欄は鳴る / 同じ欄を名と欄の型を持つ class に
 /// 起こした .py は鳴らない / entry の層(宣言の無い層)の .py の同じ欄は DOEFF171 では鳴らず、DOEFF172 が数える。
 #[test]
@@ -5997,7 +5997,7 @@ fn wire_free_layer_judges_python_dataclass_fields() {
     assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/page.py::DOEFF172::field:Page.counts"], "{}", report);
 }
 
-/// agora-redesign #2143 の (2): 写像の置き場の臭い(DOEFF172・major・warning — 数えるだけ)。handler の外の定義の本体で写像を組む所と、
+/// 写像の置き場の臭い(DOEFF172・major・warning — 数えるだけ)。handler の外の定義の本体で写像を組む所と、
 /// 値を型だけで渡す層の外の欄の写像を当てる。defhandler の中・:post が写像の綴りの 1 点・契約の辞書・値を型だけで渡す層の欄(DOEFF171 の
 /// 持ち場)は当てない。
 #[test]
@@ -6036,7 +6036,7 @@ fn dict_smells_count_built_maps_and_map_fields_outside_their_place() {
     assert_eq!(hit["severity"], "warning", "{}", hit);
 }
 
-/// agora-redesign #2310: DOEFF172 の失敗ケース 2 つ — match の型の位置に {…} を書いた定義は鳴らない(型は値を組まない — 以前は
+/// DOEFF172 の失敗ケース 2 つ — match の型の位置に {…} を書いた定義は鳴らない(型は値を組まない — 以前は
 /// 「写像を組む」と数えた)/ 同じ match の本体で写像を組む定義は鳴る。
 #[test]
 fn dict_smells_skip_match_patterns() {
@@ -6051,7 +6051,7 @@ fn dict_smells_skip_match_patterns() {
     assert_eq!(keys(&report, "DOEFF172"), vec!["app/billing/entry/codec.hy::DOEFF172::built:counted"], "型の {{…}} は数えず本体の写像は数える: {}", report);
 }
 
-/// agora-redesign #2265: DOEFF172 の失敗ケース 2 つ — docstring の後に契約の辞書だけを持つ定義は鳴らない(以前は契約の metadata を
+/// DOEFF172 の失敗ケース 2 つ — docstring の後に契約の辞書だけを持つ定義は鳴らない(以前は契約の metadata を
 /// 「handler の外で組む写像」と数えた)/ 本文で写像を組む定義は鳴る。:tags の :spells(wire の形を綴る 1 点の名乗り)は core の外(ここでは entry)では
 /// 数えず、値を型だけで渡す層(core)では名乗っても数える。
 #[test]
@@ -6083,7 +6083,7 @@ fn dict_smells_skip_the_contract_after_a_docstring_and_honour_spells_outside_cor
     );
 }
 
-/// agora-redesign #1797: 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
+/// 境目の部品は許す種類(:touches — 閉じた語彙)と理由(:reason)を名指す。欠けと語の外は設定の誤りで止まる。
 #[test]
 fn boundary_parts_need_touches_and_a_reason() {
     let files = [("app/billing/entry/bench.hy", tags("billing", "entry") + "(defk run [] 1)\n")];
@@ -6096,7 +6096,7 @@ fn boundary_parts_need_touches_and_a_reason() {
     assert!(stderr.contains("boundary-part app.billing.entry.other の :touches の socket は語の外"), "{}", stderr);
 }
 
-/// agora-redesign #1797: 境目の部品の生の副作用は DOEFF106 で当てないが、索引の証拠としては残るので、部品に届く deftest は縁で
+/// 境目の部品の生の副作用は DOEFF106 で当てないが、索引の証拠としては残るので、部品に届く deftest は縁で
 /// :edge-mark の印が要る(DOEFF133)— 印の無い検は当たり、印の在る検は当たらない。
 #[test]
 fn tests_reaching_a_boundary_part_need_the_edge_mark() {
@@ -6122,7 +6122,7 @@ fn tests_reaching_a_boundary_part_need_the_edge_mark() {
     );
 }
 
-// ------------------------------------------------------------------ 基点との比べ(--baseline-report・agora-redesign #1803)
+// ------------------------------------------------------------------ 基点との比べ(--baseline-report)
 
 /// DOEFF110 を critical にした一時の repo の設定(登録簿は空 — 基点との比べは登録簿に依らない)。
 const CRITICAL_110: &str = "[tool.doeff-linter.rules.DOEFF110]\nlevel = \"critical\"\n";
@@ -6212,7 +6212,7 @@ fn baseline_only_criticals_are_compared_and_a_bad_file_is_an_argument_error() {
     assert_eq!(code, 2, "{}", stderr);
 }
 
-/// 層の宣言の :exempt で定義の書き方の規則を外す repo(agora-redesign #2913)。package の dir に architecture.hy を置き、src の module を
+/// 層の宣言の :exempt で定義の書き方の規則を外す repo。package の dir に architecture.hy を置き、src の module を
 /// 名指す(doeff-hy の macro の展開の時点の module と同じ形)。declaration が None なら宣言を置かない。
 fn exempt_repo(declaration: Option<&str>) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
@@ -6407,7 +6407,7 @@ fn lower_layer_repo(lower_layer: bool) -> tempfile::TempDir {
     dir
 }
 
-/// 利用者の決定 2026-10-07(agora-redesign #3885): 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
+/// 記録の service の生の操作を使うのは handler(protocol・foundation の層)だけ。業務の層
 /// (core・intent)の定義が :lower-layer-modules の効果を出す(直に・defk を辿って・同じ package の repo の外の defk を実行して)所と、
 /// その package の handler を被せる所は critical。値の型の使用・ドメインの効果・翻訳と土台の層は当たらない。
 #[test]

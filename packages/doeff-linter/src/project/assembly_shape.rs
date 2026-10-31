@@ -1,4 +1,4 @@
-//! DOEFF155・156: 組み立ての形(agora-redesign #1376 / #1367 / #1189 — 元は agora-controllers の一時の検
+//! DOEFF155・156: 組み立ての形(#1367 / #1189 — 元は agora-controllers の一時の検
 //! controllers/agora_sim/tests/business_fakes_rules.hy の assembly-breaches の 5 法・ADR R8・R9・#780・#827・#832・#893・#1340)。
 //!
 //! 翻訳の列の 1 点は組み立ての層の defk(名の型 `:translation-point` — 例 `with-*-translation`)で、本体の
@@ -9,8 +9,7 @@
 //! * 組の file(`:business-fakes` の `:sets` に当たる本番の code の file)が残る
 //! * 組み立ての層に退役した組み立ての関数(`:retired-function`)が残る
 //! * 翻訳の列の 1 点が `#*` で翻訳の列でない import した名を並べる
-//! * 翻訳の列の 1 点が `#*` で自分の引数を並べる(呼び手が列を渡せると、模擬が本番と別の列を渡せる — 列は翻訳の層の定数だけ・
-//!   agora-redesign #3408)
+//! * 翻訳の列の 1 点が `#*` で自分の引数を並べる(呼び手が列を渡せると、模擬が本番と別の列を渡せる — 列は翻訳の層の定数だけ)
 //! * 検証環境(architecture.hy の `:verification-environment` の dir)と検の file が、翻訳の列(1 点が並べてよい列)を `#*` で
 //!   開いて並べる — 模擬は本番と同じ翻訳の列の 1 点を呼び、列を自分で組まない(1 点が一緒に並べる別の列・順は写らない・#3408)
 //! * 列の並び: 列が出し直す別の service の intent の効果(`:intent-layer`)に答える列が、それより外側(前)に無い
@@ -38,7 +37,7 @@ use super::paths::glob_matches;
 use super::spans::innermost_definition;
 
 /// 判定の材料のうち、全体の定義の図から組む物(組むのは呼び手 — project/mod.rs の judge_assembly_shape)。図の型と組み立てを
-/// mod.rs に置いたまま、この module が mod.rs を読み戻さない形で受け取るため(読み戻すと依存の輪になる — agora-redesign #2121)。
+/// mod.rs に置いたまま、この module が mod.rs を読み戻さない形で受け取るため(読み戻すと依存の輪になる)。
 pub struct GraphInputs<'h> {
     /// 図の file の並び(定義の節の順)。
     pub rels: Vec<&'h String>,

@@ -1,4 +1,4 @@
-;;; rollouts と refused の欄が表(Table)で、書き手が「動いた行だけの書き」であることの検(ki-099b9b525351 — T6a)。
+;;; rollouts と refused の欄が表(Table)で、書き手が「動いた行だけの書き」であることの検(T6a)。
 ;;;
 ;;; 時間では測らない。見る物は 3 つ: 残る行(鍵)、書きの無い拍で表・状態が元と同じ物(is)であること、保存の鍵と値。
 (require doeff-hy.macros [deftest val <- defk])
@@ -17,7 +17,7 @@
 (import tests.state_rows [table-from-rows])
 
 (val T (ClusterTiming))
-;; 相手が Service だけの Rollout の spec(Deployment の相手を持たないので、持ち主の判断や観測を使わない)。
+;; 相手が Service だけの Rollout の spec(Deployment の相手を持たないので、台数を持つ側の判断や観測を使わない)。
 (val SPEC (validate-rollout-spec {"from" {"kind" "Service" "name" "old"}
                                   "to" {"kind" "Service" "name" "new"}
                                   "readyTimeoutSeconds" 300 "stopTimeoutSeconds" 180 "observeSeconds" 60 "failAfterSeconds" 30

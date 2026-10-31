@@ -25,7 +25,7 @@
 (val FOLLOWUP-ROUNDS 2)
 ;; 起こしの見送りの行の名(#3713 — 名 + 欄 job・reason の形。reason = StartHold の値)。
 (val START-HOLD-LOG "worker: job の起こしの見送り")
-;; 止めを求めていない終わりの行の名(card ki-cb9f34c49f83 — 名 + 欄 job・pid・exit-code・signal・ran-ms・backoff-ms・memory-killed の形。
+;; 止めを求めていない終わりの行の名(名 + 欄 job・pid・exit-code・signal・ran-ms・backoff-ms・memory-killed の形。
 ;; 欄は policy の ExitNote)。0 でない終了 code の終わりは warning(落ちた)、0 の終わり(task の済み・退いた process の自分での終わり)は info。
 (val JOB-EXIT-LOG "worker: job の止めを求めていない終わり")
 ;; 拍の遅れの行の名と閾(#3715 — 名 + 欄 elapsed-ms = 拍の頭から終わりまでの ms・slowest = その拍でいちばん長かった区間の名・
@@ -100,7 +100,7 @@
    今の拍の頭・EnvReport の後の読みで区間に切り、遅れの行の欄(間と、いちばん長い区間の名と長さ)を導くため。区間 = 前の拍より前(EarlierTicks — 間に送らない拍を
    挟んだ時)・前の拍の EnvReport・ReadDesired(前の拍で送っていれば送った後の返事の待ち)・ObserveWorld・残り・拍の間の待ち
    (AwaitNextTick)・今の拍の EnvReport・ReadDesired(送るまで)。since より前の部分と sent-at より後の部分は数えない(拍の外の背景の
-   task の送りは、前の拍の途中や拍の間の待ちの途中でも起きる — card ki-e38dbfca7671)。長さが並んだら先の区間を名指す。"
+   task の送りは、前の拍の途中や拍の間の待ちの途中でも起きる)。長さが並んだら先の区間を名指す。"
   (val earlier (match previous
     None #()
     _ #((GapMark :name "EarlierTicks" :at previous.began)
@@ -118,10 +118,10 @@
   (HeartbeatGap :gap-ms (- sent-at since) :slowest longest.name :slowest-ms longest.ms))
 
 
-;; 起こせなかった job の答えを集める(card ki-e1612a12d0c3)。
+;; 起こせなかった job の答えを集める。
 (defk fired-not-started [actions]
   {:pre [(: actions tuple)] :post [(: % (get tuple #(JobNotStarted ...)))] :tags {:context "worker" :role "program"}}
-  "拍の action を順に撃ち、StartJob が起こせなかった答え(JobNotStarted)を集めるため(card ki-e1612a12d0c3): 起こせない事は効果の答えの
+  "拍の action を順に撃ち、StartJob が起こせなかった答え(JobNotStarted)を集めるため: 起こせない事は効果の答えの
    値で、記憶の数え records-after がその job だけの失敗に数える — 同じ拍のほかの action と動いている job は続ける。以前は宿が例外に
    変え、ここを抜けて worker の process ごと落ち、機体の上の job を全部道連れにした(10-24 02:42 JST)。想定しない例外(code の誤り)は
    捕まえない。ほかの action の答えは読まない。"
@@ -145,7 +145,7 @@
   ;; 壁の時計の枠へ写す: now から、頭からの長さ(heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)を引く。単調な差だけを引くと、
   ;; 拍の途中(宣言の読みの返事の処理の間)に機体が眠った時、began が眠りの後の刻になり、眠りの間に過ぎた heartbeat と柵の期限を
   ;; 「この拍がもう判じた」として捨てた(拍だけが heartbeat を送る口で、自己停止の判断が眠りの 200 秒余り後 — 設計検証の盲検 A の副次の
-  ;; 観測・card ki-069f4a5c07f7)。
+  ;; 観測)。
   (<- began-wall int (now-epoch-ms))
   (<- began-mono float (GetMonotonic))
   (<- env-report (| dict None) (EnvReport))
@@ -158,8 +158,8 @@
   (val env-reported-ms (monotonic-ms-of env-reported-mono))
   (<- ticking int (silent-ms now (monotonic-ms-of desired-read-mono) began-wall began-ms))
   (val began (- now ticking))
-  ;; heartbeat の間の計り(#3850): 前の読みの後からこの読みまでの送り(この読みの送りと、拍の外の背景の task の送り — card
-  ;; ki-e38dbfca7671)ごとに、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を越えたら、間のいちばん長い区間を
+  ;; heartbeat の間の計り(#3850): 前の読みの後からこの読みまでの送り(この読みの送りと、拍の外の背景の task の送り)
+  ;; ごとに、前の送りからの間が送った時の生存の窓 × HEARTBEAT-GAP-LEASE-RATIO を越えたら、間のいちばん長い区間を
   ;; 名指す。間は送りの単調な時計の読み(mono-ms)の差で、区間は拍で既に読んだ単調な時計の読みで切る(時刻の読みを足さない)。
   (var last-sent-mono-ms state.last-sent-mono-ms)
   (for [sent read.sends]
@@ -193,7 +193,7 @@
   (var fired (tuple actions))
   (<- counted dict (records-after now state.records actions policy not-started))
   (var records counted)
-  ;; 止めを求めていない終わりの回収を 1 行ずつ(card ki-cb9f34c49f83 — 止めた終わりの行は process-host の止めの計時の行)。
+  ;; 止めを求めていない終わりの回収を 1 行ずつ(止めた終わりの行は process-host の止めの計時の行)。
   (<- exits tuple (exit-notes now world counted actions policy))
   (for [e exits]
     (<- (slog JOB-EXIT-LOG :level (if (= e.exit-code 0) "info" "warning") :job e.name :pid e.pid :exit-code e.exit-code :signal e.signal
@@ -279,7 +279,7 @@
     (when (and stopping (= alive 0)) (return state))
     ;; 起きる物の組: 状態を持つ handler が足した期限・呼び鈴・待つ子に、計画の期限を合わせる(#3871 の単位 4)。handler は期限を
     ;; tick の頭の時刻を基準に組み立てる(tick の後半が長くても、まだ判定していない期限を捨てない — #4332)。
-    ;; tick の頭の単調な時計の読みも渡す(handler が began を今の壁の時計の枠へ写し直す — card ki-069f4a5c07f7)。
+    ;; tick の頭の単調な時計の読みも渡す(handler が began を今の壁の時計の枠へ写し直す)。
     (<- outer WakeSet (WorkerWakes :began (get ticked 5) :began-mono-ms (get ticked 6)))
     (<- gathered WakeSet (wakes-with outer (get ticked 3) #() #()))
     (val fired (get ticked 4))
@@ -288,6 +288,6 @@
     (<- counted int (count-unsettled-ticks streak due fired))
     (:= streak counted)
     ;; 周の間の待ちは答え手 tick-pauses の 1 本の待ち(本番の組も模擬の世界の宿も同じ — #3871 の単位 4・5)。周の頭の刻の対も渡す —
-    ;; 答え手は待ちの長さをこの対からの経過で数える(期限を組み立てた後に壁の時計が戻っても待ちが延びない — card ki-069f4a5c07f7)。
+    ;; 答え手は待ちの長さをこの対からの経過で数える(期限を組み立てた後に壁の時計が戻っても待ちが延びない)。
     (<- (AwaitNextTick policy (get ticked 2) (replace gathered :due due) :began (get ticked 5) :began-mono-ms (get ticked 6)
                        :stopping stopping))))

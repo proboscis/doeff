@@ -1,5 +1,5 @@
 ;;; 全 thread の stack を書く見張りの本物の答え手(faulthandler-stack-dump-handler)だけの性質 — 期限を過ぎると、張った時の sys.stderr へ
-;;; 本当に全 thread の stack を 1 度書き、期限の前に外せば何も書かない(agora-redesign #2748)。契約の性質は test_stack_dump_contract.hy。
+;;; 本当に全 thread の stack を 1 度書き、期限の前に外せば何も書かない。契約の性質は test_stack_dump_contract.hy。
 ;;; 実時間で待つ(1 本 0.5 秒前後 — 期限の後の待ちは、機体の負荷で見張りの thread の起き上がりが遅れても書き終わる幅)。
 (require doeff-hy.macros [deftest <- val])
 (import doeff_core_effects [ArmStackDump DisarmStackDump])

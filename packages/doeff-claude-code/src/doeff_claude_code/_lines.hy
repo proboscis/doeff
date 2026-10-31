@@ -98,7 +98,7 @@
    名乗る。出力の token は呼びの途中の値。usage の object が無ければ None)/ model = message.model(無ければ None)/
    parent-tool-use-id = subagent の行なら親の呼び(道具の呼び)の id、本体の会話の行は None(行の最上位の parent_tool_use_id)。#3744。
    message-id = message.id(この行を出した API の呼びの id — 1 つの呼びの block ごとの行は同じ id を名乗る。subagent の行も持つ。
-   無ければ None)— 上の層が、並んで走る subagent の行が交互に来ても呼びごとに畳むため(ki-8239be27d5f6)。"
+   無ければ None)— 上の層が、並んで走る subagent の行が交互に来ても呼びごとに畳むため。"
   (setv #^ str text "")
   (setv #^ (get tuple #(ToolCall ...)) tool-calls #())
   (setv #^ (| Usage None) usage None)
@@ -113,7 +113,7 @@
   (setv #^ (| str None) refusal-category None)
   ;; request-id = 行の最上位の request_id(この行を出した API の呼びの要求の id — CLI の telemetry の api_request の request_id と同じ値。
   ;; 1 つの呼びの block ごとの行は同じ id を名乗る。無ければ None)— 上の層が、CLI の telemetry にだけ出る呼び(道具の中の呼び・会話の
-  ;; 圧縮)を記録へ足す時に、stdout で読んだ呼びと 2 度数えないため(card ki-b99ace070bf0。実測 CLI 2.1.292 — stream-json の
+  ;; 圧縮)を記録へ足す時に、stdout で読んだ呼びと 2 度数えないため(実測 CLI 2.1.292 — stream-json の
   ;; assistant の行が持つ)。
   (setv #^ (| str None) request-id None))
 
@@ -137,7 +137,7 @@
 (defrecord AgentToolResult
   "本体の会話の道具 Agent の結果(user の行の最上位の tool_use_result — CLI が subagent の答え終えに出す。実測 2.1.306: 報せの行
    task_notification の後・手番の result の行の前)。subagent の transcript を書き切ったかと、その最後の呼びの最終の usage を知るため
-   (lines.hy の subagent-transcript-of・card ki-3d45f5857239)。agent-id = subagent の task の id(transcript の file の名の id)/
+   (lines.hy の subagent-transcript-of)。agent-id = subagent の task の id(transcript の file の名の id)/
    status = 終わり方(completed ほか)/ usage = subagent の最後の呼びの最終の usage(名乗らなければ None)。本番の実測(CLI 2.1.292・
    10-23 の 5 件): transcript の最後の答えの呼びの行は stop_reason が null で出力の token が途中の値(3・8)のまま書かれ、最終の値
    (10,060・2,843)はここにだけ在った。入力の側 3 種は transcript の最後の行と同じ。"
@@ -149,7 +149,7 @@
   "user の行の tool_result(道具の結果が model へ返った): answers = 結果ごとの答え(block の順 — 答えた呼びの id は各答えの id)/
    parent-tool-use-id = subagent の行なら親の呼び(subagent を走らせた本体の会話の道具の呼び)の id、本体の会話の行は None(行の最上位の
    parent_tool_use_id — AssistantMessage の同じ名の欄と同じ読み)。上の層が、本体の会話の道具の答えと subagent の中の道具の答えを
-   見分けるため(card ki-b25d579bf48b — subagent の中の Bash の答えは本体の会話の手番を終えない)。agent-result = 道具 Agent の結果
+   見分けるため(subagent の中の Bash の答えは本体の会話の手番を終えない)。agent-result = 道具 Agent の結果
    (行の tool_use_result が subagent の task の id と終わり方を名乗る時だけ — ほかの道具の結果は None)。"
   (#^ (get tuple #(ToolAnswer ...)) answers)
   (setv #^ (| str None) parent-tool-use-id None)
@@ -162,7 +162,7 @@
 (defenum DeltaKind TEXT THINKING TOOL-INPUT OTHER NO-DELTA)
 
 (defrecord CallOpened
-  "API の呼び 1 回の始まり(stream_event の message_start — card ki-290ec664737d): message-id = message.id / model = message.model
+  "API の呼び 1 回の始まり(stream_event の message_start): message-id = message.id / model = message.model
    (無ければ None)/ parent-tool-use-id = 行の最上位の parent_tool_use_id(本体の会話は None)/ usage = message.usage(始まりの usage —
    出力は途中の値。実測 CLI 2.1.292: stdout の message_start も、その呼びの assistant の行も、出力 16 を名乗る)。"
   (#^ str message-id)
@@ -185,8 +185,7 @@
    message_delta の行なら、その event の usage(呼びの終わりの usage — 実測 CLI 2.1.292 は最終の出力と入力の側・cache の寿命の内訳・
    server_tool_use を名乗る。名乗らない欄は None・ほかの行は None)/ call-end-reason = message_delta の行なら、その delta.stop_reason
    (呼びの止まった訳 — API の終わりは必ず名乗る。null か名乗らない終わりと、ほかの行は None)/ parent-tool-use-id = 行の最上位の
-   parent_tool_use_id(本体の会話は None)。後の 4 つは、上の層が呼びの最終の usage を始まりと終わりの対から組むため(call-step —
-   card ki-290ec664737d・止めた呼びの見分けは card ki-7498a039250d)。"
+   parent_tool_use_id(本体の会話は None)。後の 4 つは、上の層が呼びの最終の usage を始まりと終わりの対から組むため(call-step)。"
   (setv #^ str text-delta "")
   (setv #^ DeltaKind delta DeltaKind.NO-DELTA)
   (setv #^ str thinking-delta "")
@@ -206,7 +205,7 @@
     (when (and self.thinking-delta (!= self.delta DeltaKind.THINKING))
       (raise (ValueError (.format "PartialMessage の考えの差分は種類 THINKING の行だけ: delta {!r}" self.delta))))))
 
-;; --- 呼びの最終の usage(card ki-290ec664737d) ------------------------------------------------------
+;; --- 呼びの最終の usage ------------------------------------------------------
 ;;
 ;; CLI の stdout の assistant の行の usage は、その呼びの message_start の値のまま(出力は途中の値 — 実測 CLI 2.1.292 は block ごとの行が
 ;; どれも出力 16 を名乗る)。呼びの出力の全部と、終わりに確かになる入力の側は、その呼びの message_delta の stream_event だけが名乗る。
@@ -215,7 +214,7 @@
 ;; (止めた・process が降りた・stream が切れて CLI が送り直した)は閉じない — 上の層はその呼びの出力を途中の値として扱う(0 も最終の値も
 ;; 発明しない)。
 ;;
-;; 止めた呼び(card ki-7498a039250d): CLI は流れている呼びを control_request interrupt で止めると、その呼びの終わりの行
+;; 止めた呼び: CLI は流れている呼びを control_request interrupt で止めると、その呼びの終わりの行
 ;; (content_block_stop・message_delta・message_stop)を自分で作って stdout に出す。その message_delta は止まった訳を名乗らず
 ;; (delta.stop_reason が null)、usage は始まり(message_start)の値のまま(出力も始まりの値 — 実測 2026-10-24・本物の CLI 2.1.292 を偽の
 ;; Messages API へ向けて thinking の途中で止めた計測)。CLI はこの呼びを result の額にも telemetry の api_request にも数えない。API は止める
@@ -339,7 +338,7 @@
    hook_name の「:」の前)/ phase = 段階(HookPhase)/ name = hook の名前(hook_name — 「イベント名:matcher」・無ければ空)。入力を
    書かずに事前起動した process が最初の入力の前に出してよい行と、ターンの外で出てよい行を、イベント名で絞るため(dialogue.hy の
    quiet-before-first-input・quiet-outside-turn)。hook-id = hook の 1 回の実行の id(hook_id — 開始と応答で同じ)。応答の行だけが
-   運ぶ欄(上の層が hook の結果を会話の画面に出すため・ki-d8b473480303 — CLI 2.1.292 は SessionStart・Setup の
+   運ぶ欄(上の層が hook の結果を会話の画面に出すため — CLI 2.1.292 は SessionStart・Setup の
    ほかの hook の行を --include-hook-events の時だけ出す): stdout・stderr = hook の命令の出力(JSON で答える hook の stdout は JSON の
    文字列のまま)/ output = CLI がまとめた出力 / exit-code = 命令の終了の code(名乗らなければ None)/ outcome = CLI の終わり方の語
    (success・error ほか — 語は CLI のまま・名乗らなければ空)。"
@@ -358,16 +357,15 @@
    tool_use_id — 名乗らなければ None)/ task-type = task の種類(task_started の task_type — subagent は SUBAGENT-TASK-TYPE。報せの行は
    名乗らないので空)/ total-tokens = 報せの行の usage.total_tokens(CLI の値のまま。始まりの行と名乗らない行は None。transcript の
    最後の呼びの 4 種 token の和と合うとは限らない — 本番 2026-10-22 で書き切った transcript の和より +251〜+1,801 多い報せが 13 件中
-   10 件在った・card ki-3d45f5857239。transcript を書き切ったかの判定には使わない — subagent-transcript-of)。
-   subagent の task の id は、CLI がその subagent の transcript を書く file の名(agent-<id>.jsonl)の id と同じ(実測 2.1.292・
-   card ki-e798888dce4e)。"
+   10 件在った。transcript を書き切ったかの判定には使わない — subagent-transcript-of)。
+   subagent の task の id は、CLI がその subagent の transcript を書く file の名(agent-<id>.jsonl)の id と同じ(実測 2.1.292)。"
   (#^ str task-id)
   (#^ str status)
   (setv #^ (| str None) tool-use-id None)
   (setv #^ str task-type "")
   (setv #^ (| int None) total-tokens None))
 
-;; task_started の task_type のうち、subagent(Agent の道具が起こした agent)を名乗る語(実測 2.1.292・card ki-e798888dce4e)。
+;; task_started の task_type のうち、subagent(Agent の道具が起こした agent)を名乗る語(実測 2.1.292)。
 (val SUBAGENT-TASK-TYPE "local_agent")
 ;; 報せの行の status のうち、subagent が答え終えた事を名乗る語(実測 2.1.292 — 書き切った transcript は閉じた呼びで終わる)。
 (val SUBAGENT-ANSWERED-STATUS "completed")
@@ -377,7 +375,7 @@
 ;; (null)行も閉じていない。ほかの語(end_turn・max_tokens・stop_sequence・refusal ほか)は答えを閉じた呼び(last-call-closed)。
 (val CONTINUING-STOP-REASONS #{"tool_use" "pause_turn"})
 
-;; subagent の transcript の読みの欠けの訳(閉じた語彙 — card ki-e798888dce4e・ki-3d45f5857239): ABSENT = file が無い / UNREADABLE =
+;; subagent の transcript の読みの欠けの訳(閉じた語彙): ABSENT = file が無い / UNREADABLE =
 ;; 読めない所が在る(OS の誤り・task の id が file の名にできない = 何も読めない。UTF-8 でない・JSON の object でない行・呼びの行が
 ;; 時差つきの刻を名乗らない = その行だけ数えない)/ TRUNCATED = 書きの途中(最後の行が改行で終わっていない・答え終えた subagent の
 ;; transcript が閉じた呼びで終わらない — CLI は transcript を報せの行より後に書き足す。実測 2.1.292: 報せの行を出した時点の file には
@@ -394,11 +392,11 @@
   (setv #^ (| str None) model None)
   (setv #^ (| str None) call-id None)
   ;; request-id = 行の requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と同じ値。無ければ None)— 上の層が
-  ;; telemetry にだけ出る呼びを記録へ足す時に、transcript で読んだ呼びと 2 度数えないため(card ki-b99ace070bf0)。1 つの呼びの行は
+  ;; telemetry にだけ出る呼びを記録へ足す時に、transcript で読んだ呼びと 2 度数えないため。1 つの呼びの行は
   ;; どれも同じ id を名乗るので、usage と同じく最後の行の物。
   (setv #^ (| str None) request-id None)
-  ;; output-partial = usage の出力の token が呼びの途中の値か(呼びの最後の行が stop_reason を名乗らない — 閉じた行の無い呼び・card
-  ;; ki-edb2b5947d6a)。CLI は呼びの終わり(message_delta)の stop_reason と最終の output_tokens を呼びの最後の行に載せて書くが、並べた
+  ;; output-partial = usage の出力の token が呼びの途中の値か(呼びの最後の行が stop_reason を名乗らない — 閉じた行の無い呼び)。
+  ;; CLI は呼びの終わり(message_delta)の stop_reason と最終の output_tokens を呼びの最後の行に載せて書くが、並べた
   ;; 道具の呼び(1 つの呼びで tool_use を 2 つ以上出す)などで最後の content block の行が message_delta より先に書かれると、その呼びの
   ;; 行はどれも stop_reason null・出力は途中の値(実測 CLI 2.1.306・本番 2026-10-24〜25 の 24 時間で subagent の呼び 6,024 のうち 26 —
   ;; 出力が 96〜1,866 token 少ない。入力の側 3 種は最終の値と同じ)。最終の値は transcript にも stdout にも無いので、上の層が同じ
@@ -407,12 +405,12 @@
 
 (defrecord SubagentTranscript
   "subagent 1 つの transcript(<設定 dir>/projects/<cwd>/<会話の id>/subagents/agent-<task の id>.jsonl)を、その subagent の task の
-   報せの行(task_notification)を受けた所で読んだ結果(card ki-e798888dce4e)。stdout の行ではなく、handler が報せの行の直後に手番の記録へ
+   報せの行(task_notification)を受けた所で読んだ結果。stdout の行ではなく、handler が報せの行の直後に手番の記録へ
    足す行の種類(raw は空)。背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV)は subagent の呼びの行を stdout に出さないので、
    subagent の呼びの消費はここからだけ読む。
    agent-id = task の id / parent-tool-use-id = subagent を起こした道具の呼びの id / calls = 読めた呼び(書かれた順 — 前の報せの後に
    伸びた分だけ)/ problem = 読みの欠けの訳(欠けが無ければ None)/ detail = 欠けの手がかり(path・誤りの文・欠けた行の数 — 欠けが
-   無ければ空)。欠けが在っても、読めた呼びは calls に載せる(捨てて 0 にしない — card ki-3d45f5857239)。読めなかった行の呼びは
+   無ければ空)。欠けが在っても、読めた呼びは calls に載せる(捨てて 0 にしない)。読めなかった行の呼びは
    発明しない。"
   (#^ str agent-id)
   (#^ str parent-tool-use-id)
@@ -479,7 +477,7 @@
   (setv #^ (| int None) max-output-tokens None))
 
 (defclass [(dataclass :frozen True)] ModelUsage []
-  "modelUsage の model 1 つの使用量(card ki-1d986d4f0007)。result の行と transcript の cost-state の行の modelUsage は会話の累積
+  "modelUsage の model 1 つの使用量。result の行と transcript の cost-state の行の modelUsage は会話の累積
    (実測 CLI 2.1.292: 同じ process の 2 つ目の result の行は 1 つ目との和、--resume の process も前の値から数え続ける — costUSD の和は
    total_cost_usd と同じ値)。TurnResult と CostMark はその累積を、手番の終わりは手番の分へ直した増分を持つ(per-turn-model-usage)。
    model = modelUsage の鍵 / input-tokens = inputTokens / output-tokens = outputTokens / cache-read-input-tokens = cacheReadInputTokens /
@@ -495,7 +493,7 @@
 
 (defclass [(dataclass :frozen True)] CostMark []
   "手番の額の起点(CLI の会話の累積の 1 点 — 前の手番を閉じた result の行・transcript の最後の cost-state の行・新しい会話の 0)。
-   額と model ごとの使用量を同じ 1 点で持つ — 手番の額と model ごとの増分を必ず同じ起点から数えるため(card ki-1d986d4f0007)。
+   額と model ごとの使用量を同じ 1 点で持つ — 手番の額と model ごとの増分を必ず同じ起点から数えるため。
    total-usd = 累積の額(total_cost_usd・totalCostUSD)/ models = その点の model ごとの累積(ModelUsage の列 — 新しい会話は空。
    None = その点の modelUsage を知らない: 欄の無い行・古い CLI の cost-state の行)。"
   (#^ float total-usd)
@@ -507,7 +505,7 @@
 ;; model ごとの額の和と手番の額を照合する時の許し(USD)— CLI の costUSD と total_cost_usd は同じ和の丸めなので、越えるのは数え違い。
 (val MODEL-COST-TOLERANCE-USD 0.01)
 
-;; 手番の model ごとの使用量が手番の額と照合できなかった訳(閉じた語彙 — card ki-1d986d4f0007):
+;; 手番の model ごとの使用量が手番の額と照合できなかった訳(閉じた語彙):
 ;; UNKNOWN-MARK = 起点の model ごとの累積が分からない(額の起点が分からない・起点の行が modelUsage を持たない)/
 ;; NOT-NAMED = 手番を閉じた result の行が modelUsage を名乗らない(result の行の無い終わりも)/
 ;; COUNTED-BACK = model ごとの累積が起点より減った・起点に在った model が消えた(CLI が起点から数えていない)/
@@ -557,7 +555,7 @@
   {:pre [(: mark (| CostMark None)) (: now (| tuple None)) (: cost (| float None))] :post [(: % ModelUsageTally)]
    :tags {:context "claude-code" :role "judgment"}}
   "手番を閉じた result の行の model ごとの累積(now)を、手番の額と同じ起点(mark)からの増分へ直し、手番の額(cost — 同じ起点の差)と
-   照合するため(card ki-1d986d4f0007)。起点に無い model は 0 から数える。増分が全部 0 の model(前の手番だけで使った model)は
+   照合するため。起点に無い model は 0 から数える。増分が全部 0 の model(前の手番だけで使った model)は
    入れない。起点が分からない・now が無い・累積が減った時は増分を出さず、訳だけを返す(推測で埋めない)。"
   (when (or (is mark None) (is mark.models None))
     (return (ModelUsageTally :models None :gap ModelUsageGap.UNKNOWN-MARK)))
@@ -609,7 +607,7 @@
    api-error-status = API の誤りの HTTP status / input-refs = user_message_uuids(名乗らなければ空)/
    model-windows = modelUsage の model ごとの窓(ModelWindow の列・object の鍵の順 — 無ければ空)/
    model-usage = modelUsage の model ごとの累積の使用量(ModelUsage の列・object の鍵の順 — 行が modelUsage の object を持たなければ
-   None。手番の分へ直すのは状態機械 — card ki-1d986d4f0007)/ timing = 計時の欄(RequestTiming)/ structured-output = structured_output(--json-schema を付けて起こした CLI の構造化の答え —
+   None。手番の分へ直すのは状態機械)/ timing = 計時の欄(RequestTiming)/ structured-output = structured_output(--json-schema を付けて起こした CLI の構造化の答え —
    深く凍らせた JSON の値。名乗らない・null なら None)。"
   (#^ str subtype)
   (#^ bool is-error)
@@ -657,11 +655,11 @@
 (val COMPACTING-STATUS "compacting")
 
 (defrecord CompactStarted
-  "CLI が会話の context の圧縮を始めた行(system/status の status = compacting — ki-aeae6f9e643d)。上の層が、圧縮の間
+  "CLI が会話の context の圧縮を始めた行(system/status の status = compacting)。上の層が、圧縮の間
    (要約を作る数十秒〜数分 — 実測 2026-10-10 の 2 分)会話の画面に圧縮中を出すため。終わりは CompactBoundary(compact_boundary)。
    行は token 数も起き方も持たない(それは終わりの行が持つ)。status の他の状態(requesting など)は今までどおり Other。")
 
-;; 会話の圧縮の終わり方(閉じた語彙 — ki-8239be27d5f6)。CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず
+;; 会話の圧縮の終わり方(閉じた語彙)。CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず
 ;; system/status の行(status = null)を 1 つ出し、圧縮を試みた時は compact_result(success / failed)と、失敗なら compact_error(誤りの文)を
 ;; 添える: SUCCEEDED = compact_result success / FAILED = compact_result failed(誤りの文は compact_error)/ INTERRUPTED = compact_result failed
 ;; で、誤りの文が止めの文(COMPACT-ABORTED-ERROR — 圧縮の要求が止められた)/ NOT-COMPACTED = compact_result の無い status null(圧縮を
@@ -673,7 +671,7 @@
 (val COMPACT-ABORTED-ERROR "API Error: Request was aborted.")
 
 (defrecord CompactEnded
-  "CLI が会話の context の圧縮を終えた行(system/status の status = null — ki-8239be27d5f6)。上の層が、圧縮の
+  "CLI が会話の context の圧縮を終えた行(system/status の status = null)。上の層が、圧縮の
    成功だけでなく失敗・中断・圧縮しなかった事も手番の出来事として記録するため(成功の中身 — token 数・起き方 — は CompactBoundary が持つ)。
    outcome = 終わり方(CompactOutcome)/ error = CLI が名乗った誤りの文(compact_error — 失敗と中断の時だけ・無ければ None)。
    圧縮の要求 1 回の token(入力・出力・cache)は CLI 2.1.292 が stream-json のどの行にも名乗らない(この行にも compact_boundary の
@@ -701,7 +699,7 @@
 
 
 (defn #^ None tap-lines [#^ (get Callable #([ClaudeStreamLine] None)) tap #^ list lines]
-  "手番の記録に足した行を、手番を始めた側の写し手(ClaudeStartTurn.tap)へ足した順に渡すため(card ki-31b41eac5071 — 上の層が
+  "手番の記録に足した行を、手番を始めた側の写し手(ClaudeStartTurn.tap)へ足した順に渡すため(上の層が
    頁を受ける遅れに縛られずに、行を読んだ時点で自分の記録を書く)。読み手の thread が会話の lock の外で呼ぶ(写し手の書き込みで
    ほかの手番の節を待たせない)。写し手の例外は捨てる — 読み手の thread で上げると process を降ろす(process.hy の read-stdout)。"
   (for [line lines]
@@ -719,13 +717,13 @@
 ;; model / model-windows = この手番に読んだ result の行の modelUsage の窓(model ごとに 1 つ)。手番の途中で終わった時は、それまでに
 ;; 読んだ値(本体の assistant の行が無ければ None・result の行が無ければ空 — 0 を発明しない)。
 ;;
-;; CLI が終えた手番(Completed・Failed)は、手番の model ごとの使用量と照合の結末を持つ(card ki-1d986d4f0007 — 状態機械 dialogue.hy の
+;; CLI が終えた手番(Completed・Failed)は、手番の model ごとの使用量と照合の結末を持つ(状態機械 dialogue.hy の
 ;; end-of-result が per-turn-model-usage の 1 か所で載せる): model-usage = 手番を閉じた result の行の modelUsage の累積を、額と同じ起点
 ;; (CostMark)からの増分へ直した物(ModelUsage の列 — この手番に使った model だけ。出せなければ None)/ model-usage-gap = model ごとの額の
 ;; 和と手番の額 cost-usd を照合できなかった訳(ModelUsageGap — 合えば None。既定は NOT-NAMED = modelUsage を名乗らない終わり)。止めた
-;; 手番(Interrupted)は、止めた手番を閉じた result の行が在れば同じ数え方で持ち(起点はその行へ進む — 次の手番へは混ぜない・card
-;; ki-47e64b7b642f)、result の行の無い止めは持たない。ただし生き残った入力の手番が同じ process で続く止め — Interrupted の continued-by —
-;; は起点を動かさず持たず、止めた区切りの分を続いた手番の終わりに含める(card ki-9246ea31f98d)。消えた手番(BackendLost)は持たない。
+;; 手番(Interrupted)は、止めた手番を閉じた result の行が在れば同じ数え方で持ち(起点はその行へ進む — 次の手番へは混ぜない)、
+;; result の行の無い止めは持たない。ただし生き残った入力の手番が同じ process で続く止め — Interrupted の continued-by —
+;; は起点を動かさず持たず、止めた区切りの分を続いた手番の終わりに含める。消えた手番(BackendLost)は持たない。
 ;;
 ;; 手番の途中で CLI の process が降りた終わり(BackendLost と、注入を待って飲んだ result の Failed)は、process の終了 code と stderr の
 ;; 末尾を欄で持つ(#4207 — 文 detail の中だけでなく、上の層が型の欄で「なぜ降りたか」を読めるように)。欄の値は状態機械 dialogue.hy の
@@ -795,9 +793,9 @@
    (作り手が必ず名乗る)・surviving-refs = CLI が次の手番として走らせる入力(continued-by がその手番)・dropped-refs = 読まれずに
    捨てられた入力 / last-call-usage・last-call-model・model-windows は節の頭の註 /
    usage・cost-usd・model-usage・model-usage-gap = 止めた手番を閉じた result の行で数えた、止めるまでの消費(数え方は Completed・Failed と
-   同じ end-of-result — card ki-47e64b7b642f: 止めた手番も呼びの分を使っており、額を捨てると上の層は額の無い手番として単価で推定する)。
+   同じ end-of-result — 止めた手番も呼びの分を使っており、額を捨てると上の層は額の無い手番として単価で推定する)。
    result の行の無い終わり(止めの途中で process が降りた・会話を閉じた)と、生き残った入力の手番が続く止め(continued-by — 止めた区切りの
-   分は続いた手番の終わりに含む・card ki-9246ea31f98d)は持たない(None・None・None・NOT-NAMED)。"
+   分は続いた手番の終わりに含む)は持たない(None・None・None・NOT-NAMED)。"
   (#^ bool process-kept)
   (setv #^ (get tuple #(str ...)) surviving-refs #())
   (setv #^ (get tuple #(str ...)) dropped-refs #())
@@ -922,7 +920,7 @@
   "user の行 → ToolResult(tool_result の block ごとに ToolAnswer)。isSynthetic の行で本文が STOP-HOOK-FEEDBACK-HEAD で始まる行は
    StopHookFeedback(#4020)。どちらでもない行は Other(type = user)。tool_use_id が無い・空の tool_result を 1 つでも持つ行は、
    名指しの Other(subtype = tool_result_without_id)で断る — どの呼びへの答えか分からない結果を通さない。行の最上位の
-   parent_tool_use_id も読む(無い・空なら None — subagent の中の道具の答えを本体の会話の答えと見分ける・card ki-b25d579bf48b)。"
+   parent_tool_use_id も読む(無い・空なら None — subagent の中の道具の答えを本体の会話の答えと見分ける)。"
   (setv results (tuple (gfor block (content-blocks record) :if (= (.get block "type") "tool_result") block))
         said (.join "\n" (gfor block (content-blocks record) :if (= (.get block "type") "text") (text-at block "text"))))
   (cond
@@ -1038,9 +1036,9 @@
     (= subtype "hook_started") (run (hook-notice-of record HookPhase.STARTED))
     (= subtype "hook_response") (run (hook-notice-of record HookPhase.RESPONSE))
     (= subtype "compact_boundary") (run (compact-boundary-of record))
-    ;; 圧縮の始まり(card ki-aeae6f9e643d)。status の他の状態は名前だけの Other のまま。
+    ;; 圧縮の始まり。status の他の状態は名前だけの Other のまま。
     (and (= subtype "status") (= (text-at record "status") COMPACTING-STATUS)) (CompactStarted)
-    ;; 圧縮の終わり(status が JSON の null — 鍵の無い行は数えない・card ki-8239be27d5f6)。
+    ;; 圧縮の終わり(status が JSON の null — 鍵の無い行は数えない)。
     (and (= subtype "status") (in "status" record) (is (get record "status") None)) (run (compact-ended-of record))
     True (Other :type "system" :subtype subtype)))
 
@@ -1081,7 +1079,7 @@
 (defk model-usage-of [record]
   {:pre [(: record dict)] :post [(: % (| (get tuple #(ModelUsage ...)) None))] :tags {:context "claude-code" :role "foundation"}}
   "行(result の行・transcript の cost-state の行 — 同じ欄の名)の modelUsage を model ごとの累積の使用量(ModelUsage の列・object の鍵の順)
-   にするため(card ki-1d986d4f0007)。行が modelUsage の object を持たなければ None(空の object は空の列 — まだ何の model も使っていない)。
+   にするため。行が modelUsage の object を持たなければ None(空の object は空の列 — まだ何の model も使っていない)。
    値が object でない model・空の名は飛ばす。"
   (val model-usage (.get record "modelUsage"))
   (if (isinstance model-usage dict)
@@ -1144,7 +1142,7 @@
 (defk call-opened-of [#^ dict event #^ (| str None) parent]
   {:pre [(: event dict) (: parent (| str None))] :post [(: % (| CallOpened None))] :tags {:context "claude-code" :role "foundation"}}
   "stream_event の event が呼びの始まり(message_start)なら、その呼びの id・model・始まりの usage を読むため(呼びの最終の usage を
-   終わりの usage と組むため — card ki-290ec664737d)。ほかの event・message.id の無い始まり(どの呼びか分からない)は None。"
+   終わりの usage と組むため)。ほかの event・message.id の無い始まり(どの呼びか分からない)は None。"
   (val message (object-at event "message"))
   (val usage (.get message "usage"))
   (if (and (= (text-at event "type") "message_start") (text-at message "id"))
@@ -1154,14 +1152,14 @@
 
 (defk call-end-usage-of [#^ dict event]
   {:pre [(: event dict)] :post [(: % (| Usage None))] :tags {:context "claude-code" :role "foundation"}}
-  "stream_event の event が呼びの終わり(message_delta)で usage を名乗れば、その usage を読むため(card ki-290ec664737d)。ほかの event・
+  "stream_event の event が呼びの終わり(message_delta)で usage を名乗れば、その usage を読むため。ほかの event・
    usage の無い終わりは None。"
   (val usage (.get event "usage"))
   (if (and (= (text-at event "type") "message_delta") (isinstance usage dict)) (usage-of usage) None))
 
 (defn #^ (| str None) call-end-reason-of [#^ dict event]
-  "stream_event の event が呼びの終わり(message_delta)で止まった訳(delta.stop_reason)を名乗れば、その語を読むため(card
-   ki-7498a039250d — 名乗らない終わりは CLI が止めた呼びに自分で作った終わり)。ほかの event・null・空の訳は None。"
+  "stream_event の event が呼びの終わり(message_delta)で止まった訳(delta.stop_reason)を名乗れば、その語を読むため(
+   名乗らない終わりは CLI が止めた呼びに自分で作った終わり)。ほかの event・null・空の訳は None。"
   (if (= (text-at event "type") "message_delta")
       (or (text-at (object-at event "delta") "stop_reason") None)
       None))
@@ -1188,8 +1186,8 @@
   {:pre [(: transcript-text str) (: whole bool)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
   "--resume(--fork-session を含む)で起こした CLI が数え始める額と model ごとの使用量(CostMark)を、handler がその会話の transcript
    (jsonl の本文)から知るため: CLI は降りる時に会話の累積を {\"type\":\"cost-state\", \"totalCostUSD\": 数, \"modelUsage\": {…}} の行で
-   記し、続きの process と枝の process は最後のその行から数え続ける(実測 2.1.283・#883・modelUsage は 2.1.292 — card ki-1d986d4f0007)。
-   cost-state の行が 1 つも無い transcript の続きは 0 から数える(実測 2.1.292 — card ki-4b9be8d95d9f: 偽の Messages API で、行を
+   記し、続きの process と枝の process は最後のその行から数え続ける(実測 2.1.283・#883・modelUsage は 2.1.292)。
+   cost-state の行が 1 つも無い transcript の続きは 0 から数える(実測 2.1.292 — 偽の Messages API で、行を
    全部消した transcript の続きの total_cost_usd は前の呼びを数えずその呼びの分だけ。本番の aj-667MHNMS57VHYM4NXBEPBWKHBD — host の
    起き直しで額を記す前に消えた process の続き — の最初の cost-state の modelUsage も続きの呼びの和と 1 token も違わない)。
    whole = 本文が transcript の頭から全部か。読むのは最後の cost-state の行の totalCostUSD と modelUsage だけ。行が無く whole なら
@@ -1213,7 +1211,7 @@
   "手番を閉じた result の行を次の手番の起点(CostMark)にするため — 額と model ごとの累積を同じ行から取る。額を名乗らない行は None。"
   (if (is result.cost-usd None) None (CostMark result.cost-usd result.model-usage)))
 
-;; --- subagent の transcript の呼び(純関数 — card ki-e798888dce4e) ------------------------------------------
+;; --- subagent の transcript の呼び(純関数) ------------------------------------------
 
 (defk instant-at [#^ dict value #^ str key]
   {:pre [(: value dict) (: key str)] :post [(: % (| datetime None))] :tags {:context "claude-code" :role "foundation"}}
@@ -1253,7 +1251,7 @@
   "subagent の transcript の行(JSON の object の列)から、API の呼びごとの消費を書かれた順に読むため(SubagentCall の註の畳み方)。
    数えるのは message.usage が object の assistant の行だけで、CLI が呼ばずに書いた行(model が SYNTHETIC-MODEL)は数えない。
    時差つきの刻(timestamp)を名乗らない行は呼びに数えず、数だけを答える(刻を発明しない — ほかの行の呼びは捨てない)。usage を読む
-   最後の行が stop_reason を名乗らない呼びは、出力が途中の値(output-partial — 閉じた行の無い呼び・card ki-edb2b5947d6a)と名指す。"
+   最後の行が stop_reason を名乗らない呼びは、出力が途中の値(output-partial — 閉じた行の無い呼び)と名指す。"
   (val called (lfor record records
                     :setv message (object-at record "message")
                     :if (and (= (text-at record "type") "assistant") (isinstance (.get message "usage") dict)
@@ -1279,7 +1277,7 @@
 
 (defk own-records [#^ tuple records]
   {:pre [(: records tuple)] :post [(: % tuple)] :tags {:context "claude-code" :role "foundation"}}
-  "subagent の transcript の行から、本体の会話の呼びの写しを外すため(card ki-3d45f5857239・ki-603188dbe54d)。fork の subagent(道具
+  "subagent の transcript の行から、本体の会話の呼びの写しを外すため。fork の subagent(道具
    Agent の subagent_type fork — 本体の会話の文脈を受け継ぐ)の transcript は、頭の fork-context-ref の行の次に、その fork を起こした
    本体の呼びの行(fork を起こした tool_use を持つ assistant の行 — requestId は本体の呼びの物)の写しを書き、その次に fork への頼みの
    user の行を書く(実測 CLI 2.1.306・本番 2026-10-24 の session 04dbe41b: 1 つの本体の呼びで起こした 3 つの fork の transcript が、
@@ -1287,8 +1285,8 @@
    を query_source sdk〔本体〕の 1 回と数える)。subagent の呼びは頼みの user の行の後に始まるので、写しは transcript の形で見分ける:
    読みが fork-context-ref の行で始まれば、最初の user の行より前の assistant の行を外す。道具の呼びの id では見分けない — 道具
    SendMessage で続けた fork は、終わりの報せが続けた道具の呼びの id を名乗り、写しの tool_use の id(fork を起こした道具の呼び)と
-   合わない(本番 2026-10-25 の session e2729ddb: 続けた fork 2 つの写し 0.3709 USD を subagent の呼びに数えた・card
-   ki-603188dbe54d)。前の読みの続き(頭から読まない読み)は fork-context-ref の行で始まらないので何も外さない — 写しは頭の読みに在る。"
+   合わない(本番 2026-10-25 の session e2729ddb: 続けた fork 2 つの写し 0.3709 USD を subagent の呼びに数えた)。
+   前の読みの続き(頭から読まない読み)は fork-context-ref の行で始まらないので何も外さない — 写しは頭の読みに在る。"
   (when (not (and records (= (text-at (get records 0) "type") "fork-context-ref")))
     (return records))
   (val head (next (gfor #(index record) (enumerate records) :if (= (text-at record "type") "user") index) (len records)))
@@ -1313,7 +1311,7 @@
   {:pre [(: calls tuple) (: reported (| AgentToolResult None))] :post [(: % (| SubagentCall None))]
    :tags {:context "claude-code" :role "foundation"}}
   "subagent の transcript の最後の呼びが、道具 Agent の結果(reported — 答え終えた subagent の結果だけ)の名乗る最後の呼びかを知り、
-   そうならその呼びを最終の usage で答えるため(card ki-3d45f5857239)。同じ呼びか = 入力の側 3 種(input・cache_creation・
+   そうならその呼びを最終の usage で答えるため。同じ呼びか = 入力の側 3 種(input・cache_creation・
    cache_read)の token が全部同じ(呼びごとに会話が伸びるので、前の呼びとは cache_read が違う — 最後の呼びの行がまだ書かれていない
    読みは合わない)。本番の CLI 2.1.292 は最後の答えの呼びの行を出力の token が途中の値のまま書くので、usage は結果の物にする
    (model・刻・呼びの id・要求の id は transcript の物 — 出力は最終の値なので output-partial は偽)。合わない・結果や usage が無い・呼びが
@@ -1340,7 +1338,7 @@
    last-call-closed だけで決める。報せの行の total_tokens とは比べない(実測: 本番で書き切った transcript の最後の呼びの和より報せが
    +251〜+1,801 多い subagent が 13 件中 10 件在り、呼びを全部捨てていた)。stop_reason だけでは決めない(実測 10-23 の本番 5 件・
    CLI 2.1.292: 書き切った transcript が、最後の答えの呼びの行を stop_reason null のまま書いた 2 件と、PostToolUse の hook に止められて
-   tool_use の呼びで終わった 3 件で、5 件とも TRUNCATED と誤った — card ki-3d45f5857239)。結果の名乗る最後の呼びで書き切った読みは、
+   tool_use の呼びで終わった 3 件で、5 件とも TRUNCATED と誤った)。結果の名乗る最後の呼びで書き切った読みは、
    最後の呼びの usage を結果の物にする(transcript の行の出力の token は途中の値 — 改行で終わらない行が残る読みは直さない)。
    改行で閉じた行から読めた呼びは、訳が在っても全部載せる(捨てて 0 にしない)。訳(problem・detail)は欠けを名指す: 最後の行が改行で
    終わらない・answered なのに書き切っていない = TRUNCATED(後ろの行がまだ書かれていない)/ UTF-8 でない・JSON の object でない行・

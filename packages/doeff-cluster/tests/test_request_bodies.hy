@@ -137,7 +137,7 @@
 
 
 (deftest test-an-old-worker-heartbeat-with-capacity-is-read-with-no-background-room
-  ;; 配備の間だけの許し(card ki-2acb63aec0fd — coordinator を先・worker を後に入れ替える): 旧い worker の本文は capacity を送り
+  ;; 配備の間だけの許し(coordinator を先・worker を後に入れ替える): 旧い worker の本文は capacity を送り
   ;; backgroundRoom を送らない。capacity は読み捨て(数でも数でない値でも本文を断らない)、背景の枠は 0 と読む。新しい worker の本文は
   ;; capacity を送らない。
   (<- old (body-of (! (http-request "POST" "/heartbeat" {} {"name" "w" "provides" ["net"] "capacity" 41 "taskReserve" 6}))))
@@ -198,7 +198,7 @@
 
 (deftest test-a-declared-service-without-its-memory-is-refused-but-a-stored-row-without-it-loads
   ;; 送り手の書く宣言(Service の資源の POST・PUT と旧い PUT /jobs)は memory の欄 peakMiB・settleMiB を必ず持つ — 欠けた・型の違う・
-  ;; 山を越える宣言は判断の前に 400 で、job と欄を名指して断る(既定の値で埋めない — card ki-2acb63aec0fd)。保存の読み直しは
+  ;; 山を越える宣言は判断の前に 400 で、job と欄を名指して断る(既定の値で埋めない)。保存の読み直しは
   ;; 旧い coordinator が欄の無いまま保存した行を断らず、memory を None で読む(断ると RefusedJob になり job が止まる)。
   (val bare {"revision" "r" "run" SAMPLE-RUN "needs" ["net"]})
   (<- made (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" bare}))))

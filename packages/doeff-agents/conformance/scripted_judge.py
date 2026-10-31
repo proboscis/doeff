@@ -33,8 +33,7 @@ def _received_environment() -> dict[str, str]:
     """The two contract variables agentd launched this judge with, asked once
     through doeff's foundation handler (subprocess_handler answers
     ReadEnvironment from the process environment) instead of read from the
-    process environment directly. The env contract above is unchanged
-    (agora-redesign #3012)."""
+    process environment directly. The env contract above is unchanged."""
     entries = run(
         with_handlers(
             [subprocess_handler], ReadEnvironment((TABLE_VARIABLE, JOURNAL_VARIABLE))

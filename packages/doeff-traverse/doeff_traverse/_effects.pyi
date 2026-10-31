@@ -1,4 +1,4 @@
-"""effects.py の公開面の型(型検査のための宣言・agora-redesign #2321)。
+"""effects.py の公開面の型(型検査のための宣言)。
 
 for/do は `(_doeff_traverse_Traverse (fn [x] ((_doeff_do (fn [] 本体)))) items)` に展開される。Traverse を件の型 `_Item`
 と答えの型 `_Answer` の総称にすると、pyright は items(`Iterable[_Item]`)から件の引数 x の型を推し、本体の答え
@@ -34,10 +34,10 @@ class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
 
     f の Program は同じ handler へ Traverse をもう一度出しうる(重ねた From・本体で受けた for/do)。handler は件の Program を自分の
     下で走らせ、Traverse をまたぐ資源を件の Program の間に持ち続けない。内側の答えを平らにするのは展開(Collection.flatten)で、
-    handler は内側の From かを推さない(effects.py の docstring・設計検証 lt-BD5XYC8Z64P5YMHZDEAPKXQXK5)。
+    handler は内側の From かを推さない(effects.py の docstring)。
     """
 
-    # f が作る Program を出した所の handler の下で走らせる宣言(閉じの検が f の本体を出した所で読む・agora-redesign #2973)。
+    # f が作る Program を出した所の handler の下で走らせる宣言(閉じの検が f の本体を出した所で読む)。
     __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Item], Program[_Answer, Any]]
     items: Iterable[_Item]
@@ -52,7 +52,7 @@ class Traverse(EffectBase[Collection[_Answer]], Generic[_Item, _Answer]):
 class Reduce(EffectBase[_Acc], Generic[_Acc, _Item]):
     """有効な件を f で畳む。答えは init の型。"""
 
-    # Traverse と同じく、f が作る Program を出した所の handler の下で走らせる宣言(agora-redesign #2973)。
+    # Traverse と同じく、f が作る Program を出した所の handler の下で走らせる宣言。
     __doeff_runs_carried__: ClassVar[frozenset[str]]
     f: Callable[[_Acc, _Item], Program[_Acc, Any]]
     init: _Acc

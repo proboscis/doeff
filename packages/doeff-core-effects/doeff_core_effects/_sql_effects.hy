@@ -1,4 +1,4 @@
-;;; 汎用の SQL の問い合わせの effect(agora-redesign #802 便 3・消費者 = #783 便 2 の記録の service の翻訳)。業務の語を持たない土台の語彙で、
+;;; 汎用の SQL の問い合わせの effect(消費者 = #783 便 2 の記録の service の翻訳)。業務の語を持たない土台の語彙で、
 ;;; HttpRequest(http_effects.hy)・RunProcess(process_effects.hy)と同じ段。答え手は仕組みごとに差し替える:
 ;;;   postgres-sql-handler         本物の PostgreSQL(psycopg 3・postgres_sql.hy)。psycopg はその module の中でだけ読む。driver の I/O は
 ;;;                                呼び 1 つに thread 1 本で回し、遅い問い合わせの間も scheduler の他の task が回る(#1215)
@@ -46,7 +46,7 @@
 ;;;                    batched(bool・既定 False)= 文の流し方の宣言(手順は sql_transaction.hy の頭の註):
 ;;;                      False  文 1 つを 1 回ずつ流す — BEGIN → 錠 → 文を出た順に → SqlNotify もその場で → COMMIT / ROLLBACK(SQL を出さない
 ;;;                             program でも BEGIN・錠・COMMIT を流す)
-;;;                      True   往復をまとめる(agora-redesign #3605)— BEGIN と錠は最初の文と同じ往復・SqlNotify は覚えて COMMIT と同じ往復・
+;;;                      True   往復をまとめる— BEGIN と錠は最初の文と同じ往復・SqlNotify は覚えて COMMIT と同じ往復・
 ;;;                             commit の束(SqlBatch の commit = True)は COMMIT と同じ往復・SQL を 1 つも出さない program は往復 0
 ;;;   SqlBatch         batched = True の SqlTransaction の program の中で、文の並び queries を 1 回の往復でまとめて流す(PostgreSQL = 1 つの
 ;;;                    pipeline・sqlite = 順に流す)。答え = queries と同じ順の SqlRows の tuple(どれかが落ちれば約束 (1) — program は再開
@@ -283,10 +283,10 @@
 
 ;; 文の割りの覚え(文 → 割った並び)。割りは文だけで決まる純粋な計算で、答えは凍った record の tuple なので同じ物を何度返しても
 ;; 呼び手は書き換えられない。dict の get / 代入は 1 つずつ不可分なので、thread が重なっても同じ文を 2 度割るだけで食い違わない
-;; (agora-redesign #2423 — SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
+;; (SqlQuery 1 つ約 100 µs のうち割りが約 2 割)。
 ;; 覚えの大きさは部品(SqlText・SqlPlaceholder)の数で限る。code の literal の文は部品が数十まで(18 欄の INSERT で約 40)だが、
 ;; 値の数だけ引数を並べる文(`IN (:k0, :k1, …)`・行の数だけ VALUES を並べる INSERT)は値の数ごとに別の文になり、1 つで数百の部品を持つ。
-;; 文の数だけで限った時は 4096 文 × 平均約 120 部品 ≈ 50 万個の record を抱え、GC の 1 回を重くした(agora card ki-a1feff4314cc)。
+;; 文の数だけで限った時は 4096 文 × 平均約 120 部品 ≈ 50 万個の record を抱え、GC の 1 回を重くした。
 ;; そこで部品が SPLIT-MEMO-STATEMENT-PARTS を越える文は覚えず(値の数で変わる文 — 同じ文が繰り返す見込みが薄い)、覚えた部品の総数が
 ;; SPLIT-MEMO-PART-LIMIT に着いたら覚えるのを止める(止めた後は毎回割る)。thread が重なると総数の足しが前後し、上限を文 1 つ分×thread の
 ;; 数まで越えうる(越えは SPLIT-MEMO-STATEMENT-PARTS × thread の数で止まる)。
@@ -419,7 +419,7 @@
    :post [(: % (get tuple #((get tuple #(SqlValue ...)) ...)))]
    :tags {:context "sql" :role "foundation"}}
   "driver の行の列を SqlRows の rows(値を正規化した tuple の tuple)へ写すため。全部の値の型が閉じた集合の型そのもの
-   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形・agora-redesign #2423)。
+   (PLAIN-VALUE-TYPES — normalized-value でも同じ値のまま)なら、値 1 つごとに呼ばずに写す(sqlite の答えはいつもこの形)。
    値の型は driver ごとに違う — 写す決まりの無い型(DriverValue の外)はここで TypeError(driver の値の型を検める 1 点)。"
   (when (is-plain-rows rows)
     (return (tuple (gfor row rows (tuple row)))))

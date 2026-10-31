@@ -78,24 +78,24 @@
 
 ;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
 (val BOOT-FILE-VAR "DOEFF_WORKER_BOOT_FILE")
-;; 子の job を置く兄弟の cgroup の名(無ければ子を本体と同じ cgroup で起こす — card ki-ed9dca403f58・worker/core/job_cgroup)。
+;; 子の job を置く兄弟の cgroup の名(無ければ子を本体と同じ cgroup で起こす・worker/core/job_cgroup)。
 (val JOB-CGROUP-VAR "DOEFF_WORKER_JOB_CGROUP")
-;; 常駐の job の shim を置く兄弟の cgroup の名(無ければ置き分けない — card ki-cd8cb84fdcd2・worker/core/job_cgroup の service の類)。
+;; 常駐の job の shim を置く兄弟の cgroup の名(無ければ置き分けない・worker/core/job_cgroup の service の類)。
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
-;; 実行環境の service も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4 — WorkerPolicy.warm-services)。値は on か off
-;; (無ければ枠の file の自分の行の warmServices — card ki-67abc0cf71e9・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
+;; 実行環境の service も、その root の待ちの子から分けて起こすか(WorkerPolicy.warm-services)。値は on か off
+;; (無ければ枠の file の自分の行の warmServices・それも無ければ off)。それ以外の綴りは起動を断る(黙って off に倒れない)。
 (val WARM-SERVICES-VAR "DOEFF_WORKER_WARM_SERVICES")
-;; この worker の Pod の metadata.uid(worker の雛形が downward API で置く — card ki-a66bb71f4152)。在り、node の名(--node)も在る時だけ、
+;; この worker の Pod の metadata.uid(worker の雛形が downward API で置く)。在り、node の名(--node)も在る時だけ、
 ;; 置かれた常駐の job を自分の Pod の label に写す(worker/protocol/pod_labels)。Pod の外の worker には無い。
 (val POD-UID-VAR "POD_UID")
 
 
 (defk pod-label-parts [pod-uid node]
   {:pre [(: pod-uid (| str None)) (: node str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
-  "Pod の job の label の答え手(worker/protocol/pod_labels — card ki-a66bb71f4152)の設定と入れ物を、Pod の uid と node の名が揃った
+  "Pod の job の label の答え手(worker/protocol/pod_labels)の設定と入れ物を、Pod の uid と node の名が揃った
    worker にだけ作るため(答え = #(設定 入れ物)・None = 写さない — Pod の外の worker)。身元と宛先は k8s が Pod に置く ServiceAccount の dir と
    自区画の API server。"
   (if (and pod-uid node)
@@ -126,7 +126,7 @@
 
 (defk boot-warm-services [room-file name value]
   {:pre [(: room-file str) (: name str) (: value (| str None))] :post [(: % (| bool str))] :tags {:context "worker" :role "main"}}
-  "起動の時に service も待ちの子から分けるかを決めるため(card ki-67abc0cf71e9): 環境変数の値(value — WARM-SERVICES-VAR)が在ればそれ、
+  "起動の時に service も待ちの子から分けるかを決めるため: 環境変数の値(value — WARM-SERVICES-VAR)が在ればそれ、
    無ければ枠の file(room-file — 空 = 読まない)の自分の行の warmServices、どちらも無ければ偽。枠の file は名の固定した ConfigMap の
    file で、中身を変えても Pod は作り直されない — 版の file の入れ替えで起きる新しい世代が読むので、機体ごとに Pod を作り直さずに入れられる。
    綴りの誤りは起動を断る訳の文を返す。file を読めない時は無いと同じ(枠の読み — boot-room が断るか引数へ戻る)。"
@@ -146,8 +146,8 @@
   {:pre [(: room-file str) (: name str) (: task-reserve (| int None)) (: background-room int) (: memory-mib (| int None))]
    :post [(: % (| WorkerRoom str))]
    :tags {:context "worker" :role "main"}}
-  "起動の時に名乗る枠を決めるため(card ki-6828eda880ce): 枠の file(room-file — 空 = 読まない)の自分の行が読めればその値、読めなければ
-   引数の値(--background-room は既定 0・--memory-mib は省けば名乗らない — card ki-2acb63aec0fd)。引数の --task-reserve も無ければ起動を
+  "起動の時に名乗る枠を決めるため: 枠の file(room-file — 空 = 読まない)の自分の行が読めればその値、読めなければ
+   引数の値(--background-room は既定 0・--memory-mib は省けば名乗らない)。引数の --task-reserve も無ければ起動を
    断る訳の文を返す — 既定の値で埋めない。0 未満の引数も断る訳の文(coordinator の heartbeat の本文の型と同じ範囲 — 外れた値で名乗り
    続けて断られない)。file を読めない事は最初の heartbeat の前の読み直し(coordinator_link.room-noted)が log に出し、heartbeat の
    roomFile で名乗る。"
@@ -188,7 +188,7 @@
 
 (defk cgroup-dir-environ [cgroup-dir]
   {:pre [(: cgroup-dir (| str None))] :post [(: % dict)] :tags {:context "worker" :role "main"}}
-  "書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)を job の子へ渡す env にするため(card ki-cd8cb84fdcd2 — 子が自分の子を、機体の配備が
+  "書ける cgroup v2 の見えの根(CGROUP-DIR-VAR)を job の子へ渡す env にするため(子が自分の子を、機体の配備が
    宣言した層へ置けるように)。無ければ渡さない。"
   (if (is cgroup-dir None) {} {CGROUP-DIR-VAR cgroup-dir}))
 
@@ -244,17 +244,17 @@
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
    code-host はその外側に置く。coordinator-link は状態の報告を受けた後、同じ効果を外側の status-file へ回す。待ちの子へ頼む効果
    (ForkFromWarm・PollWarmChild・SignalWarmChild・WriteWarmChildInput — process-host が出す)の本物の答え手は os-warm-process-handler(#3646)で、
-   service の子の入力の pipe の書き口の表を session に持つので session-store の内側に置く(card ki-de44efdb9aa4)。木の数えと消しと
+   service の子の入力の pipe の書き口の表を session に持つので session-store の内側に置く。木の数えと消しと
    様子つきの歩き(MeasureTree・RemoveTree・StatTree)は offloaded-tree-handler が thread で待つ — env-host の掃除の task が詰まった disk の
-   上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715・card ki-0da6a0186492)。tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)も offloaded-file-handler が thread で待つ(card ki-97da6e8be47f)。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
+   上で木を数え・消す間も、10 万の file の bytecode の保存先を歩く間も、調整ループ(heartbeat)は回り続ける(#3715)。tick が触る同期の file の効果(WriteText・ReadText・StatPath・ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)も offloaded-file-handler が thread で待つ。止めの合図(SIGTERM・SIGINT)は核の os-signal-stop-handler が答える — 信号の受け手を
    最初の止めの問いで据え、その箱を session-store に置く(#3871 の単位 3)。Pod の止まりの観測(ObserveLeaving — local-host が問う)は
    leaving-observer が世代の file(boot-file — 無ければ止まりを読まない)の隣の印を、この process の世代(link.boot)と比べて答える(AL-D2p —
    印の書き手と形の module leaving_mark は読まない)。機体の memory の見張りが読む process の表と、止める SignalPid は os-proc-table-handler
-   が答える(card ki-7b934e2538f9 — 見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
+   が答える(見張りが問う job の根 ObserveJobRoots は process-host・/proc/meminfo などの読みは offloaded-file-handler)。
    機体の memory の逼迫の観測(ObserveMemoryTight — local-host が問う)は memory-observer が、見張りと分ける入れ物 memory-cell の様子で答える
-   (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs — card ki-ed9dca403f58)が在れば、
+   (task の起動の見送り — policy の ready-tree-step)。子の job を置く兄弟の cgroup(job-procs)が在れば、
    job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。
-   Pod の job の label(pod-labels = pod-label-parts の #(設定 入れ物) — card ki-a66bb71f4152)が在れば、pod-job-labels を coordinator-link の
+   Pod の job の label(pod-labels = pod-label-parts の #(設定 入れ物))が在れば、pod-job-labels を coordinator-link の
    すぐ内側に置き(拍の宣言の読みの答えを受け取って label に写す)、自区画の API server 宛ての要求だけを区画の CA で検める
    in-cluster-api-routed を http-production-handler のすぐ内側に置く(coordinator への要求は外側の client のまま)。"
   (+
@@ -307,7 +307,7 @@
          (: hold-cell SuppliedHoldCell)]
    :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
   "機体の memory の見張り(worker/protocol/memory_watch)と、値の写しの係(worker/protocol/supplied_hold — hold が在る時だけ・
-   ADR-DOE-CLUSTER-004)を調整ループの外の背景の task として起こしてから、調整ループを回すため(card ki-7b934e2538f9)。どちらも同じ
+   ADR-DOE-CLUSTER-004)を調整ループの外の背景の task として起こしてから、調整ループを回すため。どちらも同じ
    handler の組の下で走る(job の根は process-host・表は os-proc-table-handler・API server への要求は in-cluster-api-routed が答える)。"
   (<- (Spawn (memory-watch-loop watch cell) :daemon True))
   (when (is-not hold None)
@@ -342,14 +342,14 @@
   (.add-argument parser "--task-reserve" :type int :default None
                  :help "task のために空けておく数(0 以上)。--room-file が無ければ必ず渡す(在れば file の値が勝ち、file を読めない起動の時だけ使う)")
   (.add-argument parser "--background-room" :type int :default 0
-                 :help "背景の仕事を同時に置ける数(0 以上 — task の空きは task-reserve + この数 − 置いた task・card ki-2acb63aec0fd)。
+                 :help "背景の仕事を同時に置ける数(0 以上 — task の空きは task-reserve + この数 − 置いた task)。
                         --room-file が在れば file の値が勝つ")
   (.add-argument parser "--memory-mib" :type int :default None
                  :help "常駐の job に使ってよい memory の予算(MiB・0 以上)。coordinator は置いた job の settle の和 + 新しい job の settle が
                         この値以下の時だけ置く。省けば名乗らず、memory で縛られない(枠の file の外の機体の worker)。--room-file が在れば file の値が勝つ")
   (.add-argument parser "--room-file" :default ""
                  :help "枠の file(JSON — worker の名 → taskReserve・backgroundRoom・memoryMiB)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
-                        値を名乗る — 枠の変更で worker を起こし直さない(card ki-6828eda880ce)。空 = 読まない")
+                        値を名乗る — 枠の変更で worker を起こし直さない。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
                  :help "連絡が途絶えて自分の job を止めるまでの秒(最初に coordinator へ届くまで。以後は coordinator の値)")
   (.add-argument parser "--repo" :required True :help "コードを取り出す git repo")
@@ -382,7 +382,7 @@
                  :help "実行環境の準備の uv の子が使う cache の dir(UV_CACHE_DIR・空きが最低を割った時に prune する)")
   (.add-argument parser "--tools" :default "" :help "この worker が名乗る道具(名=版,… — 実行環境の宣言の tools と照らす)")
   (.add-argument parser "--memory-guard" :choices ["on" "off"] :default "on"
-                 :help "機体の memory が尽きかけた時に、job の木のいちばん大きい単位を止めるか(off = 測りの log だけ — card ki-7b934e2538f9)")
+                 :help "機体の memory が尽きかけた時に、job の木のいちばん大きい単位を止めるか(off = 測りの log だけ)")
   (.add-argument parser "--pass-env" :default ""
                  :help "子 process へ渡す worker の環境変数の名(`,` で並べる — 機体の設定の path や URL。無い名は起動を止める)")
   (setv args (.parse-args parser))
@@ -396,7 +396,7 @@
       (.error parser (str error))))
   (when (not (<= (set exclusive) (set provides)))
     (.error parser (.format "--exclusive {} は --provides {} の一部で名乗る" (list exclusive) (list provides))))
-  ;; 起動の時に名乗る枠(card ki-6828eda880ce): 枠の file が在れば file の自分の行(読めなければ引数 — 両方無ければ起動しない)、
+  ;; 起動の時に名乗る枠: 枠の file が在れば file の自分の行(読めなければ引数 — 両方無ければ起動しない)、
   ;; 無ければ引数。以後の読み直しは coordinator への口(room-noted)。
   (setv room (run (with-handlers [os-file-handler] (boot-room args.room-file args.name args.task-reserve args.background-room args.memory-mib))))
   (when (isinstance room str)
@@ -411,14 +411,14 @@
         ;; 世代ごとの置き場と分け合う置き場と、分け合う log の dir の中の名に入れる世代の印(AL-D2c・AL-D2j — worker/core/places の 1 か所で決める)。
         places (run (worker-places (str state-dir) (str shared-dir) boot))
         hy-command (str (/ (. (Path sys.executable) parent) "hy"))
-        ;; job と検めの shim を起こす素の python(card ki-869cdf21ec85)。worker は hy の命令で動くので sys.executable は hy の script
+        ;; job と検めの shim を起こす素の python。worker は hy の命令で動くので sys.executable は hy の script
         ;; (hy の cmdline が差し替え、元の interpreter を hy.sys_executable に残す)— shim は .hy を読まないので Hy を読み込まずに起こす
         ;; (shim の import が 1 本 約 7 MB 軽い)。hy の命令を通さずに起きた時は sys.executable が素の python。
         interpreter (getattr hy "sys_executable" sys.executable)
         ;; 版ごとのコードの木の置き場と準備(worker/protocol/code_store の言い換えが読む — #2466)。
         codes (CodeSettings :repo args.repo :cache places.code :hy-command (if args.no-warm None hy-command) :tool PREPARE-TOOL
                             :layout layout)
-        ;; この process の doeff の版を持つ環境変数の名(起動の script が自己起動した commit — heartbeat の doeffCommit・card ki-6e83e03d146d)。
+        ;; この process の doeff の版を持つ環境変数の名(起動の script が自己起動した commit — heartbeat の doeffCommit)。
         commit-var (run (worker-commit-env-name))
         ;; 起動の時に要る機体の環境変数(子へ渡す名・世代の file の名・自分の行の送り先・自分の版)を在る分だけ 1 度読む(答え手 = subprocess-handler)。
         machine-env (run (with-handlers [subprocess-handler]
@@ -426,8 +426,8 @@
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR CGROUP-DIR-VAR
                                                      WARM-SERVICES-VAR POD-UID-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
-        ;; service も待ちの子から分けるか(card ki-de44efdb9aa4 — 機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
-        ;; 入れる・card ki-67abc0cf71e9・無ければ今までどおり)。
+        ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
+        ;; 入れる・無ければ今までどおり)。
         warm-services (run (with-handlers [os-file-handler]
                              (boot-warm-services args.room-file args.name (.get machine-env WARM-SERVICES-VAR))))
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000))
@@ -442,9 +442,9 @@
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name))
                     (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR))))
-        ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(card ki-cd8cb84fdcd2 — 起動の script の層が置く・無ければ /sys/fs/cgroup)。
+        ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層が置く・無ければ /sys/fs/cgroup)。
         cgroup-root (.get machine-env CGROUP-DIR-VAR CGROUP-ROOT)
-        ;; 常駐の job の shim を置く兄弟の cgroup(card ki-cd8cb84fdcd2 — 機体の配備が名を渡した時だけ)。
+        ;; 常駐の job の shim を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
         service-procs (run (with-handlers [os-file-handler]
                              (job-cgroup-placed (.get machine-env SERVICE-CGROUP-VAR) cgroup-root SERVICE-CGROUP-VAR)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
@@ -468,7 +468,7 @@
         ;; 入口の検め(service の job の木を worker の実行環境で読み込めるか — 起こす前に試す)。
         probes (ProbeSettings :python interpreter :hy-command hy-command :layout layout
                               :probe-dir places.probe :shim shim))
-  ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(card ki-35923a5895b2 — 機体の上で
+  ;; この process の Python の出力(sys.stdout・sys.stderr)の行を、job の log と同じ送り先へも送る(機体の上で
   ;; 直に動く worker の log は機体の file にしか無かった)。job の名 worker/<名>・世代 boot で名乗る。送り先が在り、stdout と stderr が
   ;; 同じ file の時だけ差し替え、以後の行は file に刻つきで書く(Pod の worker は今のまま)。fd 1・2 は替えない — 子孫は元の file を継ぐ。
   ;; 終わりは process の終わり — 下の断りの traceback も送る。
@@ -478,20 +478,20 @@
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と
   ;; 名指しの待ちと lease の返しで別の入れ物に置く(同じ並び)。送り方は一巡し直さない(前の httpx の client を持つ口と同じ —
   ;; 届かない拍は次の拍で送り直す)。世代(boot — 上で決めた値)は Pod の中の file にも書く(readinessProbe が比べる)。
-  ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る・card ki-069f4a5c07f7)。
+  ;; 起動の刻は壁の時計と単調な時計の両方で読む(最後の連絡とみなす初めの刻 — 沈黙は 2 つの時計の長い方で計る)。
   (setv started-ms (run (with-handlers [(sync-time-handler)] (now-epoch-ms)))
         started-mono-ms (monotonic-ms-of (run (with-handlers [(sync-time-handler)] (GetMonotonic))))
         link (LinkState args.name provides room.task-reserve room.background-room (int (* args.fence 1000)) places.tasks boot
                         started-ms started-ms started-mono-ms
                         :versions (run (this-process-versions)) :tools (run (parse-labels args.tools)) :handles-envs True :exclusive exclusive
                         :node args.node :boot-marks boot-marks :overlaps-elder args.overlaps-elder
-                        ;; ServiceAccount の token の古さを heartbeat で名乗る(card ki-d31166f84ad0 — Pod の外の worker は file が無く、名乗らない)。
+                        ;; ServiceAccount の token の古さを heartbeat で名乗る(Pod の外の worker は file が無く、名乗らない)。
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
-                        ;; 枠の file を heartbeat の前に読み直す(card ki-6828eda880ce — 空 = 読まない)。
+                        ;; 枠の file を heartbeat の前に読み直す(空 = 読まない)。
                         :room-file (or args.room-file None)
-                        ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない・card ki-2acb63aec0fd)。
+                        ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない)。
                         :memory-mib room.memory-mib
-                        ;; 自分の doeff の版を heartbeat で名乗る(card ki-6e83e03d146d — 無ければ名乗らない)。
+                        ;; 自分の doeff の版を heartbeat で名乗る(無ければ名乗らない)。
                         :doeff-commit (.get machine-env commit-var "")
                         ;; heartbeat を拍から切り離し、desired の変化は名指しの待ちで受ける(#1933 — 待つ口の無い coordinator
                         ;; には拍ごとに送る)。
@@ -503,13 +503,13 @@
         watch-cell (RouteCell (run (route-of args.coordinator started-ms)))
         lease-cell (RouteCell (run (route-of args.coordinator started-ms))))
   (run (with-handlers [os-file-handler] (boot-file-written (.get machine-env BOOT-FILE-VAR) boot)))
-  ;; 機体の memory の見張り(card ki-7b934e2538f9 — 5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
+  ;; 機体の memory の見張り(5 秒ごとに job ごとの memory を数え、尽きかけたら大きい単位を止める)の入れ物は、
   ;; 見張りの背景の task と、逼迫の観測の答え手 memory-observer(本番の組)が分けるので、組より先に作る。
   (setv watch (MemoryWatchSettings :guard (= args.memory-guard "on"))
         memory-cell (MemoryCell)
-        ;; 子の job を置く兄弟の cgroup(card ki-ed9dca403f58 — 機体の配備が名を渡した時だけ)。
+        ;; 子の job を置く兄弟の cgroup(機体の配備が名を渡した時だけ)。
         job-procs (run (with-handlers [os-file-handler] (job-cgroup-placed (.get machine-env JOB-CGROUP-VAR) cgroup-root)))
-        ;; 置かれた常駐の job を自分の Pod の label に写す(card ki-a66bb71f4152 — Pod の uid と node の名が在る worker だけ)。
+        ;; 置かれた常駐の job を自分の Pod の label に写す(Pod の uid と node の名が在る worker だけ)。
         pod-labels (run (pod-label-parts (.get machine-env POD-UID-VAR) args.node))
         ;; 値の写しの係(ADR-DOE-CLUSTER-004 — 区画の CA で API server を検める口 in-cluster-api-routed を組む Pod の worker だけ。Pod の外の
         ;; worker は ServiceAccount を持たず、API server から値を読まない)。
@@ -519,7 +519,7 @@
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
                                            :job-procs job-procs :pod-labels pod-labels)))
-  ;; 生存の合図の thread(card ki-9b58446e2ad6 — scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
+  ;; 生存の合図の thread(scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
   ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
   ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。
   (setv stop-lifeline (run (start-lifeline (LifelineSettings :turn (fn [] (lifeline-turn link))

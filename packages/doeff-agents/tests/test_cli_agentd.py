@@ -439,8 +439,8 @@ def test_agentd_ensure_json_reports_supervised_socket(
     runner: CliRunner,
     tmp_path: Path,
 ) -> None:
-    # Ops verification seam for the single-supervisor deployment (issue
-    # #558): `agentd ensure --json` states whether the canonical socket
+    # Ops verification seam for the single-supervisor deployment (
+    # issue #558): `agentd ensure --json` states whether the canonical socket
     # is declared supervisor-managed, so plist⇔ensure wiring is checkable
     # with one command.
     state_home = tmp_path / "state"
@@ -524,7 +524,7 @@ def _snapshot(
 def test_cli_builds_no_client_and_runs_only_effect_programs() -> None:
     """The commands yield effects under handlers; the session host's client is built in the handler layer only.
 
-    Card ki-307f29018559 (CLI commands = programs of effects run under handlers):
+    CLI commands = programs of effects run under handlers:
     the CLI module names no client class and no function that hands one out, so a
     command cannot reach the host except through the effects its handlers answer.
     """

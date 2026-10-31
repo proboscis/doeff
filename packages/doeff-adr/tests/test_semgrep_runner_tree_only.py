@@ -38,12 +38,12 @@ def registry():
 
 
 def _register(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
     run(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
     run(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 
@@ -153,7 +153,7 @@ def test_run_semgrep_empty_stdout_with_exit_0_is_loud(tmp_path):
 def test_run_semgrep_failure_names_the_json_errors_not_only_stderr(tmp_path: Path) -> None:
     """--quiet --json の semgrep は、失敗(exit 2)の理由を stdout の JSON の errors にだけ載せ、stderr は空。
 
-    反例 = agora-redesign #2865: agora の日次で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
+    反例: 日次の検で「semgrep failed with exit 2:」だけが残り、規則の読みの失敗か
     semgrep の版かを名指せなかった。失敗の文は errors の種類・規則・文言を名乗る。
     """
     verdict = {

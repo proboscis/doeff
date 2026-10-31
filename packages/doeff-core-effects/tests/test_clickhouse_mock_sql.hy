@@ -1,4 +1,4 @@
-;;; ClickHouse の約束を持つ模擬の SQL の答え手(_clickhouse_mock_sql.hy — card ki-1c9c7903dfc4)の約束ごとの検。
+;;; ClickHouse の約束を持つ模擬の SQL の答え手(_clickhouse_mock_sql.hy)の約束ごとの検。
 ;;;   - SqlTransaction は本物(clickhouse-http-sql-handler)と同じ SqlFailed(0A000)で断り、program は走らない。
 ;;;   - SqlQuery の rowcount は None(sqlite の答え手は数える)・行は読める。
 ;;;   - SqlInsertRows は書いた行の数を返す・空は 0・bytes は ValueError。

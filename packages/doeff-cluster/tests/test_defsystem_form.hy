@@ -95,7 +95,7 @@
   (assert (in ":readiness の値は数か :environ の名の文字列" a) a))
 
 
-;; card ki-02e836a9c628: 「既定を空にした」事実と「宣言の時に埋める」印を別の所(使い手の手書きの表)で持つと、表への書き漏れが宣言する者の
+;; 「既定を空にした」事実と「宣言の時に埋める」印を別の所(使い手の手書きの表)で持つと、表への書き漏れが宣言する者の
 ;; 確かめの穴になった(使い手の 1 系だけの宣言が、埋める名を空のまま出した)。:environ の値を既定の値と埋める名の 2 つの型に分ける。
 (deftest test-defsystem-carries-the-names-filled-at-declaration
   (<- ns (evaluate "
@@ -214,7 +214,7 @@
 
 
 (deftest test-defsystem-requires-the-memory-of-every-job
-  ;; job の memory(:peak-mib・:settle-mib — card ki-2acb63aec0fd)は必ず書く。既定の値で埋めない: 省いた鍵・負の数・真偽・文字列・
+  ;; job の memory(:peak-mib・:settle-mib)は必ず書く。既定の値で埋めない: 省いた鍵・負の数・真偽・文字列・
   ;; 山を越える落ち着きは、系と job を名指して展開の時に断る。:single-host の空の訳も断る。
   ;; 失敗ケース = 省いた job に既定の値を入れて通す・片方だけの job を通す・True を 1 と読む。
   (<- a (refusal "(defsystem s [foundation] (job (make foundation) :replicas 1 :settle-mib 100))"))
@@ -313,7 +313,7 @@
 
 
 (deftest test-defsystem-declares-the-task-limits-of-the-system
-  ;; 系の頭の :task-limits(2026-10-12・card ki-b0e8028c8c8d)は、系の値の task-limits(GroupLimit)と静的な記述の task_limits に載る —
+  ;; 系の頭の :task-limits(2026-10-12)は、系の値の task-limits(GroupLimit)と静的な記述の task_limits に載る —
   ;; 組の上限の値の持ち主は系の宣言 1 つで、task は組の名だけを名乗る。:task-limits の無い系の静的な記述は前と同じ形(鍵を書かない)。
   (<- ns (evaluate "
 (defk notice [foundation] {:pre [(: foundation Callable)] :post [(: % int)]} 1)

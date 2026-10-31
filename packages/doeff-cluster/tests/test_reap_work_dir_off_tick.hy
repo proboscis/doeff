@@ -1,4 +1,4 @@
-;; 実行環境の job の作業 dir の消し(RemoveTree)が worker の拍を止めない形の検(card ki-2158e6d6e304)。
+;; 実行環境の job の作業 dir の消し(RemoveTree)が worker の拍を止めない形の検。
 ;;
 ;; 実例(zeus・2026-10-23 17:42〜10-24 06:55 JST の worker の log): 区間 ActionsToPublishStatus が 10 秒を越えた拍が 17 回在り、17 回とも
 ;; その拍の中で実行環境の task を回収していた。回収(ReapJob)は作業 dir(<state>/jobs/task_<id> — 14 万 file・3.4 GiB に育つ)を

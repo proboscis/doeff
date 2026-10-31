@@ -1,5 +1,5 @@
 //! law の対応の検めた形 — law の名・文・当たる層と、law に書かれた規則の ID(層の規則か、既存の Python の規則か)。
-//! 説明(`explain`)と設定の組み立て(`settings`)が読む(agora-redesign #2123 で settings.rs から分けた)。
+//! 説明(`explain`)と設定の組み立て(`settings`)が読む(settings.rs から分けた)。
 
 use std::collections::BTreeSet;
 

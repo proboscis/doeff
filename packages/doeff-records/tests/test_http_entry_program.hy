@@ -552,7 +552,7 @@
 
 
 (deftest test-the-entry-program-opens-its-port-beside-a-twin-that-shares-it
-  ;; 同じ置き場を答える記録の service の 2 本が 1 つの port で受ける形(ki-a4f46b3d98c5 — 1 本が止まっても、
+  ;; 同じ置き場を答える記録の service の 2 本が 1 つの port で受ける形(1 本が止まっても、
   ;; kernel が生きている待ち受けへ接続を渡す): 入口の Program は待ち受けを port の共有で開くので、共有で持つ別の待ち受けが居ても
   ;; 開いて答え、0 で終わる。
   (<- script HttpScript (served-script))

@@ -1,6 +1,6 @@
 """Programs a handler receives in an effect, and functions written where they are passed.
 
-Regression target (agora-redesign #1432, from #1265): once the reader followed a
+Regression target (from #1265): once the reader followed a
 foundation's ports, three places inside the doeff handlers were left it could not
 follow — ``try_handler`` runs the Program ``Try`` carried (``prog = effect.program``,
 rewrapped in the inner handlers, run by the nested generator ``attempt``) and

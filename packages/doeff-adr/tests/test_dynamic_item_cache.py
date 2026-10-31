@@ -104,7 +104,7 @@ def test_dynamic_values_interpreters_and_explicit_ids_are_cached(dynamic_project
     cold: pytest.RunResult = collect(project)
     assert len(nodeids(cold)) == 4
     assert imports(project) == ["imported"]
-    # 書いた直後の file は記録の時刻の区切りの内で、stat を信じず hash で確かめる(card ki-5b70c4b62814)。本物の作業木の file と同じく
+    # 書いた直後の file は記録の時刻の区切りの内で、stat を信じず hash で確かめる。本物の作業木の file と同じく
     # 最後の変更から区切りの幅を越えた後に記録を取った形へ、記録の時刻を書き換える(壁の時計で待たない — 収集は別の process なので
     # 時刻の供給は差し替えられない)。
     entry: object = json.loads(cache_path(project).read_text())
@@ -244,7 +244,7 @@ def collect_two_dynamic_files(project: pytest.Pytester) -> pytest.RunResult:
 
 
 def test_two_dynamic_files_in_one_collection_read_each_loaded_source_once(dynamic_project: pytest.Pytester) -> None:
-    """失敗ケース(card ki-b2383fcc8b25・agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
+    """失敗ケース(agora-controllers の日次 2026-10-11 12:00): 実値の記録を書くたびに、読み込み済みの local source を
     全部読み直して hash を取っていた。読み込んだ module は session が進むほど増えるので、実値の file の import の区間の CPU が file の位置と
     ともに増え、doeff-hy-pytest の読み込みの上限 1 秒を負荷の高い回だけ越えた(表の 13 本のうち 9 本)。収集 1 回の中では、同じ source を
     1 度だけ読む。"""
@@ -263,7 +263,7 @@ def test_the_import_window_of_a_dynamic_file_reads_no_loaded_source(dynamic_proj
 
 def test_dependency_stat_fast_path_hash_refresh_and_same_size_edit(tmp_path: Path) -> None:
     """stat の速い経路・stamp だけの変化での hash の取り直し・同じ大きさの書き換え。速い経路は、file の最後の変更が記録の時刻より
-    RACY_WINDOW_NS 以上前の記録だけに効く(card ki-5b70c4b62814)— 記録の時刻は渡して決める(書いた直後の本物の時刻では、どの記録も
+    RACY_WINDOW_NS 以上前の記録だけに効く— 記録の時刻は渡して決める(書いた直後の本物の時刻では、どの記録も
     区切りの内で hash になる)。"""
     source: Path = tmp_path / "values.py"
     source.write_text("VALUE = 1\n")
@@ -314,7 +314,7 @@ def test_an_old_record_without_a_recorded_time_is_checked_by_hash_once_and_rewri
 
 
 def test_a_same_size_edit_within_one_coarse_timestamp_tick_is_not_missed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """失敗ケース(card ki-5b70c4b62814・atlas の 2026-10-10 20:05 の日次の赤): 時刻の粗い kernel(atlas の 6.8 — 細かい ctime は 6.13 から)
+    """失敗ケース(atlas の 2026-10-10 20:05 の日次の赤): 時刻の粗い kernel(atlas の 6.8 — 細かい ctime は 6.13 から)
     では、記録を取った時刻と同じ区切りの中の書き換えで mtime・ctime が進まない。大きさも同じなら stat が全部一致し、速い経路は hash を
     読まずに古い記録を信じた(git の racy-git と同じ形)。粗い kernel の代わり = 最初に見た mtime・ctime を返し続ける stat(区切りが
     終わらない間の kernel)。"""

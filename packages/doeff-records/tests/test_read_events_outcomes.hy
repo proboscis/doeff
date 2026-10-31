@@ -1,4 +1,4 @@
-;; 追記の列の読み ReadEvents の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補 — card ki-60ce852440ca):
+;; 追記の列の読み ReadEvents の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補):
 ;; defeffect が Events = 成功 / Unreachable = 失敗 / NotIndexed = 失敗(不在と値は無し)と宣言し、呼び手の <- は
 ;;   - Events を中身のまま束ねる
 ;;   - Unreachable を Raise(Unreachable) として逃がす(on-raise で値へ戻せる。戻さなければ上へ出る)

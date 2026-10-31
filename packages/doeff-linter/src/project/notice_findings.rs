@@ -1,5 +1,5 @@
 //! 設定の知らせ(DOEFF100)を違反の形(Finding)へ直す — 説明(Explanation)と違反の型を読む側を、知らせの型と鍵の位置の読み
-//! (`notice`)から分けた。`notice` は宣言を読む `architecture`・設定を組む `settings` が下から読むので、違反と説明を読まない(agora-redesign #2124)。
+//! (`notice`)から分けた。`notice` は宣言を読む `architecture`・設定を組む `settings` が下から読むので、違反と説明を読まない。
 
 use std::path::Path;
 

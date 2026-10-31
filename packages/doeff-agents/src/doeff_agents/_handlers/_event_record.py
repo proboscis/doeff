@@ -1,4 +1,4 @@
-"""The keeper of a session's event record (``LaunchEffect.event_record`` — agora card ki-31b41eac5071).
+"""The keeper of a session's event record (``LaunchEffect.event_record``).
 
 A caller of the headless adapter wrote its record of a turn (the agora answer ledger the PreToolUse hook reads)
 only when its page reads (``EventsEffect``) caught up with the runtime, and those reads lagged seconds to minutes
@@ -11,10 +11,10 @@ the file with the text a fold answers: written to a sibling first and moved over
 half a file. A write that fails removes the file (a reader then finds no record rather than a stale one). A copy or
 fold that raises drops the item and keeps the state — the reader thread must not stop.
 
-Those drops are not silent (agora card ki-d59018b840f9): the keeper counts, per turn, the items the tap brought and
+Those drops are not silent: the keeper counts, per turn, the items the tap brought and
 the copies, folds and writes that failed, and the adapter settles each turn once when it closes the turn
 (``settle``). A turn whose pages carried text or tool calls while the tap brought nothing — a handler between the
-adapter and the runtime rebuilt ``ClaudeStartTurn`` without its tap (agora card ki-3f17ef920d2b) — or a turn with
+adapter and the runtime rebuilt ``ClaudeStartTurn`` without its tap — or a turn with
 any failure is logged as one warning naming the session, the turn and the record's path.
 """
 

@@ -1,4 +1,4 @@
-//! DOEFF162: effect の宣言の全体(agora-redesign #1373・#1438 — 元は agora-controllers の一時の判定
+//! DOEFF162: effect の宣言の全体(#1438 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/intake_only_rules.hy の 2)。
 //!
 //! architecture.hy の `:effect-census [(effect-census "名" :files [..] :effects [..] :base "EffectBase" :why "…") …]` の宣言ごとに、
@@ -9,7 +9,7 @@
 //!   * `:files` に当たる file が無ければ architecture.hy の位置で 1 件(`<名>:missing` — 母集団 0 を緑にしない)。
 //! effect を足す変更は、宣言の一覧も同じ変更で直す(黙って増えない)。宣言の形は Python の `class X(… base …):` と Hy の
 //! `(defclass [飾り] X [… base …])` / `(defclass X [… base …])`、`:base` が `EffectBase` なら Hy の `(defeffect X …)` も
-//! (defeffect は常に EffectBase を継ぐ — agora-redesign #1464)。
+//! (defeffect は常に EffectBase を継ぐ)。
 
 use std::collections::BTreeMap;
 use std::path::Path;

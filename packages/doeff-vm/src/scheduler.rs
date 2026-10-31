@@ -14,7 +14,7 @@
 //! - the handle classes (`Task`, `Future`, `Promise`, `ExternalPromise`,
 //!   `Semaphore`) and the exception classes;
 //! - the root close-out warning (#501), the never-retrieved task exception
-//!   warning and its per-task description (card ki-84667a89b47a), and the
+//!   warning and its per-task description, and the
 //!   task-error traceback enrichment helper, which run once per run / per
 //!   failing task.
 //!
@@ -32,7 +32,7 @@
 //!   continuation when the scheduler still holds it — the Python version gets
 //!   the same routing from the VM's `handler_k_handle` recovery.
 //!
-//! The measurement hook (`set_scheduler_trace`, agora-redesign #3855 / #3861).
+//! The measurement hook (`set_scheduler_trace` / #3861).
 //! While a sink is installed this scheduler emits the Python version's events —
 //! the same kinds, the same fields, in the same order — through the Python
 //! version's own helpers (`_trace`, `_trace_step_boundary`), so the dicts and
@@ -203,11 +203,10 @@ struct Spec {
     not_a_waitable: Py<PyAny>,
     enrich_traceback: Py<PyAny>,
     /// `_describe_unretrieved_exception`: a failed task's entry in the
-    /// never-retrieved warning (card ki-84667a89b47a).
+    /// never-retrieved warning.
     describe_unretrieved_exception: Py<PyAny>,
     /// `_drop_waiter_frames`: gives a failed entry's error back the traceback
-    /// it had when it failed, once its waiters' frames are finished (card
-    /// ki-6ebcb9c44749).
+    /// it had when it failed, once its waiters' frames are finished.
     drop_waiter_frames: Py<PyAny>,
     logger: Py<PyAny>,
     /// `_external_wake_of`: the wake a new external promise carries.
@@ -370,7 +369,7 @@ struct TaskEntry {
     /// reads the missing key as `""`.
     spawn_site: Option<Option<String>>,
     /// A `Cancelled` task nothing can re-read any more (the Python version's
-    /// `settled`, agora-redesign #3504): it ran to its `TaskCompleted` after
+    /// `settled`): it ran to its `TaskCompleted` after
     /// the Cancel, or it never started and `pick_next` skipped its start, or
     /// a Discard dropped the continuation the scheduler held. The sweep
     /// removes a `Cancelled` task only once it is settled — a task dropped by
@@ -382,7 +381,7 @@ struct TaskEntry {
     /// `@do` call runs, else the program's type. `None` once released.
     definition: Option<Py<PyAny>>,
     /// A Wait, Gather, Race, Cancel or Discard was given the task (the Python
-    /// version's `retrieved`): its outcome is claimed (card ki-84667a89b47a).
+    /// version's `retrieved`): its outcome is claimed.
     retrieved: bool,
     /// The description of the exception the task failed with while nothing
     /// had claimed its outcome (the Python version's `unretrieved`); cleared
@@ -402,7 +401,7 @@ struct PromiseEntry {
     external: bool,
     /// How an external promise is known to wake the scheduler — the Python
     /// `_ClockWake` / `_WatchedWake` that `external_wake_of` made from the
-    /// `CreateExternalPromise` (#765, card ki-6222e22d4179); `None` =
+    /// `CreateExternalPromise` (#765); `None` =
     /// open-ended. Judged by `external_wait_is_stall` (invariant S1).
     wake: Option<Py<PyAny>>,
     cancel_callbacks: Option<Vec<Py<PyAny>>>,
@@ -705,7 +704,7 @@ struct State {
     waiters: OrderedMap<Vec<WaiterEntry>>,
     /// The reverse index of `waiters`: owner → {key: how many of the owner's
     /// entries are under it}, so a Cancel reads the keys its task is parked
-    /// on instead of walking every waiter (agora card ki-9de8d0a54408).
+    /// on instead of walking every waiter.
     parked_keys_of: HashMap<Owner, HashMap<WKey, usize>>,
     /// Moved only through `ready_push` / `ready_pop` / `ready_remove_at` /
     /// `drop_claimed_marks`, which keep the counts below in step.
@@ -843,7 +842,7 @@ fn set_scheduler_step_budget_armed(armed: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// The scan counts (`_vm_scan_counts` — the effect `ReadVmScanCounts`, agora card ki-9de8d0a54408)
+// The scan counts (`_vm_scan_counts` — the effect `ReadVmScanCounts`)
 // ---------------------------------------------------------------------------
 
 /// What a scheduler scan walks. Every place that looks at entries of a
@@ -1393,8 +1392,8 @@ impl Locked<'_> {
     /// the finished waiter frames its error's traceback gathered — every
     /// throw into a waiter prepends the waiter's frames, and they hold the
     /// waiter's Wait/Try effects and the handle those name — may be what keeps
-    /// that handle alive, so the sweep never deleted the entry (card
-    /// ki-6ebcb9c44749). Letting go of those frames can finalize what they
+    /// that handle alive, so the sweep never deleted the entry
+    /// . Letting go of those frames can finalize what they
     /// held, so it runs when the graveyard is dropped, after the lock is
     /// released; the next sweep then finds the handle dead. An entry whose
     /// error still has the traceback it failed with has no waiter frames.
@@ -1536,8 +1535,7 @@ impl Locked<'_> {
     }
 
     /// A Wait, Gather, Race, Cancel or Discard was given the task: its outcome
-    /// is claimed, so its exception is not reported as never retrieved (card
-    /// ki-84667a89b47a).
+    /// is claimed, so its exception is not reported as never retrieved.
     fn mark_retrieved(&mut self, key: WKey) {
         if key.kind != WKind::Task {
             return;
@@ -1577,7 +1575,7 @@ impl Locked<'_> {
     /// is about to wait for an external completion, it sweeps once the ids allocated since
     /// the last sweep times `IDLE_SWEEP_ROWS_PER_ID` cover the rows a sweep
     /// walks — in a job with no work that is every tick, so a tick's terminal
-    /// entries do not outlive it (agora card ki-f9aa5fce26e3).
+    /// entries do not outlive it.
     fn sweep_when_idle(&mut self, py: Python<'_>) {
         let allocated = self.next_id - self.swept_at_id;
         let rows = (self.tasks.len() + self.promises.len() + self.waiters.len()) as u64;
@@ -1672,7 +1670,7 @@ impl Locked<'_> {
         Python::attach(|py| self.trace_enqueued(py, owner, wake, priority));
     }
 
-    // --- the ready heap and its counts (agora card ki-9de8d0a54408) ----------
+    // --- the ready heap and its counts ----------
     //
     // The heap is moved only through these, so the live counts
     // (`has_live_ready_entry`), the queued continuations by owner
@@ -1771,7 +1769,7 @@ impl Locked<'_> {
     /// A dead placeholder still in the heap is popped only when no NORMAL work
     /// is queued — in a busy run every timed wait whose future won left one
     /// there, holding the deadline timer's registration (the Python version's
-    /// `claim`, card ki-1294af4fa525). Once there are many and they are most of
+    /// `claim`). Once there are many and they are most of
     /// the heap, they are taken out together.
     fn claim(&mut self, mark: &Claim) {
         if mark.claimed.swap(true, Ordering::Relaxed) {
@@ -1888,7 +1886,7 @@ impl Locked<'_> {
         Err(PyErr::from_value(error))
     }
 
-    // --- waiters and its reverse index (agora card ki-9de8d0a54408) ----------
+    // --- waiters and its reverse index ----------
 
     /// Register `entry` under `key`: the one way into `waiters`, so its
     /// reverse index (`parked_keys_of`) stays in step.
@@ -2363,7 +2361,7 @@ impl Locked<'_> {
     /// queue. Blocking the whole interval in a Rust wait instead held SIGTERM's
     /// handler back for up to EXTERNAL_STALL_LOG_INTERVAL_SECONDS (30 s): a
     /// process waiting on an external completion did not stop on SIGTERM
-    /// (agora card ki-6dde100393cd). `check_signals` is a no-op off the main
+    ///. `check_signals` is a no-op off the main
     /// thread; an error a handler raises propagates.
     fn pop_external_within(&mut self, py: Python<'_>, timeout: Duration) -> PyResult<Option<(Settle, u64, Py<PyAny>)>> {
         let deadline = Instant::now() + timeout;
@@ -2968,7 +2966,7 @@ impl Locked<'_> {
     /// placeholder, unless `park` (a Race with `priority=TaskPriority.IDLE`):
     /// then the waiter still counts for the blocking drain
     /// (`has_pending_external_waiters` reads `waiters`), but the sim clock
-    /// driver may run (agora-redesign #3054).
+    /// driver may run.
     fn register_pending_waiter(&mut self, wk: WKey, kind: GroupKind, owner: Owner, group: u64, park: bool) {
         let external = wk.kind == WKind::Promise
             && self.promises.get(&wk.id).is_some_and(|p| p.external);
@@ -3438,7 +3436,7 @@ impl Locked<'_> {
                         .unwrap_or_else(|| Ok("".into_pyobject(py)?.into_any().unbind()))?;
                     // Nothing has claimed the outcome yet: describe the
                     // exception now, while the program and spawn site are
-                    // still held (card ki-84667a89b47a).
+                    // still held.
                     let unretrieved = {
                         let task = self.tasks.get(&tid).expect("checked above");
                         if task.retrieved || error.is_instance(&cancelled_error)? {
@@ -3810,7 +3808,7 @@ impl Locked<'_> {
             effect.getattr(pyo3::intern!(py, "error"))?.unbind()
         };
         // `CompletePromise(..., yield_to_woken=False)`: the completer keeps
-        // its turn (agora-redesign #4013); FailPromise always yields.
+        // its turn; FailPromise always yields.
         let yield_to_woken: bool = if complete {
             effect
                 .getattr(pyo3::intern!(py, "yield_to_woken"))?
@@ -4294,7 +4292,7 @@ impl PySchedulerCore {
     }
 
     /// `(tasks to cancel, tasks to wait for)` at root return, for the close-out
-    /// unwinding shared with the Python scheduler (agora-redesign #2684 /
+    /// unwinding shared with the Python scheduler (
     /// #2690): the live non-daemon tasks — pending and running ones receive
     /// Cancel, and those already cancelling are only waited for (Cancel is not
     /// delivered twice). Ascending task ids, the order the Python scheduler
@@ -4321,7 +4319,7 @@ impl PySchedulerCore {
     }
 
     /// `(named, total)` of the task exceptions nothing retrieved, for the
-    /// run-end warning (card ki-84667a89b47a): the swept tasks' exceptions,
+    /// run-end warning: the swept tasks' exceptions,
     /// then the entries still holding one, in task order.
     fn unretrieved_exceptions(&self) -> PyResult<(Vec<String>, usize)> {
         let locked = self.core.lock()?;

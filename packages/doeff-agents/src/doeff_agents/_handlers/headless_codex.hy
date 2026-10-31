@@ -1,5 +1,4 @@
-;;; headless の codex の adapter — doeff-agents の公開 effect(effects/agent.py)を doeff-codex の公開 effect へ写す
-;;; (card acp:kanban-issue:ki-534a081e32eb)。
+;;; headless の codex の adapter — doeff-agents の公開 effect(effects/agent.py)を doeff-codex の公開 effect へ写す。
 ;;;
 ;;; 層: codex の app-server ← doeff-codex(process の寿命)← この adapter(agent の寿命)← 呼び手の Program。この module は process を
 ;;; 知らない: 子 process・起動の引数・pid・信号・降りた process の起こし直しは doeff-codex の handler の中にある。ここが持つのは agent の
@@ -14,7 +13,7 @@
 ;;;   LaunchEffect.session_env      → 家の env に重ねる(資格の env は持てない — claude の adapter と同じ検め)
 ;;;   LaunchEffect.turn_credential_ref → 起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの CodexTurnCredential(借りた
 ;;;                                    口座の auth.json の中身)を会話の宣言の家 CodexHome.auth-json に置く — 層 2 がその process だけの
-;;;                                    CODEX_HOME に auth.json を置き、process が降りたら消す(card acp:kanban-issue:ki-0b244c011ca3)。
+;;;                                    CODEX_HOME に auth.json を置き、process が降りたら消す。
 ;;;                                    HomeTurnCredential = 家の資格のまま・TurnCredentialUnavailable と codex の形でない資格(claude の
 ;;;                                    TurnCredential)= TurnCredentialUnavailableError で起こさない
 ;;;   attachments(起動・追送)       → 入力 CodexInput の images(codex は data URL の image の入力で受ける)
@@ -27,12 +26,12 @@
 ;;;   WarmSessionEffect             → 偽(前もって起こさない — doeff-codex に入力の前に thread を開く口が無い)
 ;;;   行 → 出来事: TextDelta → AgentTextDeltaEvent・AgentMessageDone → AgentTextEvent・item の種類 reasoning の始まり →
 ;;;     AgentThinkingStartedEvent・ReasoningDelta → AgentThinkingDeltaEvent・TokenUsage → AgentCallUsageEvent(この呼びの分)。
-;;;     道具の item(card acp:kanban-issue:ki-77e76c7c07ce)— 道具の名は codex の item の種類の名、ToolCall の id は item の id:
+;;;     道具の item— 道具の名は codex の item の種類の名、ToolCall の id は item の id:
 ;;;       commandExecution・fileChange の始まり → AgentToolUseEvent(始まりの item が命令・変えるファイルを持つ)、終わり →
 ;;;         AgentToolResultEvent(命令は出力の文 aggregatedOutput・ファイルの変更は空の文。誤りの印 = 状態が completed でない)
 ;;;       webSearch の始まり → AgentToolCallStartedEvent(始まりの item は検索の語を持たない — 上流は語を終わりで名乗る)、終わり →
 ;;;         AgentToolUseEvent と AgentToolResultEvent(空の文 — codex は検索の結果の文を item で運ばない)
-;;;       mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView(card acp:kanban-issue:ki-c09b93b72bff)の始まり →
+;;;       mcpToolCall・dynamicToolCall・collabAgentToolCall・imageView の始まり →
 ;;;         AgentToolUseEvent、終わり → AgentToolResultEvent(MCP の道具・動的な道具は答えの文〔MCP の誤りは誤りの文〕・子の agent の
 ;;;         道具は子ごとの「thread の id: 状態」の行〔最後の答えが在れば「 — 答え」を続ける〕・画像を見る道具は空の文。誤りの印 = 状態が
 ;;;         completed でない〔動的な道具は答え手が失敗と名乗った時も〕・画像を見る道具は状態を持たないので誤りでない)
@@ -43,16 +42,16 @@
 ;;;     子の agent の thread の行は層 2 の handler が会話のターンに積まない(子の答えを会話の答えにしない)。
 ;;;     ほかの item・誤りの通知・語彙の外の行は、今は出来事にしない。
 ;;;   口座の利用枠切れ: 失敗の終わりの利用枠切れの事実(TurnEnded.usage-limit = UsageLimitHit)→ AgentTurnFailed.account_limit
-;;;     (AgentAccountLimit — claude の adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ・card acp:kanban-issue:ki-a59d80e0afa9)。
+;;;     (AgentAccountLimit — claude の adapter と同じ欄。agora は同じ道で口座を外し、戻りの刻まで待つ)。
 ;;;     判定(誤りの種類の綴り・尽きた窓の選び・枠の知らせの重ね方)は層 2(doeff-codex の limits.hy)が持ち、ここは窓の長さを claude と
 ;;;     同じ綴りの窓の名にして運ぶだけ(account-limit-of)。
 ;;;   提供側の混雑: 失敗の終わりの混雑の事実(TurnEnded.server-overloaded = ServerOverloadedHit — codex の「Selected model is at
 ;;;     capacity」)→ AgentTurnFailed.provider_capacity(AgentProviderCapacity — model = 会話の宣言の model・text = codex の文)。agora は
-;;;     少し後に同じ thread で試し直す(card acp:kanban-issue:ki-843475dd8f8b)。判定(誤りの種類の綴り)は層 2(doeff-codex の lines.hy)が
+;;;     少し後に同じ thread で試し直す。判定(誤りの種類の綴り)は層 2(doeff-codex の lines.hy)が
 ;;;     持ち、ここは運ぶだけ(provider-capacity-of)。
 ;;;   道具を呼べない process: 層 2 の終わり ToolsUnavailable(codex が code mode を使えず道具の呼びを閉じたと名乗った process のターンを、
 ;;;     層 2 が model の文だけの答えの前に終えた物)→ AgentTurnFailed(detail = codex の警告の文・account_limit なし)。agora は失敗の
-;;;     ターン(cli-failed)と読み、completed と見せない(card acp:kanban-issue:ki-86b1443b22b6)。警告の判定と process の降ろしは層 2。
+;;;     ターン(cli-failed)と読み、completed と見せない。警告の判定と process の降ろしは層 2。
 ;;;   入力の行方: ターンを始めた入力・足した入力は、層 2 が受けた時に AgentInputFateEvent(started)を出し、完了の input_refs にも載せる
 ;;;     (codex は入力ごとの行方を行で名乗らない — 受けた入力はそのターンが読む)。
 ;;;   usage: 入力の側は cache から読んだ分を除く(codex の inputTokens は cachedInputTokens を含む — 層 3 の input_tokens は claude と同じ
@@ -63,7 +62,7 @@
 ;;; 断る物(AgentCapabilityUnsupportedError — 黙って捨てない): new_context_id の名指し(codex 0.162.1 の thread/start に id の欄が無く、
 ;;; 呼び手の id で thread を始められない)・resume_snapshot と ExportContextEffect(codex の会話の写しの口が無い)・mcp_tools・bare・
 ;;; CaptureEffect・AttachAgentSessionEffect(画面が無い)・ReplaceSessionCredentialEffect(走っている codex の process の資格を替える口を
-;;; まだ持たない — claude の headless の adapter だけが答える・card acp:kanban-issue:ki-4ffdafa021e5)。
+;;; まだ持たない — claude の headless の adapter だけが答える)。
 ;;; この handler が起こしていない session の effect と、CODEX 以外の LaunchEffect は外側の handler へ回す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "headless-codex-adapter" :role "foundation"})
@@ -204,7 +203,7 @@
                #("LaunchEffect.bare" request.bare)
                #("LaunchEffect.new_context_id" (isinstance request.new-context-id NamedContextId))
                #("LaunchEffect.resume_snapshot" (is-not request.resume-snapshot None))
-               ;; 出来事の記録は claude の adapter だけが持つ(agora card ki-31b41eac5071)。
+               ;; 出来事の記録は claude の adapter だけが持つ。
                #("LaunchEffect.event_record" (is-not request.event-record None))))
   (val refused (next (gfor #(capability present) asked :if present capability) None))
   (when (is-not refused None)
@@ -703,7 +702,7 @@
 
   (FollowUpEffect [handle message mode input-ref attachments record-note]
     :when (in handle.session-id state.sessions)
-    ;; 出来事の記録を持たない adapter は、記録へ畳む物を黙って捨てずに断る(agora card ki-31b41eac5071)。
+    ;; 出来事の記録を持たない adapter は、記録へ畳む物を黙って捨てずに断る。
     (when (is-not record-note None)
       (raise (AgentCapabilityUnsupportedError :capability "FollowUpEffect.record_note" :handler HANDLER-NAME)))
     (<- images (images-of attachments))

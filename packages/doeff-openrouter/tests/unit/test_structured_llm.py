@@ -351,7 +351,7 @@ async def test_chat_completion_tracks_prompt_state():
 
 def test_chat_completion_retry_waits_on_the_time_handler_clock():
     """The wait between retries is doeff-time's Delay: two transient failures move the virtual
-    clock 1 s each, and the test never sleeps (card ki-94380dba532f)."""
+    clock 1 s each, and the test never sleeps."""
 
     response_data = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
     request = AsyncMock(

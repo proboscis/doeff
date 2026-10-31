@@ -71,7 +71,7 @@ class SyncTimeRuntime:
         if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
             # The deadline is an external promise a wall-clock timer completes (the scheduler knows
             # when it wakes — #765), raced against the future(s); the timer is stopped afterwards.
-            # WaitTicks' deadline is its last tick (agora-redesign #3066).
+            # WaitTicks' deadline is its last tick.
             started = float(self._monotonic())
             seconds = timed_wait_seconds(effect)
             deadline = yield CreateExternalPromise(deadline=time.monotonic() + seconds)
@@ -102,7 +102,7 @@ class SyncTimeRuntime:
                 timer.daemon = True
                 timer.start()
                 yield WaitTask(ep.future)
-                # Wait(task) answers the scheduled program's value (agora-redesign #1159).
+                # Wait(task) answers the scheduled program's value.
                 return (yield effect.program)
 
             # Resume the caller with the spawned Task (same contract as

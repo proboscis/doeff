@@ -382,6 +382,36 @@ KEEP: tuple[Keep, ...] = (
     Keep("packages/doeff-agents/tests/test_headless_adapter.hy", "4", "token shape", "test fake"),
     Keep("packages/doeff-cluster/tests/test_supplied_held.hy", "4", "token shape", "test fake"),
     Keep("packages/doeff-cluster/tests/test_supplied_values.hy", "4", "token shape", "test fake"),
+    Keep(
+        "packages/doeff-hy/src/doeff_hy_bytecode_guard/_macro_use.py",
+        "1",
+        "quote after a speaker (no time)",
+        "code: Python's operator module",
+    ),
+    Keep(
+        "packages/doeff-validation/tests/test_validate.py",
+        "1",
+        "quote after a speaker (no time)",
+        "code: Python's operator module",
+    ),
+    Keep(
+        "packages/doeff-records/src/doeff_records/_laws.hy",
+        "1",
+        "quote after a speaker (no time)",
+        "code: the operator-paths field of a records table",
+    ),
+    Keep(
+        "packages/doeff-records/src/doeff_records/_values.hy",
+        "1",
+        "quote after a speaker (no time)",
+        "code: the operator-paths field of a records table",
+    ),
+    Keep(
+        "packages/doeff-records/tests/test_admission.hy",
+        "1",
+        "quote after a speaker (no time)",
+        "code: the operators field of a records schema",
+    ),
 )
 
 

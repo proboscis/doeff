@@ -1,5 +1,5 @@
 ;;; handle(一度きりの handler をその場で program に当てる)が、名を付けた defhandler を with-handler で当てた program と同じ物で
-;;; ある事の検(card ki-fb1c0fb41ff5)。
+;;; ある事の検。
 ;;;
 ;;; 確かめること: 同じ節を handle で書いた program と defhandler + with-handler で書いた program が同じ答えを返す(resume・transfer・
 ;;; finish・:when の守りと外への reperform・<- で外へ頼む節)・resume を使えない書き方(Raise の節の resume・resume の抜けた枝)が

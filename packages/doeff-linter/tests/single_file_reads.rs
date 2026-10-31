@@ -1,4 +1,4 @@
-//! 1 file の実行(`--output-format editor-json --stdin --path <file>` — 書き込み直後の hook とエディタ)が読む範囲の検(card ki-a9959efd9cf6 の残り)。
+//! 1 file の実行(`--output-format editor-json --stdin --path <file>` — 書き込み直後の hook とエディタ)が読む範囲の検。
 //!
 //! 1 file の検査は、書いた file と、その file が名指す定義だけで答えが決まる。以前は repo の Hy の file を全部読んで(事実の種類ごとに
 //! file 1 つずつ 約 1 万回の open・agora-controllers で 1 回 CPU 0.5〜1.5 秒)から書いた file 1 つを判じていた — 混んだ Pod(load 40〜100)では
@@ -242,7 +242,7 @@ fn a_single_file_run_stores_facts_only_for_the_modules_the_file_names() {
 
 /// 逆向きの依存のうち、引数に渡された Program(呼び手が別の file)が要る file の 1 file の実行は、呼び先の名を字面に含む file だけを解析する:
 /// repo 全体の表を通らず、呼び手でない module(3〜)の defk の名も、引数に渡された Program の事実も cache に置かない(冷えた作業木の最初の 1 回が
-/// repo の Hy の全部を作り直して 8〜13 秒かかっていた・card ki-58bfad2c13a1 の残り)。答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
+/// repo の Hy の全部を作り直して 8〜13 秒かかっていた)。答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
 #[test]
 fn a_single_file_run_that_needs_the_callers_reads_only_the_files_that_spell_the_callee() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -261,8 +261,8 @@ fn a_single_file_run_that_needs_the_callers_reads_only_the_files_that_spell_the_
 }
 
 /// 逆向きの依存のうち、失敗の型の宣言(別の file の defeffect の `:failure`)が要る file の 1 file の実行も、型の名を字面に含む宣言の file だけを読む:
-/// repo 全体の表を通らず、置く失敗の型の事実も、型の名を綴る宣言の file の分だけ(冷えた作業木の最初の 1 回が 19〜27 秒かかっていた・card ki-58bfad2c13a1 の残り)。
-/// 宣言の file の読み解きを置くのは、次の実行が同じ file を読み解き直さないため(混んだ機体の hook の CPU の大半だった・agora-redesign #1022)。置き場の鍵は全体の実行と同じ。
+/// repo 全体の表を通らず、置く失敗の型の事実も、型の名を綴る宣言の file の分だけ(冷えた作業木の最初の 1 回が 19〜27 秒かかっていた)。
+/// 宣言の file の読み解きを置くのは、次の実行が同じ file を読み解き直さないため(混んだ機体の hook の CPU の大半だった)。置き場の鍵は全体の実行と同じ。
 /// 答えは `a_single_file_run_answers_like_the_whole_run_for_that_file` が守る。
 #[test]
 fn a_single_file_run_that_needs_the_failure_types_reads_only_the_declarations_that_spell_the_type() {

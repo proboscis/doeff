@@ -67,7 +67,7 @@
 ;;;   NodeReads                 偽の k8s が coordinator へ伝えた node の名の列(伝えた順の tuple — 時間で node の label を読みに行く数の検・#4070)。
 ;;;   RelabelNode 名 labels      node の label を替える(本番の Node の変化の出来事に当たる — 待っている coordinator を起こす)。
 ;;;   WriteRoomFile text        枠の file の中身を替える(None = 消す — 本番の ConfigMap worker-room の変更に当たる。SimWorker の reads-room の
-;;;                             worker が読み直して名乗る・card ki-ced3c45980a5)。
+;;;                             worker が読み直して名乗る)。
 ;;;   ReportsOf 名             coordinator に届いた ReportReady / ReportMetrics の列(SimReport)。
 ;;;   ReadinessOf 名            coordinator の Service の status の ready(ServiceReadiness — Ready / NotReady / Unknown / Missing)。
 ;;;   ProcessesOf 名            その job の process の列(SimProcess — 世代・worker・始まり・終わり・exit-code)。task は task/<id>。
@@ -81,7 +81,7 @@
 ;;;   ReadCoordinator path      coordinator の口の GET の本文(/state・/workers/<名>・/metrics など)。
 ;;;   StopCoordinator 秒        coordinator の Pod を優雅に止め(次の拍の止めの合図)、秒の間止めてから作り直す(置き場から読み直す)。
 ;;;   CrashCoordinator 秒       次の Persist を失敗させる(返事をせずに落ちる — 取った要求の送り手には接続の失敗)。秒の後に作り直す。
-;;;   StallCoordinator 秒       coordinator の機体ごと秒の間止める(2026-10-13 の atlas の 3 分の止まりの形 — card ki-d033e5f969cf): 調停
+;;;   StallCoordinator 秒       coordinator の機体ごと秒の間止める(2026-10-13 の atlas の 3 分の止まりの形): 調停
 ;;;                             ループも受付も答えず、並んでいた要求と止まりの間の送りは接続の失敗になる。明けると同じ一生のまま
 ;;;                             (置き場から読み直さない)調停ループが続く。
 ;;;   FailRoute 型 path 状態 秒  coordinator の口 型 path(完全一致)への要求に、秒の間 状態(5xx など)で答える(本番の coordinator の前の
@@ -99,7 +99,7 @@
 ;;;   StallWorker 名 秒         worker の処理を秒の間止める(heartbeat を送らない・送りの失敗が無いので fence も効かない・子は動き続ける —
 ;;;                             本番の worker の処理が I/O で止まった形・#2804)。
 ;;;   StepWorkerWall 名 秒      worker の機体の壁の時計だけを秒の分戻す(負 = 進める)。単調な時計と世界の時計(coordinator・他の worker)は
-;;;                             動かない — NTP の step・機体の suspend(単調は進まず壁だけ進む)の形(card ki-069f4a5c07f7)。
+;;;                             動かない — NTP の step・機体の suspend(単調は進まず壁だけ進む)の形。
 ;;;                             steps-wall の worker にだけ使える(その worker と子 process の GetTime がずれる)。
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
@@ -263,7 +263,7 @@
 (val QUEUE-WAIT-SECONDS 0.01)                ; coordinator が受け付けを始める・worker が最初に名乗るのを待つ間隔
 (val WORKER-WAIT-SECONDS 5.0)                ; 筋書きの前に worker が最初に名乗るのを待つ上限(名乗れない worker が在っても筋書きは始める)
 ;; 世界が静まった時だけ走る優先度: 普通の task(TaskPriority.NORMAL = 10)と外の待ちの席(PRIORITY_EXTERNAL_WAIT = 5)が 1 つも走れない時に
-;; 走り、仮想の時計を進める係(TaskPriority.IDLE = 0)より先に走る — 今の刻の仕事が尽きた時(card ki-a27b195a3f92)。
+;; 走り、仮想の時計を進める係(TaskPriority.IDLE = 0)より先に走る — 今の刻の仕事が尽きた時。
 (val SETTLED-PRIORITY 1)
 (val DRAIN-TTL-SECONDS (float (+ DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS)))  ; drain の期限(本番の preStop の頼みと同じ)
 (val REPORT-KINDS #("readiness" "metrics"))
@@ -276,8 +276,8 @@
 (val STALL-REASON "sim: coordinator の機体が止まっている(StallCoordinator — 返事なし)")
 ;; 模擬の世界の時間の設定の既定の比: :timing を渡さない筋書きは、本番の既定の窓を全部この比で延ばした設定(scaled-timing)で走る。
 ;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
-;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
-;; 200 → 350(#3871 の単位 5・cisco-c8 の決定 2026-10-07): worker の代役が本番と同じく heartbeat ごとに周を 1 回まわすようになり
+;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する。
+;; 200 → 350(#3871 の単位 5): worker の代役が本番と同じく heartbeat ごとに周を 1 回まわすようになり
 ;; (前は静かな周を眠り heartbeat を受付の列に預けた)、仮想の 1 日を回す日次の検証の歩が 158,366 → 317,374 に増えた。周 1 回を
 ;; 軽くした後(呼び鈴を task なしで競わせる・代役の読み直しを 1 つ省く — 271,329)も上限 170,000 を越えたので、heartbeat の周の数を
 ;; 減らす比を足した。測った比: 300 = 187,158(越える)・350 = 163,384・400 = 145,061。上限に入る最小の 350 を採る。
@@ -290,8 +290,8 @@
   "sim の worker 1 台(本番の worker の --provides・--exclusive・--task-reserve・--background-room・--memory-mib・node に当たる)。provides =
    提供する能力の名・exclusive = 専用の能力(この能力を needs に持つ job だけを受ける)・task-reserve = task のために空けておく数(必ず渡す —
    本番の worker の --task-reserve と同じく既定の値は無い)・background-room = 背景の仕事を同時に置ける数(既定 10 — 模擬の筋書きが task の
-   空きを気にせず走るため。本番の既定は 0)・memory-mib = 常駐の job の memory の予算(MiB — None = 名乗らず、memory で縛られない・
-   card ki-2acb63aec0fd)・node = 置かれた k8s の node の名(空 = k8s の外)・
+   空きを気にせず走るため。本番の既定は 0)・memory-mib = 常駐の job の memory の予算(MiB — None = 名乗らず、memory で縛られない)
+   ・node = 置かれた k8s の node の名(空 = k8s の外)・
    versions = 名乗る版(None = 送り手と同じ筋の versions — 違えば版の合わない task は置かれない)・prepare-seconds = コードの木と
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
@@ -304,7 +304,7 @@
    途絶しても動かし続けてよい印(#2804)を知らない古い版の worker の代役(heartbeat に keptWhenCutOff を載せず、返事の keepWhenCutOff を
    読み捨てる — 新しい coordinator と古い worker の組を確かめるため)・silent-stop = 反例の世界だけの壊れた worker(宣言の読みの handler が
    止まり始めを heartbeat で名乗らない — 条 C3 の反例・#2819)・overstates-memory = 反例の世界だけの壊れた worker(heartbeat で memory-mib の
-   代わりにこの予算を名乗る — None = memory-mib。本当の予算は memory-mib のまま — 条 C6 の反例・#1976・card ki-2acb63aec0fd)・claims-provides = 反例の世界だけの
+   代わりにこの予算を名乗る — None = memory-mib。本当の予算は memory-mib のまま — 条 C6 の反例・#1976)・claims-provides = 反例の世界だけの
    壊れた worker(heartbeat で provides の代わりにこの能力を名乗る — None = provides。本当に提供する能力は provides のまま — 条 C7 の反例・#1976)・
    claims-exclusive = 反例の世界だけの壊れた worker(heartbeat で exclusive の代わりにこの専用の能力を名乗る — None = exclusive。本当の
    専用の能力は exclusive のまま — 条 C10 の反例・#1976)・fresh-boot-every-beat = 反例の世界だけの壊れた worker(heartbeat ごとに新しい
@@ -317,10 +317,10 @@
    置き先の判断と版の突き合わせ versions には使わない。空 = 版を名乗らない筋書き・#3366)・steps-wall = 機体の壁の時計を筋書きが動かす
    worker(StepWorkerWall の相手 — 宿の外側に機体の壁の時計の代役 worker-wall を並べ、その worker の調整ループ・宿・子 process の
    GetTime を世界の時計から動かした分だけずらす。偽 = 世界の時計をそのまま読む。この worker が起こした process の記録 SimProcess の
-   刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない・card ki-069f4a5c07f7)・
+   刻は世界の時計のまま。処理の止まり StallWorker の明けの刻は世界の時計なので、壁を動かした worker と併せて使わない)・
    reads-room = 枠の file を読む worker(本番の --room-file を渡した worker — 世界の枠の file を WriteRoomFile が書き換え、worker は本番の
    room-noted と同じ間 room-read-due で読み直して、file の行の task-reserve・background-room・memory の予算・置ける組の印 pools を名乗る。組の
-   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の task-reserve・background-room・memory-mib・組の印は無し)のまま・card ki-ced3c45980a5)。"
+   印は provides に足す。file を読めない・崩れた間は前に名乗った値(初めは SimWorker の task-reserve・background-room・memory-mib・組の印は無し)のまま)。"
   (#^ str name)
   (#^ (get frozenset str) provides)
   (#^ int task-reserve)
@@ -516,7 +516,7 @@
 (defeffect WriteRoomFile
   "検の effect: 枠の file(本番の ConfigMap worker-room を kubelet が Pod へ置いた file)の中身を text に替える(None = file を消す — 読む
    worker は unreadable を名乗る)。枠の file を読む worker(SimWorker の reads-room)は本番と同じ間で読み直し、Pod を作り直さずに新しい
-   行を名乗る(card ki-ced3c45980a5)。走りの初めは file が無い(読む worker は書かれるまで SimWorker の値を名乗る)。"
+   行を名乗る。走りの初めは file が無い(読む worker は書かれるまで SimWorker の値を名乗る)。"
   {:fields [(: text (| str None))]
    :answer None
    :tags {:context "doeff-cluster" :role "intent"}})
@@ -612,7 +612,7 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect StallCoordinator
-  "検の effect: coordinator の機体ごと seconds 秒止める(card ki-d033e5f969cf — 2026-10-13 02:22〜02:24 JST の atlas の形: containerd と
+  "検の effect: coordinator の機体ごと seconds 秒止める(2026-10-13 02:22〜02:24 JST の atlas の形: containerd と
    kubelet が 3 分答えず、coordinator の process も受付も止まった)。並んでいた要求は接続の失敗で切れ、止まりの間の送りも接続の失敗に
    なる(調停ループに届かない)。調停ループは次の取りで止まり、明けると同じ一生のまま(置き場から読み直さない)続く。答え = None。"
   {:fields [(: seconds float)]
@@ -708,7 +708,7 @@
   (#^ str revision)
   (#^ dict versions)
   (#^ int start-ms)
-  ;; 起点 start-ms と同じ刻の単調な時計の読み(ms — 最初の世代の宿が、最後の連絡とみなす初めの刻を 2 つの時計で持つ・card ki-069f4a5c07f7)。
+  ;; 起点 start-ms と同じ刻の単調な時計の読み(ms — 最初の世代の宿が、最後の連絡とみなす初めの刻を 2 つの時計で持つ)。
   (#^ int start-mono-ms)
   (#^ ClusterTiming timing)
   (#^ ClusterNaming naming)
@@ -810,7 +810,7 @@
   (setv #^ bool overlaps-elder False)
   ;; 枠の file を読む worker(SimWorker の reads-room)が最後に名乗った枠(本番の LinkState の task-reserve・background-room・memory-mib・pools —
   ;; None = まだ読めていない = SimWorker の値を名乗る)・最後に読んだ状態(None = まだ読んでいない・読まない worker — heartbeat の
-  ;; roomFile に載せない)・最後に読んだ刻(card ki-ced3c45980a5)。世代ごと(新しい世代は読み直す — 本番の起動の boot-room と同じく
+  ;; roomFile に載せない)・最後に読んだ刻。世代ごと(新しい世代は読み直す — 本番の起動の boot-room と同じく
   ;; 最初の heartbeat の前に読む)。
   (setv #^ (| WorkerRoom None) room None)
   (setv #^ (| RoomState None) room-state None)
@@ -888,7 +888,7 @@
 
 (defeffect RoomFileText
   "世界の枠の file の今の中身(None = file が無い — WriteRoomFile が書き換える)。枠の file を読む worker(SimWorker の reads-room)の
-   heartbeat が、読み直しの番の拍にだけ問う(本番の room-noted の ReadText に当たる・card ki-ced3c45980a5)。"
+   heartbeat が、読み直しの番の拍にだけ問う(本番の room-noted の ReadText に当たる)。"
   {:answer (| str None) :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect PutHostTruth
@@ -1488,7 +1488,7 @@
   queue)
 
 
-;; 終わりの出口(card ki-e7945a2b2d00)の待ち手の呼び鈴の鍵(task の key は呼び手が決める語で、NUL を含まない — 重ならない)。
+;; 終わりの出口の待ち手の呼び鈴の鍵(task の key は呼び手が決める語で、NUL を含まない — 重ならない)。
 (val OUTBOX-BELL "\u0000outbox")
 
 
@@ -2033,7 +2033,7 @@
   (<- kept tuple (keep-marks-held truth.last-desired))
   (val named (if (is worker.claims-provides None) worker.provides worker.claims-provides))
   (val named-exclusive (if (is worker.claims-exclusive None) worker.exclusive worker.claims-exclusive))
-  ;; 枠の file から名乗る枠(card ki-ced3c45980a5 — 読めていない worker は SimWorker の値・組の印は無し)。
+  ;; 枠の file から名乗る枠(読めていない worker は SimWorker の値・組の印は無し)。
   (val room (if (is truth.room None)
                 (WorkerRoom :task-reserve worker.task-reserve :background-room worker.background-room :memory-mib worker.memory-mib)
                 truth.room))
@@ -2057,7 +2057,7 @@
 (defk room-noted-truth [worker boot truth now-ms]
   {:pre [(: worker SimWorker) (: boot str) (: truth HostTruth) (: now-ms int)] :post [(: % HostTruth)]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "本番の coordinator への口の room-noted の代役(card ki-ced3c45980a5): 枠の file を読む worker が、読み直しの番(room-read-due)に世界の
+  "本番の coordinator への口の room-noted の代役: 枠の file を読む worker が、読み直しの番(room-read-due)に世界の
    枠の file を読み、名乗る枠(task-reserve・background-room・memory の予算・置ける組の印)と読めた状態を宿の真実へ書いて、その真実を返すため。
    読めない・崩れた file は前に名乗った値のまま(状態だけを替える — 本番と同じ room-of-text の判断)。読まない worker と番でない拍は
    truth のまま返す(世界へ問わない)。"
@@ -2092,7 +2092,7 @@
   (<- body dict (beat-body worker roomed sent-at stopping plan))
   (<- answer tuple (send-request link "POST" "/heartbeat" {} body))
   (<- now int (now-epoch-ms))
-  ;; 返事の刻は壁の時計と単調な時計の両方で読む(沈黙の計りの起点と今 — 本番の coordinator への口の beat と同じ・card ki-069f4a5c07f7)。
+  ;; 返事の刻は壁の時計と単調な時計の両方で読む(沈黙の計りの起点と今 — 本番の coordinator への口の beat と同じ)。
   (<- mono float (GetMonotonic))
   (val now-mono-ms (monotonic-ms-of mono))
   (if (= (get answer 0) 200)
@@ -2234,7 +2234,7 @@
    (tick の頭 — #4332)で組み立てる heartbeat の期限(beat-due — 間隔は反例の worker の beat-every-ms か返事の間隔)・途絶の柵
    (fence-due)・前の heartbeat が届いていなければ再送の時刻(now + RESEND-AFTER-MS)と、宿が持つ時刻(処理の止まりの明け
    stalled-until-ms・準備の揃う時刻 ready-ms — 本番では準備の task の終わり)の早い方。最後に届いた返事と tick の頭は、本番と同じく今の
-   壁の時計の枠へ写してから使う(今の壁の時計 − heartbeat_rules.silent-ms — card ki-069f4a5c07f7)。呼び鈴 = 宿の呼び鈴 bell(期限が
+   壁の時計の枠へ写してから使う(今の壁の時計 − heartbeat_rules.silent-ms)。呼び鈴 = 宿の呼び鈴 bell(期限が
    全部過ぎても起きる物の無い待ちにしない)。bell が None なら、周の頭に掛けた鈴がこの周の間に鳴った(周の観測の後の出来事かも
    しれない)ので今すぐ(本番の、もう終わった子の待ちと同じ)。"
   (val interval (if (is worker.beat-every-ms None) truth.beat-interval-ms worker.beat-every-ms))
@@ -2268,8 +2268,8 @@
     (<- ticked HostTruthChange (change-live-truth worker.name boot ticked-truth))
     (val truth ticked.after)
     (<- now int (now-epoch-ms))
-    ;; 沈黙の長さは壁の時計と単調な時計の長い方(本番の coordinator への口の polled と同じ計り — heartbeat_rules.silent-ms・card
-    ;; ki-069f4a5c07f7)。送る間隔の判断と自己停止の判断の両方がこの値を使う。
+    ;; 沈黙の長さは壁の時計と単調な時計の長い方(本番の coordinator への口の polled と同じ計り — heartbeat_rules.silent-ms)。
+    ;; 送る間隔の判断と自己停止の判断の両方がこの値を使う。
     (<- mono float (GetMonotonic))
     (<- silent int (silent-ms now (monotonic-ms-of mono) truth.last-ok-ms truth.last-ok-mono-ms))
     (val watching (and truth.watch-confirmed (not truth.watch-unsupported) (is-not truth.watch-after None)
@@ -2326,7 +2326,7 @@
   (ForgetProbes [keep]
     (<- (change-live-truth worker.name boot (fn [truth] (replace truth :probes (dfor #(k v) (.items truth.probes) :if (in k keep) k v)))))
     (resume None))
-  ;; 待ちの子(#3646)の代役: 起こした刻に準備済み(模擬に読み込みの秒も thread も VM も無い・service の頼みも受ける版 — card ki-de44efdb9aa4)・止めは合図の刻に終わる(TERM = -15・
+  ;; 待ちの子(#3646)の代役: 起こした刻に準備済み(模擬に読み込みの秒も thread も VM も無い・service の頼みも受ける版)・止めは合図の刻に終わる(TERM = -15・
   ;; KILL = -9)・忘れると観測から外す。分かれた task は待ちの子と別に走る(本番の A が別の session なのと同じ — 止めても task に触れない)。
   (StartWarmChild [key launch]
     (<- now int (now-epoch-ms))
@@ -2449,7 +2449,7 @@
   (WorkerWakes [began began-mono-ms]
     ;; 周の間の待ちを起こす物(#3871 の単位 5)の一番外: 宿の期限(本番の送り手の口と同じ関数)と宿の呼び鈴(host-wakes)。宿の内側に
     ;; 状態を持つ handler は無いので、外へ出し直さずに答える。今の刻は壁の時計と単調な時計の両方で読む(期限を今の壁の時計の枠で
-    ;; 組み立てる — 本番の coordinator への口の WorkerWakes と同じ・card ki-069f4a5c07f7)。
+    ;; 組み立てる — 本番の coordinator への口の WorkerWakes と同じ)。
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
     (<- mono float (GetMonotonic))
@@ -2482,7 +2482,7 @@
   ;; 引数に残す理由: worker ごとに別の機体の時計を並べる(run-worker は自分の名を effect で問わない)ので Ask で区別できない。
   ;; worker name の機体の壁の時計の代役(steps-wall の worker の宿の外側 — run-sim-worker が並べる): 世界の時計の答えを、筋書きが
   ;; StepWorkerWall で動かした分(世界が持つ — WallBackOf)だけずらす。単調な時計(GetMonotonic)と待ち(Delay)は世界の時計のまま通す
-  ;; — 壁の時計だけが動く(NTP の step・機体の suspend の後の形・card ki-069f4a5c07f7)。
+  ;; — 壁の時計だけが動く(NTP の step・機体の suspend の後の形)。
   (GetTimeEffect []
     (<- now datetime effect)
     (<- back-ms int (WallBackOf name))
@@ -2672,7 +2672,7 @@
   ;; 書きより前に要る・#3132)。返事と書きは帳面 book に溜める。
   (NextRequests [timeout-seconds limit]
     (<- taken list effect)
-    ;; 機体ごとの止まり(StallCoordinator)は取りの後に始まる: 取った要求を切り、明けるまで調停ループを止める(card ki-d033e5f969cf)。
+    ;; 機体ごとの止まり(StallCoordinator)は取りの後に始まる: 取った要求を切り、明けるまで調停ループを止める。
     (<- batch list (stall-taken queue taken))
     ;; 篩い・報告の記録・覚えを、世界への問い 1 つで(#3054 の C-6)。
     (<- admitted Admission (AdmitBatch (tuple batch)))
@@ -2734,7 +2734,7 @@
 
 (defk stall-taken [queue taken]
   {:pre [(: queue RequestQueue) (: taken list)] :post [(: % list)] :tags {:context "doeff-cluster" :role "program"}}
-  "機体ごとの止まり(StallCoordinator — card ki-d033e5f969cf)が立っていれば、取った要求を接続の失敗で切り、明ける刻まで調停ループを
+  "機体ごとの止まり(StallCoordinator)が立っていれば、取った要求を接続の失敗で切り、明ける刻まで調停ループを
    止めてから受付を戻し、空の取りを返すため(本番の機体の止まりでは、process も受付も答えず、送り手は打ち切りで諦める)。立って
    いなければ取った要求をそのまま返す。止まりの間は調停ループが判断をしない — 明けた歩の判断の刻は止まりの後になる。"
   (if (not queue.stalled-until)
@@ -2849,7 +2849,7 @@
 (defk world-up-watch [jobs]
   {:pre [(: jobs tuple)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "世界が立ち上がった出来事を歩数の印に残すため: 宣言の job が全部 最初の process を起こした後、世界が初めて静まった(普通の task が
-   1 つも走れず、時計を進めるしか無い)時を「立ち上がった」とする(card ki-a27b195a3f92 — 歩数の上限は立ち上がりから止め始めまでの
+   1 つも走れず、時計を進めるしか無い)時を「立ち上がった」とする(歩数の上限は立ち上がりから止め始めまでの
    走りの分だけを数え、起動の追いつきは起動の歩数に入る)。時刻では区切らない。起きない job が在れば立ち上がらず、止めの時に
    sim-main が取り消す(その世界の歩数は全部 起動に数える)。"
   (for [job jobs]
@@ -3178,7 +3178,7 @@
   ;; coordinator の Pod の環境変数(ReplaceCoordinatorEnviron で差し替える — 一生の始めに CoordinatorEnvironOf で読む・#3772)。
   (session var coordinator-environ #())
   ;; 枠の file の中身(本番の ConfigMap worker-room を kubelet が Pod へ置いた file — None = 無い。WriteRoomFile で書き換え、枠の file を
-  ;; 読む worker の heartbeat が RoomFileText で読む・card ki-ced3c45980a5)。
+  ;; 読む worker の heartbeat が RoomFileText で読む)。
   (session var room-text None)
   ;; coordinator の歩の記録(CoordinatorStep の tuple・刻の順 — AdmitBatch が運ぶ・検が CoordinatorSteps で読む・#2670 の根 B)。
   (session var steps-seen #())
@@ -3989,7 +3989,7 @@
   "coordinator の Pod を起こし、宣言を書き、worker を並べてから scenario を(筋書きの送り手の口の下で)走らせ、終われば worker・
    coordinator の順に止めるため。scenario は行き止まりの見張り(deadlock-watch)と競わせ、見張りが行き止まりを見つければ scenario を
    待たずに SimDeadlockError で終わる(#3078)。歩数の上限の plugin のために、始まり・立ち上がり(world-up-watch)・止め始め・
-   終わりの印を残す(card ki-a27b195a3f92)。"
+   終わりの印を残す。"
   (mark-world-phase "begun")
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))

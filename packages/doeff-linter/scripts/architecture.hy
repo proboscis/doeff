@@ -1,4 +1,4 @@
-;;; packages/doeff-linter/scripts の file の層の宣言(agora-redesign #3012)。
+;;; packages/doeff-linter/scripts の file の層の宣言。
 ;;;
 ;;; 今は、規則の母集団から外す層 1 つだけを置く(tools/architecture.hy・packages/doeff-indexer/architecture.hy と同じ形)。doeff-linter は
 ;;; Python の文ごとの規則の母集団を、file から上へ最も近い architecture.hy から決める(#2811)。ここで外すのは下の名指しの module だけ。

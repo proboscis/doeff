@@ -40,7 +40,7 @@ static FILE_NOQA_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// noqa の書き方の知らせ(NoqaWarning)を違反として出す時の規則の ID — Python の規則を走らせた file には必ず出しうる(`lint_source` が
-/// 出し、editor-json の `judged_rules` が Python の規則と一緒に名乗る・agora-redesign #2163)。
+/// 出し、editor-json の `judged_rules` が Python の規則と一緒に名乗る)。
 pub const NOQA_RULE_ID: &str = "NOQA001";
 
 /// A warning from noqa parsing

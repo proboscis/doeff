@@ -131,13 +131,13 @@ _COLLECTED_FILES_KEY = pytest.StashKey[frozenset[Path]]()
 # One measurement per session: the collection-finish report and an in-session
 # gate test read the same verdict instead of walking rootdir twice.
 _WIRING_VERDICT_KEY = pytest.StashKey[WiringVerdict]()
-# 収集の終わりの報告(agora-redesign #1223): 記録から収集した file と、import して収集した file とその理由。
+# 収集の終わりの報告: 記録から収集した file と、import して収集した file とその理由。
 _INDEXED_FILES_KEY = pytest.StashKey[list[Path]]()
 _IMPORTED_FILES_KEY = pytest.StashKey[list[tuple[Path, str]]]()
 _DEPENDENCY_CHECKS_KEY = pytest.StashKey[DependencyChecks]()
 _PENDING_ENTRIES_KEY = pytest.StashKey[tuple[PendingEntry, ...]]()
 _SESSION_PATHS_KEY = pytest.StashKey["SessionPaths"]()
-# ini の doeff_hy_test_skips を起動の時に読んだ物(agora-redesign #2591)。
+# ini の doeff_hy_test_skips を起動の時に読んだ物。
 _HY_TEST_SKIPS_KEY = pytest.StashKey["HyTestSkips"]()
 
 
@@ -148,7 +148,7 @@ class DoeffAdrHookspecs:
     def pytest_doeff_import_hy_module(self, collector: pytest.Module) -> types.ModuleType | None:
         """Hy の test file の module を読む — 収集で読む時(記録で説明できない file)と、item の setup で読む時
         (記録から収集した file)の両方がここを通る。import の時間を測る plugin(doeff-hy-pytest の上限)は、この hook を
-        wrapper で包む(agora-redesign #1225)。"""
+        wrapper で包む。"""
         raise NotImplementedError
 
 
@@ -173,7 +173,7 @@ class HySourceFinder(importlib.abc.MetaPathFinder):
     pytest の書き換え(``AssertionRewritingHook``)は、命令の行で名指した file の module を ``SourceFileLoader`` の
     spec で見つけると ``ast.parse`` で Python として読み直す。Hy の loader は ``SourceFileLoader`` の子なので、名指しの
     .hy を別の test file が名前で import すると SyntaxError になる(記録から収集した file はまだ読まれていないので
-    当たりやすい — agora-redesign #1211 の後の報告)。書き換えより前に置き、.hy の spec はそのまま(Hy の loader)返す。
+    当たりやすい)。書き換えより前に置き、.hy の spec はそのまま(Hy の loader)返す。
     loader そのものには触れない(bytecode の見張り(#1292)が包む ``SourceFileLoader`` の口はそのまま効く)。
     """
 
@@ -197,7 +197,7 @@ def pytest_configure(config: pytest.Config) -> None:
     ここで先頭に入れれば書き換えより先に .hy を引き受けられる。"""
     if _HY_SOURCE_FINDER not in sys.meta_path:
         sys.meta_path.insert(0, _HY_SOURCE_FINDER)
-    # deftest の :scans が付ける印(agora-redesign #3874)— deftest を集めるこの plugin が登録し、どの repo でも知らない印にしない。
+    # deftest の :scans が付ける印— deftest を集めるこの plugin が登録し、どの repo でも知らない印にしない。
     config.addinivalue_line("markers", "scans(*globs): このテストが走査して読む dir か glob(deftest の :scans — 選びの道具が当てる)")
     # 外す一覧は起動の時に 1 度だけ読む — 理由の無い行はここで run を止める(収集の file ごとに読み直さない)。
     config.stash[_HY_TEST_SKIPS_KEY] = parse_hy_test_skips(config.getini("doeff_hy_test_skips"))
@@ -266,7 +266,7 @@ class HyFileMatcher:
 
     候補は fnmatch と同じ意味で、file の名・rootdir からの path・絶対 path の 3 つ(``_matches_file_patterns`` と同じ)。rootdir の下
     の path は文字列の頭で分かるので、Path の分解と再生成(``relative_to`` — 収集で 1 file ごとに 3 度、走査でも 1 度)を
-    繰り返さない(agora-redesign #1551)。文字の上で rootdir の下に無い path は、今までどおり解決(realpath)して相対にする。
+    繰り返さない。文字の上で rootdir の下に無い path は、今までどおり解決(realpath)して相対にする。
     """
 
     root: Path
@@ -344,8 +344,8 @@ def pytest_collect_file(file_path: Path, parent: pytest.Collector) -> pytest.Col
     """Hy の file の集め手の 1 点 — executable ADR の pattern と、ini の doeff_hy_test_files の pattern(検の file)。
 
     検の file を package ごとの conftest.py の ``pytest_collect_file`` で集めていた時は、conftest の無い dir の
-    test_*.hy が 1 本も集められないまま、日次の母集団の検には数えられていた(packages/doeff-hy/tests の 6 本・
-    agora-redesign #2591)。集める条件は root の ini の 1 点に置き、日次の母集団の検も同じ ini を読む。
+    test_*.hy が 1 本も集められないまま、日次の母集団の検には数えられていた(packages/doeff-hy/tests の 6 本)。
+    集める条件は root の ini の 1 点に置き、日次の母集団の検も同じ ini を読む。
     """
     path = file_path
     if path.suffix != ".hy":
@@ -466,7 +466,7 @@ class DoeffAdrHyFile(pytest.Module):
     走っていた(ADR-DOE-HY-002 R2「deftest の params を fixture へ忠実に受け渡す」の違反・2026-09-25 の
     doeff-claude-code の検で発覚)。Module の収集は parametrize を callspec に展開する。
 
-    収集で import しない(agora-redesign #1211 / #1223): item を作る macro が書いた記録で説明できる file は、記録から
+    収集で import しない(#1223): item を作る macro が書いた記録で説明できる file は、記録から
     作った仮の module を Module の収集に渡し、module の import は item の setup まで待つ(``lazy_collection``)。
     記録で説明できない file だけ、今までどおり収集で import する。
     """
@@ -629,7 +629,7 @@ def _hy_test_skip_reason(path: Path, config: pytest.Config) -> str | None:
 
 
 def _skipped_file_items(collector: DoeffAdrHyFile) -> list[pytest.Item] | None:
-    """外す一覧に載る file なら、import せずに理由つきの skip の item 1 つ(走らせた数の報告に毎回出す — agora-redesign #2591)。
+    """外す一覧に載る file なら、import せずに理由つきの skip の item 1 つ(走らせた数の報告に毎回出す)。
     載らなければ None。"""
     reason = _hy_test_skip_reason(collector.path, collector.config)
     if reason is None:
@@ -703,7 +703,7 @@ def _pattern_regex(patterns: tuple[str, ...]) -> re.Pattern[str]:
     """pattern の並びを 1 つの正規表現にする(並びごとに 1 度だけ)。
 
     収集と wiring の走査は file ごとに照合するので、pattern ごと・候補の path ごとに fnmatch を呼ぶと 1 回の収集で
-    6 万回近くになっていた(agora-redesign #1334)。意味は fnmatch.fnmatch と同じ(normcase をかけ、全体に当てる)。
+    6 万回近くになっていた。意味は fnmatch.fnmatch と同じ(normcase をかけ、全体に当てる)。
     """
     return re.compile("|".join(f"(?:{fnmatch.translate(os.path.normcase(p))})" for p in patterns))
 
@@ -826,7 +826,7 @@ def _discover_executable_adrs(
     """rootdir の下の executable ADR の file(解決した path)を全部集める。
 
     os.walk と同じ辿り方(symlink の dir は降りない・読めない dir は飛ばす・dir の数の上限)を scandir で行い、``.hy`` で終わらない
-    名は Path を作る前に除く(agora-redesign #1551 — 1 回の走査で数万の file の Path を作っていた)。rootdir の下の file の
+    名は Path を作る前に除く(1 回の走査で数万の file の Path を作っていた)。rootdir の下の file の
     解決した path は、rootdir を 1 度だけ解決した物から組み立てる(降りた dir に symlink は無い)。file 自身が symlink なら
     今までどおり解決する。
     """
@@ -897,7 +897,7 @@ def _relative_posix(path: Path, root: Path) -> str:
 
     収集と wiring の走査は rootdir の下の path を 1 file ずつ渡すので、文字の上で rootdir の下にあればそのまま
     相対にする。symlink の解決(realpath)は外れた時だけ — 毎回解決すると、収集の 1 回で 1 万回近く呼ばれて
-    収集の時間の 1 割を占めていた(agora-redesign #1227 の実測)。
+    収集の時間の 1 割を占めていた。
     """
     path_text = path.as_posix()
     prefix = root.as_posix().rstrip("/") + "/"
@@ -942,7 +942,7 @@ def _relative_module_parts(path: Path, root: Path) -> list[str] | None:
 
     収集は file ごとに import の基の dir と module の名を決めるので、この部分を 2 度ずつ求める。文字の上で rootdir の
     下にある時は文字列を切って分ける — ``with_suffix`` / ``relative_to`` は path を作り直すので、420 file の収集で
-    目立っていた(agora-redesign #1551)。文字列の頭が合わない時は今までの部分の比べに回す。
+    目立っていた。文字列の頭が合わない時は今までの部分の比べに回す。
     """
     text = path.as_posix()
     root_text = root.as_posix()

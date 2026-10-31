@@ -22,7 +22,7 @@
 (defclass FakeWorld []
   "子 process とコードの展開を模す。TERM を無視する job と、KILL でも死なない job を指定できる。crashes = job の名 → 自分で落ちる刻
    (その刻の後の最初の観測で exit code 1 — 1 度だけ)・leaving-at = この宿の Pod の止まり(preStop)が始まる刻(その後の観測は
-   WorldView.leaving — AL-D2p)・refusals = job の名 → 起こすのを断る回数(StartJob の答えを JobNotStarted にする — card ki-e1612a12d0c3)。"
+   WorldView.leaving — AL-D2p)・refusals = job の名 → 起こすのを断る回数(StartJob の答えを JobNotStarted にする)。"
   (defn #^ None __init__ [self #^ tuple [ignore-term #()] #^ tuple [unkillable #()] #^ dict [crashes None] #^ (| int None) [leaving-at None]
                           #^ dict [refusals None]]
     ;; 時刻は doeff-time の仮想の時計(epoch 0 から)。now = その epoch ミリ秒(記録の刻)。
@@ -110,7 +110,7 @@
   (assert (= world.procs {})))
 
 (deftest test-a-leaving-pod-does-not-restart-a-crashed-handoff-job
-  ;; 調整ループ全体で(AL-D2p・設計検証 lt-C071SZK8EQTX19F3YV1MSWT53X の S6): 宿の観測が止まり(preStop の始まり)になった後は、同じ
+  ;; 調整ループ全体で(AL-D2p): 宿の観測が止まり(preStop の始まり)になった後は、同じ
   ;; 判断の Program(run-worker)が、落ちた handoff の job を起こし直さない。止まりでなければ backoff の後に起こし直す。変えるのは宿の
   ;; 観測(FakeWorld の leaving-at)だけ。
   (val handoff (replace A1 :handoff True))
@@ -146,7 +146,7 @@
   (assert (= (lfor s last-statuses :if (= s.name "b") s.phase) [JobPhase.STOP-UNCONFIRMED])))
 
 (deftest test-a-job-that-cannot-be-started-backs-off-alone-and-the-worker-keeps-running
-  ;; card ki-e1612a12d0c3: 宿が「起こせなかった」(StartJob の答え JobNotStarted)と答えても worker の拍は落ちず、その job だけを落ちた時と
+  ;; 宿が「起こせなかった」(StartJob の答え JobNotStarted)と答えても worker の拍は落ちず、その job だけを落ちた時と
   ;; 同じ backoff の後に起こし直す。同じ拍の b は起こし、worker の停止まで触らない(前は宿の OSError が拍を抜けて worker ごと落ちた)。
   (setv world (FakeWorld :refusals {"a" 2})
         script #(#(0 (DesiredJobs #(A1 B1)))))

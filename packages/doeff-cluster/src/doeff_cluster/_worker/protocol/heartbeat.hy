@@ -45,14 +45,14 @@
    :tags {:context "worker" :role "protocol"}}
   "POST /heartbeat の本文(生存・能力・版・状態の報告・世代・持っている印・止まり始め)を作るため。実行環境の root の名乗り(env-body)は
    本番の worker だけが足す。task-reserve = task のために空けておく数・background-room = 背景の仕事を同時に置ける数(どちらも必ず書く — coordinator の task の
-   空きは予約 + 背景の枠 − 置いた task。capacity は送らない — card ki-2acb63aec0fd)。
+   空きは予約 + 背景の枠 − 置いた task。capacity は送らない)。
    kept = 途絶しても動かし続けてよい印を今持っている job の名(worker_policy.keep-marks-held — #2804)。欄を毎回
    書く(空でも)— coordinator は欄の在る worker だけを「印を知る worker」と数え、欄の無い本文(古い worker)には印の約束を持たない。
    stopping = この世代が止まり始めた(coordinator はこの世代へ新しく置かない — drain の頼みを通らない止めの名乗り・#2819)。
    overlaps-elder = この世代は同じ名の前の世代がまだ走っている間に起きた(起動の script が渡す — coordinator は新しい世代の名乗りで
    前の世代の process の lease を外さない・AL-D2e)。真の時だけ欄を書く(偽の本文は前と同じ形)。doeff-commit = この process の doeff の
-   版(起動の script が自己起動した commit の WORKER_DOEFF_COMMIT・card ki-6e83e03d146d — coordinator は Worker の spec.doeffCommit に
-   出す)。空でない時だけ欄を書く(版を持たない worker の本文は前と同じ形)。pools = 枠の file の行の置ける組の印(card ki-ced3c45980a5 —
+   版(起動の script が自己起動した commit の WORKER_DOEFF_COMMIT — coordinator は Worker の spec.doeffCommit に
+   出す)。空でない時だけ欄を書く(版を持たない worker の本文は前と同じ形)。pools = 枠の file の行の置ける組の印(
    provides の後ろに足して名乗る。起動の引数の能力との和で、coordinator は heartbeat ごとに Worker の行の provides を書き直すので、次の
    heartbeat から置き方に効く)。memory-mib = 常駐の job の memory の予算(MiB — 名乗る時だけ欄 memoryMiB を書く。coordinator は置いた job の
    settle の和 + 新しい job の settle がこの値以下の時だけ置き、名乗らない worker は memory で縛らない)。"

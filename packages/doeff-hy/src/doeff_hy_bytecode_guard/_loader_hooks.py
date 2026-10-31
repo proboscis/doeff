@@ -51,8 +51,8 @@ _installation = {"installed": False, "dataclasses": False}
 #: threading は起動時に読まないため、初めて Hy の source に当たった時に作る。
 _compile_counts: dict[str, object] = {}
 
-#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、保存先の鍵に使うため
-#: (agora-redesign #2799)。get_code が終わる時にその path の分を捨てる(source を process の間ずっと持たない)。
+#: この thread で最後に読んだ Hy の source の bytes(path ごと)— compile した bytes を、保存先の鍵に使うため。
+#:get_code が終わる時にその path の分を捨てる(source を process の間ずっと持たない)。
 _source_reads: dict[str, object] = {}
 
 #: file の sha256 — 鍵は (path, 更新時刻 ns, 大きさ)。同じ process で同じ macro の file を何百回も照合するので、
@@ -61,8 +61,7 @@ _digests: dict[tuple[str, int, int], str] = {}
 
 #: 本体を実行した source の file の状態(path → (更新時刻 ns, 大きさ) — 読みの口が本体の実行の直前に読んだ物・process の間)。
 #: .pyc の記録の照らしの歩みは、読み込み済みの module の値を process の中から、その値を覆う文と file の sha256 を今の disk から
-#: 読む。module を実行した後に file が書き換わった常駐の process では 2 つが食い違うので、歩みが確かめる(設計検証
-#: lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A — card ki-be596ac8276f)。
+#: 読む。module を実行した後に file が書き換わった常駐の process では 2 つが食い違うので、歩みが確かめる。
 _executed: dict[str, tuple[int, int]] = {}
 
 #: 読みの口が返した Hy の module の code に載った記録(source の path → 記録 — 記録の無い code は載せない・process の間)。
@@ -112,7 +111,7 @@ def is_hy_source(path: object) -> bool:
 
 def loaded_record(path: str) -> "MacroRecord | None":
     """この process で読みの口が返した Hy の module の code に載った記録(path = source の file。読んでいない・記録の無い code は
-    None)— Hy の test file の item の記録の cache(doeff-adr の item_cache — agora-redesign #1291)が、import した test file の
+    None)— Hy の test file の item の記録の cache(doeff-adr の item_cache)が、import した test file の
     展開が使った macro を、展開し直さず file も読み直さずに引くための公開の口。照らしは :func:`record_is_current_here`(.pyc と
     同じ 1 つの照らし方 — 展開で実行された関数の中身だけを覆う。file 単位で照らすと、macro の提供元のどの行の変更でも item の
     記録が全部冷えた・#3769 の子)。"""
@@ -121,8 +120,8 @@ def loaded_record(path: str) -> "MacroRecord | None":
 
 def macro_recording(module: ModuleType) -> "MacroRecording":
     """Hy の module の展開(compile)を囲む口 — ``with macro_recording(module) as recording:`` の中の展開が使った macro を拾い、
-    ``recording.record(source)`` が記録を作る。compile の口が code に足す記録(.pyc)と、展開した木の cache(doeff-effect-analyzer
-    — agora-redesign #3598)と、型検査の展開の保存(doeff_hy._static_cache — agora-redesign #3862)が同じ 1 つの拾い方と作り方を
+    ``recording.record(source)`` が記録を作る。compile の口が code に足す記録(.pyc)と、展開した木の cache(doeff-effect-analyzer)
+    と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの拾い方と作り方を
     使うための公開の口。``record`` の ``also`` は macro の外で展開の結果を変える値の在処(型検査の展開の後処理)。"""
     from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
 
@@ -131,7 +130,7 @@ def macro_recording(module: ModuleType) -> "MacroRecording":
 
 def gensym_renaming(names: "Iterable[str]") -> "Callable[[str], str]":
     """名の並びに現れる Hy の gensym の名を、数えの小さい順に 1 から振り直す関数(他の名はそのまま返す)— code の木の正準化
-    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy._static_check — agora-redesign #3869)にも当てる
+    (``records.canonical_gensyms``)と同じ規則を、型検査の展開の木(doeff_hy._static_check)にも当てる
     公開の口。展開の文が、同じ process で先に何を展開したか・どの process で展開したかに依らなくなる。"""
     from doeff_hy_bytecode_guard import _records as records  # 起動時に読まない
 
@@ -143,8 +142,8 @@ def record_is_current_here(record: "MacroRecord") -> bool:
     """記録が、今の Hy の版と今の環境の macro に合うか — 使った macro を module 名から今の環境で引き直し(定義した module を
     import する — 引けなければ古い)、その code の閉包の digest を比べる。記録か今の歩みが import の途中の module に当たった行は、
     digest でなく閉包が依った module の file の sha256 を import せずに比べる。記録は file の path を持たないので、別の木で作った .pyc(実行環境の
-    準備が前の root から hardlink で引き継ぐ物 — agora-redesign #2598)や保存先の code も今の木の macro で照らす。.pyc の記録と、
-    展開した木の cache(doeff-effect-analyzer — agora-redesign #3598)と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの
+    準備が前の root から hardlink で引き継ぐ物)や保存先の code も今の木の macro で照らす。.pyc の記録と、
+    展開した木の cache(doeff-effect-analyzer)と、型検査の展開の保存(doeff_hy._static_cache)が同じ 1 つの
     照らし方を使うための公開の口。"""
     from doeff_hy_bytecode_guard import _macro_use as macro_use  # 起動時に読まない
 
@@ -190,7 +189,7 @@ def source_to_code_as_import(
 
     import の外で ``source_to_code`` を直に呼ぶと、Hy は仮の module を作って compile の直後に消すので、compile の口の包みが
     module を見られず記録を足さない。記録の無い .pyc は import の時に古いかもしれない物として compile し直されるので、前もって
-    作った bytecode が無駄になり、起動の時に macro の展開を全部やり直していた(agora-redesign #2598 — 預かり所の job の起動の
+    作った bytecode が無駄になり、起動の時に macro の展開を全部やり直していた(預かり所の job の起動の
     CPU 約 46 秒のうち約 43 秒)。Hy 以外の source は ``source_to_code`` をそのまま呼ぶ。"""
     install()
     if not is_hy_source(path):
@@ -284,7 +283,7 @@ def _recording_source_to_code(previous: SourceToCode):
 
         # Hy の source の compile は import・作り直し・前もって作る道具(source_to_code_as_import)・image の組み立て(source_to_code を
         # 直に呼ぶ)のどれもこの口を通る — Hy の口の上でも下でも、ここが受けるのは compile の済んだ code。gensym の名を module の
-        # 中の順の通し番号にし、compile の順・process・thread に依らない code にする(agora-redesign #3667)。
+        # 中の順の通し番号にし、compile の順・process・thread に依らない code にする。
         code = records.canonical_gensyms(code)
         counts = _counts()
         counts[path] = counts.get(path, 0) + 1
@@ -316,8 +315,8 @@ def _recording_source_to_code(previous: SourceToCode):
         if recording is None:
             return code
         record = recording.record(source)
-        # Hy の口の下では展開した後の木が来る — 同じ source を doeff-effect-analyzer が展開し直さないよう、記録と並べて置く
-        # (card ki-e053a847c515)。置き場の dir の持ち主は expansion_trees(木でない物・dir の無い時は何も置かない)。
+        # Hy の口の下では展開した後の木が来る — 同じ source を doeff-effect-analyzer が展開し直さないよう、記録と並べて置く。
+        #置き場の dir の持ち主は expansion_trees(木でない物・dir の無い時は何も置かない)。
         from doeff_hy_bytecode_guard import _expansion_trees as expansion_trees
 
         expansion_trees.add_import_tree(module.__name__, source, record, data)
@@ -330,7 +329,7 @@ def _recording_source_to_code(previous: SourceToCode):
 def _remembering_get_data(previous: GetData):
     """読みの口の包み — Hy の source を読んだ bytes を、この thread の「最後に読んだ中身」として覚えるため。compile の口は
     Hy の包みの内側では展開した後の木しか受け取らないので、compile した bytes が見えるのは読みの所だけ。保存先の鍵は
-    この bytes から作り、file を読み直さない(agora-redesign #2799)。"""
+    この bytes から作り、file を読み直さない。"""
 
     def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
         data = previous(self, path)
@@ -344,10 +343,9 @@ def _remembering_get_data(previous: GetData):
 # 戻り値の型は内側の関数の推論に任せる(上と同じ理由)。
 def _scoped_exec_module(previous: ExecModule):
     """module の本体の実行の口の包み — 一番外の実行(中の import を含む)の間、.pyc の記録の照らしが file の状態を 1 度だけ読む
-    覚えを置くため(照らしは Hy の module 1 つごとに走り、照らしごとに確かめると同じ file を何百回も stat した — agora-redesign card
-    ki-be596ac8276f)。入れ子の実行は外の覚えを使う。閉じる時は覚えを閉じる — 中で起きた thread と写した context に値が残る。
-    同じ間、GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard._import_gc` — 読み込みが heap を育てるたびに heap 全体を掃いていた・
-    card ki-de9d3593bbde)。"""
+    覚えを置くため(照らしは Hy の module 1 つごとに走り、照らしごとに確かめると同じ file を何百回も stat した — agora-redesign)。
+    入れ子の実行は外の覚えを使う。閉じる時は覚えを閉じる — 中で起きた thread と写した context に値が残る。
+    同じ間、GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard._import_gc` — 読み込みが heap を育てるたびに heap 全体を掃いていた)。"""
 
     def exec_module(self: importlib.machinery.SourceFileLoader, module: ModuleType) -> None:
         _note_executed(self.path)
@@ -410,7 +408,7 @@ def _checking_get_code(previous: GetCode):
         record = _remember_record(path, code)
         if code is not None and record is not None:
             # macro を require し忘れた・import で入れた module に、書き足す 1 行を言う(実行の前 — 文は Python が出し、
-            # その frame に doeff の code が無い・card ki-909e814cc835)。.pyc・保存先から読んだ code にも同じ記録が載る。
+            # その frame に doeff の code が無い)。.pyc・保存先から読んだ code にも同じ記録が載る。
             from doeff_hy_bytecode_guard import _macro_hints as macro_hints  # Hy の source に当たった時だけ読む
 
             macro_hints.warn_about_macro_use(code, record, path, fullname)
@@ -426,8 +424,8 @@ def _checking_get_code(previous: GetCode):
         before = counts.get(path, 0)
         if _bytecode_matches_source(self, path, header):
             # 作業木の .pyc が source に合う — 標準の口は .pyc を読むだけで compile しないので、展開の module を引かない(引き方は
-            # 読み込み済みの module 全部を歩く。Hy の module ごとに引くと、検の読み込みで CPU 約 0.6 秒の固定費になった —
-            # card ki-e77d44aa61e5)。.pyc が壊れていて compile した時は記録が無いので、下の照らしが囲みの中で compile し直す。
+            # 読み込み済みの module 全部を歩く。Hy の module ごとに引くと、検の読み込みで CPU 約 0.6 秒の固定費になった)。
+            # .pyc が壊れていて compile した時は記録が無いので、下の照らしが囲みの中で compile し直す。
             code = previous(self, fullname)
         else:
             # compile し直す時(.pyc が無い・古い)に、展開が使った macro を拾う(compile の口の包みが記録を作る)。
@@ -458,7 +456,7 @@ def _replacing_stale_pyc(
     self: importlib.machinery.SourceFileLoader, fullname: str, path: str, header: bytes | None
 ) -> CodeType:
     """記録が古い .pyc の代わりの code — 保存先に今の環境の macro で合う entry が在ればそれを使い(compile せず、.pyc を書き直す)、
-    無ければ compile し直して保存先へ足す(card ki-11a90ffff495)。"""
+    無ければ compile し直して保存先へ足す。"""
     stored = _from_shared_store_over_stale_pyc(self, fullname, path, header)
     if stored is not None:
         return stored
@@ -492,7 +490,7 @@ def _record_is_current_here(code: CodeType) -> bool:
 
 def bytecode_is_current(path: str, pyc: bytes, source: bytes) -> bool:
     """木に既に在る .pyc の中身 pyc を、今の source と今の環境の macro にそのまま使えるか — bytecode を前もって作る道具が、前の木から
-    引き継いだ .pyc を焼き直さずに残すかを決めるため(agora-redesign #2598)。
+    引き継いだ .pyc を焼き直さずに残すかを決めるため。
 
     使えるのは、頭に source の hash を持つ PEP 552 の hash 方式の .pyc で、その hash が今の source と同じ物だけ。Hy の source の
     .pyc は、さらに記録が今の環境の macro に合うこと(読みの口と同じ照らし方)。前もって作る道具がここで焼き直さないと、
@@ -529,7 +527,7 @@ def _from_shared_store(
 ) -> CodeType | None:
     """作業木の .pyc が使えない時に、別の作業木で作った同じ中身の code を保存先(code_store — 作業木・版をまたいで中身で引く)から
     引く(当たらなければ None)— 新しい作業木の .pyc は source の絶対 path に結びつくので必ず冷え、同じ中身の file の変換(macro の
-    展開)をやり直していた(agora-redesign #1753)。
+    展開)をやり直していた。
 
     鍵の entry(macro の環境ごとに並ぶ — doeff の版の違う書き手の物も)の記録を、使った macro を module 名から今の環境で引き直して
     照らし、合う物を使う(記録は file の path を持たないので、そのまま作業木の .pyc に書ける)。作業木の .pyc も標準の timestamp の形で
@@ -559,7 +557,7 @@ def _from_shared_store_over_stale_pyc(
 ) -> CodeType | None:
     """作業木の .pyc は source に合うが、記録が今の環境の macro に合わない時(兄弟の doeff を替えた後に使い回す木)に、compile し直す前に
     保存先を引く(当たらなければ None で、呼び手が今どおり compile して足す)— 保存先に今の環境で合う entry が在るのに、.pyc が在るという
-    だけで引かずに木の Hy の module を全部 compile し直していた(card ki-11a90ffff495)。照らしは :func:`_from_shared_store` と同じ。
+    だけで引かずに木の Hy の module を全部 compile し直していた。照らしは :func:`_from_shared_store` と同じ。
     作業木の .pyc は読んだ .pyc と同じ方式(timestamp か hash)で書き直す。"""
     from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
 
@@ -618,9 +616,9 @@ def _compiled_source(path: str) -> bytes | None:
 
 def _to_shared_store(fullname: str, path: str, source: bytes | None, code: CodeType) -> None:
     """今 compile した Hy の code を、compile した source の bytes を鍵にして保存先(code_store)へ足す(記録の無い code は足さない。
-    bytecode を書かない設定では、保存先を名指した時だけ足す — 書かない設定は木への書きの決めで、名指しの保存先は木の外・
-    agora-redesign #3737)— 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
-    からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る — agora-redesign #2799)。
+    bytecode を書かない設定では、保存先を名指した時だけ足す — 書かない設定は木への書きの決めで、名指しの保存先は木の外)
+    — 次に同じ中身の file を別の作業木で読む時に、変換をやり直さないため。鍵は compile した bytes
+    からだけ作り、file を読み直さない(読み直すと、間に書き換わった file の中身の鍵に古い code が入る)。
     書けない保存先では足さない — import の口は venv のすべての Python の起動で走るので、書けない理由を import のたびに出さない
     (保存先は速さのためだけ・worker の道具は同じ書きの理由を名指して出す)。"""
     from doeff_hy_bytecode_guard import _code_store as code_store  # 保存先を使う時だけ読む
@@ -718,7 +716,7 @@ def _module_being_loaded(
     (``inspect.getmodule`` — 同じ file を別の名で先に読んだ module があればそれ)、無ければ import の途中の module
     (``sys.modules`` に先に置かれている ``self.name``)。``self.name`` だけで引くと、同じ file を package の名で読んだ process で
     path から別の名で読み直した時(worker の bytecode の道具の bake_plan.hy)、展開が引かない表から空の記録を作り、照らしが
-    素通りの entry を共有の置き場に入れた(2026-10-11 atlas・card ki-9180656459ac)。"""
+    素通りの entry を共有の置き場に入れた(2026-10-11 atlas)。"""
     import inspect  # Hy の source に当たった時だけ読む(Hy の compile の口も読む)
 
     try:

@@ -1,4 +1,4 @@
-"""Deadlines as events: arm a timer, and receive ``TimerFired`` through ``WaitForEvent`` (agora-redesign #3076).
+"""Deadlines as events: arm a timer, and receive ``TimerFired`` through ``WaitForEvent``.
 
 A program does not wait for time. It arms a timer with ``ArmTimer(tag, at)`` and goes on waiting for events;
 at ``at`` the timer handler publishes ``TimerFired(tag)``, which the program receives with
@@ -61,7 +61,7 @@ class ArmedTimersEffect(EffectBase[tuple[ArmedTimer, ...]]):
 
     Only the timers armed with ``ArmTimer`` are listed — the programs' deadlines, not the clock's own waits
     (a sim host's quiet-beat wait goes to the clock directly), so an empty answer tells a sim watcher that
-    no deadline will ever wake a program (agora-redesign #3078).
+    no deadline will ever wake a program.
     """
 
 

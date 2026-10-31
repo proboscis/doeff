@@ -1,4 +1,4 @@
-"""handlers.py の公開面の型(型検査のための宣言・agora-redesign #2321)。
+"""handlers.py の公開面の型(型検査のための宣言)。
 
 py.typed の package の注記の無い関数は、pyright が答えの型を推さず Unknown にするので、ここで宣言する。
 どれも doeff.program.handler が包んだ Program → Program の handler。

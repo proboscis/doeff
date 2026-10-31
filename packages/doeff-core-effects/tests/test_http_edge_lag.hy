@@ -1,4 +1,4 @@
-;;; 待ち受けの loop の遅れの計器(_aiohttp_http_server.hy の頭の註の loop の遅れ・agora card ki-5bf133f2c72c — 画面の ws の往復の延びを、
+;;; 待ち受けの loop の遅れの計器(_aiohttp_http_server.hy の頭の註の loop の遅れ — 画面の ws の往復の延びを、
 ;;; 測りの client の CPU の待ちと分けて待ち受けの側で読む)。
 ;;;   (1) 窓の 1 行は、拍の数・最長・99%(並べて下から ceil(0.99 n) 番目)を ms で名乗る
 ;;;   (2) 本物の asyncio の loop で、拍の間を 0.15 秒塞ぐと、窓の 1 行の最長が 100 ms を越える(寝過ごしを測っている)

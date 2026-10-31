@@ -38,15 +38,15 @@ sha2 = "0.10"
 # 事実の cache の置き場が、置く前に値の綴りへ根の絶対 path が入っていないかを探す(SIMD の部分列の探索 — 事実 1 つ 64KB 前後を数千回)。
 # regex の依存で Cargo.lock に既に在る(新しい crate を足さない)。
 memchr = "2"
-# 設定の知らない鍵を、止めずに path つきで集める(struct の定義が知っている鍵の唯一の正本 — 鍵の表を手で持たない・agora-redesign #848)。
+# 設定の知らない鍵を、止めずに path つきで集める(struct の定義が知っている鍵の唯一の正本 — 鍵の表を手で持たない)。
 serde_ignored = "0.1"
-# repo 全体の Hy の索引の file ごとの cache を、欄の名前を持たない binary の形で置く(JSON では 147MB・読みに 1.2 秒 — agora-redesign #1364)。
+# repo 全体の Hy の索引の file ごとの cache を、欄の名前を持たない binary の形で置く(JSON では 147MB・読みに 1.2 秒)。
 bincode = "1.3"
 # binary の確保器(main.rs の global_allocator)— 索引の cache の読み・辿り・後片づけは小さな確保と解放の数百万回で、既定の確保器では
-# 1 file の実行の半分近くを占めた(agora-redesign #1364)。
+# 1 file の実行の半分近くを占めた。
 mimalloc = { version = "0.1", default-features = false }
 # 待ちを重ねる thread を増やすかを、その thread が disk の読みを頼んだか(getrusage の RUSAGE_THREAD の ru_inblock)で決める(bulk_read.rs の
-# Widen・card ki-40c8ca380713)。mimalloc などの依存で Cargo.lock に既に在る(新しい crate を足さない)。
+# Widen)。mimalloc などの依存で Cargo.lock に既に在る(新しい crate を足さない)。
 libc = "0.2"
 
 [dev-dependencies]

@@ -49,7 +49,7 @@
    records = 周の後の job ごとの記憶。"
   (val codes (tuple (gfor code world.codes :if (= code.state CodeState.FAILED) (+ (or code.failed-ms 0) policy.code-retry-ms))))
   (val probes (tuple (gfor probe world.probes :if (= probe.state ProbeState.FAILED) (+ (or probe.failed-ms 0) policy.code-retry-ms))))
-  ;; backoff の起点は終わりの刻か、起こせなかった刻(policy の backoff-from — card ki-e1612a12d0c3)。
+  ;; backoff の起点は終わりの刻か、起こせなかった刻(policy の backoff-from)。
   (val backoffs (tuple (gfor record (.values records)
                              :setv since (backoff-from record)
                              :if (is-not since None)

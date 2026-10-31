@@ -1,4 +1,4 @@
-"""Hy の検の file の集め手の 1 点(ini の doeff_hy_test_files・agora-redesign #2591)。
+"""Hy の検の file の集め手の 1 点(ini の doeff_hy_test_files)。
 
 conftest.py を 1 つも置かない project で、test を定義する .hy は関数ごとの item に、定義しない「上から順に実行する
 script」の .hy は file ごと 1 つの item に集まり、script の例外は赤になること。外す一覧(doeff_hy_test_skips)の

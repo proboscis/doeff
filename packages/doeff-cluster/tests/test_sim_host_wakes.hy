@@ -104,8 +104,8 @@
   (<- prepared tuple (wakes-at (replace heard :codes {"k" preparing}) 1000 1000))
   (assert (= (. (get prepared 0) due) (DueAt :at 1800)) prepared)
   ;; tick の頭(壁 1400・単調 1400)の後に壁の時計が 10 秒戻った代役(今 = 壁 −8500・単調 1500・最後に届いた返事は 0): heartbeat の
-  ;; 期限は今の壁の時計の枠で「あと 1 秒」(−8500 + 間隔の残り 1000 = −7500 — 本番の coordinator-link と同じ写し・card
-  ;; ki-069f4a5c07f7)。前の枠の刻(2500)のままだと、待ちが戻った分だけ延びる。
+  ;; 期限は今の壁の時計の枠で「あと 1 秒」(−8500 + 間隔の残り 1000 = −7500 — 本番の coordinator-link と同じ写し)。
+  ;; 前の枠の刻(2500)のままだと、待ちが戻った分だけ延びる。
   (<- bell Promise (CreatePromise))
   (<- stepped WakeSet (host-wakes WORKER heard 1400 1400 -8500 1500 bell.future))
   (assert (= stepped.due (DueAt :at -7500)) stepped)

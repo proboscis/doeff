@@ -78,7 +78,7 @@ def test_clip_keeps_head() -> None:
 
 
 def test_a_usage_limit_is_a_judge_error_of_its_own_kind() -> None:
-    # 判定器の口座の利用枠の尽き(card ki-eb4f8e1db64d): 呼び手は JudgeError のまま受けられ、型で尽きを分けて戻る刻を読める。
+    # 判定器の口座の利用枠の尽き: 呼び手は JudgeError のまま受けられ、型で尽きを分けて戻る刻を読める。
     from doeff_system_one import JudgeError, JudgeUsageLimited
 
     limited = JudgeUsageLimited("You've hit your session limit", window="five_hour", resets_at=1791342000)

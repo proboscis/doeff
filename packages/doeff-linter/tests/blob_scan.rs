@@ -1,4 +1,4 @@
-//! 冷えた作業木の最初の 1 回が、repo の Hy の全部を読まない事の検(card ki-d56ba76422ba)。
+//! 冷えた作業木の最初の 1 回が、repo の Hy の全部を読まない事の検。
 //!
 //! 1 file の実行は、書いた file が自分の引数を素で呼ぶ定義を持つ時、呼び手を探すために repo の Hy の約 2900 file を全部読む
 //! (`program-params.scan`)。作業木ごとに別の inode なので、冷えた作業木では 1 file ごとに disk を待ち、混んだ Pod で 3〜5 秒かかって
@@ -168,7 +168,7 @@ fn a_file_changed_in_the_worktree_is_read_not_remembered() {
 }
 
 /// 新しい作業木の最初の 1 回は、綴りの覚えを file ごとの置き場の file でなく、index の並びの塊ごとの file から引く — 冷えた作業木で置き場の file を
-/// repo の Hy の数だけ開いて disk を待たない(card ki-40c8ca380713 — 冷えた新しい作業木で約 4600 open)。答えは読んだ時と同じ。
+/// repo の Hy の数だけ開いて disk を待たない(冷えた新しい作業木で約 4600 open)。答えは読んだ時と同じ。
 #[test]
 fn a_fresh_worktree_reads_the_spellings_from_a_few_chunks_not_one_object_per_file() {
     let main = repo();
@@ -224,7 +224,7 @@ fn count_of(stderr: &str, label: &str, field: &str) -> usize {
 }
 
 /// 失敗の型の宣言を探す歩きも、新しい作業木の最初の 1 回は、別の作業木が読んだ file の中身を読まない(綴りの覚えを塊から引く)— 冷えた作業木で
-/// repo の Hy の全部を読む待ちが 3 秒だった(card ki-40c8ca380713)。宣言の綴りを含む file も、型の名を綴らないと覚えが言えば読まない。答えは読んだ時と同じ。
+/// repo の Hy の全部を読む待ちが 3 秒だった。宣言の綴りを含む file も、型の名を綴らないと覚えが言えば読まない。答えは読んだ時と同じ。
 #[test]
 fn a_fresh_worktree_finds_the_failure_declarations_without_reading_the_repo() {
     let main = failure_repo();
@@ -269,7 +269,7 @@ fn class_repo() -> tempfile::TempDir {
 
 const HANDLERS: &str = "app/core/handlers.hy";
 
-/// class の frozen を引く 1 file の実行も、新しい作業木の最初の 1 回は、別の作業木が読んだ Hy と Python の file の中身を読まない(card ki-40c8ca380713 の (c) —
+/// class の frozen を引く 1 file の実行も、新しい作業木の最初の 1 回は、別の作業木が読んだ Hy と Python の file の中身を読まない(
 /// 順に歩いて repo の全部を読んでいた)。答えは読んだ時と同じ(同じ名の frozen でない class が在るので Cfg は frozen でない)。
 #[test]
 fn a_fresh_worktree_builds_the_class_index_without_reading_the_repo() {
@@ -288,7 +288,7 @@ fn a_fresh_worktree_builds_the_class_index_without_reading_the_repo() {
 }
 
 /// 別の commit から作った作業木(file を 1 つ変えて commit した後)も、塊の表を引き、表に無いのは変えた file の blob だけ — 塊の名は塊の頭の path で
-/// 決まり、表は blob の行を足していくので、commit が違っても変わっていない file は当たる(card ki-40c8ca380713)。答えは読んだ時と同じ。
+/// 決まり、表は blob の行を足していくので、commit が違っても変わっていない file は当たる。答えは読んだ時と同じ。
 #[test]
 fn a_worktree_of_a_later_commit_misses_only_the_changed_file() {
     let main = repo();

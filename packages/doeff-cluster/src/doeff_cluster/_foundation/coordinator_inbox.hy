@@ -89,7 +89,7 @@
 
 (defclass AcceptingServer [ThreadingHTTPServer]
   "接続を受けた最初の刻に、箱の reached を立てる HTTP server。kubelet の readinessProbe(tcpSocket)の接続が Pod を Ready にし Service に載せるので、
-   外からの最初の接続 = Service に載った印(起き直しの後の届かない間を終える証拠 — card ki-f9fd557e6ad0)。"
+   外からの最初の接続 = Service に載った印(起き直しの後の届かない間を終える証拠)。"
   (defn #^ None __init__ [self #^ tuple address #^ object handler #^ object inbox]
     (setv self.inbox inbox)
     (.__init__ (super) address handler))

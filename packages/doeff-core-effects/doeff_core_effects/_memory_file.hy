@@ -1,8 +1,8 @@
-;;; 汎用の file system の effect(file_effects.hy)の I/O なしの答え手 memory-file-handler(agora-redesign #802 便 1)。置き場(MemoryFiles)を
+;;; 汎用の file system の effect(file_effects.hy)の I/O なしの答え手 memory-file-handler。置き場(MemoryFiles)を
 ;;; session の値に持ち、本物の file system と同じ所で断る(FileFailed の detail も OSError の文の形):
 ;;;   親の dir が無い(No such file or directory)・途中や先が file(Not a directory)・dir へ書く / 読む(Is a directory)・中身の在る dir への
 ;;;   rename(Directory not empty)・dir を自分の下へ rename(Invalid argument)・無い path を消す。
-;;; symlink を持つ(MakeSymlink — agora-redesign #4036): 本物と同じく、読み・書き・一覧・走査・錠は path の symlink を辿り、RenamePath・
+;;; symlink を持つ(MakeSymlink): 本物と同じく、読み・書き・一覧・走査・錠は path の symlink を辿り、RenamePath・
 ;;; RemoveTree・LinkFile・MakeSymlink と書きの置き換え(replace = True)は最後の 1 つを辿らずに link 自身を扱い、StatPath の
 ;;; follow-symlinks = False は SYMLINK と答える。dir の中の link は一覧と走査に SYMLINK で出て、走査は link の先へ入らない。断りの path は
 ;;; 呼び手が渡した path(辿った先ではない)。辿る数が 40 を越えたら本物と同じく ELOOP で断る。錠は本物と同じく取れるまで待つ

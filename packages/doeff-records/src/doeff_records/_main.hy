@@ -204,7 +204,7 @@
   (when (or store.indexes.missing store.indexes.retired)
     (<- (Spawn (reconcile-indexes store) :daemon True)))
   ;; 書き手の名ごとの handler は 1 度だけ組んで使い回す(handler は用意した置き場と名と機体の名の値だけを持つ — 要求ごとに組むと、組むたびに
-  ;; 節の関数と型の注釈を作り直して、1 要求の scheduler の thread の CPU を使っていた・card ki-1841b724d061)。名は呼び手の名乗りなので、
+  ;; 節の関数と型の注釈を作り直して、1 要求の scheduler の thread の CPU を使っていた)。名は呼び手の名乗りなので、
   ;; 覚える数に上限を置く(WRITER-HANDLERS-KEPT)。
   ((functools.lru-cache :maxsize WRITER-HANDLERS-KEPT) (fn [writer] (pg-records-handler store writer host :gated True))))
 

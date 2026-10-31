@@ -1,4 +1,4 @@
-"""Pytest wrapper for the transcript-rebuild deftests (card acp:kanban-issue:ki-c3aace97d825).
+"""Pytest wrapper for the transcript-rebuild deftests.
 
 Same dynamic exposure pattern as ``test_sessionhost_acp_rehydrate.py``: every ``test_*``
 deftest in ``sessionhost_transcript_rebuild_deftests.hy`` is surfaced automatically so a

@@ -1,4 +1,4 @@
-"""defrecord の頭の辞書 {:tags … :check […]} の deftest を公開する(agora-redesign #798)。
+"""defrecord の頭の辞書 {:tags … :check […]} の deftest を公開する。
 
 ``defrecord_check_deftests.hy`` の deftest を包み直さずそのまま公開する(ADR-DOE-HY-002 —
 包むと pytestmark が落ちる)。実行時の ``doeff_interpreter`` はこの module の fixture が供給する。

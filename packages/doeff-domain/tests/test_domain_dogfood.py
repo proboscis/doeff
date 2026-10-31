@@ -2,13 +2,13 @@
 
 かつて MemoDeleteEffect / CacheDeleteEffect は語彙として定義・export されながら
 どの handler も処理しない実ドリフトで、known_uncovered として申告されていた
-(2026-07-17 調査)。maintainer 裁定 A(2026-07-18)で両 effect の handler が
+(2026-07-17 調査)。その後、両 effect の handler が
 実装され、stale-ratchet の強制どおり申告は除去された — 検査 (a) は申告なしで
 green になる。ratchet 自体の発火は test_stale_known_uncovered_declaration_rejected
 が固定する。
 
 表は effect で読み、domain_registry() が process の表(dogfood の module が import の時に載せる所)から答える
-(ADR-DOE-API-001 R29・card ki-03a7f0af2b64)。
+(ADR-DOE-API-001 R29)。
 """
 
 import doeff_domain._core_effects_domains as dogfood  # noqa: F401 — import 時に登録

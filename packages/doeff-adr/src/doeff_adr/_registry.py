@@ -97,7 +97,7 @@ class AdrSpec:
 _ADRS: dict[str, AdrSpec] = {}
 _ENFORCEMENTS: dict[str, EnforcementRef | SemgrepSpec] = {}
 # installed の defsemgrep の例の組 1 つに当たった規則の id(鍵 = semgrep の版・設定の中身・例の中身の digest — semgrep_verdicts)。
-# 同じ設定を読む規則の例を 1 回の semgrep で確かめ、同じ process の残りの検はここから読む(agora-redesign #2976 I-3)。
+# 同じ設定を読む規則の例を 1 回の semgrep で確かめ、同じ process の残りの検はここから読む。
 _INSTALLED_VERDICTS: dict[str, frozenset[str]] = {}
 
 
@@ -107,7 +107,7 @@ def _clear_registry(
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> None:
     """ADR の表と検の表(None = process の登録簿)を空にする。外からは effect ClearRegistry で空にする(handler adr_registry が
-    答える・card ki-dab8943cf664)。"""
+    答える)。"""
     (_ADRS if adrs is None else adrs).clear()
     (_ENFORCEMENTS if table is None else table).clear()
 
@@ -117,11 +117,11 @@ def isolated_registry() -> Generator[None]:
     """空の登録簿で中を走らせ、出る時に入る前の登録簿へ戻す。
 
     収集で import された ADR は収集の時点で登録簿に載る — 空にしたまま返す test があると、後で走るその ADR の条文の
-    test が KeyError で落ちる(agora-redesign #1211)。test が登録簿を空にしたい時はこれを使う。
+    test が KeyError で落ちる。test が登録簿を空にしたい時はこれを使う。
 
     effect だけで読み書きする test は、これでなく別の登録簿を据えた handler adr_registry(specs=[], enforcements={}) で足りる。
     これが要るのは、macro defadr・defsemgrep の展開が import の時に process の登録簿へ載せる所を試す test だけ(展開は
-    handler を自分で据えるので、外から差し替えられない・card ki-dab8943cf664)。
+    handler を自分で据えるので、外から差し替えられない)。
     """
     saved_adrs = dict(_ADRS)
     saved_enforcements = dict(_ENFORCEMENTS)
@@ -210,7 +210,7 @@ def _register_deftest_enforcement(
     mode: EnforcementMode = "green",
 ) -> EnforcementRef:
     """deftest の検を表(None = process の登録簿)に載せる。外からは effect RegisterDeftest で載せる(handler
-    adr_registry が答える・card ki-54e559d3c0e7)。"""
+    adr_registry が答える)。"""
     _ensure_new_enforcement_id(enforcement_id, table)
     normalized_mode = _normalize_enforcement_mode(mode)
     ref = EnforcementRef(id=enforcement_id, kind="deftest", mode=normalized_mode)
@@ -237,7 +237,7 @@ def _register_semgrep_enforcement(
     mode: EnforcementMode = "green",
 ) -> SemgrepSpec:
     """Semgrep の検を表(None = process の登録簿)に載せる。外からは effect RegisterSemgrep で載せる(handler
-    semgrep_enforcements が答える・card ki-2a549274055c)。"""
+    semgrep_enforcements が答える)。"""
     _ensure_new_enforcement_id(enforcement_id, table)
     if pattern is None and rule_id is None:
         raise ValueError("defsemgrep requires either pattern= or rule_id=")
@@ -279,7 +279,7 @@ def _register_adr(
     table: dict[str, EnforcementRef | SemgrepSpec] | None = None,
 ) -> AdrSpec:
     """ADR を表(adrs・table が None = process の登録簿)に載せる。enforcement の検の id は検の表 table から種類を読む。
-    外からは effect RegisterAdr で載せる(handler adr_registry が答える・macro defadr の展開も同じ・card ki-dab8943cf664)。"""
+    外からは effect RegisterAdr で載せる(handler adr_registry が答える・macro defadr の展開も同じ)。"""
     by_id = _ADRS if adrs is None else adrs
     if adr_id in by_id:
         raise ValueError(f"duplicate ADR id: {adr_id}")
@@ -322,26 +322,24 @@ def _coerce_enforcement_ref(
 
 
 def _adr_ids() -> list[str]:
-    """登録簿の ADR の id を並べる。外からは effect AdrIds で読む(handler adr_registry が答える・card ki-2d28425e0d40)。"""
+    """登録簿の ADR の id を並べる。外からは effect AdrIds で読む(handler adr_registry が答える)。"""
     return sorted(_ADRS)
 
 
 def _enforcement_ids(table: dict[str, EnforcementRef | SemgrepSpec] | None = None) -> list[str]:
-    """検の表(None = process の登録簿)の id を並べる。外からは effect EnforcementIds で読む(handler adr_registry が答える・
-    card ki-dab8943cf664)。"""
+    """検の表(None = process の登録簿)の id を並べる。外からは effect EnforcementIds で読む(handler adr_registry が答える)。"""
     return sorted(_ENFORCEMENTS if table is None else table)
 
 
 def _get_adr(adr_id: str) -> AdrSpec:
-    """登録簿の ADR を id で引く。外からは effect GetAdr で引く(handler adr_registry が答える・card ki-24a2bca4339f)。"""
+    """登録簿の ADR を id で引く。外からは effect GetAdr で引く(handler adr_registry が答える)。"""
     return _ADRS[adr_id]
 
 
 def _get_enforcement(
     enforcement_id: str, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
 ) -> EnforcementRef | SemgrepSpec:
-    """検の表(None = process の登録簿)の検を id で引く。外からは effect GetEnforcement で引く(handler adr_registry が答える・
-    card ki-dab8943cf664)。"""
+    """検の表(None = process の登録簿)の検を id で引く。外からは effect GetEnforcement で引く(handler adr_registry が答える)。"""
     return (_ENFORCEMENTS if table is None else table)[enforcement_id]
 
 
@@ -349,7 +347,7 @@ def _assert_adr_contract(
     spec: AdrSpec, *, table: dict[str, EnforcementRef | SemgrepSpec] | None = None
 ) -> None:
     """ADR の形を確かめる: 採用済みなら検が 1 つ以上在り、挙げた検が表(None = process の登録簿)に載り、expected-red の検は
-    計画に結ばれている。外からは effect AssertAdrContract・AssertAllAdrContracts で確かめる(card ki-54e559d3c0e7)。"""
+    計画に結ばれている。外からは effect AssertAdrContract・AssertAllAdrContracts で確かめる。"""
     enforcements = _ENFORCEMENTS if table is None else table
     if spec.status == "accepted" and not spec.enforcement:
         raise AssertionError(f"{spec.id}: accepted ADR must have executable enforcement")
@@ -369,7 +367,7 @@ def _assert_semgrep_enforcement(
     semgrep: str | None = None,
 ) -> None:
     """表(None = process の登録簿)の Semgrep の検を走らせ、規則が当たる見本に当たり、当たらない見本に当たらない事を
-    確かめる(semgrep = 走らせる実行 file・None は PATH の semgrep)。外からは effect AssertSemgrep で確かめる(card ki-2a549274055c)。"""
+    確かめる(semgrep = 走らせる実行 file・None は PATH の semgrep)。外からは effect AssertSemgrep で確かめる。"""
     enforcements = _ENFORCEMENTS if table is None else table
     spec = enforcements[enforcement_id]
     if not isinstance(spec, SemgrepSpec):
@@ -474,10 +472,10 @@ def _installed_verdict(
     """例の組 1 つに当たった規則の id — 同じ設定を読む規則の例をまとめて 1 回の semgrep で確かめた答えから読む。
 
     規則の検 1 本ごとに semgrep を起こすと、1 回の起動の費用(約 2.3 秒)が「規則の数 × 2」だけ重なる
-    (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒 — agora-redesign #2976 I-3)。最初の検の時に、
+    (agora-controllers の defadr_turn_boundary は 7 規則で 14 回・約 33 秒)。最初の検の時に、
     同じ設定を読む表(table — 確かめる検の載る表)の規則の当たる例と当たらない例を全部集めて 1 回で回し、答えを覚える。呼び手が置き場を名指して
     いれば(semgrep_verdicts.verdict_store)、先に置き場から読み、回した答えを置き場に残す — 設定も例も変わらない次の process は
-    semgrep を起こさない(card ki-f81dde817291 — 日次は session と設定ごとに 1 回の起動 約 8 秒を毎回払っていた)。
+    semgrep を起こさない(日次は session と設定ごとに 1 回の起動 約 8 秒を毎回払っていた)。
     """
     identity = semgrep_identity(semgrep)
     config_digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
@@ -701,7 +699,7 @@ def _run_semgrep(
     if proc.returncode not in (0, 1):
         # --quiet --json では、規則の読みの失敗・対象の parse の失敗・時間切れの理由は stderr に出ず、
         # stdout の JSON の errors にだけ載る — stderr だけを名乗ると理由が空のまま落ちる
-        # (agora-redesign #2865: agora の日次で「semgrep failed with exit 2:」だけが残り、
+        # (agora の日次で「semgrep failed with exit 2:」だけが残り、
         # 規則の読みか semgrep の版かを名指せなかった)。
         raise AssertionError(
             f"semgrep failed with exit {proc.returncode}: {proc.stderr}\n"

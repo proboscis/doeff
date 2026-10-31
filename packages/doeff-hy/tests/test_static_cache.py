@@ -1,6 +1,6 @@
 """doeff-hy-check の展開の保存(doeff_hy/_static_cache.py)の失敗ケース — 引くか、展開し直すか。
 
-保存した展開は、展開が依った物が今の環境と同じ時だけ引く(agora-redesign #3862)。依った物 = source の中身・module 名・
+保存した展開は、展開が依った物が今の環境と同じ時だけ引く。依った物 = source の中身・module 名・
 根からの相対 path・Hy の版と、展開が通った file(require した macro の module・macro が呼ぶ補助の module・推移的な require・
 型検査の展開の後処理の module)。展開が通らない doeff_hy の file を変えても、保存は引ける(以前は doeff_hy の package 全体の
 指紋がキーに入り、関係ない commit 1 つで全部の展開が作り直しになっていた)。
@@ -127,7 +127,7 @@ def test_an_unchanged_tree_reads_the_stored_expansion(tree: Tree, expansions: li
 def test_an_entry_of_the_current_store_version_is_read_back(
     tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A・card ki-1475765a3f18): entry の読みは保存の形の版を literal の 3 で
+    # 直す前は赤: entry の読みは保存の形の版を literal の 3 で
     # 照らしていた。CACHE_VERSION を上げた版は、自分が書いた entry を 1 つも読めず、毎回全部を展開し直す。
     monkeypatch.setattr(static_cache, "CACHE_VERSION", static_cache.CACHE_VERSION + 1)
     first = _project(tree)
@@ -137,9 +137,9 @@ def test_an_entry_of_the_current_store_version_is_read_back(
 
 #: 型検査の展開の後処理(static_check の with_canonical_gensyms)が使う gensym の名の振り直しの規則の source の sha256 → その規則で
 #: 書いた保存の形の版(CACHE_VERSION)。規則は doeff_hy_bytecode_guard(閉包の歩みが名だけ入れる package)に在り、記録の digest が
-#: 覆わない(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A — 規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
+#: 覆わない(規則を替えても保存した展開が古い名のまま引かれた)。規則を替えたら
 #: CACHE_VERSION を上げ、この表に新しい行を足す(版は行ごとに違う — 同じ版のまま hash だけを足すと下の検が断る)。
-#: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(card ki-9d2ff8ae7009 — 規則は同じなので版は
+#: 版 3 の行の hash は、gensym_renaming の中の import を _records へ移した source の物(規則は同じなので版は
 #: 上げず、前の hash 5b4612a4… を置き換えた)。
 GENSYM_RULE_VERSIONS = {
     "75e5ff36f3eb6481e3c6b03baa0a56172324c1a00aa783b7317c715746d301b4": 3,
@@ -165,7 +165,7 @@ def _gensym_rule_sha256() -> str:
 
 
 def test_a_changed_gensym_renaming_rule_comes_with_a_new_store_version() -> None:
-    # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 A): 振り直しの規則の source が表に無ければ、規則を替えたのに保存の形の版を
+    # 守り: 振り直しの規則の source が表に無ければ、規則を替えたのに保存の形の版を
     # 上げていない(保存した展開が古い規則の名のまま引かれる)。表の版は行ごとに違い、今の規則の行の版が CACHE_VERSION。
     assert len(set(GENSYM_RULE_VERSIONS.values())) == len(GENSYM_RULE_VERSIONS), "同じ版に 2 つの規則の行がある"
     rule = _gensym_rule_sha256()
@@ -181,7 +181,7 @@ PLACE_LINES = {("static_check.py", "    module.__file__ = str(source)")}
 
 
 def test_doeff_hy_sources_do_not_read_their_place() -> None:
-    # 守り(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C): doeff_hy の macro と型検査の後処理は、自分の置き場から隣の file を読まない。
+    # 守り: doeff_hy の macro と型検査の後処理は、自分の置き場から隣の file を読まない。
     # 置き場から作った素の文字列の大域(HERE = os.path.dirname(__file__))を関数が読む形は、閉包の歩みが値(path)を入れるだけで path の
     # 先の file の中身を覆わず、隣の file を替えても古い展開を引く(code か束縛の文が置き場を直に読む形は、歩みが照らせない印にする)。
     package = Path(doeff_hy.__file__).parent
@@ -240,7 +240,7 @@ def test_a_changed_macro_of_a_transitive_require_expands_again(
 def test_a_relative_require_follows_the_macro_module_of_its_package(
     tree: Tree, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 2 の相対の require(`.macros`)の形(agora-redesign #2696)。
+    # 失敗ケース 2 の相対の require(`.macros`)の形。
     tree.user.write_text("(require .deeper [deep])\n(setv c (deep))\n", encoding="utf-8")
     _project(tree)
     _rewrite(tree.package / "deeper.hy", '(defmacro deep [] "deeper")\n')
@@ -251,7 +251,7 @@ def test_a_relative_require_follows_the_macro_module_of_its_package(
 def test_the_hy_version_is_part_of_what_the_expansion_used(
     tree: Tree, expansions: list[Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース 7: Hy の版が変わったら作り直す(agora-redesign #2774)。
+    # 失敗ケース 7: Hy の版が変わったら作り直す。
     import hy
 
     _project(tree)
@@ -309,7 +309,7 @@ def outside_macros(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
 def test_a_changed_macro_of_another_package_outside_the_roots_expands_again(
     tmp_path: Path, outside_macros: Path, expansions: list[Path]
 ) -> None:
-    # 失敗ケース 5: 根の外の別の package の macro(例 doeff-adr.macros)を変えたら作り直す(agora-redesign #2774)。
+    # 失敗ケース 5: 根の外の別の package の macro(例 doeff-adr.macros)を変えたら作り直す。
     project = tmp_path / "proj"
     cache = tmp_path / ".cache"
     first = project_cached(project, [project], project / "probe.hy", cache)
@@ -472,7 +472,7 @@ def test_a_comment_in_doeff_hy_macros_keeps_the_stored_expansion(copied_doeff_hy
 def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
     copied_doeff_hy: CopiedDoeffHy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 冷えなくてよい時(直す前は赤 — agora-redesign card ki-1475765a3f18): 同じ中身の doeff_hy を別の dir に置いても保存から引く。
+    # 冷えなくてよい時(直す前は赤): 同じ中身の doeff_hy を別の dir に置いても保存から引く。
     # 日次の全体検証は回ごとに別の dir(task の作業 dir の下の作業木)に doeff を置く。後処理(POST_PROCESSING)の閉包の digest に
     # static_check の __file__ の値(置き場の path — project の `module.__file__ = …` が code の名の表に __file__ を出す)が入り、
     # 保存した展開が回ごとに全部外れた(agora-controllers の hy-type-trend が毎回 .hy 約 2,450 本を冷えて展開した)。
@@ -489,7 +489,7 @@ def test_the_same_doeff_hy_in_another_place_keeps_the_stored_expansion(
 def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_again(
     copied_doeff_hy: CopiedDoeffHy,
 ) -> None:
-    # 直す前は赤(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B・card ki-1475765a3f18): 後処理が自分の module の置き場
+    # 直す前は赤: 後処理が自分の module の置き場
     # (__file__)から隣の file を読んで展開の結果を変えると、歩みはその file の中身を覆わない。置き場の path を digest から
     # 外した後は、別の dir の木どうしでも、同じ木でも、file を替えた後に古い展開を引いた。置き場を値として読む code の
     # digest は照らせない印になり、使い手は毎回展開し直す。
@@ -511,7 +511,7 @@ def test_a_changed_file_the_post_processing_reads_beside_its_module_expands_agai
     assert copied_doeff_hy.expanded() == 1, "後処理が読む隣の file を替えたのに、保存した古い展開を引いた"
 
 
-# ---- 保存先(agora-redesign #3863)--------------------------------------------------------------------------
+# ---- 保存先--------------------------------------------------------------------------
 
 
 def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
@@ -531,7 +531,7 @@ def test_doeff_hy_check_cache_names_the_place_of_the_stored_expansions(
     assert default_cache_dir() == tmp_path / "kept"
 
 
-# ---- 2 つの書き手(agora-redesign #3863 の (b) — 2 台の worker が保存先を共有する)--------------------------------------------
+# ---- 2 つの書き手(2 台の worker が保存先を共有する)--------------------------------------------
 
 #: 子の process が同じ entry へ何度も書く(大きい中身で、書きの途中に別の書き手の書きが重なるようにする)。
 WRITER = """\
@@ -588,7 +588,7 @@ def test_each_writer_uses_its_own_temporary_file(tmp_path: Path, monkeypatch: py
     assert written[0] != written[1], written
 
 
-# ---- 引く速さ(card ki-0f0542a69a78 — 10 file の検めで stat 10 万回・CPU 10 秒)-----------------------------------------------
+# ---- 引く速さ(10 file の検めで stat 10 万回・CPU 10 秒)-----------------------------------------------
 
 
 def test_entry_keeps_imports_and_old_entry_reads_as_unknown(tmp_path: Path) -> None:
@@ -653,7 +653,7 @@ def test_shared_scope_stats_each_file_once_across_checks(tmp_path: Path) -> None
     assert macro_use._state_now(str(probe)) != first
 
 
-# --- closure 単位の束(card ki-2829daea29fa)-------------------------------------------------------------------------
+# --- closure 単位の束-------------------------------------------------------------------------
 
 
 def _closure(tree: Tree) -> static_check.Closure:

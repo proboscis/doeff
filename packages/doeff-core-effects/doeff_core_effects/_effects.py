@@ -164,10 +164,10 @@ class Await(EffectBase[_T], Generic[_T]):
 
     ``deadline`` (a ``time.monotonic()`` instant) marks a clock wait whose
     completion time is known, e.g. ``asyncio.sleep``: the scheduler does not
-    report it as a stall until the deadline is exceeded (agora-redesign #765).
+    report it as a stall until the deadline is exceeded.
     ``source_alive`` marks a watched wait, e.g. a child's exit descriptor: the
     scheduler does not report it as a stall while ``source_alive()`` is True
-    (agora-redesign card ki-6222e22d4179). Both go to the promise the await
+   . Both go to the promise the await
     handler creates — see ``CreateExternalPromise`` (invariant S1).
     """
 
@@ -239,7 +239,7 @@ def runs_carried_of(effect_type: type) -> frozenset[str]:
     handlers it puts back).  A type that declares none runs what it carries elsewhere,
     if at all (a remote job).  A closure check reads the declared Programs as run at the
     performing site, and a declared function's body as the Program it builds
-    (agora-redesign #1456・#2973).
+    (#2973).
     """
     declared = getattr(effect_type, "__doeff_runs_carried__", frozenset())
     if not (isinstance(declared, frozenset) and all(isinstance(name, str) for name in declared)):

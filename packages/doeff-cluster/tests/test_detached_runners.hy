@@ -102,14 +102,14 @@
   (len running))
 
 
-(defhandler rig-runners [#^ CoordinatorRunners runners #^ httpx.Client operator]
+(defhandler rig-runners [#^ CoordinatorRunners runners #^ httpx.Client admin]
   ;; sim の組の検の effect(KillWorker・DrainWorker・StopWorker・StartWorker)に、coordinator の組の担い手で答える。
   (KillWorker [name]
     (<- lost int (stop-worker (get runners.workers name)))
     (resume lost))
   (DrainWorker [name ttl-seconds]
     ;; 本番の drain と同じ口(POST /workers/<名>/drain)。答え = 本番の CoordinatorCall と同じ形。
-    (val response (.post operator (.format "/workers/{}/drain" name) :json {"ttlSeconds" ttl-seconds}))
+    (val response (.post admin (.format "/workers/{}/drain" name) :json {"ttlSeconds" ttl-seconds}))
     (resume {"status" response.status-code "body" (.json response)}))
   (StopWorker [name]
     ;; 止め = 前の process が抜ける(同じ名で 2 つの世代が交互に名乗ると、coordinator は作り直しと読んで置いた task を消す)。
@@ -132,9 +132,9 @@
         coordinator (MemoryCoordinator clock TIMING)
         transport (httpx.MockTransport coordinator.handle)
         runners (CoordinatorRunners tmp-path transport)
-        operator (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]
+        admin (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]
     (for [fact RUNNERS] (.fresh runners fact.name fact.provides fact.exclusive))
-    (RunnersRig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runners runners operator)
+    (RunnersRig "coordinator" [(sim-time-handler :clock clock) (transport-http transport) (rig-runners runners admin)
                                (detached-cluster (route-cell) TEST-ROUTE (detached-sender "r") :poll-seconds POLL)]
                 runners.workers)))
 
@@ -596,7 +596,7 @@
   (assert ok))
 
 
-;; --- task の時刻(ReadDetachedTiming — card ki-f3edfdaf9599): 「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めるための読み -----
+;; --- task の時刻(ReadDetachedTiming): 「ある刻に task が始まっていたか」を、読んだ今の phase でなく刻で決めるための読み -----
 
 ;; coordinator の GET /state の返事(task の行は epoch ミリ秒の時刻を持つ — 本番の返事の形のうち読む欄と、読まない欄の id・worker)。
 ;; k = 置かれて走っている task・q = 待っている task・f = 終わった task・最後の行は RemoteJob の task(key を持たない)。

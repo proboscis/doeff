@@ -136,7 +136,7 @@
 ;; (ADR-DOE-AGENTS-008 R2)。poll / 再描画待ちは退役 Rust 移植値
 ;; 300ms / 800ms(rollback 専用出自 — ADR-DOE-AGENTS-004 R7/U1)。
 ;; 待ちは doeff-time の Delay を yield する — 1 秒が何であるかは handler の積み(host.hy run-hosted の
-;; sync-time-handler・検は台本の世界の時計)が決める(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1)。
+;; sync-time-handler・検は台本の世界の時計)が決める(ADR-DOE-TIME-001 R1)。
 (setv REPL-IDLE-POLL-SECONDS 0.3)
 (setv DIALOG-REDRAW-SECONDS 0.8)
 
@@ -692,7 +692,7 @@
                 "kind and permitted by host policy — never by an env var "
                 "(ADR-DOE-AGENTS-004 R9)."))))
   ;; 従量課金 credential は binding 所有キーと違い「正しい家」が無い — どの
-  ;; 経路でも受けない(operator 裁定 2026-08-26。resume も本関所を通る)。
+  ;; 経路でも受けない(resume も本関所を通る)。
   ;; 判定は policy の 1 点(session.send の手番ごとの env も同じ関所を通る)。
   (setv env-error (session-env-admission-error session-env "session.launch"))
   (when (is-not env-error None)
@@ -811,7 +811,7 @@
     (setv identity (dict resolved))
     (.pop identity "warnings" None)
     (setv minted-conversation (.pop identity "conversation" None))
-    ;; card acp:kanban-issue:ki-c3aace97d825: 鋳造した新しい会話ではなく、家に在る transcript を継いだか。
+    ;; 鋳造した新しい会話ではなく、家に在る transcript を継いだか。
     ;; 継いだ拍は `--session-id`(新しい会話)ではなく `--resume`(続き)で起こす — 器は既に在る id での
     ;; `--session-id` を『already in use』で断る(実射 2026-09-23)。
     (setv adopted-conversation (bool (.pop identity "adopted_conversation" False))))
@@ -847,7 +847,7 @@
 (defk claude-settings-declaration [agent-type]
   {:pre [(: agent-type str)]
    :post [(: % (| dict None))]}
-  "席の settings の宣言(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13): 機体の参加の宣言
+  "席の settings の宣言(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言
    [agentd].claude_settings_file が名指した file(join が門を通して据えた絶対 path = env
    DOEFF_AGENTD_CLAUDE_SETTINGS_FILE — 綴りの正本は acp/effects.py CLAUDE_SETTINGS_FILE_ENV)を**起動の拍ごとに**
    読み、claude の `--settings` に合流させる dict を返す(合流点は impls/claude_code.hy build-claude-argv・鍵の衝突は
@@ -888,7 +888,7 @@
 (defk claude-instruction-sources [agent-type]
   {:pre [(: agent-type str)]
    :post [(: % tuple)]}
-  "席の家へ運ぶ**共通の指示**の読み(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D1 / D11)。
+  "席の家へ運ぶ**共通の指示**の読み(D11)。
 
    機体の参加の宣言が名指した正本(join が門を通して据えた絶対 path = 名簿 policy.CARRIED-INSTRUCTION-SOURCES
    の env)を**起動の拍ごとに**読み、器が家へ実体化できる形にして返す。claude-settings-declaration と
@@ -922,7 +922,7 @@
                 (<- _ (log-line
                         (+ f"session.launch: {source.absent-word} {source.env}={path} — "
                            "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
-                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c D5)")))
+                           "(宿の checkout が追いつくまで)")))
                 (do
                   (setv (get landing CARRIED-ITEM-TEXT) text)
                   (.append items landing))))
@@ -936,7 +936,7 @@
                 (<- _ (log-line
                         (+ f"session.launch: {source.absent-word} {source.env}={path} — "
                            "機体の参加の宣言が名指した共通の指示が無いので、この席はそれ無しで起こす"
-                           "(宿の checkout が追いつくまで・card acp:kanban-issue:ki-62aa1f4e9c9c D5)")))))
+                           "(宿の checkout が追いつくまで)")))))
         True
           (raise (RuntimeError
                    (+ f"session.launch: 名簿 policy.CARRIED-INSTRUCTION-SOURCES の運び方が閉語彙の外: "
@@ -1003,7 +1003,7 @@
   (<- tmux-exists (tmux-has-session session-name))
   (when tmux-exists
     (raise (RuntimeError f"tmux session already exists: {session-name}")))
-  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(D1): 席の家への据え付けは**起動の拍**で、座は
+  ;; D1: 席の家への据え付けは**起動の拍**で、座は
   ;; per-kind の PreLaunchSetup(claude-pre-launch)の 1 か所。読みはここ(腕の共有点)で、
   ;; 器は運ばれてきた物を実体化するだけ(memory_files と同じ規律)。
   (<- params (params-with-instruction-sources params agent-type))
@@ -1011,7 +1011,7 @@
   (setv identity (get prepared "identity"))
   (setv minted-conversation (get prepared "conversation"))
   (setv resume-context (.get params "resume_context"))
-  ;; card acp:kanban-issue:ki-c3aace97d825: 会話 identity と起こし方(--session-id / --resume)の判断は
+  ;; 会話 identity と起こし方(--session-id / --resume)の判断は
   ;; policy.launch-conversation-plan-of の 1 点(headless.hy と同じ関数)。
   (<- launch-plan dict (launch-conversation-plan-of resume-context minted-conversation
                                                     (bool (.get prepared "adopted" False))
@@ -1025,7 +1025,7 @@
   (when (not has-override)
     (setv effective-params (dict params))
     (setv (get effective-params "session_hooks") session-hooks)
-    ;; card ki-7b52bb76aa6e: 名指しの無い手番は欄を作らない(argv の byte 同一の pin を保つ)。
+    ;; 名指しの無い手番は欄を作らない(argv の byte 同一の pin を保つ)。
     (when (is-not claude-settings None)
       (setv (get effective-params "claude_settings") claude-settings))
     (when (and (is-not expected-result None)
@@ -1240,11 +1240,11 @@
    ⚠ charter → resume params(judgment.resume-params-of)→ wire の受理形
    (host.build-resume-program-params)→ **ここ** と続く 4 枚のうちの 4 枚目。純関数として
    外へ出しているのは、検が『charter の欄が 1 枚でも落ちたら赤』をこの座で撃てるようにするため
-   (card acp:kanban-issue:ki-a40292ed30d9 受入・制約 4: 届いた所を母集団に入れる)。"
+   (制約 4: 届いた所を母集団に入れる)。"
   ;; 席へ運ぶ charter の欄(policy.CHARTER-CARRIED-KEYS)は蘇生の名簿でも運ぶ。2 度写すのは
   ;; 優先の順そのもの: まず蘇生元の行の意図(overlay = 行に残る旗)、その上に呼び手の params
   ;; (この手番の charter)を重ねる — 呼び手が名乗った欄が勝ち、名乗らない欄は行から戻る。
-  ;; ⚠ **欄の名をここで数えない**(card acp:kanban-issue:ki-a40292ed30d9: 置き場だけをこの座へ
+  ;; ⚠ **欄の名をここで数えない**(置き場だけをこの座へ
   ;; 手で足した便の次に、同じ座で記憶の本文が落ちた)。
   (carry-charter-fields
     params

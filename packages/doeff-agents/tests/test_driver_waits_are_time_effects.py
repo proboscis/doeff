@@ -1,4 +1,4 @@
-"""driver 層の program の待ちは doeff-time の ``Delay``(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1)。
+"""driver 層の program の待ちは doeff-time の ``Delay``(ADR-DOE-TIME-001 R1)。
 
 program は時間の効果を yield し、1 秒が何であるかは呼び手が置く時間の handler が決める。ここの検は、program と
 I/O の世界の間に仮想の時計(sim_time_handler)を挟み、時計がどれだけ進んだかを読む — program が自前の待ちの

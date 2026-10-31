@@ -1,4 +1,4 @@
-"""StartProcess の「起こした process が終わったら、その子も終わる」の検で、起こす側になる小さな script(agora-redesign #3866)。
+"""StartProcess の「起こした process が終わったら、その子も終わる」の検で、起こす側になる小さな script。
 
 本物の答え手(subprocess-handler)で子を 1 つ StartProcess し(process-group True — 新しい session)、子の pid を out-path へ 1 行で書く。
   * mode = hold: 書いた後は終わらずに待つ — 検が外から SIGKILL する(起こした側が片づけを走らせずに死ぬ形)

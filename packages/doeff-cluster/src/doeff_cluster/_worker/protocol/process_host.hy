@@ -13,7 +13,7 @@
 ;;; (前の uuid4 の頭 12 桁と同じ形 — 乱数の効果を使わず、再起動した worker でも pid が違うので重ならない)。
 ;;;
 ;;; 実行環境の job の作業 dir(回収した job の物と、起こす前に残っていた前の job の物)は、拍の中では置き場(jobs-dir の下の
-;;; SET-ASIDE-DIR)へ名を付け替えるだけにし、木の消し(RemoveTree)は拍の外の task が行う(card ki-2158e6d6e304 — 作業 dir は 14 万
+;;; SET-ASIDE-DIR)へ名を付け替えるだけにし、木の消し(RemoveTree)は拍の外の task が行う(作業 dir は 14 万
 ;;; file・3.4 GiB に育ち、回収の拍が消しの終わりを 40〜250 秒待って、ほかの job の起動・止め・状態の報告を道連れに止めた)。消しの task は
 ;;; 同時に 1 つで、置き場の中身を全部消す(前の process が残した物も拾う)。走っている間に退けた物は、task の終わりの後の拍が次の task に渡す。
 (require doeff-hy.macros [defhandler defk <- val var])
@@ -53,8 +53,8 @@
 (defrecord HostSettings
   "job の子 process の置き場と起こし方の設定(worker の組み立ての入口 main が作る): log-dir = 子の出力の file の dir(世代をまたいで分け合う)・
    generation = log-dir の中の名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・jobs-dir = 実行環境の
-   job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter(hy を通さない素の python —
-   card ki-869cdf21ec85)・hy-command = 木の job の hy・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
+   job の作業 dir の親・program-dir = 詰めた Program の cache の dir・python = shim を起こす interpreter(hy を通さない素の python)
+   ・hy-command = 木の job の hy・extra-env = 子へ渡す worker の文脈(名前・coordinator — 資格は渡さない)・layout = 業務の repo の木の形・
    program-env = 詰めた Program の file を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT)・shim = shim の時間の内訳(worker の方針から
    shim_timing.shim-spans が導く — 子の shim の猶予と、回収の時に shim を待つ秒が同じ値を読む・#2940)。"
   (#^ str log-dir)
@@ -73,7 +73,7 @@
   ;; 退きの知らせの pipe の読み口の fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — #3672)。shim がこの名で
   ;; job へ渡し、worker が標準入力へ書いた行をその pipe へ中継する。
   (#^ str notice-env)
-  ;; 常駐の job(JobSpec.once が偽)の shim を置く兄弟の cgroup の cgroup.procs(card ki-cd8cb84fdcd2 — worker/core/job_cgroup の
+  ;; 常駐の job(JobSpec.once が偽)の shim を置く兄弟の cgroup の cgroup.procs(worker/core/job_cgroup の
   ;; service の類・入口 main が DOEFF_WORKER_SERVICE_CGROUP から 1 度だけ決める)。None = 置き分けない(子は外の job-cgroup-placer の置き場か、
   ;; worker と同じ cgroup)。
   (setv #^ (| str None) service-procs None))
@@ -81,7 +81,7 @@
 
 (defrecord ForkedFrom
   "待ちの子から分けて起こした子の印(#3646): start-ticks = 分かれた子 A の /proc の起動の刻(pid の使い回しを見分ける)・exit-path = A が
-   終了コードを書く file・holds-input = A の入力の pipe を握って頼んだ(service — 退きの知らせをそこへ書く・card ki-de44efdb9aa4)。
+   終了コードを書く file・holds-input = A の入力の pipe を握って頼んだ(service — 退きの知らせをそこへ書く)。
    観測・止め・回収は pid とこの印で問う(汎用の子 process の効果ではなく、待ちの子の効果)。"
   (#^ int start-ticks)
   (#^ str exit-path)
@@ -109,7 +109,7 @@
 (defenum StopMoment TERM KILL REAPED)
 ;; 止めの計時の行の名(他の計時の行と同じく、名 + 欄の形 — 本文は持たない)。
 (val STOP-TIMING-LOG "worker: job の止めの計時")
-;; 起こせなかった job の行の名(card ki-e1612a12d0c3 — 名 + 欄 job・via(shim か warm:<root のキー>)・detail の形)。
+;; 起こせなかった job の行の名(名 + 欄 job・via(shim か warm:<root のキー>)・detail の形)。
 (val JOB-NOT-STARTED-LOG "worker: job を起こせなかった")
 ;; 退けた作業 dir の置き場の名(jobs-dir の下 — 名の付け替えが同じ file system の中の 1 手で済む。job の作業 dir の名は job-work-dir が
 ;; job の名から作り、. で始まらない)。
@@ -183,7 +183,7 @@
   {:pre [(: started Started) (: notice (| Retired HandoffAbandoned))] :post [(: % Started)] :tags {:context "worker" :role "protocol"}}
   "退きの知らせ notice を子へ送り、観測の notice に残した子を返すため(#3672): shim の下の子は shim の標準入力の pipe へ 1 行
    (retirement-line)を書く — shim がその行を job の知らせの pipe へ中継する。待ちの子から分けた service は、握った入力の pipe へ同じ行を
-   書く — 分けた子 A が同じ部品で中継する(card ki-de44efdb9aa4)。分けた task(入れ替えの対象でない)は知らせの口を持たないので書かない。
+   書く — 分けた子 A が同じ部品で中継する。分けた task(入れ替えの対象でない)は知らせの口を持たないので書かない。
    書けなかった(子が終わっていた)時も観測には残す — 終わりは ObserveProcesses が運ぶ。"
   (<- line str (retirement-line notice))
   (cond
@@ -314,7 +314,7 @@
 
 (defk shim-argv [settings spec argv]
   {:pre [(: settings HostSettings) (: spec JobSpec) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
-  "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ移ってから起こす形に包むため(card ki-cd8cb84fdcd2 —
+  "shim の argv を、常駐の job(once が偽)なら service の兄弟の cgroup へ移ってから起こす形に包むため(
    worker/core/job_cgroup の service の類)。task と、置き分けない worker(service-procs が None)は argv のまま。外の job-cgroup-placer
    はこの後に全部の子を job の兄弟へ包むので、常駐の job の子は job の兄弟を経て service の兄弟に落ち着く(内の包みが後に走る)。"
   (when (or spec.once (is settings.service-procs None))
@@ -328,9 +328,9 @@
   "StartJob を汎用の効果で答えるため: 出力の file の dir を作り、起こし方(job-launch)を決め、実行環境の job は使った印と空の作業 dir を
    作ってから起こす。道は判断が決めた欄のとおり(黙って別の道へ倒れない): warm-key の在る task は、その root の待ちの子へ頼んで分ける
    (ForkFromWarm — socket は root のキーから warm-place で導く・cwd と入口の後ろの引数は shim の道と同じ job-launch の値・env は shim の
-   道と同じ root の venv まで含めた job-launch の entry-env — card ki-b884608b96e4)、
+   道と同じ root の venv まで含めた job-launch の entry-env)、
    それ以外は shim の下の子を専用の group に起こす。起こした子(観測と、分けた子の印)を返す。起こせなければ(待ちの子が分けるのを
-   断った・shim を起こせない)その訳の JobNotStarted を返す(card ki-e1612a12d0c3 — 例外にすると worker の process ごと落ち、機体の上の
+   断った・shim を起こせない)その訳の JobNotStarted を返す(例外にすると worker の process ごと落ち、機体の上の
    job を全部道連れにした。断りの数えと起こし直しは判断の層 — policy の record-after・warm-child-actions)。"
   (val spec action.spec)
   (<- (file-done (MakeDirectory settings.log-dir)))
@@ -348,7 +348,7 @@
   (when spec.program
     (<- cached Path (spec-program-file (Path settings.program-dir) spec))
     (:= program-path (str cached)))
-  ;; root へ送る子の入口の名(card ki-7a7a1dcb1933): 子は root の版の doeff で起きるので、実行環境の job は root の完成の印の置き場の名。
+  ;; root へ送る子の入口の名: 子は root の版の doeff で起きるので、実行環境の job は root の完成の印の置き場の名。
   ;; 木の job は宣言の名のまま。shim の下の道と待ちの子から分ける道が同じ名を使う。
   (var entry spec.entry)
   (when spec.runtime-env
@@ -372,11 +372,11 @@
   (if (is-not action.warm-key None)
       (do (<- place WarmPlace (warm-place settings.warm-dir action.warm-key))
           (val exit-path (+ stem ".exit"))
-          ;; 常駐の job(service — card ki-de44efdb9aa4)は入れ物 shim の 4 つの役を分けた子 A に揃える: 入力の pipe を握る(worker の
+          ;; 常駐の job(service)は入れ物 shim の 4 つの役を分けた子 A に揃える: 入力の pipe を握る(worker の
           ;; 消失の検知と退きの知らせ — shim の hold-stdin)・知らせの中継(shim の --notice-env)・service の兄弟の cgroup(shim-argv の
           ;; placed-argv と同じ cgroup.procs)。log の刻と孫の回収と終了コードは task と同じ A の見張りが持つ。
           (val service (not spec.once))
-          ;; worker より長く生きる service(launch の outlives-worker — card ki-f69f2a6869aa)は、A に入力の EOF を退きとして待たせる
+          ;; worker より長く生きる service(launch の outlives-worker)は、A に入力の EOF を退きとして待たせる
           ;; (入れ物 shim の --orphan-seconds と同じ値。印 orphanForks の無い版の待ちの子へは頼まない — warm_rules の warm-start)。
           (<- orphan (| float None) (orphan-seconds-of spec))
           (<- forked (ForkFromWarm :socket-path place.socket :entry entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
@@ -417,7 +417,7 @@
       (<- work str (job-work-dir settings spec.name))
       (<- moved SetAside (work-dir-set-aside settings work aside))
       (:= aside moved))
-    ;; 起こせなかった子は表に載せず、その答えを返す(判断がその job だけの失敗に数える — card ki-e1612a12d0c3)。
+    ;; 起こせなかった子は表に載せず、その答えを返す(判断がその job だけの失敗に数える)。
     (<- begun (| Started JobNotStarted) (start-job settings (StartJob spec attempt code-path :warm-key warm-key)))
     (if (isinstance begun JobNotStarted)
         (resume begun)
@@ -511,7 +511,7 @@
     (:= aside progressed)
     (resume (tuple (gfor started (.values seen) started.view))))
   (ObserveJobRoots []
-    ;; 機体の memory の見張りの問い(card ki-7b934e2538f9): 終わりをまだ観測していない子の根を、表のまま答える(子を問い直さない)。
+    ;; 機体の memory の見張りの問い: 終わりをまだ観測していない子の根を、表のまま答える(子を問い直さない)。
     (resume (tuple (gfor started (.values table) :if (is started.view.exit-code None)
                          (JobRoot :name started.view.name :pid started.view.pid)))))
   (WorkerWakes []

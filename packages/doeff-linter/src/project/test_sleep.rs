@@ -1,4 +1,4 @@
-//! DOEFF211: Hy の検は、実時間が対象だと名乗らない限り壁の時計で眠らない(doeff の ADR-DOE-TIME-001 R3 — card ki-bb3ee40d0af2)。
+//! DOEFF211: Hy の検は、実時間が対象だと名乗らない限り壁の時計で眠らない(doeff の ADR-DOE-TIME-001 R3)。
 //!
 //! 検が `time.sleep` / `asyncio.sleep` で待つと、待つ物(出来事)が名指されず、実時間の分だけ遅くなり、込んだ機体では時間切れで
 //! 赤になる。検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を

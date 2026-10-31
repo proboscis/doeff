@@ -4,8 +4,8 @@
 ``if isinstance(effect, EffectBase): if not guard: yield Pass(effect, k) else: <body>``: a ``Nap``
 reaches the clause and is passed on, so it leaves the handler.  The reader took the clause for
 every effect it names and never looked at its guard, so a ``Nap`` that crossed a fence was read as
-answered by it and the Program's residual was empty (card ki-9a93072b861e; found by the design
-check of card ki-1201d06f6324).  The guard is read per effect that arrives: a class test decides
+answered by it and the Program's residual was empty (found by the design).
+The guard is read per effect that arrives: a class test decides
 (``isinstance`` / ``not`` / ``and`` / ``or``) and the effect it certainly sends on leaves the
 handler.  A guard that tests anything else (a field of the effect, a call) is decided only at run
 time: the clause is taken to answer the effect, as a clause without a guard does — most guards in an

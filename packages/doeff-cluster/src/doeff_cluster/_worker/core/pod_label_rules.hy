@@ -1,4 +1,4 @@
-;;; worker の Pod の job の label の判断(card ki-a66bb71f4152)— I/O は呼び手(worker/protocol/pod_labels)が行う。
+;;; worker の Pod の job の label の判断— I/O は呼び手(worker/protocol/pod_labels)が行う。
 ;;;
 ;;; 常駐の job の置き先は coordinator の GET /state にしか出なかったので、k8s の Service は job の置き先を選べず、機体の label
 ;;; (doeff.dev/node)で 1 台を名指していた — job が別の機体へ移ると口が届かない。worker は coordinator の宣言がこの worker に置いた

@@ -57,7 +57,7 @@ pub(crate) fn record_abandoned_transfer_branch_free() {
     ABANDONED_TRANSFER_BRANCH_FREES.fetch_add(1, Ordering::Relaxed);
 }
 
-// ── 積み上げの仕事の量(agora-redesign #2851・#2670)───────────────────────────────────
+// ── 積み上げの仕事の量(#2670)───────────────────────────────────
 // 上の「今生きている数」と違い、process の全部の VM が進めた歩数と handler を呼んだ回数を、減らさずに積み上げる。
 // 検の時間の予算を、機体の負荷で揺れない決まった数で判じるため(doeff-hy-pytest の budget.py が区間の前後の差を取る)。
 // 加算は Relaxed の 1 回で、常時の費用はほぼ 0。
@@ -90,7 +90,7 @@ pub(crate) fn record_handler_call() {
     HANDLER_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
-// ── 継続の fiber の鎖をなめた数(agora card ki-9de8d0a54408)──────────────────────────────
+// ── 継続の fiber の鎖をなめた数──────────────────────────────
 // 切り離した fiber の鎖(DetachedFiberChain)の中で、id から fiber を引くたびに見た entry の数を積み上げる。鎖を
 // 1 度たどる仕事が鎖の長さ(handler の段の数)に比例するか、その 2 乗かを、時計でなく数で判じるため(検が前後の差を
 // 取る)。たどり 1 回に Relaxed の加算 1 回。

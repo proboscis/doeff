@@ -1,6 +1,6 @@
-"""載っている ADR の id の一覧を読む操作は effect AdrIds で、GetAdr と同じ handler の工場 adr_registry が答える(card ki-2d28425e0d40)。
+"""載っている ADR の id の一覧を読む操作は effect AdrIds で、GetAdr と同じ handler の工場 adr_registry が答える。
 
-決め: 依頼書 lt-SNXDP773DP61WQ8S3D5HSHW2B1 の答え lt-NJMPGF51C0FBF49SC430JWEQ82(effect にする・ADR-DOE-API-001 R21)。
+決め: effect にする(ADR-DOE-API-001 R21)。
 関数 adr_ids は、外の repo の呼び手(agora L6159・custody L74)を AdrIds へ書き換えた後に消した。
 
 adr_registry() は process の登録簿の id を、adr_registry(specs=[spec, …]) はその列の id だけを並べて返す。

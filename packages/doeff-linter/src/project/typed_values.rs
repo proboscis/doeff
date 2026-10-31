@@ -1,5 +1,5 @@
 //! DOEFF144: 構造を持つ値は欄の名前と型を静的に持つ型で表す — 公開面の型の注記に素の写像・素の組が無いことを file 1 つずつ判じる
-//! (agora-redesign #1191 — agora-controllers の scripts/check_typed_values.hy の判定の移し先。判定の意味は元と同じにし、広げも狭めもしない)。
+//! (agora-controllers の scripts/check_typed_values.hy の判定の移し先。判定の意味は元と同じにし、広げも狭めもしない)。
 //!
 //! 読む file は repo の architecture.hy の `:typed-values {:files [..] :except [..]}` にだけ在り、ここには書かない。判定は file 1 つを
 //! 読めば決まるので repo 全体の索引を組まない — 名指しの path(`focus`)が在ればその下の file だけを読み、無ければ宣言の glob の頭の
@@ -15,9 +15,9 @@
 //! 素の組(tuple・Tuple)・値の型が object / Any の写像・長さの決まった組 `tuple[A, B]`・要素の型が object / Any の組
 //! `tuple[Any, ...]`(型を付けたことにならない)。赤にしない型: キーで引く索引 `dict[str, Row]`・同じ型の列 `tuple[X, ...]`・
 //! 凍らせた写像。これらの名は Python の型の意味なので linter が持つ。Hy の `(get tuple #(X ...))`・`(of tuple X ...)`・`(of dict K V)`・
-//! `(get dict #(K V))` も同じに読む — doeff-hy がこの形を :pre / :post と欄に書けるようにした(agora-redesign #1790・#1791)。
+//! `(get dict #(K V))` も同じに読む — doeff-hy がこの形を :pre / :post と欄に書けるようにした(#1791)。
 //!
-//! 構造を持つ値ではない 3 つの形は、名の形で決めてその種類の赤だけを外す(agora-redesign #1792・#1762 の決定 Q2-2 — Plain・plain_shape):
+//! 構造を持つ値ではない 3 つの形は、名の形で決めてその種類の赤だけを外す(#1762 の決定 Q2-2 — Plain・plain_shape):
 //! 並べ替えのキー(名が `…key-of`・`sort-key`・`order-key`)と SQL の引数の並び(`params`・`…-params`)の素の組・組の literal、
 //! キーで引く索引(`…-by-…`)の素の写像。それ以外の名の公開面の素の組・素の写像は今までどおり鳴る。
 //!
@@ -79,7 +79,7 @@ const CONTAINERS: &[&str] = &[
 /// 答えの組を探す時に入らない入れ子の関数の頭。
 const NESTED_FUNCTIONS: &[&str] = &["fn", "defn", "defk", "deff", "fnk"];
 
-/// 構造を持つ値ではない形(record にする意味が無い — agora-redesign #1792・#1762 の決定 Q2-2)。名の最後の段の形で決め、その形の
+/// 構造を持つ値ではない形(record にする意味が無い・#1762 の決定 Q2-2)。名の最後の段の形で決め、その形の
 /// 赤の種類だけを外す(同じ名でも別の種類の赤は鳴る)。どの形が例外かはこの型と plain_shape の 1 か所にだけ書く。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Plain {
@@ -356,7 +356,7 @@ fn generic_problem<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<St
         if args.len() >= 2 && !ellipsis(args[args.len() - 1]) {
             return Some(format!("長さの決まった組 {}[A, B]", base));
         }
-        // 同じ型の列 tuple[X, ...] でも、要素の型が object / Any なら型を付けたことにならない(agora-redesign #1791)。
+        // 同じ型の列 tuple[X, ...] でも、要素の型が object / Any なら型を付けたことにならない。
         if args.len() == 2 && open(args[0]) {
             return Some(format!("要素の型が開いた組 {}[object/Any, ...]", base));
         }
@@ -710,10 +710,10 @@ pub fn find(root: &Path, selection: &FileSelection, focus: Option<&[PathBuf]>) -
     )
 }
 
-// --- 値を型だけで渡す層(DOEFF170・171 — agora-redesign #2143)----------------------------------------------------------
+// --- 値を型だけで渡す層(DOEFF170・171)----------------------------------------------------------
 //
 // 層の宣言 `:wire-free True` の層(agora の core)は、wire の型(defwire)を持たず、写像も中身の型の無い組 / 列も受け渡さない
-// (operator の決定 2026-10-01 — defwire は core に置かず、写像は組む事そのものが目的の時だけ渡す。データを引くための写像は
+// (defwire は core に置かず、写像は組む事そのものが目的の時だけ渡す。データを引くための写像は
 // キー → 値の関数か効果にする)。DOEFF144 と違い、
 // 型つきの写像(`(of dict str Row)`)も鳴る(データを引く写像はキー → 値の関数か効果にする)。写像を組むのが目的の綴りは翻訳の層の
 // 1 点に置くので、この層には例外を置かない — ただし並べ替えのキーの組(Plain::SortKey)は値の受け渡しではないので外す。
@@ -798,7 +798,7 @@ fn wire_free_type_problem(node: &Hy) -> Option<String> {
     }
 }
 
-/// 総称型 base[args] 1 つ → 赤の理由(Hy と Python の注記で同じ判定 — agora-redesign #2203)。写像は中身の型が在っても鳴る。
+/// 総称型 base[args] 1 つ → 赤の理由(Hy と Python の注記で同じ判定)。写像は中身の型が在っても鳴る。
 fn wire_free_generic<T>(base: &str, args: &[&T], problem: &dyn Fn(&T) -> Option<String>, open: &dyn Fn(&T) -> bool, ellipsis: &dyn Fn(&T) -> bool) -> Option<String> {
     if BARE_MAPPINGS.contains(&base) || WIRE_FREE_MAPPINGS.contains(&base) {
         return Some(format!("写像 {}[…](中身の型が在ってもデータを引く写像は渡さない)", base));
@@ -859,7 +859,7 @@ fn py_field_sites(module: &[Stmt]) -> Vec<(String, &Expr)> {
         .collect()
 }
 
-/// 値を型だけで渡す層の Python の file 1 つを判じる(DOEFF171 の欄の型 — dataclass・TypedDict・class の欄の注記・agora-redesign #2203)。
+/// 値を型だけで渡す層の Python の file 1 つを判じる(DOEFF171 の欄の型 — dataclass・TypedDict・class の欄の注記)。
 /// Python には defwire も :pre / :post も無いので、見るのは欄だけ。読めなければ理由。
 pub fn py_wire_free_hits(source: &str, rel: &str) -> Result<Vec<WireFreeHit>, String> {
     let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
@@ -876,7 +876,7 @@ pub fn py_wire_free_hits(source: &str, rel: &str) -> Result<Vec<WireFreeHit>, St
     Ok(out)
 }
 
-/// 値を型だけで渡す層の外の Python の file 1 つの欄の写像(DOEFF172 の欄の臭い — agora-redesign #2203)。読めなければ理由。
+/// 値を型だけで渡す層の外の Python の file 1 つの欄の写像(DOEFF172 の欄の臭い)。読めなければ理由。
 pub fn py_dict_smell_hits(source: &str, rel: &str) -> Result<Vec<DictSmellHit>, String> {
     let module = parse(source, Mode::Module, rel).map_err(|error| format!("構文木にならない: {}", error))?;
     let Mod::Module(module) = module else { return Ok(Vec::new()) };
@@ -946,7 +946,7 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
                     let (start, end) = class.span();
                     out.push(WireFreeHit { start, end, name: spelled(source, class), what: WireFreeWhat::Wire, problem: String::new() });
                 }
-                // defwire の欄の型も defrecord・defclass と同じに見る(operator の決定 2026-10-01 — defrecord の欄に dict を
+                // defwire の欄の型も defrecord・defclass と同じに見る(defrecord の欄に dict を
                 // 持たせるのは本当に要る時だけ。欄の dict 系は 3 つの宣言のどれでも)。
                 out.extend(field_sites(source, form).into_iter().filter_map(|(name, node)| typed(name, WireFreeWhat::Field, node)));
             }
@@ -966,10 +966,10 @@ pub fn wire_free_hits(source: &str) -> Result<Vec<WireFreeHit>, String> {
     Ok(out)
 }
 
-// --- 写像の置き場の臭い(DOEFF172 — agora-redesign #2143 の (2))------------------------------------------------------------
+// --- 写像の置き場の臭い(DOEFF172)------------------------------------------------------------
 //
-// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator の決定
-// 2026-10-01)。だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
+// agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ。
+// だから handler の外で写像を組む定義と、欄に写像を持つ型は臭い(数えるだけ — major・warning)。写像を組むのが目的の定義(:post が
 // 写像 — JSON の境界で綴る 1 点)と defhandler の中は数えない。値を型だけで渡す層の欄の写像は DOEFF171(critical)が見るので、欄の
 // 臭いはそれ以外の層だけ。
 
@@ -1011,7 +1011,7 @@ fn mapping_problem(node: &Hy) -> Option<String> {
 }
 
 /// `(match 主 型 本体 型 :if 守り 本体 …)` の、型の位置を除いた項(主・守り・本体)— 型の `{…}` は値を組まず形を照らすだけなので数えない
-/// (agora-redesign #2310 — 以前は `{"type" "call"}` の型を「写像を組む」と数えていた)。
+/// (以前は `{"type" "call"}` の型を「写像を組む」と数えていた)。
 fn match_evaluated(items: &[Hy]) -> Vec<&Hy> {
     let mut out: Vec<&Hy> = items.get(1).into_iter().collect();
     let mut at = 2;
@@ -1053,7 +1053,7 @@ fn contract_map(item: &Hy) -> bool {
 }
 
 /// defk・deff・defn の本体の始まり(名・引数の後の先頭の docstring と契約の辞書を飛ばした位置)。docstring は契約の辞書の前にも後にも
-/// 置けるので、先頭に並ぶ文字列と契約の辞書を順を問わず飛ばす(agora-redesign #2265 — 以前は引数の直後の {…} だけを契約と読み、
+/// 置けるので、先頭に並ぶ文字列と契約の辞書を順を問わず飛ばす(以前は引数の直後の {…} だけを契約と読み、
 /// docstring の後の契約の辞書を「handler の外で組む写像」と数えていた)。
 fn body_start(items: &[Hy]) -> usize {
     let mut at = 3;
@@ -1067,7 +1067,7 @@ fn body_start(items: &[Hy]) -> usize {
 const BOUNDARY_FORMS: &[&str] = &["json", "http", "env", "schema", "records"];
 
 /// 契約の :tags の境界の名乗り(:spells = 外の形を綴る 1 点・:reads = 外の形を型へ読む 1 点)の形の名。無いか一覧の外なら None
-/// (agora-redesign #2515 — 以前は :spells の空でない値なら何でも受けた)。
+/// (以前は :spells の空でない値なら何でも受けた)。
 fn boundary_form_of(items: &[Hy]) -> Option<String> {
     let contract = items.get(3..body_start(items))?.iter().find_map(|item| item.form(Kind::Brace).filter(|_| contract_map(item)))?;
     tags_boundary_form(contract)
@@ -1082,16 +1082,16 @@ fn tags_boundary_form(head: &[Hy]) -> Option<String> {
     })
 }
 
-/// defwire の頭の辞書(名前と docstring の後の {…})の境界の名乗りの形の名(agora-redesign #2515 — 契約どおりの外の形の写像の欄を持つ
+/// defwire の頭の辞書(名前と docstring の後の {…})の境界の名乗りの形の名(契約どおりの外の形の写像の欄を持つ
 /// wire の型は、何の境界かを :spells / :reads で名乗れば欄を数えない。defrecord は値の型なので名乗りを効かせない)。
 fn wire_boundary_form(items: &[Hy]) -> Option<String> {
     items.get(2..)?.iter().filter(|item| !matches!(item, Hy::Text { .. })).take(1).find_map(|item| item.form(Kind::Brace)).and_then(tags_boundary_form)
 }
 
-/// 列の型の名か(要素の型が中継の型なら、列も中を読まずに運ぶ — agora-redesign #2586)。
+/// 列の型の名か(要素の型が中継の型なら、列も中を読まずに運ぶ)。
 const RELAY_SEQUENCES: [&str; 4] = ["tuple", "list", "typing.Tuple", "typing.List"];
 
-/// 欄の型が中を読まない中継の型 OpaqueJson ちょうどか(None との和を含む)— DOEFF172 は写像と数えない(agora-redesign #2515 — #2077・
+/// 欄の型が中を読まない中継の型 OpaqueJson ちょうどか(None との和を含む)— DOEFF172 は写像と数えない(#2077・
 /// #2211・#2068 で採った中継の形。OpaqueJson と他の写像の和は数える)。要素の型が中継の型の tuple / list(`(get tuple #(OpaqueJson ...))`・
 /// `(of tuple OpaqueJson ...)`・`(get list OpaqueJson)`)も、中継を 0 個以上運ぶだけなので数えない(#2586)。
 fn relays_opaque_json(node: &Hy) -> bool {
@@ -1174,7 +1174,7 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
                     continue;
                 }
                 // 外の形を綴る・読むのが目的の 1 点(契約の :tags に :spells / :reads を形の名で名乗る)は数えない — operator の選んだ線 (b)、dict を
-                // 組む事が目的の 1 点だけ可(agora-redesign #2265・#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
+                // 組む事が目的の 1 点だけ可(#2515)。値を型だけで渡す層(core)では名乗っても数える(その層は綴らない)。
                 if fields && boundary_form_of(items).is_some() {
                     continue;
                 }
@@ -1227,7 +1227,7 @@ mod tests {
 
     #[test]
     fn dict_smell_skips_match_patterns_but_counts_the_subject_guard_and_body() {
-        // agora-redesign #2310: match の型の位置の {…} は値を組まず形を照らすだけ(以前は「写像を組む」と数えた — turn_event_codec の
+        // match の型の位置の {…} は値を組まず形を照らすだけ(以前は「写像を組む」と数えた — turn_event_codec の
         // detail-of-json)。主・`:if` の守り・本体で組む写像は今までどおり数える。
         let source = r#"
 (defk detail-of [value]
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     fn dict_smell_skips_the_contract_after_a_docstring_and_honours_spells_outside_core() {
-        // agora-redesign #2265: docstring の後に置いた契約の辞書は写像の値ではない(以前は引数の直後の {…} だけを契約と読み、数えていた)。
+        // docstring の後に置いた契約の辞書は写像の値ではない(以前は引数の直後の {…} だけを契約と読み、数えていた)。
         // 本文で組む写像は docstring の有無を問わず数える。:tags の :spells(wire の形を綴る 1 点の名乗り)は値を型だけで渡す層の外でだけ効く。
         let source = r#"
 (defk note [n]
@@ -1280,7 +1280,7 @@ mod tests {
 
     #[test]
     fn dict_smell_honours_spells_and_reads_with_a_form_name_only() {
-        // agora-redesign #2515: :spells / :reads の値は外の形の名(json / http / env / schema)。形の名の無い名乗りは数える(失敗ケース 1)・
+        // :spells / :reads の値は外の形の名(json / http / env / schema)。形の名の無い名乗りは数える(失敗ケース 1)・
         // core(値を型だけで渡す層)では形の名で名乗っても数える(失敗ケース 2)。
         let source = r#"
 (defk header-map [x]
@@ -1313,7 +1313,7 @@ mod tests {
 
     #[test]
     fn dict_smell_does_not_count_opaque_json_relay_fields() {
-        // agora-redesign #2515: 中を読まない中継の型 OpaqueJson の欄(None との和を含む)は写像と数えない。OpaqueJson 以外の写像の欄・
+        // 中を読まない中継の型 OpaqueJson の欄(None との和を含む)は写像と数えない。OpaqueJson 以外の写像の欄・
         // OpaqueJson と他の写像の和は数える(失敗ケース 3)。
         let source = r#"
 (defrecord Relay (#^ OpaqueJson body) (#^ (| OpaqueJson None) extra) (#^ dict index) (#^ (| OpaqueJson dict) mixed) (#^ JsonBody raw))
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[test]
     fn dict_smell_does_not_count_sequences_of_opaque_json_relays() {
-        // agora-redesign #2586: 要素の型が中継の型 OpaqueJson の tuple / list(中を読まない JSON を 0 個以上運ぶだけ)は写像と数えない。
+        // 要素の型が中継の型 OpaqueJson の tuple / list(中を読まない JSON を 0 個以上運ぶだけ)は写像と数えない。
         // 写像の欄と、要素の型が OpaqueJson と写像の和の列は今までどおり数える(失敗ケース)。
         let source = r#"
 (defrecord Docs (#^ (get tuple #(OpaqueJson ...)) documents) (#^ (of tuple OpaqueJson ...) more) (#^ (get list OpaqueJson) listed)
@@ -1342,7 +1342,7 @@ mod tests {
 
     #[test]
     fn dict_smell_does_not_count_unions_of_opaque_json_and_records() {
-        // agora-redesign #2629(#2587 の IntakeSettled.result・PostSettled.result): 中継の型 OpaqueJson と写像でない型(record)の和は
+        // PostSettled.result: 中継の型 OpaqueJson と写像でない型(record)の和は
         // 写像と数えない。写像の枝を含む和と、中継の枝の無い写像の和は今までどおり数える(失敗ケース)。
         let source = r#"
 (defrecord Settled (#^ (| OpaqueJson IntakeRecord) result) (#^ (| OpaqueJson IntakeRecord None) maybe) (#^ (| IntakeRecord OpaqueJson) flipped)
@@ -1357,7 +1357,7 @@ mod tests {
 
     #[test]
     fn dict_smell_honours_a_boundary_named_defwire_only() {
-        // agora-redesign #2515(kn-w21 の #2505 の知らせ): 契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の :tags に :spells /
+        // 契約どおりの外の形の写像の欄を持つ defwire は、頭の辞書の :tags に :spells /
         // :reads を形の名で名乗れば欄を数えない。名乗らない defwire・形の名でない名乗り・defrecord の欄は数える。
         let source = r#"
 (defwire Usage "公開する自由なキーの索引。" {:tags {:context "x" :role "type" :spells "json"} :names :camel} (#^ (of dict str int) counts))
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     fn python_fields_in_the_wire_free_layer() {
-        // agora-redesign #2203: .py の class の欄 — 型つきの写像・文字列の注記・Optional の中・中身の型の無い組・凍った写像は鳴り、
+        // .py の class の欄 — 型つきの写像・文字列の注記・Optional の中・中身の型の無い組・凍った写像は鳴り、
         // 名と欄の型を持つ型と同じ型の列は鳴らない。名が _ で始まる欄も欄なので見る(DOEFF144 の公開面の絞りとは違う)。
         let source = "from typing import Mapping, Optional\n\nclass View:\n    rows: Mapping[str, 'Row']\n    meta: 'dict[str, int]'\n    \
                       maybe: Optional[dict]\n    pair: tuple\n    _cache: FrozenMap\n    ids: tuple[str, ...]\n    row: Row\n    \
@@ -1536,7 +1536,7 @@ mod tests {
         assert!(judge("a.md", "dict").unwrap().is_empty(), "Hy と Python の file だけを読む");
     }
 
-    // --- 構造を持つ値ではない形(agora-redesign #1792)---------------------------------------------------------------
+    // --- 構造を持つ値ではない形---------------------------------------------------------------
 
     #[test]
     fn a_sort_key_tuple_is_not_flagged() {
@@ -1581,7 +1581,7 @@ mod tests {
         assert_eq!(details("a.hy", source), vec!["field:View.items-by-id", "post:order-key-of", "post:rows-by-key"]);
     }
 
-    // --- 要素の型つきの総称型(agora-redesign #1791・doeff-hy の #1790 の形)-------------------------------------------
+    // --- 要素の型つきの総称型(doeff-hy の #1790 の形)-------------------------------------------
 
     #[test]
     fn element_typed_tuple_in_post_is_not_flagged() {

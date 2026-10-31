@@ -12,7 +12,7 @@
 ;;;   - 担い手の名簿(ReadRunners)= coordinator の名簿の生存と drain
 ;;;   - Service の一覧(ReadServices)= coordinator の Service の宣言の台数と、置き先の担い手が報告した落ちた事実(#3479)
 ;;;   - task の時刻(ReadDetachedTiming)= 積まれた刻・worker に置かれた刻・終わった刻(epoch ミリ秒)。終わったかどうかを待たず、「ある刻に始まって
-;;;     いたか」を読んだ今の phase でなく刻で決める呼び手のための読み(card ki-f3edfdaf9599)
+;;;     いたか」を読んだ今の phase でなく刻で決める呼び手のための読み
 ;;;
 ;;; 2026-09-28: 同じ VM の scheduler の task で走らせる模擬(detached-local・置き場 DetachedLocalStore・模擬の担い手)を消した。呼び手の
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
@@ -619,7 +619,7 @@
   answer)
 
 
-;; --- 終わりの出口(AwaitDetachedOutbox・AckDetachedOutbox — 2026-10-21・card ki-e7945a2b2d00)の本番の答え -----------------------------
+;; --- 終わりの出口(AwaitDetachedOutbox・AckDetachedOutbox — 2026-10-21)の本番の答え -----------------------------
 
 ;; 出口の読み直しの間(秒)。出口は終わった task の数だけしか動かず、知らせは数秒遅れてよい(待つ側の上限 timeout-seconds の内で回す)。
 (val OUTBOX-POLL-SECONDS 5.0)

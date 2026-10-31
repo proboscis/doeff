@@ -288,7 +288,7 @@ def _settled(call: Call) -> object:
 
     VM がその呼びを走らせても、関数を呼んで答えをそのまま返すだけ(本体は何も出さない)なので、束ねる所で
     呼んでも意味は同じ — 呼ぶ時点(束ねた所)・例外の上がる位置・``:pre`` / ``:post`` の検めは変わらず、VM の往復
-    だけが消える(agora-redesign #844)。本体に yield の在る関数の呼びは ``call`` そのもの(VM が走らせる)。
+    だけが消える。本体に yield の在る関数の呼びは ``call`` そのもの(VM が走らせる)。
     yield の無い関数が生成器を返したら、VM と同じくその生成器を Program として走らせる。
     """
     definition = call.function
@@ -339,7 +339,7 @@ def _open_bind(expr: object, absent: Callable[[], object] | None = None) -> obje
 def _passes_through(kind: type) -> bool:
     """型 kind の operand を ``absent`` 無しで束ねた時、``_open_bind`` がそれをそのまま返すか(``_opened`` の振り分けのどれにも
     当たらない — 呼び・DirectBind・値の型・変換する宣言を持つ effect・Absent / Raise のどれでもない)。答えは型だけで決まるので、
-    ``BindOpener`` が型ごとに覚え、その型の operand の束ねを Python の振り分けへ渡さない(card ki-5c3e73834e73)。"""
+    ``BindOpener`` が型ごとに覚え、その型の operand の束ねを Python の振り分けへ渡さない。"""
     if issubclass(kind, (Call, Absent, Raise)) or kind is DirectBind or kind in _VALUE_TYPES:
         return False
     outcomes = getattr(kind, "__doeff_outcomes__", None)
@@ -353,12 +353,12 @@ def _generator_program(value: GeneratorType) -> object:
 
 # 束ねの 1 点。熱い道(``absent`` 無しで、効果を出さない @do の呼び ``Call`` を束ねる — defk の判断)は doeff-vm の
 # ``BindOpener`` が Rust の中でその場で呼んで ``Pure`` を返し、それ以外は ``_open_bind`` へ渡す(答えは同じ・
-# agora-redesign #844 — 画面の 1 行で 10〜16 回束ねる判断で、Python の振り分け open_bind → _opened → _settled が
+# 画面の 1 行で 10〜16 回束ねる判断で、Python の振り分け open_bind → _opened → _settled が
 # 1 回の束ねの一番大きい残りの費用だった)。``absent`` 無しで効果を出す @do の呼び(本体に yield の在る ``Call``)も
-# ``BindOpener`` がその呼びそのものを返す — ``_settled`` が呼びをそのまま返すのと同じ答え(agora-redesign #2449 —
+# ``BindOpener`` がその呼びそのものを返す — ``_settled`` が呼びをそのまま返すのと同じ答え(
 # 預かり所の契約の例で Python の振り分けへ来た束ね 16.3k 回のうち 13.8k 回がこの形だった)。``absent`` 無しで、変換する
 # 宣言を持たない effect(``_passes_through`` が真の型)を束ねる時も、``BindOpener`` が型ごとに覚えた答えでその effect
-# そのものを返す(card ki-5c3e73834e73 — 記録の service の要求ごとの effect の束ねが毎回 Python の振り分けへ来ていた)。
+# そのものを返す(記録の service の要求ごとの effect の束ねが毎回 Python の振り分けへ来ていた)。
 # doeff-hy の <- の展開と effect-analyzer は、この object を名で引く。
 open_bind: BindOpener = BindOpener(_open_bind, _generator_program, _passes_through)
 

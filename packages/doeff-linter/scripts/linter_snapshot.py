@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""doeff の 1 つの commit から組んだ doeff-linter の置き場 — 機体で sha ごとに 1 度だけ組む(agora-redesign #1582・#2001)。
+"""doeff の 1 つの commit から組んだ doeff-linter の置き場 — 機体で sha ごとに 1 度だけ組む(#2001)。
 
 各 repo(agora-controllers・merge-queue ほか)の commit の hook が、組み立ての論理を写して持たずにこの 1 か所を呼ぶ。標準ライブラリ
 だけで書き(PEP 723 の依存は空)、repo の Python の環境が無くても `uv run --script` で動く。元の実装 = agora-controllers の
@@ -18,7 +18,7 @@
     packages/doeff-indexer)。作業木の file を読まないので、fast-forward の途中でも混ざらない。
   * 置き場 = `<store>/<40 桁の sha>/doeff-linter`(store の既定 = $XDG_CACHE_HOME/doeff-linter-snapshots、無ければ ~/.cache の下。
     env DOEFF_LINTER_SNAPSHOT_DIR で替える)。在れば組まずに返す。
-  * 入力の鍵で使い回す(agora-redesign #2383 — 2026-10-03 の pin 6ee873af3〜697796697 の 70 commit で linter の入力は 1 度も変わらないのに、
+  * 入力の鍵で使い回す(2026-10-03 の pin 6ee873af3〜697796697 の 70 commit で linter の入力は 1 度も変わらないのに、
     日次の機体が pin のたびに同じ linter を release・lto で組み直し〔1 回 約 8 分〕、最初に commit の hook を撃つ検が 300 秒の上限で切られた):
     sha の組み立ての入力の鍵(決め方の 1 か所 = doeff の scripts/doeff_linter_locked.py の `key <commit>` の口 — crate と path 依存の
     src・data・Cargo.toml・Cargo.lock・build.rs の object id)を問い、置き場に同じ鍵を書いた別の sha の linter が在れば、組まずに写して
@@ -29,14 +29,14 @@
   * 組み方 = `cargo build --release --locked`。cargo の target は機体の cache の根の下の共有の dir(`<cache の根>/cargo-target/doeff-linter`・
     cache の根 = $XDG_CACHE_HOME、無ければ ~/.cache — 置き場の既定と同じ 1 か所の決まり `cache_root`)で、置き場(env
     DOEFF_LINTER_SNAPSHOT_DIR)を替えても動かない — 置き場を読む側に合わせて ~/.cache に留める機体でも、大きな target は cache の
-    宣言の置き場へ行く(agora-redesign #3520)。組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
+    宣言の置き場へ行く。組んだ後も消さない — 依存の crate は sha をまたいで使い回し、新しい sha では
     doeff-linter と doeff-indexer の crate と link だけを組む(以前は一時の dir で毎回冷えた所から組み、新しい pin の後で最初に
-    commit した席が load の高い時に 9 分払った・agora-redesign #2977)。違う sha を同時に組む 2 本が同じ release/ の binary を
+    commit した席が load の高い時に 9 分払った)。違う sha を同時に組む 2 本が同じ release/ の binary を
     上書きしないよう、組んで写すまでを `<target>.lock` の flock で 1 本ずつにする。
     build.rs は断面に .git が無いので env DOEFF_LINTER_BUILD_COMMIT に 40 桁の sha を渡す。組んだ binary の `--version` がその sha
     ちょうど(+dirty なし)を名乗る事を確かめてから、一時の名から rename で置く。
   * git に渡す env から GIT_ で始まる名を外す — 別の repo の git の hook の中で呼ばれると、git が渡す GIT_DIR などが `-C` より勝ち、
-    その repo の object を読む(agora-redesign #1481・#1517)。
+    その repo の object を読む(#1517)。
 
 使い方: uv run --script packages/doeff-linter/scripts/linter_snapshot.py <doeff の checkout> <commit>
   組めれば binary の path を 1 行印字して 0、組めなければ理由を stderr に 1 行出して 1(呼び手は自分の環境の linter へ戻る)、

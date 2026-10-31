@@ -1,5 +1,5 @@
 ;;; HttpRequest の契約テスト — 同じ効果 HttpRequest に答える本物(http-production-handler)と fake(http-fixture-handler の replay)
-;;; が、同じ deftest を通る(agora-redesign #1159)。解釈器の組み立てと契約の世界は http_contract_handlers.hy。
+;;; が、同じ deftest を通る。解釈器の組み立てと契約の世界は http_contract_handlers.hy。
 ;;;
 ;;;   * 同じ要求(method・url・headers・body)に同じ status・headers・本文・最後の url が返る。header や本文だけが違う要求は
 ;;;     別の答えになる

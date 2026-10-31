@@ -1,4 +1,4 @@
-//! file 1 つの「どの名を綴っているか」の覚え — git の blob の id を鍵に、中身を読まずに引く(card ki-d56ba76422ba)。
+//! file 1 つの「どの名を綴っているか」の覚え — git の blob の id を鍵に、中身を読まずに引く。
 //!
 //! 1 file の実行は、呼び先の名を字面に綴る file だけを選ぶために、repo の Hy を全部読む(`spelled_callers`)。`Spelling::in_source` が見るのは
 //! 「記号の最後の段」だけ: 空白と `( ) [ ] { } " ;` で区切った語の、最後の `.` より後ろ。その語(`-` を `_` に畳む)の集合を、file ごとに Bloom filter
@@ -28,7 +28,7 @@ pub enum Seen {
     Unreadable,
 }
 
-/// repo の Hy の全部を歩きながら、file ごとに綴りの覚えを git の blob の id で引く(card ki-d56ba76422ba・ki-40c8ca380713)。覚えが在って
+/// repo の Hy の全部を歩きながら、file ごとに綴りの覚えを git の blob の id で引く。覚えが在って
 /// `wants_source(覚え)` が偽の file は中身を読まない。覚えが無い・index と外れた file・`wants_source` が真の file は中身を読む(覚えの無い blob は、
 /// 読んだ中身から覚えを作って置く)。覚えは index の並びの塊ごとに 1 file で引く(`ChunkedFacts` — 冷えた作業木で置き場の file を 4600 開かない)。
 /// 計器へ段 `label` の時間と、中身を読んだ数(`<label> read=N`)を出す。並びは `hy_files::collect_reading` と同じ。
@@ -82,7 +82,7 @@ fn hash_of(token: &str) -> u64 {
 }
 
 /// bit の位置の数と、語 1 つあたりの bit の数(2 の冪に切り上げる)。呼び先の名を 12 個探す file(requests_projection)では、前の 3 個・8 bit
-/// の誤った「在る」が名 1 つで約 1%・repo の Hy 4620 file の約 500 を読ませた(card ki-40c8ca380713 の実測)。8 個・16 bit なら名 1 つで
+/// の誤った「在る」が名 1 つで約 1%・repo の Hy 4620 file の約 500 を読ませた。8 個・16 bit なら名 1 つで
 /// 約 0.05% 以下(表は約 2 倍)。
 const HASHES: u64 = 8;
 const BITS_PER_WORD: usize = 16;

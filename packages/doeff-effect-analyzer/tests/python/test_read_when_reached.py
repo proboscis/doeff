@@ -1,10 +1,10 @@
-"""閉じの解析が、effect の届いた節だけを読み、同じ scope を辿り直さない事の検(card ki-5a5f6bd26d5e)。
+"""閉じの解析が、effect の届いた節だけを読み、同じ scope を辿り直さない事の検。
 
 agora-controllers の閉じの検は、土台の handler を読むたびに全部の節の emits(節が中で出す effect)を読み、handled の scope と運ばれた
 Program を、そこへ届いた walk ごとに報告し直していた(deliver の組で作った節 452 のうち引かれたのは 118・報告 7,000〜17,500 回に
 別の本体 800〜1,900)。節の emits は effect が届いた時に読み、報告は reader に覚えて、答えを変えずに同じ物を作り直さない。
 
-設計検証の盲検(docs/design/analyzer-read-when-reached-ki-5a5f6bd26d5e)が見つけた 2 つの失敗例も、ここで拒む: 1 つの handler の節を
+設計検証の盲検が見つけた 2 つの失敗例も、ここで拒む: 1 つの handler の節を
 2 つの thread が同時に引くと、節が共有する reader の読みかけの事実を辿って effect を落とした(A)。handler の読みを process で覚えると、
 解析の答えと読んだ source の数えが、同じ process で前に走った解析に依った(B — `:absent` の受け手が実際にそう覚えられていた)。
 """

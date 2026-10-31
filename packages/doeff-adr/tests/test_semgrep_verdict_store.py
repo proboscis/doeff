@@ -1,4 +1,4 @@
-"""installed の defsemgrep の答えを、呼び手が名指す置き場に残し、次の process で semgrep を起こし直さない(card ki-f81dde817291)。
+"""installed の defsemgrep の答えを、呼び手が名指す置き場に残し、次の process で semgrep を起こし直さない。
 
 同じ設定の規則の例は 1 回の semgrep にまとめてある(test_semgrep_installed_batch.py)が、その答えは process の中にしか無かった。
 agora の日次は pytest を 3 つの session に分けて回し、回ごとに空の HOME を作るので、設定も例も変わらない日にも session と設定ごとに
@@ -37,12 +37,12 @@ WORDS = ("eval", "exec")
 
 
 def _put_on_registry(effect: RegisterSemgrep) -> None:
-    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep — card ki-2a549274055c)。"""
+    """Semgrep の検を process の登録簿に載せる(effect RegisterSemgrep)。"""
     run_doeff(semgrep_enforcements()(effect))
 
 
 def _check(enforcement_id: str) -> None:
-    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep — card ki-2a549274055c)。"""
+    """登録簿の Semgrep の検を確かめる(effect AssertSemgrep)。"""
     run_doeff(semgrep_enforcements()(AssertSemgrep(enforcement_id)))
 
 

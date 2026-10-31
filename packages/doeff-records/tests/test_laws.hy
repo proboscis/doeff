@@ -134,14 +134,14 @@
   (assert transcript))
 
 (deftest test-append-events-answer-like-appends-in-order
-  ;; card ki-48c34994ed15: 追記の束は束の順に AppendEvent を撃った答えと同じ(断りは他の追記を止めない・番号は束の順)— 4 つの組で。
+  ;; 追記の束は束の順に AppendEvent を撃った答えと同じ(断りは他の追記を止めない・番号は束の順)— 4 つの組で。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-append-events-answer-like-appends-in-order harness))
   (assert transcript))
 
 (deftest test-read-batch-answers-like-each-read
-  ;; card ki-177a4f287c42: 読みの束は束の読みを 1 つずつ撃った答えと同じ(表をまたぐ鍵・値の組・頁の続き・NotIndexed・Reset)— 4 つの組で。
+  ;; 読みの束は束の読みを 1 つずつ撃った答えと同じ(表をまたぐ鍵・値の組・頁の続き・NotIndexed・Reset)— 4 つの組で。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-read-batch-answers-like-each-read harness))
@@ -210,35 +210,35 @@
 
 
 (deftest test-only-confirmed-events-are-retired
-  ;; card ki-707aad0f88e8: 送ってから外す列は、回収でも送り先に届かない回でも外れず、送り先に在ると確かめた出来事だけが外れる。
+  ;; 送ってから外す列は、回収でも送り先に届かない回でも外れず、送り先に在ると確かめた出来事だけが外れる。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-only-confirmed-events-are-retired harness))
   (assert transcript))
 
 (deftest test-retirement-keeps-the-read-boundary
-  ;; card ki-707aad0f88e8: 送りの読みの後に期限を過ぎた出来事は、同じ回の外しで外れない。
+  ;; 送りの読みの後に期限を過ぎた出来事は、同じ回の外しで外れない。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-retirement-keeps-the-read-boundary harness))
   (assert transcript))
 
 (deftest test-a-write-keeps-the-unarchived-event-it-touches
-  ;; card ki-707aad0f88e8: 送ってから外す列の期限を過ぎた鍵・組に触る追記は出来事を外さず、答えは前と同じ。
+  ;; 送ってから外す列の期限を過ぎた鍵・組に触る追記は出来事を外さず、答えは前と同じ。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-a-write-keeps-the-unarchived-event-it-touches harness))
   (assert transcript))
 
 (deftest test-keys-are-forgotten-after-their-memory
-  ;; card ki-4ebaefac6668: 覚えを長さで限った列の覚えは長さの後の回収で外れ、外れた鍵と覚えを残さない列の鍵の追記は新しい出来事。
+  ;; 覚えを長さで限った列の覚えは長さの後の回収で外れ、外れた鍵と覚えを残さない列の鍵の追記は新しい出来事。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-keys-are-forgotten-after-their-memory harness))
   (assert transcript))
 
 (deftest test-unarchived-keys-are-kept-until-retired
-  ;; card ki-4ebaefac6668: 送ってから外す列の覚えは、送り先に届かない間は長さを過ぎても外れず、確かめて外した後に外れる。
+  ;; 送ってから外す列の覚えは、送り先に届かない間は長さを過ぎても外れず、確かめて外した後に外れる。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-unarchived-keys-are-kept-until-retired harness))
@@ -252,21 +252,21 @@
   (assert transcript))
 
 (deftest test-a-keyed-write-replays-its-answer
-  ;; card ki-78c6d663491f: 冪等キーつきの書きの送り直しは、間に別の書き手が行を変えていても前の答え(Written・その時の版)を返し、行を変えない。
+  ;; 冪等キーつきの書きの送り直しは、間に別の書き手が行を変えていても前の答え(Written・その時の版)を返し、行を変えない。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-a-keyed-write-replays-its-answer harness))
   (assert transcript))
 
 (deftest test-another-key-is-judged-by-its-expectation
-  ;; card ki-78c6d663491f: 同じ値でも別の鍵・鍵の無い書きは、今までどおり期待で判じる(Conflict)。
+  ;; 同じ値でも別の鍵・鍵の無い書きは、今までどおり期待で判じる(Conflict)。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-another-key-is-judged-by-its-expectation harness))
   (assert transcript))
 
 (deftest test-write-keys-are-forgotten-after-their-memory
-  ;; card ki-78c6d663491f: 行の書きの冪等キーの覚えは、決まった期間の後の回収で外れる(際限なく伸びない)。
+  ;; 行の書きの冪等キーの覚えは、決まった期間の後の回収で外れる(際限なく伸びない)。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-write-keys-are-forgotten-after-their-memory harness))
@@ -274,21 +274,21 @@
 
 
 (deftest test-rows-and-events-are-written-together-or-not-at-all
-  ;; card ki-e17ba3b32dea: PutRowsAppendEvents は PutRows → AppendEvents と同じ答えで、全部か 0 で積む — 4 つの組で。
+  ;; PutRowsAppendEvents は PutRows → AppendEvents と同じ答えで、全部か 0 で積む — 4 つの組で。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-rows-and-events-are-written-together-or-not-at-all harness))
   (assert transcript))
 
 (deftest test-a-keyed-rows-and-events-write-replays-its-answer
-  ;; card ki-e17ba3b32dea: 冪等キーつきの PutRowsAppendEvents の送り直しは前の答えを返し、置き場を変えない。
+  ;; 冪等キーつきの PutRowsAppendEvents の送り直しは前の答えを返し、置き場を変えない。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-a-keyed-rows-and-events-write-replays-its-answer harness))
   (assert transcript))
 
 (deftest test-events-written-with-rows-name-the-rows-position
-  ;; card ki-e17ba3b32dea: 行と一緒に積んだ出来事は、読み戻しで同じ書きの行の最後の変更の位置を名乗る。
+  ;; 行と一緒に積んだ出来事は、読み戻しで同じ書きの行の最後の変更の位置を名乗る。
   {:interpreters ["memory" "pg" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-events-written-with-rows-name-the-rows-position harness))

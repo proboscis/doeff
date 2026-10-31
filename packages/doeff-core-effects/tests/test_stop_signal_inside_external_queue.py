@@ -1,5 +1,5 @@
 """止めの合図(SIGTERM)が、scheduler の外からの完了の列の操作の中に居る主 thread に当たっても、AwaitStop の待ちが起きて run が
-終わる事の検(agora-redesign #3584)。
+終わる事の検。
 
 道筋(本物): os-signal-stop-handler が据える受け手 StopBox.receive は、主 thread の上で bytecode の区切りに割り込んで走り、寝ている
 AwaitStop の外の約束(ExternalPromise)の complete を呼ぶ。complete は scheduler の外からの完了の列(_scheduled_python の

@@ -60,7 +60,7 @@
 #   worker の code を変える時は WORKER_DOEFF_COMMIT を変えて Pod を入れ替える(image は作り直さない)。無ければ今までどおり PATH の hy。
 #   版の file(WORKER_VERSION_FILE)を渡す worker は Pod を入れ替えず、下の keeper が同じ container の中で worker の process を入れ替える。
 #
-# 版の file と keeper(WORKER_VERSION_FILE が在る役 worker — card ki-6e83e03d146d):
+# 版の file と keeper(WORKER_VERSION_FILE が在る役 worker):
 #   WORKER_VERSION_FILE = worker の doeff の版(40 字の sha・1 行)を持つ file。k8s では名の固定した ConfigMap worker-version を volume で
 #   置いた file(subPath でない — 中身を変えても Pod は作り直されず、kubelet が file を入れ替える)。起動の版は呼び手がこの file から
 #   WORKER_DOEFF_COMMIT に入れて渡す(image の script は file を読まない)。その版の script は役 worker を keeper として回す:
@@ -91,11 +91,11 @@
 #   worker が鍵なしで clone する(公開の repo は通り、読めない非公開の repo は clone の失敗 repo-unreachable で返る)。
 #   WORKER_REPOS が無く /etc/worker-git/id が在れば、今までどおりそれを唯一の deploy key として使う。
 #
-# cgroup の層(WORKER_CGROUP_LAYOUT が在る時 — card ki-cd8cb84fdcd2):
+# cgroup の層(WORKER_CGROUP_LAYOUT が在る時):
 #   1 本の task の memory を kernel が抑え、常駐の job と worker の本体の memory を kernel が守るため、worker の cgroup の中に子の cgroup を
 #   作り、子ごとに memory の守り(memory.min・memory.low)か上限(memory.max・memory.high)を掛ける。worker はその子へ job を置き分ける
 #   (DOEFF_WORKER_JOB_CGROUP・DOEFF_WORKER_SERVICE_CGROUP — worker/core/job_cgroup)。
-#   CPU の重み(card ki-b40c5c399455): 子ごとに cpu.weight(1〜10000)と cpu.idle(0 か 1)も掛けられる。CPU が埋まった時に、遅れに
+#   CPU の重み: 子ごとに cpu.weight(1〜10000)と cpu.idle(0 か 1)も掛けられる。CPU が埋まった時に、遅れに
 #   敏感な層(worker の本体・常駐の job)の thread を、一括の仕事の層(task・CLI・命令)より先に CPU へ載せるため — 子に cpu を掛けない
 #   と、層の中の nice や SCHED_IDLE は層どうしの取り分を変えず、起きた常駐の thread が一括の仕事の後ろで実行待ちの列に並ぶ。
 #   WORKER_CGROUP_LAYOUT = 空白で並べた「<名>:<file>=<値>,…」(名は英小文字・数字・-。file は memory.min・memory.low・memory.high・
@@ -341,7 +341,7 @@ access_refused() {
 
 # 読み取りの鍵の表から、worker の鍵の表の JSON と、url ごとに鍵を選ぶ git / ssh の設定を書き、git と ssh をそこへ向ける
 # (export するので subshell で呼ばない)。JSON の path は repo_keys に置く。3 つの file は別名に書いてから置き換える — 走っている
-# worker の隣で組み直しても(worker が準備の前に ROLE=access で撃つ・card ki-2de748a0eac5)、git・ssh・準備の process は書きかけを読まない。
+# worker の隣で組み直しても(worker が準備の前に ROLE=access で撃つ)、git・ssh・準備の process は書きかけを読まない。
 repo_access() {
   keys=${WORKER_REPO_KEYS_DIR:-/etc/worker-repos}
   dir=${WORKER_ACCESS_DIR:-$HOME/.doeff-worker-repos}
@@ -911,8 +911,8 @@ elif [ "${WORKER_DIR_LOCK:-}" = 1 ]; then
   echo "boot: $WORK_DIR/worker.lock を取った $(date +%T)" >&2
 fi
 repo_keys=""
-# 鍵の表を file で受ける worker は、準備の前ごとにこの script を ROLE=access で撃ち、表を組み直す(起動し直さずに表の変更を読む・
-# card ki-2de748a0eac5)。env だけで受ける worker は起動の時の表のまま(空 = 組み直さない)。
+# 鍵の表を file で受ける worker は、準備の前ごとにこの script を ROLE=access で撃ち、表を組み直す(起動し直さずに表の変更を読む)。
+# env だけで受ける worker は起動の時の表のまま(空 = 組み直さない)。
 repo_access_script=""
 if [ -n "${WORKER_REPOS_FILE:-}" ]; then
   repo_access_script=$0
@@ -947,7 +947,7 @@ if [ -n "${WORKER_LABELS:-}" ]; then
   echo "boot: WORKER_LABELS は受け付けない — WORKER_PROVIDES(と WORKER_EXCLUSIVE)で提供する能力を名乗る" >&2
   exit 2
 fi
-# 枠(card ki-6828eda880ce・ki-2acb63aec0fd): WORKER_ROOM_FILE(worker の名 → taskReserve・backgroundRoom・memoryMiB の JSON — k8s では名の
+# 枠: WORKER_ROOM_FILE(worker の名 → taskReserve・backgroundRoom・memoryMiB の JSON — k8s では名の
 # 固定した ConfigMap worker-room を volume で置いた file)が在れば、worker は起動の時と heartbeat の前にその file の自分の行を読み直して
 # 名乗る(枠を変えても Pod を作り直さない)。WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・WORKER_MEMORY_MIB は file を読めない起動の時だけ
 # 使う。file の無い worker(機体の上の worker)は task のために空けておく数(WORKER_TASK_RESERVE)を必ず渡す — 既定の値で埋めない(範囲

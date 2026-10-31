@@ -5,7 +5,7 @@
 ;;;                            it on the main thread; Python only delivers signals there).
 ;;;   scripted-stop-handler    no I/O: RaiseStop sets the reason, StopRequested reads it. For tests and emulated worlds.
 ;;;
-;;; Both also answer AwaitStop (park until the stop — agora-redesign #2205): the OS handler parks each wait on an external
+;;; Both also answer AwaitStop (park until the stop): the OS handler parks each wait on an external
 ;;; promise the signal receiver completes; the scripted handler parks every wait on one promise RaiseStop completes. Both
 ;;; answer StopBell with one Future per session (the OS handler: one more external promise parked in the box until the
 ;;; signal; the scripted handler: the promise RaiseStop completes). A scheduler handler must be outside them (AwaitStop and

@@ -1,5 +1,5 @@
-;;; 子 process の終わりを待つ効果(AwaitProcessExit・AwaitWarmChildExit)と、答え手 process-exit-handler(process_exit.hy・
-;;; agora-redesign #3871 の単位 1)。本物の process(sleep・true・sh)を使う。終わると読める fd の開き方は機体ごと(Linux = pidfd・
+;;; 子 process の終わりを待つ効果(AwaitProcessExit・AwaitWarmChildExit)と、答え手 process-exit-handler(process_exit.hy)。
+;;; 本物の process(sleep・true・sh)を使う。終わると読める fd の開き方は機体ごと(Linux = pidfd・
 ;;; macOS = kqueue の EVFILT_PROC)で、同じ検がどちらの機体でもその機体の開き方を測る。
 ;;;
 ;;;   - 立てた子の終わりで答え、終わる前には答えない。待ちは子を回収しない(終了 code は後の PollProcess が答える)。
@@ -9,7 +9,7 @@
 ;;;   - 取り消した待ちは fd を残さず、待たれない coroutine の警告も出さない。
 ;;;   - 終わると読める fd を取る関数(機体の開き方)は、居ない pid に None を返す。
 ;;;   - 走っている子の終わりの待ちは、scheduler の止まりと数えない。子が終わったのに知らせの届かない待ちは止まりと数える
-;;;     (条 S1 — packages/doeff-core-effects/architecture.hy・card ki-6222e22d4179)。
+;;;     (条 S1 — packages/doeff-core-effects/architecture.hy)。
 (require doeff-hy.macros [defk deff deftest <- val])
 (import gc)
 (import logging)
@@ -107,7 +107,7 @@
 
 
 (defclass ChildWaitEvidence []
-  "走っている子の終わりの待ちが after 秒を越えた時に、子の様子と scheduler の待ちの列を lines に残すため(card ki-3a95051d3fb8 —
+  "走っている子の終わりの待ちが after 秒を越えた時に、子の様子と scheduler の待ちの列を lines に残すため(
    日次の回で約 60 秒止まって落ちた時に、1 回の失敗の記録から原因を決める)。待ちの上限も検の厳しさも変えない。"
   (defn __init__ [self [after EVIDENCE-AFTER] [every EVIDENCE-EVERY]]
     (setv self.after after self.every every self.lines [] self.pid None self.began (time.monotonic)
@@ -276,8 +276,8 @@
 (deftest test-waiting-on-a-running-child-is-not-a-stall [implementation monkeypatch caplog]
   {:params {"implementation" ["python" "rust"]}}
   ;; 条 S1: 走っている子の終わりの待ちは、終わりの知らせの出どころ(終わると読める fd)が登録され、子が生きている間は止まりでない。
-  ;; 子の 0.5 秒は、縮めた止まりの見張りの周期の 10 倍。直す前は周期ごとに警告を書いた(courier の job で 30 秒ごと・card ki-6222e22d4179)。
-  ;; 待ちが EVIDENCE-AFTER 秒を越えたら、子の様子と scheduler の待ちの列を残す(失敗の記録に証拠が出る — card ki-3a95051d3fb8)。
+  ;; 子の 0.5 秒は、縮めた止まりの見張りの周期の 10 倍。直す前は周期ごとに警告を書いた(courier の job で 30 秒ごと)。
+  ;; 待ちが EVIDENCE-AFTER 秒を越えたら、子の様子と scheduler の待ちの列を残す(失敗の記録に証拠が出る)。
   (.setattr monkeypatch scheduler-module "EXTERNAL_STALL_LOG_INTERVAL_SECONDS" STALL-INTERVAL)
   (.set-level caplog logging.WARNING :logger scheduler-module.__name__)
   (val evidence (run-with-evidence monkeypatch #("sleep" "0.5") implementation EVIDENCE-AFTER EVIDENCE-EVERY))

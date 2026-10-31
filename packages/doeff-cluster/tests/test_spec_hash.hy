@@ -96,7 +96,7 @@
 
 
 (deftest test-moving-the-entry-to-the-hidden-place-keeps-the-spec-hash
-  ;; card ki-7a7a1dcb1933: 送る名を区画を隠す前の置き場から _worker の置き場へ替えても、process の形は同じなので指紋は変わらない(変われば
+  ;; 送る名を区画を隠す前の置き場から _worker の置き場へ替えても、process の形は同じなので指紋は変わらない(変われば
   ;; coordinator の版上げで全部の service を作り直す)。指紋は前の綴りで計った値(固定の文字列)と一致する。
   (val legacy (JobSpec "svc" "doeff_cluster.worker.entry.job_entry" #("service" "--identity" "abc") "rev1"))
   (val moved (replace legacy :entry "doeff_cluster._worker.entry.job_entry"))

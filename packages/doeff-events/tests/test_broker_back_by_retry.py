@@ -1,6 +1,6 @@
 """The answer to "has the broker come back" for a broker that cannot tell its own return (Redis):
 ``broker_back_by_retry`` tries a connection (``ProbeBroker``) at the interval the composition names, and only while
-somebody waits for the return (agora-redesign #3864 — the decision of 2026-10-07, ADR-DOE-EVENTS-002 R6).
+somebody waits for the return (the decision of 2026-10-07, ADR-DOE-EVENTS-002 R6).
 
 The conditions it is held to, on the in-memory broker under a virtual clock (the in-memory handler answers
 ``ProbeBroker`` from whether its broker is cut; ``broker_back_by_retry`` sits inside it, so the in-memory

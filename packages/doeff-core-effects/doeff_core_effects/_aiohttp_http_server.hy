@@ -1,40 +1,40 @@
-;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の本物の答え手 aiohttp-http-server(agora-redesign #802 便 2 — agora-controllers の
+;;; 汎用の HTTP の待ち受けの effect(http_server_effects.hy)の本物の答え手 aiohttp-http-server(agora-controllers の
 ;;; webapp の受け口の土台 #767 / #795 から移した)。aiohttp の待ち受け・応答の送出・HTTP と ws の中継の実 I/O で、判断を持たない
 ;;; (何をどう送るかは呼び手の Program が HttpRespond の値で決める)。aiohttp は extra `http-server` の依存。
 ;;;
 ;;;   待ち受けの loop aiohttp の server とこの module の実 I/O の全部は、process に 1 つの待ち受けの loop(edge-loop — await-handler の
 ;;;                 共有の event loop とは別の daemon thread で回る)の上で走る。答え手の節は Await で共有の loop に入り、そこから待ち受けの
 ;;;                 loop の coroutine の完了を待つ(across)。共有の loop か協調型の scheduler が止まっても、待ち受けの loop は接続を受け続ける
-;;;                 (agora-redesign #2776 — 2026-10-02 の record の job は共有の loop が 30 秒止まり、/healthz も答えなかった)
+;;;                 (2026-10-02 の record の job は共有の loop が 30 秒止まり、/healthz も答えなかった)
 ;;;   loop の遅れ   待ち受けの loop は作った時から EDGE-LAG-TICK-SECONDS ごとに寝て起き、予定の刻と起きた刻の差(寝過ごし — thread が
 ;;;                 CPU を待った分と、loop の上の他の仕事が塞いだ分)を集め、EDGE-LAG-WINDOW-SECONDS の窓ごとに拍の数・最長・99% を
 ;;;                 stderr に 1 行名乗る(edge-lag-line)。ws の ping への pong もこの loop が返すので、画面の外の測りの client の CPU の待ちと
-;;;                 分けて、待ち受けの側の往復の遅れを読める(agora card ki-5bf133f2c72c)
+;;;                 分けて、待ち受けの側の往復の遅れを読める
 ;;;   probe の口   HttpListen の probes に当たる要求(probe-for — GET・HEAD と path)は列にも scheduler にも渡さず、待ち受けの loop が
 ;;;                 answer の Program を別の thread(asyncio.to_thread)の自分の run で走らせて答える(probe-answer)。札は 1 つ数える
 ;;;   待ち受け      aiohttp の server を待ち受けの loop の上に立てる(HttpListen)。要求ごとに札を振り、出来事
 ;;;                 HttpRequestArrived(頭と、送り元の address = request.remote を含む)を列へ並べ、命令(札つき)を待ってから実 I/O を撃つ — 呼び手は撃つだけで待たないので、
 ;;;                 長い中継が他の要求を止めない。列(Arrivals)に既に在る出来事は、HttpNextRequest の節が答え手の節の thread で待たずに
-;;;                 取る(共有の loop へ入らない — 書き 1 回で起きた待ちの読みが列に溜まった時に 1 つずつ往復しない・agora-redesign #3688
+;;;                 取る(共有の loop へ入らない — 書き 1 回で起きた待ちの読みが列に溜まった時に 1 つずつ往復しない
 ;;;                 の案 1)。列が空の時は scheduler の外から完了させる promise を列に預け、待ち受けの loop が積んだ拍に完了させる(共有の
-;;;                 loop を経ない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない・agora card ki-5c3e73834e73)
+;;;                 loop を経ない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない)
 ;;;   本文の読み    HttpReadBody で札の要求の本文を request.content から塊で流しながら読む(aiohttp の request.read の既定の上限 1 MiB は
 ;;;                 通らない — 上限は effect の max-bytes だけ)。宣言の Content-Length が上限を超えれば読まずに断り、宣言が無い(chunked)・
 ;;;                 偽る要求は読んだ量が上限を 1 byte でも超えた拍に止めて断る。断った札は、答えを送った後に接続を閉じる(残りの本文を
 ;;;                 aiohttp の lingering で読み捨てさせない)。宣言の長さが PREFETCH-BYTES 以下の本文は、待ち受けの loop が出来事を並べる
-;;;                 前に読み切り、HttpReadBody は共有の loop へ入らずに答え手の節の側で上限を判じて答える(agora-redesign #3688 の子 (3) の
-;;;                 3c — 超えれば同じ HttpBodyTooLarge で、答えの後に接続を閉じる)。先に読んだ本文は、読まずに HttpForward した札では
+;;;                 前に読み切り、HttpReadBody は共有の loop へ入らずに答え手の節の側で上限を判じて答える(
+;;;                 超えれば同じ HttpBodyTooLarge で、答えの後に接続を閉じる)。先に読んだ本文は、読まずに HttpForward した札では
 ;;;                 中継先へそのまま送る
 ;;;   接続の持ち方  使われない接続は IDLE-CONNECTION-SECONDS(3630 秒)で閉じる — doeff の HTTP の client が使われない接続を持つ秒
 ;;;                 (_http_handlers_impl.hy の CLIENT-KEEPALIVE-SECONDS 60 秒)より長い(server の切り > client の上限 — その file の頭の註の
-;;;                 契約・agora-redesign #3688)
+;;;                 契約)
 ;;;   応答の送出    HttpRespond の status と頭をそのまま・本文は byte 列か file の範囲(start から length byte を塊で読んで書く)。
-;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない — agora-redesign #3688 の子 (3)
-;;;                 の 3b)。積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
+;;;                 答え手の節は命令を待ち受けの loop へ積むだけで戻る(共有の loop を経ず、往復を待たない)。
+;;;                 積んだ順に渡るので、後から撃った読み・閉じより先に渡る。札が待ち受けに無い(2 度目・知らない札)命令は、積んだ
 ;;;                 側がもう戻っているので、待ち受けの loop で 1 行名乗って捨てる。
 ;;;                 相手が先に切った後の書き込みの失敗(答えが遅れ、相手の上限が先に来た — ConnectionError)は aiohttp へ上げず、1 行で
 ;;;                 名乗って待ち受けごとに数える(上げると aiohttp が 1 件ごとに traceback を書く — 2026-10-02 の record の止まりで約 2.2KB ×
-;;;                 265 本・agora-redesign #2757)。待ち受けを閉じる時に、届かなかった答えの合計を 1 行名乗る
+;;;                 265 本)。待ち受けを閉じる時に、届かなかった答えの合計を 1 行名乗る
 ;;;   HTTP の中継   本文を両向きとも streaming で通す。hop-by-hop の頭を落とし、X-Forwarded-Proto / X-Forwarded-For を足す。Host は要求の
 ;;;                 値のまま。中継先に届かなければ 502
 ;;;   ws の中継     先に中継先へ ws で繋いでから(届かなければ 502)、要求を ws に上げて frame を両向きに写す。1 frame の上限は HttpListen の
@@ -48,7 +48,7 @@
 ;;;                 他の接続と本体を塞がない)を立てる。箱の溜まりが ws-send-max-bytes を超える 1 通が来たら、その接続をその場で切る(箱を捨てる・
 ;;;                 transport を落とす)。閉じた接続への送りは黙って捨てる。出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed)は要求と
 ;;;                 同じ列へ並べ、受けた拍の単調時計を received-at に載せる。WsSendText の節は、箱へ積む仕事を待ち受けの loop へ積むだけで
-;;;                 戻る(共有の loop を経ず、往復を待たない — 応答の送出と同じ形・card ki-bbf782b2ab4b: 同じ通を接続の数だけ送る呼び手の
+;;;                 戻る(共有の loop を経ず、往復を待たない — 応答の送出と同じ形・同じ通を接続の数だけ送る呼び手の
 ;;;                 1 周期が、送り 1 回ごとの往復の待ちで送りの数に比例して伸びていた)。積んだ順に渡るので、同じ札への送りは撃った順に
 ;;;                 箱へ入り、後から撃った閉じ(WsClose)・勘定の読み(TakeWsSendReport)・待ち受けの閉じ(HttpShutdown)より先に渡る
 ;;;   閉じ          HttpShutdown で新しい要求を受けず、開いている ws の全部へ close 1000 を積み、書き手が流し切るのを drain-seconds まで待ち、
@@ -241,8 +241,8 @@
 
 (defclass Arrivals []
   "受け口の列(要求と ws の出来事・閉じの印)。待ち受けの loop だけが積み(put)、受け手はどの thread からでも列に在る出来事を待たずに
-   取れ(take-now — 共有の loop へ入らない・agora-redesign #3688 の案 1)、空なら scheduler の外から完了させる promise を預けて、積まれた
-   拍に起こされる(wake-on-arrival — 共有の loop も待ち受けの loop の coroutine も経ない・agora card ki-5c3e73834e73)。積んだ順に取れる。"
+   取れ(take-now — 共有の loop へ入らない)、空なら scheduler の外から完了させる promise を預けて、積まれた
+   拍に起こされる(wake-on-arrival — 共有の loop も待ち受けの loop の coroutine も経ない)。積んだ順に取れる。"
 
   (defn #^ None __init__ [self]
     ;; ready = 積まれてまだ取られていない出来事(deque の append と popleft は thread をまたいで安全)。sleepers = 空の列を見て起こしを
@@ -375,7 +375,7 @@
     (HttpAddress :host self.address.host :port (get bound 1)))
 
   (defn #^ (| HttpEvent None) take-arrival [self]
-    "受け口の列に既に在る次の出来事を、答え手の節の thread で待たずに取るため(共有の loop へ入らない・agora-redesign #3688 の案 1 —
+    "受け口の列に既に在る次の出来事を、答え手の節の thread で待たずに取るため(共有の loop へ入らない —
      列が空なら None で、答え手の節が wake-on-arrival に promise を預けて待つ)。閉じた後は HttpServerClosed(列に何が残っていても)。"
     (when (is-not self.shut None)
       (return (HttpServerClosed :reason self.shut)))
@@ -442,8 +442,8 @@
     None)
 
   (defn #^ None post [self #^ str ticket #^ HttpCommand command]
-    "本体の命令を待ち受けの loop へ積むだけで戻るため(答えの送り — 共有の loop を経ず、往復を待たない・agora-redesign #3688 の子 (3) の
-     3b)。待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。先に読んだ本文は積む前にここで外す —
+    "本体の命令を待ち受けの loop へ積むだけで戻るため(答えの送り — 共有の loop を経ず、往復を待たない)。
+     待ち受けの loop は積まれた順に回すので、後から撃った across の coroutine より先に渡る。先に読んだ本文は積む前にここで外す —
      答えの後に撃った読みは、命令が渡るより先でも先に読んだ本文を取らない。"
     (.pop self.prefetched ticket None)
     (.call-soon-threadsafe (self.edge-loop) self.posted ticket command)
@@ -842,7 +842,7 @@
   {:pre [(: edge WebEdge)] :post [(: % HttpEvent)]}
   "受け手へ次の出来事を渡すため: 受け口の列に既に在れば答え手の節の thread で待たずに取り(共有の loop へ入らない — 頭の註の待ち受け)、
    空なら scheduler の外から完了させる promise を列に預けて積まれるまで待ち、起きたら取り直す(待ちの間に共有の loop と待ち受けの loop を
-   往復しない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない・agora card ki-5c3e73834e73)。"
+   往復しない — 待つたびに scheduler の thread が共有の loop を起こす書きを払わない)。"
   (match (.take-arrival edge)
     None (do (<- promise (CreateExternalPromise))
              (.wake-on-arrival edge.arrivals promise)

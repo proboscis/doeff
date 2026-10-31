@@ -2,28 +2,27 @@
 
 例は `hy examples/<名>.hy` で走らせる読み物で、どの検も走らせていなかったので、doeff-hy の macro が変わっても
 誰も気づかなかった: 2026-04-07 の fa37eaaf1 が fold macro を消し、defk の :pre/:post を必須にした後、
-ex09_for_do_when.hy は使ってもいない fold の require で落ちていた(card ki-7e6a11f56bd5 の担い手の所見)。
+ex09_for_do_when.hy は使ってもいない fold の require で落ちていた。
 
 examples/ の `.hy` は全部この検に入る(新しい例も書いただけで入る)。今の macro で走らない例は BROKEN の表に
 理由つきで置き、表の例は今も落ちる事を確かめる — 直した例が表に残ると赤になり、行を外せと名指す。
 
 終了コードだけでは足りない: Traverse の handler は件の中の例外を件の失敗として記録して先へ進むので、macro の
-展開が件の中で壊れても例は 0 で終わる(設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の盲検 A — When の展開が引く名を
+展開が件の中で壊れても例は 0 で終わる(When の展開が引く名を
 変えると、ex09 は件を skipped ではなく failed と印字して 0 で終わった)。走る例は標準出力を expected/<stem>.txt と
 比べる。走るたびに変わる所(実時間・lib の traceback)は、期待の出力の側で印に置き換える — どこが変わるかは例の
 持ち分で、検は印の意味だけを知る。印は種類ごとに呑める物が決まっていて(行だけの ANY は traceback の frame の行・行の
-中の印は MARKS の形の文字列)、件の結果の行を呑む印は赤になる(card ki-f8a58fb49dd9)。書いた木の上では毎回同じに出て、
+中の印は MARKS の形の文字列)、件の結果の行を呑む印は赤になる。書いた木の上では毎回同じに出て、
 別の木・別の機体や答えを変えない変更で外れる物(checkout や機体の path・Hy の付ける名・frame の行)は、期待の出力に
 置かない(UNPLACEABLE)。機体の時間帯は子の側で決めた値にする(CHILD_TIME_ZONE)ので、地方時の印字は機体に依らない。
 
 件の中の失敗が比べる出力に出る事は、例ごとに、Traverse の走りごとに最初の件を件の中で失敗させる子
-(run_example_failing_a_case.py)で確かめる — その子の出力は期待の出力に合わない(card ki-2d5b129f2ff2)。失敗は例の
+(run_example_failing_a_case.py)で確かめる — その子の出力は期待の出力に合わない。失敗は例の
 source を書き換えずに起こすので、出力を変えない例の中の書き換えで検の file を直す事は無い。同じ子が実行の印 — 件の関数を
 呼んだ数と doeff の run で Program を走らせた数 — を数える: 件を走らせず、macro の展開や関数の番地など doeff-hy・Hy の
-中身だけを印字する debug 用の file は例ではなく、examples/ に置かない(card ki-3497c5fd38df が ex04_debug・ex04_debug2 を
+中身だけを印字する debug 用の file は例ではなく、examples/ に置かない(ex04_debug2 を
 外した)。例は Program を走らせ、件を 1 つも走らせない例は NO_CASES に理由つきで置く。走った数で確かめるので、名だけ
-在って走らない run(呼ばない関数の中・quote の中)は数えない(設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の名で数える検を、
-card ki-f8a58fb49dd9 が実行の印に替えた)。
+在って走らない run(呼ばない関数の中・quote の中)は数えない(名で数える検を、実行の印に替えた)。
 
 macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 消えた macro を例の中で定義し直すと、例は利用者が
 使えない書き方を教え、doeff-hy の変更も届かない(同じ設計検証の盲検 B — fold を例の中の defmacro で戻した ex04 は
@@ -32,11 +31,10 @@ macro の持ち主は doeff-hy で、例は doeff-hy の macro だけを使う: 
 文字列で写して印字する例は、macro が変わっても赤にならずに古い展開を教える — 写しは展開の形の印(Hy・doeff-hy の隠す名と、
 展開が module を引く __import__)を持つので、期待の出力に置かせない。例が使う doeff-hy の macro の展開がどれもその印を持つ
 事も、使い所を 1 つずつ文脈の外で展開して確かめる — 印の無い展開の macro(val など)は UNMARKED_EXPANSIONS に理由つきで
-置き、文脈の外で展開を断る入れ子の使い所は、引き出して写せる形が無いので数えない(card ki-fe7a2e60fdfb・設計検証
-lt-0ZP7AYKXMDX83R8DKGFBA73DBJ)。
+置き、文脈の外で展開を断る入れ子の使い所は、引き出して写せる形が無いので数えない。
 
 展開を写さずに、展開が作った値を実行時に覗いて印字する例(値の class 名・型・属性)は、文字列の印を持たないので上の検が
-見分けない — 答えを変えない macro の変更で、その例だけが赤になる(card ki-b7c40391ac8e)。そこで例を、答えを変えない展開の変異
+見分けない — 答えを変えない macro の変更で、その例だけが赤になる。そこで例を、答えを変えない展開の変異
 の下でも走らせ(run_example_mutated_expansion.py — 値を作る macro の展開を、何もしない handler の下で走らせる Program で包む。defk・fnk は
 定義した・作った関数を呼んだ値を包む)、出力が期待の出力のままである事を求める。変わる例は、macro を変えなくても名指して赤になる。
 包む macro は MUTATED_MACROS・包まない macro は訳つきで UNMUTATED_MACROS に置き、例が初めて使う macro はどちらかへ置かせる。変異は例の file の展開だけに当てるので、examples/ の下には
@@ -66,11 +64,11 @@ EXPECTED = EXAMPLES / "expected"
 # 子 1 つの制限時間の、負荷で伸ばす前の値(秒)。1 本は 約 1 秒(置き場が冷えていても 約 20 秒)。
 CHILD_DEADLINE_SECONDS = 50
 # 子の時間帯(POSIX の TZ の綴り — 時間帯の data base が無い機体でも読める)。例が地方時を印字しても、期待の出力が機体の
-# 時間帯に依らない(設計検証 lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の盲検 B — datetime.fromtimestamp の印字は TZ=JST-9 の機体で外れた)。
+# 時間帯に依らない(datetime.fromtimestamp の印字は TZ=JST-9 の機体で外れた)。
 CHILD_TIME_ZONE = "UTC0"
 # 子(例・件の中で失敗させる例)を同時に走らせる数。子 1 本は 約 1 秒で、多くは hy と doeff の import(例の中身は 0.2〜0.3 秒・ex05 は
 # sleep 2.5 秒)。1 本ずつ順に走らせると子 12 本の秒が足し算になり、この file 1 本が負荷の下で 25〜42 秒かかって、変えた所の検
-# (make test-changed)の 60 秒の上限で後ろの検を打ち切った(card ki-458fc8e0de36)。全部を一度に起こさないのは、機体の検の枠
+# (make test-changed)の 60 秒の上限で後ろの検を打ち切った。全部を一度に起こさないのは、機体の検の枠
 # 1 つ(root の conftest の _hold_check_slot)の目安 — 検 1 本 0.5〜2.5 core — を大きく越えないため。
 PARALLEL_CHILDREN = 4
 
@@ -122,7 +120,7 @@ UNMUTATED_MACROS: dict[str, str] = {
 # 期待の出力の印の字。印の種類は置く所で決まり、種類ごとに呑める物が決まっている:
 #   - 行が ANY だけの行は、traceback の frame の行を 1 行以上呑む(_frame_violations) — 件の結果の行は呑めない。
 #   - 行の中の印は MARKS のどれかの形で置き、その形の文字列だけを呑む(行を越えない)。
-# どの文字列にも合う印は、件の結果を載せる行まで伏せられ、その行を変える変異が無いと気づけなかった(card ki-f8a58fb49dd9)。
+# どの文字列にも合う印は、件の結果を載せる行まで伏せられ、その行を変える変異が無いと気づけなかった。
 ANY = "…"
 # 行の中の印(綴り → 呑む文字列)。走るたびに変わる物の種類を増やす時は、ここに行を足す。
 MARKS: dict[str, str] = {
@@ -174,9 +172,8 @@ UNPLACEABLE: dict[str, Callable[[str], bool]] = {
     "機体の置き場(venv・Python・home)": _searches(
         "|".join(re.escape(f"{path}/") for path in _MACHINE_PATHS)
     ),
-    # Hy の付ける名の番号は macro の展開と compile の順で決まり、例の結果ではない(設計検証 lt-4Z5WD2EKQ4ARF9CPCHPTQG00TF の
-    # 盲検 B)。展開を文字列で写した印字は、答えを変えない macro の変更でも外れず、古い展開を教える(設計検証
-    # lt-C53PGBQD7WWPYAA1WWSW41BHDP の残る限界・card ki-fe7a2e60fdfb)
+    # Hy の付ける名の番号は macro の展開と compile の順で決まり、例の結果ではない。
+    # 展開を文字列で写した印字は、答えを変えない macro の変更でも外れず、古い展開を教える
     "展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)": _shows_expansion,
     # path と、lib・例の行番号が入る — frame は行だけの ANY にする
     "traceback の frame の行": _searches(r'^\s*File "[^"]*", line \d+', re.MULTILINE),
@@ -192,7 +189,7 @@ def _unplaceable_in(text: str) -> list[str]:
 _MACRO_DEFINERS = frozenset({"defmacro", "defmacro!", "defreader"})
 _MACRO_OWNER = "doeff_hy"
 # 例の中で呼ばない、macro の展開を引き出す関数。展開の形は doeff-hy の隠す中身で、例が印字すると、答えを変えない
-# macro の変更で例が赤になる(設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の盲検 A・B — Program を走らせる例に展開の印字を
+# macro の変更で例が赤になる(Program を走らせる例に展開の印字を
 # 足すと検を通った)。
 _MACRO_EXPANDERS = frozenset({"macroexpand", "macroexpand_1", "macroexpand_all"})
 
@@ -632,8 +629,7 @@ def test_case_failure_shows_in_compared_output(name: str, children: Children) ->
         f"例ではない(examples/ に置かない)。件の無い例なら NO_CASES に理由つきで足す"
     )
     # 子が 0 以外で終わるのは、起こした失敗が件の失敗として記録されず例の外へ出た時 — 出力の比べ方を確かめられないので、
-    # 失敗が見えたとは数えない(traverse-lib の件の失敗の方針が変わったか、子の入口が壊れた — 設計検証
-    # lt-EDXAAEFYPM5TD5HTTXD3Q4V4XD の盲検 A)
+    # 失敗が見えたとは数えない(traverse-lib の件の失敗の方針が変わったか、子の入口が壊れた)
     assert result.returncode == 0, (
         f"件の中で失敗させた子が 0 以外で終わった — 起こした失敗が件の失敗として記録されず、例の外へ出た。子の入口"
         f"(件の失敗の起こし方の持ち主)を traverse-lib の今の件の失敗の方針に合わせる\n{result.stdout}{result.stderr}"
@@ -681,8 +677,7 @@ def _expansion_mutation_change(
 @pytest.mark.parametrize("name", _runnable())
 def test_example_output_survives_expansion_mutation(name: str, children: Children) -> None:
     """答えを変えない展開の変異の下でも、例の出力は期待の出力のまま — 展開が作った値の class 名・型・属性を印字する例は、
-    展開の文字列の写しではないので印の検が見分けず、macro が答えを変えずに展開を変えるとその例だけが赤になる(card
-    ki-b7c40391ac8e)。"""
+    展開の文字列の写しではないので印の検が見分けず、macro が答えを変えずに展開を変えるとその例だけが赤になる。"""
     expected = _expected(name)
     assert expected.is_file(), f"{name} の期待の出力が無い(test_example_runs が名指す)"
     change = _expansion_mutation_change(
@@ -755,7 +750,7 @@ def test_example_uses_only_doeff_hy_macros(name: str) -> None:
 
 def test_macro_check_sees_nested_forms() -> None:
     """今の例には違反が無いので、確かめが form の中へ降りる事は違反を含む source で確かめる
-    (降りない確かめは、例の中の defmacro を見逃して緑のまま — 設計検証 lt-QV9FJWHA394WE5MH3QVJFQBHV5 の c6a)。"""
+    (降りない確かめは、例の中の defmacro を見逃して緑のまま)。"""
     source = """
 (require doeff-hy.macros [defk] support.fold-shim [fold] bare [x] doeff_hy.handle :as h)
 (when True
@@ -868,7 +863,7 @@ def test_expansion_check_reads_uses_out_of_context() -> None:
 
 def test_printed_expansion_copy_is_named(tmp_path: Path, deadline_scale_factor: float) -> None:
     """Program を走らせる例に、展開を引き出さずに文字列で写した展開の印字を足すと、期待の出力の検が名指す(例の検の他の
-    検 — 走る・Program を走らせる・macro の持ち主 — は通る形: 設計検証 lt-C53PGBQD7WWPYAA1WWSW41BHDP の残る限界)。写しは
+    検 — 走る・Program を走らせる・macro の持ち主 — は通る形)。写しは
     今の展開そのもの(古い写しの形は test_unplaceable_table_catches_its_samples)。"""
     example = EXAMPLES / "ex04_simple.hy"
     source = example.read_text(encoding="utf-8")
@@ -989,8 +984,8 @@ def test_expansion_mutation_changes_the_built_value_not_the_answer(
     tmp_path: Path, deadline_scale_factor: float
 ) -> None:
     """今の例は展開が作った値の形を印字しないので、変異が空振りしない事(包む macro ごとに、作る値が WithHandler になる)・答えを
-    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(card ki-b7c40391ac8e の失敗ケース — ex10 の形と、defk が
-    定義した関数を呼んだ値の形: 設計検証 lt-0ZP7AYKXMDX83R8DKGFBA73DBJ・lt-17JV52X9T2DN5SK9TQQZ31VXA6 の盲検 B)は、値の形を印字する
+    変えない事(run の後の答えは同じ)・値の形を印字する例を名指す事(ex10 の形と、defk が
+    定義した関数を呼んだ値の形)は、値の形を印字する
     source で確かめる。例の他の検 — 走る・Program を走らせる・macro の持ち主・期待の出力に置かない物 — は通る形(展開の文字列の
     写しではないので、印の検が見分けない)。変異の後の姿だけを決め、macro が今どんな値を作るか(Traverse か Program か)は決めない
     — 答えを変えない macro の変更でこの検は変わらない。"""

@@ -49,7 +49,7 @@
   ;; 版は宣言の revision ただ 1 つ(Program を詰めた commit — 以前の image の版を追う baseFrom と、定義だけを別の commit で重ねる
   ;; overlay は消した。持つ行は宣言の口と読み直しで断る — cluster_policy.program-row-refusal)。
   (setv #^ str update "recreate")
-  ;; --- memory と 1 台に縛る訳(card ki-2acb63aec0fd) ---
+  ;; --- memory と 1 台に縛る訳 ---
   ;; 起動の memory の山と落ち着いた値(MiB)。宣言の口は必ず受け取る(cluster_policy.declared-job-from-json)が、旧い coordinator が
   ;; 欄の無いまま保存した行は None で読む(次の宣言し直しで知る)。process の形ではない — JobSpec に入れず、指紋 spec-hash に入らない。
   (setv #^ (| int None) peak-mib None)
@@ -102,19 +102,19 @@
   ;; 先の組みを memory を測らずに始めた root のキー(heartbeat の envs.memoryUnmeasured — 温める表の行の memory-unmeasured の材料・#3748)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前 — どちらも名で渡す)。
   (setv #^ (get frozenset str) env-memory-unmeasured (frozenset))
-  ;; ServiceAccount の token の状態(heartbeat の accountToken — ok・stale = kubelet の置き直しが遅れた・expired・unreadable・card
-  ;; ki-d31166f84ad0)。保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  ;; ServiceAccount の token の状態(heartbeat の accountToken — ok・stale = kubelet の置き直しが遅れた・expired・unreadable)。
+  ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str account-token "ok")
-  ;; 枠の file の状態(heartbeat の roomFile — ok・unreadable・malformed — ok でない間 worker は前に名乗った枠のまま・card
-  ;; ki-6828eda880ce)。保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
+  ;; 枠の file の状態(heartbeat の roomFile — ok・unreadable・malformed — ok でない間 worker は前に名乗った枠のまま)。
+  ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str room-file "ok")
-  ;; 今の世代の process の doeff の版(heartbeat の doeffCommit — 起動の script の WORKER_DOEFF_COMMIT・card ki-6e83e03d146d。版を持たない
+  ;; 今の世代の process の doeff の版(heartbeat の doeffCommit — 起動の script の WORKER_DOEFF_COMMIT。版を持たない
   ;; worker は空)。同じ Pod の中で版を入れ替える worker は Pod の env に版を持たないので、版の読み手は Worker の spec.doeffCommit を読む。
   ;; 保存しない(次の heartbeat で埋まる)。位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ str doeff-commit "")
-  ;; 常駐の job に使ってよい memory の予算(MiB — heartbeat の memoryMiB = 枠の file の行の値・card ki-ced3c45980a5。名乗らない worker は
-  ;; None)。job の側の枠: 置いた job と surge の settle の和 + 新しい job の settle がこの値以下の時だけ置く(cluster_policy.memory-misfit —
-  ;; card ki-2acb63aec0fd)。None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
+  ;; 常駐の job に使ってよい memory の予算(MiB — heartbeat の memoryMiB = 枠の file の行の値。名乗らない worker は
+  ;; None)。job の側の枠: 置いた job と surge の settle の和 + 新しい job の settle がこの値以下の時だけ置く(cluster_policy.memory-misfit)。
+  ;; None の worker(枠の file の外の機体 — Mac・zeus-native)は memory で縛らない。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| int None) memory-mib None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
@@ -135,7 +135,7 @@
   ;; まだ印の拍を通っていない worker は None(lastSeenMs を書かない)。以前は ClusterState の写像 seen-marks(worker 名 → 時刻)に
   ;; 持っていた — worker の保存の行の材料をこの記録 1 つに寄せた(#2903)。
   (setv #^ (| int None) seen-mark None)
-  ;; task の側の枠(card ki-2acb63aec0fd): task-reserve = task のために空けておく数(heartbeat の taskReserve — 0 以上・必ず名乗る)・
+  ;; task の側の枠: task-reserve = task のために空けておく数(heartbeat の taskReserve — 0 以上・必ず名乗る)・
   ;; background-room = 背景の仕事を同時に置ける数(heartbeat の backgroundRoom — 0 以上)。task の空きは 予約 + 背景の枠 − 置いた task
   ;; (cluster_policy.task-room-of)で、常駐の job の数に依らない(job は memory で数える — memory-mib)。どちらも保存する。位置で渡す欄の
   ;; 後ろに置くので、KW_ONLY の印の後の名で渡す必ずの欄(既定の値なし — 型の宣言 .pyi でも必ずの欄として読まれる)。
@@ -274,7 +274,7 @@
    unknown-since-ms = 観察中に新が NotReady / 観測が Unknown になった時刻・rollback-step = 戻しの手順・failure = 戻しに入った理由・
    restored-old-ms = 旧が Ready に戻った時刻・stuck / stuck-cleared-ms = 戻しが終わらない印とそれが解けた時刻・last-action = 直前に
    実行した action と結末(op・target の「Kind:名」・ok・error・at・count ほか — action の種類で欄が違うので JSON の object のまま)・
-   simulated = dry-run の相手の記録した台数(「Kind:名」→ 台数)・marked-deployment = 台数の持ち主の annotation を置いた「ns/名」・
+   simulated = dry-run の相手の記録した台数(「Kind:名」→ 台数)・marked-deployment = 台数の持ち主の annotation を置いた ns/名・
    drift / drift-resolved-ms = 台数の食い違いとそれが解けた時刻。無い欄は None。#2447 で dict をこの型にした。JSON の形(在る欄だけの
    {phase phaseSinceMs reason history …})は rollout_policy の rollout-status-to-json / rollout-status-from-json。"
   (setv #^ str phase "Pending")
@@ -374,7 +374,7 @@
 
 
 (defrecord NeedsOverride
-  "Service 1 つの置き先の一時の上書き(資源 NeedsOverride — 2026-10-27・card ki-1523bc0aba4f)。宣言(Service の spec・ClusterJob.needs)は
+  "Service 1 つの置き先の一時の上書き(資源 NeedsOverride — 2026-10-27)。宣言(Service の spec・ClusterJob.needs)は
    書き換えない別の記録で、置き先の判断が効く needs をこの行から決める(cluster_policy.effective-needs)。以前は復旧の手が Service の
    spec.needs そのものを書き換えたので、元の needs・訳・期限が残らず、worker の能力の側だけが戻ると Service が置き先の無いまま残った
    (2026-10-26 22:45〜23:21 に 13 本)。coordinator は、期限 expires-ms の来た拍と、上書きの needs を満たす生きた worker が 0 になった拍
@@ -402,7 +402,7 @@
    preStop の drain か、止まり始めの名乗りが届いた — AL-D2k)。重なりの組は、この印が付くまで job を新しい世代へ渡さない: Service は
    worker の Pod を振り先にし、Terminating の Pod を振り先から外すので、印の前に渡すと、渡した job へは新しい Pod が Ready になるまで
    届かず、印の後まで残すと、残した job へは届かない。since-ms = この組を初めて書いた刻(重なりの組では受け渡しの待ちの始まり —
-   status.handover の sinceMs と止まりの知らせ HANDOVER-STALL-MS の起点・card ki-d8e594fe934d。この欄の前に保存した行は None)。
+   status.handover の sinceMs と止まりの知らせ HANDOVER-STALL-MS の起点。この欄の前に保存した行は None)。
    保存する(durable_kv の superseded/<名>/<世代>)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str worker)
@@ -415,7 +415,7 @@
 
 
 (defrecord HandoverBlocker
-  "世代をまたぐ受け渡し(AL-D2k — cluster_policy.handover-pending)を止めている job 1 つ(card ki-d8e594fe934d): 今の世代がまだ受け取れない
+  "世代をまたぐ受け渡し(AL-D2k — cluster_policy.handover-pending)を止めている job 1 つ: 今の世代がまだ受け取れない
    job の名 job・入れ替えの形 update(handoff = 今の世代の process が Ready と数えられていない・recreate = 状態の行の phase が
    HANDOVER-SETTLED-PHASES に無い)と、今の世代の状態の行の最後の結末(phase・続けて落ちた回数 failures・最後の終わりの code
    last-exit-code・detail — 行が無ければ phase は None)。"
@@ -438,7 +438,7 @@
 
 
 (defrecord GroupLimitView
-  "組 1 つの画面(GET /state の groupLimits — 2026-10-12・card ki-b0e8028c8c8d): limit = 系が宣言した値(GroupLimit)・resource-version =
+  "組 1 つの画面(GET /state の groupLimits — 2026-10-12): limit = 系が宣言した値(GroupLimit)・resource-version =
    資源 GroupLimit の版・held = 置いている数の升の列(数の在る升だけ — worker と区分の順)・queued = この組を名乗って待っている task の数。
    運用者が、組ごとの宣言の値と置いている数を 1 か所で読むため。"
   (#^ GroupLimit limit)
@@ -452,17 +452,16 @@
 
 ;; 置き先が無い理由(cluster_policy.unplaced-kind)。WAITING-PREVIOUS-HOLDER = 前の担い手が止め終えるのを待っている(drain や
 ;; 入れ替えの正常な途中)・NO-ELIGIBLE-WORKER = 置ける worker が無い・NO-ROOM = 置ける worker に空きが無い(job の側の空きは memory —
-;; 訳は UnplacedView.memory・card ki-2acb63aec0fd)。
+;; 訳は UnplacedView.memory)。
 
 
 (defrecord UnplacedView
-  "置き先の無い Service 1 つの読み(cluster_policy.unplaced-views — card ki-53b8677f1374)。置き先の無い Service に人が気づくまでの長さが、
+  "置き先の無い Service 1 つの読み(cluster_policy.unplaced-views)。置き先の無い Service に人が気づくまでの長さが、
    止まりの長さになった(2026-10-26 22:45〜23:21 に 13 本)ので、外の見張りが理由の文を読み解かずに、種類・足りない能力・いつからを読むため。
    service = Service の名・kind = 置き先が無い理由の種類・needs = 効く needs(cluster_policy.effective-needs — 上書きの間は上書きの needs)・
    missing = needs のうち、生きていて drain 中でない worker のどれも名乗らない能力(名の順 — 空なら、能力は揃うが 1 台に揃わない・固定・
    専用の能力・空きのどれかで置けない)・pin = 固定の worker の名・since-ms = 置き先が無いと最初に見た拍の刻(ClusterState.unplaced-since)・
-   memory = 生きていて条件を満たし drain 中でない worker ごとの、memory で置けない訳(cluster_policy.memory-misfit の文 — worker の名の順・
-   card ki-2acb63aec0fd)。"
+   memory = 生きていて条件を満たし drain 中でない worker ごとの、memory で置けない訳(cluster_policy.memory-misfit の文 — worker の名の順)。"
   {:tags {:context "coordinator" :role "type"}}
   (#^ str service)
   (#^ UnplacedKind kind)
@@ -480,8 +479,8 @@
    どの job が約束で担い手に留まっているかを外から確かめるため・読みだけ)・coordinator-commit = 答えた coordinator の process が走っている
    doeff の版(ClusterState の running-commit — 読めなければ None で、JSON の欄 coordinatorCommit を書かない。版上げの Program が「新しい
    版の coordinator が答えた」を、宣言した版でなく答えた process の版で判じるため・#3772)・group-limits = 組の同時数の上限の画面の列
-   (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride・card ki-1523bc0aba4f)・
-   unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView・card ki-53b8677f1374 — unplaced と同じ Service)。
+   (組の名の順 — GroupLimitView)・needs-overrides = 置き先の一時の上書きの列(Service の名の順 — NeedsOverride)・
+   unplaced-detail = 置き先の無い Service の読みの列(Service の名の順 — UnplacedView — unplaced と同じ Service)。
    JSON の形は coordinator/protocol/replies が綴る。"
   (#^ int now)
   (#^ (get tuple #(ServiceView ...)) services)
@@ -672,7 +671,7 @@
 
 ;; 待っている task を置けない理由(cluster_policy.place-tasks が detail に書く文の種類 — cluster_policy.task-unplaced-text)。
 ;; TASK-NO-ROOM = 能力と版の合う生きた worker が在り、drain 中でも disk 尽きでもない worker も在るが、どれも task を置ける空き
-;; (task-room-of)が 0(置かれた task で予約と背景の枠が埋まっている — 常駐の job は task の空きを使わない・card ki-2acb63aec0fd)。
+;; (task-room-of)が 0(置かれた task で予約と背景の枠が埋まっている — 常駐の job は task の空きを使わない)。
 
 
 (defenum NotReadyKind
@@ -823,7 +822,7 @@
 (defrecord ServiceObserved
   "資源の画面の Service の観測(resource_policy.resource-view — #2595): ready-reason = 準備の判定の理由・last-readiness = 最後に受けた準備の
    報告(無ければ None — JSON の形は coordinator/protocol/replies が綴る)・process = 置き先の worker の最後の報告の行・version = 版の判定・
-   running = 生きている process の版の列・unplaced = 置き先が無ければその読み(UnplacedView — 置かれていれば None・card ki-53b8677f1374)。"
+   running = 生きている process の版の列・unplaced = 置き先が無ければその読み(UnplacedView — 置かれていれば None)。"
   (#^ str ready-reason)
   (#^ (| ReadinessReport None) last-readiness)
   (#^ (| StatusRow None) process)
@@ -889,7 +888,7 @@
 
 (defrecord BoardTally
   "盤の行の集計(ClusterState.board-tally): rows = 行の数・bytes = 行の size の合計・expiring = 期限つきの行の数。盤の書きごとに
-   cluster_policy.board-written が足し引きして持ち回る(全行を読み直さない — card ki-ea1179b7565a)。保存しない(読み直しで求め直す)。"
+   cluster_policy.board-written が足し引きして持ち回る(全行を読み直さない)。保存しない(読み直しで求め直す)。"
   (#^ int rows)
   (#^ int bytes)
   (#^ int expiring))
@@ -1105,11 +1104,11 @@
   ;; GroupLimit・2026-10-12)。どちらも欄の無い旧い行は既定で読む。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #())
-  ;; --- 終わりの知らせ先(2026-10-21・card ki-e7945a2b2d00)---
+  ;; --- 終わりの知らせ先(2026-10-21)---
   ;; notify = 送り手の名乗った知らせ先(空 = 知らせない)。終わりへ移った歩で出口(ClusterState.outbox)に 1 度だけ積む(detached_policy.outbox-noted)。
   ;; この欄の無い旧い行は空で読む。
   (setv #^ str notify "")
-  ;; --- queued の期限超えの知らせ(2026-10-29・card ki-4b6613f39c80)---
+  ;; --- queued の期限超えの知らせ(2026-10-29)---
   ;; queued-noticed-ms = 知らせ先を名乗った task が queued のまま期限(ClusterTiming.queued-notice-ms)を越え、出口へ待ちの行を積んだ刻
   ;; (None = まだ積んでいない)。積んだ印で、待ち続けても・読み手が受領して行を外しても 2 度目を積まない(detached_policy.queued-noticed)。
   ;; この欄の無い旧い行は None で読む。
@@ -1195,26 +1194,26 @@
   ;; cluster_policy.absorb-superseded-heartbeat が書き直し、空になれば外す。保存する(durable_kv の superseded/<名>/<世代>)。
   ;; 位置の引数の呼び手のため最後に置く。
   (setv #^ (get tuple #(SupersededRun ...)) superseded-runs #())
-  ;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 組の名で引く、系が宣言した GroupLimit の表(資源 GroupLimit — 宣言の道具が
+  ;; 組の同時数の上限(2026-10-12): 組の名で引く、系が宣言した GroupLimit の表(資源 GroupLimit — 宣言の道具が
   ;; 書く・書き換えない表 Table — 写像として持ち回らない)。task は組の名だけを名乗り、置き方(cluster_policy.task-misfit)はこの値で
   ;; 数える。受け口は宣言に無い組を名乗る task を断る。保存する(durable_kv の grouplimit/<名>)。位置の引数の呼び手のため最後に置く。
   (setv #^ (get Table GroupLimit) group-limits (field :default-factory (partial table-of #())))
-  ;; 終わりの出口(2026-10-21・card ki-e7945a2b2d00): 結末の id(task の id)→ DetachedEnded。知らせ先を名乗った切り離した task が終わりへ
+  ;; 終わりの出口(2026-10-21): 結末の id(task の id)→ DetachedEnded。知らせ先を名乗った切り離した task が終わりへ
   ;; 移った歩で 1 行積み(detached_policy.outbox-noted — 終わりへの移りが通る 1 点)、読み手の受領(DELETE /outbox/<id>)か出口の保持の期限で
   ;; 外す。task の行の解放・保持の期限とは別(行が消えても出口の行は残る)。保存する(durable_kv の outbox/<id>)。位置の引数の呼び手のため最後に置く。
   (setv #^ (get Table DetachedEnded) outbox (field :default-factory (partial table-of #())))
-  ;; 起き直しの後、まだ heartbeat を 1 つも受けていない間の、経過に数えなかった最後の刻(2026-10-21・card ki-439a73dc075c — None =
+  ;; 起き直しの後、まだ heartbeat を 1 つも受けていない間の、経過に数えなかった最後の刻(2026-10-21 — None =
   ;; 受けた後・起き直していない)。受付を始めてから Pod が Ready になり Service に載るまで(readinessProbe の周期 — 最大 10 秒)は、
   ;; worker の heartbeat が届かない。その間を沈黙に数えると、止まっていた長さだけずらした最後の連絡が lease で切れ、全 worker が
   ;; WorkerGone になって Service に載った後に WorkerBack で戻った(rev 47 2026-10-17 15:25 の実測)。読み直し(api_policy.resume-after-downtime)
   ;; が今の刻を置き、調停の歩ごとにその刻からの長さだけ時計をずらし(api_policy.unreached-shifted)、最初の heartbeat を受けた歩か
   ;; 待ちの上限(api_policy.REACH-WAIT-MS)で None に戻す。保存しない(起き直すたびに読み直しが置く)。位置の引数の呼び手のため最後に置く。
   (setv #^ (| int None) unreached-ms None)
-  ;; Service の置き先の一時の上書き(2026-10-27・card ki-1523bc0aba4f): Service の名 → NeedsOverride(資源 NeedsOverride — 宣言は
+  ;; Service の置き先の一時の上書き(2026-10-27): Service の名 → NeedsOverride(資源 NeedsOverride — 宣言は
   ;; 書き換えない)。置き先の判断は上書きの needs を効かせ(cluster_policy.effective-needs)、期限の拍か上書きの needs を満たす生きた worker
   ;; が 0 になった拍に、coordinator が行を外して宣言の needs で置き直す(resource_policy.lift-needs-overrides)。保存する(durable_kv の needsoverride/<名>)。位置の引数の呼び手のため最後に置く。
   (setv #^ (get Table NeedsOverride) needs-overrides (field :default-factory (partial table-of #())))
-  ;; 置き先が無いと最初に見た拍の刻(2026-10-27・card ki-53b8677f1374): Service の名 → epoch ms。調停の拍ごとに cluster_policy.note-unplaced が
+  ;; 置き先が無いと最初に見た拍の刻(2026-10-27): Service の名 → epoch ms。調停の拍ごとに cluster_policy.note-unplaced が
   ;; 置き先の無い Service に刻を置き、置かれた Service の行を外す(置かれないまま続く間は最初の刻を保つ)。GET /state の unplacedDetail と
   ;; Service の資源の status.unplaced の sinceMs に出る — 外の見張りが「いつから置き先が無いか」を読むため。保存しない(起き直した後は、
   ;; 起きた後の最初の拍から数える)。位置の引数の呼び手のため最後に置く。

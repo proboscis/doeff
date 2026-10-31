@@ -1,4 +1,4 @@
-;;; 失敗した Await の約束の行が、自分の handle を持ち続けて掃除されない形(agora card ki-84b4a6fb6503 — messaging の process で、
+;;; 失敗した Await の約束の行が、自分の handle を持ち続けて掃除されない形(messaging の process で、
 ;;; 失敗で終わった要求ごとに httpcore の AsyncHTTPConnection・Origin・ExternalPromise・Await が 1:1:1:1 で約 0.8 個/秒ずつ増え、
 ;;; 3.5 時間で 9,971 個・gc の後も減らなかった)。scheduler は失敗した約束の例外を、掃除(#502)が handle を全部死んだと読むまで約束の表に
 ;;; 持つ。await-handler の橋の coroutine が捕えた例外の traceback の頭は橋自身の frame で、その closure が ExternalPromise と Await

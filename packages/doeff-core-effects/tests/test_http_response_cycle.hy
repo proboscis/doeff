@@ -1,4 +1,4 @@
-;;; HTTP の答え手が答えた後に、httpx の応答が cyclic GC を待たずに消える事(agora card ki-83d403d6e421)。
+;;; HTTP の答え手が答えた後に、httpx の応答が cyclic GC を待たずに消える事。
 ;;; httpx の応答は本文の流れと互いを指す(Response.stream = BoundAsyncStream(..., response=self) — httpx 0.28.1 の _client.py)ので、
 ;;; そのままでは本文の bytes と str が参照の数で放されず、GC の回まで残る。free-threading の CPython は GC の間隔を生きている物の数に応じて
 ;;; 広げ(手元の実測で 4〜16 万個ごと)、GC で放した memory を機体へ返さないので、60 秒ごとに 96 KB の応答を受ける job

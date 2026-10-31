@@ -1,4 +1,4 @@
-;; 枠の file の行を N+1 の判断の worker にする読み room-file-workers(card ki-5996b0cce581)。
+;; 枠の file の行を N+1 の判断の worker にする読み room-file-workers。
 ;; 能力は worker 自身の名乗り(起動の引数の能力 host-<名>・雛形の能力・足す能力に、行の組の印を足す)と同じで、枠・予約・memory の予算は
 ;; 行の値。失敗ケース = worker が名乗らない行(taskReserve の無い行・範囲の外)を既定の値で通す・足す能力を行の無い worker に当てて
 ;; 黙って捨てる・heartbeat の名乗りと違う能力を作る。

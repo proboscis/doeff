@@ -1,5 +1,5 @@
-;;; 枠の file(deploy/k8s/workers/worker-room.json)の行を、N+1 の判断 failover_policy.failover-refusals が受ける worker にする読み
-;;; (card ki-5996b0cce581)。I/O はしない — file の中身は呼び手が渡す。
+;;; 枠の file(deploy/k8s/workers/worker-room.json)の行を、N+1 の判断 failover_policy.failover-refusals が受ける worker にする読み。
+;;;I/O はしない — file の中身は呼び手が渡す。
 ;;;
 ;;; 上に載る系の照らし(常駐の job の契約が枠に入るか)は、枠の file の形(欄の名・範囲)も worker の名乗り方(起動の引数の能力に行の組の印を
 ;;; 足す)も持たず、ここを呼ぶ。読みを照らしの側に写すと、枠の file の形や名乗り方が変わるたびに写しだけが古い置き場を読み続けて外れる

@@ -1,10 +1,9 @@
 """Semgrep の検を表に載せる操作は effect RegisterSemgrep、走らせて見本の当たり外れを確かめる操作は effect AssertSemgrep で、
-handler を返す工場 semgrep_enforcements が答える(card ki-2a549274055c)。
+handler を返す工場 semgrep_enforcements が答える。
 
-決め: 依頼書 lt-WVC8PTVD0E022XXMKP1J98ACDP の答え lt-KY48MR4KP2N0GS9MQCCJTJMH55(register-semgrep)と、依頼書
-lt-5CQZ1TMGZSCQ01PXH8JY2JK3DN の答え lt-19276K37Z3TCCRTBMXWBMMXVMN(assert-semgrep)— どちらも effect にする。前の関数
-register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えた後(card ki-ac39cb3c0bcd)に
-消した(card ki-baf84c90f3df)。
+決め: register-semgrep と assert-semgrep は、どちらも effect にする。前の関数
+register_semgrep_enforcement と assert_semgrep_enforcement は、外の repo の呼び手を書き換えた後に
+消した。
 
 semgrep_enforcements() は process の登録簿に載せて読み、semgrep_enforcements(table={…}) はその辞書に載せて読む(辞書に無い id は
 登録簿へ落ちずに KeyError)。semgrep_enforcements(semgrep=…) は渡した実行 file で semgrep を起こす。内側に据えた handler が先に

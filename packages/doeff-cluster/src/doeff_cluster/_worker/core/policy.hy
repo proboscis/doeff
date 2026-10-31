@@ -13,8 +13,8 @@
 ;; import だけで本体を走らせない — worker_rules.probe-args)。以前は先に旧を止めてから準備と検めをしたので、本番の Pod 1 つの記録の service が
 ;; 新しい版の環境の準備の約 107 秒を含む約 130 秒書けなかった(02:45:30 に止め → 02:47:24 に起動)。判断は replace-step の 1 か所
 ;; (plan-job の止めの枝と、見送りの行の start-holds が読む)。宣言から消えた job・drain 中の版の据え置き・task は今までどおり。
-;; 待ちの子から分ける root の service(card ki-de44efdb9aa4)は、新しい版の root の待ちの子が準備済みになるまでも旧を止めない(2026-10-29・
-;; card ki-d8cc8191472e): 以前は検めが通った所で旧を止め、止め終えた後に新が待ちの子の準備(本番 zeus の 10-28〜29 の 30 回のうち 23 回・
+;; 待ちの子から分ける root の service は、新しい版の root の待ちの子が準備済みになるまでも旧を止めない(2026-10-29):
+;; 以前は検めが通った所で旧を止め、止め終えた後に新が待ちの子の準備(本番 zeus の 10-28〜29 の 30 回のうち 23 回・
 ;; 回収から起動まで 5.8〜23.3 秒)を待ったので、その間 job の仕事が止まった。待ちの子が準備済みなら、止め終えた次の周期に分けて起こす。
 ;;
 ;; 入口の検め(probe・2026-09-25): service の job は、木が揃った後に「worker の実行環境でその木の入口(factory と env)を読み込めるか」を
@@ -158,13 +158,13 @@
 (defk ran-stably? [now record policy]
   {:pre [(: now int) (: record JobRecord) (: policy WorkerPolicy)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
   "job の名で最後に起こした process が stable-run-ms 以上動いたか — 続けて落ちた回数を数え直す境 — を 1 か所で決めるため。記憶の数え
-   record-after(終わりの回収 ReapJob と、名から外す RetireJob)と状態の報告 job-status が同じ述語を読む(card ki-3f4bbc55733a — 以前は
+   record-after(終わりの回収 ReapJob と、名から外す RetireJob)と状態の報告 job-status が同じ述語を読む(以前は
    報告だけがこの境を持ち、入れ替えで名から外した後の新しい process は、前の process が長く動いた後でも前の落ち続けの回数を引き継いだ)。"
   (and (is-not record.last-start-ms None) (>= (- now record.last-start-ms) policy.stable-run-ms)))
 
 (defn #^ (| int None) backoff-from [#^ JobRecord record]  ; defk にできない: 純粋な判断の in-backoff(Program の外の関数)が呼ぶ
   "起こし直しの間(backoff)を数える起点を 1 か所で決める(in-backoff と、期限の worker_due.plan-due が読む): 最後の StartJob が起こせ
-   なかった刻(card ki-e1612a12d0c3 — 終わりより後の出来事なので先に読む)、それ以外は停止を求めずに終わった刻。どちらも無ければ None。"
+   なかった刻(終わりより後の出来事なので先に読む)、それ以外は停止を求めずに終わった刻。どちらも無ければ None。"
   (cond
     (is-not record.not-started None) record.not-started.at-ms
     (and (is-not record.last-exit-ms None) (= record.last-outcome Outcome.EXITED)) record.last-exit-ms
@@ -263,7 +263,7 @@
   {:pre [(: now int) (: spec JobSpec) (: tree str) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: warm-keys frozenset)]
    :post [(: % StartStep)] :tags {:context "worker" :role "judgment"}}
   "木が READY の job を起こすため: 入口の検めが通るまで起こさず、backoff の間は待つ。待ちの子から分かれる task(#3646)と、service を分ける
-   root(warm-keys — card ki-de44efdb9aa4)の service は、道を warm_rules の warm-start が決める: 待ちの子が準備済みになるまで起こさず
+   root(warm-keys)の service は、道を warm_rules の warm-start が決める: 待ちの子が準備済みになるまで起こさず
    (待ちの子を起こすのは warm-child-actions)、分ける時は StartJob に root のキーを載せる。黙って入れ物 shim へ倒れない(service が shim で
    起きるのは warm-start が名指す訳 — 古い版の待ちの子・断りの上限 — の時だけ)。"
   (val gate (probe-actions now spec tree world policy))
@@ -275,7 +275,7 @@
     ;; 同じ名の前の世代がこの job を動かしている(AL-D2f): 準備と検めは揃ったので、coordinator が印を外すまで起こさない(状態の行は
     ;; elder-runs — coordinator はそれを見て前の世代から外す)。
     (elder-waits spec) (StartStep :actions #() :hold StartHold.ELDER-RUNS)
-    ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける — card ki-7b934e2538f9)。準備と
+    ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける)。準備と
     ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
     (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
     True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)))
@@ -325,7 +325,7 @@
    周期の終わりの見送りの行 start-holds が同じ判断を読む — 2026-10-08): 新しい版の木が READY でなければ準備だけ(準備中・失敗の後の
    作り直しの間を含む — 訳は prepare-hold)、木が揃っても入口の検めが通っていなければ検めだけ(走っている・落ちた間は待つ — 訳は
    probe-hold)、新しい版を待ちの子から分ける service(warm-keys の root — warm_rules の warm-start が WAIT)は待ちの子が準備済みになるまで
-   待つ(訳は WARM-CHILD — 待ちの子を起こすのは warm-child-actions・card ki-d8cc8191472e)。どの間も旧は動かしたまま。揃ったら旧を
+   待つ(訳は WARM-CHILD — 待ちの子を起こすのは warm-child-actions)。どの間も旧は動かしたまま。揃ったら旧を
    止める(SpecChanged)— 止め終えた次の周期で start-step が待たずに起動する(warm-start は旧の有無を読まないので、ここで WAIT でなければ
    start-step でも WAIT でない)。準備の action は方策の並べる数(compile-jobs-while-replacing)を載せる — 旧い service と焼きが同じ Pod の
    memory の上限を分け合うので、道具の既定の並べる数で焼かない。"
@@ -362,14 +362,14 @@
    handoff でなくなった時も止める。退いた process が上限 R に達している間に宣言が変わっても、退いた process は止めない — 今の
    process を退かせる番は handoff-actions が待たせる(#4072 の D-3 の改め: 以前はいちばん古く退いた process を止めて 1 つ空け、その
    process が回していた仕事を切っていた — 2026-10-10 15:01 UTC の本番)。
-   退きの保ち(card ki-e3531030eb37): 寿命の上限は自分で終わらない退いた process の受け止めで、仕事の長さの上限ではない。退いた process
+   退きの保ち: 寿命の上限は自分で終わらない退いた process の受け止めで、仕事の長さの上限ではない。退いた process
    が退きの保ち(readiness_model の RETIREMENT-HOLD — 元の job の want.retired-held にその世代の名が在る)を持つ間は、上限を越えても止めない
    (以前は上限の拍で止め、走っていた仕事を切っていた — 2026-10-16 04:28:49 JST の本番で 6 時間 7 分の仕事)。保ちが無くなれば(返した・
    延ばしが止まって切れた)、その拍から今どおり止める。
    世代をまたぐ入れ替え(AL-D2): 元の job に印 superseded-by が在れば、新の process は新しい世代の worker の上に在り、この worker の
    上には無い — 印を「新の Ready」と数える(coordinator は新しい世代の process が Ready か、この世代の Pod の止まりが始まった時だけ
-   印を付ける)。数えなければ寿命の無い退いた process は止める時が来ず、旧い Pod の preStop が drain の上限まで待った(card ki-7c11722e3621
-   — 10-12 の本番で 6 時間)。"
+   印を付ける)。数えなければ寿命の無い退いた process は止める時が来ず、旧い Pod の preStop が drain の上限まで待った(
+   10-12 の本番で 6 時間)。"
   (setv want (desired-of desired origin)
         current (process-of world origin)
         lifetime (if (is want None) None want.retired-ms)
@@ -481,7 +481,7 @@
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "root のキー 1 つの待ちの子の action を決めるため(判断の表 — tests/test_warm_child_policy.hy が全行を撃つ)。launch = 要る root の待ちの子の
    起こし方(要らない・root が READY でなければ None)・view = 待ちの子の観測・refusal = この root から task を分けるのを断られた最後の答え
-   (無ければ None — card ki-e1612a12d0c3)。観測が変わらない限り同じ action を 2 度出さない(起こした・止め始めた・忘れた事は次の観測に
+   (無ければ None)。観測が変わらない限り同じ action を 2 度出さない(起こした・止め始めた・忘れた事は次の観測に
    出る)。走っている task には何もしない(条 WC2)。"
   (cond
     ;; 要らない root: 走っていれば止め、終わっていれば観測から外す。
@@ -499,7 +499,7 @@
     (is-not view.exit-code None)
       (if (>= (- now (or view.ended-ms 0)) policy.code-retry-ms) #((StartWarmChild key launch)) #())
     (is-not view.stop None) (! (warm-stop-step now view policy))
-    ;; 今の子を起こした後に task を分けるのを断った待ちの子(card ki-e1612a12d0c3)は止める。止めた子の終わりは断りに数え(fork-refused —
+    ;; 今の子を起こした後に task を分けるのを断った待ちの子は止める。止めた子の終わりは断りに数え(fork-refused —
     ;; warm_rules の ended-refusing)、起こし直しと上限は起動の断りと同じ道(上の枝)。task は shim の道へ倒さず、backoff の後にこの root の
     ;; 次の待ちの子から分ける。
     (and (is-not refusal None) (>= refusal.at-ms view.started-ms))
@@ -519,7 +519,7 @@
 
 (defk fork-refusals [records]
   {:pre [(: records dict)] :post [(: % (get dict #(str JobNotStarted)))] :tags {:context "worker" :role "judgment"}}
-  "root のキーごとに、task を分けるのを断られた最後の答えを job の記憶から集めるため(card ki-e1612a12d0c3 — 待ちの子の断りに数える
+  "root のキーごとに、task を分けるのを断られた最後の答えを job の記憶から集めるため(待ちの子の断りに数える
    warm-child-step が読む)。起こせた StartJob は記憶の not-started を消すので、残るのは起こせていない task の断りだけ。"
   (var found {})
   (for [record (.values records)]
@@ -533,8 +533,8 @@
   {:pre [(: now int) (: desired tuple) (: world WorldView) (: warm tuple) (: policy WorkerPolicy) (: records dict)] :post [(: % tuple)]
    :tags {:context "worker" :role "judgment"}}
   "待ちの子(#3646)を起こす・止める・観測から外す action を求めるため: 要る root = 宣言に分かれる task が在るか温める表に在る root と、
-   service を分ける root(service-warm-keys — card ki-de44efdb9aa4)のうち READY の物。要る root と観測に在る待ちの子を root のキーの順に
-   1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める材料 — fork-refusals・card ki-e1612a12d0c3)。"
+   service を分ける root(service-warm-keys)のうち READY の物。要る root と観測に在る待ちの子を root のキーの順に
+   1 つずつ判じる(warm-child-step)。records = job の記憶(task を分けるのを断った待ちの子を止める材料 — fork-refusals)。"
   (val services (service-warm-keys desired policy))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
                             (tuple (gfor w warm w.key))
@@ -656,7 +656,7 @@
 
 (defn #^ JobRecord record-after [#^ int now #^ JobRecord record #^ Action action #^ WorkerPolicy [policy (WorkerPolicy)]
                                  #^ (| JobNotStarted None) [not-started None]]
-  "撃った action 1 つを job の記憶に数える(not-started = その action が StartJob で、起こせなかった答え — card ki-e1612a12d0c3)。"
+  "撃った action 1 つを job の記憶に数える(not-started = その action が StartJob で、起こせなかった答え)。"
   (cond
     ;; 起こせなかった StartJob: 落ちた時と同じく続けて落ちた回数(failures・unexpected-exits)に数え、backoff を断りの刻から数える
     ;; (backoff-from)。起こした刻は書かない(走った process が無い)・task を終えた事にしない(last-outcome を書かない — backoff の後に
@@ -694,7 +694,7 @@
     ;; 続けて終わった回数を 0 から数え直す — 報告の境(job-status)と同じ。退いた process の終わりは退いた名の記憶で回収して捨てるので、
     ;; 二重には数えない。stable-run-ms に満たずに落ち続けている間の入れ替えは回数を引き継ぐ(落ち続けを隠さない)。
     ;; 以前は外しが記憶に触れず、1 時間 48 分 安定して動いた process を入れ替えた後の新しい process が、起動から 60 秒の間 前の落ち続けの
-    ;; 回数 11 を報告した(card ki-3f4bbc55733a — 上に載る系の見張りが落ち続けと数えた)。
+    ;; 回数 11 を報告した(上に載る系の見張りが落ち続けと数えた)。
     (isinstance action RetireJob)
       (if (run (ran-stably? now record policy)) (replace record :failures 0 :unexpected-exits 0) record)
     True record))
@@ -704,7 +704,7 @@
          (: not-started (get tuple #(JobNotStarted ...)))]
    :post [(: % (get dict #(str JobRecord)))] :tags {:context "worker" :role "judgment"}}
   "撃った action を job ごとの記憶(起こした回数・止め始め・終わり方)に数えた後の記憶を求めるため。not-started = 撃った StartJob のうち
-   起こせなかった答え(card ki-e1612a12d0c3 — job の名で StartJob に結ぶ)。1 つずつの数えは record-after
+   起こせなかった答え(job の名で StartJob に結ぶ)。1 つずつの数えは record-after
    (効果を出さない純粋な畳み: 同じ job の action が続けば前の数えの答えを次が読むので、互いに独立な Program の列を順に走らせる
    sequence の形ではなく、素の関数のまま — #2812)。"
   (var result (dict records))
@@ -721,7 +721,7 @@
       (:= result (dfor #(k v) (.items result) :if (!= k action.name) k v))))
   result)
 
-;; 止めを求めていない終わりの行(card ki-cb9f34c49f83): 回収した拍に 1 行。以前は止めた終わりの計時の行(process_host の STOP-TIMING-LOG)
+;; 止めを求めていない終わりの行: 回収した拍に 1 行。以前は止めた終わりの計時の行(process_host の STOP-TIMING-LOG)
 ;; しか無く、job が SIGSEGV で落ちても worker の log に落ち方が残らなかった(終了 code は状態の file の lastExitCode を読むまで分からない)。
 (defrecord ExitNote
   "止めを求めていない job の終わり 1 つ(回収の拍の行の欄): name = job の名(退いた process は退いた名)・pid = 子の pid・exit-code = 終了 code・
@@ -827,7 +827,7 @@
           ;; 待ちの子が起動の断りの上限に達した task は、準備の失敗として終える。
           (and (forks-from-warm-child want) (warm-child-refused (warm-child-of world (warm-key-of want)) policy)) JobPhase.ENV-FAILED
           ;; 待ちの子から分かれる task と分ける root の service は、待ちの子が準備済みになるまで準備の段階のまま(段階の語は足さず、理由は
-          ;; 状態の行の文 — #3646・card ki-de44efdb9aa4)。
+          ;; 状態の行の文 — #3646)。
           (= (warm-start want world policy warm-keys) WarmStart.WAIT) JobPhase.PREPARING
           ;; 前の世代が動かしている印の job(AL-D2f): 入口の検めまで揃った時だけ elder-runs(coordinator はこれで前の世代から外す)。
           (elder-ready now want code world policy) JobPhase.ELDER-RUNS
@@ -845,7 +845,7 @@
 
 (defn #^ (| str None) warm-wait-detail [#^ WorldView world #^ (| JobSpec None) want #^ (| ProcessView None) process
                                         #^ JobRecord record #^ WorkerPolicy policy #^ frozenset warm-keys]
-  "待ちの子の準備を待っている task と service(card ki-de44efdb9aa4)の状態の行の理由(#3646)。待っていなければ None。前の待ちの子が
+  "待ちの子の準備を待っている task と service の状態の行の理由(#3646)。待っていなければ None。前の待ちの子が
    終わっていれば、その訳も添える。"
   (if (or (is want None) (is-not process None) (is-not record.last-outcome None)
           (is (ready-path (code-of world (code-key want))) None)
@@ -884,12 +884,12 @@
   (val given-up (and (is process None) (is-not want None) (memory-given-up want record policy)))
   ;; 今の process が stable-run-ms 以上動いていれば、続けて落ちた回数は 0 と報告する(次に終わった時に 1 から数え直す record-after と
   ;; 同じ境 ran-stably? — 拍ごとに組む報告から導くので、動いている間は記憶を書き換える仕掛けも時刻の見張りも要らない・#3477)。記憶を
-  ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob — card ki-3f4bbc55733a)の record-after。
+  ;; 0 に戻すのは、その process が終わった時(ReapJob)と名から外した時(RetireJob)の record-after。
   (<- ran-stably bool (ran-stably? now record policy))
   (val stable (and (is-not process None) ran-stably))
   (JobStatus name (phase-of now want process world record policy warm-keys)
       (if (is want None) None want.revision)
-      ;; 動いている版: 宣言と同じ spec(中身の鍵が同じ — card ki-81bf84ac6590)の process は、版の違う宣言し直しでも起こし直さないので、
+      ;; 動いている版: 宣言と同じ spec(中身の鍵が同じ)の process は、版の違う宣言し直しでも起こし直さないので、
       ;; 宣言の版を仕事している版と数える(読む code が宣言の版と同じ)。鍵の無い宣言は spec が同じなら版も同じ(今どおり)。
       (cond (is process None) None
             (and (is-not want None) (= want process.spec)) want.revision
@@ -908,7 +908,7 @@
           (.format "旧い版を動かしたまま — 新しい版を準備できない: {}" code.detail)
         (and replacing (is-not probe None)) (.format "旧い版を動かしたまま — 新の入口を読み込めない: {}" probe.detail)
         (and replacing (is-not probing None)) (.format "旧い版を動かしたまま — {}" (probing-detail probing))
-        ;; 検めの後、新しい版の待ちの子の準備を待っている間(replace-step の WARM-CHILD — card ki-d8cc8191472e)。
+        ;; 検めの後、新しい版の待ちの子の準備を待っている間(replace-step の WARM-CHILD)。
         (and replacing (is-not (ready-path code) None) (= (warm-start want world policy warm-keys) WarmStart.WAIT))
           "旧い版を動かしたまま — 新しい版の待ちの子の準備中"
         replacing (.format "旧い版を動かしたまま — 新しい版の準備中(新のコード {})" (if (is code None) "未準備" code.state.value))
@@ -921,7 +921,7 @@
         (is-not probing None) (probing-detail probing)
         ;; 待ちの子が起動の断りの上限に達した task。
         (is-not refused None) (.format "待ちの子が {} 回続けて断った: {}" (+ refused.refusals 1) refused.detail)
-        ;; 最後の StartJob が起こせなかった(card ki-e1612a12d0c3 — backoff の後に起こし直す)。
+        ;; 最後の StartJob が起こせなかった(backoff の後に起こし直す)。
         (and (is process None) (is-not record.not-started None))
           (.format "起こせなかった({}): {} — backoff={}ms"
                    (if (is record.not-started.warm-key None) "shim" (+ "warm:" record.not-started.warm-key))

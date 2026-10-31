@@ -1,4 +1,4 @@
-"""doeff-core-effects の組んだ wheel が、この配布の top-level の package を全部持つ事の検(agora-redesign #3866)。
+"""doeff-core-effects の組んだ wheel が、この配布の top-level の package を全部持つ事の検。
 
 editable の環境(開発の venv)は package の dir を sys.path に足すだけなので、配布の設定(pyproject.toml の
 [tool.hatch.build.targets.wheel] packages)に名が無い package も import が通る。wheel にだけ入らず、本番(wheel で入れる worker)で

@@ -1,4 +1,4 @@
-;;; 機体の memory の見張り(card ki-7b934e2538f9)— 調整ループの外の背景の task(Spawn の daemon)が sample-seconds ごとに、機体の
+;;; 機体の memory の見張り— 調整ループの外の背景の task(Spawn の daemon)が sample-seconds ごとに、機体の
 ;;; memory(/proc/meminfo・/proc/pressure/memory)・worker の container の memory(cgroup v2)・job ごとの memory(process の表を job の根の
 ;;; 木で数える)を読み、worker の log に残す。機体の memory が尽きかけたら(worker/core/memory_rules の DANGER)、job の木の中のいちばん
 ;;; 大きい単位を SIGKILL で止める — kernel の OOM に至らない reclaim の thrash で機体の全体が止まる前に。
@@ -11,7 +11,7 @@
 ;;;   MEMORY-LEVEL-LOG   機体の様子(CALM・TIGHT・DANGER)が変わった時に 1 行: 機体の空き・PSI・大きい単位の上位。
 ;;;   MEMORY-KILL-LOG    止めた時に 1 行: job・単位の頭の pid と命令の名・単位の memory・送った process の数・機体の空き。
 ;;;   MEMORY-SWARM-KILL-LOG  止める候補の単位が無く、1 つの job の木が機体の大きな割合を持つ時に、その job の小さい単位をまとめて止めた
-;;;                      時に 1 行(worker/core/memory_rules の swarm-of — card ki-d9953fe1d739): job・止めた単位の数と和・大きい単位の
+;;;                      時に 1 行(worker/core/memory_rules の swarm-of): job・止めた単位の数と和・大きい単位の
 ;;;                      上位・送った process の数・機体の空き。
 ;;;   MEMORY-NO-VICTIM-LOG  DANGER なのに止める単位が無い(止める候補の単位が無いか min-victim-bytes 未満で、群れの止めも当たらない — 食った
 ;;;                      物は job の外か、平常の大きさで動く小さい常駐の job だけ)時に、DANGER の 1 回につき 1 行: 機体の使用量・container の
@@ -19,7 +19,7 @@
 ;;;   MEMORY-UNREAD-LOG  読めない訳が変わった時に 1 行(読めない間は数えない・止めない)。
 ;;; 止めは guard が真の時だけ(偽は log だけ — 起動の引数 --memory-guard off)。止めた後 kill-cooldown-seconds は次を止めない(止めた木の
 ;;; memory が戻るのを待つ)。
-;;; 平常の大きさ(card ki-649b1b2f5838): 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが
+;;; 平常の大きさ: 最大の行の間を閉じるたびに、その間の job の名ごとの最大を steady-windows 個まで残し(見張りが
 ;;; 止めた job の最大は残さない)、その中のいちばん大きい物を job の平常の大きさとして止める単位の選びに渡す(worker/core/memory_rules の
 ;;; victim-of — 平常の大きさで動く常駐の job は止めない)。名ごとに残すので、起こし直された job も前の走りの大きさを平常とする。
 ;;; 止めた印: 止めた単位の属する job の根(名と pid)を、止めた刻とともに入れ物に kill-mark-seconds の間残す。調整ループは終わった process

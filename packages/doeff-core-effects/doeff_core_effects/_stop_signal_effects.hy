@@ -4,7 +4,7 @@
 ;;; something else happens races AwaitStop against its own wait instead of waking up to ask.
 ;;; The handlers live in stop_signal_handlers.hy: os-signal-stop-handler (the process's real signals)
 ;;; and scripted-stop-handler (no I/O — a scenario raises the stop with RaiseStop).
-;;; Added for agora-redesign #802 (bundle 5) so services stop keeping their own signal boxes.
+;;; Added so services stop keeping their own signal boxes.
 
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
@@ -19,7 +19,7 @@
   "Wait until a stop has been requested. Answer = the reason (str) — at once if one was already requested.
    It never answers None: a loop that sleeps until something else happens (a table changes, a deadline) spawns
    this, races it against its own wait, and cancels the loser — so it notices a stop without waking up every few
-   seconds to ask StopRequested (agora-redesign #2205).")
+   seconds to ask StopRequested.")
 
 
 (defclass [(dataclass :frozen True)] StopBell [EffectBase]

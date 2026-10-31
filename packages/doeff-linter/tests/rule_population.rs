@@ -1,4 +1,4 @@
-//! 層の宣言で規則の母集団から外す形(`:modules` と `:exempt`)と DOEFF032 の検(agora-redesign #2811)。
+//! 層の宣言で規則の母集団から外す形(`:modules` と `:exempt`)と DOEFF032 の検。
 //!
 //! 一時の repo の根に `.git` を置き、package `pkg` の architecture.hy に起動の時点の層 startup(名指しの module `guard`・DOEFF004 を
 //! 理由つきで外す・業務の module を禁じる)を宣言する。linter は根から(設定なしで)走らせる — doeff の根の実行(pre-commit・make
@@ -183,7 +183,7 @@ fn an_exemption_without_a_reason_is_not_applied_and_is_named() {
     );
 }
 
-/// doeff の repo の `tools/architecture.hy`(agora-redesign #2859 — Rust の package の PEP 517 の build の入口を DOEFF004 から外す)
+/// doeff の repo の `tools/architecture.hy`(Rust の package の PEP 517 の build の入口を DOEFF004 から外す)
 /// をそのまま一時の repo に置いて確かめる: 宣言を書き換えると、ここが赤になる。
 const BUILD_DECLARATION: &str = include_str!("../../../tools/architecture.hy");
 
@@ -222,7 +222,7 @@ fn the_build_backend_is_out_of_the_environment_rule_and_business_code_is_not() {
 }
 
 /// build の入口が業務の module(doeff)を import すると DOEFF032 に当たる(外した層に業務の code が入ったら赤)。
-/// repo 全体を当てると、symlink とその本物は 1 つの file として本物の path で 1 度だけ名指し(agora-redesign #2905)、
+/// repo 全体を当てると、symlink とその本物は 1 つの file として本物の path で 1 度だけ名指し、
 /// symlink の path だけを名指しても(pre-commit が変えた path を渡す形)当たる。
 #[cfg(unix)]
 #[test]
@@ -246,9 +246,9 @@ fn business_code_in_the_build_backend_is_red() {
     );
 }
 
-/// 環境を読む module を 1 つに寄せて層の宣言で外した package(agora-redesign #2860)— doeff の repo の宣言をそのまま一時の repo に
+/// 環境を読む module を 1 つに寄せて層の宣言で外した package— doeff の repo の宣言をそのまま一時の repo に
 /// 置いて確かめる: 宣言を書き換えると、ここが赤になる。(宣言の path・寄せた module の path・同じ package のほかの module の path)
-/// doeff-hy と doeff-flow は環境変数を ReadEnvironment の効果で問う形にして層を外した(agora-redesign #3012)ので、表から外した。
+/// doeff-hy と doeff-flow は環境変数を ReadEnvironment の効果で問う形にして層を外したので、表から外した。
 const ENVIRONMENT_PACKAGES: [(&str, &str, &str, &str); 1] = [
     (
         "packages/doeff-effect-analyzer/architecture.hy",
@@ -300,11 +300,11 @@ fn business_code_in_the_environment_module_is_red() {
     }
 }
 
-/// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名・agora-redesign #2861)の宣言 —
+/// 名指しの module が `__init__.py` の無い dir に在る package(module の名 = file の名)の宣言 —
 /// package の根に置き、tests の dir の素の module を名指して DOEFF004 を外す。
 /// 以前は doeff の repo の宣言(doeff-agents の runner-env・doeff-openrouter の local-dotenv)をそのまま読んでいたが、2 つとも
-/// 環境変数を ReadEnvironment で読む形になって DOEFF004 の外しを消した(agora-redesign #3012)。素の module を名指して外す仕組みは
-/// linter に残るので、同じ形の宣言をここに書いて確かめ続ける(agora-redesign #3023)。
+/// 環境変数を ReadEnvironment で読む形になって DOEFF004 の外しを消した。素の module を名指して外す仕組みは
+/// linter に残るので、同じ形の宣言をここに書いて確かめ続ける。
 const BARE_MODULE_DECLARATION: &str = r#"
 (defarchitecture bare
   :root "."
@@ -358,7 +358,7 @@ fn business_code_in_a_named_bare_module_is_red() {
     }
 }
 
-/// hash で封をした記録の file を :files で path ごとに名指して外す宣言(agora-redesign #2934)の模型 — docs の下の宣言 1 つと、
+/// hash で封をした記録の file を :files で path ごとに名指して外す宣言の模型 — docs の下の宣言 1 つと、
 /// 記録の dir の中の、もっと近い宣言 1 つ。一時の repo に置いて確かめる。
 const SEALED_DECLARATIONS: [(&str, &str); 2] = [
     ("docs/architecture.hy", DOCS_SEALED_DECLARATION),
@@ -421,7 +421,7 @@ fn expected_hits(paths: &[&str], rules: &[&str]) -> Vec<(String, String)> {
 }
 
 /// 名指した封の file は外した規則(DOEFF007)から外れ、同じ dir の名指していない file は今どおり当たる(dir ごと外れない)。宣言が
-/// 外さない規則(DOEFF004 — 封の file の環境変数の直の読みは agora-redesign #3012 で直して外すのをやめた)は、封の file にも当たる。
+/// 外さない規則(DOEFF004 — 封の file の環境変数の直の読みは直して外すのをやめた)は、封の file にも当たる。
 /// 宣言は読めて DOEFF032 も出ない。
 #[test]
 fn only_the_named_sealed_files_are_out_of_the_rule_population() {

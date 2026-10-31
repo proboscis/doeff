@@ -123,7 +123,7 @@ def test_do_block_bind_points_at_the_failing_bind(mod: ModuleType) -> None:
 
 
 
-# 行番号がずれる最小の Hy(agora-redesign #1004)。defk の本体の束ねはどれも outcomes の module を同じ名で
+# 行番号がずれる最小の Hy。defk の本体の束ねはどれも outcomes の module を同じ名で
 # 引く。その名を 1 つの Symbol として展開のあいだで使い回すと、locate-synthesized が最初の展開で付けた位置が
 # その Symbol に残り、後の展開の (! …) の式(失敗が投げ込まれる yield を含む)の始まりがその行へ引き寄せられる。
 # 残る位置は「その process で最初に展開された束ね」の行なので、traceback で見ると検の順で赤にも緑にもなる。

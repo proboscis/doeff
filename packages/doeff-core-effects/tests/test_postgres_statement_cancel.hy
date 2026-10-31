@@ -1,5 +1,5 @@
 ;;; 文 1 つの SQL の effect(SqlQuery・SqlInsertRows・SqlEnsureTables)を答える offloaded-statement(postgres_sql.hy — postgres-sql-handler と
-;;; pooled-postgres-sql-handler が共に使う)の取り消しの検(agora-redesign #2792)。実 PostgreSQL を使わず、接続の貸し出しを偽物に替える:
+;;; pooled-postgres-sql-handler が共に使う)の取り消しの検。実 PostgreSQL を使わず、接続の貸し出しを偽物に替える:
 ;;; 許可は本物と同じ database ごとの thread の間の錠で数え、接続の代わりに札を貸す。実 PG の検は DSN が無いと skip されるので、この検は
 ;;; それに頼らない。
 ;;;   - 場面(record の DB が 30 秒止まった形 — 時刻は順序だけで写す): 許可 4 本・読み 12 件。最初の 4 件の文は DB の止まりで返らず、残り
@@ -7,7 +7,7 @@
 ;;;     取り消された要求が、許可を取った後に流した文の数。直す前は 8(許可が取れると取り消しを見ずに文を流した)・直した後は 0。走り出して
 ;;;     いた 4 件の文は止めない(直しの外)。
 ;;;   - 借りと文の仕事が始まる前に取り消された要求は、仕事が外れて接続を借りない(返す物も無い)。
-;;;   - 文 1 つは借りと文と返却を pool の仕事 1 つで答える(agora card ki-5c3e73834e73 — 以前は借りと文の 2 つ)。
+;;;   - 文 1 つは借りと文と返却を pool の仕事 1 つで答える(以前は借りと文の 2 つ)。
 (require doeff-hy.macros [deftest defk deff <- val])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -222,7 +222,7 @@
 
 (deftest test-a-statement-is-one-pool-job
   ;; 文 1 つの effect は、借りと文と返却を pool の仕事 1 つで答える(scheduler の thread が外から完了させる promise の往復を文ごとに
-  ;; 1 度だけ払う — agora card ki-5c3e73834e73)。借りた接続は答えの後に返っている。
+  ;; 1 度だけ払う)。借りた接続は答えの後に返っている。
   (<- settled (CreateExternalPromise))
   (val stall (threading.Event))
   (.set stall)
@@ -237,7 +237,7 @@
 
 
 (deftest test-statements-in-a-row-reuse-one-thread
-  ;; 続けて流す文は、前の文の仕事を回した thread を使い回し、文ごとに thread を起こさない(agora card ki-8fc4f9017572 — 起こす待ちが
+  ;; 続けて流す文は、前の文の仕事を回した thread を使い回し、文ごとに thread を起こさない(起こす待ちが
   ;; 預かり所の普段の CPU の 2 割だった)。postgres-sql-handler の Executor もこの形。
   (val statements 20)
   (val stall (threading.Event))

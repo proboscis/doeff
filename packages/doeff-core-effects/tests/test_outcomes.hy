@@ -165,7 +165,7 @@
 
 
 (deftest test-on-raise-mangles-dashed-field-names
-  ;; 直す前は on-raise の match が属性 idempotency-key を引いて当たらず、Raise が外へ抜けた(agora-redesign card ki-6aa23021c532)
+  ;; 直す前は on-raise の match が属性 idempotency-key を引いて当たらず、Raise が外へ抜けた
   (<- mapped (keyed-recovery (AppendRefused "鍵-1" "重複")))
   (assert (= mapped "鍵-1: 重複") mapped))
 
@@ -224,8 +224,8 @@
 
 
 (deftest test-the-boundaries-are-handlers
-  ;; 設定の無い maybe・result は handler の値で program に当て(ADR-DOE-API-002 R1・2026-10-29 の答え — agora card
-  ;; ki-2d05bfc6ec94)、設定を受ける on_raise・absent_as は中核の state() と同じく呼ぶと handler を返す工場(ADR-DOE-API-001 R6)。
+  ;; 設定の無い maybe・result は handler の値で program に当て(ADR-DOE-API-002 R1・2026-10-29 の答え)、
+  ;; 設定を受ける on_raise・absent_as は中核の state() と同じく呼ぶと handler を返す工場(ADR-DOE-API-001 R6)。
   ;; どれも印 _doeff_is_handler_fn を持つ。
   (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
   (val handlers {"maybe" maybe
@@ -266,7 +266,7 @@
 
 
 (deftest test-the-old-forms-are-refused
-  ;; program を工場に渡す旧い形は、呼んだ所で TypeError で断る — 移し替えの層は agora card ki-53be25c354e4 で消した。
+  ;; program を工場に渡す旧い形は、呼んだ所で TypeError で断る — 移し替えの層は消した。
   ;; absent_as は前の macro の展開の形(印を 3 つ目に置く)も断る。
   (val conflict-case (RaiseCase #(Conflict) (fn [r] (Some (+ "conflict: " r.detail)))))
   (with [(pytest.raises TypeError :match "handler を返す工場")]

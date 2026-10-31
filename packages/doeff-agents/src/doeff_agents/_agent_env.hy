@@ -1,4 +1,4 @@
-;;; agent の境界で運ばせない env の語彙(card acp:kanban-issue:ki-2a061da56ca9・agora-redesign #708)。
+;;; agent の境界で運ばせない env の語彙。
 ;;;
 ;;; 綴りの家はここ 1 点。層(受理 = sessionhost/policy.hy session-env-admission-error・
 ;;; spawn = sessionhost/substrate.hy・shell の起動 = shell.py)は「どの集合を禁じるか」を
@@ -32,7 +32,7 @@
 ;; 誕生の札で再開した手番が 401 を食った)。預かり所の貸与の札はこの名で運ぶ。判定点はここ 1 つ。
 ;; claude の手番の資格の env の名(headless の adapter が借りた access token を置く・agentd の貸与の札も同じ名)。
 (setv CLAUDE-TURN-CREDENTIAL-ENV "CLAUDE_CODE_OAUTH_TOKEN")
-;; ターンの資格に付いた事実の env の名(card acp:kanban-issue:ki-d81bb8c7eaaa)— claude の CLI は資格を env の CLAUDE_CODE_OAUTH_TOKEN で
+;; ターンの資格に付いた事実の env の名— claude の CLI は資格を env の CLAUDE_CODE_OAUTH_TOKEN で
 ;; 受けると、契約の種類と階級をこの 2 つから読む(無ければ null — 種類の無い資格を team / enterprise かもしれないとして、起動のたびに
 ;; 組織の方針を確かめに行く)。headless の adapter は引き換えの答え(TurnCredential.subscription_type・rate_limit_tier)が値を持つ時だけ置く。
 ;; 2 つは token と組でしか意味を持たず、別の口座の事実が混ざらないよう入口を token と同じ 1 つにする — だからターンの資格の名の集合に入れる
@@ -42,7 +42,7 @@
 (val TURN-AUTH-ENV-KEYS #{CLAUDE-TURN-CREDENTIAL-ENV CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV})
 
 ;; ターンの資格の答え(TurnCredential.github_token)が GitHub の token を持つ時に、headless の adapter がその値を置く子の env の名
-;; (agora-redesign #3753 — 子の CLI の gh・git が GitHub へ書くため)。設定 dir の env・session_env の受理と禁止の集合には入れない(どの集合を
+;; (子の CLI の gh・git が GitHub へ書くため)。設定 dir の env・session_env の受理と禁止の集合には入れない(どの集合を
 ;; 禁じるかは上の表のまま)。
 (setv GITHUB-TOKEN-ENV "GH_TOKEN")
 
@@ -74,7 +74,7 @@
    (session-env-admission-error)・spawn(substrate ensure-no-forbidden-agent-env)・
    shell の起動(shell.assert-no-forbidden-agent-env)。層ごとに違うのは
    **どの集合を禁じるか**だけで、正規化と突合はこの 1 つを通る
-   (card acp:kanban-issue:ki-2a061da56ca9: 3 写しの正規化が別々に古びるのを止める)。
+   (3 写しの正規化が別々に古びるのを止める)。
    返るのは呼び手が書いた綴りのまま(正規化後の名ではない — 断りの文が
    『あなたが載せた名』を指せるように)。"
   (sorted (lfor key (.keys env)

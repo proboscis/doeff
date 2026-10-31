@@ -1,4 +1,4 @@
-//! DOEFF032: 規則の母集団の宣言の破れ(agora-redesign #2811)
+//! DOEFF032: 規則の母集団の宣言の破れ
 //!
 //! 層の宣言は、名指しの module に限って規則を母集団から外せる(`(layer 名 :modules [..] :exempt [(rule 規則 ID "理由")]
 //! :forbid-modules [..])`)。外すのは Program の外の code(Python の起動の時点で `.pth` から入る見張りほか)だけで、そこに業務の code が

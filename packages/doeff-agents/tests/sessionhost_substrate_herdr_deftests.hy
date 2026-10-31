@@ -207,11 +207,11 @@
                                    "name" "zsh"
                                    "argv" ["/usr/bin/zsh"]
                                    "cmdline" "/usr/bin/zsh"
-                                   "cwd" "/home/kento"}]}}})
+                                   "cwd" "/home/user"}]}}})
 
 
 (deftest test-herdr-pane-current-command-reads-answers-without-argv0
-  ;; 日次の機体 zeus の赤の回帰 pin(2026-09-26・agora-redesign#639 依頼書 H):
+  ;; 日次の機体 zeus の赤の回帰 pin(2026-09-26):
   ;; herdr 0.9.1 の公開 schema(protocol 22)で PaneProcessInfoProcess の必須欄は
   ;; pid と name だけで、argv0 / argv は省かれうる。旧実装は argv0 を必ず在る前提で
   ;; 読み、zeus の答えで KeyError: 'argv0' を出して観測ごと落ちた。

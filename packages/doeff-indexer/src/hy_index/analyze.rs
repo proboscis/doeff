@@ -323,7 +323,7 @@ impl<'a> Analyzer<'a> {
             "defk" => self.function_def(form, items, DefinitionKind::Defk, container),
             "deff" => self.function_def(form, items, DefinitionKind::Deff, container),
             "defclass" => self.class_def(form, items, container),
-            // defwire(JSON の境目の型 — doeff-hy の record.hy・agora-redesign #840)は defrecord へ展開するので、同じ読み方・同じ kind。
+            // defwire(JSON の境目の型 — doeff-hy の record.hy)は defrecord へ展開するので、同じ読み方・同じ kind。
             "defrecord" | "defwire" => self.record_def(form, items, container),
             "defenum" => self.enum_def(form, items, container),
             "defhandler" => self.handler_def(form, items, container),
@@ -609,7 +609,7 @@ impl<'a> Analyzer<'a> {
 
     /// `(defrecord Name [bases]? "doc"? {:tags {…} :check […]}? #^ T field …)` を読む(field は裸・括弧つき・注釈なしの
     /// 記号のどれでもよい)。今の defrecord の macro は基底を書かない形だけなので、bases はふつう空。
-    /// 頭の辞書(doeff-hy の defrecord・agora-redesign #798)の :tags は定義のタグ(defk / defeffect と同じ読み方)、
+    /// 頭の辞書(doeff-hy の defrecord)の :tags は定義のタグ(defk / defeffect と同じ読み方)、
     /// :check の各式は書かれたとおりの綴りで checks に入れる(頭の辞書が無ければ checks は null)。
     fn record_def(&mut self, form: &Form, items: &[Form], container: Option<&str>) {
         let Some(name) = items.get(1).and_then(|first| self.def_name(first)) else {

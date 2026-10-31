@@ -17,7 +17,7 @@
 (defrecord KnownRoot
   "worker が既に完成させた root(木を写す元の候補)。platform = 完成マーカーに書いた、その root の platform(欄の無い印の root は
    None = 分からない・写し元にしない)・made-ms = 完成マーカーを置いた時刻(epoch ミリ秒 — 同じ repo を持つ root のうち最も新しく完成した物を写し元に選ぶため・
-   #3677・card ki-61eb8170b3b9)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
+   #3677)・hy-version = 完成マーカーに書いた、その root の venv の Hy の compiler の版(欄の無い前の印の root と、venv に Hy の無い root は
    None = 分からない — #3706)。"
   (#^ RuntimeEnv env)
   (#^ str root)
@@ -119,7 +119,7 @@
    memory.current。準備の間に container の memory.peak が上がらなかった・読めなかった組みは None — worker が先の組みを始める前の memory の
    見積もりに読む・#3748)・built = 組んだ native の wheel の数(build の口の報告の無い wheel が在れば None = 数えられない・#3860)・
    entry-place = root の中で子の入口の解ける置き場(job_model の CHILD-ENTRY-PLACES の 1 つ — 準備の確かめが読む。worker が子へ送る名を
-   選ぶ時に印から読む・card ki-7a7a1dcb1933)。"
+   選ぶ時に印から読む)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -211,7 +211,7 @@
   (setv #^ (| VolumeKind None) volume None)
   ;; root の venv の Hy の compiler の版(bytecode の処理ステージが読み、引き継ぎ元の選びと完成マーカーへ渡す — #3706)。
   (setv #^ (| str None) hy-version None)
-  ;; root の中で子の入口の解ける置き場(準備の確かめが読み、完成マーカーへ渡す — card ki-7a7a1dcb1933)。
+  ;; root の中で子の入口の解ける置き場(準備の確かめが読み、完成マーカーへ渡す)。
   (setv #^ (| str None) entry-place None))
 
 

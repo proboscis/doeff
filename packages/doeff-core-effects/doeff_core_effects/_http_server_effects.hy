@@ -1,18 +1,18 @@
-;;; 汎用の HTTP の待ち受け(受ける側)の effect(agora-redesign #802 便 2・消費者 = #795 webapp の受け口)。送る側の HttpRequest
+;;; 汎用の HTTP の待ち受け(受ける側)の effect(消費者 = #795 webapp の受け口)。送る側の HttpRequest
 ;;; (http_effects.hy)と対になる土台の語彙で、業務の語を持たない。答え手は仕組みごとに差し替える:
 ;;;   aiohttp-http-server   本物の待ち受け(aiohttp_http_server.hy — aiohttp は extra `http-server` の依存)
 ;;;   scripted-http-server  I/O なし — 台本の要求の列を出来事にし、受けた命令を記録する(scripted_http_server.hy)
 ;;;
 ;;;   HttpListen       待ち受けを開く(address・ws の 1 通の上限・ws の接続ごとの送りの上限・port の共有)。答え = 実際に結んだ宛先 HttpAddress
 ;;;                    (port 0 を渡せば空いている port を結ぶ — 結んだ port はこの答えで知る)。share-port = 同じ port を別の待ち受けと
-;;;                    共有して開く(SO_REUSEPORT — 入れ替えで新旧の待ち受けを重ねる形・agora-redesign #4317。両方が真で開いた時だけ重なり、
+;;;                    共有して開く(SO_REUSEPORT — 入れ替えで新旧の待ち受けを重ねる形。両方が真で開いた時だけ重なり、
 ;;;                    新しい接続は開いている待ち受けへ kernel が振り分ける)。既定の偽は今どおり — 使われている port は開けない
 ;;;   HttpNextRequest  次の出来事。答え = HttpEvent: HttpRequestArrived(札・method・path・target・頭・ws への Upgrade を求めたか・送り元の address)・
 ;;;                    ws の出来事(WsOpened・WsTextArrived・WsBinaryArrived・WsClosed — WsAccept で ws に上げた札だけ)・HttpServerClosed
 ;;;   HttpTakeQueued   既に受けて列に溜まっている出来事を、待たずに全部取る。答え = HttpEvent の tuple(受けた順・溜まっていなければ空)。
 ;;;                    取った出来事は HttpNextRequest でもう渡らない(同じ流れの先取り)。閉じた後は HttpNextRequest と同じく HttpServerClosed を
-;;;                    1 つ含んで止まる。消費者が、溜まった出来事の中から急ぐ物を先に処理する並べ替えのため(agora-controllers
-;;;                    ki-472623c28ba0 — 画面 6 枚の同時の読み込みの 36 通の後ろで、別の接続の会話を開く要求が約 1 秒待った)
+;;;                    1 つ含んで止まる。消費者が、溜まった出来事の中から急ぐ物を先に処理する並べ替えのため(
+;;;                    画面 6 枚の同時の読み込みの 36 通の後ろで、別の接続の会話を開く要求が約 1 秒待った)
 ;;;   HttpRespond     札の要求へ status・頭・本文(HttpBodyBytes / HttpBodyFileRange / HttpNoBody)を送る。答え = None
 ;;;   HttpForward      札の要求を url へ HTTP で中継する(本文は両向き streaming・hop-by-hop の頭を落とし X-Forwarded-Proto / -For を足す・
 ;;;                    届かなければ 502)。答え = None
@@ -27,15 +27,15 @@
 ;;;                    接続(読まない相手)はその場で切る(箱の中身を捨て、出来事 WsClosed の理由に名乗る)。答え = None
 ;;;   WsSendTextEach   札の列の接続へ、同じ文字の 1 通ずつを送る(1 回の求め — 札ごとに WsSendText を撃つのと同じ決め: 札の順に、閉じた・知らない札は
 ;;;                    黙って捨て、箱の溜まりが上限を超える接続はその場で切る。本物の答え手は 1 回の積みで全部の札の箱へ入れる。同じ通を
-;;;                    接続の数だけ送る消費者の、送り 1 回ごとの固定費を通 1 つにつき 1 回にするため — agora-controllers ki-3dbe3dd46994)。答え = None
+;;;                    接続の数だけ送る消費者の、送り 1 回ごとの固定費を通 1 つにつき 1 回にするため)。答え = None
 ;;;   WsClose          状態符と理由で閉じる(箱に積んだ 1 通を流し切ってから close を送る)。答え = None
 ;;; 待ち受けの全体へは:
 ;;;   HttpStopListening 待ち受けだけを閉じる — 新しい接続を受けない(port を共有する別の待ち受けが在れば、新しい接続はそちらへ行く)。
 ;;;                    開いている接続(ws と命令を待つ要求)と出来事の流れはそのまま続く。入れ替えで退く側が、客を閉じる前に撃つ
-;;;                    (閉じられた客の張り直しが退く側に当たらない — agora-redesign #4317)。答え = None
+;;;                    (閉じられた客の張り直しが退く側に当たらない)。答え = None
 ;;;   HttpShutdown     待ち受けを閉じる — 先に待ち受けの口を閉じて新しい接続を受けず(HttpStopListening と同じ — 閉じを受けた客の直後の
 ;;;                    張り直しが、port を共有する別の待ち受けに当たる)、開いている ws の全部へ close close-code(既定 1000 — 入れ替えで退く
-;;;                    側は 1001 going away・agora-redesign #4317)を送り、送りの箱を drain-seconds まで流し切ってから閉じる。以後の
+;;;                    側は 1001 going away)を送り、送りの箱を drain-seconds まで流し切ってから閉じる。以後の
 ;;;                    HttpNextRequest は HttpServerClosed(reason)。答え = None
 ;;;   TakeWsSendReport 送りの箱の勘定(前に読んでから積んだ・流した・捨てた byte と流すまでの所要 — WsSendReport)を読んで 0 に戻す。
 ;;;                    消費者が自分の計器へ積むための材料で、答え手は消費者の計器を知らない
@@ -43,7 +43,7 @@
 ;;; 持たない台本の答え手では、台本の書き手が載せた値のまま(載せなければ None)。
 ;;; 要求の remote = 送り元の address(IP の綴り)。本物の答え手は接続の相手(aiohttp の request.remote)を載せ、名乗れない時は None。
 ;;; 台本の答え手では、台本の書き手が HttpRequestArrived に載せた値のまま(載せなければ None)。
-;;; 要求の本文を読む effect(agora-redesign #880 U1 — 記録の service は POST の本文が本体):
+;;; 要求の本文を読む effect(記録の service は POST の本文が本体):
 ;;;   HttpReadBody     札の要求の本文を max-bytes まで読む。答え = HttpBodyOutcome:
 ;;;                      HttpBodyRead(data)          本文の全部(本文なしは b"")
 ;;;                      HttpBodyTooLarge(declared)  本文が max-bytes を超える — declared = 要求が宣言した Content-Length(chunked 等で
@@ -56,7 +56,7 @@
 ;;;                    答え手はその答えを送った後に接続を閉じる(残りの本文を読み捨てない)。HttpForward に渡す札では撃たない(中継は本文を
 ;;;                    streaming で写すので、先に読むと写す本文が無くなる)。
 ;;; file の状態は file_effects.hy の StatPath で読む(ここに持たない)。
-;;; 答え手が自分で答える probe の口(agora-redesign #2776 — 本体の流れが止まっても生存の問いに答える):
+;;; 答え手が自分で答える probe の口(本体の流れが止まっても生存の問いに答える):
 ;;;   HttpListen の probes = HttpProbe の列。GET か HEAD で path(query を除く)が probe の path と同じ要求は、出来事にせず(HttpNextRequest に
 ;;;   届かない)、答え手がその HttpProbe の answer(答えが HttpProbeAnswer の Program)を自分の run で走らせて答える。札は他の要求と同じ
 ;;;   数えで 1 つ使う(届いた順の札の並びを本物と台本でそろえる)。
@@ -68,7 +68,7 @@
 ;;;   走らせて答え、記録(HttpServed)に残す。
 ;;;   何を答えるか(生存 = process が居る・仕事ができる = 本体の流れが動いている、の分け方や閾値)は呼び手が answer に書く — ここは業務の語を
 ;;;   持たない。
-;;; 答え手がその場で答える ws の 1 通の口(agora card ki-f4cd863959c8 — 消費者の処理ループが 1 項目を数百 ms 持つ間も、急ぐ 1 通の答えを
+;;; 答え手がその場で答える ws の 1 通の口(消費者の処理ループが 1 項目を数百 ms 持つ間も、急ぐ 1 通の答えを
 ;;; 待たせない):
 ;;;   HttpListen の ws-shortcuts = WsShortcut の列。ws に上げた接続の文字の 1 通が、ある WsShortcut の marker(文字列)を含めば(ws-shortcut-for —
 ;;;   先頭の 1 つ)、答え手は answer(札と 1 通の文を受けて、送る文の tuple を答える閉じた Program を返す関数)を自分の run で走らせ
@@ -76,7 +76,7 @@
 ;;;   1 通を今までどおり出来事 WsTextArrived として列へ並べ、欄 answered に積んだ文の列・answered-at に積み終えた拍の単調時計を載せる
 ;;;   (当たらなかった 1 通と、answer が空の tuple で答えた 1 通は answered が空・answered-at が None)。本体は同じ 1 通を受け、自分の状態を
 ;;;   変える(答えを積み直すかは本体が決める)。
-;;;   答えは 2 段にも分けられる(agora card ki-d5887d5edbd5 — 先に「読み込み中」を送り、記録を読んでから行を送る): answer の Program が
+;;;   答えは 2 段にも分けられる(先に「読み込み中」を送り、記録を読んでから行を送る): answer の Program が
 ;;;   WsShortcutAhead(texts と続きの閉じた Program rest)で答えれば、答え手は texts を積んでから rest を同じ自分の run で走らせ、rest の答えを
 ;;;   同じ形で受ける(rest がまた WsShortcutAhead なら続ける)。終わりの答えが WsShortcutCarried(texts と値 carried)なら、texts を積み、
 ;;;   1 通の出来事の欄 carried に値を載せて本体へ渡す(本体が答え手の読んだ物を自分の状態へ畳み、同じ物を読み直さない)。answered は全部の段で

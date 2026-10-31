@@ -1,6 +1,6 @@
 ;; 道具の item(commandExecution・fileChange・webSearch と、mcpToolCall・dynamicToolCall・imageView・collabAgentToolCall)の行の分類の検 — 版を固定した本物の codex(0.162.1)が、偽の上流の道具の
 ;; 呼びに答えて命令を走らせ、ファイルを書いた行を録った物(tests/recorded/codex-0.162.1/tool-calls・録り方は
-;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる(ki-77e76c7c07ce)。
+;; scripts/record_app_server_lines.py の筋書き tool-calls)で確かめる。
 ;;
 ;; 守る事: 道具の item の始まりと終わりが、命令と出力と終了 code(commandExecution)・変えたファイル(fileChange)・検索の語(webSearch)を
 ;; 型つきの記録で運ぶ。崩れると上の層(doeff-agents の adapter)は codex の道具の呼びと結果を AgentToolUseEvent・AgentToolResultEvent
@@ -100,7 +100,7 @@
 
 
 (deftest test-other-tool-items-carry-the-mcp-call-the-dynamic-call-the-image-and-the-agent-calls
-  ;; 失敗ケース(card ki-c09b93b72bff): 版を固定した本物の codex(0.162.1)が、偽の上流の呼びに答えて録りの MCP の server の道具・
+  ;; 失敗ケース: 版を固定した本物の codex(0.162.1)が、偽の上流の呼びに答えて録りの MCP の server の道具・
   ;; thread に宣言した動的な道具・画像を見る道具・子の agent を始めて待つ道具を走らせた行(tests/recorded/codex-0.162.1/other-tools・
   ;; 録り方は scripts/record_app_server_lines.py の筋書き other-tools)。どの item も道具の中身を型つきの記録で運ぶ(崩れると上の層は
   ;; この 4 種の呼びと結果を道具の出来事へ写せず、画面の道具カードに出ない)。

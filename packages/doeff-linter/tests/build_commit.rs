@@ -1,4 +1,4 @@
-//! 版に埋める doeff の commit(build.rs)の検(agora-redesign #1481)— cargo が組んだ build script をそのまま走らせ、
+//! 版に埋める doeff の commit(build.rs)の検— cargo が組んだ build script をそのまま走らせ、
 //! 別の repo の `GIT_DIR` が env に在っても、この crate の在る doeff の HEAD を名乗るかを見る。
 //!
 //! 反例の場面: agora の作業木の git の hook が `uv run` で環境を同期し、linter を組み直す。git が hook に渡す `GIT_DIR` が build.rs の
@@ -42,7 +42,7 @@ fn repo_with_one_commit(dir: &Path, message: &str) -> String {
 }
 
 /// doeff の checkout の代わりは一時の repo(packages/doeff-linter の形)— この検が走る木そのものの `.git` に頼らない。日次の全体検証は
-/// doeff の木を `.git` 無しで同期して撃つので、この crate の dir の HEAD を git で読む形は、その環境で必ず落ちていた(agora-redesign #2410)。
+/// doeff の木を `.git` 無しで同期して撃つので、この crate の dir の HEAD を git で読む形は、その環境で必ず落ちていた。
 #[test]
 fn another_repos_git_dir_does_not_name_its_head_as_the_doeff_commit() {
     let doeff = tempfile::tempdir().expect("doeff の代わりの一時の repo");

@@ -35,7 +35,7 @@ def persistent_cache_path() -> Path:
 
     DOEFF_CACHE_PATH is asked through doeff's foundation handler (subprocess_handler
     answers ReadEnvironment from the process environment) instead of read from the
-    process environment directly (agora-redesign #3012).
+    process environment directly.
     """
     entries = run(with_handlers([subprocess_handler], ReadEnvironment((CACHE_PATH_ENV_KEY,))))
     env_path = next((entry.value for entry in entries if entry.value), None)

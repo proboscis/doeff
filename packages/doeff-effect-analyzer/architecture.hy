@@ -1,4 +1,4 @@
-;;; doeff-effect-analyzer の層の宣言(agora-redesign #2860)。
+;;; doeff-effect-analyzer の層の宣言。
 ;;;
 ;;; 今は、規則の母集団から外す層 1 つだけを置く。doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い
 ;;; architecture.hy(この file)から決める(#2811)。ここで外すのは下の名指しの module だけで、この package のほかの file の母集団は

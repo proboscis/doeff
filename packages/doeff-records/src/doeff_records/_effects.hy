@@ -5,12 +5,11 @@
 ;;; 9 つ目の ReadEventByKey は追記の列の出来事を冪等キーで 1 つ引く(列を頭から読まずに、置き場の (列, 冪等キー) の一意の索引で答える —
 ;;; 出自の issue は #3750)。
 ;;; 10 個目の AppendEvents は追記の束(束の追記 1 つ = EventAppend — AppendEvent と同じ欄)を置き場への 1 往復で積む(1 つの要求で原因と
-;;; 本体の 2 つの出来事を積む書き手が、置き場の書きの錠と往復を 2 回順に待たないため — card ki-48c34994ed15)。
+;;; 本体の 2 つの出来事を積む書き手が、置き場の書きの錠と往復を 2 回順に待たないため)。
 ;;; 11 個目の ReadBatch は行の読みの束(ReadRow と ListRows の組)を置き場への 1 往復で読む(複数の表から名指す鍵と欄の値の組の行を
-;;; 読む読み手が、読みを 1 本ずつ撃って往復ごとの client の接続の取り合いと service の受けの列を読みの数だけ待たないため —
-;;; card ki-177a4f287c42)。
+;;; 読む読み手が、読みを 1 本ずつ撃って往復ごとの client の接続の取り合いと service の受けの列を読みの数だけ待たないため)。
 ;;; PutRowsAppendEvents は行の書きの束と追記の束を置き場の 1 つの書きで全部か 0 で積む(行を書いた事を出来事で知らせる書き手が、片方だけが
-;;; 残る形を作らないため。今積んだ出来事は同じ書きの行の最後の変更の位置を Event.position に持つ — card ki-e17ba3b32dea)。
+;;; 残る形を作らないため。今積んだ出来事は同じ書きの行の最後の変更の位置を Event.position に持つ)。
 ;;; 公開 effect の外に、追記の列の頭が進むのを待つ WatchEvents を置く(置き場の handler が自分の待ち方で答える: memory = 列の呼び鈴・
 ;;; PostgreSQL = ReadEvents の読み直し。出自の issue は #1019)。HTTP の口は wire の watch-events で service の中の置き場の待ちへ渡す
 ;;; (long-poll — #3074。前は client が ReadEvents を読み直していた)。
@@ -204,7 +203,7 @@
 
 
 (defclass [(dataclass :frozen True)] ReadBatch [(get EffectBase ReadBatchAnswer)]
-  "行の読みの束を置き場への 1 往復で読む(card ki-177a4f287c42)。reads = ReadRow | ListRows の空でない tuple(READ-BATCH-MAX 個まで・
+  "行の読みの束を置き場への 1 往復で読む。reads = ReadRow | ListRows の空でない tuple(READ-BATCH-MAX 個まで・
    束の中の ListRows の limit の和は LIST-LIMIT-MAX まで — 外は作る時に ValueError・読みでない項は TypeError)。
    答え = BatchRead(items = 束の順の、読み 1 つごとの答え — ReadRow は Row | Missing・ListRows は Page | Reset | NotIndexed)| Unreachable。
    束の i 番目の読みの答えは、同じ読みを 1 つだけ撃った答えと同じ(読みの意味・保持の期限の除き・索引の断り NotIndexed・頁の続きの位置は
@@ -224,7 +223,7 @@
 (defclass [(dataclass :frozen True)] PutRow [(get EffectBase PutRowAnswer)]
   "行を書く。value = 欄の差分の凍らせた写像(書く欄 → 値。書かない欄は今の値のまま・値 None = その欄を消す〔JSON merge patch の null と同じ〕)/
    expect = ExpectAbsent | ExpectVersion | ExpectAny。答え = Written | Conflict | Refused | Unreachable。
-   idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き。card ki-78c6d663491f): 置き場は確定した鍵つきの書きの答えを
+   idempotency-key = 書き 1 つの身元(冪等キー — None = 鍵の無い書き): 置き場は確定した鍵つきの書きの答えを
    WRITE-KEY-MEMORY-SECONDS の間覚え、同じ鍵・同じ本文(表・鍵・値・期待)の送り直しには期待を見ずに前の答え(Written の replayed 真)を
    返す。同じ鍵の別の本文は Refused。衝突・断りの答えは覚えない(書いていない)。HTTP の client は鍵の無い書きに要求ごとの鍵を作り、
    届かない書きの撃ち直しに同じ鍵を付ける(_http_client.hy の頭の註)。
@@ -382,7 +381,7 @@
 
 
 (defclass [(dataclass :frozen True)] AppendEvents [(get EffectBase AppendEventsAnswer)]
-  "追記の束を置き場への 1 往復で積む(card ki-48c34994ed15)。appends = EventAppend の空でない tuple(同じ列の同じ冪等キーは 1 度だけ —
+  "追記の束を置き場への 1 往復で積む。appends = EventAppend の空でない tuple(同じ列の同じ冪等キーは 1 度だけ —
    2 度出たら作る時に ValueError)。答え = AppendedEvents(items = 束の順の、追記 1 つごとの答え Appended | Refused)| Unreachable。
    束の答えは、束の順に AppendEvent を 1 つずつ、間に他の書きを挟まずに撃った答えと同じ: 追記 1 つの判断は AppendEvent と同じ(冪等キーの
    再送は前の番号・別の本文と上限は Refused)で、断られた追記は束の他の追記を止めない(PutRows と違い全部か 0 ではない)。今積んだ追記の
@@ -412,7 +411,7 @@
 
 (defeffect PutRowsAppendEvents
   "行の書きの束と追記の束を、置き場の 1 つの書き(PostgreSQL は 1 つの transaction・memory は錠の内の 1 回)で全部か 0 で積む
-   (card ki-e17ba3b32dea — 行を書いた事を出来事で知らせる書き手が、行と出来事を別の書きにして片方だけが残る形を作らないため)。
+   (行を書いた事を出来事で知らせる書き手が、行と出来事を別の書きにして片方だけが残る形を作らないため)。
    writes = RowWrite の空でない tuple(PutRows と同じ検め)/ appends = EventAppend の空でない tuple(AppendEvents と同じ検め)/
    idempotency-key = 書き 1 つの身元(PutRows と同じ — 同じ鍵・同じ本文〔行の束と追記の束の両方〕の送り直しは前の WrittenAndAppended を
    replayed 真で返し、同じ鍵の別の本文は行の束の 0 行目の RowsRefused)。

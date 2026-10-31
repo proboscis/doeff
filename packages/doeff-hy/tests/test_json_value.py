@@ -1,4 +1,4 @@
-"""OpaqueJson の作り方の検(agora-redesign #2449)。
+"""OpaqueJson の作り方の検。
 
 ``OpaqueJson.of`` は書いた直後の文字列を ``__post_init__`` で解き直さずに包む。その速い道が、受ける値・断る値・綴りを
 ``cls(json.dumps(...))``(解き直す道)と変えないこと、外から渡る文字列は今までどおり解いて確かめること、

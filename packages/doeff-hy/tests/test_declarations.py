@@ -1,4 +1,4 @@
-"""defk / deff / defp / defhandler の頭の辞書の :effects と :tags(agora-redesign #800)。
+"""defk / deff / defp / defhandler の頭の辞書の :effects と :tags。
 
 - 書いた宣言は定義の属性 __doeff_effects__(effect の型の tuple)と __doeff_tags__(DefinitionTags)に残る。無ければ None。
 - 知らない鍵は黙って捨てずに断る(反例 = 今までの macro は :tags を書いても何も起きなかった)。
@@ -82,7 +82,7 @@ def test_an_unknown_key_is_refused_instead_of_dropped() -> None:
 
 
 def test_a_function_declares_what_it_writes_and_nothing_happens_at_run_time() -> None:
-    # agora-redesign #3501・#3496: job でない書き手(系の job から送られる task の Program)が、外の置き場に書く物を defsystem の job の
+    # job でない書き手(系の job から送られる task の Program)が、外の置き場に書く物を defsystem の job の
     # :writes と同じ形で名乗る(使い手の doeff-linter DOEFF207 が source の綴りを読む)。以前は知らない鍵として SyntaxError(反例)。
     ns = evaluate("""
 (defk run-task [x] {:pre [(: x int)] :post [(: % int)] :writes #{"record:turn" "records:turn-event"}} x)
@@ -110,7 +110,7 @@ def test_the_tags_are_checked_when_compiling() -> None:
 
 
 def test_the_spells_tag_names_a_wire_spelling_point() -> None:
-    # agora-redesign #2299: :tags の省ける鍵 :spells(wire の形を綴る 1 点の名乗り — DOEFF172 が数えない形・#2265)。
+    # :tags の省ける鍵 :spells(wire の形を綴る 1 点の名乗り — DOEFF172 が数えない形・#2265)。
     # 以前は :context と :role の外の鍵として SyntaxError で、名乗りを書けなかった(反例)。
     ns = evaluate("""
 (defk payload-text [x] {:pre [(: x int)] :post [(: % str)] :tags {:context "kanban" :role "protocol" :spells "json"}} (str x))
@@ -131,7 +131,7 @@ def test_the_spells_tag_takes_only_a_known_spelling_literal() -> None:
 
 
 def test_spells_and_reads_name_any_outer_form() -> None:
-    # agora-redesign #2515: :spells の値は外の形の名(json / http / env / schema)・読む側の名乗り :reads も同じ一覧を受ける。
+    # :spells の値は外の形の名(json / http / env / schema)・読む側の名乗り :reads も同じ一覧を受ける。
     ns = evaluate("""
 (defk header-of [x] {:pre [(: x int)] :post [(: % str)] :tags {:context "k" :role "protocol" :spells "http"}} (str x))
 (defk row-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :reads "json"}} x)
@@ -143,7 +143,7 @@ def test_spells_and_reads_name_any_outer_form() -> None:
 
 
 def test_spells_names_the_records_api_form() -> None:
-    # agora-redesign #2515(cisco-c8 の決め 2026-10-02 02:00): doeff-records の API の形(ListRows の where・RecordsSchema)を綴る 1 点は
+    # cisco-c8 の決め 2026-10-02 02:00: doeff-records の API の形(ListRows の where・RecordsSchema)を綴る 1 点は
     # :spells "records" と名乗る(schema と名乗ると何の境界かが違う)。一覧の外の名は今までどおり断る。
     ns = evaluate("""
 (defk where-of [x] {:pre [(: x int)] :post [(: % int)] :tags {:context "k" :role "protocol" :spells "records"}} x)
@@ -153,7 +153,7 @@ def test_spells_names_the_records_api_form() -> None:
 
 
 def test_a_defwire_names_its_outer_form_in_tags() -> None:
-    # agora-redesign #2515: 契約どおりの外の形の写像の欄を持つ defwire も :tags に :spells / :reads を名乗れる(DOEFF172 が欄を数えない)。
+    # 契約どおりの外の形の写像の欄を持つ defwire も :tags に :spells / :reads を名乗れる(DOEFF172 が欄を数えない)。
     ns = evaluate("""
 (require doeff-hy.record [defwire])
 (import dataclasses [dataclass])
@@ -197,7 +197,7 @@ def test_a_handler_refuses_pre_and_post_and_do_refuses_declarations() -> None:
 
 
 def test_the_roles_are_the_closed_list_of_the_decision() -> None:
-    # agora-redesign #780 の層の確定(core -> intent -> protocol)と、層 entry の 3 種の役(#1108・#1187)。
+    # 層の確定(core -> intent -> protocol)と、層 entry の 3 種の役。
     assert ROLES == ("type", "judgment", "program", "intent", "protocol", "foundation", "entry", "system", "process", "main")
     for entry_role in ("system", "process", "main"):
         assert DefinitionTags(context="kanban", role=entry_role).role == entry_role
@@ -253,7 +253,7 @@ def test_defeffect_requires_the_answer_and_tags_and_closed_keys() -> None:
 
 
 def test_defeffect_fields_take_defaults_and_pre_checks_on_construction() -> None:
-    """欄の既定値と :pre(agora-redesign #800 — agent_task の StartTurn・DeliverInput・ExportAgentMemory を移すため)。"""
+    """欄の既定値と :pre(agent_task の StartTurn・DeliverInput・ExportAgentMemory を移すため)。"""
     import dataclasses
 
     ns = evaluate("""
@@ -294,7 +294,7 @@ def test_defeffect_refuses_misplaced_defaults_and_pre() -> None:
 
 
 def test_defeffect_runs_carried_names_the_fields_its_handler_runs_in_place() -> None:
-    """:runs-carried(agora-redesign #1456)— 答え手が出した所で走らせる Program の欄を宣言し、閉じの検がそれを読む。"""
+    """:runs-carried— 答え手が出した所で走らせる Program の欄を宣言し、閉じの検がそれを読む。"""
     from doeff_core_effects._effects import runs_carried_of
 
     ns = evaluate("""

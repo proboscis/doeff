@@ -11,7 +11,7 @@ spec:
       containers:
         - name: worker
           # helios は CPU 15・memory 58Gi(Node の allocatable・2026-10-31 の実測)。組の印 pool-helios の常駐の job を受ける機体。
-          # 上限は、置く予定の job 24 本の宣言の値の和(起動の山 約 31GiB・落ち着いた値 約 16.5GiB — card ki-47015eb20680)に余裕を足した大きさ。
+          # 上限は、置く予定の job 24 本の宣言の値の和(起動の山 約 31GiB・落ち着いた値 約 16.5GiB)に余裕を足した大きさ。
           # 根の disk(915G)は Longhorn の写しを受けない(allowScheduling false)ので、disk の分け前(../../disk-share)の外 — 空きの最低と
           # roots の上限は boot.sh の既定のまま。
           resources: { requests: { cpu: "2", memory: 4Gi }, limits: { cpu: "12", memory: 40Gi } }

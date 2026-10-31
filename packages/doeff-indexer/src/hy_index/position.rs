@@ -50,7 +50,7 @@ impl<'a> LineIndex<'a> {
 
     /// 契約の位置を byte の位置へ戻す(`position` の逆)。行が source の外なら source の終わり、列が行の外ならその行の終わりへ寄せる。
     /// 行の頭は表から引くので、1 回の手間はその行の長さだけ(source の頭から数え直さない — 1 file の多くの位置を戻す呼び手が
-    /// file の長さの 2 乗で重くなっていた・agora-redesign #1632)。
+    /// file の長さの 2 乗で重くなっていた)。
     pub fn offset(&self, position: Position) -> usize {
         let Some(&line_start) = self.line_starts.get(position.line as usize) else { return self.src.len() };
         let line_end = self.src[line_start..].find('\n').map(|at| line_start + at).unwrap_or(self.src.len());

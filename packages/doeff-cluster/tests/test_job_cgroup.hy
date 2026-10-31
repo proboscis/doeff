@@ -1,4 +1,4 @@
-;; 子の job を置く cgroup(card ki-ed9dca403f58): zeus の機体の worker(zeus-native)は heartbeat を送る本体も子の job も同じ cgroup
+;; 子の job を置く cgroup: zeus の機体の worker(zeus-native)は heartbeat を送る本体も子の job も同じ cgroup
 ;; (CPUWeight=idle・CPUQuota=200%)に居て、機体が混んだ刻に本体が拍の間の眠り(AwaitNextTick)から 10 秒起きられず、coordinator から
 ;; 消えた。機体の配備が本体と兄弟の cgroup を分け、worker は起こす子を兄弟の cgroup へ入れる(判断 = worker/core/job_cgroup・答え手 =
 ;; worker/protocol/job_cgroup・入口の読み = worker/entry/main の job-cgroup-placed)。
@@ -105,7 +105,7 @@
     (! (with-handlers [(machine-files OWN None)] (job-cgroup-placed "jobs")))))
 
 
-;; k8s の Pod の worker(card ki-cd8cb84fdcd2): 起動の script の層(deploy/boot.sh の WORKER_CGROUP_LAYOUT)が本体を自分の container の
+;; k8s の Pod の worker: 起動の script の層(deploy/boot.sh の WORKER_CGROUP_LAYOUT)が本体を自分の container の
 ;; cgroup の子 worker へ移し、兄弟 jobs・services を作る。Pod の /sys/fs/cgroup は読み取りだけなので、兄弟の cgroup.procs は書ける見え
 ;; (host の cgroupfs の mount の中の同じ dir — DOEFF_WORKER_CGROUP_DIR)の下に書く。
 (val POD-OWN "0::/worker\n")

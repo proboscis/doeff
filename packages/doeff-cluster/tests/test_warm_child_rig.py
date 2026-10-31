@@ -1,4 +1,4 @@
-"""待ちの子を起こす検は、温めた Hy の code の置き場を渡す共通の起こし方(fixture start_warm_child)を通す(card ki-2121cf77fe73)。
+"""待ちの子を起こす検は、温めた Hy の code の置き場を渡す共通の起こし方(fixture start_warm_child)を通す。
 
 失敗ケース: 検が `-m doeff_cluster._worker.entry.warm_child` を subprocess.Popen で直に起こすと、env が探し道だけで置き場に届かず、
 準備のたびに Hy を source から 25 秒以上 compile し直す(30 秒の期限と余裕が 0 になる)。

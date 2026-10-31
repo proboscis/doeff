@@ -54,7 +54,7 @@
 (deftest test-the-worker-withholds-the-hook-marker-from-every-layer-of-the-child-env
   ;; Claude Code は hook・MCP の起動にだけ env CLAUDE_PROJECT_DIR を置く。上に載る系の Bash の包み(ConfigMap worker-shell)はこの名の有無で
   ;; hook・MCP の起動と Bash の道具の命令を見分け、無い時だけ命令を SCHED_IDLE・nice で下げて出力を流す。job の子の CLI の env にこの名が
-  ;; 在ると Bash の道具の命令も hook と見なされ、下げと流しが黙って外れる(card ki-222003f40484・設計検証 lt-2F7ATZXHBCYA0WX1F36A6ZC1JE)。
+  ;; 在ると Bash の道具の命令も hook と見なされ、下げと流しが黙って外れる。
   ;; worker はこの名(WITHHELD-ENV-NAMES)を、どの層から来ても子の env に置かない。反例(盲検 B): --pass-env を「宣言に置ける名を全部」へ
   ;; 広げても、許可表を頭で広げても、宣言の environ に書いても、子へ届かない。
   (assert (in MARKER WITHHELD-ENV-NAMES) WITHHELD-ENV-NAMES)

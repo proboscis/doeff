@@ -60,7 +60,7 @@
 (defk worker-commit-env-name []
   {:pre [] :post [(: % str)] :tags {:context "doeff-cluster" :role "judgment"}}
   "worker の process が走っている doeff の版(boot.sh が自己起動の root を選んだ版)を、その process が起動の時に読む環境変数の名を表から
-   引くため — worker は heartbeat の doeffCommit にこの版を載せる(card ki-6e83e03d146d)。名を 2 つ目に書かない。"
+   引くため — worker は heartbeat の doeffCommit にこの版を載せる。名を 2 つ目に書かない。"
   (next (gfor f WORKER-LAUNCH-FIELDS :if (= f.field "doeff_commit") f.env-name)))
 
 

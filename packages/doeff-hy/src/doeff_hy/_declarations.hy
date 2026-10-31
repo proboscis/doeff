@@ -1,4 +1,4 @@
-;;; 定義の宣言 — defk / deff / defp / defpp / defhandler の頭の辞書の :effects と :tags(agora-redesign #800)。
+;;; 定義の宣言 — defk / deff / defp / defpp / defhandler の頭の辞書の :effects と :tags。
 ;;;
 ;;; 何のためか: 契約の辞書は :pre / :post のほかの鍵を黙って捨てていた(:effects や :tags を書いても何も起きない)。
 ;;; 受ける鍵を閉じ、:effects(その定義が出す effect の型の列)と :tags(文脈と役)を定義の属性として残して、
@@ -24,27 +24,27 @@
 (import hy.models [Dict List Object Set Symbol String Keyword])
 (import doeff_hy._expansion_names [import-form])
 
-;; 役の閉じた一覧(agora-redesign #780 の層の確定 — 層の並びは core → intent → protocol。operator の決定 2026-09-27):
+;; 役の閉じた一覧(層の並びは core → intent → protocol):
 ;; core の type・judgment・program / intent(core が外へ求める事の型 — defeffect)/ protocol(intent を相手の話し方へ訳す handler)/
 ;; foundation(汎用の I/O)/ entry(組み立て)。前の一覧の effect は intent に、translation は protocol に置き換わった。
-;; 層 entry の役は 3 種 — system(系の宣言)・process(handler の並び)・main(薄い main)(agora-redesign #1108 の決め・#1187・operator
+;; 層 entry の役は 3 種 — system(系の宣言)・process(handler の並び)・main(薄い main)(#1187・operator
 ;; 2026-09-29 の案 A)。どの層にどの役を置くかは使う側の宣言(architecture.hy の :roles)が決め、ここは綴りの閉じた一覧だけを持つ。
 ;; entry は 3 種へ移る前の綴りで、使う側が付け替え終えるまで残す。
 (setv ROLES #("type" "judgment" "program" "intent" "protocol" "foundation" "entry" "system" "process" "main"))
 ;; 契約の辞書が受ける鍵。
 (setv CONTRACT-KEYS #(":pre" ":post" ":effects" ":tags" ":needs"))
 ;; 関数(deff・defk)の契約の辞書が受ける鍵 — CONTRACT-KEYS と型の引数 :tp(`:tp [T]`・型検査の展開で PEP 695 の `def f[T]`・
-;; 実行時の確かめでは object に消す — doeff_hy/macros.hy の _type-params。agora-redesign #2893)。defp などは :tp を断る。
+;; 実行時の確かめでは object に消す — doeff_hy/macros.hy の _type-params)。defp などは :tp を断る。
 ;; :writes は、その定義(job でない書き手 — 系の job から送られる task の Program など)が外の置き場に書く物の集合で、defsystem の
 ;; job の :writes と同じ形(文字列の literal の集合・綴り <置き場>:<名>)を展開の時に検め、実行時は何もしない。使い手の
-;; doeff-linter の規則 DOEFF207 が source の綴りを読み、本番の入口から届く定義の :writes を書き手に数える(agora-redesign #3501・
+;; doeff-linter の規則 DOEFF207 が source の綴りを読み、本番の入口から届く定義の :writes を書き手に数える(
 ;; #3496)。:reads は受けない(job でない定義の読みを照らす規則が無い)。
 (setv FUNCTION-CONTRACT-KEYS (+ CONTRACT-KEYS #(":tp" ":writes")))
 ;; 頭の辞書に :pre / :post を持たない定義(defhandler)が受ける鍵。
 (setv DECLARATION-KEYS #(":effects" ":tags" ":needs"))
 (setv TAG-KEYS #(":context" ":role"))
 ;; :tags の省ける鍵。:spells = その定義が外の形を綴るのが目的の 1 点・:reads = 外の形を型へ読むのが目的の 1 点だという名乗り —
-;; doeff-linter の DOEFF172(写像の置き場)が『dict を組む事が目的の 1 点』として数えない(agora-redesign #2265 の決め・#2299 で書けるように
+;; doeff-linter の DOEFF172(写像の置き場)が『dict を組む事が目的の 1 点』として数えない(#2299 で書けるように
 ;; した・#2515 で形の名を json の外へ広げ、読む側の :reads を足した — cisco-c8 の線引きの決め 2026-10-02)。値は SPELLS の閉じた一覧(形の名)。
 ;; records = doeff-records の API の形(ListRows の where・RecordsSchema の表の宣言 — 外で決まった形・cisco-c8 の決め 2026-10-02 02:00・#2515)。
 ;; env = 環境の形(doeff の Local が受ける reader の環境の写像・子 process の environ — 写像しか受けない外の API・cisco-c8 の決め 2026-10-02 05:3x・#2610)。
@@ -179,10 +179,10 @@
 
 ;; defeffect の頭の辞書が受ける鍵(:answer と :tags は必須・:fields は無ければ欄なし・:pre は作る時の検め)。
 ;; :absent / :failure / :value は答えの型の分け方(ADR-DOE-CORE-EFFECTS-003 R5 — どれも任意・:answer の union の要素の list)。
-;; :runs-carried は、答え手が effect を出した所(その所の handler の下)で走らせる Program の欄の名の list(agora-redesign #1456 —
+;; :runs-carried は、答え手が effect を出した所(その所の handler の下)で走らせる Program の欄の名の list(
 ;; doeff_core_effects._effects の runs-carried-of が読む)。
 ;; :tp は型の引数(`:tp [T]` — defk・deff の :tp と同じ形・型検査の展開で class を PEP 695 の `class E[T]` にし、:answer と欄の型が T を読む。
-;; 実行時の展開には型の引数を出さない — T は module の `(val T (TypeVar "T"))` で読む。agora-redesign #2939)。
+;; 実行時の展開には型の引数を出さない — T は module の `(val T (TypeVar "T"))` で読む)。
 (setv EFFECT-KEYS #(":fields" ":answer" ":tags" ":pre" ":absent" ":failure" ":value" ":runs-carried" ":tp"))
 ;; 答えの分け方の鍵。<- は :absent の答えを Absent に、:failure の答えを Raise(答え) に変えて呼び手のスコープで出す。
 ;; :value は業務で普通に扱う答え(失敗と宣言しない印)、どれにも書かない要素は成功。
@@ -268,7 +268,7 @@
 
 (defn #^ (get list Symbol) type-param-symbols [#^ (| Object None) form #^ str where]  ; defk にできない: macro の展開の時に呼ぶ関数(defk・deff の契約の :tp も読む — macros.hy の _type-params)
   "契約の辞書の `:tp [T …]` の値の form(無ければ None)を、型の引数の記号の list にするため(書かなければ空)。形は重ならない記号の
-   空でない list だけ — 名の並びでない値・重なる名は SyntaxError(defk・deff・defeffect の :tp が同じ規則で断る・agora-redesign #2893 / #2939)。"
+   空でない list だけ — 名の並びでない値・重なる名は SyntaxError(defk・deff・defeffect の :tp が同じ規則で断る)。"
   (cond
     (is form None) []
     (and (isinstance form List) (> (len form) 0)
@@ -297,7 +297,7 @@
    型検査の展開(doeff_hy/_static_view.py)では `cast(object, (A, B, …))`(:answer の union の要素の tuple・union でなければ
    要素 1 つ)にする: pyright は値の位置の `A | B` も型として評価し、素の総称(`dict | X` — reportMissingTypeArgument)や
    `Callable | None`(reportOperatorIssue)を赤にするが、要素を並べた tuple なら名を読むだけ。cast は、要素に型の分からない名
-   (stub の無い module から import した名)があっても属性の型を Unknown にしない(agora-redesign #2322)。
+   (stub の無い module から import した名)があっても属性の型を Unknown にしない。
    cast の別名 _doeff-cast は defeffect-form が import する。"
   (import doeff_hy._static_view [static-view-enabled])
   (if (static-view-enabled)
@@ -338,7 +338,7 @@
   (setv runs-carried (runs-carried-names (declared-value contract ":runs-carried") names where))
   (setv type-params (type-param-symbols (declared-value contract ":tp") where))
   ;; :pre が参照する欄だけを束縛する(defrecord の :check と同じ形)。全部の欄を束縛すると、:pre が使わない欄が型検査の展開で
-  ;; 未使用の変数(reportUnusedVariable)の赤になり、書き手は直せない(agora-redesign #4196)。`value.x` のような dotted の記号は
+  ;; 未使用の変数(reportUnusedVariable)の赤になり、書き手は直せない。`value.x` のような dotted の記号は
   ;; 頭の名で読む。
   (setv seen (set)
         pending (list pre-code))
@@ -355,7 +355,7 @@
             ~@pre-code
             None)]
         []))
-  ;; 関数を展開の時に書く(card ki-e77d44aa61e5 — defrecord の 424a87f58 と同じ形): dataclass には欄の表(__dataclass_fields__・
+  ;; 関数を展開の時に書く(defrecord の 424a87f58 と同じ形): dataclass には欄の表(__dataclass_fields__・
   ;; __match_args__・可変の既定の断り・__replace__)だけを作らせ、__init__(位置と名前の引数・既定値は class の本体で 1 度評価した値)・
   ;; __repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの
   ;; 時に dataclass が関数の source を exec(compile)しない。既定値に field の呼びを書いた欄が在る時と、型検査の投影(static-view)の時は
@@ -412,7 +412,7 @@
      (import dataclasses [dataclass :as _doeff-dataclass])
      (import doeff [EffectBase :as _doeff-effect-base])
      (import doeff_hy._declarations)
-     ;; 答えの型は class の本体の `__doeff_answer__: ClassVar[object] = …` で置く(agora-redesign #2322)。型検査の展開は
+     ;; 答えの型は class の本体の `__doeff_answer__: ClassVar[object] = …` で置く。型検査の展開は
      ;; 記帳の setattr(`__doeff_…__`)を外すので、setattr で置くと :answer の式が型検査から消え、答えの型のためだけに
      ;; import した名が reportUnusedImport の赤になっていた(消すと実行時に壊れるので書き手は直せない)。本体の代入は
      ;; 記帳ではないので型検査に残り、その名は使われた import と読まれる。注記は object なので、答えの型の読み方

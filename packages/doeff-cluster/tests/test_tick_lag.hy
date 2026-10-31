@@ -5,7 +5,7 @@
 ;;   - 区間の計りの読みは単調な時計(GetMonotonic — #3825)で拍の頭・重い 3 種(EnvReport・ReadDesired・最初の ObserveWorld)の待ちの後・拍の
 ;;     終わりの 5 回だけ、壁の時計(GetTime)の読みは拍の頭と判断の now の 2 回だけで、どちらも action の数に依らない(WorkerWakes の
 ;;     基準の拍の頭の刻は、頭で読んだ壁の時計と単調な時計の対を判断の now の枠へ写す — 単調な差だけで導くと、拍の途中の機体の眠りで
-;;     拍の頭が眠りの後へずれる・card ki-069f4a5c07f7)
+;;     拍の頭が眠りの後へずれる)
 ;;   - 拍の遅れの行の slowest は 3 種の名か、それ以外の区間(action・揃いの追いの観測・PublishStatus)の名 ACTIONS-TO-PUBLISH
 ;; 反例 = 直す前の形(action ごと・揃いの追いの ObserveWorld ごと・PublishStatus の後にも刻む)は、action の在る拍で読みが 7 回になり、
 ;; 遅い action と遅い PublishStatus をその effect の名で名指す — 下の断言が赤(2026-10-06 に直す前の program.hy に差し替えて確かめた)。

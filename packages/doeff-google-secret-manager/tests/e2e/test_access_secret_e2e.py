@@ -34,7 +34,7 @@ ENV_VERSION = "SECRET_MANAGER_TEST_SECRET_VERSION"
 
 def _runner_settings() -> dict[str, str]:
     """The destinations the runner chose (project・secret id・version) — read through the ReadEnvironment effect and its real
-    handler, not os.environ directly (DOEFF004 — agora-redesign #3012). Unset names are absent."""
+    handler, not os.environ directly (DOEFF004). Unset names are absent."""
     found = run(with_handlers([subprocess_handler], ReadEnvironment((ENV_PROJECT, ENV_SECRET_ID, ENV_VERSION))))
     return {entry.name: entry.value for entry in found}
 

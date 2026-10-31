@@ -7,7 +7,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   待ちの子 ── fork ──▶ A(setsid で group の先頭・子孫の引き取り手・log へ dup2・env と cwd を整える)
                           ├ fork ──▶ B(読み込み済みの入口の main を同じ process の中で走らせる)
                           └ exec ──▶ 見張り(worker/entry/warm_watch — shim と同じ見張り shim_code。読み込んだ module と heap の写しを
-                                     手放す — card ki-97e47900b302: fork のままの A は写しを job の終わりまで持ち、待ちの子が消えた後や
+                                     手放す — fork のままの A は写しを job の終わりまで持ち、待ちの子が消えた後や
                                      B が heap を書き替えた後の頁を A だけが持った)
   A の log は task の log なので、shim の --stamp-lines と同じ部品(worker/entry/line_stamp)で 1 行ごとに壁の時計の刻を付ける(#3714)。
   B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.<世代の印>.log — warm_host の warm-log-path)には付けない — 待ちの子は fork のために
@@ -16,7 +16,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   待ちの子は、その知らせを受けてから A の pid と起動の刻(機体ごとの読み proc-stat-of の start-ticks — pid の使い回しを見分ける)を
   答える(答えの直後の
   合図が、まだ group の先頭でない A に届いて ESRCH にならないように)。
-常駐の job(service — card ki-de44efdb9aa4)の頼みは 3 つの欄を足す(どれも省ける — task の頼みは今までの形):
+常駐の job(service)の頼みは 3 つの欄を足す(どれも省ける — task の頼みは今までの形):
   holdInput   = 頼みの 1 行の頭の byte に、worker が握る入力の pipe の読み口が添えて届く(unix socket の fd の受け渡し)。A はそれを自分の
                 標準入力にする — worker が消えると A は EOF を読む(入れ物 shim の標準入力と同じ)・worker が書いた退きの知らせの行を読む。
                 添えた fd の無い holdInput の頼み・holdInput でない頼みに添えた fd は断る。
@@ -24,7 +24,7 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
                 worker/core/job_cgroup の service の類)。書けなければ A は入口を起こさずに終わり、待ちの子は断りを答える。
   noticeEnv   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(入れ物 shim の --notice-env と同じ)。
   orphanSeconds = A が入力の EOF(worker の消失)を退きとして扱い、入口が自分で終わるのを待つ秒(入れ物 shim の --orphan-seconds と
-                同じ — card ki-f69f2a6869aa)。
+                同じ)。
 待ちの子は service の頼みを受けられる事を準備完了の印の serviceForks で名乗る(worker はこの印の無い版の待ちの子へ service を頼まない)。
 orphanSeconds を受けられる事は印の orphanForks で名乗る(worker はこの印の無い版の待ちの子へ worker より長く生きる service を頼まない)。
 頼みと答えの 1 行は doeff_core_effects._os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
@@ -218,7 +218,7 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, giv
     """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になり、頼みの cgroup が在ればそこへ移ってから待ちの子へ
     知らせ(led へ 1 byte — 移れなければ断りの byte を送り、入口を起こさずに終わる)、入力の pipe(given — service の頼み)を標準入力にし、
     log(1 行ごとに刻を付ける書き手の pipe)・知らせの pipe・env・cwd・子孫の引き取りを整えてから、TERM を block して B を fork し、
-    読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec する(card ki-97e47900b302 — 見張りは job の終了コードを exit の
+    読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec する(見張りは job の終了コードを exit の
     file に書いてから、shim と同じ値で終わる)。exec に失敗したら、同じ見張りをこの process で走らせる。"""
     for descriptor in closing:
         with contextlib.suppress(OSError):

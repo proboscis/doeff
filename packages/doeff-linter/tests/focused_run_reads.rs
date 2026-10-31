@@ -1,4 +1,4 @@
-//! 名指しの実行(`-- <path>` — commit の hook が stage した path に当てる形)が読む範囲の検(card ki-4c87df448c5f)。
+//! 名指しの実行(`-- <path>` — commit の hook が stage した path に当てる形)が読む範囲の検。
 //!
 //! file 1 つで決まると名乗る規則(`ProjectRule::needs_whole_repo` が偽)だけを当てる名指しの実行は、名指しの file の外を読まなくても
 //! 答えが同じ。以前は DOEFF106・131・108 が 1 file の実行でも repo 全体の Hy の索引を組み(agora-controllers で 1 回 CPU 20〜60 秒・

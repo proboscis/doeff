@@ -1,6 +1,6 @@
 //! DOEFF126 の 2 つ目の形: 引数で受けた関数を素で呼ぶ所 — ただし呼び手がその引数に defk か fnk を渡している時だけ拾う。
 //!
-//! 事実(agora-redesign #798・agora の L1550 で直した): `rows-by-text` が引数 `field-of` を `(setv value (field-of row))` と素で
+//! 事実(agora の L1550 で直した): `rows-by-text` が引数 `field-of` を `(setv value (field-of row))` と素で
 //! 呼んでいたが、呼び手はそこに fnk(`payload-of` を呼ぶ)を渡していた。値は常に Program になり、`isinstance value str` が常に偽で
 //! 索引が常に空になる本物の欠陥だった。coordinator の依頼 2026-09-28。
 //!

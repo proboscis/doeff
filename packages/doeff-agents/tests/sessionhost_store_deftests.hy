@@ -69,7 +69,7 @@
        ;; 手番の終わり(turn-end の連言)を最初に観測した時刻。level-triggered
        ;; (次の手番が走ると None)・単一 writer = monitor・素の last-write-wins。
        "turn_ended_at"
-       ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 温かい session の手番が失敗で終わった時に走行器が
+       ;; D2: 温かい session の手番が失敗で終わった時に走行器が
        ;; 名乗った文。turn_ended_at と対の level-triggered の欄。
        "turn_error"])
 
@@ -121,7 +121,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 書きの所要(card acp:kanban-issue:ki-e786e72e2ae7)
+;; 書きの所要
 ;; ---------------------------------------------------------------------------
 
 (deftest test-open-conn-writes-without-a-sync-per-statement
@@ -284,7 +284,7 @@
 
 
 (deftest test-turn-error-roundtrip-last-write-wins
-  ;; 依頼 lt-R79KYTYMJH4ZT9X4KHWKCD23KB(D2): 手番の失敗の文は turn_ended_at と対の level-triggered — 刻む・wire に載る・
+  ;; D2: 手番の失敗の文は turn_ended_at と対の level-triggered — 刻む・wire に載る・
   ;; None で消え wire から欄ごと落ちる(成功の終わり・次の手番の送り)。旧形は multi_turn の失敗の旗を行へ運ばなかった。
   (defn check [conn]
     (db-upsert-snapshot conn (make-snap "s1" :lifecycle "multi_turn"))
@@ -486,8 +486,8 @@
 (defk transaction-closing-body [conn fail]
   {:pre [(: conn sqlite3.Connection) (: fail bool)]
    :post [(: % NoneType)]}
-  "transaction を閉じる本体の検のための本体。書いた後に helper が自分で commit する形(依頼
-   lt-A5KGD83R9HQJ2K172V61A6VMG9 の盲検 A の反例 — cache_receipt_put の conn.commit())を作る。"
+  "transaction を閉じる本体の検のための本体。書いた後に helper が自分で commit する形(
+   cache_receipt_put の conn.commit())を作る。"
   (db-upsert-lease conn 111)
   (.commit conn)
   (when fail

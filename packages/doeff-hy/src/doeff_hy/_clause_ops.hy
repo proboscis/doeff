@@ -1,5 +1,4 @@
-;;; defhandler / handle の節の操作(resume・transfer・finish・reperform・pass・raise)の表 — 操作の名と性質の唯一の定義元
-;;; (card ki-b4c015d8ba1f)。
+;;; defhandler / handle の節の操作(resume・transfer・finish・reperform・pass・raise)の表 — 操作の名と性質の唯一の定義元。
 ;;;
 ;;; 操作 1 つの行(ClauseOp)が持つ物:
 ;;;   name          節の中で書く頭の名
@@ -15,20 +14,20 @@
 ;;;
 ;;; 表を読む所 — 操作の名の一覧をこの表の外に写さない。handle.hy の _terminates と clause_endings.hy の ENDING-OPS・RESUMING-OPS が
 ;;; 写しだった頃、新しい操作を _terminates と書き換えにだけ足すと、Raise の節のその操作を、展開・handle の評価・実行のどの検めも
-;;; 止めなかった(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — (Raise [reason] (throw …)) で Raise の続きが走った)。
+;;; 止めなかった(失敗例: (Raise [reason] (throw …)) で Raise の続きが走った)。
 ;;;   handle.hy          _terminates(節のすべての道が終わるか)・_rewrite-ops(書き換えと戻る操作の印)・_tail-resume-to-transfer
 ;;;                      (末尾の替え)・_vm-imports(node の import)
 ;;;   clause_endings.hy  ops-in / clause-ops(節が使う操作)・check-clause-by-name / check-clause-endings(ending ごとの照合)
 ;;;   doeff-linter       business_fakes.rs の節の判じ(DOEFF143 ほか)— Rust は Hy を評価できないので、表から名・ending・arity だけを
-;;;                      linter-table-json で書き出した packages/doeff-linter/data/clause_ops.json を include_str! で読む(card ki-d3ef2a50cc04)。
+;;;                      linter-table-json で書き出した packages/doeff-linter/data/clause_ops.json を include_str! で読む。
 ;;;                      file は scripts/export_clause_ops.py --write が書き、tests/test_linter_clause_ops.py が表との食い違いを赤にする。
 ;;; doeff_hy のどの module も、表の外に操作の名を文字列か quote した記号で書かない(tests/test_handle_clause_ops.py が全 module を
-;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない・設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 B)。
+;;; 拾う — 名の集まりを写した新しい読み手は、表への追加・退役に追従しない)。
 ;;; doeff-linter の側も同じ — business_fakes.rs は操作の名を literal で書かない(その file の検が拾う)。
 ;;;
 ;;; 行を足す前に(操作の名は節の本体の頭の名として予約される): 書き手が同じ名の関数を節の本体(入れ子の fn の中も)で呼んでいると、
 ;;; 行を足した瞬間にその呼びが操作へ黙って書き換わる(`throw` の行を足すと、書き手の関数 `throw` の呼びが ResumeThrow になり、
-;;; 検めの関数が generator になって検めごと消えた — 設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 B)。node の名の衝突は
+;;; 検めの関数が generator になって検めごと消えた)。node の名の衝突は
 ;;; expansion_names.py の別名が防ぐが、操作の名はこの機構の外 — 機械の検では止められない(足す前の呼びと足した後の呼びを source から見分けられない)ので、
 ;;; 足す前に agora・agora-controllers・doeff・dotfiles の origin/main の節の本体で、その名を頭にした呼びを引く(0 件を確かめてから足す)。
 ;;; 足す行は packages/doeff-linter/data/clause_ops.json の書き直し(scripts/export_clause_ops.py --write)も要る。

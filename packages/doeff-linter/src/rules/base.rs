@@ -4,7 +4,7 @@ use crate::models::{RuleContext, Violation};
 
 /// 規則が 1 回の当てで見る単位。本体(lib の check_stmt_recursive)はこの単位どおりに文を渡す。
 /// 単位が規則と本体の約束に無いと、自分で入れ子へ降りる規則や module 全体を見る規則が、本体が渡す文の数だけ
-/// 同じ当たりを数える(agora-redesign #2858)。
+/// 同じ当たりを数える。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleReach {
     /// 渡された文 1 つ(の自分の式)だけを見る。入れ子の文は本体が 1 つずつ渡す — 全部の文に当てる。

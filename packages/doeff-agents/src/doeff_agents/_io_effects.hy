@@ -25,7 +25,7 @@
 (import sys)
 (import dataclasses [dataclass])
 (import doeff [EffectBase])
-;; 汎用の子 process の effect と答えの型は doeff-core-effects に 1 つ(agora-redesign #802 便 1)— この module は同じ型を re-export する
+;; 汎用の子 process の effect と答えの型は doeff-core-effects に 1 つ— この module は同じ型を re-export する
 ;; (driver 層の使い手と検は今までどおり doeff_agents._io_effects から読める)。
 (import doeff_core_effects [ProcessOutcome RunProcess ExecutableAt])
 
@@ -159,7 +159,7 @@
 
 ;; 待ちの要求はこの語彙に無い — driver 層の program は doeff-time の Delay を yield し、1 秒が何であるかは
 ;; composition root が置く時間の handler が決める(本番 = io_handlers.hy の run-driver-io の sync-time-handler・
-;; 検 = io_fake.hy の世界の時計。card ki-3c3d85253c2c・ADR-DOE-TIME-001 R1)。
+;; 検 = io_fake.hy の世界の時計・ADR-DOE-TIME-001 R1)。
 (defclass [(dataclass :frozen True :kw-only True)] MonotonicTime [EffectBase]
   "単調時計の現在値(秒)。締切の計算に使う。")
 

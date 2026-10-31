@@ -1,4 +1,4 @@
-//! repo 全体の Hy の索引の file ごとの cache(agora-redesign #1364)の検 — 一時の repo で binary を走らせ、出力の鍵を見る。
+//! repo 全体の Hy の索引の file ごとの cache の検 — 一時の repo で binary を走らせ、出力の鍵を見る。
 //!
 //! 生の副作用の当たり(DOEFF106)は索引の生の副作用の証拠から出るので、索引がどの file の中身から組まれたかが鍵に現れる。
 //! cache の鍵(file の大きさと更新時刻)を保ったまま中身だけを替えると、cache の索引が使われていれば古い中身の当たりが残る —
@@ -70,7 +70,7 @@ fn rewrite_keeping_stamp(path: &Path, text: &str) {
     std::fs::File::options().write(true).open(path).unwrap().set_modified(before).unwrap();
 }
 
-/// cache の置き場の file を、種類の dir の名と塊の名の組(`<種類>.<形>.d/<塊>`)で並べる(agora-redesign #1523 — 種類ごとに塊へ分けて置く)。
+/// cache の置き場の file を、種類の dir の名と塊の名の組(`<種類>.<形>.d/<塊>`)で並べる(種類ごとに塊へ分けて置く)。
 fn cache_files(cache: &Path) -> Vec<String> {
     let mut names: Vec<String> = walkdir::WalkDir::new(cache)
         .into_iter()

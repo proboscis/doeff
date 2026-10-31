@@ -1,23 +1,23 @@
-"""macro が変わった Hy の module の古い bytecode を使わない(agora-redesign #1292・親 #1290)。
+"""macro が変わった Hy の module の古い bytecode を使わない(親 #1290)。
 
 Hy の module の bytecode は source だけでなく、展開に使った macro にも依る。Python の .pyc の有効判定は
 source の更新時刻と大きさ(または source の hash)しか見ないので、macro の定義(doeff-hy の macros.hy など)を
-変えても、使う側の module は古い展開のまま動く(agora-redesign #1003 の赤)。
+変えても、使う側の module は古い展開のまま動く。
 
-この package は Hy に手を入れずに(Hy は改めず、回避は doeff の側に置く — 利用者の決定 2026-09-29)、
+この package は Hy に手を入れずに(Hy は改めず、回避は doeff の側に置く)、
 Python 標準の ``importlib.machinery.SourceFileLoader`` の 2 つの口を包んで同じ正しさを出す:
 
 - ``source_to_code``(compile の口): Hy の module を compile した直後に、その展開が実際に使った macro(提供元の module 名・
   macro 名・macro の関数の code の閉包の digest)の記録を、code object の定数の末尾に 1 つ足す。使った macro は、展開の間だけ
   module の macro の表を引いた名を覚える表に替えて拾う(``macro_recording`` — 読みの口と import の外の compile の口が開く)。
   digest は閉包の関数の code の中身を、その展開で実行された関数(展開の間に :mod:`doeff_hy_bytecode_guard._called_code` が拾う)と
-  値を作った関数に絞って覆う(展開で呼ばれない method の変更で使い手が冷えない — agora-redesign #3769 の子)。
+  値を作った関数に絞って覆う(展開で呼ばれない method の変更で使い手が冷えない)。
   .pyc は標準の形のまま(隣に別の file を書かない)。
   その前に code の Hy の gensym の名を module の中の順の通し番号へ振り直す(``records.canonical_gensyms`` —
-  同じ source の code を compile の順・process・thread に依らず同じにする・agora-redesign #3667)。
+  同じ source の code を compile の順・process・thread に依らず同じにする)。
 - ``get_code``(読みの口): .pyc から読んだ Hy の module の code に載った記録の macro を、提供元の module 名から今の環境で
   引き直して digest を比べ、1 つでも変わっていれば source から compile し直して .pyc を書き直す(記録は file の path を持たない
-  ので、別の木から引き継いだ .pyc も今の木の macro で照らす — agora-redesign #2598)。使っていない macro・行番号だけの変更では
+  ので、別の木から引き継いだ .pyc も今の木の macro で照らす)。使っていない macro・行番号だけの変更では
   compile し直さない。
 
 import の外で bytecode を前もって作る道具は :func:`doeff_hy_bytecode_guard._loader_hooks.source_to_code_as_import` で
@@ -26,13 +26,12 @@ compile する(import と同じく module を置いた中で compile し、記�
 照らし方)で決める。
 
 同じ保存先(code_store)で、dataclass が型ごとに作る関数の source の compile も中身で覚える(:mod:`doeff_hy_bytecode_guard._dataclass_code`
-— compile は文と Python の版だけで決まるので照らしは要らない。読み込みの固定費の大半が型ごとの compile だった・card ki-e77d44aa61e5)。
+— compile は文と Python の版だけで決まるので照らしは要らない。読み込みの固定費の大半が型ごとの compile だった)。
 dataclasses は読み込み済みの時だけ包む(起動時の :func:`install` と Hy の source の初めての読み)。
 同じ module の本体の実行の口の包みで、一番外の読み込みの間だけ GC の閾値を上げる(:mod:`doeff_hy_bytecode_guard._import_gc` —
-読み込みが heap を育てるたびに heap 全体を掃いていた・card ki-de9d3593bbde)。
+読み込みが heap を育てるたびに heap 全体を掃いていた)。
 読みの口は Hy の module の code を返す前に、doeff-hy の macro を require し忘れた・import で入れた誤りを見て、書き足す 1 行を
-警告で言う(:mod:`doeff_hy_bytecode_guard._macro_hints` — 文は Python が出し通る frame に doeff の code が無いので、実行の前に言う・
-card ki-909e814cc835)。
+警告で言う(:mod:`doeff_hy_bytecode_guard._macro_hints` — 文は Python が出し通る frame に doeff の code が無いので、実行の前に言う)。
 
 入れる所は venv の起動時(doeff-hy が配る ``doeff_hy_bytecode_guard.pth``)と ``import doeff_hy`` の 2 か所。
 どちらも :func:`install` を呼ぶだけで、何度呼んでも 1 度しか包まない。Hy の import の前でも後でも効く
@@ -49,7 +48,7 @@ from importlib import import_module
 # 入口が出すのは起動の口 install だけ(.pth と ``import doeff_hy`` が呼ぶ)。ほかの口 — 照らし(bytecode_is_current・
 # record_is_current_here)・記録の作りと読み(macro_recording・record_to_json ほか)・import の外の compile(source_to_code_as_import)・
 # 型検査の展開の印(_expansion.TYPE_CHECK_EXPANSION)・file の状態の覚え(_import_scope.SharedScope)— は doeff の中の道具だけが
-# 内側の module から読む(ADR-DOE-API-001 R1・R14・card ki-97f5f5d3dea4)。install は venv ごとに写した .pth
+# 内側の module から読む(ADR-DOE-API-001 R1・R14)。install は venv ごとに写した .pth
 # (``import doeff_hy_bytecode_guard; doeff_hy_bytecode_guard.install()`` — 入れた時の写しで、doeff を上げても書き換わらない)が呼ぶので、
 # 入口に残す。
 from doeff_hy_bytecode_guard._loader_hooks import install as install

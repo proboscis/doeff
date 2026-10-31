@@ -61,7 +61,7 @@ def test_simple_pure_program() -> None:
 
 
 def test_do_call_builds_one_call_node() -> None:
-    """A `@do` call is one `Call` node sharing its definition (agora-redesign #844).
+    """A `@do` call is one `Call` node sharing its definition.
 
     The slow shape: every call built `Expand(Apply(Pure(Callable(thunk)), []))` — five
     objects and a closure — and the thunk wrapped a non-generator result in a Python
@@ -116,14 +116,14 @@ def test_do_call_runs_generator_value_kwargs_and_raises_like_before() -> None:
 
 
 def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_its_fallback() -> None:
-    """`outcomes.open_bind` is a BindOpener (agora-redesign #844).
+    """`outcomes.open_bind` is a BindOpener.
 
     The slow shape: every bind of a defk judgment went through the Python dispatch
     `open_bind` → `_opened` → `_settled` — the largest cost left per bind (a screen row
     binds 10–16 judgments). The hot path (no `absent`, a `Call` whose definition does not
     yield) must answer `Pure(answer)` without touching the fallback. A `Call` whose
     definition yields, with no `absent`, must answer the call itself without touching the
-    fallback (agora-redesign #2449 — the Python dispatch handed it back unchanged, at the
+    fallback (the Python dispatch handed it back unchanged, at the
     cost of three Python calls per bind). Everything else must reach the fallback with the
     same arguments.
     """
@@ -178,7 +178,7 @@ def test_bind_opener_calls_a_non_yielding_call_in_place_and_hands_the_rest_to_it
 
 def test_bind_opener_hands_back_an_operand_whose_type_passes_through_without_its_fallback() -> None:
     """A no-``absent`` operand of a type ``passes_through`` answered True is handed back
-    unchanged without the Python dispatch (card ki-5c3e73834e73 — every bind of an effect paid
+    unchanged without the Python dispatch (every bind of an effect paid
     ``_open_bind`` → ``_opened``). The answer is asked once per type and kept while the type is
     unchanged: changing the class makes the opener ask again. A type answered False, an
     ``absent``, and an opener without ``passes_through`` still reach the fallback.

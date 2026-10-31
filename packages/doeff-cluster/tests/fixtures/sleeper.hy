@@ -45,7 +45,7 @@
   ;; --once: 止めの合図を待たずに自分で終わる(残した孫は shim が片づける・#2940)。
   (when (in "--once" sys.argv)
     (setv flag.stopping True))
-  ;; --segfault: 拍を 1 度書いた後、止めの合図を待たずに SIGSEGV で落ちる(止めを求めていない signal の終わり — card ki-cb9f34c49f83)。
+  ;; --segfault: 拍を 1 度書いた後、止めの合図を待たずに SIGSEGV で落ちる(止めを求めていない signal の終わり)。
   ;; core の file は残さない。
   (when (in "--segfault" sys.argv)
     (.write-text beat (str (time.time)))

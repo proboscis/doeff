@@ -68,7 +68,7 @@
 
 ;; agent process へ決して渡さない env(oracle FORBIDDEN_AGENT_ENV_KEYS —
 ;; API-key 呼び出しは memoized LLM handler 経由のみ、agent session env は禁止)。
-;; 綴りは持たず policy の語彙を名指す(card acp:kanban-issue:ki-2a061da56ca9:
+;; 綴りは持たず policy の語彙を名指す(
 ;; 3 層が別々の literal を持っていたので 3 つとも中身が違った)。ここは最後の砦
 ;; なので **PROVIDER-AUTH ちょうど** — 手番の札(TURN-AUTH)は受理と同じく
 ;; わざと通す(ADR 012 R5・R30)。
@@ -353,7 +353,7 @@
 (deff ensure-symlink-outcome [link target]
   {:pre [(: link str) (: target str)]
    :post [(: % FsSymlinkOutcome)]}
-  "symlink を正しい先へ据える **1 つの動詞**(card acp:kanban-issue:ki-62aa1f4e9c9c D8・盲検 A)。
+  "symlink を正しい先へ据える **1 つの動詞**(盲検 A)。
    4 値を返す(raise しない — 方針判断は呼び手所有):
      同じ先を指す symlink   \"unchanged\"(触らない — 本体は skills の dir を見張っているので、
                             用の無い張り替えは走っている席にまで効く)
@@ -577,7 +577,7 @@
 
   (FsWriteTextAtomic [path text tmp-suffix]
     ;; write-new + rename(oracle: 並走 reader が torn state を読まない)
-    ;; ⚠ tmp の名は**書き手ごとに一意**(card acp:kanban-issue:ki-62aa1f4e9c9c D9・盲検 A の反例):
+    ;; ⚠ tmp の名は**書き手ごとに一意**(盲検 A の反例):
     ;; 固定名 <path><suffix> は、同じ家へ 2 席が同拍で書くと互いの書きかけを上書きし、
     ;; 先に rename した側の tmp を後の側が消して **FileNotFoundError で片方の書きが落ちる**。
     ;; 家は資格ごとに共有され(1 つの config-dir に複数の席)、この便でその家へ書く物が増えるので、
@@ -654,7 +654,7 @@
                     (! (_container-verdict "symlink" error)))))))))
 
   (FsRemoveFile [path]
-    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす。**dir は触らない**
+    ;; 名指した 1 file を落とす。**dir は触らない**
     ;; (再帰も glob も無い)。不在は成功 = 端の状態を観測する形で、既に無いのは望みの状態。
     ;; ⚠ raise しない: 置き場の掃除は席を起こすための前置きなので、ここで送出すると記憶を使う
     ;; 会話だけが起動できなくなる。dir を渡された拍(IsADirectoryError)・権限も同じ扱いで、

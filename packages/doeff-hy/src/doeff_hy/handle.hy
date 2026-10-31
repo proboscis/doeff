@@ -44,7 +44,7 @@
 
 (import hy.models [Expression Symbol List Keyword Sequence String])
 ;; 展開の部品は `_` の名で束ねる — この module は Hy の require が path で読む macro の境界で、見せる名は macro だけ
-;; (ADR-DOE-API-001 R14・card ki-a28c20b93638)。素の名で束ねると、目録が doeff_hy.handle の公開の名と数える。
+;; (ADR-DOE-API-001 R14)。素の名で束ねると、目録が doeff_hy.handle の公開の名と数える。
 (import doeff-hy._positions [locate-synthesized :as _locate-synthesized])
 (import doeff-hy._declarations [DECLARATION-KEYS :as _DECLARATION-KEYS
                                refuse-unknown-keys :as _refuse-unknown-keys
@@ -69,10 +69,10 @@
   "handler の本体を包む `_doeff-do` の import。型検査のための展開(doeff_hy/_static_view.py)
    では型付きの doeff_hy._static_types.do を取る — 同じ module の defk と同じ名前に 2 つの
    型が付くと、pyright から見た `_doeff_do` が両者の union になり誤検出を出すため
-   (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`(card ki-973b4e44d7bc)。"
+   (macros.hy の `_helper-imports` と同じ決め)。実行時の do の置き場は補助の表の `_runtime-do`。"
   (if (_static-view-enabled)
       ;; 型付きの do は doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の STATIC_HELPER_IMPORTS —
-      ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする・agora-redesign #1686)。
+      ;; 節ごとに出すと 1 つの名の宣言が 64 を超えた module で pyright が Unknown にする)。
       '(do)
       (do
         (import doeff-hy.macros [_runtime-do-import])
@@ -82,7 +82,7 @@
 (defn _clause-endings-import [name alias]
   "節の終わり方の検め(clause_endings.hy の name)を alias で引く import。型検査のための展開では、型付きの
    doeff_hy._static_types の同じ名を doeff-hy-check が module の頭に 1 度だけ import する(static_view.py の
-   HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない・agora-redesign #2279)。"
+   HANDLER_STATIC_NAMES — clause_endings は .hy なので pyright から型が見えない)。"
   (if (_static-view-enabled)
       '(do)
       `(import doeff-hy._clause-endings [~name :as ~alias])))
@@ -92,18 +92,18 @@
   "handler の展開が使う doeff の node の import — 節の操作の node(clause_ops.hy の表の nodes / static-nodes)と、handler 自身が
    使う Pass(番の外れた effect とどの節にも当たらない effect を外へ渡す)と WithHandlerType(doeff の根の名 — doeff_vm は import しない)。型検査のための展開の resume / transfer は
    typed-resume / typed-transfer になり Resume / Transfer を使わないので、表の static-nodes に載せない(使わない import は strict の
-   赤 — agora-redesign #2279)。
+   赤)。
 
    名は `_doeff_<名>` の別名で束ねる(doeff_hy/_expansion_names.py)。素の名で束ねると、書き手が自分の effect を同じ名にした時
    (振込の Transfer)、節の頭の isinstance が VM の node を指して effect が外の handler へ黙って抜け、module の段では書き手の
-   名が上書きされた(card ki-16180480129e)。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
+   名が上書きされた。展開がこれらの node を読む綴りも、alias-symbol で同じ別名を引く。"
   (_import-form (+ (_node-names (_static-view-enabled)) ["Pass" "WithHandlerType"])))
 
 
 (defn _handler-fn-form [endings-check]
   "handler を本文に被せる関数 __doeff-handler-fn__ の定義。型検査のための展開では、本文を
    `HandlerBody[HandledAnswer]`、答えを `HandledScope[HandledAnswer]`(本文の答えの型をそのまま運ぶ)と注記する
-   (doeff_hy/_static_types.pyi・agora-redesign #2279)。実行時の展開は注記を付けない。"
+   (doeff_hy/_static_types.pyi)。実行時の展開は注記を付けない。"
   (if (_static-view-enabled)
       `(defn #^ (get _doeff_HandledScope _doeff_HandledAnswer) __doeff-handler-fn__
              [#^ (get _doeff_HandlerBody _doeff_HandledAnswer) __doeff-body__]
@@ -198,7 +198,7 @@
 (defn _fresh-lazy-tmp [lazy-name suffix]
   "lazy の初期化の一時の名を作るため。Hy の gensym で作る — 名の番号は compile の口の正準化
    (doeff_hy_bytecode_guard._records.canonical_gensyms)が module の中の順へ振り直すので、compile の順に依らない
-   (自前の数えを持つと、その番号が compile の順で変わっていた — agora-redesign #3667)。"
+   (自前の数えを持つと、その番号が compile の順で変わっていた)。"
   (hy.gensym (+ "lazy_" (str lazy-name) "_" suffix)))
 
 (defn _references-symbol [form sym-name]
@@ -260,7 +260,7 @@
    reportUnknownVariableType の赤になる(代入先に型を宣言しても同じ)。絞る前の値に束ねておき、書いた節の判定が書き手の名も絞る
    (`_clause-test`)。判定の中で束ねる形(`isinstance((effect := _doeff_effect), T) and isinstance(_doeff_effect, T)`)は採らない:
    walrus の右辺を絞るかは pyright の版で変わり(1.1.411 は左辺だけ・1.1.414 は右辺も)、右辺も絞る版では 2 つ目が「いつも真」
-   (reportUnnecessaryIsInstance)になる — 書いた節ごとに 1 件で、書き手は直せない(card ki-a06b0fbce50d)。"
+   (reportUnnecessaryIsInstance)になる — 書いた節ごとに 1 件で、書き手は直せない。"
   (lfor row _WRITER-VISIBLE
         :if (and row.narrowed
                  (any (gfor clause clauses (in row (_clause-aliases clause lazy-defs)))))
@@ -268,7 +268,7 @@
 
 (defn _effect-form-binding [etype fields rewritten]
   "型検査のための展開で、節の `isinstance` が絞った `_doeff_effect` を、effect の型の型引数をすべて Any で解いた型に束ね直す形の list
-   (実行時の展開と、束ね直す要らない節は空 — card ki-fede97890f70)。
+   (実行時の展開と、束ね直す要らない節は空)。
 
    pyright は総称 class の絞りの型引数を Unknown にする(`isinstance(object の値, Race)` は `Race[Unknown]`)。節の欄の束ね
    (`tasks = _doeff_effect.tasks`)も typed_resume / typed_transfer の effect の引数も一部 Unknown の赤になり、書き手は直せない
@@ -347,7 +347,7 @@
         `(setv ~(Symbol (str lazy-name)) ~val-var)]))
 
   ;; Build full lazy init sequence
-  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ・agora-redesign #2293): 名は初期化の式の値に
+  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ): 名は初期化の式の値に
   ;; 束ねる。実行時は Get の答え(Some の中身)か初期化の値のどちらかだが、状態に置くのは同じ初期化の値なので型は同じ —
   ;; Get の答えは型を持たないので、そのまま写すと名とそれを使う式が全部 Unknown になり、書き手に直せない赤が出ていた。
   ;; キーの名は := の Put が引くので残す。
@@ -513,7 +513,7 @@
           ;; Without this a resume at the end of a match branch stayed a Resume: the handler's
           ;; generator frame was kept (holding the resumed value) for as long as the handled program
           ;; ran — a long-running loop under the handler piled one frame per handled effect
-          ;; (agora-redesign #3530: an intake reader held every page it read).
+          ;; (an intake reader held every page it read).
           (and (= hname "match") (>= (len form) 4))
             (_match-cases-to-transfer form)
 
@@ -686,13 +686,13 @@
             (_build-lazy-init-forms handler-name lname lbody legacy?)))))
 
   ;; Field bindings: (setv field (. _doeff_effect field))
-  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ・agora-redesign #2514)では、束ねの直後に
+  ;; 型検査のための展開(doeff_hy/_static_view.py — 走らせず pyright が読むだけ)では、束ねの直後に
   ;; `_ = field` を置いて名を「読んだ」ことにする。欄の名で束ねるので、本体が使わない欄(例 `[stored mark]` の mark)は
   ;; reportUnusedVariable の赤になり、書き手は名を変えられない(`_` で始めると欄に当たらない)。本体が名を参照するかを
   ;; 記号の走査で決めると `stored.version` のような点つきの記号や macro が作る参照を取り逃がすので、全部の欄に置く。
   ;; 欄の名の綴りの誤りは `(. _doeff_effect field)` の属性の読みで今までどおり赤になる。実行時の展開は変えない。
-  ;; 欄は節の effect を `_doeff_effect` から読む: 欄の名が `effect`・`k` でも、受けた effect と続きを上書きしない
-  ;; (card ki-6af9862aed32)。書き手が本体・番に書いた `effect`・`k` の束ねは、欄の束ねより前に置く(欄が同じ名なら束ねず、欄が優先)。
+  ;; 欄は節の effect を `_doeff_effect` から読む: 欄の名が `effect`・`k` でも、受けた effect と続きを上書きしない。
+  ;;書き手が本体・番に書いた `effect`・`k` の束ねは、欄の束ねより前に置く(欄が同じ名なら束ねず、欄が優先)。
   (setv bindings
     (+ (lfor row (_clause-aliases clause lazy-defs)
              form (_alias-forms row)
@@ -757,7 +757,7 @@
   (.append cond-forms 'True)
   (.append cond-forms `(yield (~(_alias-symbol "Pass") ~(_effect-symbol) ~(_continuation-symbol))))
 
-  ;; 型検査のための展開(agora-redesign #2279): effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
+  ;; 型検査のための展開: effect は object(節の isinstance が節ごとの型へ絞る — 節の型の和で
   ;; 注記すると最後の節の isinstance が「いつも真」の赤になる)、k は続き、答えは ClauseRun(doeff_hy/_static_types.pyi)。
   ;; 書き手が `effect` を書いた節の在る handler は、節の判定より前に `effect` を絞る前の値に束ねる(_narrowed-alias-bindings)。
   ;; 実行時の展開は VM の型の絞り込みのために effect を節の型で注記する(_effect-parameter)。
@@ -810,7 +810,7 @@
   "The handler's effect parameter, annotated with the clauses' effect types — the VM reads the annotation
    once at install (doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER) and skips this handler for any
    other effect without calling into Python, the same as the handler passing it on first thing
-   (agora-redesign #1931 — the handler list walk was 28〜39% of an invariant test's CPU). The clauses
+   (the handler list walk was 28〜39% of an invariant test's CPU). The clauses
    already answer only their own types (every other effect falls to (Pass effect k)), so the
    annotation changes nothing but the cost. On Python 3.14+ the annotation is evaluated lazily (PEP 649),
    so an effect type defined later or in an enclosing function resolves. Before 3.14 an annotation is
@@ -856,19 +856,19 @@
    関数の本体の中(defk の本体など)と class の本体では、import・節の終わり方の検め・handler の組み立てを、すぐ呼ぶ
    引数なしの関数に入れ、その関数が返す「本文に handler を被せる関数」を本文 body に当てる。関数の中で import した名は
    関数全体の局所の名になるので、並べたままだと同じ本体で先に読む traverse / for/do の `_doeff_do` が UnboundLocalError
-   で落ちた(card ki-907f779b3290・tests/test_handle_scope.py)。class の本体で import した名は class の属性になり、節の
-   関数は名を引く時に class の段を飛ばすので、節の Transfer・Resume・Pass が NameError で落ちた(card ki-edab7c8fbb55)。
+   で落ちた(tests/test_handle_scope.py)。class の本体で import した名は class の属性になり、節の
+   関数は名を引く時に class の段を飛ばすので、節の Transfer・Resume・Pass が NameError で落ちた。
    すぐ呼ぶ関数の中で import すれば、節の関数はその関数の閉包から名を読み、書いた場所の module の globals にも書き手の
    同じ名にも依らない。本文は外の do の文脈に属する(`!` の yield は外の生成器の物)ので、すぐ呼ぶ関数の中に入れず、
    書いた場所で評価する。module の段は今までどおり並べる(import は module の globals に置く)。
 
    被せる関数は、本文より前の文で一意の名(gensym)に束ねてから本文に当てる。Hy は本文の文の部分(`(do (f) prog)` の
    `(f)`・let の束ね・`!` の yield)を、それを含む式より前の文へ出す。すぐ呼ぶ関数を本文と同じ式の中で呼ぶと、本文の
-   文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W
+   文の部分が検めより先に走り、検めが落ちる handler でも本文の effect が先に出ていた(
    の盲検 A)。外の関数に残る名はこの一意の名だけで、先に読む所が無いので未束縛にならない。
 
    節の文法は defhandler と同じ 1 つ(_build-handler-expr)で、出来る program は `((defhandler 名 節…) body)` と同じ答えを返す
-   (一度きりは handle・再利用は defhandler — 節を defhandler へ移して名を付けるだけ・card ki-fb1c0fb41ff5)。handler の直下の
+   (一度きりは handle・再利用は defhandler — 節を defhandler へ移して名を付けるだけ)。handler の直下の
    session val / session var(と旧い lazy)は受けない: セッションの値は handler の名でキーを作る(doeff_hy._session.session_key)ので、
    名を持つ defhandler に置く。"
   (import doeff-hy.macros [_module-names _in-function-body? _in-class-body?])
@@ -978,7 +978,7 @@
     (setv docstring (get clauses 0))
     (setv clauses (cut clauses 1 None)))
 
-  ;; Optional declaration dict {:effects [...] :tags {:context … :role …}} (agora-redesign #800 — doeff_hy._declarations).
+  ;; Optional declaration dict {:effects [...] :tags {:context … :role …}} (doeff_hy._declarations).
   ;; A handler has no :pre / :post, so only :effects and :tags are accepted.
   (setv declarations None)
   (when (and (> (len clauses) 0) (isinstance (get clauses 0) Dict))
@@ -1028,10 +1028,10 @@
   ;; raw handler dispatcher. The inner dispatcher is stored for introspection
   ;; and installed with the Rust VM WithHandler node.
   ;; 関数の本体の中に書いた defhandler は、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition —
-  ;; 外の関数で先に読む traverse / for/do の `_doeff_do` を未束縛にしない・card ki-907f779b3290)。
+  ;; 外の関数で先に読む traverse / for/do の `_doeff_do` を未束縛にしない)。
   ;; class の本体では、import を handler を組む関数(引数の無い handler はすぐ呼ぶ関数・引数の在る handler は name の
   ;; 関数そのもの)の中へ移す。class の本体の import は class の属性になり、組む関数・節の関数・本文に被せる関数は名を
-  ;; 引く時に class の段を飛ばすので、_doeff_do・Transfer などが NameError で落ちた(card ki-edab7c8fbb55)。中で
+  ;; 引く時に class の段を飛ばすので、_doeff_do・Transfer などが NameError で落ちた。中で
   ;; import すれば、それらの関数は組む関数の局所と閉包から名を読む。name の定義は class の段に残す(`__qualname__`)。
   (setv imports [(_do-import)
                  (_vm-imports)
@@ -1040,7 +1040,7 @@
         #(outer-imports inner-imports) (if (_in-class-body? _hy-compiler) #([] imports) #(imports [])))
   ;; 引数の在る defhandler は handler の工場(呼ぶと handler を返す関数)。実行時の展開は工場の戻りの型を doeff の ProgramHandler と
   ;; 注記する — 公開 API の目録(tools/public_api_inventory.py)と inspect.signature が、工場を handler を返す関数と読めるように(注記が
-  ;; 無いと「戻りの型が無い関数」で未分類になった・card ki-01270742001e)。class の本体では注記しない(import が組む関数の中へ移り、
+  ;; 無いと「戻りの型が無い関数」で未分類になった)。class の本体では注記しない(import が組む関数の中へ移り、
   ;; 定義の段から名が見えない)。型検査のための展開も注記しない(pyright は本文に被せる関数の型を推し、型の宣言の生成 static_stub.py は
   ;; 工場の答えを Handler と書く)。
   (setv factory-annotated (and (is-not params None) (not (_static-view-enabled)) (not (_in-class-body? _hy-compiler)))

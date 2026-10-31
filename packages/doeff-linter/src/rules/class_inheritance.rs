@@ -1,4 +1,4 @@
-//! class が自分で置く属性と、継承元が持つ属性の見分け(DOEFF002 — agora-redesign #2951)。
+//! class が自分で置く属性と、継承元が持つ属性の見分け(DOEFF002)。
 //!
 //! DOEFF002 は init の外で書き換える属性を `_mut_` の名にさせる。継承元(framework)が定義した属性へ書く class は、名を変えると
 //! framework が読まなくなる(Textual の `App.sub_title` は、書くと header の表示が変わる)。属性の名が class 自身の物か継承元の物かを、

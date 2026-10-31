@@ -112,7 +112,7 @@
 
 (deftest test-outside-a-turn-only-the-hooks-that-are-not-model-work-are-quiet
   ;; CLI に全 hook の行を出させる(--include-hook-events)と、ターンの外でも Notification・SessionEnd の hook の行が出る — どちらも CLI が
-  ;; 回す物で model の動きではないので、ターンの外の出力として process を止めない(ki-d8b473480303)。model の
+  ;; 回す物で model の動きではないので、ターンの外の出力として process を止めない。model の
   ;; 手番の中で走る hook(UserPromptSubmit・PreToolUse・Stop ほか)の行は、ターンの外なら今までどおり止める(model が動いた兆候)。
   (val idle (. (read-record (. (read-record (. (dialogue.begin-turn (DialogueState :session-id SID) (TurnInput "hello" "msg-1")) state)
                                             INIT) state)
@@ -157,8 +157,8 @@
 
 (deftest test-hook-lines-are-classified-by-their-event
   ;; hook の開始と応答の行は、イベント名(hook_event — この欄の無い版では hook_name の「:」の前)と段階を持つ型 HookNotice に分ける。
-  ;; 応答の行は hook の id・出力(stdout・stderr・output)・exit code・終わり方(outcome)も運ぶ(会話の画面に hook の結果を出すため・
-  ;; ki-d8b473480303)。途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
+  ;; 応答の行は hook の id・出力(stdout・stderr・output)・exit code・終わり方(outcome)も運ぶ(会話の画面に hook の結果を出すため)。
+  ;; 途中経過の行(hook_progress)など、ほかの hook の行は語彙の外(Other)のまま。
   (assert (= (classify-record SESSION-START-HOOK-STARTED)
              (lines.HookNotice :event "SessionStart" :phase lines.HookPhase.STARTED :name "SessionStart:startup" :hook-id "hook-1")))
   (assert (= (classify-record SESSION-START-HOOK-RESPONSE)
@@ -276,7 +276,7 @@
 
 (deftest test-a-continued-turn-counts-from-the-interrupted-turns-mark
   ;; 止めて生き残った入力の手番が同じ process で続く時(continues)、止めた区切り(Interrupted — 額の欄が無い)を閉じた result の行で
-  ;; 起点を進めない: 続いた手番の額と usage は止めた区切りの始まりから数え、止めた区切りの分を含む(card ki-9246ea31f98d — 上の層は
+  ;; 起点を進めない: 続いた手番の額と usage は止めた区切りの始まりから数え、止めた区切りの分を含む(上の層は
   ;; 2 つの区切りを 1 つの手番として読み、続いた手番の終わりの額だけを手番の額にする)。
   (val injected (dialogue.inject (started FRESH-MARK) (TurnInput "also this" "inj-1")))
   (val plan (dialogue.interrupt injected.state "rid-9"))
@@ -299,7 +299,7 @@
 
 (deftest test-a-stopped-turn-carries-what-it-used-from-the-result-that-closed-it
   ;; 止めた手番を閉じた result の行(SIGINT の形・生き残りの無い control の形)は累積の額を名乗る — 止めるまでの消費を Completed と同じ
-  ;; 数え方で手番に載せ、起点はその行へ進める(次の手番へは混ぜない・card ki-47e64b7b642f。前は額を捨て、上の層は額の無い手番として
+  ;; 数え方で手番に載せ、起点はその行へ進める(次の手番へは混ぜない。前は額を捨て、上の層は額の無い手番として
   ;; 単価で推定した — 本番 10-23 の ticket の予備の割り込みで止めた手番 6 件)。
   (val signalled (dialogue.interrupt (started) "rid-7"))
   (val stopped (read-record signalled.state (usage-line 0.5 {MAIN #(10 100 1000 200 1 0.5)} :subtype "error_during_execution"
@@ -350,7 +350,7 @@
 
 
 (deftest test-a-named-interrupt-is-needed-only-while-the-named-input-is-queued
-  ;; 入力を名指した止め(今すぐ送る — card ki-1c4cfde50ac5)を出すかの判断: 名指した注入がまだ読まれていない(queued)間だけ止める。
+  ;; 入力を名指した止め(今すぐ送る)を出すかの判断: 名指した注入がまだ読まれていない(queued)間だけ止める。
   ;; CLI がもう読んだ注入(started・completed)・手番を始めた入力は読み終えた物で、止めると答えが途中で切れる。
   (val injected (. (dialogue.inject (started) (TurnInput "also this" "inj-1")) state))
   (assert (not (dialogue.input-already-read injected "inj-1")))
@@ -358,8 +358,7 @@
   (assert (dialogue.input-already-read read "inj-1"))
   (assert (dialogue.input-already-read (. (read-record read (lifecycle "inj-1" "completed")) state) "inj-1"))
   (assert (dialogue.input-already-read injected "msg-1"))
-  ;; この手番に入れていない ref(止めの依頼の id など)は読んだかが分からない — 止める(読んだと数えると止めが黙って効かなくなる・設計検証
-  ;; lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。
+  ;; この手番に入れていない ref(止めの依頼の id など)は読んだかが分からない — 止める(読んだと数えると止めが黙って効かなくなる)。
   (assert (not (dialogue.input-already-read injected "never-added")))
   (assert (not (dialogue.input-already-read read "stop-request-1")))
   ;; 入力の運命を名乗らない CLI(msg_lifecycle_v1 なし)では読んだかが分からない — 名指さない止めと同じに止める。
@@ -688,8 +687,8 @@
   (assert (and (isinstance second.end Completed) (is second.end.model-refusal None)) (repr second.end)))
 
 
-;; --- 手番の model ごとの使用量(card ki-1d986d4f0007) -----------------------------------------------------
-;; result の行と cost-state の行の modelUsage は会話の累積(実測 CLI 2.1.292 + 偽の Messages API — 親 card ki-290ec664737d の会話)。
+;; --- 手番の model ごとの使用量 -----------------------------------------------------
+;; result の行と cost-state の行の modelUsage は会話の累積(実測 CLI 2.1.292 + 偽の Messages API)。
 ;; 欄は実物と同じ名(窓の欄も添える)。額は 2 進で割り切れる値にして、和の比べに端数を出さない。
 (setv MAIN "claude-opus-5-5" SUB "claude-sonnet-5-5")
 
@@ -754,8 +753,7 @@
 
 (deftest test-a-continued-turn-counts-model-usage-from-the-same-mark-as-the-cost
   ;; 止めて生き残った入力の手番が同じ process で続く時、止めた区切り(Interrupted — 額も model ごとの使用量も持たない)を閉じた
-  ;; result の行で起点を進めない: 続いた手番の model ごとの使用量は額と同じく止めた区切りの始まりから数え、照合が合う
-  ;; (card ki-9246ea31f98d)。
+  ;; result の行で起点を進めない: 続いた手番の model ごとの使用量は額と同じく止めた区切りの始まりから数え、照合が合う。
   (val injected (dialogue.inject (started) (TurnInput "also this" "inj-1")))
   (val plan (dialogue.interrupt injected.state "rid-9"))
   (val answered (read-record plan.state {"type" "control_response"

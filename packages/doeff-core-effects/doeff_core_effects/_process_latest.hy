@@ -1,4 +1,4 @@
-;;; 最新の値の本物の答え手 process-latest-handler(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
+;;; 最新の値の本物の答え手 process-latest-handler(ADR-DOE-CORE-EFFECTS-004)— PublishLatest・ReadLatest・AwaitLatest に、
 ;;; process に 1 つの保存先で答える。
 ;;;
 ;;; 何のためか: 動き続ける process では、処理ループの run が断面(破れの記録・同期の進み・標本の ring …)を置き、別の run(probe の HTTP)が
@@ -9,7 +9,7 @@
 ;;; free-threaded の Python でも割れない)。置き場を作る時だけ lock を取る。置き場は process の終わりまで残る。
 ;;; thread に触るのはこの module だけ(memory の答え手 memory_latest.hy は触らない)。
 ;;;
-;;; 変わるまでの待ち(AwaitLatest — agora-redesign #4296): 待つ側は呼び鈴(CreateExternalPromise の約束 — 別の thread から完了してよい唯一の手段)を
+;;; 変わるまでの待ち(AwaitLatest): 待つ側は呼び鈴(CreateExternalPromise の約束 — 別の thread から完了してよい唯一の手段)を
 ;;; 「名前 → 型 → 掛かっている呼び鈴の組」(BELLS)に掛けてから保存先を確かめ直し、まだ seen なら呼び鈴の約束を park の形(Wait の TaskPriority.IDLE —
 ;;; 仮想の時計を止めない)で待つ。置く側の PublishLatest は値を差し替えた後に、その型の呼び鈴を全部外して鳴らす。取りこぼさない順: 待つ側は
 ;;; 「掛ける → 確かめ直す」、置く側は「差し替える → 外して鳴らす」で、呼び鈴の組の出し入れだけを BELLS-LOCK の中で行う — 置く側が外す時に

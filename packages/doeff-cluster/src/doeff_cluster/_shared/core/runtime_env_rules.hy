@@ -92,7 +92,7 @@
 (defk repo-source-material [repo]
   {:pre [(: repo RepoCheckout)] :post [(: % dict)]}
   "宣言の repo 1 つの木の同一性(名と url の正体 — commit は入れない)を作るため。準備は、これが同じ repo を持つ完成済みの root から
-   木を写す(env_prepare.tree-source — card ki-61eb8170b3b9)。"
+   木を写す(env_prepare.tree-source)。"
   (<- location RepoLocation (url-location repo.url))
   (<- located dict (location-material location))
   {"name" repo.name "location" located})

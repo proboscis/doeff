@@ -1,4 +1,4 @@
-"""handle と defhandler + with-handler が同じ program になる事の deftest を公開する(card ki-fb1c0fb41ff5)。
+"""handle と defhandler + with-handler が同じ program になる事の deftest を公開する。
 
 ``handle_inline_deftests.hy`` の deftest を包み直さずそのまま公開する(ADR-DOE-HY-002 —
 包むと pytestmark が落ちる)。実行時の ``doeff_interpreter`` はこの module の fixture が供給する。

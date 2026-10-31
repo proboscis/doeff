@@ -42,7 +42,7 @@
   (setv #^ int worker-forget-ms (* 7 24 3600 1000))
   ;; 版の変化を待つ読み(GET /watch)の待ちの上限 — worker が問いの timeoutSeconds に載せ、coordinator が頭打ちにする取り交わしの値。
   ;; worker は heartbeat の返事の timing から受け取る(lease-ms と同じ道)。下の 2 つの HTTP の打ち切りより短い(__post-init__ が検める —
-  ;; 定数 WATCH-MAX-SECONDS から移した・Mac の調整役の決定 2026-10-07 04:4x・#3865)。
+  ;; 定数 WATCH-MAX-SECONDS から移した・#3865)。
   (setv #^ int watch-max-ms 10000)
   ;; worker と送り手の HTTP の client が coordinator の返事を待つ打ち切り(RouteOptions.reply-seconds — foundation/coordinator_http の定数
   ;; REPLY-SECONDS から移した)。coordinator は書きを永続化してから返事をする(group commit)ので、返事は fsync の時間だけ遅れる。longhorn の
@@ -52,12 +52,11 @@
   ;; 受付の箱(foundation/coordinator_inbox)の HTTP の thread が、調停ループの返事を待つ打ち切り(前は名の無い 30 秒)。
   (setv #^ int inbox-reply-ms 30000)
   ;; 知らせ先を名乗った切り離した task が queued のまま待つと、出口へ待ちの行(queued-overdue)を 1 度だけ積むまで(置いた刻から数える —
-  ;; detached_policy.queued-noticed・card ki-4b6613f39c80)。背景の仕事の予約の待ちで 2 時間 queued のまま気づかれなかった(2026-10-29)。
+  ;; detached_policy.queued-noticed)。背景の仕事の予約の待ちで 2 時間 queued のまま気づかれなかった(2026-10-29)。
   (setv #^ int queued-notice-ms (* 15 60 1000))
 
   (defn #^ None __post-init__ [self]
-    ;; 時間の窓の順の関係を 1 か所で検め、崩れた組は作る時に断る(本番の設定の誤りと、模擬の世界が比を保たずに延ばした組を名指す —
-    ;; Mac の調整役の決定 2026-10-07 04:4x の条件 (a)・#3865)。
+    ;; 時間の窓の順の関係を 1 か所で検め、崩れた組は作る時に断る(本番の設定の誤りと、模擬の世界が比を保たずに延ばした組を名指す・#3865)。
     (when (<= self.keep-fence-ms self.fence-ms)
       (raise (ValueError "印の在る job の長い方の柵(keep-fence-ms)は fence より長くなければならない")))
     (when (<= self.reassign-after-ms self.fence-ms)
@@ -139,5 +138,5 @@
 
 (defclass [(dataclass :frozen True)] ServiceReached [EffectBase]
   "結果は bool: この coordinator が起きてから、外から接続を受けたか(Pod が Ready になり Service に載った印 — kubelet の readinessProbe の
-   接続・worker の接続・読み手の接続のどれでもよい。card ki-f9fd557e6ad0)。起き直しの後の届かない間(ClusterState.unreached-ms)を
+   接続・worker の接続・読み手の接続のどれでもよい)。起き直しの後の届かない間(ClusterState.unreached-ms)を
    終える証拠で、worker の heartbeat を待たずに、死んだ worker を生きているとは答えない。")

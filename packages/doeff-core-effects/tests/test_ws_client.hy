@@ -1,4 +1,4 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の、答え手の片方だけが持つ性質の検(agora-redesign #4007 U0)。両方に共通の
+;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の、答え手の片方だけが持つ性質の検。両方に共通の
 ;;; 性質(繋ぎ・frame の往復・相手の閉じとこちらの閉じ・閉じた後・知らない id・範囲の終わりの後始末)は test_ws_client_contract.hy の契約
 ;;; テストが両方の答え手で回す。
 ;;;   - 台本の答え手(scripted-ws-client): 台本の frame が尽きた時(then-close の有無)・送った文が含む語ごとの replies が台本の順に全部

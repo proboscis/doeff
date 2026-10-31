@@ -1,4 +1,4 @@
-;;; 汎用の WebSocket の client(繋ぐ側)の effect(agora-redesign #4007 U0・消費者 = 音声の service が OpenAI の sideband の WebSocket に
+;;; 汎用の WebSocket の client(繋ぐ側)の effect(消費者 = 音声の service が OpenAI の sideband の WebSocket に
 ;;; 付くため)。待ち受け側(http_server_effects.hy の WsOpened / WsTextArrived / WsClosed …)と対になる土台の語彙で、業務の語を持たない。
 ;;; 名は待ち受け側と衝突しない(WsConnect / WsReceive / WsSend / WsDisconnect と WsLink / WsText / WsBinary / WsLinkClosed)。
 ;;; 答え手は仕組みごとに差し替える:

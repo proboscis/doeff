@@ -1,4 +1,4 @@
-"""Hy の module の型の宣言(.pyi)を、型検査のための展開から作る(agora-redesign #2826)。
+"""Hy の module の型の宣言(.pyi)を、型検査のための展開から作る。
 
 型検査のための展開(static_check.project)は、defk / deff の契約(:pre の `(: x T)`・:post の `(: % T)`)と
 defrecord の欄の `#^` を Python の注記にした module の木を返す。ここはその木から本体を外し、公開面の宣言だけを
@@ -102,7 +102,7 @@ class _Helper:
 
 #: 補助の型の import(宣言の中の名 reads を読む時だけ置く)。後の 2 つは defeffect の展開が import する macro の補助の名で、
 #: 宣言の基底・飾りがそのまま読む — 隠す名(_doeff_)の import は公開し直さないので、ここで置かないと .pyi に
-#: 定義の無い名が残り、使い手には effect の基底が Unknown(答えの型も Unknown)になっていた(agora-redesign #2886)。
+#: 定義の無い名が残り、使い手には effect の基底が Unknown(答えの型も Unknown)になっていた。
 _HELPERS = (
     _Helper("TypeAlias", "typing", "TypeAlias", None),
     _Helper("Incomplete", "_typeshed", "Incomplete", None),
@@ -206,7 +206,7 @@ def _absolute(path: Path) -> Path:
 
 def hidden_name(name: str) -> bool:
     """型の面に出さない名か(module の印・Hy の gensym・macro の補助と記帳)。手書きの宣言と実装を照らす検
-    (doeff-core-effects の test_hy_module_stubs)も、公開の名をこの 1 か所で決める(agora-redesign #2909 — MODULE_TAGS を
+    (doeff-core-effects の test_hy_module_stubs)も、公開の名をこの 1 か所で決める(MODULE_TAGS を
     道具は隠し検は数える食い違いで、頭のタグを足した module が赤になった)。"""
     return name in _HIDDEN_NAMES or name.startswith(_HIDDEN_PREFIXES)
 
@@ -505,7 +505,7 @@ def _declared_answer(statement: ast.stmt, type_vars: frozenset[str]) -> ast.expr
 
 def _effect_base(base: ast.expr, answer: ast.expr | None) -> ast.expr:
     """defeffect の基底(素の EffectBase)に答えの型を載せるため — 使い手の `<-`(型検査の展開では `_doeff_perform(e)` = e の
-    Program[T] の T)が答えを読めるように(素のままだと使い手には答えが Unknown — agora-redesign #2886)。型検査の展開の
+    Program[T] の T)が答えを読めるように(素のままだと使い手には答えが Unknown)。型検査の展開の
     defeffect の基底は素のまま(定義する module の検に、素の総称の答えの赤を足さない — #2322)で、.pyi だけが答えを持つ。"""
     match base:
         case ast.Name(id="_doeff_effect_base") if answer is not None:
@@ -577,7 +577,7 @@ def _placed(statement: ast.AST, init: ast.FunctionDef) -> _Placed | None:
 
 def _init_attributes(node: ast.ClassDef, declared: frozenset[str]) -> list[ast.stmt]:
     """__init__ の中で self に置く欄の宣言。型検査は .pyi に書かれていない欄を読めないので、method だけを宣言した class は欄を
-    求める Protocol を満たさなかった(WalStore と ByteLog — agora-redesign #2972)。型は注記つきの置き方(`(setv #^ T self.x …)`)の
+    求める Protocol を満たさなかった(WalStore と ByteLog)。型は注記つきの置き方(`(setv #^ T self.x …)`)の
     T か、引数をそのまま置く時はその引数の注記。どちらでもない欄は型を推さず Incomplete にする(書き手が注記を足す先として
     報告される)。class の本体で既に宣言した名と、`_` で始まる私的な欄(使い手が読む型の面ではない — 出すと型の分からない欄の
     報告が増えるだけ)は足さない。"""

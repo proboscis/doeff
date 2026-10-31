@@ -177,7 +177,7 @@
 
 
 (deftest test-the-link-deadlines-follow-the-wall-clock-after-it-stepped-back-inside-a-tick
-  ;; card ki-069f4a5c07f7: tick の頭の後に壁の時計が 10 秒戻っても、heartbeat の期限は今の壁の時計の枠で「あと 2 秒」(今 −8500 +
+  ;; tick の頭の後に壁の時計が 10 秒戻っても、heartbeat の期限は今の壁の時計の枠で「あと 2 秒」(今 −8500 +
   ;; 間隔の残り 2000 = −6500)。前の枠の刻(最後に届いた返事 1000 + 間隔 = 3500)のままだと、待ちは 12 秒になる。
   (<- wakes WakeSet (link-wakes-after-a-step 10000))
   (assert (= wakes.due (DueAt :at -6500)) wakes)

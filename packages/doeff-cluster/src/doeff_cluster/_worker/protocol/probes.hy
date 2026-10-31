@@ -40,8 +40,8 @@
 
 
 (defrecord ProbeSettings
-  "入口の検めの起こし方の設定(worker の組み立ての入口 main が作る): python = shim を起こす interpreter(hy を通さない素の python —
-   card ki-869cdf21ec85)・hy-command = 木の job の hy・layout = 業務の repo の木の形・probe-dir = 実行環境の job の検めの cwd と束の出力の file の dir・
+  "入口の検めの起こし方の設定(worker の組み立ての入口 main が作る): python = shim を起こす interpreter(hy を通さない素の python)
+   ・hy-command = 木の job の hy・layout = 業務の repo の木の形・probe-dir = 実行環境の job の検めの cwd と束の出力の file の dir・
    shim = shim の時間の内訳(worker の方針から shim_timing.shim-spans が導く — 検めの shim の猶予と、時間切れの束を強いて止めるまでの
    待ちが同じ値を読む・#2940)・timeout-seconds = 束 1 本の時間の上限。"
   (#^ str python)
@@ -56,7 +56,7 @@
   "走っている検めの束 1 本(木ごとに 1 本): pid = shim の process(group の先頭)・specs = 束の spec・targets = 束の対象(検める順)・
    runtime-env = 実行環境の宣言・started-ms = 起こした時刻(epoch ms)・out / err = 標準出力と標準エラーを受ける file・
    stopping-ms = 時間切れで止めの合図を送った時刻(epoch ms・送っていなければ None — #2940)・entry-place = 対象の入口の名の置き場
-   (実行環境の束は root の完成の印の置き場・木の束は None — 起こす時と片づける時が同じ対象の名を読む・card ki-7a7a1dcb1933)。"
+   (実行環境の束は root の完成の印の置き場・木の束は None — 起こす時と片づける時が同じ対象の名を読む)。"
   (#^ int pid)
   (#^ tuple specs)
   (#^ tuple targets)
@@ -84,7 +84,7 @@
   "束 1 本を起こすため: 束の spec の対象を重ねずに並べ、shim を group の先頭にして 1 つの process で検める。n = 出力の file の名の番号。"
   (val code-path (get batch 0))
   (val runtime-env (get batch 1))
-  ;; 実行環境の束は、子と同じく root の完成の印の置き場の名を検める(card ki-7a7a1dcb1933 — 子は root の版の doeff で起きる)。
+  ;; 実行環境の束は、子と同じく root の完成の印の置き場の名を検める(子は root の版の doeff で起きる)。
   (var allowed #())
   (var place None)
   (when runtime-env

@@ -60,7 +60,7 @@
 (defhandler bytecode-kept-out
   ;; 検の差し込み: 検めの shim の環境に PYTHONDONTWRITEBYTECODE を足してから本物へ渡す。実行環境の検めの子は許可表で組んだ環境(REPLACE)で
   ;; 起き、PYTHON* を継がないので、根の conftest の固定が届かず checkout の中に bytecode を書く(前は fake の uv の包みが立てていた —
-  ;; 本体を uv run を挟まずに起こす card ki-869cdf21ec85 で包みを通らなくなった)。test_task_venv_on_both_paths.hy の同じ名の差し込みと同じ訳。
+  ;; 本体を uv run を挟まずに起こす包みを通らなくなった)。test_task_venv_on_both_paths.hy の同じ名の差し込みと同じ訳。
   (StartProcess [argv cwd env env-mode env-drop stdout-path stderr-path process-group hold-stdin reap-group]
     (<- answer (StartProcess :argv argv :cwd cwd :env (+ (or env #()) #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))
                              :env-mode env-mode :env-drop env-drop :stdout-path stdout-path :stderr-path stderr-path

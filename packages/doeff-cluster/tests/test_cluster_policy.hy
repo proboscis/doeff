@@ -52,7 +52,7 @@
   (assert (= (.size (! (jobs-placed 1000 state T))) 0)))
 
 (deftest test-memory-and-jobs-for
-  ;; memory の予算 250 MiB の worker に settle 100 の job 3 本: 2 本だけ置ける(card ki-2acb63aec0fd — 数でなく memory で数える)。
+  ;; memory の予算 250 MiB の worker に settle 100 の job 3 本: 2 本だけ置ける(数でなく memory で数える)。
   (setv state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (replace (! (worker "mac" 0)) :memory-mib 250)}))))
   (setv result (! (jobs-placed 0 state T)))
   (assert (= (sorted (.keys result)) ["a" "b"]))
@@ -605,7 +605,7 @@
   (assert (= #(quiet.revision quiet.audit-seq) #(first.revision first.audit-seq))))
 
 
-;; --- worker の枠(card ki-2acb63aec0fd — #3489 の task-reserve を引き継ぐ)----------------------------------------------------
+;; --- worker の枠(#3489 の task-reserve を引き継ぐ)----------------------------------------------------
 ;; job の側は memory で数える: 置いた job と surge の settle の和 + 新しい job の settle ≤ memory-mib の時だけ置く(memory-misfit)。task の側は
 ;; 予約(task-reserve)+ 背景の枠(background-room)− 置いた task(task-room-of)で、常駐の job の数に依らない。置けない job は memory の訳を、
 ;; 置けない task は理由の閉じた語 TASK-NO-ROOM の固定の文を持って待つ。
@@ -626,7 +626,7 @@
   (replace (! (worker name seen room)) :task-reserve reserve :memory-mib memory :versions #((ComponentVersion "python" "3"))))
 
 (deftest test-a-job-over-the-memory-allowance-is-refused-by-name
-  ;; 失敗ケース(card ki-2acb63aec0fd の受入 c74f57d5e): memory の予算 250 MiB の worker に settle 100 の job を 3 本。2 本(名の順に a・b)を
+  ;; 失敗ケース: memory の予算 250 MiB の worker に settle 100 の job を 3 本。2 本(名の順に a・b)を
   ;; 置き、3 本目 c は置かずに、job・worker・settle の和・job の settle・予算を名指して断る。理由の文と GET /state の unplacedDetail が同じ訳を持つ。
   (val state (ClusterState #((! (job "a")) (! (job "b")) (! (job "c"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 1 250))}))))
   (val placed (! (jobs-placed 0 state T)))
@@ -1052,7 +1052,7 @@
   (assert ok "新しい世代の process が期限の前に lease を取れる"))
 
 (deftest test-a-new-generation-overlapping-a-running-elder-leaves-the-elder-leases-held
-  ;; 失敗ケース(AL-D2e・card ki-d17d5d63d9ed — 10-11 17:36:49 JST の zeus の RollingUpdate): 新しい世代が、前の世代がまだ走っている
+  ;; 失敗ケース(AL-D2e — 10-11 17:36:49 JST の zeus の RollingUpdate): 新しい世代が、前の世代がまだ走っている
   ;; (起動の script が前の世代の dir の錠を持たれていると見た)と名乗る(overlapsElder)。前の世代の process は走り続けているので、担い手を
   ;; 外さず、その process の延長も通す(直す前は #3770 が外し、recreate の job の process が返しで LeaseLost で落ち、退き中の handoff の
   ;; process の lease の延長が断られて走っていた仕事が切れた)。新しい世代の process は、前の担い手が返すか期限が来るまで取れない。
@@ -1091,7 +1091,7 @@
   (assert ok))
 
 
-;; --- 退きの保ち(card ki-e3531030eb37): 今の世代の worker への返事は、入れ替えの job の退いた process のうち、退きの保ち(名前付きの lease
+;; --- 退きの保ち: 今の世代の worker への返事は、入れ替えの job の退いた process のうち、退きの保ち(名前付きの lease
 ;;     RETIREMENT-HOLD)を期限の内に持つ process の世代の名を JobSpec.retired-held に載せる(worker はその process を寿命の上限で止めない)。---
 (import doeff_cluster._coordinator.core.cluster_policy [heartbeat-reply])
 (import doeff_cluster [RETIREMENT-HOLD RETIREMENT-HOLD-PERMITS])
@@ -1301,7 +1301,7 @@
   (assert (= (! (cold-starts (! (table-from-rows {"p" (replace (get tasks "p") :phase "queued")})) (! (table-from-rows tasks)))) 0)))
 
 
-;; --- tasks が表になった後の失敗ケース(ki-7da93582d95e — T3a の test 側) -------------------------------------------------------
+;; --- tasks が表になった後の失敗ケース(T3a の test 側) -------------------------------------------------------
 
 (deftest test-the-same-tasks-inserted-in-another-order-place-to-the-same-workers-and-answer-the-same-json
   ;; 失敗ケース: 表の行の並びは挿入順。置き先と GET /state の task の JSON が並びに依ると、同じ task の集合が送られた順で別の結果になる。

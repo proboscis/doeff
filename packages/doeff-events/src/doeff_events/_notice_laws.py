@@ -1,4 +1,4 @@
-"""The delivery laws of the notice broker — the one place they are declared (agora-redesign #3850).
+"""The delivery laws of the notice broker — the one place they are declared.
 
 Every law is a program that drives a handler stack through public effects only and raises ``LawBroken`` when the
 law does not hold. The same programs run against the in-memory broker and against a real Redis server, and a
@@ -16,7 +16,7 @@ The laws of the upper layer (``notice_events_handler`` — what a business progr
   the broker came back (``SourceResumed``), and — like the start — only after the subscription is in place again.
 
 The laws of a sender the broker could not take a notice from (the receivers stay subscribed and connected —
-agora-redesign #3864, ADR-DOE-EVENTS-002 R5):
+ADR-DOE-EVENTS-002 R5):
 
 - ``law_missed_notice_is_told_once_the_broker_is_back`` — ``Publish`` answers ``NoticeGapMarked`` instead of
   raising, and once the broker is back the receivers are told once that the channel has a gap (``SourceMissed``).

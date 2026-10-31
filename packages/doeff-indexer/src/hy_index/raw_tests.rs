@@ -71,7 +71,7 @@ const CLOCK: &str = r#"(import time)
 (defk reads-clock [] (<- (GetTime)))
 "#;
 
-/// 局所の束縛の名が method の名(`stat`・`read-text`)と同じでも証拠にしない反例(agora-redesign #798 — agora-controllers の
+/// 局所の束縛の名が method の名(`stat`・`read-text`)と同じでも証拠にしない反例(agora-controllers の
 /// daily_verify_translate.hy の kind-at で `(<- stat (StatPath …))` の `stat` が `.stat` の弱い証拠になっていた)。method の名は
 /// `(.m x)` の頭・`x.m` の属性・`(. obj m)` / `(. obj (m …))` の属性にある時だけ method の証拠。
 const MEMBERS: &str = r#"(import pathlib [PurePosixPath])
@@ -289,7 +289,7 @@ fn catalog_extra_adds_names_and_reports_unknown_categories() {
     assert_eq!(direct(&after, "custom-program"), vec!["http my_http_lib.get", "time .tick?"]);
 }
 
-/// 目録の引数の上限(max_args)で、同じ名の別の型の method を数えない(agora-redesign #3014 — doeff-cluster の process_host.hy の
+/// 目録の引数の上限(max_args)で、同じ名の別の型の method を数えない(doeff-cluster の process_host.hy の
 /// 文字列の `(.replace name "/" "_")` が、pathlib を import した file の中で Path.replace の弱い証拠になっていた)。Path.replace は
 /// 引数 1 つ(target)・str.replace は 2 つ以上。呼びの頭でない参照は引数が分からないので今までどおり数える。cache を往復しても同じ。
 #[test]

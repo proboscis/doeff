@@ -6,7 +6,7 @@
 ;; - 約束の在る job の移し替え(kept-reassign-after-ms)は長い方の柵(keep-fence-ms)と移し替えより長く、忘れる期限より短い。
 ;; - 待ちの上限 < worker の client の打ち切り < 受付の打ち切り。延ばすのは scaled-timing(比 1 つ)だけ。
 ;; - 模擬の世界(sim-plan)の時間の既定は比で延ばした値(scaled-timing SIM-TIMING-RATIO)。本番の値で走らせる筋書きは :timing に
-;;   ClusterTiming の既定を明示して渡し、その値がそのまま使われる(Mac の調整役の決定 2026-10-07 05:1x の道 ホ)。
+;;   ClusterTiming の既定を明示して渡し、その値がそのまま使われる。
 ;; - 忘れる判断(forget-silent-workers)と、その期限(liveness-due)は設定の worker-forget-ms を読む(定数ではない — 模擬の世界が設定を
 ;;   丸ごと比を保って延ばす時に、忘れる期限も一緒に動く)。
 (require doeff-hy.macros [deftest <- val])
@@ -71,7 +71,7 @@
   (assert (= due (DueAt :at (+ (* 2 3600 1000) 1))) due))
 
 
-;; --- 待ちの上限と HTTP の打ち切り(Mac の調整役の決定 2026-10-07 04:4x の選び 1)--------------------------------------------
+;; --- 待ちの上限と HTTP の打ち切り--------------------------------------------
 
 (deftest test-the-watch-and-http-cutoffs-keep-their-order
   ;; 待ちの上限 < worker の client の打ち切り < 受付の thread の打ち切り。崩れた組は作る時に断る。既定は本番の値(10 秒・15 秒・30 秒)。

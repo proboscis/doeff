@@ -1,4 +1,4 @@
-;; 新しい worker が古い coordinator の heartbeat の返事を読んだ時(配備の順の誤り — card ki-01d1f8cb0391・#3767)。
+;; 新しい worker が古い coordinator の heartbeat の返事を読んだ時(配備の順の誤り・#3767)。
 ;;   doeff 7decfe5f7 から、Program の job の行は送り手の版 versions を必ず持つ(coordinator が宣言の行の run.versions を載せ、worker は
 ;;   cache の file を (sha・版) ごとに決める)。古い coordinator の返事の job の行には versions が無い。配備は coordinator を先に上げるが、
 ;;   順を誤って worker を先に上げた時に、その拍は黙って止まってはいけない。直す前は、拍が ready の file を書いた後に declared-job-spec の

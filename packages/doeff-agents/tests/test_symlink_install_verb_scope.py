@@ -1,6 +1,6 @@
 """symlink を据える物理が、許した 2 つの動詞の**中**にしか無いことの構造検査。
 
-card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8 / 設計
+決定 D8 / 設計
 ``docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/design.md`` 3.6 (b)。
 
 なぜ semgrep では足りないか

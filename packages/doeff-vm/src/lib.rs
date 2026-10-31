@@ -40,7 +40,7 @@ fn vm_live_counts() -> (usize, usize, usize) {
 /// Return (steps, handler_calls) taken by every VM in this process so far —
 /// cumulative, never decreasing. doeff-hy-pytest's budget plugin reads it
 /// (through the effect `ReadVmWorkCounts`) before and after a test to judge
-/// the test by a load-independent count (agora-redesign #2670 / #2851).
+/// the test by a load-independent count (#2851).
 #[pyfunction]
 #[pyo3(name = "_vm_work_counts")]
 fn vm_work_counts() -> (u64, u64) {
@@ -54,7 +54,7 @@ fn vm_work_counts() -> (u64, u64) {
 /// at to find one in a detached continuation chain (`chain_fibers`).
 /// Cumulative, never decreasing: a test reads it before and after, to
 /// judge by a load-independent count whether one step's work grows with
-/// the parked tasks or the handler depth (agora card ki-9de8d0a54408).
+/// the parked tasks or the handler depth.
 #[pyfunction]
 #[pyo3(name = "_vm_scan_counts")]
 fn vm_scan_counts(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
@@ -91,7 +91,7 @@ fn set_invariant_checks(on: bool) {
 /// list it. The VM's counts and switches are read and set through doeff's
 /// effects (`ReadVmWorkCounts`, `SetInvariantChecks`, ... answered by
 /// `doeff_core_effects.handlers.vm_probe_handler`); the functions stay inside
-/// for that handler and doeff's own scheduler (agora card ki-27e8ea225b62).
+/// for that handler and doeff's own scheduler.
 pub(crate) fn bind_internal(
     m: &Bound<'_, PyModule>,
     function: Bound<'_, pyo3::types::PyCFunction>,

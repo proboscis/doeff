@@ -1,4 +1,4 @@
-;;; 汎用の列(channel)の effect(agora-redesign #802 便 4 の相乗り・最初の消費者 = agora の画面の処理ループの受け口 — socket の 1 通・起こし・
+;;; 汎用の列(channel)の effect(最初の消費者 = agora の画面の処理ループの受け口 — socket の 1 通・起こし・
 ;;; 記録の表の変更・Spawn した task の答えを 1 本の列で届いた順に読む。btc-w1 の #811)。業務の語を持たない土台の語彙。
 ;;; 答え手は scheduler-channel-handler(scheduler_channel.hy)1 つだけ — I/O を持たず、同じ run の scheduler の promise で待つので、本番と模擬で
 ;;; 同じ物を使う(差し替える物が無い)。scheduled の下で使う。

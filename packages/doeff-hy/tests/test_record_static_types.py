@@ -1,8 +1,8 @@
-"""defrecord の :check の展開と doeff_hy.record の型(record.pyi)の失敗ケース(agora-redesign #2252)。
+"""defrecord の :check の展開と doeff_hy.record の型(record.pyi)の失敗ケース。
 
 :check つきの defrecord は `(import doeff_hy._declarations doeff_hy.record doeff_hy._record_check)` を出し、`doeff_hy.record.DoExpr`・
 `doeff_hy.record.EffectBase`・`doeff_hy._record_check.require_check` を名指す(require_check は前は `doeff_hy.record` に在った —
-macro の module は macro だけを見せる・ADR-DOE-API-001 R14・card ki-a28c20b93638)。前は使う側の defrecord の行に strict の赤が 5 件出ていた:
+macro の module は macro だけを見せる・ADR-DOE-API-001 R14)。前は使う側の defrecord の行に strict の赤が 5 件出ていた:
 
 - record.hy は Hy の module で型の宣言が無く、名指す 4 つの名(record・DoExpr・EffectBase・require_check)が Unknown。
   → record.pyi で宣言する。
@@ -92,7 +92,7 @@ def _expand(source: str) -> str:
 
 
 def test_only_the_runtime_expansion_refuses_a_program_verdict() -> None:
-    # :check の答えが Program かの判定(`isinstance(v, (DoExpr, EffectBase))`)は実行時の展開だけに在る(card ki-601652993a18)。
+    # :check の答えが Program かの判定(`isinstance(v, (DoExpr, EffectBase))`)は実行時の展開だけに在る。
     # 型検査の展開に在ると、pyright 1.1.414 は同じ process で前に検めた file によってこの tuple を
     # `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType を出した(agora-controllers の
     # 日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つ)。書き手は直せない。
@@ -131,7 +131,7 @@ def test_a_bookkeeping_import_with_no_reader_is_dropped() -> None:
 
 def test_the_stub_matches_record_hy() -> None:
     # record.pyi が宣言する名は record.hy に在り(宣言だけが先へ行かない)、関数を宣言しない — record.hy は macro のほかに
-    # 関数を見せない(require_check は内側の doeff_hy._record_check・card ki-a28c20b93638)。
+    # 関数を見せない(require_check は内側の doeff_hy._record_check)。
     stub = ast.parse(Path(record.__file__).with_suffix(".pyi").read_text(encoding="utf-8"))
     declared = [
         alias.asname or alias.name

@@ -49,7 +49,7 @@
   {:pre [(: platform str)] :post [(: % tuple)]}
   "準備の process の CPU の優先度を下げる命令の頭を組むため(platform = この worker の platform)。Linux は SCHED_IDLE(chrt --idle)と
    nice 10、他(macOS の worker — chrt が無い)は nice 10 だけ。SCHED_IDLE は同じ Pod の service(SCHED_OTHER・nice 0)が起きた時に
-   必ず譲り、重みも 3 なので、焼きを何本並べても service の CPU の取り分が並べた本数で決まらない(card ki-757b489f8a14 —
+   必ず譲り、重みも 3 なので、焼きを何本並べても service の CPU の取り分が並べた本数で決まらない(
    nice 10 の焼き 31 本・20 core の窓で service の和の CPU の待ちが 59%、前後の窓は 15〜16%)。"
   (if (.startswith platform "linux")
       #("chrt" "--idle" "0" "nice" "-n" "10")

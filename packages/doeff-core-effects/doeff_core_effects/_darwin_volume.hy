@@ -1,5 +1,5 @@
 ;;; macOS(Darwin)の volume の空きの読み — CoreFoundation の CFURLCopyResourcePropertyForKey で、volume の資源の key
-;;; kCFURLVolumeAvailableCapacityForOpportunisticUsageKey(先回りの・無くてもよい物の置き場の空き)を読む(card ki-4ee952807ce0)。
+;;; kCFURLVolumeAvailableCapacityForOpportunisticUsageKey(先回りの・無くてもよい物の置き場の空き)を読む。
 ;;;
 ;;; statvfs の空き(shutil.disk_usage)は、macOS が要る時に自動で空ける領域(APFS の local snapshot が持つ消した中身・消してよい cache)
 ;;; を使えない空きとして引く。Apple の文書の使い分けは、利用者が頼んだ物・動くのに要る物の置き場 = ImportantUsage、先回りの・無くてもよい

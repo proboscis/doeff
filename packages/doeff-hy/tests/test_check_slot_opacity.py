@@ -1,10 +1,10 @@
-"""doeff_hy._check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検(設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
+"""doeff_hy._check_slot(M-slot)が、機体の検の枠の正本の方策と持ち物を開かない形の機械の検。
 
 守る知識: 正本の方策の中身(欄の名・値)・入れ子の時の幅の規則・env の名は正本の持ち物で、M-slot は知らない。M-slot が正本から
 受ける物は、方策(read_policy の答え)と持ち物(take の答え)という **開かない物** と、並走の数(process_width の答え)という整数だけ。
 
 直す前の検(test_the_canon_policy_goes_straight_into_take)は「read_policy の答えは take の 1 つ目の引数にしか現れない」を見た。
-守りたい知識より狭く、広かった(card ki-1bfe2c42dce6)。
+守りたい知識より狭く、広かった。
 - 入る向きだけを見た: take の答えから欄を読む実装(`holding.policy.processes_per_slot`)は通った(盲検 B)。
 - 正しい形を断った: 方策を名に束ねて正本の公開の口(process_width)へ渡す形は read_policy の答えが take 以外に現れて赤(盲検 A)。
 
@@ -413,7 +413,7 @@ def test_the_guard_refuses_each_way_of_opening_what_the_canon_gave(
 
 
 def test_the_guard_refuses_the_blind_b_patch_as_it_was_written() -> None:
-    """盲検 B の差分(設計検証 lt-W8F3HD41FWBR4PS26EDSEJDJMT)の核: 持ち物の Protocol に policy を足し、SlotHeld が持ち物から
+    """盲検 B の差分の核: 持ち物の Protocol に policy を足し、SlotHeld が持ち物から
     processes_per_slot を読んで幅を決める。持ち物の欄の名は code の名として現れるので、正本の名の検が拒む。"""
     patch = '''
 class SlotPolicy(Protocol):

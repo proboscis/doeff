@@ -1,4 +1,4 @@
-;;; 機体の process の表の効果(proc_table_effects.hy)の本物の答え手 os-proc-table-handler(card ki-7b934e2538f9)。
+;;; 機体の process の表の効果(proc_table_effects.hy)の本物の答え手 os-proc-table-handler。
 ;;;
 ;;;   ReadProcTable  /proc の直下の数の dir ごとに stat を 1 度読み、ProcRow の列(pid の昇順)で答える。読む間に終わった process・
 ;;;                  zombie は入れない。rss は page の数 × この機体の page の byte(os.sysconf の SC_PAGE_SIZE)。

@@ -1,5 +1,5 @@
 ;;; 子 process の終わりを待つ効果(process_effects.hy の AwaitProcessExit・warm_effects.hy の AwaitWarmChildExit)の答え手
-;;; process-exit-handler(agora-redesign #3871 の単位 1)。
+;;; process-exit-handler。
 ;;;
 ;;; 待ち方: その process が終わると読める fd を開き、await-handler の共用の asyncio の loop の add_reader に掛け、読めた時に答える —
 ;;; 周期で問わない。fd の開き方だけが機体ごと(EXIT-FD-OPENERS — Linux = pidfd_exit.hy の pidfd-of〔pidfd_open〕・macOS = kqueue_exit.hy
@@ -19,7 +19,7 @@
 ;;; 止まりの見張り: 待ちは終わりの知らせの出どころ(終わると読める fd)が登録された外部の待ちなので、Await の source-alive に
 ;;; 「待つ相手がまだ終わっていないか」の読み(AwaitProcessExit = child-running・AwaitWarmChildExit = same-child-running)を渡す。
 ;;; scheduler は相手が生きている間の待ちを止まりと数えず、相手が終わったのに知らせが届かない待ちは止まりと数える(条 S1 —
-;;; packages/doeff-core-effects/architecture.hy・card ki-6222e22d4179)。読みは scheduler の thread で、止まりの見張りの周期ごとに走る。
+;;; packages/doeff-core-effects/architecture.hy)。読みは scheduler の thread で、止まりの見張りの周期ごとに走る。
 ;;;
 ;;; 外側に await-handler と scheduled が要る。
 (require doeff-hy.macros [defhandler defk <- val])
