@@ -12,6 +12,10 @@
 - **doeff-run:** a docker handler (`docker_run_handler` with its `DockerRunHost`) that runs each run as one container
   through the docker CLI and reads states and events from `docker container inspect`; a read waits on `docker events`
   instead of polling. The contract test runs under it when `DOEFF_RUN_DOCKER=1` is set on a machine with docker.
+- **doeff-run:** a k3s handler (`k3s_run_handler` with its `K3sRunHost`) that runs each run as one Pod through `kubectl`.
+  A stopped Pod keeps its exit code until `RunRemove` (a finalizer), an `env` value is never written into the Pod
+  declaration (a Secret owned by the Pod carries it), and a read waits on a watch from the version it read instead of
+  polling. The contract test runs under it when `DOEFF_RUN_K3S=1` is set with a test namespace and a workload image.
 - doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
   installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.

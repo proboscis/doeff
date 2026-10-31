@@ -197,7 +197,7 @@ def test_a_running_pod_is_live_since_it_started() -> None:
 
 def test_a_pod_that_ended_by_itself_is_stopped_as_exited_with_its_code() -> None:
     state, events, _ = read_pod(HANDLE, pod(state=terminated(3), phase="Failed"))
-    assert state == RunStopped(exit_code=3, cause=StopCause.EXITED, detail="Error")
+    assert state == RunStopped(exit_code=3, cause=StopCause.EXITED)
     assert [(e.seq, type(e.state)) for e in events] == [(1, RunLive), (2, RunStopped)]
     assert events[1].at == datetime(2026, 10, 31, 16, 51, 53, tzinfo=UTC)
 

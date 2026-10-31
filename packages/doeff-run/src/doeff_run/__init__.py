@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     from doeff_run._faults import RunVanish as RunVanish
     from doeff_run._docker import DockerRunHost as DockerRunHost
     from doeff_run._docker import docker_run_handler as docker_run_handler
+    from doeff_run._k3s import K3sRunHost as K3sRunHost
+    from doeff_run._k3s import k3s_run_handler as k3s_run_handler
     from doeff_run._fake import FakeBehavior as FakeBehavior
     from doeff_run._fake import FakeRunWorld as FakeRunWorld
     from doeff_run._fake import fake_run_handler as fake_run_handler
@@ -70,6 +72,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RunVanish": "doeff_run._faults",
     "DockerRunHost": "doeff_run._docker",
     "docker_run_handler": "doeff_run._docker",
+    "K3sRunHost": "doeff_run._k3s",
+    "k3s_run_handler": "doeff_run._k3s",
     "FakeBehavior": "doeff_run._fake",
     "FakeRunWorld": "doeff_run._fake",
     "fake_run_handler": "doeff_run._fake",

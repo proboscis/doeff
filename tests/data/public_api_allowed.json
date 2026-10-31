@@ -13430,6 +13430,13 @@
   {
    "package": "doeff-run",
    "module": "doeff_run",
+   "name": "K3sRunHost",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
    "name": "RefusalWhy",
    "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
