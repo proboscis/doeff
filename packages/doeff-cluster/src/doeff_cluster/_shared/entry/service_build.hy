@@ -91,8 +91,7 @@
   (System :name name :jobs jobs :task-limits named))
 
 
-;; defk にできない: declare の CLI が呼ぶ
-(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions
+(deff system-declaration [#^ System system #^ str revision #^ (| RuntimeEnv None) [runtime-env None] #^ (| dict None) [environ None] * #^ dict versions  ; defk にできない: declare の CLI が呼ぶ
                           #^ (| dict None) [contents None]]
   {:pre [(: system System) (: revision str) (: versions dict) (: runtime-env (| RuntimeEnv None)) (: environ (| dict None)) (: contents (| dict None))]
    :post [(: % Declaration)] :tags {:context "doeff-cluster" :role "main" :spells "json"}}

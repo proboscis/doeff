@@ -289,8 +289,7 @@ def do(
     is a generator function), so ``f`` is ``Callable[P, Expand[T, Never]]``. This is the
     one type of ``do``: doeff-hy's type-check expansion (doeff_hy/_static_types.pyi) re-exports
     it instead of declaring a second ``do``, so a module that imports ``do`` as ``_doeff_do``
-    itself (the for/do contract) does not give the name a second, different type
-   .
+    itself (the for/do contract) does not give the name a second, different type.
 
     An ``async def`` function (a coroutine function or an async generator function) is a
     ``TypeError`` where ``@do`` is applied: calling it gives a coroutine or an async generator,

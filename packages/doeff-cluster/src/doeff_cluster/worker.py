@@ -218,6 +218,7 @@
 #   notice_variable open_relay placed_in reaped received_request refused_start replace_environ
 #   request_of run_entry run_forked served shim_code stamped_lines start_ticks thread_count
 #   write_replacing
+# moved-submodule-shim-names doeff_cluster.worker.entry.warm_watch:
 # moved-submodule-shim-names doeff_cluster.worker.intent.code_model:
 #   CompileSources DEFAULT_IMPORT_ROOTS ImportClosure LinkPycs MODULE_TAGS Note ScanTree WriteMarker
 # moved-submodule-shim-names doeff_cluster.worker.intent.drain_model:

@@ -395,8 +395,13 @@ def test_real_codex_worker_test_names_a_codex_that_does_not_start(
         return
     declarations = _declarations(check_layer, result)
     assert [declaration.kind for declaration in declarations] == ["tool-absent"]
-    assert declarations[0].reason.startswith(f"{CODEX_TEST}: codex")
-    assert "exits 127: codex: router entry point" in declarations[0].reason
+    reason = declarations[0].reason
+    assert reason.startswith(f"{CODEX_TEST}: codex")
+    # The check layer folds a reason to 300 characters and ends it with "…". The reason names the stand-in's
+    # path, which is as long as the run's tmp dir: under the daily run's long tmp dir only the exit status and
+    # the head of codex's own words are left before the fold.
+    said = "exits 127: codex: router entry point"
+    assert said in reason or (reason.endswith("…") and "exits 127: " in reason), reason
 
 
 # --- A premise other than a tool: a git checkout holding a pinned commit (依頼書 K) ----------
