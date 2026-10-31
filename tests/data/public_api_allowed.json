@@ -13430,6 +13430,13 @@
   {
    "package": "doeff-run",
    "module": "doeff_run",
+   "name": "ProcessRunHost",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
    "name": "RefusalWhy",
    "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
@@ -13570,8 +13577,57 @@
   {
    "package": "doeff-run",
    "module": "doeff_run",
+   "name": "VolumeAbsent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeCreated",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeEnsureOutcome",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeExisted",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
    "name": "VolumeMount",
    "組": "許した物 — effect の値の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumePresent",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeRefused",
+   "組": "許した物 — effect の答えの型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
+   "name": "VolumeStatusOutcome",
+   "組": "許した物 — effect の答えの型",
    "決め": "ADR-DOE-API-001 R2"
   },
   {
