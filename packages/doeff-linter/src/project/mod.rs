@@ -2320,6 +2320,9 @@ fn place_verdict(rel: &str, architecture: &architecture::Architecture) -> PlaceV
     let service_layers: BTreeSet<&str> =
         architecture.layers.iter().map(|l| l.name.as_str()).filter(|l| architecture.foundation.as_deref() != Some(*l)).collect();
     match parts.as_slice() {
+        [file] if Path::new(file).file_stem().and_then(|stem| stem.to_str()).is_some_and(|stem| architecture.root_modules.iter().any(|m| m == stem)) => {
+            PlaceVerdict::Declared
+        }
         [_file] => PlaceVerdict::UndeclaredPlace(explain::PlaceProblem::DirectlyUnderRoot),
         [first, ..] if architecture.foundation.as_deref() == Some(*first) => PlaceVerdict::Declared,
         [first, _file] if architecture.shared.as_deref() == Some(*first) || architecture.service_by_dir(first).is_some() => {
