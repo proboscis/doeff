@@ -1,2 +1,0 @@
-built: <class 'doeff_vm.doeff_vm.Call'>
-valid: [2, 4, 6]

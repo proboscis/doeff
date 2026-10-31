@@ -1,4 +1,4 @@
-"""開発の記録の図「35日の、日ごとのcommitの数」を、数えた表(reviews/fleet-commits.csv)からSVGに描く。
+"""開発の記録の図「35日の、日ごとのcommitの数」を、数えた表(checks/fleet-commits.csv)からSVGに描く。
 
 使い方: `uv run --no-sync python publications/zenn-use-cases-v0/visuals/fleet_commits_svg.py`。
 visuals/fleet-commits.svg を書き、PNGへはrender_svg.mjsで撮る(幅1200・高さ800)。
@@ -10,7 +10,7 @@ from itertools import accumulate  # 積み上げの高さを、下から順に�
 from pathlib import Path  # 表とSVGの置き場を指す。
 
 SOURCE = Path(__file__).resolve().parents[1]  # 記事の正本のディレクトリ。
-TABLE = SOURCE / "reviews/fleet-commits.csv"  # 2026-10-17に数えた表。
+TABLE = SOURCE / "checks/fleet-commits.csv"  # 2026-10-17に数えた表。
 OUTPUT = SOURCE / "visuals/fleet-commits.svg"  # 書き出すSVG。
 SERIES = (  # 下から積む順の系列(表の列名・凡例の名・色)。色はdatavizの既定の1〜3番。
     ("controllers", "裏の仕組み(配り役・作業ボードなど)", "#2a78d6"),  # 1番の青。

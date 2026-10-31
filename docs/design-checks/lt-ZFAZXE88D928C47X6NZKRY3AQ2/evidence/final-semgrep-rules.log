@@ -1,7 +1,0 @@
-# 規則の検(検体と実の木 — 起点の規則と時計の effect の規則)。対象版: d25e8a25e4fdfb831fe64d2601000d94b9fb6238
-$ uv run pytest tests/semgrep/test_vm_failfast_semgrep_rules.py -k "silence_anchor or clock_effect" -q
-4 passed, 25 deselected, 1 warning in 36.88s
-rc=0
-$ semgrep(commit の hook と同じ呼び方)--error 検体 2 本(発火する行)
-silence_anchor_read_outside_measure_forbidden [9, 13, 17, 20, 23, 26, 29, 32, 35, 38, 41] ['doeff-cluster-worker-silence-anchors-are-read-by-the-one-measure']
-clock_effect_answered_outside_time_handlers_forbidden [10, 15, 20, 21] ['doeff-cluster-clock-effects-are-answered-by-the-default-time-handlers']

@@ -1,6 +1,0 @@
-## (e4) session var の挙動(4 つの置き場 × 7 つの名)と、外の handler が Get / Put で session の値を差し替え・観測する公開の契約の検 — 対象 main fb4dd0f3b50417c54948a69ea0a0dd215e3f2829
-$ uv run pytest tests/test_handle_writer_names.py packages/doeff-hy/tests/test_val_var_lazy.py -k "defhandler-session or outer_handler or session" -q -W ignore
-
-test-admission: focused — 36 件(変更箇所の検証)
-....................................                                     [100%]
-36 passed, 124 deselected in 9.77s

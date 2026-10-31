@@ -1,8 +1,0 @@
-"""置き場から作った素の文字列の大域 HERE を読む関数の digest が、隣の file を替えた時・置き場を替えた時にどうなるかを測る。"""
-import sys
-sys.path.insert(0, sys.argv[1])
-import doeff_hy_bytecode_guard.macro_use as mu
-from doeff_hy_bytecode_guard.loader_hooks import file_sha256
-from doeff_hy_bytecode_guard.records import ValueReference
-import hereprobe.tools
-print(mu.value_digest(ValueReference("hereprobe.tools", "note"), file_sha256).digest)

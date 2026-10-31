@@ -1,8 +1,0 @@
-#!/bin/bash
-# 使い方: run2.sh <置き場 a|b> <保存先> <名> — 日次と同じく doeff_hy.static_check を __main__ の名で撃ち(python -m と同じ・展開の子 4)、
-# controllers/screen に当てて、秒と保存を引けた数・外れた数を出す。Hy の展開の置き場は温まった物を共有し、bytecode の置き場は回ごと(日次と同じ)。
-M=/tmp/kiwork/meas; side=$1; cache=$2; name=$3
-( cd $M/ac && env PYTHONPYCACHEPREFIX=$M/pyc-$name DOEFF_HY_CODE_STORE=$M/store-screen-before DOEFF_HY_CHECK_EXPANDERS=4 \
-    uv run --frozen --no-sync --project /work/toolset/worktrees/doeff-wt-ki1475-meas-$side python /tmp/kiwork/count_m.py \
-    --root $M/ac --strict --cache-dir $cache --pyright $M/fake-pyright controllers/screen > $M/out-$name.txt 2> $M/err-$name.txt )
-echo "$name($(git -C /work/toolset/worktrees/doeff-wt-ki1475-meas-$side log -1 --format=%h)・置き場 $side): $(grep '^全体' $M/err-$name.txt)"

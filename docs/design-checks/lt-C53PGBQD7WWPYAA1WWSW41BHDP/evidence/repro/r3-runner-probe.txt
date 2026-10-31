@@ -1,6 +1,0 @@
-# r3: 盲検 B の runner_probe.py(blind/b-files/runner_probe.py.txt)を cf27cee98 の検の file に当てる — doeff の口でない run を数えるか
-$ uv run python /tmp/ki3497-blind-B/scratch/runner_probe.py packages/doeff-traverse/tests
-subprocess.run(hy2py) -> ['run']
-asyncio.run -> ['run']
-local defn run -> ['run']
-exit=0

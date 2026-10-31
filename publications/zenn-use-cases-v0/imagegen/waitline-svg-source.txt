@@ -1,7 +1,7 @@
 待ちの1行の記事（doeff-waitline.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
 
 - 正本：../visuals/waitline-concept.svg・../visuals/waitline-flow.svg・../visuals/waitline-days.svg。
-- waitline-days.svgは、日ごとの表../reviews/waitline-days.csvから../visuals/waitline_days_svg.pyで描く。
+- waitline-days.svgは、日ごとの表../checks/waitline-days.csvから../visuals/waitline_days_svg.pyで描く。
   - workと筆者を待つ申告は数の桁が違うので、1つの軸に混ぜず、左右2段に分けた。右の段に「左と目盛りが違う」と書いた。
   - 配色はdatavizの既定の1〜3番（#2a78d6・#eb6834・#1baf7a）。白背景で色の確かめの道具を通した（水色の字の濃さだけWARN。値の字を全部の行に添えた）。
   - workは1つの系列なので灰の1色にし、凡例は置かず段の見出しで名指した。

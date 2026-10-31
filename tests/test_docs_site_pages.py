@@ -1,6 +1,6 @@
 """docs の site(mkdocs.yml)の page の組が、docs/index.md の目次と同じである事の検(取り組み doeff-publish・card ki-ba5f61eb7962)。
 
-site に入るのは docs/index.md の目次から辿る利用者向けの page だけで、開発の記録(docs/design・docs/adr・docs/history ほか)は
+site に入るのは docs/index.md の目次から辿る利用者向けの page だけで、開発の記録(docs/adr・docs/specs ほか)は
 入れない。page の組は mkdocs.yml の 2 か所(exclude_docs の許す一覧と nav)に在り、2 つの食い違いは site の build
 (mkdocs build --strict)が落とす。この検は、目次と nav の食い違いを落とす — 目次に page を足して nav に足し忘れると、その page は
 site に出ない(build は落ちず、hook が GitHub への link に替える)。
@@ -106,7 +106,7 @@ def test_site_holds_only_the_nav_pages() -> None:
 
 
 def test_site_pages_are_top_level_docs() -> None:
-    """開発の記録(docs/design・docs/adr・docs/history ほか、docs/ の下の dir)を site に入れないため。"""
+    """開発の記録(docs/adr・docs/specs ほか、docs/ の下の dir)を site に入れないため。"""
     pages = _nav_pages(_mkdocs()["nav"])
     assert [page for page in pages if "/" in page and page not in PUBLISHED_SUBDIR_PAGES] == []
     assert [page for page in pages if not (DOCS / page).is_file()] == []

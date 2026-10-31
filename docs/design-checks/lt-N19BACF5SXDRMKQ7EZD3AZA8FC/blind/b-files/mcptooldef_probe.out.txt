@@ -1,5 +1,0 @@
-== n=3 (実装の版・無変更)
-1 diagnostics
-error reportCallIssue 25 No parameter named "bogus"
-== n=70 (実装の版・無変更)
-0 diagnostics

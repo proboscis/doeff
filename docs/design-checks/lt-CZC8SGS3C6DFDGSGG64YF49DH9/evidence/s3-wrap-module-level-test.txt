@@ -1,4 +1,0 @@
-# S3 の失敗例: module の段の handle も(型検査の展開の外では)すぐ呼ぶ関数に包む — 作業木 doeff-wt-blind-a-ki-edab(08ddfc707 + s3-wrap-module-level.diff + 強めた tests/test_handle_scope.py)・2026-10-12T04:42:34Z
-## uv run pytest tests/test_handle_scope.py -q
-57 passed, 1 warning in 7.02s
-rc=0

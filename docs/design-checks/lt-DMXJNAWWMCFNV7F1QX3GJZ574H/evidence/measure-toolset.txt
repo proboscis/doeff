@@ -1,9 +1,0 @@
-# 手元の測り(c1e7731d の着地の前・2026-10-11 23:0x JST)— 依頼の測りの script(ki-d7f2e023c0d4 の発言)・toolset の組
-# agora-controllers e1a3917c5・doeff bf6e78bc3・DOEFF_EFFECT_ANALYZER_RESULT_CACHE=off・zeus の負荷 30〜48
-# 写し: main = origin/main の analyzer、新 = c1e7731d の形。各々「そのまま」で空の置き場を埋め、「program_effects.py に 1 行足した写し」で撃ち直した。
-# 生の log は測りの後に消した(数は c1e7731d の commit 本文と card ki-81f1c868203f の発言に同じ値で残る)。
-main 1: toolset: analyze 91.5s (うち展開の外れ 87.3s)  答え d2403829db68  外れの内訳 expand 79.5s write 7.8s expand_n 107
-main 2: toolset: analyze 91.2s (うち展開の外れ 87.1s)  答え d2403829db68  外れの内訳 expand 77.7s write 9.4s expand_n 107
-新 1:   toolset: analyze 69.2s (うち展開の外れ 65.9s)  答え d2403829db68  外れの内訳 expand 59.4s write 5.6s expand_n 107
-新 2:   toolset: analyze 11.3s (うち展開の外れ 8.0s)   答え d2403829db68  外れの内訳 expand 0.0s write 6.2s expand_n 0
-置き場の大きさ: main 2 版で 76 MB・新 2 版で 95 MB(うち展開の置き場 20 MB)

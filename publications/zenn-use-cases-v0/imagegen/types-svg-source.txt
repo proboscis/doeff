@@ -2,7 +2,7 @@
 
 - 正本：../visuals/types-concept.svg と ../visuals/types-flow.svg。
 - 図の仕様：../reviews/types-visuals.json。
-- types-flowの数は、reviews/types-check.pyがPyPIのdoeff 0.6.0のverifytypesから訳ごとに数え直し、図の数（FLOW_COUNTS）と照らす。
+- types-flowの数は、checks/types-check.pyがPyPIのdoeff 0.6.0のverifytypesから訳ごとに数え直し、図の数（FLOW_COUNTS）と照らす。
 - PNGへの変換：../visuals/render_svg.mjs（playwright 1.62.1のchromiumで撮る・agoraの会話ではagora-browser node …）。
   - types-concept：幅1200・高さ1120。
   - types-flow：幅1200・高さ1110。

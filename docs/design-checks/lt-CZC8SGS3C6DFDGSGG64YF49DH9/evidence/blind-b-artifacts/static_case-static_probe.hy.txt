@@ -1,9 +1,0 @@
-(require doeff-hy.handle [handle defhandler])
-(import dataclasses [dataclass])
-(import doeff [EffectBase])
-(defclass [(dataclass :frozen True)] Bump [EffectBase] #^ int n)
-(defclass [(dataclass :frozen True)] Scale [EffectBase] #^ int n)
-(defhandler top-h {:effects [Scale]} (Bump [n] (<- r (Scale n)) (resume (+ r 100))))
-(defclass C []
-  (defhandler h {:effects [Scale]} (Bump [n] (<- r (Scale n)) (resume (+ r 100)))))
-(defn host [] (defhandler inner-h (Bump [n] (<- r (Scale n)) (resume r))) inner-h)

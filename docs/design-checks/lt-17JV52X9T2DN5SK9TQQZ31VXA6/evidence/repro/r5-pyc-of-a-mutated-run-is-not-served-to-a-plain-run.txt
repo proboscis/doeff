@@ -1,5 +1,0 @@
-# r5 — 変異の走りが例の隣に書く .pyc を、通常の走りが読み違えない(/tmp の複製 ex10 で、版 91b9b8bbc)
-$ python tests/run_example_mutated_expansion.py <複製>/ex10.hy traverse for/do   → built: WithHandler / WithHandler   (__pycache__/ex10.cpython-314.pyc を書く)
-$ python -m hy <複製>/ex10.hy                                                      → built: Traverse / Call            (変異が混ざらない)
-$ python tests/run_example_mutated_expansion.py <複製>/ex10.hy traverse for/do   → built: WithHandler / WithHandler
-$ python -m hy <複製>/ex10.hy                                                      → built: Traverse / Call

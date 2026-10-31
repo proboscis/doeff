@@ -1,8 +1,0 @@
-E       AssertionError: {'static_check.py': ['project_each', 'expander_limit']}
-E       assert {'static_chec...ander_limit']} == {'static_chec...ander_limit']}
-E         
-E         Differing items:
-E         {'static_check.py': ['project_each', 'expander_limit']} != {'static_check.py': ['expander_limit']}
-E         Use -v to get more diff
-FAILED packages/doeff-hy/tests/test_check_slot_opacity.py::test_the_default_child_count_is_read_only_where_the_slot_width_may_be_missing
-1 failed, 29 passed, 1 warning in 2.19s

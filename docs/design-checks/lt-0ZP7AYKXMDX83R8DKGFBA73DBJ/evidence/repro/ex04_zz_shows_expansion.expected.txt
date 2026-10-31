@@ -1,7 +1,0 @@
-Result: Collection(3 valid, 0 failed)
-Valid: [2, 4, 6]
-Failed: []
-   0 2 False [HistoryEntry(stage=None, event='ok', detail=None, attempt=1)]
-   1 4 False [HistoryEntry(stage=None, event='ok', detail=None, attempt=1)]
-   2 6 False [HistoryEntry(stage=None, event='ok', detail=None, attempt=1)]
-traverse の展開: (_doeff_traverse_Traverse (_doeff_do (fn [x] (do (setv y (yield (open_bind (double x)))) y))) items)

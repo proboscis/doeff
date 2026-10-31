@@ -1,3 +1,0 @@
-rev=42e67d88e63b978def59f2afa5c6fbc7ed7907a9
-$ pytest(触った検の全部)
-71 passed, 1 warning in 11.40s

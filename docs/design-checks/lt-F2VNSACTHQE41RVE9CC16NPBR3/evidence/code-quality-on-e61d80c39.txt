@@ -1,7 +1,0 @@
-code-quality: passed (scope=changed・型検査は未実行(fast の段))
-code-quality-base: {'revision': '4bb2e090cff9f48dd5e70ab2b2507204ca1f29f8', 'repo': '/work/toolset/worktrees/doeff-wt-dc-make-once'}
-code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない = 型は日次(--stage full)と手の名指しだけ。この passed は型を含まない
-code-quality-registration: docs/design-checks/lt-F2VNSACTHQE41RVE9CC16NPBR3/evidence/scripts/mutate.sh: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
-code-quality-registration: tests/test_daily_test_population.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない — 登録は明示的な操作か日次)
-code-quality-coverage: partial / 対象 876 / 全体 2826 / 未導入 {'hy': 343, 'javascript': 12, 'lua': 17, 'python': 1325, 'rust': 88, 'shell': 42, 'typescript': 123} / typed:true だが include に無い 27(型は日次(fast の段は compiler を撃たない)) / include の重複 0 / 基底の鍵の重複 0
-code-quality-baseline: 今回観測した既存違反 0 / 登録 556 件（自動増加しない）

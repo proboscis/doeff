@@ -1,8 +1,0 @@
-== at 9abed41dbbcf40db60c6009481129f973fa194b7 + 作業木(contract test・docstring)
-== s2_flatten_policy
-[今の flatten] valid_values=[(0, 0), (0, 0)]
-[今の flatten] all_items=[(0, False, [('outer', 'ok'), ('inner', 'ok')]), (1, False, [('outer', 'ok'), ('inner', 'ok')]), (2, True, [('outer', 'ok'), ('inner', 'failed')]), (3, True, [('outer', 'skipped')]), (4, True, [('outer', 'ok'), ('inner', 'failed')])]
-[今の flatten] test_skips_and_failures_of_both_froms_keep_their_places: passed
-[S2 の flatten(落ちた外の件を外す)] valid_values=[(0, 0), (0, 0)]
-[S2 の flatten(落ちた外の件を外す)] all_items=[(0, False, [('outer', 'ok'), ('inner', 'ok')]), (1, False, [('outer', 'ok'), ('inner', 'ok')]), (2, True, [('outer', 'ok'), ('inner', 'failed')]), (3, True, [('outer', 'ok'), ('inner', 'failed')])]
-[S2 の flatten(落ちた外の件を外す)] test_skips_and_failures_of_both_froms_keep_their_places: AssertionError (pytest の外の素の assert の比べが偽 — 文は空)

@@ -1,8 +1,0 @@
-# os_files = b32605d92(直す前)・試験 = fb4dd0f3b50417c54948a69ea0a0dd215e3f2829
-$ uv run pytest -q packages/doeff-events/tests/test_file_watch.py -k default_executor
-E       AssertionError: (2, False)
-E       assert (2, False) == (4, True)
-E         
-E         At index 0 diff: 2 != 4
-E         Use -v to get more diff
-1 failed, 10 deselected, 1 warning in 6.47s

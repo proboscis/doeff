@@ -1,7 +1,0 @@
-== N-B: f977f0d8c + mutant-B-on-f977f0d8c.diff(会話の一生で枠を重ね、終わりの事実をそこから作る — 盲検 B の差分を直した版へ移した物)
-E     AssertionError: ((), UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.'))
-/tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/tests/test_limits.hy:168: AssertionError
-AssertionError: ((), UsageLimitHit(minutes=300, resets_at=1893456000, text='You’ve hit your usage limit.'))
-FAILED ../../../tmp/dc-lt0bc9-H2VP/c-copy/packages/doeff-codex/tests/test_limits.hy::test_a_usage_limit_turn_reads_only_the_notices_of_its_own_turn
-1 failed, 24 passed, 1 warning in 32.38s
-pytest rc=1

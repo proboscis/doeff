@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "/tmp/blind-b-lt07hr/analyzer_pool.py", line 7, in <module>
-    from doeff_effect_analyzer.hy_expansion import _expand_hy
-ModuleNotFoundError: No module named 'doeff_effect_analyzer'
-_expand_hy の local 40 本のうち answer の漏れ: 0 本 / quiet 40 本のうち混入: 10 本
-_expand_hy の local 40 本のうち answer の漏れ: 2 本 / quiet 40 本のうち混入: 8 本

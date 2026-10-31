@@ -1,8 +1,0 @@
-{
- "modules": 298,
- "failed": {
-  "HyMacroExpansionError": 2
- },
- "loaded_hy": 358,
- "hits": []
-}

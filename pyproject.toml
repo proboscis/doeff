@@ -195,13 +195,11 @@ disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF125"]
 #   検出の見本)と空の __init__.py だけ(2026-10-02 に追跡中の file を見た)。当たりを持つのが役目で、直すと検の見本が壊れる。
 # build の道具の環境変数の読み(DOEFF004 だけ)は、ここで file ごと外さず、名指しの module に限って外す — tools/architecture.hy・
 #   packages/doeff-indexer/architecture.hy。
-#   design・design-checks = 設計の記録の dir(下の [tool.doeff] record-dirs の末尾の名 — docs/design/・docs/design-checks/)。
-#   その時点の証拠(測りの script・盲検の A・B が書いた物の写し)で、書き直すと記録が変わる。業務の code でも検でもないので、
-#   規則の対象にしない。記録の dir を足したら末尾の名をここへ足す(tests/test_linter_excludes_record_dirs.py が赤にする)。
+# 設計の記録の dir(下の [tool.doeff] record-dirs)を作ったら、その末尾の名もここへ足す(tests/test_linter_excludes_record_dirs.py が赤にする)。
 # linter の exclude は path の部品 1 つ(dir の名か file の名)と一致する時だけ外す — 名に語を含むだけでは外さない(doeff-linter の
 # should_exclude・以前は部分一致で、名に build・dist を含む file が黙って判定の外だった)。file を名指して測る入口
 # (scripts/hook_finding_baseline.py)は --force-exclude を付けて、名指した file にも当てる。
-exclude = ["fixtures", "design", "design-checks"]
+exclude = ["fixtures"]
 
 # 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団(agora-redesign #2909・
 # #2877)。以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは
@@ -249,9 +247,9 @@ exclude = [
 # 読み手は 2 つ: make test-changed の選び(scripts/run_changed_tests.py の collector_patterns)は、この下の file を名の規則に当たっても
 # 検として選ばない / 日次の母集団の検(tests/test_daily_test_population.py)は逆に、この下の検の名の file を赤にして `.py.txt` への
 # 改名を求める(除外の行で dir ごと外すと、本物の検を記録にだけ置いても緑になる — 設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B)。
-# dir は `/` で終える。新しい種類の記録の dir を作る時は、ここへ足す。
+# dir は `/` で終える。新しい種類の記録の dir を作る時は、ここへ足す。今の木に記録の dir は無い。
 [tool.doeff]
-record-dirs = ["docs/design/", "docs/design-checks/"]
+record-dirs = []
 
 # 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
 # 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で
@@ -424,8 +422,8 @@ tests = ["tests/test_docs_entry_path_examples.py"]
 prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
 
-# 09 章の State の節か、State の仕様を書き換えた便は、無い key の Get(state() の下で None)を実装と同じに言う事の検を払う
-# (card ki-4fc77b6d6aa9)。09 章の節の例を走らせ、仕様が名指す検が木に在る事を読む — どちらも import の逆依存では選ばれない。
+# 09 章の State の節を書き換えた便は、無い key の Get(state() の下で None)を実装と同じに言う事の検を払う
+# (card ki-4fc77b6d6aa9)。09 章の節の例を走らせる — import の逆依存では選ばれない。
 # 秒は 3.5 秒(起動を含む壁時計・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/09-advanced-effects.md"
@@ -435,10 +433,6 @@ tests = [
     # (card ki-d4da7b8d4229)。09 章は page 全体をまだ走らせられないので、小節だけを走らせる。
     "tests/test_docs_gather_io_example.py",
 ]
-
-[[tool.doeff.contract-tests]]
-prefix = "docs/history/specs/effects/SPEC-EFF-002-state.md"
-tests = ["tests/test_docs_state_get_missing_key.py"]
 
 # 11 章(Kleisli)は、page の例の検(tests/test_docs_page_examples.py)に加え、今の @do に無い引数の自動の解き(should_unwrap)
 # の説明が戻らない検を払う(card ki-7277427f6d8e)。語の検の秒は 4.0 秒(3 本・子 1 本・起動を含む壁時計・load 約 85 の下・

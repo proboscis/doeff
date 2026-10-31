@@ -102,7 +102,7 @@ _NOT_WALKED = (
 
 # どの母集団にも属さない test 名の file の除外の表(path か、`/` で終わる dir の接頭辞 → 理由)。
 # 行を足す時は理由を書く。該当する file が 1 本も無い行は古い行として赤になる。
-# 設計の記録(docs/design/・docs/design-checks/)は dir の行で外さない — 記録の中の検の写し・模型は集め手の pattern に当たらない名
+# 設計の記録の dir は dir の行で外さない — 記録の中の検の写し・模型は集め手の pattern に当たらない名
 # (`<名>.py.txt`)で置く。行で外すと、make test-changed の選び(名の規則だけを読む)が写しを検として走らせ、本物の
 # 検を記録の中にだけ置いても緑になる(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B — docs/design/ の
 # 行も同じ形で、seat-home の模型 4 本は 2026-10-12 に .py.txt へ替えて外した・card ki-d153ab595504)。
@@ -115,14 +115,6 @@ EXCLUDED: dict[str, str] = {
     "packages/doeff-agents/conformance/": (
         "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
         "使えるかが未測定で、母集団へ入れるかは card acp:kanban-issue:ki-2832a04913cc が決める"
-    ),
-    "docs/design/worker-pod-cpu-share/artifacts/2026-10-12/evidence/scripts/fork_test.py": (
-        "測りの script(pytest の検ではなく、module の先頭で sched_setattr と fork を走らせる)。閉じた記録 "
-        "docs/design/worker-pod-cpu-share/records/assessment-1bff46b3e6e1.json が path と sha256 で名指すので改名できない"
-    ),
-    "docs/design/worker-pod-cpu-share/artifacts/2026-10-12/evidence/scripts/reset_test.py": (
-        "fork_test.py と対の測りの script(pytest の検ではなく、module の先頭で sched_setattr と chrt を走らせる)。"
-        "同じ閉じた記録の本文が名で指すので改名しない"
     ),
     "ide-plugins/pycharm/test_program_detection.py": (
         "PyCharm plugin の検出の検体(テスト関数を持たない)"
@@ -256,7 +248,7 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
         f"日次のどの母集団にも除外の表にも無い検の file が {len(orphans)} 本: {orphans}"
         " — 母集団の根の下へ置くか(package の tests/ の外の根は Makefile の PACKAGE_EXTRA_TEST_ROOTS へ足す)、"
         "tests/test_daily_test_population.py の EXCLUDED に理由つきで載せる(呼び手の無い木の緑は日次に見えない)。"
-        "設計の記録(root の pyproject.toml の `[tool.doeff] record-dirs` — docs/design/・docs/design-checks/)の中の検の写し・模型は、"
+        "設計の記録(root の pyproject.toml の `[tool.doeff] record-dirs`)の中の検の写し・模型は、"
         "集め手の pattern に当たらない名(元の名に `.txt` を足す: `test_x.py` → `test_x.py.txt`・`test_x.hy` → `test_x.hy.txt`)に替える"
         "— ADR-DOE-ENFORCE-001 R8"
     )
@@ -606,21 +598,21 @@ def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path:
 
 
 def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path) -> None:
-    """失敗ケース: docs/design/ の記録の中に検の名の file(`test_*.py` の模型・`*_test.py` の測りの script)を置くと赤、集め手の
+    """失敗ケース: 設計の記録の dir の中に検の名の file(`test_*.py` の模型・`*_test.py` の測りの script)を置くと赤、集め手の
     pattern に当たらない名(`.py.txt`)に替えると緑。除外の表に名指しの行がある file の隣に置いた新しい検も赤(card ki-d153ab595504)。
 
-    docs/design/ を dir の行で外していた形では、seat-home の模型 4 本(`def test_*` を持たず `t_*` を __main__ から回す script)が
-    make test-changed の選びで検として集められ(0 本集まって「未測」)、本物の検を記録の中にだけ置いても日次が緑だった
-    (docs/design-checks/ の盲検 A・B と同じ 2 つの穴)。
+    記録の dir を dir の行で外していた形では、模型 4 本(`def test_*` を持たず `t_*` を __main__ から回す script)が
+    make test-changed の選びで検として集められ(0 本集まって「未測」)、本物の検を記録の中にだけ置いても日次が緑だった。
+    記録の dir は模型の木の中の名(今の木に記録の dir は無い)。
     """
     (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
-    named = next(Path(row) for row in EXCLUDED if row.startswith("docs/design/") and not row.endswith("/"))
+    named = next(Path(row) for row in EXCLUDED if not row.endswith("/"))
     candidates = (
         *(
-            Path(record, "lt-MODEL", *tail)
-            for record in _record_dirs(REPO_ROOT)
+            Path(record, "MODEL", *tail)
+            for record in ("docs/records/",)
             for tail in (("model", "test_chain.py"), ("evidence", "scripts", "fork_test.py"))
         ),
         named.with_name("hidden_test.py"),
@@ -714,7 +706,6 @@ def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
     記録の中で外せるのは、改名できない file の 1 file ごとの path の行だけ。
     """
     records = _record_dirs(REPO_ROOT)
-    assert records, "root の pyproject.toml の [tool.doeff] record-dirs が空 — 記録の dir を 1 点で宣言する"
     covering = [
         row
         for row in EXCLUDED

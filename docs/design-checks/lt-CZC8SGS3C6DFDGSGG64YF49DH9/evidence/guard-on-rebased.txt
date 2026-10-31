@@ -1,7 +1,0 @@
-# 載せ直した後の確かめ: doeff deead40812(origin/main cd305fbd0e の上 — 08ddfc707 の後に clause_ops.hy の表(10addc647)と _scoped-definition の module-forms(0dfa6f81f・192e6eacb)が入った版)+ 最終の tests/test_handle_scope.py
-# 1 回目(2026-10-12T04:57:28Z)は timeout 280 秒の中で機体の検の枠を待ち切れず rc=124(検は走っていない)。2 回目を timeout 550 秒で走らせた
-## uv run pytest tests/test_handle_scope.py -q(2 回目)
-check-slot: 枠 3 を取った(待ち 376 秒)— pytest doeff-wt-ki-edab-design-check (c-Z48YJMZ0CSH4120XECK1TQWS0P)
-deadline scale x2.3 (load per usable CPU) — per test 136s, watchdog 204s
-57 passed, 1 warning in 22.10s
-rc=0

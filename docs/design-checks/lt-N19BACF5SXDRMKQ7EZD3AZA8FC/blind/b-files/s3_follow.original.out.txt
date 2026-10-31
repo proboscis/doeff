@@ -1,9 +1,0 @@
-macros file: /work/toolset/worktrees/doeff-blind-d4c8d7ce9/packages/doeff-hy/src/doeff_hy/macros.hy
-SEEN by new do source: ['step', '_echo_mcp_handler', 'Tools._in_class_mcp_handler', 'outer.<locals>._hy_anon_1.<locals>._in_fn_mcp_handler']
-defk step follows M1: True
-defmcp-tool (module) follows M1: True
-defmcp-tool (class) follows M1: True
-defmcp-tool (function) follows M1: True
-run(echo.handler('hi')): hi
-run(Tools.in_class.handler('hi')): hi
-run(outer().handler('hi')): hi

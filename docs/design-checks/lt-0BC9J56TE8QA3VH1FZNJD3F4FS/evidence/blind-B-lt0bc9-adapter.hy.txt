@@ -1,7 +1,0 @@
-;; 盲検 B の probe — probe の筋書き 2 で u1 の終わりが運んだ事実を、adapter の account-limit-of が agora へ渡す公開型へ写した値を見るため。
-(import doeff [run])
-(import doeff_codex.lines [UsageLimitHit])
-(import doeff_agents.handlers.headless_codex :as adapter)
-(print adapter.__file__)
-(for [hit [(UsageLimitHit :minutes 300 :resets-at 1893474000 :text "t") (UsageLimitHit :minutes 10080 :resets-at 1893888000 :text "t")]]
-  (print hit.minutes "->" (run (adapter.account-limit-of hit))))

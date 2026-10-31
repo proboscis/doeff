@@ -1,7 +1,0 @@
-# dotfiles の試作(4b9b243b9)を commit した時に、commit の hook が走らせた品質検査の出力の転記(2026-10-12 11:0x UTC・会話の画面から書き写した物)
-code-quality: passed (scope=changed・型検査は未実行(fast の段))
-code-quality-base: {'revision': 'cd7a49008dbe2e866f3e80a53522ead835be21bc', 'repo': '/work/toolset/worktrees/dotfiles-wt-ppslot-canon'}
-code-quality-stage: fast(指定範囲・変更範囲の拡張なし・速い規則だけ)— 型検査(pyright / hy / cabal / tsc)はこの段では撃たない
-code-quality-registration: agent/tests/machine_check_slots.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない)
-code-quality-registration: agent/tests/test_machine_check_slots.py: 変更ソースが include/exclude により未導入。継続検査対象へ登録が必要(fast は止めない)
-code-quality-baseline: 今回観測した既存違反 0 / 登録 4128 件（自動増加しない）

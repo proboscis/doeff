@@ -1,9 +1,0 @@
-# r0 — 基の版 c33b881a9(origin/main・変更なし)で例の検が緑(62 passed)— 2026-10-12
-................................s..............................          [100%]
-=============================== warnings summary ===============================
-packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-62 passed, 1 skipped, 1 warning in 19.59s
-real	0m36.235s
-user	0m31.560s
-sys	0m3.227s

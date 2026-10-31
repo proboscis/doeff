@@ -1,9 +1,0 @@
-# 盲検 A の分割(A-split.py)と body_facts.py だけの変更を、直した版(caf81e66d)の写しに当てた A1f・A2f。同じ置き場 cache-Af を共有
-== A1f
-analyzer: /tmp/ki81-exp.dDsxKw/A1f/doeff_effect_analyzer/program_effects.py
-derived place: 7af8f832a918 entries: 1 returned: _WholeTree
-rewraps in this reader's entry: [{}]
-== A2f
-analyzer: /tmp/ki81-exp.dDsxKw/A2f/doeff_effect_analyzer/program_effects.py
-derived place: f0aae8e4ef6e entries: 2 returned: _WholeTree
-rewraps in this reader's entry: [{'prog': 1}]

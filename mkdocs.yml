@@ -1,5 +1,5 @@
-# doeff の docs の site。中身は docs/index.md から辿る利用者向けの page だけ — 開発の記録(docs/design・docs/adr・
-# docs/history ほか)は入れない。page の組は 2 か所に書く: exclude_docs の許す一覧(この組の外の docs/ の file は site に入らない)と
+# doeff の docs の site。中身は docs/index.md から辿る利用者向けの page だけ — 開発の記録(docs/adr・
+# docs/specs ほか)は入れない。page の組は 2 か所に書く: exclude_docs の許す一覧(この組の外の docs/ の file は site に入らない)と
 # nav(docs/index.md の目次と同じ節と順)。片方にだけ在る page は build が warning を出し、--strict の build を落とす
 # (validation の omitted_files と、nav の指す file が無い時の warning)。docs/index.md の目次と nav の食い違いは
 # tests/test_docs_site_pages.py が落とす。

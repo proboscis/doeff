@@ -1,3 +1,0 @@
-packages/doeff-cluster の warning が基点より増えた(新しい違反は直す — 基点に足さない):
-  DOEFF172 src/doeff_cluster/coordinator/core/cluster_policy.hy: 基点 31 → 今 32
-linter exit (HEAD の同じ file)=1

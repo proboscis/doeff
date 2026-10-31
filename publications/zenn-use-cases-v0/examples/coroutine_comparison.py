@@ -1,7 +1,7 @@
 """async/awaitとyieldの比較、ハンドラの差し替え、1断片ずつの待ちを、通信せずに確かめる。
 
 記事 doeff-coroutines.md の Python の4枠と同じ行を持つ完全な例。記事の枠の行は、
-reviews/coroutines-check.py がこのファイルの行と一致することを確かめる。
+checks/coroutines-check.py がこのファイルの行と一致することを確かめる。
 """
 
 import asyncio  # 比べるためのcoroutineを、標準のイベントループで動かす。

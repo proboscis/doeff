@@ -1,4 +1,0 @@
-rev=42e67d88e63b978def59f2afa5c6fbc7ed7907a9
-$ hy probe_s2.hy(表に 1440 分の行が無い今の版)
-adapter の WINDOW-NAMES: {300: 'five_hour', 10080: 'seven_day'}
-終わり: AgentTurnFailed account_limit = AgentAccountLimit(window=None, resets_at=1893456000, text='You’ve hit your usage limit.')

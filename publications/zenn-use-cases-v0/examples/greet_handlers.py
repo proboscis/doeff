@@ -1,7 +1,7 @@
 # ruff: noqa: I001  # importの並びを本文の枠と同じに保つ。
 """記事「doeffとは」の完全な例。同じgreetへ花子と太郎のハンドラを取り付けて実行する。
 
-本文の2つのコードの枠を、この順のまま1つのファイルにした。reviews/main-check.pyが本文との一致を確かめる。
+本文の2つのコードの枠を、この順のまま1つのファイルにした。checks/main-check.pyが本文との一致を確かめる。
 """
 
 from doeff import Pass, Resume, do, handler, run, with_handlers  # 依頼の委譲・再開・処理の定義と実行を使う。

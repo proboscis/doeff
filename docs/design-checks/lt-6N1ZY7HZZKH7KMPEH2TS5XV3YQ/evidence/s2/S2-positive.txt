@@ -1,9 +1,0 @@
-基 d49f483297ee6ee07fbe4379b29670a33ebf9595・$ uv run hy /tmp/k4c/s2_usable_cpus.hy(中身 = evidence/s2/s2_usable_cpus.hy.txt)
-affinity 36
-上限なし(zeus) → 8
-pod の上限 2(k3s) → 2
-pod の上限 8(atlas) → 8
-file が無い(cgroup v1 の node) → 8
-読めない中身 → 8
-ok: どの答えでも 1 ≤ 既定 ≤ 8
-exit=0

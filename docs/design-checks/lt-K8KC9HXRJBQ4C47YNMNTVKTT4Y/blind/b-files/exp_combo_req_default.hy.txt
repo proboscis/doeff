@@ -1,1 +1,0 @@
-(defmcp-tool t "t" [{:name "limit" :type "integer" :description "d" :required False :default 10}] limit)

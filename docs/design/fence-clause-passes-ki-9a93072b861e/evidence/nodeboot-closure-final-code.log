@@ -1,6 +1,0 @@
-doeff-min-commit: 兄弟の doeff(/work/toolset/worktrees/measure-ki9a93/doeff)の HEAD e76b005506f605df68ef52d2c4c4157d25280df3 は宣言 b85e20d81c82a7667c5bf324b022838daaae2de2 以降
-    - controllers/agora_sim/tests/test_cli_failed_detail_on_turn_world.hy
-    - controllers/scheduling/tests/test_input_failed_rows.hy
-    - controllers/scheduling/tests/test_passed_over_on_record.hy
-    - controllers/screen/tests/test_failed_requests.hy
-1 passed, 1 warning in 142.83s (0:02:22)

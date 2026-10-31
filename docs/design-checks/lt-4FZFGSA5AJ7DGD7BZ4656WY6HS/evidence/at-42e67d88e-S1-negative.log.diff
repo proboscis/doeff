@@ -1,9 +1,0 @@
-diff --git a/packages/doeff-codex/src/doeff_codex/fake.hy b/packages/doeff-codex/src/doeff_codex/fake.hy
-index 0cc8c77b3..e7765f181 100644
---- a/packages/doeff-codex/src/doeff_codex/fake.hy
-+++ b/packages/doeff-codex/src/doeff_codex/fake.hy
-@@ -201,3 +201,4 @@
-   (CodexLaunchCount [thread-id]
-     (<- count (fake-launch-count world thread-id))
-     (resume count)))
-+(val USAGE-LIMIT-WINDOW-MINUTES {"five_hour" 300 "seven_day" 10080})

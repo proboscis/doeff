@@ -1,4 +1,0 @@
-# 確かめ c11 — 新しい接頭辞の名 _dh_helper を持つ写しは、hidden_name に接頭辞を足す前は印でなく、足した後は検を変えずに名指される(S3 の失敗例 — 検は hidden_name を呼ぶ)
-# 版: e2c158f5e6bae3d4564390a3c666833281556900・作業木 /home/ubuntu/.worktrees/doeff-wt-check-ki-fe7a・2026-10-12T04:19:13Z
-## 足す前: ['展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)'] / []
-## 足した後: ['展開の形の印(Hy・doeff-hy の隠す名・展開の __import__)']

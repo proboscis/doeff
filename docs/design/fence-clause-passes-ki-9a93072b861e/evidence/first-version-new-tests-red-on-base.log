@@ -1,9 +1,0 @@
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_fence-leaves0]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_inline_fence-leaves1]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_fence_of-leaves2]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_fence_pair-leaves3]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_only_tick-leaves4]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_fence_compound-leaves5]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_lets_through_leave_the_handler[through_long_naps-leaves6]
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_a_fence_is_read_by_its_clauses_and_leaves_a_gap_for_what_it_passes
-8 failed, 2 passed, 1 warning in 36.56s

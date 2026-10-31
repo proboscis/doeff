@@ -1,7 +1,0 @@
-# 2026-10-17T13:40:40+00:00 doeff f207e4d366c7350f45418e4bb28b39c8a93ad65b(作業木の未 commit の変更 = F1・F2)
-$ uv run --no-sync pytest -v docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_only_the_bytecode_tool_places_pyc docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_judgments_reject_the_counterexamples docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_the_prepare_tool_does_not_carry_from_a_previous_tree
-docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_only_the_bytecode_tool_places_pyc PASSED [ 33%]
-docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_judgments_reject_the_counterexamples PASSED [ 66%]
-docs/adr/defadr_doeff_build_002_one_bytecode_store.hy::test_adr_doe_build_002_the_prepare_tool_does_not_carry_from_a_previous_tree PASSED [100%]
-========================= 3 passed, 1 warning in 5.68s =========================
-rc=0

@@ -1,5 +1,0 @@
-(require doeff-hy.macros [val])
-
-(defn f []
-  (val x 1)
-  x)

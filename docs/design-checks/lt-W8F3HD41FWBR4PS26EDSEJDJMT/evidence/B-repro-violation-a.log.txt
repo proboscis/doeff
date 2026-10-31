@@ -1,9 +1,0 @@
-# 盲検 B の (a): patch を当てた doeff_hy で take_slot を呼び、width(4) を印字(宣言 slots 1・processesPerSlot 2)
-# 版: c8fd2c26a54af6b8cf976007c5f4e1751f71f4e4・正本: dotfiles d8a18fdb0 の machine_check_slots.py の写し
-$ uv run python /tmp/ki2320-probe.py <一時の home>
-holding: Holding width(4) = 2 名乗り: 
-rc=0
-# 同じ probe を c8fd2c26a(patch 無し)で
-                                                                 ^^^^^^^^^^
-AttributeError: 'SlotHeld' object has no attribute 'width'
-rc=1

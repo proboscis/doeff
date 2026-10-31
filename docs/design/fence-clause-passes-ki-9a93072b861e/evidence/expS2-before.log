@@ -1,3 +1,0 @@
-E       AssertionError: assert set() == {'Nap'}
-FAILED packages/doeff-effect-analyzer/tests/python/test_zz_probe_s2.py::test_issubclass_of_the_type_is_read_as_a_class_test
-1 failed, 1 warning in 1.18s

@@ -1,6 +1,0 @@
-# 確かめ c5 — 変異の走りは bytecode の保存先へ、通常の走りと違う物を書かない(空の保存先で比べる): (1) 今の例 ex09 (2) 例が import する lib が defk・traverse を使う場合
-# 版: 3186205eb4df8f03bd40147316f357ddf240e877・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-b7c4・2026-10-12T11:22:58Z
-ex09 plain exit=0 files=70 content-hash=9fa7fb53f8a1394a9a205007f59ecc79 output-last=  frank: 80.3
-ex09 mutated exit=0 files=70 content-hash=9fa7fb53f8a1394a9a205007f59ecc79 output-last=  frank: 80.3
-lib plain exit=0 files=75 content-hash=e66e11a6312630385e59e02e17830f74 output-last=library: Traverse Call
-lib mutated exit=0 files=75 content-hash=7bfe8a345e6264619945ec7a029bfe6a output-last=library: Traverse Call

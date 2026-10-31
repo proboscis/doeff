@@ -1,8 +1,0 @@
-#!/bin/sh
-# 使い方: mkexp.sh <名> <patch>... — df1ea3efc の doeff_core_effects を /tmp/w1294dc/exp/<名> へ写し、patch を順に当てる
-set -e
-name=$1; shift
-dst=/tmp/w1294dc/exp/$name
-rm -rf "$dst"; mkdir -p "$dst"
-git -C /home/ubuntu/.worktrees/doeff-wt-ki1294-dcfix archive df1ea3efc packages/doeff-core-effects/doeff_core_effects | tar -x -C "$dst"
-for p in "$@"; do patch -p1 -d "$dst" --no-backup-if-mismatch < "$p"; done

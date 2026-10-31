@@ -50,7 +50,7 @@ AIエージェントで開発した記録の連載。1本目の会話を最大50
 
 2026-10-21の利用者の決定で、記事は1本ごとに、公開の前に本文と図を利用者に見せる依頼書を出し、許可が出た回だけを公開する。まとめて許可を取る形や、許可の前に予約する形にしない。許可が出るまで、公開予定の回に公開の刻を書かない(刻の無い公開予定はZennの下書きのまま置かれる)。この決定に合わせ、同じ日に2〜10本目とAIエージェントの連載の1〜6本目の予約の刻を外した。1本目は2026-10-20 14:08 JSTに1本の許可の前に公開していたため、2026-10-21の利用者の決定で取り下げ(zenn-contentでpublished: false)、公開予定に戻した。同じ日に、許可を公開状態の「許可 lt-…」で書く形にし、`push_zenn_branch.py`が許可の無い回の予約と公開を止めるようにした([決定記録](../../docs/design/decisions/2026-10-21-zenn-publish-permit.md))。
 
-doeffの連載の1本目の「困りごとから選ぶ入口」は、doeffの連載の表の10本の題を同じ順の一覧で持つ。AIエージェントの連載の回は、表から外し、その連載の1本目へのリンク1行で案内する。表の順や題を変えたら、1本目の一覧も同じに直す。`reviews/main-check.py`が照らす。
+doeffの連載の1本目の「困りごとから選ぶ入口」は、doeffの連載の表の10本の題を同じ順の一覧で持つ。AIエージェントの連載の回は、表から外し、その連載の1本目へのリンク1行で案内する。表の順や題を変えたら、1本目の一覧も同じに直す。`checks/main-check.py`が照らす。
 
 原稿の欄の題は、各原稿のfront matterの`title`と同じにする。2026-10-17に、Zennで読まれる記事の傾向と手本の連載の調べを元に、10本の題と冒頭の3文を直した。題は区切り記号(—)で2つに分けず、30字前後の1つの主張にする。直した訳は[決定記録](../../docs/design/decisions/2026-10-17-zenn-titles-and-openings.md)にある。2026-10-20に、実践の技術の回を「〜のをやめる」、開発の記録の回を「〜のをやめた」の形に直した。入門の1本目・数字の記録の回・問いの形の回は、そのままにした。
 
@@ -83,7 +83,7 @@ Zennのslugは、Zennの`articles/<slug>.md`のファイル名で、公開後の
 - 測った数字には、測った日と範囲を添える。APIキー・トークン・個人の情報・社外に出せない機械やプロジェクトの名前を載せない。
 - 記事の台帳は、記事ごとのファイルを足して書く(図の題と説明は`visuals/captions/<slug>.json`、採用画像は`imagegen/manifest/<slug>.json`、制作の経緯は`imagegen/records/<slug>.md`、決定は`docs/design/decisions/<日付>-zenn-week<N>-<slug>.md`。`<slug>`は原稿`doeff-<slug>.md`の名)。共有の台帳の末尾へ書き足さず、記事の数も書かない。`verify_publication.py`が原稿と台帳の組を照らす。
 - 参考の節に、公開順の前の回と次の回へのリンクを`- 前の回:[題](doeff-<slug>.md)`・`- 次の回:[題](doeff-<slug>.md)`の形で置く。`verify_publication.py`が、公開予定・公開済みの回どうしで照らす。
-- 掲載したコードの確かめは`reviews/<slug>-check.py`に置く。`verify_examples.py`が、公開予定・公開済みの回の確かめを表の順に走らせる。
+- 掲載したコードの確かめは`checks/<slug>-check.py`に置く。`verify_examples.py`が、公開予定・公開済みの回の確かめを表の順に走らせる。
 - 確かめの頭に、PyPIで入れる物をPEP 723の宣言(`# /// script`)で書く。doeffは版を書かず、GitHubから入れる部品は記事と同じ版を書く。`verify_pypi.py`が毎日と版を出した後に、公開順の表と候補の回の確かめを、PyPIの最新のdoeffと宣言の物だけを入れた新しい環境で走らせる(`.github/workflows/article-code-from-pypi.yml`)。
 
 字数・枠・図・文の長さは`render_release.py`で測る。字数は、コードの枠・画像・リンク先・Markdownの記号・空白を除いて数える。
@@ -107,16 +107,16 @@ uv run --no-sync python publications/zenn-use-cases-v0/render_release.py doeff-m
 ## 公開の準備と手順
 
 1. `export_zenn.py`で、公開順の表の公開予定・公開済みの記事を、Zennの記事を置くリポジトリの根へ書き出す。下書きの行は書き出さない。`articles/<slug>.md`と、本文が参照する`images/`の画像が出来る。編集用の原稿は引き続きこのディレクトリを正本とする。
-2. 各記事のコード・ハンドラ・期待結果を確認し、`zenn-check/check.mjs`で書き出しを読み、`zenn-check/screenshot.mjs`でプレビューの画面を記事ごとに写して、どちらも崩れが0個であることを確かめる。
+2. 各記事のコード・ハンドラ・期待結果を確認し、`zenn-preview/check.mjs`で書き出しを読み、`zenn-preview/screenshot.mjs`でプレビューの画面を記事ごとに写して、どちらも崩れが0個であることを確かめる。
 
 書き出しと確かめは次の5行で行う。`<出力先>`は記事を置くリポジトリの根、`<写しの置き場>`は記事ごとの写し(`<slug>.png`)を書くディレクトリである。
 
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/export_zenn.py <出力先>  # 公開順の表の記事を、Zennのarticles/とimages/へ書き出す。
-npm ci --prefix publications/zenn-use-cases-v0/zenn-check  # 版を固定したzenn-cliとzenn-modelを入れる。
-node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  # zenn-cliのプレビューで読み、崩れを数える。0個なら終了コード0。
-npx --prefix publications/zenn-use-cases-v0/zenn-check playwright install chromium  # 写しを撮るchromiumを入れる(agoraの会話では要らない)。
-node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出力先> <写しの置き場>  # プレビューの画面を写し、画面の崩れを数える。agoraの会話では`agora-browser node …`で走らせる。
+npm ci --prefix publications/zenn-use-cases-v0/zenn-preview  # 版を固定したzenn-cliとzenn-modelを入れる。
+node publications/zenn-use-cases-v0/zenn-preview/check.mjs <出力先> --online  # zenn-cliのプレビューで読み、崩れを数える。0個なら終了コード0。
+npx --prefix publications/zenn-use-cases-v0/zenn-preview playwright install chromium  # 写しを撮るchromiumを入れる(agoraの会話では要らない)。
+node publications/zenn-use-cases-v0/zenn-preview/screenshot.mjs <出力先> <写しの置き場>  # プレビューの画面を写し、画面の崩れを数える。agoraの会話では`agora-browser node …`で走らせる。
 ```
 
 | 書き出しの項目 | 書き出す値 |
@@ -208,8 +208,8 @@ doeffの連載10本を、1冊の無料のZennの本にまとめる下書きを�
 
 ```bash
 uv run --no-sync python publications/zenn-use-cases-v0/export_zenn_book.py <出力先>  # 本の正本と原稿から、books/<本のslug>/とimages/を書き出す。
-node publications/zenn-use-cases-v0/zenn-check/check.mjs <出力先> --online  # 本はvalidateBook、章はvalidateBookChapterで読み、崩れを数える。
-agora-browser node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出力先> <写しの置き場>  # 本と章の画面を写し、画面の崩れを数える。
+node publications/zenn-use-cases-v0/zenn-preview/check.mjs <出力先> --online  # 本はvalidateBook、章はvalidateBookChapterで読み、崩れを数える。
+agora-browser node publications/zenn-use-cases-v0/zenn-preview/screenshot.mjs <出力先> <写しの置き場>  # 本と章の画面を写し、画面の崩れを数える。
 ```
 
 `verify_publication.py`も、本の正本が今の原稿から崩れずに書き出せることを照らす。原稿を直して本の書き出しが止まったら、`rewrites.json`の直す前の文を、直した原稿の文に合わせる。
@@ -221,7 +221,7 @@ agora-browser node publications/zenn-use-cases-v0/zenn-check/screenshot.mjs <出
 - [x] 連載10本の順を案Mに決めた(2026-10-17)。
 - [x] 最初の4本に対応する原稿・コード・レビュー記録がある。
 - [x] 5〜10本目の下書きを仕上げ基準に揃え、公開状態を公開予定にした。5・7・8・10本目は新しいファイルに書いた(2026-10-17)。
-- [x] 10本の各回の参考に、前の回と次の回へのリンクを置いた。各回の確かめのスクリプト(`reviews/<slug>-check.py`)を`verify_examples.py`から呼ぶ(2026-10-17)。
+- [x] 10本の各回の参考に、前の回と次の回へのリンクを置いた。各回の確かめのスクリプト(`checks/<slug>-check.py`)を`verify_examples.py`から呼ぶ(2026-10-17)。
 - [x] 10本の題と冒頭の3文を、Zennで読まれる記事の傾向と手本の連載の調べで直した。2〜10本目の冒頭に、1本目とGitHubへ案内する1文を置いた(2026-10-17・[決定記録](../../docs/design/decisions/2026-10-17-zenn-titles-and-openings.md))。
 - [ ] 各回の図を揃える。`images/zenn-use-cases-v0/generated/`のPNG 47枚はリポジトリに入っておらず、週1の3枚、週3と週4の各2枚を作り直した(2026-10-16)。
 - [x] Zennの形への書き出しと確かめの道具を作った。最初の4本を書き出し、崩れ0個を確かめた(2026-10-16・zenn-cli 0.5.6)。連載10本を書き出し、`check.mjs`と`screenshot.mjs`で崩れ0個を確かめた。10本の図22枚はリポジトリにある(2026-10-17)。

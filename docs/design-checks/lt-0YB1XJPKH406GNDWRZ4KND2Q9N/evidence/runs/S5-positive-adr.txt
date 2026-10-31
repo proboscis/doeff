@@ -1,8 +1,0 @@
-# 実験 S5-positive-adr・刻 2026-10-12T04:20:00Z・HEAD 912bec3bc4720ceeb4377052acdf29f3bb2b3696
-$ git apply S5-positive-records-storage-renamed.diff.txt
- packages/doeff-hy/src/doeff_hy/pytest_items.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-$ uv run --frozen pytest packages/doeff-adr/tests/test_pytest_item_records.py packages/doeff-hy/tests/test_pytest_items.py -q -W ignore
-pytest の exit=0
-7 passed in 2.53s
-$ git status --short -- packages tests(外した後)

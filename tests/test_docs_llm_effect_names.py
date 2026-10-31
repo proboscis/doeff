@@ -5,8 +5,8 @@
 README(doeff-openai・doeff-openrouter・doeff-gemini)の対応する effect の一覧が旧い名のまま残り、写して動かすと ImportError になった。
 
 この検は docs/*.md と README(根と各 package の)に出る `LLMChat`・`LLMStreaming*`・`LLMStructured*`・`LLMEmbed*` の名を全部集め、
-`doeff_llm._effects` の `__all__` に在る事を確かめる。改名を言う行(「renamed」を含む行)と、改名の記録の表(documentation-fix-table.md)・
-CHANGELOG は、旧い名を書くのが役目なので読まない。
+`doeff_llm._effects` の `__all__` に在る事を確かめる。改名を言う行(「renamed」を含む行)と
+CHANGELOG は、旧い名を書くのが役目なので読まない(CHANGELOG は docs/ にも README にも無いので読まない)。
 doeff-llm は核の外の部品なので、入っていない環境(核の 5 個だけを入れる CI の Python Compatibility の venv)では、doeff-llm を読む
 page ごとの検を skip にする(top で import すると集めの段で ModuleNotFoundError になり、main の CI が ERROR で赤になった —
 2026-10-17)。名の拾い方の検は doeff-llm を読まないので、どの環境でも走る。
@@ -20,15 +20,13 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-# 旧い名を書くのが役目の file(改名の記録の表)。CHANGELOG は docs/ にも README にも無いので読まない。
-RECORDS = frozenset({"documentation-fix-table.md"})
 # doeff-llm の effect の名の形(`LLMService` のような DI の見本の class は含まない)。
 EFFECT_NAME = re.compile(r"\bLLM(?:Chat|Streaming\w*|Structured\w*|Embed\w*)\b")
 RENAME_LINE = re.compile(r"renamed", re.IGNORECASE)
 
 
 def _pages() -> list[Path]:
-    docs = [page for page in sorted((REPO / "docs").glob("*.md")) if page.name not in RECORDS]
+    docs = sorted((REPO / "docs").glob("*.md"))
     readmes = [REPO / "README.md", *sorted((REPO / "packages").glob("*/README.md"))]
     return [*docs, *readmes]
 

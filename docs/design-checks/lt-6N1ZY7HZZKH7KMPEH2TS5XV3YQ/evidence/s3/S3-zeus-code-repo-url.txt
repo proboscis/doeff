@@ -1,4 +1,0 @@
-zeus の worker の Deployment の env に CODE_REPO_URL(版の木の job を受ける設定)が在るか — 値は出さない
-$ kubectl -n agent-worker get deploy doeff-worker-zeus -o json | (env の名から CODE_REPO_URL の値が空でないかだけを出す)
-CODE_REPO_URL 在る(空でない): False
-読んだ刻 2026-10-12T02:36:47Z

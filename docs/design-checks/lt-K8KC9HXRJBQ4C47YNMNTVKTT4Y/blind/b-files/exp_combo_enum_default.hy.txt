@@ -1,1 +1,0 @@
-(defmcp-tool t "t" [{:name "side" :type "string" :description "d" :enum ["buy" "sell"] :default "buy"}] side)

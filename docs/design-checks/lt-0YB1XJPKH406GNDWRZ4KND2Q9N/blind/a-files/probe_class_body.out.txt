@@ -1,3 +1,0 @@
-記録: ['{"args": ["doeff_interpreter"], "decorators": [], "function": "test_in_class"}']
-module に test_in_class が在る: False
-verify_records の problems: ['記録の test_in_class が module に無い']

@@ -1,7 +1,0 @@
-#!/bin/sh
-# 失敗例を作業木へ当てる(commit しない)。戻すのは restore.sh。
-set -e
-W=/work/toolset/worktrees/doeff-wt-blind-b-ki069f; C=$W/packages/doeff-cluster; T=/tmp/blind-b-ki069f
-cp $T/steady_wall.hy $C/src/doeff_cluster/worker/protocol/steady_wall.hy
-cp $T/main.modified.hy $C/src/doeff_cluster/worker/entry/main.hy
-cp $T/test_blind_b_entry_steady_wall.hy $C/tests/test_blind_b_entry_steady_wall.hy

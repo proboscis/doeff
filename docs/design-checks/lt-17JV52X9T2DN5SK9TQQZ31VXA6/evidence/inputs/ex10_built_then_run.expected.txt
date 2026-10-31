@@ -1,3 +1,0 @@
-built: Traverse / Call
-single: [10, 20, 30]
-pairs: [20, 30, 30, 40]

@@ -1,9 +1,0 @@
-DOEFF_BLIND_A_BENCH_GUARD = None
-_DEFINITION_SAMPLES に defbench: True
-_CASES に defbench を使う入力: False
-globals の検: 赤(AssertionError — module の globals が変わった)
-----
-DOEFF_BLIND_A_BENCH_GUARD = 1
-_DEFINITION_SAMPLES に defbench: True
-_CASES に defbench を使う入力: False
-globals の検: 緑

@@ -1,6 +1,0 @@
-# 正常例: 列挙の検(名に依らない投影の検・main 側の検を含む)
-# 対象: 作業木 doeff-wt-design-check-scoped-def @ 64a022d75(基底 1a869eb9d の上・source は変えず、検の file と設計の記録だけが差分)
-# 実行: 2026-10-12T12:01:49Z
-$ uv run pytest tests/test_nested_definition_scope.py tests/test_handle_scope.py::test_class_body_handle_leaves_module_globals_alone -q
-exit=0
-147 passed, 1 warning in 40.59s

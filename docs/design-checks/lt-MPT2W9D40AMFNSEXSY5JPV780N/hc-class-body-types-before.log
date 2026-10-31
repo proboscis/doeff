@@ -1,5 +1,0 @@
-2 個の .hy を検めた: 新しい error 4 件・基点に在る error 0 件・warning 0 件
-b_cls_effect.hy:3:49 - error: "_doeff_ClassVar" is not defined (reportUndefinedVariable)
-b_cls_effect.hy:3:49 - error: "_doeff_cast" is not defined (reportUndefinedVariable)
-c_cls_record_check.hy:3:20 - error: "_doeff_cast" is not defined (reportUndefinedVariable)
-c_cls_record_check.hy:3:74 - error: "_doeff_ClassVar" is not defined (reportUndefinedVariable)

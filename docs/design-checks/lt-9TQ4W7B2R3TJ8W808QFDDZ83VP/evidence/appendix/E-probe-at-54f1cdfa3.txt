@@ -1,9 +1,0 @@
-刻: 2026-10-11T16:43:55Z
-木: /home/ubuntu/.worktrees/doeff-wt-ki-be59-thread-scope
-版: 54f1cdfa33cd2fca1988c8731fa959f8e1406f87 0 個の未 commit の変更
-命令(cwd /home/ubuntu/.worktrees/doeff-wt-ki-be59-thread-scope): uv run --frozen python /work/agent-workspaces/a-VD2S8F3KBAB5PMHRCDEGH4PAY1/dc/e_probe.py /tmp/be59-ev-e-fin
----
-1 環境変数なし(plain): {'compiled': ['macros.hy', 'plain_user.hy', 'hy_repr.hy', 'table_user.hy'], 'values': {'plain_user': 'plain', 'table_user': 'plain'}}
-2 同じ環境の 2 つ目の process: {'compiled': [], 'values': {'plain_user': 'plain', 'table_user': 'plain'}}
-3 PROBE_E_MODE=fancy の process: {'compiled': ['plain_user.hy'], 'values': {'plain_user': 'fancy', 'table_user': 'plain'}}
---- 終了の code: 0

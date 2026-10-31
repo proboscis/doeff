@@ -1,3 +1,0 @@
-blind-b-loader-hooks-diff: code=1 2 failed, 15 passed, 63 deselected, 1 warning in 39.35s 狙いが赤=はい 落ちた=2 ('test_an_environment_reading_user_is_compiled_again_after_its_macro_changed_in_another_tree', 'test_the_environment_mark_is_read_only_by_the_walk_and_the_check')
-hy-import-left-unresolved: code=1 1 failed, 16 passed, 63 deselected, 1 warning in 37.91s 狙いが赤=はい 落ちた=1 ('test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_changes[hy-import]',)
-opaque-fold-without-mark: code=1 2 failed, 15 passed, 63 deselected, 1 warning in 36.87s 狙いが赤=はい 落ちた=2 ('test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_changes[default]', 'test_a_macro_reading_a_value_decided_by_the_environment_is_stale_when_it_changes[cell]')

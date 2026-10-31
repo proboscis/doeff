@@ -1,4 +1,4 @@
-"""報告のページの記事の図「図の数ごとの、図が全部入るまでの分」を、所要の表(reviews/reports-pages.csv)からSVGに描く。
+"""報告のページの記事の図「図の数ごとの、図が全部入るまでの分」を、所要の表(checks/reports-pages.csv)からSVGに描く。
 
 使い方: `uv run --no-sync python publications/zenn-use-cases-v0/visuals/reports_minutes_svg.py`。
 visuals/reports-minutes.svg を書き、PNGへはrender_svg.mjsで撮る(幅1200・高さ760)。
@@ -10,7 +10,7 @@ import statistics  # 中央値を数える。
 from pathlib import Path  # 表とSVGの置き場を指す。
 
 SOURCE = Path(__file__).resolve().parents[1]  # 記事の正本のディレクトリ。
-TABLE = SOURCE / "reviews/reports-pages.csv"  # 2026-10-12〜18の所要の記録から写した表。
+TABLE = SOURCE / "checks/reports-pages.csv"  # 2026-10-12〜18の所要の記録から写した表。
 OUTPUT = SOURCE / "visuals/reports-minutes.svg"  # 書き出すSVG。
 FONT = "IPAPGothic, IPAGothic, sans-serif"  # 図の他の記事と同じ字形。
 BLUE = "#2a78d6"  # datavizの既定の1番。毎日の中央値。

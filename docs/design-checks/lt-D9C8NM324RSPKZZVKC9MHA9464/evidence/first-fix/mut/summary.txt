@@ -1,7 +1,0 @@
-no-statement-read: code=1 3 failed, 9 passed, 63 deselected, 1 warning in 38.15s 狙いが赤=はい 落ちた=3
-no-code-read: code=1 3 failed, 9 passed, 63 deselected, 1 warning in 29.83s 狙いが赤=はい 落ちた=3
-no-local-import-read: code=1 1 failed, 11 passed, 63 deselected, 1 warning in 30.70s 狙いが赤=はい 落ちた=1
-no-environment-object-value: code=1 1 failed, 11 passed, 63 deselected, 1 warning in 33.29s 狙いが赤=はい 落ちた=1
-no-getenv-function: code=1 1 failed, 11 passed, 63 deselected, 1 warning in 35.49s 狙いが赤=はい 落ちた=1
-row-check-ignores-recorded-mark: code=1 1 failed, 11 passed, 63 deselected, 1 warning in 32.37s 狙いが赤=はい 落ちた=1
-remember-environment-digest: code=1 9 failed, 3 passed, 63 deselected, 1 warning in 34.44s 狙いが赤=はい 落ちた=9

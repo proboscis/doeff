@@ -1,9 +1,0 @@
-== at 9abed41dbbcf40db60c6009481129f973fa194b7 + 作業木の検(未 commit の contract test)・overlay = A の変更を parallel に当てた doeff_traverse
-/tmp/dc-repro-a-8HzR/overlay-a/doeff_traverse/handlers.py
-E                       doeff_core_effects.scheduler.SchedulerDeadlockError: scheduler deadlock: semaphore waiters remain with no runnable tasks (semaphore 0: tasks 4, 5, 6); parked waiters that no external completion can wake: root (gather) on task 1; root (g
-E                       doeff_core_effects.scheduler.SchedulerDeadlockError: scheduler deadlock: semaphore waiters remain with no runnable tasks (semaphore 0: tasks 2, 3, 4, 5); parked waiters that no external completion can wake: task 1 (gather) on task 2; ta
-E                       doeff_core_effects.scheduler.SchedulerDeadlockError: scheduler deadlock: semaphore waiters remain with no runnable tasks (semaphore 0: tasks 4, 5, 6, 7); parked waiters that no external completion can wake: task 1 (gather) on task 4; ro
-FAILED tests/test_for_do_runtime.py::test_two_froms_under_the_parallel_handler_give_the_same_values
-FAILED tests/test_for_do_runtime.py::test_nested_froms_answer_under_every_shipped_handler[parallel-1]
-FAILED tests/test_for_do_runtime.py::test_nested_froms_answer_under_every_shipped_handler[parallel-2]
-3 failed, 9 passed, 1 warning in 1.99s

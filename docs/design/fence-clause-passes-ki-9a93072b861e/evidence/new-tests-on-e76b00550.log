@@ -1,4 +1,0 @@
-FAILED test_guarded_clauses.py::test_what_a_clause_does_before_its_guard_leaves_with_the_effect_the_guard_sends_on
-FAILED test_guarded_clauses.py::test_pass_through_sends_on_what_a_clause_says_without_reading_any_source
-FAILED test_guarded_clauses.py::test_a_clause_stored_before_its_guard_was_read_performs_nothing_before_it
-3 failed, 31 passed, 1 warning in 72.97s (0:01:12)

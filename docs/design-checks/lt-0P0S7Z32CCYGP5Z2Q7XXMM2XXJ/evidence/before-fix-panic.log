@@ -1,4 +1,0 @@
-# os_files = aefc034f9(Exception だけを捕まえていた版)・試験 = 5344008c6dc6cd08be0fcf12fd9312eeaa78c9e0
-$ uv run --no-sync pytest -q packages/doeff-events/tests/test_file_watch.py -k panic
-E                   TimeoutError
-1 failed, 1 passed, 10 deselected, 2 warnings in 10.52s

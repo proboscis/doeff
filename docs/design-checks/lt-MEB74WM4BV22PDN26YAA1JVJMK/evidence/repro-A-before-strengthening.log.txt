@@ -1,9 +1,0 @@
-# 対象: doeff b142161f1d15b35da10850449a81e7ffdb081098(main d6ebc3db9 の上・検は main の形)+ 変異 mutant-A-warm-launch-realpath.diff.txt
-$ git apply mutant-A-warm-launch-realpath.diff.txt && uv run --no-sync pytest -q packages/doeff-cluster/tests/test_task_venv_on_both_paths.hy
-.                                                                        [100%]
-=============================== warnings summary ===============================
-packages/doeff-adr/src/doeff_adr/pytest_plugin.py:422
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-1 passed, 1 warning in 4.47s
-rc=0

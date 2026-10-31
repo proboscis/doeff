@@ -1,9 +1,0 @@
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def _self_check(monkeypatch):
-    # 直した版の自己照合を入れて走らせる(実験の検だけ・repo の tests/conftest.py の fixture と同じ働き)。
-    import doeff_core_effects.scheduler as scheduler_module
-
-    monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", True)

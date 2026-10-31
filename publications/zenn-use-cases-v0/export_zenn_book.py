@@ -21,7 +21,7 @@
 
 連載の言葉(「N本目」「連載」「前の回:」「メイン記事」「この記事」)が残る章、Zennに置けない画像、
 公開先から開けないリンクがあれば、何も書かずに全部を表示して止まる。出力先の他のファイルは消さない。
-出力はzenn-check/check.mjs(zenn-cliのプレビューとzenn-modelの検査)で確かめる。
+出力はzenn-preview/check.mjs(zenn-cliのプレビューとzenn-modelの検査)で確かめる。
 """
 
 from __future__ import annotations

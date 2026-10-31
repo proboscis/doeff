@@ -1,9 +1,0 @@
-== 版 dcdbb260d316525144335709a8ecedc0a37be848 + light_stack.py だけを変えた(negative: 行は元の tuple のまま _HY_CALLER_MODULES に hy.reader.hy_reader を足す)
- packages/doeff-hy/src/doeff_hy/light_stack.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
--_HY_CALLER_MODULES = frozenset({"hy.compiler", "hy.macros"})
-+_HY_CALLER_MODULES = frozenset({"hy.compiler", "hy.macros", "hy.reader.hy_reader"})
-== R7 の照合の検
-E   AssertionError: PyPI の Hy 1.3.1(uv.lock の版)に、doeff が import でない形で依る Hy の内部が無い(ADR-DOE-HY-008 R7 — 当て物を新しい版に合わせるか、Hy の版を戻す): ['packages/doeff-hy/src/doeff_hy/light_stack.py: hy.reader.hy_reader の 142 行の `inspect.stack()[1].frame.f_globals.get("_hy_reader_macros", {})` の読みは、light_stack が返す行(tuple)から frame を返さない']
-1 failed in 7.14s
-rc=1

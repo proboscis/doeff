@@ -1,6 +1,0 @@
-
-deadline scale x3.0 (load per usable CPU) — per test 182s, watchdog 272s
-
-test-admission: focused — 32 件(変更箇所の検証)
-................s...............                                         [100%]
-31 passed, 1 skipped in 24.14s

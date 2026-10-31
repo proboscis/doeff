@@ -139,8 +139,6 @@ This is useful for:
 - Waiting on the same key is not treated as a circular dependency.
 - Lazy program results are cached per `run()` invocation.
 
-See [SPEC-EFF-001](history/specs/effects/SPEC-EFF-001-reader.md) for details.
-
 ### Local - Temporary Environment Override
 
 `Local(env_update, sub_program)` runs a sub-program with modified environment. `Local` is

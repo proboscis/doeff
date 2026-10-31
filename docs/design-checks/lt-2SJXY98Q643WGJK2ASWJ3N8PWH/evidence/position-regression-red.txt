@@ -1,8 +1,0 @@
-## (e5) 位置の退行を直す前のコード(import_form が module の名を hy.read で作る = 1410ce508 の綴り)の overlay に、位置の検を走らせる — 検は main fb4dd0f3b の物
-$ PYTHONPATH=<overlay: expansion_names._module_model を hy.read(module) に戻した複写> uv run pytest tests/test_expansion_names.py tests/test_handle_writer_names.py -k "positioned or handlers_line" -q -W ignore
-FAILED tests/test_expansion_names.py::test_import_form_builds_no_positioned_model[doeff]
-FAILED tests/test_expansion_names.py::test_import_form_builds_no_positioned_model[doeff_vm]
-FAILED tests/test_expansion_names.py::test_import_form_builds_no_positioned_model[dotted-module]
-FAILED tests/test_expansion_names.py::test_import_form_builds_no_positioned_model[all-homes]
-FAILED tests/test_handle_writer_names.py::test_static_expansion_imports_keep_the_handlers_line
-5 failed, 141 deselected in 1.37s

@@ -1,6 +1,0 @@
-# 対象 64cd93dfa13ffd2cf61970067370e9738ca4b4d4
-C-S1-P {'agora.tenant': 'personal', 'service.name': 'doeff.job-log', 'doeff.worker': 'eos-native', 'doeff.job': 'worker/eos-native', 'doeff.attempt': '0', 'doeff.instance': 'b1'}
-C-S2-P {'agora.tenant': 'company', 'service.name': 'doeff.job-log', 'doeff.worker': 'atlas-native', 'doeff.job': 'worker/atlas-native', 'doeff.attempt': '0', 'doeff.instance': 'b2'}
-C-S2-N {'agora.tenant': 'company', 'service.name': 'doeff.job-log', 'doeff.worker': 'atlas-native', 'doeff.job': 'worker/atlas-native', 'doeff.attempt': '0', 'doeff.instance': 'b2'}
-all asserted
-rc=0

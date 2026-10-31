@@ -1,7 +1,0 @@
-import sys
-sys.path.insert(0, "/home/ubuntu/.worktrees/doeff-wt-blind-a-ki-fe7a/packages/doeff-traverse/tests")
-import hy, test_examples_run as t
-p = t.EXAMPLES / "ex04_simple.hy"
-for use, exp in t._doeff_hy_expansions(p.read_text(), str(p)):
-    r = hy.repr(exp)
-    print(use, "| _doeff_outcomes" if "_doeff_outcomes" in r else "", "| __import__" if "__import__" in r else "", "| (<- " if "(<- " in r else "")

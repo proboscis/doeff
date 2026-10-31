@@ -1,6 +1,0 @@
-start 2026-10-12T04:27:54Z pid 1214231's current scheduling policy: SCHED_OTHER pid 1214231's current scheduling priority: 0  nice=10
-round 1 at 2026-10-12T04:27:54Z load 59.10 69.95 85.37 23/9322 1214259
-r1-A slice_us=0 nice=10 getattr policy=0 nice=10 runtime_ns=2800000 load 59.10→55.03 cpu=2.98s wait=0.28s ratio=9% switches=6140 wait/switch=45us
-r1-B slice_us=100 nice=10 getattr policy=0 nice=10 runtime_ns=100000 load 59.10→55.03 cpu=2.95s wait=0.44s ratio=13% switches=6734 wait/switch=66us
-r1-C slice_us=0 nice=10 getattr policy=5 nice=10 runtime_ns=2800000 load 59.10→55.03 cpu=2.78s wait=1.27s ratio=31% switches=9098 wait/switch=140us
-end 2026-10-12T04:28:40Z

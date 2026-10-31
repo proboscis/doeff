@@ -18,13 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # ``handler(fn)(`` — an unmarked function wrapped at the call and applied to a program.
 OLD_STYLE = re.compile(r"\bhandler\([a-z_]+\)\(")
 # Records of their time, kept as written.
-HISTORICAL = (
-    "docs/proposals/",
-    "docs/specs/",
-    "docs/design/",
-    "docs/design-checks/",
-    "docs/history/",
-)
+HISTORICAL = ("docs/specs/",)
 
 
 def _pages() -> list[Path]:

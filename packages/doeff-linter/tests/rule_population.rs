@@ -358,28 +358,49 @@ fn business_code_in_a_named_bare_module_is_red() {
     }
 }
 
-/// hash で封をした記録の file を :files で path ごとに名指して外す宣言(agora-redesign #2934)— doeff の repo の宣言をそのまま
-/// 一時の repo に置いて確かめる: 宣言を書き換えると、ここが赤になる。
+/// hash で封をした記録の file を :files で path ごとに名指して外す宣言(agora-redesign #2934)の模型 — docs の下の宣言 1 つと、
+/// 記録の dir の中の、もっと近い宣言 1 つ。一時の repo に置いて確かめる。
 const SEALED_DECLARATIONS: [(&str, &str); 2] = [
-    ("docs/architecture.hy", include_str!("../../../docs/architecture.hy")),
-    (
-        "docs/design/seat-home-common-instructions-AJ8C0B/model/architecture.hy",
-        include_str!("../../../docs/design/seat-home-common-instructions-AJ8C0B/model/architecture.hy"),
-    ),
+    ("docs/architecture.hy", DOCS_SEALED_DECLARATION),
+    ("docs/records/model/model/architecture.hy", MODEL_SEALED_DECLARATION),
 ];
 
-/// 宣言が名指す封の file(doeff の repo の記録と同じ path)。
+/// docs の下の宣言: 2 つの記録の file を名指し、今当たる規則(DOEFF002・DOEFF007)だけを外す。
+const DOCS_SEALED_DECLARATION: &str = r#"(defarchitecture doeff-docs
+  :root "."
+  :layers [(layer sealed
+             :summary "hash で封をした記録の file — 中身を記録の封の表が控えるので書き換えない"
+             :knows "封の表"
+             :does-not-know "doeff の Program・effect・handler"
+             :files ["records/probe/evidence/link_artifact_doors.py"
+                     "checks/probe/evidence/race_b_probe.py"]
+             :exempt [(rule DOEFF002 "中身を記録の封の表が控える file で、書き換えると封が壊れる")
+                      (rule DOEFF007 "中身を記録の封の表が控える file で、書き換えると封が壊れる")])])
+"#;
+
+/// 記録の dir の中の宣言: その dir の file 1 つを名指し、DOEFF007 だけを外す。
+const MODEL_SEALED_DECLARATION: &str = r#"(defarchitecture sealed-model
+  :root "."
+  :layers [(layer sealed
+             :summary "hash で封をした記録の file — 中身を封の表が控えるので書き換えない"
+             :knows "封の表"
+             :does-not-know "doeff の Program・effect・handler"
+             :files ["chain.py"]
+             :exempt [(rule DOEFF007 "中身を封の表が控える記録の file で、書き換えると封が壊れる")])])
+"#;
+
+/// 宣言が名指す封の file。
 const SEALED_FILES: [&str; 3] = [
-    "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/link_artifact_doors.py",
-    "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/race_b_probe.py",
-    "docs/design/seat-home-common-instructions-AJ8C0B/model/chain.py",
+    "docs/records/probe/evidence/link_artifact_doors.py",
+    "docs/checks/probe/evidence/race_b_probe.py",
+    "docs/records/model/model/chain.py",
 ];
 
 /// 同じ dir に置いた、名指していない file(封の表が控えていない file)。
 const UNSEALED_SIBLINGS: [&str; 3] = [
-    "docs/design/symlink-verbs-fail-vocabulary-ZCN5BD/evidence/unsealed.py",
-    "docs/design-checks/lt-N23MQ5ZMSM6KCDKCB0G2RTFCAH/evidence/unsealed.py",
-    "docs/design/seat-home-common-instructions-AJ8C0B/model/unsealed.py",
+    "docs/records/probe/evidence/unsealed.py",
+    "docs/checks/probe/evidence/unsealed.py",
+    "docs/records/model/model/unsealed.py",
 ];
 
 /// 封の file と同じ dir の file に置く中身: 環境変数の直の読み(DOEFF004 — 宣言は外さない)と引数の書き換え(DOEFF007 — 宣言 2 つが

@@ -1,7 +1,0 @@
-B の差分を当てた木(基 d49f483297ee6ee07fbe4379b29670a33ebf9595)
-$ uv run pytest packages/doeff-cluster/tests/test_env_warm.hy -q -p no:cacheprovider
-    warnings.warn(pytest.PytestWarning(message), stacklevel=1)
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-21 passed, 1 warning in 102.16s (0:01:42)
-exit=0

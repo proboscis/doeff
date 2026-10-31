@@ -1,6 +1,0 @@
-# 2026-10-17T13:40:48+00:00 doeff f207e4d366c7350f45418e4bb28b39c8a93ad65b(作業木の未 commit の変更 = F1・F2)
-$ uv run --no-sync pytest -v packages/doeff-cluster/tests/test_env_prepare.hy -k warm_root or another_source_key
-packages/doeff-cluster/tests/test_env_prepare.hy::test_changing_only_the_project_commit_makes_a_warm_root PASSED [ 50%]
-packages/doeff-cluster/tests/test_env_prepare.hy::test_a_root_with_another_source_key_is_not_a_copy_source PASSED [100%]
-================= 2 passed, 31 deselected, 1 warning in 3.59s ==================
-rc=0

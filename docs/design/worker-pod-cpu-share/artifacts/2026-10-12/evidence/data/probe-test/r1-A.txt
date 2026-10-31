@@ -1,1 +1,0 @@
-slice_us=0 nice=10 getattr policy=0 nice=10 runtime_ns=2800000 load 59.10→55.03 cpu=2.98s wait=0.28s ratio=9% switches=6140 wait/switch=45us

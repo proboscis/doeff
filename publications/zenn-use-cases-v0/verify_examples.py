@@ -20,7 +20,7 @@ from doeff import run, with_handlers
 
 SOURCE = Path(__file__).resolve().parent
 ROOT = SOURCE.parents[1]
-# 子プロセス1つの時間の上限。混んだ機械(load average 約100)では、10本目の確かめ(reviews/adr-check.py)が1つで約3分かかる。
+# 子プロセス1つの時間の上限。混んだ機械(load average 約100)では、10本目の確かめ(checks/adr-check.py)が1つで約3分かかる。
 TIMEOUT = 600.0
 # 実行を許す例を明示する。新しい外部連携のファイルを自動実行しない。
 OFFLINE = (
@@ -142,10 +142,10 @@ with TemporaryDirectory() as directory:
     )
     print("OK: Conductor 履歴再利用(エージェントなし)", flush=True)
 
-    # 公開順の表の各回(公開予定・公開済み)の確かめ(reviews/<slug>-check.py)を、表の順に走らせる。
+    # 公開順の表の各回(公開予定・公開済み)の確かめ(checks/<slug>-check.py)を、表の順に走らせる。
     # 回を足す仕事は表の行と確かめのファイルを足すだけで、この一覧を書き換えない。
     for row in read_rows((SOURCE / "publication-plan.md").read_text()):
-        check = SOURCE / "reviews" / f"{row.name.removeprefix('doeff-').removesuffix('.md')}-check.py"
+        check = SOURCE / "checks" / f"{row.name.removeprefix('doeff-').removesuffix('.md')}-check.py"
         if not check.is_file():
             print(f"確かめのスクリプトなし: {row.name}(例はOFFLINEの一覧で走らせる)", flush=True)
             continue

@@ -1,5 +1,0 @@
-# 木: /home/ubuntu/.worktrees/doeff-wt-blind-a-ki-b0e8 (doeff 74ebb50b6 detached)
-# 足した検: packages/doeff-cluster/tests/test_blind_a_shared_group.hy (差分 = experiment.diff)
-uv run pytest packages/doeff-cluster/tests/test_blind_a_shared_group.hy -s -q   # run1.txt (1 本は検の書き誤りで赤 — defk の答えを <- で受けていなかった)
-uv run pytest 'packages/doeff-cluster/tests/test_blind_a_shared_group.hy::test_the_declare_writer_overwrites_another_systems_value_without_a_word' -s -q   # run2-writer.txt
-uv run pytest packages/doeff-cluster/tests/test_blind_a_shared_group.hy -s -q   # run3-all.txt (5 passed)

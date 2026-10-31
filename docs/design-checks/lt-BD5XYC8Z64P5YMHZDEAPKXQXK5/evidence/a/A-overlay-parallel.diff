@@ -1,9 +1,0 @@
-186a187
->     shared_sem = {}
-230c231,234
-<             sem = yield CreateSemaphore(concurrency)
----
->             # 盲検 A の変更: 枠を Traverse ごとでなく handler に 1 つ(for/do 全体の同時の件を N に抑えるつもり)
->             if "sem" not in shared_sem:
->                 shared_sem["sem"] = yield CreateSemaphore(concurrency)
->             sem = shared_sem["sem"]

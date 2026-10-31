@@ -1,3 +1,0 @@
-trace: Traverse step-is-do: True items: list
-Valid: [2, 4, 6]
-Failed: 0

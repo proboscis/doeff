@@ -1,7 +1,0 @@
-# 作業木: /home/ubuntu/.worktrees/doeff-at-a2254d66c(HEAD a2254d66cfc52f9fa9c3b4829bff2d76191bccb3)
-# 作業木の未 commit の変更: 
-# 命令: timeout 200 uv run python -I /home/ubuntu/.worktrees/doeff-wt-design-check-d4d7/.scratch/design-check/lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W/evidence/scripts/module_level_overwrite.py
-# 時刻: 2026-10-12T00:20:41Z
-
-handle の後の Pass は利用者の class か: False ・Pass の module: doeff_vm.doeff_vm
-# 終了の状態: 0

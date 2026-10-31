@@ -4,7 +4,7 @@
 - mergequeue-concept.svgは手で書いた。前の形を橙、今の形を青緑、別の列の検証を青で描く（開発の記録の図と同じ色の役）。
 - mergequeue-flow.svgとmergequeue-verify.svgは、../visuals/mergequeue_svg.pyで描く。
   - flowは、本文の2つ目の枠と同じ8件の山（75秒おき）を、517秒の門と5秒の門で並べた時刻表。
-  - verifyは、数えた表../reviews/mergequeue-verify-runs.csvの42回の結末を、日（行）× 刻（列）のマス目にした物。
+  - verifyは、数えた表../checks/mergequeue-verify-runs.csvの42回の結末を、日（行）× 刻（列）のマス目にした物。
   - 門の帯の色はdatavizの既定の1番（#2a78d6）。待ちの帯は灰。
   - 結末の色はdatavizの状態の色（赤#d03b3b・判じられない#fab219・緑#0ca30c）。色だけに頼らず、×・△・○・—の記号と凡例の文字を添えた。
 - 図の仕様：../reviews/mergequeue-visuals.json。

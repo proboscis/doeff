@@ -1,6 +1,0 @@
-6a7
-> (import pathlib [Path])
-18c19
-<   {:pre [(: message str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "foundation"}}
----
->   {:pre [(: repo Path) (: message str)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "foundation"}}

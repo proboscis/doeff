@@ -1,3 +1,0 @@
-EnvVar: 断った reserved-env-var reserved-env-var: hook の印の環境変数は宣言で置けない: CLAUDE_PROJECT_DIR
-environ-refusal: environ の CLAUDE_PROJECT_DIR: reserved-env-var: hook の印の環境変数は宣言で置けない: CLAUDE_PROJECT_DIR
-environ-refusal (ほかの名): None

@@ -1,3 +1,0 @@
-E               assert {'Nap'} == {'Tick'}
-FAILED packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_a_guard_reads_the_values_the_call_gives_it
-1 failed, 33 deselected, 1 warning in 6.16s

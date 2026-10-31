@@ -1,5 +1,0 @@
-#!/bin/sh
-set -e
-W=/work/toolset/worktrees/doeff-wt-blind-b-ki069f; C=$W/packages/doeff-cluster; T=/tmp/blind-b-ki069f
-cp $T/orig/main.hy $C/src/doeff_cluster/worker/entry/main.hy
-rm -f $C/src/doeff_cluster/worker/protocol/steady_wall.hy $C/tests/test_blind_b_entry_steady_wall.hy

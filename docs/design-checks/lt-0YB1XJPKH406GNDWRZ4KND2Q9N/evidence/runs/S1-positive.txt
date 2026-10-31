@@ -1,9 +1,0 @@
-# 実験 S1-positive・刻 2026-10-12T04:06:57Z・作業木 /home/ubuntu/.worktrees/doeff-wt-ki-93395c-dc・HEAD 912bec3bc4720ceeb4377052acdf29f3bb2b3696
-$ git apply S1-positive-new-import-in-defeffect-form.diff.txt
-$ git diff --stat
- packages/doeff-hy/src/doeff_hy/declarations.hy | 1 +
- 1 file changed, 1 insertion(+)
-$ uv run --frozen pytest tests/test_nested_definition_scope.py -q -W ignore
-pytest の exit=0
-75 passed in 36.38s
-$ git status --short -- packages tests(外した後)

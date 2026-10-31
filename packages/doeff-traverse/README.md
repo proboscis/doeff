@@ -220,7 +220,3 @@ See `examples/` directory:
 - **ex07** — proboscis-ema pipeline rewrite with per-item failure tracking
 - **ex08** — tqdm progress bar integration (bars close with a failing item too)
 - **ex09** — for/do comprehension: From + When + SortBy + Take
-
-## ADR
-
-See [ADR-TRAVERSE-001](../../docs/history/specs/features/ADR-TRAVERSE-001-applicative-traverse-via-free-monad-on-algebraic-effects.md) for the full design rationale.

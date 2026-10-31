@@ -1,2 +1,0 @@
-(require mac [bound-twice])
-(setv other (bound-twice 2))
