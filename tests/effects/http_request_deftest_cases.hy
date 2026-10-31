@@ -106,7 +106,7 @@
 
 
 (deftest test-http-production-handler-logs-no-line-per-request-by-default
-  ;; agora-redesign #823 項目 2: 要求ごとの slog は opt-in(log-each-request)— 毎分撃つ呼び手の log を要求ごとに増やさない。
+  ;; 要求ごとの slog は opt-in(log-each-request)— 毎分撃つ呼び手の log を要求ごとに増やさない。
   (val client (FakeAsyncClient
                 [(make-response 200 {} b"ok" "ok" "https://example.test/start" 0.2)]))
   (<- pair

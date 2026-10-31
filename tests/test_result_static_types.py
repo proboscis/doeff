@@ -1,6 +1,6 @@
 """doeff.result の Some・Maybe と Err の error が型を持つ事を、実行時と pyright と mypy で確かめる。
 
-失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べ card ki-02e317783af0 の抜け 5):
+失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 5):
 ``doeff/result.py`` に注記が無く、``Some(1).value`` は pyright で Unknown・mypy で Any だった。``Maybe = Some | _NothingType``
 は型の引数を持たず、``Maybe[int]`` は両方の道具で error。``Err`` は Generic でなく ``Err(...).error`` は Any で、``Try`` の答えの
 ``Err`` の中身も Any だった。``Ok`` と ``Err`` の宣言に ``__match_args__`` が無く、docstring の ``case Ok(value):`` も両方の道具で

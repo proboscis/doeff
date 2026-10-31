@@ -86,7 +86,7 @@ export function lintArgs(base: readonly string[], request: LintRequest): string[
 }
 
 /** 開発版の linter の置き場(home からの相対)。本線の doeff に自動で追いつく置き場で、書くのは dotfiles の追随の係だけ
- * (agora-redesign #848)。書き込み直後の hook と同じく PATH より先に見る — PATH の `~/.cargo/bin` の手組みの版は
+ *。書き込み直後の hook と同じく PATH より先に見る — PATH の `~/.cargo/bin` の手組みの版は
  * 誰も更新せず、設定の新しい鍵で終了コード 2 になる。 */
 const DEV_LINTER_DIR = ['.local', 'share', 'doeff-linter-dev'];
 

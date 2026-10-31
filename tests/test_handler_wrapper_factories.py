@@ -1,4 +1,4 @@
-"""program に handler を被せていた 8 名が、ほかの handler と同じく h1(h2(p)) で当てる工場か handler の値になった事(agora card ki-c72b3906869b)。
+"""program に handler を被せていた 8 名が、ほかの handler と同じく h1(h2(p)) で当てる工場か handler の値になった事。
 
 決まり: handler を返す工場は、最小の引数で呼ぶと印 _doeff_is_handler_fn の付いた handler を返す関数(ADR-DOE-API-001 R3)。
 program を包む関数は工場の形へ寄せ(R6)、program には h1(h2(p)) で当てる(R16)。設定も呼びごとの状態も無い handler は、工場でなく

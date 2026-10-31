@@ -94,7 +94,7 @@ export interface ViolationPlace {
 
 /**
  * 読む面の違反の吹き出しの「show in violations」の命令 — 違反の表(linter)の該当の項目を見せる(REVEAL_VIOLATION_COMMAND の
- * 逆向き・agora-redesign #1685)。引数は ViolationRef 1 つ。命令は lint の側が登録する。
+ * 逆向き)。引数は ViolationRef 1 つ。命令は lint の側が登録する。
  */
 export const REVEAL_IN_VIOLATIONS_COMMAND = 'doeff-runner.lint.revealInViolations';
 
@@ -154,7 +154,7 @@ export type ViolationAction =
 const HY_FILE = /\.(?:hy|hyk|hyp)$/;
 
 /**
- * 違反の項目から読む面へ行くため(v10・operator の決定: 違反の一覧の項目を押すと、その hy の file の読む面を source つきで開く)—
+ * 違反の項目から読む面へ行くため(v10: 違反の一覧の項目を押すと、その hy の file の読む面を source つきで開く)—
  * 違反の行を含む定義のカードを開いて source の箱も開く。定義の外の行は面の先頭と理由の 1 行。
  * 読む面を設定で切っている時・Hy でない file・索引に無い file は今までどおり editor で開く。定義の解決は file:line と同じ locate。
  */

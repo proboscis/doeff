@@ -70,7 +70,7 @@ State observed at 2026-06-19 22:02 JST:
 - Observed subprocesses:
   - `gtimeout 5400 make -C packages/nakagawa test-k3s-sbi-safe-readiness`
   - `make -C packages/nakagawa test-k3s-sbi-safe-readiness`
-  - `rsync ... /Users/s22625/repos/proboscis-ema/ zeus:/tmp/nakagawa-build-ctx/`
+  - `rsync ... /path/to/proboscis-ema/ zeus:/tmp/nakagawa-build-ctx/`
 - Log: `/tmp/proboscis-ema-sbi-k3s-safe-20260619-220130.log`
 - Stage: syncing/building the `zeus:5000/nakagawa:test` image for the
   k3s test job.

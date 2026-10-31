@@ -1,4 +1,4 @@
-"""VM が型の注釈で handler を飛ばす答えを effect の型ごとに覚える時の失敗ケース(card ki-65239b222437)。
+"""VM が型の注釈で handler を飛ばす答えを effect の型ごとに覚える時の失敗ケース。
 
 VM は、注釈の型が `type` そのものの作った class だけの handler について、「この effect の型を受けるか」を型ごとに覚え、
 次の同じ型の effect では isinstance を呼ばない。覚えた答えが古くなる・instance ごとに違う答えを型の答えにしてしまう形を、

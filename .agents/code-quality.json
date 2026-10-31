@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/・agora-redesign #19 / #20)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2d(agora-redesign #37)で headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6f(agora-redesign #26)で 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4u(agora-redesign #49)で手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。 段 8q(agora-redesign #51)で会話の引き継ぎ(履歴からの再開・家と機体の cache の扱い)の deftest(sessionhost_acp_rehydrate_deftests.hy)を同じ agentd-tests に足す。 段 8 lane 4aa(agora-redesign #63)で実況の push の周期の deftest(sessionhost_acp_live_poll_deftests.hy)を同じ agentd-tests に足す。 段 10f 便 2(agora-redesign #82)で自己圧縮(compactAt)の deftest(sessionhost_acp_compact_deftests.hy)を同じ agentd-tests に足す。 card ki-9fc7d4bca4dc 便 3 で会話の自動記憶の行化(hydration と畳み戻し)の deftest(sessionhost_acp_memory_rows_deftests.hy)を同じ agentd-tests に足す — 併せて agentd-judgment の allow に sessionhost-headless-protocol を名乗る(card ki-2bd49c68b042 で入った cli-own-turn-result の import が宣言に写っていなかった・相手は layer = pure で I/O なし)。 agora-redesign #668(削除 5-1・2026-09-26): agentd(sessionhost/acp/)と session host の headless backend・契約の写しの口を退役し、それらの module 契約をこの台帳から外した。",
+  "_comment": "共通の品質検査(dotfiles agent/code_quality.py)の module 契約。初回の登録は段 2 の agentd(sessionhost/acp/)だけ — 既存の sessionhost(deff / defhandler を持つ Hy)は投影の対象外なので include に入れず、依存先としてだけ宣言する。 段 2 lane 2dで headless backend の Python の module(headless_protocol / headless_process)と検を足す — headless.hy / substrate_headless.hy / impls/headless_argv.hy は deff / defhandler を持つ Hy なので、既存の sessionhost と同じく投影の対象外(依存先としてだけ宣言)。 段 6 lane 6fで 1 命令の参加 join の判断(join.hy・pure)を足す — env の綴りは effects.py の 1 点へ寄せたので valve / entry も effects を読む。 段 7 lane 7d-3(agora-redesign 7d の登記済み間隙 2)で profile の残量の観測(ReadProfileUsage → status.observed)の deftest(sessionhost_acp_profile_deftests.hy)を agentd-tests に足す(収集の wrapper .py は既存の wrapper 群と同じく契約の外)。 段 8 lane 4uで手番の出来事の耐久化(turn-record の entries への追記)の deftest(sessionhost_acp_turn_events_deftests.hy)を同じ agentd-tests に足す。 段 8qで会話の引き継ぎ(履歴からの再開・家と機体の cache の扱い)の deftest(sessionhost_acp_rehydrate_deftests.hy)を同じ agentd-tests に足す。 段 8 lane 4aaで実況の push の周期の deftest(sessionhost_acp_live_poll_deftests.hy)を同じ agentd-tests に足す。 段 10f 便 2で自己圧縮(compactAt)の deftest(sessionhost_acp_compact_deftests.hy)を同じ agentd-tests に足す。 続く便で会話の自動記憶の行化(hydration と畳み戻し)の deftest(sessionhost_acp_memory_rows_deftests.hy)を同じ agentd-tests に足す — 併せて agentd-judgment の allow に sessionhost-headless-protocol を名乗る(後から入った cli-own-turn-result の import が宣言に写っていなかった・相手は layer = pure で I/O なし)。 2026-09-26 に agentd(sessionhost/acp/)と session host の headless backend・契約の写しの口を退役し、それらの module 契約をこの台帳から外した。",
   "include": [
     "packages/doeff-agents/src/doeff_agents/_io_effects.hy",
     "packages/doeff-agents/src/doeff_agents/_io_handlers.hy",
@@ -39,7 +39,7 @@
   "untyped_dependencies": [
     {
       "path": "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
-      "reason": "deff macro の Hy(typed:false の legacy)で検査器が型を投影できない。読み手(python -m の入口 / usage.py / entry.py / 検)は隣の host.pyi の宣言で型を読む(段 12 lane 12b・agora-redesign #207 / #229・検査器の直し = code-quality #1)。",
+      "reason": "deff macro の Hy(typed:false の legacy)で検査器が型を投影できない。読み手(python -m の入口 / usage.py / entry.py / 検)は隣の host.pyi の宣言で型を読む(段 12 lane 12b・検査器の直し)。",
       "moved_from": ""
     }
   ],
@@ -76,7 +76,7 @@
         "packages/doeff-agents/src/doeff_agents/_agent_env.hy",
         "packages/doeff-agents/src/doeff_agents/_agent_env.pyi"
       ],
-      "responsibility": "agent の process へ env で運ばせない名の語彙(provider の資格・provider の宛先・手番の資格・binding が持つ名)と、正規化・突合の 1 点。受理(sessionhost/policy)・spawn(sessionhost/substrate)・shell の起動(shell.py)の 3 層が名指す。session host を import しない — headless の手番の経路が session host を引きずらないため(agora-redesign #708)",
+      "responsibility": "agent の process へ env で運ばせない名の語彙(provider の資格・provider の宛先・手番の資格・binding が持つ名)と、正規化・突合の 1 点。受理(sessionhost/policy)・spawn(sessionhost/substrate)・shell の起動(shell.py)の 3 層が名指す。session host を import しない — headless の手番の経路が session host を引きずらないため",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_agent_env.hy",
@@ -123,7 +123,7 @@
         "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
         "packages/doeff-agents/src/doeff_agents/_sessionhost/host.pyi"
       ],
-      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy。依存先として宣言・検が触る面の pyi。backend は tmux / herdr — headless の分岐は agora-redesign #668 で退いた)",
+      "responsibility": "sessionhost の host(RPC の dispatch・handler stack・monitor loop — deff / defhandler の Hy。依存先として宣言・検が触る面の pyi。backend は tmux / herdr — headless の分岐は退いた)",
       "layer": "runtime",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy",
@@ -142,7 +142,7 @@
         "packages/doeff-agents/src/doeff_agents/_sessionhost/store.pyi",
         "packages/doeff-agents/src/doeff_agents/_sessionhost/store_memory.hy"
       ],
-      "responsibility": "sessionhost の行の置き場の答え手 2 つ — SQLite の store(store.hy の sqlite-session-store・書きを直列にする actor・lease)と、その fake の memory の store(store_memory.hy の memory-session-store)。行の値の並び・書きの重ね方(changed-policy-patch と列の OVERLAY-RULES)・terminal の行を戻さない断り・出来事に載せる行は store.hy の defk 1 つずつで、両方が呼ぶ(agora-redesign #1351)。pyi は検が触る StoreActor だけ",
+      "responsibility": "sessionhost の行の置き場の答え手 2 つ — SQLite の store(store.hy の sqlite-session-store・書きを直列にする actor・lease)と、その fake の memory の store(store_memory.hy の memory-session-store)。行の値の並び・書きの重ね方(changed-policy-patch と列の OVERLAY-RULES)・terminal の行を戻さない断り・出来事に載せる行は store.hy の defk 1 つずつで、両方が呼ぶ。pyi は検が触る StoreActor だけ",
       "layer": "io",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy",
@@ -161,7 +161,7 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
       ],
-      "responsibility": "session host の effect と行の型(SessionRow・TerminalCause・SessionStore* ほか — ADR-DOE-AGENTS-004 R1)。値と effect の宣言だけで I/O を呼ばない。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無く dependency-uncontracted になっていたため(agora-redesign #1351)",
+      "responsibility": "session host の effect と行の型(SessionRow・TerminalCause・SessionStore* ほか — ADR-DOE-AGENTS-004 R1)。値と effect の宣言だけで I/O を呼ばない。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無く dependency-uncontracted になっていたため",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy"
@@ -174,7 +174,7 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/store_health.py"
       ],
-      "responsibility": "store の書き込みの健康(続いた書きの失敗を数えて host の readiness を落とす判断)。値の計算だけ — sqlite3 は失敗の型の名を読むためだけに import する。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無かったため(agora-redesign #1351)",
+      "responsibility": "store の書き込みの健康(続いた書きの失敗を数えて host の readiness を落とす判断)。値の計算だけ — sqlite3 は失敗の型の名を読むためだけに import する。2026-09-29 に契約を与えた — sessionhost-store が読むのに依存先の契約が無かったため",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/store_health.py"
@@ -409,7 +409,7 @@
         "packages/doeff-hy/src/doeff_hy/_json_value.py"
       ],
       "allow": [],
-      "responsibility": "JSON の値の型 JsonValue / JsonObject の唯一の定義(型検査の時は再帰の別名・実行の時は isinstance に渡せる union)。触ってよいのは汎用の解き手と foundation の送受信だけ(agora-redesign #840)",
+      "responsibility": "JSON の値の型 JsonValue / JsonObject の唯一の定義(型検査の時は再帰の別名・実行の時は isinstance に渡せる union)。触ってよいのは汎用の解き手と foundation の送受信だけ",
       "layer": "domain",
       "typed": true
     },
@@ -459,7 +459,7 @@
         "doeff-hy-json-value",
         "doeff-hy-record"
       ],
-      "responsibility": "defwire の汎用の解き手: JSON の値と型を宣言した値を pydantic の TypeAdapter で行き来する(parse・parse-json・dump・dump-json・json-schema)。形の違う JSON は Malformed(agora-redesign #840)",
+      "responsibility": "defwire の汎用の解き手: JSON の値と型を宣言した値を pydantic の TypeAdapter で行き来する(parse・parse-json・dump・dump-json・json-schema)。形の違う JSON は Malformed",
       "layer": "domain",
       "typed": true
     },
@@ -515,7 +515,7 @@
       "paths": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/attachment.py"
       ],
-      "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o・agora-redesign #96)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は doeff-claude-code の Dialogue。判断も I/O も持たない",
+      "responsibility": "手番の入力に付く添付(画像)の型 — 器に依らない値ちょうど(段 10 lane 10o)。mime と base64 の逐語・見出しの検めの材料・器の断りの理由・手番 1 回分の入力(本文 + 添付)。CLI の綴り(claude の block・codex の input の項)は持たない = 綴りの座は doeff-claude-code の Dialogue。判断も I/O も持たない",
       "layer": "pure",
       "public": [
         "packages/doeff-agents/src/doeff_agents/_sessionhost/attachment.py"
@@ -662,7 +662,7 @@
       "paths": [
         "packages/doeff-records/src/doeff_records/_store_choice.hy"
       ],
-      "responsibility": "記録の service の置き場の選びの型 StoreChoice(表の用意の作り手 prepare-of と /readyz の問い readiness と詰まりの読み pressure の組)と、詰まりの読みの答えの型 StorePressure・PressureUnread(錠を待つ本数・idle in transaction の最長の秒 — agora-redesign #1858)。data だけで I/O なし。本体の設定 records-serving が引数で受け、値は置き場の module が持つ(PostgreSQL = main の PG-STORE・memory = memory の memory-store-choice — agora-redesign #1608)",
+      "responsibility": "記録の service の置き場の選びの型 StoreChoice(表の用意の作り手 prepare-of と /readyz の問い readiness と詰まりの読み pressure の組)と、詰まりの読みの答えの型 StorePressure・PressureUnread(錠を待つ本数・idle in transaction の最長の秒)。data だけで I/O なし。本体の設定 records-serving が引数で受け、値は置き場の module が持つ(PostgreSQL = main の PG-STORE・memory = memory の memory-store-choice)",
       "layer": "domain",
       "public": [
         "packages/doeff-records/src/doeff_records/_store_choice.hy"

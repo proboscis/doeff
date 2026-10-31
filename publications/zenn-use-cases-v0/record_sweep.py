@@ -1,4 +1,4 @@
-"""公開の刻を過ぎた回を公開済みに直してmainに入れ、Zennの記事のbranchのリンクを張り直す1回(card ki-9c84cc3b4e19)。
+"""公開の刻を過ぎた回を公開済みに直してmainに入れ、Zennの記事のbranchのリンクを張り直す1回。
 
 agoraの担当の道具の組の同期のjob(agora-controllersのagent-toolset-sync — プログラムのreconcile)が、毎日8:10 JSTと
 起動の時に、doeffのmainの先端の作業木でこの命令を走らせる。1回は次の2段で、何度走らせても同じ所に落ち着く。
@@ -144,7 +144,7 @@ def commit_message(recorded: tuple[record_published.Recorded, ...]) -> str:
     names = "・".join(row.slug for row in recorded)
     return (
         f"公開の刻を過ぎた回を公開済みに直す({names})\n\n"
-        "record_sweep.pyが、Zennで開けることを確かめて公開順の表を直した(card ki-9c84cc3b4e19)。\n\n"
+        "record_sweep.pyが、Zennで開けることを確かめて公開順の表を直した。\n\n"
         f"{lines}"
     )
 

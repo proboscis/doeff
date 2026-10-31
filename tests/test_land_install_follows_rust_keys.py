@@ -1,5 +1,5 @@
 """取り込みの作業の作り直し(.agents/land-queue.toml の [follow] install)と make sync が、Rust の部品(doeff-vm)の build の口を
-呼ぶのは doeff-vm の tool.uv.cache-keys の file が変わった時だけである事の失敗ケース(agora-redesign #3860 の 2・ADR-DOE-BUILD-001)。
+呼ぶのは doeff-vm の tool.uv.cache-keys の file が変わった時だけである事の失敗ケース(ADR-DOE-BUILD-001)。
 
 uv は cache-keys の file の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を引く。だから旗
 `--reinstall-package doeff-vm` は要らず、在ると変わっていない時も毎回口を呼ぶ。ここでは cargo と maturin を撃たず、本物の

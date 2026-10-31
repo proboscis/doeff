@@ -2902,7 +2902,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Store extension context for bundled binary access
   extensionContext = context;
-  registerFollowNotice(context, output); // vsix の追随の報せ(Reload が要る時の通知・組み立ての失敗の警告 — agora-redesign #1043)
+  registerFollowNotice(context, output); // vsix の追随の報せ(Reload が要る時の通知・組み立ての失敗の警告)
 
   // Hy (doeff-hy) navigation: definition / references / outline / workspace symbols / hover.
   const hyNavigation = registerHyNavigation(context, { locateIndexer: () => locateIndexer(), output });
@@ -2911,7 +2911,7 @@ export function activate(context: vscode.ExtensionContext) {
   const pixelIcons = PixelIcons.load(context.extensionPath, output);
   const treePixels = (): IconSource | undefined => (treeIconsEnabled() ? pixelIcons : undefined);
   // doeff-linter's findings (the linter is the source of truth; the editor only displays them).
-  // 索引の全 file の呼び出しの表 — 読む面と、違反の欄の文の中の名の解決が共有する(agora-redesign #910 v12)
+  // 索引の全 file の呼び出しの表 — 読む面と、違反の欄の文の中の名の解決が共有する(v12)
   const graphs = new GraphTable(hyStore);
   const lint = registerLint(context, output, { tree: treePixels, ownsGutter: pixelOwnsGutter, icons: pixelIcons }, (filePath, message) =>
     messageEntities(filePath, message, graphs.graph)
@@ -2919,14 +2919,14 @@ export function activate(context: vscode.ExtensionContext) {
   const lintStore = lint.store;
   // Browse definitions by service / layer / tags (display only).
   registerBrowse(context, hyStore, hyNavigation.status, lintStore, output, treePixels);
-  // 定義を読む面(webview)— 定義 1 つを 1 枚のカードにし、kind と :tags の軸で絞る。定義の一覧は hy-index だけから(agora-redesign #910)
+  // 定義を読む面(webview)— 定義 1 つを 1 枚のカードにし、kind と :tags の軸で絞る。定義の一覧は hy-index だけから
   const readingParts = registerReadingPlane(context, hyStore, hyNavigation.status, lintStore, pixelIcons, lint.watch, output, graphs);
-  // 定義を読む面の repo 全体の入口 — file を開かずに索引の全定義を軸から絞る(agora-redesign #910 U9)
+  // 定義を読む面の repo 全体の入口 — file を開かずに索引の全定義を軸から絞る
   registerWorkspacePlane(context, hyStore, lintStore, readingParts, lint.watch);
   // エディタの上の pixel art(gutter の種類の icon と状態の印・決まった語の文字の置き換えと hover・状態バーの doe)
-  // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示(agora-redesign #849)
+  // defk の見出し(型の流れ・effect・tags)と束縛の型 — linter の editor-json 版 2 を読むだけの表示
   const defkView = registerDefkView(context, lintStore, (name) => pixelIcons.sprite(name), output);
-  // 定義の本体の呼びを f(a, b) の形で見せる — editor-json の rewrites を読むだけの表示(agora-redesign #849)
+  // 定義の本体の呼びを f(a, b) の形で見せる — editor-json の rewrites を読むだけの表示
   const callView = registerCallSyntaxView(context, lintStore, (name, px) => pixelIcons.inline(name, px));
   registerPixelEditor(context, hyStore, hyNavigation.effects, lintStore, pixelIcons, output, {
     hiddenSpans: (editor) => [...defkView.hiddenSpans(editor), ...callView.hiddenSpans(editor)],

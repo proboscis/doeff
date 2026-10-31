@@ -1,4 +1,4 @@
-// VS Code の拡張の追随の報せ(agora-redesign #1043)— 追随(dotfiles の agentcli/src/agentcli/vsix_follow.py)が書く状態 file を、
+// VS Code の拡張の追随の報せ— 追随(dotfiles の agentcli/src/agentcli/vsix_follow.py)が書く状態 file を、
 // 起動した時と file が変わった時に読み、新しい版が入ったのに動いているのが前の版なら Reload のボタンつきの通知を、組み立てが
 // 落ちていれば警告を出す。判定は ./status の純関数、この file は VS Code と file system に触る口だけ。
 // doeff-runner 1 つが状態 file の全部の拡張(python-semantic-highlighter を含む)について出す — 他の拡張の動いている版は

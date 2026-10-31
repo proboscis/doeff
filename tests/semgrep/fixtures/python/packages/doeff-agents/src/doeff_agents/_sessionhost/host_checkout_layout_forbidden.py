@@ -5,7 +5,7 @@
 ⚠ この file は fixture で、走る code ではない(`make lint-semgrep` は doeff/ と packages/ だけを見る)。
 """
 MEMORY = "dotfiles/claude/CLAUDE.md"
-ABSOLUTE = "/home/kento/dotfiles/claude/CLAUDE.md"
+ABSOLUTE = "/home/user/dotfiles/claude/CLAUDE.md"
 TILDE = "~/dotfiles/agent/skills"
 INTERPOLATED = f"{HOME}/dotfiles/agent/skills"
 JOINED = os.path.join(HOME, "dotfiles", "claude", "CLAUDE.md")
@@ -17,5 +17,5 @@ SEGMENT_HEAD = "dotfiles"
 NOT_A_SEGMENT = "my-dotfiles/claude"
 ALSO_NOT = "dotfiles-base/claude"
 DOTTED = "acp.dotfiles/claude"
-# 陰性対照 2(名指しで通す 1 件・card acp:kanban-issue:ki-6f8425e88733)
+# 陰性対照 2(名指しで通す 1 件)
 VERIFY_SCRIPTS_RELDIR = "dotfiles/cron_management"

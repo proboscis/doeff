@@ -1,4 +1,4 @@
-"""無い key の Get を、仕様と docs が実装と同じに言う事の検(取り組み doeff-publish・card ki-4fc77b6d6aa9)。
+"""無い key の Get を、仕様と docs が実装と同じに言う事の検(取り組み doeff-publish)。
 
 0.5.0 の `state()` は、無い key の `Get` に None を返す(tests/test_core_effects.py の test_get_missing_returns_none)。writer と
 Hy の defhandler の session val / var は、この None を「まだ置いていない」と読んで初めの値を置く。ところが仕様

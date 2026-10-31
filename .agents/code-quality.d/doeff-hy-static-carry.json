@@ -21,7 +21,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/_static_carry.py"
       ],
-      "responsibility": "doeff-hy-check の運び(--carry)の中身 — .hy ごとの入力(自身の展開・使う名の宣言の表面の推移・import の解き先・環境の指紋)の digest を作り、前の回の運びの文書と比べて pyright に当てる file を選び、当てなかった file の前の回の診断を運ぶ。pyright の検は撃たない(版を問うだけ — 検は doeff-hy-static-check が撃つ)(card ki-cbd1c93cfe7c)",
+      "responsibility": "doeff-hy-check の運び(--carry)の中身 — .hy ごとの入力(自身の展開・使う名の宣言の表面の推移・import の解き先・環境の指紋)の digest を作り、前の回の運びの文書と比べて pyright に当てる file を選び、当てなかった file の前の回の診断を運ぶ。pyright の検は撃たない(版を問うだけ — 検は doeff-hy-static-check が撃つ)",
       "typed": true
     }
   ]

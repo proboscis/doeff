@@ -3,7 +3,7 @@
     {
       "count": 7,
       "path": "packages/doeff-agents/src/doeff_agents/_sessionhost/result_mcp.py",
-      "reason": "legacy: 結果の MCP server の入口 result_mcp.py(旧 relaymain.py・card ki-bb337cfd0336 で名を替えた)の Any(unsafe-type-escape)— 基底 fe5c3c7b から在る既存の違反で、stdlib-only の JSON-RPC の relay の値の型。変更していない code を先払いで直させないために断片に載せる(負債の追跡 #229)",
+      "reason": "legacy: 結果の MCP server の入口 result_mcp.py(旧 relaymain.py から名を替えた)の Any(unsafe-type-escape)— 基底 fe5c3c7b から在る既存の違反で、stdlib-only の JSON-RPC の relay の値の型。変更していない code を先払いで直させないために断片に載せる(負債の追跡 #229)",
       "rule": "unsafe-type-escape",
       "subject": "typing.Any"
     }

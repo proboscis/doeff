@@ -1,4 +1,4 @@
-"""doeff-agents-no-sleep-effect-hy の極性の検(card ki-3c3d85253c2c)。
+"""doeff-agents-no-sleep-effect-hy の極性の検。
 
 doeff-agents は自前の待ちの効果を持たない — program は doeff_time の Delay を yield する(ADR-DOE-TIME-001 R7)。Python の定義と import は
 doeff-agents-no-sleep-effect が見るが、Hy の定義(io_effects.hy の Sleep・sessionhost/effects.hy の ClockSleep の形)には当たらなかった。

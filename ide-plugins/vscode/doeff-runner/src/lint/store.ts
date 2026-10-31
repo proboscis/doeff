@@ -2,7 +2,7 @@
 // 差し替える。表示(波線・パネル・地図)はすべてここから読む。外の世界には触らない。
 // 知らせは 2 種類 — 違反の側(違反・module・規則・層・root の実行の状態・知らない語)が変わった時の onDidChange と、見出しの側
 // (1 file の見出し・束縛・置き換え・本体の行)が変わった時の onDidChangeSignatures。木は違反の側だけを聞く(見出しだけの変化や
-// 前と同じ違反の差し替えで木を出し直すと、展開と選択が初期に戻る — agora-redesign #2162)。
+// 前と同じ違反の差し替えで木を出し直すと、展開と選択が初期に戻る)。
 
 import * as path from 'path';
 import type { DocIndex, DocProgress } from './docWorkspaceContract';
@@ -189,12 +189,12 @@ export interface FileSignatures extends DocumentStamp {
   readonly bindings: readonly LintBinding[];
   /** 呼びを `f(a, b)` の形で見せる置き換え(parent は この列の中の番号) */
   readonly rewrites: readonly LintRewrite[];
-  /** 定義ごとの本体の文字の行(定義を読む面が描く・agora-redesign #910 U2 / U5) */
+  /** 定義ごとの本体の文字の行(定義を読む面が描く) */
   readonly bodies: readonly LintBody[];
 }
 
 /**
- * root 1 つの全体の実行の状態(agora-redesign #1650) — 実行中(前の結果があれば保つ)・測定済み・失敗(前の結果が
+ * root 1 つの全体の実行の状態 — 実行中(前の結果があれば保つ)・測定済み・失敗(前の結果が
  * あれば保つ)の閉じた型に畳む。「まだ全体の実行を始めていない」は roots に entry が無い事で表す。
  */
 export type RootRun =
@@ -219,7 +219,7 @@ function reportOf(run: RootRun): LintReport | undefined {
 }
 
 /**
- * 1 file の実行の結果が差し替える範囲(agora-redesign #2163) — linter が判じた規則を名乗れば(judged_rules)その規則の違反だけ、
+ * 1 file の実行の結果が差し替える範囲 — linter が判じた規則を名乗れば(judged_rules)その規則の違反だけ、
  * 名乗らない古い linter の出力は file の違反の全部。名乗らない規則(repo 全体でだけ判じる DOEFF166 など)の違反は、全体の実行の
  * 結果のまま残す(以前は全部を差し替え、項目を押した・保存した file からその違反が次の全体の実行まで消えていた)。
  */
@@ -371,7 +371,7 @@ export class LintStore {
   private readonly unknownBySource = new Map<string, readonly string[]>();
 
   /**
-   * root の全体の実行を始めた事を置く(agora-redesign #1650) — 前の結果(measured の report か、failed の previous)
+   * root の全体の実行を始めた事を置く — 前の結果(measured の report か、failed の previous)
    * があれば running へ持ち越す。表は「実行中」の札を出しつつ、前の結果があればその違反と波線を保つ(消して 0 件の
    * 「違反はありません」に見せない — 起動直後と再実行の間の取り違え)。
    */
@@ -482,7 +482,7 @@ export class LintStore {
 
   /**
    * root の全体の実行が失敗した事を置く(前の結果は running と同じく持ち越す — 表は古い結果と失敗の理由を並べて
-   * 出す)。表示が失敗を「違反はありません」と取り違えないため(agora-redesign #1631)。同じ理由が続く間は書き換え
+   * 出す)。表示が失敗を「違反はありません」と取り違えないため。同じ理由が続く間は書き換え
    * ない(実行のたびに毎回 emit しない)。
    */
   failRoot(root: string, reason: string): void {

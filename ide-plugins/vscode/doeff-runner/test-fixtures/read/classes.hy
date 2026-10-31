@@ -1,4 +1,4 @@
-;;; defclass のカード(agora-redesign #910 U17・v9)のテストの見本 — decorator の札・欄の型・縦の表・used by
+;;; defclass のカード(v9)のテストの見本 — decorator の札・欄の型・縦の表・used by
 ;;; (arg of・returns・field of・made in)。
 (require doeff-hy.macros [defk <-])
 (require doeff-hy.record [defrecord])

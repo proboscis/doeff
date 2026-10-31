@@ -6,17 +6,17 @@
 > deftest 配線済み未使用、VM oracle 実装済み未配線、semgrep 229 ルール未実行)への対処として、
 > 本計画は **新しい力ではなく、既にある力を安全に・安く使える状態にする**投資を優先する。
 >
-> 裁定済み(2026-07-14 maintainer):
+> 決定済み(2026-07-14):
 > - **A3 = guard-error 確定**(auto-bind 不採用。エラーメッセージは修正プロンプト形式)
 > - **B3 = dev ビルドは doeff-vm-core feature `invariant-checks` + `python_bridge` 常時有効**
 > - **ゲート正典はローカル pytest**(GitHub CI は予算により停止中 — 再有効化は選択肢にない)
 >
-> 裁定済み(2026-07-17 maintainer + frontier):
+> 決定済み(2026-07-17):
 > - **C3 = GetTraceback / GetExecutionContext は VM 内省命令のまま現状維持**
 > - **E1 = `packages/doeff-domain` に完全 opt-in で配置**。導入 1 / 包含 ∞、handler 処理集合は二層導出、
 >   適合検査 (a) 被覆・(c) 孤児禁止を E1 で出荷する
 >
-> 裁定済み(2026-07-18 maintainer):
+> 決定済み(2026-07-18):
 > - **E2 = 見送り**。再開条件は、エージェントが語彙探索に実際に失敗した事例の観測
 > - **E3 の前提 = interpreter→handler 列の列挙契約設計**。frontier+人間の深い設計議論に予約し、
 >   worker へ委譲しない
@@ -53,7 +53,7 @@
 | Gap-1 | ~~docs/adr に conftest.py が無い~~ **解消済み(Stage 0)**: `docs/adr/conftest.py` を新設(:env を reader で反映・エラー再送出。ADR-DOE-HY-002 R3 の参照実装) | 2026-07-14 実装 |
 | Gap-2 | ~~T-A1/B3 は green、root testpaths の flip 後に DOMAIN-001 の xfail(strict) 相当 1 件が designed-red として残存~~ **解消(T-E1、2026-07-17 PR #544)**: E1 実装と同時に xfail を撤去し、DOMAIN-001 を deftest 5 本 + defsemgrep 1 本の green ピンへ置換。既定 suite の designed-red / xfail は 0 | tests/test_adr_wiring_gate.py / ADR-DOE-DOMAIN-001 / PR #544 |
 | Gap-3 | ~~CORE-002 enforcement blocked / C3 未裁定~~ **解消(T-C1/T-C3、2026-07-17)**: 現行 main に per-effect 捕捉は存在しないと確定し、回帰ガード deftest green。GetTraceback / GetExecutionContext は effect dispatch を通らない VM 内省命令として現状維持を裁定。下流 TRD-002 も旧版限定として resolved 化済み(ema PR #612) | C1 spike / CORE-002 R3 / ema PR #612 |
-| Gap-4 | `doeff-main-with-handler-stack`(489MB 姉妹 checkout)は 2026-07-11 に main へ完全マージ済みの残骸と判明 — 計画対象外、削除は maintainer 判断 | git merge-base 検証 2026-07-14 |
+| Gap-4 | `doeff-main-with-handler-stack`(489MB 姉妹 checkout)は 2026-07-11 に main へ完全マージ済みの残骸と判明 — 計画対象外、削除するかは別に決める | git merge-base 検証 2026-07-14 |
 | Gap-5 | ~~T-A4 の bang(!) が制御境界を越えて hoist~~ **解消(2026-07-16 PR #533)**: evaluation-position を保存する in-place yield 展開へ修正。ADR-DOE-HY-003 は fresh bytecode で 10 tests collected(probe 9 + ADR contract 1) | ADR-DOE-HY-003 / PR #533 |
 
 ## 依存関係(ASCII)
@@ -138,7 +138,7 @@
 
 ## Non-goals
 
-- GitHub Actions の再有効化(予算制約、maintainer 裁定 2026-07-14)。
+- GitHub Actions の再有効化(予算制約のため)。
 - auto-bind の導入(A3 裁定で不採用。再検討するとしても T-A2 完了後の別 ADR)。
 - class 2 新プリミティブ(rate-limit/batching/dedup/hedging)の実装 — 本計画の Gate 達成が前提の次期計画。
 - 本 docs-only 更新内での `packages/doeff-domain` を含むサブパッケージの追加・変更(T-E1 実装は PR #544 で完了済み)、Haskell client の拡張、multi-shot 方向の検討。
@@ -246,7 +246,7 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
   置換した。これにより既定 suite の designed-red / xfail は 0。
 - **E1 dogfood が delete-effects ドリフトを検出・解消**: (a) 被覆検査が、定義・export 済みの
   `MemoDeleteEffect` / `CacheDeleteEffect` を全 handler が未処理であることを初日に検出した。
-  maintainer 裁定 A(handler 追加)を PR #546(main `b89c62ff`、2026-07-18)で実装した。
+  採った案 A(handler 追加)を PR #546(main `b89c62ff`、2026-07-18)で実装した。
   memo は broadcast Put + get write-through により同一キーが複数層へ保持されることを probe で実証し、
   単層削除では外層の stale 値が `MemoGet` から再び見えるため、自層削除 + 外層への delete 伝播を採用。
   単層の cache handler は自層だけを削除する。両 handler とも Put と対称に `None` を resume し、
@@ -262,7 +262,7 @@ docs/adr/enforcement-ledger.json、docs/adr/semgrep-baseline.json、docs/adr/con
   (doeff >= `678c32b7`、pin 不採用)により PR #40(`b6b74da2`)を merge。これにより ema PR #613 /
   hypha PR #5 / mediagen PR #23 / ACP PR #39 + #40 の全下流で発火 0 件となり、休眠 discard 不在の
   証明が揃った。
-- **E2 見送り裁定**: 2026-07-18 maintainer 裁定により、SEDA/registry 照会の CLI/MCP 面は見送った。
+- **E2 の見送り**: 2026-07-18 に、SEDA/registry 照会の CLI/MCP 面を見送ると決めた。
   根拠は、(1) 核#8 型増殖への実 enforcement を E1 の孤児禁止・被覆・stale-ratchet が既に担い、
   MemoDeleteEffect / CacheDeleteEffect の実ドリフト検出から裁定 A、PR #546 での解消まで実証したこと、
   (2) 照会対象の宣言は `packages/doeff-domain/src/doeff_domain/core_effects_domains.hy` の 1 ファイルに

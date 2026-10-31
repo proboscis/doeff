@@ -1,4 +1,4 @@
-"""doeff-linter の data/clause_ops.json を、doeff-hy の表 CLAUSE-OPS から書き出す(card ki-d3ef2a50cc04)。
+"""doeff-linter の data/clause_ops.json を、doeff-hy の表 CLAUSE-OPS から書き出す。
 
 節の操作(resume・transfer・finish など)の名と終わり方の定義元は doeff-hy の表 CLAUSE-OPS 1 か所。Rust の linter は Hy を評価できない
 ので、表から名・終わり方・引数の数だけを書き出した file を読む。file は生成物で手で書かない。

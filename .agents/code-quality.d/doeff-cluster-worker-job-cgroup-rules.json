@@ -25,7 +25,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_worker/core/job_cgroup.hy"
       ],
-      "responsibility": "子の job を置く cgroup の判断(card ki-ed9dca403f58): worker の本体の cgroup(/proc/self/cgroup の中身)と機体の配備が渡した兄弟の名から、子を置く兄弟の cgroup.procs の path を決め(置けない形は断る)、子の argv を「自分の pid を cgroup.procs へ書いてから exec する sh」で包む純関数。",
+      "responsibility": "子の job を置く cgroup の判断: worker の本体の cgroup(/proc/self/cgroup の中身)と機体の配備が渡した兄弟の名から、子を置く兄弟の cgroup.procs の path を決め(置けない形は断る)、子の argv を「自分の pid を cgroup.procs へ書いてから exec する sh」で包む純関数。",
       "typed": true
     }
   ]

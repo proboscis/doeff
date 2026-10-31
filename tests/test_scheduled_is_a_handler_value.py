@@ -1,6 +1,6 @@
 """scheduled is a handler applied straight to the program, not a handler factory (ADR-DOE-API-001 R6).
 
-The owner's policy of 2026-10-30 (agora card ki-8187e8827ad9): a handler is a factory only where it has to be.
+The owner's policy of 2026-10-30: a handler is a factory only where it has to be.
 ``scheduled`` has neither settings nor per-call state, so like ``maybe`` and ``result`` (ADR-DOE-API-002 R1) it is
 a marked handler value: ``scheduled(prog)``, ``scheduled(prog, implementation=...)``, and ``scheduled`` in a stack.
 """

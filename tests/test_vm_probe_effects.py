@@ -1,4 +1,4 @@
-"""doeff-vm の数と切り替えは doeff の effect で読み書きし、doeff-vm の関数としては見えない事(card ki-27e8ea225b62)。
+"""doeff-vm の数と切り替えは doeff の effect で読み書きし、doeff-vm の関数としては見えない事。
 
 決まり: doeff の subpackage が利用者に見せる公開 API は effect と handler だけ。doeff-vm の数を測る・設定する関数 9 個
 (doeff_vm の根の vm_live_counts・invariant_checks_enabled と、拡張 doeff_vm.doeff_vm の 7 個)は、effect

@@ -1,4 +1,4 @@
-"""``@do`` の 1 回の飾りの費用(``program_factory``)と、その答えが変わらないこと(agora-redesign #2421)。
+"""``@do`` の 1 回の飾りの費用(``program_factory``)と、その答えが変わらないこと。
 
 ``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — #2421 の測りで 1 検 1811 回)。飾るたびに
 ``inspect.isgeneratorfunction`` で partialmethod・method・partial を剥がし、関数の中で ``doeff_vm`` を import していた。
@@ -123,7 +123,7 @@ def test_calling_a_decorated_function_builds_its_call_without_the_call_construct
 ) -> None:
     """失敗ケースの対(数の検): ``@do`` の関数の 1 回の呼びは ``Call`` の型を呼ばない — 定義の ``make_call``
     (vectorcall の method)が同じ ``Call`` を作る。型を呼ぶと、引数の tuple・``tp_new`` の振り分け・pyo3 の
-    constructor の引数の読みが呼びごとに掛かった(agora-redesign #2817)。直しを外すと 1 回数える。
+    constructor の引数の読みが呼びごとに掛かった。直しを外すと 1 回数える。
     """
     do_module = importlib.import_module("doeff.do")
     constructed = itertools.count()

@@ -1,5 +1,5 @@
 """Hy や httpx が無い環境で Hy の module・HTTP の handler を読むと、足す extra の名を言う文が出る事の失敗ケース(取り組み
-doeff-publish の区切り 8・card ki-7310ee8e4fd0)。
+doeff-publish の区切り 8)。
 
 `pip install doeff` は核の 4 個だけを入れ、Hy の言語(doeff-hy)は extra hy、HTTP の client の handler(Hy で書いてあり、httpx で
 送る)は extra http で足す(tests/test_core_install_extras.py)。足していない利用者が `No module named 'doeff_hy'` だけを見て

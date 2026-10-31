@@ -1,5 +1,5 @@
 """型の章(docs/23 と docs/24)の例を、読み手が写した形のまま pyright の strict と mypy の --strict にかけ、赤が出ない事の検
-(取り組み doeff-publish・card ki-b370d8d59e8c)。
+(取り組み doeff-publish)。
 
 型の報告(2026-10-17-doeff-user-typecheck.html の抜け 9): 型の章の 4 例は import と定義の抜けた抜き書きで、写して型の check に
 かけると名が 16 個解けなかった。例を走らせる検(tests/test_docs_page_examples.py)は、例が走って注記の通りに印字する事を見るが、

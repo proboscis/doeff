@@ -1,13 +1,13 @@
 {
  "version": 2,
- "root": "/Users/kento/repos/agora-controllers",
+ "root": "/path/to/project",
  "violations": [
   {
    "rule": "DOEFF110",
    "law": null,
    "adr": null,
    "severity": "error",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handlers_agents.hy",
+   "path": "/path/to/project/controllers/agent_task/handlers_agents.hy",
    "range": {
     "start": {
      "line": 160,
@@ -33,7 +33,7 @@
    "law": null,
    "adr": null,
    "severity": "error",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handlers_agents.hy",
+   "path": "/path/to/project/controllers/agent_task/handlers_agents.hy",
    "range": {
     "start": {
      "line": 163,
@@ -59,7 +59,7 @@
    "law": null,
    "adr": null,
    "severity": "warning",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/envs.hy",
+   "path": "/path/to/project/controllers/agent_task/envs.hy",
    "range": {
     "start": {
      "line": 45,
@@ -85,7 +85,7 @@
    "law": null,
    "adr": null,
    "severity": "warning",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/envs.hy",
+   "path": "/path/to/project/controllers/agent_task/envs.hy",
    "range": {
     "start": {
      "line": 50,
@@ -111,7 +111,7 @@
    "law": "business-modules-carry-no-environment-name",
    "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
    "severity": "info",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handler_sets.hy",
+   "path": "/path/to/project/controllers/agent_task/handler_sets.hy",
    "range": {
     "start": {
      "line": 36,
@@ -137,7 +137,7 @@
    "law": "business-modules-carry-no-environment-name",
    "adr": "ADR-CONTROLLERS-CHOOSE-ENVIRONMENT-BY-HANDLER-SET",
    "severity": "info",
-   "path": "/Users/kento/repos/agora-controllers/controllers/agent_task/handler_sets.hy",
+   "path": "/path/to/project/controllers/agent_task/handler_sets.hy",
    "range": {
     "start": {
      "line": 41,
@@ -161,7 +161,7 @@
  ],
  "modules": [
   {
-   "path": "/Users/kento/repos/agora-controllers/controllers/core/chat_wake.hy",
+   "path": "/path/to/project/controllers/core/chat_wake.hy",
    "layer": "core",
    "context": "chat",
    "role": "judgment",
@@ -170,7 +170,7 @@
    "service": null
   },
   {
-   "path": "/Users/kento/repos/agora-controllers/controllers/core/daily_verify_judgment.hy",
+   "path": "/path/to/project/controllers/core/daily_verify_judgment.hy",
    "layer": "core",
    "context": "daily-verify",
    "role": "judgment",
@@ -179,7 +179,7 @@
    "service": null
   },
   {
-   "path": "/Users/kento/repos/agora-controllers/controllers/core/daily_verify_loop_types.hy",
+   "path": "/path/to/project/controllers/core/daily_verify_loop_types.hy",
    "layer": "core",
    "context": "daily-verify",
    "role": "type",

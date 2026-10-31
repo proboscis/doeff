@@ -4,7 +4,7 @@ and of doeff-time which the README installs from PyPI, reads on the same axis as
 
 A PyPI page shows `description` as its one-line summary, searches by `keywords`, and lists `project.urls` as its
 links. Before this check the summary was the old "Pragmatic do-notation and effects system for Python", the
-keywords were monad and free-monad, and the only link was Homepage (card ki-9e64d26d0140).
+keywords were monad and free-monad, and the only link was Homepage.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ CORE = {
 
 # Packages released on their own tag whose PyPI page the README sends readers to (`pip install doeff-time`).
 # doeff-time 0.1.0 went to PyPI with the summary "Provider-agnostic time effects for doeff", no keywords, no
-# links and no classifiers; its next release carries the same metadata as the core (card ki-bdc3c0fec9b0).
+# links and no classifiers; its next release carries the same metadata as the core.
 ON_PYPI_ALONE = {
     "doeff-time": REPO / "packages" / "doeff-time",
 }

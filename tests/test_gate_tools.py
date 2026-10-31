@@ -1,4 +1,4 @@
-"""日次の全体検証が走る所の道具の依存の宣言と準備(agora-redesign #3870・card ki-9338eec1d15e)。
+"""日次の全体検証が走る所の道具の依存の宣言と準備。
 
 日次の全体検証(.agents/land-queue.toml の gate.full)は、2026-10-10 から日次の task が走っている所(atlas の doeff-worker の Pod)で
 直に走る(ADR-DOE-ENFORCE-001 R10 — それまでは remote_check で木を zeus の上へ送って走っていた)。本物の Redis の配達の法

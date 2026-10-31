@@ -1,5 +1,5 @@
 """docs の目次が、`pip install doeff` だけで読める page と、核の外の部品を別に入れる page を分けて見せる事の検
-(取り組み doeff-publish・card ki-d20475e94d87)。
+(取り組み doeff-publish)。
 
 `pip install doeff` が入れるのは核の 5 個(tools/verify_release_install.py の CORE)だけで、doeff-agents・doeff-llm などは
 入らない。前の目次は、それらの部品が要る page(agent の手引き・Gemini の page など)を核の page と同じ節に並べていたので、

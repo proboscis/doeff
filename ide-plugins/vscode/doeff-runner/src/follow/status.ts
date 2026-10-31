@@ -1,5 +1,5 @@
 // VS Code の拡張の追随(dotfiles の agentcli/src/agentcli/vsix_follow.py・ai land arm の側 loop)が書く状態 file の契約と、
-// そこから出す報せの判定(agora-redesign #1043)。この file は `vscode` を import しない純関数だけ(単体の検が VS Code 無しで撃てる)。
+// そこから出す報せの判定。この file は `vscode` を import しない純関数だけ(単体の検が VS Code 無しで撃てる)。
 //
 // 責務の分け方: 「入れた版と commit・直近の失敗」を知っているのは追随だけなので追随が状態 file に書く。「いま動いている拡張の commit」を
 // 知っているのは動いている拡張の側だけ(入った dir の out/vsix-follow-build.json)なので、Reload が要るかはこちらが判じる。

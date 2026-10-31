@@ -3,7 +3,7 @@
     {
       "count": 2,
       "path": "packages/doeff-hy/src/doeff_hy/_outcome_forms.hy",
-      "reason": "outcome_forms.hy の bind-form(<- の form 1 つの展開)が、macros.hy の内部名 _bind-parts・_bind-yield を関数の中で import して呼び返す既存の依存(macros.hy が outcome_forms.hy の split-absent・open-form・bind-form を呼ぶ向きと対の相互参照)。outcome_forms.hy に module の契約を与えて typed:true にした時(card ki-26d44798fdc5)に初めて測られた。切るのは bind-form を macros.hy へ寄せるか _bind-parts・_bind-yield に公開の名を与える便で、型の契約の便とは別。",
+      "reason": "outcome_forms.hy の bind-form(<- の form 1 つの展開)が、macros.hy の内部名 _bind-parts・_bind-yield を関数の中で import して呼び返す既存の依存(macros.hy が outcome_forms.hy の split-absent・open-form・bind-form を呼ぶ向きと対の相互参照)。outcome_forms.hy に module の契約を与えて typed:true にした時に初めて測られた。切るのは bind-form を macros.hy へ寄せるか _bind-parts・_bind-yield に公開の名を与える便で、型の契約の便とは別。",
       "rule": "private-symbol",
       "subject": "packages/doeff-hy/src/doeff_hy/macros.hy"
     }

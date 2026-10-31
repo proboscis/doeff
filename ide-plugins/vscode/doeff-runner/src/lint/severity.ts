@@ -34,7 +34,7 @@ export interface LevelColors {
   readonly underline: string;
 }
 
-/** 重大さの色の表 — 読む面の札・下線・file の帯は、この 1 つの表からだけ色を引く(面に色の表を増やさない・agora-redesign #1685)。 */
+/** 重大さの色の表 — 読む面の札・下線・file の帯は、この 1 つの表からだけ色を引く(面に色の表を増やさない)。 */
 export const LEVEL_COLORS: Readonly<Record<LintLevel, LevelColors>> = {
   critical: { background: '#5a1d1d', foreground: '#ffb0b0', underline: '#f14c4c' },
   major: { background: '#5a3a1d', foreground: '#ffd0a0', underline: '#e5a03c' },

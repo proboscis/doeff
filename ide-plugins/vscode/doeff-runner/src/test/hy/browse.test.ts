@@ -156,7 +156,7 @@ suite('タグで閲覧 — 並べ方と絞り込み', () => {
     assert.deepStrictEqual(browseChildren(kinds[0], view, ctx).map(show), ['file-handler']);
   });
 
-  test('木の節の固定の id — 同じ一覧と見方から 2 度作れば同じ id、同じ値の束も親が違えば別の id(agora-redesign #2162)', () => {
+  test('木の節の固定の id — 同じ一覧と見方から 2 度作れば同じ id、同じ値の束も親が違えば別の id', () => {
     const ctx = context();
     const view: BrowseView = { name: 'x', order: [axis('raw'), axis('kind')], filters: [] };
     const walk = (nodes: readonly BrowseNode[]): BrowseNode[] => nodes.flatMap((n) => [n, ...walk(browseChildren(n, view, ctx))]);

@@ -2,7 +2,7 @@
 
 決まり: ADR-DOE-API-001 の R5 — 公開の名は subpackage の import の根(``__init__``)からだけ出し、根のすぐ下の子
 (module か package)は名に ``_`` を付けて隠す。doeff の main を兄弟の dir から読む外の repo(agora-controllers・
-merge-queue・moneta・custody)を壊さない様に、3 つの stage で進める(card ki-83e663b21128 と同じ順):
+merge-queue・moneta・custody)を壊さない様に、3 つの stage で進める:
 
 1. ``hide``(doeff の木): 子を ``git mv`` で ``_<名>`` へ移し、元の名の所に移し替えの module を置き、子の名のうち入口へ
    出す名を入口の遅延の名に足し、doeff の木の import を書き換える。
@@ -46,15 +46,15 @@ merge-queue・moneta・custody)を壊さない様に、3 つの stage で進め�
 - 入口が読む module は、名の定義の在る公開の module(子が別の区画の名を import して出し直す時は、子の外の module)。
 - Hy の macro は入口の遅延の名にできないので ``_`` に残し、``require`` は ``_`` の path を読む(注に出す)。macro を出す
   module そのもの(``doeff_conductor.macros`` の形)は子に渡さない — ADR-DOE-API-001 R14・R15・R31 で公開の境界に置く
-  (段 1 で隠した conductor と events の macro の module は card ki-d80c9c978b35 が戻した)。
+  (段 1 で隠した conductor と events の macro の module は後で戻した)。
 - 同じ名で定義の違う物が 2 つ在る(子どうし・入口に在る名と)時は足さずに「ぶつかり」に出す。入口に同じ定義が在れば足さない。
   子が別の子の名を import して出し直す(定義が 1 つ)時は、定義の在る子から 1 度だけ足す。
 - 子の名が入口の出す名(入口へ足す名・入口に既に在る名・入口が既に束ねる名)と同じなら、何も書かずに断る
   (ADR-DOE-API-001 R34)。古い path に移し替えの module を置くと、古い path の import が親の属性 ``<根>.<子>`` を module に
-  束ね、入口の名を隠す(card ki-db44e4d3efe4 — 記録の service が起動の度に落ちた)。子の名か入口の名を先に替える。
+  束ね、入口の名を隠す(記録の service が起動の度に落ちた)。子の名か入口の名を先に替える。
 - ``--hold <名>``(``hide``・何度でも): 子と同じ名の名(入口がまだ出していない物)を、この stage では入口へ出さず ``_`` に
   残す。R34 の順の 1 段目: 子を移して移し替えの module を残し、外の repo を ``_`` の path へ書き換え、``finish`` で移し替えの
-  module を消してから入口へ足す(card ki-dc1f58c59bcc — doeff_core_effects の http_host_gate)。子の名でない名と、入口が
+  module を消してから入口へ足す(doeff_core_effects の http_host_gate)。子の名でない名と、入口が
   既に束ねる名は断る。
 
 入口は遅延の import で書く: ``_LAZY_EXPORTS``(名から module へ)・``__getattr__``・``__dir__``・``if TYPE_CHECKING:`` の
@@ -67,7 +67,7 @@ import すると ``_<子>`` の module そのものを返し(``sys.modules`` を
 finder が ``_<子>.<下>`` の module そのものを返す。古い path の ``mock.patch`` の的・isinstance・``python -m <古い path>`` は
 移す前と同じに効く。印の行の下には、古い path が出す名の固定の列(``# moved-submodule-shim-names <古い module>: <名> …``
 の行・子とその下の module ごと)を書く: 隠した時の目録の名のうち、effect・handler と既知の表の名。目録は古い path の名を
-この列だけで数えるので、移した先の ``_`` の module に helper を足しても公開名は増えない(card ki-4fbed45b5863)。
+この列だけで数えるので、移した先の ``_`` の module に helper を足しても公開名は増えない。
 
 書き換え(木の git の追跡する file):
 
@@ -98,7 +98,7 @@ import の根の中の file と ``--underscore-only`` は ``_`` の path だけ�
 
 doeff-linter の目録 ``packages/doeff-linter/data/world_handlers.json`` の handler の行(綴り ``<module>:<名>``)は、
 木の書き換えに当てない(linter は外の repo の ``:wraps`` の綴りを目録の鍵と完全一致で照らすので、古い綴りの行を
-書き換えると、古い綴りを書く外の repo の commit の hook が設定の誤りで止まる — card ki-1bea6cc16446)。``hide`` は
+書き換えると、古い綴りを書く外の repo の commit の hook が設定の誤りで止まる)。``hide`` は
 移した子とその下の module の行ごとに、古い綴りの行を残したまま、その前に ``_`` の綴りの行と、入口が出す名なら入口の
 綴り(``<根>:<名>``)の行を足す。``finish`` は古い綴りの行を消す(``_`` の綴りの行が無ければ ``_`` の綴りへ書き換える)。
 
@@ -1355,7 +1355,7 @@ def _shown_by_root(root: types.ModuleType, name: str, value: object) -> bool:
     """根が名を公開の名として出すか(遅延の表・``X as X``・``__all__``・package の中で定義した物)。
 
     ``__all__`` は入口が名を出す宣言なので、``@handler``・``@do`` で包んで定義の module が包みの側になった物も入口の名と
-    読む(card ki-32a05dc657b8 — doeff-gemini の ``default_gemini_cost_handler`` の定義の module は ``doeff.program``)。
+    読む(doeff-gemini の ``default_gemini_cost_handler`` の定義の module は ``doeff.program``)。
     """
     lazy = root.__dict__.get("_LAZY_EXPORTS")
     if isinstance(lazy, dict) and name in lazy:
@@ -1994,8 +1994,8 @@ def entry_name_clashes(children: Sequence[Child], fates: Sequence[NameFate]) -> 
 
     古い path を import すると、import の仕組みが親の package の属性 ``<根>.<子>`` を移した module に束ねる。属性が在るので
     入口の遅延の ``__getattr__`` は呼ばれず、後から入口で名を取る呼び手は関数でなく module を受ける(どちらが勝つかは
-    import の順で決まる — 10-30 に doeff_core_effects の aiohttp_http_server で記録の service が起動の度に落ちた・card
-    ki-db44e4d3efe4)。ADR-DOE-API-001 R34: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない。
+    import の順で決まる — 10-30 に doeff_core_effects の aiohttp_http_server で記録の service が起動の度に落ちた)。
+    ADR-DOE-API-001 R34: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない。
     """
     shown = {
         (module.split(".")[0], fate.name)
@@ -2662,8 +2662,8 @@ def finish(
 def pin(package_dir: Path, table_path: Path | None, allowed_path: Path | None) -> Report:
     """名の固定の列の無い移し替えの module に、今の目録の名のうち effect・handler と既知の表の名を列として書く。
 
-    列を書く道具より前に置いた移し替えの module を、表が認めた名だけを古い path の名とする形に揃える為の直し(card
-    ki-4fbed45b5863)。列を既に持つ移し替えの module は触らない(列は隠した時に固めた物)。
+    列を書く道具より前に置いた移し替えの module を、表が認めた名だけを古い path の名とする形に揃える為の直し。
+    列を既に持つ移し替えの module は触らない(列は隠した時に固めた物)。
     """
     tool = _inventory_tool()
     package_dir = package_dir.resolve()

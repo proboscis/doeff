@@ -1,4 +1,4 @@
-"""@do の関数が返す Expand は、pyright がどの順で file を検めても Program として受け取れる(agora-redesign #4346)。
+"""@do の関数が返す Expand は、pyright がどの順で file を検めても Program として受け取れる。
 
 agora-controllers の日次の型検査(pyright 1.1.414・1 process で全 file)で、defk の関数を
 `Callable[..., Program]` の引数へ渡す所が reportArgumentType で落ち、赤になる file が実行のたびに入れ替わっていた。

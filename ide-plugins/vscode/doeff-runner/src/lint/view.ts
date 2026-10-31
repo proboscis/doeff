@@ -122,7 +122,7 @@ export type LintNode =
 
 /**
  * 節の固定の id — 同じ置き場から 2 度作った節は同じ id、違う節は違う id(1 つの木の中で重ならない)。VS Code の TreeView は
- * id の同じ節の展開と選択を出し直しの後も保つ(id が無いと、出し直すたびに全部畳まれ選択も消えた — agora-redesign #2162)。
+ * id の同じ節の展開と選択を出し直しの後も保つ(id が無いと、出し直すたびに全部畳まれ選択も消えた)。
  * 数や文の変わる欄(件数・前回からの増減・束の見出しの名)は入れない — 変わっても同じ節のまま。
  */
 export function nodeId(node: LintNode): string {
@@ -250,8 +250,8 @@ export function violationRoots(
 
 /**
  * 違反の表の最上段 — root ごとの今の全体の実行の状態(running・measured・failed)を先に見る。実行中の root は
- * 「実行中」の札(agora-redesign #1650 — 起動直後と再実行の間、結果が無いだけで「違反はありません」と出ない
- * ようにする)、失敗した root は理由の札(#1631)を先頭に出す。実行中か失敗の root が 1 つでもあれば、violations
+ * 「実行中」の札(起動直後と再実行の間、結果が無いだけで「違反はありません」と出ない
+ * ようにする)、失敗した root は理由の札を先頭に出す。実行中か失敗の root が 1 つでもあれば、violations
  * が 0 件でも「違反はありません」は出さない(前の結果が無ければ札だけ、前の結果があればその violations が summary
  * 行以下に出る — その violations は store.violations() が running・failed の previous からすでに拾っている)。
  * 「違反はありません」が出るのは、全 root が measured で violations が 0 件の時だけ。
@@ -467,7 +467,7 @@ export function lintChildren(node: LintNode): LintNode[] {
 
 /**
  * 違反の表の中の、目印(規則の ID と位置)の違反の節までの道 — 束 → file → 違反(読む面の吹き出しの「show in violations」から
- * 表の項目を見せるため・agora-redesign #1685)。子は渡された口で引く(表が作った同じ節を VS Code の reveal に渡すため)。
+ * 表の項目を見せるため)。子は渡された口で引く(表が作った同じ節を VS Code の reveal に渡すため)。
  * 表に無ければ undefined(絞り込みで隠れた・規則の一覧を出している・linter を走らせ直して消えた)。
  */
 export function violationTrail(

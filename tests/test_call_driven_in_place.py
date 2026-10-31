@@ -1,4 +1,4 @@
-"""effect を出さずに終わる生成器の ``@do`` の定義の呼びを、VM が親の stream の中でその場で回す(agora-redesign #2816)。
+"""effect を出さずに終わる生成器の ``@do`` の定義の呼びを、VM が親の stream の中でその場で回す。
 
 親の生成器が、本体が yield する定義の ``Call`` を yield すると、VM の stream が子の生成器をその場で作って
 ``PyIter_Send`` で回し、返った値を親へ送り直す(VM の歩を使わない)。子が更に ``Call`` を yield すれば明示の

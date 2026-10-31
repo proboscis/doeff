@@ -1,6 +1,6 @@
-// 定義を読む面の hover の文(v1 2.5 節「束縛の型・effect の絵の hover」・agora-redesign #910)を組む純粋な関数(VS Code に触らない)。
+// 定義を読む面の hover の文(v1 2.5 節「束縛の型・effect の絵の hover」)を組む純粋な関数(VS Code に触らない)。
 // 本体の名には、その名の束縛の型(linter の bindings)か引数の型(linter の見出し)、effect の絵とチップには、索引の defeffect の
-// 引数と答えと説明の 1 行目を出す。違反の印には、違反の欄を並べた吹き出しの HTML を出す(v13・agora-redesign #1685)。
+// 引数と答えと説明の 1 行目を出す。違反の印には、違反の欄を並べた吹き出しの HTML を出す(v13)。
 // 読み方の正本は linter と索引で、ここは並べるだけ。
 
 import { typeText } from '../defk/model';
@@ -96,7 +96,7 @@ function tipRow(label: string, text: string | null): string {
 }
 
 /**
- * 違反の吹き出しの HTML(v13・agora-redesign #1685 の 2)— 規則の ID・短い名(無ければ ID だけ)・重大さ・立場(新しい /
+ * 違反の吹き出しの HTML(v13)— 規則の ID・短い名(無ければ ID だけ)・重大さ・立場(新しい /
  * 既知 / 照合中)・Jev の p(Jev の違反だけ)・違反の文・why(explanation.reason)・how to fix(hint)・law(law_statement)・
  * ボタン 2 つ(違反の表の項目へ・editor で範囲を選んで開く)。違反の欄と規則の短い名を並べるだけで、面は文を作らない。
  * webview の script は、この HTML を印の近くに写すだけ(頭・本体・source・帯・足のどの印からも同じ吹き出し)。

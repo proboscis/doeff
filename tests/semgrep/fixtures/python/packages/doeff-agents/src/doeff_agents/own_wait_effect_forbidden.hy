@@ -1,6 +1,6 @@
 ;;; doeff-agents-no-sleep-effect-hy の検体 — doeff-agents が Hy で自前の待ちの効果とその構築子を定める形を鳴らす。
 ;;; 行末の「; 鳴る」が鳴るべき行の印(tests/semgrep/test_doeff_agents_no_sleep_effect_hy_rule.py が印の行と当たりの行を突き合わせる)。
-;;; 鳴る形は ki-3c3d85253c2c の前に在った物の写し: io_effects.hy の Sleep と sleep・sessionhost/effects.hy の ClockSleep と clock-sleep。
+;;; 鳴る形は待ちを doeff-time の Delay に替える前に在った物の写し: io_effects.hy の Sleep と sleep・sessionhost/effects.hy の ClockSleep と clock-sleep。
 ;;; この file は実行しない(読むだけの検体)。
 (require doeff-hy.macros [defk defhandler <-])
 (import dataclasses [dataclass])

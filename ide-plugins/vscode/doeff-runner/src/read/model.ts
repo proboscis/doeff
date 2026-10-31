@@ -1,4 +1,4 @@
-// 定義を読む面(agora-redesign #910・案 D)の中身 — 定義 1 つを 1 枚のカードにし、軸で絞る純粋な関数(VS Code に触らない)。
+// 定義を読む面(案 D)の中身 — 定義 1 つを 1 枚のカードにし、軸で絞る純粋な関数(VS Code に触らない)。
 // 定義の一覧の正本は hy-index(置き場の 1 file の索引)。面が自分で file を歩いて定義を探すことはしない。
 // 型と effect は linter の editor-json の signature を材料に添えるだけ(読み方の正本は linter)。
 //
@@ -198,7 +198,7 @@ function byPosition(a: HyDefinition, b: HyDefinition): number {
 }
 
 /**
- * 違反の置き場(定義 1 つに対して — agora-redesign #1685 の 1・設計 v13)。linter が出した違反は、この 3 つのどれか 1 か所に
+ * 違反の置き場(定義 1 つに対して — 設計 v13)。linter が出した違反は、この 3 つのどれか 1 か所に
  * 必ず出す(どのカードにも置けない違反は file の帯へ — bandViolations)。
  */
 export type ViolationPlacement =

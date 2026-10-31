@@ -4,7 +4,7 @@ asyncio warns "Task exception was never retrieved" when a failed task is
 dropped unread. The scheduler does the same at the end of the run: one
 RuntimeWarning names every spawned task that ended with an exception while
 nothing claimed its outcome — no Wait, Gather or Race was given the task, and
-no Cancel or Discard either (card ki-84667a89b47a; before, the run returned
+no Cancel or Discard either (before, the run returned
 and the exception went nowhere — cases/e18_spawned_error_never_waited).
 
 Every test runs under both scheduler implementations.

@@ -1,5 +1,4 @@
-"""`pip install doeff` は核の 4 個だけを入れ、Hy と HTTP は extra で足す事の失敗ケース(取り組み doeff-publish の区切り 8・
-card ki-006338b48f4b)。
+"""`pip install doeff` は核の 4 個だけを入れ、Hy と HTTP は extra で足す事の失敗ケース(取り組み doeff-publish の区切り 8)。
 
 核の 4 個 = doeff・doeff-vm・doeff-core-effects・frozendict。`import doeff` と README の Python の例は、この 4 個だけで動く
 (依存の報告 2026-10-16-doeff-core-dependency-tree.html の ★ 案 D)。Hy の言語(doeff-hy・hy・pydantic …)と httpx は extra で足す:

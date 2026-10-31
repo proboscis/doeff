@@ -1,4 +1,4 @@
-"""doeff に無い名の import は、型の check で import の行が error になる(card ki-02e317783af0 の抜け 3)。
+"""doeff に無い名の import は、型の check で import の行が error になる(取り組み doeff-publish の調べの抜け 3)。
 
 実測(pyright 1.1.414 の standard と strict・mypy 2.4.0 の既定と --strict): ``doeff/__init__.py`` の
 module の ``def __getattr__(name: str) -> object`` が型の道具に見え、``from doeff import state``(handler は

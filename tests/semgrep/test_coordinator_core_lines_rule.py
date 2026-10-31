@@ -1,4 +1,4 @@
-"""coordinator の core が行の送り先を知らない事の陽性対照と弁別(card ki-0b0ab40048b9・設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB)。
+"""coordinator の core が行の送り先を知らない事の陽性対照と弁別(設計検証)。
 
 送りの配線(line_stamp の process_lines)は入口 coordinator/entry/main.hy だけが持つ。code-quality の module doeff-cluster-coordinator
 は core と入口を 1 つに持つので、入口のための許しが core にも効く — 規則が core からの import を断る。

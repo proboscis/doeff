@@ -1,4 +1,4 @@
-"""commit の hook scripts/check_hy_stubs.py の失敗ケース(card ki-5755818ef0d8)。
+"""commit の hook scripts/check_hy_stubs.py の失敗ケース。
 
 .hy だけを変えて隣の .pyi を作り直さない commit は止まり、作り直せば通る。afaf956cd(kube.hy に import を足して kube.pyi を直し忘れた)の
 形を、小さな package の .hy で再現する。

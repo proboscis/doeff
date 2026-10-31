@@ -52,7 +52,7 @@ class McpJsonType:
     handler の引数の型の注記(defmcp-tool の展開が書く文字)と、tool の server が受けた値の検め
     (``McpParamSchema.decode``)の両方がこの行を読む。写しを 2 つ持つと、server の検めと注記が別の判断に
     なった — 例: number を ``float`` の isinstance で検めると正しい JSON の整数 ``2`` を断り、integer を ``int`` の
-    isinstance で検めると ``true`` を通す(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 B・card ki-973b4e44d7bc)。
+    isinstance で検めると ``true`` を通す(設計検証の盲検 B)。
     """
 
     name: str
@@ -224,7 +224,7 @@ class McpToolDef:
 
         handler の引数の注記(defmcp-tool の展開)が約束する型を、server の側でも真にする所。検めずに渡していた頃は、
         ``int`` と注記した引数に ``"100"`` が届いて ``(* qty 2)`` が ``'100100'`` を成功として返し、省いた必須の引数に
-        None が届いていた(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A)。
+        None が届いていた(設計検証の盲検 A)。
         """
         decoded = tuple(p.decode(arguments) for p in self.params)
         return McpArguments(

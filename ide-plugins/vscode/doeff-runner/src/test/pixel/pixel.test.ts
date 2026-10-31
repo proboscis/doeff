@@ -282,7 +282,7 @@ suite('pixel art の icon — 画と字体', () => {
     assert.deepStrictEqual(stale, [], 'npm run pixel で作り直す');
   });
 
-  test('PNG の生成物は圧縮の byte ではなく画で比べる — 別の zlib で作った同じ画は同じ・1 画素でも違えば違う(agora-redesign #1626)', () => {
+  test('PNG の生成物は圧縮の byte ではなく画で比べる — 別の zlib で作った同じ画は同じ・1 画素でも違えば違う', () => {
     const doe = allGlyphs(glyphSet()).find((g) => g.name === 'doe');
     assert.ok(doe !== undefined);
     const made = png(doe.pixels[32], glyphSet().palette, 4);

@@ -1,6 +1,6 @@
 // 呼びを `f(a, b)` の形で見せる表示の置き換え — どの置き換えを描くか・どこに何を描くか・hover の文を決める純粋な関数(VS Code に触らない)。
 // 式の形を読むのは linter の editor-json の `rewrites`(src/project/call_view.rs)の 1 か所で、ここは Hy を読み直さずに描く場所を決めるだけ。
-// 読むだけの表示 — file の文字は変えない(agora-redesign #849・operator の決定 2026-09-28 — 呼びを
+// 読むだけの表示 — file の文字は変えない(呼びを
 // (f a b) でなく f(a, b) の形で見せる・式の途中の effect は `!` の印を残す案 A を採る)。
 
 import type { LintRange, LintRewrite, LintRewritePart, LintTypeRef } from '../lint/contract';

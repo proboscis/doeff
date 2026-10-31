@@ -1,4 +1,4 @@
-"""消費者の追従の後段(tools/consumer_follow.py)が、消費者を導き、針の赤を報告の行にする事(card ki-93ba968bbafe)。
+"""消費者の追従の後段(tools/consumer_follow.py)が、消費者を導き、針の赤を報告の行にする事。
 
 1. 消費者 = 根か 1 段下の pyproject.toml が doeff の配布物に依存する checkout。doeff 自身と、doeff を読まない repo は消費者でない。
 2. 針の赤の検は 1 行ずつ報告の行になり、消費者の conftest の fixture を求める検は「測らない検」に数えて赤にしない(conftest は読まない)。

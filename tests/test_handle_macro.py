@@ -561,7 +561,7 @@ class TestDefhandlerMissingRequire:
         import os
         sys.path.insert(0, os.path.join(os.getcwd(), "tests"))
         sys.modules.pop("fixtures.repro_387_no_require", None)
-        # この固定の file は require を意図して抜いた形 — doeff-hy は読む時に書き足す 1 行を警告で言う(card ki-909e814cc835)。
+        # この固定の file は require を意図して抜いた形 — doeff-hy は読む時に書き足す 1 行を警告で言う。
         with pytest.warns(HyMacroUseWarning, match=r"\(require doeff-hy\.macros \[defhandler\]\)"):
             import fixtures.repro_387_no_require as mod
         return mod

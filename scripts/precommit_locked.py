@@ -1,5 +1,5 @@
 """doeff の素の commit の hook(scripts/git-hooks/pre-commit)が呼ぶ pre-commit を、repo の uv.lock が決める版に固定する入口
-(card ki-8c0bb496bfab)。
+。
 
 素の hook は作業木の `.venv` に依らない(make sync をしていない作業木・agora の担当の Pod の作業木でも走る)。pre-commit は dev の
 依存なので、semgrep と同じく uv.lock の版を読み、uv の道具の置き場から `uv tool run --from pre-commit==<版> pre-commit` で呼ぶ

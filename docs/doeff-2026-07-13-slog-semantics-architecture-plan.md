@@ -103,7 +103,7 @@ ADR-DOE-CORE-EFFECTS-001 (proposed)
 
 merge 時に判明: main は 0acce3a9(2026-07-09)で同じ .log 廃止を別解で実施済みだった
 (State 収集 + `writer_log()`/`slog_log()` 値フロー、handler の installer 化、
-handler からの direct IO 排除哲学、59 ファイル掃討)。ユーザー裁定による統合形:
+handler からの direct IO 排除哲学、59 ファイル掃討)。採った統合形:
 
 - **slog_handler = 表示専用**(installer 形状、stderr 1 行、収集しない)— observability の
   IO boundary として direct-IO 排除哲学と整合(ShellRun handler と同型)
@@ -118,11 +118,11 @@ handler からの direct IO 排除哲学、59 ファイル掃討)。ユーザー
 
 ## Pre-existing 負債の棚卸し(本チェンジ外・要フォローアップ)
 
-- doeff-preset: 17/21 fail(削除済み `default_handlers` / 旧 protocol handler 規約 / 無引数 `Pass()`)→ **解消済み(2026-07-13 ユーザー裁定: retire)**: ADR-DOE-PRESET-001 でパッケージごと退役。enforcement は `tests/test_doeff_preset_retired.py` + semgrep `no-doeff-preset-import`。examples の残余 rot(`run_program` / `default_handlers`)は別負債として下記に残る
+- doeff-preset: 17/21 fail(削除済み `default_handlers` / 旧 protocol handler 規約 / 無引数 `Pass()`)→ **解消済み(2026-07-13 に退役と決定)**: ADR-DOE-PRESET-001 でパッケージごと退役。enforcement は `tests/test_doeff_preset_retired.py` + semgrep `no-doeff-preset-import`。examples の残余 rot(`run_program` / `default_handlers`)は別負債として下記に残る
 - doeff-time: 18 fail(`_protocol_handler() missing 'k'` — 旧規約)
 - doeff-flow: collection error(`RunResult` は doeff_vm から削除済み)
 - doeff-notify: 3 fail(`default_handlers` 削除)
-- doeff-agents / doeff-agentic の examples 14 ファイル: 削除済み API(`run_program(scoped_handlers=...)` / `default_handlers` / `doeff.effects.writer` / 旧 `Launch(name, config)` / 旧 `slog(step=...)` / `handle.pane_id` / 旧 `configure_mock_session(store, ...)`)参照の bit-rot → **解消済み(2026-07-13 ユーザーの指示で、残った負債を全部片付ける)**: examples 用エントリポイント `_runtime.run_program`(標準スタック mirror、slog_handler 標準装備)を新設し全面移行。doeff-agents 側は mock 実行で全数動作検証、doeff-agentic 側はコンパイル検証(OpenCode サーバー要のため)
+- doeff-agents / doeff-agentic の examples 14 ファイル: 削除済み API(`run_program(scoped_handlers=...)` / `default_handlers` / `doeff.effects.writer` / 旧 `Launch(name, config)` / 旧 `slog(step=...)` / `handle.pane_id` / 旧 `configure_mock_session(store, ...)`)参照の bit-rot → **解消済み(2026-07-13 に残った負債を全部片付けた)**: examples 用エントリポイント `_runtime.run_program`(標準スタック mirror、slog_handler 標準装備)を新設し全面移行。doeff-agents 側は mock 実行で全数動作検証、doeff-agentic 側はコンパイル検証(OpenCode サーバー要のため)
 - doeff-agentic の legacy handler 層: `handlers/production.py` が削除済み `Sleep`/`SleepEffect` を import しており **test_handlers_module.py が collection 不能**(`AgenticAPI.run` もこの層依存で従来から ImportError で死んでいる — 2026-07-13 実測、origin/main でも同様)。さらに `TmuxAgentHandler` 直 import は agent-boundary 規約違反。`visual_interceptor.py` も削除済み `WithIntercept` 依存で 2 tests fail。preset と同様の retire or 修理の裁定が必要(別 ADR 案件)。なお mock 層(`handlers/testing.py`)と `handlers/tmux.py` の `_as_protocol_handler` 二重ラップ(installer を (effect, k) で呼ぶ旧規約バグ)は 2026-07-13 に修理済み — agentic tests は 120 passed / 2 fail(WithIntercept)+ 1 module collection error(Sleep)まで回復
 - `tests/architecture/test_no_public_withhandler_shim.py`: `packages/doeff-adr/tests/test_defadr_macros.py` が banned pattern を含む
 - `make lint-semgrep`: 全体 140 pre-existing findings / `memo_handlers.py` F401×2

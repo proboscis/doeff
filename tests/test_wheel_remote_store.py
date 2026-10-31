@@ -1,8 +1,8 @@
 """build の口(tools/doeff_cargo_backend.py の stored_wheel)が、手元の保存先に無い wheel を機体の外の置き場から取る失敗ケース
-(ADR-DOE-BUILD-001 R5 の追補・card ki-5fab1f97d98b・設計 docs/design/rust-wheel-distribution)。
+(ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution)。
 
 置き場は doeff の GitHub の release `rust-wheels` の asset `<package>-<鍵>.whl`。口は手元の保存先 → 置き場 → 組む、の順に引く。ここでは
-置き場を手元の HTTP の口(127.0.0.1)に向け、網の外へ出ない。空の機体の検(card ki-c4dbd8771633 の受入 c1f9f7ae2)は本物の maturin の
+置き場を手元の HTTP の口(127.0.0.1)に向け、網の外へ出ない。空の機体の検は本物の maturin の
 組み方を通し、PATH の先頭に置いた偽の cargo・rustc が呼ばれた数を数える。
 """
 
@@ -175,7 +175,7 @@ def _fake_rust_tools(bin_dir: Path, log: Path) -> None:
 def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_cargo(
     backend: ModuleType, remote: RemoteStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 失敗ケース(card ki-c4dbd8771633 の受入 c1f9f7ae2・ki-5fab1f97d98b): 手元の保存先が空の機体で、置き場に同じ鍵の wheel が在れば、
+    # 失敗ケース: 手元の保存先が空の機体で、置き場に同じ鍵の wheel が在れば、
     # 口は本物の組み方(maturin)を通しても cargo を 1 度も呼ばずに置き場の wheel を使う。直す前は置き場を引かずに maturin が cargo を
     # 撃った(空の機体の同期で doeff-linter を一から組んで +435 秒 — agora 3466059e5)。
     log = tmp_path / "rust-tools.log"

@@ -1,4 +1,4 @@
-// 実体の種類ごとの欄と下の帯(v2 2.1 節の表・agora-redesign #910 U4)の HTML を組む純粋な関数(VS Code に触らない)。
+// 実体の種類ごとの欄と下の帯(v2 2.1 節の表)の HTML を組む純粋な関数(VS Code に触らない)。
 // 材料は hy-index 版 5(欄の型・答えの型・宣言した effect・effect 節の handles・型でない契約)と、呼び出しの表の逆引き。
 // defk / deff の見出しは linter の signature が正本なので、ここは見出しの無い実体(defeffect・defrecord・defenum・defhandler・
 // 最上位の変数 ほか)と、全部の実体に共通の「契約」の欄と下の帯を受け持つ。

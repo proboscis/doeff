@@ -1,4 +1,4 @@
-;;; 定義を読む面(agora-redesign #910)のテストの見本 — 入れ子でない定義を 1 枚ずつのカードにし、kind と :tags の軸で絞る。
+;;; 定義を読む面のテストの見本 — 入れ子でない定義を 1 枚ずつのカードにし、kind と :tags の軸で絞る。
 (require doeff-hy.macros [defk deff defrecord deftest <- val])
 
 (val LIMIT 3)

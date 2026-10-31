@@ -2,7 +2,7 @@ import { termMessage } from '../lint/termViews';
 // 定義を読む面の VS Code の層 — `.hy` を webview(custom text editor)で開き、model.ts が組むカードと軸を render.ts の
 // HTML で描く。読むためだけの面で、document を書き換えない(operator は source を手で編集しない)。
 // 定義の一覧は hy-index の置き場だけから読み、面が自分で file を歩かない。型・effect・違反は linter の置き場から添える。
-// `.hy` を開いた時の既定はこの面(v5・operator の決定 2026-09-29)。
+// `.hy` を開いた時の既定はこの面(v5)。
 
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -703,7 +703,7 @@ export function registerReadingPlane(
 ): ReadingPlaneParts {
   // effect の絵は装飾 A と同じ pixel art を data URI で(webview の CSP は img-src data: だけを許す)
   const glyphs: Glyphs = { effect: (name) => icons.inline(effectGlyph(name), 14)?.toString(true) };
-  // source の箱の色 — editor の `.hy` と同じ文法・theme・記号ごとの色(agora-redesign #910 U16)
+  // source の箱の色 — editor の `.hy` と同じ文法・theme・記号ごとの色
   const highlighter = new SourceHighlighter(output);
   const memory = workspaceFoldMemory(context.workspaceState);
   const navigator = new PlaneNavigator();

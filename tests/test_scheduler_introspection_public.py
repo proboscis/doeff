@@ -4,8 +4,7 @@
 tests and agora-controllers' tests all import it — it is the only way to read how many rows the
 scheduler's tables hold (they are closure state), and doeff-domain lists it in the
 ``doeff-scheduler`` vocabulary. A name that other packages must import has to be public, or every
-strict type check of those tests reports ``reportPrivateUsage`` for it (agora-controllers, card
-ki-f26dcea37a93).
+strict type check of those tests reports ``reportPrivateUsage`` for it (agora-controllers).
 """
 
 import pytest

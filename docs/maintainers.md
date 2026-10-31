@@ -10,7 +10,7 @@
 
 upstream 規約(検証済みでしか main を進めない)は 2026-08-09 から窓の battery が機械強制する。
 
-窓を回す機体は `.agents/land-queue.toml` の `policy.runner` が決める — 2026-09-14 から `"pod"`(k3s の頭脳の pod の land-api・実行者 `land-runner@agora-1`・押す鍵 = Secret `land-key-doeff` の deploy key)。登記した Mac は「この repo の窓は pod が回す」と名乗って見送る。Mac の窓へ戻すには runner の行を消す(agora-redesign #71 便 2d)。
+窓を回す機体は `.agents/land-queue.toml` の `policy.runner` が決める — 2026-09-14 から `"pod"`(k3s の頭脳の pod の land-api・実行者 `land-runner@agora-1`・押す鍵 = Secret `land-key-doeff` の deploy key)。登記した Mac は「この repo の窓は pod が回す」と名乗って見送る。Mac の窓へ戻すには runner の行を消す。
 
 ## `.agents/land-queue.toml` は maintainer の設備
 

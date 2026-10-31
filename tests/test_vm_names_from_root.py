@@ -1,6 +1,6 @@
 """The VM's types are read from doeff's root; doeff is the one package that imports doeff_vm.
 
-The user's answer "via-root" (lt-XM33P1YN6QBWX9VFMHT0T439FA, agora-redesign ki-ff728b00369a): a user or
+The shape is "via-root": a user or
 a subpackage writes handlers and program nodes with ``from doeff import ...``. Every type doeff_vm
 exports is reachable from doeff as the same object — under its own name, or, for the two nodes
 whose plain name doeff keeps for something else, under the root's name for the node. The
@@ -38,7 +38,7 @@ def test_every_vm_type_is_the_same_object_on_doeffs_root(name: str) -> None:
 
 
 def test_the_types_added_for_writing_handlers_are_on_the_root() -> None:
-    """The 7 types that were reachable only through doeff_vm before (ki-ff728b00369a)."""
+    """The 7 types that were reachable only through doeff_vm before."""
     from doeff import (
         BindOpener,
         Call,

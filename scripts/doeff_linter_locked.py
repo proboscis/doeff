@@ -1,5 +1,4 @@
-"""doeff の commit の hook が呼ぶ doeff-linter を、基点の file が名乗る鍵と同じ組み立ての入力から組まれた binary に固定する入口
-(agora-redesign #2906 の 2 便目・決め = #2906 の comment・c3-w49 と c2-w28 の合意)。
+"""doeff の commit の hook が呼ぶ doeff-linter を、基点の file が名乗る鍵と同じ組み立ての入力から組まれた binary に固定する入口。
 
 何が壊れていたか: hook は探し道の `doeff-linter`(zeus では各席が手で入れる ~/.cargo/bin の物)を呼び、その版が基点の版と違えば
 「測れない」と名乗って通った。linter の source を変える便のたびに、誰かが共有の binary を入れ直すまで hook の linter の項は

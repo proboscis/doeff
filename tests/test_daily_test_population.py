@@ -13,7 +13,7 @@ test-adr-doe-enforce-001-daily-populations-are-separate-stages が持ち、こ�
   理由つきの除外の表に在る。
 - 検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern(root の ini の python_files・
   doeff_hy_test_files・executable ADR の pattern)に当たり、Hy の集め手を conftest.py に写さない。外す一覧
-  (doeff_hy_test_skips)の行は今の Hy の検の file を名指す(agora-redesign #2591)。
+  (doeff_hy_test_skips)の行は今の Hy の検の file を名指す。
 - package は自分の pytest の設定を持たない(持つと root の ini と conftest が効かなくなる)。
 
 反例の実弾: 2026-09-24 の日次(断面 f271ae39)は root の赤 3 本で `&&` が止まり、package と
@@ -47,7 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # pytest の既定の python_files(root の ini が python_files を書けば、そちらを読む)。
 _PYTEST_PYTHON_FILES = ("test_*.py", "*_test.py")
-# 「検のつもりの名」の file — どれかの集め手に集められなければ、日次で 1 本も走らない(agora-redesign #2591)。
+# 「検のつもりの名」の file — どれかの集め手に集められなければ、日次で 1 本も走らない。
 _TEST_NAMED_SOURCES = ("test_*.py", "test_*.hy")
 
 
@@ -56,13 +56,13 @@ def _test_file_patterns(repo: Path) -> tuple[str, ...]:
 
     - Python の検: root の ini の python_files(既定は pytest の既定)。
     - Hy の検の file: root の ini の doeff_hy_test_files(doeff-adr の plugin の集め手が同じ値を読む・deftest の
-      file も上から順に実行する script も集める — agora-redesign #2591)。
+      file も上から順に実行する script も集める)。
     - executable ADR: doeff-adr の plugin の既定の pattern と root の ini の doeff_adr_hy_files。
 
     `.py` だけを数えていた時は、母集団の外の `.hy` の検が日次で走らなくても赤にならなかった
-    (#2542 の packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy・agora-redesign #2577)。
+    (#2542 の packages/doeff-cluster/src/doeff_cluster/_sim/test_entries_on_sim.hy)。
     Hy の条件を検の側に `test_*.hy` と写していた時は、集める conftest の無い dir の test_*.hy(packages/doeff-hy/tests
-    の 6 本)を「検の file」と数えながら、どの集め手も集めていなかった(agora-redesign #2591)。
+    の 6 本)を「検の file」と数えながら、どの集め手も集めていなかった。
     """
     ini = _root_ini(repo)
     return (
@@ -104,17 +104,17 @@ _NOT_WALKED = (
 # 行を足す時は理由を書く。該当する file が 1 本も無い行は古い行として赤になる。
 # 設計の記録(docs/design/・docs/design-checks/)は dir の行で外さない — 記録の中の検の写し・模型は集め手の pattern に当たらない名
 # (`<名>.py.txt`)で置く。行で外すと、make test-changed の選び(名の規則だけを読む)が写しを検として走らせ、本物の
-# 検を記録の中にだけ置いても緑になる(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B — docs/design/ の
-# 行も同じ形で、seat-home の模型 4 本は 2026-10-12 に .py.txt へ替えて外した・card ki-d153ab595504)。
+# 検を記録の中にだけ置いても緑になる(設計検証の盲検 A・B — docs/design/ の
+# 行も同じ形で、seat-home の模型 4 本は 2026-10-12 に .py.txt へ替えて外した)。
 # 記録の中の行は、hash で封をした閉じた記録が名指して改名できない file だけを、1 file ごとの path で書く(dir の行と違い、
 # 新しい検を隠せない — dir の行は test_exclusion_table_has_no_dir_row_over_a_record_dir が禁じる)。記録の dir は root の
 # pyproject.toml の `[tool.doeff] record-dirs` の 1 点で、make test-changed の選び(scripts/run_changed_tests.py)もこの下の file を
 # 検として選ばない。選びが記録の中の file を選ぶと、その file が import する module の変更で「集める時に落ちた」赤になった
-# (設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A・実測)。
+# (設計検証の盲検 A・実測)。
 EXCLUDED: dict[str, str] = {
     "packages/doeff-agents/conformance/": (
         "tmux / herdr の実 pane を使う黒箱の交代ゲート(実モデルは使わない)。日次の宿で tmux が"
-        "使えるかが未測定で、母集団へ入れるかは card acp:kanban-issue:ki-2832a04913cc が決める"
+        "使えるかが未測定で、母集団へ入れるかは別の便で決める"
     ),
     "docs/design/worker-pod-cpu-share/artifacts/2026-10-12/evidence/scripts/fork_test.py": (
         "測りの script(pytest の検ではなく、module の先頭で sched_setattr と fork を走らせる)。閉じた記録 "
@@ -144,7 +144,7 @@ EXCLUDED: dict[str, str] = {
         "紹介の記事の例の dir の README が書く `pytest` で利用者が走らせる、mock.patch と doeff の handler の検の例。例は PyPI の"
         "版に留めて書く(ADR-DOE-API-002 R3)ので、repo の版では走らせず、毎日の CI(.github/workflows/core-install-from-pypi.yml)"
         "の tools/verify_core_install.py --pypi が、PyPI の doeff と pytest だけの venv で例の dir を写した所で走らせる"
-        "(card ki-5ea7c639b693)— 根の下に置くと repo の版と根の conftest.py の下で走る"
+        "— 根の下に置くと repo の版と根の conftest.py の下で走る"
     ),
     "tools/test_python_versions.py": "Python の版を回す道具の script",
 }
@@ -265,7 +265,7 @@ def _assert_every_test_file_belongs_to_a_daily_population(repo: Path, roots: lis
 def _assert_every_test_named_source_is_collected(repo: Path) -> None:
     """検のつもりの名(test_*.py・test_*.hy)の file は、どれかの集め手の pattern に当たる(fixtures の下を除く)。
 
-    当たらない file は、母集団の根の下に在っても pytest に集められず、日次で 1 本も走らない(agora-redesign #2591 —
+    当たらない file は、母集団の根の下に在っても pytest に集められず、日次で 1 本も走らない(
     packages/doeff-hy/tests の 6 本は、集める conftest の無い dir の test_*.hy だった)。
     """
     patterns = _test_file_patterns(repo)
@@ -293,7 +293,7 @@ def _named_failed_packages(output: str) -> list[str] | None:
 # 偽の runner(make の PACKAGE_UV_RUN に置く)— 引数の 1 つが DOEFF_FAKE_RUNNER_FAIL の dir に当たる時だけ 1 で終わり、返す rc・
 # cwd・引数を記録の file へ 1 行(タブ区切り)で足す。引数は runner の cwd から解くので、package の dir から走らせる形でも
 # 同じ package と数える。sh で書く: Python で書くと 1 巡で Python 3.14t を session の数(35)だけ起こし、load 65〜70 で
-# 1 巡 4.75 秒かかった(card acp:kanban-issue:ki-e8f54a86b0a8)。path は cd と pwd -P で解く(realpath -m は Mac に無い)。
+# 1 巡 4.75 秒かかった。path は cd と pwd -P で解く(realpath -m は Mac に無い)。
 _FAKE_RUNNER = """\
 unset CDPATH
 fail=$(cd -- "$DOEFF_FAKE_RUNNER_FAIL" 2>/dev/null && pwd -P)
@@ -339,7 +339,7 @@ def _run_test_packages(repo: Path, tmp: Path, fail: Path, *overrides: str) -> _M
     runner = tmp / "fake_runner.sh"
     runner.write_text(_FAKE_RUNNER, encoding="utf-8")
     record = tmp / "calls.tsv"
-    # 子(make)は doeff の子 process の答え手が起こし、今の環境に偽の runner の 2 つの名を重ねて渡す(agora-redesign #3012)。
+    # 子(make)は doeff の子 process の答え手が起こし、今の環境に偽の runner の 2 つの名を重ねて渡す。
     proc = run(
         with_handlers(
             [subprocess_handler],
@@ -389,11 +389,11 @@ class _PackagesRound:
 def packages_round(tmp_path_factory: pytest.TempPathFactory) -> _PackagesRound:
     """この repo の `make test-packages` の一巡を module で 1 回だけ回し、その記録を package の loop の検 2 本が共に読む。
 
-    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す(card acp:kanban-issue:ki-e8f54a86b0a8)。
+    検ごとに回すと、同じ一巡(package の数だけ runner を起こす)を 2 回回す。
     この一巡には赤が在るので、「全部が緑なら rc 0」は模型の木の検
     test_make_test_packages_is_green_when_every_package_is_green が見る。この一巡の模擬の結末は「最初の package だけが赤」の
     1 つで、別の結末(rc 5・赤 2 つ・時間切れ)を見る検は `_run_test_packages` で自分の一巡を回す — 相乗りすると、訪ねの検の
-    rc≠0 が何の赤から来たかを言えなくなる(訪ねの検が赤にする — 設計検証 lt-F2VNSACTHQE41RVE9CC16NPBR3 の盲検 B)。
+    rc≠0 が何の赤から来たかを言えなくなる(訪ねの検が赤にする — 設計検証の盲検 B)。
     """
     expected = _expected_packages(REPO_ROOT)
     assert expected, "packages/*/tests に Python のテストを持つ package が 1 つも見つからない"
@@ -501,7 +501,7 @@ def test_package_failure_names_are_repo_root_relative(tmp_path: Path) -> None:
     green.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
     # 模型の木は root の conftest も外の plugin も持たない — 外の走行の設定を持ち込まない。子(make)は doeff の子 process の
-    # 答え手が起こし、今の環境にこの 3 つの名を重ねて渡す(agora-redesign #3012)。
+    # 答え手が起こし、今の環境にこの 3 つの名を重ねて渡す。
     proc = run(
         with_handlers(
             [subprocess_handler],
@@ -559,7 +559,7 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
     tmp_path: Path,
 ) -> None:
     """失敗ケース: package の tests/ の外に `.hy` の検だけを持つ dir を置くと赤、その dir を本物の
-    Makefile の PACKAGE_EXTRA_TEST_ROOTS に入れると緑(#2542 の sim の dir の形・agora-redesign #2577)。
+    Makefile の PACKAGE_EXTRA_TEST_ROOTS に入れると緑(#2542 の sim の dir の形)。
 
     `.py` だけを数えていた時の規則では、この `.hy` は検の file に数えられず、母集団の外でも緑だった。
     """
@@ -587,7 +587,7 @@ def test_hy_test_outside_every_population_is_red_until_its_root_is_declared(
 
 def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path: Path) -> None:
     """失敗ケース: 設計検証の記録の中に検の名の写し(test_*.py)を置くと赤、集め手の pattern に当たらない名
-    (`.py.txt`)に替えると緑(設計検証 docs/design-checks/lt-9R40Q1PM496VA4HVD1FMXVYW8Z)。
+    (`.py.txt`)に替えると緑(設計検証)。
 
     docs/design-checks/ を除外の行で外した形(77e0eb3f9)では、写しは make test-changed の選びで検として走り(名に `.` を
     含む写しは集める時に落ちて赤 1)、本物の検を記録の中にだけ置いても緑だった(盲検 A・B)。
@@ -607,7 +607,7 @@ def test_test_named_copy_in_a_design_check_record_is_red_until_renamed(tmp_path:
 
 def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path) -> None:
     """失敗ケース: docs/design/ の記録の中に検の名の file(`test_*.py` の模型・`*_test.py` の測りの script)を置くと赤、集め手の
-    pattern に当たらない名(`.py.txt`)に替えると緑。除外の表に名指しの行がある file の隣に置いた新しい検も赤(card ki-d153ab595504)。
+    pattern に当たらない名(`.py.txt`)に替えると緑。除外の表に名指しの行がある file の隣に置いた新しい検も赤。
 
     docs/design/ を dir の行で外していた形では、seat-home の模型 4 本(`def test_*` を持たず `t_*` を __main__ から回す script)が
     make test-changed の選びで検として集められ(0 本集まって「未測」)、本物の検を記録の中にだけ置いても日次が緑だった
@@ -641,13 +641,13 @@ def test_test_named_file_in_a_design_record_is_red_until_renamed(tmp_path: Path)
 
 
 def test_every_test_named_file_is_collected_by_some_collector() -> None:
-    """test_*.py・test_*.hy の file はどれも、どれかの集め手の pattern に当たる(agora-redesign #2591)。"""
+    """test_*.py・test_*.hy の file はどれも、どれかの集め手の pattern に当たる。"""
     _assert_every_test_named_source_is_collected(REPO_ROOT)
 
 
 def test_hy_test_without_a_collector_is_red_until_the_collector_is_declared(tmp_path: Path) -> None:
     """失敗ケース: 母集団の根(root の testpaths)の下に、どの集め手にも集められない test_*.hy を 1 本置くと赤、
-    root の ini の doeff_hy_test_files で集め手に当てると緑(agora-redesign #2591)。
+    root の ini の doeff_hy_test_files で集め手に当てると緑。
 
     検の側に Hy の条件を `test_*.hy` と写していた #2577 の形では、ini に集め手が無くてもこの file は「検の file」と
     数えられ、母集団の根の下なので緑だった — packages/doeff-hy/tests の 6 本と同じ形。
@@ -692,7 +692,7 @@ def test_hy_test_skips_name_hy_test_files_with_a_reason() -> None:
 def test_no_conftest_copies_the_hy_test_collector() -> None:
     """Hy の検の file の集め手は root の ini の doeff_hy_test_files の 1 点 — conftest.py に写さない。
 
-    写しが残ると、その dir の外の test_*.hy は集められないまま母集団の検に数えられる(agora-redesign #2591 の前は
+    写しが残ると、その dir の外の test_*.hy は集められないまま母集団の検に数えられる(この検を足す前は
     7 つの conftest.py が同じ条件を書き、conftest の無い packages/doeff-hy/tests の 6 本が日次で走らなかった)。
     """
     copies = sorted(
@@ -710,7 +710,7 @@ def test_no_conftest_copies_the_hy_test_collector() -> None:
 def test_exclusion_table_has_no_dir_row_over_a_record_dir() -> None:
     """除外の表に、設計の記録の dir を dir ごと覆う行(記録の dir・その親・その下の dir)が無い。
 
-    dir の行の下に置いた本物の検は、母集団の検にも古い行の検にも見つからない(設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 B)。
+    dir の行の下に置いた本物の検は、母集団の検にも古い行の検にも見つからない(設計検証の盲検 B)。
     記録の中で外せるのは、改名できない file の 1 file ごとの path の行だけ。
     """
     records = _record_dirs(REPO_ROOT)
@@ -781,14 +781,14 @@ def test_no_package_declares_its_own_pytest_ini() -> None:
 
 def test_every_daily_stage_declares_whether_it_runs_pytest() -> None:
     """日次の全体検証は欄 pytest = true の処理ステージで session が 1 本も答えなければカバレッジの欠けに数え、欄の無い処理ステージは
-    「pytest の実行は未宣言」と記帳する(agora-redesign #3879)。走らせ器は断らないので、欄の書き忘れはこの repo の宣言の検で赤にする。"""
+    「pytest の実行は未宣言」と記帳する。走らせ器は断らないので、欄の書き忘れはこの repo の宣言の検で赤にする。"""
     full = tomllib.loads((REPO_ROOT / ".agents" / "land-queue.toml").read_text(encoding="utf-8"))["gate"]["full"]
     assert isinstance(full, list) and full, f"[gate] full が処理ステージの列でない(1 本の文字列には欄 pytest を書けない): {full!r}"
     missing = [stage.get("name") for stage in full if not isinstance(stage.get("pytest"), bool)]
     assert not missing, f"[gate] full の処理ステージ {missing} に欄 pytest(true か false)が無い"
 
 
-# 日次の pytest の session が終わりに出す秒の一覧の口 — 10 秒以上の検を本数の上限なしで出す(card acp:kanban-issue:ki-b8a436264866)。
+# 日次の pytest の session が終わりに出す秒の一覧の口 — 10 秒以上の検を本数の上限なしで出す。
 # 上限を付けると(旧 --durations=20)、package に 30 秒を越える検が 20 本を越えた時に残りが log に出ない。
 _DAILY_DURATIONS_FLAGS = ("--durations=0", "--durations-min=10")
 

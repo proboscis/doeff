@@ -1,4 +1,4 @@
-// 定義を読む面に出る文字の表 — 面の文字はここからだけ引く(v5・ラベルは 引数/答え でなく args / return type にする — operator の決定 2026-09-29)。
+// 定義を読む面に出る文字の表 — 面の文字はここからだけ引く(v5・ラベルは 引数/答え でなく args / return type にする)。
 // ラベルは一般に通じる英語の技術用語(小文字)。実体の種類のバッジ・tags の key・説明・本体は source の語のままで、この表に置かない。
 // 戻す時はこの表だけを直す(docs/design/hy-reading-plane/artifacts/v5/design.md 2 節)。
 
@@ -86,7 +86,7 @@ export const LABELS = {
   inferencePartial: 'inference partial',
   waitingForLinter: 'waiting for linter',
   violations: 'violations',
-  /** 違反の吹き出しと file の帯(v13・agora-redesign #1685) */
+  /** 違反の吹き出しと file の帯(v13) */
   why: 'why',
   howToFix: 'how to fix',
   law: 'law',

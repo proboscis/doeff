@@ -1,5 +1,5 @@
 """核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)の配布物が、根と同じ MIT の LICENSE を持つ事の
-失敗ケース(取り組み doeff-publish の区切り 2・card ki-2dbb91f7e2c8)。
+失敗ケース(取り組み doeff-publish の区切り 2)。
 
 license の欄は PEP 639 の SPDX の式(`license = "MIT"`)と `license-files` で書く。build の口はそれを core metadata の
 License-Expression と License-File にし、LICENSE を wheel の dist-info/licenses と sdist の根に入れる。PEP 639 では license の

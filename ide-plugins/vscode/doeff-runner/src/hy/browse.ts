@@ -198,7 +198,7 @@ const TOP_PARENT = '';
 
 /**
  * 節の固定の id — 同じ定義の一覧と見方から 2 度作った節は同じ id、違う節は違う id(木の中で重ならない)。VS Code の TreeView は
- * id の同じ節の展開と選択を出し直しの後も保つ(linter の結果が変わるたびに木を出し直すため — agora-redesign #2162)。
+ * id の同じ節の展開と選択を出し直しの後も保つ(linter の結果が変わるたびに木を出し直すため)。
  * 件数・違反の数は入れない(変わっても同じ節のまま)。
  */
 export function browseNodeId(node: BrowseNode): string {

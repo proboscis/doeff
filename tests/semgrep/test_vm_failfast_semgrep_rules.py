@@ -249,7 +249,7 @@ def test_herdr_label_holders_indexed_rule_detects_arbitrary_holder_pick() -> Non
 
 
 def test_program_arguments_rule_detects_a_second_config_to_arguments_copy() -> None:
-    # Design check 2026-09-26 (agora-redesign#639 request 2, blind A): three
+    # Design check 2026-09-26 (request 2, blind A): three
     # copies turned run.config into program arguments and only two of them
     # dropped the assembly field "record", so the single-process main and the
     # worker disagreed on the same declaration.
@@ -266,7 +266,7 @@ def test_program_arguments_rule_detects_a_second_config_to_arguments_copy() -> N
 
 
 def test_report_tables_rule_detects_a_reader_outside_the_owner() -> None:
-    # Design check 2026-10-11 (AL-D2o・card ki-02ca1a2bfc6c, blind B): a copy in
+    # Design check 2026-10-11 (AL-D2o, blind B): a copy in
     # handoff_policy that picked "Ready" reports by worker・spec hash・placement
     # only held off a handoff abandonment with reports from processes other than
     # the placed one, and passed every presented check.
@@ -301,7 +301,7 @@ def test_report_tables_are_read_only_by_their_owners_in_the_tree() -> None:
 
 
 def test_silence_anchor_rule_detects_reads_outside_the_one_measure() -> None:
-    # card ki-069f4a5c07f7: the worker's fence against a lost coordinator measured
+    # The worker's fence against a lost coordinator measured
     # silence by the wall-clock difference alone, so a wall clock stepped back
     # during the cut delayed the self-stop past the coordinator's reassignment.
     # The anchors are read only as the 3rd and 4th argument of
@@ -340,7 +340,7 @@ def test_silence_anchors_are_read_only_by_the_one_measure_in_the_tree() -> None:
 
 
 def test_clock_effect_rule_detects_answers_outside_the_time_handlers() -> None:
-    # Design check lt-ZFAZXE88D928C47X6NZKRY3AQ2 (card ki-069f4a5c07f7, blind B): a
+    # Design check (blind B): a
     # handler at the worker entry that rebuilt the wall clock from the monotonic
     # clock passed every presented check, and the worker no longer decided its
     # self-stop after a 30 second suspend (the wall difference stopped counting sleep).
@@ -378,7 +378,7 @@ def test_clock_effects_are_answered_only_by_the_time_handlers_in_the_tree() -> N
 
 
 def test_idle_shell_vocabulary_rule_detects_substrate_side_judgement() -> None:
-    # Design check 2026-09-26 (agora-redesign#639 request H, blind B): the
+    # Design check 2026-09-26 (request H, blind B): the
     # herdr substrate picking "the first non-idle-shell process" passed every
     # other check while moving part of the zombie judgement out of policy.hy.
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
@@ -503,7 +503,7 @@ def test_koine_interactive_terminalize_rule_is_clean_on_fixed_policy() -> None:
     )
 
 
-# agora-redesign #668(手順 5-1): agentd の tick の順序と、再開した手番の出力の測りの
+# agentd の tick の順序と、再開した手番の出力の測りの
 # 3 規則(doeff-agents-job-step-reads-the-stream-before-the-step・
 # doeff-agents-recovered-turns-do-not-claim-unread-output・
 # doeff-agents-turn-output-judgment-reads-the-materials-coverage)は、対象の
@@ -539,9 +539,9 @@ def test_gc_traverse_null_guard_rule_reaches_nested_src_directories() -> None:
 
 
 def test_application_vocabulary_rule_fires_on_the_words_and_spares_the_records_field() -> None:
-    # agora-redesign #2875: 3 package の tests/test_no_application_vocabulary.hy の写しを 1 つの規則にした。語は大文字小文字を
+    # 3 package の tests/test_no_application_vocabulary.hy の写しを 1 つの規則にした。語は大文字小文字を
     # 区別せず、前が英字でない時だけ当たる(_acp は当たり xacp は当たらない)。size-budget(doeff-records の宣言の欄の名)は外す。
-    # 2026-10-02 に doeff の main を 2 度赤にした形(註の「agora-redesign #2830」)も当たる。
+    # 2026-10-02 に doeff の main を 2 度赤にした形(註に書いた repository の名)も当たる。
     fixture_root = REPO_ROOT / "tests/semgrep/fixtures/python"
     results = _semgrep_results(
         REPO_ROOT / ".semgrep.yaml",

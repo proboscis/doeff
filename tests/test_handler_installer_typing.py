@@ -98,7 +98,7 @@ handler(42)  # non-callable
     ], errors
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べ card ki-02e317783af0 の抜け 2):
+# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 2):
 # ProgramHandler が Callable[[object], Program[Any]] だった時、`reader(env)(prog())`・`state()(p)`・`writer(p)`・
 # `handler(h)(p)`・`stacked_handlers(...)(p)` は全部 Program[Any, Any] で `run(...)` は Any — 結果の型の食い違いを
 # 黙って通した。`writer(prog)`(呼び忘れ)と `state()(42)` も通った(実行時は TypeError)。
@@ -198,7 +198,7 @@ def test_installers_keep_the_result_type_and_refuse_a_non_program_under_mypy(tmp
     ], errors
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べ card ki-02e317783af0 の抜け 7):
+# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 7):
 # handler() の引数が Callable[..., object] だった時、effect の注記に effect が当たらない関数(`effect: str`)も、
 # (effect, k) を受けない関数も型の check を通った — 実行すると handler() の所で TypeError(check_handler_annotation)。
 # 受ける関数を「EffectBase の effect と K を受ける関数」に絞る。effect の注記の無い関数・Any・object は全部の effect を受ける。

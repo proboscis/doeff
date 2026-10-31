@@ -1,4 +1,4 @@
-"""核の 5 個を repo の外の新しい venv に入れ、5 個の README の例を走らせて注記と比べる(取り組み doeff-publish・card ki-7746480f388d)。
+"""核の 5 個を repo の外の新しい venv に入れ、5 個の README の例を走らせて注記と比べる(取り組み doeff-publish)。
 
 出す前(手元で build した wheel)と出した後(PyPI の版)に、同じ 1 つの命令で「核の 5 個を入れた新しい環境で README の例が
 通るか」を確かめる:
@@ -42,7 +42,7 @@ from typing import TypeVar
 import readme_examples
 
 REPO = Path(__file__).resolve().parents[1]
-# 核の 5 個(区切り ms-680daa3cc6a7 の範囲)。README を読む順でもある。
+# 核の 5 個。README を読む順でもある。
 CORE = ("doeff", "doeff-vm", "doeff-core-effects", "doeff-hy", "doeff-hy-pytest")
 # Python の版ごとに wheel を組む物(PyO3 の拡張 — abi3 ではない)。
 NATIVE = "doeff-vm"

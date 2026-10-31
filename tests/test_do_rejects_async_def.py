@@ -6,7 +6,7 @@ Before: ``@do`` over ``async def prog(): await asyncio.sleep(0.01); return 42`` 
 and ``run(scheduled(prog()))`` returned ``<coroutine object prog at 0x…>`` with exit 0 — the only
 sign was Python's ``RuntimeWarning: coroutine 'prog' was never awaited``. An async generator
 function (``async def`` with ``yield``) returned ``<async_generator object …>`` the same way
-(first-error table row 13, card ki-8152466e96ad).
+(first-error table row 13).
 """
 
 from __future__ import annotations

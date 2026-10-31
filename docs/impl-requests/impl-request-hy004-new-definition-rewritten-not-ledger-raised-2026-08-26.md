@@ -3,7 +3,7 @@
 発注元 task: route-4b012e30cd(doeff の日次基底検証が赤・6 日連続。精査段としてこの書を起草)
 方向宣言: `hy004-new-definition-rewritten-not-ledger-raised`(開発ボードへ seat-proposal で登記)
 対象: repo `~/repos/doeff` / 基底 `main` の断面 `5dc6c3ded5a6`
-検証 log(全文): `/Users/s22625/.local/state/ai/land-runs/doeff-verify-20260826-065004.log`(該当の失敗は 54〜85 行)
+検証 log(全文): `~/.local/state/ai/land-runs/doeff-verify-20260826-065004.log`(該当の失敗は 54〜85 行)
 
 ## この赤は何か(前提知識ゼロ向けの導入)
 
@@ -55,7 +55,7 @@ AssertionError: 新しい deff の定義は禁止(ADR-DOE-HY-004 R1 — defk で
 
 - R1: 「新しい deff 定義は禁止(repo 全域)。新しい関数は defk で書く」。`admit-launch-attribution` は
   2026-08-25 に**新設**された関数であり、R1 の直撃対象。
-- R5: 「台帳の増額・除外の新設は operator 裁定のみ」。この便にオーナー裁定は無い。
+- R5 では、台帳の増額と除外の新設は個別の承認を経た時だけ行える。この便にその承認は無い。
 - R3 の「台帳を同便で削る」は既存定義を `defk` へ**変換する**便の話で、新設の追認には使えない。
 
 したがって「上限表を上げれば緑になる」は**この便では実行不能**であり、実装席は選んではならない。
@@ -243,4 +243,4 @@ no-op 化する」を名指している。今回の site では起こらない�
 - **この依頼書そのものが repo に登記されていない**: `docs/impl-requests/` 配下でこの file だけが
   git の管理下に無い(共有 checkout の untracked file)。commit message の `IMPL-REQUEST:` 行が
   指す先が本線に存在しないため、書の耐久性は共有 checkout の生存に依存している。
-  登記するかは著者会話 / operator の判断。
+  登記するかは書き手が決める。

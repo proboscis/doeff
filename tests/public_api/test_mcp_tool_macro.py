@@ -144,7 +144,7 @@ class TestDefmcpToolMacro:
 
     def test_handler_params_are_annotated_with_the_schema_types(self):
         """handler の引数は schema の :type を写した型の注記(文字)を持ち、必須でない引数は `| None`
-        (card ki-973b4e44d7bc)。"""
+       。"""
         import inspect
 
         mod, _ = _eval_mcp("""
@@ -182,7 +182,7 @@ class TestDefmcpToolMacro:
 
     def test_default_with_required_or_enum_builds_the_schema(self):
         """:default を :required・:enum と一緒に書いても定義でき、schema に全部の欄が載る。既定値が None の引数は必須でない
-        注記(`| None`)になる(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 B)。"""
+        注記(`| None`)になる(設計検証の盲検 B)。"""
         import inspect
 
         mod, _ = _eval_mcp("""
@@ -214,7 +214,7 @@ class TestDefmcpToolMacro:
     def test_body_calling_the_tools_own_name_raises(self, body):
         """本体が tool 自身の名を呼ぶ展開は断る(綴りが - でも _ でも、式の奥でも)。展開はその名を McpToolDef に束ねるので、
         同じ名の defk が先に在っても本体の呼びは tool を指し、run で TypeError: 'McpToolDef' object is not callable に
-        なっていた(docs 12 章 MCP の道具の例・card ki-896fc4bca8cb)。"""
+        なっていた(docs 12 章 MCP の道具の例)。"""
 
         @do
         def submit_order(symbol):

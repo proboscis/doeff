@@ -1,8 +1,8 @@
-# 実時間で待ってよい検の名簿(card ki-94380dba532f)。
+# 実時間で待ってよい検の名簿。
 #
 # .semgrep.yaml の規則 doeff-no-sleep-in-tests は、@pytest.mark.realtime を名乗る関数と
 # pytestmark = pytest.mark.realtime を名乗る module の中の sleep を鳴らさない。Hy の検は doeff-linter の規則 DOEFF211 が同じ
-# 決まりを持ち(card ki-bb3ee40d0af2)、deftest の meta の {:marks ["realtime"]}・素の関数の検の decorator
+# 決まりを持ち、deftest の meta の {:marks ["realtime"]}・素の関数の検の decorator
 # (defn [pytest.mark.realtime] 名 [] …)・module の最上位の (val pytestmark pytest.mark.realtime) を名乗りと読む。名乗ってよいのは、本物の thread・
 # 本物の asyncio の loop・本物の外の process や library の実時間そのものが対象の検だけ。それ以外の検は、program に
 # doeff-time の Delay を yield させて sim_time_handler の仮想の時計で走らせるか、待つ物(出来事)を名指して待つ。
@@ -13,7 +13,7 @@
 # 鍵 = "<repo の根からの path>::<関数の名>"(class の method は "<path>::<class の名>::<関数の名>")・
 #      module の pytestmark は "<path>"。値 = 理由の 1 行。Hy の検の名は pytest が見せる形(- を _ に直した名)。
 #
-# 規則の外へ出る道はこの file の 2 つの表だけ(card ki-6aa7cb5ffb83):
+# 規則の外へ出る道はこの file の 2 つの表だけ:
 # - [tests]: 上の marker。本物の process を待つ検の support の module(pytest が集めない file)も、同じ pytestmark の 1 行で
 #   名乗ってここに載る。Hy の、検が別の process として起こす独立の script(job の本体・替え玉の CLI — pytest を import しないので
 #   marker を名乗れない)は、[tool.doeff-linter.test_sleep] の exclude に file で名指した 1 行が名乗りの代わりで、同じくここに載る。
@@ -29,7 +29,7 @@
 "packages/doeff-agents/tests/test_l2_session_algebra.py::test_agent_validation_failure_past_deadline_parks_without_follow_up" = "run_agent_task が time.monotonic で測る node の締め切り(L-K4-3)の後に結果が届く — 締め切りの実時間が対象"
 "packages/doeff-conductor/tests/test_k4_parallel_overlap.py" = "offload の本物の thread で走る 2 本の枝の重なりを、経過の実時間で測る(L-K4-2)"
 "packages/doeff-cluster/tests/test_job_log_ship.py" = "本物の子 process・log の送り手・HTTP の /livez を締め切りつきで待つ — 外の process の実時間が対象"
-"packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "本物の shim と job の process の asyncio の loop の拍と、log の file の止まりの間の HTTP の要求の答えを、実時間の timeout で測る(card ki-2742a2af90b6)"
+"packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "本物の shim と job の process の asyncio の loop の拍と、log の file の止まりの間の HTTP の要求の答えを、実時間の timeout で測る"
 "packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "本物の OS の file 監視の library の待ちを、別の task が実時間の後に閉じる"
 "tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Gather が spawn した task が本物の asyncio の loop の上で重なって走る事を、経過の実時間で測る"
 "tests/test_idle_job_sweeps_terminal_rows.py" = "scheduler が await の bridge の本物の asyncio の loop の thread を待って止まる時の掃除が対象 — 模擬の眠り 1 回に実時間 2 ms を置き、scheduler に走れる物の無い待ちを作る"

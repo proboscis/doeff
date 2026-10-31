@@ -1,4 +1,4 @@
-"""公開の名の型が型の道具に分かる事の検(型の報告の抜け 6・card ki-23e84023ab9c)。
+"""公開の名の型が型の道具に分かる事の検(型の報告の抜け 6)。
 
 pyright の verifytypes は、package の公開の名ごとに、引数と戻りと属性の型がすべて分かるかを数える。核の 4 個だけの環境で
 測ると、doeff は 81.9%・doeff_core_effects は 87.5% だった(2026-10-17・main 9fe8c330b・pyright 1.1.414)。分からない名を
@@ -49,7 +49,7 @@ _DOEFF_GAPS: dict[str, str] = {
 _CORE_HEAD_GAPS: dict[str, str] = {}
 #: doeff_core_effects の module のうち、公開の名の全部に型が分かる物(この検が守る範囲)。今は全部を下の隠した module で数える。
 _CORE_TYPED_MODULES: tuple[str, ...] = ()
-#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5・card ki-c09b3b527fad・cache と memo は card ki-375e0a35b7a0)。
+#: 守る範囲のうち、名に _ を付けて隠した module(ADR-DOE-API-001 R5)。
 #: verifytypes は _ の module の名を数えないので、入口がこれらの module から出す名
 #: (``doeff_core_effects.Task`` とその欄)で数える。
 _CORE_TYPED_HIDDEN_MODULES = (

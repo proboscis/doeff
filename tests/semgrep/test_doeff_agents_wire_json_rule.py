@@ -1,4 +1,4 @@
-"""doeff-agents が外の CLI の行(JSON)の形を自前で解かないことの陽性対照と弁別(ki-77e76c7c07ce の設計検証・盲検 B)。
+"""doeff-agents が外の CLI の行(JSON)の形を自前で解かないことの陽性対照と弁別(設計検証の盲検 B)。
 
 層の決まり: codex の行の形を知るのは層 2(doeff-codex の lines)だけで、doeff-agents(層 3 の adapter)は層 2 の型つきの記録だけを
 読む。盲検 B は、層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・

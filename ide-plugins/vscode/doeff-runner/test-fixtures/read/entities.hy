@@ -1,4 +1,4 @@
-;;; 実体の種類ごとの欄(agora-redesign #910 U4)のテストの見本 — defeffect・defhandler・defenum・型でない契約を持つ defk。
+;;; 実体の種類ごとの欄のテストの見本 — defeffect・defhandler・defenum・型でない契約を持つ defk。
 (require doeff-hy.macros [defk defhandler <-])
 (require doeff-hy.record [defrecord defenum])
 (import doeff-hy.effects [defeffect])

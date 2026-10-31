@@ -1,6 +1,6 @@
 """MCP の引数の型の表 `MCP_JSON_TYPES`(doeff/mcp.py)を差し替えると、defmcp-tool の handler の引数の注記
 (macros.hy の `_mcp-handler-param`)と、tool の server の値の検め(doeff_agents の mcp_server_loop の
-`_tool-result-with-stack`)の両方が従う事の検(設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A・B・card ki-973b4e44d7bc)。
+`_tool-result-with-stack`)の両方が従う事の検(設計検証の盲検 A・B)。
 
 注記が約束する型と、server が handler へ渡す値は、同じ表の行から決まる。どちらかが表を写して持つと(例: server の
 側に JSON の型 → Python の型の表を手で書く)、表を替えた時に写した側だけが古い判断のまま残る — 盲検 B では、手で

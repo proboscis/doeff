@@ -1,4 +1,4 @@
-"""doeff-indexer の wheel が、入れた後に命令として動く形かを確かめる(取り組み doeff-publish・card ki-d20475e94d87 の見つけた不具合)。
+"""doeff-indexer の wheel が、入れた後に命令として動く形かを確かめる(取り組み doeff-publish で見つけた不具合)。
 
 PyPI の 0.1.3 の Linux x86_64 の wheel は、命令の binary を `python/doeff_indexer/bin/doeff-indexer` に持ち、
 `doeff_indexer/bin/` には持たなかった。命令の入口(python/doeff_indexer/_cli.py)は package の `bin/` の下だけを探すので、

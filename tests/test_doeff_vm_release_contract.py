@@ -11,6 +11,8 @@ import yaml
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
+# The specifier operator of a lower bound.
+LOWER_BOUND = ">="
 
 
 def _read_toml(path: Path) -> dict:
@@ -25,7 +27,7 @@ def _dependency_lower_bound(dependencies: list[str], package_name: str) -> str:
     # The core packages also cap each other at the next minor series
     # (tests/test_core_packages_version.py), so the requirement carries a `<` bound next to `>=`.
     for requirement in map(Requirement, dependencies):
-        lower = [spec.version for spec in requirement.specifier if spec.operator == ">="]
+        lower = [spec.version for spec in requirement.specifier if spec.operator == LOWER_BOUND]
         if requirement.name == package_name and len(lower) == 1:
             return lower[0]
     raise AssertionError(f"{package_name} dependency must use an explicit >= lower bound")
@@ -106,7 +108,7 @@ def test_linux_aarch64_doeff_vm_wheels_build_natively_on_an_arm_runner() -> None
 
 def test_musllinux_doeff_vm_wheels_build_in_the_native_pypa_image_and_gate_the_upload() -> None:
     """maturin-action's default musl container is a cross toolchain without the CPython interpreters
-    that -i names; the PyPA musllinux_1_2 image of the runner's arch has them (card ki-8080389a2f78)."""
+    that -i names; the PyPA musllinux_1_2 image of the runner's arch has them."""
     jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "build-vm.yml").read_text(encoding="utf-8"))["jobs"]
 
     for name in ("build-musllinux", "build-musllinux-freethreaded"):

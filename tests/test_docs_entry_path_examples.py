@@ -1,4 +1,4 @@
-"""docs の入門の道の page の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish・card ki-9c93a506326b)。
+"""docs の入門の道の page の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish)。
 
 初めての利用者は README から docs の目次(docs/index.md)へ進み、入門の章から順に読む。その道の page の例は、どの検も
 走らせていなかったので、handler の使い方が変わっても誰も気づかなかった: 0.5.0 の時点で、目次から辿る囲み 324 個のうち
@@ -7,7 +7,7 @@ Try が try_handler を要る — 下の STALE_EXAMPLES が当時の写し・doc
 
 囲みは README と同じ約束で読み・走らせ・注記と比べる(約束の 1 点は tools/readme_examples.py — 読み込みと走らせ方は
 tests/test_readme_examples.py の物を借りる)。走らせない断片は、言葉の後に語 `excerpt` を置く(```` ```python excerpt ```` —
-card ki-9c49b3d5867a が 13 章に付けた印と同じ)。page は 1 つずつ別の dir で扱い、`file=` の囲みは後の囲みの前に置く。
+13 章に付けた印と同じ)。page は 1 つずつ別の dir で扱い、`file=` の囲みは後の囲みの前に置く。
 
 入門の道 = 目次の page・目次の Learning Path の For Beginners の page・card の言う 01〜05 の章。14 章(CLI の自動の発見)は
 入れない: 例は doeff-indexer(核の 5 個の外)と、dir を持つ package(`myapp/features/report.py`)を要り、約束の `file=` は
@@ -129,7 +129,7 @@ def test_beginner_pages_are_read_from_the_section_only() -> None:
 
 
 # 直す前の docs の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)— 03 章の Ask の例(writer の外に state が無い・
-# card ki-9c93a506326b の前)と 05 章の Try の例(try_handler が無い・card ki-74ffd7faafe8 の前)。
+# 直す前)と 05 章の Try の例(try_handler が無い・直す前)。
 STALE_EXAMPLES = {
     "Get": Example(
         "docs/03-basic-effects.md",

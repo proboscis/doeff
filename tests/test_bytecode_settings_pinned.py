@@ -7,20 +7,20 @@ bodies, fixtures, and the subprocesses they start.
 A test can still give a subprocess a bytecode directory of its own inside the checkout, which
 the settings do not see; the land tool keeps a checkout's ignored files from one candidate to
 the next, so that bytecode would be read by later runs.  The run therefore fails at its end
-when bytecode files were written under the checkout during it (agora-redesign#639).  The one
+when bytecode files were written under the checkout during it.  The one
 directory it does not walk is the environment of the interpreter running the tests (the .venv:
-13,000 files, 9-34 s to list on a loaded machine, card ki-16954373dfe0); inside it, the bytecode
+13,000 files, 9-34 s to list on a loaded machine); inside it, the bytecode
 of the modules a start of the interpreter imports is still looked at, file by file.
 
 A test whose subprocesses need bytecode asks for the ``subprocess_bytecode`` fixture: its
 subprocesses write and reuse bytecode in one directory of the run under pytest's temporary
-directory, while the test body keeps the pinned settings (agora-redesign#2818).
+directory, while the test body keeps the pinned settings.
 
 A subprocess started with an environment of its own (EnvMode.REPLACE) does not get the pin, and
 its first act is to write the bytecode of the interpreter's startup modules into the checkout.
 The run clears that bytecode when its tests start and looks for it after every test, so the
 test that wrote it is the one named — on a developer's tree, where an earlier run left the same
-bytecode in place, as well as in the daily run (card ki-23c3280da1a5).
+bytecode in place, as well as in the daily run.
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def test_a_run_ending_names_the_bytecode_outside_the_interpreters_environment_an
     )
 
     # The installed packages of the environment (pydantic) are not looked at; the modules a start of
-    # the interpreter imports are, wherever they are (cf. the six writers of card ki-23c3280da1a5).
+    # the interpreter imports are, wherever they are.
     assert written == [STARTUP_IN_THE_ENVIRONMENT, "pkg/__pycache__/new.cpython-314.pyc"]
 
 
@@ -164,7 +164,7 @@ def test_a_run_ending_does_not_walk_the_interpreters_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The walk of a .venv (13,000 files in 2,000 directories) took 5-9 s at the end of a run on a loaded
-    # machine, every run (card ki-16954373dfe0): what is not looked at must not be listed either.
+    # machine, every run: what is not looked at must not be listed either.
     started = 1_000_000.0
     checkout, environment = _checkout_with_its_interpreter_environment(tmp_path, started)
     monkeypatch.setattr(sys, "prefix", str(environment))

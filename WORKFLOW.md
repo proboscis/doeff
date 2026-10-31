@@ -215,7 +215,7 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: CODEX_HOME=/Users/s22625/.codex/profiles/company PATH=$PWD/.symphony-bin:$PATH codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.5 --config 'model_reasoning_effort="xhigh"' --config 'service_tier="fast"' --config shell_environment_policy.inherit=all app-server
+  command: CODEX_HOME=$HOME/.codex/profiles/company PATH=$PWD/.symphony-bin:$PATH codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.5 --config 'model_reasoning_effort="xhigh"' --config 'service_tier="fast"' --config shell_environment_policy.inherit=all app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:

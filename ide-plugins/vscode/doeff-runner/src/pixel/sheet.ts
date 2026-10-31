@@ -107,7 +107,7 @@ nav a { margin-right: 16px; }
 ${DEMO_CSS}
 </style></head><body>
 <h1>doeff-runner の pixel art の icon(見本)</h1>
-<p>これは doeff の VS Code 拡張(doeff-runner)に入れる pixel art の見本です。GitHub の issue proboscis/agora-redesign #841(エディタと linter の欄を pixel art の icon で見せる)の成果で、3 つの部分があります。</p>
+<p>これは doeff の VS Code 拡張(doeff-runner)に入れる pixel art の見本です。エディタと linter の欄を pixel art の icon で見せるための物で、3 つの部分があります。</p>
 <ol>
 <li>icon の組 — 拡張の icon(手紙 = effect をくわえた雌鹿)と、語ごとの icon。1 つ 1 つが枠の無い物の sprite で、同じ語はどこでも同じ sprite です。</li>
 <li>拡張の中で使う — 「違反(linter)」の欄・「タグで閲覧」の欄・行の左端(gutter)・hover・状態バー(違反で表情の変わる雌鹿)。</li>

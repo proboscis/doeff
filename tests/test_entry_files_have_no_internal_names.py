@@ -84,14 +84,17 @@ def internal_names_in_entry_files(root: Path) -> list[str]:
     ]
 
 
+#: 作り物の card と依頼の id(本物の id ではない)。綴りを分けて置き、この file 自身を id の形の検出に当てない。
+FAKE_CARD_ID = "ki-" + "0123456789ab"
+FAKE_REQUEST_ID = "lt-" + "0123456789ABCDEFGHJKMNPQRS"
+
+
 def test_each_kind_finds_its_names() -> None:
-    assert internal_names_in("see agora-redesign #2830") == ["業務の系の名: agora"]
+    assert internal_names_in("see agora-redesign") == ["業務の系の名: agora"]
     assert internal_names_in("(raise (AcpProtocolError msg))") == ["業務の系の名: Acp"]
     assert internal_names_in("a Kanban card and the hypha view") == ["業務の系の名: Kanban", "業務の系の名: hypha"]
-    assert internal_names_in("card ki-4064da9af9eb") == ["作業ボードと会話の id: ki-4064da9af9eb"]
-    assert internal_names_in("request lt-W1NE1192A8DVXWZTAZN38168PJ") == [
-        "作業ボードと会話の id: lt-W1NE1192A8DVXWZTAZN38168PJ"
-    ]
+    assert internal_names_in(f"card {FAKE_CARD_ID}") == [f"作業ボードと会話の id: {FAKE_CARD_ID}"]
+    assert internal_names_in(f"request {FAKE_REQUEST_ID}") == [f"作業ボードと会話の id: {FAKE_REQUEST_ID}"]
     assert internal_names_in("image: zeus:5000/doeff-worker on k3s-2") == [
         "cluster の機体の名: zeus",
         "cluster の機体の名: k3s-2",

@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { parseHyIndexJson } from '../../hy/contract';
 import { loadDocument, readFixture } from './fixtures';
 
-// defrecord の頭の辞書 {:tags … :check […]}(doeff-hy・agora-redesign #798)を契約の tags と checks として読む。
+// defrecord の頭の辞書 {:tags … :check […]}(doeff-hy)を契約の tags と checks として読む。
 // fixture defrecord.json は doeff-indexer hy-index の実出力(root を /ws に置き換えた物)。
 suite('Hy の defrecord の頭の辞書', () => {
   test('頭の辞書の :tags はタグ、:check は checks になり、頭の辞書の無い形はどちらも null', () => {

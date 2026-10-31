@@ -1,4 +1,4 @@
-"""README の例(``` の囲み)を読み、走らせ、印字を注記と比べる 1 点(取り組み doeff-publish・card ki-68cd4c8effcd・ki-7746480f388d)。
+"""README の例(``` の囲み)を読み、走らせ、印字を注記と比べる 1 点(取り組み doeff-publish)。
 
 使う所は 2 つ: repo の検 tests/test_readme_examples.py(根の README を開発の環境で走らせ、核の 5 個の README の囲みが下の約束に
 合う事を読む)と、出す前と出した後の確かめの道具 tools/verify_release_install.py(核の 5 個を入れた新しい venv で、5 個の

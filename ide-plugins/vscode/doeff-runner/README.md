@@ -110,7 +110,7 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 
 ### linter の結果(doeff-linter)
 
-規則の判定の正本は linter で、拡張はその出力を表示するだけです(自分では判定しません)。linter を正本とし、editor はそれに従うというのが operator の決定(2026-09-28)です。
+規則の判定の正本は linter で、拡張はその出力を表示するだけです(自分では判定しません)。
 
 - **呼び方**: 設定 `doeff-runner.hy.lintCommand`(workspace ごと)。既定は `doeff-linter --output-format editor-json` です。空にすると呼びません。
   - 起動時と workspace の変化、「再実行」のボタンでは、repo 全体を呼びます(引数なし)。
@@ -183,11 +183,11 @@ http・asyncio・時刻・乱数・file・process・環境変数・network・db�
 - **新しい版が入った**: 追随が書く状態 file `~/.local/state/ai/vsix-follow/status.json` の入った commit と、いま動いている拡張の入った dir の印 `out/vsix-follow-build.json` の commit が違えば、「新しい版が入った — Reload Window で有効」の通知を Reload のボタンつきで 1 回出します(この拡張と python-semantic-highlighter の両方)。押すと Reload Window が走ります。Reload は押した時だけで、追随は自分では Reload しません。
 - **組み立てが落ちた**: 状態 file に直近の失敗があれば、理由の 1 行つきの警告を 1 回出します(同じ失敗は繰り返しません)。
 
-状態 file が無い・読めない・知らない版の時は何も出しません。同じ文は Output の `doeff-runner` にも `[vsix の追随]` の行で出ます(agora-redesign #1043)。
+状態 file が無い・読めない・知らない版の時は何も出しません。同じ文は Output の `doeff-runner` にも `[vsix の追随]` の行で出ます。
 
 ## pixel art の icon
 
-doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則・service を、同じ絵で見分けるための icon の組です。絵柄は工業の生活感のある機械の sprite(端末・貨物の木箱・データのカートリッジ・ドローン・錨・エアロック・警報灯 — 継ぎはぎの板・ラベル・通気口・配線・ボルト・錆の染み)で、枠は付けません。色と絵柄は operator がくれた見本の絵に寄せています(版 3・2026-09-28)。
+doeff の語(`defk`・`<-`・`Absent` など)・層・linter の違反と規則・service を、同じ絵で見分けるための icon の組です。絵柄は工業の生活感のある機械の sprite(端末・貨物の木箱・データのカートリッジ・ドローン・錨・エアロック・警報灯 — 継ぎはぎの板・ラベル・通気口・配線・ボルト・錆の染み)で、枠は付けません。色と絵柄は見本の絵に寄せています(版 3)。
 
 - **元の定義は `resources/pixel/glyphs.json` の 1 か所**です。icon ごとに名前・家族・一言の説明と、32×32 と 16×16 の点の格子(1 文字 = 1 点)を持ちます。画面に出す大きさは 16 css px と 8 css px で、1 css px に縦横 2 点ずつを詰めます(Retina の画面では 1 点 = 1 画素)。版 2(2026-09-28)で、版 1 の 16×16 と 8×8 の絵を拡大ではなく 2 倍の点で描き直しました。
   - 文字の意味: `.` は透明、`0`〜`9`・`a`〜`v` は色の組(`palette`)の番号、`L` は物に付いた小さな灯(消えている時は `lamps.off` の色、違反の重さで `lamps.error` / `warning` / `info` の色に灯る)、`A` / `B` は service の旗の模様の色です。

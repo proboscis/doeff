@@ -11,7 +11,7 @@
 idle回収から保護する。適格(稼働中のClaude/headless/multi_turn・会話あり)の
 判定も同じ1点にある。
 
-> 2026-09-22(card acp:kanban-issue:ki-567f2dd6140f §3.1e)に座を移した。
+> 2026-09-22 に座を移した。
 > 旧形はsessionhost側の`cache-resident-retention`が適格の篩と保持予算
 > (`CACHE_RESIDENT_IDLE_MS`)の両方を持ち、`cache_retained_until_ms`という
 > **期限**をwireに載せていた。sessionhostを制御面から切り離す(process分割)には、

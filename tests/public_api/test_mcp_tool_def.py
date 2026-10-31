@@ -135,7 +135,7 @@ class TestMcpToolDef:
 
 class TestDecodeArguments:
     """tool の server が handler を呼ぶ前に、引数を schema(表 MCP_JSON_TYPES)で検める
-    (設計検証 lt-K8KC9HXRJBQ4C47YNMNTVKTT4Y の盲検 A・B・card ki-973b4e44d7bc)。"""
+    (設計検証の盲検 A・B)。"""
 
     @staticmethod
     def _tool(*params: McpParamSchema) -> McpToolDef:

@@ -3,7 +3,7 @@
 Historical and migration notes are collected here so the main documentation chapters stay focused on
 the current architecture and APIs.
 
-## ki-7277427f6d8e (2026-10-17)
+## Kleisli arrows chapter (2026-10-17)
 
 ### `@do` arguments are passed as given
 

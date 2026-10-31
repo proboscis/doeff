@@ -1,4 +1,4 @@
-"""doeff-public-api-no-subpackage-imports の検体(agora-redesign #2857)。
+"""doeff-public-api-no-subpackage-imports の検体。
 
 `# 鳴る` を付けた行だけが当たる。規則の言葉 = 下の package からの import は許す・top level に在る名は top level から。
 鳴らない形 = 取り込む名が全部 `_` で始まる内部の名(top level に出ない名 — sentinel など)。

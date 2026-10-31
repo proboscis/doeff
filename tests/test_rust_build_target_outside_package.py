@@ -1,7 +1,7 @@
-"""doeff の Rust の package の build の口(tools/doeff_cargo_backend.py)を確かめる(agora-redesign #1493)。
+"""doeff の Rust の package の build の口(tools/doeff_cargo_backend.py)を確かめる。
 
 口は cargo の target を package の dir の外の、1 回の build ごとの一時の dir に置き、wheel を作ったら消す。
-作業木ごとに target が残って disk を埋めた(agora-redesign #1472)のを止め、しかも中身の違う作業木どうしで
+作業木ごとに target が残って disk を埋めたのを止め、しかも中身の違う作業木どうしで
 build を取り違えない事を、小さな bin の crate を 2 か所に置いて本物の maturin と cargo で組んで確かめる。
 """
 
@@ -90,7 +90,7 @@ def _two_checkouts(tmp_path: Path) -> Checkouts:
 def _build_env(temp_root: Path, target_dir: Path | None) -> list[str]:
     """build の process の命令の頭に付ける `env`: 子はこの process の環境を継ぎ、CARGO_TARGET_DIR を外して(`env -u`)渡す時だけ置き、
     一時の dir の置き場を temp_root に向ける。"""
-    # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない — agora-redesign #2364)。
+    # wheel の置き場も検ごとの dir に(利用者の ~/.cache に書かず、検どうしで同じ source の wheel を引き合わない)。
     # 機体の外の置き場は引かない(この検は手元で組む道を見る — 置き場の検は tests/test_wheel_remote_store.py)。
     settings = [f"TMPDIR={temp_root}", f"DOEFF_WHEEL_CACHE={temp_root / 'wheel-cache'}", "DOEFF_WHEEL_REMOTE="]
     match target_dir:
@@ -146,7 +146,7 @@ def test_a_shared_target_hands_the_older_checkout_the_other_checkouts_build(tmp_
     """反例: 2 つの作業木が 1 つの target を共有すると、先に切った作業木 B は A の build を黙って受け取る。
 
     cargo は source の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付けるため。口が共有の
-    target を使わず、1 回の build ごとの一時の dir を使う理由(agora-redesign #1472 の comment)。
+    target を使わず、1 回の build ごとの一時の dir を使う理由。
     """
     checkouts = _two_checkouts(tmp_path)
     newer, older = checkouts.newer, checkouts.older
@@ -368,7 +368,7 @@ def _build_logged(package: Path, wheel_dir: Path, env: list[str]) -> BuiltWheel:
 
 
 def test_the_same_source_in_a_fresh_checkout_reuses_the_wheel(tmp_path: Path) -> None:
-    """失敗ケース(agora-redesign #2364): pin を上げて作り直した作業木は、中身が同じでも file の時刻と path が違う — 口は中身の hash で
+    """失敗ケース: pin を上げて作り直した作業木は、中身が同じでも file の時刻と path が違う — 口は中身の hash で
     前の wheel を引き、cargo を撃たない(2 回目に「組んだ」が出ない・一時の target を作らない)。"""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
@@ -398,7 +398,7 @@ def test_a_changed_source_builds_again(tmp_path: Path) -> None:
 
 
 def test_an_editable_in_a_fresh_checkout_reuses_the_stored_wheel(tmp_path: Path) -> None:
-    """失敗ケース(agora-redesign #3860): editable の hook も保存先を引く — 同じ中身の作業木を作り直して editable で入れ直しても、
+    """失敗ケース: editable の hook も保存先を引く — 同じ中身の作業木を作り直して editable で入れ直しても、
     2 回目は cargo を撃たない。直す前の editable は毎回一時の target で組み直した(日次の検証で doeff-vm を 1 日 約 100 度)。"""
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()

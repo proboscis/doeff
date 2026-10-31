@@ -22,7 +22,7 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
    移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
    印の下に名の固定の列を持つ移し替えの module は、移した先の _ の module に helper を足しても目録の行が増えず緑・列が
-   無ければ赤・入口に名を足すと列が在っても赤(card ki-4fbed45b5863)。移し替えの module の全部が列を持つ事も確かめる。
+   無ければ赤・入口に名を足すと列が在っても赤。移し替えの module の全部が列を持つ事も確かめる。
    戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
    直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
 6. 許した物の表は決めの id つきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めが card・依頼・
@@ -52,18 +52,18 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
    package が定義した設定の型の欄〔Protocol の property を含む〕を辿る — 目録の settings)に出る class と型の別名だけ: どの引数にも出ない class・関数・
    標準の library の型を出し直した名を置くと赤。
 7. 決まりの範囲の、Rust の拡張を持つ package(maturin)は、目録が import で読めなければ赤 — 字面の読みは入口が拡張から
-   出す名を数えないので(card ki-1e51e218527e — doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
+   出す名を数えないので(doeff-indexer の Indexer・SymbolInfo を数えていなかった)、環境に入れて読む。
 8. doeff の中の部品(目録の道具の DOEFF_PARTS — doeff-vm)は、doeff の根の package と同じく目録が数えず、表に載せない
-   (ADR-DOE-API-001 R11・card ki-9c326052f21c)。その前提として、doeff の外の file(packages/ の下の部品の外の package・examples・
+   (ADR-DOE-API-001 R11)。その前提として、doeff の外の file(packages/ の下の部品の外の package・examples・
    docs/adr)が部品の import の根を import すれば赤(file と行と module を名指す)。失敗ケース: 使い捨ての repo で、素の import・
    from・下の module・Hy の import と require・importlib と pytest.importorskip に渡す名の文字列は赤、doeff の根と doeff._vm から
    読む形と、部品そのもの・doeff の根の package・doeff の検(tests/)の import は緑。
-9. 入口(import の根の __init__)の出す名と同じ名の子(移し替えの module を含む)を根の下に置かない(ADR-DOE-API-001 R34・
-   card ki-db44e4d3efe4 — 古い path の import が親の属性を module に束ね、入口の関数を隠して記録の service が起動の度に
+9. 入口(import の根の __init__)の出す名と同じ名の子(移し替えの module を含む)を根の下に置かない(ADR-DOE-API-001 R34
+   — 古い path の import が親の属性を module に束ね、入口の関数を隠して記録の service が起動の度に
    落ちた)。package ごとに 2 つで照らす: 字面の照合(入口の file が束ねる名と子の名)と、新しい process で根と全部の公開の
    module(古い path を含む)を 1 つずつ import した後も入口の名が module に替わらない確かめ。失敗ケース: 使い捨ての package
    の入口が関数 serve(遅延)・tool(すぐ)を出す所に同じ名の移し替えの module を置くと両方が赤・殻を消すと緑。
-   根の下の package(_ の package を含む)の入口にも同じく当てる(card ki-d3a096ce3eaa — 移した package の古い path
+   根の下の package(_ の package を含む)の入口にも同じく当てる(移した package の古い path
    doeff_agents.effects.agent の import が doeff_agents._effects の関数 agent を module で上書きした)。失敗ケース: 根の下の
    package _inner の入口が同じ名の子 tool から関数 tool を束ね、移した package の古い path inner を殻が答えると両方が赤・
    子を _tool へ移すと緑。
@@ -174,6 +174,9 @@ ADR_FILE = ROOT / "docs" / "adr" / "defadr_doeff_api_001_subpackages_show_effect
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
 #: 決めの id: card(ki-)・依頼(lt-)・利用者の発言(ci-)。
 DECISION = re.compile(r"(ki-[0-9a-f]{12}|lt-[0-9A-Z]{26}|ci-[0-9A-Z]{26})")
+#: 使い捨ての表の決めに置く、形だけの id(どの記録も指さない)。
+FAKE_CARD_ID = "ki-" + "0123456789ab"
+FAKE_REQUEST_ID = "lt-" + "0123456789ABCDEFGHJKMNPQRS"
 #: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒・混みの倍率は根の conftest が掛ける)。
 _PROBE_SECONDS = 100
 
@@ -206,10 +209,9 @@ class PackageEntry(TypedDict):
 
 
 class KnownTable(TypedDict):
-    """既知の表(違反の表)の全体(説明と問いは読む人のための欄)。"""
+    """既知の表(違反の表)の全体(説明は読む人のための欄)。"""
 
     説明: NotRequired[list[str]]
-    問い: NotRequired[str]
     packages: dict[str, PackageEntry]
     足した名: list[AddedName]
 
@@ -498,7 +500,7 @@ def unread_native_modules(
     """決まりの範囲の、Rust の拡張を持つ package の module のうち、目録が import できずに字面で読んだ物。
 
     字面の読みは source に定義の在る名しか数えないので、入口が拡張から出す名(前の doeff-indexer の Indexer・SymbolInfo)を
-    数えない(card ki-1e51e218527e)。決まりの範囲の名は全部を数えるので、そういう package は環境に入れて import で読む。
+    数えない。決まりの範囲の名は全部を数えるので、そういう package は環境に入れて import で読む。
     """
     if (
         entry["範囲"] != "決まりの範囲"
@@ -816,7 +818,7 @@ def test_the_known_table_only_shrinks_from_its_first_version() -> None:
     )
 
 
-# --- 入口の名と同じ名の submodule(ADR-DOE-API-001 R34・card ki-db44e4d3efe4) ---
+# --- 入口の名と同じ名の submodule(ADR-DOE-API-001 R34) ---
 
 #: 子の module の file の末尾(拡張の module は名の後の最初の . までが名)。
 _CHILD_SUFFIXES = (".py", ".pyi", ".hy")
@@ -880,7 +882,7 @@ def entry_packages(root_dir: Path, root: str) -> list[tuple[str, Path]]:
     """import の根と、その下の package(_ の package を含む)の名と dir — 入口の file を持つ dir(名の順)。
 
     根の下の package の入口も根と同じく名を出し、移した package の古い path の import がその package の属性を同じ名の子の
-    module で上書きする(doeff_agents.effects.agent の import が doeff_agents._effects の agent を — card ki-d3a096ce3eaa)。
+    module で上書きする(doeff_agents.effects.agent の import が doeff_agents._effects の agent を)。
     """
     if not root_dir.is_dir():
         return []
@@ -1050,7 +1052,7 @@ def check_entry_names(package_dir: Path) -> None:
     clashes = [*written_entry_name_clashes(package_dir), *imported]
     assert not clashes, (
         f"{package_dir.name}: 入口の出す名と同じ名の submodule(移し替えの module を含む)を置かない"
-        "(ADR-DOE-API-001 R34 — 古い path の import が親の属性を module に束ね、入口の名を隠す・card ki-db44e4d3efe4):\n"
+        "(ADR-DOE-API-001 R34 — 古い path の import が親の属性を module に束ね、入口の名を隠す):\n"
         + "\n".join(f"  {line}" for line in clashes)
         + ("\n  import に落ちた(名を束ねないので数えない): " + "; ".join(failed) if failed else "")
     )
@@ -1127,12 +1129,12 @@ def _fixture_table(
     }
 
 
-def _fixture_allowed(helpers: Iterable[str], decision: str = "ki-5b3b2320de40") -> AllowedTable:
+def _fixture_allowed(helpers: Iterable[str], decision: str = FAKE_CARD_ID) -> AllowedTable:
     """使い捨ての package の入口の名を、組「許した物 — program の helper」で許した物の表。"""
     return _fixture_grouped({(FIXTURE_ROOT, name): HELPER_GROUP for name in helpers}, decision)
 
 
-def _fixture_grouped(groups: Mapping[Key, str], decision: str = "ki-d80c9c978b35") -> AllowedTable:
+def _fixture_grouped(groups: Mapping[Key, str], decision: str = FAKE_CARD_ID) -> AllowedTable:
     """使い捨ての package の (module, 名) を、それぞれの組で許した物の表。"""
     return {
         "許した物": [
@@ -1186,7 +1188,7 @@ def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
         "module": FIXTURE_ROOT,
         "name": "helper",
         "訳": "使い手が値を直に組む所(例)",
-        "決め": "ki-aaaa56621c5a",
+        "決め": FAKE_CARD_ID,
     }
     table = _fixture_table({}, [row])
     check_package(_read_fixture(repo), table)
@@ -1220,7 +1222,7 @@ def test_a_native_package_in_scope_that_the_inventory_cannot_import_turns_red(
     tmp_path: Path,
 ) -> None:
     """Rust の拡張を持つ package を目録が import で読めない(環境に無い)と、字面の読みは入口が拡張から出す名を数えない —
-    決まりの範囲なら赤(card ki-1e51e218527e — 前の doeff-indexer の Indexer・SymbolInfo を目録が数えなかった)。名を決めて
+    決まりの範囲なら赤(前の doeff-indexer の Indexer・SymbolInfo を目録が数えなかった)。名を決めて
     いない範囲の答え待ちの package は、同じ読みで緑。"""
     package = tmp_path / "packages" / FIXTURE_DIR
     (package / "python" / FIXTURE_ROOT).mkdir(parents=True)
@@ -1430,7 +1432,7 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
         listed = sorted(set(rest) - set(conversions))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): CONVERSION_GROUP for name in conversions},
-            "lt-YB2AMVK3D876GN4RM1SB3T24AR",
+            FAKE_REQUEST_ID,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1496,7 +1498,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
             for module, names in outliers.items()
         }
         allowed = _fixture_grouped(
-            {key: EXCEPTION_GROUP for key in exceptions}, "lt-85SHMNQG7HG4AYHBER6V2BAKX6"
+            {key: EXCEPTION_GROUP for key in exceptions}, FAKE_REQUEST_ID
         )
         return _fixture_table({m: n for m, n in listed.items() if n}), allowed
 
@@ -1626,7 +1628,7 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         listed = sorted((set(rest) | set(known)) - set(names))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): BUILDER_GROUP for name in names},
-            "lt-D4KB5PAECAE921VNAFHQHX4W3G",
+            FAKE_REQUEST_ID,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1731,7 +1733,7 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
     def tables(placed: list[str], listed: list[str]) -> tuple[KnownTable, AllowedTable]:
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in placed},
-            "lt-85SHMNQG7HG4AYHBER6V2BAKX6",
+            FAKE_REQUEST_ID,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1823,12 +1825,12 @@ class FactoryEffect(EffectBase[Callable[..., int]]):
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
     """許した物の表の組「許した物 — effect の答えの型」に置けるのは、目録が package の effect の答えの型と読む名だけ
-    (ADR-DOE-API-001 R2・card ki-17fb02cf904b)。
+    (ADR-DOE-API-001 R2)。
 
     EffectBase[T] の T(和の型の別名)とその class・答えの class の欄の型(Enum)・答えの class の子は、許した物の表に置けば
     緑・どちらの表にも無ければ外れのまま赤。答えを docstring だけに書いた effect の答えの class と、どの effect の答えにも
     出ない class を置くと赤(組と名と形を名指す)。答えに object と Callable が出ても、どの effect も答えない class を引数に
-    取る Callable の別名(Listener)は答えの型でない — Callable の引数の並びの型も読む(card ki-d976fdee464d)。
+    取る Callable の別名(Listener)は答えの型でない — Callable の引数の並びの型も読む。
     """
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + ANSWERS)
     package = _read_fixture(repo)
@@ -1853,7 +1855,7 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
         listed = sorted(set(rest) - set(placed))
         allowed = _fixture_grouped(
-            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, "ki-17fb02cf904b"
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FAKE_CARD_ID
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1906,7 +1908,7 @@ class AwaitEventsEffect(AwaitEventEffect):
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_path: Path) -> None:
     """本体が名指した型で答える待ちの effect は EffectBase[T] に 1 つの型を書けないので、package が bus に出す event を自分の
-    __doeff_bus_events__ に宣言し、目録はそれを待ちの答えの型と読む(ADR-DOE-API-001 R2・card ki-d94ee9f9f6ce)。
+    __doeff_bus_events__ に宣言し、目録はそれを待ちの答えの型と読む(ADR-DOE-API-001 R2)。
 
     宣言した event とその欄の型は組「許した物 — effect の答えの型」に置けば緑・どちらの表にも無ければ外れのまま赤。宣言を
     継ぐだけの子の effect は宣言を読み直さない(答えの場所は宣言した effect だけ)。どの待ちも宣言しない event の class を
@@ -1921,7 +1923,7 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
         listed = sorted({"Undeclared"} - set(placed))
         allowed = _fixture_grouped(
-            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, "ki-d94ee9f9f6ce"
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FAKE_CARD_ID
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -2023,11 +2025,10 @@ def rooted_ping_handlers(root: Path) -> ProgramHandler:
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path: Path) -> None:
     """許した物の表の組「許した物 — handler の設定の型」に置けるのは、その package が定義した型で、同じ package が見せる
-    handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2・
-    card ki-93b21540e519)。
+    handler と工場の引数の注釈に出る(package が定義した設定の型の欄を辿る)と目録が読む名だけ(ADR-DOE-API-001 R2)。
 
     工場の引数(字の注釈)の型・型引数の中の型(Sequence[Hint])・設定の型の欄の型(Settings.level の Level)・欄が名指す
-    Protocol の、読むだけの欄(property)の戻りの型(Settings.marked の type[_Marked] の marks の Mark — card ki-fe3115756381)は、
+    Protocol の、読むだけの欄(property)の戻りの型(Settings.marked の type[_Marked] の marks の Mark)は、
     許した物の表に置けば緑・どちらの表にも無ければ外れのまま赤。どの引数にも出ない class と関数と、標準の library の class Path を
     submodule の __all__ で出し直した名(工場の引数に出るが package が定義した型でない)を置くと赤(組と名と形を名指す)。
     """
@@ -2055,7 +2056,7 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
             module: sorted(name for each, name in set(rest) - set(placed) if each == module)
             for module in (FIXTURE_ROOT, rooted)
         }
-        allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), "lt-85SHMNQG7HG4AYHBER6V2BAKX6")
+        allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), FAKE_REQUEST_ID)
         known = {module: names for module, names in listed.items() if names} | {SUBMODULE: [rooted]}
         return _fixture_table(known), allowed
 
@@ -2289,7 +2290,7 @@ def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_grou
             for module, names in outliers.items()
         }
         return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
-            {**placed, **moved}, "ki-a07d4703a73b"
+            {**placed, **moved}, FAKE_CARD_ID
         )
 
     check_package(package, *tables({}), repo=repo)
@@ -2340,7 +2341,7 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
     table = _fixture_table({})
     where = f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging"
     assert (
-        allowed_problems(_fixture_allowed(["pinging"], "lt-7EK027YNFXTP27QE60J7Q686CZ"), table)
+        allowed_problems(_fixture_allowed(["pinging"], FAKE_REQUEST_ID), table)
         == []
     )
     assert allowed_problems(_fixture_allowed(["pinging"], "決めた"), table) == [
@@ -2372,7 +2373,7 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
         "許した物の表の行は (package, module, name) の順に並べ、重ねない"
     ]
     outside = _fixture_table({})
-    outside["packages"][FIXTURE_DIR] = {"範囲": "範囲の外", "名": {}, "決め": "ki-aaaa56621c5a"}
+    outside["packages"][FIXTURE_DIR] = {"範囲": "範囲の外", "名": {}, "決め": FAKE_CARD_ID}
     assert allowed_problems(_fixture_allowed(["pinging"]), outside) == [
         f"{where}: 範囲の外の package の名は許さない(名を突き合わせない)"
     ]
@@ -2384,7 +2385,7 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
             "module": FIXTURE_ROOT,
             "name": "pinging",
             "訳": "表を足した後に見せる helper(例)",
-            "決め": "ki-f20b18c2aad9",
+            "決め": FAKE_CARD_ID,
             "組": HELPER_GROUP,
         },
     )
@@ -2561,7 +2562,7 @@ def test_a_different_definition_with_a_known_name_at_the_root_turns_red(tmp_path
         check_package(_read_fixture(repo), table)
 
 
-#: 子の package を _types へ移した後に元の path へ残す移し替えの module(card ki-299be2ea4a13 の道具の形 — 1 行目の印つき)。
+#: 子の package を _types へ移した後に元の path へ残す移し替えの module(道具の形 — 1 行目の印つき)。
 MARKED_SHIM = f"""# moved-submodule-shim: {FIXTURE_ROOT}.types -> {FIXTURE_ROOT}._types
 import sys
 from importlib import import_module
@@ -2619,7 +2620,7 @@ def test_a_marked_shim_of_a_namespace_dir_keeps_the_modules_below_at_their_old_n
     移す前の namespace の dir は module でなく(submodule の行が無い)、目録は dir を通り抜けて下の module を数える。
     移し替えの module はその dir の代わりなので、自分は submodule と数えずに、移した先の dir を同じに通り抜ける
     (doeff-cluster の区画 sim を _sim へ移した時、移した先を辿らずに下の 603 行が消え、移し替えの module が表に無い
-    submodule になった — card ki-9b8308f2c7c3)。
+    submodule になった)。
     """
     below = f"{FIXTURE_ROOT}.types.sub"
     table = _fixture_table({SUBMODULE: [below], below: ["sub_helper"]})
@@ -2653,7 +2654,7 @@ def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_th
     """import できない子を _ へ移し、印のある移し替えの module を残す間も、名を移した先の text から古い名で数えて緑。
 
     移し替えの module の text は名を定義しないので、移した先を読まないと名が目録から消え、表に在るのに目録に無い名で赤になる
-    (doeff-ml-nexus の import できない Hy の module で起きた — card ki-460c44bf9b79)。
+    (doeff-ml-nexus の import できない Hy の module で起きた)。
     """
     child = f"{FIXTURE_ROOT}.types"
     table = _fixture_table({SUBMODULE: [child], child: ["helper"]})
@@ -2669,7 +2670,7 @@ def test_a_marked_shim_of_a_module_that_cannot_be_imported_keeps_the_names_of_th
     check_package(_read_fixture(stage_1), table)
 
 
-# --- doeff の中の部品は doeff だけが import する(ADR-DOE-API-001 R10・R11 — card ki-9c326052f21c) ---
+# --- doeff の中の部品は doeff だけが import する(ADR-DOE-API-001 R10・R11) ---
 
 #: doeff の外の file を探す所(repo の根から): packages/ の下(部品そのものの dir を除く)・examples・docs/adr の Hy。doeff の根の
 #: package(doeff/)と doeff の検(tests/)は doeff の中。
@@ -2912,7 +2913,7 @@ def test_a_doeff_part_imported_outside_doeff_turns_red(tmp_path: Path) -> None:
     assert part_imports(tmp_path) == []
 
 
-#: 隠した時の名の固定の列を印の下に持つ移し替えの module(tools/hide_submodules.py の書く形 — card ki-4fbed45b5863)。
+#: 隠した時の名の固定の列を印の下に持つ移し替えの module(tools/hide_submodules.py の書く形)。
 PINNED_SHIM = MARKED_SHIM.replace(
     "\n",
     f"\n# moved-submodule-shim-names {FIXTURE_ROOT}.types:\n#   LIMIT PingResult\n#   helper\n",
@@ -2939,7 +2940,7 @@ def test_a_name_added_inside_a_pinned_shim_does_not_grow_the_public_api(tmp_path
     """移し替えの module が名の固定の列を持てば、移した先の _ の module に helper を足しても目録の行は増えず緑。
 
     列の無い移し替えの module では、古い path が移した先の module そのものを返すので、足した helper が古い path の
-    公開名に加わって赤になる(card ki-4fbed45b5863 — 内側の helper を足すだけで公開 API が増えた)。入口に足した名は
+    公開名に加わって赤になる(内側の helper を足すだけで公開 API が増えた)。入口に足した名は
     書き手が意図して見せる名なので、列が在っても赤(表に足すか直す)。
     """
     child = f"{FIXTURE_ROOT}.types"
@@ -2999,7 +3000,7 @@ def test_a_name_added_below_a_pinned_namespace_dir_shim_does_not_grow_the_public
     """namespace の dir を指す移し替えの module の名の固定の列も読み、移した先の _ の下に helper を足しても緑。
 
     その移し替えの module は module でないので、目録が module の列だけから列を読むと読まれず、足した helper が古い path の
-    公開名に加わって赤に戻った(doeff-cluster の区画 _sim・_record_store — card ki-fcf6342de575)。列の無い時は、
+    公開名に加わって赤に戻った(doeff-cluster の区画 _sim・_record_store)。列の無い時は、
     下の古い path を列の無い path に数える(tools/hide_submodules.py pin が列を書く移し替えの module に拾う)。
     """
     below = f"{FIXTURE_ROOT}.types.sub"
@@ -3078,7 +3079,7 @@ def test_a_submodule_named_like_an_entry_name_turns_red_and_removing_it_turns_gr
     赤(どの古い path の import で名が module に替わったかを名指す)・2 つの殻を消すと緑(ADR-DOE-API-001 R34)。
 
     doeff 42f897000 の doeff_core_effects の殻 aiohttp_http_server.py と同じ形で、10-30 に記録の service が起動の度に
-    ``with_handlers: handler must be callable, got module`` で落ちた(card ki-db44e4d3efe4)。
+    ``with_handlers: handler must be callable, got module`` で落ちた。
     """
     files = {
         "__init__.py": CLASHING_ENTRY,
@@ -3138,7 +3139,7 @@ def test_an_inner_package_entry_name_like_its_child_turns_red_and_moving_the_chi
     字面の照合も新しい process の確かめも赤(古い path inner.tool の import が _inner の属性 tool を module で上書きする)・
     子を _ の名 _tool へ移すと緑(ADR-DOE-API-001 R34)。
 
-    doeff_agents._effects の子 agent と、移した package の古い path doeff_agents.effects.agent と同じ形(card ki-d3a096ce3eaa)。
+    doeff_agents._effects の子 agent と、移した package の古い path doeff_agents.effects.agent と同じ形。
     """
     files = {
         "__init__.py": "",

@@ -1,4 +1,4 @@
-"""realtime の名簿(tests/realtime_tests.toml)と、検の眠りの規則の外へ出る道の突き合わせ(card ki-94380dba532f・ki-6aa7cb5ffb83・ki-bb3ee40d0af2)。
+"""realtime の名簿(tests/realtime_tests.toml)と、検の眠りの規則の外へ出る道の突き合わせ。
 
 .semgrep.yaml の doeff-no-sleep-in-tests は realtime を名乗る検の中の sleep を鳴らさない。名乗ってよいのは実時間そのものが
 対象の検だけなので、名乗る検を名簿に理由と一緒に載せ、名簿と marker が 1 対 1 で合う事をここで見る — 名簿に無い marker も、

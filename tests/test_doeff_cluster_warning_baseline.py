@@ -1,4 +1,4 @@
-"""packages/doeff-cluster の warning の基点の比べ(scripts/doeff_cluster_warning_baseline.py・agora-redesign #2683)の検。
+"""packages/doeff-cluster の warning の基点の比べ(scripts/doeff_cluster_warning_baseline.py)の検。
 
 失敗ケース: 新しい warning が 1 つ増えると赤・直したのに基点を下げないと赤・lower は下げるだけで上げない。
 #2906: commit の hook の道(scripts/lint-doeff-cluster.sh に file を渡す時)は HEAD の組み立ての入力の鍵の binary で測り、探し道の

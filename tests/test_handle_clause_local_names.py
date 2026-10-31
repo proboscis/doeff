@@ -1,5 +1,4 @@
-"""handle・defhandler の節の展開の局所名 `effect`・`k` は、書き手の節の欄の名と衝突しない事の検(card ki-6af9862aed32 —
-card ki-16180480129e の続き)。
+"""handle・defhandler の節の展開の局所名 `effect`・`k` は、書き手の節の欄の名と衝突しない事の検(tests/test_handle_writer_names.py の続き)。
 
 展開は節を回す関数の引数と節の操作のために、局所名 `effect`(受けた effect)と `k`(続き)を束ねて読む。書き手が節の欄を同じ名にすると
 (KV の `(Kv [k v] …)`)、欄の束ね `(setv k (. effect k))` が続きを上書きし、`(resume …)` が `TypeError: argument 'k': 'int' object is

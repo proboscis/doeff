@@ -13,7 +13,7 @@
   (.row state.observations.metrics name))
 
 (defn verdict-through-the-owner [state name now timing]
-  ;; 発火しない: 持ち主の判断を呼ぶ・宣言の readiness の欄・k8s の Deployment の観測の表。
+  ;; 発火しない: 所有者の判定を呼ぶ・宣言の readiness の欄・k8s の Deployment の観測の表。
   (setv job (next (gfor j state.jobs :if (= j.spec.name name) j)))
   #((service-readiness state name now timing) job.readiness
     (.row state.observations.deployments name)))

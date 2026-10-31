@@ -3,7 +3,7 @@
 Sessions opened inside agora read this repository's AGENTS.md too, and they have
 no terminal multiplexer, no peer-messaging command and no profile switcher. A
 2026-10-07 session followed host-only steps it read in shared instructions and
-failed (agora-redesign #3904 / #3915). How to reach another session belongs to
+failed. How to reach another session belongs to
 the environment's own instructions, not to this repository.
 """
 

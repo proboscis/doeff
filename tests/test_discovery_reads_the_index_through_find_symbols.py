@@ -1,6 +1,5 @@
 """doeff run の discovery(doeff/cli/discovery.py)は、doeff-indexer の effect FindSymbols で索引を引く program で、doeff run は
-それを handler rust_indexer(Rust の索引器)の下で回す(ADR-DOE-API-001・依頼書 lt-S4R44DQ5ZPJZD986TY812Q2DW9 の答え
-lt-ZDN45RSNPV16BKSM997GGZ9CVB・card ki-1e51e218527e)。前は class Indexer を直に呼ぶ class IndexerBasedDiscovery だった。
+それを handler rust_indexer(Rust の索引器)の下で回す(ADR-DOE-API-001)。前は class Indexer を直に呼ぶ class IndexerBasedDiscovery だった。
 
 - Rust の索引器の下で、印の付いた interpreter のうち program の module の階層で最も近い物と、階層の印の付いた env を根から選ぶ。
 - doeff run の resolve_context が同じ program で既定の interpreter と env を決める(--env が在れば env は探さない)。
@@ -181,8 +180,7 @@ def test_the_effect_and_its_answer_type_are_read_without_the_rust_extension(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """FindSymbols と SymbolInfo は拡張の .so 無しに読め(test の handler が答えられる)、rust_indexer だけが拡張を読む。
-    doeff-indexer は在るのに拡張を読めない時、doeff run は黙らずに warning を出して探さない(構成のレビュー
-    lt-QHQJEWJDSAHGTT1ZASS28F9V68 の所見 A)。"""
+    doeff-indexer は在るのに拡張を読めない時、doeff run は黙らずに warning を出して探さない(構成のレビューの所見 A)。"""
     _forget_doeff_indexer(monkeypatch)
     monkeypatch.setitem(
         sys.modules, "doeff_indexer._native", None

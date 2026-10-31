@@ -135,7 +135,7 @@ function rgb(palette: Palette, color: ColorIndex): [number, number, number] {
 /**
  * PNG — 1 点を scale × scale の正方形にそのまま拡大する(補間しない・透明は alpha 0)。
  * 画素の値は格子で決まるが、圧縮した byte(deflate)は zlib の実装と版で変わる — 生成物の食い違いは byte ではなく
- * pngContent の画素で比べる(agora-redesign #1626)。
+ * pngContent の画素で比べる。
  */
 export function png(pixels: Pixels, palette: Palette, scale: number): Buffer {
   const size = pixels.length;
@@ -176,7 +176,7 @@ export type PngContent =
 
 /**
  * PNG を頭と画素の列に戻す — 別の機体(Node・zlib の版の違い)で作って commit した PNG と、ここで作った PNG を、
- * 圧縮の byte ではなく画そのもので比べるため(agora-redesign #1626)。
+ * 圧縮の byte ではなく画そのもので比べるため。
  */
 export function pngContent(bytes: Buffer): PngContent {
   if (bytes.length < PNG_SIGNATURE.length || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
@@ -212,7 +212,7 @@ export function pngContent(bytes: Buffer): PngContent {
 
 /**
  * commit してある生成物が、ここで作った生成物と同じか — PNG は画(頭と画素)で、ほかは byte で比べる。
- * 検(生成物は元の定義どおり)と scripts/build-pixel.js の書き出し・--check が同じ物差しを使うため(agora-redesign #1626)。
+ * 検(生成物は元の定義どおり)と scripts/build-pixel.js の書き出し・--check が同じ物差しを使うため。
  * commit してある PNG が読めなければ「違う」(作り直す側)。
  */
 export function sameAsset(relative: string, current: Buffer, generated: Buffer): boolean {

@@ -73,7 +73,7 @@ def test_wrong_handler_arity_is_rejected_at_entry_and_by_vm_on_reinstall() -> No
         return Pure(effect)
 
     # @do 関数でも dispatcher の引数 (effect, k) を受け取れなければ、元の入口は
-    # 組む時に名指しで断る(agora-redesign #3724)。引き継ぎ先は形式判定を省くが、
+    # 組む時に名指しで断る。引き継ぎ先は形式判定を省くが、
     # VM 実行時の TypeError を保つ — 省略で引数の数の誤りを迂回できない。
     with pytest.raises(TypeError, match=r"without the handler marker: .*wrong_arity"):
         handler(wrong_arity)

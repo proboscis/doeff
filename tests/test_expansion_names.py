@@ -1,4 +1,4 @@
-"""handle・defhandler の展開が読む doeff の名の綴りの表(doeff_hy/_expansion_names.py)の検(card ki-16180480129e)。
+"""handle・defhandler の展開が読む doeff の名の綴りの表(doeff_hy/_expansion_names.py)の検。
 
 表は展開が読む名の別名(`_doeff_<名>`)と import の唯一の定義元。展開の名が書き手の同じ名の effect を隠さない事そのものは
 tests/test_handle_writer_names.py が、表を介さずに素の名を書く読み手が戻らない事はここが確かめる。
@@ -39,7 +39,7 @@ def test_alias_is_the_doeff_prefixed_name() -> None:
 
 
 def test_alias_symbol_makes_a_new_symbol_each_call() -> None:
-    """位置を付ける macro(locate-synthesized)が Symbol を使い回さないよう、呼ぶたびに別の Symbol を作る(agora-redesign #1004)。"""
+    """位置を付ける macro(locate-synthesized)が Symbol を使い回さないよう、呼ぶたびに別の Symbol を作る。"""
     assert expansion_names.alias_symbol("Put") is not expansion_names.alias_symbol("Put")
 
 
@@ -73,7 +73,7 @@ def test_home_refuses_a_name_outside_the_table() -> None:
         ("doeff", "do", "_doeff_do", False),
         ("doeff_traverse", "Traverse", "_doeff_traverse_Traverse", False),
         ("doeff_vm", "Pass", "_doeff_Pass", False),
-        # the VM node is read from doeff's root, never from doeff_vm (agora-redesign ki-ff728b00369a)
+        # the VM node is read from doeff's root, never from doeff_vm
         ("doeff_vm", "WithHandler", "_doeff_WithHandler", False),
         ("doeff", "Pass", "Pass", False),
         ("doeff", "Pass", None, False),
@@ -157,7 +157,7 @@ def _bare_symbols_in_python(path: Path) -> frozenset[str]:
 
 def test_no_source_spells_an_expansion_name_bare() -> None:
     """doeff_hy のどの source も、展開が読む名を素の Symbol で書かない(表の `alias-symbol` を引く) — 素の綴りは書き手の同じ名の
-    effect と 1 つの名を分け合う(card ki-16180480129e)。"""
+    effect と 1 つの名を分け合う。"""
     spelled = {
         path.name: names
         for path in sorted([*_PACKAGE.glob("*.hy"), *_PACKAGE.glob("*.py")])
@@ -193,6 +193,6 @@ def _positioned_models(form: object) -> list[object]:
 def test_import_form_builds_no_positioned_model(names: list[str]) -> None:
     """`import_form` が返す model は位置を持たない。reader が作る model(`hy.read("doeff.do")` など)は 1 行目 1 列目の位置を
     持ち、位置を付ける macro(locate-synthesized)が利用者の式の位置と取り違えて、囲む式の範囲を 1 行目へ引く — 型検査の
-    診断(未使用の import・未定義の名)の行が、handler の行でなく 1:1 になった(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の
-    実測で見つけた、card ki-16180480129e の直しの退行)。"""
+    診断(未使用の import・未定義の名)の行が、handler の行でなく 1:1 になった(設計検証の盲検 A の
+    実測で見つけた、展開の名を別名にした直しの退行)。"""
     assert _positioned_models(expansion_names.import_form(names)) == []

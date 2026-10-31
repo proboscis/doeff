@@ -1,4 +1,4 @@
-"""docs と README が名指す LLM の effect が、今の doeff-llm に在る事の検(取り組み doeff-publish・card ki-d20475e94d87 の見つけた不具合)。
+"""docs と README が名指す LLM の effect が、今の doeff-llm に在る事の検(取り組み doeff-publish で見つかった不具合)。
 
 `LLMStructuredOutput` は `LLMStructuredQuery` に改名され(docs/llm_unified_effects.md が記す)、旧い名は今の doeff-llm に無い。
 改名の後も docs/20-why-effects-over-di.md の `LLMChat, LLMStructuredOutput` を import する行と、3 つの provider の

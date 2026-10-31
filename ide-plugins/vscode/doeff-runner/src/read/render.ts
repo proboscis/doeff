@@ -1,5 +1,5 @@
 // 定義を読む面の HTML を組む純粋な関数(VS Code に触らない)。カード = 定義などの実体 1 つの部品を HTML で見せる物で、
-// 構文はなぞらず、defk などの実体を HTML でよく見せる(v2・operator の決定 2026-09-28)。見本 = docs/design/hy-reading-plane/artifacts/v5/entity.html(左に軸・上に 1 行の切り替え・右に実体のカード)。
+// 構文はなぞらず、defk などの実体を HTML でよく見せる(v2)。見本 = docs/design/hy-reading-plane/artifacts/v5/entity.html(左に軸・上に 1 行の切り替え・右に実体のカード)。
 // カードは 1 行に畳める(v4)。面に出る文字は labels.ts の表からだけ引く(v5)。
 // 本体の文字(val / var の表)は linter の印字が入るまで出さず、元の Hy は実体ごとの source ボタンで開閉する(v3 3 節)。
 
@@ -670,7 +670,7 @@ ${content.bar}
 
 /**
  * 重大さの色の CSS — 札の地と字・名と source の範囲の下線・file の帯の縁。色は lint/severity.ts の 1 つの表からだけ引く
- * (面に色の表を増やさない — agora-redesign #1685 の 5)。
+ * (面に色の表を増やさない)。
  */
 const LEVEL_STYLE = LINT_LEVELS.map((level) => {
   const c = LEVEL_COLORS[level];

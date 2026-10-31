@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""変えた所の検 — 登記(`ai land request`)の前に手元で走らせる入口(agora-redesign #2605 の 2 本目・1 便目)。
+"""変えた所の検 — 登記(`ai land request`)の前に手元で走らせる入口。
 
 commit の hook ではテストを走らせない(operator #1122・#794)。この入口は登記の前に書き手が `make test-changed` で走らせ、
 日次と並ぶ。選び方と打ち切りの定義はこの file の 1 点:
@@ -15,7 +15,7 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    file が無い時は止める(rc 2)。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で持つか木を歩くので、
    import の逆依存では選べない — だから固定の組で先頭に置く。表は package(uv の workspace の member)ごとに、組か
    「組の要らない理由」(`reason` の行)のどちらかを持つ。どちらも無い package は `table_gaps` が名指し、日次と表の
-   repo 全体の行で走る検(tests/test_contract_table_follows_packages.py)が赤にする(agora-redesign #2658)。
+   repo 全体の行で走る検(tests/test_contract_table_follows_packages.py)が赤にする。
 3. 変えた検の file そのもの(検の file かは pytest の集め手と同じ名の規則 — root の ini の python_files・
    doeff_hy_test_files・doeff_adr_hy_files と doeff-adr の DEFAULT_FILE_PATTERNS)。ただし root の pyproject.toml の
    `[tool.doeff] record-dirs`(設計の記録の dir)の下は、名の規則に当たっても検に数えない(3 も 4 の答えの絞りも)。
@@ -26,22 +26,22 @@ commit の hook ではテストを走らせない(operator #1122・#794)。こ�
    答えが読めない時は逆依存を足さずに「逆依存を測れなかった」と名指す(黙って空にしない・赤とは分ける)。
    linter の命令は、`--linter` で渡した物 → 作業木の組み立ての入力の鍵の linter(commit の hook と同じ探し方
    scripts/doeff_linter_locked.py の `which`・組まない — 会話の Pod は PATH に doeff-linter を持たず、hook のために揃えた
-   断面の置き場にだけ在る・card ki-2042a72a245b)→ PATH の doeff-linter の順に決める。
+   断面の置き場にだけ在る)→ PATH の doeff-linter の順に決める。
 5. 選んだ検を、日次と同じ pytest の session の境目(repo の根・package ごとの `packages/<名>/tests`・package の tests/ の
    外の根 = Makefile の PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest(`-m "not e2e"`)の process で走らせる。日次の
    `make test-packages` が package ごとに session を分けるのと同じ理由で、`tests/` に `__init__.py` と `conftest.py` を
    持つ package の検を 1 つの session に混ぜると `tests.conftest` の名がぶつかり(ImportPathMismatchError)、pytest が
-   1 本も走らせずに止まる(agora-redesign #2682 — #2658 の標本で 12 commit 中 6 本)。順は組(契約の組 → 変えた検 →
+   1 本も走らせずに止まる(#2658 の標本で 12 commit 中 6 本)。順は組(契約の組 → 変えた検 →
    逆依存)ごとに session で束ね、隣り合う同じ session の束は 1 つの process にする。束を順に走らせ、合計の上限
    (既定 60 秒)の残りを次の束に渡す — 番が来なかった束の検は「未測」と名指す。上限は pytest の configure の間(root の
    conftest が機体の検の枠を取る — 埋まっていれば待つ)を数えず、数えなかった秒は要約に別の行で出す(枠の正本の
-   hold_check_slot の「待ちを変更箇所の検証の 60 秒に数えない」約束・card ki-55970a1649be)。拍は ReportPlugin が pipe へ書く。
+   hold_check_slot の「待ちを変更箇所の検証の 60 秒に数えない」約束)。拍は ReportPlugin が pipe へ書く。
 
 出力は 走った(緑)・赤・未測 の 3 つ。終わらなかった file・集めた検が 0 本の file・venv の無い作業木は「未測」と
 名指し、赤と分ける。rc は 赤が在れば 1・表や入力が読めなければ 2・それ以外 0(未測は登記を止めない — 名指すだけ)。
 どの道で終わっても、出力の最後の行は数だけの要約 1 行(`land-focus-counts: selected=… ran=… red=… unmeasured=…
 unmeasured_reverse=… rc=… seconds=… budget=…`・agora の入口と同じ綴り)— 1 日の未測を実数で数える読み手のため
-(agora-redesign #2685)。検の名の一覧は載せない。この入口は file にも記録の service にも書かない(届ける口は別に持つ)。
+。検の名の一覧は載せない。この入口は file にも記録の service にも書かない(届ける口は別に持つ)。
 
 pytest の結果は、この同じ file の ReportPlugin を pytest の plugin として渡して行ごとの JSON で受け取る
 — 打ち切った時も、そこまでに終わった検の結末が残る。stdlib 単独(呼び口は `uv run --script`・機体の python は撃たない)。
@@ -103,7 +103,7 @@ LINTER_TIMEOUT_SECONDS = 30.0
 EXTRA_ROOTS_TARGET = "print-package-extra-test-roots"
 #: repo の根の session(package の tests/ と、その外の根のどちらにも当たらない検 — 日次の root の `pytest` と同じ)。
 ROOT_SESSION = "."
-#: 入口の出力の最後の 1 行(数だけの要約)の頭 — agora の登記の前の入口(scripts/land_focus_gate.hy)と同じ綴り(agora-redesign #2685)。
+#: 入口の出力の最後の 1 行(数だけの要約)の頭 — agora の登記の前の入口(scripts/land_focus_gate.hy)と同じ綴り。
 COUNTS_PREFIX = "land-focus-counts:"
 #: Makefile に session の根を聞く命令を待つ上限の秒(変数を 1 つ echo するだけ — 60 秒の検の予算とは別に数える)。
 MAKE_TIMEOUT_SECONDS = 30.0
@@ -383,7 +383,7 @@ def collector_patterns(repo: Path) -> TestFilePatterns:
 def is_test_file(path: str, patterns: TestFilePatterns) -> bool:
     """pytest の照合と同じ: `/` を含まない pattern は file の名に、含む pattern は repo の根からの path に当てる。
     設計の記録の dir の下は、名の規則に当たっても検ではない(記録の中の改名できない測りの script が、import 先の変更で選ばれ
-    「集める時に落ちた」赤になった — 設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A)。"""
+    「集める時に落ちた」赤になった — 設計検証の盲検 A)。"""
     name = path.rsplit("/", 1)[-1]
     return (
         "fixtures" not in path.split("/")
@@ -673,7 +673,7 @@ def extend_with_reverse(
 
 
 # ---------------------------------------------------------------------------
-# pytest の session の境目(日次と同じ — agora-redesign #2682)
+# pytest の session の境目(日次と同じ)
 # ---------------------------------------------------------------------------
 
 
@@ -981,13 +981,13 @@ class ChildClock:
 
     spawned = 起こした拍・configuring = configure に入った拍・started = session が始まった拍(来ていなければ None)。
     configure の間は root の conftest が機体の検の枠を取る(埋まっていれば待つ)ので数えない — 枠の正本の hold_check_slot は
-    「待ちを変更箇所の検証の 60 秒に数えない」と約束している(card ki-55970a1649be)。起こしてから configure まで(uv・python・
+    「待ちを変更箇所の検証の 60 秒に数えない」と約束している。起こしてから configure まで(uv・python・
     conftest の import)と session が始まってからは今までどおり数える(止まったままの子も上限で切るため)。
 
     ⚠ 数えない区間は、入口が時間で切らない区間でもある(_ChildProgress.wait_within は paused の間、子の終わりか拍だけを待つ)。
     だから数えない区間は、上限を別の持ち主が持つ区間 — configure の間の枠の待ち(上限は枠の正本の 1 点が持ち、越えれば
     pytest が未実行を名乗って終わる)— だけにする。収集や検の本体を数えない区間に足すと、止まった子を誰も切らず入口が
-    終わらない(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 A — test_a_collection_over_the_budget_is_cut_not_excluded が守る)。
+    終わらない(設計検証の盲検 A — test_a_collection_over_the_budget_is_cut_not_excluded が守る)。
     区間を足す時は、その区間の上限の持ち主を先に決め、paused と wait_within を一緒に変える。"""
 
     spawned: float
@@ -1079,7 +1079,7 @@ class _ChildProgress:
         """process が終わるまで待つ — 上限に数える秒が budget に達したら False(呼び手が打ち切る)。configure の間は数えない
         ので時間を切らずに待つ(枠の待ちは枠の正本の上限が限り、越えれば pytest が未実行を名乗って終わる)。
         ⚠ この区間に入口の側の上限を置かない — 置くと、待ちを諦める判断が枠の正本(待ちの上限の .json と未実行の名乗り)から
-        入口へ移り、2 つの上限の小さい方が効く(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 B)。待ちの上限を変える時は
+        入口へ移り、2 つの上限の小さい方が効く(設計検証の盲検 B)。待ちの上限を変える時は
         正本の値を変える。"""
         with self._changed:
             while not self._mut_exited:
@@ -1329,7 +1329,7 @@ class Finished:
 
 @dataclass(frozen=True)
 class RunCounts:
-    """入口の 1 回を数だけで表す要約(agora-redesign #2685 — 1 日の未測を実数で数えるため・中身の一覧は載せない)。
+    """入口の 1 回を数だけで表す要約(1 日の未測を実数で数えるため・中身の一覧は載せない)。
     selected = ran + red + unmeasured。unmeasured_reverse = 未測のうち逆依存の検。seconds = 入口の壁時計。"""
 
     selected: int

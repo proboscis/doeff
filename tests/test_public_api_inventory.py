@@ -359,7 +359,7 @@ def test_the_helper_reading_judges_each_body_once(
     sample: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """program を返す関数がいくつ同じ呼び先を読んでも、1 回の読み(1 つの _Classifier)の中で、本体ごとに読む関数を
-    1 度だけ集め、名と値ごとに 1 度だけ helper を越えるかを判じる(card ki-534cd3be4d7c — 関数ごとに呼び先を辿り直し、
+    1 度だけ集め、名と値ごとに 1 度だけ helper を越えるかを判じる(前は関数ごとに呼び先を辿り直し、
     日次の回の doeff-cluster の目録が 100 秒を越えた)。判定の結果は 3 つとも helper のまま。
     """
     (tmp_path / "inventory_shared.py").write_text(textwrap.dedent(SHARED), encoding="utf-8")

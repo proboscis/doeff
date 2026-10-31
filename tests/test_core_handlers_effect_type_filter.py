@@ -1,4 +1,4 @@
-"""doeff-core-effects の handler の effect の引数の型の註の検(agora-redesign #1954)。
+"""doeff-core-effects の handler の effect の引数の型の註の検。
 
 VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
 その handler を Python に入らずに外へ渡す。core-effects の handler は、どれも扱う型の外の effect を最初に `Pass` で外へ渡すだけなので、
@@ -115,7 +115,7 @@ def _asks_then_state():
 
 def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
     # 列の最後が一番内側: Ask は state を飛ばして外の reader に届く。state は VM の中の Rust の handler で
-    # Python の本体を持たないので(card ki-83236a21466e)、VM が handler を呼んだ回数で数える。
+    # Python の本体を持たないので、VM が handler を呼んだ回数で数える。
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
     result, calls = _handler_calls_of(with_handlers(stack, _asks_then_state()))
     _, reading = _handler_calls_of(Pure(None))  # 後の読みの effect が vm_probe_handler を呼ぶ分

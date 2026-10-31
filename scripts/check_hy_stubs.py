@@ -1,4 +1,4 @@
-"""commit する .hy の隣の .pyi が、今の .hy から作り直した物と同じかを照らす(commit の hook — card ki-5755818ef0d8)。
+"""commit する .hy の隣の .pyi が、今の .hy から作り直した物と同じかを照らす(commit の hook)。
 
 .pyi は doeff_hy._static_stub が .hy から作る生成物で、各 package の test_generated_stubs が「作り直した物 == commit された物」を
 日次に照らす。.hy だけを変えて .pyi を作り直さない commit は、その test が後から failing にするので(afaf956cd — kube.hy)、

@@ -1,4 +1,4 @@
-"""packages/doeff-cluster の warning(major)の数を、規則ごと × file ごとの基点と比べる(agora-redesign #2683)。
+"""packages/doeff-cluster の warning(major)の数を、規則ごと × file ごとの基点と比べる。
 
 error(critical)は lint-doeff-cluster.sh が doeff-linter の終了コードで止める。warning は linter が 0 で終わるので、ここで
 基点の file(packages/doeff-cluster/lint-warning-baseline.json = {規則: {package の dir からの path: 数}})と比べる:
@@ -43,7 +43,7 @@ def package_path(package_dir: Path, reported: str) -> str:
     """linter が報せた path(絶対のことも package の dir からのこともある)を、package の dir からの path に揃えるため。
 
     鍵が作業木の置き場に依らないようにする(ddc164310 は絶対 path を鍵にしたので、別の作業木では lower が基点を空にし、
-    path を渡す check は 1 つも比べずに通った — agora-redesign #2683 の cc1-w38 の実測)。package の外の path は名指して止める。"""
+    path を渡す check は 1 つも比べずに通った — 実測)。package の外の path は名指して止める。"""
     path: Path = Path(reported)
     if not path.is_absolute():
         return path.as_posix()
@@ -149,7 +149,7 @@ def main(argv: list[str]) -> int:
         argv = argv[2:]
     package_dir: Path = top / PACKAGE
     # 基点の置き場を差し替えるのは make の入口の検だけ(偽の linter と空の基点で終了コードの伝わり方を試す)。
-    # 置き場の差し替えは環境変数の値 — os.environ を直に読まず、本物の答え手の下の ReadEnvironment で問う(agora-redesign #3012)。
+    # 置き場の差し替えは環境変数の値 — os.environ を直に読まず、本物の答え手の下の ReadEnvironment で問う。
     entries = run(with_handlers([subprocess_handler], ReadEnvironment((BASELINE_ENV,))))
     configured = next((entry.value for entry in entries if entry.name == BASELINE_ENV), None)
     baseline_file: Path = Path(configured or package_dir / BASELINE_NAME)

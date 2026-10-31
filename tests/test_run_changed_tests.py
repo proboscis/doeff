@@ -1,4 +1,4 @@
-"""登記の前の入口 scripts/run_changed_tests.py(`make test-changed`)の失敗ケース(agora-redesign #2605 の 2 本目・1 便目)。
+"""登記の前の入口 scripts/run_changed_tests.py(`make test-changed`)の失敗ケース。
 
 t135 の形: doeff-core-effects の `.hy` に公開の名を 1 つ足し、隣の `.pyi` を直さない commit は、書き手が選ぶ検
 (test_sql_effects.hy)では緑のまま通り、契約の検 test_hy_module_stubs だけが赤にする。入口がその検を契約の組から選ぶので
@@ -13,12 +13,12 @@ t135 の形: doeff-core-effects の `.hy` に公開の名を 1 つ足し、隣�
 命令(`--linter`)に差し替え、契約の組 → 変えた検 → 逆依存(距離の順)に並ぶこと・linter が答えない時に名指して進むことを
 確かめる。linter 側の選び方そのものの失敗ケースは doeff-linter の Rust の検(project::affected_tests)が持つ。
 
-session の境目(agora-redesign #2682): 入口は日次と同じ境目(repo の根・`packages/<名>/tests`・Makefile の
+session の境目: 入口は日次と同じ境目(repo の根・`packages/<名>/tests`・Makefile の
 PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest の process で走らせる。`tests/` に `__init__.py` と `conftest.py` を持つ package を
 2 つ同時に選んでも止まらないこと(1 回の pytest では `tests.conftest` の名がぶつかり rc 2 で止まった)・合計の上限を束どうしで
 分け合い、番の来なかった束を未測と名指すこと・束の並びが契約の組を先に保つことを確かめる。
 
-機体の検の枠の待ち(card ki-55970a1649be): doeff の root の conftest は pytest_configure(収集の前)で機体の検の枠を取り、
+機体の検の枠の待ち: doeff の root の conftest は pytest_configure(収集の前)で機体の検の枠を取り、
 埋まっていれば待つ。入口は configure の間を上限に数えず、数えなかった秒を要約に別の行で出すことを確かめる。
 """
 
@@ -84,7 +84,7 @@ class RunnerOutput:
 
 def _git(root: Path, *args: str) -> str:
     """模型の repo で git を走らせる(作者は固定の名)。子は doeff の子 process の答え手(subprocess_handler)が起こし、
-    今の環境に GIT_ENV を重ねて渡す(agora-redesign #3012)。"""
+    今の環境に GIT_ENV を重ねて渡す。"""
     outcome = run(
         with_handlers(
             [subprocess_handler],
@@ -154,7 +154,7 @@ def _make_model(
         root / CORE_EFFECTS,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    # Makefile は入口が session の境目(PACKAGE_EXTRA_TEST_ROOTS)を聞く定義元(agora-redesign #2682)。
+    # Makefile は入口が session の境目(PACKAGE_EXTRA_TEST_ROOTS)を聞く定義元。
     for rel in (STUB_TEST, ADR_PLUGIN, "Makefile"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / rel, root / rel)
@@ -244,7 +244,7 @@ def _run(
 
 
 def _counts(output: RunnerOutput) -> str:
-    """入口の出力の最後の行 — 数だけの要約(agora-redesign #2685)。どの道で終わっても最後の行にちょうど 1 行出る。"""
+    """入口の出力の最後の行 — 数だけの要約。どの道で終わっても最後の行にちょうど 1 行出る。"""
     lines = [line for line in output.stdout.splitlines() if line.strip()]
     assert lines, f"入口が何も出していない(rc {output.returncode})\n{output.text[-3000:]}"
     assert lines[-1].startswith("land-focus-counts: "), lines[-5:]
@@ -440,7 +440,7 @@ def test_a_test_named_file_under_a_record_dir_is_selected_neither_as_changed_nor
 ) -> None:
     """失敗ケース: 設計の記録の dir(pyproject の `[tool.doeff] record-dirs`)の下の検の名の file は、変えても・逆依存の答えに載っても選ばない。
     宣言が無い対照では同じ file が選ばれ、集める時に落ちて赤になる(記録の中の改名できない測りの script が、import 先の変更で
-    赤になった — 設計検証 lt-R12TTZXKQPKRPSE5342853KM0V の盲検 A)。記録の外の検の名の file は、宣言の有無によらず今までどおり選ぶ。"""
+    赤になった — 設計検証の盲検 A)。記録の外の検の名の file は、宣言の有無によらず今までどおり選ぶ。"""
     record = "docs/design/lt-REC/evidence/probe_test.py"
     model = _make_model(
         tmp_path,
@@ -497,7 +497,7 @@ def test_an_unanswering_linter_is_named_and_the_run_goes_on(
 
 
 # ---------------------------------------------------------------------------
-# linter の命令の決め方(card ki-2042a72a245b): 会話の Pod は PATH に doeff-linter を持たず、commit の hook のために揃えた
+# linter の命令の決め方: 会話の Pod は PATH に doeff-linter を持たず、commit の hook のために揃えた
 # 断面の置き場にだけ持つ — 既定の探し方が置き場の鍵の linter を見つける事
 # ---------------------------------------------------------------------------
 
@@ -613,7 +613,7 @@ def test_a_worktree_without_the_linter_crate_falls_back_to_path_and_names_it(
 
 
 # ---------------------------------------------------------------------------
-# 日次と同じ session の境目ごとに別の pytest の process(agora-redesign #2682)
+# 日次と同じ session の境目ごとに別の pytest の process
 # ---------------------------------------------------------------------------
 
 
@@ -692,7 +692,7 @@ def _slot_wait_conftest(seconds: int) -> str:
 
 
 def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path: Path) -> None:
-    """失敗ケース(card ki-55970a1649be — load 70 で枠の待ち 19 秒が root の束を打ち切った形): 枠が埋まっていて、root の
+    """失敗ケース(load 70 で枠の待ち 19 秒が root の束を打ち切った形): 枠が埋まっていて、root の
     conftest の pytest_configure が上限(ここでは 8 秒)より長い 10 秒を待つ。待ちを上限に数える入口は束を集める前に打ち切り、
     検を未測にした。入口は configure の間を数えないので、束は待ちの後に上限の残りで走り切って緑になり、数えなかった秒は
     所要とは別の行に出る。"""
@@ -728,7 +728,7 @@ SLOW_COLLECTION_SECONDS = 40
 
 
 def test_a_collection_over_the_budget_is_cut_not_excluded(tmp_path: Path) -> None:
-    """失敗ケース(設計検証 lt-PSZ6XPVAV2FN3CRME26FC2QQ34 の盲検 A): 上限に数えないのは configure の間(上限を枠の正本が持つ
+    """失敗ケース(設計検証の盲検 A): 上限に数えないのは configure の間(上限を枠の正本が持つ
     枠の待ち)だけ。数えない区間は入口が時間で切らない区間でもあるので、収集まで数えない入口は、集める時に止まった子を
     切れず、上限を越えて待ち続けた。module の頭で 40 秒止まる検は、上限 6 秒で打ち切られ「集め終わらなかった」未測になり、
     収集の秒は数えなかった秒(待ちの行)に入らない。"""
@@ -842,7 +842,7 @@ def test_the_session_roots_are_read_from_the_makefile(runner: ModuleType) -> Non
 
 
 def test_the_budget_clock_stops_between_configure_and_the_session_start(runner: ModuleType) -> None:
-    """上限の時計(card ki-55970a1649be): 起こしてから configure まで(uv・python・conftest の import)と session が始まって
+    """上限の時計: 起こしてから configure まで(uv・python・conftest の import)と session が始まって
     からを数え、configure の間(機体の検の枠の待ち)は数えない — 待っている間は時計が止まっている。拍の行が 2 度来ても
     最初の拍を使い、結末の行は時計を変えない。"""
     spawned = runner.ChildClock(spawned=100.0, configuring=None, started=None)
@@ -860,7 +860,7 @@ def test_the_budget_clock_stops_between_configure_and_the_session_start(runner: 
 
 
 def test_the_counts_split_every_selected_test_once(runner: ModuleType) -> None:
-    """数の要約(agora-redesign #2685): 選んだ検の 1 本ずつが走った・赤・未測のどれか 1 つに数えられ(selected = ran + red +
+    """数の要約: 選んだ検の 1 本ずつが走った・赤・未測のどれか 1 つに数えられ(selected = ran + red +
     unmeasured)、未測のうち逆依存の検を分けて数える。行は頭の印と `名=数` だけ(検の名の一覧は載せない)。"""
     origin, verdict = runner.Origin, runner.Verdict
     results = tuple(

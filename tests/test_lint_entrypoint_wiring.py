@@ -34,10 +34,10 @@ def _linter_locked() -> ModuleType:
 LINTER_LOCKED: ModuleType = _linter_locked()
 
 
-# hook の python の宣言(.pre-commit-config.yaml の `uv run --python` の版 — card acp:kanban-issue:ki-a28a482132ab)。
+# hook の python の宣言(.pre-commit-config.yaml の `uv run --python` の版)。
 HOOK_PYTHON: str = "3.12"
 FAKE_VERSIONS: dict[str, str] = {"semgrep": "0.0.0-fake", "doeff-linter": "doeff-linter 0.0.0 (fake)"}
-# 偽の lock の行の source — 道具の版の読み手(scripts/semgrep_locked.py)は index から入れる版の行だけを読む(card ki-33d2441b7e28)。
+# 偽の lock の行の source — 道具の版の読み手(scripts/semgrep_locked.py)は index から入れる版の行だけを読む。
 FAKE_SOURCE: str = 'source = { registry = "https://pypi.org/simple" }\n'
 # 基点と比べる道(scripts/hook_finding_baseline.py)が読む JSON の答え — 所見の無い報告。
 FAKE_REPORTS: dict[str, str] = {"semgrep": '{"results": [], "errors": []}', "doeff-linter": "[]"}
@@ -87,7 +87,7 @@ def _uv_dir(uv: str, kind: str) -> str:
 
 def _environment(directory: Path, path: str | None = None) -> tuple[EnvEntry, ...]:
     """子の環境へ今の環境の上に重ねる分(path = 子の PATH・既定は偽の道具の dir と /usr/bin・/bin)。今の環境の受け継ぎと
-    外す名(SKIP など)は、子を起こす doeff の答え手が行う(_run_child・agora-redesign #3012)。"""
+    外す名(SKIP など)は、子を起こす doeff の答え手が行う(_run_child)。"""
     real_uv: str | None = shutil.which("uv")
     assert real_uv is not None, "uv が要る(hook の script を走らせる)"
     fake_uv: Path = directory / "uv"
@@ -112,7 +112,7 @@ def _run_child(
     argv: tuple[str, ...], cwd: Path, overlay: tuple[EnvEntry, ...], drop: tuple[str, ...] = ("SKIP",),
 ) -> ProcessOutcome:
     """子を doeff の子 process の答え手(subprocess_handler)で起こすため — 子の環境は今の環境から drop の名を外し、overlay を
-    重ねた物(受け継ぎは答え手の中で行う・agora-redesign #3012)。"""
+    重ねた物(受け継ぎは答え手の中で行う)。"""
     return run(with_handlers(
         [subprocess_handler],
         RunProcess(argv=argv, cwd=str(cwd), env=overlay, env_mode=EnvMode.EXTEND, env_drop=drop),
@@ -177,7 +177,7 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     repository.mkdir()
     subprocess.run(["/usr/bin/git", "init", "-q", str(repository)], check=True)
     shutil.copyfile(ROOT / ".pre-commit-config.yaml", repository / ".pre-commit-config.yaml")
-    # 木の python の宣言(3.14t)も写す — hook の python は設定の宣言で決まり、木の既定に依らない(card acp:kanban-issue:ki-a28a482132ab)。
+    # 木の python の宣言(3.14t)も写す — hook の python は設定の宣言で決まり、木の既定に依らない。
     shutil.copyfile(ROOT / ".python-version", repository / ".python-version")
     # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
@@ -244,8 +244,8 @@ def test_pre_commit_runs_matching_linter_on_only_the_changed_file(
     assert hook.result.exit_code == 0, hook.result.stdout + hook.result.stderr
     semgrep_calls: list[list[str]] = [call for call in hook.calls if call[0] == "semgrep" and "--version" not in call]
     assert len(semgrep_calls) == 1, hook.result.stdout + hook.result.stderr
-    # どの項も uv.lock の版を uv の道具の置き場から、設定が宣言した python で呼ぶ(探し道の semgrep を直に呼ばない — #2906・木の
-    # .python-version の 3.14t では ruamel-yaml-clib が組めない — card acp:kanban-issue:ki-a28a482132ab)。
+    # どの項も uv.lock の版を uv の道具の置き場から、設定が宣言した python で呼ぶ(探し道の semgrep を直に呼ばない — 木の
+    # .python-version の 3.14t では ruamel-yaml-clib が組めない)。
     assert [call for call in hook.calls if call[0] == "uv"] == [
         ["uv", "tool", "run", "--python", HOOK_PYTHON, "--from", "semgrep==0.0.0-fake", "semgrep"],
     ]
@@ -310,7 +310,7 @@ def test_hy_only_hook_runs_real_semgrep_handler_boundary_rule(
 
 # 素の commit の hook(scripts/git-hooks/pre-commit)— make hooks-install と agora の担当の Pod の準備(agora の
 # deploy/agent-worker/worker-prepare.sh)が入れる物。pre-commit の枠組みを据え付けない機体でも、commit は semgrep の規則を通る
-# (card ki-8c0bb496bfab — 10-11 の日次の 5 回の赤は、Pod の commit が枠組みの semgrep の項を通らずに入れた業務の語)。
+# (10-11 の日次の 5 回の赤は、Pod の commit が枠組みの semgrep の項を通らずに入れた業務の語)。
 PLAIN_HOOK: Path = ROOT / "scripts" / "git-hooks" / "pre-commit"
 # 素の hook が撃つ pre-commit の項の別名 — .pre-commit-config.yaml の semgrep の項はどれもこの別名を持つ。
 PLAIN_HOOK_ALIAS: str = "semgrep-rules"
@@ -429,7 +429,7 @@ def test_plain_hook_passes_staged_file_without_findings(tmp_path: Path, changed:
 
 # どの package に業務の語の規則を当てるかは、規則の paths.include の 1 か所が決める — 項は package の名を持たない。持っていた
 # 時は、規則に package を足した便(10-10 の doeff-codex は規則と項を別の commit で足した)が項を直し忘れると、素の hook がその
-# package の文書を黙って通した(設計検証 lt-Z4J4B9281EK68D2Q8PZAJVZAV5 の盲検 A)。
+# package の文書を黙って通した(設計検証の盲検 A)。
 PACKAGE_ADDED_TO_THE_RULE: str = "doeff-example-generic"
 
 
@@ -450,7 +450,7 @@ def test_plain_hook_follows_the_rule_paths_for_documents(
 
 def test_plain_hook_leaves_file_selection_to_the_config(tmp_path: Path) -> None:
     # 素の hook は stage した file を自分で選ばず、どの項にも当たらない stage でも pre-commit を起こす — file を選ぶのは項の
-    # files / types の 1 か所(設計検証 lt-Z4J4B9281EK68D2Q8PZAJVZAV5 の盲検 B: 「当たる file が無ければ起こさない」近道を hook に
+    # files / types の 1 か所(設計検証の盲検 B: 「当たる file が無ければ起こさない」近道を hook に
     # 足すと、名が ASCII の外の文書や、項に足した file 種を黙って通した)。
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     names: list[str] = [hook["name"] for hook in hooks if hook.get("alias") == PLAIN_HOOK_ALIAS]
@@ -472,9 +472,9 @@ def test_plain_hook_runs_every_semgrep_hook_of_the_config() -> None:
     assert f"run {PLAIN_HOOK_ALIAS}" in PLAIN_HOOK.read_text(encoding="utf-8")
 
 
-# 素の hook は doeff-linter の基点の比べの項も撃つ(card ki-c6f026ac047e)— 10-18 の 3 commit は Pod(素の hook だけ)から入り、
+# 素の hook は doeff-linter の基点の比べの項も撃つ— 10-18 の 3 commit は Pod(素の hook だけ)から入り、
 # 検の file 2 つに DOEFF004 の所見を 9 件足したのに、素の hook が linter の項を撃たず、日次(10-19 04:05 JST)で初めて見つかった。
-# 着地の門は衝突の印だけを見る(operator 裁定 land-gate-runs-no-tests)ので、基点を越える所見を止められる最初の点は commit の時。
+# 着地の門は衝突の印だけを見る(決まり land-gate-runs-no-tests)ので、基点を越える所見を止められる最初の点は commit の時。
 PLAIN_HOOK_LINTER_ID: str = "doeff-linter"
 
 
@@ -507,7 +507,7 @@ def test_plain_hook_runs_the_linter_once_on_only_the_staged_python_file(tmp_path
 
 def test_every_uv_hook_declares_the_hook_python() -> None:
     # uv で走る項は、どれも hook の python を宣言する — 宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の
-    # ruamel-yaml-clib が組めずに落ちる(Pod 2026-10-10・card acp:kanban-issue:ki-a28a482132ab)。
+    # ruamel-yaml-clib が組めずに落ちる(Pod 2026-10-10)。
     hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
     uv_entries: list[str] = [hook["entry"] for hook in hooks if hook["entry"].startswith("uv ")]
     assert uv_entries

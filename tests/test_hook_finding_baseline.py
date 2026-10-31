@@ -1,4 +1,4 @@
-"""commit の hook の doeff-linter と semgrep(Python)の所見を基点と比べる道具(scripts/hook_finding_baseline.py・agora-redesign #2848)の検。
+"""commit の hook の doeff-linter と semgrep(Python)の所見を基点と比べる道具(scripts/hook_finding_baseline.py)の検。
 
 失敗ケース(#2848 の決め): 前からの所見の在る file に新しい所見を 1 つ足すと止まる・足さなければ通る・前からの所見を直したのに
 基点が古いと赤。基点の鍵は行番号に依らない。
@@ -345,7 +345,7 @@ def _semgrep_rig(tmp_path: Path) -> Rig:
 def test_the_locked_command_names_the_lock_version(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text(LOCK_TEMPLATE.format(version="1.169.0"))
     # 道具の python は、script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 木の .python-version
-    # (3.14t)を uv tool run に選ばせない(card acp:kanban-issue:ki-a28a482132ab)。
+    # (3.14t)を uv tool run に選ばせない。
     running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
     assert SEMGREP_LOCKED.locked_command(tmp_path) == [
         "uv", "tool", "run", "--python", running, "--from", "semgrep==1.169.0", "semgrep",
@@ -391,7 +391,7 @@ def test_a_lock_without_semgrep_stops_without_falling_back_to_the_path(tmp_path:
 
 def test_a_lock_row_outside_the_index_stops_without_calling_the_tool(tmp_path: Path) -> None:
     """lock の semgrep の行が index から入れる版でない(git など)と、`semgrep==<版>` は index の別の物を入れるので、読み手が
-    名指して止まり道具を呼ばない(uv.lock の版を読む 1 か所の判定 — Hy の版で測る検と同じ・card ki-33d2441b7e28)。"""
+    名指して止まり道具を呼ばない(uv.lock の版を読む 1 か所の判定 — Hy の版で測る検と同じ)。"""
     rig = _semgrep_rig(tmp_path)
     assert _run(rig, "init", "semgrep").returncode == 0
     calls = tmp_path / "bin" / "uv-calls.jsonl"
@@ -442,7 +442,7 @@ def test_strict_turns_unmeasured_red(tmp_path: Path) -> None:
 
 
 def test_strict_names_a_linter_changed_past_the_baseline_and_turns_it_red(tmp_path: Path) -> None:
-    # 失敗ケース(設計検証 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の盲検 A): linter の src を変えて基点を数え直していない木でも、基点の鍵の
+    # 失敗ケース(設計検証の盲検 A): linter の src を変えて基点を数え直していない木でも、基点の鍵の
     # binary が在れば、日次は規則の古い linter で黙って測り、鍵の違いを名乗らなかった(実例: 10-03〜10-11 に linter の入力を変えた
     # commit 28 本・基点を書いた commit 0 本)。
     rig = _rig(tmp_path)

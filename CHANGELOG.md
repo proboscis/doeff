@@ -451,7 +451,7 @@
   `from doeff import state` (the handler lives in `doeff_core_effects.handlers`) or a misspelling such as
   `from doeff import reeder` (pyright: `"state" is unknown import symbol`, mypy: `Module "doeff" has no attribute
   "state"`). The module `__getattr__` that loads names on first use is hidden from type checkers, so such names no
-  longer resolve to `object`. Nothing changes at run time (card ki-02e317783af0).
+  longer resolve to `object`. Nothing changes at run time.
 - `doeff-core-effects`: `doeff_core_effects/__init__.py` now re-exports the effects and handlers it imports
   (`Ask`, `Get`, `Put`, `Tell`, `reader`, `state`, `writer`, `Spawn`, `Gather`, `scheduled`, … — 58 names) as
   `from … import X as X`, so they are public to type checkers. The package ships `py.typed`, and a name that
@@ -459,7 +459,7 @@
   was flagged `reportPrivateImportUsage` by pyright (basic and up) and `attr-defined` by `mypy --strict`. Nothing
   changes at run time. The HTTP names (`HttpRequest`, `http_production_handler`, …) still load on first use through
   `__getattr__` and are not re-exported this way, because that would import the Hy modules and httpx with the
-  package (card ki-02e317783af0).
+  package.
 - `doeff`: a handler keeps the result type of the program it wraps. `doeff.program.ProgramHandler` was
   `Callable[[object], Program[Any]]`, so `reader(env)(prog())`, `state()(p)`, `writer(p)`, `handler(h)(p)` and
   `stacked_handlers(...)(p)` were all `Program[Any, Any]` and `run(...)` of them `Any`: a wrong result type passed
@@ -468,7 +468,7 @@
   `Program[T, Any]` (Python types cannot take the effects the handler answers out of `E`). Every installer — the core
   handlers, `handler()`, `stacked_handlers()`, a `defhandler` handler — keeps `T`, and a value that is not a program
   is a type error. Code that installs a handler on a value typed `object` now names it a `Program`, or passes it to
-  `with_handlers(handlers, value)`, which still takes any value (card ki-68c54e9064e5).
+  `with_handlers(handlers, value)`, which still takes any value.
 - `doeff-hy`: a Hy module that uses a doeff-hy macro it never required, or brings a macro in with `import`, now
   warns when it is loaded and names the line to add. Hy compiles an unrequired `(do! …)` as a call to an undefined
   function, so the module died at run time with `NameError: name 'hyx_doXexclamation_markX' is not defined` (and
@@ -502,7 +502,7 @@
   `r + 1` says to take the value out with `match r: case Ok(value) / case Err(error)` or to yield the program
   without `Try`. The note is found from the expression that failed and the values its variables hold, and only for
   an error that reaches `run()`; the doeff traceback prints notes after the message, as Python does
-  (card ki-1c49d3ce4554).
+ .
 - `doeff-vm`: messages name its classes without the module — `'Call'`, `'Ok'`, `'Err'` instead of
   `'doeff_vm.doeff_vm.Call'` (and `'K'` instead of `'builtins.K'`). `__module__` and `__qualname__` are unchanged,
   so pickles and stored type names (cache keys, memo) read the same.
@@ -515,7 +515,7 @@
   scope is annotated for it, the `UnhandledEffect` message names the handlers whose annotation skipped it
   (`skipped by annotation: store_handler (effect: Store)`), and an effect no package registered a hint for (an effect
   class of the user's own) ends with `hint: install a handler for Fetch: run(handler(fn)(prog)), …` (first-look error
-  table rows 9 and the appendix, card ki-f102109edbc8).
+  table rows 9 and the appendix).
 - `doeff-core-effects`: `Semaphore(...)` raises `TypeError` again, as docs 09, 13 and 21 and SPEC-EFF-014 say; the
   2026-03 scheduler rewrite had made the base class buildable by hand. Create a semaphore with
   `sem = yield CreateSemaphore(permits)`. A hand-made handle never worked: it named no semaphore of the run
@@ -529,7 +529,7 @@
   outer `Listen` captures its whole scope, including the inner scope's entries. `docs/03-basic-effects.md` (Listen
   Composition Rules) runs the nested example; `specs/effects/SPEC-EFF-003-writer.md` is rewritten for the current
   `(value, collected)` result and the handler's mechanism (it described `ListenResult`, `ListenFrame` and a `__log__`
-  store key that no longer exist) (found while checking chapter 03, card ki-59841195eb05).
+  store key that no longer exist) (found while checking chapter 03).
 - `doeff-hy`: `defmcp-tool` refuses, when it expands, a body that calls the tool's own name
   (`(defmcp-tool submit-order … (submit-order …))`, spelled `submit-order` or `submit_order`, at any depth outside a
   quote). The expansion binds that name to the `McpToolDef`, so the call reached the tool instead of a `defk` of the
@@ -538,12 +538,12 @@
   tool after the `defk` it called; the example now names the tool `submit-order-tool`, defines the `defk`, and runs
   the handler. `tests/test_docs_page_examples.py` runs that example and the From Python one and compares what they
   print; the page's other fences, which need Claude Code or names the page does not define, are marked `excerpt`
-  (or `text` for the diagrams) (card ki-896fc4bca8cb).
+  (or `text` for the diagrams).
 - `doeff-vm`: `EffectBase` (`doeff.Effect`) raises `TypeError` for constructor arguments that no `__init__` keeps —
   `Effect("fetch", url=...)`, or a subclass without an `__init__` called with arguments. 0.5.0 dropped them without a
   word, so the handler got an effect with neither the name nor the arguments (docs/MARKERS.md's examples did this).
   Subclasses with an `__init__` (`@dataclass` effects) and calls without arguments are unchanged, and the stub's
-  `EffectBase.__init__` takes no arguments, so pyright flags the same call (card ki-450280be9dfe).
+  `EffectBase.__init__` takes no arguments, so pyright flags the same call.
 - `doeff` CLI: `doeff run` no longer prints `[DOEFF][PROFILE]` timing lines unless asked. `doeff run --profile` or
   `DOEFF_PROFILE=1` prints them on stderr as before (`DOEFF_PROFILE` empty or `0` leaves them off).
   `DOEFF_DISABLE_PROFILE` is no longer read, since profiling is off by default, and `doeff-ml-nexus`'s docker handler
@@ -553,7 +553,7 @@
   returns its value, and at the end of the run one `RuntimeWarning` ("spawned task exception was never retrieved", like
   asyncio's) names each such task: its program, where it was spawned, the exception and where it was raised. Both
   scheduler implementations; daemon tasks included; a task ending with `TaskCancelledError` is not named
-  (docs/04-async-effects.md "Task Exceptions Nothing Retrieved", card ki-84667a89b47a).
+  (docs/04-async-effects.md "Task Exceptions Nothing Retrieved").
 
 ### Added
 
@@ -576,12 +576,11 @@
   `parallel_fail_fast` report each item's outcome (`ok` / `failed` / `skipped` / `carried`) under the handlers between
   the Traverse and themselves, while one of those handlers names `ItemOutcome`; and `progress_bars(make_bar)`, which
   counts them into one bar per Traverse (`tqdm.tqdm` fits) — the bar now reaches its total and closes when items fail
-  (card ki-e3a936788353). Consumers pass each report on (only the Traverse handler answers it), so several compose in
-  any order; one that answers a report or throws into it fails the Traverse with `ItemOutcomeNotPassedError` (design
-  check lt-H07C2RG4T2BM59EENGQWQHSJKH).
+ . Consumers pass each report on (only the Traverse handler answers it), so several compose in
+  any order; one that answers a report or throws into it fails the Traverse with `ItemOutcomeNotPassedError`.
 
 - `doeff-linter`: added the critical rule `DOEFF210` (Program Sleeps On The Wall Clock) — a Hy program (`defk` / `defp`)
-  must not call `time.sleep` / `asyncio.sleep`; it waits by yielding doeff-time's `Delay` (card ki-3c3d85253c2c). Handler
+  must not call `time.sleep` / `asyncio.sleep`; it waits by yielding doeff-time's `Delay`. Handler
   implementations may sleep: a `defhandler` clause, a definition taking `[effect k]`, and a helper that declares
   `:role "foundation"` in its contract's `:tags`. A literal `0` (yield once) is not counted; `deff` / `defn` are plain
   callables and are not judged. The rule runs only where a repo declares its program places in the new section
@@ -589,7 +588,7 @@
   without `tests` / `examples`.
 - `doeff-linter`: added the critical rule `DOEFF211` (Test Sleeps On The Wall Clock) — a Hy test file must not call
   `time.sleep` / `asyncio.sleep` (nor reword it as `(.wait (threading.Event) seconds)` or `(.sleep time seconds)`)
-  unless it declares that real time is its subject (card ki-bb3ee40d0af2). The declaration is the pytest mark
+  unless it declares that real time is its subject. The declaration is the pytest mark
   `realtime` in one of three forms: a deftest's meta map `{:marks ["realtime"]}`, a plain test function's decorator
   `(defn [pytest.mark.realtime] name [] …)`, or a top-level `(val pytestmark pytest.mark.realtime)` for a whole file.
   The rule runs only where a repo declares its test places in the new section `[tool.doeff-linter.test_sleep]`
@@ -618,7 +617,7 @@
 - `doeff-claude-code`: added `ClaudeReplaceSessionCredential(session_id, credential)` — replaces the lent credential of a
   session's live Claude CLI process (answers `CredentialReplaced` | `NoSuchSession` | `SessionProcessDown` |
   `HomeCredentialSession`). The CLI uses the new access token from its next API call, also in the middle of a turn
-  (card ki-4ffdafa021e5).
+ .
 - `doeff-agents`: added `ReplaceSessionCredentialEffect(handle, credential_ref)` (and `ReplaceSessionCredential`). The
   headless Claude handler redeems the reference with `RedeemTurnCredentialEffect` and replaces the live process's
   credential (answers `SessionCredentialReplaced` | `SessionProcessNotLive` | `SessionOnHomeCredential` |
@@ -631,28 +630,28 @@
   the others are limited to that minor series (`>=0.5.0,<0.6`), so one number tells which releases go together. The
   workspace sources still resolve them to the working tree. `tests/test_core_packages_version.py` fails when any of the
   eight places holding the number (the five `pyproject.toml` files, `doeff.__version__`, and `doeff-vm`'s `Cargo.toml`
-  and `Cargo.lock`) or any core-to-core dependency drifts (card ki-4f3135e2be74).
+  and `Cargo.lock`) or any core-to-core dependency drifts.
 - `doeff`, `doeff-vm`, `doeff-core-effects`, `doeff-hy`, `doeff-hy-pytest`: each declares its license as the PEP 639
   SPDX expression `license = "MIT"` with `license-files = ["LICENSE"]` and carries a copy of the root MIT `LICENSE`, so
   every wheel and sdist ships it (`.dist-info/licenses/LICENSE`, core metadata `License-Expression: MIT`); the
   deprecated `License ::` classifier is gone. The build backends now require `hatchling>=1.27` / `maturin>=1.9.3`
   (the first releases that write these fields). The `doeff` sdist's include patterns are anchored to the repository
-  root, so it no longer picks up other packages' `LICENSE`, `README.md` and `doeff/` directories (card ki-2dbb91f7e2c8).
+  root, so it no longer picks up other packages' `LICENSE`, `README.md` and `doeff/` directories.
 - `doeff-openai`, `doeff-gemini`, `doeff-openrouter`, `doeff-seedream`: the wait between retries (and Gemini's wait for an
   uploaded file to become ACTIVE) yields doeff-time's `Delay` instead of `Await(asyncio.sleep(...))`, and the four
-  packages now depend on `doeff-time` (card ki-94380dba532f). **Callers must install a time handler**:
+  packages now depend on `doeff-time`. **Callers must install a time handler**:
   `async_time_handler()` inside `await_handler()` waits on the wall clock; `sim_time_handler()` lets a test run the
   retry path without sleeping. Without one, the first retry fails with an unhandled `DelayEffect`.
 - `doeff-flow`: `run_result` and `run_workflow` now install `doeff_time.async_time_handler()` inside `await_handler()`,
   so a workflow that yields `Delay` / `GetTime` (or any doeff-time effect) is answered on the wall clock; before, it failed
-  with an unhandled effect (card ki-94380dba532f). The examples wait with `yield Delay(...)` instead of `time.sleep`.
+  with an unhandled effect. The examples wait with `yield Delay(...)` instead of `time.sleep`.
   Examples `01`, `02`, `03`, `04`, `05` and `06` run to the end again: their `slog` calls now carry the `msg` that
   `slog` requires (`02`, `03`, `04` ended with `Err` before), `01` and `06` use `run_result` in place of the removed
   `default_handlers` / `run_sync`, and `05` uses an `@do` cache handler that yields `Pass` (not the removed
   `Delegate`) and yields the `Await` that `SQLiteStorage.get` / `put` return.
 - `.semgrep.yaml`: `doeff-no-sleep-in-programs` covers `packages/*/examples/` and `examples/` as well as the source.
-- `doeff-agents`: programs wait by yielding doeff-time's `Delay`; the package's own wait effects are removed (card
-  ki-3c3d85253c2c). `doeff_agents.io_effects.Sleep` / `sleep` and `doeff_agents.sessionhost.effects.ClockSleep` /
+- `doeff-agents`: programs wait by yielding doeff-time's `Delay`; the package's own wait effects are removed.
+  `doeff_agents.io_effects.Sleep` / `sleep` and `doeff_agents.sessionhost.effects.ClockSleep` /
   `clock-sleep` no longer exist — yield `Delay(seconds)` from `doeff_time`. `driver-io-handler` and `real-substrate` do
   not answer waits: the roots install doeff-time's `sync_time_handler()` (`run_driver_io`, the session host's
   `run-hosted`), and **a caller that builds its own stack around `driver-io-handler` must add a time handler**. The
@@ -664,10 +663,10 @@
   `tests/realtime_tests.toml`.
 - `.semgrep.yaml`: `doeff-no-sleep-in-tests` now also reaches test-named files outside a `tests/` directory
   (`test_*.py`, `*_test.py`, `conftest.py`) and catches the `threading.Event().wait(seconds)` spelling of a sleep
-  (card ki-6aa7cb5ffb83). The only ways out are the two tables of `tests/realtime_tests.toml`: `[tests]` (the `realtime`
+ . The only ways out are the two tables of `tests/realtime_tests.toml`: `[tests]` (the `realtime`
   marks) and `[suites]` (the directories in the rule's `paths.exclude` — today the black-box `doeff-agents`
   conformance suite). A `nosemgrep` comment on the rule now fails `tests/semgrep/test_realtime_tests_registry.py`.
-- `doeff-traverse`: a Traverse handler now stops the items it started when it stops (card ki-e0fd319d5b75). When `Gather`
+- `doeff-traverse`: a Traverse handler now stops the items it started when it stops. When `Gather`
   raises, `parallel` and `parallel_fail_fast` cancel the item tasks left, wait for them to unwind, and raise the
   original exception. Before, items kept running after a `parallel_fail_fast` failure that the caller caught, and new
   ones even started; cancelling the task that runs a Traverse stopped only that task, not its items. The stopped items

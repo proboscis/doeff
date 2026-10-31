@@ -3,7 +3,7 @@
     {
       "function": "_runtime_do_import",
       "path": "packages/doeff-hy/src/doeff_hy/macros.hy",
-      "reason": "展開が出す実行時の `do` の import の module 名を、置き場の表(`_runtime-do`)から計算して綴るのが役目の口 — 置き場を macro ごとに綴ると表を替えても写しが古い `do` で包み続けた(card ki-973b4e44d7bc)。"
+      "reason": "展開が出す実行時の `do` の import の module 名を、置き場の表(`_runtime-do`)から計算して綴るのが役目の口 — 置き場を macro ごとに綴ると表を替えても写しが古い `do` で包み続けた。"
     },
     {
       "function": "_do_reference",
@@ -39,7 +39,7 @@
         "packages/doeff-hy/src/doeff_hy/macros.hy",
         "packages/doeff-hy/src/doeff_hy/macros.pyi"
       ],
-      "responsibility": "doeff-hy の標準の macro(do!・defk・deff・fnk・<-・defp・deftest・defhandler・traverse・for/do・defmcp-tool ほか)の定義 — 展開の時に契約の鍵を検め、Program を組む形へ写す。実行時の補助(guard の globals への据え付け)も持つ。import の form を組む module の名の文字列(`hy.models` で組む綴り)は、契約の import_tables でこの file を宣言しているので、repo の module の名に一致する物がこの module の依存として判じられる(card ki-b644bb2cbd02)。",
+      "responsibility": "doeff-hy の標準の macro(do!・defk・deff・fnk・<-・defp・deftest・defhandler・traverse・for/do・defmcp-tool ほか)の定義 — 展開の時に契約の鍵を検め、Program を組む形へ写す。実行時の補助(guard の globals への据え付け)も持つ。import の form を組む module の名の文字列(`hy.models` で組む綴り)は、契約の import_tables でこの file を宣言しているので、repo の module の名に一致する物がこの module の依存として判じられる。",
       "typed": true
     }
   ]

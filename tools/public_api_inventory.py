@@ -361,7 +361,7 @@ class DoeffPart:
     """One of doeff's own parts under ``packages/``: a package only doeff (the repo root package) imports.
 
     A part is not a subpackage a user imports — a user reads its names from ``doeff`` — so the inventory does
-    not count it, as it does not count ``doeff`` itself (ADR-DOE-API-001 R10・R11 — agora card ki-9c326052f21c).
+    not count it, as it does not count ``doeff`` itself (ADR-DOE-API-001 R10・R11).
     ``tests/test_public_api_known_violations.py`` checks that no file outside doeff imports its root.
     """
 
@@ -642,7 +642,7 @@ def _shim_target(name: str, path: Path) -> Path | None:
     """The package dir or module file a moved-submodule shim stands for (``None`` for any other module).
 
     A shim's first line is ``# moved-submodule-shim: <old> -> <new>``, its old name is its own and
-    the new one is a sibling (the shims the rewriting tool of card ki-299be2ea4a13 writes).
+    the new one is a sibling (the shims the rewriting tool writes).
     """
     if path.suffix != ".py":
         return None
@@ -1865,7 +1865,7 @@ def _put_roots_on_path(layout: PackageLayout) -> None:
     A maturin package needs its built native module, so its source dir is never put first: it goes
     last, where an installed build wins and a pure-Python front end that loads its native module
     only on use (doeff-effect-analyzer — not installed in the dev env) is read from the checkout
-    instead of its text (card ki-593f9f44c501 — read as text, its effects and handler were
+    instead of its text (read as text, its effects and handler were
     unclassified).
     """
     places = [str(root.path.parent) for root in layout.roots]
@@ -1970,7 +1970,7 @@ def _macro_exports(
 ) -> list[tuple[str, Callable[..., object]]]:
     """A Hy module's public macros: ``_hy_export_macros`` when it exports them, else its own macros.
 
-    The names of Hy's tables come from ``doeff_hy_bytecode_guard._records``, their one home (card ki-ffe72a1fb7d7).
+    The names of Hy's tables come from ``doeff_hy_bytecode_guard._records``, their one home.
     """
     if importlib.util.find_spec("doeff_hy_bytecode_guard") is None:
         return []
@@ -2422,7 +2422,7 @@ def _declared_answer(effect: type) -> Iterator[_FieldType]:
 
     A wait whose answer is whichever event types its caller names (doeff-events' ``WaitForEvent``) has no one ``T``:
     it declares the events its package defines for the bus in its own ``__doeff_bus_events__`` (not inherited), read
-    as its answers at ``<effect> の bus の event`` (ADR-DOE-API-001 R2 — card ki-d94ee9f9f6ce).
+    as its answers at ``<effect> の bus の event`` (ADR-DOE-API-001 R2).
     """
     from doeff_vm._effect_types import effect_result_type
 

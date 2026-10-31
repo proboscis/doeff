@@ -1,7 +1,5 @@
 """席の家へ運ぶ共通の指示の 2 規則(D10 / D11)の陽性対照と弁別。
 
-card acp:kanban-issue:ki-62aa1f4e9c9c / 依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1。
-
 守る性質は 2 つ:
 
 * **D10**(`host-checkout-layout-is-never-spelled-here`)は、宿の checkout の layout を
@@ -11,7 +9,7 @@ card acp:kanban-issue:ki-62aa1f4e9c9c / 依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1。
 * **D11**(`seat-home-instruction-names-have-one-home`)の 3 本目は**行内に閉じる**。
   `[^"]` は改行を含むので、散文の中の引用符 1 つと数行下の綴りを 1 致に巻き込む。
 
-⚠ 名指しで通す 1 件(`"dotfiles/cron_management"` = 別便の card acp:kanban-issue:ki-6f8425e88733)
+⚠ 名指しで通す 1 件(`"dotfiles/cron_management"` = 別便で扱う 1 件)
 が、広げた形でも現に通ることをこの対照が押さえる(pattern-not-regex は 1 致の範囲へ当たるので、
 形を広げると黙って効かなくなり得る)。
 """

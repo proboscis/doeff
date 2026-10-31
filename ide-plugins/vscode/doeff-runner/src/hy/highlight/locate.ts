@@ -1,5 +1,5 @@
 // editor が使っている `.hy` の文法と、有効な color theme の file を、入っている拡張の宣言から選ぶ(純粋 — 拡張の一覧は外から渡す)。
-// 面が文法や theme を自前で持たず、editor と同じ file を使うため(agora-redesign #910 U16)。
+// 面が文法や theme を自前で持たず、editor と同じ file を使うため。
 
 import * as path from 'path';
 

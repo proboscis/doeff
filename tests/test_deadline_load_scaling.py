@@ -123,7 +123,7 @@ def test_the_load_is_divided_by_the_cpus_this_process_may_use(
     cores from 20:10 to 20:40.  load1 / os.cpu_count() halves what the Pod lives through:
     at load 12 it reads 0.75 and holds every deadline fixed, while the Pod's 8 CPUs are
     1.5 times oversubscribed — and a 30 s child of
-    packages/doeff-adr/tests/test_indexed_collection.py was killed (card ki-bb91f171d222).
+    packages/doeff-adr/tests/test_indexed_collection.py was killed.
     """
     conftest = _root_conftest()
     _machine(monkeypatch, conftest, cores=16, affinity=16, load1=12.0)
@@ -260,7 +260,7 @@ def test_a_declared_deadline_is_scaled_where_pytest_timeout_reads_it(
     pytest-timeout reads only the closest (first) timeout marker, so a scaled
     marker appended after ``@pytest.mark.timeout(10)`` was never read: at load
     x1.4 the markers were [(10,), (14.19,)] and pytest-timeout enforced 10 s
-    (measured 2026-09-26; unnoticed since 2026-08-17 — agora-redesign#639).
+    (measured 2026-09-26; unnoticed since 2026-08-17).
     The enforced deadline is read here through pytest-timeout's own resolution,
     with the load factor fixed so the answer does not depend on this machine.
     """

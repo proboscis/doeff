@@ -32,7 +32,7 @@ dependencies = [
 viz = ["phart>=1.1.4"]
 # 既定は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけ。Hy で書いた effect と handler・cache・CLI の doeff run は
 # hy、HTTP の client の handler は http、0.5 までの既定と同じ組は all で足す。中身は doeff-core-effects の同じ名の extra が持つ
-# (tests/test_core_install_extras.py・card ki-006338b48f4b)。
+# (tests/test_core_install_extras.py)。
 hy = ["doeff-core-effects[hy]>=0.8.0,<0.9"]
 http = ["doeff-core-effects[http]>=0.8.0,<0.9"]
 all = ["doeff-core-effects[all]>=0.8.0,<0.9"]
@@ -113,7 +113,7 @@ doeff-claude-code = { workspace = true }
 doeff-codex = { workspace = true }
 doeff-records = { workspace = true }
 doeff-run = { workspace = true }
-# Hy は PyPI の版(uv.lock が 1.3.1 に固定)を使い、フォークしない(ADR-DOE-HY-008・agora-redesign #1290)。フォークが持っていた
+# Hy は PyPI の版(uv.lock が 1.3.1 に固定)を使い、フォークしない(ADR-DOE-HY-008)。フォークが持っていた
 # 3 つの機能は doeff の側に置いた: テストの索引(doeff-adr item_cache)・macro の変更で古い bytecode を使わない判定
 # (doeff_hy_bytecode_guard)・require の呼び出し元の取り方(doeff_hy._light_stack)。
 
@@ -133,7 +133,7 @@ testpaths = [
     "packages/doeff-vm/tests",
     "packages/doeff-vm-core/tests",
 ]
-# Hy の検の file の集め手の 1 点(doeff-adr の pytest plugin が rootdir の下のどこでも集める・agora-redesign #2591)。
+# Hy の検の file の集め手の 1 点(doeff-adr の pytest plugin が rootdir の下のどこでも集める)。
 # test を定義する file は関数ごとの item、定義しない「上から順に実行する script」は file ごと 1 つの item になる。
 # 日次の母集団の検(tests/test_daily_test_population.py)も同じこの値を読む — package ごとの conftest.py に条件を写さない。
 doeff_hy_test_files = ["test_*.hy"]
@@ -149,7 +149,7 @@ markers = [
     "stress: stress tests with high concurrency or iteration count",
     "pre_kleisli_behavior: characterization tests for pre-Kleisli handler behavior",
     "phase3_baseline: characterization tests for VM Kleisli Phase 3 behavior",
-    "realtime: tests whose subject is real time (real threads, a real asyncio loop, a real external process); the semgrep rule doeff-no-sleep-in-tests does not fire inside them and tests/realtime_tests.toml lists each with its reason (agora-redesign #2882)",
+    "realtime: tests whose subject is real time (real threads, a real asyncio loop, a real external process); the semgrep rule doeff-no-sleep-in-tests does not fire inside them and tests/realtime_tests.toml lists each with its reason",
 ]
 
 [tool.ruff]
@@ -190,7 +190,7 @@ external = ["PINJ", "DOEFF"]  # doeff-linter codes in `# noqa: DOEFFnnn`
 # doeff-records の defn・#2923 doeff-core-effects の defn・#2913 doeff-hy)が数を 0 にした変更で 1 つずつ外す(先に効かせて main を
 # 赤にしない・登録簿に載せて通さない)。minor(123・125)は今は扱わない。
 disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF125"]
-# 規則の対象の外(agora-redesign #3012 の doeff の分・全部の規則の外 — 業務の code ではない):
+# 規則の対象の外(doeff の分・全部の規則の外 — 業務の code ではない):
 #   fixtures = 名が fixtures の dir の全部。道具の検が読む見本の入力(doeff-linter の規則の見本・semgrep の規則の検体・doeff-indexer の
 #   検出の見本)と空の __init__.py だけ(2026-10-02 に追跡中の file を見た)。当たりを持つのが役目で、直すと検の見本が壊れる。
 # build の道具の環境変数の読み(DOEFF004 だけ)は、ここで file ごと外さず、名指しの module に限って外す — tools/architecture.hy・
@@ -203,8 +203,8 @@ disable = ["DOEFF013", "DOEFF110", "DOEFF119", "DOEFF123", "DOEFF125"]
 # (scripts/hook_finding_baseline.py)は --force-exclude を付けて、名指した file にも当てる。
 exclude = ["fixtures", "design", "design-checks"]
 
-# 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団(agora-redesign #2909・
-# #2877)。以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは
+# 定義の書き方の規則(DOEFF110 defn・111 deff の理由・112 タグ・119 class・126 素の defk 呼び ほか)の母集団。
+# 以前はこの節が無く、doeff の package の src に defn・class・素の defk 呼びを足しても鳴らなかった。今効くのは
 # DOEFF112(頭の MODULE-TAGS で補う)・DOEFF126(critical)と当たり 0 の規則。
 # DOEFF175(critical・登録簿で下げない — 宣言を切り替えた effect の古い分岐。ADR-DOE-CORE-EFFECTS-003 R14 (4))もこの母集団に当たる。
 # ADR(docs/adr)と doeff-core-effects の probe の検は、この paths の外(全部の Hy に広げても今は当たり 0 — 2026-10-23 の測り)。本番の code の
@@ -212,7 +212,7 @@ exclude = ["fixtures", "design", "design-checks"]
 [tool.doeff-linter.definitions]
 paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effects/doeff_core_effects", "packages/doeff-hy/src/doeff_hy"]
 
-# Hy の program(defk・defp)は壁の時計で眠らない(DOEFF210・ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)の母集団 = 本体の Hy の
+# Hy の program(defk・defp)は壁の時計で眠らない(DOEFF210・ADR-DOE-TIME-001 R1・R2)の母集団 = 本体の Hy の
 # program の置き場。Python の同じ決まりは semgrep の doeff-no-sleep-in-programs(.semgrep.yaml)が持ち、範囲もそれに合わせる:
 # doeff/ と packages/ の本体で、検(tests/)と例(examples/)は外す — Hy の検の眠りは下の DOEFF211(test_sleep の節)が持つ・例は親 card の別の子。
 # 上の definitions(定義の書き方の規則群)とは別の節: その規則群をまだ当てていない package(doeff-agents ほか)の program にも、
@@ -222,7 +222,7 @@ paths = ["packages/doeff-records/src/doeff_records", "packages/doeff-core-effect
 paths = ["doeff", "packages"]
 exclude_parts = ["tests", "examples"]
 
-# Hy の検は、実時間が対象だと名乗らない限り壁の時計で眠らない(DOEFF211・ADR-DOE-TIME-001 R3・card ki-bb3ee40d0af2)の母集団 = 検の
+# Hy の検は、実時間が対象だと名乗らない限り壁の時計で眠らない(DOEFF211・ADR-DOE-TIME-001 R3)の母集団 = 検の
 # 置き場。Python の同じ決まりは semgrep の doeff-no-sleep-in-tests(.semgrep.yaml)が持ち、範囲もそれに合わせる: 名が tests の dir の
 # 下の Hy の file(検・道具・子の process に渡す job の本体)と、どこに在っても検の名の Hy の file。
 # 名乗りは 3 つの形: deftest の meta の `{:marks ["realtime"]}`・素の関数の検の decorator `(defn [pytest.mark.realtime] 名 [] …)`・
@@ -248,16 +248,16 @@ exclude = [
 # 設計の記録の dir(その時点の証拠 — 模型・測りの script・検の写しを置く。検の名の file が在っても検ではない)。定義はこの 1 点で、
 # 読み手は 2 つ: make test-changed の選び(scripts/run_changed_tests.py の collector_patterns)は、この下の file を名の規則に当たっても
 # 検として選ばない / 日次の母集団の検(tests/test_daily_test_population.py)は逆に、この下の検の名の file を赤にして `.py.txt` への
-# 改名を求める(除外の行で dir ごと外すと、本物の検を記録にだけ置いても緑になる — 設計検証 lt-9R40Q1PM496VA4HVD1FMXVYW8Z の盲検 A・B)。
+# 改名を求める(除外の行で dir ごと外すと、本物の検を記録にだけ置いても緑になる — 設計検証の盲検 A・B)。
 # dir は `/` で終える。新しい種類の記録の dir を作る時は、ここへ足す。
 [tool.doeff]
 record-dirs = ["docs/design/", "docs/design-checks/"]
 
-# 契約の検の固定の組(agora-redesign #2605): 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
+# 契約の検の固定の組: 登記の前の入口 `make test-changed`(scripts/run_changed_tests.py)は、変えた file が
 # 接頭辞に当たる行の検を、変えた検の file より先に必ず走らせる。stub の突き合わせ・dogfood の登録・母集団の検は module を文字列で
 # 持つか木を歩くので、import の逆依存では選べない(t135 の 5 commit は、これが無いと登記の前に赤にならなかった)。
 # 読み手は scripts/run_changed_tests.py の read_contract_table の 1 か所 — 書いた検の file が木に無いと止める。
-# 行は 2 種類: 契約の組 = prefix と tests・組の要らない package の除外 = prefix と reason(agora-redesign #2658)。
+# 行は 2 種類: 契約の組 = prefix と tests・組の要らない package の除外 = prefix と reason。
 # prefix = 接頭辞(dir は `/` で終える・"" は repo 全体)。tests = path か `path::検の名`(冊の検は 1 本に絞る)。
 # package(上の [tool.uv.workspace] の member の dir — `packages/<名>/`)は、どれも組か除外のどちらかを持つ。どちらも無い package は
 # tests/test_contract_table_follows_packages.py が名指して赤にする(日次と、下の repo 全体の行の両方で走る)。除外の reason には
@@ -271,12 +271,12 @@ tests = [
     "packages/doeff-domain/tests/test_domain_dogfood.py",  # 2.8 秒 — core-effects の語彙の domain 宣言と孤児の走査
     "docs/adr/defadr_doeff_domain_001_vocabulary_cohesion.hy::test_adr_doe_domain_001_dogfood_core_effects_green",  # 2.2 秒
     # README の例(多くは core-effects の handler の使い方)を子の interpreter で走らせる — 例は file に書いて走らせるので、import の
-    # 逆依存では選ばれない(並行の例は writer が state を要るようになった後も落ちたままだった・card ki-68cd4c8effcd)
+    # 逆依存では選ばれない(並行の例は writer が state を要るようになった後も落ちたままだった)
     "tests/test_readme_examples.py::test_readme_example_runs_and_prints_what_it_states",  # 4 本の call で 1.6 秒(load 約 70 の下)
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-core-effects]",  # 3.3 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
-# README の囲みを書き換えた便は、例を走らせて印字を注記と比べる検と、囲みの言葉・入口の例の節の検を払う(card ki-68cd4c8effcd)。
+# README の囲みを書き換えた便は、例を走らせて印字を注記と比べる検と、囲みの言葉・入口の例の節の検を払う。
 # 頭の GIF の画像の行を消す・指す先を変える便も、GIF の検が名指す。
 [[tool.doeff.contract-tests]]
 prefix = "README.md"
@@ -285,12 +285,12 @@ tests = [
     "tests/test_readme_demo.py",  # 0.6 秒(4 本・子なし・pytest の計・枠の待ちを除く・load 約 40 の下)
     # README の link が木で解ける事(下の docs/ の行と同じ検)。7.1 秒(1 本・子なし・pytest の計・load 約 86 の下)
     "tests/test_check_links.py::test_repo_links_resolve_in_the_tree",
-    # 節 Type checking の型を書いた例が pyright の strict と mypy --strict で error 0 である事(card ki-92c3133da46d — 下の
+    # 節 Type checking の型を書いた例が pyright の strict と mypy --strict で error 0 である事(下の
     # 01 章の行と同じ検)。16 秒(4 本・子 2 本・pytest の計・2026-10-17 会話の Pod)
     "tests/test_docs_typed_examples.py",
     # 核だけの venv の道具が確かめる LLM の agent の例を、README が指したままでいる事(下の docs/index.md の行と同じ検)
     "tests/test_verify_core_install.py::test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it",
-    # README が handler を古い handler(fn)(program) で書かない事(下の docs/ の行と同じ検・card ki-6dcc457d8917)
+    # README が handler を古い handler(fn)(program) で書かない事(下の docs/ の行と同じ検)
     "tests/test_docs_current_handler_style.py",
 ]
 
@@ -304,7 +304,7 @@ prefix = "docs/"
 tests = [
     "tests/test_check_links.py::test_repo_links_resolve_in_the_tree",
     # docs の page が handler を今の書き方(@handler を付けた def を program に当てる)だけで書き、古い
-    # handler(fn)(program) が 0 である事(card ki-6dcc457d8917)。markdown を path で読む。
+    # handler(fn)(program) が 0 である事。markdown を path で読む。
     "tests/test_docs_current_handler_style.py",
 ]
 
@@ -327,8 +327,8 @@ tests = [
     "tests/test_public_api_known_violations.py::test_an_outlier_added_with_a_reason_line_is_green",
 ]
 
-# 公開 API の外れの既知の表(tests/data/public_api_known_violations.json)を変えた便は、表の形と減るだけの検を払う(card
-# ki-aaaa56621c5a)。検は表を path で読むので、import の逆依存では選ばれない。表と一緒に変えた package の 1 件は、その package の
+# 公開 API の外れの既知の表(tests/data/public_api_known_violations.json)を変えた便は、表の形と減るだけの検を払う。
+# 検は表を path で読むので、import の逆依存では選ばれない。表と一緒に変えた package の 1 件は、その package の
 # 行が選ぶ。
 [[tool.doeff.contract-tests]]
 prefix = "tests/data/public_api_known_violations.json"
@@ -350,7 +350,7 @@ tests = ["tests/test_readme_demo.py"]
 
 # README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、その pytest の検の例を変えた便は、例が
 # 走って答えを印字する検・例の 2 つの file だけを写した dir で検の例が通る検・核だけの venv の道具がその例を確かめる判じ方の検を
-# 払う(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。どれも例を path で読むので、import の逆依存では選ばれない。examples/ の他の例の
+# 払う。どれも例を path で読むので、import の逆依存では選ばれない。examples/ の他の例の
 # 検(印 slow の llm_multi_provider_stacking — openai の SDK の import に 約 25 秒)は選ばない。14 秒(64 本・子 2 本・pytest の計・
 # 起動を含む壁時計は 76 秒・load 約 100 の下・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
@@ -370,7 +370,7 @@ tests = [
 
 # README が案内する HTTP の API の例(examples/github_repo/ — doeff[http] の handler で GitHub を呼ぶ program と、偽の handler の
 # pytest の検の例)を変えた便は、script の本番の handler の組を手元の偽の API へ向けて子で走らせる検と、README の命令
-# `pytest examples/github_repo` を pytest の外の plugin 無しの子で走らせる検を払う(card ki-1356963e2d0b)。どちらも例を path で
+# `pytest examples/github_repo` を pytest の外の plugin 無しの子で走らせる検を払う。どちらも例を path で
 # 走らせるので、import の逆依存では選ばれない。examples/ の他の例の検は選ばない。
 [[tool.doeff.contract-tests]]
 prefix = "examples/github_repo/"
@@ -380,7 +380,7 @@ tests = [
 ]
 
 # 入門の道の docs の page(目次と 01〜05 章)を書き換えた便は、その例を走らせて印字を注記と比べる検と、囲みの約束の検を払う
-# (card ki-9c93a506326b)。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
+#。例は file に書いて走らせるので、import の逆依存では選ばれない。page を足す時は、検の ENTRY_PATH と
 # ここの両方に足す(片方だけなら検 test_contract_table_selects_this_check_for_each_entry_page が名指す)。
 # 秒は 38 秒(79 本・子 64 本・起動を含む壁時計・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
@@ -391,14 +391,14 @@ tests = [
     "tests/test_verify_core_install.py::test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it",
 ]
 
-# 01 章は、入門の道の検に加え、節 Adding Types の型を書いた例が型の check で error 0 である事の検を払う(card ki-92c3133da46d —
-# 上の README の行と同じ検)。
+# 01 章は、入門の道の検に加え、節 Adding Types の型を書いた例が型の check で error 0 である事の検を払う(上の
+# README の行と同じ検)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/01-getting-started.md"
 tests = ["tests/test_docs_entry_path_examples.py", "tests/test_docs_typed_examples.py"]
 
 # 02 章は、入門の道の検に加え、Handler Contract の節の Resume しない return と Pass しない handler の例が検から外れない事の
-# 検を払う(card ki-03bb9225a242 — 下の 13 章の行と同じ検)。
+# 検を払う(下の 13 章の行と同じ検)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/02-core-concepts.md"
 tests = ["tests/test_docs_entry_path_examples.py", "tests/test_docs_handler_endings.py"]
@@ -416,7 +416,7 @@ prefix = "docs/05-error-handling.md"
 tests = ["tests/test_docs_entry_path_examples.py"]
 
 # 入門の道の外で、例を走る形に直した docs の page を書き換えた便は、その例を走らせて印字を注記と比べる検を払う
-# (card ki-8e45f740dc61)。page を足す時は、ここに行を 1 つ足す(検の CHECKED_PAGES はこの表から読む・card ki-7277427f6d8e)。
+#。page を足す時は、ここに行を 1 つ足す(検の CHECKED_PAGES はこの表から読む)。
 # 秒は 27 秒(34 本・子 19 本・起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod — 23 章と 24 章を足した後)。
 # 20 章を足した分は 18.6 秒(17 本・子 15 本・pytest の計・起動を除く・load 約 110 の下・2026-10-17 会話の Pod)。
 # FAQ の page(docs/faq.md)を足した後は 49 秒(39 本・子 22 本・pytest の計・枠の待ちを除く・load 約 90 の下・2026-10-17 会話の Pod)。
@@ -425,14 +425,14 @@ prefix = "docs/07-cache-system.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 09 章の State の節か、State の仕様を書き換えた便は、無い key の Get(state() の下で None)を実装と同じに言う事の検を払う
-# (card ki-4fc77b6d6aa9)。09 章の節の例を走らせ、仕様が名指す検が木に在る事を読む — どちらも import の逆依存では選ばれない。
+#。09 章の節の例を走らせ、仕様が名指す検が木に在る事を読む — どちらも import の逆依存では選ばれない。
 # 秒は 3.5 秒(起動を含む壁時計・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/09-advanced-effects.md"
 tests = [
     "tests/test_docs_state_get_missing_key.py",
     # 小節 Using Gather with Async Operations の例(I/O を HttpGet の effect と @handler に置いた形)を走らせる
-    # (card ki-d4da7b8d4229)。09 章は page 全体をまだ走らせられないので、小節だけを走らせる。
+    #。09 章は page 全体をまだ走らせられないので、小節だけを走らせる。
     "tests/test_docs_gather_io_example.py",
 ]
 
@@ -441,7 +441,7 @@ prefix = "docs/history/specs/effects/SPEC-EFF-002-state.md"
 tests = ["tests/test_docs_state_get_missing_key.py"]
 
 # 11 章(Kleisli)は、page の例の検(tests/test_docs_page_examples.py)に加え、今の @do に無い引数の自動の解き(should_unwrap)
-# の説明が戻らない検を払う(card ki-7277427f6d8e)。語の検の秒は 4.0 秒(3 本・子 1 本・起動を含む壁時計・load 約 85 の下・
+# の説明が戻らない検を払う。語の検の秒は 4.0 秒(3 本・子 1 本・起動を含む壁時計・load 約 85 の下・
 # 2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/11-kleisli-arrows.md"
@@ -452,21 +452,21 @@ prefix = "docs/12-mcp-tools.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 12 章(Patterns)の Layered・Repository・Service Locator・Unit of Work・Resource Management の例は、client の object の
-# method を呼ばず、領域の effect と @handler で書く(card ki-6954d4a02101)。page の例の検が、その例を走らせて印字を比べる。
+# method を呼ばず、領域の effect と @handler で書く。page の例の検が、その例を走らせて印字を比べる。
 [[tool.doeff.contract-tests]]
 prefix = "docs/12-patterns.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 13 章の Control Effects の節(Resume と Pass の項)を書き換えた便は、Resume しない handler と Pass しない handler が program
-# をどう終えるかの例を走らせる検を払う(card ki-03bb9225a242)。13 章は page 全体をまだ走らせられないので、page の例の検
+# をどう終えるかの例を走らせる検を払う。13 章は page 全体をまだ走らせられないので、page の例の検
 # (CHECKED_PAGES)に載せず、節だけを走らせる。秒は 4.5 秒(4 本・子 2 本・起動を含む壁時計・load 約 60 の下・
 # 2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/13-api-reference.md"
 tests = [
     "tests/test_docs_handler_endings.py",
-    # The index of public names and the Removed APIs table list every name of doeff (card
-    # ki-e3a2ebe02690). The check reads the page by path, so import reverse-dependencies do not
+    # The index of public names and the Removed APIs table list every name of doeff.
+    # The check reads the page by path, so import reverse-dependencies do not
     # select it. 2.0 s (5 tests, no child, pytest's count, 2026-10-25 conversation Pod).
     "tests/test_public_names_documented.py",
 ]
@@ -476,7 +476,7 @@ prefix = "docs/18-effect-combinations.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 19 章(agent の tutorial)は、doeff-agents の effect を yield する @do の Program を test 用の handler で走らせる(取り組み
-# doeff-publish の区切り 26・card ki-04da29e4b673)。本番の handler の段は session host を要るので excerpt。
+# doeff-publish の区切り 26)。本番の handler の段は session host を要るので excerpt。
 [[tool.doeff.contract-tests]]
 prefix = "docs/19-agent-tutorial.md"
 tests = ["tests/test_docs_page_examples.py"]
@@ -490,7 +490,7 @@ prefix = "docs/22-capability-classes.md"
 tests = ["tests/test_docs_page_examples.py"]
 
 # 型の章(23 と 24)は、page の例の検に加え、写した例が pyright の strict と mypy の --strict で赤を出さない検を払う
-# (card ki-b370d8d59e8c)。型の検の page の一覧(TYPED_PAGES)もこの表から読む。型の検の秒は 38 秒(7 本・子 4 本 — pyright 2・mypy 2・
+#。型の検の page の一覧(TYPED_PAGES)もこの表から読む。型の検の秒は 38 秒(7 本・子 4 本 — pyright 2・mypy 2・
 # 起動を含む壁時計・load 約 95 の下・2026-10-17 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "docs/23-static-typing.md"
@@ -505,8 +505,8 @@ tests = ["tests/test_docs_page_examples.py", "tests/test_docs_typing_chapter_exa
 prefix = "docs/faq.md"
 tests = ["tests/test_docs_page_examples.py"]
 
-# doeff の説明の軸の定義の page(何が algebraic effects で、何が使い方の例か — 取り組み doeff-publish の区切り 17・
-# card ki-3a3b13c1d16e)の例を走らせる。
+# doeff の説明の軸の定義の page(何が algebraic effects で、何が使い方の例か — 取り組み doeff-publish の区切り 17)
+# の例を走らせる。
 [[tool.doeff.contract-tests]]
 prefix = "docs/positioning/what-doeff-is.md"
 tests = ["tests/test_docs_page_examples.py"]
@@ -541,12 +541,12 @@ tests = [
 ]
 
 # 例の検(下の doeff-traverse の行と同じ検)は、例が require する macro の持ち主の source(展開の中身)の変更でも選ぶ。
-# 接頭辞は src だけ — doeff-hy の検だけを変えた差分には払わせない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
-# doeff-effect-analyzer の検 3 本も、同じ展開の変更で選ぶ(card ki-f0192874690b)。analyzer の検は Hy の source に
+# 接頭辞は src だけ — doeff-hy の検だけを変えた差分には払わせない。
+# doeff-effect-analyzer の検 3 本も、同じ展開の変更で選ぶ。analyzer の検は Hy の source に
 # `(require doeff-hy.macros [defhandler …])` を書いて本物の macro で展開してから読み、doeff-hy を import しないので、
 # 展開(handle・defhandler の節の局所名・節の操作の形)を変える commit を import の逆依存は選ばない。4f284efa9(節の effect・k を
-# _doeff_effect・_doeff_k の別名にした・card ki-6af9862aed32)はこのため、analyzer の検 12 本(test_program_effects.py の 2 本・
-# test_guarded_clauses.py の 10 本)と agora-controllers の閉じの検(*_closure)が赤のまま main に入り、日次で初めて出た(card ki-fbf5f1db72a7)。
+# _doeff_effect・_doeff_k の別名にした)はこのため、analyzer の検 12 本(test_program_effects.py の 2 本・
+# test_guarded_clauses.py の 10 本)と agora-controllers の閉じの検(*_closure)が赤のまま main に入り、日次で初めて出た。
 # 3 本は、今の main の doeff-hy(4f284efa9 を含む)と直す前の analyzer(2641decc8 の前)の組で赤、今の main の analyzer で緑
 # (2026-10-12 の測り): 節が受けた effect を出す形・それを別の関数へ渡す形(閉じの検が赤だった形)・`:when` の守りが effect を読む形。
 # 1 file ずつの壁時計(起動を含む・会話の Pod の load average 60 で)は test_program_effects.py の 2 本が 3.8〜5.2 秒・
@@ -561,7 +561,7 @@ tests = [
     "packages/doeff-effect-analyzer/tests/python/test_guarded_clauses.py::test_the_effects_a_guard_certainly_sends_on_leave_the_handler[through_fence-leaves0]",
 ]
 
-# doeff-linter が節の判じに読む節の操作の一覧(生成物)は、doeff-hy の表 CLAUSE-OPS の書き出しと 1 字も違わない(card ki-d3ef2a50cc04)。
+# doeff-linter が節の判じに読む節の操作の一覧(生成物)は、doeff-hy の表 CLAUSE-OPS の書き出しと 1 字も違わない。
 # 表(clause_ops.hy)の変更は、検が表を import するので逆依存が選ぶ。生成物の file の変更はこの行が選ぶ(Python から import されない)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-linter/data/clause_ops.json"
@@ -570,19 +570,19 @@ tests = [
 ]
 
 # Hy の版を変える変更(uv.lock の hy の行)は、doeff が hy.* から import する名(macros.hy の hy.scoping の 3 つなど — Hy の公開の
-# API に無い名)が新しい版に在る事を登記の前に確かめる(card ki-a05a752e7545・ADR-DOE-HY-008 R4)。検は照合の版を uv.lock から読み、
+# API に無い名)が新しい版に在る事を登記の前に確かめる(ADR-DOE-HY-008 R4)。検は照合の版を uv.lock から読み、
 # 使い捨ての環境で import するので、作業木の venv を sync する前でも新しい版で測る。uv.lock の他の行の変更でも払う。
 # import でない形の依り(hy.importer._could_be_hy_src の差し替え・macro が受ける compiler の scope など・light_stack の当て物)も
-# 同じ使い捨ての環境で照合する(card ki-2fa4c02604b1・ADR-DOE-HY-008 R7)。
-# macro の変更で古い bytecode を使わない包みの検も、uv.lock の版の PyPI の Hy の使い捨ての環境で測る(card ki-33d2441b7e28 —
-# 表に無かった間、Hy を上げる便で選ばれず日次でだけ走った)。包みが import でない形で依る Hy の内部(module の macro の表の名と
+# 同じ使い捨ての環境で照合する(ADR-DOE-HY-008 R7)。
+# macro の変更で古い bytecode を使わない包みの検も、uv.lock の版の PyPI の Hy の使い捨ての環境で測る(表に無かった間、
+# Hy を上げる便で選ばれず日次でだけ走った)。包みが import でない形で依る Hy の内部(module の macro の表の名と
 # 展開が表を「名 in 表」と「表[名]」で引く事・export の名の表・gensym と let が改めた束縛の名の形)も、この検が包みを動かして測る
-# (card ki-eafa369600cd — R7 の母集団の外)。同じ process の検は venv の Hy を測るので、file の検は venv の Hy が uv.lock の版である
+# (R7 の母集団の外)。同じ process の検は venv の Hy を測るので、file の検は venv の Hy が uv.lock の版である
 # 事を先に確かめる(Hy を上げて sync していなければ赤)。uv.lock の Hy の版で測る検がこの行と下の読み手の行で選ばれる事は
 # tests/test_contract_table_follows_packages.py が source から数えて確かめる。
 # Hy の内部の名(module の macro の表・reader macro の表・export の名の表・Hy が一時の名に振る形)の定義元は
 # doeff_hy_bytecode_guard._records の 1 か所で、使い手の 3 か所(doeff_effect_analyzer._result_cache の解析の鍵・doeff_hy._static_baseline
-# の基点の鍵・macro_use の全部の require の判定)はそれを引く(card ki-ffe72a1fb7d7)。records の読みを実物の Hy の module に当てる検
+# の基点の鍵・macro_use の全部の require の判定)はそれを引く。records の読みを実物の Hy の module に当てる検
 # (test_bytecode_guard.py の test_records_reads_… と test_the_temporaries_hy_names_…)と、鍵が両方の表に従う事を測る analyzer の
 # 2 本が、この行で選ばれる(analyzer の 2 本の版の一致は同じ行の test_bytecode_guard.py の先頭の確かめが持つ)。
 [[tool.doeff.contract-tests]]
@@ -597,7 +597,7 @@ tests = [
 ]
 
 # doeff で uv.lock の版を読む 1 か所(scripts/semgrep_locked.py の locked_version — commit の hook の semgrep・pre-commit と、
-# 上の Hy の版で測る検が path で読む・card ki-33d2441b7e28)。読みを変えた便は、読みの判定(1 行・index の版)の反例と、
+# 上の Hy の版で測る検が path で読む)。読みを変えた便は、読みの判定(1 行・index の版)の反例と、
 # 使い手ごとに 1 本を払う。使い手は path で読むので、逆依存では選ばれない。
 [[tool.doeff.contract-tests]]
 prefix = "scripts/semgrep_locked.py"
@@ -607,7 +607,7 @@ tests = [
     "tests/test_hook_finding_baseline.py",  # 24.9 秒(28 本 — semgrep の版の読みの検を含む・load 63 の下)
 ]
 
-# doeff-hy の Hy の上限(他の repo の解決にも効く)は uv.lock の hy の版ちょうど(ADR-DOE-HY-008 R6・card ki-0ff168f4eaf5)— 上限を
+# doeff-hy の Hy の上限(他の repo の解決にも効く)は uv.lock の hy の版ちょうど(ADR-DOE-HY-008 R6)— 上限を
 # 変えた便も、uv.lock を変えた便と同じ突き合わせを払う(上の行は uv.lock の変更でしか選ばれない)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-hy/pyproject.toml"
@@ -616,7 +616,7 @@ tests = [
 ]
 
 # doeff-hy を引かずに Hy を宣言する doeff-domain(ADR-DOE-DOMAIN-001 R1)は、doeff-hy の Hy の宣言と同じ版の指定を置く — 宣言を
-# 変えた便も、doeff-hy の宣言との突き合わせを払う(ADR-DOE-HY-008 R6・card ki-96ca6c49fffd)。
+# 変えた便も、doeff-hy の宣言との突き合わせを払う(ADR-DOE-HY-008 R6)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-domain/pyproject.toml"
 tests = [
@@ -625,7 +625,7 @@ tests = [
 
 # macro の実行時の半分(`<-`・`!` の束ねの開き方 — doeff-hy の outcome_forms.hy「実行時の意味は doeff_core_effects._outcomes が持ち」)
 # の変更も、例の検を選ぶ。doeff-core-effects の他の file には払わせない(file の接頭辞)。上の行だけでは選ばれず、この file の変更で
-# 例 ex05・ex08 が赤になる形を設計検証の盲検 B が見つけた(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES)。
+# 例 ex05・ex08 が赤になる形を設計検証の盲検 B が見つけた。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-core-effects/doeff_core_effects/_outcomes.py"
 tests = [
@@ -636,13 +636,13 @@ tests = [
 prefix = "packages/doeff-vm/"
 tests = [
     "packages/doeff-vm/tests/test_package_exports.py",  # 1.0 秒 — doeff-vm の公開の名
-    # 2.3 秒 — 型の宣言の Expand が Program を基底に持ち、pyright が file を並べた順で答えを変えない(agora-redesign #4346)。
+    # 2.3 秒 — 型の宣言の Expand が Program を基底に持ち、pyright が file を並べた順で答えを変えない。
     # pyright が .pyi を読むだけで import しないので、import の逆依存では選ばれない
     "tests/test_expand_program_static_types.py",
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-vm]",  # 0.6 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
 
-# ── 2026-10-02 に足した組(agora-redesign #2658 — 表に組の無かった 31 package の中身を読み、package の公開の形・木を歩く母集団を
+# ── 2026-10-02 に足した組(表に組の無かった 31 package の中身を読み、package の公開の形・木を歩く母集団を
 #    確かめる検の在った 8 package)。秒は同じ測り方(2 回目)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-adr/"
@@ -699,10 +699,10 @@ prefix = "packages/doeff-traverse/"
 tests = [
     "packages/doeff-traverse/tests/test_traverse_answer_types.py",  # 3.6 秒 — effect の答えの型を実行時と pyright(.pyi を読む)で
     # 10.1 秒(2026-10-12 09:0x JST の会話の Pod・load average 57〜59)— examples/ の例を全部、子の process で 2 度(そのまま・
-    # 件の中で失敗させて — card ki-f8a58fb49dd9)走らせ、期待の出力(examples/expected/)と比べる。子 1 本 約 1 秒(ex05 は例の
+    # 件の中で失敗させて)走らせ、期待の出力(examples/expected/)と比べる。子 1 本 約 1 秒(ex05 は例の
     # 中の sleep 2.5 秒を含む)の 20 本を 4 本ずつ並べる(8.3 秒だった子 12 本の頃・load 62〜64)— 1 本ずつ順に
-    # 走らせた間は 25〜40 秒(load 110〜130)で、後ろの repo 全体の行を 60 秒の上限で打ち切った(card ki-458fc8e0de36)。例も
-    # macro も import しないので、import の逆依存では選ばれない(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間は日次でしか走らなかった)
+    # 走らせた間は 25〜40 秒(load 110〜130)で、後ろの repo 全体の行を 60 秒の上限で打ち切った。例も
+    # macro も import しないので、import の逆依存では選ばれない(表に無かった間は日次でしか走らなかった)
     "packages/doeff-traverse/tests/test_examples_run.py",
     "tests/test_public_api_known_violations.py::test_public_api_outside_effects_and_handlers_is_in_the_known_table[doeff-traverse]",  # 0.8 秒 — 公開名のうち effect と handler の外の物が既知の表と同じ
 ]
@@ -726,23 +726,23 @@ tests = [
 prefix = ""
 tests = [
     "tests/test_daily_test_population.py",  # 7.5 秒 — 検の file の置き場と集め手(日次の母集団)
-    "tests/test_contract_table_follows_packages.py",  # 1.3 秒 — この表と package の増減のずれ(agora-redesign #2658)
-    "packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py",  # 1.3 秒 — Hy の内部の名の綴りは records の外に 0 件(card ki-ffe72a1fb7d7・木を歩くので逆依存では選べない)
+    "tests/test_contract_table_follows_packages.py",  # 1.3 秒 — この表と package の増減のずれ
+    "packages/doeff-hy/tests/test_hy_internal_names_have_one_home.py",  # 1.3 秒 — Hy の内部の名の綴りは records の外に 0 件(木を歩くので逆依存では選べない)
     # 核の 5 個の版の番号を持つ 8 か所(5 個の pyproject・doeff の __version__・doeff-vm の Cargo.toml と Cargo.lock)と互いの依存の系
-    # (card ki-4f3135e2be74)— file を path で読むので逆依存では選べず、8 か所は 5 つの dir と根に散るので repo 全体の行に置く
+    # — file を path で読むので逆依存では選べず、8 か所は 5 つの dir と根に散るので repo 全体の行に置く
     "tests/test_core_packages_version.py",
     # pip install doeff は核の 4 個だけを入れ、Hy と HTTP は extra で足す事と、workspace の部品が import する Hy と httpx を
-    # 自分の依存で入れる事(card ki-006338b48f4b)— pyproject.toml と部品の source を path で読むので逆依存では選べない。
+    # 自分の依存で入れる事— pyproject.toml と部品の source を path で読むので逆依存では選べない。
     # 3.0 秒(4 本・起動を含む壁時計・load 約 37 の下・2026-10-17 会話の Pod)
     "tests/test_core_install_extras.py",
-    # 入口の file(根の README・docs/index.md・docs/README.md・部品の README・examples/)に社内の名が無い事(card ki-1736ed91eaac)—
+    # 入口の file(根の README・docs/index.md・docs/README.md・部品の README・examples/)に社内の名が無い事—
     # file を path で読むので逆依存では選べず、入口は根・docs・packages・examples に散るので repo 全体の行に置く
     "tests/test_entry_files_have_no_internal_names.py",
 ]
 
-# ── 2026-10-02 に契約の組の要らない package として除外した 23 package(agora-redesign #2658 — 根拠は「公開の名の全体を
+# ── 2026-10-02 に契約の組の要らない package として除外した 23 package(根拠は「公開の名の全体を
 #    確かめる検が無い」)。2026-10-27 に公開名の全体を既知の表と突き合わせる検(tests/test_public_api_known_violations.py の
-#    package ごとの 1 件・card ki-aaaa56621c5a)を足したので、除外の行を組の行に書き換えた。上の組の行の package にも同じ 1 件を
+#    package ごとの 1 件)を足したので、除外の行を組の行に書き換えた。上の組の行の package にも同じ 1 件を
 #    足した。秒は 1 package を子の process で読む壁時計(load 約 55 の下・2026-10-27 会話の Pod)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-agentic/"
@@ -799,9 +799,9 @@ tests = [
 ]
 
 # wheel の中の binary の位置(命令の入口が探す所)と、CI の maturin の固定と、今の source を組んだ wheel を入れた命令の動き
-# (PyPI の 0.1.3 は全部の機体の wheel が binary を python/ の下に持ち、入れた命令が動かなかった・card ki-d20475e94d87)。
+# (PyPI の 0.1.3 は全部の機体の wheel が binary を python/ の下に持ち、入れた命令が動かなかった)。
 # Python の公開面は effect FindSymbols・handler rust_indexer・答えの型 SymbolInfo で(拡張は内側の _native)、doeff run の discovery が
-# それで引く(card ki-1e51e218527e)。Rust の検は cargo の範囲(make test-rust)。
+# それで引く。Rust の検は cargo の範囲(make test-rust)。
 [[tool.doeff.contract-tests]]
 prefix = "packages/doeff-indexer/"
 tests = [
@@ -894,7 +894,7 @@ tests = [
 [dependency-groups]
 dev = [
     # make sync builds the Rust VM with maturin — declared here so every machine gets it
-    # from the lock, not from a tool installed by hand (agora-redesign#645 item 7).
+    # from the lock, not from a tool installed by hand.
     "maturin>=1.5,<2",
     "pytest>=8.1.1",
     "pytest-asyncio>=0.24.0",
@@ -915,16 +915,16 @@ dev = [
     "pytest-xdist>=3.8.0",
     "pytest-timeout>=2.3.1",
     # 実 PostgreSQL の検(doeff-core-effects の extra postgres・doeff-records の extra pg と同じ psycopg)を、日次と手元の dev の環境でも
-    # 走らせる — 検が使い捨ての PostgreSQL を自分で立てても、psycopg が無いと skip か import の失敗になる(agora-redesign #2830)。
+    # 走らせる — 検が使い捨ての PostgreSQL を自分で立てても、psycopg が無いと skip か import の失敗になる。
     "psycopg>=3.1",
     # 実 Redis の検(doeff-events の extra redis と同じ client)を、日次と手元の dev の環境でも走らせる — client が無いと、redis-server の
-    # 実行 file が在っても本物を相手にする検が import で落ちる(agora-redesign #3850)。
+    # 実行 file が在っても本物を相手にする検が import で落ちる。
     "redis>=5.0",
     # OS のファイル監視の検(doeff-events の extra files と同じ library — #3977)を、日次と手元の dev の環境でも走らせる。
     "watchfiles>=1.0",
     "hy>=1.2.0",
     "doeff-hy",
-    # 自前の defwire の解き手を pydantic と照らす test(packages/doeff-hy/tests/test_wire_parity.py)が読む pydantic(card ki-5ddadb736f62)。
+    # 自前の defwire の解き手を pydantic と照らす test(packages/doeff-hy/tests/test_wire_parity.py)が読む pydantic。
     "doeff-hy[parity]",
     "doeff-adr",
     "doeff-domain[dogfood]",
@@ -947,9 +947,9 @@ dev = [
     # 開発版の置き場も PATH の binary も無いので、dev の依存に置いて make sync で入れる — 無いと doeff の Hy の file が検査されない。
     "doeff-linter",
     # 公開の API の目録(tools/public_api_inventory.py)は doeff-indexer の入口を import で読み(Rust の拡張を持つ package は字面では
-    # 拡張の名を数えられない)、doeff run の discovery の検は effect FindSymbols に Rust の索引器で答える(card ki-1e51e218527e)。
+    # 拡張の名を数えられない)、doeff run の discovery の検は effect FindSymbols に Rust の索引器で答える。
     "doeff-indexer",
     # 公開の API の型が pyright だけでなく mypy でも効く事を確かめる検(tests/test_handler_installer_typing.py — 使う人は
-    # どちらの道具でも check する・card ki-68c54e9064e5)。
+    # どちらの道具でも check する)。
     "mypy>=2.4.0",
 ]

@@ -1,4 +1,4 @@
-"""生成器の ``@do`` の定義を呼ぶ 1 回(``Call``)の往復の形と答え(agora-redesign #2801)。
+"""生成器の ``@do`` の定義を呼ぶ 1 回(``Call``)の往復の形と答え。
 
 VM は yield された ``Call`` を、生成器の定義ならその場で関数を呼んで stream にし(``Expand(Pure(stream))`` —
 ``@do`` の handler と同じ形)、生成器は C API の ``PyIter_Send`` で回す(StopIteration の例外を作らない)。

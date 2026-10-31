@@ -1,7 +1,7 @@
 """The Rust scheduler's work per step does not grow with the tasks parked elsewhere or the handler depth.
 
-agora card ki-9de8d0a54408: the screen server's main thread spent 73% of its CPU inside the Rust VM,
-about 3 ms per step of its loop. ki-1294af4fa525 took the full scans out of the Python scheduler only;
+A screen server's main thread spent 73% of its CPU inside the Rust VM,
+about 3 ms per step of its loop. An earlier change took the full scans out of the Python scheduler only;
 the Rust scheduler (the default) still walked the ready heap (has_live_ready_entry), every parked
 waiter (keys_parked_by, detach_from_waiters) and every task row (live_semaphore_waiters) per step,
 kept claimed external-wait placeholders in the ready heap until popped, and walked a detached
@@ -172,8 +172,8 @@ class TestRustSchedulerStepDoesNotScanTheParkedTasks:
 def test_cancelled_deadline_timers_do_not_pile_up_in_the_rust_ready_heap():
     """A WaitWithin whose future wins cancels its deadline timer; the timer's external-wait
     placeholder (PRIORITY_EXTERNAL_WAIT) is then claimed, but stays in the ready heap until popped —
-    and it is popped only when no NORMAL work is queued (the Python version's drop_claimed_marks,
-    card ki-1294af4fa525). Here other NORMAL work stays queued for the whole run; the heap must not
+    and it is popped only when no NORMAL work is queued (the Python version's drop_claimed_marks).
+    Here other NORMAL work stays queued for the whole run; the heap must not
     grow with the waits done meanwhile."""
     waits = 1000
     stop = [False]

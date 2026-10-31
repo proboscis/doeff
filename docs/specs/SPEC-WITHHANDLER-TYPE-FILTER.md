@@ -32,7 +32,7 @@ after dispatch". The implementation follows that rule:
 
 Tests: `tests/test_handler_effect_type_filter.py`.
 
-Hy `defhandler` / `handle` (2026-10-01・agora-redesign #1931): the macro annotates the
+Hy `defhandler` / `handle` (2026-10-01): the macro annotates the
 generated `(fn [effect k] ...)` with the union of its clauses' effect types, so every
 defhandler is filtered by its own clauses — before, the generated function had no
 annotation and every defhandler saw every effect. The clauses already answered only those
@@ -44,7 +44,7 @@ A clause on `EffectBase` makes the union mean "everything" (no filter). Tests:
 `packages/doeff-hy/tests/test_defhandler_effect_type_filter.py`.
 
 Annotations no effect can match, and the skipped handlers in the UnhandledEffect message
-(2026-10-17・card ki-f102109edbc8): a filter on a type no effect can be an instance of
+(2026-10-17): a filter on a type no effect can be an instance of
 (`effect: str`) made the handler unreachable, and the run ended in an UnhandledEffect that
 did not name the annotation.
 
@@ -376,7 +376,7 @@ These are implementation details invisible to users. The isinstance semantic con
 
 ---
 
-## Passed effects — the complement filter (agora-redesign #2008)
+## Passed effects — the complement filter
 
 An annotation says "only these types". A catch-all handler that answers everything *except* `X` cannot say that, so the
 VM entered it for every effect. `defhandler` / `handle` recognise one shape and hand the complement to the VM:

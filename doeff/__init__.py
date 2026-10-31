@@ -20,7 +20,7 @@ from doeff_vm import PyVM as PyVM
 from doeff_vm import UnhandledEffect as UnhandledEffect
 
 # The VM's types for writing handlers and program nodes. doeff is the one package that imports
-# doeff_vm; a subpackage or a user imports these from doeff (agora-redesign ki-ff728b00369a).
+# doeff_vm; a subpackage or a user imports these from doeff.
 # They are bound before doeff_core_effects is imported below, which imports them from here.
 from doeff_vm import BindOpener as BindOpener
 from doeff_vm import Call as Call
@@ -170,7 +170,7 @@ if TYPE_CHECKING:
     )
 
     # The protocol is defined in the doeff_vm stub so that Expand can name it as its base
-    # (doeff_vm/__init__.pyi, agora-redesign #4346).
+    # (doeff_vm/__init__.pyi).
     from doeff_vm import Program as Program
 
     ProgramBase = DoExpr

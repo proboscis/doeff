@@ -1,4 +1,4 @@
-"""doeff-no-star-imports の極性の検(card ki-3a06f37f859d)。
+"""doeff-no-star-imports の極性の検。
 
 鳴らないべき形 = tools/hide_submodules.py の置く移し替えの module(module の子と package の子の 2 つの形 — ``if TYPE_CHECKING:``
 の star import の後に ``sys.modules[__name__] = import_module(…)`` で自分を移した module に差し替える)。道具の ``shim_text`` が作る

@@ -102,7 +102,7 @@ def test_doeff_run_works_without_hy(
     assert (PROFILE_LINE in completed.stderr) is profile_line
 
 
-# Hy が要る program を Hy 無しで走らせると、足す extra の名を言う文で 1 を返す(card ki-7310ee8e4fd0)。文は
+# Hy が要る program を Hy 無しで走らせると、足す extra の名を言う文で 1 を返す。文は
 # doeff_core_effects/_extra_hints.py の表 1 つが持つ(Hy の module・HTTP の handler の場面は tests/test_missing_extra_hints.py)。
 HY_MODULE = "(import doeff [Pure])\n(setv answer-program (Pure 42))\n"
 USES_HY_MODULE = """

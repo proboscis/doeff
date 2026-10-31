@@ -1,5 +1,4 @@
-"""11 章(docs/11-kleisli-arrows.md)が、今の @do に無い引数の自動の解きを言わない事の検(取り組み doeff-publish・
-card ki-7277427f6d8e)。
+"""11 章(docs/11-kleisli-arrows.md)が、今の @do に無い引数の自動の解きを言わない事の検(取り組み doeff-publish)。
 
 11 章は、@do が引数の注記から should_unwrap を決め、effect の引数を走る時に解く(`x: int` の `Ask("x")` は `Perform` になる)と
 書いていた。doeff は 2026-03-25 の VM の書き直し(926341cc0 が doeff/kleisli.py の解きの仕組みを消した)から引数を解かず、

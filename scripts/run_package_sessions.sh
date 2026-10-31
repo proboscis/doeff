@@ -1,6 +1,6 @@
 #!/bin/sh
 # make test-packages の PACKAGE_JOBS が 2 以上の時の本体: package ごとの pytest の session を最大 N 本同時に走らせる
-# (日次の処理ステージ packages の短縮・card acp:kanban-issue:ki-dde4fe85a5ed)。
+# (日次の処理ステージ packages の短縮)。
 # - 使い方: run_package_sessions.sh <N> <name>=<path> ...   path は repo の根からの tests/ か根の dir。
 #   pytest の命令は環境変数 PACKAGE_SESSION_CMD(例 "uv run --no-sync pytest")と PACKAGE_SESSION_ARGS(例 "-m 'not e2e'")。
 # - 各 session の出力は 1 本の file に溜め、全部終わってから引数の順に `=== Testing <name> ===` つきで出す
