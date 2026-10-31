@@ -111,8 +111,8 @@
 (import doeff [handler :as make-handler])
 (import doeff [UnhandledEffect])
 (import doeff-core-effects [try-handler])
-(import doeff-core-effects [Absent Raise Resumption]
-        doeff-core-effects._effects [resumption-of])
+(import doeff-core-effects [Absent Raise]
+        doeff-core-effects._effects [Resumption resumption-of])
 (import doeff-core-effects [Raise :as ProbeAliasedRaise])  ; R15 の反例: 名前では Raise と分からない別名
 (import doeff-core-effects [maybe result RaiseCase]
         doeff-core-effects._outcomes [open-bind Outcomes])
