@@ -20,6 +20,7 @@
 (import dataclasses [dataclass])
 (import hy)
 (import hy.models [Expression Symbol Keyword String List Tuple Dict Set FString FComponent Sequence Object Bytes Integer Float Complex])
+(import doeff_hy._match_fields [mangle-match-fields])
 
 
 (defrecord SplitBind
@@ -218,9 +219,13 @@
           `(_doeff-raise-case
              #(~@(pattern-types pattern))
              (fn [#^ object ~reason]
-               (match ~reason
-                 ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)
-                 _ _doeff-nothing))))))
+               ;; この match は defk の本体の欄の名の直し(doeff_hy/_match_fields.py)の後に展開で生まれるので、ここで直す —
+               ;; 直さないと (AppendRefused :idempotency-key k) は属性 idempotency-key を引いて黙って当たらず、型検査の展開も
+               ;; ast.parse の SyntaxError で落ちた(agora-redesign card ki-6aa23021c532)。
+               ~(mangle-match-fields
+                  `(match ~reason
+                     ~pattern ~@(if (is guard None) [] [(Keyword "if") guard]) (_doeff-some ~mapped)
+                     _ _doeff-nothing)))))))
     `(do (import doeff_core_effects [on-raise :as _doeff-on-raise RaiseCase :as _doeff-raise-case])
          (import doeff.result [Some :as _doeff-some Nothing :as _doeff-nothing])
          ((_doeff-on-raise ~@cases) ~program))))

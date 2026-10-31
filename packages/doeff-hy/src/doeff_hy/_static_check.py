@@ -657,6 +657,46 @@ def _only_used(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
             return statement
 
 
+def _parses(statement: ast.stmt) -> bool:
+    """文 1 つを字面に戻して、Python の文法で読み直せるか。"""
+    try:
+        ast.parse(ast.unparse(statement))
+    except SyntaxError:
+        return False
+    return True
+
+
+def _nested_statements(node: ast.AST) -> list[ast.stmt]:
+    """node の直下の文(本体・else・finally・except と case の節の本体 — 入れ子の文の中へは入らない)。"""
+    def own(child: ast.AST) -> list[ast.stmt]:
+        """子 1 つが node の直下に持ち込む文(節は中の本体へ降りる・式は文を持たない)。"""
+        match child:
+            case ast.stmt():
+                return [child]
+            case ast.excepthandler() | ast.match_case():
+                return _nested_statements(child)
+            case _:
+                return []
+
+    return [statement for child in ast.iter_child_nodes(node) for statement in own(child)]
+
+
+def _unparsable_statement(statements: list[ast.stmt]) -> ast.stmt | None:
+    """字面に戻すと読み直せない一番奥の文(statements のどれも読み直せれば None)。"""
+    for statement in statements:
+        if not _parses(statement):
+            return _unparsable_statement(_nested_statements(statement)) or statement
+    return None
+
+
+def _unparsable_position(statements: list[ast.stmt]) -> HyPosition:
+    """展開が文法に合わない時に、診断が指す Hy の位置: 読み直せない一番奥の文の位置(見つからなければ file の頭)。"""
+    culprit = _unparsable_statement(statements)
+    if culprit is None:
+        return HyPosition(1, 1)
+    return HyPosition(_position(culprit, "lineno") or 1, max(_position(culprit, "col_offset") or 1, 1))
+
+
 def project(root: Path, roots: list[Path], source: Path) -> Projection | CompileFailure:
     """1 つの .hy を型検査のための展開で Python にし、位置の対応表を作る。"""
     text = source.read_text(encoding="utf-8")
@@ -688,8 +728,24 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         return CompileFailure(
             source, Diagnostic(relative, line, column, "error", "hy-compile", message)
         )
+    except Exception as error:  # macro の外の後処理の失敗も 1 本の file の失敗にする — 子の process から抜けて検査全体を落とさない
+        return CompileFailure(
+            source,
+            Diagnostic(relative, 1, 1, "error", "hy-expansion", f"展開に失敗した: {type(error).__name__}: {error}"),
+        )
     rendered = ast.unparse(tree)
-    reparsed = ast.parse(rendered)
+    try:
+        reparsed = ast.parse(rendered)
+    except SyntaxError as error:
+        # Hy が Python の文法に無い木を出した(match の型の pattern の欄の名を Hy が mangle しない `case A(b-c=x)` など)。
+        # 以前は SyntaxError が子の process から抜けて repo 全体の検査を落とした(agora-redesign card ki-6aa23021c532)。
+        at = _unparsable_position(tree.body)
+        return CompileFailure(
+            source,
+            Diagnostic(
+                relative, at.line, at.column, "error", "hy-expansion", f"展開した Python が文法に合わない: {error.msg}"
+            ),
+        )
     spans = [span for pair in _child_pairs(reparsed, tree) if (span := _span(*pair)) is not None]
     # module の直下の setv は macro の外なので、source の一番外の並びを別に見る(ADR-DOE-HY-006)— compile と並んで見た所見。
     top_level = scope.findings

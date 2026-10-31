@@ -149,6 +149,27 @@
   (assert (= #(first second) #("版: 版の負け" "ほか: 鍵")) #(first second)))
 
 
+(defclass [(dataclass :frozen True)] AppendRefused []
+  "流れへの足しの断り(欄の名に `-` の綴りを持つ — 検のための失敗の理由)。"
+  #^ str idempotency_key
+  #^ str reason)
+
+
+(defk keyed-recovery [reason]
+  {:pre [(: reason AppendRefused)] :post [(: % str)]
+   :tags {:context "outcomes-test" :role "program"}}
+  "受けの型の pattern の欄の名を Hy の綴り(`:idempotency-key`)で書く — 展開が属性の名 idempotency_key へ直す。"
+  (<- answer (on-raise (Raise reason)
+               (AppendRefused :idempotency-key key :reason why) (+ key ": " why)))
+  answer)
+
+
+(deftest test-on-raise-mangles-dashed-field-names
+  ;; 直す前は on-raise の match が属性 idempotency-key を引いて当たらず、Raise が外へ抜けた(agora-redesign card ki-6aa23021c532)
+  (<- mapped (keyed-recovery (AppendRefused "鍵-1" "重複")))
+  (assert (= mapped "鍵-1: 重複") mapped))
+
+
 (defk python-error-through-on-raise []
   {:pre [] :post [(: % str)]
    :tags {:context "outcomes-test" :role "program"}}

@@ -8,7 +8,8 @@ Hy 1.3.1 の ``match`` は class pattern の keyword の欄の名を mangle せ�
 揃えれば、利用者は Hy の自然な綴り ``(Rec :ended-reason None)`` のまま書ける。
 
 Hy の本体は直さない(フォーク・monkeypatch・hy の版の指定の変更はしない — ADR-DOE-HY-008・operator 2026-10-01
-"i said no. i asked you to make workaround and report me")。直すのは defk の本体(引数・契約を含む)だけで、
+"i said no. i asked you to make workaround and report me")。直すのは defk の本体(引数・契約を含む)と、展開で
+``match`` を作る doeff の macro(on-raise の受け・doeff-events の受け — defk の直しの後に生まれる match)だけで、
 defk の外の ``match`` は doeff-linter の DOEFF169 が止める(規則は defk の form の中を当てない)。
 
 直す所は class pattern の keyword の欄の名だけ。値の pattern としての keyword(``(Rec :kind :a-b)`` の ``:a-b``)・
