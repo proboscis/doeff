@@ -1,4 +1,4 @@
-"""検の session が立てる使い捨ての PostgreSQL(postgres_support/disposable_postgres.py — agora-redesign #2830)の検。
+"""検の session が立てる使い捨ての PostgreSQL(postgres_support/disposable_postgres.py)の検。
 
 - env が無く binary が在れば、立てた PostgreSQL を env が指し、実際に ``select 1`` が通る(session の用意と、部品を直に呼んだ形の両方)。
   反例 = conftest が用意を呼ばない形では、session の env が無く赤になる。
@@ -59,7 +59,7 @@ def test_session_environment_points_at_a_live_postgres() -> None:
             psql = postgres_bin_dir(DEFAULT_SOURCE) / "psql"
         except DisposablePostgresError as failed:
             pytest.skip(f"{UNAVAILABLE_PREFIX}: {failed}")
-    # 検の module が受ける DSN(用意の結果の dsns — env には書かない・agora-redesign #3012)。
+    # 検の module が受ける DSN(用意の結果の dsns — env には書かない)。
     for variable in (SQL_EFFECTS_VARIABLE, RECORDS_VARIABLE):
         dsn = session_dsn(variable)
         assert dsn, f"{variable} の DSN が無い(conftest が使い捨ての PostgreSQL を用意していない)"

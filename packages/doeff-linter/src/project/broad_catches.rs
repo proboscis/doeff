@@ -1,4 +1,4 @@
-//! DOEFF160: 広い例外の捕捉は運搬の境界だけ(agora-redesign #1372・#1415 — 元は agora-controllers の一時の判定
+//! DOEFF160: 広い例外の捕捉は運搬の境界だけ(#1415 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/fault_boundary_rules.hy の (d))。
 //!
 //! architecture.hy の `:broad-catches [(broad-catch "名" :files [..] :except [..] :carriers [(carrier "module:名" :event "出来事")] :why "…")]`

@@ -2,7 +2,7 @@
 
 Python's messages read the C-level name of a type (tp_name), which pyo3 builds from the pyclass
 ``module`` — so ``x + 1`` with ``x = child()`` ended with ``unsupported operand type(s) for +:
-'doeff_vm.doeff_vm.Call' and 'int'`` (card ki-1c49d3ce4554). ``__module__`` and ``__qualname__``
+'doeff_vm.doeff_vm.Call' and 'int'``. ``__module__`` and ``__qualname__``
 stay: pickle and the stored type names (cache keys, memo) read them.
 """
 

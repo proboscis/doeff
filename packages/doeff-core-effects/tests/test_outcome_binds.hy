@@ -206,8 +206,8 @@
   (with [spy (mock.patch.object outcomes "_opened" :wraps outcomes._opened)]
     (assert (is (open-bind program) program) "束ねは呼びそのものを yield する")
     (assert (= spy.call-count 0) f"効果を出す defk の呼びは Python の振り分けへ入らない: {spy.call-count}")
-    ;; 変換の宣言の無い effect も、型ごとに覚えた答え(_passes-through)で振り分けへ入らずに同じ物を yield する
-    ;; (card ki-5c3e73834e73)。変換の宣言の在る effect は振り分けへ渡す(test-declared-bind-opens-the-answer)。
+    ;; 変換の宣言の無い effect も、型ごとに覚えた答え(_passes-through)で振り分けへ入らずに同じ物を yield する。
+    ;;変換の宣言の在る effect は振り分けへ渡す(test-declared-bind-opens-the-answer)。
     (val effect (PlainRead "a"))
     (assert (is (open-bind effect) effect) "変換の宣言の無い effect の束ねは同じ物を yield する")
     (assert (= spy.call-count 0) f"変換の宣言の無い effect の束ねは Python の振り分けへ入らない: {spy.call-count}"))
@@ -218,7 +218,7 @@
 (defk judge-row [x]
   {:pre [(: x int)] :post [(: % bool)]
    :tags {:context "outcomes-test" :role "program"}}
-  "効果を出さない判断(本体に yield が無い)— 画面の行ごとの判断の形(agora-redesign #844)。"
+  "効果を出さない判断(本体に yield が無い)— 画面の行ごとの判断の形。"
   (> x 3))
 
 (defk count-judged [xs]
@@ -343,7 +343,7 @@
 
 
 (deftest test-bind-refuses-a-plain-value-in-the-value-position
-  ;; agora-controllers の card ki-de00c871fa53: (<- split (if (is existing None) None (observe-split …))) が、行の無い card で
+  ;; 失敗例: (<- split (if (is existing None) None (observe-split …))) が、行の無い card で
   ;; 素の None を yield し、VM が TypeError(yield got None)で落とした。値の位置(式そのもの・if の枝・cond の値の枝・
   ;; when / unless の外れ)に字面の値を持つ束ねは、<- でも ! でも展開の時に断る。
   (val head "(require doeff-hy.macros [<- do!]) (fn [c] ")

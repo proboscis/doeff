@@ -1,5 +1,5 @@
 """辿れない大域を覆う source の文の読み(doeff_hy_bytecode_guard._bound_source.binding_of)を、置き場(DOEFF_HY_CODE_STORE)に覚える形の
-失敗ケース(agora-redesign card ki-38508e6e56fd)。
+失敗ケース。
 
 置き場の読みは、同じ中身・同じ名・同じ読み方の時だけ前の読みを返す — 返す物は、その process で解き直した読みと同じでなければ
 ならない。process をまたぐ形は、process の中の覚えを捨てて同じ口を呼び直すことで作る(子の process の形は

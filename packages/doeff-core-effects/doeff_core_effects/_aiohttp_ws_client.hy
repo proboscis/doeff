@@ -1,4 +1,4 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の本物の答え手 aiohttp-ws-client(agora-redesign #4007 U0)。aiohttp の
+;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の本物の答え手 aiohttp-ws-client。aiohttp の
 ;;; ClientSession.ws_connect で繋ぐ・frame を受け渡す・close frame を送る実 I/O で、判断を持たない。aiohttp は extra `http-server` の依存。
 ;;;
 ;;;   loop          節は Await で await-handler の共有の event loop に入り、その上で aiohttp の coroutine を走らせる(handler の組み立ての外側に

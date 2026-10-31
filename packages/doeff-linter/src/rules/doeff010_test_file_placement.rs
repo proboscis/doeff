@@ -4,7 +4,7 @@
 //! with `__init__.py` — outside a `tests` directory. There it ships with the package and pytest
 //! collects the package's classes as tests.
 //!
-//! 鳴るのは「import できる package の中に置かれた検の file」だけ(agora-redesign #2880)。package でない dir
+//! 鳴るのは「import できる package の中に置かれた検の file」だけ。package でない dir
 //! (agentd の conformance の組・設計の記録の模型・examples・道具の script)に置かれた `test_*.py` は配る code に混ざらず、
 //! この規則の害の外 — 前は祖先に `tests` の dir が無いだけで鳴り、doeff だけで 41 件の誤検出を出していた。
 //! 失う当たり: package でない dir(repo の根など)の `test_*.py` と、PEP 420 の名前空間 package(`__init__.py` の無い

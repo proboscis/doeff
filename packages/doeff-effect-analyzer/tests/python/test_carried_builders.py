@@ -1,4 +1,4 @@
-"""A function an effect carries to build the Program its handler runs (agora-redesign #2973).
+"""A function an effect carries to build the Program its handler runs.
 
 ``Traverse(f, items)`` carries ``f``: its handler calls ``f(item)`` and runs the Program
 it builds where the Traverse was performed (``sequential`` puts the inner handlers and
@@ -191,7 +191,7 @@ def test_doeff_traverse_sequential_is_followed() -> None:
 
 @pytest.mark.parametrize("name", ["sequential", "parallel", "parallel_fail_fast"])
 def test_doeff_traverse_item_outcomes_stay_inside_the_handler(name: str) -> None:
-    """The Traverse handlers report each item's outcome (``ItemOutcome``, card ki-e3a936788353)
+    """The Traverse handlers report each item's outcome (``ItemOutcome``)
     under the inner handlers and then under themselves, which answer it — so no clause emits
     it past the handler.  A clause that did would leave ``ItemOutcome`` unanswered in every
     stack installing the handler (a foundation closure check reports it as a gap, whether or

@@ -1,4 +1,4 @@
-;;; 自前の解き手(doeff_hy/_wire_codec.py)の検に使う defwire の型(card ki-923c16d33551)。
+;;; 自前の解き手(doeff_hy/_wire_codec.py)の検に使う defwire の型。
 ;;; 検は test_wire_codec.py — 同じ型を今の pydantic の解き手(doeff_hy._wire の parse-json)にも通して答えを比べる。
 
 (require doeff-hy.record [defwire defrecord defenum])
@@ -90,7 +90,7 @@
 (defwire Unresolved {:names :camel} (#^ "NoSuchType" x))
 
 
-;; 書き手と JSON Schema の検(test_wire_codec_write.py・card ki-f6551d717654)に使う型。
+;; 書き手と JSON Schema の検(test_wire_codec_write.py)に使う型。
 ;; 既定値の形ごとの欄(入れ子の defwire・defenum・frozenset・NaN・OpaqueJson・object・作り手)と、(| T None) の title の付け方。
 (defwire Leaf {:names :camel} (#^ str leaf-name) (setv #^ int n 0))
 (defwire Defaults
@@ -119,7 +119,7 @@
 (import wire_codec_types_other)
 (defwire BothNotes {:names :camel} (#^ Note mine) (#^ wire_codec_types_other.Note theirs))
 
-;; 照らしの test(test_wire_parity.py・card ki-b7701d5fc0dd)が見つけた差の型: doc を持つ StrEnum(JSON Schema の description)・
+;; 照らしの test(test_wire_parity.py)が見つけた差の型: doc を持つ StrEnum(JSON Schema の description)・
 ;; 値の型が何でもよい dict(additionalProperties true)。
 (defclass Shade [StrEnum]
   "明るさ(照らしの test の見本 — JSON Schema の $defs に description として出る)。"

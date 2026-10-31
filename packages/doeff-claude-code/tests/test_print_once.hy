@@ -1,7 +1,7 @@
 ;; 1 回きりの print(ClaudePrintOnce — CLI の print mode を `--output-format stream-json --verbose --json-schema …` で 1 回走らせて構造化の答えを
 ;; 受ける)の検。
 ;;
-;; - 純関数: argv・env・CLI の答えの JSON の読み(実物 2.1.292 の行 — 2026-10-19 の測り)と、口座の利用枠の尽きの読み(card ki-eb4f8e1db64d)。
+;; - 純関数: argv・env・CLI の答えの JSON の読み(実物 2.1.292 の行 — 2026-10-19 の測り)と、口座の利用枠の尽きの読み。
 ;; - 本番の handler + 替え玉の CLI(tests/stub_cli/claude_print.py — API は撃たない): 借りた資格をその process だけの設定 dir に置いて
 ;;   終わったら消す・家の資格のまま走らせる・待ちの上限で止める・CLI が無い。
 ;; - fake の handler: 筋書きの答えで答える。
@@ -125,7 +125,7 @@
 (deftest test-the-print-once-argv
   ;; 1 回きりの print の旗(素の CLI の測り 2026-10-18 と同じ組): 道具なし・設定の源なし・家の MCP を継がない・記録を残さない。
   ;; 出力は stream-json(--verbose が要る)— 口座の利用枠の尽きを名乗る行(拒まれた rate_limit_event・error rate_limit の答え)は result の
-  ;; 行の前に出て、`--output-format json` の 1 行には載らない(card ki-eb4f8e1db64d)。本文は argv に載せない(標準入力)。
+  ;; 行の前に出て、`--output-format json` の 1 行には載らない。本文は argv に載せない(標準入力)。
   (assert (= (print-once-argv #("claude") (request-of))
              ["claude" "-p" "--output-format" "stream-json" "--verbose" "--model" "claude-test" "--system-prompt" "Judge the material."
               "--json-schema" SCHEMA "--tools" "" "--setting-sources" "" "--strict-mcp-config" "--no-session-persistence"]))
@@ -211,7 +211,7 @@
 
 (deftest test-the-print-outcome-names-the-exhausted-usage-limit-apart-from-other-failures
   ;; 拒まれた限度の行と限度の答え(error rate_limit)を出して降りた print は、誤りの PrintFailed でなく PrintLimited: どの枠か・戻る刻
-  ;; (epoch 秒)・CLI の限度の文(上の層が「判定器の口座の枠が尽きた・いつ戻る」と言うため — card ki-eb4f8e1db64d)。
+  ;; (epoch 秒)・CLI の限度の文(上の層が「判定器の口座の枠が尽きた・いつ戻る」と言うため)。
   ;; 失敗ケース(前の形): api_error_status 429 の PrintFailed になり、戻る刻を持たず、判定器に届かない時と同じ断りになる。
   (<- outcome (print-outcome 1 (stream-of REAL-INIT LIMIT-REJECTED LIMIT-ANSWER LIMIT-RESULT) "" 900 False 60.0))
   (assert (= outcome (PrintLimited :limit (AccountLimitHit :window "five_hour" :resets-at 1791342000 :text LIMIT-TEXT)

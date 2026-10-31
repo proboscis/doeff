@@ -79,7 +79,7 @@ from doeff_core_effects._scheduler import TaskPriority as TaskPriority
 from doeff_core_effects._scheduler import Wait as Wait
 from doeff_core_effects._scheduler import scheduled as scheduled
 
-# the doeff-vm's counts and switches, answered by vm_probe_handler (agora card ki-27e8ea225b62)
+# the doeff-vm's counts and switches, answered by vm_probe_handler
 from doeff_core_effects._vm_probe_effects import ReadInvariantChecks as ReadInvariantChecks
 from doeff_core_effects._vm_probe_effects import ReadVmLiveCounts as ReadVmLiveCounts
 from doeff_core_effects._vm_probe_effects import ReadVmScanCounts as ReadVmScanCounts

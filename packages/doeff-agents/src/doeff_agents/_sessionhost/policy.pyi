@@ -15,7 +15,7 @@ BINDING_OWNED_ENV_KEYS: set[str]
 
 def session_env_admission_error(session_env: dict[str, str], verb: str) -> str | None: ...
 
-#: 席の家へ運ぶ共通の指示の**運び方**の閉語彙(card acp:kanban-issue:ki-62aa1f4e9c9c D11)。
+#: 席の家へ運ぶ共通の指示の**運び方**の閉語彙。
 CARRIED_SOURCE_FILE_TEXT: str
 CARRIED_SOURCE_DIR_LINK: str
 CARRIED_SOURCE_KINDS: set[str]

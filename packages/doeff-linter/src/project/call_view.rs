@@ -1,6 +1,6 @@
-//! 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`(agora-redesign #849)。
+//! 定義の本体の呼びを `f(a, b)` の形で見せる表示の置き換え — editor-json の `rewrites`。
 //!
-//! operator の決定 2026-09-28(#849): 呼びを `(f a b)` でなく `f(a,b)` の形で見せ、束縛も `int x <- some-func(0) + 1` のように
+//! 呼びを `(f a b)` でなく `f(a,b)` の形で見せ、束縛も `int x <- some-func(0) + 1` のように
 //! 読める形にする。式の途中の effect は `!` の印を残す案 A。
 //! 読むための表示だけで、source の Hy はそのまま(書く向きの変換は持たない)。式の形を読むのはここ 1 か所で、エディタは
 //! 置き換えを描くだけ(Hy を読み直さない)。
@@ -277,7 +277,7 @@ impl CallNames {
 }
 
 /// 本体の文字の式 1 つの置き換え(文の値の場所 = 括弧の要らない場所で読む)。effect を撃つ `!` は印を出さず、呼びの頭の
-/// effect の部品が絵を持つ(`(! (E a))` → `E(a)` — 読む面の本体の文字の表・agora-redesign #910)。effect でない `!` は残す。
+/// effect の部品が絵を持つ(`(! (E a))` → `E(a)` — 読む面の本体の文字の表)。effect でない `!` は残す。
 pub(super) fn expression_rewrites(world: &World, reader: &FileReader, names: &CallNames, form: &Form) -> Vec<Rewrite> {
     let mut walker =
         Walker { world, reader, locals: &names.locals, file_names: &names.file_names, bang: BangStyle::Glyph, out: Vec::new() };
@@ -855,7 +855,7 @@ fn last_segment(name: &str) -> &str {
 /// 置き換えごとに、置き換えた後の文字(中の置き換えも当てた物)を入れ、edit を本文の順に並べる。
 fn fill_texts(reader: &FileReader, rewrites: &mut [Rewrite]) {
     // 位置は行の表から戻す(source の頭から数え直さない)・編集の位置は 1 度だけ戻す(並べ替えの比べのたびに戻さない)— 1 file の
-    // 書き換えと編集の数の分だけ file の長さを数え直し、見出しの 1 回で 0.06〜0.08 秒かかっていた(agora-redesign #1632)。
+    // 書き換えと編集の数の分だけ file の長さを数え直し、見出しの 1 回で 0.06〜0.08 秒かかっていた。
     let offset = |p: crate::position::Position| reader.lines.offset(p);
     let spans: Vec<(usize, usize)> = rewrites.iter().map(|r| (offset(r.range.start), offset(r.range.end))).collect();
     let mut all: Vec<(usize, usize, String)> = Vec::new();

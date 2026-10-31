@@ -1,4 +1,4 @@
-"""deftest の展開の引数の型(agora-redesign #2214)の失敗ケース。
+"""deftest の展開の引数の型の失敗ケース。
 
 前は deftest の展開が作る関数の引数(fixture の doeff_interpreter・tmp_path・monkeypatch …)に型が無く、strict の
 doeff-hy-check で deftest 1 本につき書き手に直せない赤が約 5 件出た(reportUnknownParameterType・

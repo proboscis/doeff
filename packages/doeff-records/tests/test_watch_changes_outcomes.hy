@@ -1,4 +1,4 @@
-;; 表の変更の待ち WatchChanges の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補 — card ki-9ef4c6a23811):
+;; 表の変更の待ち WatchChanges の答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補):
 ;; defeffect が Changes = 成功 / Reset = 値 / Unreachable = 失敗(不在は無し)と宣言し、呼び手の <- は
 ;;   - Changes を中身のまま束ねる
 ;;   - Reset を値のまま束ねる(Raise にも Absent にもしない — 呼び手が (epoch, floor) から読み直して続ける普通の答え)

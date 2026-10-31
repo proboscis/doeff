@@ -8,7 +8,7 @@ DOEFF002 が鳴らす属性と、鳴らさない属性の境(class 自身の属�
 
 class の `__init__`・`__post_init__`・`__set_name__` の外で `self.<名>` へ書く属性は、書き換わる状態なので、名の頭を `mut_`(公開)か `_mut`(非公開)にする。型は問わない(list・dict・set だけでなく、数・真偽・文字列も)。
 
-継承元の属性への書きは、この規則の対象ではない。framework が決めた名は、変えると framework が読まなくなる。たとえば Textual の `App.sub_title` は、書くと header の表示が変わる属性で、`self._mut_sub_title` に変えると表示が止まる(agora-redesign #2951)。
+継承元の属性への書きは、この規則の対象ではない。framework が決めた名は、変えると framework が読まなくなる。たとえば Textual の `App.sub_title` は、書くと header の表示が変わる属性で、`self._mut_sub_title` に変えると表示が止まる。
 
 ## 属性が誰の物かの決め方
 

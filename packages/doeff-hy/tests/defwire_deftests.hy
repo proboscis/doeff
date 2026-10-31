@@ -1,4 +1,4 @@
-;;; defwire(doeff_hy/record.hy)と解き手(doeff_hy/_wire.hy)の検(agora-redesign #840)。
+;;; defwire(doeff_hy/record.hy)と解き手(doeff_hy/_wire.hy)の検。
 ;;;
 ;;; 確かめること: 解けた値・欄の名の写し(:camel / :snake / :kebab / 明示の辞書)・知らない欄の断りと読み捨て・:check の失敗・
 ;;; 型違いの Malformed(文字列の数・真偽の数・列挙の外の綴り)・凍らせた JSON と JSON の文字列からの解き・dump と parse の往復・
@@ -253,7 +253,7 @@
 
 
 
-;; --- 解き手を組む時期(agora-redesign #2420・前例 #2327・card ki-8b518c8f8e9d・ki-b7701d5fc0dd)-------------------------------------------
+;; --- 解き手を組む時期(前例 #2327)-------------------------------------------
 ;; 解き手(doeff_hy._wire_codec の型の木)は型を定義した時には組まず、最初の parse / dump / json-schema で 1 度だけ組んで型に覚える
 ;; (型の属性 __doeff_codec__)。この 2 型は他の検が使わない(使う前の型を写すため)。
 
@@ -284,7 +284,7 @@
 
 (deftest test-the-solver-is-built-at-first-use-and-never-rebuilt-by-use
   {:tags {:context "wire" :role "judgment"}}
-  ;; 定義した時には組まない — 使わない型の組む費用を、module を読み込む process ごとに払わない(card acp:kanban-issue:ki-8b518c8f8e9d:
+  ;; 定義した時には組まない — 使わない型の組む費用を、module を読み込む process ごとに払わない(
   ;; test_emulated_screen.hy の 1 回で組んだ 547 個のうち使ったのは 49 個)。最初に使う時に 1 度だけ組み、2 回目以降は組み直さない。
   (<- before (built-codec FieldsDefinedBefore))
   (assert (is before None) before)

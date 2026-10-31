@@ -1,4 +1,4 @@
-"""doeff-hy-check に名指した path が、根の書き方(symlink を辿らない絶対 path)と食い違っても黙って捨てられないこと(card ki-ed254bf53094)。
+"""doeff-hy-check に名指した path が、根の書き方(symlink を辿らない絶対 path)と食い違っても黙って捨てられないこと。
 
 失敗ケース(2026-10-11 agora-controllers の型の赤 22 件): 作業木の根 `/home/ubuntu/.worktrees/<木>` は `/work/toolset/worktrees/<木>` への
 symlink で、`--root "$PWD"` は symlink の側の綴り、相対 path を繋ぐ `Path.cwd()` は辿った先の綴りになる。名指した file は「根の外」として

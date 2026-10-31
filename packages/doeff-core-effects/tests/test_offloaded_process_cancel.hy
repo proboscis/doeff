@@ -1,4 +1,4 @@
-;;; offloaded-subprocess-handler(os_process.hy)で走らせる子 process の要求を取り消す検(agora-redesign #2829 — #2792 の
+;;; offloaded-subprocess-handler(os_process.hy)で走らせる子 process の要求を取り消す検(#2792 の
 ;;; L1276 で RLock にした offloaded_call.hy の Handoff の錠の、子 process の側の使い手の検)。本物の子(/bin/sh・sleep・true)を使う。
 ;;;
 ;;;   (a) 仕事が始まる前の取り消し: 子を起こす仕事を thread に渡したが、その thread がまだ仕事を始めていない間に、待っている task を
@@ -9,7 +9,7 @@
 ;;;   (b) 子が走っている間の取り消し: 子が自分の pid を FIFO へ書いた後(走っている)に、待っている task を取り消す。子は時間の上限
 ;;;       (RunProcess の timeout)と猶予の内に居なくなる — subprocess.run と同じ待ち方の道(process-group なし)も run-watched の道
 ;;;       (process-group)も。
-;;;   (c) 時間の上限の無い子が走っている間の取り消し(agora-redesign #2847): 上限が無いので、取り消しの手当てが子を止めなければ子は
+;;;   (c) 時間の上限の無い子が走っている間の取り消し: 上限が無いので、取り消しの手当てが子を止めなければ子は
 ;;;       自然に終わるまで残る(#2829 で分かった — 前は答えを捨てるだけだった)。取り消しの後、RunProcess の stop-grace の内に子が
 ;;;       居なくなる。process-group の道では、子が背景に起こした孫も居なくなる(group ごと止める)。
 ;;;   (d) (c) の子が SIGTERM を無視する時: stop-grace の後に SIGKILL で止まる(group なら孫も)。

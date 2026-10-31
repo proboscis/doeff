@@ -23,7 +23,7 @@ classifiers = [
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
-# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py・agora-redesign #1493)
+# maturin を包み、cargo の target を作業木の外の一時の dir に置く(tools/doeff_cargo_backend.py)
 build-backend = "doeff_cargo_backend"
 backend-path = ["."]
 
@@ -32,10 +32,10 @@ backend-path = ["."]
 bindings = "bin"
 strip = true
 # sdist は path 依存の crate(doeff-indexer)を持つので crate を doeff-linter/ の下へ移す。build の口は pyproject と
-# 同じ根に要る(backend-path = ["."])ので、根に写す — 無いと sdist から組めない(agora-redesign #1493)。
+# 同じ根に要る(backend-path = ["."])ので、根に写す — 無いと sdist から組めない。
 include = [{ path = "doeff_cargo_backend.py", format = "sdist" }]
 
-# uv が「作り直すか」を決める入力(agora-redesign #1294・親 #1160)。
+# uv が「作り直すか」を決める入力(親 #1160)。
 # uv は path で入れた依存を、既定では pyproject.toml / setup.py / setup.cfg が変わった時にしか作り直さない。
 # この package の中身は Rust の binary なので、src の .rs を変えても使う側の venv は古い binary のまま残る
 # (実例: agora-controllers の venv の `doeff-linter --version` が履歴の書き換えの前の 7cfe942 を名乗り続けた)。

@@ -35,7 +35,7 @@
 ;;;     上限で撃つ)が届く = 200・届かないか上限の内に答えない = 503 store-unavailable。/healthz は process の生存だけ(liveness が置き場の
 ;;;     不調で再起動を繰り返さない)
 ;;;   - 手入れ(serving.maintenance — 無ければ立てない)は用意の後に :daemon True の task で、Delay で拍を刻む。手入れの Program は
-;;;     別の thread の VM で回す(doeff の run-apart — card ki-3b942d3af8da・ADR-DOE-RECORDS-002 R7): 手入れの計算(使い手が渡す送りの
+;;;     別の thread の VM で回す(doeff の run-apart・ADR-DOE-RECORDS-002 R7): 手入れの計算(使い手が渡す送りの
 ;;;     関数の照らしを含む)は要求と同じ scheduler の thread を占めず、手入れが出す effect だけを task の handler が答える。前は要求と同じ
 ;;;     thread の task で、送りの関数が送り先から読み戻した 19 万行を 1 行ずつ照らす計算に、起き直しのたびに 4 分ずつ 2 回 thread を
 ;;;     占め、2 本の口の要求が全部その後ろで待った(2026-10-27 01:26〜01:44・02:08〜02:16 JST)
@@ -49,8 +49,8 @@
 ;;     配っている表の宣言の要約(schema_digest.schema-digests)を答える。身元も表の用意も置き場も問わない(置き場に届かない間も使い手が
 ;;     動いている版を読める)。計器では種 other に数える
 ;;;   - 要求ごとの計時(#3688): 要求の task は要求 1 つの刻の帳面(MarkBook)を作り、task の始まり・本文の読み終わり・答えの決まり・
-;;;     送り終わりの刻を、自分で土台の時計(GetMonotonic)から読んで帳面に打つ(札ごとの刻を session の値に控えない — card ki-1841b724d061・
-;;;     ki-5c3e73834e73: 控えの Get と Put と控えから外す effect が要求ごとに土台まで往復し、1 要求の scheduler の thread の CPU の大きな
+;;;     送り終わりの刻を、自分で土台の時計(GetMonotonic)から読んで帳面に打つ(札ごとの刻を session の値に控えない・
+;;;     控えの Get と Put と控えから外す effect が要求ごとに土台まで往復し、1 要求の scheduler の thread の CPU の大きな
 ;;;     割合が計時だった)。要求の task は要求ごとの外側の handler(serving.request-handlers — 検の仮想の時計)の外で走るので、読むのは土台の
 ;;;     時計。記録の操作の handler は包み(stamped-handling)で被せ、handler の入りと出と、handler の中の待ち(doeff-time の WaitWithin —
 ;;;     変化の待ちの long-poll)の入りと起きの刻を、同じ帳面に打たせる(StampRequest)。包みは serving.request-handlers の内側で走るので、
@@ -287,7 +287,7 @@
   "要求 1 つの刻の帳面(頭の註の要求ごとの計時): 要求の task が自分で読んだ刻と、記録の handler の包みが StampRequest で打たせた刻を、
    打った順に持つ。作るのも読むのも要求の task(answer-arrival)で、包みと待ちの刻も同じ task の中で StampRequest の答え手が打つ —
    持ち主が 1 つの task なので値の型ではなく帳面。札ごとの刻を session の値に控えて読み書きしない(要求ごとに控えの Get と Put と
-   TakeMarks が土台まで往復していた — card ki-5c3e73834e73)。"
+   TakeMarks が土台まで往復していた)。"
 
   (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
     {:pre [(: self MarkBook)] :post [(: % None)]}
@@ -317,7 +317,7 @@
   "走り中の要求の Task の台帳(受けの loop が待ち受けの閉じの後に残りを待てるようにするため)。作るのは受けの loop(receive-requests)で、
    受けの loop が Spawn した task を載せ(track)、要求の task が答え終えたら外す(settle)— どちらも同じ scheduler の thread の上の
    task なので値の型ではなく帳面。session の値に控えて読み書きしない(要求ごとに Track と Settle の effect と控えの Get と Put が土台まで
-   往復していた — card ki-5c3e73834e73)。"
+   往復していた)。"
 
   (deff __init__ [self]  ; defk にできない: 帳面の class の初期化
     {:pre [(: self RequestLedger)] :post [(: % None)]}
@@ -631,7 +631,7 @@
   (<- (StampRequest :book book :mark RequestMark.HANDLER-OUT))
   (when (isinstance body ListRows)
     (<- (count-list-rows caller body answer)))
-  ;; 読みの束の中の一覧の読みも、1 つずつ撃った一覧と同じに数える(card ki-177a4f287c42 — 束にしても表ごとの読み通しが数で言える)。
+  ;; 読みの束の中の一覧の読みも、1 つずつ撃った一覧と同じに数える(束にしても表ごとの読み通しが数で言える)。
   (when (and (isinstance body ReadBatch) (isinstance answer BatchRead))
     (for [#(one item) (zip body.reads answer.items)]
       (when (isinstance one ListRows)
@@ -720,8 +720,7 @@
    答えは送ってあり、台帳 ledger からは外す(誤りはそのまま上げる)。marks = 要求の刻の帳面の答えが決まるまでの刻(始まり・本文の読み終わり・
    handler の入りと出と待ち・答えの決まり — 打った順)。送る前に区間の秒を 1 度割って答えの見出しに載せ、送り終えた刻を読んで、記録の
    操作の要求なら、送り終えた刻で決まる区間(sent-stages)を足して計器に積む(stage-observations — 頭の註の要求ごとの計時・刻の列を送った
-   後に割り直さない)。区間と見出しと数えの名の計算は、どれも他の defk を呼ばない関数をここから 1 段ずつ呼ぶ(要求ごとに Program を回さない
-   — card ki-5c3e73834e73)。"
+   後に割り直さない)。区間と見出しと数えの名の計算は、どれも他の defk を呼ばない関数をここから 1 段ずつ呼ぶ(要求ごとに Program を回さない)。"
   (val operation (! (operation-of path)))
   (val wait (! (waited marks)))
   (var stages #())
@@ -879,7 +878,7 @@
                                 (.join "・" unsent)))))
   (<- (place-answer-metrics serving))
   ;; 待ち受けは port の共有(share-port — SO_REUSEPORT)で開く: 同じ置き場を答える口が同じ port に何本並んでも答えは同じなので、
-  ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(ki-a4f46b3d98c5 — 2026-10-09 23:08 の
+  ;; 2 本で受けて 1 本が止まっても、kernel は生きている待ち受けへ接続を渡す(2026-10-09 23:08 の
   ;; 17 分の止まりで、1 本の口が閉じた間の書きが全部 503 になった)。入れ替えで新旧を同じ port に並べる形も同じ共有で開ける。
   (<- bound HttpAddress (HttpListen :address serving.address :share-port True))
   (<- (RecordsListening :address bound))

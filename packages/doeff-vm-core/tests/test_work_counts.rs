@@ -1,4 +1,4 @@
-//! process 全体の積み上げの数(`memory_stats::work_counts` — agora-redesign #2851)の検。
+//! process 全体の積み上げの数(`memory_stats::work_counts`)の検。
 //!
 //! 数は process の全部の VM を通した和なので、同じ process で他の検が VM を回すと差が混ざる。cargo は統合の検の file ごとに
 //! 別の binary(別の process)を作るので、この file には検を 1 本だけ置き、その中で program を順に 2 回走らせる。

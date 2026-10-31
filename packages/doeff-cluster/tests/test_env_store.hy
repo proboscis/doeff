@@ -141,7 +141,7 @@
   (assert (.exists used) "使った entry を消した"))
 
 
-;; 失敗ケース(card ki-6828e9af04b4): code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store の鍵の印 3 の並び)。
+;; 失敗ケース: code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store の鍵の印 3 の並び)。
 ;; 掃除は dir の下の 7 日使われない entry も消し、中が全部 7 日動いていない dir は dir ごと消す — 鍵の dir は版ごとの source の数だけ増える
 ;; ので、entry だけを消すと空の dir が残り続け、保存先の歩きが年に数十万の空の dir を読む。使った entry の在る鍵の dir と、作ったばかりの
 ;; 空の dir(書き手が entry を置く前)は残す。

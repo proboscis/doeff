@@ -1,11 +1,11 @@
-//! 機体の検の枠(card ki-ce35bf38508d・親 ki-aabe38bf85ef)— 重い mode の doeff-linter は、起動の時に機体の検の枠の正本
+//! 機体の検の枠— 重い mode の doeff-linter は、起動の時に機体の検の枠の正本
 //! (`~/dotfiles/agent/tests/machine_check_slots.py`)の命令の包み `run` へ自分を渡し、枠を 1 つ取ってから走る。
 //!
 //! なぜ: 同じ機体(Pod)で同時に走る検の process 木を、正本の宣言の K 本までに絞る。doeff-linter は会話が直に撃つ道
 //! (`uv run doeff-linter`・poe の lint・land_lint_gate・日次の段・code-quality の中)が多く、道ごとに包むと
 //! 包み忘れた道が枠の外で走る(10-12 08:39 JST の zeus・load 105 で poe の lint 1 本 1.9 core と会話の直 2 本 0.64 core が枠の外)。
 //! binary の起動の 1 点で取れば、どの道から撃っても同じ枠に入る。commit の hook(`--commit-hook`)は検でなく止める検査なので
-//! 取らない(weight の註・card ki-b96d1fd0433f)。
+//! 取らない(weight の註)。
 //!
 //! 形: 自分の process を python へ exec し(pid は同じ — 呼び手の信号と時間切れは今までどおりこの pid に届く)、
 //! `python <正本> run --label <名> -- <自分> <同じ引数>` で走り直す。正本が枠を取り(埋まっていれば保持者を名乗って待ち、待ちの
@@ -57,7 +57,7 @@ pub struct Mode {
 /// (保存前の 1 file — 書き込み直後の hook は全体 3 秒で切って黙って通すので、待つと hook が効かなくなる)/ `--commit-hook`
 /// (test でなく、stage した file に file 1 つで決まる規則を当てる止める検査 — 子の linter 1 回ごとに自分の CPU 秒の上限
 /// [tool.doeff-linter.commit_hook] timeout_s を持つ。枠に並ぶと pytest と型の検の後ろで最長 20 分待ち、会話の道具の上限で commit が
-/// 切れた — card ki-b96d1fd0433f・利用者の決定 2026-10-12: commit の前の検査は test ではないので、ほかの検の後ろで待たせない。
+/// 切れた — commit の前の検査は test ではないので、ほかの検の後ろで待たせない。
 /// 子の linter も取らない — commit_hook::run_linter が GATED_ENV を付けて起こす)。
 /// 取る: `--hook`(Cursor の stop hook — workspace の全体)・editor-json と text / json の repo 全体(CPU 100 秒超)。
 pub fn weight(mode: Mode) -> Weight {
@@ -106,7 +106,7 @@ fn canon_path() -> Option<PathBuf> {
 }
 
 /// 正本を走らせる python — `uv python find` の答え(作業木の venv が在ればそれ)。機体の python3 や venv の bin を直に探さない
-/// (operator の決定 2026-09-27・2026-09-25 — python は uv で選び、機体の python や venv を直に使わない)。
+/// (2026-09-25 — python は uv で選び、機体の python や venv を直に使わない)。
 /// 正本は標準の library だけで走る。`uv run` で包まないのは、uv が子を起こして待つ形だと、呼び手の SIGKILL が uv だけを殺し、
 /// 包みと linter が孤児で残るため(exec した python は linter と同じ pid)。
 fn python_for_canon() -> Result<PathBuf, String> {

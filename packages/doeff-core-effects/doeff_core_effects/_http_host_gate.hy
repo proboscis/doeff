@@ -1,4 +1,4 @@
-;;; 外への HTTP の要求(HttpRequest)を、通す宛先の host の集合で絞る答え手(agora-redesign #3412 — 手元の構成が本物の資格で上流を撃たない
+;;; 外への HTTP の要求(HttpRequest)を、通す宛先の host の集合で絞る答え手(手元の構成が本物の資格で上流を撃たない
 ;;; ため。cisco-c8 の決め 2026-10-05 05:53: 手元の預かり所の job の HTTP は 127.0.0.1 だけに答える)。
 ;;;
 ;;;   http-host-gate [hosts]  宛先の host(URL の hostname — port は見ない)が hosts に無い要求を止める。要求が届かない失敗を値で受ける形

@@ -1,5 +1,4 @@
-;;; 機体の process の表の契約テストの解釈器(composition root)— 同じ契約の Program を、process の表の handler だけ替えて走らせる
-;;; (card ki-7b934e2538f9)。
+;;; 機体の process の表の契約テストの解釈器(composition root)— 同じ契約の Program を、process の表の handler だけ替えて走らせる。
 ;;;
 ;;;   os-proc-table        本物: os-proc-table-handler(/proc と os.kill)+ 検の中で起こす本物の眠る子(sleep 30 — 検の process の子)
 ;;;   scripted-proc-table  fake: scripted-proc-table-handler(台本の表 — 親と眠る子の 2 行)

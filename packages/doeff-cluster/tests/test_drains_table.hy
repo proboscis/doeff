@@ -1,4 +1,4 @@
-;;; drains の書き手が「変わった worker の行だけの書き」であることの検(ki-0bf6112a11b5 — T5b)。
+;;; drains の書き手が「変わった worker の行だけの書き」であることの検(T5b)。
 ;;;
 ;;; 時間では測らない。見る物は 2 つ: 残る行(鍵)と、書きの無い拍で表が元と同じ物(is)であること。
 (require doeff-hy.macros [deftest val <- defk])

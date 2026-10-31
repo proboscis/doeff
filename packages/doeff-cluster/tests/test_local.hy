@@ -473,7 +473,7 @@
 (deftest test-the-fence-drops-a-process-whose-effect-only-the-sim-could-answer
   ;; 柵: sim の外側が答える物(scheduler の Spawn / Wait・時計の Delay / GetTime・期限つきの待ち RaceWithin / WaitTicks)は通る。sim の世界
   ;; だけが答える effect(検の ProcessesOf)を出した process は、本番の子と同じ未処理の例外で落ちる(exit 1 — worker が起こし直しても同じく
-  ;; 落ちる)。RaceWithin と WaitTicks が表に無かった時は passer が柵で落ちた(card ki-fce105f02918 — 失敗ケース)。
+  ;; 落ちる)。RaceWithin と WaitTicks が表に無かった時は passer が柵で落ちた(失敗ケース)。
   (<- seen Fenced (sim-cluster :notice-broker (MemoryBroker) (fenced sim-foundation) (watch-fence)))
   (assert (= (get seen.rows "fence/passer" "answer") 42) seen.rows)
   (assert (= #((get seen.rows "fence/passer" "raced") (get seen.rows "fence/passer" "ticked")) #(7 9)) seen.rows)
@@ -1067,7 +1067,7 @@
 
 
 (deftest test-a-worker-runs-no-more-jobs-than-its-memory
-  ;; 条 C6(architecture.hy の :invariants・card ki-2acb63aec0fd で memory の版へ): memory の予算 150 MiB の worker 1 台に settle 100 の
+  ;; 条 C6(architecture.hy の :invariants・memory の版へ): memory の予算 150 MiB の worker 1 台に settle 100 の
   ;; service 2 つの系を置くと、coordinator は 1 つだけ置き、動く job の settle の和は予算を越えない。
   (<- spans tuple (sim-cluster :notice-broker (MemoryBroker) (beacons-plus sim-foundation) (spans-on-one-worker) :workers #(ONE-SLOT)))
   (assert spans spans)
@@ -1122,7 +1122,7 @@
 
 
 (deftest test-tasks-run-in-the-reserve-beside-every-resident-job
-  ;; 条 C17(architecture.hy の :invariants・card ki-2acb63aec0fd で task の側の版へ): 予約 1・背景の枠 0 の worker 1 台に常駐の service を
+  ;; 条 C17(architecture.hy の :invariants・task の側の版へ): 予約 1・背景の枠 0 の worker 1 台に常駐の service を
   ;; 3 つ宣言すると、coordinator は 3 つとも置き(job は task の空きを使わない)、delegator が出す手番の task は予約の分で走って答える
   ;; (add-task の答え 103 が盤に載る)。どの瞬間も動く task は予約 + 背景の枠 = 1 を越えない。
   (<- scene ReserveScene (sim-cluster :notice-broker (MemoryBroker) (reserved-trio sim-foundation) (reserve-scene) :workers #(RESERVED-ONE)))

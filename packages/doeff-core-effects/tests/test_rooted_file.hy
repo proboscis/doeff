@@ -1,6 +1,6 @@
 (require doeff-hy.macros [defk <- val])
 
-;;; rooted-file-handler(doeff_core_effects._rooted_file — agora-redesign #823 項目 1):
+;;; rooted-file-handler(doeff_core_effects._rooted_file):
 ;;;   * 1 つの memory の置き場を root ごとに分けて見せる: 同じ内側の path が root ごとに別の file を指し、書きは root の下に着く
 ;;;   * 答えの path(PathStat の real-path・FileFailed の path と文・LockHeld の path)は内側の path で返る(root を見せない)
 ;;;   * 反例: `..` で root の外(隣の root)を読もうとしても内側の / で止まる・相対 path は呼び手の誤りとして断る
@@ -64,7 +64,7 @@
 
 
 (defn #^ None test-a-symlink-points-inside-the-root []
-  ;; agora-redesign #4036: link の絶対の先は内側の / から読む先なので root の下へ移す(移さないと置き場の / の下の別の file を指す)・
+  ;; link の絶対の先は内側の / から読む先なので root の下へ移す(移さないと置き場の / の下の別の file を指す)・
   ;; 相対の先は link の在る dir から読むのでそのまま。
   (setv #(absolute relative through-absolute through-relative links) (rooted "/nodes/a" (link-then-read)))
   (assert (= #(absolute relative) #(None None)))

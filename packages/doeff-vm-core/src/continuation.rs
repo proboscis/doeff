@@ -305,7 +305,7 @@ impl DetachedFiberChain {
     /// behind — so the position is the id → index table: a walk from the head
     /// finds each parent right after the fiber before it, and the tail is the
     /// last entry. A linear find per fiber made every walk O(L²) under L
-    /// handlers (agora card ki-9de8d0a54408). Any other layout still answers,
+    /// handlers. Any other layout still answers,
     /// through the linear search the count then shows.
     fn position(&self, id: FiberId, expected: usize, probes: &mut u64) -> Option<usize> {
         *probes += 1;

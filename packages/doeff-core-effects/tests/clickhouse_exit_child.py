@@ -1,4 +1,4 @@
-"""ClickHouse の往復が走っている間に SIGTERM で終わる子 process(tests/test_sql_effects.hy の process の終わりの検が起こす・card ki-41b402ad072d)。
+"""ClickHouse の往復が走っている間に SIGTERM で終わる子 process(tests/test_sql_effects.hy の process の終わりの検が起こす)。
 
 引数: url(偽の ClickHouse の口)と shape。
   * shape = stop  — 本番の service の形: os-signal-stop-handler を据え(最初の StopRequested)、問い合わせを別の task で撃ち、止めの合図を

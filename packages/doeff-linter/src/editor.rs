@@ -7,7 +7,7 @@
 //! 名を添え、家族で行の絵を変えるため。名と家族の正本は linter 側(層の規則は `project::rule::ProjectRule`・
 //! Python の規則は `rule_info::RuleInfo`)にあり、エディタは写しを持たない。版は上げない(欄の追加だけ — 契約の更新 6)。
 //!
-//! 一番上の `judged_rules` は、この実行で判じた規則の ID(契約の更新 8・agora-redesign #2163)。1 file の実行(`--stdin`)は repo 全体で
+//! 一番上の `judged_rules` は、この実行で判じた規則の ID(契約の更新 8)。1 file の実行(`--stdin`)は repo 全体で
 //! だけ判じる規則(DOEFF166・141 など — `ProjectRule::judged_on_one_file` が偽の規則)を走らせないので、エディタは 1 file の結果で
 //! この列の規則の違反だけを差し替え、ほかの規則の違反は全体の実行の結果のまま残す。版は上げない(欄の追加 — 欄の無い古い出力を読む
 //! エディタは今までどおり全部差し替え、版を上げると版 2 だけを読む古いエディタが出力の全体を捨てる)。
@@ -27,7 +27,7 @@ use crate::project::report::ProjectReport;
 use crate::rule_info::get_rule_info;
 
 /// 契約の版。形を変える時は契約と一緒に上げる。版 2 = defk / deff の見出し `signatures` と束縛の型 `bindings` を足した
-/// (agora-redesign #849 — エディタが型・effect・tags を読むだけの表示で描くため)。
+/// (エディタが型・effect・tags を読むだけの表示で描くため)。
 pub const EDITOR_CONTRACT_VERSION: u32 = 2;
 
 /// 違反の重さ(契約の閉じた集合)。
@@ -114,7 +114,7 @@ pub struct EditorRule {
     pub family: RuleFamily,
 }
 
-/// この出力を作った binary(版と、組んだ doeff の commit — 置き場の binary が古いかを外から見分けるため・agora-redesign #848)。
+/// この出力を作った binary(版と、組んだ doeff の commit — 置き場の binary が古いかを外から見分けるため)。
 #[derive(Debug, Clone, Serialize)]
 pub struct EditorLinter {
     pub version: String,
@@ -145,18 +145,18 @@ pub struct EditorReport {
     pub bodies: Vec<crate::project::body_view::Body>,
     pub modules: Vec<EditorModule>,
     pub rules: Vec<EditorRule>,
-    /// この実行で判じた規則の ID(辞書順・重ねない — 契約の更新 8・agora-redesign #2163)。当たりを出し切った規則で、0 件の規則も載る。
+    /// この実行で判じた規則の ID(辞書順・重ねない — 契約の更新 8)。当たりを出し切った規則で、0 件の規則も載る。
     /// `rules[]` の欄(`judged`)にしないのは、`rules[]` が有効な規則の一覧で、その外で出る違反の規則(noqa の知らせ NOQA001・enable に
     /// 無くても出す DOEFF100 / DOEFF128)を持たないため — 判じたかは実行の性質で、report の一番上で名乗る。`violations` の規則はどれも
     /// この列に入る。
     pub judged_rules: Vec<String>,
     pub errors: Vec<String>,
     /// `--baseline-report` の時: 基点に無い critical の識別子(`<path>::<規則>::<名>`・辞書順)。基点と比べない時は null
-    /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加・agora-redesign #1803)。
+    /// (仕様 1 節「基点との比べ」— 版は上げない欄の追加)。
     pub new_critical: Option<Vec<String>>,
     /// path を名指した全体の実行の時: 名指した Hy の file のうち linter が歩く範囲(根の下と設定の include)の外の物(正規化した絶対の
     /// path — 違反の path と同じ形・辞書順)。
-    /// 名指しの無い実行と `--stdin` は null(仕様 1 節「名指しの範囲の外」— 版は上げない欄の追加・agora-redesign #2821)。
+    /// 名指しの無い実行と `--stdin` は null(仕様 1 節「名指しの範囲の外」— 版は上げない欄の追加)。
     pub out_of_scope: Option<Vec<String>>,
 }
 
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn judged_rules_name_python_rules_noqa_and_the_project_judged_rules_only() {
-        // agora-redesign #2163: judged_rules は Python の規則(と NOQA001)と project の実行が判じた規則だけ — 1 file の実行で判じない
+        // judged_rules は Python の規則(と NOQA001)と project の実行が判じた規則だけ — 1 file の実行で判じない
         // DOEFF166 は有効でも載らない(rules[] には有効な規則として載ったまま)。
         let python_rules = vec!["DOEFF016".to_string()];
         let project_rules: BTreeSet<ProjectRule> = [ProjectRule::DefnForbidden, ProjectRule::RegistryEntryStale].into_iter().collect();

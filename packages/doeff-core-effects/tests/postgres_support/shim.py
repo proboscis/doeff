@@ -2,7 +2,7 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = ["pgserver==0.1.4"]
 # ///
-"""使い捨ての PostgreSQL の binary の置き場を 1 行で出す(agora-redesign #2830)。
+"""使い捨ての PostgreSQL の binary の置き場を 1 行で出す。
 
 doeff の Python には pgserver の wheel が無い(cp39〜cp312 だけ)ので、この script を uv の分けた Python 3.12 の環境で
 走らせ(`uv run --script --locked`・版と hash は隣の shim.py.lock が固定する — doeff の uv.lock には足さない)、wheel に同梱された

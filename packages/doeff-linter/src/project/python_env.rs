@@ -1,4 +1,4 @@
-//! DOEFF106 の Python の枝: 層の置き場の `.py` の file の環境変数の読み(`os.environ`・`os.getenv`)を見つける(agora-redesign #1907・
+//! DOEFF106 の Python の枝: 層の置き場の `.py` の file の環境変数の読み(`os.environ`・`os.getenv`)を見つける(
 //! #1898 の子 (b))。Hy の file の生の副作用は Hy の定義の索引(hy_index の raw_catalog)が集めるが、Python の file はその索引の外で、
 //! 業務の層の `.py` が環境変数を読んでも何も当たらなかった。
 //!
@@ -8,7 +8,7 @@
 //!
 //! どの名が os・os.environ・os.getenv を指すかは、DOEFF004 と同じ表(utils の OsEnvNames — 構文木の import 文から作る)で解く。
 //! 以前は字句の並びから別名を集め、`import json, os as o`(os が 2 番目以降)の o を見落とし、`from pkg import os as o` の o を
-//! os と見ていた(agora-redesign #3012)。import 文の中の字句は読みでないので数えない。
+//! os と見ていた。import 文の中の字句は読みでないので数えない。
 //!
 //! 環境変数のほかの生の副作用(file・時計・network)は、ここでは当てない — 範囲を環境変数の読みに絞る(#1907 の決め — 広げると当たりが
 //! 増えうるので、要る時に別の変更で足す)。当たった位置を包む関数の名は構文木の関数の範囲から引く(無ければ module の直下)。
@@ -150,7 +150,7 @@ mod tests {
         );
     }
 
-    /// 反例(agora-redesign #3012): `import json, os as o` の o は os を指す — 直す前は import の直後の名が os の時だけ別名を
+    /// 反例: `import json, os as o` の o は os を指す — 直す前は import の直後の名が os の時だけ別名を
     /// 覚え、0 件だった。関数の中の import の別名も同じ。
     #[test]
     fn an_os_alias_after_another_module_in_one_import_is_found() {
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(names(source), vec![("os.environ".into(), "<module>".into()), ("os.getenv".into(), "f".into())]);
     }
 
-    /// 反例(agora-redesign #3012): `from pkg import os as o` の o は pkg の中の os で、os の module ではない — 直す前は字句の
+    /// 反例: `from pkg import os as o` の o は pkg の中の os で、os の module ではない — 直す前は字句の
     /// `import os as o` の並びに当たり、os の別名と見ていた。
     #[test]
     fn os_imported_from_another_package_is_not_an_os_alias() {

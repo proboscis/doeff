@@ -1,4 +1,4 @@
-//! DOEFF147: 呼んでよい頭を決めた定義(agora-redesign #1372・#1413 — 元は agora-controllers の一時の判定
+//! DOEFF147: 呼んでよい頭を決めた定義(#1413 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/fault_boundary_rules.hy の (e)(g))。
 //!
 //! architecture.hy の `:allowed-heads [(allowed-heads "module:名" :heads [..] :why "…")]` の定義ごとに:

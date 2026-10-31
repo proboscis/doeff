@@ -1,4 +1,4 @@
-//! 基点との比べ(`--baseline-report <file>`・仕様 1 節「基点との比べ」・agora-redesign #1803)。
+//! 基点との比べ(`--baseline-report <file>`・仕様 1 節「基点との比べ」)。
 //!
 //! マージ前の検査と commit の hook は、保存した既知の一覧を持たず、基点(main の先端)と commit の両方で linter を走らせ、
 //! commit の critical の識別子の集合が基点の集合に含まれていれば通す(#1762 の決定 A)。件数ではなく識別子で比べるので、
@@ -56,7 +56,7 @@ pub fn baseline_identities(report: &Value) -> Result<BTreeSet<String>, String> {
 }
 
 /// 違反 1 つが、基点の差で下げずに止める当たりか — 規則 `rule` が既知の一覧を持たない規則(登録簿で下げない規則 —
-/// `ProjectRule::lowered_by_registry` が偽 = DOEFF206〜209・211)で、重大さが critical(agora-redesign #3834)。変えた file に在れば止める判定の
+/// `ProjectRule::lowered_by_registry` が偽 = DOEFF206〜209・211)で、重大さが critical。変えた file に在れば止める判定の
 /// 1 か所 — 名指しの実行の new_critical(blocking_criticals — commit の hook も stage した path に当てる子の linter でこれを読む)が使う。
 pub fn blocks_regardless_of_baseline(rule: &str, level: RuleLevel) -> bool {
     level == RuleLevel::Critical && ProjectRule::parse(rule).is_some_and(|rule| !rule.lowered_by_registry())
@@ -68,7 +68,7 @@ fn unlisted_rule_criticals(violations: &[EditorViolation]) -> impl Iterator<Item
 }
 
 /// 止める critical の識別子(辞書順)— 基点に無い critical(new_criticals)に加え、名指しの path が在る実行(`named` — 変えた file を
-/// 名指す commit の hook と登録の前の確かめ)では、既知の一覧を持たない規則の critical を全部(agora-redesign #3834・cisco-c8 の可)。
+/// 名指す commit の hook と登録の前の確かめ)では、既知の一覧を持たない規則の critical を全部(cisco-c8 の可)。
 /// その規則は今在る当たりを基点の差でも登録簿でも通さず、変えた file に当たりが在れば止める(細かさは file 単位)。violations は
 /// 名指しの path で絞った後の列。名指しの無い実行(全体)は基点の差だけ — 全体の数は日次で出す。
 pub fn blocking_criticals(baseline: &BTreeSet<String>, violations: &[EditorViolation], named: bool) -> Vec<String> {

@@ -1,7 +1,7 @@
-"""`:post` の型の契約 `(: % T)` と本体の途中の `(return x)` を両方持つ defk / deff の、型検査の赤の失敗ケース(agora-redesign #4254・
+"""`:post` の型の契約 `(: % T)` と本体の途中の `(return x)` を両方持つ defk / deff の、型検査の赤の失敗ケース(
 親 #3167)。
 
-doeff 66d4c9428(agora-redesign #1823)から、`:post` を持つ定義の途中の `(return x)` は最後の式と同じ出口 — `_contract_result = x` →
+doeff 66d4c9428 から、`:post` を持つ定義の途中の `(return x)` は最後の式と同じ出口 — `_contract_result = x` →
 guard → `_hy_let_% = _contract_result` → `:post` の確かめ → `return _contract_result` — に書き換わる。型の注記 `_contract_result: T` は
 最後の式の代入にしか付かず、本体の最後が `while True` の形では最後の代入が到達しない所に置かれて注記がどこにも効かなかった。
 途中の出口の値の型の穴(`tuple[Unknown, ...]` など)が guard の引数・`_hy_let_%`・return へのコピーへ伝わり、書き手の code の側から

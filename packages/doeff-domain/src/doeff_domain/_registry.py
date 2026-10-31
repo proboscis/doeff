@@ -12,7 +12,7 @@ Violations of the table invariants raise immediately:
   registered domain, keyed by class identity (D3 — includes are unlimited).
 
 Inside the package: programs read and check the tables through the effects of
-doeff_domain._effects (ADR-DOE-API-001 R29 — card ki-03a7f0af2b64).
+doeff_domain._effects (ADR-DOE-API-001 R29).
 """
 
 from collections.abc import Iterator

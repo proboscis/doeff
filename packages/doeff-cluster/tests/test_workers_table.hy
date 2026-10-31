@@ -1,4 +1,4 @@
-;;; workers の書き手が「変わった行だけの書き」であることの検(ki-c0af02718092 — T4)。
+;;; workers の書き手が「変わった行だけの書き」であることの検(T4)。
 ;;;
 ;;; 時間では測らない。見る物は 2 つ: 表の同一性(is)と、変わった行の鍵(changed-keys)。
 (require doeff-hy.macros [deftest val <- defk])

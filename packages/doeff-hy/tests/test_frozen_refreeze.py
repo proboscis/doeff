@@ -41,7 +41,7 @@ def test_thaw_returns_fresh_mutable_values() -> None:
 
 
 def test_updated_returns_a_new_map_with_the_changes_and_leaves_the_source_alone() -> None:
-    # 写像を 1 項ずつ育てる所(計器の断面)が、毎回 dict(写像) で全部を Python の 1 項ずつで写さずに済むため(agora-redesign #2593)。
+    # 写像を 1 項ずつ育てる所(計器の断面)が、毎回 dict(写像) で全部を Python の 1 項ずつで写さずに済むため。
     source = FrozenMap({"a": 1.0, "b": 2.0})
     grown = source.updated({"b": 3.0, "c": 4.0})
     assert grown == {"a": 1.0, "b": 3.0, "c": 4.0}
@@ -58,7 +58,7 @@ def test_updated_refuses_a_key_that_is_not_a_string() -> None:
 
 
 def test_freeze_json_text_reads_and_freezes_deeply_and_round_trips() -> None:
-    # JSON の文字列を読む所で型を決める口(agora-redesign #2628): 読んだ値は freeze-json と同じ深く凍った形で、凍らせ直しは
+    # JSON の文字列を読む所で型を決める口: 読んだ値は freeze-json と同じ深く凍った形で、凍らせ直しは
     # 同じ物を返し、戻すと元の JSON と同じ。
     text = json.dumps(SOURCE)
     frozen = freeze_json_text(text)
@@ -98,7 +98,7 @@ def test_a_map_that_is_not_deeply_frozen_is_still_copied_deeply() -> None:
     assert copied["list"] == [1, 2]
 
 
-# --- items・values は中の dict の眺め(agora-redesign #2670 の根 E (b))---------------------------------------------
+# --- items・values は中の dict の眺め---------------------------------------------
 # Mapping の既定の ItemsView・ValuesView は鍵ごとに __getitem__ を撃つ。FrozenMap は中の dict の眺めを返す — 中身と順は既定と
 # 同じで、凍った値は写さずに同じ物を返し、眺めから中の dict を変えられない。
 
@@ -146,7 +146,7 @@ def test_the_views_cannot_change_the_frozen_map() -> None:
     assert dict(frozen) == {"a": 1}
 
 
-# --- thaw-json は葉では自分を呼ばない(agora-redesign #2670 の根 E (b) の 3)----------------------------------------
+# --- thaw-json は葉では自分を呼ばない----------------------------------------
 # thaw-json は JSON の節 1 つごとに自分を呼んでいた(葉の文字列・数にも 1 回ずつ)。記録の行を型へ読むたびに全体を戻すので、画面の
 # stats の場面で行 1 つあたり約 36 回の呼びになった。葉はその場で返し、自分を呼ぶのは入れ物(写像・列)の時だけにする。
 
@@ -209,7 +209,7 @@ def test_thaw_calls_itself_only_for_containers(monkeypatch: pytest.MonkeyPatch) 
     assert len(calls) == 3
 
 
-# --- 凍らせ直しは深く凍った要素を辿らない(agora-redesign #2670 の根 E の残り)----------------------------------------
+# --- 凍らせ直しは深く凍った要素を辿らない----------------------------------------
 # 記録の書きの道の層(行の型の dump → 判定の差分 → 確定する値 → 一覧の行)は、深く凍った値の要素から新しい写像を組み直して凍らせ
 # 直す。要素ごとに freeze-json を始めると、行 1 つで同じ値を 5 回辿る(画面の stats の場面で約 110 万回の関数の始まり)。
 # 葉と深く凍った写像は freeze-json を呼ばずにその場で返し、凍っていない入れ物は今までどおり全部辿る。

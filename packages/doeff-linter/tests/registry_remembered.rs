@@ -1,4 +1,4 @@
-//! 登録簿の dir(1 鍵 1 file)を、1 file の実行が毎回全部読まない事の検(card ki-58bfad2c13a1 の残り)。
+//! 登録簿の dir(1 鍵 1 file)を、1 file の実行が毎回全部読まない事の検。
 //!
 //! 登録簿の dir は agora-controllers で 447 file あり、冷えた作業木では 1 file ごとに disk を待つ。1 回の実行の open の 83% がこの dir だった
 //! (2026-10-17・Pod の IO の圧迫 55〜66%・open 596 件のうち 494 件)。dir の中の file の(名・大きさ・更新時刻)が前の実行と同じなら、
@@ -164,7 +164,7 @@ fn repo_with_fresh_worktree() -> (tempfile::TempDir, tempfile::TempDir, std::pat
 }
 
 /// 新しい作業木の登録簿は、git の index の blob の id が別の作業木と同じなら、別の作業木が読んだ結果を使い、中身を読まない
-/// (card ki-40c8ca380713 — 冷えた新しい作業木で 449 file を読む待ちが 0.8〜4.8 秒)。答えは読んだ時と同じ。
+/// (冷えた新しい作業木で 449 file を読む待ちが 0.8〜4.8 秒)。答えは読んだ時と同じ。
 #[test]
 fn a_fresh_worktree_does_not_read_the_registry_another_worktree_read() {
     let (main, _parent, fresh) = repo_with_fresh_worktree();

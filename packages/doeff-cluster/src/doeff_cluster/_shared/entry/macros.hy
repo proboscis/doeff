@@ -6,8 +6,8 @@
 ;;; 使い手は公開の置き場 doeff_cluster.macros から require する(ADR-DOE-API-001 R15 — この module は共有の区画の中に隠した本体で、
 ;;; doeff_cluster.macros が defsystem を出し直す。隠す前の path doeff_cluster.shared.entry.macros は、移し替えの module を消す段 3 まで
 ;;; この module を返す)。
-;;; 持ち主は doeff-cluster(2026-10-27 に doeff-hy の doeff_hy.macros から移した — 利用者の答え lt-GXXY5TVWBHJW4ZCBDTCRN68XZS の
-;;; by-group・card ki-f2107259b141)。展開が呼ぶ構成子(job・system-of)は doeff_cluster._shared.entry.service_build、型は
+;;; この macro を持つのは doeff-cluster(2026-10-27 に doeff-hy の doeff_hy.macros から移した)。
+;;; 展開が呼ぶ構成子(job・system-of)は doeff_cluster._shared.entry.service_build、型は
 ;;; doeff_cluster._shared.intent.service_model。関数の本体の中に書いた時の組み方は doeff-hy の定義の macro の土台
 ;;; (doeff_hy.macros の _scoped-definition)に任せる。
 (require doeff-hy.macros [val])
@@ -39,7 +39,7 @@
    (task は組の名だけを名乗る — 値の持ち主は系の宣言)。
    形は静的に決まる物だけを受け、外れれば展開の時に SyntaxError(doeff-linter が実行せずに読めるように)。
    関数には静的な記述 __doeff_system__(名・引数・job ごとの関数の名と約束)が付く。
-   関数の本体の中に書くと、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition — card ki-93395c51de1e)。"
+   関数の本体の中に書くと、import と定義をすぐ呼ぶ関数に入れて name だけを束ねる(_scoped-definition)。"
   (import doeff_hy.macros [_scoped-definition])
   (import doeff-cluster._shared.entry._system-form [defsystem-form])
   (_scoped-definition _hy-compiler name [(defsystem-form name params body)]))

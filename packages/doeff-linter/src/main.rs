@@ -18,8 +18,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-/// binary の確保器 — repo 全体の Hy の索引の cache の読み・辿り・後片づけの小さな確保と解放を速くするため(Cargo.toml の註・
-/// agora-redesign #1364)。答えは変えない。
+/// binary の確保器 — repo 全体の Hy の索引の cache の読み・辿り・後片づけの小さな確保と解放を速くするため(Cargo.toml の註)。
+/// 答えは変えない。
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -113,7 +113,7 @@ struct Args {
     hook: bool,
 
     /// git の commit の hook として走る — stage した source に file 1 つで決まる規則を当てて
-    /// HEAD の版と比べ、新しい破れが在れば終了コード 1(agora-redesign #1989・repo 全体の規則は当てない — card ki-7da14032cf9c)
+    /// HEAD の版と比べ、新しい破れが在れば終了コード 1(repo 全体の規則は当てない)
     #[arg(long)]
     commit_hook: bool,
 
@@ -123,23 +123,23 @@ struct Args {
     commit_hook_timeout_s: Option<u64>,
 
     /// --commit-hook の報告を書く file — HEAD の版と stage した path の 2 つの測り(測った path の列・editor-json の形の違反・判じた
-    /// 規則)を 1 つの JSON で書く(card ki-b9eeeea338b6・仕様 3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は変えない
+    /// 規則)を 1 つの JSON で書く(仕様 3 節「commit の hook の報告」)。止める判定・終了コード・stderr の文は変えない
     #[arg(long)]
     report_out: Option<PathBuf>,
 
     /// 規則の一覧を JSON で出して終わる — 各規則の ID と、当たりを判じるのに repo 全体が要るか(whole_repo)。門と hook は repo 全体の
-    /// 比べに当てる規則をこの名乗りで選ぶ(手で保つ一覧を持たない — agora-redesign #2090)
+    /// 比べに当てる規則をこの名乗りで選ぶ(手で保つ一覧を持たない)
     #[arg(long)]
     list_rules: bool,
 
     /// 変えた path(path の引数・repo の根から)に当てる規則の分けを JSON で出して終わる — {"quick", "whole", "declaration_changed"}。
-    /// commit の hook と同じ 1 か所の判定(宣言の file を変えた変更は file 1 つで判じる規則も whole へ — agora-redesign #2127)を、
+    /// commit の hook と同じ 1 か所の判定(宣言の file を変えた変更は file 1 つで判じる規則も whole へ)を、
     /// マージの門が読む口
     #[arg(long)]
     split_rules: bool,
 
     /// 変えた path(repo の根から・複数)を直接・間接に import(Hy は require も)する検の file を、距離つきの JSON で出して終わる
-    /// (登記の前の入口が契約の検と変えた検の後ろに足す — agora-redesign #2605)。--test-pattern が要る
+    /// (登記の前の入口が契約の検と変えた検の後ろに足す)。--test-pattern が要る
     #[arg(long, num_args = 1.., value_name = "PATH")]
     affected_tests: Option<Vec<String>>,
 
@@ -152,7 +152,7 @@ struct Args {
     max_dependents: Option<usize>,
 
     /// commit 本文の file(--commit-hook と --split-rules)— 本文に理由つきの `Lint-Baseline: declarations <理由>` の行が在れば、基点を
-    /// 今の宣言(設定 file と architecture.hy)で測る 1 回限りの指定として読む(規則を鳴らし始める commit のため — agora-redesign #2143)
+    /// 今の宣言(設定 file と architecture.hy)で測る 1 回限りの指定として読む(規則を鳴らし始める commit のため)
     #[arg(long)]
     commit_message: Option<PathBuf>,
 
@@ -175,7 +175,7 @@ struct Args {
     no_log: bool,
 
     /// 意味の規則(DOEFF201・202・203)で Jev に問う — 対象は path の引数の file、無ければ git で変わった file(cache に答えの在る定義も問い直す)。
-    /// 旗の無い既定は --semantic-changed と同じ(cache を使い、変わった定義だけ問う — agora-redesign #1160)
+    /// 旗の無い既定は --semantic-changed と同じ(cache を使い、変わった定義だけ問う)
     #[arg(long)]
     semantic: bool,
 
@@ -236,9 +236,9 @@ struct Setup {
     enabled_rules: Option<Vec<String>>,
     exclude_patterns: Vec<String>,
     settings: ProjectSettings,
-    /// 設定の知らない鍵と規則の ID(読まずに残りを読んだ — DOEFF100 で知らせる・agora-redesign #848)。
+    /// 設定の知らない鍵と規則の ID(読まずに残りを読んだ — DOEFF100 で知らせる)。
     notices: Vec<project::notice::ConfigNotice>,
-    /// 読んだ service と層の宣言の file(根の外に在っても宣言の規則が判じる — 名指しの範囲の外に数えない・agora-redesign #2821)。
+    /// 読んだ service と層の宣言の file(根の外に在っても宣言の規則が判じる — 名指しの範囲の外に数えない)。
     declaration: Option<PathBuf>,
 }
 
@@ -376,8 +376,8 @@ fn semantic_mode(args: &Args, root: &Path, stdin_path: Option<&Path>) -> project
     if args.semantic_all {
         return SemanticMode::AskAll;
     }
-    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(operator の決定 2026-09-29 — Jev を使う規則も毎回どこでも走らせ、
-    // 既定で cache を使う・agora-redesign #1160)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
+    // 既定 = 全体の実行は cache を使い、変わった定義だけを問う(Jev を使う規則も毎回どこでも走らせ、
+    // 既定で cache を使う)。1 file の --stdin(書いた直後の hook・エディタ)は既定で cache だけを読む — hook の
     // 全体 3 秒の上限の中で層の規則の知らせを失わないため(#1190 の決定 A・戻し方 = 下の Some(_) の枝を AskChanged にする)。
     // cache を読むだけの全体の実行は --semantic-cache-only で名指す。
     if args.semantic_cache_only || (stdin_path.is_some() && !args.semantic && !args.semantic_changed) {
@@ -436,7 +436,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
     } else {
         config::load_config_checked(args.config.as_deref(), &cwd)?
     };
-    // 設定の root(設定 file の dir からの相対 — agora-redesign #1977)。
+    // 設定の root(設定 file の dir からの相対)。
     let declared_root = loaded
         .as_ref()
         .and_then(|l| l.config.root.as_ref().map(|r| l.path.parent().map(Path::to_path_buf).unwrap_or_else(|| cwd.clone()).join(r)));
@@ -479,7 +479,7 @@ fn prepare(args: &Args) -> Result<Setup, String> {
             .map_err(|problems| format!("設定の誤り:\n  {}", problems.join("\n  ")))?,
         (None, None) => ProjectSettings::default(),
     };
-    // 根の外で歩く dir(設定 file の dir から)。無い dir は黙って何も歩かない形にせず、設定の誤りとして止める(agora-redesign #2821)。
+    // 根の外で歩く dir(設定 file の dir から)。無い dir は黙って何も歩かない形にせず、設定の誤りとして止める。
     let include_base = config_dir.clone().unwrap_or_else(|| root.clone());
     settings.include = config.iter().flat_map(|c| c.include.iter()).map(|dir| include_base.join(dir)).collect();
     if let Some(missing) = settings.include.iter().find(|dir| !dir.is_dir()) {
@@ -669,7 +669,7 @@ fn main() -> ExitCode {
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::facts_cache::SWEEP_COMMAND) {
         return doeff_linter::project::facts_cache::run_handed_sweep(&argv[2..]);
     }
-    // 作業木の変わりを inotify で覚えて 1 file の実行の問いに答える常駐の process(card ki-9e7e85407b71)。
+    // 作業木の変わりを inotify で覚えて 1 file の実行の問いに答える常駐の process。
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::fsmonitor::SERVE_COMMAND) {
         return doeff_linter::project::fsmonitor::daemon::serve();
     }
@@ -685,7 +685,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // 重い mode は、仕事の前に機体の検の枠を 1 つ取る(正本の命令の包みへ自分を exec で渡す — 渡せたら戻らない・card ki-ce35bf38508d)。
+    // 重い mode は、仕事の前に機体の検の枠を 1 つ取る(正本の命令の包みへ自分を exec で渡す — 渡せたら戻らない)。
     check_slot::enter(check_slot::weight(check_slot::Mode {
         list_rules: args.list_rules,
         split_rules: args.split_rules,
@@ -702,7 +702,7 @@ fn main() -> ExitCode {
 
     if let Some(changed) = &args.affected_tests {
         // 逆依存の問いも小さな仕事(cache の温まった doeff で CPU 0.05 秒)— 負荷 26 の機体で 36 本の thread は sys の時間だけで
-        // 0.9〜11 秒を使い、4 本は冷えて 0.28 秒・温まって 0.07 秒だった(agora-redesign #2605 の実測)。
+        // 0.9〜11 秒を使い、4 本は冷えて 0.28 秒・温まって 0.07 秒だった。
         if std::env::var_os("RAYON_NUM_THREADS").is_none() {
             let _ = rayon::ThreadPoolBuilder::new().num_threads(SINGLE_FILE_THREADS).build_global();
         }
@@ -833,7 +833,7 @@ fn run_affected_tests(args: &Args, changed: &[String]) -> ExitCode {
     }
 }
 
-/// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節・agora-redesign #1803)。
+/// 基点との比べで新しい critical が在る時の終了コード(仕様 1 節)。
 const NEW_CRITICAL_EXIT: u8 = 4;
 
 /// `--baseline-report` の file を読み、基点の critical の識別子の集合を返す(無ければ None)。読めない・形が違えば理由。
@@ -952,7 +952,7 @@ fn run_editor(args: &Args) -> ExitCode {
     }));
     report.new_critical =
         baseline.map(|baseline| doeff_linter::baseline::blocking_criticals(&baseline, &report.violations, only.is_some()));
-    // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」・agora-redesign #2821)。
+    // 名指した Hy の file のうち linter が歩く範囲の外の物(層の規則が判じていない — 仕様 1 節「名指しの範囲の外」)。
     report.out_of_scope = match (&only, stdin_file.is_none() && setup.has_project_rules()) {
         (Some(named), true) => {
             Some(
@@ -984,7 +984,7 @@ fn run_editor(args: &Args) -> ExitCode {
     }
 }
 
-/// 破れは無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった)時の終了コード(agora-redesign #1160 の決定 2)。
+/// 破れは無いが、意味の規則で問うはずだった定義に答えを得られなかった(測れなかった)時の終了コード。
 const UNMEASURED_EXIT: u8 = 3;
 
 fn run_as_hook(args: &Args) -> ExitCode {
@@ -1160,7 +1160,7 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
 
 /// `--semantic` / `--semantic-changed` で名指した path のうち、disk に無い物を断る理由(全部在れば None)。名指しの path は問う対象の
 /// 組(SemanticMode の targets)の鍵になるので、無い path は どの定義にも当たらず、問う数 0・較正 not-run・終了コード 0 で黙って終わっていた
-/// (agora-redesign #2075 — 3 人が「問う数が多いと黙って 0」と読んだ実例は、zsh が引用符の無い `$FILES` を分けず、11 個の path が空白で
+/// (3 人が「問う数が多いと黙って 0」と読んだ実例は、zsh が引用符の無い `$FILES` を分けず、11 個の path が空白で
 /// 繋がった 1 つの無い path として届いていた)。問うと名指した実行が何も問わずに緑を名乗らないよう、引数の誤りとして終了コード 2 で止める。
 fn missing_semantic_targets(args: &Args) -> Option<String> {
     if !(args.semantic || args.semantic_changed) || args.stdin {
@@ -1253,8 +1253,8 @@ fn run_normal(args: &Args) -> ExitCode {
     let mut results = lint_files_parallel(&files, &all_rules);
     // 意味の規則で問うはずだったのに答えを得られなかった数(0 でなければ、破れが無くても緑と分けて終了コード 3)。
     let mut unmeasured = 0;
-    // 命令の行で名指した Hy の file のうち、linter が歩く範囲の外の物(層の規則が判じていない — 破れが無くても緑と分けて終了コード 3・
-    // agora-redesign #2821)。--modified は名指しではないので数えない。
+    // 命令の行で名指した Hy の file のうち、linter が歩く範囲の外の物(層の規則が判じていない — 破れが無くても緑と分けて終了コード 3)。
+    // --modified は名指しではないので数えない。
     let mut outside: Vec<PathBuf> = Vec::new();
     if setup.has_project_rules() {
         // --modified の時は、変更した file の違反だけにする(変更していない file の既知の違反で止めない)。file 1 つで判じられる規則は
@@ -1383,7 +1383,7 @@ fn run_normal(args: &Args) -> ExitCode {
     }
 }
 
-/// 名指した Hy の file が linter の歩く範囲の外である事を名指す 1 行(通常の入口の stderr・agora-redesign #2821)。
+/// 名指した Hy の file が linter の歩く範囲の外である事を名指す 1 行(通常の入口の stderr)。
 fn outside_line(path: &Path, root: &Path) -> String {
     format!(
         "doeff-linter: 対象の外 — {}(linter が歩く範囲 = 根 {} の下の Hy の file の外 — 層の規則はこの file を判じていない)",

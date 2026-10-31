@@ -117,7 +117,7 @@
 
 
 (deftest test-parse-args-max-running-unlimited
-  ;; 「上限なし」を言う口(2026-08-19 operator 裁定: 同時走行の上限は ACP の
+  ;; 「上限なし」を言う口(同時走行の上限は ACP の
   ;; 都合であって sessionhost の性質ではない)。None = admission の check ごと
   ;; 飛ぶ = 無制限で、これは直接束縛(config を持たない使い方)と同じ形。
   (for [spelling ["none" "unlimited" "NONE" "Unlimited"]]
@@ -230,7 +230,7 @@
          [["--prompt-stall-secs" "0"] "must be positive"]
          [["--max-running" "0"] "rejects every launch"]
          [["status"] "unknown argument"]
-         ;; サブコマンドは無い(入口の module が host の 1 つの役 — card ki-bb337cfd0336)。
+         ;; サブコマンドは無い(入口の module が host の 1 つの役)。
          [["serve"] "unknown argument"]]]
     (setv raised None)
     (try
@@ -307,7 +307,7 @@
 
 (deftest test-run-hosted-answers-a-delay-on-the-wall-clock
   ;; 本番の積み(run-hosted)は時間の handler を持つ — launch の ready gate の待ち(doeff-time の Delay)に壁の時計で
-  ;; 答える(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R2)。無ければ Delay は答えの無い効果で落ちる。
+  ;; 答える(ADR-DOE-TIME-001 R2)。無ければ Delay は答えの無い効果で落ちる。
   (defn check [config actor]
     (assert (is (run-hosted config actor (Delay 0.001)) None)))
   (with-skeleton check))

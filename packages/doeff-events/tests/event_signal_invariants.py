@@ -1,7 +1,7 @@
-"""合図の handler が守る不変条件の検(agora-redesign #3075・設計 #3072)。
+"""合図の handler が守る不変条件の検(設計 #3072)。
 
 各関数は handler の組み立て方(``SignalWorld``)を引数に取り、筋書きを走らせて不変条件を確かめる。memory の
-``subscribed_event_handler`` も、その内側に記録の service の変化を合図として発する源を置いた組(agora-redesign #3077)も、
+``subscribed_event_handler`` も、その内側に記録の service の変化を合図として発する源を置いた組も、
 同じ関数を自分の組み立て方で呼ぶ。pytest が直に集めないよう ``test_`` で始めない名の file に置く。
 
 合図は「どこが変わったか」(記録のキー)だけを運び、受け手は記録を読み直して状態を作る。筋書きの記録は

@@ -17,7 +17,7 @@
   spec.fingerprint)
 
 
-;; 中身の鍵の綴り(card ki-81bf84ac6590): 英数字と . _ : - の 1〜128 字(送り手の計った hash に名の頭を付けた物 — 例 "sha256:<64 桁>")。
+;; 中身の鍵の綴り: 英数字と . _ : - の 1〜128 字(送り手の計った hash に名の頭を付けた物 — 例 "sha256:<64 桁>")。
 (val #^ (get re.Pattern str) CONTENT-KEY (re.compile r"[0-9A-Za-z._:-]{1,128}"))
 
 
@@ -28,7 +28,7 @@
       (.format "content は中身の鍵(英数字と . _ : - の 1〜128 字)か null: {!r}" value)))
 
 
-;; 常駐の job の memory(card ki-2acb63aec0fd): 起動の山 peakMiB と落ち着いた値 settleMiB(MiB の整数・0 以上・落ち着きは山以下)。
+;; 常駐の job の memory: 起動の山 peakMiB と落ち着いた値 settleMiB(MiB の整数・0 以上・落ち着きは山以下)。
 ;; 値の持ち主は job の宣言(defsystem の :peak-mib・:settle-mib)で、既定の値で埋めない。
 (defn #^ (| str None) memory-refusal [#^ object peak #^ object settle]  ; defk にできない: 宣言の値を作る時(defsystem の構成子)と coordinator の宣言の読み(Program の外の純粋な判断)が呼ぶ
   "job の memory の山 peak・落ち着いた値 settle(MiB)を受けられない理由を、送り手と coordinator が同じ 1 つの規則で言うため(受けられれば
@@ -51,7 +51,7 @@
 
 (defn #^ bool spec-hash-matches [#^ JobSpec spec #^ (| str None) reported]  ; defk にできない: coordinator の純粋な判断(Program の外 — running-process・new-generation-live)が spec-hash と並べて呼ぶ
   "worker が報告した process の指紋 reported が、今の宣言 spec の process の物か(coordinator の readiness・入れ替えの見張りが読む)。
-   中身の鍵(JobSpec.content — card ki-81bf84ac6590)の在る宣言は、鍵で計った指紋に加えて、鍵を外した版の指紋(版と commit で計る今までの
+   中身の鍵(JobSpec.content)の在る宣言は、鍵で計った指紋に加えて、鍵を外した版の指紋(版と commit で計る今までの
    指紋)も受ける: 鍵の欄を読まない古い worker は版で計った指紋を報告し、その指紋が合うのは宣言の版そのもので起こした process だけ。"
   (or (= reported (spec-hash spec))
       (and (is-not spec.content None) (= reported (spec-hash (replace spec :content None))))))

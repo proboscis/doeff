@@ -14,7 +14,7 @@
 ;;;                          置き場の一時の失敗〔PostgreSQL の接続の prepare の名が消えた 26000 など〕も service の実装の誤りも同じ答えで
 ;;;                          来て、client には分けられない。結末の不明な答えの値は Unreachable だけで、どの要求の答えの型にも在る — 書きの
 ;;;                          断り Refused は「宣言が許さない・何も書いていない」と言い切る値なので当てない。前は WireError を上げ、答えの型で
-;;;                          読み分ける呼び手の外へ例外が抜けて、呼び手の process ごと落ちた(card ki-200a8499710f)。撃ち直しは 503 と同じく
+;;;                          読み分ける呼び手の外へ例外が抜けて、呼び手の process ごと落ちた。撃ち直しは 503 と同じく
 ;;;                          置き場の止まりの待ちが持ち、書きは冪等キーで守る(下の「置き場の止まり」「行の書きの冪等キー」)。誤りの
 ;;;                          追跡は service の標準の誤りの行と、500 の計器の系列(service の records_requests_*_500・client の
 ;;;                          records_client_requests_*_500)が持つ
@@ -46,7 +46,7 @@
 ;;; law-append-is-idempotent)、行の書き(PutRow・PutRows・PutRowsAppendEvents)は下の「行の書きの冪等キー」。変化の待ち 2 つ(WatchChanges・WatchEvents)は待たない —
 ;;; 合図の源が自分で止まりを越え、SourceStalled・SourceResumed を bus に出す(_event_source.hy の ride-out-stall)。
 ;;;
-;;; 行の書きの冪等キー(card ki-78c6d663491f — 前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
+;;; 行の書きの冪等キー(前は行の書きに身元が無く、答えが要求の期限に間に合わず確定した書きの撃ち直しが、自分の着いた
 ;;; 1 回目に負けて Conflict で返り、期待の無い書きは間の別の書き手の欄を書き戻した): 鍵の無い PutRow・PutRows・PutRowsAppendEvents には撃つ前に要求 1 つの鍵を
 ;;; 乱数で作り(keyed-write)、1 回目と撃ち直しの全部に同じ鍵を見出し X-Records-Idempotency-Key(wire の IDEMPOTENCY-HEADER)で付ける。
 ;;; 置き場は確定した鍵の答えを覚え、同じ鍵・同じ本文の撃ち直しに前の答え(Written・WrittenRows の replayed 真)を返す(_laws.hy の
@@ -58,7 +58,7 @@
 ;;; 要求は service の計器に出ないので、client の側でだけ数えられる。meter の無い endpoint は計器の effect を出さない(答え手を持たない
 ;;; 使い手が壊れない)。書き手の job は、拍ごとに断面を送る計器と同じ答え手を渡す。
 ;;;
-;;; 往復の計時の行(ki-ca4b41612e2e): endpoint の timed-operations に名指した操作(wire の操作の名 — 例 watch-changes)の要求は、HTTP の
+;;; 往復の計時の行: endpoint の timed-operations に名指した操作(wire の操作の名 — 例 watch-changes)の要求は、HTTP の
 ;;; 答え手に区間の計時(HttpRequest の trace-phases)を頼み、往復 1 本ごとに log の 1 行(EXCHANGE-LOG — slog)を出す。往復の秒を、接続
 ;;; (新しい接続か使い回しか)・送る・service の受けの列・service の中(答えの見出し Server-Timing — _request_timing.hy)・返す(service の外の
 ;;; 待ち = 網の往き帰りと、この process の event loop が答えに気づくまで)・本文を受ける・読み解く(JSON と答えの型)と、HttpRequest の
@@ -447,7 +447,7 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (PutRowsAppendEvents [writes appends]
-    ;; 行と追記の束は 1 回の要求(wire の put-rows-append-events — card ki-e17ba3b32dea)— 鍵の無い書きには行の書きと同じく要求の冪等キーを
+    ;; 行と追記の束は 1 回の要求(wire の put-rows-append-events)— 鍵の無い書きには行の書きと同じく要求の冪等キーを
     ;; 付け、届かない時は止まりを越えて同じ鍵で撃ち直す(置き場が覚えた答えを送り直しで返す)。
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
@@ -465,7 +465,7 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadBatch [reads]
-    ;; 読みの束は 1 回の要求(wire の read-batch — card ki-177a4f287c42)— 届かない時は止まりを越えて同じ束を撃ち直す(読みは置き場を変えない)。
+    ;; 読みの束は 1 回の要求(wire の read-batch)— 届かない時は止まりを越えて同じ束を撃ち直す(読みは置き場を変えない)。
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer)))
 

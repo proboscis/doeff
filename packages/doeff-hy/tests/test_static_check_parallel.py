@@ -1,4 +1,4 @@
-"""doeff-hy-check の依存の展開を子の process で並べる形(agora-redesign #3869 の (b))の失敗ケース。
+"""doeff-hy-check の依存の展開を子の process で並べる形の失敗ケース。
 
 - 並べた結果(展開の文・位置の対応・所見・失敗の一覧)が直列と同じ — 展開の文の Hy の gensym の名まで同じ。
 - 1 つの file の展開に失敗しても、同じ段の他の file の結果は揃う。
@@ -152,7 +152,7 @@ print(json.dumps(seen))
 def test_the_entry_run_as_main_reads_the_store_its_expansion_children_wrote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 直す前は赤(agora-redesign card ki-1475765a3f18): 記録は後処理 POST_PROCESSING を __name__ の module で名指していた。
+    # 直す前は赤: 記録は後処理 POST_PROCESSING を __name__ の module で名指していた。
     # `python -m` の入口では、展開の子が __mp_main__ の project を辿った digest を書き、次の実行の親は __main__ の project を
     # 辿って照らす(関数の持ち主の名と __name__ の値が違う)ので、同じ木・同じ置き場でも保存を 1 つも引けなかった
     # (agora-controllers の日次の hy-type-trend は同じ dir でも 593 本中 592 本を展開し直す形だった)。

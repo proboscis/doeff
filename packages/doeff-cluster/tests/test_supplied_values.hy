@@ -371,7 +371,7 @@
 
 
 (deftest test-the-closure-reading-follows-the-routed-request-and-the-ca-connected-body
-  ;; 失敗ケース(card ki-0b68af4154d6): 閉じの解析(foundation-closure)は in-cluster-api-routed の先を、節が受けた要求を routed-answer へ
+  ;; 失敗ケース: 閉じの解析(foundation-closure)は in-cluster-api-routed の先を、節が受けた要求を routed-answer へ
   ;; 渡して <- で外側へ渡し直す所(in_cluster_api.hy の request)と、in-cluster-api-connected が引数の body を区画の CA の client の
   ;; with-handlers の本体に渡す所(同 body)まで追う。追えないと使い手の起動の閉じの検が「yielded a value that is not a call」で赤になる
   ;; (merge-queue の閉じの検 6 本 — 古い解析器が入っていた)。外側へ渡し直した要求は外側の代役が答え、CA の client が出す effect だけが残る。

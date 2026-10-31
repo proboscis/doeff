@@ -1,4 +1,4 @@
-;;; 汎用の計算の effect(compute_effects.hy — agora-redesign #802 便 4)の検。
+;;; 汎用の計算の effect(compute_effects.hy)の検。
 ;;;   - 本物(thread-pool-compute-handler)と I/O なし(inline-compute-handler)が同じ筋書きに同じ答えを返す: 値・落ちた program・純粋でない
 ;;;     program(呼び手の handler には届かず ComputeFailed)。
 ;;;   - 本物は計算の間も scheduler の他の task を回す(計算が他の task の合図を待っても詰まらない)。

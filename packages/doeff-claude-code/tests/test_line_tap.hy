@@ -1,4 +1,4 @@
-;; 手番の行の写し手(ClaudeStartTurn.tap — card ki-31b41eac5071)の検。
+;; 手番の行の写し手(ClaudeStartTurn.tap)の検。
 ;;
 ;; 上の層(CLI のホスト)は答えの記録を、ClaudeReadTurnEvents で頁を受けた時に書いていた。本番の turn-host では、読み手の thread が
 ;; 行を読んでから上の層が頁を受けるまで中央値 7.3 秒・最大 119 秒遅れ、記録を 2 秒しか待たない hook が、答えた後の呼びを「答えていない」と

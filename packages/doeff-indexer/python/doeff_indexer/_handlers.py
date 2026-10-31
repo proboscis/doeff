@@ -1,6 +1,6 @@
 """FindSymbols に Rust の索引器(内側の拡張 doeff_indexer._native)で答える handler rust_indexer。
 
-拡張の .so を読むのはこの module だけ(effect と答えの型は _effects — 構成のレビュー lt-QHQJEWJDSAHGTT1ZASS28F9V68 の所見 A)。
+拡張の .so を読むのはこの module だけ(effect と答えの型は _effects)。
 Rust の索引器は、今の dir の下の Python の file を全部読んで索引を作る(module_path は索引の根を決めない — 前の口と同じ)。
 """
 

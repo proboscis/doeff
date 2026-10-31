@@ -1,5 +1,4 @@
-;;; JSON Lines(1 行に JSON の値を 1 つ書いて改行で区切る本文 — CLI の会話の記録・stream の出力など)を行に割る唯一の所
-;;; (card ki-3d45f5857239)。
+;;; JSON Lines(1 行に JSON の値を 1 つ書いて改行で区切る本文 — CLI の会話の記録・stream の出力など)を行に割る唯一の所。
 ;;;
 ;;; 割るのは改行(LINE-END)だけ。str.splitlines は JSON の文字列の中に生のまま書かれた U+2028・U+2029(JSON は escape を求めない —
 ;;; web の本文に在る)や \x1c〜\x1e・\x85・\v・\f でも割り、正しい JSON の行を読めない 2 行にする(実測: 本番の Claude Code の

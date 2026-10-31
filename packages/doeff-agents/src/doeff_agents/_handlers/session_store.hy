@@ -1,4 +1,4 @@
-;;; agent runtime の session の行の保存の handler(agora-redesign #608)。
+;;; agent runtime の session の行の保存の handler。
 ;;;
 ;;; 既知の形: algebraic effects。`PutAgentSession` / `GetAgentSession` /
 ;;; `ListAgentSessions` の 3 つの effect を、composition root が選んだ repository

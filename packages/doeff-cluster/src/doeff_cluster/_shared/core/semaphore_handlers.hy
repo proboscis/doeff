@@ -101,7 +101,7 @@
   ;; (TaskCancelledError — scheduler が task の中へ投げる)は届かない失敗として飲まずに上げる(飲むと取り消した task が待ち続ける)。
   ;; 取り消しが、最後の claim が盤に通ったか分からない間(返事を待つ間・届かずに試し直す間)に届いたら、上げる前に同じ token の返しを
   ;; 1 度送る(claim-withdrawn — 盤に通っていた token を期限まで残さない。手元の記録は返事が ok と分かった後にしか付かないので、呼び手は
-  ;; この token を知らない・依頼 lt-VDFSDNZKFS9ACQHW4R64AGK4N0 の盲検 A)。断られた後の空きの待ちの間は、盤に token が無いので送らない。
+  ;; この token を知らない)。断られた後の空きの待ちの間は、盤に token が無いので送らない。
   (setv token (.next-token session))
   (var unsure False)
   (try

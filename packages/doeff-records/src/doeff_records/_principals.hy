@@ -1,7 +1,7 @@
 ;;; 記録の service の呼び手の書き手の名 — 呼び手が X-Records-Writer の見出しで名乗った名を、そのまま書き手の名にする(純粋)。
 ;;;
 ;;; 名乗らない呼び手(見出しが無い・空)は、名の無い書き手 ANONYMOUS として通す。service は名簿の file を読まず、Authorization の見出しも読まない
-;;; (#3008・頼まれていない token・password・security の仕掛けは置かない — 利用者の決定 2026-10-02)。
+;;; (#3008・頼まれていない token・password・security の仕掛けは置かない)。
 (require doeff-hy.macros [defk <- val])
 (val MODULE-TAGS {:context "records" :role "judgment"})
 (import dataclasses [dataclass])

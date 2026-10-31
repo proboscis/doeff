@@ -1,4 +1,4 @@
-;;; worker の ServiceAccount の token の古さの判断(card ki-d31166f84ad0)— I/O は呼び手(worker/protocol/coordinator_link)が行う。
+;;; worker の ServiceAccount の token の古さの判断— I/O は呼び手(worker/protocol/coordinator_link)が行う。
 ;;;
 ;;; kubelet は投影の token を期限の 8 割(1 時間の token なら約 48 分)で置き直す。2026-10-24 の zeus では kubelet が置き直しを止め、
 ;;; 通信が戻った後も再開せず、JWT の exp の 81 秒後から Pod の中で API server を呼ぶ物が全部 401 になった(Pod の中からは

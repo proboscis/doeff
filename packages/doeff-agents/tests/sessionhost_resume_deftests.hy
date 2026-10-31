@@ -54,7 +54,7 @@
   (.update fields overrides)
   (setv row (SessionRow #** fields))
   ;; 置き場は memory-session-store(under-world が重ねる)— SessionStoreUpsert と同じ書きの判断で置き場へ書き、検が読む写しにも置く
-  ;; (agora-redesign #2409 — 09-29 の 8c560886c で置き場を分けた後、蘇生元の行が置き場に無く SessionStoreGet が答えを持たなかった)。
+  ;; (09-29 の 8c560886c で置き場を分けた後、蘇生元の行が置き場に無く SessionStoreGet が答えを持たなかった)。
   (setv world.store (run (with-row world.store row)))
   (setv (get world.rows row.session-id) row)
   row)

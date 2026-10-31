@@ -23,8 +23,8 @@
 ;;;   - 行の identity = 呼んだ関数の module:qualname・引数の正規 JSON(関数は {"ref": "module:qualname"})。spec-hash は identity・
 ;;;     revision・versions・environ から作り、詰めた文字列は比べない(改訂 1 の A — cloudpickle の出力は同じ Program でも揺れる)。
 ;;;   - describe = identity から作る表示の 1 行(coordinator は業務の code を持たず Program を解けないので、表示は宣言が運ぶ)。
-;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない(operator 2026-09-27)。
-;;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d): 系は task-limits(GroupLimit — 組の名・範囲・上限の値)を持ち、宣言は資源
+;;; 旧い宣言(:env・:config・:env-config・:requires・関数の参照 + 設定)は受け付けない。
+;;; 組の同時数の上限(2026-10-12): 系は task-limits(GroupLimit — 組の名・範囲・上限の値)を持ち、宣言は資源
 ;;; GroupLimit として coordinator へ書く。task は組の名だけを名乗る(値の持ち主は系の宣言 1 つ)。
 ;;; 置き場(#2540): この module は型だけ(CallShape・Job・System・RecordArgument・Declaration・UPDATE-FORMS・REPLICAS-VALUES)。identity と検めの判断は
 ;;; doeff_cluster._shared.core.service_rules、構成子と宣言の行の組み立ては doeff_cluster._shared.entry.service_build。
@@ -54,9 +54,9 @@
   "系の job 1 つ(常駐の service)。program = Program の値(R1)・call = それを作った呼び出しの形・needs = 要る能力の名(空でない
    frozenset — R4b)・replicas = 望む台数(0 = 取り下げ・1 = 動かす — 宣言し直しが Service に書く値)・readiness = {\"windowSeconds\" n …}
    か None・update = recreate | handoff・environ = 子の環境変数(EnvVar の tuple — 名の順)・peak-mib = 起動の memory の山(MiB)・
-   settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する・card ki-2acb63aec0fd)・single-host = 1 台の worker に縛ってよい訳
+   settle-mib = 落ち着いた memory(MiB・山以下 — どちらも必ず宣言する)・single-host = 1 台の worker に縛ってよい訳
    (無ければ None — 置ける worker が 2 台以上を求める照らしの外にする)・filled = environ の名のうち宣言の時に埋める名(defsystem の印
-   (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ・card ki-02e836a9c628)。"
+   (filled) — 既定を持たず、宣言する者が上書きで値を渡す。上書きの後も空なら断るのは宣言する者の確かめ)。"
   (#^ str name)
   (#^ object program)
   (#^ CallShape call)
@@ -73,7 +73,7 @@
 
 (defrecord System
   "系 = job の組(defsystem の関数が返す値)。name = 系の名・jobs = Job の tuple(名は重ならない)・task-limits = 系が宣言する組の同時数の
-   上限(GroupLimit の tuple — 組の名は重ならない。task は組の名だけを名乗り、値と範囲はここが持つ — card ki-b0e8028c8c8d)。"
+   上限(GroupLimit の tuple — 組の名は重ならない。task は組の名だけを名乗り、値と範囲はここが持つ)。"
   (#^ str name)
   (#^ tuple jobs)
   (setv #^ (get tuple #(GroupLimit ...)) task-limits #()))

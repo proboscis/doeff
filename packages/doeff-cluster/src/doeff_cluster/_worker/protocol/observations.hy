@@ -48,13 +48,13 @@
 
 (defclass [(dataclass :frozen True)] ObserveJobRoots [EffectBase]
   "worker が起こし、まだ終わりを観測していない job の根の process(JobRoot の tuple — worker/core/memory_rules)。機体の memory の見張り
-   (worker/protocol/memory_watch)が、子 process の言い換え(worker/protocol/process_host)へ問う(card ki-7b934e2538f9)。子を問い直さない
+   (worker/protocol/memory_watch)が、子 process の言い換え(worker/protocol/process_host)へ問う。子を問い直さない
    (終わりの観測と回収は調整ループの ObserveProcesses だけ)。")
 
 
 (defclass [(dataclass :frozen True)] ObserveMemoryTight [EffectBase]
   "機体の memory が逼迫(見張りの様子が TIGHT か DANGER)かの観測(bool)。世界の観測のまとめ(local-host)が、機体の memory の見張りの
-   観測の答え手(worker/protocol/memory_observer)へ問う(card ki-7b934e2538f9)。")
+   観測の答え手(worker/protocol/memory_observer)へ問う。")
 
 
 (defclass [(dataclass :frozen True)] ObserveMemoryKills [EffectBase]

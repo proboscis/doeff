@@ -1,4 +1,4 @@
-"""例ごとに作り直す閉包の handler の、effect の型の解きを code ごとに 1 回にする事の検(agora-redesign #2422)。
+"""例ごとに作り直す閉包の handler の、effect の型の解きを code ごとに 1 回にする事の検。
 
 VM は handler を据える度に effect の引数の型の註を解く(doeff_vm._effect_types.handler_spec)。答えは関数のオブジェクトに
 覚えるが、handler を返す関数が例ごとに作る閉包は毎回別のオブジェクトなので、毎回解き直していた(預かり所の本体の契約の検の

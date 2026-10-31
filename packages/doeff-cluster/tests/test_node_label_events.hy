@@ -1,5 +1,5 @@
 ;;; worker の置かれた node の label を、coordinator が時間で k8s へ読みに行かず、Node の変化の出来事で受けて能力を導き直す事の失敗ケース
-;;; (#4070 — polling に頼る所は全部直し、polling は最後の手段にする。利用者の決定 2026-10-06)。
+;;; (#4070 — polling に頼る所は全部直し、polling は最後の手段にする)。
 ;;;
 ;;; 本物の coordinator と worker を模擬の cluster(仮想の時計・偽の k8s KubeMemory)で回す。worker w1 は node n1 に置かれ、n1 は会社の機体の
 ;;; label(doeff.dev/company-machine=true)を持つので、coordinator は w1 に能力 company-machine を足す(ClusterNaming の node-capabilities の

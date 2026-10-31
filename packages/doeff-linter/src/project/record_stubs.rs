@@ -1,4 +1,4 @@
-//! DOEFF145: 型の宣言(.pyi)が、同じ dir の同じ名の .hy の実行時の形を偽らない(agora-redesign #1191 — agora-controllers の
+//! DOEFF145: 型の宣言(.pyi)が、同じ dir の同じ名の .hy の実行時の形を偽らない(agora-controllers の
 //! scripts/check_record_stubs.hy の判定の移し先。判定の意味は元と同じ)。
 //!
 //! 食い違いの形: .hy の class が kw-only の record(最上位の `(defrecord 名 …)` か、飾りに `(dataclass … :kw-only True …)` を持つ

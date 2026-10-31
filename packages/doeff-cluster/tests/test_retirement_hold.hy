@@ -1,4 +1,4 @@
-;; 退きの保ち(card ki-e3531030eb37): 入れ替え(handoff)で退いた process が退きの保ち(名前付きの lease RETIREMENT-HOLD)を持つ間は、
+;; 退きの保ち: 入れ替え(handoff)で退いた process が退きの保ち(名前付きの lease RETIREMENT-HOLD)を持つ間は、
 ;; 宣言の寿命の上限(readiness の retiredSeconds)を越えても worker が止めず、走っている仕事が終わりまで回る。保ちを持たない退いた
 ;; process は今どおり上限で止められる(上限は、自分で終わらない退いた process を受け止める物 — 仕事の長さの上限ではない)。
 ;;

@@ -1,4 +1,4 @@
-"""deff の :tags・:effects の展開と doeff_hy._declarations の型(declarations.pyi)の失敗ケース(agora-redesign #2335・#2324 の子)。
+"""deff の :tags・:effects の展開と doeff_hy._declarations の型(declarations.pyi)の失敗ケース(#2324 の子)。
 
 deff は定義の後に `setattr(名, '__doeff_tags__', doeff_hy._declarations.DefinitionTags(…))` と
 `setattr(名, '__doeff_effects__', doeff_hy._declarations.effect_types(…))` を出す。型検査の展開は module の直下の記帳を外すが、

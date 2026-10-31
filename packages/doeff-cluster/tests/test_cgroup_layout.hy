@@ -1,4 +1,4 @@
-;; 起動の script の cgroup の層(deploy/boot.sh の WORKER_CGROUP_LAYOUT — card ki-cd8cb84fdcd2)の検。
+;; 起動の script の cgroup の層(deploy/boot.sh の WORKER_CGROUP_LAYOUT)の検。
 ;;
 ;; k8s の Pod の worker では、worker の本体・常駐の job・task が 1 つの cgroup(container の cgroup)を分け合い、1 本の task が memory を
 ;; 増やすと、container の上限の手前で回収が詰まり、本体も常駐の job も一緒に止まった(10-24 06:03 JST に 16.7 分)。層は container の cgroup
@@ -60,7 +60,7 @@
 
 
 (deftest test-a-layout-with-cpu-files-gives-the-children-cpu-and-writes-each-weight [#^ Path tmp-path]
-  ;; CPU の重み(card ki-b40c5c399455): cpu の file を書く層が在れば、子に memory と cpu を掛けてから重みを書く。失敗ケース: 子に cpu を
+  ;; CPU の重み: cpu の file を書く層が在れば、子に memory と cpu を掛けてから重みを書く。失敗ケース: 子に cpu を
   ;; 掛けないまま cpu.weight を書くと、kernel は file を作らず(書けない)、常駐の層の thread が一括の層と同じ重みで実行待ちに並ぶ。
   (<- scope Path (fake-container tmp-path))
   (<- done subprocess.CompletedProcess

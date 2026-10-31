@@ -150,7 +150,7 @@
   ;; 同じ(worker/protocol/leaving_mark)。真の間、worker は handoff の job の新しい試行を起こさない(coordinator の返事の印 supersededBy に
   ;; 依らない — policy.start-step)。既定は偽(印を読まない呼び手・Pod の外の worker)。
   (setv #^ bool leaving False)
-  ;; 機体の memory が逼迫(見張り worker/protocol/memory_watch の様子が TIGHT か DANGER — card ki-7b934e2538f9)。真の間、worker の判断
+  ;; 機体の memory が逼迫(見張り worker/protocol/memory_watch の様子が TIGHT か DANGER)。真の間、worker の判断
   ;; (policy の ready-tree-step)は task(once)の起動を見送る(常駐の job は見送らない)。既定は偽(見張りを持たない呼び手・模擬の環境)。
   (setv #^ bool memory-tight False)
   ;; 機体の memory の見張りが止めた job の process の印(#(process の名 根の pid) の frozenset — 見張りが止めた単位の属する job の根)。
@@ -208,8 +208,8 @@
 ;;   WARM-CHILD = 分かれ元の待ちの子の準備待ち・HANDOFF-ABANDONED = 入れ替えの諦め(宣言が変わるまで起こさない)・ELDER-RUNS = 準備と
 ;;   入口の検めは揃ったが、同じ名の前の世代がこの job を動かしている(印 elder-runs — coordinator が印を外すまで起こさない・AL-D2f)・
 ;;   LEAVING = この Pod の止まり(preStop の drain)が始まったので handoff の job の新しい試行を起こさない(WorldView.leaving — AL-D2p)・
-;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない・
-;;   card ki-7b934e2538f9)・MEMORY-KILLED = 常駐の job が機体の memory の見張りに続けて止められた(WorkerPolicy.memory-kill-limit 回 —
+;;   MEMORY-TIGHT = 機体の memory が逼迫(TIGHT か DANGER)の間、task を起こさない(WorldView.memory-tight — 常駐の job は見送らない)
+;;   ・MEMORY-KILLED = 常駐の job が機体の memory の見張りに続けて止められた(WorkerPolicy.memory-kill-limit 回 —
 ;;   起動のたびに同じ memory の山を作る job は、起こし直しても同じ所で止められる。宣言の spec が変わるまで起こさない)。
 (defenum StartHold PREPARING PREPARE-FAILED DISK-FULL PROBING PROBE-FAILED BACKOFF WARM-CHILD HANDOFF-ABANDONED ELDER-RUNS LEAVING MEMORY-TIGHT
          MEMORY-KILLED)
@@ -223,9 +223,9 @@
 (defrecord WarmChildMark
   "待ちの子の準備完了の印(<S>/ready.json — 入口が読み込みの後に書く): threads = 書いた時の thread の数・vm-live = 生きた VM の数の 3 つ組。
    分かれる前に thread も VM も無い形(threads = 1・vm-live が全部 0)の時だけ準備済みに数える(条 WC3 — 判じるのは判断の層 1 か所)。
-   services = 常駐の job(service)の頼み(入力の pipe・cgroup・知らせの中継)を受けられる版の待ちの子か(印の serviceForks — card
-   ki-de44efdb9aa4。待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。
-   orphans = 頼みの orphan-seconds(worker の消失を退きとして扱い、寿命の上限まで待つ — card ki-f69f2a6869aa)を受けられる版の待ちの子か
+   services = 常駐の job(service)の頼み(入力の pipe・cgroup・知らせの中継)を受けられる版の待ちの子か(印の serviceForks —
+   待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。
+   orphans = 頼みの orphan-seconds(worker の消失を退きとして扱い、寿命の上限まで待つ)を受けられる版の待ちの子か
    (印の orphanForks。頼みの形は知らない欄を断るので、印の無い版の待ちの子へ worker より長く生きる service を頼まない — 入れ物 shim で
    起こす)。"
   (#^ int threads)
@@ -253,7 +253,7 @@
    (まだ書いていなければ None)・exit-code = 終わりを観測した code(走っていれば None)・ended-ms = 終わりを観測した刻・detail = 終わりの理由
    (log の最後の 1 行か、worker が止めた訳)・stop = worker が止め始めた後の進み(止めていなければ None)・refusals = この子を起こす前に、
    同じ root の待ちの子が続けて断った(起動を断った・分けるのを断った)回数(warm_rules の refusals-after が数える)・fork-refused = task を
-   分けるのを断ったので worker が止めた子(StopWarmChild の refused — card ki-e1612a12d0c3)。"
+   分けるのを断ったので worker が止めた子(StopWarmChild の refused)。"
   (#^ str key)
   (#^ int pid)
   (#^ int started-ms)
@@ -271,7 +271,7 @@
   (setv EXITED "exited" STOPPED "stopped"))
 
 
-;; StartJob の答え(card ki-e1612a12d0c3): 起こせなかった事は例外でなく値で返す。待ちの子の混み(5 秒の内に答えない)や命令の無さで
+;; StartJob の答え: 起こせなかった事は例外でなく値で返す。待ちの子の混み(5 秒の内に答えない)や命令の無さで
 ;; 普通に起きる答えで、例外にすると worker-tick を抜けて worker の process ごと落ち、機体の上の job を全部道連れにした(10-24 02:42 JST)。
 (defrecord JobStarted
   "StartJob で子を起こした: name = job の名・pid = 起こした子の pid。"
@@ -299,7 +299,7 @@
   (setv #^ (| int None) last-exit-code None)
   (setv #^ (| JobStop None) stopping None)
   ;; 続けて exit code が 0 でなく終わった回数(失敗の数え方・状態の表示に使う)。exit code 0 の終わりは失敗ではないので 0 に戻す。
-  ;; stable-run-ms 以上動いた process を入れ替えで名から外した時も 0 に戻す(unexpected-exits も — 報告の境と同じ・card ki-3f4bbc55733a)。
+  ;; stable-run-ms 以上動いた process を入れ替えで名から外した時も 0 に戻す(unexpected-exits も — 報告の境と同じ)。
   (setv #^ int failures 0)
   ;; 最後に起動した時刻(十分長く動いた後の終了は数え直す)。
   (setv #^ (| int None) last-start-ms None)
@@ -311,7 +311,7 @@
   ;; 終わったら 0 に戻す(止められても、その前に仕事を回せた job は数え直す)。
   (setv #^ int memory-kills 0)
   (setv #^ (| str None) memory-killed-spec None)
-  ;; 最後の StartJob が起こせなかった答え(card ki-e1612a12d0c3 — 起こせた StartJob で None に戻す)。続けて落ちた回数(failures・
+  ;; 最後の StartJob が起こせなかった答え(起こせた StartJob で None に戻す)。続けて落ちた回数(failures・
   ;; unexpected-exits)にも数え、backoff はこの刻から数える(policy の in-backoff)。task は終わった事にしない(last-outcome を書かない —
   ;; backoff の後に起こし直す)。
   (setv #^ (| JobNotStarted None) not-started None)
@@ -350,14 +350,14 @@
   ;; 待ちの子が準備完了の印を書く前に終わる(起動を断る)事が同じ root で続いた時に、起こし直しを止めて、その root から分かれる task を
   ;; env-failed で終える回数(正の整数)。断りが決定的(import の失敗など)なら起こし直しても同じで、上限が無いと task は PREPARING のまま
   ;; worker の枠を取り続けた(2026-10-10 に 1,092 回・10 時間)。task を分けるのを断った待ちの子(worker が止める)も同じ数えに乗る
-  ;; (card ki-e1612a12d0c3 — warm_rules の ended-refusing)。
+  ;; (warm_rules の ended-refusing)。
   (setv #^ int warm-refusal-limit 3)
-  ;; 常駐の job(service — JobSpec.once が偽・実行環境を宣言した job)も、その root の待ちの子から分けて起こすか(card ki-de44efdb9aa4)。
+  ;; 常駐の job(service — JobSpec.once が偽・実行環境を宣言した job)も、その root の待ちの子から分けて起こすか。
   ;; 分けた service は待ちの子が読み込んだ module の頁を共有する(何もしない job の本体 1 本 170 MB の 8 割が読み込んだ code と型)。
   ;; 偽 = 今までどおり入れ物 shim で冷えた起動。真でも、印で service を受けると名乗らない版の待ちの子と、断りの上限に届いた待ちの子の
   ;; root の service は入れ物 shim で起こす(warm_rules の service-start)。機体の配備が worker の環境変数 DOEFF_WORKER_WARM_SERVICES で入れる。
   (setv #^ bool warm-services False)
-  ;; service のために待ちの子を起こす root の、実行環境の service の本数の下限(正の整数 — card ki-de44efdb9aa4)。待ちの子そのものが
+  ;; service のために待ちの子を起こす root の、実行環境の service の本数の下限(正の整数)。待ちの子そのものが
   ;; 読み込んだ頁を持つ(zeus の測りで RSS 約 500 MB)ので、service が 1〜2 本の root では分けても本体の合計が減らない。task か温める表の
   ;; ために待ちの子を起こす root の service は、本数によらず分ける(待ちの子は既に居る — warm_rules の service-warm-keys)。
   (setv #^ int warm-services-min 3)
@@ -424,7 +424,7 @@
 ;; --- 宣言の読み取り -------------------------------------------------------------
 
 (defrecord HeartbeatSent
-  "coordinator への口が heartbeat を送った事実(宣言の読み ReadDesired の送りも、拍の外の背景の task の送りも — card ki-e38dbfca7671):
+  "coordinator への口が heartbeat を送った事実(宣言の読み ReadDesired の送りも、拍の外の背景の task の送りも):
    at = 送った刻(epoch ms の壁の時計 — 送りを始めた時刻・遅れの行に書く刻)・mono-ms = 送りを始めた単調な時計の読み(ms — 間の長さの
    計り用。壁の時計は戻りうるので、間は mono-ms の差で計る・#3825)・worker = 名乗った worker の名・lease-ms = 送った時に知っていた
    生存の窓(heartbeat の返事の timing の lease_ms — まだ返事が無ければ ClusterTiming の既定)。拍の Program が前の送りとの間を測り、
@@ -447,10 +447,10 @@
   ;; 値の比べには入れない(同じ宣言は呼び鈴が違っても同じ)。
   (setv #^ (| Future None) changed (field :default None :compare False))
   ;; 前の読みの後からこの読みまでに送った heartbeat の事実(HeartbeatSent)の列 — 送った順。この読みの送りと、拍の外の背景の task の
-  ;; 送り(card ki-e38dbfca7671)。空 = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに絞った)。値の比べには入れない
+  ;; 送り。空 = 送らなかった(前の返事の desired を使い続けた・途絶で送らずに絞った)。値の比べには入れない
   ;; (同じ宣言は送りの刻が違っても同じ)。
   (setv #^ tuple sends (field :default #() :compare False))
-  ;; 返事がこの世代を退いた世代と名指した(返事の superseded — 同じ名の新しい世代が名乗った後・card ki-a66bb71f4152)。Pod の job の
+  ;; 返事がこの世代を退いた世代と名指した(返事の superseded — 同じ名の新しい世代が名乗った後)。Pod の job の
   ;; label の答え手(worker/protocol/pod_labels)は、退いた世代では label に触らない。途絶で絞った宣言は偽。値の比べには入れない。
   (setv #^ bool superseded (field :default False :compare False)))
 
@@ -526,7 +526,7 @@
 
 
 (defclass [(dataclass :frozen True)] StartJob [EffectBase]
-  "job の子を起こす。答え = JobStarted か JobNotStarted(起こせなかった — 例外にしない・card ki-e1612a12d0c3)。"
+  "job の子を起こす。答え = JobStarted か JobNotStarted(起こせなかった — 例外にしない)。"
   (#^ JobSpec spec)
   (#^ int attempt)
   (#^ str code-path)
@@ -607,7 +607,7 @@
 (defclass [(dataclass :frozen True)] StopWarmChild [EffectBase]
   "走っている待ちの子の process group へ stage の signal を送る(reason = 止めた訳 — 観測の detail に残る)。待ちの子から分かれた task には
    何も送らない(task は分かれた時に自分の session と process group を持つ — 条 WC2)。refused = 分けるのを断った待ちの子を止める
-   (観測の fork-refused に残り、終わった後は断りに数える — card ki-e1612a12d0c3)。"
+   (観測の fork-refused に残り、終わった後は断りに数える)。"
   (#^ str key)
   (#^ StopStage stage)
   (#^ str reason)
@@ -678,7 +678,7 @@
    heartbeat を送った tick の後半が送信間隔 2.5 秒を越えると、次の heartbeat の期限を捨てて fence の期限まで眠った)。
    began-mono-ms = 同じ tick の頭の、単調な時計の読み(ms)。began は tick の判断の時の壁の時計の枠の刻なので、その後に壁の時計が
    動いた時に handler が今の壁の時計の枠へ写し直せるよう、単調な読みを一緒に渡す(写し方 = 今の壁の時計 − heartbeat_rules.silent-ms —
-   card ki-069f4a5c07f7。壁の時計だけの刻と比べる handler は began をそのまま使う)。"
+   壁の時計だけの刻と比べる handler は began をそのまま使う)。"
   (#^ int began)
   (#^ int began-mono-ms))
 
@@ -694,7 +694,7 @@
    began・began-mono-ms = 終わった周の頭の刻の対(WorkerWakes に渡した物と同じ — 壁の時計の epoch ms と、同じ刻の単調な時計の ms)。
    wakes の期限(DueAt)は壁の時計の枠の刻なので、答え手は「期限 − 今の壁の時計」で待たず、この対からの経過を沈黙と同じ計り
    (heartbeat_rules.silent-ms — 壁の時計と単調な時計の長い方)で数えて待ちの長さにする: 期限を組み立てた後・答え手が時計を読む前に
-   壁の時計が戻っても、戻った分だけ待ちが延びない(延びると、途絶の柵の判断が戻った分だけ遅れる — card ki-069f4a5c07f7)。"
+   壁の時計が戻っても、戻った分だけ待ちが延びない(延びると、途絶の柵の判断が戻った分だけ遅れる)。"
   (#^ WorkerPolicy policy)
   (#^ (| Future None) changed)
   (#^ WakeSet wakes)

@@ -1,4 +1,4 @@
-;;; 形の違う JSON の答え Malformed の置き場(card ki-923c16d33551)。
+;;; 形の違う JSON の答え Malformed の置き場。
 ;;;
 ;;; wire.hy(pydantic の解き手)と wire_codec.py(自前の解き手・pydantic を読まない)の両方が同じ型を返すので、pydantic を読まない
 ;;; この module に置く。wire.hy は ここから import して今までどおり名を出す(`(import doeff_hy._wire [Malformed])` の読み手は変わらない)。

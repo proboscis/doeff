@@ -1,4 +1,4 @@
-//! 機体の検の枠の門の検(card ki-ce35bf38508d)— 重い mode の doeff-linter は、HOME の下の正本
+//! 機体の検の枠の門の検— 重い mode の doeff-linter は、HOME の下の正本
 //! (`dotfiles/agent/tests/machine_check_slots.py`)の命令の包み `run` へ自分を渡し、枠を取ってから走る。
 //!
 //! 本物の正本を写した検は、HOME を一時の dir に向け、正本の module の写しと、K = 1・置き場 = 一時の dir の宣言を隣に置いて撃つ
@@ -160,7 +160,7 @@ fn a_linter_beyond_the_slots_waits_names_the_holder_and_runs_when_one_frees() {
 #[test]
 fn a_stale_holder_marker_does_not_let_the_linter_skip_a_full_slot_and_the_expiry_exits_75() {
     // 入れ子かどうか(祖先が枠を持つか)は正本だけが判じる — 正本の内部の印(env)を継いだだけの linter は、印の指す pid が
-    // 枠を持っていなければ内側ではない(保持者が退いた後に残った子・背景の子 — 盲検 B・設計検証 lt-2QBB34XF77DRT3V3THV7T67D3P)。
+    // 枠を持っていなければ内側ではない(保持者が退いた後に残った子・背景の子 — 盲検 B)。
     // 枠が埋まったままなら待ちの上限で lint をせずに終わり、linter の公開の終了コード 75(未実行)を返す。
     let tmp = tempfile::TempDir::new().unwrap();
     let (home, canon, slot) = canon_home(tmp.path(), 2);
@@ -265,7 +265,7 @@ fn stage_in_git(repo: &Path) {
     git(&["add", "tool.py"]);
 }
 
-/// 利用者の決定 2026-10-12(commit の前の検査は test ではないので、ほかの検の後ろで待たせない): commit の hook
+/// commit の前の検査は test ではないので — ほかの検の後ろで待たせない: commit の hook
 /// (`--commit-hook`)は stage した file に file 1 つで決まる規則を当てる短い止める検査で、自分の CPU 秒の上限(timeout_s)を持つ。
 /// 親も、親が stage した path に撃つ子の linter(editor-json)も正本を通らない — 枠の待ちで commit が止まらない。
 /// 子が走った事は、stage した tool.py の当たり(DOEFF016)で止まる事で見る。
@@ -325,7 +325,7 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 fn the_linter_keeps_no_copy_of_the_slot_values() {
     // 値の持ち主は正本の隣の宣言 1 つ(K・置き場・待ちの上限)。linter の code はその値も宣言の file の名も綴らない —
     // 綴るのは正本の在処(HOME からの相対)だけ。正本の内部の印(枠を持つ process の子へ継ぐ env の名)も綴らない —
-    // 入れ子の判定を linter に写さない(盲検 B・設計検証 lt-2QBB34XF77DRT3V3THV7T67D3P)。
+    // 入れ子の判定を linter に写さない(盲検 B)。
     let holder_env = canon_holder_env();
     let declaration_path = real_canon().with_file_name("machine_check_slots.json");
     let declaration: serde_json::Value = serde_json::from_str(&read(&declaration_path)).unwrap();

@@ -1,6 +1,6 @@
 (require doeff-hy.macros [deftest defhandler defk <- val with-handler])
 
-;;; http-host-gate(doeff_core_effects/_http_host_gate.hy — agora-redesign #3412):
+;;; http-host-gate(doeff_core_effects/_http_host_gate.hy):
 ;;;   * 通す集合に在る host への要求は答えず、外側の答え手へそのまま流れる(port は見ない)
 ;;;   * 通す集合に無い host への要求は外へ出ない: 失敗を値で受ける要求には HttpFailed(CONNECT-FAILED)、それ以外には HostNotAllowed
 ;;;   * host は URL の hostname ちょうどで照らす(手元の名を前に付けただけの外の名は通らない)

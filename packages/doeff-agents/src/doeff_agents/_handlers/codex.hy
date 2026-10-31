@@ -78,7 +78,7 @@
        "status" SessionStatus.BOOTING}}))
     (resume handle))
 
-  ;; 文脈の写し(agora-redesign #731)は codex の文脈では取り出せない — 黙って None を返さず断る。
+  ;; 文脈の写しは codex の文脈では取り出せない — 黙って None を返さず断る。
   ;; LaunchEffect.resume_snapshot は上の refuse-turn-capabilities が断る。
   (ExportContextEffect [agent-type]
     :when (= agent-type AgentType.CODEX)

@@ -8,12 +8,12 @@
 ;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
-;;;   outbox/<結末の id>(2026-10-21・card ki-e7945a2b2d00 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
+;;;   outbox/<結末の id>(2026-10-21 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 出口を持たない今までの振る舞い)
 ;;;   keep/<名>(#2804 — 途絶しても動かし続けてよい印の約束 KeepMark {job worker boot since_ms}。無い置き場は空として読む。旧い版の
 ;;;   coordinator はこの鍵を読まずに無視する — 印を約束しない今までの振る舞い)
 ;;;   superseded/<名>/<世代>(AL-D2 — 退いた世代が走らせている入れ替えの job の組 SupersededRun {worker boot jobs seen_ms overlapped leaving since_ms}。無い置き場は
-;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い。since_ms の無い行は None として読む — card ki-d8e594fe934d)
+;;;   空として読む。旧い版の coordinator はこの鍵を読まずに無視する — 旧い Pod の preStop が入れ替えの job を待たない今までの振る舞い。since_ms の無い行は None として読む)
 ;;;   board/<盤のキー> = {"value" … "resourceVersion" …}
 ;;; worker/<名> は最後の連絡の時刻 lastSeenMs を持つ(2026-09-25 — heartbeat ごとではなく api_policy.mark-alive の拍ごとの写し)。
 ;;; 世代の順 boot・retired と今の世代の起動時刻 bootAt(2026-09-27 — cluster_policy.generation-order)も持つ(無い鍵は世代・起動時刻を知らない)。
@@ -47,11 +47,11 @@
 (val HANDOFF "handoff/")
 (val KEEP "keep/")
 (val SUPERSEDED "superseded/")
-;; 組の同時数の上限(2026-10-12・card ki-b0e8028c8c8d — 資源 GroupLimit 1 つに鍵 1 つ)。
+;; 組の同時数の上限(2026-10-12 — 資源 GroupLimit 1 つに鍵 1 つ)。
 (val GROUP-LIMIT "grouplimit/")
-;; Service の needs の一時の上書き(2026-10-27・card ki-1523bc0aba4f — 資源 NeedsOverride 1 つに鍵 1 つ。無い置き場は空として読む)。
+;; Service の needs の一時の上書き(2026-10-27 — 資源 NeedsOverride 1 つに鍵 1 つ。無い置き場は空として読む)。
 (val NEEDS-OVERRIDE "needsoverride/")
-;; 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00 — 出口の行 1 つに鍵 1 つ。鍵 = 結末の id)。
+;; 切り離した task の終わりの出口(2026-10-21 — 出口の行 1 つに鍵 1 つ。鍵 = 結末の id)。
 (val OUTBOX "outbox/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
@@ -73,7 +73,7 @@
      (if (= state.task-prefix "t") {} {"taskPrefix" state.task-prefix})))
 
 
-;; 保存の行は capacity を書かず backgroundRoom を書く(card ki-2acb63aec0fd)。capacity の在る旧い行は capacity を読まずに通し、backgroundRoom の無い行は
+;; 保存の行は capacity を書かず backgroundRoom を書く。capacity の在る旧い行は capacity を読まずに通し、backgroundRoom の無い行は
 ;; 0 で読む — 配備の間だけの許し(旧い coordinator の保存から読み直す間)。
 (deff worker-json [#^ WorkerInfo w]  ; defk にできない: SaveState の答え手 durable-states と起動の読み直し(Program の外)が呼ぶ純粋な綴り
   {:pre [(: w WorkerInfo)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}

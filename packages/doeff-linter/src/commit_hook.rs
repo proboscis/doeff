@@ -1,4 +1,4 @@
-//! commit の hook の入口(`doeff-linter --commit-hook`・agora-redesign #1989)。
+//! commit の hook の入口(`doeff-linter --commit-hook`)。
 //!
 //! 各 repo(agora-controllers・merge-queue ほか)が hook の論理を写して持たず、この 1 か所を呼ぶ。repo が書くのは設定の
 //! `[tool.doeff-linter.commit_hook]`(上限の秒)だけ。元の実装 = agora-controllers の
@@ -7,24 +7,24 @@
 //! 止める物は 3 種(どれも stage した path の中だけ — 子の linter は stage した path と、その HEAD の版だけを測る):
 //! - stage した source(.hy・.hyk・.hyp・.py)の、critical でない規則の登録簿の外の error(登録簿の既知は linter が warning に下げる)。
 //! - stage した source の critical のうち HEAD の版に無い物(`--baseline-report` の `new_critical`)。
-//! - stage した source の major の warning の数が、規則ごとに HEAD の版より増えた物(agora-redesign #2683 — warning は終了コードを
+//! - stage した source の major の warning の数が、規則ごとに HEAD の版より増えた物(warning は終了コードを
 //!   変えないので、直している間に新しい warning が入っても減らなかった)。数は stage した file の組の合計で比べる(移した・消した
 //!   file の HEAD の版も数える)— file ごとに比べると、warning を増やさない移しや分割まで止まる。基点は HEAD の版そのものなので、
 //!   減らした commit の後は次の commit の基点が自ずと下がる(基点の file を持たない・下げ忘れが無い)。
 //!
 //! 当てる規則は、有効な規則のうち file 1 つの中身と設定だけで決まる物(split_rules の quick)だけ。repo 全体が要ると規則が名乗る物
 //! (`ProjectRule::needs_whole_repo`)と、宣言の file を変えた commit の stage していない file の当たりは、hook では測らず、repo 全体の
-//! 検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る(card ki-7da14032cf9c・cisco-c8 の決め 2026-10-11 11:1x)。以前は
+//! 検証(各 repo の日次 — agora-controllers は 4 時間ごと)が見る(cisco-c8 の決め 2026-10-11 11:1x)。以前は
 //! repo 全体の比べ(先端の木と HEAD の木を repo 全体で測る)も hook が持ち、agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB かかり、
 //! 日次の赤を直す 23 会話が同時に commit して zeus を埋めた(load 102/24 core・swap 全部)。repo 全体の規則は file 1 つに当てても
 //! repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、stage した path に当てる形でも軽くならない。
 //!
 //! 既知の一覧を持たない規則(DOEFF206〜209・211)の critical は、上の 2 つ目の列で、stage した path に在れば HEAD に同じ鍵が在っても
-//! 止める(agora-redesign #3834)。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
+//! 止める。その当たりは「HEAD に無い」でなく「変えた file の既存の当たり(main にも在る…)」と書き、直し方の
 //! 案内を 1 行足す(split_by_head — 止める判断は変えず文だけを分ける)。
 //!
-//! 子の linter は 1 回ごとに上限(既定 20 秒・0 は上限なし)を持ち、越えたら commit を止める(終了コード 1・agora-redesign #3834・
-//! 上限は子の CPU 秒で測る — card ki-79532edd43dd: 混んだ機体では wall の秒だけが伸び、上限なしなら 0 件の commit が毎回切れていた。
+//! 子の linter は 1 回ごとに上限(既定 20 秒・0 は上限なし)を持ち、越えたら commit を止める(終了コード 1・
+//! 上限は子の CPU 秒で測る — 混んだ機体では wall の秒だけが伸び、上限なしなら 0 件の commit が毎回切れていた。
 //! CPU を使わずに終わらない子には wall の予備の上限〔上限 × WALL_BACKSTOP_FACTOR〕を残し、子の CPU 秒を読めない機体〔/proc の無い
 //! Mac〕では wall の秒で測る — 判断は cut_measure の 1 か所・
 //! 元の issue #2723)。以前は越えたら通していて、何を確かめずに通したかを 1 行で書くだけだった — 作業役は通った commit を
@@ -32,11 +32,10 @@
 //! 何秒の上限で打ち切ったかを 1 行で書き、上限なしで同じ比べをやり直す命令(unbounded_command — そのまま貼って実行できる形)と、
 //! その結果が 0 件である事を確かめてから commit し直す(--no-verify は使わない)案内を続けて出す。
 //! HEAD の版を測る木は事実の cache の根の `commit-hook-tree/<repo を表す名>/tree` に repo ごとに 1 つ置き、HEAD が進んだら git の差分で変わった
-//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の版を測る 1 回にも事実の cache が効く・
-//! agora-redesign #3858)。
+//! file だけを書き換える(head_tree — 根の path と変わらない file の更新時刻が保たれるので、HEAD の版を測る 1 回にも事実の cache が効く)。
 //! 純粋な部分(規則の分け・識別子の差・止める当たりの選び・測れなかった比べの文・上限なしの命令)は関数に分けて、単体のテストで確かめる。
 //!
-//! 報告の出口(引数 `--report-out <file>`・card ki-b9eeeea338b6): 2 回の測り(HEAD の版・stage した path)を、それぞれ測った path の列・
+//! 報告の出口(引数 `--report-out <file>`): 2 回の測り(HEAD の版・stage した path)を、それぞれ測った path の列・
 //! 違反(editor-json の違反の形のまま — HEAD の版は先端の根の path へ付け替えた後)・判じた規則の ID で 1 つの JSON に書く(report_of)。
 //! 会話の commit の hook がこの報告を会話 id つきで記録へ送り、会話が増やした・減らした違反を commit ごとに読む材料にする
 //! (設計の記録 project-health-ide の指摘 2)。止める判定・終了コード・stderr の文は引数の無い時と同じで、書けない時も終了コードは
@@ -70,8 +69,8 @@ pub struct RuleSplit {
 
 /// 純粋: 有効な規則から Jev に問う意味の規則(規則の名乗り config::is_semantic — commit では問わない・cache を読むだけでも遅い)を除き、規則が repo 全体が要ると名乗る物(config::needs_whole_repo)を whole、残りを
 /// quick に分ける(順は保つ)。以前は設定の手の一覧 whole_repo_rules で分けていて、一覧に足し忘れた規則(DOEFF149・161)の当たりが
-/// どちらの段にも掛からず main に入った(agora-redesign #2090)。意味の規則も以前は ID の頭 DOEFF2 で除いていて、頭が同じ決定的な規則
-/// (DOEFF206〜209)がどちらにも入らなかった(agora-redesign #3834)。
+/// どちらの段にも掛からず main に入った。意味の規則も以前は ID の頭 DOEFF2 で除いていて、頭が同じ決定的な規則
+/// (DOEFF206〜209)がどちらにも入らなかった。
 pub fn split_rules(enabled: &[String]) -> RuleSplit {
     let (whole, quick): (Vec<String>, Vec<String>) = enabled
         .iter()
@@ -81,7 +80,7 @@ pub fn split_rules(enabled: &[String]) -> RuleSplit {
     RuleSplit { quick, whole }
 }
 
-/// 純粋: 退役した設定の鍵 whole_repo_rules が残っている時の知らせ(読まない — 規則の名乗りで分ける・agora-redesign #2090)。
+/// 純粋: 退役した設定の鍵 whole_repo_rules が残っている時の知らせ(読まない — 規則の名乗りで分ける)。
 pub fn retired_whole_repo_rules_note(section: Option<&CommitHookSection>) -> Option<String> {
     section.filter(|s| !s.whole_repo_rules.is_empty()).map(|_| {
         "設定の whole_repo_rules は退役した鍵で読まない — repo 全体の比べの規則は linter の規則が名乗る(`doeff-linter --list-rules`)。鍵を消す".to_string()
@@ -135,7 +134,7 @@ pub fn grown_major_warnings(head: &Value, tip: &Value) -> Vec<String> {
 }
 
 /// 止める当たりの識別子を、HEAD の版に同じ識別子が無い物(新しく増えた当たり)と在る物(既知の一覧を持たない規則の、変えた file の
-/// 既存の当たり)に分けた組(どちらも辞書順)。止める・止めないは変えず、出す文だけを分ける(agora-redesign #3834・cisco-c8 の頼み
+/// 既存の当たり)に分けた組(どちらも辞書順)。止める・止めないは変えず、出す文だけを分ける(cisco-c8 の頼み
 /// 2026-10-07 — 既存の当たりにも「HEAD に無い」と書いていて、作業役が hook の不具合と読んで hook を飛ばしかけた)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ByHead {
@@ -197,7 +196,7 @@ pub fn effective_rules(config: Option<&Config>, cli_enable: &[String], cli_disab
 }
 
 /// 宣言の file と dir(repo の根からの path)— 設定 file・architecture.hy・登録簿の表。ここを変えた commit は、file 1 つで判じる規則の
-/// 当たりも変更の外の file に付けうる(層に禁じた module を足すと、触っていない core の file が赤になる — agora-redesign #2127)。
+/// 当たりも変更の外の file に付けうる(層に禁じた module を足すと、触っていない core の file が赤になる)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Declarations {
     pub files: Vec<String>,
@@ -210,7 +209,7 @@ pub struct Declarations {
 /// 基点を今の宣言で測る 1 回限りの指定の commit 本文の行(trailer)— `Lint-Baseline: declarations <理由>`。規則を鳴らし始める commit
 /// (enable に足す・層の宣言を足す)は、既存の当たりが全部「基点に無い当たり」になり、その commit 自身が門と hook を通れない。この行の
 /// 在る変更だけ、基点の木を今の宣言(switches)で測り、既存の当たりを基点に在る物として新しい当たりだけを止める(既知の一覧に載せる
-/// 形ではない — agora-redesign #2143・cisco-c8 の決め 2026-10-01)。宣言だけで触っていない file に当たりを付ける変更(#2127)を見逃す
+/// 形ではない・cisco-c8 の決め 2026-10-01)。宣言だけで触っていない file に当たりを付ける変更(#2127)を見逃す
 /// 形なので、理由の無い行は効かない(誰が何のために使ったかを本文に残す)。
 pub const BASELINE_TRAILER: &str = "Lint-Baseline: declarations";
 
@@ -251,7 +250,7 @@ pub fn touches_declaration(changed: &[String], declarations: &Declarations) -> b
     })
 }
 
-/// 純粋: 変更に当てる規則の分け — 門と commit の hook が共有する 1 か所(agora-redesign #2127)。ふだんは規則の名乗り(split_rules)で
+/// 純粋: 変更に当てる規則の分け — 門と commit の hook が共有する 1 か所。ふだんは規則の名乗り(split_rules)で
 /// 分け、宣言の file を変えた変更では file 1 つで判じる規則も repo 全体の比べに入れる(quick は空)。手の一覧は持たない。
 pub fn split_for_change(enabled: &[String], changed: &[String], declarations: &Declarations) -> RuleSplit {
     let split = split_rules(enabled);
@@ -339,7 +338,7 @@ pub struct LintRun {
     pub args: Vec<String>,
 }
 
-/// 打ち切りを判じた物差し(card ki-79532edd43dd — 上限は子の CPU 秒で測る)。
+/// 打ち切りを判じた物差し(上限は子の CPU 秒で測る)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Measure {
     /// 子の CPU 秒(子とその待ち終えた子孫の utime・stime)が上限を越えた。
@@ -351,10 +350,10 @@ pub enum Measure {
 }
 
 /// CPU を使わずに終わらない子を打ち切る wall の予備の上限の倍率(CPU 秒の上限の何倍か)。混んだ機体で 1 core の取り分が 1/4 を
-/// 割るまで、CPU 秒の上限の内の子を wall で切らない(zeus は 36 core・load 73 で取り分 約 1/2 — card ki-79532edd43dd)。
+/// 割るまで、CPU 秒の上限の内の子を wall で切らない(zeus は 36 core・load 73 で取り分 約 1/2)。
 pub const WALL_BACKSTOP_FACTOR: u32 = 4;
 
-/// 純粋: 子の linter 1 回を打ち切るかの判断(card ki-79532edd43dd)— wall = 起こしてからの wall の秒・cpu = 子の CPU 秒(読めない機体は
+/// 純粋: 子の linter 1 回を打ち切るかの判断— wall = 起こしてからの wall の秒・cpu = 子の CPU 秒(読めない機体は
 /// None)・limit = 上限。CPU 秒が読めれば CPU 秒で測り、wall は予備の上限(limit × WALL_BACKSTOP_FACTOR)だけを見る。読めなければ wall で測る。
 pub fn cut_measure(wall: Duration, cpu: Option<Duration>, limit: Duration) -> Option<Measure> {
     match cpu {
@@ -403,7 +402,7 @@ pub struct Unmeasured {
     pub cut: Cut,
 }
 
-/// 純粋: 測れなかった比べを 1 行で書く(何を確かめずに commit を止めたか — agora-redesign #2723・#3834)。
+/// 純粋: 測れなかった比べを 1 行で書く(何を確かめずに commit を止めたか)。
 pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
     let Cut { side, rules, limit, measure } = &unmeasured.cut;
     let secs = limit.as_secs();
@@ -478,7 +477,7 @@ pub enum Measured {
 /// cut_measure)。終了コード 0・1・3・4 は測れた(中身で判じる)とし、他は理由つきの失敗。
 pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
     let started = Instant::now();
-    // 子は hook の一部 — 機体の検の枠を取らない(editor-json は重い mode の形なので、印が無いと枠を待つ・card ki-b96d1fd0433f)。
+    // 子は hook の一部 — 機体の検の枠を取らない(editor-json は重い mode の形なので、印が無いと枠を待つ)。
     let spawned = Command::new(linter)
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
@@ -523,7 +522,7 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
     let out = stdout.join().unwrap_or_default();
     let err = stderr.join().unwrap_or_default();
     // 子の stderr は全部の行を理由に運ぶ(設定の誤りは 1 行目が「設定の誤り:」の見出しだけで、名指しは次の行から — 1 行目だけでは
-    // どの宣言が誤りかが消える・agora-redesign #2377)。
+    // どの宣言が誤りかが消える)。
     let err_line = String::from_utf8_lossy(&err).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" / ");
     match status.code() {
         Some(0 | 1 | 3 | 4) => match serde_json::from_slice::<Value>(&out) {
@@ -568,7 +567,7 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
     Err("一時の dir の固有の名を作れない".to_string())
 }
 
-// HEAD の木を置く場所(agora-redesign #3858)。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
+// HEAD の木を置く場所。doeff-linter の事実の cache(project::facts_cache)は根の path ごとの dir に、file ごとの
 // 大きさと更新時刻を鍵にして置かれる。木を一時 dir や sha ごとの dir に書き出すと、commit のたびに HEAD が進むふだんの使い方では毎回が
 // 新しい根 = cache 無しの 1 回目になる(agora-controllers で CPU 約 66 秒)。木は repo ごとに 1 つ決まった path に置き、HEAD が進んだ時は
 // git の差分で変わった file だけを書き換える — 変わらない file には触らないので更新時刻が保たれ、事実の cache が当たる。
@@ -577,7 +576,7 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 //   `commit-hook-tree/<repo を表す名>/` の下に、木 `tree/`・木の今の sha と重ねた宣言の file の記録 `tree.sha`・lock の file `lock`・
 //   repo の git の共有 dir の絶対 path の記録 `repo.path`。
 //   木は根(--root)の dir の中身で、根が作業木の根の下の dir なら、名は共有 dir にその位置(`git rev-parse --show-prefix`)を繋いだ path の
-//   sha256 の 16 桁(agora-redesign #3934 — 位置の違う根が 1 つの木を取り合わない)。
+//   sha256 の 16 桁(位置の違う根が 1 つの木を取り合わない)。
 //   repo を表す名 = repo の git の共有 dir(`git rev-parse --git-common-dir`・正規化した絶対 path)の sha256 の 16 桁。同じ repo の別の
 //   作業木は同じ名で、1 つの木を分け合う — 作業木は数百ある(zeus の agora-controllers で 561)ので作業木ごとでは disk が足りず(木 1 つ
 //   約 35MB)、新しい作業木の最初の commit も、ほかの作業木が進めた木(本線の近く)から差分だけで進められる。
@@ -912,7 +911,7 @@ pub fn git_toplevel(cwd: &Path) -> Result<PathBuf, String> {
 }
 
 /// 根 root の、git の作業木の根からの位置(`git rev-parse --show-prefix` — 根が作業木の根なら空・下の dir なら `pkg/` の形)。
-/// 根が作業木の根の下の dir の時(dotfiles の agentcli/ に設定を置いた形 — agora-redesign #3934)、git が答える path の根と木の置き場を
+/// 根が作業木の根の下の dir の時(dotfiles の agentcli/ に設定を置いた形)、git が答える path の根と木の置き場を
 /// 根に合わせるために読む 1 か所。
 fn root_prefix(root: &Path) -> Result<String, String> {
     let out = git(root, &["rev-parse", "--show-prefix"])?;
@@ -960,12 +959,12 @@ struct Blocking {
     staged: Vec<String>,
     fresh_critical: ByHead,
     grown_warnings: Vec<String>,
-    /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない(agora-redesign #2821)。
+    /// stage した Hy の file のうち linter が歩く範囲の外の物 — 測っていない事を名指すだけで止めない。
     out_of_scope: Vec<String>,
 }
 
 /// 純粋: 子の linter の報告(editor-json)の `out_of_scope` — 名指した Hy の file のうち linter が歩く範囲の外の物(仕様 1 節
-/// 「名指しの範囲の外」・agora-redesign #2821)。欄が無い・null なら空。
+/// 「名指しの範囲の外」)。欄が無い・null なら空。
 pub fn out_of_scope_of(report: &Value) -> Vec<String> {
     report["out_of_scope"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect()
 }
@@ -1107,7 +1106,7 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
         return Ok(Judged::unmeasured());
     }
     // file 1 つで決まる規則だけを stage した path に当てる — repo 全体が要る規則と、宣言の file を変えた commit の stage していない
-    // file の当たりは repo 全体の検証が見る(card ki-7da14032cf9c・頭の註)。
+    // file の当たりは repo 全体の検証が見る(頭の註)。
     let quick = split_rules(&options.enabled).quick;
     let paths = linted_paths(&staged, |p| root.join(p).exists());
     if quick.is_empty() || paths.is_empty() {
@@ -1187,12 +1186,12 @@ mod tests {
         let split = split_rules(&enabled);
         // 知らない ID(DOEFF999)は file 1 つの側 — 有効な規則の一覧には載らず、DOEFF100 が知らせる。
         assert_eq!(split.quick, ids(&["DOEFF016", "DOEFF110", "DOEFF999"]));
-        // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る(agora-redesign #2090)。列の DOEFF166 が行の名指す規則を
-        // 同じ実行で当てる(agora-redesign #1999・#2033)。
+        // repo 全体の比べは規則が名乗る列 — 手の一覧に無かった DOEFF149 も入る。列の DOEFF166 が行の名指す規則を
+        // 同じ実行で当てる(#2033)。
         assert_eq!(split.whole, ids(&["DOEFF163", "DOEFF149", "doeff166"]));
     }
 
-    /// agora-redesign #3834: Jev の規則かどうかは規則の名乗り(ProjectRule::is_semantic)で決まり、ID の頭では決まらない — 頭が DOEFF2 の
+    /// Jev の規則かどうかは規則の名乗り(ProjectRule::is_semantic)で決まり、ID の頭では決まらない — 頭が DOEFF2 の
     /// 決定的な規則(DOEFF206〜209)は quick か whole に入り、Jev の規則(DOEFF201〜205)だけがどちらにも入らない。
     #[test]
     fn commit_hook_split_rules_keeps_deterministic_rules_whose_id_starts_with_doeff2() {
@@ -1270,7 +1269,7 @@ mod tests {
         json!({ "rule": rule, "path": path, "severity": severity, "level": level, "message": "m" })
     }
 
-    /// agora-redesign #2683: major の warning は規則ごとの数で HEAD の版と比べる — 1 つ増えれば名指す・同じ数と減った数は出さない・
+    /// major の warning は規則ごとの数で HEAD の版と比べる — 1 つ増えれば名指す・同じ数と減った数は出さない・
     /// 別の file へ移っただけ(移し・分割)は数が同じなので出さない。critical・error・minor・info は数えない(別の段か対象の外)。
     #[test]
     fn commit_hook_grown_major_warnings_counts_per_rule() {
@@ -1305,7 +1304,7 @@ mod tests {
         assert_eq!(grown_major_warnings(&json!({ "violations": [] }), &fewer), ids(&["DOEFF113 0 → 1"]));
     }
 
-    /// card ki-b9eeeea338b6: 報告の測りは、子の linter の editor-json の違反を形のまま移し、判じた規則の ID と渡した path の列を添える。
+    /// 報告の測りは、子の linter の editor-json の違反を形のまま移し、判じた規則の ID と渡した path の列を添える。
     /// 報告は根・終了コード・測りの列で、測った対象は `HEAD`・`stage` と綴る。子を撃っていない測り(欄の無い報告)は違反も規則も空。
     #[test]
     fn commit_hook_report_carries_each_measurement_in_the_editor_json_shape() {
@@ -1357,7 +1356,7 @@ mod tests {
             .contains("wall の予備の上限 8 秒で打ち切った(CPU 秒の上限 2 秒の 4 倍"));
     }
 
-    /// card ki-79532edd43dd: CPU 秒が読めれば CPU 秒で測る — 混んで wall だけ伸びた子(wall 9 秒・CPU 3 秒・上限 4 秒)は切らず、CPU 秒が
+    /// CPU 秒が読めれば CPU 秒で測る — 混んで wall だけ伸びた子(wall 9 秒・CPU 3 秒・上限 4 秒)は切らず、CPU 秒が
     /// 上限に届けば切る。wall は予備の上限(上限の 4 倍)だけを見る。読めない機体は今までどおり wall で測る。
     #[test]
     fn commit_hook_cut_measure_reads_cpu_seconds_and_keeps_a_wall_backstop() {
@@ -1390,7 +1389,7 @@ mod tests {
         assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0) }), None), None);
     }
 
-    /// agora-redesign #3834: 上限なしの命令は、同じ linter・根・設定・--enable / --disable・commit 本文の file に上限なしを足した 1 行で、
+    /// 上限なしの命令は、同じ linter・根・設定・--enable / --disable・commit 本文の file に上限なしを足した 1 行で、
     /// 空白や ' を含む path も shell にそのまま貼れる形で書く。設定が無ければ --no-config。
     #[test]
     fn commit_hook_unbounded_command_repeats_the_same_hook_without_a_limit() {

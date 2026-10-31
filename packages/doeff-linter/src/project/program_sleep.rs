@@ -1,4 +1,4 @@
-//! DOEFF210: Hy の program は壁の時計で眠らない(doeff の ADR-DOE-TIME-001 R1・R2 — card ki-3c3d85253c2c)。
+//! DOEFF210: Hy の program は壁の時計で眠らない(doeff の ADR-DOE-TIME-001 R1・R2)。
 //!
 //! program(defk・defp の本体 — @do の generator)が時間を待つ時は doeff-time の効果(Delay・WaitUntil・WaitWithin …)を出し、
 //! 1 秒が何であるかは呼び手が置く時間の handler が決める。program が `time.sleep` / `asyncio.sleep` を呼ぶと、どの handler を

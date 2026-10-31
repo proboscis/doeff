@@ -1,5 +1,5 @@
 ;;; Linux で process の終わりで読める fd(pidfd)を開く — 子 process の終わりの待ち(process_exit.hy の process-exit-handler)の Linux の
-;;; 開き方(agora-redesign #3871 の単位 1)。macOS の開き方は kqueue_exit.hy の kqueue-fd-of で、どちらも pid → fd | None の同じ形。
+;;; 開き方。macOS の開き方は kqueue_exit.hy の kqueue-fd-of で、どちらも pid → fd | None の同じ形。
 ;;;
 ;;; process の pidfd(Linux 5.3 からの pidfd_open)は、その process が終わると読める fd になる。pidfd は子でない process にも開けるので、
 ;;; 待ちの子から分けた子(worker の子ではない)も同じ形で待てる。
@@ -17,7 +17,7 @@
 ;; libc(import の時に 1 度だけ読み込む — 呼ぶたびに ctypes.CDLL を作らない)。CDLL は作るたびに関数の型(_FuncPtr の class)を 1 つ
 ;; 作り、free-threading の CPython 3.14 では、主 thread の VM が走る間に await の bridge の thread で作り続けると、放した後も memory が
 ;; 戻らない(1 回あたり約 1.8 KB)。worker の周の間の待ちは拍ごと・子ごとに pidfd-of を呼ぶので、子 1 つの worker の process が 1 日に
-;; 0.5 GB を越えて増えた(依頼 lt-KAYKH21D2WYWBEG2EH8AJSB19N)。関数の物(.syscall)は最初の読みで CDLL の上に覚えられる。errno は ctypes が
+;; 0.5 GB を越えて増えた。関数の物(.syscall)は最初の読みで CDLL の上に覚えられる。errno は ctypes が
 ;; thread ごとに写すので、thread をまたいで共有してよい。
 (val #^ ctypes.CDLL LIBC (ctypes.CDLL None :use-errno True))
 

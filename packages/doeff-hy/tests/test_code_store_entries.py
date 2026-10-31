@@ -1,5 +1,5 @@
 """source の中身で引く code の保存先(:mod:`doeff_hy_bytecode_guard._code_store`)は、鍵 1 つに macro の環境ごとの entry を幾つか持ち、環境の
-違う書き手が同じ鍵の entry を上書きし合わない(card ki-6828e9af04b4)の検。
+違う書き手が同じ鍵の entry を上書きし合わないの検。
 
 実例(2026-10-12・zeus): 鍵 1 つに entry 1 つの並びでは、実行環境の準備(worker の焼きの道具 — 記録の印 6)と会話の作業木の import
 (doeff の版が会話ごとに違う — 記録の印 5 など)が、同じ source の鍵の entry を互いに「古い」と見て compile し直し、上書きし合った。準備は
@@ -149,7 +149,7 @@ def test_entries_beyond_the_limit_go_least_recently_used_first(tmp_path: Path) -
 
 def test_a_new_entry_waits_behind_the_entries_in_use_until_it_is_used(tmp_path: Path) -> None:
     """足したばかりの entry は、鍵の他の entry より後ろに並び(時刻が前)、照らして使われた時に頭へ出る — 一度きりの環境の entry が
-    使い続けている書き手の entry の前に並ばない(設計検証 lt-Y2ZEDKRFVZR3S6T34PNQZ28Z97 の盲検 A)。"""
+    使い続けている書き手の entry の前に並ばない。"""
     store, key = str(tmp_path), _key()
     code_store.add_code(store, key, _code(RECORD_FIVE))
     _age(_entry_of(store, key, RECORD_FIVE), 50)

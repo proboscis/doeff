@@ -12,7 +12,7 @@
 ;;
 ;; 確保は process の RSS の最大で測る: 1 度目の起動で import と型の組み立てを済ませ、/proc/self/clear_refs で VmHWM を今の RSS へ
 ;; 戻してから、その後の VmHWM の伸びを読む(tracemalloc は free-threading の python で読み手の thread と時計の thread を止めた)。
-;; 出自 = card ki-83f24000d86c(描き手の会話の resume の答え 1 行で、zeus の turn-host の本体が 27 GB に膨らんだ)と、その元を断つ
+;; 出自 = 描き手の会話の resume の答え 1 行で、zeus の turn-host の本体が 27 GB に膨らんだ事と、その元を断つ
 ;; excludeTurns(同じ card の続き — 答えの履歴は本体が使わない)。
 (require doeff-hy.macros [deftest defk val])
 (val MODULE-TAGS {:context "codex-test" :role "program"})

@@ -1,4 +1,4 @@
-;;; heap の凍結の検(agora-redesign #1440)。契約(本物 gc-freeze-handler と fake scripted-freeze-handler が同じ deftest を通る)と、
+;;; heap の凍結の検。契約(本物 gc-freeze-handler と fake scripted-freeze-handler が同じ deftest を通る)と、
 ;;; 本物だけの性質・fake だけの性質。解釈器の組み立ては heap_contract_handlers.hy。
 ;;;
 ;;;   契約     CollectAndFreeze の答えは 0 以上の int

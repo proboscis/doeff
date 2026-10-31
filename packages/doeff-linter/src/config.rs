@@ -93,13 +93,13 @@ pub struct Config {
 
     /// repo の根(module の名・層の置き場・登録簿・鍵の path の基準)の path(設定 file の dir からの相対)。書かなければ設定 file の dir。
     /// `--root` が勝つ。monorepo の package の `src/` の下を根にして、module の名を import の名(`doeff_cluster.x`)に揃えるため
-    /// (agora-redesign #1977 — 設定 file の dir を根にすると `src.doeff_cluster.x` になる)。
+    /// (設定 file の dir を根にすると `src.doeff_cluster.x` になる)。
     #[serde(default)]
     pub root: Option<String>,
 
     /// 根の外で歩く dir(設定 file の dir からの相対)— その下の Hy の file は定義の書き方の規則の母集団と「対象の外」の判定に入る
     /// (層の規則は根の下の層の置き場だけを判じるので入らない)。名乗りは根から `..` を含む相対(`../tests/x.hy` — 宣言の file の鍵と
-    /// 同じ形)。root = "src" の package の `tests/` を判じるため(agora-redesign #2821 の案 A-1)。
+    /// 同じ形)。root = "src" の package の `tests/` を判じるため。
     #[serde(default)]
     pub include: Vec<String>,
 
@@ -115,16 +115,16 @@ pub struct Config {
     #[serde(default)]
     pub translation_effects: Option<crate::project::settings::TranslationEffectsSection>,
 
-    /// commit の hook(`--commit-hook`)の設定 — `[tool.doeff-linter.commit_hook]`(agora-redesign #1989)
+    /// commit の hook(`--commit-hook`)の設定 — `[tool.doeff-linter.commit_hook]`
     #[serde(default)]
     pub commit_hook: Option<CommitHookSection>,
 }
 
-/// `[tool.doeff-linter.commit_hook]` — commit の hook の入口(`--commit-hook`)が読む設定(agora-redesign #1989)。
+/// `[tool.doeff-linter.commit_hook]` — commit の hook の入口(`--commit-hook`)が読む設定。
 /// 各 repo が hook の論理を写して持たず、この 1 か所の宣言だけを書く。
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct CommitHookSection {
-    /// 退役した鍵(agora-redesign #2090)— 以前は repo 全体に当てる規則の手の一覧。今は読まず、残っていれば hook が 1 行で名乗る
+    /// 退役した鍵— 以前は repo 全体に当てる規則の手の一覧。今は読まず、残っていれば hook が 1 行で名乗る
     /// (規則の分けは `ProjectRule::needs_whole_repo` の名乗り)。古い設定を読めなくしないために形だけ残す。
     #[serde(default)]
     pub whole_repo_rules: Vec<String>,
@@ -156,7 +156,7 @@ impl Config {
                     }
                 }
                 // 生の I/O を許す所は、architecture.hy の許可名簿(:world-handlers)を書いたらそこだけで決める — 層で許す
-                // [tool.doeff-linter.raw_side_effects] allowed_layers と並べない(agora-redesign #1106)。
+                // [tool.doeff-linter.raw_side_effects] allowed_layers と並べない。
                 let allowed_layers = self.raw_side_effects.as_ref().is_some_and(|raw| !raw.allowed_layers.is_empty());
                 if !arch.world_handlers.is_empty() && allowed_layers {
                     clashes.push(format!(
@@ -274,7 +274,7 @@ impl Config {
             if !problems.is_empty() {
                 return Err(problems);
             }
-            // 問いに入れる線引きは architecture.hy の :semantic-lines から取り込む(定義元は architecture.hy の 1 か所・agora-redesign #1909)。
+            // 問いに入れる線引きは architecture.hy の :semantic-lines から取り込む(定義元は architecture.hy の 1 か所)。
             let lines = settings.architecture.as_ref().map(|arch| arch.semantic_lines.clone()).unwrap_or_default();
             settings.semantic = Some(crate::project::semantic::SemanticSettings { lines, ..checked });
         }
@@ -493,7 +493,7 @@ pub struct LoadedConfig {
 
 /// 設定 file を読む。`[tool.doeff-linter]` の節を持つ file(pyproject.toml の形)でも、節の中身だけを書いた file でもよい。
 /// 読めない・TOML でない・欄の型が違う時は理由の文を返す(黙って既定値にしない)。
-/// この binary の知らない鍵(どの段でも)は誤りにせず、その鍵だけを読まずに知らせの列へ積む(agora-redesign #848 — 設定は binary より
+/// この binary の知らない鍵(どの段でも)は誤りにせず、その鍵だけを読まずに知らせの列へ積む(設定は binary より
 /// 先に進むことがあり、その間に lint 全体を止めない)。知っている鍵の唯一の正本は Config と各節の struct の定義(`serde_ignored` が
 /// 定義に無い鍵を path つきで集める — 鍵の表を手で持たない)。書き違いも同じ知らせで見える。
 pub fn load_config_file(path: &Path) -> Result<LoadedConfig, String> {
@@ -528,7 +528,7 @@ pub fn load_config_checked(explicit: Option<&Path>, start: &Path) -> Result<Opti
 }
 
 /// 規則の ID の全部 — Python の文ごとの規則(rules の get_all_rules)と層の規則(ProjectRule)。設定の有効な規則の既定と知らない規則の
-/// 判じに使う。ここに置くのは、rules/mod.rs が project を読むと依存の輪になるため(config は既に ProjectRule を読む・agora-redesign #2122)。
+/// 判じに使う。ここに置くのは、rules/mod.rs が project を読むと依存の輪になるため(config は既に ProjectRule を読む)。
 pub fn get_all_rule_ids() -> Vec<String> {
     crate::rules::get_all_rules()
         .iter()
@@ -537,13 +537,13 @@ pub fn get_all_rule_ids() -> Vec<String> {
         .collect()
 }
 
-/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か(agora-redesign #2090)。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
+/// 規則の ID が、当たりを判じるのに repo 全体が要る規則か。Python の文ごとの規則(DOEFF001〜031)は file 1 つで
 /// 判じるので偽。層の規則は ProjectRule::needs_whole_repo の名乗り。知らない ID は偽(有効な規則の一覧には載らない — DOEFF100 が知らせる)。
 pub fn needs_whole_repo(id: &str) -> bool {
     ProjectRule::parse(id).is_some_and(|rule| rule.needs_whole_repo())
 }
 
-/// 規則の ID が Jev に問う意味の規則か(ProjectRule::is_semantic の名乗り — ID の頭では決めない・agora-redesign #3834)。Python の文ごとの
+/// 規則の ID が Jev に問う意味の規則か(ProjectRule::is_semantic の名乗り — ID の頭では決めない)。Python の文ごとの
 /// 規則と知らない ID は偽。
 pub fn is_semantic(id: &str) -> bool {
     ProjectRule::parse(id).is_some_and(|rule| rule.is_semantic())
@@ -698,7 +698,7 @@ max_mutable_attributes = 5
         assert_eq!(config.rules["DOEFF003"].max_mutable_attributes, Some(5));
     }
 
-    /// architecture.hy の許可名簿(:world-handlers)を書いたら、層で生の I/O を許す allowed_layers は二重の宣言(agora-redesign #1106)。
+    /// architecture.hy の許可名簿(:world-handlers)を書いたら、層で生の I/O を許す allowed_layers は二重の宣言。
     #[test]
     fn allowed_layers_clash_with_the_world_handler_list() {
         let arch_source = r#"(defarchitecture s :root "app" :layers [(layer core) (layer foundation)] :foundation foundation
@@ -711,7 +711,7 @@ max_mutable_attributes = 5
         assert!(without.project_settings_with(Some(arch)).is_ok(), "allowed_layers の無い raw_side_effects を断った");
     }
 
-    /// 設定が binary より新しい時(知らない鍵がどの段に在っても)、誤りにせずその鍵だけを読まずに知らせ、残りは読む(agora-redesign #848)。
+    /// 設定が binary より新しい時(知らない鍵がどの段に在っても)、誤りにせずその鍵だけを読まずに知らせ、残りは読む。
     #[test]
     fn unknown_keys_at_every_depth_are_notices_and_the_rest_is_read() {
         let dir = TempDir::new().unwrap();
@@ -851,7 +851,7 @@ layers = ["core"]
         for needle in ["2 度", "ghost", "nowhere", "translation", "DOEFF1O1", "env-by-layer"] {
             assert!(text.contains(needle), "{} が無い: {}", needle, text);
         }
-        // 形の正しい知らない ID(この binary より新しい規則)は誤りにしない — DOEFF100 の知らせに回す(agora-redesign #848)。
+        // 形の正しい知らない ID(この binary より新しい規則)は誤りにしない — DOEFF100 の知らせに回す。
         assert!(!text.contains("DOEFF999"), "新しい規則の ID を誤りにした: {}", text);
     }
 

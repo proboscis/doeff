@@ -4,9 +4,9 @@
 「DOEFF_<package>_<置き場>」の形 — 日次の全体検証の task は回ごとに HOME を空の dir に替え、回をまたぐ置き場をこの形の環境変数で子へ渡す。
 """
 
-#: Hy の test file の item の記録の置き場の dir(card ki-9338eec1d15e の責務 R2 — 順は item_cache.items_cache_dir_for)。
+#: Hy の test file の item の記録の置き場の dir(順は item_cache.items_cache_dir_for)。
 ITEMS_CACHE_ENV = "DOEFF_ADR_ITEMS_CACHE"
-#: installed の defsemgrep の答えを process の外に残す置き場の dir(card ki-f81dde817291 — registry の _installed_verdict)。
+#: installed の defsemgrep の答えを process の外に残す置き場の dir(registry の _installed_verdict)。
 SEMGREP_VERDICTS_ENV = "DOEFF_ADR_SEMGREP_VERDICTS"
 
 

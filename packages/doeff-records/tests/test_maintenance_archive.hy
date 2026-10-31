@@ -1,4 +1,4 @@
-;; 手入れの「消す前に送る」(_maintenance.hy の頭の註 — card ki-c32e43651f2e・2026-10-11 11:21 に使い手の記録の Postgres の
+;; 手入れの「消す前に送る」(_maintenance.hy の頭の註・2026-10-11 11:21 に使い手の記録の Postgres の
 ;; disk が 100% になった事故の根の直し): 送りの関数を持つ計画の手入れ 1 回は、送りの答えの番号を刈りの上限に渡し、送り先に届かなかった
 ;; 回は刈らない。送りを持たない計画は上限なしで刈る(今までと同じ)。置き場の handler は撃たれた PruneChanges を控えるだけの顔。
 (require doeff-hy.macros [deftest defhandler defk <- val var])
@@ -73,7 +73,7 @@
   (assert (is report.archived None) report))
 
 
-;; 出来事を送ってから外す(_maintenance.hy の頭の註 — card ki-707aad0f88e8): 手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を
+;; 出来事を送ってから外す(_maintenance.hy の頭の註): 手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を
 ;; 頁で読んで送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す。置き場は頁を答えて撃たれた外しを控えるだけの顔。
 
 (defclass ExpiredShelf []

@@ -1,5 +1,4 @@
-;;; HttpRequest の契約テストの解釈器(composition root)— 同じ契約の Program を、HttpRequest の handler だけ替えて走らせる
-;;; (agora-redesign #1159)。
+;;; HttpRequest の契約テストの解釈器(composition root)— 同じ契約の Program を、HttpRequest の handler だけ替えて走らせる。
 ;;;
 ;;;   http-production      本物: http-production-handler。client は httpx の MockTransport で、外へ出ずに契約の世界(WORLD)が答える
 ;;;   http-fixture-replay  fake: http-fixture-handler の replay。先に同じ Program を record で 1 度走らせて同じ世界の答えを

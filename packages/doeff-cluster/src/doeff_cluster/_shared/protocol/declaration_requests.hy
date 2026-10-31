@@ -75,7 +75,7 @@
   (ServiceRead :name name :target target :version version :spec (OpaqueJson.of now) :body (OpaqueJson.of body)))
 
 
-;; --- 同じ版の起こし直し(RestartService — card ki-0019be4b9939)--------------------------------------------------------------
+;; --- 同じ版の起こし直し(RestartService)--------------------------------------------------------------
 ;; 起こし直しの印の環境変数の名。子の環境変数は spec の指紋(job_model.JobSpec.fingerprint)に入るので、値を 1 つ進めれば版が同じでも別の spec になり、
 ;; 入れ替えの形が handoff の job は新を旧と並べて起こす。名は子の環境変数の規則(EnvVar — 大文字と数字と _ ・予約の頭 DOEFF_ などの外)に合う。
 (val RESTART-MARK "RESTART_MARK")

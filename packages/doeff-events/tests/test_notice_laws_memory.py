@@ -1,5 +1,5 @@
 """The delivery laws of the notice broker on the in-memory broker, and the proof that each law catches the upper
-layer broken in its way (agora-redesign #3850). These always run — no server is needed.
+layer broken in its way. These always run — no server is needed.
 
 Also: the shared signal invariants of ``event_signal_invariants`` applied to this source (every subscriber is a
 process of its own with its own queue; a signal travels through the broker as a notice), and the checks of the
@@ -450,7 +450,7 @@ def test_notice_announced_during_an_outage_is_not_delivered_later() -> None:
 
 
 def test_a_stall_at_the_start_is_followed_by_its_return_before_the_start() -> None:
-    # agora card ki-b7aa8ddce32d: a broker unreachable when the source first subscribes is waited for like any
+    # a broker unreachable when the source first subscribes is waited for like any
     # outage, and its end is told like any outage's — ``SourceResumed`` once the subscription is confirmed, then
     # ``SourceStarted``. Before, only ``SourceStarted`` came: a program that keeps the stalled sources until their
     # return (agora's read replica) held the source as stalled until the process ended.

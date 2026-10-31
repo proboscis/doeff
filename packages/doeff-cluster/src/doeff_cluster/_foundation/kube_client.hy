@@ -8,7 +8,7 @@
 ;;; 古すぎれば(410)list し直し、届かない・断られた時は理由を伝えて retry-seconds の後に list し直す(見張り — 2 つの種類で同じ)。
 ;;; 思わぬ例外でも見張りの thread は抜けない: 理由を伝え、traceback を stderr に出し、retry-seconds の後に list し直す。
 ;;; 接続の pool は thread の間で分けない: 見張り 1 つごとに自分の httpx.Client を持ち、台数と annotation の書き(本体の thread)は設定の
-;;; client を使う(card ki-3ba062c02beb — 1 つの pool を 2 つ以上の thread が使うと、free-threaded の Python では httpcore の
+;;; client を使う(1 つの pool を 2 つ以上の thread が使うと、free-threaded の Python では httpcore の
 ;;; has_expired が pool の錠の外で書き換わる接続の期限を読み、float と None を比べる TypeError で見張りの thread が止まった・
 ;;; 本番 2026-10-09 12:40:48 JST)。
 ;;;

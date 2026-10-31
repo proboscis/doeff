@@ -1,4 +1,4 @@
-;;; 子の job を兄弟の cgroup へ置く答え手 job-cgroup-placer(card ki-ed9dca403f58 — 判断は worker/core/job_cgroup)。worker の本体が出す
+;;; 子の job を兄弟の cgroup へ置く答え手 job-cgroup-placer(判断は worker/core/job_cgroup)。worker の本体が出す
 ;;; 子 process の効果(StartProcess・RunProcess)の argv を、兄弟の cgroup へ移ってから exec する sh で包み、外の答え手(本番は
 ;;; subprocess-handler)へ回す。worker の入口(worker/entry/main)は、環境変数 DOEFF_WORKER_JOB_CGROUP が在る時だけ、この答え手を
 ;;; subprocess-handler のすぐ内側に並べる — process-host・warm-host・probe-host・code-host・env-host の起こす子はすべてここを通る。

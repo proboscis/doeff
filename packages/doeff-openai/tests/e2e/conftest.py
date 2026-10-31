@@ -1,8 +1,8 @@
 """Pytest conftest hook — exposes the shared ``run_program`` helper to e2e tests.
 
 本物の OpenAI API を呼ぶ e2e(印 ``real_openai``)は、2 つが揃った時だけ走る: 印を名指して選ぶ(``pytest -m real_openai``)・
-doeff.py の鍵が在る。以前は環境変数 RUN_OPENAI_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004・
-agora-redesign #3012)。費用の掛かる呼びを誤って撃たないため、鍵が在るだけでは走らせない。
+doeff.py の鍵が在る。以前は環境変数 RUN_OPENAI_E2E で切り替えていた(検の module が環境変数を直に読む — DOEFF004)。
+費用の掛かる呼びを誤って撃たないため、鍵が在るだけでは走らせない。
 """
 import sys
 from pathlib import Path

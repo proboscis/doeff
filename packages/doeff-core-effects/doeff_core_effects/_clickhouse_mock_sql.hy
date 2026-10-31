@@ -1,4 +1,4 @@
-;;; ClickHouse の約束を持つ模擬の SQL の答え手 clickhouse-mock-sql-handler(card ki-1c9c7903dfc4 — moneta の帳簿を ClickHouse へ移す
+;;; ClickHouse の約束を持つ模擬の SQL の答え手 clickhouse-mock-sql-handler(moneta の帳簿を ClickHouse へ移す
 ;;; 書き直しを、模擬の test で確かめるための前提)。sqlite の答え手(sqlite_sql.hy)の道を包み、本物の clickhouse-http-sql-handler
 ;;; (clickhouse_http_sql.hy)と同じ約束だけを足す。sqlite と同じく I/O なし・実 process なし。
 ;;;   - SqlTransaction は本物と同じ値(_clickhouse-transaction-refusal — SqlFailed(0A000))で断る。program は走らせない。

@@ -211,7 +211,7 @@ def test_compile_counter_adds_only_the_outermost_window(tmp_path, monkeypatch) -
 
 def test_compile_counter_counts_a_collection_once() -> None:
     """引く区間の外で起きた GC は GC の欄に数え、変換の区間の中で起きた GC は変換の秒に入っているので GC の欄に数えない
-    (二重に引かない・card ki-b2383fcc8b25)。"""
+    (二重に引かない)。"""
     import gc
 
     counter = CompileCounter()
@@ -261,7 +261,7 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
     """報告のみの形(既定)は、印の秒の上限を超えた検を警告と一覧に出し、赤にしない。"""
     _project(pytester, REAL_WORLD_SECONDS_INI, {"test_slow": REAL_WORLD_SLOW_CALL})
     # 同じ process で走る内側の pytest は、外側の走りの警告の filter を引き継ぐ — 外側が `-W ignore::pytest.PytestWarning`
-    # で走ると BudgetWarning(PytestWarning の子)が消えて赤になった(card ki-2320b23ba160)。内側の -W で見せる側に固定する。
+    # で走ると BudgetWarning(PytestWarning の子)が消えて赤になった。内側の -W で見せる側に固定する。
     result = pytester.runpytest("-q", "-W", "default::doeff_hy_pytest._budget.BudgetWarning")
     result.assert_outcomes(passed=2)
     result.stdout.fnmatch_lines(
@@ -275,7 +275,7 @@ def test_report_mode_warns_and_lists_but_stays_green(pytester: pytest.Pytester) 
 
 # 超過を赤にする判定の検は、上限の基準の build(検査なし)に固定する(effect ReadInvariantChecks に答える vm_probe_handler が読む
 # 拡張の関数を差し替える) — 日次は make sync の検査つきの build で走り、
-# 8d4ff1bb からそこでは超過を赤にしない(日次 t104 の赤・agora-redesign #857)。子の process で走る検は、plugin が
+# 8d4ff1bb からそこでは超過を赤にしない(日次 t104 の赤)。子の process で走る検は、plugin が
 # build の種類を読む pytest_configure より前に読まれる conftest で固定する。
 PIN_UNCHECKED_VM_BUILD = "\nfrom doeff._vm import native as _vm_ext\n\n_vm_ext._invariant_checks_enabled = lambda: False\n"
 
@@ -436,7 +436,7 @@ def test_collect_budget_does_not_charge_a_garbage_collection_to_the_file(
     """読み込みの区間の中で起きた GC(ごみ集め)の CPU は、その file の重さに数えない — GC の費用は session に生きている object の
     数で決まり、どの file の読み込みに当たるかは割り当ての数の巡りで回ごとに変わる。数えると、file も import 先も変わらないのに
     落ちる file が回ごとに入れ替わる(agora-controllers の日次 10-10〜10-11・file 1 本だけなら 0.03 秒の file が session の中で
-    1.0〜1.4 秒 — card ki-b2383fcc8b25)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。
+    1.0〜1.4 秒)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。
     上限は 0.5 秒: この file は process で最初に読む .hy の file なので、doeff-hy の bytecode の確かめが process で 1 度だけ払う
     macro の digest(約 0.2 秒・GC とは別の根)も乗る — その分では赤にならず、GC 4 回を数えれば赤になる幅。"""
     _project(
@@ -470,8 +470,8 @@ READS_HEAVY_DEPENDENCY = """\
 def test_collect_budget_does_not_charge_a_shared_dependency_to_the_first_file(
     pytester: pytest.Pytester,
 ) -> None:
-    """共有の依存の一度きりの import の重さは、どの file の import にも乗せない — 並び順・1 file だけの実行で合否を変えない
-    (agora-redesign #1752)。file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。"""
+    """共有の依存の一度きりの import の重さは、どの file の import にも乗せない — 並び順・1 file だけの実行で合否を変えない。
+   file 自身の本体が重い file は今までどおり赤(上の test_collect_budget_subtracts_…)。"""
     _project(
         pytester,
         f'doeff_test_collect_budget_seconds = {SHARED_DEPENDENCY_COLLECT_BUDGET_SECONDS}\ndoeff_test_budget_mode = "fail"\n',
@@ -521,7 +521,7 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """記録から収集した file(2 回目 — 1 回目の import が pyc と記録を書く)は、module の import が item の setup で起き、
-    上限はそこで同じ鍵で判定される(赤はその item の setup の誤り・agora-redesign #1225)。"""
+    上限はそこで同じ鍵で判定される(赤はその item の setup の誤り)。"""
     _project(
         pytester,
         'doeff_test_collect_budget_seconds = 0.05\ndoeff_test_budget_mode = "fail"\n'
@@ -542,7 +542,7 @@ def test_import_budget_is_judged_at_setup_when_collected_from_records(
     assert "の読み込み(import)が" not in collected.stdout.str()
 
 
-# 印ごとの上限(agora-redesign #1296)。手元の検 1 秒・real_world の検 10 秒の設定で、測った値を判定の純粋な部分へ渡す
+# 印ごとの上限。手元の検 1 秒・real_world の検 10 秒の設定で、測った値を判定の純粋な部分へ渡す
 # (実時計で 11 秒待たない)。
 LOCAL_AND_EDGE = {"local": 1.0, "real_world": 10.0}
 
@@ -660,7 +660,7 @@ def test_marker_budget_alone_turns_the_plugin_on_and_fails_the_marked_test(
     result.stdout.fnmatch_lines(["*実行の上限は印ごとの秒(doeff_test_call_budget_by_marker)だけ*"])
 
 
-# 印 real_world の検の重さは子 process と待ちに在る(card ki-f35bb95eddda・agora-redesign #3858)— 子 process の 0.3 秒の
+# 印 real_world の検の重さは子 process と待ちに在る— 子 process の 0.3 秒の
 # sleep を待つ検は、親の process の CPU 秒はほぼ 0 で、壁の時計の秒は 0.3 秒を越える。
 CHILD_WAIT_CALL = """\
 (require doeff-hy.macros [deftest])
@@ -796,7 +796,7 @@ def test_the_removed_call_budget_seconds_setting_does_not_judge_the_run(
 def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """解析器の Hy の展開(構文木の cache に当たらない時だけ)も数えに乗り、install の外では乗らない(agora-redesign #1534)。"""
+    """解析器の Hy の展開(構文木の cache に当たらない時だけ)も数えに乗り、install の外では乗らない。"""
     program_effects = pytest.importorskip("doeff_effect_analyzer._program_effects")
     monkeypatch.setenv("DOEFF_EFFECT_ANALYZER_CACHE", str(tmp_path / "trees"))
     source = "(setv answer (+ 1 2))\n"
@@ -819,7 +819,7 @@ def test_the_analyzers_uncached_expansion_is_subtracted_like_bytecode_compilatio
     assert outside.count == 0
 
 
-# ── 歩数で判じる(agora-redesign #2670・#2852)──────────────────────────────────────────────
+# ── 歩数で判じる(#2852)──────────────────────────────────────────────
 # 数の口(effect ReadVmWorkCounts に答える vm_probe_handler が読む拡張の関数 doeff_vm.doeff_vm._vm_work_counts)だけを、検の中から歩数を足せる偽の関数に差し替える。CPU 秒が揺れても歩数は
 # 決まった数なので、判定が数なら同じ検は毎回同じ判定になる。
 
@@ -1132,7 +1132,7 @@ def test_no_steps_setting_arms_no_runaway_budget(pytester: pytest.Pytester) -> N
     result.assert_outcomes(passed=1)
 
 
-# ── 検ごとの宣言(agora-redesign #2670 の 3・Mac の調整役の決め 2026-10-03 21:5x)──────────────────────────────
+# ── 検ごとの宣言(Mac の調整役の決め 2026-10-03 21:5x)──────────────────────────────
 # 既定の上限は変えず、縮められない検だけが検の定義の隣で要る歩数と理由を宣言する。宣言のある検は宣言の値で判じ、
 # 宣言の無い検は今までどおり既定の上限で判じる。
 
@@ -1208,7 +1208,7 @@ def test_a_test_over_its_declaration_is_red(pytester: pytest.Pytester) -> None:
     result.stdout.fnmatch_lines(["*宣言した歩数を超えた: test_over.hy::test_over*歩数 20000*宣言 歩数 12000*"])
 
 
-# ── 模擬の世界の走りの歩数だけで判じる(card ki-a27b195a3f92)────────────────────────────────────────
+# ── 模擬の世界の走りの歩数だけで判じる────────────────────────────────────────
 # 世界の印(doeff_core_effects._world_phases — doeff-cluster の sim-main が残す)を、検の中から偽の歩数と並べて残す。
 
 
@@ -1285,7 +1285,7 @@ def test_an_unknown_steps_counted_value_stops_the_run_by_name(pytester: pytest.P
     result.stderr.fnmatch_lines(["*doeff_test_call_steps_counted は call か world-running: 'running'*"])
 
 
-# ── 検ごとの CPU 秒 ÷ 歩数の比(agora-redesign #2854・card ki-a4042e38352a)──────────────────────────
+# ── 検ごとの CPU 秒 ÷ 歩数の比──────────────────────────
 # 報告だけの 1 行。床(RATIO_FLOOR_STEPS)を越える検の µs/歩 を session の中央値で割り、外れ(RATIO_OUTLIER_FACTOR 倍超・分の 1 未満)を
 # 名指す。判定・終わりの code・BudgetWarning は変えない。
 
@@ -1448,7 +1448,7 @@ RATIO_TESTS_INI = 'doeff_test_call_budget_steps = "25000"\n'
 def _ratio_tests(*, hot: bool) -> str:
     """歩数 20,000 の検 8 本と 30,000 歩の検 1 本(上限 25,000 歩を越える — 報告のみの形で BudgetWarning)。どの検も歩数 1 万あたり
     CPU を 0.01 秒回し、比を揃える。歩数は fake の数で、回さなければ検 1 本の CPU は 1 ms に満たず、最初の検の準備などの数 ms の揺れで
-    比が 2 倍を越えた(日次の 10-14 08 時と 10-17 20 時の回で、外れの無い走りの検が名指された・card ki-6dde100393cd)。spin は自分の
+    比が 2 倍を越えた(日次の 10-14 08 時と 10-17 20 時の回で、外れの無い走りの検が名指された)。spin は自分の
     process の CPU 秒で止まるので、機体が混んでも測る CPU 秒は回した分に揃う。hot なら 1 本目が更に 0.3 秒回す(中央値の 2 倍を
     大きく越える外れ)。"""
     spin = "\n  (spin 0.3)" if hot else ""

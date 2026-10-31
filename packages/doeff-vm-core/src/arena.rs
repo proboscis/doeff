@@ -448,8 +448,8 @@ mod tests {
 
     #[test]
     fn test_detached_chains_keep_their_fibers_in_chain_order() {
-        // DetachedFiberChain finds a fiber by its position (agora card
-        // ki-9de8d0a54408): a walk from the head expects each parent right
+        // DetachedFiberChain finds a fiber by its position
+        // : a walk from the head expects each parent right
         // after the fiber before it, and the tail last. A detached chain and
         // the chain a Pass appends behind it keep that order.
         let mut arena = FiberArena::new();

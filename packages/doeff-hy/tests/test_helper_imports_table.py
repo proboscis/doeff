@@ -1,5 +1,5 @@
 """`do` を引く macro の実行時の展開が、`do` の置き場を補助の表(macros.hy の `_helper-imports` の `do` の行 `_runtime-do`)から
-取る事の検(card ki-4848d81e0bc5・設計検証 lt-N19BACF5SXDRMKQ7EZD3AZA8FC の盲検 B、card ki-973b4e44d7bc)。
+取る事の検。
 
 表の `do` の行を差し替えると、どの macro の展開も、module・class の本体・関数の本体のどこに書いても、差し替えた置き場の
 `do` だけを引く。引き方は macro ごとに違う — 定義の macro(defk・defp・deftest・defmcp-tool)は表の import の `_doeff_do`、

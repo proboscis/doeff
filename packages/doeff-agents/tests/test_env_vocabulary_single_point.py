@@ -1,9 +1,9 @@
-"""agent 境界で禁じる env の語彙は agent_env.hy の 1 点(card acp:kanban-issue:ki-2a061da56ca9・#708).
+"""agent 境界で禁じる env の語彙は agent_env.hy の 1 点(#708).
 
 3 層(受理 policy / spawn substrate / shell の起動)が同じ「運ばせない名」を
 別々の literal で持っていたため、3 つとも中身が違っていた。定義を 1 点へ
 寄せ、層は「どの集合を禁じるか」を名指すだけにする。家は agent_env.hy(session host を
-import しない — headless の経路が session host を引きずらない・agora-redesign #708)で、
+import しない — headless の経路が session host を引きずらない)で、
 sessionhost/policy.hy は同じ object を再輸出するだけ。
 
 針は行の字面でなく **名前の集合の関係** を撃つ(ADR 012 の 2026-09-19 の訓)。

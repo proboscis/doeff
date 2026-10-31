@@ -1,4 +1,4 @@
-"""定義の宣言 :effects にだけ出る効果の名を、型検査が「使われていない import」と数えない(agora-redesign #3871 の後)の失敗ケース。
+"""定義の宣言 :effects にだけ出る効果の名を、型検査が「使われていない import」と数えないの失敗ケース。
 
 handler の節が効果を下請けの関数(別の module の defk)を通して出す時、その効果の型の名は handler の頭の :effects の宣言にだけ
 現れる。型検査のための展開(static_check.without_bookkeeping)は定義の記帳 `setattr(名, '__doeff_effects__', …)` を丸ごと外して

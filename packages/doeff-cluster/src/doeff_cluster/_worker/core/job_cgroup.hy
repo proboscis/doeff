@@ -1,4 +1,4 @@
-;;; 子の job を置く cgroup の判断(card ki-ed9dca403f58): worker の本体(heartbeat を送る process)と、worker が起こす子 process(job の
+;;; 子の job を置く cgroup の判断: worker の本体(heartbeat を送る process)と、worker が起こす子 process(job の
 ;;; shim・待ちの子・入口の検め・木と root の準備の git や uv)を別の cgroup に置くため。機体の配備(systemd の unit — Delegate= と
 ;;; DelegateSubgroup=)は本体を自分の cgroup に置き、その兄弟の cgroup にだけ CPU の重み(cpu.idle)と枠(cpu.max)を掛ける。
 ;;; 子は fork した親の cgroup を継ぐので、配備だけでは分けられない — worker が子を起こす時に兄弟の cgroup へ入れる。
@@ -11,7 +11,7 @@
 ;;; 兄弟の名は worker の環境変数 DOEFF_WORKER_JOB_CGROUP(worker/entry/main が読む・無ければ包まない)。
 ;;; path は worker の自分の cgroup(/proc/self/cgroup の cgroup v2 の行 `0::<path>`)の親の下の名。
 ;;;
-;;; service の類(card ki-cd8cb84fdcd2): 機体の配備が DOEFF_WORKER_SERVICE_CGROUP も名指すと、常駐の job(JobSpec.once が偽)の shim だけを
+;;; service の類: 機体の配備が DOEFF_WORKER_SERVICE_CGROUP も名指すと、常駐の job(JobSpec.once が偽)の shim だけを
 ;;; その兄弟へ置く(worker/protocol/process_host の start-job)。配備は兄弟ごとに memory の守り(memory.min)と上限(memory.max)を分けて掛け、
 ;;; 1 本の task が上限まで memory を使っても、kernel はその兄弟の中だけで回収して止め、常駐の job の兄弟は回収されない。
 ;;;

@@ -156,7 +156,7 @@
 
   (defn read-stdout [self]
     "stdout の行を on-line へ渡す。on-line が例外を投げたら、その型と文を reader-failure に控えて process を降ろす(読み手の居ない
-     process を生かさない — 持ち主は「process が降りた」で待ちを解き、stderr-tail の訳で読み手の死を知る。card ki-bd3aa18e3e71)。
+     process を生かさない — 持ち主は process が降りた事で待ちを解き、stderr-tail の訳で読み手の死を知る)。
      on-exit は降ろす梯子の後に 1 度だけ呼ぶ(梯子は有界 — 生きた process を無期限に待たない)。"
     (setv stream self.process.stdout)
     (when (is stream None) (raise (RuntimeError "claude の process の stdout を pipe で開いていない")))

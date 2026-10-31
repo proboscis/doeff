@@ -1,7 +1,7 @@
-"""Hy の test file を import せずに収集し、item の setup で初めて import する(agora-redesign #1223・親 #1211)。
+"""Hy の test file を import せずに収集し、item の setup で初めて import する(親 #1211)。
 
 別の process で pytest を走らせる(pytester の subprocess)。1 回目は記録が無いので収集で import し(その時に Hy の
-plugin が記録をキャッシュに書く — agora-redesign #1291)、2 回目はキャッシュから収集する。2 回の nodeid・選別・結果が同じで、
+plugin が記録をキャッシュに書く)、2 回目はキャッシュから収集する。2 回の nodeid・選別・結果が同じで、
 2 回目の収集は test module を import しないことを確かめる。キャッシュと pyc の置き場は tmp の下(ini の doeff_adr_items_cache・
 PYTHONPYCACHEPREFIX)— checkout の中にも利用者のキャッシュにも書かない。
 
@@ -36,7 +36,7 @@ FILES = {
 (deftest test-skipped {:skip-if (= 1 1) :skip-reason "always"} (assert False))
 (deftest test-kept {:skip-if (= 1 2) :skip-reason "never"} (assert True))
 """,
-    # 親の package の中の別の module を名前で import する(agora-redesign #1212 の反例)
+    # 親の package の中の別の module を名前で import する
     "pkg/tests/test_beta.hy": PRELUDE
     + """
 (import pkg.tests.test-alpha :as alpha)
@@ -183,7 +183,7 @@ def test_a_named_hy_file_imported_by_another_named_file_is_read_by_hy(project: p
     """命令の行で名指した .hy を、先に並んだ別の名指しの file が import しても、Hy の loader で読まれる。
 
     pytest の assert の書き換えは、命令の行で名指した file を Python として読み直す(``ast.parse``)。.hy が
-    そこへ渡ると SyntaxError になる(agora-redesign #1211 の後の報告 — test_emulated_delivery_unwritten が
+    そこへ渡ると SyntaxError になる(test_emulated_delivery_unwritten が
     test_emulated_delivery_to_turn を import する組)。記録が冷えていても温まっていても同じに通る。
     """
     named = ("pkg/tests/test_beta.hy", "pkg/tests/test_alpha.hy")
@@ -256,7 +256,7 @@ def test_marks_added_by_a_collection_hook_survive_the_swap_to_the_real_module(
     project: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """収集の hook が足した印は、記録から収集した item の setup(実物への置き換え)の後も位置ごと残る。印の並び
-    (名・引数)と keywords は、import して収集した時と記録から収集した時とで同じ(agora-redesign #1553)。
+    (名・引数)と keywords は、import して収集した時と記録から収集した時とで同じ。
 
     直す前は、関数の印を実物の印で丸ごと置き直していたので hook の足した印が消え、module の印は実物の印が末尾へ
     動いていた。
@@ -322,7 +322,7 @@ def test_a_changed_macro_provider_reads_no_stale_record(project: pytest.Pytester
 
 
 def test_a_macro_the_expansion_does_not_use_keeps_the_record(project: pytest.Pytester, tmp_path: Path) -> None:
-    """macro の提供元に、展開が使わない macro を足しても、記録から収集する(agora-redesign #3769 の子 — 直す前は提供元の file の
+    """macro の提供元に、展開が使わない macro を足しても、記録から収集する(直す前は提供元の file の
     sha256 で照らし、doeff_hy の macros.hy のどの行の変更でも doeff の日次の Hy の test file を全部 import で収集し直して、日次の
     時間の上限を越えた・10-12 04:00 と 08:00 の回)。記録は展開が使った macro 単位(doeff_hy_bytecode_guard の記録)で照らす。"""
     _collect(project)
@@ -337,7 +337,7 @@ def test_a_macro_the_expansion_does_not_use_keeps_the_record(project: pytest.Pyt
 def test_a_fixture_bound_by_assignment_is_collected_from_records(project: pytest.Pytester, tmp_path: Path) -> None:
     """代入で作った module の fixture((val 名 ((pytest.fixture …) 関数)))を持つ file も記録から集める — 仮の module に
     同じ名・scope・引数の仮の fixture を置き、呼ばれた時は本物の module の fixture を呼ぶ。その実行の中で本物の module の
-    import は 1 回だけ(agora-redesign #1227 の案 B・議論の席の条件 1)。L713 の前は記録だけで集めて fixture not found に
+    import は 1 回だけ(議論の席の条件 1)。L713 の前は記録だけで集めて fixture not found に
     なっていた。"""
     (project.path / "pkg/tests/test_fixture_by_val.hy").write_text(
         PRELUDE

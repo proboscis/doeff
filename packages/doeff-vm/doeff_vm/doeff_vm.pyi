@@ -1,12 +1,12 @@
 # compiled の拡張 module doeff_vm.doeff_vm(Rust・pyo3 — src/lib.rs)の型の宣言のうち、package の頭(doeff_vm/__init__.py)へ出さない口。
 # 拡張だけに置く口は、古い build の .so で package の import を落とさないため、使い手が doeff_vm.doeff_vm から直に引く
 # (src/lib.rs の gc_traverse_zeroed_visits の註)。拡張のほかの名はこの宣言では型を持たない(__getattr__)— 拡張に
-# 宣言が無かった今までと同じ扱いで、名の全部を写すのはこの宣言の範囲の外(agora-redesign #2851)。
+# 宣言が無かった今までと同じ扱いで、名の全部を写すのはこの宣言の範囲の外。
 # 宣言した関数が拡張に在ることは packages/doeff-vm/tests/test_memory_stats.py が確かめる。
 #
 # _ で始まる関数は VM の数と切り替えで、公開の名ではない(拡張の __all__ に載らない — src/lib.rs の bind_internal)。
 # 利用者は doeff の effect(ReadVmWorkCounts・SetInvariantChecks など)を出し、doeff_core_effects._handlers.vm_probe_handler が
-# これらを呼んで答える。ほかに呼ぶのは doeff_core_effects の scheduler と world_phases だけ(agora card ki-27e8ea225b62)。
+# これらを呼んで答える。ほかに呼ぶのは doeff_core_effects の scheduler と world_phases だけ。
 from _typeshed import Incomplete
 
 def _vm_live_counts() -> tuple[int, int, int]:

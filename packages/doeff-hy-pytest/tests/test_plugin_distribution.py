@@ -52,8 +52,8 @@ def test_installed_plugin_entry_point_belongs_to_doeff_hy_pytest() -> None:
 
 
 def test_the_plugin_shows_only_the_two_declarations() -> None:
-    """入口が出す名は検ごとの宣言 2 個だけで、hook は pytest が拾う属性として在る(card ki-ad38495b7c15)。測りの中は _ で
-    始まる module に在り、_ の無い module は無い — 旧い path(budget・python_calls)の移し替えも消した(card ki-c1df9e7c5d02)。"""
+    """入口が出す名は検ごとの宣言 2 個だけで、hook は pytest が拾う属性として在る。測りの中は _ で
+    始まる module に在り、_ の無い module は無い — 旧い path(budget・python_calls)の移し替えも消した。"""
     import doeff_hy_pytest
 
     assert doeff_hy_pytest.__all__ == ["declare_process_tree_cpu", "declare_step_budget"]
@@ -70,5 +70,5 @@ def test_the_plugin_shows_only_the_two_declarations() -> None:
 
 def test_the_plugin_package_ships_its_types() -> None:
     """doeff_hy_pytest は型を持つ印 py.typed を持つ — 使い手の検が declare_step_budget を import した時に、pyright strict が
-    型の写しの無い module(reportMissingTypeStubs)として赤にしないため(agora-redesign #2670 の 3)。"""
+    型の写しの無い module(reportMissingTypeStubs)として赤にしないため。"""
     assert (PACKAGES / "doeff-hy-pytest" / "src" / "doeff_hy_pytest" / "py.typed").is_file()

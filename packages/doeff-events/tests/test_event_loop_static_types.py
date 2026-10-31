@@ -1,4 +1,4 @@
-"""event-loop の macro を、state の型を書いて使う係の型検査の失敗ケース(agora-redesign #3079・#3080)。
+"""event-loop の macro を、state の型を書いて使う係の型検査の失敗ケース(#3080)。
 
 macro の展開は、節の値を「state の型か、抜ける印 LoopStop」の注記つきで束ねていた。使い手の pyright strict に、書き手に直せない赤
 (Expected type arguments for generic class "LoopStop"・展開の変数と state の型が Unknown)が出た(automation の係の手本を macro で

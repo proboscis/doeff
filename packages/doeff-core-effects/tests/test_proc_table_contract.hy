@@ -1,4 +1,4 @@
-;;; 機体の process の表の検(card ki-7b934e2538f9)。契約(本物 os-proc-table-handler と fake scripted-proc-table-handler が同じ deftest を
+;;; 機体の process の表の検。契約(本物 os-proc-table-handler と fake scripted-proc-table-handler が同じ deftest を
 ;;; 通る)と、stat の 1 行の読み。解釈器の組み立ては proc_table_contract_handlers.hy。
 ;;;
 ;;;   契約  表は pid の昇順で重なりが無く、眠る子の行は親の pid を持つ。起動の刻の違う SignalPid は送らずに False(使い回された pid の

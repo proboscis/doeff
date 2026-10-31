@@ -1,4 +1,4 @@
-"""前もって焼いた Hy の .pyc を、import の時に doeff-hy の古さの検めが compile し直さない(agora-redesign #2598)。
+"""前もって焼いた Hy の .pyc を、import の時に doeff-hy の古さの検めが compile し直さない。
 
 doeff-cluster の実行環境の準備は、木の source を ``compile-python-sources``(この package の python_bytecode.hy)で前もって焼く。
 import の外で compile すると、Hy は仮の module を作って compile の直後に消すので、doeff-hy の compile の口の包みが macro の記録を

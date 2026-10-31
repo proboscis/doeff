@@ -1,4 +1,4 @@
-;;; 組の同時数の上限の値の持ち主は系の宣言 1 つ(2026-10-12・card ki-b0e8028c8c8d)の検。
+;;; 組の同時数の上限の値を持つのは系の宣言 1 つだけ、の検。
 ;;; 失敗ケース(直す前): 送り手が task ごとに上限の値を名乗り、coordinator は置く task 自身の申告と升の数を比べた — 2 本目の送り手が値を
 ;;; 上げると、1 本目の申告した上限を越えて置かれ、同じ 2 本でも置いた順で機体の同時数が変わった(上に載る系の再現の検の P1・P2)。今は task は組の名だけを名乗り、coordinator は系が宣言した資源 GroupLimit の値で数え、
 ;;; 宣言に無い組を名乗る task を受け口で断る。/state の groupLimits に組ごとの宣言の値と置いている数が出る。
@@ -222,7 +222,7 @@
   (assert (= #(ended.phase ended.detail ended.limits) #("finished" "done" #())) ended))
 
 
-;; --- 待っている task の理由を外から読む(ReadDetachedQueue — 依頼 lt-6203WCGWA41PGZ5KWK6FYZZBPA)-----------------------------------------
+;; --- 待っている task の理由を外から読む(ReadDetachedQueue)-----------------------------------------
 
 (defk queue-reason-scenario []
   {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}

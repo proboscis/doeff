@@ -1,5 +1,4 @@
-//! この binary を組んだ doeff の commit を env DOEFF_LINTER_COMMIT として埋める(`--version` と editor-json の `linter` が名乗る・
-//! agora-redesign #848)。
+//! この binary を組んだ doeff の commit を env DOEFF_LINTER_COMMIT として埋める(`--version` と editor-json の `linter` が名乗る)。
 //!
 //! - 自動の組み直し(dotfiles の agentcli doeff_linter_follow)は env DOEFF_LINTER_BUILD_COMMIT に 40 桁の sha を渡す — それをそのまま使う。
 //! - 手で組んだ時は `git rev-parse HEAD`。linter か indexer の dir に commit していない変更が在れば `+dirty` を付ける
@@ -10,7 +9,7 @@ use std::process::Command;
 /// crate の dir で git を撃ち、成功した時の stdout(前後の空白を除く)を返す。
 ///
 /// env の `GIT_*` は外す: 別の repo の git の hook の中で組まれると(その repo の hook が `uv run` で環境を同期する時)、git が hook に
-/// 渡す `GIT_DIR` などが `-C` より勝ち、その repo の HEAD を doeff の commit として名乗る(agora-redesign #1481)。
+/// 渡す `GIT_DIR` などが `-C` より勝ち、その repo の HEAD を doeff の commit として名乗る。
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     for (name, _) in std::env::vars_os() {

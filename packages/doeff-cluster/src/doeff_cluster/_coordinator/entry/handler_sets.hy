@@ -1,5 +1,5 @@
-;;; coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す(operator 2026-09-25 逐語
-;;; "such environmental changes are to be all done via handler swapping")。調停ループの Program(coordinator.run-coordinator)は
+;;; coordinator の handler の組 — 環境の違いは、ここに並ぶ「handler の組」という値だけで表す。
+;;; 調停ループの Program(coordinator.run-coordinator)は
 ;;; 環境を知らない。
 ;;;
 ;;;   production-handlers  本番: HTTP の受付(RequestInbox — 別 thread の HTTP server)・追記の log の置き場(WalStore の帳簿 + file の effect に答える os-file-handler)・

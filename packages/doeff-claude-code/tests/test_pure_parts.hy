@@ -22,7 +22,7 @@
                                 :autocompact (AutocompactTokens 400000)))
   (setv argv (launch-argv #("claude") spec (FreshSession SID)))
   ;; --include-hook-events = CLI に全 hook の開始と応答の行を出させる(上の層が hook の結果を会話の画面に出すため — CLI 2.1.292 は旗が
-  ;; 無いと SessionStart・Setup の hook の行だけを出す・ki-d8b473480303)。
+  ;; 無いと SessionStart・Setup の hook の行だけを出す)。
   (assert (= (cut argv 0 9) ["claude" "-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose"
                              "--include-partial-messages" "--include-hook-events"]))
   (assert (= (cut argv 9 10) ["--dangerously-skip-permissions"]))
@@ -48,7 +48,7 @@
 
 (deftest test-the-launch-key-follows-the-launch-conditions
   ;; 起こした時の条件の鍵(#3672): argv(会話の始まり方を除く)・cwd・env・資格の分が同じなら同じ鍵、どれかが違えば違う鍵。
-  ;; 資格の分(card ki-4ffdafa021e5)は借りたか家のかと口座の事実(契約の種類・階級)だけ — token と期限は鍵に入らない
+  ;; 資格の分は借りたか家のかと口座の事実(契約の種類・階級)だけ — token と期限は鍵に入らない
   ;; (資格だけが替わった次の手番は、走っている process の資格の家の file を替えて使い回す)。token は鍵に文字として残らない。
   (val lent (LentCredential :access-token "fake-token-1" :expires-at 1000.0 :subscription-type "max" :rate-limit-tier "tier-a"))
   (val base (ClaudeSessionSpec :home (ClaudeHome "/h/.claude" {"PATH" "/bin"}) :cwd "/w" :model "opus" :credential lent))
@@ -131,7 +131,7 @@
   (assert (= (transcript-path "/h/.claude" "/tmp/work.dir" SID)
              (.format "/h/.claude/projects/-tmp-work-dir/{}.jsonl" SID)))
   ;; 計時の env(#3855)は家の env の後に足す — 起動と要求までの区間を CLI に名乗らせる handler の物理。CLAUDE_CONFIG_DIR はその
-  ;; process の設定 dir(借りた資格で起こす process は資格の家 — card ki-4ffdafa021e5)。
+  ;; process の設定 dir(借りた資格で起こす process は資格の家)。
   (assert (= (process-env HOME "/h/.claude") {"PATH" "/bin" "CLAUDE_CODE_EMIT_STARTUP_TIMING" "1" "CLAUDE_CONFIG_DIR" "/h/.claude"}))
   (assert (= (get (process-env HOME "/h/.claude/.credential-homes/x") "CLAUDE_CONFIG_DIR") "/h/.claude/.credential-homes/x")))
 
@@ -233,7 +233,7 @@
     (lines.ToolAnswer "" "x" False)))
 
 (deftest test-tool-results-keep-the-parent-tool-call-of-a-subagent
-  ;; card ki-b25d579bf48b: subagent の中の道具の答えの user の行は、最上位に parent_tool_use_id(subagent を走らせた本体の会話の
+  ;; subagent の中の道具の答えの user の行は、最上位に parent_tool_use_id(subagent を走らせた本体の会話の
   ;; 道具の呼びの id)を持つ。ToolResult はそれを parent-tool-use-id に持ち、本体の会話の行(null・欄が無い・空)は None — 上の層が
   ;; subagent の中の Bash の答えを本体の会話の手番の答えと見分ける材料。読まない分類は subagent の答えも本体の答えに見えて赤。
   (val result {"type" "tool_result" "tool_use_id" "toolu_inner" "content" "ticket x1"})
@@ -299,7 +299,7 @@
     (PartialMessage :delta lines.DeltaKind.TEXT :thinking-delta "hmm")))
 
 (deftest test-a-tool-call-start-and-its-input-pieces-are-read
-  ;; #3974 の 3(道具を呼んでいる間を画面で分かるようにする。利用者の決定 2026-10-07): 担当が道具の命令を書いている間を画面に出す
+  ;; #3974 の 3(道具を呼んでいる間を画面で分かるようにする): 担当が道具の命令を書いている間を画面に出す
   ;; ため、content_block_start の tool_use は呼びの id と道具の名(tool-start)を、input_json_delta は命令の切れ端(partial_json — JSON の
   ;; 途中で単独では読めない文字列)を運ぶ。前は種類 TOOL-INPUT だけで中身を落とし、道具の名も読まなかったので赤。
   (val start (classify-record {"type" "stream_event"
@@ -423,7 +423,7 @@
   ;; 末尾だけの本文でも、在る行はそのまま起点。
   (<- tail-found (recorded-cost text False))
   (assert (= tail-found found) tail-found)
-  ;; 頭から全部読んで額の行が 1 つも無い = 0 から(CLI 2.1.292 の --resume は 0 から数える — card ki-4b9be8d95d9f)。発話の中の
+  ;; 頭から全部読んで額の行が 1 つも無い = 0 から(CLI 2.1.292 の --resume は 0 から数える)。発話の中の
   ;; cost-state の語は行ではない。
   (<- absent (recorded-cost "{\"type\":\"user\",\"text\":\"x\"}\n{\"type\":\"user\",\"text\":\"\\\"type\\\":\\\"cost-state\\\"\"}\n" True))
   (assert (= absent (CostMark 0.0 #())) absent)
@@ -524,7 +524,7 @@
              (Other :type "system" :subtype "compact_boundary_unknown_trigger"))))
 
 (deftest test-a-compacting-status-line-is-compact-started
-  ;; card ki-aeae6f9e643d: CLI は自動の圧縮を始めると、compact_boundary(終わり)の前に system/status の行(status = compacting)を
+  ;; CLI は自動の圧縮を始めると、compact_boundary(終わり)の前に system/status の行(status = compacting)を
   ;; 1 つ出す(CLI 2.1.294 の stream-json の書き手 — 替え玉の CLI tests/stub_cli/claude.hy が #4189 で写した形)。名前だけの Other に
   ;; 捨てると、上の層は圧縮の始まりを知れず、会話の画面は圧縮の 2 分間 何も出さない。ほかの状態(requesting など)は今までどおり Other。
   (import doeff_claude_code [CompactStarted])
@@ -534,7 +534,7 @@
              (Other :type "system" :subtype "status"))))
 
 (deftest test-a-status-null-line-is-compact-ended-with-its-outcome
-  ;; card ki-8239be27d5f6: CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず system/status の行(status = JSON の null)を出し、圧縮を
+  ;; CLI 2.1.292 は圧縮の関数の終わり(finally)で必ず system/status の行(status = JSON の null)を出し、圧縮を
   ;; 試みた時は compact_result(success / failed)と失敗の文 compact_error を添える(stream-json の書き手 = sdk_status の metadata の
   ;; compactResult・compactError)。名前だけの Other に捨てると、上の層は失敗・中断した圧縮を記録できない(成功だけが compact_boundary を持つ)。
   (import doeff_claude_code [CompactEnded CompactOutcome]
@@ -560,7 +560,7 @@
   (assert (= (lfor field (fields CompactEnded) field.name) ["outcome" "error"])))
 
 (deftest test-an-assistant-line-names-its-call-id
-  ;; card ki-8239be27d5f6: 1 つの API の呼びは content の block ごとに同じ message.id の行を出す。並んで走る subagent の行は交互に来るので、
+  ;; 1 つの API の呼びは content の block ごとに同じ message.id の行を出す。並んで走る subagent の行は交互に来るので、
   ;; 上の層は呼びの id で畳む — 本体の行も subagent の行も message.id を持つ。無ければ None。
   (val sub (classify-record {"type" "assistant" "parent_tool_use_id" "toolu_9"
                              "message" {"id" "msg_sub_1" "model" "claude-sub" "content" [] "usage" {"input_tokens" 2}}}))
@@ -569,7 +569,7 @@
   (assert (is main.message-id None) (repr main)))
 
 (deftest test-an-assistant-line-names-its-request-id
-  ;; card ki-b99ace070bf0: stream-json の assistant の行は最上位に request_id を持つ(実測 CLI 2.1.292 — 偽の API が答えの頭
+  ;; stream-json の assistant の行は最上位に request_id を持つ(実測 CLI 2.1.292 — 偽の API が答えの頭
   ;; request-id に置いた値がそのまま出た)。CLI の telemetry の api_request が同じ呼びを同じ id で名指すので、上の層は telemetry にだけ出る
   ;; 呼びを足す時にこの id で重ねる。無ければ None。
   (val line (classify-record {"type" "assistant" "parent_tool_use_id" None "session_id" "s" "request_id" "req_011CgHq2"
@@ -580,7 +580,7 @@
 
 
 (deftest test-the-recorded-cost-carries-the-model-usage-of-the-same-line
-  ;; card ki-1d986d4f0007: CLI 2.1.292 の cost-state の行は額と同じ点の model ごとの累積(modelUsage — result の行と同じ欄の名・窓の欄は
+  ;; CLI 2.1.292 の cost-state の行は額と同じ点の model ごとの累積(modelUsage — result の行と同じ欄の名・窓の欄は
   ;; 無い)を持つ。起点は額と model ごとの累積の組で、同じ 1 行から取る。modelUsage の無い古い形の行は額だけの起点(models None)。
   (val line {"type" "cost-state" "sessionId" "s" "totalCostUSD" 0.75 "totalAPIDuration" 10
              "modelUsage" {"claude-opus-5-5" {"inputTokens" 12 "outputTokens" 340 "thinkingTokens" 0 "cacheReadInputTokens" 9000

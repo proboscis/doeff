@@ -1,6 +1,6 @@
 """Programs handed over as a generator expression / comprehension and run inside the callee.
 
-Regression target (agora-redesign intake closure, request lt-QX2FM3MDS8EX0Q308A3NCQQYGJ):
+Regression target (agora-redesign intake closure):
 doeff-traverse's ``sequence(programs)`` takes an iterable of Programs and runs each with
 ``value = yield program``.  Callers build that iterable as a generator expression —
 ``(sequence (gfor row rows (carrier-of-request row)))`` — which the reader did not read as

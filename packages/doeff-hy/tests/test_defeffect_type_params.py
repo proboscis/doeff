@@ -1,4 +1,4 @@
-"""defeffect の型の引数 :tp(agora-redesign #2939)の失敗ケース。
+"""defeffect の型の引数 :tp の失敗ケース。
 
 答えが「走らせる Program の答え」で決まる effect(doeff-core-effects の SqlTransaction — 答え = program の答え T | 失敗の値)は、
 欄 `program` と :answer が型の引数 T を読む。型検査の展開は class を T について総称にしなかったので、欄に `Program[T, object]` を

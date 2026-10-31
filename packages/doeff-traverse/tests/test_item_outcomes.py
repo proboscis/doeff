@@ -1,7 +1,7 @@
-"""Traverse の handler が件ごとの結末を ItemOutcome で知らせる契約の検(card ki-e3a936788353)。
+"""Traverse の handler が件ごとの結末を ItemOutcome で知らせる契約の検。
 
-失敗する件のある pipeline に進捗の bar を足すと、bar が n < total のまま閉じなかった(設計検証
-lt-JQVA466JCC2G49XC7TSGKZD6D0 の盲検 A): 進捗の handler は f を包んで終わった件だけを数え、失敗した件・When で
+失敗する件のある pipeline に進捗の bar を足すと、bar が n < total のまま閉じなかった
+: 進捗の handler は f を包んで終わった件だけを数え、失敗した件・When で
 落ちた件・前の段から持ち越した件を数えられなかった — 件の結末を知るのは Traverse の handler だけだった。
 
 契約: sequential・parallel・parallel_fail_fast は、件の結末(ok・failed・skipped・carried)が決まるたびに
@@ -211,7 +211,7 @@ def test_a_traverse_with_no_item_to_run_reports_nothing(name: str) -> None:
 
 
 def test_parallel_fail_fast_reports_the_items_up_to_the_failure_and_the_rest_cancelled() -> None:
-    """件 3 で止まると、それまでの件と失敗した件に続き、止めた件 4 を cancelled と知らせる(card ki-e0fd319d5b75)。"""
+    """件 3 で止まると、それまでの件と失敗した件に続き、止めた件 4 を cancelled と知らせる。"""
     reports = _Reports()
     with pytest.raises(ValueError, match="three"):
         _run_under(
@@ -354,7 +354,7 @@ def test_a_report_no_handler_takes_is_answered_by_the_traverse_handler(name: str
     assert second.valid_values == [11, 21, 41, 61]
 
 
-# 受け手の決まり(設計検証 lt-H07C2RG4T2BM59EENGQWQHSJKH の盲検 A・B): 受け手は知らせを見て外へ渡し、答えるのは Traverse の
+# 受け手の決まり: 受け手は知らせを見て外へ渡し、答えるのは Traverse の
 # handler だけ。A — 答えて止める受け手が 1 つ居ると、並び次第で別の受け手(2 本目の bar・失敗の記録)が黙って何も受けなかった。
 # B — 知らせに例外を投げ返す受け手(失敗の上限で Traverse を止める)が、Traverse の走り方の判断を受け手へ移したまま検を通った。
 

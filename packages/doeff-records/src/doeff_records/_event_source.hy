@@ -425,7 +425,7 @@
 ;; 包む関数の型 = BodyWrapper(handler の印を持つ class — subscribed_event_handler・timer_handler と同じ with-handlers の列に並ぶ、doeff の
 ;; ProgramHandler に当たる値)。ProgramHandler は runtime_checkable でない Protocol で isinstance に渡せない(契約の実行時の確かめが
 ;; TypeError)ので、契約には返す class を綴る。前の Callable[[object], Program] は公開 API の目録(tools/public_api_inventory.py)が
-;; handler と読めず、工場が未分類になった(card ki-01270742001e)。BodyWrapper は Callable[[object], Program](SignalSourceFactory の make の答え)
+;; handler と読めず、工場が未分類になった。BodyWrapper は Callable[[object], Program](SignalSourceFactory の make の答え)
 ;; にもそのまま入る。
 (deff records-signal-handler [bindings subscriber]  ; defk にできない: with-handlers の列に呼びの字面で置く素の工場の関数 — 閉じの検の道具が宣言を読む形(#3104)
   {:pre [(: bindings (get tuple #(SignalTables ...))) (: subscriber str)] :post [(: % BodyWrapper)]}

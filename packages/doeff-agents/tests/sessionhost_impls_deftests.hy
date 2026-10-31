@@ -41,7 +41,7 @@
     (setv self.fs {})              ;; path -> text
     (setv self.dirs [])            ;; FsMakeDirs の記録
     (setv self.atomic-writes [])   ;; [(path, tmp-suffix)]
-    (setv self.removed [])         ;; FsRemoveFile の記録(card ki-6b5c4b270ca0)
+    (setv self.removed [])         ;; FsRemoveFile の記録
     (setv self.env {})             ;; EnvGet 台本(process env fallback)
     (setv self.canonical {})       ;; path -> canonical path 台本
     (setv self.tmux-calls [])      ;; あらゆる tmux effect の記録
@@ -59,7 +59,7 @@
     (setv (get world.fs path) text)
     (resume None))
   (FsRemoveFile [path]
-    ;; card acp:kanban-issue:ki-6b5c4b270ca0: 名指した 1 file を落とす(不在は成功)。
+    ;; 名指した 1 file を落とす(不在は成功)。
     (.append world.removed path)
     (resume (is-not (.pop world.fs path None) None)))
   (FsMakeDirs [path]
@@ -163,7 +163,7 @@
 
 
 (deftest test-claude-argv-always-declares-the-compaction-threshold
-  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window・operator 指示 2026-09-18)。根 = 起こす argv が閾値を
+  ;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window)。根 = 起こす argv が閾値を
   ;; 何も名乗らず、claude が自分の窓(1M)いっぱいまで畳まずに伸びていた。実測 2026-09-18:
   ;; 1 手番の平均の文脈 550k・最大 967k・600k 超の手番が費用の 59%。
   ;; ⇒ effort(名乗らない席は旗を出さない)と**逆に**、閾値は常に載せる。
@@ -347,7 +347,7 @@
 
 
 (deftest test-claude-argv-merges-the-declared-seat-settings
-  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings
+  ;; ADR-DOE-AGENTS-004 R13: 機体の参加の宣言が名指した席の settings
   ;; (launch / headless が起動の拍ごとに読んで params claude_settings に載せる — 中身は dotfiles の proxy 登録 1 枚)は、
   ;; 記憶の置き場と**同じ 1 つの** `--settings` に合流する。--settings を 2 回出すと後勝ちで片方が黙って消える。
   (setv world (ImplWorld))
@@ -1040,9 +1040,9 @@
 
 
 (deftest test-api-limit-reading-names-the-range-and-the-reason-the-text-says
-  ;; 2026-09-23(operator の規則 2026-09-17 — profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
+  ;; 2026-09-23(profile が費用の上限で止まれば、上限の種類に依らず口座が枯れたと読む):
   ;; 実物の文 = 2026-09-23 08:00〜15:00 JST の agent-job の ProviderLimit の 8 件(3 種)と、過去の実物の文。
-  ;; 2026-09-24(card acp:kanban-issue:ki-5d4849d22a4e・受入 A6): 表は範囲と理由の対を返す。group の上限 $N の族は
+  ;; 2026-09-24(受入 A6): 表は範囲と理由の対を返す。group の上限 $N の族は
   ;; 範囲を名乗らないので unknown(器は決めない)・範囲を名乗る文は account / model のまま・理由は今日どれも rate-limited。
   (setv org-cap "Your group's usage limit is set to $0 · ask your admin for a higher limit")
   (setv org-cap-reading (run (api-limit-reading-of org-cap)))
@@ -1103,7 +1103,7 @@
 
 (deftest test-api-limit-resets-at-reads-its-zone-without-the-machines-tz-data
   ;; 時間帯の表は doeff-agents が依存に宣言した tzdata から引く。機体の tz データ
-  ;; (/usr/share/zoneinfo)の無い Pod でも戻りの時刻を失わない(card ki-db3650ee22fb:
+  ;; (/usr/share/zoneinfo)の無い Pod でも戻りの時刻を失わない(
   ;; daily-verify の Pod に zoneinfo が無く、Asia/Tokyo が引けず None になった)。
   (val jst-15 1790143200000) ;; 2026-09-23 15:00 JST
   (zoneinfo.reset-tzpath :to [])
@@ -1159,7 +1159,7 @@
 
 
 (deftest test-api-limit-marker-org-cap-family
-  ;; agora-redesign #513(2026-09-17 実 incident): 組織の側の上限「Your group's usage limit is
+  ;; 2026-09-17 実 incident: 組織の側の上限「Your group's usage limit is
   ;; set to $0 · ask your admin for a higher limit」は所有格族の外の述部で、会社の口座 p10174 の
   ;; 18 手番が普通の終わりとして流れた(族の表が破れた 4 度目)。固定するのは述部と金額の先頭だけ。
   (for [frame ["Your group's usage limit is set to $0 · ask your admin for a higher limit"
@@ -1172,7 +1172,7 @@
 
 
 (deftest test-is-api-limit-refusal-structure-first-then-wording
-  ;; agora-redesign #513: CLI が構造で名乗る status が在れば 429 ちょうどが限度(文は読まない)。
+  ;; CLI が構造で名乗る status が在れば 429 ちょうどが限度(文は読まない)。
   ;; 実測 2026-09-17 の 4 種の文は全部 429 —— 未知の言い回しでも 429 なら限度。
   (setv unknown-wording (is-api-limit-refusal "Usage is paused for this workspace · ask your admin" 429))
   (assert unknown-wording)

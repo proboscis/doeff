@@ -1,4 +1,4 @@
-"""wire.hy の公開面の型(型検査のための宣言 — 実行時は wire.hy を読む・agora-redesign #2282・#2279 の子)。
+"""wire.hy の公開面の型(型検査のための宣言 — 実行時は wire.hy を読む・#2279 の子)。
 
 wire.hy は Hy の module なので、pyright は中を読めず、`from doeff_hy._wire import parse` の名が全部 Unknown になる
 (agora の protocol の file で strict の赤が書き手に直せない形で出る — #2220 で 317 → 416 の出どころの 1 つ)。

@@ -1,5 +1,5 @@
 """The in-memory broker hands a notice over as Redis Pub/Sub does: ``Announce`` returns to the writer at once and
-the subscribers it woke run when the writer next waits — the writer does not wait for them (agora-redesign #4013).
+the subscribers it woke run when the writer next waits — the writer does not wait for them.
 
 Before, ``Announce`` woke a waiting subscriber with ``CompletePromise``, and the scheduler runs every task a
 completion woke before the completer goes on (#493). A writer that sent several notices in one stretch then let the

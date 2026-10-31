@@ -1,12 +1,12 @@
 """An analysis answer is reused from disk only while every module file it depends on has the same content.
 
 The answer of a closure analysis depends on the sources it reads and on the runtime values importing
-them made (agora-redesign #1645). It is keyed on the files of the modules the analysis read and the
-modules their values were built from — not on every module the process had loaded (ki-30d28550680c:
+them made. It is keyed on the files of the modules the analysis read and the
+modules their values were built from — not on every module the process had loaded (
 a test session loads hundreds of unrelated test files, and one change among them made every closure
 test analyze again). One changed byte in a module of the key must make the next call analyze again;
 a change in a module outside it must not. The key is the files' content, not their path
-(agora-redesign #3777): another checkout with the same content reads the stored answer, and
+: another checkout with the same content reads the stored answer, and
 checkouts with other contents keep their answers side by side.
 """
 
@@ -150,7 +150,7 @@ def test_checkouts_with_other_contents_keep_their_answers_side_by_side(
     cache_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two worktrees at different commits running the same analysis do not overwrite each other's
-    answer (agora-redesign #3777 — an identity had one answer, and the closure test of the screen
+    answer (an identity had one answer, and the closure test of the screen
     job ran in full whenever another worktree had run it last)."""
     name = "result_cache_side_by_side"
     first = checkout_with(tmp_path, "a", name, "CHECKOUT = 'a'\n")
@@ -248,7 +248,7 @@ def test_an_answer_from_another_checkout_is_not_reused(
     """Two checkouts of one repo share the machine's cache and name their modules alike; an answer
     computed while one checkout's module was loaded must not answer a process that loaded the same
     module from the other checkout, although the first checkout's file is still unchanged
-    (agora-redesign #1864 — a closure check counted a module only the other checkout had)."""
+    (a closure check counted a module only the other checkout had)."""
     name = "result_cache_checkout"
     checkouts = {}
     for label in ("a", "b"):
@@ -321,7 +321,7 @@ def test_only_objects_found_again_by_their_name_are_named() -> None:
     assert rc.importable_name(functools.partial(module_level_job)) is None
 
 
-# --- The key is the modules the answer depends on (ki-30d28550680c) ---------------------------------
+# --- The key is the modules the answer depends on ---------------------------------
 # A test session loads hundreds of test files the closure analysis never reads; the key named every
 # loaded module, so a change in any of them (and ``conftest`` / ``__mp_main__``, named alike in every
 # session) made the next session analyze in full (20-60 s per closure test). The key is the modules
@@ -502,7 +502,7 @@ def test_a_changed_reader_macro_of_a_read_hy_module_analyzes_again(cache_dir: Pa
     """A Hy module's values are built by the reader macros it requires too (Hy keeps them in a table of
     their own): their module is in the key. The names of Hy's macro tables are read from the one home
     of Hy's internal names (``doeff_hy_bytecode_guard._records``); this and the test above measure that
-    the key follows both tables of the Hy that uv.lock pins (card ki-ffe72a1fb7d7 — they are selected
+    the key follows both tables of the Hy that uv.lock pins (they are selected
     by a change of uv.lock, with packages/doeff-hy/tests/test_bytecode_guard.py)."""
     import hy  # noqa: F401 - registers the .hy import hook
 

@@ -1,4 +1,4 @@
-"""macro を require し忘れた Hy の module と、macro を import で入れた module に、書き足す 1 行を言う検(取り組み doeff-publish・card ki-909e814cc835)。
+"""macro を require し忘れた Hy の module と、macro を import で入れた module に、書き足す 1 行を言う検(取り組み doeff-publish)。
 
 初見の人が README の Hy の例から ``(require doeff-hy.macros [do! <-])`` を抜くと、Hy は ``do!`` を関数の呼び出しとして compile し、
 実行の時に ``NameError: name 'hyx_doXexclamation_markX' is not defined`` になる(Hy の仕様 — Hy には手を入れない)。macro を
@@ -242,7 +242,7 @@ def test_a_module_that_uses_a_macro_spelling_only_as_a_local_name_is_not_walked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # ``(defn f [check] (check 1))`` の形 — 記録の absent に check が在っても、読みは LOAD_FAST で co_names に無い。大きな
-    # module で命令を歩くと 1 本 1 秒前後かかる(card ki-ef8a3e593353)ので、co_names の照合だけで終わる事を測る。
+    # module で命令を歩くと 1 本 1 秒前後かかるので、co_names の照合だけで終わる事を測る。
     import hy  # noqa: F401 — 表は Hy の mangle で作る
     from doeff_hy_bytecode_guard import _macro_hints as macro_hints
 

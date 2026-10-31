@@ -221,7 +221,7 @@
   ;; 置き先が無い: 置ける worker が無い・空きが無い(理由の文は今までどおり)。
   (assert (= (! (answer (! (declared)))) #(NotReadyKind.NO-ELIGIBLE-WORKER VersionState.BLOCKED)))
   (assert (.startswith (get (running-process (! (declared)) "w" START T) "reason") "置き先が無い: 置ける worker が無い"))
-  ;; 空きが無い = memory の予算 0 の worker(card ki-2acb63aec0fd — 理由の文に memory の訳が付く)。
+  ;; 空きが無い = memory の予算 0 の worker(理由の文に memory の訳が付く)。
   (val full (! (beat (! (declared)) "atlas" :memory 0)))
   (assert (= (! (answer full)) #(NotReadyKind.NO-ROOM VersionState.BLOCKED)))
   (assert (.startswith (get (running-process full "w" START T) "reason") "置き先が無い: 置ける worker に空きが無い(job w を worker atlas に置くと")

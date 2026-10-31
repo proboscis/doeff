@@ -1,4 +1,4 @@
-//! 作業木の git の index が持つ blob の id で、file の中身を読まずに「その中身」を名指す(card ki-d56ba76422ba)。
+//! 作業木の git の index が持つ blob の id で、file の中身を読まずに「その中身」を名指す。
 //!
 //! 冷えた作業木の最初の 1 回は、repo の Hy の約 2900 file を 1 つずつ開いて読む(作業木ごとに別の inode なので、1 file ごとに disk を待つ)。
 //! 別の作業木が同じ中身を読んで結果を置いていても、(path・更新時刻)は作業木ごとに違うので引けない。git の index は、checkout の時に各 file の

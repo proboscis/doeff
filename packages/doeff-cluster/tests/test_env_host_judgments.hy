@@ -865,7 +865,7 @@
 
 
 (deftest test-the-host-carries-the-compile-jobs-of-a-warm-preparation-unchanged [tmp-path]
-  ;; 失敗ケース(2026-10-12・設計検証 lt-6N1ZY7HZZKH7KMPEH2TS5XV3YQ の盲検 B): 「走っている準備の横で起こす先読みは天井を分けた数で
+  ;; 失敗ケース(2026-10-12): 「走っている準備の横で起こす先読みは天井を分けた数で
   ;; 焼く」を env-host の起こしの所に書くと、方策(policy の replace-step・start-step)が載せなかった並べる数 None を env-host が数に
   ;; 書き換え、焼きの並列数の既定(bake_plan の cpu-limit-of — pod の上限と天井)を通らない数で焼く(上限 8 の pod で下がり、上限 2 の
   ;; pod で越える)。検の一式と commit の時の検は、その差分をどれも通した。env-host は頼みの並べる数を、先読みでも、走っている準備の

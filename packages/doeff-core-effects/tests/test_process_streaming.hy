@@ -1,4 +1,4 @@
-;;; 子 process の本物の答え手だけの性質(agora-redesign #2184)— 台本の世界には時間の経過も並行も無いので、契約(test_process_contract.hy)
+;;; 子 process の本物の答え手だけの性質— 台本の世界には時間の経過も並行も無いので、契約(test_process_contract.hy)
 ;;; には置けない性質を、本物の 2 つの答え手(subprocess-handler・offloaded-subprocess-handler)で確かめる。解釈器は
 ;;; process_contract_handlers.hy(conftest が scheduled を積む)。
 ;;;

@@ -1,5 +1,4 @@
-//! Python の文ごとの規則の母集団を、file ごとに、その file を持つ package の architecture.hy の層の宣言から決める 1 点
-//! (agora-redesign #2811)。
+//! Python の文ごとの規則の母集団を、file ごとに、その file を持つ package の architecture.hy の層の宣言から決める 1 点。
 //!
 //! linter は 1 回の実行に宣言 1 つ(設定の architecture か、根の architecture.hy)を読む。doeff の根の実行(pre-commit・make lint-doeff)は
 //! package の宣言を読まないので、package が層に書いた規則の除外が効かなかった。ここでは file から上へ最も近い architecture.hy
@@ -46,7 +45,7 @@ fn declarations() -> &'static Mutex<Declarations> {
 }
 
 /// 実行の頭で読んだ宣言を、母集団の問いに渡す。同じ宣言を 2 度読まないため(`Architecture::load` は 530KB の architecture.hy で 1 回 30〜80 ミリ秒 —
-/// 書いた file 1 つの hook の CPU の約 1/4・agora-redesign #1022)。呼び手は、問いが読むのと同じ読み方(宣言の dir を repo の根として読んだ宣言)だけを渡す。
+/// 書いた file 1 つの hook の CPU の約 1/4)。呼び手は、問いが読むのと同じ読み方(宣言の dir を repo の根として読んだ宣言)だけを渡す。
 pub fn remember_declaration(path: &Path, architecture: Arc<Architecture>) {
     declarations()
         .lock()
@@ -118,7 +117,7 @@ pub fn population_of(file: &Path) -> Result<FilePopulation, String> {
         return Ok(FilePopulation::Plain);
     };
     let architecture = declaration(&path)?;
-    // :files の path での名指しを先に見る(module の名を持たない file — agora-redesign #2934)、無ければ :modules の名
+    // :files の path での名指しを先に見る(module の名を持たない file)、無ければ :modules の名
     let base = path.parent().unwrap_or(Path::new("."));
     let by_file = absolute
         .strip_prefix(base)

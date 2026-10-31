@@ -1,4 +1,4 @@
-"""defhandler の節の effect の型を、VM の型の選り分けに渡す事の検(agora-redesign #1931)。
+"""defhandler の節の effect の型を、VM の型の選り分けに渡す事の検。
 
 defhandler は節の effect の型を、生成する `(fn [effect k] ...)` の effect の引数の型の註にする。VM はそれを install の時に 1 度読み
 (doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect ではこの handler を Python に入らずに飛ばす — 節の外の

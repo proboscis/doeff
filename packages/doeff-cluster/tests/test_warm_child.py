@@ -321,7 +321,7 @@ def anonymous_kib(pid: int) -> int:
 @pytest.mark.skipif(not LINUX, reason="/proc の命令行と smaps_rollup で見る — Linux の worker")
 def test_the_forked_watcher_lets_go_of_the_loaded_heap_while_the_job_runs(place: Path, start_warm_child: StartWarmChild) -> None:
     """分かれた子 A は入口 B を起こした後、読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec し、job が走る間、待ちの子の
-    heap の写しを持たない(card ki-97e47900b302 — fork のままの A は job の終わりまで写しを持ち、daily-verify の A で PSS 270 MB・
+    heap の写しを持たない(fork のままの A は job の終わりまで写しを持ち、daily-verify の A で PSS 270 MB・
     Private_Dirty 80 MB)。前の形では A の命令行が待ちの子のままで、無名の memory が待ちの子と同じ大きさで赤。"""
     warm = started(place, start_warm_child)
     try:
@@ -429,7 +429,7 @@ def test_the_warm_child_reads_the_process_through_the_machine_readers() -> None:
     assert "proc_stat_of" in source and "own_thread_count" in source
 
 
-# --- service の頼み(card ki-de44efdb9aa4)— 入力の pipe・cgroup・退きの知らせの中継 -------------------------------------------------
+# --- service の頼み— 入力の pipe・cgroup・退きの知らせの中継 -------------------------------------------------
 
 NOTICE_ENV = "DOEFF_WORKER_NOTICE_FD"
 

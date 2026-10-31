@@ -1,6 +1,6 @@
 """Harness teardown — the daemon a harness run spawned is gone afterwards.
 
-agora-redesign #3026: conformance runs left session host processes
+conformance runs left session host processes
 daemons behind for hours (ppid = the user systemd, --db under
 /tmp/agentd-conf-*). The harness stops the daemon's whole process group where
 it spawned it: on a passing scenario, on a failing one, and when the daemon

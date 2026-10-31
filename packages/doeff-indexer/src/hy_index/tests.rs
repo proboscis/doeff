@@ -520,7 +520,7 @@ fn defeffect_is_a_definition_with_fields_bases_docstring_and_tags() {
 
 #[test]
 fn defrecord_header_gives_tags_and_checks() {
-    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}(agora-redesign #798)。
+    // doeff-hy の defrecord の頭の辞書 {:tags … :check […]}。
     let source = r#"(defrecord ChatId
   "chat の id"
   {:tags {:context "chat" :role "type"}
@@ -553,7 +553,7 @@ fn defrecord_header_gives_tags_and_checks() {
 
 #[test]
 fn defwire_is_read_as_a_record() {
-    // doeff-hy の defwire(JSON の境目の型 — agora-redesign #840)は defrecord へ展開する。kind・docstring・欄は defrecord と同じに読む。
+    // doeff-hy の defwire(JSON の境目の型)は defrecord へ展開する。kind・docstring・欄は defrecord と同じに読む。
     let source = r#"(defwire LandingRow
   "取り込みの台帳の 1 行"
   {:tags {:context "land-notice" :role "type"} :names :camel :unknown :reject}

@@ -46,7 +46,7 @@ Collect = Callable[[pytest.Pytester], pytest.RunResult]
 
 @pytest.fixture
 def child_deadline(deadline_scale_factor: float) -> float:
-    """子 1 つの制限時間。root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸ばす(card ki-bb91f171d222)。"""
+    """子 1 つの制限時間。root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸ばす。"""
     return CHILD_DEADLINE_SECONDS * deadline_scale_factor
 
 
@@ -530,7 +530,7 @@ else:
 
 @pytest.mark.parametrize("deadline_scale_factor", [2.0])
 def test_child_deadline_follows_the_load_scale(child_deadline: float) -> None:
-    """子の制限時間は、root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸びる(card ki-bb91f171d222)。
+    """子の制限時間は、root の conftest が pytest-timeout の締切に掛ける負荷の係数で伸びる。
 
     反例: 子ごとの固定の 30 秒。日次 10-11 20:00 の atlas で worker の Pod が CPU の枠 8 に張り付いた間、
     test_plain_items_share_closures_without_definition_nodes の 2 回目の子(単独なら 1.5 秒)が 30 秒で殺された。

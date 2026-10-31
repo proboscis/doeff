@@ -1,5 +1,5 @@
 ;; 調停ループ(core/program.hy の run-coordinator)の水準で、止まりの判断が api_policy.stall-of の 1 つだけである事の失敗ケース
-;; (card ki-d033e5f969cf の設計検証 — 盲検 B: 調停ループの側で別の閾・別の意味の Stall を作って時計をずらしても、判断の test
+;; (盲検 B: 調停ループの側で別の閾・別の意味の Stall を作って時計をずらしても、判断の test
 ;; test_coordinator_stall.hy は stall-of しか通らないので見逃す)。
 ;;   1 予定の起きる刻を lease 以下(7 秒)寝過ごした歩は止まりでない — 止まりの行を出さず、時計をずらさない。
 ;;   2 保存が lease 以下(7 秒)かかった歩の次の歩も止まりでない。

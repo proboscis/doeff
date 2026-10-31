@@ -1,6 +1,6 @@
-"""installed の defsemgrep の答え(例の組 1 つに当たった規則の id)を引く鍵と、答えを process の外に残す置き場(card ki-f81dde817291)。
+"""installed の defsemgrep の答え(例の組 1 つに当たった規則の id)を引く鍵と、答えを process の外に残す置き場。
 
-同じ設定の規則の例は 1 回の semgrep にまとめて確かめる(registry._installed_verdict・agora-redesign #2976 I-3)が、残る費用は semgrep の
+同じ設定の規則の例は 1 回の semgrep にまとめて確かめる(registry._installed_verdict)が、残る費用は semgrep の
 1 回の起動そのもの(約 8 秒)で、agora の日次は pytest の session と設定ごとに、設定も例も変わらない日にも毎回払っていた。呼び手が
 環境変数 SEMGREP_VERDICTS_ENV で置き場の dir を名指せば、答えを ``<dir>/<鍵>.json`` に残し、次の process はそこから読む。名指しが
 無ければ残さない(process の中だけで覚える)— doeff-adr は日次の名も置き場の根も知らない。

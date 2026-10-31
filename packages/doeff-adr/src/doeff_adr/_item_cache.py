@@ -1,7 +1,7 @@
-"""Hy の test file の item の記録のキャッシュ — 鍵は source の内容の hash と、展開が使った macro の記録(agora-redesign #1291)。
+"""Hy の test file の item の記録のキャッシュ — 鍵は source の内容の hash と、展開が使った macro の記録。
 
 item を作る macro は、展開の式で記録を module に積む(``doeff_hy._pytest_items``)。この module は、収集で 1 度 import した
-file の記録を保存し、次の収集からは import せずに引けるようにする。Hy の importer には手を入れない(#1290 の利用者の決定)。
+file の記録を保存し、次の収集からは import せずに引けるようにする。Hy の importer には手を入れない。
 
 - 置き場: ``<dir>/<source の sha256>.json``。dir は :func:`items_cache_dir_for` の 1 か所で決める(ini → 環境変数
   ``DOEFF_ADR_ITEMS_CACHE`` → ``~/.cache/doeff-adr/pytest-items`` の順 — plugin が ini を読んで渡す)。内容の
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from doeff_hy_bytecode_guard import MacroRecord
 
 # 記録の形か鍵の決め方を変えたら上げる(古い版のキャッシュは読まない)。2 = macro の提供元を doeff_hy_bytecode_guard の辿り方で求める。
-# 3 = module の fixture の記録を足す(agora-redesign #1227 の案 B)。
+# 3 = module の fixture の記録を足す。
 # 4 = import後の実値・明示idとproject内sourceの状態を保存する(#1459)。
 # fixture の別名も pytest の登録名で保存する (#1551)。古い記録の名前を使わない。
 # 6 = macro の提供元の file の sha256 の代わりに、展開が使った macro の記録と記録を積む実行時の口の file を保存する(#3769 の子)。
@@ -72,7 +72,7 @@ def items_cache_dir_for(configured: str, rootpath: Path) -> Path:
     順: ini の値が在ればそれ(project の設定が最も狭い)→ 無ければ環境変数 ITEMS_CACHE_ENV(走らせる側が process ごとに渡す)→
     どちらも無ければ利用者の cache の dir の下(``~/.cache/doeff-adr/pytest-items``)。環境変数の段は、日次の全体検証の task が
     HOME を回ごとに空の dir に替えるため(既定の置き場では記録が毎回空になり、atlas の日次は収集のために 309 file を import
-    していた — card acp:kanban-issue:ki-9338eec1d15e の責務 R2)。ini と環境変数の相対の path は rootdir から解く。
+    していた)。ini と環境変数の相対の path は rootdir から解く。
     """
     named = configured.strip() or (environment_value(ITEMS_CACHE_ENV) or "").strip()
     if not named:
@@ -129,7 +129,7 @@ class FixtureRecord:
     """module の fixture 1 つ — 仮の module に同じ名・scope・引数の仮の fixture を置くための記録。
 
     保存の時に本物の module の pytest の fixture の印から作る(fixture の定義元は本物の module のまま — 仮の fixture は
-    setup で本物の関数を呼ぶだけ・agora-redesign #1227 の案 B)。params / autouse つきの fixture は記録しない
+    setup で本物の関数を呼ぶだけ)。params / autouse つきの fixture は記録しない
     (収集の結果を変えるので、その file は今までどおり import で集める)。
     """
 
@@ -292,7 +292,7 @@ def _read_runtime_entry(
 @dataclass(frozen=True)
 class PendingEntry:
     """import した直後に照合した記録 1 つ — 書くのは収集の終わり。書き込みと、読込済みの source の読みと hash は、doeff-hy-pytest の
-    読み込みの上限が測る import の区間の外で行う(収集の道具の費用で、検の file の重さではない — card ki-b2383fcc8b25)。
+    読み込みの上限が測る import の区間の外で行う(収集の道具の費用で、検の file の重さではない)。
     expansion = import した時の展開が使った macro の記録(:func:`expansion_of`)。
     origins = 実値の記録が依存する、import した時点で読込済みだった module の file(静的な記録は空)。"""
 

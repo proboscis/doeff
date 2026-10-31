@@ -1,5 +1,5 @@
 ;;; doeff-time の契約テスト — 同じ effect に答える本物の時計(async-time-handler・sync-time-handler)と仮想の時計
-;;; (sim-time-handler)が、同じ deftest を通る(agora-redesign #1159)。解釈器の組み立ては time_contract_clocks.hy。
+;;; (sim-time-handler)が、同じ deftest を通る。解釈器の組み立ては time_contract_clocks.hy。
 ;;;
 ;;; 時間の幅は時計の性質(ClockTraits)で見る: 仮想の時計はちょうど・本物の時計は早起きを early 秒・遅れを late 秒まで許す。
 ;;; SetTime は仮想の時計だけの effect なので契約の外(test_sim_time.py)。本物の時計が壁時計を読むことは test_get_time.py。

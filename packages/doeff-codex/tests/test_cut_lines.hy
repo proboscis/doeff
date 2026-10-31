@@ -1,7 +1,7 @@
 ;; 1 行の上限を超えて頭だけを読んだ行の分類の検 — 頭(途中で切れた JSON)を閉じて分け、要求への答えは id と thread の id を名乗る記録に、
 ;; ほかの行は中身の欠けた記録を作らず method を名乗る Unparsed にする事。答えの形は録った実物の行(tests/recorded/codex-0.162.1 の
 ;; thread/start の答え — thread/resume の答えと同じ形で、thread の id が頭に・履歴 turns が thread の最後の欄に在る)に、履歴を足して作る。
-;; 出自 = card ki-83f24000d86c(thread/resume の答え 1 行で turn-host の本体が 27 GB に膨らんだ)。
+;; 出自 = thread/resume の答え 1 行で turn-host の本体が 27 GB に膨らんだ事。
 (require doeff-hy.macros [val])
 (val MODULE-TAGS {:context "codex-test" :role "foundation"})
 (require doeff-hy.macros [deftest defk <-])

@@ -17,7 +17,7 @@ resources:
   - ../nodes/zeus
   # 根の disk を worker と Longhorn が分け合う機体の Longhorn の disk の予約(worker の env と同じ宣言 ../disk-share/shares.yaml から導く)。
   - ../disk-share
-# 機体ごとの worker の枠(card ki-6828eda880ce): 同時の job と task の上限 capacity と、そのうち task のために空けておく数 taskReserve を、
+# 機体ごとの worker の枠: 同時の job と task の上限 capacity と、そのうち task のために空けておく数 taskReserve を、
 # 機体の名(= worker の名)ごとに worker-room.json に置く — 枠の定義元はこの 1 file。名の固定した ConfigMap worker-room にし(中身の hash を
 # 名に付けない)、worker は volume で置いた file(subPath でない)を heartbeat の前に読み直して名乗る。中身を変えても Pod は作り直されず、
 # kubelet が file を入れ替えた後(1 分前後)の heartbeat から coordinator の Worker の行が新しい値になる。枠を下げて今の数を下回っても、
@@ -30,7 +30,7 @@ configMapGenerator:
       - worker-room.json
     options:
       disableNameSuffixHash: true
-  # 機体ごとの worker の doeff の版(card ki-6e83e03d146d): 機体の名 = worker の名ごとに 1 行の worker-version.env — 版の定義元はこの 1 file。
+  # 機体ごとの worker の doeff の版: 機体の名 = worker の名ごとに 1 行の worker-version.env — 版の定義元はこの 1 file。
   # 名の固定した ConfigMap worker-version にし(中身の hash を名に付けない)、data の鍵 = 機体の名・値 = commit。雛形は volume で置いた
   # file(subPath でない)/etc/worker-version/<worker の名> を WORKER_VERSION_FILE で渡し、keeper が file の替わりで同じ container の
   # 中の worker の process を入れ替える。中身を変えても Pod は作り直されない(版は Pod の template に無い)。

@@ -1,4 +1,4 @@
-;;; 組の同時数の上限の値の持ち主を 1 つに保つ検(設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 A・B を受けた失敗ケース・card ki-b0e8028c8c8d)。
+;;; 組の同時数の上限の値の持ち主を 1 つに保つ検(B を受けた失敗ケース)。
 ;;;
 ;;; - 盲検 A: 別の系(defsystem)が同じ組を違う値で宣言すると、資源 GroupLimit は後に宣言した系の値で黙って書き直され、置ける本数が
 ;;;   宣言の順で変わった(値の割れが「送り手の順」から「宣言の順」へ移った)。組を宣言する系は 1 つで、別の系の書き直しは断る。
@@ -45,7 +45,7 @@
 (deftest test-system-of-names-the-declaring-system-on-its-limits
   ;; 系の構成子は組の上限に宣言する系の名を付ける(資源 GroupLimit の spec の system に載る)。既に名の付いた上限(作った系の値を繋ぐ
   ;; 時 — 上に載る系の宣言の道具は 1 度に宣言する系を名 "a+b" の 1 つの系に繋ぐ)は、作った系の名を保つ。繋いだ名で付け直すと、同じ系を
-  ;; 別の組み合わせで宣言するたびに持ち主が "a+b" と "a" の間で揺れ、資源の口が 409 で断る(以前は名の違いを断り、繋ぐ宣言が止まった)。
+  ;; 別の組み合わせで宣言するたびに持ち主が a+b と a の間で揺れ、資源の口が 409 で断る(以前は名の違いを断り、繋ぐ宣言が止まった)。
   (assert (= (. (get ALPHA.task-limits 0) system) "alpha") ALPHA.task-limits)
   (assert (= (group-limit-spec (get ALPHA.task-limits 0)) {"scope" "cluster" "limit" 1 "system" "alpha"}) ALPHA.task-limits)
   (val joined (system-of "alpha+gamma" #() :task-limits (+ ALPHA.task-limits #((GroupLimit :group "gpu" :scope "worker" :limit 2)))))
@@ -194,7 +194,7 @@
 (deftest test-the-sender-facing-fields-and-the-counting-inputs-are-pinned
   ;; 盲検 B: 送り手の名乗る欄を足して置き方がそれで数えると、提示の検を全部通りながら上限の値が送り手へ戻った。送り手の欄の集合と、数えの
   ;; 関数が受ける物を固定する — 足す時は、組の上限の数えに送り手の値を入れない事を確かめ(値と範囲の持ち主は系の宣言 GroupLimit だけ)、
-  ;; この表を直す。notify(終わりの知らせ先 — card ki-e7945a2b2d00)は出口へ積む判断(detached_policy.outbox-noted)だけが読み、下の数えの関数は
+  ;; この表を直す。notify(終わりの知らせ先)は出口へ積む判断(detached_policy.outbox-noted)だけが読み、下の数えの関数は
   ;; 受けない。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")

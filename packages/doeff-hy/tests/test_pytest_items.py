@@ -1,7 +1,7 @@
-"""item を作る macro が展開の式で module に積む pytest の item の記録(doeff_hy/_pytest_items.py・agora-redesign #1291)。
+"""item を作る macro が展開の式で module に積む pytest の item の記録(doeff_hy/_pytest_items.py)。
 
 記録は展開の式として module に入るので、test module を import して ``__doeff_pytest_items__`` を読めば確かめられる
-(Hy の importer にも pyc にも頼らない — #1290 の利用者の決定)。
+(Hy の importer にも pyc にも頼らない)。
 """
 
 import importlib
@@ -121,7 +121,7 @@ def test_malformed_record_is_refused() -> None:
 
 
 def test_two_meta_maps_after_the_name_are_refused(hy_dir: Path) -> None:
-    """失敗ケース(agora-redesign #2726): 名の後に meta の map が 2 つ並ぶと、2 つ目は黙って本文の式になり、その鍵(:skip-if)が
+    """失敗ケース: 名の後に meta の map が 2 つ並ぶと、2 つ目は黙って本文の式になり、その鍵(:skip-if)が
     捨てられていた(agora の検で印の map を既存の meta の前に足し、skip が消えて日次で KeyError — #2704)。展開の時に、捨てられる
     鍵を名指して断る。meta を 1 つの map にまとめた形は今どおり通る。"""
     split = (

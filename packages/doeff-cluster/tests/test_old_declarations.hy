@@ -1,4 +1,4 @@
-;;; 旧い宣言の形を断る coordinator 側の入口(ADR-DOE-CLUSTER-001・計画 2.8 の入口 5・6・10 — 旧い宣言の形は受け付けない。operator の決定 2026-09-27)。
+;;; 旧い宣言の形を断る coordinator 側の入口(ADR-DOE-CLUSTER-001・計画 2.8 の入口 5・6・10 — 旧い宣言の形は受け付けない)。
 ;;;
 ;;;   5 = 書きの口(PUT /jobs・POST/PUT /resources/Service)は旧い本文を 400 と理由で断る。run の無い生の entry と args の job
 ;;;       (Program でない job)も同じ — 移行の期間は置かない(ADR-DOE-CLUSTER-001 R1・R7)。
@@ -211,7 +211,7 @@
 
 (deftest test-a-worker-without-its-task-reserve-or-outside-its-range-does-not-start
   ;; task のために空けておく数 --task-reserve は必ずの引数(既定の値は無い)。無ければ argparse の error、負の背景の枠は起動の検めで
-  ;; 止まり、どちらも理由を stderr に出す(coordinator に断られる名乗りで動き続けない)。背景の枠の既定は 0(card ki-2acb63aec0fd)。
+  ;; 止まり、どちらも理由を stderr に出す(coordinator に断られる名乗りで動き続けない)。背景の枠の既定は 0。
   (val missing (subprocess.run [sys.executable "-m" "hy" "-m" "doeff_cluster._worker.entry.main" "--coordinator" "http://127.0.0.1:9"
                                 "--name" "w" "--provides" "net" "--repo" "." "--state-dir" "/nonexistent"]
                                :cwd (str PACKAGE-ROOT) :capture-output True :text True :timeout 120))

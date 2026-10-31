@@ -27,7 +27,7 @@ parent's death, the pre-existing restart/durability physics (S10/S15).
 S28a runs the issue's acceptance counterexample end to end (harness + parked
 agent, driver SIGKILLed); S28c isolates the serve-level mechanism without any
 mux session (cheap, no tmux); S28e kills the spawner while the daemon is still
-starting, under a subreaper that is not pid 1 (agora-redesign #3026).
+starting, under a subreaper that is not pid 1.
 """
 
 import contextlib

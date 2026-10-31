@@ -78,8 +78,7 @@ pub enum DoCtrl {
     /// Install a stack of boundaries (handlers and observers) and execute body,
     /// in one step — the same scope as nesting `WithHandler` / `WithObserve`
     /// once per entry, so a task started by a scheduler gets the boundary stack
-    /// captured at its spawn site without paying a step per layer
-    /// (agora-redesign #3149).
+    /// captured at its spawn site without paying a step per layer.
     /// boundaries: innermost first (the order `boundary_callables` returns);
     /// each callable is a `Value::Callable`.
     /// The boundary fibers are chained directly (outermost under the current

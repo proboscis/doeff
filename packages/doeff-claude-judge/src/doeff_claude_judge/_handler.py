@@ -8,7 +8,7 @@ print を 1 回出す(待ちの上限 = Judge の timeout_seconds)→ 構造化�
 投げる:
 
   写せない問い = unsupported / 資格を借りられない = no_credentials / 口座の利用枠が尽きた = usage_limit(JudgeUsageLimited — 枠の種類と
-  戻る刻・card ki-eb4f8e1db64d)/ CLI が API の誤りを名乗った = http(status = その HTTP status)/
+  戻る刻)/ CLI が API の誤りを名乗った = http(status = その HTTP status)/
   CLI が答えずに降りた・待ちの上限を越えた・print の handler の誤り = transport / 答えの形が違う = malformed。
 
 記録は slog("claude_judge", …) 1 行(資格・本文は載せない)。handler は答えを返したら用が済むので Transfer / TransferThrow で続きへ

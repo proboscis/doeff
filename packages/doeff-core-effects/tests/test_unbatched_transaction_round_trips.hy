@@ -1,4 +1,4 @@
-;;; 既に在る SqlTransaction の意味は変えない(agora-redesign #3605): batched を選ばない transaction について、答え手が DB へ流す往復の列
+;;; 既に在る SqlTransaction の意味は変えない: batched を選ばない transaction について、答え手が DB へ流す往復の列
 ;;; (往復ごとの文の並び)が基点(eaeeb75c4 — 往復をまとめる形を足す前)と同じである事を、基点の並びを書いた期待と比べる。
 ;;;   - PostgreSQL(postgres-sql-handler と pooled-postgres-sql-handler): client と使い捨ての PostgreSQL の間に置いた中継
 ;;;     (postgres_support/statement_wire_tap.py)が、wire の上で client が送った文を往復ごとに記録する。
@@ -8,7 +8,7 @@
 ;;; ROLLBACK・預かり所の本体の commit-rows の形(controllers/custody_body/protocol/store.hy — 錠の鍵つきで version の SELECT × 2 → UPSERT × 2)・
 ;;; sqlite が断る SqlNotify(ROLLBACK)。
 ;;; この file は基点に在る名だけを使う — 基点の答え手の源に差し替えても同じ期待で緑になる事を、変更の時に確かめた。合図だけは
-;;; agora-redesign #3688 で形が変わった: SqlNotify が関わる名(topics)を持ち、pg_notify の本文が空でなく引数($2)になった(往復の数と
+;;; 後の変更で形が変わった: SqlNotify が関わる名(topics)を持ち、pg_notify の本文が空でなく引数($2)になった(往復の数と
 ;;; 順は変わらない)。
 (require doeff-hy.macros [deftest defk <- val var with-handler])
 (import queue)
@@ -37,7 +37,7 @@
 
 ;; 基点の往復の列(PostgreSQL)— 文 1 つが往復 1 回。SqlInsertRows は executemany(行ごとの文を 1 往復で)。引数は wire の綴り($1 …)。
 ;; 基点では ROLLBACK の後に driver(psycopg)が DEALLOCATE ALL を流していた(psycopg が自分で prepare した文を覚えている接続で ROLLBACK を
-;; 見ると、覚えを捨てて流す)。psycopg の自動の prepare を止めたので流れない(名の持ち主は doeff 1 つ — agora card ki-2c5646a8a2c1)。
+;; 見ると、覚えを捨てて流す)。psycopg の自動の prepare を止めたので流れない(名の持ち主は doeff 1 つ)。
 (val INSERT-PARAMS "INSERT INTO items (id, label) VALUES ($1, $2)")
 (val LOCK-WIRE "SELECT pg_advisory_xact_lock(hashtext($1))")
 (val BASE-POSTGRES-ROUND-TRIPS

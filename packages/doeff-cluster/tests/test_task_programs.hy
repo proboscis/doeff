@@ -326,7 +326,7 @@
   (<- transport httpx.MockTransport (coordinator-programs [(get reply-b 0)] 6))
   (val link (LinkRig "http://coord" "w" #("net") 10 0 60000 :task-dir (str (/ tmp-path "state" "tasks")) :transport transport))
   ;; 同じ Program を指す service の job も並べる — service は宣言の行の版(DECLARED)で比べ、coordinator の Program の行の版(B)は
-  ;; 使わない(card ki-172e63fed4c7)。
+  ;; 使わない。
   (val service (JobSpec "svc" JOB-ENTRY #("service" "--identity" (* "0" 16)) "rev1" :program sha :versions (environ-pairs DECLARED)))
   (val specs (.accept-tasks link rows))
   (.accept-programs link (+ #(service) specs))

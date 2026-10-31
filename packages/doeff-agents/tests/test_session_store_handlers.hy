@@ -1,4 +1,4 @@
-;;; session の行の保存の handler の検(agora-redesign #608)。
+;;; session の行の保存の handler の検。
 ;;;
 ;;; 受入: memory と PostgreSQL の handler で同じ検が緑。法の本体は
 ;;; `session_store_laws.hy` に 1 つだけ置き、ここでは handler の組ごとに同じ法を並べる:

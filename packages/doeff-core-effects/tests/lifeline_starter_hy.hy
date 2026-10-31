@@ -1,4 +1,4 @@
-;;; lifeline_starter.py を Hy の入口から走らせる(agora-redesign #3866)。Hy の入口は自分の process の sys.executable を hy の起動口に
+;;; lifeline_starter.py を Hy の入口から走らせる。Hy の入口は自分の process の sys.executable を hy の起動口に
 ;;; 書き換える(hy/cmdline.py)ので、doeff-cluster の worker(boot.sh の `exec hy -m …`)と同じく、sys.executable が python でない
 ;;; 起こす側になる。使い方: hy lifeline_starter_hy.hy <mode> <out-path> -(子は sleep だけ — 孫を起こす形は sys.executable を使うので
 ;;; ここでは使わない)

@@ -90,7 +90,7 @@
 
 
 (deftest test-the-deployed-handler-carries-the-content-keys-of-the-declared-system
-  ;; card ki-81bf84ac6590: target の中身の鍵(道具が当てる全部の系の job の分)のうち、宣言する系の job の分だけが Service の spec の content に
+  ;; target の中身の鍵(道具が当てる全部の系の job の分)のうち、宣言する系の job の分だけが Service の spec の content に
   ;; 載る(系に無い job の鍵は渡さない — system-declaration は系に無い job の鍵を断る)。鍵を持たない target の宣言は content を持たない。
   (val clock (SimClock START))
   (val coordinator (MemoryCoordinator clock))
@@ -150,7 +150,7 @@
 
 
 (deftest test-the-deployed-handler-restarts-a-handoff-service-by-advancing-the-restart-mark
-  ;; 同じ版の起こし直し(card ki-0019be4b9939): 配備の handler の RestartService は、Service の spec の環境変数 RESTART_MARK を 1 つ進めた書きを読んだ版つきで送る —
+  ;; 同じ版の起こし直し: 配備の handler の RestartService は、Service の spec の環境変数 RESTART_MARK を 1 つ進めた書きを読んだ版つきで送る —
   ;; 版・引数・台数・所有者・readiness は読んだまま。2 度目は次の値。宣言し直すと印は宣言の値(印の無い環境変数)へ戻る。
   (val clock (SimClock START))
   (val coordinator (MemoryCoordinator clock))

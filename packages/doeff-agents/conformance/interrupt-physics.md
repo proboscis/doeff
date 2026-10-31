@@ -1,4 +1,4 @@
-# 割り込みの本文の実 CLI 物理(段 8 lane 4x・agora-redesign #56 の Phase 0 プローブ)
+# 割り込みの本文の実 CLI 物理(段 8 lane 4x)
 
 headless の claude が**走っている手番の途中に届いた本文をどう扱うか**を実物の CLI で測った記録。
 resume-physics.md と同じ役割 — 偽 CLI(tests/headless_stubs/claude)が真似る本物の測定値を凍結する。
@@ -31,7 +31,7 @@ resume-physics.md と同じ役割 — 偽 CLI(tests/headless_stubs/claude)が真
   (impls/headless_argv.hy の CLAUDE-HEADLESS-FLAGS)。手番の本文 = user の行(閉じない)、割り込みの本文 = 同じ
   user の行を手番の途中に(`ClaudeDialogue.inject` — `in_flight` の間だけ。手番の外に書くと**次の手番**になるので
   器は断り、呼び手が queued へ倒す)。
-- 追記(段 12 lane 12e・agora-redesign #517・実弾 2026-09-17 19:4x): result の後も stdin が開いていると、CLI は
+- 追記(段 12 lane 12e・実弾 2026-09-17 19:4x): result の後も stdin が開いていると、CLI は
   自分の background task / Monitor の完了(`<task-notification>`)で model を**手番の外で**起こし直し tool を撃つ
   (同じ会話の 2 つの process が本番に作用・stream が閉じた後なので記録に載らない)。⇒ **手番の終わり = 対話の
   終わり = process の終わり**: 器は result の行で stdin に EOF を出して降ろす(`ClaudeDialogue._end` の
@@ -45,14 +45,14 @@ resume-physics.md と同じ役割 — 偽 CLI(tests/headless_stubs/claude)が真
   thread へ本文の `turn/start` を積む(`CodexDialogue.inject`・host から見て手番は 1 つのまま)。app-server の
   `turn/interrupt` の受理形は codex 側の物理(turn の status = interrupted)で、この便では実 CLI を撃っていない —
   deftest(tests/test_sessionhost_headless.py の codex の inject)が Dialogue の作法を撃つ。実測は codex の家が
-  在る機体で `codex app-server` に対して撃つ(TODO・agora-redesign #56 に登記)。
+  在る機体で `codex app-server` に対して撃つ(TODO)。
 
 ## 記録
 
 - `/tmp/stage8-interrupt-phase0/run-stream-1789278477.jsonl`(割り込み・t 付きの stdout の要約)と
   `run-multiturn-1789278615.jsonl`(2 手番)— 測定機の一時 file(残らない)。要点は上の数字。
 
-## 追記 2026-09-14 — 停止の合図(control_request interrupt)と注入の行の運命(段 10 lane 10n・agora-redesign #93 便 1)
+## 追記 2026-09-14 — 停止の合図(control_request interrupt)と注入の行の運命(段 10 lane 10n)
 
 測定日 2026-09-14。claude Claude Code 2.1.270(model claude-sonnet-5・`--permission-mode bypassPermissions`・argv は上と
 同じ)、機体 = 会社 Mac(個人 profile の家)。script は測定機の一時 file(`~/.cache/lane10n/probe/probe2.py`・repo には

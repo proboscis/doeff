@@ -28,13 +28,13 @@
 (setv DETACHED-DEFAULT-RETAIN-SECONDS 86400.0)   ; 終わった後に結果を持っておく長さ
 
 
-;; --- task の置き方の名乗りと、組の同時数の上限の宣言(2026-10-11・値の持ち主を系の宣言にした 2026-10-12)---------------
+;; --- task の置き方の名乗りと、組の同時数の上限の宣言(2026-10-11。値は 2026-10-12 から系の宣言が持つ)---------------
 ;; 組の同時数の上限の範囲: worker = 置いた worker ごとに数える・cluster = cluster の全体で数える。
 (val TASK-LIMIT-SCOPES (frozenset #("worker" "cluster")))
 
 
 (defrecord GroupLimit
-  "系が宣言する組の同時数の上限 1 つ(2026-10-12 — Airflow の pool の形。値の持ち主を系の宣言 1 つにした・card ki-b0e8028c8c8d。以前は
+  "系が宣言する組の同時数の上限 1 つ(2026-10-12 — Airflow の pool の形。値は系の宣言 1 つが持つ。以前は
    送り手が task ごとに値を名乗り、送り手ごとに値が割れた): group = 組の名・scope = 数える範囲(TASK-LIMIT-SCOPES)・limit = 置いている
    (PLACED-PHASES の)task の数の上限(1 以上)・per-part = 組を名乗る task が区分(TaskLimit の part — 例: 呼び手の id)を名乗り、区分ごとに
    この値で数える組か(偽の組は区分を名乗る task を断る — 区分で上限を逃れさせない)。系の宣言(service_model の System の task-limits)に
@@ -42,7 +42,7 @@
    task は失敗にせず queued のまま待つ。system = 組を宣言した系の名(系の構成子 service_build.system-of が名の無い上限に付け、系を
    繋ぐ時は作った系の名を保つ — 書き手は書かない。空 = 持ち主の無い組 — 最初に宣言し直した系が持つ。1 つの組を宣言する系は 1 つで、
    coordinator の資源の口は別の系の書き直しを断る。2 つの系が同じ組を違う値で宣言すると、後に宣言した系の値が黙って勝ち、宣言の順で
-   同時数が変わった — 設計検証 lt-9E0W15ZW21H6R3SA26CNW1T4FP の盲検 A)。形の検めは
+   同時数が変わった)。形の検めは
    doeff_cluster._shared.core.detached_rules の group-limit-refusal。"
   {:tags {:context "doeff-cluster" :role "intent"}}
   (#^ str group)
@@ -81,7 +81,7 @@
   ;; 形の検めは構築関数。
   (setv #^ int priority 0)
   (setv #^ (get tuple #(TaskLimit ...)) limits #())
-  ;; 知らせ先(2026-10-21・card ki-e7945a2b2d00): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
+  ;; 知らせ先(2026-10-21): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
   ;; 中身を読まず、task が終わりへ移った歩で 1 度だけ出口(outbox — 下の節)へ積む。同じ key の送り直しの比べには入れない。
   (setv #^ str notify "")
   (defn #^ None __post-init__ [self]
@@ -347,7 +347,7 @@
 (setv DetachedSubmitAnswer (| DetachedSubmitted DetachedUnreachable))
 
 
-;; --- task の時刻(ReadDetachedTiming — card ki-f3edfdaf9599)----------------------------------------------------------
+;; --- task の時刻(ReadDetachedTiming)----------------------------------------------------------
 ;; DetachedTiming = 切り離した task 1 つの、いまの phase と行の時刻(epoch ミリ秒): submitted-ms = 積まれた刻・started-ms = worker に置かれた
 ;;   刻(phase queued の間は None。置いた後に実行環境の準備の失敗や worker の止まり始めで待ちへ戻った task も、置き直されるまで None。
 ;;   coordinator が置き場を失って走っている task を引き取った場合は、置かれた刻でなく引き取った刻)・finished-ms = 終わった刻(終わるまで None)。
@@ -399,7 +399,7 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
-;; --- 待っている task の理由(ReadDetachedQueue — 依頼 lt-6203WCGWA41PGZ5KWK6FYZZBPA)------------------------------
+;; --- 待っている task の理由(ReadDetachedQueue)------------------------------
 ;; 待っている(phase queued)切り離した task が、なぜ置かれないかを読む。理由は 2 つに分かれる: 名乗った組の同時数が系の宣言の上限に達している
 ;; (列に並んでいる — 組・範囲・今の数・上限の値が分かる)・置ける worker に空きが無い(置き先が無い — 組は足りている)。coordinator が task の
 ;; detail に書く固定の文(cluster_policy.task-unplaced-text)をそのまま運び、組の読みを足す。読む先は coordinator の GET /state の
@@ -484,13 +484,13 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
-;; --- 終わりの出口(outbox — 2026-10-21・card ki-e7945a2b2d00)--------------------------------------------------------
+;; --- 終わりの出口(outbox — 2026-10-21)--------------------------------------------------------
 ;; 知らせ先(SubmitDetached の notify)を名乗った task が終わりへ移ると(値か例外を返した・取り消された・lost・走らなかった・実行環境を
 ;; 用意できない — どの道で終わっても)、coordinator はその移りを状態に書く歩の中で出口に行を 1 つ積む(task の id ごとに 1 度だけ —
 ;; coordinator/core/detached_policy.hy の outbox-noted)。読み手は出口だけを読んで知らせ、知らせ終えた行を受領(AckDetachedOutbox)して外す。
 ;; 出口の行は task の行の解放・保持の期限と別に残る(受領か出口の保持の期限 — detached_policy の OUTBOX-RETAIN-MS — まで)。
 ;;
-;; 行の種類(kind — 2026-10-29・card ki-4b6613f39c80):
+;; 行の種類(kind — 2026-10-29):
 ;;   ended           終わりの行(上の通り)。
 ;;   queued-overdue  知らせ先を名乗った task が queued のまま期限(ClusterTiming の queued-notice-ms)を越えた歩で、task ごとに 1 度だけ積む
 ;;                   行(detached_policy の queued-noticed — 積んだ印は task の行の queued-noticed-ms に残り、受領して外しても積み直さない)。

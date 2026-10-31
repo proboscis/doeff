@@ -1,4 +1,4 @@
-;;; 汎用の計算の effect(compute_effects.hy)の I/O なしの答え手 inline-compute-handler(agora-redesign #802 便 4)。thread を使わず、撃った
+;;; 汎用の計算の effect(compute_effects.hy)の I/O なしの答え手 inline-compute-handler。thread を使わず、撃った
 ;;; その場で program を新しい VM で回して答える。本物の thread-pool-compute-handler と答えの値は同じで、違うのは「回っている間に他の task が
 ;;; 進むか」だけ。仮想の時計の模擬で決定的に回すための答え手。列を持たない(撃った task がその場で回し切る)ので、負荷の読み
 ;;; (ReadComputeLoad)は常に全部 0 の断面で答える。

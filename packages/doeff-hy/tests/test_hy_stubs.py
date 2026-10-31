@@ -1,4 +1,4 @@
-"""doeff-hy が配る hy の部分の stub(src/hy-stubs)の失敗ケース(agora-redesign #2313)。
+"""doeff-hy が配る hy の部分の stub(src/hy-stubs)の失敗ケース。
 
 hy は型の宣言を持たない。Hy の展開は keyword の literal と quote した form を `hy.models.Keyword(…)` などに compile し、
 doeff-hy-check はそれを読む module に `import hy.models` を置くので、前は新しい .hy の file ごとに必ず
@@ -7,7 +7,7 @@ doeff-hy-check はそれを読む module に `import hy.models` を置くので�
 - hy の名と model を使う小さな .hy に、hy / hy.models の reportMissingTypeStubs も「型が分からない」の赤も出ない。
 - stub が宣言する名は実行時の hy に在る(宣言だけが先へ行かない)・stub は partial(宣言の無い下の module は hy の source)。
 - defmacro を書いた .hy に、展開の `hy.macros.macro('名')(…)` の「型が分からない」「hy の属性に無い」の赤が出ない(hy.macros の
-  stub macros.pyi — agora-controllers の card acp:kanban-issue:ki-5ecd80461f13・controllers/shared/intent/patrols.hy の 6 件)。
+  stub macros.pyi・controllers/shared/intent/patrols.hy の 6 件)。
 """
 
 import ast

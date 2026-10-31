@@ -119,7 +119,7 @@ def _build_mock_handler(client: MockOpenRouterClient) -> Callable[..., Any]:
 @pytest.fixture(scope="module")
 def api_key() -> str:
     """The live test's key: $OPENROUTER_API_KEY first (read through ReadEnvironment and its real handler —
-    not os.environ directly, DOEFF004 — agora-redesign #3012), then the runner's packages/doeff-openrouter/.env."""
+    not os.environ directly, DOEFF004), then the runner's packages/doeff-openrouter/.env."""
     found = run(with_handlers([subprocess_handler], ReadEnvironment(("OPENROUTER_API_KEY",))))
     key = found[0].value if found else dotenv_values(PACKAGE_ROOT / ".env").get("OPENROUTER_API_KEY")
     if not key:

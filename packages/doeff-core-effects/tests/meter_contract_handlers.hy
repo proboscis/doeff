@@ -1,4 +1,4 @@
-;;; 計器の契約テストの解釈器(composition root)— 同じ契約の Program を、計器の答え手だけ替えて走らせる(agora-redesign #1440・#1107 の決め)。
+;;; 計器の契約テストの解釈器(composition root)— 同じ契約の Program を、計器の答え手だけ替えて走らせる(#1107 の決め)。
 ;;;
 ;;;   process-meter  本物: process-meter-handler(process に 1 つの置き場 — 別の run・別の thread と同じ名前で共有する)
 ;;;   memory-meter   fake: memory-meter-handler(1 つの run の中の状態だけ — 時計・gc・thread を読まない)

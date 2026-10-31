@@ -67,7 +67,7 @@
 (defclass [(dataclass :frozen True)] SessionExported []
   "transcript の写し: jsonl の本文ちょうど(空白だけでない)。Rebuilt(jsonl-text) に渡すと同じ transcript が持ち込める。末尾だけを
    頼んだ取り出し(ClaudeExportSession の tail-bytes)の答えは、末尾の行の列(行の頭から始まる)で、持ち込みには使えない。
-   空白だけかの判定は先頭から空白でない字を探すだけにする(100 MB 級の写しを strip で写し直さない — card ki-a264a73efcce)。"
+   空白だけかの判定は先頭から空白でない字を探すだけにする(100 MB 級の写しを strip で写し直さない)。"
   (#^ str jsonl-text)
   (defn __post_init__ [self]
     (when (not (and (isinstance self.jsonl-text str) self.jsonl-text (not (.isspace self.jsonl-text))))
@@ -123,7 +123,7 @@
 (defclass [(dataclass :frozen True)] ClaudeStartTurn [(get EffectBase StartTurnOutcome)]
   "手番を始める。死んだ(降りた)process の起こし直しの判断はこの effect の handler の中の 1 か所だけ(設計 7 節)。
    答え = TurnStarted | SessionNotFound | SessionIdInUse | TurnInFlight | CarryRefused | LaunchFailed | AttachmentRefused。
-   tap = 行の写し手(None = 写さない — card ki-31b41eac5071): この手番(と同じ process で続く生き残った入力の手番)の記録に
+   tap = 行の写し手(None = 写さない): この手番(と同じ process で続く生き残った入力の手番)の記録に
    足した行(ClaudeStreamLine)を 1 つずつ、行を足した直後に呼ぶ関数。本番の handler は stdout の読み手の thread から会話の lock の外で
    呼び、fake は行を出した所で呼ぶ — 上の層が ClaudeReadTurnEvents で頁を受ける遅れ(秒〜分)に縛られずに、行を読んだ時点で自分の
    記録を書くため。写し手は塞がず、例外を出さない(出した例外は handler が捨てる — 読み手の thread を止めない)。"
@@ -183,10 +183,10 @@
    (subagent の記録・memory の dir は写さない)。session-id は会話の id の綴り(UUID — 置き場の外の path を名指せない)。
    tail-bytes = 末尾の何 byte までを読むか(None = 全部)。末尾だけの答えは、切り口の後の最初の行の頭から始まる行の列で、持ち込み
    には使えない — 写しの中の最近の行だけを読む使い手(道具の呼びで名指した作業場を新しい方から拾う等)が、100 MB 級の transcript を
-   手番ごとに丸ごと読まないため(card ki-a264a73efcce)。
+   手番ごとに丸ごと読まないため。
    from-byte = 頭から何 byte 目より後ろだけを読むか(None = 全部)。答えは transcript の from-byte byte 目から末尾まで(from-byte は字の頭 —
    前に取り出した写しの byte の長さの内の字の切れ目)で、持ち込みには使えない — 前に取り出した写しを持つ使い手が、伸びた分だけを
-   読むため(手番の終わりの写しの預け・card ki-3b521394a063)。transcript が from-byte より短い・from-byte が字の途中なら SessionNotFound。
+   読むため(手番の終わりの写しの預け)。transcript が from-byte より短い・from-byte が字の途中なら SessionNotFound。
    tail-bytes と from-byte は一緒に名指さない。
    答え = SessionExported | SessionNotFound(transcript が無い・空)。"
   (#^ ClaudeHome home)
@@ -246,7 +246,7 @@
    :tags {:context "claude-code" :role "intent"}})
 
 
-;; --- 走っている会話の process の資格を替える(card ki-4ffdafa021e5)-------------------------------------------
+;; --- 走っている会話の process の資格を替える-------------------------------------------
 
 (defrecord CredentialReplaced
   "会話の生きた process の資格の家の .credentials.json を新しい資格へ替えた(次の API の呼びから新しい token を使う — 手番の途中でも)。
@@ -271,7 +271,7 @@
 
 (defeffect ClaudeReplaceSessionCredential
   "会話(session-id)の生きた process の資格を、別の借りた資格(credential — 新しい access token と期限)へ一息に替える。預かり所が口座の
-   資格を更新すると前の access token が上流で死ぬので、更新した token を走っている CLI へ配るため(card ki-4ffdafa021e5)。
+   資格を更新すると前の access token が上流で死ぬので、更新した token を走っている CLI へ配るため。
    handler は process だけの設定 dir の .credentials.json を、同じ dir の別名に書いて rename で替える(CLI は手番の間でも途中でも次の
    API の呼びから新しい token を使い、401 を受けると file を読み直す — CLI 2.1.292 の実測)。生きた process を止める刻(期限 − 床)も
    新しい期限から決め直す。手番を走らせているかは問わない。次の手番の宣言の資格は呼び手が持つ(この effect は宣言を書き換えない —
@@ -316,7 +316,7 @@
   (#^ str stderr-tail))
 
 (defrecord PrintLimited
-  "1 回きりの print の口座の利用枠が尽きて、CLI が答えずに降りた(card ki-eb4f8e1db64d — 誤りの PrintFailed と分ける: 上の層が「枠が
+  "1 回きりの print の口座の利用枠が尽きて、CLI が答えずに降りた(誤りの PrintFailed と分ける: 上の層が「枠が
    いつ戻るか」を言い、資格や CLI の不具合と取り違えないため)。limit = 尽きた事実(lines.AccountLimitHit — どの枠・戻る刻・CLI の限度の
    文。会話の手番の終わりと同じ型)/ exit-code = process の終了 code / stderr-tail = stderr の末尾。どの口座かは CLI の行に無い — 資格を
    渡した呼び手が知っている。"

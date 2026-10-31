@@ -3,7 +3,7 @@
 (require doeff-hy.macros [deftest])
 
 (import hy)
-;; pytest の item の記録の口(agora-redesign #1211 — 記録の形の定義元は doeff_hy/_pytest_items.py)
+;; pytest の item の記録の口(記録の形の定義元は doeff_hy/_pytest_items.py)
 (import doeff-hy._pytest-items [record-function :as _record-test-function])
 
 (defn _kw-text [x]
@@ -44,7 +44,7 @@
       (do
         (.append emitted item)
         (setv test-name (_inline-enforcement-name item))
-        ;; deftest の検は import の時に effect RegisterDeftest として adr_registry の下で載せる(card ki-54e559d3c0e7)。
+        ;; deftest の検は import の時に effect RegisterDeftest として adr_registry の下で載せる。
         (.append emitted
           `(_doeff-adr-run
              ((_doeff-adr.adr-registry)
@@ -68,7 +68,7 @@
 (defmacro defsemgrep [name #* forms]
   "Define a Semgrep enforcement with bad/good fixtures and a pytest check."
   ;; 展開は、載せを import の時に、検を生まれる test の中で、effect RegisterSemgrep と AssertSemgrep として handler
-  ;; semgrep_enforcements の下で走らせる(card ki-2a549274055c)— project の doeff_interpreter fixture に頼らないので、外の repo の
+  ;; semgrep_enforcements の下で走らせる— project の doeff_interpreter fixture に頼らないので、外の repo の
   ;; defsemgrep は doeff の版を上げるだけで動く。名は使い手の module の名と重ならない _doeff-adr-run と _doeff-adr. で読む。
   (setv semgrep-imports
     ['(import doeff [run :as _doeff-adr-run])
@@ -163,9 +163,9 @@
   (setv test-name (_test-symbol "test_" (+ (_symbol-text name) "_adr_contract")))
   (setv item-record (_record-test-function test-name [] []))
   ;; deftest の検の載せと ADR の形の確かめは、effect RegisterDeftest・AssertAdrContract として handler adr_registry の下で
-  ;; 走らせる(card ki-54e559d3c0e7)— defsemgrep と同じく project の doeff_interpreter fixture に頼らず、名は使い手の module の
+  ;; 走らせる— defsemgrep と同じく project の doeff_interpreter fixture に頼らず、名は使い手の module の
   ;; 名と重ならない _doeff-adr-run と _doeff-adr. で読む。ADR の載せも import の時に effect RegisterAdr として同じ handler の
-  ;; 下で走らせる(card ki-dab8943cf664)。
+  ;; 下で走らせる。
   `(do
      (import doeff_adr._registry [enforcement-ref])
      (import doeff [run :as _doeff-adr-run])

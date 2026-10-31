@@ -1,5 +1,5 @@
 """macro の閉包の code の shape(``macro_use._code_facts``)は、意味に効かない 2 つ — 関数の型注釈と Hy の一時変数の名の番号 — で
-変わらない(card ki-968309595391)。注釈を値として読む閉包は注釈ごと digest に入る。"""
+変わらない。注釈を値として読む閉包は注釈ごと digest に入る。"""
 
 import sys
 import types

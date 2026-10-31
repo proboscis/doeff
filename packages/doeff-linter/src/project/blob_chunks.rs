@@ -1,7 +1,7 @@
-//! git の index の blob の id で引く file ごとの事実を、index の並びを区切った塊ごとに 1 つの表として置き・引く(card ki-40c8ca380713)。
+//! git の index の blob の id で引く file ごとの事実を、index の並びを区切った塊ごとに 1 つの表として置き・引く。
 //!
 //! 1 file の実行が repo の file の全部を見る所(引数に渡された Program の呼び手・失敗の型の宣言・class の frozen)は、変わっていない file の事実を
-//! blob の id で引く(card ki-d56ba76422ba — 中身を読まない)。事実を 1 blob 1 file で置くと、冷えた新しい作業木では引くだけで置き場の file を
+//! blob の id で引く(中身を読まない)。事実を 1 blob 1 file で置くと、冷えた新しい作業木では引くだけで置き場の file を
 //! repo の Hy の数だけ(約 4600)開き、1 つごとに disk を待つ(置き場の file も、作業木の file と同じに数分で page cache から追い出される)。
 //! そこで index の行(path の byte の順)を塊に分け、塊ごとに(blob の id・事実)の表を 1 file で置く(agora-controllers の Hy で約 70 file)。
 //!

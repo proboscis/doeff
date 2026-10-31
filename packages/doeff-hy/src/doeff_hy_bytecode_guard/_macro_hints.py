@@ -1,4 +1,4 @@
-"""doeff-hy の macro を使う Hy の module の誤り 2 つに、書き足す 1 行を警告で言う(取り組み doeff-publish・card ki-909e814cc835)。
+"""doeff-hy の macro を使う Hy の module の誤り 2 つに、書き足す 1 行を警告で言う(取り組み doeff-publish)。
 
 - **require し忘れ**: README の Hy の例から ``(require doeff-hy.macros [do! <-])`` を抜くと、Hy は ``do!`` を関数の呼び出しとして
   compile し、実行の時に ``NameError: name 'hyx_doXexclamation_markX' is not defined`` になる(Hy の仕様 — 未知の記号は関数の呼び出し)。
@@ -199,7 +199,7 @@ def _forgotten_requires(
     units = tuple(_units(code))
     # 読み(LOAD_NAME・LOAD_GLOBAL)の名も束縛(STORE_NAME・STORE_GLOBAL など)の名も co_names から引くので、候補が co_names の
     # 和に無ければ警告は出ない — 局所の名として同じ綴りを使う module(``(check row)`` は LOAD_FAST)では命令を歩かない
-    # (大きな module で 1 本 1 秒前後 — free-threaded の dis は遅い・card ki-ef8a3e593353)。
+    # (大きな module で 1 本 1 秒前後 — free-threaded の dis は遅い)。
     if candidates.isdisjoint(name for unit in units for name in unit.co_names):
         return
     instructions = tuple(ins for unit in units for ins in dis.get_instructions(unit))

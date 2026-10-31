@@ -1,10 +1,10 @@
-"""Hy の内部の名(macro の表の名・export の名の表の名・Hy が一時の名に振る先頭)の字は、定義元 1 か所だけが持つ(card ki-ffe72a1fb7d7)。
+"""Hy の内部の名(macro の表の名・export の名の表の名・Hy が一時の名に振る先頭)の字は、定義元 1 か所だけが持つ。
 
 Hy が module の名前空間に置く表の名(``_hy_macros``・``_hy_reader_macros``・``_hy_export_macros``)と、一時の名の先頭(``_hy_``)の定義元は
 ``doeff_hy_bytecode_guard._records``(``MACRO_TABLE``・``READER_TABLE``・``EXPORT_NAMES``・``GENERATED_NAME_PREFIX``・
 ``ANON_VAR_NAME``)で、使い手は字を持たず、records の定数と関数(``macro_tables``・``exported_macro_names``・
 ``fold_anon_var_numbers``)で引く。字を他の file へ写すと、Hy が名を替えた時に直す所が 2 つ以上になり、uv.lock の版の Hy に当てる検
-(test_bytecode_guard.py)が測るのは records の読みだけなので、写しは測られないまま古くなる(card ki-eafa369600cd の担い手が見つけた
+(test_bytecode_guard.py)が測るのは records の読みだけなので、写しは測られないまま古くなる(見つかった
 3 か所 — doeff_effect_analyzer._result_cache・doeff_hy._static_baseline・macro_use の export の名の表 — の形)。
 
 この検は、repo の production の source(.py と .hy — tests・docs・記録の dir は数えない)から、次の綴りを数え、records の外に 1 つでも在れば
@@ -17,7 +17,7 @@ Hy が module の名前空間に置く表の名(``_hy_macros``・``_hy_reader_ma
 
 数えるのは綴られた名だけで、名の別の書き方(``_(?:hy|lazy)_`` のように先頭を分けた regex・名を継ぎ足して作る文字列・計算した名の
 ``getattr``)は数えない。依りそのものは test_bytecode_guard.py の検が実物の Hy に当てて測るので、この走査は「字が 2 つ目の定義元に
-なる」素直な形を止める役で、測りの代わりではない(card ki-ffe72a1fb7d7 の 3 か所のうち、static_baseline の regex は先頭を分けた形
+なる」素直な形を止める役で、測りの代わりではない(static_baseline の regex は先頭を分けた形
 だったので、この走査では数えられなかった)。
 """
 

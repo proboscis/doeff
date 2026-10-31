@@ -1,4 +1,4 @@
-;;; agent runtime の session の行を SQL の表に置くための純粋な判断(agora-redesign #608)。
+;;; agent runtime の session の行を SQL の表に置くための純粋な判断。
 ;;;
 ;;; 既知の形: repository の中の「何を書くか」と「実行」を分ける。この module は
 ;;; 表の定義(DDL)・書きと読みの文・行と `AgentSessionSnapshot` の相互の写しだけを持ち、

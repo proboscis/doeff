@@ -1,6 +1,6 @@
 """defk / deff / defp の展開は、変換中の file の拡張子を Hy の compiler の filename から読み、inspect.stack() を回さない。
 
-出自 = agora-redesign #786: 展開のたびに inspect.stack() が全段の source を読み、大きな .hy file の最初の変換が数分かかっていた
+出自: 展開のたびに inspect.stack() が全段の source を読み、大きな .hy file の最初の変換が数分かかっていた
 (agora-controllers の controllers/screen/tests/test_server.hy の収集が cache なしで 343 秒 → 271 秒)。
 """
 

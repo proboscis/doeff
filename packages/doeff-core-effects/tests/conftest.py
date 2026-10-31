@@ -1,13 +1,13 @@
 """doeff-core-effects の検の実行環境(Hy の ``test_*.hy`` の収集と deftest の解釈器)。
 
 - Hy の ``test_*.hy`` の集め手は root の ini の ``doeff_hy_test_files``(doeff-adr の plugin の 1 点)— この conftest は集めない(package の母集団は ``make test-packages`` が別に走らせる)。
-- 契約テスト(agora-redesign #1159)は deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
+- 契約テストは deftest の ``:interpreters`` で handler を差し替える。名 → 組み立ての表は
   stop_contract_handlers.hy・http_contract_handlers.hy・process_contract_handlers.hy・http_server_contract_handlers.hy・
-  meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy(agora-redesign #1440)・
-  stack_dump_contract_handlers.hy(agora-redesign #2748)・warm_contract_handlers.hy(待ちの子の効果)が持ち、ここはその表を
+  meter_contract_handlers.hy・latest_contract_handlers.hy・heap_contract_handlers.hy ・
+  stack_dump_contract_handlers.hy ・warm_contract_handlers.hy(待ちの子の効果)が持ち、ここはその表を
   引いて scheduler つきで 1 回回すだけ。外の module が要る解釈器(REQUIRES)は、その module の無い環境では skip する。
 - 実 PostgreSQL の検(test_sql_effects.hy)の DSN の env は、pytest_configure(検の module の import より前)で
-  postgres_support/disposable_postgres.py が用意する — env が無ければ使い捨ての PostgreSQL を立てる(agora-redesign #2830・
+  postgres_support/disposable_postgres.py が用意する — env が無ければ使い捨ての PostgreSQL を立てる(
   doeff-records の tests の conftest も同じ部品を呼ぶ)。
 """
 

@@ -11,7 +11,7 @@ name = "doeff-indexer"
 version = "0.2.0"
 description = "Static indexer for doeff programs and Kleisli programs"
 # Python の口は effect FindSymbols(python/doeff_indexer/_effects.py)と handler rust_indexer(_handlers.py)なので doeff を
-# 読み、doeff と同じ版の Python から(ADR-DOE-API-001・agora card ki-1e51e218527e)。拡張の abi3 は Cargo.toml の pyo3 の
+# 読み、doeff と同じ版の Python から(ADR-DOE-API-001)。拡張の abi3 は Cargo.toml の pyo3 の
 # abi3-py310 のまま(wheel の tag は cp310-abi3 で、入れられる版はこの requires-python が決める)— py311 へ上げるのは、wheel を
 # 組む CI(.github/workflows/build-indexer.yml)の 3.10 の Python を 3.11 へ替えるのと同じ変更で。
 # 0.2.0 で Python の口が替わった(class Indexer は入口に無い)。
@@ -40,7 +40,7 @@ include = [
 doeff = { workspace = true }
 
 # uv が「作り直すか」を決める入力(doeff-linter の pyproject の同じ節と同じ訳)。root の dev の組が make sync でこの package を
-# editable で入れ(目録と discovery の検が Rust の拡張を import する・card ki-1e51e218527e)、uv は既定では pyproject.toml が変わった
+# editable で入れ(目録と discovery の検が Rust の拡張を import する)、uv は既定では pyproject.toml が変わった
 # 時にしか作り直さないので、拡張と同梱の binary の入力を全部並べる。python/ の .py は作業木から読むので鍵にしない。
 [tool.uv]
 cache-keys = [

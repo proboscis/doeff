@@ -1,4 +1,4 @@
-;;; placements と surges の書き手が「変わった job だけの書き」であることの検(ki-6cc74eb8d95d — T5a)。
+;;; placements と surges の書き手が「変わった job だけの書き」であることの検(T5a)。
 ;;;
 ;;; 時間では測らない。見る物は 2 つ: 書きの列(place-jobs の答え)に載る job の鍵と、表の同一性(is)。
 (require doeff-hy.macros [deftest val <- defk])

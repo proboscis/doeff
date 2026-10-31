@@ -103,140 +103,140 @@ pub enum ProjectRule {
     TranslationEmitsIntent,
     /// DOEFF174: 業務の層(設定の translation_effects.domain_layers — 既定 core・intent)の定義が、architecture.hy の :business-fakes の
     /// :lower-layer-modules の効果を出す(defk の呼びを辿って届く形も)か、その module の package の handler を with_handlers で被せる —
-    /// 記録の service の生の操作は handler(protocol・foundation)の仕事(利用者の決定 2026-10-07・agora-redesign #3885)。既知の一覧で下げない。
+    /// 記録の service の生の操作は handler(protocol・foundation)の仕事。既知の一覧で下げない。
     LowerLayerInDomain,
     /// DOEFF168: 業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義が、環境の名の値と比べるか dry-run の印で分岐する
-    /// (agora-redesign #1906 — 業務の層は環境を知らない・環境の違いは handler の組の差し替えだけで表す)。
+    /// (業務の層は環境を知らない・環境の違いは handler の組の差し替えだけで表す)。
     EnvironmentBranch,
-    /// DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(Hy が属性名へ mangle しないので決して当たらない — agora-redesign #2036)。
+    /// DOEFF169: `match` の class pattern の keyword の欄の名に `-` が在る(Hy が属性名へ mangle しないので決して当たらない)。
     MatchFieldHyphen,
     /// DOEFF170: 値を型だけで渡す層(architecture.hy の層の `:wire-free True` — agora の core)に defwire の宣言が在る(wire の型 — 欄名の
-    /// 対応を持つ宣言と parse / dump — は翻訳の層に置く・agora-redesign #2143 の (a))。
+    /// 対応を持つ宣言と parse / dump — は翻訳の層に置く)。
     WireInWireFreeLayer,
     /// DOEFF171: 値を型だけで渡す層の定義の :pre / :post と defclass / defrecord の欄の型に、写像(dict・Mapping・JsonBody・FrozenMap …・
-    /// 型つきの写像も)か中身の型の無い組 / 列(tuple・list)が在る(agora-redesign #2143 の (b))。
+    /// 型つきの写像も)か中身の型の無い組 / 列(tuple・list)が在る。
     BareMapInWireFreeLayer,
     /// DOEFF172(臭い・major): 写像の置き場 — handler の外の定義の本体で写像を組む(`{…}`・dfor・(dict …))か、値を型だけで渡す層の外の
-    /// defclass・defrecord・defwire の欄が写像(agora-redesign #2143 の (2) — 数えるだけ)。
+    /// defclass・defrecord・defwire の欄が写像(数えるだけ)。
     DictOutsideItsPlace,
     /// DOEFF131: architecture.hy の許可名簿(:world-handlers)の外の定義が、名簿の :wraps に挙げた doeff の実 I/O の handler を名指す
-    /// (外の世界に触れてよいのは名簿の定義だけ — agora-redesign #1106 の R1)。
+    /// (外の世界に触れてよいのは名簿の定義だけ)。
     WorldHandlerNamedOutsideList,
-    /// DOEFF132: 許可名簿の定義が実在しない・層 foundation の外に在る(外の世界に触れてよい定義は foundation の層にだけ置く —
-    /// agora-redesign #1106 の R2)。位置は architecture.hy の名簿の要素。
+    /// DOEFF132: 許可名簿の定義が実在しない・層 foundation の外に在る(外の世界に触れてよい定義は foundation の層にだけ置く)。
+    /// 位置は architecture.hy の名簿の要素。
     WorldHandlerMisplaced,
     /// DOEFF133: テストの種類(手元 / 縁)を届く先から導き、architecture.hy の :edge-mark の印と食い違う物 — 名簿の定義・:wraps の
-    /// handler・生の I/O に届くのに印が無い / 届かないのに印が在る(agora-redesign #1106 の R3)。
-    /// Hy の定義が名指す repo の中の Python の関数の中の生の I/O と呼び先も届く先に数える(agora-redesign #1798・python_reach)。
+    /// handler・生の I/O に届くのに印が無い / 届かないのに印が在る。
+    /// Hy の定義が名指す repo の中の Python の関数の中の生の I/O と呼び先も届く先に数える(python_reach)。
     TestKindMismatch,
     /// DOEFF137: architecture.hy の許可名簿(:world-handlers)の handler に、縁の検(空でない `:interpreters` を持ち、その handler の
-    /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler(agora-redesign #1363)。
+    /// 定義に届く deftest)が 1 本も無い — 本物と模擬が同じ検を通ることを見ていない実 I/O の handler。
     /// 理由つきの `:contract-test (none …)` の handler は判じない・理由の無い `:contract-test none` は鳴る(書き方は直し方の文 — #1796)。
     WorldHandlerWithoutContractTest,
     /// DOEFF135: deftest 以外のテストの形(Python の def test_*・module ごとの skip・pytest の外の check script・deftest の runner)—
-    /// architecture.hy の :test-forms の綴りの型で file を選ぶ(agora-redesign #1106 の R6)。
+    /// architecture.hy の :test-forms の綴りの型で file を選ぶ。
     TestFormNotDeftest,
     /// DOEFF146: 判定を1か所に閉じ込めた語彙が :except の外に在る — architecture.hy の :single-point-vocabulary の群が
-    /// 名指す語彙(正規表現)を、:except の file(判定の1点)の外の :files が読んでいる(agora-redesign #1192・#1371)。
+    /// 名指す語彙(正規表現)を、:except の file(判定の1点)の外の :files が読んでいる(#1371)。
     VocabularyOutsideSinglePoint,
     /// DOEFF148: 書いてよい file を決めた綴りが :except の外に在る — architecture.hy の :confined-spellings の群が名指す綴り
-    /// (正規表現・文字列の中も数える)を、:except の外の :files が書いている(agora-redesign #1373・#1436)。
+    /// (正規表現・文字列の中も数える)を、:except の外の :files が書いている(#1436)。
     SpellingOutsideItsFiles,
     /// DOEFF161: 数を決めた綴りの当たりの数が決めた数でない — architecture.hy の :counted-spellings の宣言の :pattern を、:files(か :within
-    /// の定義)の中で数えた数が :count / :at-least に合わない(agora-redesign #1373・#1437)。
+    /// の定義)の中で数えた数が :count / :at-least に合わない(#1437)。
     SpellingCountDiffers,
     /// DOEFF162: effect の宣言の全体が一覧と食い違う — architecture.hy の :effect-census の :files で :base を継ぐ class の宣言が
-    /// :effects の一覧に無い・2 度在る・一覧の effect の宣言が無い(agora-redesign #1373・#1438)。
+    /// :effects の一覧に無い・2 度在る・一覧の effect の宣言が無い(#1438)。
     EffectOutsideCensus,
     /// DOEFF149: 型の欄を持つ class の顔ぶれが一覧と食い違う — architecture.hy の :field-holders の :files の Python の class のうち、
-    /// 欄の注記に :type が在る class が :holders に無い・:holders の class がその欄を持たない(agora-redesign #1374)。
+    /// 欄の注記に :type が在る class が :holders に無い・:holders の class がその欄を持たない。
     FieldHoldersDiffer,
     /// DOEFF136: service の entry の層の定義に、模擬の環境(:verification-environment)の下の deftest が 1 本も届かない
-    /// — 本番の組み立てを手元で回していない service(agora-redesign #1106 の R5・#1111)。
+    /// — 本番の組み立てを手元で回していない service(#1111)。
     ServiceUntestedOnSim,
     /// DOEFF163: code を持つ service(entry の層に定義が 1 本以上)が defservice に :invariants を宣言していない・名指した関数が実在しない・
-    /// その関数の :role が judgment でない(agora-redesign #1559・#1155 の定義 1 — 業務ロジックを「テストした」の条 (b))。
+    /// その関数の :role が judgment でない(業務ロジックを「テストした」と数える条件)。
     ServiceInvariantsMissing,
     /// DOEFF173: code を持つ service が defservice に :system(cluster に置く系の defsystem)を宣言していない・名指した module が
-    /// その service の entry の層に無い・名が defsystem でない・defsystem の引数が型つきの土台 1 つでない(agora-redesign #2187 —
+    /// その service の entry の層に無い・名が defsystem でない・defsystem の引数が型つきの土台 1 つでない(
     /// DOEFF136 と対。defsystem が在れば汎用の模擬 cluster のテストに自動で載るので、規則が求めるのは宣言と形だけ)。
     ServiceSystemMissing,
     /// DOEFF207: 本番の系の job に読み書きの欄 :reads / :writes が無い・job が読む外の置き場の組に、本番の job の書き手も
-    /// :outside-writers の行も無い(agora-redesign #3493・#3496)。登録簿で下げない。宣言は :outside-writers。
+    /// :outside-writers の行も無い(#3496)。登録簿で下げない。宣言は :outside-writers。
     SystemAccessUnwritten,
     /// DOEFF208: 本番の code が記録の変更の待ちを job を起こす手段にする — doeff-records の合図の源の工場(read-signal-handler・
-    /// records-signal-handler)の呼びと、記録の効果の handler の外の秒が 0 でない WatchChanges / WatchEvents(利用者 2026-10-06・
-    /// agora-redesign #3834)。登録簿で下げない。母集団は :business-fakes の本番の code。
+    /// records-signal-handler)の呼びと、記録の効果の handler の外の秒が 0 でない WatchChanges / WatchEvents。
+    /// 登録簿で下げない。母集団は :business-fakes の本番の code。
     RecordChangeWakesJob,
     /// DOEFF209: 本番の code の Program が、同じ物を時間の待ちを挟んで繰り返し取りに行く — Delay・WaitTicks・今 + 決まった秒の
-    /// ArmTimer / ArmedTimer(補助の定義に包んだ形も)を繰り返しの中に置く所と、ライブラリへ渡す :poll-seconds(利用者 2026-10-06・
-    /// agora-redesign #3834)。登録簿で下げない。母集団は :business-fakes の本番の code。
+    /// ArmTimer / ArmedTimer(補助の定義に包んだ形も)を繰り返しの中に置く所と、ライブラリへ渡す :poll-seconds。
+    /// 登録簿で下げない。母集団は :business-fakes の本番の code。
     PollingOnTimer,
     /// DOEFF210: Hy の program(defk・defp の本体)が time.sleep / asyncio.sleep で壁の時計を待つ — 時間は doeff-time の効果
-    /// (Delay など)で待ち、壁の時計で待つのは handler の実装だけ(doeff の ADR-DOE-TIME-001 R1・R2・card ki-3c3d85253c2c)。
+    /// (Delay など)で待ち、壁の時計で待つのは handler の実装だけ(doeff の ADR-DOE-TIME-001 R1・R2)。
     /// 母集団は設定の `[tool.doeff-linter.program_sleep]`(program の置き場 — 書いた repo にだけ当たる)。
     ProgramSleepsOnWallClock,
     /// DOEFF211: Hy の検が、実時間が対象だと名乗らずに time.sleep / asyncio.sleep(と言い換えの `(.wait (threading.Event) 秒)`)で
     /// 壁の時計を待つ — 検は仮想の時計で走らせるか出来事で待ち、実時間そのものが対象の検だけが realtime を名乗る(doeff の
-    /// ADR-DOE-TIME-001 R3・card ki-bb3ee40d0af2)。母集団は設定の `[tool.doeff-linter.test_sleep]`(検の置き場 — 書いた repo にだけ当たる)。
+    /// ADR-DOE-TIME-001 R3)。母集団は設定の `[tool.doeff-linter.test_sleep]`(検の置き場 — 書いた repo にだけ当たる)。
     TestSleepsOnWallClock,
     /// DOEFF140: architecture.hy の :placed-dependencies の層の module(service と shared)が、root の下の層の置き場の外の module を
-    /// import する — 置き場の決まっていない module への依存(agora-redesign #1188)。
+    /// import する — 置き場の決まっていない module への依存。
     PlacedDependency,
     /// DOEFF141: architecture.hy の :blind-definitions の定義から届く定義が宣言した語を読む・定義の module が import を持つ
-    /// — 決めた材料だけで判じる定義に、ほかの材料が入り込む(agora-redesign #1368)。
+    /// — 決めた材料だけで判じる定義に、ほかの材料が入り込む。
     BlindDefinitionReads,
     /// DOEFF147: architecture.hy の :allowed-heads の定義の中に、許した頭の一覧の外の頭の form が在る — 例外を上げない物だけを
-    /// 呼ぶと決めた定義に、上げうる呼びが入り込む(agora-redesign #1372・#1413)。
+    /// 呼ぶと決めた定義に、上げうる呼びが入り込む(#1413)。
     DefinitionCallsUnlistedHead,
     /// DOEFF159: architecture.hy の :call-sites で呼んでよい場所と回数を決めた頭を、場所の外で呼ぶ・回数や外の form や分岐が宣言と違う
-    /// — 閉じ込めた 1 点が黙って 2 つ目を生やす(agora-redesign #1372・#1414)。
+    /// — 閉じ込めた 1 点が黙って 2 つ目を生やす(#1414)。
     CallOutsideDeclaredSites,
     /// DOEFF160: 広い例外の捕捉(`(except [] …)`・Exception・BaseException・AssertionError・Python の `except:`)が architecture.hy の
-    /// :broad-catches の :carriers(捕まえた例外を名で束縛し、決めた出来事に載せて運ぶ境界)の外に在る(agora-redesign #1372・#1415)。
+    /// :broad-catches の :carriers(捕まえた例外を名で束縛し、決めた出来事に載せて運ぶ境界)の外に在る(#1415)。
     BroadCatchOutsideCarrier,
     /// DOEFF150: architecture.hy の :retired-words で使わないと決めた綴り(語・正規表現・定義の名)が、宣言の file に在る
-    /// (agora-redesign #1193 — 語の表は repo の宣言にだけ在る)。
+    /// (語の表は repo の宣言にだけ在る)。
     RetiredWord,
     /// DOEFF151: architecture.hy の :retired-calls で使わないと決めた呼び(退役した effect・時計 …)を、宣言の Hy の file が呼ぶ(#1193)。
     RetiredCall,
     /// DOEFF142: defhandler の引数に client・可変の入れ物・可変の object・店の名の引数を取る(接続先と設定は Ask・状態は session に持つ —
-    /// agora-redesign #1189 / #1366)。母集団と店の名は architecture.hy の :handler-arguments から読む。
+    /// #1366)。母集団と店の名は architecture.hy の :handler-arguments から読む。
     HandlerArgumentHoldsState,
     /// DOEFF144: 公開面の型の注記(class の欄・関数の戻り値・defk / deff の :post)が素の写像・素の組・値の開いた写像・長さの決まった組、
-    /// または関数が長さ 2 以上の組の literal を答えにする — 構造を持つ値は欄の名前と型を持つ型で表す(agora-redesign #1191)。
+    /// または関数が長さ 2 以上の組の literal を答えにする — 構造を持つ値は欄の名前と型を持つ型で表す。
     UntypedStructuredValue,
     /// DOEFF145: 同じ dir の同じ名の .hy で kw-only の record(defrecord か、飾りに :kw-only True の dataclass を持つ defclass)を、
     /// 型の宣言(.pyi)が kw_only=True の無い @dataclass で宣言する — 型検査は位置の引数の呼びを通すが実行時は TypeError(#1191)。
     RecordStubNotKwOnly,
-    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表と反例の表の腐り
-    /// (agora-redesign #1375)。宣言は architecture.hy の :business-fakes。
+    /// DOEFF143: 模擬の根から届き本番の入口から届かない定義が業務の効果に tap でなく答える(偽の handler)・外の世界の表と反例の表の腐り。
+    ///宣言は architecture.hy の :business-fakes。
     BusinessEffectFake,
     /// DOEFF155: 組み立ての形の破れ — 組の file が残る・組み立ての 1 点の関数の形(土台の列 1 つ + 翻訳の層から import した翻訳の列)・
-    /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる(agora-redesign #1376)・1 点が列を引数で受ける・
+    /// defk 以外で書いた組み立て・列の並び・翻訳の列が別の service の翻訳を並べる・1 点が列を引数で受ける・
     /// 検証環境と検が翻訳の列を 1 点の外で並べる(#3408)。宣言は :assembly-shape。
     AssemblyShapeBroken,
-    /// DOEFF156: 翻訳の handler が列の外の業務の効果を出し直す・土台の handler が業務の効果に答える(agora-redesign #1376)。
+    /// DOEFF156: 翻訳の handler が列の外の業務の効果を出し直す・土台の handler が業務の効果に答える。
     AssemblyAnswerMisplaced,
-    /// DOEFF157: 検の定義からだけ届く定義が業務の効果か下の層の効果に答える — 検だけの偽物(agora-redesign #1377)。宣言は :business-fakes。
+    /// DOEFF157: 検の定義からだけ届く定義が業務の効果か下の層の効果に答える — 検だけの偽物。宣言は :business-fakes。
     TestOnlyFake,
-    /// DOEFF158: 本番の入口から届く intent の効果の答え手が翻訳の層の handler 1 つでない(agora-redesign #1377)。層の名は :assembly-shape。
+    /// DOEFF158: 本番の入口から届く intent の効果の答え手が翻訳の層の handler 1 つでない。層の名は :assembly-shape。
     IntentAnswererNotTranslation,
-    /// DOEFF164: entry の層を持つ service に、壊した handler の反例(反例の表の節に届き、その service の entry にも届く deftest)が 1 本も無い(agora-redesign #1560)。宣言は :business-fakes の :counterexamples と :verification-environment。
+    /// DOEFF164: entry の層を持つ service に、壊した handler の反例(反例の表の節に届き、その service の entry にも届く deftest)が 1 本も無い。宣言は :business-fakes の :counterexamples と :verification-environment。
     ServiceWithoutCounterexample,
     /// DOEFF167: service の条(defservice の :clauses — :invariants の関数が返す条の名)に、その条を破ると反例の表で名乗る(`breaks:` の行)
-    /// 壊した handler の反例が無く、外した理由(:clause-exemptions)も無い — 条ごとの網羅の欠け(agora-redesign #1713・ADR R2 の「条ごとに」)。
+    /// 壊した handler の反例が無く、外した理由(:clause-exemptions)も無い — 条ごとの網羅の欠け(ADR R2 の「条ごとに」)。
     /// code を持つ service が :clauses を宣言していなければ service の名で 1 つ。宣言は defservice と :business-fakes の :counterexamples。
     ClauseWithoutCounterexample,
     /// DOEFF165: intent の層の効果に、手元の検から出す定義・模擬の答え手・本番の答え手のどれかが無い — 網羅の表の欠け
-    /// (agora-redesign #1561 K3・まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
+    /// (まず報告だけ = 重さ info。失敗にするのは #1562 K4)。層の名は :assembly-shape。
     IntentEffectUncovered,
     /// DOEFF206: 検証環境(:verification-environment)の handler が intent の層の効果に自前で答える(片方の枝だけでも)・
     /// 違反を通す表(外の世界の表・下の層を通す表・検だけの偽物の表)の行が intent の層の効果を通す — 本番の翻訳の handler が手元で 1 度も
-    /// 走らないまま緑になる穴(agora-redesign #3405・#3407・#3406)。登録簿で下げない。宣言は :business-fakes・:verification-environment・:assembly-shape。
+    /// 走らないまま緑になる穴(#3407・#3406)。登録簿で下げない。宣言は :business-fakes・:verification-environment・:assembly-shape。
     IntentFakedInVerification,
-    /// DOEFF166: 登録簿の鍵が、全体の実行で判じた規則のどの所見にも当たらない — 当たらなくなった古い行(agora-redesign #1724・#1706)。
-    /// 鍵が名指す規則は enable に無くても同じ実行で当て、当たりは 166 の判じにだけ使う(agora-redesign #1999)。
+    /// DOEFF166: 登録簿の鍵が、全体の実行で判じた規則のどの所見にも当たらない — 当たらなくなった古い行(#1706)。
+    /// 鍵が名指す規則は enable に無くても同じ実行で当て、当たりは 166 の判じにだけ使う。
     RegistryEntryStale,
     /// DOEFF201(意味・Jev): 翻訳の層の定義が業務の判断をしている。
     SemanticBusinessDecision,
@@ -421,8 +421,8 @@ impl ProjectRule {
         }
     }
 
-    /// 規則の既定の重大さ(repo の宣言 `rules.<ID>.level` が無い時 — agora-redesign #1041)。None の規則は規則そのものの重さから決める
-    /// (error = major・warning = minor・info = info)。責務の境界の違反は常に critical(operator の決定 2026-09-29 — 責務の境界を
+    /// 規則の既定の重大さ(repo の宣言 `rules.<ID>.level` が無い時)。None の規則は規則そのものの重さから決める
+    /// (error = major・warning = minor・info = info)。責務の境界の違反は常に critical(責務の境界を
     /// 守る事が doeff の code を検で確かめられる形に保つ前提だから)— repo ごとに写すと片方が黙って古くなるので、既定はここ 1 か所。
     /// 新しい規則はどちらかに置く(網羅の match — 決めずに足せない)。
     pub fn default_level(self) -> Option<RuleLevel> {
@@ -451,7 +451,7 @@ impl ProjectRule {
             | ProjectRule::SystemAccessUnwritten
             | ProjectRule::RecordChangeWakesJob
             | ProjectRule::PollingOnTimer
-            // program が handler を迂回して壁の時計で待つ(時間は handler の責務 — doeff の ADR-DOE-TIME-001・利用者 2026-10-12)。
+            // program が handler を迂回して壁の時計で待つ(時間は handler の責務 — doeff の ADR-DOE-TIME-001)。
             | ProjectRule::ProgramSleepsOnWallClock
             // 検が、実時間が対象だと名乗らずに壁の時計で待つ(Python の検の同じ決まりは semgrep の ERROR — 同じ ADR の R3)。
             | ProjectRule::TestSleepsOnWallClock
@@ -494,7 +494,7 @@ impl ProjectRule {
             | ProjectRule::MatchFieldHyphen
             // 宣言を切り替えた effect の古い分岐(決して通らない枝 — ADR-DOE-CORE-EFFECTS-003 R14 (4)・毎回の切り替えの門)。
             | ProjectRule::StaleOutcomeBranch
-            // 値を型だけで渡す層の defwire と素の写像(operator の決定 2026-10-01・#2143)。
+            // 値を型だけで渡す層の defwire と素の写像(#2143)。
             | ProjectRule::WireInWireFreeLayer
             | ProjectRule::BareMapInWireFreeLayer
             // 宣言に無い置き場所(どの層の決まりも当たらない)・defk を素で呼ぶ(Program が値として流れる本物の誤り)・
@@ -504,7 +504,7 @@ impl ProjectRule {
             | ProjectRule::DefkCalledBare
             | ProjectRule::UnreadableFile => Some(RuleLevel::Critical),
             // Jev の判定(翻訳の層の業務の判断・判断の層の通信の手段・形の検めと判断の混ざり)は、較正が済んで信頼できるまで critical に
-            // しない(operator の決定 B・2026-09-30 — agora-redesign #1762 / #1801。#942 で critical にしたのを戻す)。当たりの重さは
+            // しない(#942 で critical にしたのを戻す)。当たりの重さは
             // warning なので、宣言が無いと minor になる — 責務の境界の読みとして見落とさないよう major に置く。
             ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge
@@ -535,7 +535,7 @@ impl ProjectRule {
         }
     }
 
-    /// 当たりを判じるのに repo 全体が要るか(agora-redesign #2090)— file F に付く当たりの有無が、F の外の source の中身・存在・置き場で
+    /// 当たりを判じるのに repo 全体が要るか— file F に付く当たりの有無が、F の外の source の中身・存在・置き場で
     /// 変わりうる規則(repo 全体の表 — module の索引・定義の graph・推論の世界・名の一覧 — を引く・複数の file を数えて突き合わせる・
     /// 当たりを architecture.hy や登録簿の行に付ける・「無ければ出す」当たりを持つ)は真。変えた path だけに当てても出ないので、門と
     /// commit の hook はこの名乗りで repo 全体の比べに当てる規則を選ぶ(以前は repo の手の一覧 — 足し忘れた DOEFF149・161 の新しい
@@ -630,7 +630,7 @@ impl ProjectRule {
             | ProjectRule::UntypedStructuredValue
             // DOEFF208 は file の中身と architecture.hy の :business-fakes だけで決まる(宣言を変えた commit は split_for_change が全部の規則を
             // repo 全体の比べへ移す — DOEFF170・171・173 と同じ)。stage した path に当て、既知の一覧を持たない規則の入口(基点の差で
-            // 下げない new_critical)を通す(agora-redesign #3834)。
+            // 下げない new_critical)を通す。
             | ProjectRule::RecordChangeWakesJob
             // Jev に問う意味の規則は門と hook が当てない(定義ごとに問う — 判じる単位は定義)。
             | ProjectRule::SemanticBusinessDecision
@@ -641,7 +641,7 @@ impl ProjectRule {
         }
     }
 
-    /// 1 file の実行(`Target::Single` — エディタの `--stdin --path`)がこの規則を判じるか(agora-redesign #2163)。真の規則は
+    /// 1 file の実行(`Target::Single` — エディタの `--stdin --path`)がこの規則を判じるか。真の規則は
     /// `run_with` の `Target::Single` の枝に判定を持ち、その file についての当たりを出し切る。偽の規則は repo 全体の実行
     /// (`Target::Whole`)だけが判じる — 1 file の実行では走らせず(`run_with` が有効な規則からこの名乗りで外す)、editor-json の
     /// `judged_rules` に載らないので、エディタはその規則の違反を全体の実行の結果のまま残す(以前は 1 file の実行の結果で file の違反を
@@ -747,9 +747,9 @@ impl ProjectRule {
 
     /// 登録簿(既知の当たりの表)に載った当たりを warning へ下げてよい規則か。DOEFF175 も下げない — 切り替えの門で、当たりが 0 になるまで
     /// その版を着地させない(law declarations-switch-one-effect-at-a-time)ので、既知の一覧で通せては門が空く。DOEFF206 は下げない — 違反を通す表を作らせない規則が、
-    /// 別の表で通せては穴が残る(agora-redesign #3405・同じ穴を 2 度開けない — 利用者の決定 2026-10-04)。DOEFF207・208・209 も下げない —
-    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209 = agora-redesign #3834)。DOEFF211 も下げない — 検の眠りの規則の外へ出る道は
-    /// realtime の名乗り(と、名乗りを理由と一緒に載せる repo の名簿)だけにする(card ki-bb3ee40d0af2)。
+    /// 別の表で通せては穴が残る(同じ穴を 2 度開けない)。DOEFF207・208・209 も下げない —
+    /// 今在る当たりを表に載せて通す形にしない(DOEFF208・209)。DOEFF211 も下げない — 検の眠りの規則の外へ出る道は
+    /// realtime の名乗り(と、名乗りを理由と一緒に載せる repo の名簿)だけにする。
     pub fn lowered_by_registry(self) -> bool {
         !matches!(
             self,
@@ -793,7 +793,7 @@ impl ProjectRule {
         ProjectRule::ALL.iter().copied().find(|rule| rule.id() == upper)
     }
 
-    /// 層の宣言の `:exempt [(rule 規則 ID "理由")]` で、名指しの module を理由つきで母集団から外せる規則か(agora-redesign #2913)。
+    /// 層の宣言の `:exempt [(rule 規則 ID "理由")]` で、名指しの module を理由つきで母集団から外せる規則か。
     /// 定義の file ごとに判じる定義の書き方の規則だけ — critical(DOEFF126 素の defk 呼び)と、file ごとに判じない規則(service・層・
     /// Jev)は外せない(外す 1 点は定義の file の判定の直後なので、それ以外の ID を書くと黙って効かない形になる)。
     pub fn exemptible_by_layer(self) -> bool {
@@ -1188,7 +1188,7 @@ impl ProjectRule {
             ProjectRule::RebuiltAccumulator => "for / while の中で (:= xs (+ xs #(…))) と蓄えを毎回作り直さない",
             ProjectRule::EffectsDisagreeWithInference => "defk の :effects を書いたなら、本体で撃つ呼び((<- …)・(! …))から推論した effect と同じ集合にする — 宣言に無い effect を起こさず、起こさない effect を宣言しない(:effects の無い defk は対象外)",
             ProjectRule::StaleOutcomeBranch => "defeffect が :absent / :failure で宣言した型を、その effect の答えを束ねた変数((<- x (E …))・(val x (! (E …))))に対して値として分けない — match の腕・isinstance(型の tuple・cond の枝も)。<- と ! はその型を束ねず Absent / Raise として逃がすので、枝は決して通らない(ADR-DOE-CORE-EFFECTS-003 R14 (4))",
-            ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない(operator の決定 2026-09-27)。file は architecture.hy の :test-forms の綴りの型で選ぶ",
+            ProjectRule::TestFormNotDeftest => "テストは deftest だけで書き pytest が収集する — Python の def test_*・module ごとの skip・pytest の外で走る check script・deftest を自分で回す runner は置かない。file は architecture.hy の :test-forms の綴りの型で選ぶ",
             ProjectRule::VocabularyOutsideSinglePoint => "ある語彙(job の phase・turn の state・担い手の欄 等)の判定は 1 つの file(architecture.hy の :single-point-vocabulary の :except)に閉じ込める — 他の file が同じ正規表現に当たる綴りを読むと、そこが第 2 の判定点になり、直す時に片方だけ直して食い違う",
             ProjectRule::SpellingOutsideItsFiles => "architecture.hy の :confined-spellings の群の綴り(正規表現)は :except の file にだけ書く(:except が空なら :files のどこにも書かない)— :files に当たる Hy・Python の file の、註を落とした本文(文字列の中も数える)を読む。:files に当たる file が 1 つも無い群も当たる(母集団 0 を緑にしない)",
             ProjectRule::SpellingCountDiffers => "architecture.hy の :counted-spellings の宣言ごとに、:files に当たる file(Hy と Python は註を落とす・文字列は数える)の :pattern の当たりの数が :count(ちょうど)か :at-least(以上)に合う — :within があれば名指した top level の定義ごとに、その定義の中で数える。数える file や定義が無い宣言も当たる(母集団 0 を緑にしない)",
@@ -1201,28 +1201,28 @@ impl ProjectRule {
             ProjectRule::ServiceUntestedOnSim => "業務の service は、本番の組み立て(entry の層)のまま模擬の環境に載せ、handler の差し替えだけで回して確かめる — 模擬の環境(:verification-environment)の下の deftest がその service の entry の層の定義に 1 本も届かなければ、未検証の service として赤にする",
             ProjectRule::ServiceInvariantsMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :invariants(業務の不変条件の関数 `module:関数` の列)を宣言する — 名指した関数は実在し、:tags の :role が judgment(記録を受けて破りの列を返す純粋な判断)。宣言の無い service・実在しない関数・判断でない関数は赤",
             ProjectRule::ServiceSystemMissing => "architecture.hy の defservice は(entry の層を持たない service も)、architecture.hy の defservice に :system(cluster に置く系 `module:defsystem の名`・系が複数なら列)を宣言する — 名指した module はその service の entry の層に在り、名は defsystem で定義され、引数は型つきの土台 1 つ(defsystem の引数の型の注記 `[#^ T foundation]` が在ればそれで、無ければ土台を受ける job の関数の引数の型が書かれ、素の Callable・写像・組でない)。defsystem が在れば汎用の模擬 cluster のテストに自動で載る。その service の code が別の service の系の中で走るなら {:part-of \"module:defsystem の名\"}(指す系はどこかの service の entry の層)、旧い経路に残す service と process を持たない部品の service(main も deploy も無く他の service が読むだけ)は {:exempt \"理由\"} と理由を書く(理由の中身は判じない・空の理由は赤)",
-            ProjectRule::SystemAccessUnwritten => "architecture.hy に :outside-writers(本番の系の job でない書き手が書く外の置き場の組の表)を書いた repo では、本番の系(defservice の :system が名指す defsystem)の job は :reads と :writes(読む・書く外の置き場の組 `\"<置き場>:<名>\"` の文字列の集合・使わなければ #{})を書き、job の :reads の組は、どれかの本番の job の :writes か、本番の入口(:business-fakes の宣言で決まる・DOEFF143 と同じ)から届く defk・deff の契約の :writes(job でない書き手 — 系の job から送られる task の Program など)か、:outside-writers の表に在る — 本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる穴を閉じる(この種の違反は doeff-linter が見つける — 利用者の決定 2026-10-04・agora-redesign #3493・#3496)。登録簿で下げない",
-            ProjectRule::RecordChangeWakesJob => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file・doeff-records の package の中を除く)は、記録の変更の待ちで job を起こさない — doeff-records の合図の源の工場(read-signal-handler・records-signal-handler)を呼ばず、記録の効果に答える handler の外で WatchChanges・WatchEvents を秒(:timeout か位置の 3 つ目)が literal の 0 でない値で出さない。待たずに 1 回読む(秒 0)・記録への書きは当たらない(記録を書いて記録を待つ設計を禁じ、記録と起動を分ける — 利用者の決定 2026-10-06・agora-redesign #3834)。登録簿で下げない",
-            ProjectRule::PollingOnTimer => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file — doeff-records の package の中も含む)の Program は、同じ物を時間の待ちを挟んで繰り返し取りに行かない — 繰り返し(while・loop の本体・event-loop の節・自分を呼ぶ定義)の中に、Delay・WaitTicks・module の名つきの sleep(秒が literal の 0 の譲りと (- 期限 今) の期限の待ちを除く)・刻が (+ 今 …) の ArmTimer / ArmedTimer(今 = 同じ定義で GetTime・now-ms・clock-ms から結んだ名)・それらを包む補助の定義の呼びと、handler の節が必ず待つ効果を出す所(repo を読み直して集める — 別の task に渡す Program の中は見ない)を置かない。ライブラリへ問い直しの間隔を渡す :poll-seconds も当たる。起きる刻が行や予定から導かれる期限の待ち・1 度だけ掛けて抜ける期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout は当たらない。相手が変わりを知らせる手段を持たない所だけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書いて通す — 語は閉じた集合(相手に変更の知らせが無い: <相手> — <何で確かめたか>〔相手と確かめの根拠のどちらも空でなく、変更の知らせを持つと分かっている相手 — Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — でない〕 / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し — 最後は区分 retry の当たりだけ)(取りに行く繰り返しは全部直す対象で最後の手段に限る — 利用者の決定 2026-10-06・agora-redesign #3834)。登録簿で下げない",
-            ProjectRule::TestSleepsOnWallClock => "設定の `[tool.doeff-linter.test_sleep]` の検の置き場の Hy の file(path の区切りに parts の名の dir を持つ file と、名が names の glob に合う file — exclude の dir の下を除く)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・method の綴り `(.sleep time 秒)`・(Await (asyncio.sleep 秒)) の中の呼び・言い換えの `(.wait (threading.Event) 秒)` も)— 検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象だと名乗った所だけ: module の最上位の `(val pytestmark pytest.mark.realtime)`(印の list・tuple でも)を持つ file の全部・meta の map の :marks に \"realtime\" を持つ deftest の中・decorator の並びに印を持つ素の関数の検 `(defn [pytest.mark.realtime] 名 [] …)` の中。名乗った検は、名簿を持つ repo では名簿にも理由と一緒に載せる(doeff の ADR-DOE-TIME-001 R3・待ちは doeff の時間の効果で書く — 利用者の決定 2026-10-12・card ki-bb3ee40d0af2)",
-            ProjectRule::ProgramSleepsOnWallClock => "設定の `[tool.doeff-linter.program_sleep]` の置き場の Hy の program(defk・defp の本体 — 字面で内側に在る fn・defn・deff の中も)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・(Await (asyncio.sleep 秒)) の中の呼びも)— 時間は doeff-time の効果(Delay・WaitUntil・WaitWithin …)で待ち、1 秒が何であるかは呼び手が置く時間の handler が決める。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは handler の実装だけ: defhandler の本体・引数の並びが [effect k] の定義・契約の辞書の :tags の :role が foundation(汎用の I/O の役 — handler からだけ呼ばれる helper)を自分で名乗る defk・defp。最上位の deff・defn(素の callable)は program でないので数えない(doeff の ADR-DOE-TIME-001 R1・R2・待ちは doeff の時間の効果で書く — 利用者の決定 2026-10-12・card ki-3c3d85253c2c)",
+            ProjectRule::SystemAccessUnwritten => "architecture.hy に :outside-writers(本番の系の job でない書き手が書く外の置き場の組の表)を書いた repo では、本番の系(defservice の :system が名指す defsystem)の job は :reads と :writes(読む・書く外の置き場の組 `\"<置き場>:<名>\"` の文字列の集合・使わなければ #{})を書き、job の :reads の組は、どれかの本番の job の :writes か、本番の入口(:business-fakes の宣言で決まる・DOEFF143 と同じ)から届く defk・deff の契約の :writes(job でない書き手 — 系の job から送られる task の Program など)か、:outside-writers の表に在る — 本番に書き手の無い記録を読み、手元の模擬では代役がその分を作って緑になる穴を閉じる(この種の違反は doeff-linter が見つける)。登録簿で下げない",
+            ProjectRule::RecordChangeWakesJob => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file・doeff-records の package の中を除く)は、記録の変更の待ちで job を起こさない — doeff-records の合図の源の工場(read-signal-handler・records-signal-handler)を呼ばず、記録の効果に答える handler の外で WatchChanges・WatchEvents を秒(:timeout か位置の 3 つ目)が literal の 0 でない値で出さない。待たずに 1 回読む(秒 0)・記録への書きは当たらない(記録を書いて記録を待つ設計を禁じ、記録と起動を分ける)。登録簿で下げない",
+            ProjectRule::PollingOnTimer => "architecture.hy に :business-fakes を書いた repo の本番の code(:production に当たり、:tests・:simulation・:skip に当たらない Hy の file — doeff-records の package の中も含む)の Program は、同じ物を時間の待ちを挟んで繰り返し取りに行かない — 繰り返し(while・loop の本体・event-loop の節・自分を呼ぶ定義)の中に、Delay・WaitTicks・module の名つきの sleep(秒が literal の 0 の譲りと (- 期限 今) の期限の待ちを除く)・刻が (+ 今 …) の ArmTimer / ArmedTimer(今 = 同じ定義で GetTime・now-ms・clock-ms から結んだ名)・それらを包む補助の定義の呼びと、handler の節が必ず待つ効果を出す所(repo を読み直して集める — 別の task に渡す Program の中は見ない)を置かない。ライブラリへ問い直しの間隔を渡す :poll-seconds も当たる。起きる刻が行や予定から導かれる期限の待ち・1 度だけ掛けて抜ける期限・変わりを待つ時の上限の秒(DOEFF208 の側)・要求の timeout は当たらない。相手が変わりを知らせる手段を持たない所だけ、当たりの行か直前の註に `; 時間で取り直す理由: <語>` を書いて通す — 語は閉じた集合(相手に変更の知らせが無い: <相手> — <何で確かめたか>〔相手と確かめの根拠のどちらも空でなく、変更の知らせを持つと分かっている相手 — Kubernetes・coordinator の GET /watch・doeff-events の基盤・記録の service の変更の合図 — でない〕 / 書くだけ: 生存の印・報告・期限の延長 / 届かない間だけの繋ぎ直し — 最後は区分 retry の当たりだけ)(取りに行く繰り返しは全部直す対象で最後の手段に限る)。登録簿で下げない",
+            ProjectRule::TestSleepsOnWallClock => "設定の `[tool.doeff-linter.test_sleep]` の検の置き場の Hy の file(path の区切りに parts の名の dir を持つ file と、名が names の glob に合う file — exclude の dir の下を除く)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・method の綴り `(.sleep time 秒)`・(Await (asyncio.sleep 秒)) の中の呼び・言い換えの `(.wait (threading.Event) 秒)` も)— 検は program に doeff-time の効果(Delay など)を出させて仮想の時計(sim-time-handler)で走らせるか、待つ出来事を名指して待つ。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは、実時間そのもの(本物の thread・本物の asyncio の loop・本物の外の process)が対象だと名乗った所だけ: module の最上位の `(val pytestmark pytest.mark.realtime)`(印の list・tuple でも)を持つ file の全部・meta の map の :marks に \"realtime\" を持つ deftest の中・decorator の並びに印を持つ素の関数の検 `(defn [pytest.mark.realtime] 名 [] …)` の中。名乗った検は、名簿を持つ repo では名簿にも理由と一緒に載せる(doeff の ADR-DOE-TIME-001 R3・待ちは doeff の時間の効果で書く)",
+            ProjectRule::ProgramSleepsOnWallClock => "設定の `[tool.doeff-linter.program_sleep]` の置き場の Hy の program(defk・defp の本体 — 字面で内側に在る fn・defn・deff の中も)は、time.sleep・asyncio.sleep を呼ばない(import の別名 `(import time :as t)` の t.sleep・`(import asyncio [sleep])` で束ねた名・(Await (asyncio.sleep 秒)) の中の呼びも)— 時間は doeff-time の効果(Delay・WaitUntil・WaitWithin …)で待ち、1 秒が何であるかは呼び手が置く時間の handler が決める。秒が literal の 0 の譲りは数えない。壁の時計で待ってよいのは handler の実装だけ: defhandler の本体・引数の並びが [effect k] の定義・契約の辞書の :tags の :role が foundation(汎用の I/O の役 — handler からだけ呼ばれる helper)を自分で名乗る defk・defp。最上位の deff・defn(素の callable)は program でないので数えない(doeff の ADR-DOE-TIME-001 R1・R2・待ちは doeff の時間の効果で書く)",
             ProjectRule::HandlerArgumentHoldsState => "handler は接続の object や書き換える店を引数で受け取らない — 接続先と資格・設定は Ask で読み、client は本文の先頭の (session val client …) で 1 回だけ作り、状態は (session var …) で持つ(外側の handler が差し替え・観測できる)。引数に残す物は本文に architecture.hy の :handler-arguments の :keep-mark の註で理由を書く",
-            ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ(operator の決定 2026-09-26)。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
+            ProjectRule::BusinessEffectFake => "業務の効果に答える偽物を作らない — 偽物は外の世界に触れる効果だけ。業務の操作は下の層の効果を出す defk で書き、検査は外の世界の handler だけを差し替える。模擬の根と本番の入口と業務の module は architecture.hy の :business-fakes で宣言する",
             ProjectRule::AssemblyShapeBroken => "組み立ては 1 点 — 組み立ての層の関数(引数 = 土台の値)が、土台の handler の列 1 つと、各 service の翻訳の層の翻訳の列の定数を並べるだけ。本番と模擬の違いは渡す土台の値だけで、組の file は残さない。翻訳の列は自分の service の翻訳だけを持ち、別の service の効果を出し直す列の外側にはそれに答える列を並べる。名前は architecture.hy の :assembly-shape で宣言する",
             ProjectRule::AssemblyAnswerMisplaced => "業務の効果の答えは翻訳の列の handler に置く — 翻訳の handler が出し直すのは業務を知らない汎用の効果か同じ列の効果(答える handler は外側)か他の service の公開の効果だけで、土台の handler は外の世界の効果にだけ答える",
             ProjectRule::TestOnlyFake => "検だけの偽物を作らない — 業務の handler は本番の 1 つだけで、検は土台(記録の効果・時計・外の相手)の handler の差し替えで組む。わざと壊した反例の handler は反例の表(:counterexamples)に理由つきで載せる",
             ProjectRule::IntentAnswererNotTranslation => "intent の効果に答えるのは翻訳の層の handler 1 つだけ(本番と模擬で同じ)— 環境ごとの別の答え手や土台の handler で答えず、模擬は土台を差し替える(ADR R9)",
             ProjectRule::ServiceWithoutCounterexample => "業務の service ごとに、わざと壊した handler の反例を 1 本以上持つ — 反例の表(:counterexamples)の節に届く deftest のうち、その service の entry の層の定義に(DOEFF136 と同じ図を逆向きに)届く物が 1 本も無く、節の効果の定義元がその service か土台でなければ、反例の無い service として赤にする",
-            ProjectRule::ClauseWithoutCounterexample => "業務の不変条件は条ごとに、わざと壊した handler の反例を 1 本以上持つか、持たない理由を宣言する — defservice の :clauses の条ごとに、反例の表(:counterexamples)の行のうち `breaks: <service>::<条>` でその条を名乗り、その節に届く deftest が service の entry の層の定義にも届く物が 1 本も無く、:clause-exemptions の理由も無ければ、網羅の欠けとして赤にする(service に 1 本あれば緑の DOEFF164 を条へ細かくした物・agora-redesign #1713)",
-            ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行(agora-redesign #1706)",
-            ProjectRule::IntentFakedInVerification => "intent の層の効果には、検証環境でも本番の翻訳の handler(層 protocol)が答える — 検証環境の handler が自前で答える・表の行で通すと、本番の翻訳が手元で 1 度も走らないまま緑になる(この種の違反は doeff-linter が見つける — 利用者の決定 2026-10-04・agora-redesign #3405)。外すのは、どの終わりも受けた効果をそのまま外へ渡す節と、反例の表に載せたわざと壊した節だけ(片方の枝でだけ自前で答える節は表の行が要る)",
-            ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(agora-redesign #1561・#1155)",
-            ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(実の I/O を持つ handler を当てるまでは全部が手元 — operator の決定 2026-09-29)",
+            ProjectRule::ClauseWithoutCounterexample => "業務の不変条件は条ごとに、わざと壊した handler の反例を 1 本以上持つか、持たない理由を宣言する — defservice の :clauses の条ごとに、反例の表(:counterexamples)の行のうち `breaks: <service>::<条>` でその条を名乗り、その節に届く deftest が service の entry の層の定義にも届く物が 1 本も無く、:clause-exemptions の理由も無ければ、網羅の欠けとして赤にする(service に 1 本あれば緑の DOEFF164 を条へ細かくした物)",
+            ProjectRule::RegistryEntryStale => "既知の破れの登録簿は縮める向きだけ — 載った鍵は今も当たる所見を指す。全体の実行で、鍵の区切り(law の名か規則の ID)が指す規則を判じたのに、どの所見にも当たらない鍵は消し忘れの古い行",
+            ProjectRule::IntentFakedInVerification => "intent の層の効果には、検証環境でも本番の翻訳の handler(層 protocol)が答える — 検証環境の handler が自前で答える・表の行で通すと、本番の翻訳が手元で 1 度も走らないまま緑になる(この種の違反は doeff-linter が見つける)。外すのは、どの終わりも受けた効果をそのまま外へ渡す節と、反例の表に載せたわざと壊した節だけ(片方の枝でだけ自前で答える節は表の行が要る)",
+            ProjectRule::IntentEffectUncovered => "intent の層の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持つ — 3 つのどれかが無い効果は、テストしたと言えない業務の操作(#1155)",
+            ProjectRule::TestKindMismatch => "テストの種類は 2 つだけ — 手元(届く定義に外の世界に触れる handler が無い)/ 縁(名簿の定義・:wraps の handler・生の I/O に届く)。種類は人が決めず届く先から導き、縁のテストだけが architecture.hy の :edge-mark の印を持つ(実の I/O を持つ handler を当てるまでは全部が手元)",
             ProjectRule::WorldHandlerWithoutContractTest => "architecture.hy の :world-handlers の handler と :stand-ins の組(相手役・本物)には縁の検が 1 本以上在る — 組は相手役と本物の両方に届く検だけを数える・空でない :interpreters を持つ deftest のうち、定義の辺(呼び出し・参照・入れ子 — DOEFF133 と同じ図)を辿ってその handler の定義に届く物。理由つきの :contract-test (none …) の handler は判じない・理由の無い :contract-test none は鳴る",
             ProjectRule::WorldHandlerMisplaced => "architecture.hy の :world-handlers に挙げた定義は実在し、層 foundation の module に在る(外の世界に触れてよい定義の置き場は foundation だけ)",
             ProjectRule::WorldHandlerNamedOutsideList => "architecture.hy の :world-handlers の :wraps に挙げた doeff の実 I/O の handler(os-file-handler・http-production-handler …)を名指してよいのは、許可名簿の定義(とその中の入れ子の定義)だけ — 値として渡す所(with-handlers の列)も呼び出しも数える",
             ProjectRule::TranslationEmitsIntent => "翻訳の層(設定の handler_layers)の handler — defhandler と [effect k] を受ける関数 — は doeff の汎用の effect だけを出し、業務の intent(設定の intent_layers の型)を出さない — 本体で実行する呼び((<- …)・(! …))を import した defk の先まで辿る",
-            ProjectRule::LowerLayerInDomain => "記録の service の生の操作(下の層の効果 — architecture.hy の :business-fakes の :lower-layer-modules)を読み書きするのは handler(翻訳の層・土台の層)の仕事 — 業務の層(設定の translation_effects.domain_layers・既定 core・intent)の定義は、その効果を出さず(defk の呼びを辿って届く形も)、その module の package の handler を with_handlers で被せず、ドメインの効果だけを出す(利用者の決定 2026-10-07・agora-redesign #3885)",
+            ProjectRule::LowerLayerInDomain => "記録の service の生の操作(下の層の効果 — architecture.hy の :business-fakes の :lower-layer-modules)を読み書きするのは handler(翻訳の層・土台の層)の仕事 — 業務の層(設定の translation_effects.domain_layers・既定 core・intent)の定義は、その効果を出さず(defk の呼びを辿って届く形も)、その module の package の handler を with_handlers で被せず、ドメインの効果だけを出す",
             ProjectRule::EnvironmentBranch => "業務の層(architecture.hy の :environment-branches の :layers)の Hy の定義は、環境の名の値(:values — production・emulated …)と比べず(=・!=・is・is-not・in・not-in の引数の文字列の literal と、match の節の型)、dry-run の印(:flags)で分岐しない(if・when・unless・cond の条件と match の主語の中の記号)— 環境の違いは handler の組の差し替えだけで表す(業務の層は環境を知らない)",
             ProjectRule::WireInWireFreeLayer => "値を型だけで渡す層(architecture.hy の層の :wire-free True)に defwire を置かない — wire の型(欄名の対応 :names を持つ宣言)と parse / dump は翻訳の層(protocol)に置き、この層は欄名を持たない型(defrecord)だけを持つ",
             ProjectRule::BareMapInWireFreeLayer => "値を型だけで渡す層(:wire-free True)の defk・defn・deff の :pre / :post と defclass・defrecord の欄の型と Python の class の欄の注記に、写像(dict・Dict・Mapping・MutableMapping・JsonValue・JsonBody・JsonObject・OpaqueJson・FrozenMap — 中身の型の在る写像も)と中身の型の無い組・列(tuple・list)を書かない — データは型(defrecord)か、キー → 値の関数・効果で受け渡す",

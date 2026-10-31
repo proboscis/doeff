@@ -8,7 +8,7 @@
 //!
 //! The attribute has to be the class's own. A write to an attribute that a base class outside the repo
 //! defines (Textual's `App.sub_title`, which the framework redraws the header for) cannot be renamed
-//! to `_mut_`, so it is not reported (agora-redesign #2951). `rules::class_inheritance` says whose
+//! to `_mut_`, so it is not reported. `rules::class_inheritance` says whose
 //! attribute a name is: what the class and its bases in the same repo place (init, `__new__`, the
 //! methods they call as `self.method()`, class fields) is the class's own and is reported as before;
 //! what none of them place, while a base the linter cannot see into exists, is read as that base's
@@ -284,7 +284,7 @@ class Reader:
 
     #[test]
     fn test_assignments_in_async_methods_and_every_nested_body_are_counted() {
-        // 失敗ケース(設計検証 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の盲検 B): async def の method と、try の else・finally・match の
+        // 失敗ケース: async def の method と、try の else・finally・match の
         // case・for の else・組の左辺・method の中の関数の代入を数えず、9 つのうち plain の 1 つだけを所見にしていた。
         let code = r#"
 class Reader:
@@ -377,7 +377,7 @@ class Pool:
         assert_eq!(check_code(code).len(), 0);
     }
 
-    // ---- agora-redesign #2951: 継承元(repo の外の基底)が持つ属性への書き ----
+    // ---- 継承元(repo の外の基底)が持つ属性への書き ----
 
     #[test]
     fn an_attribute_the_class_sets_in_init_and_rewrites_elsewhere_is_reported_whatever_the_base() {

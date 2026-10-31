@@ -1,6 +1,6 @@
 """``run_result`` and ``run_workflow`` answer doeff-time effects on the wall clock.
 
-The examples wait with ``yield Delay(seconds)`` instead of ``time.sleep`` (card ki-94380dba532f).
+The examples wait with ``yield Delay(seconds)`` instead of ``time.sleep``.
 That only works if the runner installs a time handler: without one the first ``Delay`` fails with
 an unhandled ``DelayEffect``. These tests run a program that reads the clock, delays, and reads the
 clock again, and check that the delay was answered and that the clock moved by the delay.

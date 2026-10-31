@@ -293,7 +293,7 @@ bypass のみで、それは green:
     発生 → 帯域外 herdr read で実物 frame を確認(逐語一致)→ fast-path が
     Enter で dismiss → **launch 5.2s / E2E 全体 9.8s PASS**(byte-faithful
     payload)。プロファイル復元済み・workspace リーク無し。
-  - 一般化(ユーザー裁定 2026-07-07: launch が無期限に黙って待つ事を禁じ、
+  - 一般化(launch が無期限に黙って待つ事を禁じ、
     明示のエラーで落とす)→ 下記 fail-closed 契約修正で実装。
 
 ### launch fail-closed 契約修正(2026-07-07、oracle からの意図的乖離)

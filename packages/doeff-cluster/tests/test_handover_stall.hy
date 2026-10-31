@@ -1,4 +1,4 @@
-;; 世代をまたぐ受け渡しの止まりを名指す(card ki-d8e594fe934d — 10-22 15:45〜16:08 JST の zeus): 前の世代がまだ走っている間に名乗った
+;; 世代をまたぐ受け渡しの止まりを名指す(10-22 15:45〜16:08 JST の zeus): 前の世代がまだ走っている間に名乗った
 ;; 新しい世代(overlapsElder)で、受け渡しを止めている job(handoff の job が今の世代で Ready でない・recreate の job が受け取れる
 ;; phase に無い)の名・最後の結末と、受け渡しの始まりの刻を Worker の status.handover に載せ、始まりから HANDOVER-STALL-MS を越えたら
 ;; stalled と GET /metrics の doeff_worker_handover_stalled{worker} で知らせる。直す前は status.handover が elder・ready・leaving

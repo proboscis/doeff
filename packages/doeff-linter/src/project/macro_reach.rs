@@ -1,4 +1,4 @@
-//! 層の宣言で DOEFF110(defn)から外した module の defn が、package のどれかの defmacro から届くか(agora-redesign #2913)。
+//! 層の宣言で DOEFF110(defn)から外した module の defn が、package のどれかの defmacro から届くか。
 //!
 //! `:exempt [(rule "DOEFF110" "理由")]` で外す理由は「macro の展開の時点(と、macro が生成した code)に Python の関数として呼ばれ、
 //! Program を返せない」こと。その主張を名の届きで確かめる: package(宣言の file の dir)の Hy の file の全部の defmacro の form に

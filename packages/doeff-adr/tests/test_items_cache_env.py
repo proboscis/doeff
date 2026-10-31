@@ -1,4 +1,4 @@
-"""item の記録の置き場を環境変数 DOEFF_ADR_ITEMS_CACHE で名指せる(card ki-9338eec1d15e の責務 R2)。
+"""item の記録の置き場を環境変数 DOEFF_ADR_ITEMS_CACHE で名指せる。
 
 日次の全体検証の task は HOME を回ごとに空の dir に替えるので、既定の置き場(HOME の下)では記録が毎回空になり、atlas の日次では
 収集のために 309 file を import していた。日次の task が回をまたぐ置き場を子へ渡せるよう、置き場は ini

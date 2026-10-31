@@ -47,16 +47,16 @@
    (PutRows #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
               (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent))
               (RowWrite "parts" #("p2") {} (ExpectAny))))
-   ;; 追記の束(card ki-48c34994ed15)— 列をまたぐ束・文字列の本文。
+   ;; 追記の束— 列をまたぐ束・文字列の本文。
    (AppendEvents #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
                    (EventAppend "journal" "k1" "a string body")))
-   ;; 読みの束(card ki-177a4f287c42)— 表をまたぐ鍵の読みと、値の組・位置・上から読む読みの一覧。
+   ;; 読みの束— 表をまたぐ鍵の読みと、値の組・位置・上から読む読みの一覧。
    (ReadBatch #((ReadRow "parts" #("p1"))
                 (ListRows "tickets" :where-any {"owner" ["o1" "o2"]} :fields #("owner") :limit 50)
                 (ReadRow "tickets" #("g1" "t1"))
                 (ListRows "parts" :where {"color" "red"} :cursor (ListCursor 2 "[\"p1\"]") :limit 5)
                 (ListRows "parts" :limit 3 :descending-by "note")))
-   ;; 行と追記の束(card ki-e17ba3b32dea)— 束の項は put-rows・append-events と同じ綴り(冪等キーは見出しで運ぶので本文に無い)。
+   ;; 行と追記の束— 束の項は put-rows・append-events と同じ綴り(冪等キーは見出しで運ぶので本文に無い)。
    (PutRowsAppendEvents #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
                           (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent)))
                         #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
@@ -74,7 +74,7 @@
    #("put-row" (Written 2 {"id" "p1"}))
    ;; 書きの変更の位置を持つ答え(鍵 position — 省ける鍵)。
    #("put-row" (Written 2 {"id" "p1"} (WatchCursor 3 41)))
-   ;; 冪等キーの送り直しの答え(鍵 replayed — 真の時だけ載る省ける鍵・card ki-78c6d663491f)。
+   ;; 冪等キーの送り直しの答え(鍵 replayed — 真の時だけ載る省ける鍵)。
    #("put-row" (Written 2 {"id" "p1"} (WatchCursor 3 41) :replayed True))
    #("put-row" (Conflict ROW))
    #("put-row" (Conflict (Missing)))
@@ -99,7 +99,7 @@
    #("read-event-by-key" (Event "journal" 4 "k1" {"n" [1 {"m" None}]} "maker" 1000))
    #("read-event-by-key" (EventAbsent))
    #("read-event-by-key" (EventRetired 3))
-   ;; 行と一緒に積んだ出来事(鍵 position — 位置を持つ時だけ載る省ける鍵・card ki-e17ba3b32dea)。
+   ;; 行と一緒に積んだ出来事(鍵 position — 位置を持つ時だけ載る省ける鍵)。
    #("read-events" (Events #((Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43))) 2))
    #("read-event-by-key" (Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43)))
    #("put-rows" (WrittenRows #((Written 2 {"id" "p1"}) (Written 1 {"group" "g1" "id" "t1"}))))
@@ -238,7 +238,7 @@
                            #("read-batch" {"reads" (lfor n (range (+ READ-BATCH-MAX 1)) {"operation" "read-row" "body" {"table" "parts" "key" [(str n)]}})})
                            #("read-batch" {"reads" (lfor n (range 2) {"operation" "list-rows" "body" {"table" "parts" "limit" LIST-LIMIT-MAX}})})
                            #("read-batch" {"reads" [] "extra" 1})
-                           ;; 行と追記の束(card ki-e17ba3b32dea): 2 つの鍵が必須・空の束・同じ行や同じ追記が 2 度・冪等キーを本文に置く・知らない鍵は断る。
+                           ;; 行と追記の束: 2 つの鍵が必須・空の束・同じ行や同じ追記が 2 度・冪等キーを本文に置く・知らない鍵は断る。
                            #("put-rows-append-events" {"writes" [{"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "any"}}]})
                            #("put-rows-append-events" {"appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]})
                            #("put-rows-append-events" {"writes" [] "appends" [{"stream" "journal" "idempotencyKey" "k1" "body" 1}]})
@@ -361,7 +361,7 @@
 
 
 (deftest test-a-batch-answer-must-match-the-reads-it-answers
-  ;; 読みの束(card ki-177a4f287c42): client は束の答えを、撃った束の読みと照らす — 項の数が違う・i 番目が i 番目の読みの答えの型でない・
+  ;; 読みの束: client は束の答えを、撃った束の読みと照らす — 項の数が違う・i 番目が i 番目の読みの答えの型でない・
   ;; 束の答えでない答えは、黙って読まずに WireMalformed で名指す(service の綴りの誤り)。合う答えはそのまま返す。
   (setv batch (ReadBatch #((ReadRow "parts" #("p1")) (ListRows "parts"))))
   (setv fitting (BatchRead #(ROW (Page #() None 1 0))))
@@ -399,7 +399,7 @@
 
 
 (deftest test-an-event-names-its-rows-position-only-when-it-has-one
-  ;; card ki-e17ba3b32dea: 出来事の鍵 position は行と一緒に積んだ出来事の時だけ載る(省ける鍵 — 位置の無い出来事は前の版と同じ綴り)。
+  ;; 出来事の鍵 position は行と一緒に積んだ出来事の時だけ載る(省ける鍵 — 位置の無い出来事は前の版と同じ綴り)。
   ;; 形の違う position は既定へ倒さず断る。
   (setv plain (run (encode-answer (Event "journal" 1 "k1" {"n" 1} "maker" 1000)))
         placed (run (encode-answer (Event "journal" 2 "k2" {"n" 2} "maker" 1000 (WatchCursor 3 43)))))

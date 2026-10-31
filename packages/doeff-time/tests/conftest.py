@@ -28,7 +28,7 @@ def doeff_interpreter_name() -> str:
 @pytest.fixture
 def doeff_interpreter(doeff_interpreter_name: str) -> Callable[[Program], object]:
     """Runs a deftest's Program under the clock handler named by `:interpreters`
-    (the composition is time_contract_clocks.hy; agora-redesign #1159)."""
+    (the composition is time_contract_clocks.hy)."""
     from time_contract_clocks import under_clock
     from time_test_support import run_with_handlers
 

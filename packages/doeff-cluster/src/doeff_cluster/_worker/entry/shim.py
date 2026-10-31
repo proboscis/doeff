@@ -10,7 +10,7 @@ group で起こした孫も、親が死ぬと PID 1 ではなく shim の子に�
       shim-spans が導く)を記し、job の終わりか期限の早い方まで待つ。
   (b) worker の消失(stdin の EOF — worker の kill -9 を含む): group へ TERM を送り(shim 自身にも届いて (a) と同じ期限が付く)、(a) と
       同じに待つ。worker の KILL は来ないので、shim が最後までやり切る。EOF を見る thread は合図を送るだけで回収しない。
-      --orphan-seconds <秒> の時(退きの寿命 retired-ms を宣言した handoff の service — card ki-f69f2a6869aa)は、消失を「後継の分からない
+      --orphan-seconds <秒> の時(退きの寿命 retired-ms を宣言した handoff の service)は、消失を「後継の分からない
       退き」として扱う: 止めの合図を送らず、job へ退く知らせの行 RETIRED-LINE を中継し、job が自分で終わるのを <秒> まで待つ(越えたら
       group へ TERM — (a) と同じ期限と片づけ)。worker の世代の入れ替え(drain で旧い世代の process を退かせ、寿命の上限まで回す)と、
       worker の落ちとで、job の寿命を変えない。待つ間も shim が job の親で、(c) の片づけを通ってから終わる(条 C4b は変わらない)。
@@ -27,7 +27,7 @@ macOS には親の死を子へ知らせる仕組み(Linux の PR_SET_PDEATHSIG)�
 
 job の出力(#3714): --stamp-lines の時は、job の stdout・stderr(worker が同じ log の file へ向けた物)を pipe で受け、1 行ごとに壁の
 時計の刻の頭を付けて log へ書く(部品 worker/entry/line_stamp — 待ちの子から分かれた子 A と同じ部品)。環境に送り先(DOEFF_JOB_LOG_OTLP)
-が在れば、同じ行を OTLP/HTTP の logs としても送る(card ki-ae919abe5b26 — job の write は止めない)。旗が無ければ、job の出力は
+が在れば、同じ行を OTLP/HTTP の logs としても送る(job の write は止めない)。旗が無ければ、job の出力は
 worker の向け替えのまま(入口の検め — worker が stdout の行を読んで判じる)。
 
 退きの知らせ(#3672): --notice-env <名> の時は、job へ知らせの pipe の読み口を継がせ(fd の番号を環境変数 <名> で渡す — 宿の契約

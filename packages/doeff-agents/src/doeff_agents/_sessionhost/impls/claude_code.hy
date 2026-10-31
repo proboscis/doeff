@@ -97,7 +97,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; ---------------------------------------------------------------------------
-;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window — operator 指示 2026-09-18)
+;; 会話の圧縮の閾値(設計記録 docs/design/auto-compact-window)
 ;; ---------------------------------------------------------------------------
 ;;
 ;; 根: 起こす argv が閾値を**何も名乗っていなかった**ので、claude は自分の窓
@@ -195,7 +195,7 @@
 (setv CLAUDE-AUTO-MEMORY-DIR-SETTING "autoMemoryDirectory")
 ;; 既定の hook の無効化(49b3549b 傷跡)の綴り。
 (setv CLAUDE-DISABLE-ALL-HOOKS-SETTING "disableAllHooks")
-;; 席に固有の二重読みを落とす鍵(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D6・綴りの定義点はここ 1 つ)。
+;; 席に固有の二重読みを落とす鍵(綴りの定義点はここ 1 つ)。
 ;; 実射で測った事実: 本体は cwd の祖先を登って <祖先>/.claude/CLAUDE.md も Project 層に積む。有人の席は
 ;; それが user 層と同じ path なので畳まれるが、無人席の家は path が違うので畳まれず、**同じ中身が 2 度**載る
 ;; (設計の evidence/probe_user_layer.log)。値は席の $HOME から導く 1 本ちょうど(glob を使わない・宣言に
@@ -204,25 +204,25 @@
 ;; 有人 profile の家の dir 名(CLAUDE_CONFIG_DIR を名乗らない人の既定)。綴りはこの 1 点で、
 ;; resolve-claude-config-dir の fallback と二重読みの落としの導出が同じ語を読む。
 (setv CLAUDE-DEFAULT-HOME-DIR ".claude")
-;; doeff が `--settings` に自分で置く鍵の集合(card acp:kanban-issue:ki-7b52bb76aa6e・ADR-DOE-AGENTS-004 R13)。
+;; doeff が `--settings` に自分で置く鍵の集合(ADR-DOE-AGENTS-004 R13)。
 ;; 機体の参加の宣言が名指した席の settings file(dotfiles claude-hooks/seat-settings.json)がこの鍵を持つと、join の
 ;; 参加の門 (c) が断り(acp/join.hy claude-settings-declaration-of)、build-claude-argv の合流も fail-loud で断る —
 ;; 定義点はこの 1 つ(綴りの家はこの file — .semgrep.yaml doeff-agents の autoMemoryDirectory の規則)。
 (setv CLAUDE-SETTINGS-OWNED-KEYS #{CLAUDE-DISABLE-ALL-HOOKS-SETTING CLAUDE-AUTO-MEMORY-DIR-SETTING
                                   CLAUDE-MD-EXCLUDES-SETTING})
-;; charter が運ぶ記憶の冊の欄(card acp:kanban-issue:ki-9fc7d4bca4dc)。綴りの家はここ(写しの元だった
-;; agentd の CHARTER_MEMORY_FILES_KEY は agora-redesign #668 で退いた)。
+;; charter が運ぶ記憶の冊の欄。綴りの家はここ(写しの元だった
+;; agentd の CHARTER_MEMORY_FILES_KEY は退いた)。
 ;; この層は行を読まない — 運ばれてきた {name, text} を置き場へ書くだけ。
 (setv CLAUDE-MEMORY-FILES-KEY "memory_files")
-;; charter が運ぶ**取り除く file の名**(card acp:kanban-issue:ki-6b5c4b270ca0)。綴りの家はここ(写しの元だった
-;; agentd の CHARTER_MEMORY_RETIRED_FILES_KEY は agora-redesign #668 で退いた)。
+;; charter が運ぶ**取り除く file の名**。綴りの家はここ(写しの元だった
+;; agentd の CHARTER_MEMORY_RETIRED_FILES_KEY は退いた)。
 ;; ⚠ この層は名を**組まない**: 運ばれてきた名をそのまま置き場の 1 節として使うだけで、行も読まない。
 (setv CLAUDE-MEMORY-RETIRED-FILES-KEY "memory_retired_files")
 ;: 索引の file 名(計器が冊と索引を分けて数えるための綴り)。綴りの家はここ(写しの元だった agentd の
-;: MEMORY_INDEX_FILE は agora-redesign #668 で退いた)。
+;: MEMORY_INDEX_FILE は退いた)。
 (setv CLAUDE-MEMORY-INDEX-FILE "MEMORY.md")
 ;: 畳み戻しの基準の file 名と冊の接尾辞。綴りの家はここ(写しの元だった agentd の MEMORY_BASE_FILE /
-;: MEMORY_FILE_SUFFIX は agora-redesign #668 で退いた。.semgrep.yaml の
+;: MEMORY_FILE_SUFFIX は退いた。.semgrep.yaml の
 ;: doeff-agents-memory-baseline-spelling-has-one-home が第 2 の座を断る)。
 (setv CLAUDE-MEMORY-BASE-FILE "MEMORY.base.json")
 (setv CLAUDE-MEMORY-FILE-SUFFIX ".md")
@@ -256,8 +256,8 @@
   (+ (json.dumps {"books" kept} :ensure-ascii False :sort-keys True :indent 2) "\n"))
 
 
-;; charter が運ぶ**組み直した transcript**の欄(card acp:kanban-issue:ki-c3aace97d825)。綴りの家はここ
-;; (写しの元だった agentd の CHARTER_REBUILT_TRANSCRIPT_KEY は agora-redesign #668 で退いた)。
+;; charter が運ぶ**組み直した transcript**の欄。綴りの家はここ
+;; (写しの元だった agentd の CHARTER_REBUILT_TRANSCRIPT_KEY は退いた)。
 ;; ⚠ この層は中身を**組まない**: 運ばれてきた jsonl を家の中の正しい場所へ置くだけで、記録の service も
 ;; ACP の行も読まない(記憶の冊 memory_files と同じ規律)。
 (setv CLAUDE-REBUILT-TRANSCRIPT-KEY "rebuilt_transcript")
@@ -268,7 +268,7 @@
 (defk claude-install-rebuilt-transcript [config-dir params]
   {:pre [(: config-dir str) (: params dict)]
    :post [(: % (| str None))]}
-  "組み直した transcript を借りた家へ置く(card acp:kanban-issue:ki-c3aace97d825)。戻り = その transcript が
+  "組み直した transcript を借りた家へ置く。戻り = その transcript が
    名乗る会話の id(置けた / 既に在った)か None(運ばれていない / 置けなかった)。
 
    家の中の場所は `<CLAUDE_CONFIG_DIR>/projects/<作業場の非英数字を - にした綴り>/<会話 id>.jsonl` ——
@@ -324,7 +324,7 @@
      canonical gate は Hy の session host(conformance/README.md 冒頭)
    - caller mcp_servers(sse)+ result channel(stdio)を単一 --mcp-config に
      まとめ、非空なら --strict-mcp-config を付ける
-   - params claude_settings(dict・card acp:kanban-issue:ki-7b52bb76aa6e・ADR-004 R13: 機体の
+   - params claude_settings(dict・ADR-004 R13: 機体の
      参加の宣言が名指した席の settings file を launch.hy / headless.hy が起動の拍ごとに読んで
      載せる)は同じ 1 つの `--settings` に合流する。doeff が置く鍵との衝突は fail-loud・
      disableAllHooks(session_hooks ≠ inherit)との同居も fail-loud。欄の無い手番の argv は
@@ -342,11 +342,11 @@
   (setv memory-dir (.get params "memory_dir"))
   (when (and (isinstance memory-dir str) (.strip memory-dir))
     (setv (get settings CLAUDE-AUTO-MEMORY-DIR-SETTING) memory-dir))
-  ;; card acp:kanban-issue:ki-7b52bb76aa6e(ADR-DOE-AGENTS-004 R13): 機体の参加の宣言が名指した席の settings
+  ;; ADR-DOE-AGENTS-004 R13: 機体の参加の宣言が名指した席の settings
   ;; (launch / headless が起動の拍ごとに読んで params へ)を**同じ 1 つの** `--settings` に合流する。doeff が置く鍵との
   ;; 衝突は fail-loud — 黙って後勝ちにすると「hook を配ったつもりで disableAllHooks が残る」か「記憶の置き場が消える」の
   ;; どちらかが無音で起きる。空の宣言({})は「何も足さない」(argv は今日と同じ)。
-  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D6): **席に固有の**二重読みを落とす。本体は cwd の祖先を
+  ;; 決定 D6: **席に固有の**二重読みを落とす。本体は cwd の祖先を
   ;; 登って <祖先>/.claude/CLAUDE.md も Project 層に積む。有人の席ではそれが user 層と同じ path なので
   ;; 畳まれるが、無人席の家は path が違うので畳まれず、同じ中身が 2 度載る(evidence/probe_user_layer.log)。
   ;; 値は席の $HOME から**導く**(宣言に書かせない — 宿ごとに書かせると 3 台目で漏れる)。落とすのは
@@ -525,13 +525,13 @@
   (when (not (and (isinstance memory-dir str) (.strip memory-dir)))
     (return None))
   (<- _ (fs-make-dirs memory-dir))
-  ;; card acp:kanban-issue:ki-9fc7d4bca4dc(法 ACP 575b1e conversation-memory-lives-in-the-row):
+  ;; 法 ACP 575b1e conversation-memory-lives-in-the-row:
   ;; 記憶の正本は ACP の行で、置き場は手番ごとの写し。charter が運んできた冊(起こす側が行から読んで
   ;; 載せた — history / first_turn と同じ形)をここで実体化する。索引 MEMORY.md も同じ列に入っていて、
   ;; 行から導いた本文で毎手番上書きされる(file としての正本を持たない)。
   ;; ⚠ **行を読むのはここではない**: この module は substrate-clean(生 IO 禁止・Fs* / EnvGet だけ)なので、
   ;; ACP も記録の service も import しない。運ぶのは charter の 2 欄ちょうど。
-  ;; card acp:kanban-issue:ki-6b5c4b270ca0: 掃除は**運ばれてきた名ちょうど**(退役した行と同じ名前)。
+  ;; 掃除は**運ばれてきた名ちょうど**(退役した行と同じ名前)。
   ;; 置き場を走査して余りを消す形にはしない — 手番の途中に席が書いた新しい冊(まだ行が無い)を、その拍で
   ;; 消してしまう。⇒ この層に在るのは「名指された 1 file を落とす」だけで、何を落とすかの判断は無い。
   ;; 掃除を書き出しの**前**に置くのは、同じ名前が両方の列に来ることが構造的に無いから(退役した行は
@@ -562,7 +562,7 @@
     (<- kept str (claude-baseline-kept base-text written))
     (<- _ (fs-write-text-atomic f"{memory-dir}/{CLAUDE-MEMORY-BASE-FILE}" kept ".agentd-tmp"))
     (setv base-written 1))
-  ;; 計器(card acp:kanban-issue:ki-a40292ed30d9 受入 3): **器が書いた数**を起動ごとに 1 行で名乗る。
+  ;; 計器: **器が書いた数**を起動ごとに 1 行で名乗る。
   ;; agentd 側の agent-memory-hydrated が数えるのは**行から読んだ数**なので、この 2 行が割れている
   ;; 拍(読んだ 44・書いた 0)が今回の壊れ方そのものだった — 読みの数だけでは log が成功しか言わない。
   ;; 置き場を名乗った手番は 0 冊でも名乗る(黙る拍を作らない)。索引は冊と別に数える
@@ -578,7 +578,7 @@
 (defk claude-install-instruction-sources [config-dir params verb]
   {:pre [(: config-dir str) (: params dict) (: verb str)]
    :post [(: % "None — 家への据え付けは副作用で、返す値を持たない")]}
-  "席の家へ**共通の指示**を実体化する(card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D1 / D2 / D3 / D8)。
+  "席の家へ**共通の指示**を実体化する(D2 / D3 / D8)。
 
    運ばれてきた物を置くだけ — **正本の path も家の中の名もここでは組まない**(名簿は
    policy.CARRIED-INSTRUCTION-SOURCES の 1 点で、読みは launch.claude-instruction-sources)。
@@ -682,7 +682,7 @@
                 f"{CLAUDE-SETTINGS-VERTEX-PROJECT-ENV}=<project>. The host never reads the "
                 "credential value — it only checks that the home declares one "
                 "(ADR-DOE-AGENTS-004 R9)."))))
-  ;; card acp:kanban-issue:ki-62aa1f4e9c9c(決定 D1): 機体の参加の宣言が名指した共通の指示を家へ据える。
+  ;; 決定 D1: 機体の参加の宣言が名指した共通の指示を家へ据える。
   ;; 座はこの 1 か所(家へ書く既存の点)で、後追いの reconciler を足さない(D7 — 次の起動の拍で直る)。
   (<- _ (claude-install-instruction-sources config-dir params "session.launch"))
   ;; 自動記憶の置き場は起こす前に在らせる(CLI 側も作るが、無い dir を設定で指さない)。
@@ -695,9 +695,9 @@
   ;; 会話の圧縮 plugin(pod だけ・daemon の env が鍵の file を名乗る時)— 失敗は warning で、起動は止めない。
   (<- plugin-warnings (install-fast-jev-plugin config-dir))
   (.extend warnings plugin-warnings)
-  ;; Claude Code の OTel の送り設定(daemon の env が送り先を名乗る機体だけ・card acp:kanban-issue:ki-b47afa9311a6)。
+  ;; Claude Code の OTel の送り設定(daemon の env が送り先を名乗る機体だけ)。
   (<- _ (install-otel-telemetry config-dir))
-  ;; card acp:kanban-issue:ki-c3aace97d825: 組み直した transcript が運ばれていれば家へ置き、その会話の id を
+  ;; 組み直した transcript が運ばれていれば家へ置き、その会話の id を
   ;; 名乗る(= 器は `--resume <id>` で続ける)。置けなければ今日どおり新しい id を鋳造する(= 履歴の畳み直し)。
   (<- adopted (| str None) (claude-install-rebuilt-transcript config-dir params))
   (when (and (is adopted None) (isinstance (.get params CLAUDE-REBUILT-TRANSCRIPT-KEY) dict))

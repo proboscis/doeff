@@ -1,4 +1,4 @@
-"""WaitWithin — a scheduler future waited for at most a duration, the deadline owned by the clock (agora-redesign #2618).
+"""WaitWithin — a scheduler future waited for at most a duration, the deadline owned by the clock.
 
 - The future's value is answered when it completes first, at the virtual time it completed.
 - ``None`` is answered exactly when the duration passes first.
@@ -132,11 +132,10 @@ def test_a_withdrawn_entry_is_skipped_by_the_queue() -> None:
     assert queue.empty()
 
 
-# --- park: 外の promise を、仮想の時計を止めずに待つ(agora-redesign #3054)-----------------------------------------
+# --- park: 外の promise を、仮想の時計を止めずに待つ-----------------------------------------
 # 外の promise(handler の外の同期の書きや別の thread が埋める — doeff-records の memory の置き場の呼び鈴)の既定の待ちは、
 # 仮想の時計の駆動を止める(埋まる前に時間を進めない)。期限つきの待ちでは期限まで時計が進む必要があるので、park で待つ。
-# park は scheduler の Race の priority=TaskPriority.IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった —
-# card ki-8f4f99f14664)。
+# park は scheduler の Race の priority=TaskPriority.IDLE が読むので、両方の版で走らせる(rust の版が読まず、時計が止まった)。
 
 
 @pytest.fixture(params=["python", "rust"])

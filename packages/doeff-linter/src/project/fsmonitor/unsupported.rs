@@ -1,4 +1,4 @@
-//! Linux の外の常駐の process の口(inotify が無いので常駐の process は無い — card ki-1bcd5b34cbb3)。
+//! Linux の外の常駐の process の口(inotify が無いので常駐の process は無い)。
 //! `enable()` が効かないので 1 file の実行はここへ来ない。`fsmonitor-serve` を直に起こされた時だけ、居ない訳を言って終わる。
 
 use std::path::Path;

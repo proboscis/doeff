@@ -1,7 +1,7 @@
-;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の判断 failover-refusals(card ki-4689c7008147)。
+;; 1 台の worker が止まっても常駐の job が残りの worker の memory に入るか(N+1)の判断 failover-refusals。
 ;; 合成の世界で、規則ごとの反例を赤にし(1 台にしか置けない job・移る先の memory の不足・離す組を両方置ける worker・memory の予算の無い
 ;; worker)、赤にしてはいけない物(機体ごとの job・1 台に縛る訳を宣言した job・replicas 0 の job)を赤にしない。数の枠の規則 2 は消した
-;; (card ki-2acb63aec0fd — job は memory で数える): job の数が多くても memory に入れば赤にしない。
+;; (job は memory で数える): job の数が多くても memory に入れば赤にしない。
 ;; 失敗ケース = 1 台に縛られた job を通す・job の数で赤にする・1 件目で止めて残りの破りを隠す。
 (require doeff-hy.macros [defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
@@ -51,7 +51,7 @@
 
 
 (deftest test-many-jobs-within-the-memory-are-not-red-for-their-number
-  ;; 規則 2(数の枠)は消した(card ki-2acb63aec0fd): 組 {a, b} に落ち着き 10・山 20 の job が 40 本でも、memory に入れば(40 × 10 + 40 × 10
+  ;; 規則 2(数の枠)は消した: 組 {a, b} に落ち着き 10・山 20 の job が 40 本でも、memory に入れば(40 × 10 + 40 × 10
   ;; = 800 ≤ 予算 800)赤にしない。予算を 1 減らすと memory の規則 3 が赤にする(数でなく memory が歯止め)。
   (val jobs (tuple (gfor n (range 40) (! (resident (.format "p{:02}" n) #("pool-x") :peak 20 :settle 10)))))
   (<- many (judged #((! (host "a" #("pool-x") :memory 800)) (! (host "b" #("pool-x") :memory 800))) jobs))
@@ -151,7 +151,7 @@
 
 
 (deftest test-a-job-declaring-single-host-may-stay-on-one-worker-but-still-takes-its-room
-  ;; 1 台に縛る訳を宣言した job(:single-host — card ki-2acb63aec0fd で手で持つ例外の表から job の宣言へ移した)は、置き先が 1 台でも
+  ;; 1 台に縛る訳を宣言した job(:single-host — 手で持つ例外の表から job の宣言へ移した)は、置き先が 1 台でも
   ;; 規則 1 で赤にしない。訳の無い同じ job は赤。memory には数える(a の予算 1000 に縛った job の落ち着き 500 と組の job 300 + b の停止で
   ;; 移る組の job の上乗せ 300 = 1100 — 赤)。
   ;; 失敗ケース = 訳を読まずに赤にする・訳の無い 1 台の job を通す・訳の在る job を memory から外す。
@@ -180,7 +180,7 @@
 ;; --- task の枠を読まない -------------------------------------------------------------------------------------------------
 
 (deftest test-the-judgment-reads-no-task-room-and-no-job-count
-  ;; 規則 2 を消した後(card ki-2acb63aec0fd)、この判断は task の側の枠(task-reserve・background-room)も、数の空き(job-room-of —
+  ;; 規則 2 を消した後、この判断は task の側の枠(task-reserve・background-room)も、数の空き(job-room-of —
   ;; coordinator から消した)も読まない。読むと task の側の値で常駐の job を赤にし、coordinator の置き方(memory だけで job を数える)と
   ;; ずれる。
   (val source (.read-text (/ (. (Path __file__) parent parent) "src" "doeff_cluster" "_coordinator" "core" "failover_policy.hy")

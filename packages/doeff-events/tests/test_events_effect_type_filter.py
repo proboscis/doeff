@@ -1,4 +1,4 @@
-"""出来事の handler の effect の引数の型の註の検(agora-redesign #2670 の根 A)。
+"""出来事の handler の effect の引数の型の註の検。
 
 VM は handler の effect の引数の型の註を install の時に読み(doeff_vm._effect_types・SPEC-WITHHANDLER-TYPE-FILTER)、型の外の effect では
 その handler を Python に入らずに外へ渡す。memory の 2 つの handler(event_handler・subscribed_event_handler)は Publish と WaitForEvent・

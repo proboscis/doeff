@@ -1,4 +1,4 @@
-"""doeff-hy-check の基点との比べ(`--baseline <json>`・`--write-baseline <json>`・agora-redesign #2153)。
+"""doeff-hy-check の基点との比べ(`--baseline <json>`・`--write-baseline <json>`)。
 
 考えは doeff-linter の `--baseline-report`(packages/doeff-linter/src/baseline.rs)と同じ: 保存した既知の一覧に照らして
 「前から在る赤」と「新しい赤」を分け、新しい赤だけを止める。違いは 2 つ。
@@ -7,7 +7,7 @@
 - 同じ識別子の赤は**個数で**比べる(多重集合)。型の赤は同じ文言で 1 file に何度も出るので、集合で比べると
   2 つ目の同じ赤を見逃す。基点より多い分だけが新しい赤。
 - Hy が展開で振る名(`_hy_anon_<番号>`・`_hy_let_first_<番号>` など)は番号を 1 つの印に畳んでから比べる。番号は展開の順で振られるので、
-  定義を 1 つ足すだけで後ろの番号がずれ、同じ赤の文言が変わって新しい赤に見えるため(agora-redesign #2287)。
+  定義を 1 つ足すだけで後ろの番号がずれ、同じ赤の文言が変わって新しい赤に見えるため。
   畳んだ後も同じ文言の赤は個数で比べるので、匿名の名の赤が本当に増えた分は新しい赤のまま。
 - file の移動・改名: 規則と文言が同じで path だけ違い、基点のその識別子が今は減っている時、1 対 1 で同じ赤とみなす
   (linter の new_criticals と同じ)。
@@ -29,7 +29,7 @@ from doeff_hy_bytecode_guard._records import fold_anon_var_numbers
 BASELINE_VERSION = 1
 
 # doeff-hy の lazy が展開で振る名(`_lazy_sent_cached_1` など)の番号。Hy が振る名(`_hy_anon_44`・`_hy_let_first_28` など)の形と畳み方は
-# Hy の内部の名の定義元(doeff_hy_bytecode_guard._records.fold_anon_var_numbers)に在り、ここは持たない(card ki-ffe72a1fb7d7)。
+# Hy の内部の名の定義元(doeff_hy_bytecode_guard._records.fold_anon_var_numbers)に在り、ここは持たない。
 # 比べの鍵では 1 つの印に畳む。行番号や型の名の数字は `_hy_` / `_lazy_` で始まらないので畳まない(vg-w39 の #2286 の形 + kn-w26 の lazy の名)。
 _LAZY_GENERATED_NUMBER = re.compile(r"\b(_lazy_[A-Za-z0-9_]*?[A-Za-z])_\d+\b")
 

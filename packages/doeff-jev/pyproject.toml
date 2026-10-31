@@ -22,7 +22,7 @@ classifiers = [
 
 dependencies = [
     "doeff>=0.1.0",
-    # extra http — 宛先の解決が Hy で書いた process の effect を、本番の配線が HTTP の client の handler を読む(card ki-006338b48f4b)。
+    # extra http — 宛先の解決が Hy で書いた process の effect を、本番の配線が HTTP の client の handler を読む。
     "doeff-core-effects[http]>=0.1.0",
     "doeff-system-one",
 ]

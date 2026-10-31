@@ -1,9 +1,9 @@
-;; code mode が使えない警告の検(card ki-86b1443b22b6)— 版を固定した本物の codex(0.162.1)を、code mode だけで道具を呼ぶ設定で、
+;; code mode が使えない警告の検— 版を固定した本物の codex(0.162.1)を、code mode だけで道具を呼ぶ設定で、
 ;; code mode の host の無い置き場(code-mode-unavailable)と、起動できない host を置いた置き場(code-mode-host-broken)から起こして録った
 ;; 行(tests/recorded/codex-0.162.1・録り方は scripts/record_app_server_lines.py)で確かめる。
 ;;
 ;; 守る事: codex が code mode を使えず道具の呼びを閉じたと名乗った process では、model は道具を 1 つも呼べないまま文だけを返し、ターンは
-;; completed になる(本番の実例 = 10-15 の会話 c-HFAMV0E6RHQJ773QTWP1HJ58T2)。警告は捨てずに型のある事実 CodeModeUnavailable にし、
+;; completed になる(本番の実例 = 10-15 の会話)。警告は捨てずに型のある事実 CodeModeUnavailable にし、
 ;; handler はその process のターンを ToolsUnavailable で終える。警告はターンを名乗らず、ターンの前(turn/start の答えより前)にも、
 ;; ターンの途中にも届きうるので、どちらの順でもターンは終わる。
 (require doeff-hy.macros [val])

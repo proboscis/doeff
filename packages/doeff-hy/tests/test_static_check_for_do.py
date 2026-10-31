@@ -1,4 +1,4 @@
-"""for/do を使う module の defk の型(agora-redesign #2321・親 #2318)の失敗ケース。
+"""for/do を使う module の defk の型(親 #2318)の失敗ケース。
 
 for/do の展開は `_doeff_do`・`_doeff_traverse_Traverse`・`_doeff_traverse_Skip` を名指し、書き手がその名を
 `(import doeff [do :as _doeff-do])` などで import する(for/do の docstring)。型検査のための展開では doeff-hy-check が
@@ -107,7 +107,7 @@ def test_defk_answer_in_a_for_do_module_is_read(tmp_path: Path) -> None:
     assert ("reportOperatorIssue", _line_of(text, '"x"')) in [(d["rule"], d["line"]) for d in errors], errors
 
 
-# From を 2 つ重ねた for/do(card ki-7e6a11f56bd5)— 答えは組ごとの本体の値を平らに並べた Collection で、有効な値は本体の
+# From を 2 つ重ねた for/do— 答えは組ごとの本体の値を平らに並べた Collection で、有効な値は本体の
 # 答え(int)と読める。前は内側の Traverse を外の件の関数が値として返し、型の上でも有効な値が Traverse だった。
 NESTED_PROBE = """\
 (require doeff-hy.macros [defk <- for/do])

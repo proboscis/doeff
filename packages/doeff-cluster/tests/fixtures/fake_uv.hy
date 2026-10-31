@@ -66,8 +66,7 @@
                (.format "home = {}\ninclude-system-site-packages = false\nversion = {}\n" (os.path.dirname real) version))
   (val python (/ venv "bin" "python"))
   (when (not (.exists python)) (os.symlink real python))
-  ;; 本物の uv sync と同じく bin/hy の入口の script を置く(worker は実行環境の job と検めをこの script で uv run を挟まずに起こす —
-  ;; card ki-869cdf21ec85)。
+  ;; 本物の uv sync と同じく bin/hy の入口の script を置く(worker は実行環境の job と検めをこの script で uv run を挟まずに起こす)。
   (val hy-script (/ venv "bin" "hy"))
   (.write-text hy-script (.format "#!{}\nimport sys\nfrom hy.cmdline import hy_main\nsys.exit(hy_main())\n" python))
   (.chmod hy-script 0o755)

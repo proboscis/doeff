@@ -1,5 +1,4 @@
-;; headless の handler(handlers/headless.hy)の検 — doeff-agents の公開 effect だけを撃つ Program を、層 2 の handler の組だけ替えて走らせる
-;; (agora-redesign #604)。
+;; headless の handler(handlers/headless.hy)の検 — doeff-agents の公開 effect だけを撃つ Program を、層 2 の handler の組だけ替えて走らせる。
 ;;
 ;;   fake  doeff-claude-code の fake の handler + 仮想の時計。API も process も使わない。
 ;;   stub  doeff-claude-code の本番の handler + 替え玉の CLI(packages/doeff-claude-code/tests/stub_cli/claude.hy)+ 壁の時計。
@@ -29,7 +28,7 @@
 ;; 待たせた入力の手番を起こせない形(層 2 の LaunchFailed)を層 2 の代わりに答える口も、層 2 の答えの型を写す(#4207)。
 (import doeff_claude_code [LaunchFailed])
 ;; 入力を名指した止めを、層 2 が判断した事(adapter が層 2 へ ClaudeInterruptTurn を出し、層 2 が InputAlreadyRead で答えた)を見る口も、
-;; 層 2 の effect と答えの型を写す(公開面は止めたか読まれていたかを区別しない — 設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 B)。
+;; 層 2 の effect と答えの型を写す(公開面は止めたか読まれていたかを区別しない)。
 (import doeff_claude_code [ClaudeInterruptTurn InputAlreadyRead])
 (import doeff_claude_code [ClaudeHome ClaudeSessionSpec TurnInput])
 (import doeff_agents._handlers.headless [HeadlessSession start-waiting])
@@ -64,12 +63,12 @@
 (defn #^ str sleep-prompt [#^ int seconds #^ str word]
   (.format "Use the Bash tool to run exactly this command: sleep {} . When it finishes, reply with exactly: {}" seconds word))
 (defn #^ str extra-prompt [] (.format "Also include the word {} in your final reply." EXTRA-WORD))
-;; 出力のある道具の手番(agora-redesign #3744 — 道具の命令と出力が出来事まで届くかを見る)。替え玉の CLI の規則と同じ言葉。
+;; 出力のある道具の手番(道具の命令と出力が出来事まで届くかを見る)。替え玉の CLI の規則と同じ言葉。
 (defk echo-prompt [#^ str output #^ str word]
   {:pre [(: output str) (: word str)] :post [(: % str)] :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具の出力が output になる命令(echo)を走らせてから word で答えさせる prompt。"
   (.format "Use the Bash tool to run exactly this command: echo {} . Then reply with exactly: {}" output word))
-;; 答えの前に考えている間の差分を片の数だけ出す手番(agora-redesign #3789 — 考えの差分が出来事まで届くかを見る)。替え玉の CLI の規則
+;; 答えの前に考えている間の差分を片の数だけ出す手番(考えの差分が出来事まで届くかを見る)。替え玉の CLI の規則
 ;; (scenario_rules.hy の THINKING-PIECES-PHRASE)と同じ言葉。片の中身は替え玉の CLI も fake も "..."。
 (defk thinking-prompt [#^ int pieces #^ str word]
   {:pre [(: pieces int) (: word str)] :post [(: % str)] :tags {:context "headless-adapter-test" :role "judgment"}}
@@ -77,7 +76,7 @@
   (.format "Stream {} thinking pieces. Reply with exactly: {}" pieces word))
 (val THINKING-PIECES 3)
 (val THINKING-PIECE "...")
-;; 道具の命令を書いている間の差分の片の数と、片の中身(替え玉の CLI も fake も同じ綴り — agora-redesign #3974 の 3)。替え玉の CLI の規則
+;; 道具の命令を書いている間の差分の片の数と、片の中身(替え玉の CLI も fake も同じ綴り)。替え玉の CLI の規則
 ;; (scenario_rules.hy の TOOL-INPUT-PIECES-PHRASE)と同じ言葉。
 (val TOOL-INPUT-PIECES 2)
 (val TOOL-INPUT-PIECE "{\"c")
@@ -86,27 +85,27 @@
 ;; 替え玉の CLI の本体と subagent の model の名(stub_cli/claude.hy と同じ — #3744)。
 (val CALL-MODEL "claude-stub")
 (val SUBAGENT-MODEL "claude-stub-sub")
-;; fake の道具の呼びの id(doeff_claude_code._fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id(card ki-8239be27d5f6)。
+;; fake の道具の呼びの id(doeff_claude_code._fake の FAKE-TOOL-USE-ID と同じ綴り)と、fake の subagent の呼びの id。
 (val FAKE-TOOL-USE-ID "fake-tool")
 (val SUBAGENT-CALL-ID "msg_fake_sub")
-;; fake の subagent の呼びの要求の id(transcript の行の requestId — agora card ki-b99ace070bf0)。
+;; fake の subagent の呼びの要求の id(transcript の行の requestId)。
 (val SUBAGENT-REQUEST-ID "req_fake_sub")
-;; fake の subagent の呼びの刻(transcript の行の刻 — 出来事はこの刻を運ぶ・card ki-e798888dce4e)。
+;; fake の subagent の呼びの刻(transcript の行の刻 — 出来事はこの刻を運ぶ)。
 (val SUBAGENT-CALL-AT (datetime.datetime.fromisoformat "2026-10-21T09:34:23.797+00:00"))
-;; Stop hook が最初の答えを 1 度差し戻す手番(agora-redesign #4020)。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
+;; Stop hook が最初の答えを 1 度差し戻す手番。替え玉の CLI の規則(scenario_rules.hy の HOOK-FEEDBACK-PHRASE と
 ;; REJECTED-ANSWER)と同じ言葉と、差し戻される答えの本文。
 (val HOOK-REASON "add-one-more-line")
 (val REJECTED-ANSWER "DRAFT-1")
-;; 答えの前に CLI が会話を 1 度自動で圧縮する手番(agora-redesign #4189)。替え玉の CLI の規則(scenario_rules.hy の COMPACT-PHRASE と
+;; 答えの前に CLI が会話を 1 度自動で圧縮する手番。替え玉の CLI の規則(scenario_rules.hy の COMPACT-PHRASE と
 ;; COMPACT-METADATA)と同じ言葉と、圧縮の行の欄の値(本物の CLI 2.1.289 の auto の圧縮の compactMetadata)。
 (val COMPACT-PHRASE "Compact the context before replying.")
-;; 添付の画像を数えて答えさせる言い方(替え玉の CLI の規則 scenario_rules.hy の IMAGES-PHRASE と同じ言葉 — ki-0faa366b76c0)。
+;; 添付の画像を数えて答えさせる言い方(替え玉の CLI の規則 scenario_rules.hy の IMAGES-PHRASE と同じ言葉)。
 (val IMAGES-PHRASE "Count the attached images.")
 (val COMPACT-PRE-TOKENS 969482)
 (val COMPACT-POST-TOKENS 252050)
 (val COMPACT-DROPPED-TOKENS 11155244)
 (val COMPACT-DURATION-MS 2730)
-;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す手番(card acp:kanban-issue:ki-d8b473480303)。替え玉の CLI の規則
+;; 答えの前に UserPromptSubmit の hook が条件つきルールの助言を返す手番。替え玉の CLI の規則
 ;; (scenario_rules.hy の ADVICE-PHRASE と advice-stdout)と同じ言葉と、hook の stdout(hook が書く JSON)。
 (val ADVICE "[rulebook]-advice-1")
 (val ADVICE-STDOUT (json.dumps {"hookSpecificOutput" {"hookEventName" "UserPromptSubmit" "additionalContext" ADVICE}}
@@ -170,8 +169,8 @@
                               #())
              :tool-input (if command {"command" (.group command 1)} {})
              :tool-output (if echoed (.group echoed 1) "")
-             ;; echo の道具が走らせる subagent(替え玉の CLI と同じ model と usage・親は道具の呼び — card ki-8239be27d5f6)。本番の handler が
-             ;; subagent の transcript から読む物と同じ形(card ki-e798888dce4e)。
+             ;; echo の道具が走らせる subagent(替え玉の CLI と同じ model と usage・親は道具の呼び)。本番の handler が
+             ;; subagent の transcript から読む物と同じ形。
              :subagent-transcript (if echoed
                                       (compose.SubagentTranscript
                                         :agent-id "afakesubagent0001" :parent-tool-use-id FAKE-TOOL-USE-ID
@@ -207,7 +206,7 @@
 
 (defn handlers-for [#^ str backend #^ str home-dir]
   "解釈器の handler の組(先頭が外側): 時間の handler → 層 2 の handler → headless の adapter。本番の層 2 の外側には、計時の行(slog)の
-   答え手も置く(agora-redesign #3605)。"
+   答え手も置く。"
   (setv settings {"disableAllHooks" True})
   (cond
     ;; fake の層 2 は process を起こさないので子の env は空・CLI の settings は本番の 2 つと同じ宣言。
@@ -331,7 +330,7 @@
 
 (defk tool-turn-to-the-end [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)]}
-  "道具を 1 度呼ぶ手番を最後まで読む(呼びの出来事と結果の出来事の id の突き合わせを見るため・agora-redesign #3518)。"
+  "道具を 1 度呼ぶ手番を最後まで読む(呼びの出来事と結果の出来事の id の突き合わせを見るため)。"
   (<- handle (launch s "adapter-tool-ids" (sleep-prompt 1 "TOOLED") None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
@@ -339,7 +338,7 @@
 
 (defk tool-turn-with-output [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "出力のある道具を 1 度呼ぶ手番を最後まで読む(道具の命令と出力が出来事に載るかを見るため・agora-redesign #3744)。"
+  "出力のある道具を 1 度呼ぶ手番を最後まで読む(道具の命令と出力が出来事に載るかを見るため)。"
   (<- prompt (echo-prompt ECHO-OUTPUT "ECHOED"))
   (<- handle (launch s "adapter-tool-content" prompt None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
@@ -348,8 +347,7 @@
 
 (defk tool-input-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "道具の命令を TOOL-INPUT-PIECES 片の差分で書いてから呼ぶ手番を最後まで読む(命令を書いている間が出来事に載るかを見るため・
-   agora-redesign #3974 の 3)。"
+  "道具の命令を TOOL-INPUT-PIECES 片の差分で書いてから呼ぶ手番を最後まで読む(命令を書いている間が出来事に載るかを見るため)。"
   (<- prompt str (echo-prompt ECHO-OUTPUT "ECHOED"))
   (<- handle (launch s "adapter-tool-input" (+ prompt (.format " Stream the tool input in {} pieces." TOOL-INPUT-PIECES)) None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
@@ -359,7 +357,7 @@
 (defk hook-feedback-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
   "Stop hook が最初の答え(REJECTED-ANSWER)を理由 HOOK-REASON で 1 度差し戻し、答え直させる手番を最後まで読む(差し戻しが出来事に
-   載るかを見るため・agora-redesign #4020)。"
+   載るかを見るため)。"
   (<- handle (launch s "adapter-hook-feedback"
                      (.format "Reply with exactly: FINAL Have the Stop hook send back a first answer with the reason: {}." HOOK-REASON)
                      None))
@@ -369,7 +367,7 @@
 
 (defk compacting-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "答えの前に CLI が会話を 1 度自動で圧縮する手番を最後まで読む(圧縮の行が出来事に載るかを見るため・agora-redesign #4189)。"
+  "答えの前に CLI が会話を 1 度自動で圧縮する手番を最後まで読む(圧縮の行が出来事に載るかを見るため)。"
   (<- handle (launch s "adapter-compaction" (+ COMPACT-PHRASE " " (reply-prompt "COMPACTED")) None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
@@ -377,8 +375,7 @@
 
 (defk advised-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "答えの前に UserPromptSubmit の hook が助言 ADVICE を返す手番を最後まで読む(hook の応答が出来事に載るかを見るため・
-   card acp:kanban-issue:ki-d8b473480303)。"
+  "答えの前に UserPromptSubmit の hook が助言 ADVICE を返す手番を最後まで読む(hook の応答が出来事に載るかを見るため)。"
   (<- handle (launch s "adapter-advised" (+ (.format "Have the hook advise: {}. " ADVICE) (reply-prompt "ADVISED")) None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
@@ -386,7 +383,7 @@
 
 (defk uncompacted-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "CLI が会話を圧縮しない手番を最後まで読む(圧縮の行を流さなければ圧縮の出来事が無いかを見るため・agora-redesign #4189)。"
+  "CLI が会話を圧縮しない手番を最後まで読む(圧縮の行を流さなければ圧縮の出来事が無いかを見るため)。"
   (<- handle (launch s "adapter-no-compaction" (reply-prompt "PLAIN") None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
@@ -394,7 +391,7 @@
 
 (defk thinking-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % Read)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "答えの前に考えの差分を THINKING-PIECES 片出す手番を最後まで読む(考えの差分が出来事に載るかを見るため・agora-redesign #3789)。"
+  "答えの前に考えの差分を THINKING-PIECES 片出す手番を最後まで読む(考えの差分が出来事に載るかを見るため)。"
   (<- prompt str (thinking-prompt THINKING-PIECES "THOUGHT"))
   (<- handle (launch s "adapter-thinking" prompt None))
   (<- done (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
@@ -411,7 +408,7 @@
   (<- (Stop handle))
   done)
 
-;; --- 添付の画像(card acp:kanban-issue:ki-0faa366b76c0 — 会話に貼った画像は prompt の一部として CLI へ渡す。利用者の決定 2026-10-10)。
+;; --- 添付の画像(会話に貼った画像は prompt の一部として CLI へ渡す)。
 ;; 替え玉の CLI は stream-json の user の content の image の block を印 IMAGE-MARK として数え、IMAGES-PHRASE か画像だけの
 ;; 入力に「IMAGES-<数>」と答える(tests/scenario_rules.hy)。中身は CLI が読まないので小さな PNG の頭だけ。
 (val PNG (InputImage :mime "image/png" :data-base64 "iVBORw0KGgo="))
@@ -472,7 +469,7 @@
 
 (defk interrupt-for-a-read-input-leaves-the-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)] :tags {:context "headless-adapter-test" :role "entry"}}
-  "入力を名指した止め(Interrupt の for_input — 今すぐ送る・card ki-1c4cfde50ac5)が、CLI がその入力を読んだ後に来た形を走らせるため: 道具の
+  "入力を名指した止め(Interrupt の for_input — 今すぐ送る)が、CLI がその入力を読んだ後に来た形を走らせるため: 道具の
    途中で入力を足し、CLI がそれを読んだ(運命 started)のを見てから名指して止め、手番を最後まで読む。読んだ後も手番が続く間を作るため、道具の
    後に答えを考える秒(替え玉の CLI)と答えの差分(fake)を置く(scenario_rules.hy の THINK-PHRASE・STREAM-PHRASE と同じ言葉)。"
   (val prompt (.join " " #((sleep-prompt 1 "SLEPT") "Think for 5 seconds before replying." "Stream the reply in 5 pieces.")))
@@ -522,8 +519,8 @@
 
 (defk busy-context-refused [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)]}
-  "文脈で手番が走っている間に、同じ文脈を続ける別の session を起こすと TurnInFlightError で断る(起動の失敗 AgentLaunchError ではない —
-   agora-redesign #789)。走っている手番は断りの後もそのまま走る。"
+  "文脈で手番が走っている間に、同じ文脈を続ける別の session を起こすと TurnInFlightError で断る(起動の失敗 AgentLaunchError ではない)。
+   走っている手番は断りの後もそのまま走る。"
   (<- handle (launch s "adapter-busy-a" (reply-prompt "FIRST") None))
   (<- first (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- _ (FollowUp handle (sleep-prompt 40 "NEVER")))
@@ -564,7 +561,7 @@
 
 (defk export-after-one-turn [#^ Setting s]
   {:pre [(: s Setting)] :post [(: % dict)]}
-  "手番 1 を走らせ、その文脈の写しを ExportContextEffect で取り出す(agora-redesign #731)。手元に無い文脈・綴りの外の id は None。"
+  "手番 1 を走らせ、その文脈の写しを ExportContextEffect で取り出す。手元に無い文脈・綴りの外の id は None。"
   (<- handle (launch s "memory-one" (remember-prompt "ALPHA-1") None))
   (<- one (read-until handle (fn [events end] (is-not end None)) s.timeout -1))
   (<- (Stop handle))
@@ -575,10 +572,10 @@
   (<- missing (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir
                                    :context-id "0b7a3e8e-2d0c-4a55-9d3f-6c1a3b7a0f11"))
   (<- malformed (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id "../not-a-uuid"))
-  ;; 末尾だけの写し(card ki-a264a73efcce): 層 2 へ tail-bytes を渡し、末尾の行だけが返る。
+  ;; 末尾だけの写し: 層 2 へ tail-bytes を渡し、末尾の行だけが返る。
   (val half (max 1 (// (len (.encode (or copied "") "utf-8")) 2)))
   (<- tail (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id context :tail-bytes half))
-  ;; 伸びた分だけの写し(card ki-3b521394a063): 層 2 へ from-byte を渡し、その byte 目から後ろだけが返る。
+  ;; 伸びた分だけの写し: 層 2 へ from-byte を渡し、その byte 目から後ろだけが返る。
   (<- grown (ExportContextEffect :agent-type AgentType.CLAUDE :work-dir s.work-dir :context-id context :from-byte half))
   {"context" context "copied" copied "missing" missing "malformed" malformed "tail" tail "half" half "grown" grown})
 
@@ -630,7 +627,7 @@
                  context))
 
 (deftest test-headless-memory-carried-into-an-empty-home-fake [tmp-path]
-  ;; agora-redesign #731: agent の記憶(文脈の transcript)を runtime の家の外へ写して、空の家で続ける。
+  ;; agent の記憶(文脈の transcript)を runtime の家の外へ写して、空の家で続ける。
   (check-memory-carry FAKE tmp-path))
 
 (deftest test-headless-memory-carried-into-an-empty-home-stub [tmp-path]
@@ -781,15 +778,15 @@
 (deftest test-headless-one-turn-and-resume-fake [tmp-path]
   (val seen (run-on FAKE tmp-path one-turn-then-resume))
   (check-one-turn-then-resume seen)
-  ;; 偽の CLI の完了は token の数を 1 つも名乗らない → usage = None(0 を発明しない・agora-redesign #766)。
+  ;; 偽の CLI の完了は token の数を 1 つも名乗らない → usage = None(0 を発明しない)。
   (assert (is (. (get seen "one") end usage) None) (repr (. (get seen "one") end))))
 
 (deftest test-headless-one-turn-and-resume-stub [tmp-path]
   (val seen (run-on STUB tmp-path one-turn-then-resume))
   (check-one-turn-then-resume seen)
   ;; 手番の使った token の数は層 2 の result の行の usage から層 3 の終わりへ運ぶ(stub は input 1・output 1 だけを名乗る —
-  ;; 名乗らない cache の欄は None のまま・agora-redesign #766)。手番の額は層 2 が CLI の累積の額から手番の分に直した値:
-  ;; stub の累積は 1 手番目 0.25・続きの 2 手番目 0.5 だが、どちらの手番の額も 0.25(agora-redesign #883)。
+  ;; 名乗らない cache の欄は None のまま)。手番の額は層 2 が CLI の累積の額から手番の分に直した値:
+  ;; stub の累積は 1 手番目 0.25・続きの 2 手番目 0.5 だが、どちらの手番の額も 0.25。
   (assert (= (. (get seen "one") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25))
           (repr (. (get seen "one") end)))
   (assert (= (. (get seen "two") end usage) (AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25))
@@ -805,14 +802,14 @@
   (assert (= [one.usage two.usage three.usage]
              (* [(AgentTurnUsage :input-tokens 1 :output-tokens 1 :cost-usd 0.25)] 3))
           (repr [one two three]))
-  ;; model ごとの使用量も同じ起点で手番の分(stub の 1 手番 = 本体の model の 0.25)で、和が手番の額と合う(card ki-1d986d4f0007)。
+  ;; model ごとの使用量も同じ起点で手番の分(stub の 1 手番 = 本体の model の 0.25)で、和が手番の額と合う。
   (assert (= (lfor end [one two three] #((lfor usage end.model-usage #(usage.model usage.cost-usd)) end.model-usage-gap))
              (* [#([#("claude-stub" 0.25)] None)] 3))
           (repr [one two three])))
 
 (deftest test-headless-failed-turn-carries-its-cost-fake [tmp-path]
   ;; 誤りで終えた手番も層 2 の額を AgentTurnUsage.cost_usd へ運ぶ。token の数を名乗らなくても額が在れば usage は None にしない
-  ;; (4 欄と額がすべて無い時だけ None・agora-redesign #883)。
+  ;; (4 欄と額がすべて無い時だけ None)。
   (val done (run-on FAKE tmp-path failed-turn-after-spending))
   (assert (isinstance done.end AgentTurnFailed) (repr done.end))
   (assert (= done.end.detail "spent then failed") (repr done.end))
@@ -827,7 +824,7 @@
 (defk check-tool-calls-meet-results [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "AgentToolUseEvent の tool_calls の id が、後に続く AgentToolResultEvent の答え(answers)の id と突き合う(どの結果も前の呼びの id を
-   名指し、どの呼びにも結果が届く)。呼びの id を落とす adapter では突き合わず赤(agora-redesign #3518)。"
+   名指し、どの呼びにも結果が届く)。呼びの id を落とす adapter では突き合わず赤。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val uses (lfor event done.events :if (isinstance event AgentToolUseEvent) event))
   (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
@@ -851,7 +848,7 @@
 (defk check-tool-events-carry-the-command-and-the-output [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "AgentToolUseEvent の呼びが道具の命令(input)を、AgentToolResultEvent の答えが結果の中身(本文・誤りの印・text でない block の種類)を
-   運ぶ。命令と出力を捨てる adapter では会話の画面の道具の行を開けず赤(agora-redesign #3744)。"
+   運ぶ。命令と出力を捨てる adapter では会話の画面の道具の行を開けず赤。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call))
   (val results (lfor event done.events :if (isinstance event AgentToolResultEvent) event))
@@ -865,7 +862,7 @@
 (defk check-thinking-deltas-come-before-the-text [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "考えている間の差分(層 2 の PartialMessage の種類 THINKING)が、片ごとに考えの出来事(AgentThinkingDeltaEvent — 考えの文字列つき)として、
-   確定の本文の出来事より前に出る。考えの差分を落とす adapter では 0 で赤(agora-redesign #3789 — 本文が 66 秒後まで来ない手番で、画面が
+   確定の本文の出来事より前に出る。考えの差分を落とす adapter では 0 で赤(本文が 66 秒後まで来ない手番で、画面が
    考えている事を出せなかった)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val thought (lfor #(index event) (enumerate done.events) :if (isinstance event AgentThinkingDeltaEvent) #(index event.text)))
@@ -878,7 +875,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "道具の呼びの始まり(層 2 の PartialMessage の tool-start)が AgentToolCallStartedEvent(呼びの id と道具の名)として、命令の差分(種類
    TOOL-INPUT)が片ごとに AgentToolInputDeltaEvent(切れ端の文字列つき)として、その呼びの AgentToolUseEvent より前に出る。命令を
-   書いている間を落とす adapter では 0 で赤(agora-redesign #3974 の 3 — 道具を呼んでいる間を画面で分かるようにする。利用者の決定 2026-10-07)。"
+   書いている間を落とす adapter では 0 で赤(道具を呼んでいる間を画面で分かるようにする)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolCallStartedEvent) #(index event.name event.id)))
   (val pieces (lfor #(index event) (enumerate done.events) :if (isinstance event AgentToolInputDeltaEvent) #(index event.text)))
@@ -894,7 +891,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "Stop hook が差し戻した手番で、差し戻された答えの本文の出来事の後に、差し戻しの出来事(AgentStopHookFeedbackEvent — 理由つき)が
    出て、その後に答え直しの本文の出来事が出る。手番の終わりの本文は答え直しだけ。差し戻しの行を捨てる adapter では差し戻しの
-   出来事が 0 で赤 — 上の層が 2 つの本文を見分けられず、画面に答えが 2 つ並ぶ(agora-redesign #4020)。"
+   出来事が 0 で赤 — 上の層が 2 つの本文を見分けられず、画面に答えが 2 つ並ぶ。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val texts (lfor #(index event) (enumerate done.events) :if (isinstance event AgentTextEvent) #(index event.text)))
   (val feedback (lfor #(index event) (enumerate done.events) :if (isinstance event AgentStopHookFeedbackEvent) #(index event.reason)))
@@ -914,7 +911,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "CLI が会話を 1 度圧縮した手番は、圧縮の出来事(AgentCompactionEvent — 行の compact_metadata の欄そのまま)をちょうど 1 つ運び、
    その後に答えの本文の出来事が出て、手番は完了で終わる(圧縮は手番の途中の出来事で、手番は続く)。圧縮の行を捨てる adapter では
-   圧縮の出来事が 0 で赤 — 上の層(turn-host)が cluster のターンの圧縮を turn-log に記録できない(agora-redesign #4189)。"
+   圧縮の出来事が 0 で赤 — 上の層(turn-host)が cluster のターンの圧縮を turn-log に記録できない。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val compactions (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionEvent) #(index event)))
   (assert (= (len compactions) 1) (repr done.events))
@@ -931,7 +928,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "CLI が会話を 1 度圧縮した手番は、圧縮の始まりの出来事(AgentCompactionStartedEvent — status 行 compacting)をちょうど 1 つ、圧縮の
    出来事(AgentCompactionEvent)より前に運ぶ。始まりを捨てる adapter では 0 で赤 — 上の層は圧縮の間 会話の画面に何も出せず、利用者には
-   手番が止まって見える(card acp:kanban-issue:ki-aeae6f9e643d・実測 2026-10-10 の 2 分の沈黙)。"
+   手番が止まって見える(実測 2026-10-10 の 2 分の沈黙)。"
   (import doeff_agents [AgentCompactionStartedEvent])
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val started (lfor #(index event) (enumerate done.events) :if (isinstance event AgentCompactionStartedEvent) index))
@@ -943,7 +940,7 @@
 
 (defk check-a-turn-without-compaction-has-no-compaction-start [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
-  "圧縮の行を出さない手番は、圧縮の始まりの出来事を 1 つも運ばない(card acp:kanban-issue:ki-aeae6f9e643d)。"
+  "圧縮の行を出さない手番は、圧縮の始まりの出来事を 1 つも運ばない。"
   (import doeff_agents [AgentCompactionStartedEvent])
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (lfor event done.events :if (isinstance event AgentCompactionStartedEvent) event) []) (repr done.events))
@@ -951,7 +948,7 @@
 
 (defk check-a-turn-without-compaction-has-no-compaction-event [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
-  "圧縮の行を出さない手番は、圧縮の出来事を 1 つも運ばない(出来事を発明しない — agora-redesign #4189)。"
+  "圧縮の行を出さない手番は、圧縮の出来事を 1 つも運ばない(出来事を発明しない)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (lfor event done.events :if (isinstance event AgentCompactionEvent) event) []) (repr done.events))
   None)
@@ -960,7 +957,7 @@
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "助言を返す hook が 1 度走った手番は、hook の出来事(AgentHookEvent — 応答の行の欄そのまま・開始の行は出来事にしない)をちょうど 1 つ
    運び、その後に答えの本文の出来事が出て、手番は完了で終わる。hook の行を捨てる adapter では hook の出来事が 0 で赤 — 上の層が
-   条件つきルールの助言を会話の画面に出せない(card acp:kanban-issue:ki-d8b473480303)。"
+   条件つきルールの助言を会話の画面に出せない。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val hooks (lfor #(index event) (enumerate done.events) :if (isinstance event AgentHookEvent) #(index event)))
   (assert (= (len hooks) 1) (repr done.events))
@@ -977,7 +974,7 @@
 (defk check-a-sent-back-answer-carries-the-stop-hook-response [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
   "Stop hook が差し戻した手番は、差し戻された答えの本文と差し戻しの出来事の間に、Stop の hook の出来事(理由は stderr・exit code 2・
-   終わり方 error)をちょうど 1 つ運ぶ(上の層が差し戻しを会話の画面に出すため・card acp:kanban-issue:ki-d8b473480303)。"
+   終わり方 error)をちょうど 1 つ運ぶ(上の層が差し戻しを会話の画面に出すため)。"
   (val hooks (lfor #(index event) (enumerate done.events) :if (isinstance event AgentHookEvent) #(index event)))
   (assert (= (lfor #(_ hook) hooks #(hook.hook-event hook.stderr hook.exit-code hook.outcome)) [#("Stop" HOOK-REASON 2 "error")])
           (repr done.events))
@@ -987,7 +984,7 @@
 
 (defk check-a-turn-without-hooks-has-no-hook-event [#^ Read done]
   {:pre [(: done Read)] :post [(: % (type None))] :tags {:context "headless-adapter-test" :role "judgment"}}
-  "hook の行を出さない手番は、hook の出来事を 1 つも運ばない(出来事を発明しない — card acp:kanban-issue:ki-d8b473480303)。"
+  "hook の行を出さない手番は、hook の出来事を 1 つも運ばない(出来事を発明しない)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (lfor event done.events :if (isinstance event AgentHookEvent) event) []) (repr done.events))
   None)
@@ -1045,7 +1042,7 @@
   "手番の終わり(AgentTurnCompleted — 頁の end と AgentTurnEndEvent の end)が、本体の会話の最後の呼びの usage(AgentTurnUsage — 額は
    呼びごとには分からないので None)と model、model ごとの窓(context の大きさの上限・出力の上限)を運ぶ。道具の呼びの行の後の最後の
    本文の行の usage を取り、subagent の行(替え玉の CLI は道具の途中に 1 行出す)は取らない(#3744)。cache の書きの寿命の内訳(5 分・1 時間)も
-   名乗られたまま運ぶ(card ki-75d813bebc27 — 失敗ケース: 内訳を総数の 1 欄に潰すと、上の層は寿命ごとの単価を当てられない)。"
+   名乗られたまま運ぶ(失敗ケース: 内訳を総数の 1 欄に潰すと、上の層は寿命ごとの単価を当てられない)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (assert (= (ends-of done.events) [done.end]) (repr done.events))
   (assert (= done.end.last-call-usage (AgentTurnUsage :input-tokens 4 :output-tokens 1 :cache-write-tokens 20
@@ -1063,7 +1060,7 @@
 (deftest test-headless-turn-end-carries-the-last-call-and-the-model-windows-stub [tmp-path]
   (<- (check-turn-end-carries-the-last-call (run-on STUB tmp-path tool-turn-with-output))))
 
-;; --- 走っている手番の途中の、本体の会話の呼びの usage(card ki-a2e985c009ae) ---------------------------------------
+;; --- 走っている手番の途中の、本体の会話の呼びの usage ---------------------------------------
 ;;
 ;; 上の層(agora の turn-host)が、手番の終わりを待たずに会話の今の context の大きさを記録へ書けるように、本体の会話の assistant の行が
 ;; usage を名乗るたびに、その呼びの usage と model を出来事 AgentCallUsageEvent で運ぶ。線引きは手番の終わりの last_call_usage と同じ
@@ -1083,7 +1080,7 @@
    名乗る usage(替え玉の CLI は最後の本文の行と別の値・fake はどの行も同じ値)。呼びの usage を終わりでしか運ばない adapter では
    出来事が 0 で赤 — 上の層は、最初の手番が走っている会話の context の大きさを知れない。行の名乗りの出来事は final が偽で、呼びの
    id(message.id)を運ぶ。closed-calls = 層 2 が呼びの始まりと終わりから組んだ最終の出来事(final が真)の数(fake は返事 1 つ = 呼び
-   1 つを result の行の前に閉じる・替え玉の CLI の既定の手番は message_delta を出さないので 0 — agora card ki-290ec664737d)。"
+   1 つを result の行の前に閉じる・替え玉の CLI の既定の手番は message_delta を出さないので 0)。"
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (<- every list (call-usages-of done.events))
   (val usages (lfor #(index event) every :if (not event.final) #(index event)))
@@ -1094,7 +1091,7 @@
           (repr done.events))
   (assert (all (gfor #(_ event) usages event.call-id)) (repr usages))
   ;; 行の名乗りは呼びの要求の id(stream-json の assistant の行の request_id)も運ぶ — 上の層が CLI の telemetry にだけ出る呼びを足す時に
-  ;; この id で重ねる(agora card ki-b99ace070bf0)。最終の出来事は運ばない(層 2 の閉じた呼びは message_delta から組む)。
+  ;; この id で重ねる。最終の出来事は運ばない(層 2 の閉じた呼びは message_delta から組む)。
   (assert (all (gfor #(_ event) usages event.request-id)) (repr usages))
   (assert (= (len finals) closed-calls) (repr finals))
   (assert (all (gfor event finals (in event.call-id (sfor #(_ streamed) usages streamed.call-id)))) (repr finals))
@@ -1118,7 +1115,7 @@
         0)))
 
 ;; 本体の呼びを本物の CLI 2.1.292 と同じく message_start → 途中の値の assistant の行 → message_delta の 3 段で流させる言い方
-;; (替え玉の CLI の規則 scenario_rules.hy の STREAMED-CALLS-PHRASE と同じ言葉 — agora card ki-290ec664737d)。
+;; (替え玉の CLI の規則 scenario_rules.hy の STREAMED-CALLS-PHRASE と同じ言葉)。
 (val STREAMED-CALLS-PHRASE "Stream each call's usage.")
 
 (defk streamed-tool-turn [#^ Setting s]
@@ -1131,7 +1128,7 @@
   done)
 
 (deftest test-headless-carries-each-main-call-final-usage-and-the-finals-sum-to-the-turn-output-stub [tmp-path]
-  ;; agora card ki-290ec664737d: 本体の呼びごとに、行の名乗り(final 偽 — 出力は途中の値 1)の後に最終の出来事(final 真)が 1 つ・呼びの
+  ;; 本体の呼びごとに、行の名乗り(final 偽 — 出力は途中の値 1)の後に最終の出来事(final 真)が 1 つ・呼びの
   ;; id は同じ・最終の出力の和が手番の usage の出力と一致する。失敗ケース = 行の名乗りだけを運ぶ adapter(最終の出来事が 0 で、行の出力の
   ;; 和 2 は手番の出力 806 と合わない)。
   (val done (run-on STUB tmp-path streamed-tool-turn))
@@ -1213,7 +1210,7 @@
   (<- (check-images-reached-the-cli (run-on STUB tmp-path injected-text-and-image) "IMAGES-1")))
 
 (deftest test-images-are-typed-and-turnless-handlers-refuse-them [tmp-path]
-  ;; 画像は mime と base64 の data の型の値。画像を CLI へ渡せない handler は黙って捨てずに断る(ki-0faa366b76c0)。
+  ;; 画像は mime と base64 の data の型の値。画像を CLI へ渡せない handler は黙って捨てずに断る。
   (import doeff_agents [LaunchEffect FollowUpEffect])
   (import doeff_agents._effects._handler-effects [refuse-turn-capabilities])
   (with [(pytest.raises ValueError)] (InputImage :mime "" :data-base64 "AAAA"))
@@ -1308,7 +1305,7 @@
   (check-concurrent (run-on FAKE tmp-path concurrent-reader-and-interrupt)))
 
 
-;; --- 最後の本文の差分(agora-redesign #3628)--------------------------------------------------------------------
+;; --- 最後の本文の差分--------------------------------------------------------------------
 
 (val STREAMED-TEXT "streamed final reply")
 (val STREAMED-PIECES 5)
@@ -1333,7 +1330,7 @@
 (deftest test-headless-carries-the-final-text-deltas-before-the-final-text-fake [tmp-path]
   ;; fake の返事が最後の本文を deltas 片の差分(層 2 の PartialMessage の text_delta)で出すと、adapter の行の写しを通って、上の層は
   ;; 書きかけの本文の出来事(AgentTextDeltaEvent)を片の数だけ、確定の本文の出来事(AgentTextEvent — 1 つ)より前に読む。片の連結は
-  ;; 確定の本文と同じ。既定の返事(deltas 0)は差分の出来事を 1 つも出さない(agora-redesign #3628 — 上の層の模擬が「文の途中を画面へ
+  ;; 確定の本文と同じ。既定の返事(deltas 0)は差分の出来事を 1 つも出さない(上の層の模擬が「文の途中を画面へ
   ;; 流す」を確かめる材料)。
   (import doeff_claude_code [FakeClaudeWorld])
   (val work (/ tmp-path "work"))
@@ -1522,7 +1519,7 @@
 
 ;; --- 新しい文脈の id を呼び手が名指す(LaunchEffect.new_context_id)-------------------------------------------------------
 ;; 事前起動する session と、最初のターンを始める session が別の LaunchEffect でも、同じ新しい文脈の id を名指せば同じ文脈になり、
-;; 最初のターンは事前起動した runtime を使い回す(agora-redesign #3810)。名指さなければ handler が id を作る(今までの形)。
+;; 最初のターンは事前起動した runtime を使い回す。名指さなければ handler が id を作る(今までの形)。
 
 (val NAMED-CONTEXT "5f0c1c5e-7a55-4b7e-9d0b-0a4d3d7f1a01")
 (val OTHER-CONTEXT "5f0c1c5e-7a55-4b7e-9d0b-0a4d3d7f1a02")
@@ -1652,7 +1649,7 @@
   (assert (= info.value.capability "WarmSessionEffect") info.value.capability))
 
 
-;; --- 同じ文脈の次の session が前の session を置き換える(agora-redesign の lt-KATGT933TATG1ESPPSW9QGFM7K)--------------------------
+;; --- 同じ文脈の次の session が前の session を置き換える--------------------------
 ;; 使い手(agora の CLI ホスト)は会話の CLI を手番をまたいで生かし、手番ごとに新しい名の session を前の手番の resume_from で起こす
 ;; (層 2 は同じ CLI を使い回す)。前の手番の session は手番の出来事を全部持ったまま表に残り、止めも片づけも来ない(片づけると共有の
 ;; CLI を降ろす)ので、ホストの process の memory が手番の数だけ伸び続けた(zeus の turn-host の本体が 1 時間に約 1.6 GB)。
@@ -1732,7 +1729,7 @@
 (deftest test-headless-redeems-the-credential-ref-into-the-lent-credential [tmp-path]
   ;; #665・#979: token は LaunchEffect に載らない。adapter が起こす直前に RedeemTurnCredentialEffect(参照)を外側へ出し、答えの token を
   ;; 層 2 の宣言の借りた資格(ClaudeSessionSpec.credential)にする — 層 2 がその process だけの設定 dir の .credentials.json に置き、子の
-  ;; env には置かない(card acp:kanban-issue:ki-4ffdafa021e5 — 走っている CLI の資格を替えるため)。家の資格の答え・参照の無い起動は
+  ;; env には置かない(走っている CLI の資格を替えるため)。家の資格の答え・参照の無い起動は
   ;; 家の資格のまま(credential = None)。token は effect・答え・家・宣言の repr に写らない。
   (import doeff_agents._agent_env [CLAUDE-TURN-CREDENTIAL-ENV :as TURN-CREDENTIAL-ENV])
   (import doeff_agents [LaunchEffect TurnCredential HomeTurnCredential RedeemTurnCredentialEffect])
@@ -1786,7 +1783,7 @@
 (deftest test-the-stated-compaction-threshold-rides-on-the-launch-argv [tmp-path]
   ;; 呼び手が LaunchEffect.autocompact で言った圧縮の閾値は、層 2 の会話の宣言(ClaudeSessionSpec.autocompact)へそのまま写り、CLI の
   ;; argv に `--autocompact <auto|tokens>` として載る(agora-controllers の cluster のターンが閾値を明示する口 — dotfiles ADR-DOTFILES-012
-  ;; R-4484fd43 (1)・card acp:kanban-issue:ki-0679d4fcb37e)。言わない起動(None)は旗を載せない = CLI の既定。閉じた型の外は作れず、
+  ;; R-4484fd43 (1))。言わない起動(None)は旗を載せない = CLI の既定。閉じた型の外は作れず、
   ;; 閾値を置けない handler(手番を持たない端末の handler)は黙って既定へ戻さずに断る。
   ;; 失敗ケース: headless.hy の spec-of が :autocompact を写さない形では、閾値を言った 2 つの起動の宣言と argv が赤。
   (import doeff_agents [LaunchEffect])
@@ -1810,7 +1807,7 @@
   (assert (= info.value.capability "LaunchEffect.autocompact") info.value.capability))
 
 (deftest test-the-redeemed-github-token-rides-on-the-child-env-as-gh-token [tmp-path]
-  ;; agora-redesign #3753: 引き換えた TurnCredential が github_token を持てば、adapter は子の claude の env の GH_TOKEN(名の定義元 = agent_env.hy)
+  ;; 引き換えた TurnCredential が github_token を持てば、adapter は子の claude の env の GH_TOKEN(名の定義元 = agent_env.hy)
   ;; にその値を 1 つ置く。持たない答え・設定 dir の資格の答えの起動には GH_TOKEN が無い。token は TurnCredential・起動の宣言・設定 dir の repr に写らず、
   ;; 値の確かめは oauth_token と同じ(空でない文字列・CR/LF/NUL を含まない)。
   (import doeff_agents._agent_env [GITHUB-TOKEN-ENV])
@@ -1842,9 +1839,9 @@
       (TurnCredential oauth None :github-token bad :subscription-type None :rate-limit-tier None))))
 
 (deftest test-the-credential-facts-ride-on-the-lent-credential-only-when-the-lender-knows-them [tmp-path]
-  ;; card acp:kanban-issue:ki-d81bb8c7eaaa: claude の CLI は資格の契約の種類が無ければ team / enterprise かもしれないとして、起動のたびに
+  ;; claude の CLI は資格の契約の種類が無ければ team / enterprise かもしれないとして、起動のたびに
   ;; 組織の方針を確かめに行く(本番で 1 回 319〜801 ms)。貸し手が資格から読んだ種類と階級を TurnCredential で運び、adapter は層 2 の宣言の
-  ;; 借りた資格へ写す(層 2 が .credentials.json の subscriptionType・rateLimitTier に置く — card acp:kanban-issue:ki-4ffdafa021e5)。貸し手が
+  ;; 借りた資格へ写す(層 2 が .credentials.json の subscriptionType・rateLimitTier に置く)。貸し手が
   ;; 知らない(None)時は None のまま。子の env には置かない。2 つの名の入口は引き換えの答え 1 つ — 設定 dir の env と session_env からは
   ;; 入れられない(ターンの資格の名 TURN-AUTH-ENV-KEYS の仲間)。2 つは秘密ではないので repr に出てよいが、token は出ない。
   (import doeff_agents._agent_env [CLAUDE-SUBSCRIPTION-TYPE-ENV CLAUDE-RATE-LIMIT-TIER-ENV TURN-AUTH-ENV-KEYS])
@@ -1919,7 +1916,7 @@
 
 
 (deftest test-the-adapter-replaces-the-live-process-credential-by-reference [tmp-path]
-  ;; card acp:kanban-issue:ki-4ffdafa021e5: ReplaceSessionCredentialEffect は token を運ばず参照だけを運ぶ。adapter は参照を
+  ;; ReplaceSessionCredentialEffect は token を運ばず参照だけを運ぶ。adapter は参照を
   ;; RedeemTurnCredentialEffect で引き換え、層 2 の ClaudeReplaceSessionCredential で走っている process の資格を替え
   ;; (SessionCredentialReplaced)、session の宣言の資格も替える(続きの手番はその資格のまま — 前の資格に戻さない)。引き換えられない
   ;; 参照・家の資格を名指す参照は ReplacementCredentialUnavailable(資格は替えない)。家の資格で起こした session は引き換えずに
@@ -1980,7 +1977,7 @@
   handle)
 
 (deftest test-a-launch-failure-does-not-carry-the-borrowed-token [tmp-path]
-  ;; agora-redesign #665(cry-w8 の独立レビューの指摘): CLI が起きない時の失敗の文・repr・traceback は worker の log に入る。引き換えた
+  ;; cry-w8 の独立レビューの指摘: CLI が起きない時の失敗の文・repr・traceback は worker の log に入る。引き換えた
   ;; token(子の env の CLAUDE_CODE_OAUTH_TOKEN)の値がそこへ写らない。
   (import traceback)
   (import doeff_agents [TurnCredential])
@@ -1998,7 +1995,7 @@
 
 
 (deftest test-claude-agent-runtime-names-leave-the-substrate-to-doeff-agents [tmp-path]
-  ;; 土台を名指さない名(agora-redesign #606): claude_agent_runtime_handlers / fake_claude_agent_runtime_handlers は、今日の土台
+  ;; 土台を名指さない名: claude_agent_runtime_handlers / fake_claude_agent_runtime_handlers は、今日の土台
   ;; (print mode の adapter)の組と同じ種類の handler を同じ順で返し、fake の名で同じ筋書きが通る。
   (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers])
   (setv home (str (/ tmp-path "home")))
@@ -2013,7 +2010,7 @@
                                    (one-turn-then-resume setting))))))
 
 
-;; --- fake の組に渡した env と settings(agora-redesign #3327)---------------------------------------------------------
+;; --- fake の組に渡した env と settings---------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] ReadLaunchSpecs [EffectBase]
   "launch-specs が写した起動の宣言を読む(答え = ClaudeSessionSpec の tuple — 層 2 へ届いた順)。")
@@ -2042,7 +2039,7 @@
   specs)
 
 (deftest test-the-fake-runtime-carries-the-given-env-and-settings-on-the-launch [tmp-path]
-  ;; agora-redesign #3327: fake の組(fake_claude_agent_runtime_handlers)に渡した env と settings は、本番の組と同じく adapter が層 2 へ渡す
+  ;; fake の組(fake_claude_agent_runtime_handlers)に渡した env と settings は、本番の組と同じく adapter が層 2 へ渡す
   ;; 起動の宣言(home.env と settings)に載る — 上の層の模擬が、本番と同じ手順で決めた子の env と CLI の settings を起動ごとに観測するため。
   (import doeff_agents [fake-claude-agent-runtime-handlers])
   (import doeff_hy._frozen [thaw-json])
@@ -2059,7 +2056,7 @@
   (assert (= (thaw-json (. (get given 0) settings)) settings)))
 
 (deftest test-the-fake-runtime-refuses-a-call-that-drops-env-or-settings []
-  ;; agora-redesign #3387: env と settings は既定の無い引数 — 落とした呼びは組を作る前に、落とした名を名指す TypeError で落ちる
+  ;; env と settings は既定の無い引数 — 落とした呼びは組を作る前に、落とした名を名指す TypeError で落ちる
   ;; (「渡さなければ空」の古い形を残さない。宣言する物の無い呼び手は空の写像を明示で渡す)。fake の 2 つの口(土台を名指さない名・
   ;; 組み立ての部品)ごとに、片方ずつ落として呼ぶ。
   (import doeff_agents [fake-claude-agent-runtime-handlers])
@@ -2072,10 +2069,10 @@
       (fake-headless-claude-handlers fake-responder #** given))))
 
 
-;; --- 層 2 だけ・adapter だけの入口(agora-redesign #3507)------------------------------------------------------------
+;; --- 層 2 だけ・adapter だけの入口------------------------------------------------------------
 
 (deftest test-the-split-entries-build-the-same-handlers-as-the-pairs [tmp-path]
-  ;; agora-redesign #3507: 層 2 だけ(本番・fake)と adapter だけの入口は、対の入口と同じ種類の handler を同じ順で作り、並べると同じ
+  ;; 層 2 だけ(本番・fake)と adapter だけの入口は、対の入口と同じ種類の handler を同じ順で作り、並べると同じ
   ;; 筋書きが通る — 呼び手が層 2 を土台の外側に、adapter を Program の近くに置き分けても、組の中身は対の入口と同じ。
   (import doeff_agents [claude-agent-runtime-handlers fake-claude-agent-runtime-handlers claude-process-layer-handler
                         fake-claude-process-layer-handler claude-agent-adapter-handler])
@@ -2105,7 +2102,7 @@
   (assert (= (thaw-json (. (get given 0) settings)) settings)))
 
 
-;; --- 生かす CLI の本数の上限を宣言しない呼び手(agora-redesign #4282)-------------------------------------------------
+;; --- 生かす CLI の本数の上限を宣言しない呼び手-------------------------------------------------
 ;; 同時に生かす CLI の本数を別の物差し(機体の memory の余白)で決める呼び手は、live-limit に None を渡す(層 2 の ClaudeCodeHost は
 ;; None を「上限を宣言しない」と受け、本数を比べず、上限越えの log の行も知らせも出さない)。本番の層 2 を作る 3 つの関数(Hy の対・
 ;; agent runtime の名・層 2 だけ)は None をそのまま層 2 へ渡す。整数を渡す呼び手は今までどおり。
@@ -2131,7 +2128,7 @@
     (assert (= (get (typing.get-type-hints make) "live_limit") (| int None)) (repr make))))
 
 (deftest test-the-adapter-and-the-fake-runtimes-carry-the-given-permission-on-the-launch [tmp-path]
-  ;; agora-redesign #3753: adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・組み立ての部品)に permission を渡すと、
+  ;; adapter だけの入口と fake の handler の並びの入口(土台を指定しない名・組み立ての部品)に permission を渡すと、
   ;; 層 2 へ渡る起動の宣言(ClaudeSessionSpec)の permission がその値になる — 許可を設定 dir の settings.json に任せる形(HomeSettings)を
   ;; 本番の adapter と模擬の fake に同じく渡すため。渡さなければ BypassAll(今のまま)。
   (import doeff_agents [claude-agent-adapter-handler fake-claude-process-layer-handler fake-claude-agent-runtime-handlers])
@@ -2160,7 +2157,7 @@
     (assert (= (. (get given 0) permission) expected) #(name (. (get given 0) permission)))))
 
 (deftest test-the-fake-process-layer-takes-exactly-one-of-responder-and-world []
-  ;; agora-redesign #3507: fake の層 2 だけの入口も、対の入口と同じく responder と world のちょうど 1 つを受ける(両方・どちらも無しは断る)。
+  ;; fake の層 2 だけの入口も、対の入口と同じく responder と world のちょうど 1 つを受ける(両方・どちらも無しは断る)。
   (import doeff_agents [fake-claude-process-layer-handler])
   (with [(pytest.raises ValueError :match "ちょうど 1 つ")]
     (fake-claude-process-layer-handler))
@@ -2169,7 +2166,7 @@
 
 
 (deftest test-the-account-limit-of-a-turn-end-reaches-the-agent-turn-end
-  ;; agora-redesign #3983: 層 2(doeff-claude-code)の手番の終わりが運ぶ「口座の限度に当たった」事実(AccountLimitHit)を、層 3 の
+  ;; 層 2(doeff-claude-code)の手番の終わりが運ぶ「口座の限度に当たった」事実(AccountLimitHit)を、層 3 の
   ;; AgentTurnCompleted・AgentTurnFailed の欄 account_limit(AgentAccountLimit — 限度の種類・戻る刻・限度の文)へ写す。当たっていない
   ;; 終わりは None。失敗ケース(前の形): 層 3 の終わりに欄が無く、上の層(配る担当)が「口座が尽きた」と知れない。
   (import doeff_claude_code [AccountLimitHit Completed Failed])
@@ -2238,7 +2235,7 @@
 
 
 (deftest test-a-turn-the-api-overloads-carries-the-provider-capacity-on-its-end
-  ;; agora card ki-0f5382d587a0: CLI が API の混雑(api_error_status 529 — 「API Error: 529 Overloaded. …」)で失敗で終えた手番を、層 3 の
+  ;; CLI が API の混雑(api_error_status 529 — 「API Error: 529 Overloaded. …」)で失敗で終えた手番を、層 3 の
   ;; AgentTurnFailed.provider_capacity(AgentProviderCapacity — 会話の宣言の model・CLI の文)へ写す。ほかの status の失敗・status の無い
   ;; 失敗・口座の限度の失敗(429)は混雑と言わない。失敗ケース(前の形): 欄は codex の終わりだけが持ち、claude の 529 は上の層(turn-host)が
   ;; 一時の混雑と知れずに cli-failed で落とした(本番 2026-10-24 09:26〜09:30 JST に 8 本)。
@@ -2289,7 +2286,7 @@
     (assert (= #(plain.exit-code plain.stderr-tail) #(None None)) plain)))
 
 
-;; --- 止めた手番の消費(card ki-47e64b7b642f)---------------------------------------------------------------------------
+;; --- 止めた手番の消費---------------------------------------------------------------------------
 ;; 失敗ケース(前の形): 層 2 が止めた手番を閉じた result の行の額を数えても、層 3 の AgentTurnInterrupted は usage の欄を持たず、上の層
 ;; (agora の記録)は止めた手番を額の無い手番として単価で推定した。
 
@@ -2310,7 +2307,7 @@
   (assert (= #(plain.usage plain.model-usage plain.model-usage-gap) #(None None ModelUsageGap.NOT-NAMED)) plain))
 
 
-;; --- cache の書きの寿命の内訳(card ki-75d813bebc27)------------------------------------------------------------------
+;; --- cache の書きの寿命の内訳------------------------------------------------------------------
 ;; 失敗ケース(前の形): 層 2 の Usage は cache_creation の 5 分・1 時間の内訳を持つのに、層 3 の AgentTurnUsage は書きの総数 1 欄に潰し、
 ;; 上の層(agora の記録と単価)は書きを全部 1 時間の単価で数えた — subagent の 5 分の書きを高く見積もった。
 
@@ -2378,7 +2375,7 @@
 (deftest test-headless-invents-no-compaction-start-stub [tmp-path]
   (<- (check-a-turn-without-compaction-has-no-compaction-start (run-on STUB tmp-path uncompacted-turn))))
 
-;; --- 圧縮の終わり方と subagent の呼びの usage(card acp:kanban-issue:ki-8239be27d5f6) -------------------------------------------
+;; --- 圧縮の終わり方と subagent の呼びの usage -------------------------------------------
 ;; 上の層(agora の turn-host)が rate limit の減りと実使用量を照合できるように、圧縮の終わり方(成功・失敗・中断・圧縮しなかった)と、
 ;; subagent の呼びごとの usage を、本体の会話の呼びと分けて出来事で運ぶ。
 
@@ -2437,7 +2434,7 @@
   "道具の途中に subagent が API を 1 回呼んだ手番は、その呼びの usage の出来事(AgentSubagentCallUsageEvent)をちょうど 1 つ運ぶ:
    親 = その手番の道具の呼びの id・model = subagent の model・usage = transcript の呼びの usage そのまま(4 欄)・呼びの id あり・刻は
    時差つき。本体の会話の呼びの usage の出来事(AgentCallUsageEvent)には入らない。層 2 が subagent の transcript から読んだ行
-   (SubagentTranscript — card ki-e798888dce4e)を捨てる adapter では 0 で赤 — 上の層は rate limit を減らす subagent の消費を記録できない。"
+   (SubagentTranscript)を捨てる adapter では 0 で赤 — 上の層は rate limit を減らす subagent の消費を記録できない。"
   (import doeff_agents [AgentSubagentCallUsageEvent])
   (assert (isinstance done.end AgentTurnCompleted) (repr done.end))
   (val calls (lfor event done.events :if (isinstance event AgentToolUseEvent) call event.tool-calls call.id))
@@ -2449,7 +2446,7 @@
                (AgentTurnUsage :input-tokens 1 :output-tokens 900 :cache-write-tokens 0 :cache-read-tokens 50000)))
           (repr event))
   (assert event.call-id (repr event))
-  ;; 呼びの要求の id(transcript の requestId)も運ぶ — agora card ki-b99ace070bf0。
+  ;; 呼びの要求の id(transcript の requestId)も運ぶ。
   (assert event.request-id (repr event))
   (assert (is-not event.at.tzinfo None) (repr event))
   (assert (not-in SUBAGENT-MODEL (lfor other done.events :if (isinstance other AgentCallUsageEvent) other.model)) (repr done.events))
@@ -2462,7 +2459,7 @@
   (<- (check-a-subagent-call-carries-its-usage-apart (run-on STUB tmp-path tool-turn-with-output))))
 
 (deftest test-headless-names-a-subagent-call-whose-output-is-a-mid-call-value
-  ;; agora card ki-edb2b5947d6a: 層 2 が閉じた行の無い呼び(出力が途中の値 — SubagentCall の output-partial)と名指した subagent の呼びは、
+  ;; 層 2 が閉じた行の無い呼び(出力が途中の値 — SubagentCall の output-partial)と名指した subagent の呼びは、
   ;; usage の出来事に印 output_partial を付けて運び、閉じた呼びは付けない。失敗ケース = 印を捨てる adapter では、上の層が途中の出力 6 を
   ;; 最終の値として記録し、telemetry の同じ request_id の値で記録し直せない。
   (import datetime [datetime timezone])
@@ -2484,7 +2481,7 @@
 
 
 (deftest test-the-model-usage-of-a-turn-end-reaches-the-agent-turn-end
-  ;; card ki-1d986d4f0007: 層 2(doeff-claude-code)の手番の終わりが運ぶ model ごとの使用量(手番の分の ModelUsage)と照合の訳
+  ;; 層 2(doeff-claude-code)の手番の終わりが運ぶ model ごとの使用量(手番の分の ModelUsage)と照合の訳
   ;; (ModelUsageGap)を、層 3 の AgentTurnCompleted・AgentTurnFailed の欄 model_usage・model_usage_gap へそのまま写す。失敗ケース(前の
   ;; 形): 層 3 の終わりに欄が無く、上の層(agora の手番の記録)が model ごとの額も照合の結末も記録できない。
   (import doeff_claude_code [Completed Failed ModelUsage ModelUsageGap])
@@ -2504,7 +2501,7 @@
 
 
 (deftest test-headless-carries-a-call-the-cli-stopped-as-not-final
-  ;; agora card ki-7498a039250d: 層 2 が止めた呼び(stopped 偽 — CLI が止めた呼びに自分で作った、止まった訳を名乗らない終わり)として
+  ;; 層 2 が止めた呼び(stopped 偽 — CLI が止めた呼びに自分で作った、止まった訳を名乗らない終わり)として
   ;; 閉じた呼びは final 偽で運び、API の終わりで閉じた呼びは final 真で運ぶ。失敗ケース = 閉じた呼びを全部 final 真で運ぶ層 3(本番
   ;; aj-P8G6EKP31ZKWS761MSKBCXK5PD — 今すぐ送るで止めた呼びが最終の値として記録され、CLI の額に無い呼びが 1 本増えた)。
   (import doeff_claude_code [CallClosed Usage])
@@ -2519,7 +2516,7 @@
   (assert (= finals [False True]) (repr finals)))
 
 
-;; --- subagent の中の道具の答えの親(agora card ki-b25d579bf48b)-------------------------------------------------------------
+;; --- subagent の中の道具の答えの親-------------------------------------------------------------
 
 (val INNER-OUTPUT "agora exec: ticket x20261024000000-0a1b2c3d")
 
@@ -2531,7 +2528,7 @@
 (deftest test-headless-carries-the-parent-tool-call-of-subagent-tool-answers-fake [tmp-path]
   ;; 層 2 の ToolResult の parent-tool-use-id(subagent の中の道具の答えなら親の本体の呼びの id)は、AgentToolResultEvent の
   ;; parent_tool_use_id へそのまま運ばれ、本体の会話の答えと本体の道具の呼び(AgentToolUseEvent)は None。運ばない adapter では
-  ;; 上の層が subagent の中の Bash の答えを本体の手番の答えと取り違え、本体の手番を切る(agora card ki-b25d579bf48b)。
+  ;; 上の層が subagent の中の Bash の答えを本体の手番の答えと取り違え、本体の手番を切る。
   (import doeff_claude_code [FakeClaudeWorld])
   (val work (/ tmp-path "work"))
   (.mkdir work :parents True :exist-ok True)
@@ -2549,7 +2546,7 @@
   (assert (and uses (all (gfor event uses (is event.parent-tool-use-id None)))) (repr uses)))
 
 
-;; --- 出来事の記録(LaunchEffect.event_record・FollowUpEffect.record_note — agora card ki-31b41eac5071) ---------------------
+;; --- 出来事の記録(LaunchEffect.event_record・FollowUpEffect.record_note) ---------------------
 ;;
 ;; 上の層(agora の turn-host)は答えの記録を頁の読み(Events)の後に書いていて、頁の読みが秒〜分遅れると、記録を 2 秒しか待たない hook が
 ;; 答えた後の呼びを断った。記録の守り手は、層 2 が行を手番の記録に足した直後に、頁と同じ写し(events-of)で出来事にして畳み、畳みが答えた
@@ -2624,9 +2621,9 @@
   handle)
 
 
-;; --- 記録の守り手の手番の勘定(agora card ki-d59018b840f9)---------------------------------------------------------------
+;; --- 記録の守り手の手番の勘定---------------------------------------------------------------
 ;;
-;; 本番の turn-host で、adapter と層 2 の間の handler が ClaudeStartTurn を写し手 tap 抜きで作り直し(agora card ki-3f17ef920d2b)、記録に
+;; 本番の turn-host で、adapter と層 2 の間の handler が ClaudeStartTurn を写し手 tap 抜きで作り直し、記録に
 ;; 手番の text と呼びが 1 つも載らず、記録を読む hook が答えた後の呼びを断り続けた。守り手は写しと畳みの例外を黙って捨て、写し手が付かない
 ;; 事も外から見えなかった。守り手は手番を閉じる時に勘定を 1 度締め、落とした物と付かなかった写し手を session と手番の名つきで log に出す。
 ;; 失敗ケース: 写し手を落とす handler を挟んでも log に出ない・畳みの例外が log に出ない・1 手番で 2 行以上出る・壊れていない手番で出る。

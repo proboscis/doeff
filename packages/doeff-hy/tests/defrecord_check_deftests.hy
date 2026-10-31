@@ -1,4 +1,4 @@
-;;; defrecord の頭の辞書 {:tags … :check […]}(doeff_hy/record.hy)の検(agora-redesign #798)。
+;;; defrecord の頭の辞書 {:tags … :check […]}(doeff_hy/record.hy)の検。
 ;;;
 ;;; 確かめること: 検めが通る・落ちる・落ちた時の文言(型・欄・検め・値)・:tags が読める・
 ;;; 頭の辞書の無い前からの形がそのまま動く・展開の時に断る形・Program を返す検めを止める。
@@ -14,7 +14,7 @@
 (import doeff_hy._declarations [DefinitionTags])
 (import doeff_hy._static_view [static-view])
 
-(setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
+(setv CHAT-ID-PATTERN (re.compile r"chat-[0-9]{4}"))
 (setv KINDS (frozenset #("chat" "agent")))
 
 (defrecord ChatId
@@ -73,8 +73,8 @@
 
 
 (deftest test-check-passes-for-a-value-in-shape
-  (<- chat (Pure (ChatId :value "c-01M2QAJS4JHEH34YQ0T6S9TZXB")))
-  (assert (= chat.value "c-01M2QAJS4JHEH34YQ0T6S9TZXB"))
+  (<- chat (Pure (ChatId :value "chat-0001")))
+  (assert (= chat.value "chat-0001"))
   (assert (= (Span :start 0 :end 3) (Span :start 0 :end 3)))
   (with [(pytest.raises FrozenInstanceError)]
     (setattr chat "value" "c-x")))
@@ -103,7 +103,7 @@
   (<- _ (Pure None))
   (assert (= ChatId.__doeff_tags__ (DefinitionTags :context "chat" :role "type")))
   (assert (= ChatId.__doeff_checks__ #("(CHAT-ID-PATTERN.fullmatch value)")))
-  ;; docstring は source と型検査の投影にだけ残る — 実行時の __doc__ は欄の名から組む(card ki-ff2c33449b3f)。
+  ;; docstring は source と型検査の投影にだけ残る — 実行時の __doc__ は欄の名から組む。
   (assert (= ChatId.__doc__ "ChatId(*, value)"))
   (assert (is Span.__doeff_tags__ None))
   (assert (= Span.__doeff_checks__ #("(>= start 0)" "(<= start end)")))
@@ -114,7 +114,7 @@
 
 (deftest test-a-field-typed-as-a-checked-record-reuses-its-check
   (<- _ (Pure None))
-  (setv chat (ChatId :value "c-01M2QAJS4JHEH34YQ0T6S9TZXB"))
+  (setv chat (ChatId :value "chat-0001"))
   (assert (= (. (Participant :chat chat :kind "agent") kind) "agent"))
   (with [caught (pytest.raises ValueError)]
     (Participant :chat chat :kind "robot"))
@@ -128,8 +128,8 @@
   (assert (not (hasattr Plain "__doeff_tags__")))
   (assert (not (hasattr Plain "__post_init__")))
   ;; 型検査の投影の展開は前の形のまま(pyright が dataclass として読む)。実行の展開は欄の表だけを dataclass に作らせ、関数は展開が
-  ;; 書く(card ki-a0cca3bdb9a0 — 振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。関数の本体の外では
-  ;; _scoped-definition が文の並びを do に並べるだけ(Python の形は同じ — card ki-8a17293bc3e5)。
+  ;; 書く(振る舞いが同じ事は defrecord_shape_deftests.hy が確かめる)。関数の本体の外では
+  ;; _scoped-definition が文の並びを do に並べるだけ(Python の形は同じ)。
   (with [_ (static-view)]
     (assert (= (hy.repr (hy.macroexpand '(defrecord Plain #^ str key)))
                "'(do (defclass [(dataclass :frozen True :kw-only True)] Plain [] (annotate key str)))")))
@@ -145,11 +145,11 @@
 
 (deftest test-a-check-answering-true-skips-the-failure-path
   (<- _ (Pure None))
-  ;; 数の検(agora-redesign #2421): 答えが True そのものの検めは require-check を呼ばない — record を作るたびの費用
+  ;; 数の検: 答えが True そのものの検めは require-check を呼ばない — record を作るたびの費用
   ;; (require-check の :pre の isinstance 5 つと値の辞書・DoExpr の metaclass を通る isinstance)を払わない。
   ;; 直しを外すと(検めごとに require-check を呼ぶ形)、通る Span 1 つで 2 回・通る ChatId で 1 回と数えて赤。
   ;; 断る物は変わらない: 偽の検めは require-check が ValueError にし、True でない真の答え(Match)は通る。
-  (import doeff_hy._record_check :as record-module)   ; 展開が引く require-check の置き場(card ki-a28c20b93638)
+  (import doeff_hy._record_check :as record-module)   ; 展開が引く require-check の置き場
   (val original record-module.require-check)
   (val calls [0])
   (setattr record-module "require_check"
@@ -158,7 +158,7 @@
              (original #* args)))
   (try
     (Span :start 0 :end 3)
-    (ChatId :value "c-01M2QAJS4JHEH34YQ0T6S9TZXB")
+    (ChatId :value "chat-0001")
     (assert (= (get calls 0) 0) (get calls 0))
     (with [caught (pytest.raises ValueError)]
       (Span :start 3 :end 1))

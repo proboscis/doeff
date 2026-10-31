@@ -1,4 +1,4 @@
-"""The three timed waits on a wall clock — WaitWithin, WaitTicks (agora-redesign #3066) and RaceWithin.
+"""The three timed waits on a wall clock — WaitWithin, WaitTicks and RaceWithin.
 
 All race the futures against one deadline timer that completes with DEADLINE_PASSED; they differ only in
 which futures, how long the deadline is and in the answer. The async and sync handlers share this, so their

@@ -3,7 +3,7 @@
 package の根は import を遅らせるため、名を ``__getattr__(name) -> Any`` で配る(``_LAZY_EXPORTS``)。型の検査は
 ``__getattr__`` の答えの型しか知らないので、``from doeff_agents import LaunchEffect`` の ``LaunchEffect`` は ``Any``
 に見え、使い手の ``isinstance(x, LaunchEffect)`` の絞りや欄の型が全部 Unknown になる(agora-controllers の日次の
-型の赤 — card ki-9ca6c2f97ea7 の ``LaunchEffect.agent_type``)。根は ``if TYPE_CHECKING:`` の節で、遅延の表の名を
+型の赤 — ``LaunchEffect.agent_type``)。根は ``if TYPE_CHECKING:`` の節で、遅延の表の名を
 全部、表と同じ定義元から import する(doeff-adr の ``__init__.py`` と同じ形)。この検は、節と表が 1 名ずつ同じ
 定義元で揃う事を、根の file の構文木で確かめる(表に足して節に足し忘れた名は、型の検査で黙って ``Any`` に戻る)。
 """

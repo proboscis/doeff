@@ -11,7 +11,7 @@ monitor tick, fake CLI in a real tmux pane, result channel spoken via the
 result MCP server's entry module (`python -m doeff_agents._sessionhost.result_mcp`).
 issue #575 M1: the retired Rust build path is gone — the daemon under test
 defaults to the entry module on the running interpreter (no console script, no
-PATH lookup — card ki-bb337cfd0336), with `CONFORMANCE_AGENTD_BIN` as the
+PATH lookup), with `CONFORMANCE_AGENTD_BIN` as the
 explicit seam.
 """
 
@@ -318,7 +318,7 @@ def resolve_agentd_command() -> tuple[str, ...]:
     at an alternative agentd-compatible executable (a single binary path that
     takes the host flags below).  Unset, the suite runs the host's entry
     module on the running interpreter, mirroring the StartSessionHost handler
-    of ensure_agentd (ADR-DOE-AGENTS-004, card ki-bb337cfd0336): no console
+    of ensure_agentd (ADR-DOE-AGENTS-004): no console
     script and no PATH lookup decide which host starts (issue #556).  A seam
     that is not an executable file is a loud AssertionError — no silent
     fallback (R7).
@@ -715,7 +715,7 @@ class AgentdHarness:
             # run's group (`timeout`) does not land on the daemon directly —
             # it goes through the orphan boundary below, which reaps the
             # launched sessions before exiting (the graceful SIGTERM path
-            # deliberately does not — agora-redesign #3026).
+            # deliberately does not).
             start_new_session=True,
             env={
                 **process_environment(),

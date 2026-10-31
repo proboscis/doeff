@@ -250,7 +250,7 @@
   (assert (= (get STATUS-OF-ERROR "internal") 500) STATUS-OF-ERROR))
 
 
-;; --- 計算の pool の負荷の系列と一覧の読みの上限(ADR-DOE-RECORDS-002 R6・card ki-42c40cb6014d)-----------------------------------
+;; --- 計算の pool の負荷の系列と一覧の読みの上限(ADR-DOE-RECORDS-002 R6)-----------------------------------
 ;; 反例: 前の形は pool の詰まり(大きな limit の束の読みが pool の全部の thread を塞ぐ)を測る計器を持たず、待ちは要求ごとの区間の秒の
 ;; handler と encode に混ざって見分けられなかった。一覧の読みの limit にも上限が無かった。
 

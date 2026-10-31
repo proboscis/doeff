@@ -56,7 +56,7 @@
 
 (defn #^ bool new-generation-live [#^ tuple rows #^ str name #^ JobSpec spec]  ; defk にできない: coordinator の純粋な判断が呼ぶ
   "担い手の行に、今の宣言の spec で起こした Service name の process が動いている形で在るか(期限の起点)。指紋の比べは spec-hash-matches
-   (中身の鍵の在る宣言を古い worker が版の指紋で起こした process も数える — card ki-81bf84ac6590)。"
+   (中身の鍵の在る宣言を古い worker が版の指紋で起こした process も数える)。"
   (any (gfor row rows (and (= row.name name) (spec-hash-matches spec row.spec-hash) (in row.phase LIVE-PHASES)))))
 
 

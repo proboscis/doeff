@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(offset_of(src, Position { line: 9, character: 0 }), src.len());
     }
 
-    /// 行の表から戻す `LineIndex::offset`(agora-redesign #1632)は、source の頭から数える `offset_of` と同じ答えを返す —
+    /// 行の表から戻す `LineIndex::offset` は、source の頭から数える `offset_of` と同じ答えを返す —
     /// 日本語・絵文字の列、行の外の列、source の外の行、末尾の改行の後の行も含めて。
     #[test]
     fn line_index_offset_agrees_with_offset_of() {

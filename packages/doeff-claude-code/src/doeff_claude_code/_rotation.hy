@@ -1,4 +1,4 @@
-;;; 大きな transcript の差し替え(card ki-d96c2ca8a5a1)— `--resume` の前に、会話の jsonl を最後の compact の境から後だけにする。
+;;; 大きな transcript の差し替え— `--resume` の前に、会話の jsonl を最後の compact の境から後だけにする。
 ;;;
 ;;; 訳(実測 2026-10-18・zeus・claude 2.1.292): CLI は `--resume` の init を出す前に transcript を頭から全部読む(冷えた 216 MB の file で
 ;;; read_bytes = 216 MB)。書き足し続けて 6,570 片に割れた file を混んだ USB の disk から読むと 0.76〜2.4 MB/s で、読むだけで約 127 秒 —

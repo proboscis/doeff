@@ -45,7 +45,7 @@
    中か)— 版を据え置く印 hold-version に写す(#3684)。既定の値は持たない: 既定があると、新しい読み手が渡し忘れた時に drain 中の
    worker が新しい版を黙って起こす(既定が無ければ、渡し忘れは呼んだ所で引数の不足として止まる)。
    Program の job の行に版 versions(名 → 版の object)が無ければ DeclaredReplyMalformed — 古い coordinator(7decfe5f7 の前)の返事で、
-   配備の順の誤り(coordinator を先に上げる)を名乗る(card ki-01d1f8cb0391)。"
+   配備の順の誤り(coordinator を先に上げる)を名乗る。"
   (when (and (in "program" job) (not (isinstance (.get job "versions") dict)))
     (raise (DeclaredReplyMalformed (.format "heartbeat の返事の Program の job {} の行に versions(名 → 版の object)が無い: {!r} — 古い coordinator の返事(coordinator を worker より先に上げる)"
                                             (.get job "name") (.get job "versions")))))
@@ -60,7 +60,7 @@
            :retired-ms (.get job "retiredMs")
            ;; 退いた process を同時に残す数の上限 R(#4072 の D-3 の改め — 宣言した handoff の job だけが持つ・無ければ None = worker の既定)。
            :retired-limit (.get job "retiredLimit")
-           ;; 退きの保ちを持つ退いた process の世代の名(card ki-e3531030eb37 — 返事の handoff の job で誰かが持つ時だけ在る・無ければ空 =
+           ;; 退きの保ちを持つ退いた process の世代の名(返事の handoff の job で誰かが持つ時だけ在る・無ければ空 =
            ;; 寿命の上限で止める)。
            :retired-held (tuple (.get job "retiredHeld" []))
            ;; 世代をまたぐ入れ替えの印(AL-D2 — 退いた世代への返事の handoff の job だけが持つ・無ければ None = 動かし続ける)。
@@ -69,14 +69,14 @@
            :elder-runs (bool (.get job "elderRuns" False))
            ;; Program の job(改訂 1 の F・G): 詰めた Program の置き場のキーと、子の環境変数。
            :program (.get job "program")
-           ;; 子の入口が比べる送り手の版 = 宣言の版(Program の job の行は必ず持つ — cache の file は版ごと・card ki-172e63fed4c7)。
+           ;; 子の入口が比べる送り手の版 = 宣言の版(Program の job の行は必ず持つ — cache の file は版ごと)。
            :versions (if (in "program" job) (environ-pairs (get job "versions")) None)
            :environ (environ-pairs (.get job "environ" {}))
            ;; 途絶しても動かし続けてよい印(#2804 — 移せる先の無い job だけが持つ・無ければ偽 = 古い coordinator の返事も同じ)。
            :keep-when-cut-off (is (.get job "keepWhenCutOff" False) True)
            ;; 版を据え置く印(#3684 — drain 中の worker は、drain の間に宣言し直された新しい版を準備も起動もしない・worker_policy.plan-job)。
            :hold-version draining
-           ;; 中身の鍵(card ki-81bf84ac6590 — 送り手が鍵を渡した job だけが持つ・無ければ None = 版と commit で宣言の変わりを判じる)。
+           ;; 中身の鍵(送り手が鍵を渡した job だけが持つ・無ければ None = 版と commit で宣言の変わりを判じる)。
            :content (.get job "content")))
 
 
@@ -86,7 +86,7 @@
    2026-09-25 から返事に draining を必ず載せ、旧い形の返事を作る相手はもう無いので、欄の無い返事は誤り(DeclaredReplyMalformed)。
    handover-pending = 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない(AL-D2k — この間 ready の file を書かない)。
    coordinator は真の時だけ書くので、欄の無い返事は偽。superseded = この世代は退いた世代(同じ名の新しい世代が名乗った後の返事 —
-   coordinator の superseded-reply。Pod の job の label の答え手 worker/protocol/pod_labels が読む・card ki-a66bb71f4152)。真の時だけ
+   coordinator の superseded-reply。Pod の job の label の答え手 worker/protocol/pod_labels が読む)。真の時だけ
    書かれるので、欄の無い返事は偽。ほかの欄(tasks・warm・timing・revision など)はここでは読まない。JSON の綴りは coordinator/protocol/replies の heartbeat-reply-json。"
   {:tags {:context "worker" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ (get tuple #((get dict #(str object)) ...)) jobs)
@@ -123,7 +123,7 @@
   specs)
 
 
-;; 子の入口の名(coordinator の JOB-ENTRY と同じ — card ki-7a7a1dcb1933)。子は job の root の版の doeff で起きるので、起こす宿が root の
+;; 子の入口の名(coordinator の JOB-ENTRY と同じ)。子は job の root の版の doeff で起きるので、起こす宿が root の
 ;; 完成の印の置き場の名へ替える(JobSpec.entry-at — _worker の無い古い版の root では区画を隠す前の名)。
 (val JOB-ENTRY "doeff_cluster._worker.entry.job_entry")
 

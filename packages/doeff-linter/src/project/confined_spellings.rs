@@ -1,4 +1,4 @@
-//! DOEFF148: 書いてよい file を決めた綴り(agora-redesign #1373・#1436 — 元は agora-controllers の一時の判定
+//! DOEFF148: 書いてよい file を決めた綴り(#1436 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/intake_only_rules.hy の 3 の一部・4・6・7 の語・8 の前半・9)。
 //!
 //! architecture.hy の `:confined-spellings [(confined-spelling "名" :patterns [r"…"] :files [..] :except [..] :why "…") …]` の群ごとに、
@@ -44,7 +44,7 @@ pub struct ConfinedFinding {
 
 /// 群ごとに `:except` の外の当たりを探す(群の宣言の順・path の順)。読めなかった file は errors へ積む。focus(命令の行の名指し)が
 /// 在れば、その下の file だけを読む — 当たりは file ごとに 1 件でその file に付くので、答えは全部を読んで名指しで絞った時と同じ
-/// (母集団 0 の知らせは glob で決まり、読まない)。1 file の commit の hook で群ごとに母集団を全部読んでいた(agora-redesign #1418)。
+/// (母集団 0 の知らせは glob で決まり、読まない)。1 file の commit の hook で群ごとに母集団を全部読んでいた。
 pub fn find(root: &Path, groups: &[ConfinedSpelling], architecture_rel: &str, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
     let mut out = Vec::new();
     let mut errors = Vec::new();
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn named_paths_read_only_the_named_files() {
-        // agora-redesign #1418: 名指しの下の file だけを読む — 名指しの外の読めない file(UTF-8 でない)を読まず、当たりは名指しの分だけ。
+        // 名指しの下の file だけを読む — 名指しの外の読めない file(UTF-8 でない)を読まず、当たりは名指しの分だけ。
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("s")).unwrap();
         std::fs::write(dir.path().join("s/a.hy"), "(PostIntake x)\n").unwrap();

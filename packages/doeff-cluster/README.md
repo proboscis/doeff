@@ -153,7 +153,7 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
 - task・切り離した task・温める頼みも同じ `needs` を持ち、空の needs は断ります。
 - 1 台の worker が止まった時、他に置ける worker が在る常駐の job は coordinator が移します。置く時(移す時も)は、置いた job と surge の
   `settleMiB` の和 + その job の `settleMiB` が worker の `memoryMiB` 以下かだけを照らし(job を数では縛らない・`memoryMiB` を名乗らない
-  worker は縛らない・memory を知らない job は置かない — card ki-2acb63aec0fd)、移ってくる job の起動の山は照らしません。
+  worker は縛らない・memory を知らない job は置かない)、移ってくる job の起動の山は照らしません。
   宣言の側は `coordinator/core/failover_policy` の `failover-refusals`(N+1 の判断)で前もって照らします: どの job も置ける worker が
   2 台以上ある(機体ごとの job と、1 台に縛る訳を `:single-host "<訳>"` で宣言した job を除く)・移ってくる job の
   起動の山が memory の予算に入る・離す組の両方を置ける worker が無い。答えは破りの文の列(空 = 通る)です。
@@ -519,7 +519,7 @@ handoff の process を終わりまで回してから退くので、版上げで
 | ConfigMap `worker-prepare` | `/opt/worker-prepare` | 起動の前に 1 度実行する script(キー `prepare.sh`・非 0 なら起動しない) | 実行せずに起動する |
 | ConfigMap `worker-shell` | `/opt/worker-shell` | job の子が使う shell の script | そのまま起動する |
 | Secret `worker-repos` | `/etc/worker-repos` | `WORKER_REPOS` の deploy key と known_hosts | 起動する(要る key が無ければ boot.sh が止まる) |
-| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `taskReserve`(task のために空けておく数)・`backgroundRoom`(背景の仕事を同時に置ける数 — task の空きはこの 2 つの和から置いた task を引いた数で、常駐の job の数に依らない)・`memoryMiB`(常駐の job の memory の予算 — coordinator は置いた job の settle の和 + 新しい job の settle がこの値以下の時だけ置く)と、省ける欄の置ける組の印 `pools`(行の `capacity` は読まない — 上に載る系が読まなくなるまで残す・card ki-2acb63aec0fd)(`pool-` で始まる名の列 — heartbeat の `provides` に足す)。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。`pools` に機体の印 `host-`・node の label から導く能力・`pool-` で始まらない名を書いた file は崩れた file。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
+| ConfigMap `worker-room`(この package が持つ — `deploy/k8s/workers/worker-room.json`) | `/etc/worker-room`(`WORKER_ROOM_FILE`) | 機体の名ごとの枠 `taskReserve`(task のために空けておく数)・`backgroundRoom`(背景の仕事を同時に置ける数 — task の空きはこの 2 つの和から置いた task を引いた数で、常駐の job の数に依らない)・`memoryMiB`(常駐の job の memory の予算 — coordinator は置いた job の settle の和 + 新しい job の settle がこの値以下の時だけ置く)と、省ける欄の置ける組の印 `pools`(行の `capacity` は読まない — 上に載る系が読まなくなるまで残す)(`pool-` で始まる名の列 — heartbeat の `provides` に足す)。worker は heartbeat の前に読み直して名乗るので、中身を変えても Pod を作り直さずに効く(kubelet が file を入れ替える 1 分前後の後)。`pools` に機体の印 `host-`・node の label から導く能力・`pool-` で始まらない名を書いた file は崩れた file。読めない・崩れた間は前の値のまま、Worker の status の `roomFile` に出る | Pod が起きない(既定の枠で起きない) |
 | ConfigMap `worker-version`(この package が持つ — `deploy/k8s/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 

@@ -1,4 +1,4 @@
-//! 設定の知らない鍵と規則の ID の知らせ(DOEFF100・agora-redesign #848)。
+//! 設定の知らない鍵と規則の ID の知らせ(DOEFF100)。
 //!
 //! 設定(pyproject の `[tool.doeff-linter]` の全部の段・architecture.hy)は linter より先に進むことがある — agora-controllers が
 //! 新しい鍵を書いた後、置き場の binary が組み直されるまでの間。その間に lint 全体を設定の誤り(終了コード 2)で止めると、

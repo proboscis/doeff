@@ -1,4 +1,4 @@
-"""ClusterState の欄に写像の型(dict・Mapping・FrozenMap)が 0 であることの網(再発の網 — card ki-aa9ec1f5e1d8・#2708 の G)。
+"""ClusterState の欄に写像の型(dict・Mapping・FrozenMap)が 0 であることの網(再発の網・#2708 の G)。
 
 12 欄(workers・tasks・placements・surges・drains・board・meta・rollouts・refused・programs・warms・handoffs)は Table[V] へ移した
 (#2708 の T1〜T6)。写像の欄を足し直すと、1 行の書きで全行を作り直す費用(設計 4.3)が戻る。欄の注記は dataclass の実体の型なので、

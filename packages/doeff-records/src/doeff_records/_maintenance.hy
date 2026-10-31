@@ -13,22 +13,22 @@
 ;;;                  (送りの答え — 下)
 ;;;   ReadChangeLog  変更の列を、after より後から番号の順に limit 件まで、表と保持の期限で絞らずに読む(送りの関数の読み — 下)。
 ;;;                  WatchChanges は頼んだ表の、読み手に見える変更だけを答えるので、送りがそれで読むと、置き場の今の宣言に無い
-;;;                  (退役した)表の変更と期限を過ぎた終端の行の変わりを送らずに刈る(card ki-e4ca6fc87109 — 2026-10-11 の使い手の本番で、
+;;;                  (退役した)表の変更と期限を過ぎた終端の行の変わりを送らずに刈る(2026-10-11 の使い手の本番で、
 ;;;                  退役した 4 表の変更 約 22,450 行が送り先に無いまま刈られた)
 ;;;
-;;; 消す前に送る(card ki-c32e43651f2e・親 ki-e26367fd8fcb — 2026-10-11 11:21 に使い手の記録の Postgres の disk が 100% に
+;;; 消す前に送る(2026-10-11 11:21 に使い手の記録の Postgres の disk が 100% に
 ;;; なった。古い変更を消さずに階層つきの保管へ送ってから外す): 手入れの計画が送りの関数 archive(keep-seconds → Program)を持てば、
 ;;; 刈りの前にそれを走らせ、答え ArchivedThrough の番号までだけを刈る(送りが Unreachable の回は刈らない)。送りは書きの錠の外で走る
 ;;; (送り先の I/O で書き手を止めない)。送り先とその効果は使い手の composition が決める(この package は送り先を知らない)。
 ;;;
-;;; 出来事を送ってから外す(card ki-707aad0f88e8): 宣言 StreamDecl.archive-before-retire の列の、保持の期限を過ぎた出来事は、回収
+;;; 出来事を送ってから外す: 宣言 StreamDecl.archive-before-retire の列の、保持の期限を過ぎた出来事は、回収
 ;;; (SweepExpired)も書き(追記が触る鍵・組の片付け)も置き場から外さない — 書きは冪等キーを覚えるだけ(読みと冪等の答えは前と同じ)。
 ;;; 外すのは手入れの計画の出来事の送りの関数 archive-events(出来事の頁 → 答えが EventsArchived | Unreachable の Program)が
 ;;; 送り先に在ると確かめた出来事だけ。手入れの回は刻 T を 1 度読み、その境で期限を過ぎた出来事を頁で読み(ReadExpiredEvents)、
 ;;; 頁ごとに送り、確かめた番号のうち頁に在った物だけを同じ刻 T の境で外す(RetireArchivedEvents — 読みと外しの間に新しく期限を
 ;;; 過ぎた出来事は頁に無く、境の読み直しでも外れない)。送りが Unreachable の頁で回を終える(その頁と残りは次の回)。
 ;;;
-;;; 鍵の覚えを外す(card ki-4ebaefac6668): 置き場を去った出来事の冪等キーの覚え(values.RetiredKey)は、前は外さず、列に積んだ出来事の数
+;;; 鍵の覚えを外す: 置き場を去った出来事の冪等キーの覚え(values.RetiredKey)は、前は外さず、列に積んだ出来事の数
 ;;; だけ際限なく育った。列の宣言の覚え方 StreamDecl.key-memory(_values.hy の KeyMemory の註)が RememberKeysFor の列は、覚えた刻から
 ;;; 宣言の長さを過ぎた覚えを SweepExpired が外し(答え Swept.forgotten)、RememberNoKeys の列は出来事が置き場を去る時に覚えを残さない。
 ;;; 送ってから外す列の覚えは、出来事が送り先に在ると確かめて外れるまで外さない — 送り先に届かない間は出来事も覚えも置き場に残り、
@@ -55,7 +55,7 @@
 (defclass [(dataclass :frozen True)] Swept []
   "回収の結果: rows = 消した行の数(変更の列に RowRemoved を積んだ数)/ forgotten = 外した鍵の覚えの数(覚え方の長さを過ぎた覚え —
    _values.hy の KeyMemory の註)/ write-keys = 外した行の書きの冪等キーの覚えの数(覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた
-   覚え — card ki-78c6d663491f)。"
+   覚え)。"
   (#^ int rows)
   (setv #^ int forgotten 0)
   (setv #^ int write-keys 0))

@@ -1,5 +1,5 @@
 ;;; 止めの合図の契約テスト — 同じ効果 StopRequested に答える本物(os-signal-stop-handler)と fake(scripted-stop-handler)が、
-;;; 同じ deftest を通る(agora-redesign #1159)。解釈器の組み立ては stop_contract_handlers.hy。
+;;; 同じ deftest を通る。解釈器の組み立ては stop_contract_handlers.hy。
 ;;;
 ;;; 合図を起こす手段(SendStop — 本物は process へ本当の signal、fake は RaiseStop)だけが解釈器ごとに違い、読む側の性質を共通の
 ;;; deftest で見る:
@@ -63,7 +63,7 @@
     (run (with_handlers [handler] (ask-twice)))))
 
 
-;; --- AwaitStop(止めまで待つ口 — agora-redesign #2205)-------------------------------------------------------------------
+;; --- AwaitStop(止めまで待つ口)-------------------------------------------------------------------
 ;; 静かな間に眠る loop が、自分の待ち(表の変化・期限)と AwaitStop を Race して、数秒ごとに起きて StopRequested を問わずに止めに気づく。
 ;; 本物と fake が同じ性質を持つ: 既に来た止めにはすぐ答える・待っている間に来た止めで起きる・打ち切った待ちは後の止めを妨げない。
 

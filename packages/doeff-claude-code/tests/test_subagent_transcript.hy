@@ -1,4 +1,4 @@
-;; subagent の transcript から subagent の呼びごとの消費を読む検(card ki-e798888dce4e)。
+;; subagent の transcript から subagent の呼びごとの消費を読む検。
 ;;
 ;; 背景の task を止めた CLI(本番の起こし方)は subagent の呼びの行を stdout に出さないので、handler は subagent の task の報せの行で
 ;; その subagent の transcript を読み、呼びごとに畳んだ SubagentTranscript の行を手番の記録へ足す。読めない transcript は呼びを
@@ -77,7 +77,7 @@
   (assert (is-not first.at.tzinfo None) (repr first)))
 
 (deftest test-a-subagent-call-names-its-request-id
-  ;; card ki-b99ace070bf0: transcript の行は requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と
+  ;; transcript の行は requestId(API の呼びの要求の id — CLI の telemetry の api_request の request_id と
   ;; 同じ値)を持つ。呼びに畳んでも残す。無い行の呼びは None。
   (val data (.encode (.join "" [(line-of (| (assistant "msg_1" "claude-opus-5-5" FIRST-USAGE AT) {"requestId" "req_1"}))
                                 (line-of (| (assistant "msg_1" "claude-opus-5-5" FINAL-USAGE LATER) {"requestId" "req_1"}))
@@ -114,7 +114,7 @@
   (assert (= (lfor call (. (read-of (.encode (line-of own) "utf-8")) calls) call.request-id) ["req_2"])))
 
 (deftest test-a-fork-continued-by-send-message-does-not-count-the-copied-main-call
-  ;; 本番の形(CLI 2.1.306・2026-10-25 の session e2729ddb の agent abc33f21e894a978f・ae5cacf2a03239b31 — card ki-603188dbe54d): 道具
+  ;; 本番の形(CLI 2.1.306・2026-10-25 の session e2729ddb の agent abc33f21e894a978f・ae5cacf2a03239b31): 道具
   ;; Agent の呼び toolu_01L9NGY… で起こした fork を、本体が道具 SendMessage の呼び toolu_01UgfKk… で続けた。終わりの報せは続けた道具の
   ;; 呼びの id を名乗るので、読み手の親の道具の呼びの id(read-of の toolu_parent)は、頭の写しの tool_use の id(toolu_started)と
   ;; 合わない。失敗ケース = 変更前は道具の呼びの id で写しを見分けたので、続けた fork の写し(本体の呼び req_main)を subagent の呼びに
@@ -139,7 +139,7 @@
   (assert (is read.problem None) (repr read)))
 
 (deftest test-a-call-with-no-closed-line-is-named-as-a-mid-call-output
-  ;; 本番の形(CLI 2.1.306・2026-10-24 の session 2dd12560 の agent aa9ff76941f4f2afe の写し — card ki-edb2b5947d6a): 道具の呼びを
+  ;; 本番の形(CLI 2.1.306・2026-10-24 の session 2dd12560 の agent aa9ff76941f4f2afe の写し): 道具の呼びを
   ;; 2 つ並べた途中の呼び req_011CgMywu8G1HrbmLVkxTaog は、thinking と 2 つの tool_use の block の行(transcript の行 86・87・89)を
   ;; どれも stop_reason null・出力 6 のまま書き、message_delta の値(stop_reason tool_use・最終の出力 441 — OTel の api_request の値)を
   ;; 載せた行が来なかった。読み手はその呼びを「出力が途中の値」と名指す(上の層が telemetry の同じ request_id の値で記録する)。閉じた
@@ -186,7 +186,7 @@
 
 (deftest test-a-finished-subagent-transcript-is-whole-when-its-last-call-is-closed
   ;; 答え終えた subagent(報せの status completed)の transcript は、最後の呼びが答えを閉じた(stop_reason が end_turn など)所で書き
-  ;; 切った読み — 報せの行の total_tokens とは比べない(card ki-3d45f5857239)。最後の呼びが道具の答えを待つ(tool_use)・stop_reason を
+  ;; 切った読み — 報せの行の total_tokens とは比べない。最後の呼びが道具の答えを待つ(tool_use)・stop_reason を
   ;; 名乗らない・呼びがまだ無い読みは TRUNCATED(CLI は報せの後に書き足す)で、それでも読めた呼びは載せる(捨てて 0 にしない)。
   (val first-call (line-of (assistant "msg_1" "m" FINAL-USAGE AT :stop-reason "tool_use")))
   (val last-call (line-of (assistant "msg_2" "m" OTHER-USAGE LATER :stop-reason "end_turn")))
@@ -316,7 +316,7 @@
 
 (deftest test-a-read-with-a-gap-keeps-the-calls-it-read-and-names-the-gap
   ;; 失敗ケース: 最後の行が途中で切れた・途中の行が JSON でない・UTF-8 でない・呼びの行が時差つきの刻を名乗らない transcript も、
-  ;; 読めた行の呼びは載せ(捨てて 0 にしない — card ki-3d45f5857239)、欠けの訳と手がかりを添える。読めない行の呼びは発明しない。
+  ;; 読めた行の呼びは載せ(捨てて 0 にしない)、欠けの訳と手がかりを添える。読めない行の呼びは発明しない。
   (val good (line-of (assistant "msg_1" "m" FINAL-USAGE AT)))
   (val other (line-of (assistant "msg_2" "m" OTHER-USAGE LATER)))
   (val cases [#((.encode (+ good (.rstrip other "\n")) "utf-8") SubagentTranscriptProblem.TRUNCATED ["msg_1"])
@@ -378,7 +378,7 @@
   ;; 後の CLI の手番の終わり(result の行)の直前に SubagentTranscript の行を 1 つ足し、その呼び(実 model・4 種 token — 出力は最後の
   ;; 値・呼びの id・親の道具の呼び・呼びの刻)を運ぶ。失敗ケース = 変更前は subagent の呼びがどの行にも無い。替え玉の報せの total_tokens
   ;; は本番の実測の形で最後の呼びの和より多く(+1,801)、答えの本文は JSON の文字列の中に生の U+2028 を持つ — どちらでも呼びを捨てない
-  ;; (失敗ケース = card ki-3d45f5857239 の前は、報せの値と合わない TRUNCATED・U+2028 で割れた UNREADABLE で呼びを全部捨てた)。替え玉の
+  ;; (失敗ケース = 直す前は、報せの値と合わない TRUNCATED・U+2028 で割れた UNREADABLE で呼びを全部捨てた)。替え玉の
   ;; transcript は本番の CLI 2.1.292 と同じく最後の答えの呼びを stop_reason null・出力 3 で書き、最終の出力 900 は道具の結果の行の
   ;; tool_use_result にだけ在る — handler はそれで書き切りを判じ、出力を 900 で運ぶ(失敗ケース = stop_reason だけで判じた版は、
   ;; 書き切った transcript を TRUNCATED と誤り、出力を 3 で運んだ — 本番 10-23 の 5 件)。
@@ -408,7 +408,7 @@
 
 (deftest test-a-subagent-transcript-with-a-gap-carries-the-calls-it-read-and-leaves-a-log-line [tmp-path]
   ;; 失敗ケース: transcript が無い・途中で切れた・途中の行が壊れた時は、読めない行の呼びを発明せず、読めた行の呼びは載せ(捨てて 0 に
-  ;; しない — card ki-3d45f5857239)、訳を行に載せ、上の層へ渡す所で log の行(SUBAGENT-TRANSCRIPT-LOG・event unread)に訳と手がかりと
+  ;; しない)、訳を行に載せ、上の層へ渡す所で log の行(SUBAGENT-TRANSCRIPT-LOG・event unread)に訳と手がかりと
   ;; 載せた呼びの数を残す。無い・切れた transcript は CLI が書き終えるのを待つ上限(SUBAGENT-SETTLE-SECONDS)まで読み直してから訳を
   ;; 載せる。手番そのものは成功のまま。切れた transcript の呼びは、閉じた行(呼びの途中の出力 3)の値で載る。
   (for [#(shape problem outputs) [#("absent" SubagentTranscriptProblem.ABSENT [])

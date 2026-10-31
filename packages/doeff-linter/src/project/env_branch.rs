@@ -1,4 +1,4 @@
-//! DOEFF168: 業務の層が環境の名の値や dry-run の印で分岐しない(agora-redesign #1906 — law business-code-has-no-environment-branch)。
+//! DOEFF168: 業務の層が環境の名の値や dry-run の印で分岐しない(law business-code-has-no-environment-branch)。
 //!
 //! 環境の名の値・dry-run の印の綴りと、当てる層は repo の architecture.hy の `:environment-branches` にだけ在り、ここには書かない。
 //! 業務の層は環境を知らない — 環境の違い(本番・模擬・dry-run)は handler の組の差し替えだけで表す。当てる形(Hy の form の木):

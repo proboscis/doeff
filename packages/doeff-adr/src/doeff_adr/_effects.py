@@ -2,15 +2,14 @@
 deftest の検を表に載せる effect RegisterDeftest と、登録簿を読み書きする effect RegisterAdr・ClearRegistry・EnforcementIds・
 GetEnforcement と、登録簿から答える handler を返す工場 adr_registry。
 
-決め: GetAdr は依頼書 lt-TNNNQAXTY6XY4RAKWDDFX62NSM の問い get-adr の答え lt-82V6XBGCCR214RCF3SRKSZGTP5(effect にする・card
-ki-24a2bca4339f・ADR-DOE-API-001 R20)。AdrIds は依頼書 lt-SNXDP773DP61WQ8S3D5HSHW2B1 の答え lt-NJMPGF51C0FBF49SC430JWEQ82
-(effect にする・card ki-2d28425e0d40・ADR-DOE-API-001 R21)。前の関数 get_adr は外の repo の呼び手を書き換えた後に
-消した(本体は内側の registry._get_adr・card ki-c46e83ebd6ac)。前の関数 adr_ids は外の repo の呼び手を書き換えた後に消した(本体は内側の registry._adr_ids)。
-AssertAdrContract・AssertAllAdrContracts・RegisterDeftest は依頼書 lt-6SE07X4256P323ZGZVNSEF9M95 の問い adr-scope の答え
-lt-RA4FZ731JNZQ6JEGVAYD35XCAZ(doeff-adr の残りの名を同じ向きで直す・card ki-54e559d3c0e7・ADR-DOE-API-001 R30)。前の関数
+決め: GetAdr は effect にする(ADR-DOE-API-001 R20)。AdrIds も effect にする
+(ADR-DOE-API-001 R21)。前の関数 get_adr は外の repo の呼び手を書き換えた後に
+消した(本体は内側の registry._get_adr)。前の関数 adr_ids は外の repo の呼び手を書き換えた後に消した(本体は内側の registry._adr_ids)。
+AssertAdrContract・AssertAllAdrContracts・RegisterDeftest も、doeff-adr の残りの名を同じ向きで直して
+effect にした(ADR-DOE-API-001 R30)。前の関数
 assert_adr_contract・assert_all_adr_contracts・register_deftest_enforcement は外の repo に呼び手が無いので、移し替えの層を残さずに
 消した(本体は内側の registry._assert_adr_contract・registry._register_deftest_enforcement)。
-RegisterAdr・ClearRegistry・EnforcementIds・GetEnforcement も同じ答え(card ki-dab8943cf664・ADR-DOE-API-001 R32)。前の関数
+RegisterAdr・ClearRegistry・EnforcementIds・GetEnforcement も同じ答え(ADR-DOE-API-001 R32)。前の関数
 register_adr・clear_registry・enforcement_ids・get_enforcement も外の repo に呼び手が無いので、移し替えの層を残さずに消した(本体は
 内側の registry._register_adr・_clear_registry・_enforcement_ids・_get_enforcement)。macro defadr の展開は ADR の載せも
 RegisterAdr として import の時にこの handler の下で走らせる。
@@ -177,7 +176,7 @@ def adr_registry(
         effect: RegisterAdr | ClearRegistry | EnforcementIds | GetEnforcement,
     ) -> AdrSpec | list[str] | EnforcementRef | SemgrepSpec | None:
         """登録簿の載せ・空け・検の引きの答えを、この handler の 2 つの表から作る(RegisterAdr の検の id はこの handler の検の表から
-        種類を読む — card ki-dab8943cf664)。"""
+        種類を読む)。"""
         match effect:
             case RegisterAdr():
                 return _register_adr(

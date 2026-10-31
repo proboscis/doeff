@@ -16,10 +16,10 @@
 ;;;     割った時に、固定されていない root を古い順に消す(選びは env_upkeep.sweep-choice — project ごとの新しい 2 つは残す・#3732・#4051。
 ;;;     候補を全部消しても空きが戻らない時は準備を disk-full で断る)・uv の cache を prune(待たない)・
 ;;;     7 日使われない wheel を消す。消すのは worker が作った dir だけ。数えは前の数えと完成の時刻・使った時刻が同じ root を歩かずに
-;;;     大きさを使い回す(card ki-a619d34de8c9 — env_upkeep の kept-bytes)。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
+;;;     大きさを使い回す(env_upkeep の kept-bytes)。数え(root ごとの MeasureTree)と消し(木の RemoveTree)はループの外の
 ;;;     task で走らせ、ループは待たない(#3715 — 2026-10-06 05:24〜05:36 に root 25 個の数えと消しがループの中で 11 分走り、heartbeat が途絶えて
 ;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
-;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(card ki-0da6a0186492 —
+;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(
 ;;;     保存先を WalkTree と file ごとの StatPath で歩いた掃除が zeus で scheduler を 10〜19 秒止めた)。
 ;;;     選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
 ;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
@@ -64,7 +64,7 @@
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
 ;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes = 共有の disk の空き・roots-bytes = roots の合計(hardlink を重ねて数える)・
 ;; cap-bytes = roots の合計の上限・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数 — #3732・walked = この数えで
-;; 木を歩いた root の数 — 前の数えから大きさを使い回した root は数えない・card ki-a619d34de8c9)。
+;; 木を歩いた root の数 — 前の数えから大きさを使い回した root は数えない)。
 (val SWEEP-LOG "worker: 掃除の選び")
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
 ;; took-ms = 数えの始めから消しの終わりまでの ms)。
@@ -89,7 +89,7 @@
   "実行環境の root の置き場と準備の設定(worker の組み立ての入口 main が作る): state = worker の state の dir(準備の要求の置き場)・
    hy-command = 準備の process を起こす hy・platform = この worker の platform(準備の頼みに書く)・code-prepare = 焼く道具の file・
    repo-keys = 鍵の表の JSON の file(URL → deploy key — 表に無い URL は鍵なしで clone)・repo-access = 鍵の表を組み直す起動の script
-   (準備の前ごとに ROLE=access で撃ち、表の file の今の値から JSON と git / ssh の設定を組み直す — 空 = 組み直さない・card ki-2de748a0eac5)・
+   (準備の前ごとに ROLE=access で撃ち、表の file の今の値から JSON と git / ssh の設定を組み直す — 空 = 組み直さない)・
    uv = uv の命令・uv-cache = 準備の uv の子の
    cache の dir(UV_CACHE_DIR・prune もこの dir — 値は main の --uv-cache・起動の script が DOEFF_UV_CACHE_DIR を渡す・#3858)・
    roots-cap-bytes = roots の合計の上限(越えた時は固定されていない root を消す — #3732)・min-free-bytes = 共有の disk の空きの最低
@@ -162,7 +162,7 @@
 
 (defk root-entry-place [root]
   {:pre [(: root str)] :post [(: % (| str None))]}
-  "root へ送る子の入口と待ちの子の名を選ぶため、root の完成の印から子の入口の置き場を読む(card ki-7a7a1dcb1933 — 起こす宿・入口の
+  "root へ送る子の入口と待ちの子の名を選ぶため、root の完成の印から子の入口の置き場を読む(起こす宿・入口の
    確かめ・待ちの子の宿が読む。印の中身の読みは launch の entry-place-of-marker)。"
   (<- text (ReadText (+ root "/" ENV-MARKER)))
   (<- place (| str None) (entry-place-of-marker (if (isinstance text str) text None)))
@@ -194,7 +194,7 @@
   {:pre [(: settings EnvSettings)] :post [(: % tuple)] :tags {:context "worker" :role "protocol" :spells "json"}}
   "完成した root の列(木を写す元の候補)を、頼みの JSON の形 {\"env\" 宣言 \"root\" path \"platform\" マーカーの platform \"madeMs\" 完成の時刻
    \"hyVersion\" マーカーの Hy の compiler の版} で返すため。写し元は repo ごとに、同じ repo を持つ root のうち完成の時刻が最も新しい物
-   (#3677・card ki-61eb8170b3b9)。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み)。マーカーを読めても時刻を読めない root(読む間に掃除で
+   (#3677)。完成の時刻 = 完成マーカーの mtime(掃除の root-infos と同じ読み)。マーカーを読めても時刻を読めない root(読む間に掃除で
    消えた)は完成した root に数えない。Hy の版は報告の値で(#3706)、完成した root に数えるかには使わない — 欄の無い前の印の root は null で
    列に入る。"
   (<- names tuple (root-dirs settings))
@@ -216,7 +216,7 @@
 
 (defk refreshed-repo-access [settings]
   {:pre [(: settings EnvSettings)] :post [(: % None)]}
-  "準備の process を起こす前に、鍵の表をその時の値で組み直すため(起動し直さずに表の変更を読む — card ki-2de748a0eac5)。表の file
+  "準備の process を起こす前に、鍵の表をその時の値で組み直すため(起動し直さずに表の変更を読む)。表の file
    (WORKER_REPOS_FILE)の今の値から、起動の script の ROLE=access が鍵の表の JSON と git / ssh の設定を別名に書いてから置き換える。
    組み直せない(鍵の file が無い・形の違う url・時間切れ)時は、置き場の file は前の値のまま残るので、断りを log に 1 行書いて前の表で
    準備する(準備は止めない)。repo-access が空の worker(表を env だけで受ける)は何もしない。"
@@ -317,7 +317,7 @@
 
 (defrecord MeasuredRoots
   "掃除の数え(ループの外の task)の答え: infos = root ごとの観測(大きさは MeasureTree で数えた byte か、前の数えから使い回した byte)・
-   walked = この数えで木を歩いた(MeasureTree を呼んだ)root の数(card ki-a619d34de8c9 — 掃除の頭の行の欄)。"
+   walked = この数えで木を歩いた(MeasureTree を呼んだ)root の数(掃除の頭の行の欄)。"
   (#^ (get tuple #(RootInfo ...)) infos)
   (#^ int walked))
 
@@ -326,7 +326,7 @@
   {:pre [(: settings EnvSettings) (: known tuple)] :post [(: % MeasuredRoots)]}
   "掃除の候補(roots の直下の dir)を返すため。worker が作った root = キーの形の名で完成マーカーを持つ dir。大きさは、前の数え(known —
    RootInfo の列)と完成の時刻・最後に使った時刻が同じ root は使い回し(env_upkeep の kept-bytes)、それ以外の root だけ木を歩いて数える
-   (card ki-a619d34de8c9 — 全 root を掃除のたびに歩くと node の共有の disk の枠を取り合い、worker の本体の thread が block 層で待った)。"
+   (全 root を掃除のたびに歩くと node の共有の disk の枠を取り合い、worker の本体の thread が block 層で待った)。"
   (<- names tuple (root-dirs settings))
   (<- roots str (roots-dir settings))
   (var infos #())
@@ -502,7 +502,7 @@
   {:pre [(: store (| str None)) (: now-ms int)] :post [(: % tuple)]}
   "bytecode の保存先(store — None = 使わない設定)のうち、掃除が消す物(unused-store-names)の path の列を求めるため(保存先の dir が
    無ければ空)。保存先は file ごとの時刻まで StatTree の 1 つの呼びで読む — 本番は offloaded-tree-handler が thread で待つので、file が
-   10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(card ki-0da6a0186492 — 前は WalkTree と file ごとの StatPath を
+   10 万を越える保存先を歩く間も調整ループ(tick と heartbeat)は回る(前は WalkTree と file ごとの StatPath を
    scheduler の thread で歩き、zeus で 10〜19 秒止めた)。"
   (if (is store None)
       #()
@@ -517,7 +517,7 @@
   {:pre [(: entries tuple) (: now-ms int)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "bytecode の保存先の歩きの答え(StatTree — 保存先の dir からの相対の名・種類・時刻)から、掃除が消す物の相対の名の列(名の順)を求める
    ため: CODE-STORE-UNUSED-SECONDS より長く時刻の進んでいない file と、自分も下の物も全部その長さ動いていない dir(dir ごと消す — その下の
-   file は名指さない)。source の code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store・card ki-6828e9af04b4)
+   file は名指さない)。source の code の entry は鍵ごとの dir の下に macro の環境ごとに並ぶ(doeff-hy の code_store)
    ので、file だけを消すと空の鍵の dir が版ごとの source の数だけ残り続ける。使った entry の在る dir と、作ったばかりの空の dir(書き手が
    entry を置く前)は残す。"
   (val limit-ms (* 1000 CODE-STORE-UNUSED-SECONDS))
@@ -765,8 +765,8 @@
   (session var prune (PruneState))
   (session var views None)
   (session var disk-named None)
-  ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりと、次の数えの大きさの使い回しが読む・#3748・
-  ;; card ki-a619d34de8c9)と、先の組みを memory を測らずに始めた root の
+  ;; 最後の掃除の数えの root ごとの観測(RootInfo の列 — 先の組みの見積もりと、次の数えの大きさの使い回しが読む・#3748)
+  ;; と、先の組みを memory を測らずに始めた root の
   ;; キーの集合(heartbeat の memoryUnmeasured — 測って始め直した root は外す)。
   (session var measured-infos #())
   (session var unmeasured (frozenset))

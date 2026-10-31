@@ -1,4 +1,4 @@
-;;; 計器の effect — 動き続ける process の中で、数え上げ・秒の観測・今の値を積み、断面を読む(agora-redesign #1440・ADR-DOE-CORE-EFFECTS-004)。
+;;; 計器の effect — 動き続ける process の中で、数え上げ・秒の観測・今の値を積み、断面を読む(ADR-DOE-CORE-EFFECTS-004)。
 ;;; 業務の語を持たない土台の語彙。名の綴り(Prometheus の名など)は呼び手が決める。
 ;;;
 ;;;   CountMetric     counter の name に amount を足す(既定 1)。amount = 0 は「0 を置く」— 無いことと 0 を読み手が区別しなくて済む。答え = None。
@@ -7,8 +7,8 @@
 ;;;   ObserveSecondsBatch
 ;;;                   秒の観測(SecondsObservation — 名と秒)の列 observations を 1 回で積む — ObserveSeconds を列の順に 1 つずつ撃ったのと
 ;;;                   同じ断面になる(秒の合計・回数・桁の counter とも、名ごとに列の順で足す)。1 つの出来事で名を変えて何度も秒を観測する
-;;;                   呼び手(記録の service の要求ごとの区間の秒 — 1 要求で 7〜9 個)が、効果を撃つ回数を 1 回にするため(agora-redesign
-;;;                   #3688)。答え = None。
+;;;                   呼び手(記録の service の要求ごとの区間の秒 — 1 要求で 7〜9 個)が、効果を撃つ回数を 1 回にするため。
+;;;                   答え = None。
 ;;;   SetGauge        gauge の name を value に置き換える。答え = None。
 ;;;   ReadMeter       今の断面(MeterSnapshot)を読む。
 ;;;
@@ -24,7 +24,7 @@
 ;;; 下の純関数(metered・counted・observed-batch・observed・gauged)は 2 つの答え手が同じ計算をするための 1 か所で、I/O を持たない。
 ;;; 数えと秒の観測の計算は metered の 1 か所(書きの列 — CountMetric・ObserveSeconds・ObserveSecondsBatch を撃った順 — を 1 度に積む。
 ;;; counted・observed-batch・observed は書き 1 つの列)。memory の答え手は書きを溜めて、読みの時か溜まりが METERED-WRITES 本に届いた時に
-;;; metered で 1 度に畳む(書きのたびに断面の写像を丸ごと写さない — card ki-5c3e73834e73)。
+;;; metered で 1 度に畳む(書きのたびに断面の写像を丸ごと写さない)。
 (require doeff-hy.macros [defeffect defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
@@ -132,7 +132,7 @@
   "数えと秒の観測の書きの列 writes(撃った順)を、1 つずつ積んだのと同じ新しい断面へ 1 度に積むため(元の断面は変えない — 頭の註): 名ごとに
    書きの順の量と秒を、元の値から列の順に 1 つずつ足すので、浮動小数の丸めまで 1 つずつ積んだのと同じ(列の秒を先に足し合わせてから積むと
    丸めが変わる)。値(SecondsTotal)と写像の写しは名ごと・写像ごとに 1 度だけ作る — 書きを溜めて畳む memory の答え手が、溜まりが長くても
-   書き 1 つあたり定まった手間で畳めるように(card ki-5c3e73834e73)。"
+   書き 1 つあたり定まった手間で畳めるように。"
   (val counters snapshot.counters)
   (val durations snapshot.durations)
   ;; 書きごとの秒の観測(名と秒の対 — 数えは秒を積まない)と、counter へ足す量(名と量の対 — 数えはその名へ amount・秒の観測は桁の表の

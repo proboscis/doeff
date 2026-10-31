@@ -100,7 +100,7 @@ def test_a_woken_wait_for_event_costs_no_more_than_the_shared_handler_and_the_wa
     scheduler: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # 上限で比べる: Python の版は購読者の handler を被せる 1 歩だけ多く、Rust の版は被せる歩を数えず同じ数になる
-    # (既定を Rust の版にした後の日次の回で、等号の比べが 29 == 30 で落ちた・card ki-6dde100393cd)。下請けの Program の 3 歩は
+    # (既定を Rust の版にした後の日次の回で、等号の比べが 29 == 30 で落ちた)。下請けの Program の 3 歩は
     # どちらの版でも上限を越える。
     monkeypatch.setenv(IMPLEMENTATION_ENV_VAR, scheduler)
     assert subscribed_woken_steps(many=False) <= shared_woken_steps() + WAITER_HANDLER_STEPS

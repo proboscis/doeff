@@ -1,4 +1,4 @@
-//! import の先の module を層と service の置き場へ引く索引(card ki-a9959efd9cf6 の残り)。
+//! import の先の module を層と service の置き場へ引く索引。
 //!
 //! 層の規則(import の向き・service の境界・置き場の依存・翻訳の層の intent)は、書いた file の import の先を `module の綴り → 置き場` で引く。全体の実行は
 //! 層の母集団の全 module を並べた表(`collect_layer_files` — 置き場の外の module は file の中身を読んで層を推すので、repo の Hy の file の全部を読んで

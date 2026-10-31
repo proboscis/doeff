@@ -1,4 +1,4 @@
-;; worker 1 台の機体の壁の時計が動いても、同じ job が 2 か所で走らない(card ki-069f4a5c07f7)— 模擬の世界(本物の coordinator と本物の
+;; worker 1 台の機体の壁の時計が動いても、同じ job が 2 か所で走らない— 模擬の世界(本物の coordinator と本物の
 ;; worker 2 台を仮想の時計で回す sim-cluster)の筋書き。本番の口そのものの刻は tests/test_silence_wall_clock_step.hy が確かめる。
 ;;
 ;; 実例の形: worker の宿は沈黙の長さ(最後に届いた返事からの ms)を壁の時計の差で判じていた。coordinator は自分の時計で、最後の heartbeat

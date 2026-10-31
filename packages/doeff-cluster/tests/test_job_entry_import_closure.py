@@ -5,7 +5,7 @@
 - httpx の頭が読む端末の client(httpx._main)と、その先の click・rich・pygments(同じ venv に開発の道具の依存で入る)。
 - 測りの報告の fake(metrics-memory)が通す coordinator の型(MetricsPayload・checked-metrics)の閉包。
 → 届けは run-task の中で読み、端末の client は入口の main が断り(_decline-httpx-cli)、fake は metrics_memory.hy に分けた。
-pydantic と pydantic_core もどの子も読まない(defwire の解き手は自前の doeff_hy/_wire_codec.py・card ki-5ddadb736f62 — 入口と土台が
+pydantic と pydantic_core もどの子も読まない(defwire の解き手は自前の doeff_hy/_wire_codec.py — 入口と土台が
 pydantic を読むと、子 1 本の Pss が約 8 MB 太る)。
 読んではいけない module が戻るか、module の数が上限を越えると赤になる(上限は今の数に余裕を足した値 — 越えたら何が増えたかを見る)。
 

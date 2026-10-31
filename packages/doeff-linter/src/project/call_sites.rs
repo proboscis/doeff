@@ -1,4 +1,4 @@
-//! DOEFF159: 頭を呼んでよい場所と回数を決めた綴り(agora-redesign #1372・#1414 — 元は agora-controllers の一時の判定
+//! DOEFF159: 頭を呼んでよい場所と回数を決めた綴り(#1414 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/fault_boundary_rules.hy の (a)(b)(c)(f)(h))。
 //!
 //! architecture.hy の `:call-sites [(call-site "頭" :files [..] :except [..] :sites [(site "module:名" :count N :parent "頭" :branch "名")]

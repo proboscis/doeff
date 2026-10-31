@@ -1,6 +1,6 @@
 ;;; 資格の家 — 借りた claude の口座の資格(LentCredential)を、その資格で起こす 1 つの process だけが読む設定 dir(CLAUDE_CONFIG_DIR)の
 ;;; .credentials.json に置き、走っている間も外から替えられるようにし、process が降りたら dir ごと消す(handler の内側の器 — 上の層は
-;;; dir を知らない)。card ki-4ffdafa021e5(親 = ki-a4d090a8d26c — 預かり所が更新した token を走っている CLI へ配る)。
+;;; dir を知らない)。預かり所が更新した token を、走っている CLI へ配るための器。
 ;;;
 ;;; なぜ file で渡すか(CLI 2.1.292 の実測 — 127.0.0.1 の偽の API を ANTHROPIC_BASE_URL で向けた):
 ;;;   - 子の env の token(CLAUDE_CODE_OAUTH_TOKEN)は起動の後に外から替えられない。

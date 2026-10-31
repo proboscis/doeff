@@ -15,7 +15,7 @@
   既定の置き場 = $XDG_CACHE_HOME/doeff-hy-check か ~/.cache/doeff-hy-check)。
 - --carry: 運びの file(doeff_hy/_static_carry.py)。前の回から入力(その file の展開・使う名の宣言の表面・import の解き先・環境)の
   変わらない .hy は pyright に当てず、file の前の回の診断を運び、この回の運びで file を置き換える(無い file = 全部を当てる初回)。
-  --carry-refresh-runs: 入力の変わらない file も、この回数のうちに 1 度は当て直す(見直し — 既定 12)。agora-redesign card ki-cbd1c93cfe7c。
+  --carry-refresh-runs: 入力の変わらない file も、この回数のうちに 1 度は当て直す(見直し — 既定 12)。
 - 新しい赤(基点が無ければ全部の赤)があれば exit 1、無ければ 0、道具として走れなければ 2。
 
 仕組み:
@@ -165,7 +165,7 @@ class Projection:
     spans: Sequence[Span]
     # macro が展開の時に出した所見(val / var の検査 — ADR-DOE-HY-006)を Hy の位置の診断にした物。
     findings: tuple[Diagnostic, ...] = ()
-    # 展開が通った file の記録(Hy の版・macro と補助と型検査の後処理の file と sha256 — 保存を照らす・agora-redesign #3862)。
+    # 展開が通った file の記録(Hy の版・macro と補助と型検査の後処理の file と sha256 — 保存を照らす)。
     used: "MacroRecord" = dataclasses.field(kw_only=True)
 
 
@@ -204,7 +204,7 @@ def _absolute(path: Path) -> Path:
 
 def in_root(root: Path, path: Path) -> Path | None:
     """名指した path を根の綴り(_absolute — symlink を辿らない絶対 path)の下へ写す。綴りが根の下ならそのまま、symlink を辿ると
-    根の下なら根の綴りへ写し直し(相対 path を繋ぐ Path.cwd() は辿った先の綴りを返す — card ki-ed254bf53094)、どちらでもなければ
+    根の下なら根の綴りへ写し直し(相対 path を繋ぐ Path.cwd() は辿った先の綴りを返す)、どちらでもなければ
     None(根の外)。"""
     absolute = _absolute(path)
     if absolute.is_relative_to(root):
@@ -267,7 +267,7 @@ def _span(generated: ast.AST, original: ast.AST) -> Span | None:
 
 #: 定義の記帳(実行時の内観のための属性 — 型の意味を持たない)だけが使う module。展開の後に使い手が残らなければ
 #: import を外す(pyright strict で doeff_hy._quoted_forms の stub 無し・doeff_hy._declarations の重複の import に
-#: なっていた — agora の画面の core の 3 file で 241 件・agora-redesign #2153)。doeff_hy._pytest_items は pytest の
+#: なっていた — agora の画面の core の 3 file で 241 件)。doeff_hy._pytest_items は pytest の
 #: item の記録(deftest・defadr・defsemgrep・pytestmark が足す — 収集のための記帳)だけが使う(stub 無しの赤 — #2214)。
 BOOKKEEPING_MODULES: frozenset[str] = frozenset(
     {"doeff_hy._declarations", "doeff_hy._quoted_forms", "doeff_hy.record", "doeff_hy._pytest_items"}
@@ -277,7 +277,7 @@ BOOKKEEPING_MODULES: frozenset[str] = frozenset(
 def _bookkeeping_statement(statement: ast.stmt) -> bool:
     """型検査に見せない module の直下の文か: 定義の記帳 `setattr(名, '__doeff_…__', …)`、pytest の item の記録
     `doeff_hy._pytest_items.record_at_import(globals(), …)`(doeff_hy/_pytest_items.py の `_record_form` が足す — 収集の
-    ための記帳・agora-redesign #2214)と、Hy が `(require …)` を compile した残り `hy.macros.require(…)`
+    ための記帳)と、Hy が `(require …)` を compile した残り `hy.macros.require(…)`
     (macro の取り込みは展開の時に済んでいる)。"""
     match statement:
         case ast.Expr(
@@ -310,8 +310,8 @@ def _effects_reads(statement: ast.stmt) -> ast.stmt | None:
     doeff_hy._declarations を呼ばない形 `setattr(名, '__doeff_effects__', (A, B))` に縮めた文にするため(それ以外は None)。
     宣言 :effects にだけ出る効果の名(handler の節が下請けの関数を通して出す効果)を、型検査の中で読まれた名に残す —
     記帳ごと外すと、その名の import が strict の reportUnusedImport の赤になり、書き手は直せない(import を消すと実行の時に
-    :effects の宣言が名を解けない — agora-redesign #3871 の後)。空の宣言 `:effects []`(effect を出さない)も `()` で残す:
-    道具 static_stub が .pyi の答えの Program の effect の位置を Never にする(読まれる名は無い・agora-redesign #2939)。"""
+    :effects の宣言が名を解けない)。空の宣言 `:effects []`(effect を出さない)も `()` で残す:
+    道具 static_stub が .pyi の答えの Program の effect の位置を Never にする(読まれる名は無い)。"""
     match statement:
         case ast.Expr(
             value=ast.Call(
@@ -365,7 +365,7 @@ def _dotted(node: ast.expr) -> str | None:
 def _referenced_paths(statements: list[ast.stmt]) -> frozenset[str]:
     """文の中で読まれている名と属性の連なり(`a.b.c` を読めば `a`・`a.b`・`a.b.c` の全部)— `import a.b` が読まれているかを
     module の綴りで決めるため。`import doeff_hy._declarations` と `import doeff_hy.record` は同じ根の名 `doeff_hy` を束縛するので、
-    根の名だけでは片方しか読まれていない時に両方を残してしまう(defrecord の :check の展開 — agora-redesign #2252)。"""
+    根の名だけでは片方しか読まれていない時に両方を残してしまう(defrecord の :check の展開)。"""
     return frozenset(
         path
         for statement in statements
@@ -384,7 +384,7 @@ def _alias_read(alias: ast.alias, used: frozenset[str]) -> bool:
 def _without_unused_bookkeeping(statement: ast.stmt, used: frozenset[str]) -> ast.stmt | None:
     """記帳だけが使う module(BOOKKEEPING_MODULES)の import から、もう読まれていない名を 1 つずつ外す。名が 1 つも残らなければ
     文ごと外す(None)。1 つの文が読まれる名と読まれない名を並べる形(`import doeff_hy._declarations, doeff_hy.record` — defrecord の
-    展開)で、読まれない側だけが strict の reportUnusedImport になっていた(agora-redesign #2252)。"""
+    展開)で、読まれない側だけが strict の reportUnusedImport になっていた。"""
     match statement:
         case ast.Import(names=names):
             kept = [a for a in names if a.name not in BOOKKEEPING_MODULES or _alias_read(a, used)]
@@ -529,7 +529,7 @@ def with_module_level_imports(tree: ast.Module) -> ast.Module:
 
 
 def with_canonical_gensyms(tree: ast.Module) -> ast.Module:
-    """展開の木の Hy の gensym の名(識別子と文字列の定数)を、file の中の数えの順に 1 から振り直す(agora-redesign #3869)。
+    """展開の木の Hy の gensym の名(識別子と文字列の定数)を、file の中の数えの順に 1 から振り直す。
 
     gensym の数えは process に 1 つなので、同じ source でも、同じ process で先に何を展開したか・並べた時にどの process で
     展開したかで名が変わり、保存の中身が実行の仕方に依っていた。振り直しの規則は、テストの実行の側の code の正準化と同じ
@@ -704,7 +704,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
     module = ModuleType(name)
     module.__file__ = str(source)
     relative = str(source.relative_to(root))
-    # source は Hy の reader で 1 度だけ読む(agora-redesign #3869)。compile は前の form を処理してから次の form を読む(file の中で
+    # source は Hy の reader で 1 度だけ読む。compile は前の form を処理してから次の form を読む(file の中で
     # 定義した reader macro を後ろの form に効かせるため)ので、先に全部を読まず、compile が form を 1 つ読むたびに同じ form を
     # 一番外の setv の所見(ModuleScope)に見せる(form を最後まで抱えない)。以前は所見のために新しい reader で読み直し、展開の
     # 約 2 割を払い、file の中の reader macro を知らずに落ちていた。
@@ -738,7 +738,7 @@ def project(root: Path, roots: list[Path], source: Path) -> Projection | Compile
         reparsed = ast.parse(rendered)
     except SyntaxError as error:
         # Hy が Python の文法に無い木を出した(match の型の pattern の欄の名を Hy が mangle しない `case A(b-c=x)` など)。
-        # 以前は SyntaxError が子の process から抜けて repo 全体の検査を落とした(agora-redesign card ki-6aa23021c532)。
+        # 以前は SyntaxError が子の process から抜けて repo 全体の検査を落とした。
         at = _unparsable_position(tree.body)
         return CompileFailure(
             source,
@@ -769,7 +769,7 @@ POST_PROCESSING = (project,)
 #: 記録が POST_PROCESSING を名指す module の名 — import で引ける名(``__spec__.name``)。``python -m doeff_hy._static_check`` で撃つと
 #: この file は親で ``__main__``・展開の子で ``__mp_main__`` の名で読まれ、``__name__`` で名指すと、子の記録(``__mp_main__`` の
 #: ``project`` を辿った digest)と次の実行の親の照らし(``__main__`` の ``project`` を辿った digest)が持ち主の名の違う関数を辿って
-#: 合わず、保存した展開を 1 つも引けなかった(agora-redesign card ki-1475765a3f18)。引ける名なら、親も子もその名で import した
+#: 合わず、保存した展開を 1 つも引けなかった。引ける名なら、親も子もその名で import した
 #: 同じ file を辿る。
 _POST_PROCESSING_MODULE = __spec__.name if __spec__ is not None else __name__
 
@@ -843,7 +843,7 @@ def search_dirs(root: Path, roots: list[Path], source: Path) -> list[Path]:
     探す(`hy scripts/x.hy` で撃つ script の隣の module `(import e2e_wire …)` がこれで解ける)。前は import の根だけを探したので、
     1 file だけを検めると隣の .hy が展開されず、pyright が import を解けなかった(reportMissingImports と、そこから来る
     Unknown の赤)。dir ごと検めると隣の .hy も検める file として展開されるので解けていた — 同じ file の答えが検め方で
-    分かれた(agora-redesign #2898)。
+    分かれた。
 
     展開は在る候補を全部集める(先の dir で当たっても後の dir を探す)。pyright が読まない展開(標準ライブラリと同じ名の
     隣の .hy など — pyright は標準ライブラリを先に解く)は余分な展開になるだけで、検める file の赤を変えない
@@ -918,8 +918,7 @@ def _to_cache(projection: Projection) -> CachedProjection:
 
 
 #: 保存から引けない依存の展開を並べる子の process の数 — 機体の検の枠の宣言が持つ(正本の公開の口 process_width が答え、
-#: SlotHeld.width で届く)。この定数は宣言が届かない機体(正本の無い宿・古い正本・宣言を読めない時)の既定で、値の持ち主ではない
-#: (agora-redesign #3869・card ki-2320b23ba160 の盲検 B の指す 2 つ目の持ち主 — 設計検証 lt-5KHSMYM9R1HW7AKJBRG32NNF4S)。
+#: SlotHeld.width で届く)。この定数は宣言が届かない機体(正本の無い宿・古い正本・宣言を読めない時)の既定で、値の持ち主ではない。
 #: 実際の数は min(この数, この process が使える CPU の数, その段の引けない file の数)。
 #: 4(2026-10-11): 36 core の機体で同じ作業木の検査 2 本と別の検 4 本が重なり load 163 になった(展開の子と forkserver で 30 本超)。
 #: 環境変数で替える口は持たない — 口が在ると、値を替えた会話の検だけが別の数で数え、枠の数え方が割れる(正本の頭の註)。
@@ -964,7 +963,7 @@ def _looked_up(
     bundle: dict[str, BundleRow] | None = None,
 ) -> _Hit | _Miss:
     """保存から引く(引けなければ、展開した後に保存する鍵を持った _Miss)。束に載る行は、source の stat が書いた時と同じなら
-    source も entry も open せずに引く(card ki-2829daea29fa)。"""
+    source も entry も open せずに引く。"""
     if cache_dir is None:
         return _Miss(source, None)
     module = module_name(roots, source)
@@ -1076,7 +1075,7 @@ def project_closure(
 ) -> Closure:
     """検める file と、それが import する根の下の .hy を全部展開する(cache_dir があれば変わらない物は引く)。
 
-    import を段ごとに辿る(agora-redesign #3869): 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
+    import を段ごとに辿る: 段の中の file は互いの展開を使わないので、保存から引ける file は親で引き、
     引けない file はまとめて _Expanders に渡す(limit = 並べる子の process の数の上限・1 なら親で順に・既定は無い —
     呼び手が expander_limit(枠の正本が答えた数)で決める)。"""
     projections: dict[Path, Projection] = {}
@@ -1091,7 +1090,7 @@ def project_closure(
     bundle = load_bundle(cache_dir, bundle_name) if cache_dir is not None else {}
     rows: dict[str, BundleRow] = {}
     # 展開の cache の「今の環境に合うか」の照らしは、file の状態を実行の間 1 度だけ stat する(照らしごとに覚えを捨てると、
-    # 10 file の検めで stat が 10 万回・CPU 10 秒になった — card ki-0f0542a69a78)。
+    # 10 file の検めで stat が 10 万回・CPU 10 秒になった)。
     with SharedScope(), _Expanders(limit) as expanders:
         while wave:
             looked = {source: _looked_up(root, roots, source, cache_dir, bundle) for source in wave}
@@ -1172,7 +1171,7 @@ def _utf16_to_index(line: str, units: int) -> int:
 
 @dataclass(frozen=True)
 class SpanIndex:
-    """1 つの展開の位置の索引 — 診断ごとに全文を行へ割り直し、全部の範囲を頭から調べ直さないため(agora-redesign #2846:
+    """1 つの展開の位置の索引 — 診断ごとに全文を行へ割り直し、全部の範囲を頭から調べ直さないため(
     赤が 1,402 件の file で locate が 26 秒)。lines = 展開した Python の行・covering = 行の番号 → その行に掛かる範囲の
     番号(projection.spans の元の順)。範囲は始まりの行から終わりの行まで(終わりの行も含む)の全部の行に載る。"""
 
@@ -1224,7 +1223,7 @@ def locate(index: SpanIndex, line: int, character: int) -> HyPosition:
 def python_without_bytecode(directory: Path, python: str) -> Path:
     """pyright が検索 path を問うために起こす python が .pyc を書かないようにするため: python を `-B`(PYTHON* の環境変数を読まない
     起こし方の下でも効く)で起こす包みを directory に置く。pyright は呼び手の PYTHONDONTWRITEBYTECODE を効かせない形で起こすので、
-    包まないと site の起動で .pth が読む module の .pyc を checkout へ書く(日次 2026-10-11 16:00 の doeff・card ki-04d762c59dac)。"""
+    包まないと site の起動で .pth が読む module の .pyc を checkout へ書く(日次 2026-10-11 16:00 の doeff)。"""
     wrapper = directory / "python-without-bytecode"
     wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(python)} -B "$@"\n', encoding="utf-8")
     wrapper.chmod(0o755)
@@ -1233,7 +1232,7 @@ def python_without_bytecode(directory: Path, python: str) -> Path:
 
 #: pyright の thread の数(pyright の --threads — 検める file を子の process に分けて並べる)の既定。1 = --threads を渡さない
 #: (1 本の pyright)。日次の型の測り(agora-controllers の hy-type-trend・.hy 2,551 本)は 1 本で約 2,250 秒かかり、処理ステージの
-#: 上限に収まらなかった(10-12 12:00 JST の回・card ki-1475765a3f18)。子 1 本ごとに検める file の import 先を別に読むので、CPU の
+#: 上限に収まらなかった(10-12 12:00 JST の回)。子 1 本ごとに検める file の import 先を別に読むので、CPU の
 #: 合計と memory は本数につれて増える(controllers/screen の 231 本で 2 本 = 秒 0.7 倍・CPU 1.2 倍、4 本 = 秒 0.5 倍・CPU 1.6 倍)。
 #: だから既定は 1 のまま、呼び手が環境変数 PYRIGHT_THREADS_ENV(env_places が読み、入口の main だけが受ける)で機体に合わせて上げる。
 PYRIGHT_THREADS = 1
@@ -1255,7 +1254,7 @@ def pyright_threads(configured: str | None, declared: int | None = None) -> int:
 def thread_clamp_note(configured: str | None, declared: int | None) -> str | None:
     """環境変数の指定が宣言の並走の数で頭打ちになる時の名乗りの 1 行(純粋・頭打ちでなければ None)。頭打ちは指定を無言で捨てる
     形だった — 日次の hy-type-trend が env を 4 にしても 4 回とも 2 本で走り、別の会話が原因を探し当てるまで見えなかった
-    (agora-controllers 93c94c6f9・card ki-1bfe2c42dce6)。値の決め方は pyright_threads のまま、見えるようにするだけ。"""
+    (agora-controllers 93c94c6f9)。値の決め方は pyright_threads のまま、見えるようにするだけ。"""
     asked = pyright_threads(configured)
     used = pyright_threads(configured, declared)
     if used == asked:
@@ -1643,7 +1642,7 @@ def main(argv: list[str] | None = None) -> int:
     for entry in reversed(roots):
         if str(entry) not in sys.path:
             sys.path.insert(0, str(entry))
-    # 名指した path は根の綴りへ写す。根の外の path は黙って捨てず断る — 捨てると赤の在る file で 0 件と答える(card ki-ed254bf53094)。
+    # 名指した path は根の綴りへ写す。根の外の path は黙って捨てず断る — 捨てると赤の在る file で 0 件と答える。
     named = [(p, in_root(root, p if p.is_absolute() else Path.cwd() / p)) for p in (args.paths or [root])]
     outside = [str(p) for p, placed in named if placed is None]
     if outside:

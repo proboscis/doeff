@@ -1,5 +1,5 @@
 ;;; 全 thread の stack を書く見張りの契約テストの解釈器(composition root)— 同じ契約の Program を、見張りの答え手と時計だけ替えて
-;;; 走らせる(agora-redesign #2748)。
+;;; 走らせる。
 ;;;
 ;;;   faulthandler-stack-dump  本物: faulthandler-stack-dump-handler(faulthandler の C の thread が実時間で期限を数えて書く)・
 ;;;                            doeff-time の実時計 sync-time-handler

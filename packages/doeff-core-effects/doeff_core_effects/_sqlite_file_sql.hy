@@ -1,4 +1,4 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の、既存の DB の file を開く sqlite の答え手 sqlite-file-sql-handler(agora-redesign #2237 の前提 —
+;;; 汎用の SQL の effect(sql_effects.hy)の、既存の DB の file を開く sqlite の答え手 sqlite-file-sql-handler(
 ;;; 預かり所の本体を doeff-cluster へ移す。今の本体(Haskell の StoreSqlite.hs)が持つ file の DB を、そのまま開いて読み書きするため)。
 ;;; 業務を知らない: 表は呼び手が SqlEnsureTables で宣言するか、file に既に在る。
 ;;;   - 組み立ての側(composition root)が database の宣言(SqliteFile — 名と file の path)の tuple から open-sqlite-files で接続を開き

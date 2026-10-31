@@ -1,4 +1,4 @@
-"""契約 `(: x FrozenJson)` と型付き束縛 `(<- x FrozenJson e)` が実行時に通ること(card acp:kanban-issue:ki-e540d658e378)。
+"""契約 `(: x FrozenJson)` と型付き束縛 `(<- x FrozenJson e)` が実行時に通ること。
 
 契約と束縛は書いた型を `doeff_hy._type_forms.runtime_type_form` で isinstance に渡せる形へ写すが、写すのは字面の総称型
 (`(get …)`・`(| …)`)だけで、名(型の別名)はそのまま isinstance に渡る。doeff_hy._frozen の実行時の名 FrozenJson が

@@ -4,7 +4,7 @@ The analyzer runs as a tool (CLI, editor, pytest collection) outside any doeff P
 place comes from environment variables, not from an Ask. This module only reads them: each function
 returns the raw value of one variable (or the XDG cache base). What a value means — "off" turns a
 cache off, which place wins — stays with the callers. ``packages/doeff-effect-analyzer/architecture.hy``
-names this module and takes it out of DOEFF004 (agora-redesign #2860); other modules of the package
+names this module and takes it out of DOEFF004; other modules of the package
 still may not read the environment.
 """
 

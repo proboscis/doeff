@@ -1,4 +1,4 @@
-;;; HTTP の答え手が同時に client へ渡す要求の数と、取り消し・時間切れの後の接続の枠(agora card ki-89809f7494aa — 画面の server が process の
+;;; HTTP の答え手が同時に client へ渡す要求の数と、取り消し・時間切れの後の接続の枠(画面の server が process の
 ;;; client 1 つへ数千の要求を上限なく撃ち、httpcore の待ちの列が 10,651 になって await の橋の thread を割り当ての照らしで使い切った・その後
 ;;; 橋が暇でも後の要求が全部 PoolTimeout のまま 20 分戻らなかった)。本物の socket で、検の中の最小の待ち受け(橋の loop の上の asyncio の
 ;;; server — 要求を数え、受けるたびに client の httpcore の列の長さを測る)へ当てる。

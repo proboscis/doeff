@@ -118,8 +118,8 @@
        ;; host RPC(session.cancel / session.cleanup)所有 — oracle は
        ;; retryable=false を明示で渡す(:1985-1991)。
        "cancelled" False
-       ;; card acp:kanban-issue:ki-b5e0d04de958 D1: host の停止(TERM)で切った・停止の拍に排水の印が在った
-       ;; (計画された入れ替え — 書いていた session host の headless の器は agora-redesign #668 で退いた。語は既存の行のために残す)。
+       ;; D1: host の停止(TERM)で切った・停止の拍に排水の印が在った
+       ;; (計画された入れ替え — 書いていた session host の headless の器は退いた。語は既存の行のために残す)。
        ;; 別の host で同じ手番を走らせ直せる。印の無い停止は上の cancelled のまま。
        "host_drained" True})
 
@@ -307,7 +307,7 @@
 (setv LAUNCH-FLAG-KEYS #("auto_compact_window"))
 
 ;; ---------------------------------------------------------------------------
-;; 席へ運ぶ、会話の宣言の欄(card acp:kanban-issue:ki-a40292ed30d9)
+;; 席へ運ぶ、会話の宣言の欄
 ;; ---------------------------------------------------------------------------
 ;;
 ;; 同じ壊れ方の 3 度目(添付 2026-09-15 → 記憶の置き場 2026-09-18 → 記憶の**本文**
@@ -345,8 +345,8 @@
   {:pre [(: resume-context (| dict None)) (: minted (| dict None)) (: adopted bool)
          (: agent-type str) (: has-override bool)]
    :post [(: % dict)]}
-  "起こす incarnation が名乗る会話と、`--session-id`(新しい会話)か `--resume`(続き)かの**判断の 1 点**
-   (card acp:kanban-issue:ki-c3aace97d825)。読み手は launch.hy(tui)と headless.hy の 2 つで、
+  "起こす incarnation が名乗る会話と、`--session-id`(新しい会話)か `--resume`(続き)かの**判断の 1 点**。
+  読み手は launch.hy(tui)と headless.hy の 2 つで、
    写しを作らない —— 片方だけが組み直した transcript を継ぐ形になると、機体によって挙動が割れる。
 
    戻り = {mode, conversation, row_conversation}:
@@ -378,7 +378,7 @@
 
 
 ;; ---------------------------------------------------------------------------
-;; 席の家へ運ぶ**共通の指示**の名簿(card acp:kanban-issue:ki-62aa1f4e9c9c・決定 D11)
+;; 席の家へ運ぶ**共通の指示**の名簿(決定 D11)
 ;; ---------------------------------------------------------------------------
 ;;
 ;; 機体の参加の宣言が名指した正本(共通の CLAUDE.md と skills)を、無人席の家
@@ -446,7 +446,7 @@
 (setv CARRIED-ITEM-HOME-NAME "home_name")
 (setv CARRIED-ITEM-TEXT "text")
 (setv CARRIED-ITEM-PATH "path")
-;: 席の $HOME(card ki-62aa1f4e9c9c D6 の材料)。起動の拍に launch.hy が読んで params へ載せ、
+;: 席の $HOME。起動の拍に launch.hy が読んで params へ載せ、
 ;: **導出は器の 1 点**(impls/claude_code.hy build-claude-argv)で行う。欄が無い = 導けない宿
 ;: (鍵を置かない — 発明しない)。⚠ 器が自分で env を読まないのは、build-claude-argv が
 ;: **効果を持てない**ため(build-claude-resume-argv が素の run で回す純関数)。
@@ -593,7 +593,7 @@
         :if (spawn-env-inherited? key)
         key value))
 
-;; 従量課金 credential の締め出し(operator 裁定 2026-08-26 — この系は API キーと
+;; 従量課金 credential の締め出し(この系は API キーと
 ;; 従量課金を使わない。音声モードは
 ;; 唯一の例外だが、この host を通らない)。binding 所有キーと違い「正しい家」が
 ;; 存在しない — agent 席の認証は定額(subscription/OAuth)profile のみで、
@@ -620,13 +620,13 @@
 
 
 ;; agent の境界で運ばせない env の語彙(PROVIDER-AUTH / PROVIDER-ROUTING / TURN-AUTH / BINDING-OWNED と
-;; 正規化・突合)は doeff_agents/_agent_env.hy の 1 点(agora-redesign #708 — session host を import しない家)。
+;; 正規化・突合)は doeff_agents/_agent_env.hy の 1 点(session host を import しない家)。
 ;; ここは上の import で名を受けて再輸出するだけ(層の表もそちらの頭の註)。
 
 ;; ⚠ この線は上の 3 層の名簿の族**ではない**(rebase の拍の判断・2026-09-19):族は「正規化した名が集合に在るか」
 ;; で、こちらは「綴りがどんな形か」— env-offenders-against は集合しか取れないので畳めない。層も 4 つ目の口
 ;; (機体の参加の宣言 = join.seat-env-of)で、受理 / spawn / shell のどれでもない。⇒ 並べて置き、畳まない。
-;; 席へ運ぶ宣言の env(agora-redesign #520 — join の [agentd].seat_env)が **資格の輸送路に化けない**
+;; 席へ運ぶ宣言の env(join の [agentd].seat_env)が **資格の輸送路に化けない**
 ;; ための、この口だけの線。上の関所(session-env-admission-error)を通した**上に**重ねる — 関所の線は
 ;; 1 語も動かさない(出荷済みの不変条件・広げると launch / session.send の判定が同時に変わる)。
 ;; 判定は語彙ではなく**形**: doeff は ACP_BASE も AGORA_BRAIN_URL も知らないまま(宛先の綴りの定義点は
@@ -634,7 +634,7 @@
 ;; 札は **file の mount** で家の既定の置き場に置くのが唯一の形で、宣言の env は宛先だけを運ぶ。
 ;; ⚠ **末尾に錨を打たない**: `_KEY` / `_TOKEN` で**終わる**名で判じると、後ろに 1 語付いた綴り
 ;; (`ANTHROPIC_API_KEY_PERSONAL` / `anthropic_api_key__personal` = この repo の CLAUDE.md が逐語で禁じる名 /
-;; `_2` / `_OLD` …)が全部通る(送り戻し lt-Y7XSNK0PK1N9706QZPMZDG0FNH の実測)。⇒ 正規化した名を `_` で
+;; `_2` / `_OLD` …)が全部通る。⇒ 正規化した名を `_` で
 ;; 割り、**区間のどれか**が KEY / TOKEN なら当たり(`_KEY_FILE` / `_KEY_PATH` / `_TOKEN_FILE` も区間に持つ)。
 ;; SECRET / PASSWORD / CREDENTIAL は**部分一致のまま**(区間にすると `SECRETARY_…` が通って今より弱くなる)。
 ;; 過剰包摂側へ倒す fail-closed: 資格でない `SECRETARY_URL` が弾かれたら起動の門で loud に見えて直せるが、
@@ -778,7 +778,7 @@
    :post [(: % (| str None))]}
   "session_env の関所(None = 適合・文字列 = reject 理由)。launch の口と
    session.send の口(段 10 lane 10d 便 2 追補 2 の手番ごとの env)と、機体の参加の
-   宣言の口(段 12・agora-redesign #520 の [agentd].seat_env — join.seat-env-of)が
+   宣言の口(段 12 の [agentd].seat_env — join.seat-env-of)が
    同じ 1 点を通る — 運ぶ口が増えても判定を並行実装しない。verb は名乗る動詞名。"
   (setv offenders (overlay-env-offenders session-env))
   (when offenders
@@ -791,12 +791,12 @@
     (return (+ f"{verb}: metered-billing credentials are forbidden in "
                f"agent sessions (offending: {(.join ", " metered) }). "
                "Agent seats authenticate with subscription profiles via the "
-               "typed `binding` field only (operator ruling 2026-08-26).")))
+               "typed `binding` field only.")))
   ;; ⚠ この節は metered の節より**後**でなければならない。ANTHROPIC_API_KEY は
   ;; 両方に当たるので、前に置くと断りの文言が変わり、逐語で撃っている既存の検
   ;; (sessionhost_launch_deftests / sessionhost_resume_deftests /
   ;; test_sessionhost_headless)が赤くなる。ここが拾うのは「形では拾えない綴り」
-  ;; ちょうど — 個人鍵の別名など(card acp:kanban-issue:ki-2a061da56ca9)。
+  ;; ちょうど — 個人鍵の別名など。
   (setv provider-auth (provider-auth-env-offenders session-env))
   (when provider-auth
     (return (+ f"{verb}: provider auth env is forbidden in agent sessions "

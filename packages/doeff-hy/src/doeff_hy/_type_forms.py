@@ -17,7 +17,7 @@ Hy の投影)も、束縛の実行時の保証を写す時にこの関数を呼�
   (#1790 の決め: 要素まで実行時に見ると確かめのたびに全要素を回し、入れ子の型の再帰も要る)。
 - ``(| A B)``: 組 ``#(A B)`` へ写す(中の総称型・``None`` も上の規則で写す: ``(| (get tuple #(str ...)) None)`` は
   ``#(tuple (. None __class__))``)。``isinstance`` は組も和も同じに受けるが、和は契約を確かめるたびに ``A | B`` を
-  組み直し(``_Py_union_type_or`` — 記録の service の scheduler の thread の CPU の 1.5%・card ki-08b447d2f71d)、
+  組み直し(``_Py_union_type_or`` — 記録の service の scheduler の thread の CPU の 1.5%)、
   組は名を読んで並べるだけで済む。名の値は呼ぶたびに読むので、後で定義される名・閉包や引数の名も今までどおり解ける
   (定義の時に 1 度評価して覚える形は、この 2 つを壊すので取らない)。
 - それ以外の form はそのまま返す(同じ object)。
@@ -54,7 +54,7 @@ RuntimeClass: typing.TypeAlias = type | types.UnionType | tuple["RuntimeClass", 
 
 def runtime_class(tp: object) -> RuntimeClass:
     """実行時の型の値 ``tp`` を外側の型へ写す — 契約と束縛の展開が、名(型の別名)を ``isinstance`` に渡して TypeError になった
-    時だけ呼ぶ(card ki-8673c7bb5b0c)。
+    時だけ呼ぶ。
 
     ``runtime_type_form`` は字面の総称型を展開の時に写すが、名の値は展開の時に分からない。名の値が型引数つきの総称型
     (``Callable[..., object]``・``FrozenMap[object]``)やそれを含む和だと ``isinstance`` が断るので、実行の時に同じ規則
@@ -69,7 +69,7 @@ def runtime_class(tp: object) -> RuntimeClass:
         return tuple(runtime_class(item) for item in members)
     origin = typing.get_origin(tp)
     if origin is typing.Annotated:
-        # ``Annotated[T, mark]`` (doeff の BuiltBy など — 静的な読み手への印)は実行の時は T(card ki-e912b1821351)。
+        # ``Annotated[T, mark]`` (doeff の BuiltBy など — 静的な読み手への印)は実行の時は T。
         return runtime_class(typing.get_args(tp)[0])
     if isinstance(tp, types.UnionType) or origin is typing.Union:
         return tuple(runtime_class(item) for item in typing.get_args(tp))

@@ -1,10 +1,10 @@
 """Python の呼び出しの数え(``sys.monitoring`` の CALL 事象)— 印 ``--doeff-python-calls`` を付けた走りだけ、歩数を宣言した検の
-call の間に数える(agora-redesign #2854・card ki-a4042e38352a の受入条 c4c2e04dc・親の設計 #2670 の §2)。
+call の間に数える(親の設計 #2670 の §2)。
 
 何のためにあるか: doeff-vm の歩数は検の筋書きの大きさで決まり、Python 側の無駄(例: #2593 の isinstance 18 万回)は歩数に出ない。
 呼び出しの数はそれを日々の推移で見せる。数は同じ検で 0.4% 以内に再現する(CPU 秒は同じ歩数で ±14% 揺れる)。
 
-設計の決め(依頼書 lt-HXGQN32BB70Z8PY7W8ZV0KQHQ8 の確定した決定):
+設計の決め:
 
 - 数える物は CALL 事象(builtin の呼びも数える — PY_START だけだと isinstance のような呼びが見えない)。cProfile は使わない
   (検ごとに区切れず、thread を跨げない)。数は CALL 事象の数と定義し、cProfile の ``total_calls`` とは比べない。

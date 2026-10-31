@@ -1,4 +1,4 @@
-"""Deadlines reach a program whose subscriber queue never empties (card ki-7d2a9efa8320).
+"""Deadlines reach a program whose subscriber queue never empties.
 
 The timer task fires its deadlines only when the scheduler runs it, and the subscriber queue answers a
 ``WaitForEvent(s)`` at once while it holds an event — so a program kept busy by queued events (the job

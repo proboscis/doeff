@@ -120,10 +120,10 @@ def claude_agent_runtime_handlers(
     cold_resume_prompt: str | None = None,
     command: tuple[str, ...] = ("claude",),
 ) -> list[ProgramHandler]:
-    """The agent runtime for Claude, as doeff-agents chooses it (agora-redesign #606).
+    """The agent runtime for Claude, as doeff-agents chooses it.
 
-    Callers that must not know the substrate (agora: "the agent runtime's
-    substrate is the library's concern", operator decision O5) ask for the
+    Callers that must not know the substrate (the agent runtime's
+    substrate is the library's concern) ask for the
     Claude agent runtime by this name; which substrate answers the public
     effects is decided here. Today it is the print-mode (headless) adapter
     over ``doeff-claude-code``: returns ``[doeff-claude-code production
@@ -132,20 +132,19 @@ def claude_agent_runtime_handlers(
     ``env`` by the composition root). ``live_limit`` is how many CLI processes
     the host keeps alive at once and ``credential_floor_seconds`` how long
     before a lent credential expires the host stops the process using it
-    (both from the caller's declaration — no defaults; agora-redesign #3672
+    (both from the caller's declaration — no defaults
     D2). ``live_limit=None`` declares no limit: for a caller that decides how
     many to keep alive by another measure (the machine's free memory), layer 2
     then compares nothing and emits neither the over-limit log line nor
-    ``ClaudeLiveLimitExceeded`` (agora-redesign #4282; ``None`` is passed
+    ``ClaudeLiveLimitExceeded`` (``None`` is passed
     through as is, and it is not a default — such a caller passes it
     explicitly). ``command`` is the CLI executable and its leading arguments.
     Install a doeff-time handler, a slog handler (the production handler
-    emits CLI launch timing lines — agora-redesign #3605), a handler that
+    emits CLI launch timing lines), a handler that
     answers ``ClaudeLiveLimitExceeded`` (the host: layer 2 never stops a CLI
     for the live limit — a launch past it is reported to the host instead,
-    agora-redesign #4072 E1b; the type is ``doeff_agents._handlers.ClaudeLiveLimitExceeded``)
-    and the scheduler outside them. No session-host socket is opened
-    (agora-redesign #604).
+    the type is ``doeff_agents._handlers.ClaudeLiveLimitExceeded``)
+    and the scheduler outside them. No session-host socket is opened.
     """
     return _hy_headless_compose_module().headless_claude_handlers(
         config_dir,
@@ -176,12 +175,11 @@ def fake_claude_agent_runtime_handlers(
     new process over the same home) instead of ``responder``; exactly one.
     ``env`` / ``settings`` are the same home env (str → str) and CLI settings
     (a JSON mapping) the production runtime takes; both are required
-    (agora-redesign #3387): a caller's emulation passes what its production
+   : a caller's emulation passes what its production
     path decided, so the launch declaration the fake layer 2 receives carries
-    them (agora-redesign #3327); a caller with nothing to declare passes empty
+    them; a caller with nothing to declare passes empty
     mappings explicitly. ``permission`` is the launch declaration's permission
-    policy, as for ``claude_agent_adapter_handler`` (default ``BypassAll()`` —
-    agora-redesign #3753).
+    policy, as for ``claude_agent_adapter_handler`` (default ``BypassAll()``).
     Returns ``[fake layer-2 handler, headless adapter]`` (outer first).
     """
     return _hy_headless_compose_module().fake_headless_claude_handlers(
@@ -199,10 +197,10 @@ def claude_process_layer_handler(
 
     The same handler ``claude_agent_runtime_handlers`` returns first. For a
     caller that places layer 2 and the adapter at different depths
-    (agora-redesign #3507): layer 2 belongs to the foundation that owns real
+   : layer 2 belongs to the foundation that owns real
     processes (an emulation answers layer 2 outside instead), the adapter sits
     next to the program. ``live_limit`` / ``credential_floor_seconds`` as for
-    ``claude_agent_runtime_handlers`` (agora-redesign #3672 D2). Install a
+    ``claude_agent_runtime_handlers``. Install a
     doeff-time handler, the scheduler, a slog handler and a
     ``ClaudeLiveLimitExceeded`` handler outside it.
     """
@@ -246,7 +244,7 @@ def claude_agent_adapter_handler(
     is the launch declaration's permission policy: the default
     ``BypassAll()`` skips permission checks; ``HomeSettings()`` puts no
     permission flag on the CLI so the home's ``settings.json`` permissions
-    decide (agora-redesign #3753). Layer 2 must be answered outside it
+    decide. Layer 2 must be answered outside it
     (``claude_process_layer_handler``, the fake, or an emulation's peer).
     """
     from doeff import run
@@ -265,8 +263,8 @@ def codex_process_layer_handler(
 ) -> ProgramHandler:
     """Codex layer 2 alone: the production handler that keeps each conversation's app-server process alive across turns.
 
-    The codex counterpart of ``claude_process_layer_handler`` (card
-    acp:kanban-issue:ki-f63f65c153b0): a caller that places layer 2 and the
+    The codex counterpart of ``claude_process_layer_handler``
+    : a caller that places layer 2 and the
     adapter at different depths builds both from these public entries — the
     composition module's name carries the lower-layer word, which agora's
     boundary rules keep out of agora's code. ``command`` is the executable

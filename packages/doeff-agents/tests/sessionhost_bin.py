@@ -1,4 +1,4 @@
-"""daemon under test の起動の argv の頭 — e2e 群の単一実装(issue #575 M2・card ki-bb337cfd0336)。
+"""daemon under test の起動の argv の頭 — e2e 群の単一実装(issue #575 M2)。
 
 ensure_agentd の起動(effect StartSessionHost の handler)をミラーする:
 DOEFF_AGENTD_BIN(明示 seam、契約語彙)→ 無ければ実行中 interpreter で host の入口の module

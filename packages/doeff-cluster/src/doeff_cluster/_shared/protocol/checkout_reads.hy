@@ -38,7 +38,7 @@
   "checkout 1 つの読み(HEAD・remote の URL・汚れ・remote の branch に在るか)を git の 4 問から作るため(頭の註の訳し方)。"
   (<- head str (git-output path #("rev-parse" "HEAD")))
   ;; URL は remote get-url でなく設定の値で読む: get-url は送り手の機体の url.<base>.insteadOf で書き換えた値を答え、機体だけの ssh の
-  ;; 別名が宣言に載ると別の機体の worker が clone できない(ki-1ada4f0c8344)。
+  ;; 別名が宣言に載ると別の機体の worker が clone できない。
   (<- url str (git-output path #("config" "--get" (.format "remote.{}.url" remote))))
   (<- status str (git-output path #("status" "--porcelain" "--untracked-files=no")))
   (<- containing str (git-output path #("branch" "-r" "--contains" head "--list" (.format "{}/*" remote))))

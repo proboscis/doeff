@@ -1,4 +1,4 @@
-;;; 機体の memory の見張りの判断(card ki-7b934e2538f9)— 機体と container の memory の読みの綴りを数にし、job ごとの memory を process の木で
+;;; 機体の memory の見張りの判断— 機体と container の memory の読みの綴りを数にし、job ごとの memory を process の木で
 ;;; 数え、機体の memory が尽きかけた時に先に止める木を選ぶ。I/O を持たない(読みは worker/protocol/memory_watch が効果で集める)。
 ;;;
 ;;; 何のためか: atlas と zeus で、1 つの job が memory を食うと機体の全体が reclaim の thrash で数十秒〜数十分止まり、worker も coordinator も
@@ -13,12 +13,12 @@
 ;;;               process だけ(子が在れば BODY — job の本体・子が無ければ LEAF — 食った道具そのもの)。
 ;;; 止める順(victim-of): BRANCH・LEAF・TASK のいちばん大きい物が先(job の本体を止めると、その job の子が全部止まる)。それが
 ;;; min-victim-bytes 未満の時だけ BODY のいちばん大きい物。
-;;; 止める候補(card ki-649b1b2f5838): task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
+;;; 止める候補: task の単位は全部。常駐の job の単位は、その job の今の memory が平常の大きさ(JobSteady — 前の
 ;;; 最大の行の間ごとの最大のいちばん大きい物)の steady-ratio 倍以上の時か、平常の大きさがまだ無い時だけ。平常の大きさで動く常駐の
 ;;; job を止めても、機体の空きの不足が worker の外(他の Pod)から来た時は直らず、起こし直された job が同じ大きさに戻ってまた止められる
 ;;; だけだから(10-24 atlas で 2 時間に 11 回)。平常の大きさより steady-ratio 倍未満の速さで太る job は止める候補にならない(平常の大きさが
 ;;; 後を追う)— 見張りが止めるのは、平常から急に跳ねた物。
-;;; 群れの止め(swarm-of — card ki-d9953fe1d739): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
+;;; 群れの止め(swarm-of): 止める候補の単位が無い(どれも min-victim-bytes 未満か平常の大きさの job の物)のに、
 ;;; 1 つの job の木が機体の全量の swarm-share 以上を持ち、worker の外の使用量より大きい時は、その job の BODY 以外の単位を大きい順に、
 ;;; 機体の空きを DANGER の線(danger-available)の上へ min-victim-bytes ぶん戻す量まで足して、まとめて止める。訳: CLI を多数並べて走らせる常駐の
 ;;; job は、CLI の木と、shim に引き取られた道具の子が数百の小さい単位に割れ、1 つずつはどれも 512 MiB 未満なのに、和は機体の
@@ -157,7 +157,7 @@
    :tags {:context "worker" :role "judgment"}}
   "min-victim-bytes 以上の単位を持つのに、平常の大きさで動くので止める候補にしなかった job の平常の大きさ(JobSteady — 名の昇順)を
    並べるため(止める単位が無い時の log に、止めなかった job を名指す)。"
-  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない — card ki-72f309f23e0f)。
+  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor unit units :if (>= unit.bytes limits.min-victim-bytes) unit)))
   (<- beyond tuple (sequence (gfor unit large (beyond-steady? unit uses steadies limits))))
   (val names (frozenset (gfor #(unit candidate) (zip large beyond) :if (not candidate) unit.job)))
@@ -253,7 +253,7 @@
   "row を頭とする木を 1 度たどった結末: members = 木の process(頭が先の深さ優先・兄弟は pid の昇順)・sizes = members の各々を頭と
    する木の rss の和・counts = その木の process の数・kids = その子の members の位置(pid の昇順)— どれも members と同じ位置。
    深さ優先の順なので、位置 i を頭とする木は members の i から counts[i] 個の連なり — 子の木を数え直さずに大きさと process を
-   引ける(card ki-72f309f23e0f: 子の木を 1 本ずつたどり直すと、shim が引き取った孤児が 8.2 万本の時に見張りの 1 回が main の
+   引ける(子の木を 1 本ずつたどり直すと、shim が引き取った孤児が 8.2 万本の時に見張りの 1 回が main の
    scheduler を何十分も塞いだ)。"
   (#^ (get tuple #(ProcRow ...)) members)
   (#^ (get tuple #(int ...)) sizes)
@@ -408,7 +408,7 @@
   "DANGER の時に止める単位を選ぶため(頭の註の順): 止める候補(beyond-steady? — uses = job ごとの今の memory・steadies = job ごとの平常の
    大きさ)の中で、BRANCH・LEAF・TASK のいちばん大きい物、それが min-victim-bytes 未満なら BODY のいちばん大きい物。どれも無ければ止めない
    (None — 食った物は job の外か、平常の大きさで動く常駐の job だけ)。units は大きい順。"
-  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない — card ki-72f309f23e0f)。
+  ;; 大きさを先に問う(小さい単位は数万に割れうるので、単位ごとに beyond-steady? を呼ばない)。
   (val large (tuple (gfor u units :if (>= u.bytes limits.min-victim-bytes) u)))
   (<- beyond tuple (sequence (gfor u large (beyond-steady? u uses steadies limits))))
   (val candidates (tuple (gfor #(u candidate) (zip large beyond) :if candidate u)))

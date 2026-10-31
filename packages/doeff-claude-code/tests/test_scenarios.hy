@@ -94,7 +94,7 @@
 
 
 (deftest test-a-named-interrupt-of-an-unread-input-stops-the-tool-for-it
-  ;; 入力を名指した止め(今すぐ送る — card ki-1c4cfde50ac5)で、名指した入力がまだ読まれていない: 名指さない止めと同じく道具を止め、その入力を
+  ;; 入力を名指した止め(今すぐ送る)で、名指した入力がまだ読まれていない: 名指さない止めと同じく道具を止め、その入力を
   ;; 生き残った入力として次の手番で走らせる。
   {:interpreters ["fake" "stub" "real"]}
   (<- s (settings))
@@ -115,7 +115,7 @@
 
 
 (deftest test-a-named-interrupt-of-an-input-already-read-leaves-the-turn-running
-  ;; 入力を名指した止めが、CLI がその入力を読んだ後に来た(今すぐ送るを押した時には担当がもう読み終えていた — card ki-1c4cfde50ac5): 止めずに
+  ;; 入力を名指した止めが、CLI がその入力を読んだ後に来た(今すぐ送るを押した時には担当がもう読み終えていた): 止めずに
   ;; InputAlreadyRead で答え、手番は道具の後の答えを最後まで書いて Completed で終わる(答えが途中で切れない)。読んだ後も手番が続く間を作るため、
   ;; 道具の後に答えを考える秒(替え玉の CLI)と答えの差分(fake)を置く。本物の claude は考える秒を選べないので替え玉の CLI と fake だけ。
   {:interpreters ["fake" "stub"]}
@@ -138,7 +138,7 @@
 
 (deftest test-a-named-interrupt-of-an-id-not-added-to-the-turn-still-stops-it
   ;; 名指した ref がこの手番に入れた入力でない(止めの依頼の id を名指した等): 読んだかが分からないので名指さない止めと同じに止める。読んだと
-  ;; 数えると止めが黙って効かず、道具が走り切る(設計検証 lt-2F61HHZ2YZKD0HY0GV1YG0ZDN0 の盲検 A)。
+  ;; 数えると止めが黙って効かず、道具が走り切る。
   {:interpreters ["fake" "stub"]}
   (<- s (settings))
   (<- started (start (FreshSession (new-id)) s.base (sleep-prompt LONG-SLEEP "NEVER")))
@@ -296,7 +296,7 @@
   (assert (in CODEWORD done.end.result-text) done.end.result-text)
   (<- again (ClaudeExportSession s.other-home s.base.cwd sid))
   (assert (.startswith again.jsonl-text exported.jsonl-text) (repr again))
-  ;; 伸びた分だけの取り出し(card ki-3b521394a063): 前の写しの byte の長さから後ろは、続けた手番が足した行だけ。
+  ;; 伸びた分だけの取り出し: 前の写しの byte の長さから後ろは、続けた手番が足した行だけ。
   (val before (len (.encode exported.jsonl-text "utf-8")))
   (<- grown (ClaudeExportSession s.other-home s.base.cwd sid :from-byte before))
   (assert (= grown (SessionExported (.decode (cut (.encode again.jsonl-text "utf-8") before None) "utf-8"))) (repr grown)))
@@ -325,7 +325,7 @@
 
 
 (deftest test-a-lent-credential-is-replaced-in-the-live-process-and-a-refreshed-turn-reuses-it
-  ;; card ki-4ffdafa021e5: 借りた資格で起こした会話の生きた process の資格は ClaudeReplaceSessionCredential で替わる
+  ;; 借りた資格で起こした会話の生きた process の資格は ClaudeReplaceSessionCredential で替わる
   ;; (CredentialReplaced)。資格だけが替わった次の手番は process を起こし直さない(起動条件のキーに token と期限が入らない — 起こした数は
   ;; 1 のまま・会話の記憶も続く)。答えは閉じた和: 知らない会話 = NoSuchSession・家の資格で起こした process = HomeCredentialSession・
   ;; 閉じた(process が降りた)会話 = SessionProcessDown。token は偽の文字列。

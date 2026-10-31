@@ -22,7 +22,7 @@
 (import hy.models [Expression Symbol Keyword String Sequence Object Tuple])
 (import doeff_core_effects._effects [Resumption resumption-of])
 ;; 節を終える操作とその終わり方(続きを再開する・打ち切る …)は clause_ops.hy の表から引く — ここに名の一覧を写さない
-;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた — card ki-b4c015d8ba1f)。resume は非末尾なら節へ戻るので、
+;; (写しを直し忘れると、新しい操作の Raise の検めが黙って抜けた)。resume は非末尾なら節へ戻るので、
 ;; 実行の時の検めが見る。
 (import doeff-hy._clause-ops [Ending clause-op ops-ending])
 
@@ -213,7 +213,7 @@
 
 ;; 節の終わり方の照合を済ませた defhandler の定義(節の記述を作る関数 specs の code object — 定義 1 つに 1 つ)。照合は節の effect の型だけで
 ;; 決まり、引数の在る handler の引数には依らない。済んだ印を handler の本体(data)に置くと、引数の在る handler は組むたびに本体が新しいので、
-;; 要求ごとに組む handler(記録の service の wait-stamps など)が組むたびに照合をやり直していた(card ki-1841b724d061 — 1 要求の
+;; 要求ごとに組む handler(記録の service の wait-stamps など)が組むたびに照合をやり直していた(1 要求の
 ;; scheduler の thread の CPU の 1 割ほど)。
 (setv CHECKED-DEFINITIONS (set))
 

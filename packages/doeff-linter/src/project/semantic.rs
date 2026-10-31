@@ -4,17 +4,17 @@
 //!
 //! - 問いの文(instructions・criteria)はこの file の 1 か所の宣言(英語のまま — jev-lint の questions.py の J2・J3 と同じ内容)。
 //!   DOEFF201・202・205 の問いには、repo の architecture.hy の :semantic-lines(どこからが違反かの線引きの文と鳴る例・鳴らない例)を
-//!   instructions の lines に入れる(SemanticQuestion::wire_with — 文と例の定義元は architecture.hy・agora-redesign #1909)。
+//!   instructions の lines に入れる(SemanticQuestion::wire_with — 文と例の定義元は architecture.hy)。
 //! - gateway を呼ぶのは `--semantic` / `--semantic-all` の時だけ。決定的な規則の実行(エディタの保存ごと・hook)は cache を読むだけ。
 //! - cache の答えが無い定義は違反にせず「未判定」の数に出す(合格に倒さない)。
 //! - 重さは warning か info だけ(当たり外れを測り終えるまで error にしない — 設定でも選べない)。
 //! - 較正の見張り: 問いを撃つ実行ごとに、既知の正例と反例(data/semantic_calibration.json)を 1 回ずつ問い、確率が幅の外なら cache を捨てて警告する。
 //! API キーの値は、設定・出力・log・cache の鍵に書かない。
 //!
-//! Jev の呼び出しを覚える代理(repo proboscis/jev-proxy — 2026-10-01 に doeff の packages/doeff-jev-proxy から移した・agora-redesign #843・#1919):
+//! Jev の呼び出しを覚える代理(repo proboscis/jev-proxy — 2026-10-01 に doeff の packages/doeff-jev-proxy から移した):
 //! - 宛先は repo ごとの設定 `[tool.doeff-linter.semantic] proxy_url` で向ける(機体全体の環境変数にしない — 会社の repo は向けない)。
 //!   env の JEV_BASE_URL が在ればそちらが勝つ。proxy へは見出し Authorization を送らない(TypeSafe のキーも送らない — proxy は
-//!   呼び手の身元を問わない・2026-10-02 に proxy の token を外した — agora-redesign #3002)。
+//!   呼び手の身元を問わない・2026-10-02 に proxy の token を外した)。
 //! - 決定的な規則の全体の実行(hook・引数なしの実行)は、手元の cache に無い定義を代理に「覚えている時だけ」問い、返った答えを手元の
 //!   cache に書く。本物の Jev は呼ばない。問いは定義 1 つずつではなく、代理の鍵(proxy_key — 本文を正規化した sha256)の束
 //!   (POST <proxy_url>/peek・PEEK_BATCH 個ずつ)で撃つ — 定義が数千ある repo でも往復が数回で済み、本文を送らない。
@@ -36,8 +36,8 @@ use sha2::{Digest, Sha256};
 
 use super::layers::{LayerDescription, LayerId};
 
-/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …] :silent [例 …])` —
-/// agora-redesign #1909)。どこからが違反かの文と、鳴る例・鳴らない例を、その規則の問いの instructions に入れる。文と例は repo の宣言に
+/// Jev に問う規則の線引き 1 つ(`:semantic-lines` の `(line "名" :rules [DOEFF201 …] :text "…" :fires [例 …] :silent [例 …])`)。
+/// どこからが違反かの文と、鳴る例・鳴らない例を、その規則の問いの instructions に入れる。文と例は repo の宣言に
 /// だけ在り、linter は持たない(定義元は architecture.hy の 1 か所)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticLine {
@@ -53,7 +53,7 @@ pub struct SemanticLine {
     pub silent: Vec<LineExample>,
 }
 
-/// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}` — agora-redesign #1995)。why = その例がなぜ鳴る / 鳴らないかの 1 文で、問いに
+/// 線引きの例 1 つ(`"<code>"` か `{:code "<code>" :why "…"}`)。why = その例がなぜ鳴る / 鳴らないかの 1 文で、問いに
 /// code と組で載る。例が code だけだと線引きの文の文言に負けた(send-task・list-limit-of・join-chat は自分自身が鳴らない例として問いに
 /// 載りながら高く出た・#1944)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +83,7 @@ impl SemanticQuestion {
     /// 全部の問い。
     pub const ALL: [SemanticQuestion; 2] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge];
 
-    /// architecture.hy の :semantic-lines で線引きを入れられる問い(DOEFF201・202・205 — agora-redesign #1909)。
+    /// architecture.hy の :semantic-lines で線引きを入れられる問い(DOEFF201・202・205)。
     pub const LINED: [SemanticQuestion; 3] = [SemanticQuestion::BusinessDecision, SemanticQuestion::TransportKnowledge, SemanticQuestion::MixedConcerns];
 
     /// 規則の ID(DOEFF201 …)。
@@ -97,7 +97,7 @@ impl SemanticQuestion {
         }
     }
 
-    /// 線引きを入れた問い(agora-redesign #1909)— architecture.hy の :semantic-lines のうちこの問いに当たる線引きの名・文・鳴る例・鳴らない例を
+    /// 線引きを入れた問い— architecture.hy の :semantic-lines のうちこの問いに当たる線引きの名・文・鳴る例・鳴らない例を
     /// instructions に入れ、線引きの読み方と答えの向きを lines_note に書く。例は `{"code", "why"}` の組(why を書いた例だけ why を持つ・#1995)で、
     /// code は定義の source と同じく :tags を消して渡す(申告に引きずられないため)。
     /// instructions は鍵の object ではなく、1 つの鍵の object を宣言の順に並べた列で送る(#1995 — object の鍵は名の順に並び、DOEFF205 では
@@ -164,7 +164,7 @@ impl SemanticQuestion {
                     ]),
                 ),
             ],
-            // 枠は 2 つを同じ重さで問う(agora-redesign #2059): 通信の手段と、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)。前の枠は
+            // 枠は 2 つを同じ重さで問う: 通信の手段と、外の data の型の無い形(dict・JSON の値を欄名で読む・組む)。前の枠は
             // 通信の手段だけで、json.loads を書かない欄名の読みを repo の線引きと例で足しても、似た形の別の定義へ広がらなかった(#2044・#2052)。
             // 欄の既定値は「欄名で読む」の内に数えるだけで、既定に倒すのが誰の仕事かは言わない(それは DOEFF201 の判断の問い)。
             SemanticQuestion::TransportKnowledge => vec![
@@ -427,7 +427,7 @@ pub struct SemanticSettings {
     pub false_positives: Vec<String>,
     /// 人が本当の違反と判定した当たりの一覧の dir(repo の根からの相対)。
     pub true_positives: Vec<String>,
-    /// Jev の問いに入れる線引き(architecture.hy の :semantic-lines — 無ければ空で、問いは今のまま・agora-redesign #1909)。
+    /// Jev の問いに入れる線引き(architecture.hy の :semantic-lines — 無ければ空で、問いは今のまま)。
     /// TOML の節には書かず、設定の組み立て(config.rs)が architecture.hy から取り込む — 文の定義元は architecture.hy の 1 か所。
     pub lines: Vec<SemanticLine>,
 }
@@ -777,7 +777,7 @@ pub fn mixed_item(
 
 /// 閾値と比べる確率 — 較正の見張りと、人の判定との突き合わせ(`labeled`)の 2 か所がこの 1 つを使う。Noul は答えの確率、選ぶ形の問いは
 /// 的の語の確率(DOEFF204 = external-world・DOEFF205 = mixed)。選ぶ形の答えの `probability` は選んだ語の確率なので、そのまま使うと
-/// judgment-only 0.97・mixed 0.02 の答えが 0.97 に見える(agora-redesign #1944・#1994 — 205 の閾値の表がこの読み違いの上で作られた)。
+/// judgment-only 0.97・mixed 0.02 の答えが 0.97 に見える(#1994 — 205 の閾値の表がこの読み違いの上で作られた)。
 pub fn target_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
     match question {
         SemanticQuestion::ClassRole => answer.probabilities.as_ref().and_then(|p| p.get("external-world").copied()).unwrap_or(0.0),
@@ -791,7 +791,7 @@ pub fn target_probability(question: SemanticQuestion, answer: &Answer) -> f64 {
 pub struct Answer {
     pub probability: f64,
     /// 答えに載った費用(USD)— 上流が答えに載せた時だけ Some(Vercel の AI Gateway の providerMetadata.gateway.cost)。TypeSafe 直は
-    /// 載せないので None で、0 と区別する(agora-redesign #1892)。以前の cache の欄 cost_usd は、載らない時も 0 と書いていたので読まない
+    /// 載せないので None で、0 と区別する。以前の cache の欄 cost_usd は、載らない時も 0 と書いていたので読まない
     /// (読むと「費用 0」と「不明」が混ざる — 前の答えは不明として読む)。
     #[serde(default)]
     pub reported_cost_usd: Option<f64>,
@@ -1237,15 +1237,14 @@ pub struct SemanticSummary {
     pub judged: usize,
     /// 答えの無い定義の数(未判定 — 合格ではない)。
     pub unjudged: usize,
-    /// 今回問うはずだったのに答えを得られなかった定義の数(Jev に届かない・鍵が無い・較正が撃てない — 「測れなかった」。緑と分けて出す・
-    /// agora-redesign #1160 の決定 2)。
+    /// 今回問うはずだったのに答えを得られなかった定義の数(Jev に届かない・鍵が無い・較正が撃てない — 「測れなかった」。緑と分けて出す)。
     pub unmeasured: usize,
     /// 今回 gateway へ撃った数(較正を含む)。
     pub asked: usize,
     /// 今回、代理が覚えていた答えを受け取って手元の cache に書いた数(覚えている時だけの問い — 本物の Jev は呼んでいない)。
     pub peeked: usize,
     /// 今回の費用(上流が答えに費用を載せた回の USD の和)。載せない回(TypeSafe 直)は cost_unreported に数え、ここに 0 を足さない
-    /// — cost_unreported が 0 でなければ、この和は下限(agora-redesign #1892)。
+    /// — cost_unreported が 0 でなければ、この和は下限。
     pub cost_usd: f64,
     /// 今回、上流を呼んだのに答えに費用が載っていなかった回の数(費用は不明 — 0 ではない)。
     pub cost_unreported: usize,
@@ -1313,7 +1312,7 @@ pub enum SemanticMode {
     AskChanged(BTreeSet<String>),
     /// 全部の定義を撃つ。
     AskAll,
-    /// 旗の無い全体の実行の既定(agora-redesign #1160): 指定した file の定義のうち手元の cache に答えの無い物だけを撃ち(AskChanged と同じ)、
+    /// 旗の無い全体の実行の既定: 指定した file の定義のうち手元の cache に答えの無い物だけを撃ち(AskChanged と同じ)、
     /// 残りの答えの無い定義は代理に「覚えている時だけ」問う(Peek と同じ — 別の worker の答えを受け取る)。
     PeekThenAskChanged(BTreeSet<String>),
 }
@@ -1374,7 +1373,7 @@ pub fn evaluate(
     };
     let asking = items.iter().any(wants_ask);
     // 問うと名指した Hy の file のうち、問いになる定義が 1 つも無い物を名乗る(問いの層の外・最上位の定義なし・書きかけ)— 名指しが
-    // どの問いにもならずに「今回撃った 0」で終わる時、なぜ 0 かを黙らない(agora-redesign #2075)。
+    // どの問いにもならずに「今回撃った 0」で終わる時、なぜ 0 かを黙らない。
     if let SemanticMode::Ask(targets) | SemanticMode::AskChanged(targets) = mode {
         let silent: Vec<&str> = targets
             .iter()
@@ -1534,7 +1533,7 @@ pub fn evaluate(
                 errors.push(format!("{} の {}: Jev に問えない: {}", item.rel, item.name, reason));
             }
             // proxy の覚えを読む束が待ちの内に返らなかった(届かない・時間切れ)定義は、答えが在るかどうかを測れていない — 未判定に数えず
-            // 「測れなかった」に数える(agora-redesign #1885: 束が 5 秒を超えた機体で、判定済み 6813 の repo が黙って未判定 7697 と出た)。
+            // 「測れなかった」に数える(束が 5 秒を超えた機体で、判定済み 6813 の repo が黙って未判定 7697 と出た)。
             None if missed => summary.unmeasured += 1,
             None => {
                 summary.unjudged += 1;
@@ -1641,7 +1640,7 @@ mod tests {
         assert_eq!(calibration_examples().len(), 8);
     }
 
-    // ---- 答えの費用(agora-redesign #1892): 上流が答えに載せた時だけ費用が在り、載せない答えは 0 ではなく「不明」----
+    // ---- 答えの費用: 上流が答えに載せた時だけ費用が在り、載せない答えは 0 ではなく「不明」----
 
     /// 費用の在る答え(Vercel の AI Gateway の形)— 費用と token を読み、上流を呼んだ回はその費用を数える。
     #[test]
@@ -1745,8 +1744,8 @@ mod tests {
         assert_eq!((gateway_env.wire, gateway_env.model.as_str()), (Wire::Direct, DIRECT_MODEL));
     }
 
-    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201 の cache のキーは線引きを足す前(agora-redesign
-    /// #1909 の前)と同じ — キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。DOEFF205 のキーは
+    /// architecture.hy に :semantic-lines の無い repo では、問いは wire() のまま。DOEFF201 の cache のキーは線引きを足す前
+    /// と同じ — キーの値は線引きを足す前の code で組んだ物(変われば、その repo の全部の定義が「答えなし」に戻る)。DOEFF205 のキーは
     /// #1995 で一般の注を線引き 4 の例外と揃えたので変わった(値は #1995 の code で組んだ物)。DOEFF202 のキーは #2059 で枠に外の data の
     /// 型の無い形を足したので変わった(値は #2059 の code で組んだ物)。
     #[test]
@@ -1798,7 +1797,7 @@ mod tests {
         }
     }
 
-    /// agora-redesign #1909: 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。例の code の :tags は消し、why を書いた
+    /// 線引きはその規則の問いにだけ入る(名・文・鳴る例・鳴らない例・答えの向き)。例の code の :tags は消し、why を書いた
     /// 例は `{"code", "why"}`、書かない例は `{"code"}` で載る(#1995)。線引きを入れた問いは cache のキーも変わる(線引きを変えると答えなしに
     /// 戻る — 想定どおり)。
     #[test]
@@ -1839,7 +1838,7 @@ mod tests {
         assert_eq!(after.question_json, BusinessDecision.wire_with(&lined.lines));
     }
 
-    /// agora-redesign #1995: 線引きを入れた問いの instructions は、宣言の順(問いの文 → 一般の例・注 → 線引きの読み方 → 線引き)の列で送る —
+    /// 線引きを入れた問いの instructions は、宣言の順(問いの文 → 一般の例・注 → 線引きの読み方 → 線引き)の列で送る —
     /// 鍵の object だと鍵の名の順に並び、DOEFF205 の一般の注(note)が線引き(lines)の後ろに来て、「上の注と違えば線引きに従え」が
     /// 逆さに読めた。送る本文の文字列でも、この順に出る(列は綴りでも順を保つ)。
     #[test]
@@ -1860,7 +1859,7 @@ mod tests {
         }
     }
 
-    /// agora-redesign #1995: DOEFF205 の一般の注は、線引き 4 の例外(型の union の枝分け・外から来ていない dict・形の確認を任せた関数の答えで
+    /// DOEFF205 の一般の注は、線引き 4 の例外(型の union の枝分け・外から来ていない dict・形の確認を任せた関数の答えで
     /// 断るだけの枝)を同じ向きで言う — 前の注は isinstance と dict の読みを例外なしに形の確認と言い、線引きと食い違った。
     #[test]
     fn the_mixed_concerns_note_states_the_exceptions_of_the_lines() {
@@ -1870,7 +1869,7 @@ mod tests {
         }
     }
 
-    /// agora-redesign #2059: DOEFF202 の枠は、通信の手段(a)と外の data の型の無い形(b — dict・JSON の値を欄名で読む・組む)を同じ重さで問う。
+    /// DOEFF202 の枠は、通信の手段(a)と外の data の型の無い形(b — dict・JSON の値を欄名で読む・組む)を同じ重さで問う。
     /// 前の枠は通信の手段だけで、json.loads を書かない欄名の読みは repo の線引きと例を足しても広がらなかった。true の例に json.loads を
     /// 含まない欄名の読みが在り、false の例に型の値だけで判じる core が在る。
     #[test]

@@ -1,4 +1,4 @@
-//! 意味の規則と Jev の呼び出しを覚える代理(agora-redesign #843)の検。代理は手元の偽の HTTP(127.0.0.1)で、覚えは本文の代理の鍵
+//! 意味の規則と Jev の呼び出しを覚える代理の検。代理は手元の偽の HTTP(127.0.0.1)で、覚えは本文の代理の鍵
 //! (proxy_key)で引く。反例: 全体の実行は代理に鍵の束で「覚えている時だけ」問い(定義 1 つずつ撃たない・本文を送らない)、本物の Jev を
 //! 呼ばせない・代理に届かなくても止まらない・編集中の 1 file(--stdin)は
 //! 代理に問わない・--semantic-changed は中身の変わった定義だけを問い、書きかけで読めない定義は問わない・較正は覚えを使わない・
@@ -246,7 +246,7 @@ fn whole_run_takes_remembered_answers_from_the_proxy_without_asking_jev() {
 
 #[test]
 fn whole_run_without_a_reachable_proxy_stays_on_the_local_cache() {
-    // 届かない proxy の束は答えの有無を測れていない — 未判定ではなく「測れなかった」(agora-redesign #1885)。止まらずに終わる。
+    // 届かない proxy の束は答えの有無を測れていない — 未判定ではなく「測れなかった」。止まらずに終わる。
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
     drop(closed);
@@ -291,7 +291,7 @@ fn slow_proxy(delay: Duration) -> String {
 
 #[test]
 fn a_peek_batch_that_does_not_return_in_time_is_unmeasured_not_unjudged() {
-    // agora-redesign #1885: proxy が束に待ち(proxy_peek_timeout_ms)の内に答えないと、linter は束を捨てる。以前はその定義を黙って
+    // proxy が束に待ち(proxy_peek_timeout_ms)の内に答えないと、linter は束を捨てる。以前はその定義を黙って
     // 未判定に数え、判定済みの repo が「未判定 7697」と出た。答えの有無を測れていないので「測れなかった」に数え、未判定に入れない。
     // 反例: 同じ proxy が待ちの内に答えれば(覚えていない = 答えが無い)、それは未判定。
     let slow = slow_proxy(Duration::from_millis(2000));
@@ -314,7 +314,7 @@ fn a_peek_batch_that_does_not_return_in_time_is_unmeasured_not_unjudged() {
 
 #[test]
 fn stdin_plain_run_does_not_ask_the_proxy() {
-    // 1 file の --stdin(書いた直後の hook・エディタ)の既定は cache だけ(agora-redesign #1190 の決定 A — hook の 3 秒の上限)。
+    // 1 file の --stdin(書いた直後の hook・エディタ)の既定は cache だけ(hook の 3 秒の上限)。
     let proxy = fake_proxy();
     let dir = repo(FILES, &proxy.url);
     let path = dir.path().join("app/protocol/chat.hy");
@@ -344,7 +344,7 @@ fn stdin_changed_run_asks_only_uncached_definitions() {
 
 #[test]
 fn unreachable_jev_is_unmeasured_and_not_green() {
-    // agora-redesign #1160 の決定 2: 問うはずの定義が Jev に届かず答えを得られなければ「測れなかった」— 破れが無くても終了コード 3。
+    // 決まり: 問うはずの定義が Jev に届かず答えを得られなければ「測れなかった」— 破れが無くても終了コード 3。
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/v1/systemone", closed.local_addr().unwrap());
     drop(closed);
@@ -415,7 +415,7 @@ fn whole_run_peeks_thousands_of_definitions_in_a_few_batches() {
 
 #[test]
 fn proxy_key_matches_the_proxy_key_contract_sample() {
-    // proxy(repo proboscis/jev-proxy — 2026-10-01 に doeff から移した・agora-redesign #1923)の鍵の決まりの見本の写しを読む。
+    // proxy(repo proboscis/jev-proxy — 2026-10-01 に doeff から移した)の鍵の決まりの見本の写しを読む。
     // 正本は proxy の repo の tests/key_contract.json(proxy の検 test_key_contract_sample_is_the_proxy_key が読む)で、この写しは
     // 移した時に 1 byte も違わない(sha256 8b4acc8b…)。鍵の決まりを変える時は、2 つの repo の見本と実装を同じ組の変更で直す
     // (片方の決まりだけを変えると、その側の検が赤になる)。
@@ -435,7 +435,7 @@ fn one_cached_answer(root: &Path) -> Value {
 
 #[test]
 fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_again() {
-    // agora-redesign #1892: 上流が答えに費用を載せれば、linter は今回の費用に数え、手元の cache の答えにも費用が載る。
+    // 上流が答えに費用を載せれば、linter は今回の費用に数え、手元の cache の答えにも費用が載る。
     let proxy = fake_proxy_with_cost(Some("0.00004"));
     let first = repo(FILES, &proxy.url);
     let (asked, _) = run(first.path(), &["--semantic-all"], None, &[]);
@@ -462,7 +462,7 @@ fn the_cache_records_the_upstream_cost_and_a_remembered_answer_is_not_charged_ag
 
 #[test]
 fn an_upstream_without_a_cost_is_counted_as_unreported_not_as_zero() {
-    // agora-redesign #1892: TypeSafe 直のように上流が費用を載せない答えは、費用 0 ではなく「不明」に数え、cache にも 0 を書かない。
+    // TypeSafe 直のように上流が費用を載せない答えは、費用 0 ではなく「不明」に数え、cache にも 0 を書かない。
     // token 数(usage)は数える。
     let proxy = fake_proxy();
     let dir = repo(FILES, &proxy.url);

@@ -2,7 +2,7 @@
 
 postgres-sql-handler used to start one thread per driver call (``ThreadPerCall``). Starting a thread
 costs milliseconds on the caller's thread, and in the custody service that cost was a fifth of its
-idle CPU (agora card ki-8fc4f9017572). ``ReusedThreads`` keeps a finished thread waiting for the next
+idle CPU. ``ReusedThreads`` keeps a finished thread waiting for the next
 call. It keeps ThreadPerCall's other promises: no upper bound on threads (a call that waits inside its
 thread for a connection permit must not starve the permit holder's next call), daemon threads, and a
 future cancelled before it starts never runs.

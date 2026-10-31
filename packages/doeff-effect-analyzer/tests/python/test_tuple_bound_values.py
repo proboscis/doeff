@@ -1,4 +1,4 @@
-"""Names bound by a tuple target from a tuple literal of the same length (agora-redesign #4254).
+"""Names bound by a tuple target from a tuple literal of the same length.
 
 doeff-hy's ``defk`` / ``deff`` with a typed ``:post`` contract declares ``_contract_result: T``
 at the head of the function and binds every exit as ``(_contract_result,) = (value,)``

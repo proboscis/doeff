@@ -13,7 +13,7 @@ class StopArrived:
     """The stop signal came: ``reason`` is the stop reason ``AwaitStop`` answered.
 
     A loop's one stop watcher (``doeff_events._event_loop.begin_watch``) publishes it on the loop's bus, so the loop
-    waits for its events and for the stop with one ``WaitForEvent`` (agora-redesign #3080's follow-up). A bus is
+    waits for its events and for the stop with one ``WaitForEvent``. A bus is
     shared only inside the reach of one stop signal (one job), so every loop on it stops on the same signal.
     ``subscribed_event_handler`` always subscribes it.
     """
@@ -28,7 +28,7 @@ class SourceFailed:
 
     The task publishes it before it ends with ``error``, and the body the source feeds waits for it together with its
     events in one ``WaitForEvent`` and raises ``error`` again (doeff-records' signal sources — the body never races the
-    source task per wait — agora-redesign #3135). ``subscribed_event_handler`` always subscribes it.
+    source task per wait). ``subscribed_event_handler`` always subscribes it.
     """
 
     source: str
@@ -41,7 +41,7 @@ class SourceStalled:
     feed), ``detail`` is the store's own words for why it is unreachable, and ``since`` is when it first was.
 
     The task stays alive and waits for the store to come back (doeff-records' signal sources wait for it as an
-    event, up to the patience its foundation declares — agora-redesign #3469). It publishes ``SourceResumed``
+    event, up to the patience its foundation declares). It publishes ``SourceResumed``
     when the store answers again, or ``SourceFailed`` when the patience runs out. Unlike ``SourceFailed`` it is
     not always subscribed: a body that shows the stall (a screen telling its users the records are unreachable)
     names it in its subscription; others never see it.
@@ -133,7 +133,7 @@ missed ``Publish``), or ``NoticeDropped`` (a ``Drop`` route)."""
 #: receives them as the answer of ``WaitForEvent`` / ``WaitForEvents`` when it names their types. The wait answers
 #: whichever types the body names, so ``EffectBase[T]`` has no one ``T`` to write: each wait declares these in its
 #: ``__doeff_bus_events__``, which the inventory of the public API (tools/public_api_inventory.py — ``answer_types``)
-#: reads as its answers (ADR-DOE-API-001 R2 · agora card ki-d94ee9f9f6ce).
+#: reads as its answers.
 _BUS_EVENTS: tuple[type[Any], ...] = (
     StopArrived,
     SourceFailed,
@@ -222,7 +222,7 @@ class PublishGapEffect(EffectBase[GapAnswer]):
     ``notice_events_handler`` tells the channel's gap like one a ``Publish`` left (``SourceMissed`` at the receivers,
     who catch up once from their records): at once, behind the sends already queued, or — when the broker cannot
     take it — by marking the channel. A sender publishes it when it gives up on learning the outcome, so that a
-    write that landed without its event is never left for the receivers' next start (agora card ki-a93fc14956e3).
+    write that landed without its event is never left for the receivers' next start.
     An event of a type no wrapper routes has no channel to tell: the effect goes outward and nothing answers it. A
     routed event answers ``GapAnswer``.
     """

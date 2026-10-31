@@ -56,7 +56,7 @@
    識別を読む Program(答え = process-versions の答え — 配備の worker の環境の版を読む Program を呼び手が渡す。宣言する process の版は
    呼び手の pin に従うので、配備の worker と違う版を当てる時はこの欄で渡す・#3295。None = 宣言する process の版 this-process-versions)・
    contents = Redeclare が宣言に載せる job ごとの中身の鍵(job の名 → 鍵 — system-declaration の :contents。宣言する系に在る job の分だけを
-   渡す・card ki-81bf84ac6590。None = 鍵を載せない = 版と commit で判じる)。"
+   渡す。None = 鍵を載せない = 版と commit で判じる)。"
   (#^ str url)
   (#^ str actor)
   (#^ str revision)
@@ -82,7 +82,7 @@
     (<- versions dict (if (is target.versions-read None) (this-process-versions) target.versions-read))
     ;; その宣言し直しの上書き(渡されなければ上書き無し — 本番の宣言と同じく宣言ごとの上書き・#3131)。台数は系の値の各 job の
     ;; :replicas が行に載って書かれる(0 = 取り下げ — #3487)。
-    ;; 中身の鍵は宣言する系の job の分だけ(target は道具が当てる全部の系の鍵を持ちうる — card ki-81bf84ac6590)。
+    ;; 中身の鍵は宣言する系の job の分だけ(target は道具が当てる全部の系の鍵を持ちうる)。
     (val names (frozenset (gfor j system.jobs j.name)))
     (val declaration (system-declaration system target.revision :runtime-env target.runtime-env :versions versions
                                          :environ (if (is environ None) {} environ)

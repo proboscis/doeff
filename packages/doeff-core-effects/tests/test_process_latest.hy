@@ -1,4 +1,4 @@
-;;; 本物の最新の値の答え手 process-latest-handler だけの性質(agora-redesign #1440)。契約の性質は test_latest_contract.hy。
+;;; 本物の最新の値の答え手 process-latest-handler だけの性質。契約の性質は test_latest_contract.hy。
 ;;;
 ;;;   * 同じ名前で入れた答え手どうしは、別の run でも別の thread でも 1 つの置き場を読み書きする(処理ループの run が置き、probe の別の run が読む)
 ;;;   * 名前が違えば置き場も別
@@ -57,7 +57,7 @@
   (assert (is value None) (.format "別の名前の置き場の読みが {!r}" value)))
 
 
-;; --- 変わるまでの待ち(AwaitLatest — agora-redesign #4296)の本物だけの性質 -----------------------------------------------------
+;; --- 変わるまでの待ち(AwaitLatest)の本物だけの性質 -----------------------------------------------------
 ;;   * 別の thread の run が置いた値で、この run の待ちが起きる(処理ループの run が置いた断面で、probe の別の run の待ちが起きる形)
 ;;   * 取り消された待ちは呼び鈴を残さない(process に 1 つの呼び鈴の保存先が空に戻る)
 

@@ -1,4 +1,4 @@
-;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の I/O なしの答え手 scripted-ws-client(agora-redesign #4007 U0)。本物の
+;;; 汎用の WebSocket の client の effect(ws_client_effects.hy)の I/O なしの答え手 scripted-ws-client。本物の
 ;;; socket を開かず、台本(WsScript — 繋ぎ先ごとの届く frame の列と、送りに応じて届く frame)で答え、送った文と閉じを記録する。業務を
 ;;; 知らない: 台本の中身は呼び手が渡す。
 ;;;

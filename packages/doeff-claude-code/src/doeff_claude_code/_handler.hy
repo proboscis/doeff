@@ -26,7 +26,7 @@
 ;;; (Doorbell — CreateExternalPromise の約束)を掛けてから条件を読み直し、WaitWithin で上限の秒まで待つ。状態を変えた側(読み手の
 ;;; thread・process の終わり・handler の節)が呼び鈴を鳴らす(時間で起きて確かめない — 行が来てから待ちが抜けるまでに刻みの遅れが無い)。
 ;;;
-;;; 借りた資格(card ki-4ffdafa021e5): 宣言(ClaudeSessionSpec)が借りた資格(credential)を持てば、その process だけの設定
+;;; 借りた資格: 宣言(ClaudeSessionSpec)が借りた資格(credential)を持てば、その process だけの設定
 ;;; dir(資格の家 — credential_home.hy)を家の設定 dir の下に作って .credentials.json に置き、子の CLAUDE_CONFIG_DIR をそこへ向ける
 ;;; (子の env に token を置かない)。家は Binding が持ち、process が降りたら消す(on-down)。資格だけが替わった手番は起動条件のキー
 ;;; (argv.hy の launch-key — token と期限を入れない)が同じなので生きた process を使い回し、その手番の資格を家の file に書く
@@ -90,10 +90,10 @@
 ;; 会話が持ち続ける手番の記録(stdout の行の全部)の本数。読み手(上の層)は今の手番と、止めて生き残った入力の続きの手番しか読まない
 ;; ので、続きを数本たどる間だけ持つ。閉じた会話は最後の手番だけを持ち(SessionRuntime.keep-only-current)、読み手がその終わりを
 ;; 読み、process も降りたら、生きた状態ごとホストから外して小さな記録(ClosedSession)だけを残す(ClaudeCodeHost.release)。16 本だった
-;; 時は、生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた(lt-KATGT933TATG1ESPPSW9QGFM7K)。
+;; 時は、生きた会話ごとに 16 手番分の行と、閉じた会話の 16 手番分の行をホストの process が持ち続けた。
 ;; 最後の 1 本を持ち続けた時も、閉じた会話の数だけ行が溜まり、CLI の数が減っても turn-host の memory が減らなかった(10-19 の本番の
-;; pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB — lt-5611P8B4MJS6CZQZ1809H94JPQ)。走っている手番も、読み手に
-;; 渡した差分の行(PartialMessage)は終わりを待たずに捨てる(TurnLog.drop-read-deltas — card ki-27d4694258b0)。行の数に上限を置く形は
+;; pid 1518593: CLI 96→57 本で ClaudeStreamLine +49,501 個・RssAnon +55 MB)。走っている手番も、読み手に
+;; 渡した差分の行(PartialMessage)は終わりを待たずに捨てる(TurnLog.drop-read-deltas)。行の数に上限を置く形は
 ;; 選ばない: 上限を越えた所で捨てる行は読み手がまだ読んでいない行で、答えの途中の本文や道具の呼びが上の層へ届かなくなる。
 (setv KEPT-TURNS 4)
 (setv RETIRE-WAIT-SECONDS (+ EOF-GRACE-SECONDS (* 2 TERM-GRACE-SECONDS) 2.0))
@@ -102,10 +102,10 @@
 (val CLI-TIMING-LOG "claude CLI の起動の計時")
 ;; 生かす本数の上限を越えて起動した時の log の行の名(#4072 の E1b — 同じ事を知らせ ClaudeLiveLimitExceeded でホストへも届ける)。
 (val LIVE-LIMIT-LOG "claude CLI の生かす本数の上限を越えた起動")
-;; 続きの前に大きな transcript を最後の compact の境から後だけに置き直した(か置き直せなかった)所の log の行の名(card ki-d96c2ca8a5a1 —
+;; 続きの前に大きな transcript を最後の compact の境から後だけに置き直した(か置き直せなかった)所の log の行の名(
 ;; rotation.hy の頭の註)。
 (val TRANSCRIPT-ROTATION-LOG "claude CLI の transcript の差し替え")
-;; transcript の読み書き(額の起点の読み・書き出し・持ち込み・様子)1 つに thread 1 本(card ki-24ee30105583): transcript の jsonl は数十 MB に
+;; transcript の読み書き(額の起点の読み・書き出し・持ち込み・様子)1 つに thread 1 本: transcript の jsonl は数十 MB に
 ;; なり、待ち行列の浅い詰まった disk では 1 回の読みが秒の単位で待つ。handler の節は scheduler の thread の上で走るので、そこで読むと
 ;; 同じ process の全部の手番が止まる。待つのは読みを頼んだ task だけにする(doeff_core_effects の offloaded — 外側に scheduled が要るのは
 ;; 呼び鈴の待ちと同じ)。待ちが取り消された後の答えは値か持ち込みの終わりの印だけ — 後始末は要らない。
@@ -216,7 +216,7 @@
      行を終わりまで持たないため。差分は答えの途中の写しで、同じ中身は後の assistant の行が運ぶ。読み手は渡された所より後しか読まない
      (after-seq)ので、捨てた行を読み直さない。渡した頁ごとに捨てるので、渡した行はどれも渡した頁の読みで捨てられ、1 回の費用は頁の
      大きさだけ(手番の長さに比例しない — tests/test_page_reads.hy)。走っている手番の差分の行を終わりまで全部持つと、本番の turn-host は
-     running の手番 1 本あたり約 900 行(その 8 割 余りが差分の行・1 行 約 2.3 KB)を持った(card ki-27d4694258b0)。会話の lock の中で呼ぶ。"
+     running の手番 1 本あたり約 900 行(その 8 割 余りが差分の行・1 行 約 2.3 KB)を持った。会話の lock の中で呼ぶ。"
     (setv start (bisect.bisect-left self.lines from-seq :key (attrgetter "seq")))
     (setv stop (bisect.bisect-right self.lines to-seq :lo start :key (attrgetter "seq")))
     (setv (cut self.lines start stop)
@@ -226,9 +226,9 @@
   "1 つの process と、その process が今走らせている手番の番号(生き残った入力の手番へ進む)。
    process は起こすまで None。credential-home = その process だけの資格の家の path(借りた資格で起こした時だけ — 家の資格なら None。
    process が降りて消したら None に戻す)。open-calls = その process の stdout で始まりを読み、まだ終わりを読んでいない API の呼び
-   (lines.hy の call-step — 呼びの最終の usage を組むため・card ki-290ec664737d。process ごとに持つ — 降りた process の開いた呼びを
+   (lines.hy の call-step — 呼びの最終の usage を組むため。process ごとに持つ — 降りた process の開いた呼びを
    次の process の終わりと組まない)。tap = 今の手番を始めた ClaudeStartTurn の行の写し手(None = 写さない — 手番を始めるたびに
-   その手番の写し手に替わる・card ki-31b41eac5071)。書き換えるのは会話の lock の中だけ。"
+   その手番の写し手に替わる)。書き換えるのは会話の lock の中だけ。"
   (defn __init__ [self #^ int turn-seq #^ (| str None) [credential-home None]]
     (setv #^ (| ClaudeProcess None) self.process None)
     (setv #^ int self.turn-seq turn-seq)
@@ -271,7 +271,7 @@
     (setv #^ bool self.warmed-fresh False)
     (setv #^ (| Binding None) self.binding None)
     (setv #^ (get dict #(int TurnLog)) self.turns {})
-    ;; subagent の transcript の読み(subagent の節 — card ki-e798888dce4e): agent-parents = この会話の CLI が起こした subagent の task の id →
+    ;; subagent の transcript の読み(subagent の節): agent-parents = この会話の CLI が起こした subagent の task の id →
     ;; 起こした道具の呼びの id(task_started の SUBAGENT-TASK-TYPE)/ unread-subagents = まだ transcript を読んでいない subagent
     ;; (SubagentTask)/ subagent-read-to = transcript を読み終えた所(byte — 同じ subagent の続きは伸びた分だけ読む)。読み手の thread と
     ;; on-exit だけが会話の lock の中で書く。
@@ -324,9 +324,9 @@
   (defn note-read [self #^ ClaudeTurn turn #^ TurnEventPage page]
     "読み手に渡した頁を手番の記録に記し、終わりまで渡した手番の行を捨てるため(終わりを渡したら、読み手はその手番をもう読まない — 閉じた
      会話を外してよいかの材料。生きた会話も、読み終えた手番の行を最近の KEPT-TURNS 本ぶん持ち続けない: 本番の turn-host では、running の
-     手番が減っても ClaudeStreamLine が増え続けた — card ki-ff61c7e52cb9)。手番の記録と終わりは残すので、読み直しには行の無い頁と終わりを
+     手番が減っても ClaudeStreamLine が増え続けた)。手番の記録と終わりは残すので、読み直しには行の無い頁と終わりを
      答える(知らない手番にはしない)。終わりの前の頁も、渡した差分の行は捨てる(TurnLog.drop-read-deltas — 走っている手番が差分の行を
-     終わりまで持たない・card ki-27d4694258b0)。計時の行(note-first-reply・note-first-text・note-turn-end)は行でなく、行を足す時に
+     終わりまで持たない)。計時の行(note-first-reply・note-first-text・note-turn-end)は行でなく、行を足す時に
      控えた目印を読む(TurnLog.add)。会話の lock の中で呼ぶ。"
     (setv log (.get self.turns turn.turn-seq))
     (cond
@@ -472,7 +472,7 @@
     (.retire (process-of binding)))
   (.ring runtime.doorbell))
 
-;; --- subagent の transcript(card ki-e798888dce4e) ------------------------------------------------------
+;; --- subagent の transcript ------------------------------------------------------
 ;;
 ;; 背景の task を止めた CLI(argv.hy の PER-TURN-SETTINGS-ENV — 本番の起こし方)は、subagent の API の呼びの行を stdout に出さない(実測
 ;; 2.1.292: 出るのは subagent の task の始まり・進み・報せの行だけで、報せの usage は total_tokens などの数だけ)。
@@ -481,8 +481,8 @@
 ;; 後に書かれた)。そこで読み手の thread は、task_started の local_agent で subagent の task の id と親の道具の呼びの id を覚え、報せの
 ;; 行で報せを受けた印と status を控え、CLI の手番の終わり(result の行)を受けた所で、報せを受けた subagent の transcript の伸びた分を
 ;; 読み、result の行の直前に SubagentTranscript の行として手番の記録へ足す。書き切ったかは transcript だけで決める(lines.hy の
-;; subagent-transcript-of — 答え終えた subagent の transcript は閉じた呼びで終わる。報せの total_tokens とは比べない・card
-;; ki-3d45f5857239)。file がまだ無い・書き切っていない間は、CLI が書き終えるのを SUBAGENT-SETTLE-SECONDS まで読み直して待つ(file の
+;; subagent-transcript-of — 答え終えた subagent の transcript は閉じた呼びで終わる。報せの total_tokens とは比べない)。
+;; file がまだ無い・書き切っていない間は、CLI が書き終えるのを SUBAGENT-SETTLE-SECONDS まで読み直して待つ(file の
 ;; 書き足しには待てる出来事が無い — 読み手の thread の中だけで待ち、会話の lock は持たない)。報せの前に process が降りた subagent は
 ;; on-exit で読む(待たない — 書き手はもう居ない)。読みに欠けが在る時(file が無い・読めない行が在る・書き切っていない)も読めた
 ;; 呼びは載せ、欠けの訳を添えて、上の層へ渡す所で log の行(SUBAGENT-TRANSCRIPT-LOG)に残す。読み終えた所は改行で閉じた行の終わり
@@ -595,7 +595,7 @@
    外の出力)は手番の記録に足さない — 終わった手番の頁に誰の物でもない行を混ぜない(手番の外の出力は状態機械が降ろす訳に変える)。
    CLI の手番の終わり(result の行)なら、その直前に、報せを受けた subagent の transcript の読み(SubagentTranscript)を足す(上の
    subagent の節)。呼びの終わり(message_delta)の行なら、その直後に、その呼びの最終の usage(CallClosed — lines.hy の call-step)を
-   足す(card ki-290ec664737d)。手番の記録に足した行は、会話の lock を出てから足した順に手番の写し手(binding.tap)へ渡す(tap-lines)。"
+   足す。手番の記録に足した行は、会話の lock を出てから足した順に手番の写し手(binding.tap)へ渡す(tap-lines)。"
   (setv record (parse-record raw))
   (when (is record None) (return None))
   (setv kind (classify-record record))
@@ -661,9 +661,9 @@
 
 (defn #^ bool file-present [#^ str path] (os.path.exists path))
 
-;; 費用の起点を探す transcript の末尾の幅(byte・狭い順 — card ki-a264a73efcce)。CLI は降りる時に cost-state の行を末尾へ書き、起点を読む
+;; 費用の起点を探す transcript の末尾の幅(byte・狭い順)。CLI は降りる時に cost-state の行を末尾へ書き、起点を読む
 ;; のは前の process が降りた後なので、ふつうは最初の幅で見つかる。最後の None = file の頭から全部: cost-state の行が 1 つも無い
-;; transcript の続きを CLI は 0 から数える(card ki-4b9be8d95d9f)ので、16 MiB の末尾に行が無い時は全部を読んで「1 つも無い」と
+;; transcript の続きを CLI は 0 から数えるので、16 MiB の末尾に行が無い時は全部を読んで「1 つも無い」と
 ;; 「もっと前に在る」を分ける(この読みに来るのは額を記す前に消えた process の続きだけ。CLI 自身も init の前に transcript を全部読む)。
 (val COST-TAIL-BYTES #(65536 1048576 16777216 None))
 
@@ -673,7 +673,7 @@
   (#^ bool whole))
 
 (defn #^ (| TranscriptBytes None) read-transcript-bytes [#^ str path #^ (| int None) tail-bytes]
-  "transcript の jsonl を、全部か末尾だけ byte で読むため(tail-bytes = 末尾の何 byte まで・None = 全部 — card ki-a264a73efcce。
+  "transcript の jsonl を、全部か末尾だけ byte で読むため(tail-bytes = 末尾の何 byte まで・None = 全部。
    100 MB 級の transcript を、最近の行だけが要る読みで丸ごと読まない)。末尾だけの読みは、切り口の後の最初の行の頭から返す(切り口の
    直前の 1 byte も読み、それが改行なら切り口の行も残す — 行の途中から始めない)。file が無い・file でない = None。"
   (when (not (os.path.isfile path))
@@ -690,8 +690,8 @@
     (except [FileNotFoundError] None)))
 
 (defn #^ (| bytes None) read-transcript-from [#^ str path #^ int from-byte]
-  "transcript の jsonl の from-byte byte 目から末尾までを読むため(前に取り出した写しを持つ使い手が伸びた分だけを読む —
-   card ki-3b521394a063)。読むのは from-byte から後ろだけ(seek)。file が無い・file でない・from-byte より短い = None。"
+  "transcript の jsonl の from-byte byte 目から末尾までを読むため(前に取り出した写しを持つ使い手が伸びた分だけを読む)。
+   読むのは from-byte から後ろだけ(seek)。file が無い・file でない・from-byte より短い = None。"
   (when (not (os.path.isfile path))
     (return None))
   (try
@@ -706,7 +706,7 @@
   {:pre [(: path str)] :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の file path を読み、CLI が数え始める額(最後の cost-state の額・行が 1 つも無ければ 0)を読むため(recorded-cost-mark が
    TRANSCRIPT-THREADS の thread の新しい VM で回す — 読みも行の解きも scheduler の thread の外)。読むのは末尾から(COST-TAIL-BYTES の幅を
-   狭い順に — card ki-a264a73efcce。前は 200 MB の transcript を起こすたびに丸ごと読み、詰まった disk の上で 15〜74 秒かかった)。全部を
+   狭い順に。前は 200 MB の transcript を起こすたびに丸ごと読み、詰まった disk の上で 15〜74 秒かかった)。全部を
    読むのは 16 MiB の末尾に行が無い時だけ。file が無い・読めない・最後の行の値が数でなければ None。"
   (for [limit COST-TAIL-BYTES]
     (val read (try
@@ -728,7 +728,7 @@
   {:pre [(: home ClaudeHome) (: canonical-cwd str) (: session-id str)] :post [(: % (| CostMark None))]
    :tags {:context "claude-code" :role "foundation"}}
   "手番の額の起点を、この handler が前の process を見ていない会話(新しい host での続き・持ち込んだ transcript・枝の親)でも知るため、
-   CLI が数え始める額 = その会話の transcript の最後の cost-state の額(行が 1 つも無ければ 0 — card ki-4b9be8d95d9f)を読む(置き場は
+   CLI が数え始める額 = その会話の transcript の最後の cost-state の額(行が 1 つも無ければ 0)を読む(置き場は
    transcript-present と同じ transcript-path)。読むのは TRANSCRIPT-THREADS の thread(頭の註の下の値の註)。file が無い・読めない・
    最後の行の値が数でなければ None。"
   (val path (transcript-path home.config-dir canonical-cwd session-id))
@@ -739,8 +739,8 @@
   {:pre [(: host ClaudeCodeHost) (: home ClaudeHome) (: canonical-cwd str) (: session-id str)]
    :post [(: % (| TranscriptKept TranscriptRotated TranscriptUnrotatable TranscriptRotationFailed))]
    :tags {:context "claude-code" :role "foundation"}}
-  "続き(--resume)の CLI が init の前に読む transcript を、上限(host.rotate-above-bytes)の内に戻すため(rotation.hy の頭の註 — card
-   ki-d96c2ca8a5a1)。前の process が降りた後に呼ぶ。読みと書きは TRANSCRIPT-THREADS の thread。置き直した・置き直せなかった時は
+  "続き(--resume)の CLI が init の前に読む transcript を、上限(host.rotate-above-bytes)の内に戻すため(rotation.hy の頭の註)。
+   前の process が降りた後に呼ぶ。読みと書きは TRANSCRIPT-THREADS の thread。置き直した・置き直せなかった時は
    log の 1 行(TRANSCRIPT-ROTATION-LOG)を出す(上限の内で置き直さなかった時は出さない)。"
   (val path (transcript-path home.config-dir canonical-cwd session-id))
   (<- began (GetMonotonic))
@@ -767,7 +767,7 @@
   {:pre [(: started (| TurnStarted LaunchFailed)) (: unrotatable (| TranscriptUnrotatable None))] :post [(: % (| TurnStarted LaunchFailed))]
    :tags {:context "claude-code" :role "foundation"}}
   "上限を越えるのに境が無くて置き直せなかった transcript の続きが起動に失敗した時、利用者に分かる訳(transcript が大きすぎて縮められ
-   なかった)を stderr-tail に足すため(card ki-d96c2ca8a5a1)。始まった手番・置き直せた・上限の内の続きの失敗はそのまま。"
+   なかった)を stderr-tail に足すため。始まった手番・置き直せた・上限の内の続きの失敗はそのまま。"
   (match #(started unrotatable)
     #((LaunchFailed :stderr-tail tail) (TranscriptUnrotatable :size size :searched searched))
       (replace started :stderr-tail (.format "{} (transcript of {} bytes has no usable compact boundary in its last {} bytes, so it was not shortened before --resume)"
@@ -1179,7 +1179,7 @@
 (defk note-unread-subagents [turn page]
   {:pre [(: turn ClaudeTurn) (: page TurnEventPage)] :post [(: % None)] :tags {:context "claude-code" :role "foundation"}}
   "欠けの在る subagent の transcript の読み(上の subagent の節 — 読めた呼びは載せ、欠けの訳を添える)を、上の層へ渡す所で log の行に
-   残すため(subagent の消費が記録に足りない訳を、無かった事と分けて読めるように — card ki-e798888dce4e・ki-3d45f5857239)。欄は訳の
+   残すため(subagent の消費が記録に足りない訳を、無かった事と分けて読めるように)。欄は訳の
    語・手がかり(path・誤りの文・欠けた行の数)・載せた呼びの数・subagent の task の id と親の道具の呼びの id だけで、transcript の
    中身は載せない。"
   (for [line page.lines]
@@ -1195,10 +1195,10 @@
          (: previous-exit (| int None)) (: cost-mark (| CostMark None)) (: start-mark (| CostMark None))]
    :post [(: % (| CostMark None))] :tags {:context "claude-code" :role "judgment"}}
   "新しく起動する process の CLI が数え始める額(ターンの費用の起点)を、ターンの process と入力なしで起動する process の両方で 1 か所
-   で決めるため(起点は額と model ごとの累積の組 CostMark — card ki-1d986d4f0007)。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
+   で決めるため(起点は額と model ごとの累積の組 CostMark)。CLI は終了する時に会話の累積の額を transcript に記録し、--resume・--fork-session の process は最後に記録した額から
    数え続ける(実測 2.1.283・#883 — ターンごとには記録せず、終了する時に 1 回)。新しい会話(FreshSession)は 0(何も使っていない —
    入力の前に停止した事前起動の process の後も 0)。ほかは recorded(transcript の最後の cost-state の額・行が 1 つも無ければ 0 —
-   CLI が数え始める額そのもの・card ki-4b9be8d95d9f)が在ればそれ。無ければ(transcript が読めない・最後の行の額が数でない)前の
+   CLI が数え始める額そのもの)が在ればそれ。無ければ(transcript が読めない・最後の行の額が数でない)前の
    process の終わり方で決める:前の process が無い・終了コード 0 = 今の起点(cost-mark)/ SIGKILL(額を
    記録できずに消えた — CLI は前の process が始まった時の額から数える)= 前の process の始まりの起点(start-mark)/ ほか(期限の
    SIGTERM・誤りの終了)= 分からないので None(そのターンの費用は None。次のターンからは読んだ行の累積で数え直す)。"
@@ -1347,7 +1347,7 @@
   "生きて手番を待つ process に、この手番の入力を書くため(#3672 — 起こさず init も待たない。CLI は入力ごとに init を出し直すが、
    書いた後なので手番の中の行として受ける)。経過の起点は入力を書いた刻。この手番の spec の資格の期限で止める刻を決め直す(同じ
    token の貸与が延びれば期限も延びる — D2)。spec が借りた資格を持てば、入力を書く前にその資格を process の資格の家の file へ書く
-   (資格だけが替わった手番も起こし直さない — card ki-4ffdafa021e5。起動条件のキーが同じなので借りたか家のかは
+   (資格だけが替わった手番も起こし直さない。起動条件のキーが同じなので借りたか家のかは
    process と spec で揃っている)。判断の後に process が降りた・降り始めた・手番を走らせているなら None(呼び手が降りるのを待って
    起こす)。"
   (<- writing (GetMonotonic))
@@ -1427,7 +1427,7 @@
 (defn retire-if-due [#^ SessionRuntime runtime #^ float now]
   "手番を走らせていない生きた process の資格が床を切っていれば止めるため(訳 CREDENTIAL-FLOOR)。見回りは層 2 の効果のたび(上の層が
    CLI の行ごとに撃つ読みを含む)に host の全部の会話を回るので、床を切っていない会話は lock も process の生き死にの確かめ(poll —
-   system call)も取らずに通す — 読み 1 回の費用を会話の数に比例させない(card ki-07d7059e1eea —
+   system call)も取らずに通す — 読み 1 回の費用を会話の数に比例させない(
    tests/test_page_reads.hy)。止める刻 retire-after は lock の中で替わり得るので、lock を取った後に同じ判じを読み直す。"
   (when (not (credential-due runtime.retire-after now))
     (return None))
@@ -1476,8 +1476,8 @@
     (<- down (wait-until (fn [bell] (.hang runtime.doorbell bell)) (fn [] (not (.alive old))) RETIRE-WAIT-SECONDS))
     (when (not down)
       (return (LaunchFailed :stderr-tail "the previous process of this session did not go down"))))
-  ;; 続きの CLI は init の前に transcript を全部読む — 上限を越える transcript は最後の compact の境から後だけに置き直す(card
-  ;; ki-d96c2ca8a5a1)。枝(ForkSession)の親は置き直さない(親の process が生きているかをここは知らない)。
+  ;; 続きの CLI は init の前に transcript を全部読む — 上限を越える transcript は最後の compact の境から後だけに置き直す。
+  ;; 枝(ForkSession)の親は置き直さない(親の process が生きているかをここは知らない)。
   (var unrotatable None)
   (when (isinstance origin ResumeSession)
     (<- rotated (rotate-before-resume host spec.home canonical target-id))
@@ -1637,7 +1637,7 @@
 (defn #^ (| TurnEventPage None) page-of [#^ SessionRuntime runtime #^ ClaudeTurn turn #^ int after-seq]
   "名指した手番の after-seq より後の行と終わり(知らない手番は None)。上の層の源の task は CLI の行が届くたびに読むので、読みの費用は
    手番の長さに比例させない: 手番の記録の行は seq の昇順(足すのは on-line の 1 か所 — 会話の lock の中で next-line-seq を進めて
-   末尾に足す)なので、読み始めの位置を二分探しで引き、その後ろだけを写す(card ki-07d7059e1eea —
+   末尾に足す)なので、読み始めの位置を二分探しで引き、その後ろだけを写す(
    tests/test_page_reads.hy)。"
   (with [runtime.lock]
     (setv log (.get runtime.turns turn.turn-seq))
@@ -1738,7 +1738,7 @@
 (defk read-session-export [request]
   {:pre [(: request ClaudeExportSession)] :post [(: % (| SessionExported SessionNotFound))] :tags {:context "claude-code" :role "foundation"}}
   "transcript の jsonl 1 つを utf-8 で読むため(置き場は session-status と同じ規則・tail-bytes が在れば末尾だけを行の頭から —
-   card ki-a264a73efcce・from-byte が在ればその byte 目から後ろだけ — card ki-3b521394a063)。無い・空白だけ = SessionNotFound(空白の
+   from-byte が在ればその byte 目から後ろだけ)。無い・空白だけ = SessionNotFound(空白の
    判定は strip で写し直さず isspace で探すだけ)。from-byte より短い・from-byte が字の途中も SessionNotFound。"
   (val path (transcript-path request.home.config-dir (os.path.realpath request.cwd) request.session-id))
   (when (is-not request.from-byte None)

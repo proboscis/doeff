@@ -1,5 +1,4 @@
-"""木の .pyc を、保存先(:mod:`doeff_hy_bytecode_guard._code_store`)の中身の同じ file への hardlink で置く入口 :func:`link_pyc` の検
-(card ki-d51b7baa38bc)。
+"""木の .pyc を、保存先(:mod:`doeff_hy_bytecode_guard._code_store`)の中身の同じ file への hardlink で置く入口 :func:`link_pyc` の検。
 
 実例(2026-10-17・Mac の worker): 実行環境の root を作り直すたびに、焼く道具が保存先の code から同じ中身の .pyc を root の木へ新しく
 書いた(root 1 本 約 100 MB)。root を消した後も macOS の local snapshot がその中身を 24 時間持ち、作業 disk の空きが root の作り直しの
@@ -79,7 +78,7 @@ def test_a_stored_pyc_left_writable_is_made_read_only_when_used(tmp_path: Path) 
 
 def test_a_second_writer_shares_the_bake_tools_file_through_the_entry_api(tmp_path: Path) -> None:
     """同じ entry から .pyc を置く 2 つの書き手(焼く道具の形 = entry_pyc の bytes を link_pyc・.pyc を寄せる別の書き手 = link_entry_pyc)は、
-    組み方を自分で持たずに保存先の 1 つの file を分け合う(設計検証 lt-4KTRWD3K1PH2VG5W5X294EZJP4 の盲検 A — 組み方が焼く道具にだけ在ると、
+    組み方を自分で持たずに保存先の 1 つの file を分け合う(組み方が焼く道具にだけ在ると、
     2 つ目の書き手は marshal し直して root ごとに別の file を作った)。"""
     store = str(tmp_path / "store")
     key = code_store.code_key("/tree/pkg/m.py", b"VALUE = 1\n", "pkg.m", "1.1.0", "cpython-314", 0)

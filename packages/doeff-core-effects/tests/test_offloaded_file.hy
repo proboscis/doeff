@@ -1,4 +1,4 @@
-;;; offloaded-file-handler(os_file.hy)の検(card ki-97da6e8be47f)— tick が触る同期の file の効果(WriteText・ReadText・StatPath・
+;;; offloaded-file-handler(os_file.hy)の検— tick が触る同期の file の効果(WriteText・ReadText・StatPath・
 ;;; ListDirectory・MakeDirectory・RenamePath・ReadDiskFree)を thread で待つ答え手が、os-file-handler と同じ答えを返す事と、書きが
 ;;; thread で待つ間も同じ scheduler の別の task が回る事。本物の file(tmp の下)を使う。test_offloaded_tree.hy と同じ作り。
 (require doeff-hy.macros [defk deftest <- val])
@@ -29,7 +29,7 @@
 
 (defk copied [root]
   {:pre [(: root str)] :post [(: % tuple)] :tags {:context "file-test" :role "program"}}
-  "bytes を書き・読み・追記し・写し・張り・木を写して歩き・総量と空きを読んだ答えを並べて返すため(card ki-24ee30105583 で広げた効果)。"
+  "bytes を書き・読み・追記し・写し・張り・木を写して歩き・総量と空きを読んだ答えを並べて返すため(広げた効果)。"
   (<- (MakeDirectory (+ root "/t/u") None))
   (<- wrote (WriteBytes (+ root "/t/u/a") b"hello" None True False))
   (<- whole (ReadBytes (+ root "/t/u/a")))
@@ -120,7 +120,7 @@
 
 
 (deftest test-another-task-runs-while-bytes-are-read [tmp-path monkeypatch]
-  ;; 読みは合図まで Path.read_bytes の頭で止まる(card ki-24ee30105583 — turn-host が会話の記録を読む間も他の手番が回る事)。
+  ;; 読みは合図まで Path.read_bytes の頭で止まる(turn-host が会話の記録を読む間も他の手番が回る事)。
   (val target (/ tmp-path "f"))
   (.write-bytes target b"payload")
   (val gate (threading.Event))

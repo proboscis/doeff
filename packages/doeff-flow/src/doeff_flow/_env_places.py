@@ -4,7 +4,7 @@ The trace directory is chosen before any doeff Program runs (the CLI and the tra
 write), so it comes from environment variables, not from an Ask. This module only reads them: each
 function returns the raw value of one variable (or the XDG state base). Which place wins stays with
 the caller. The variables are read through the ReadEnvironment effect under the real handler
-subprocess_handler, not from os.environ directly (agora-redesign #3012 — reading the environment
+subprocess_handler, not from os.environ directly (reading the environment
 belongs to the foundation handler).
 """
 

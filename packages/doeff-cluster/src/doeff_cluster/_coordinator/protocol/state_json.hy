@@ -246,7 +246,7 @@
                                (component-versions-of (.get w "versions" {}))
                                :exclusive (get caps 1) :node (.get w "node" "")
                                :task-reserve (get w "taskReserve")
-                               ;; capacity の在る旧い行は capacity を読まず、backgroundRoom の無い行は 0 で読む(配備の間だけの許し — card ki-2acb63aec0fd)。
+                               ;; capacity の在る旧い行は capacity を読まず、backgroundRoom の無い行は 0 で読む(配備の間だけの許し)。
                                :background-room (.get w "backgroundRoom" 0)
                                #** generation)))))
     ;; 改名の前の file は置き先を旧い名の欄に持つ(durable_kv.LEGACY-PLACEMENT と同じ改名)。両方を読み、新しい欄が勝つ。
@@ -272,7 +272,7 @@
     :warms (table-of (tuple (gfor #(k entry) warms (TableWrite k entry))))
     ;; 入れ替えの期限の見張り(2026-09-26)は、それより前の file には無い(空として読む)。
     :handoffs (table-of (tuple (gfor #(k v) (.items (.get data "handoffs" {})) (TableWrite k (handoff-watch-from-json v)))))
-    ;; 切り離した task の終わりの出口(2026-10-21・card ki-e7945a2b2d00)は、それより前の file には無い(空として読む)。
+    ;; 切り離した task の終わりの出口(2026-10-21)は、それより前の file には無い(空として読む)。
     :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
     :started-ms now))
 

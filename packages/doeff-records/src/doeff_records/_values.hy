@@ -365,7 +365,7 @@
     (get self.streams name)))
 
 
-;; --- 行の書きの冪等キー(card ki-78c6d663491f)-------------------------------------------------------------
+;; --- 行の書きの冪等キー-------------------------------------------------------------
 ;; 行の書き(PutRow・PutRows)の冪等キーの答えを置き場が覚える長さ(秒)。覚えは、答えの切れた書きを送り直す client(http_client の
 ;; answered-riding-stall)が同じ鍵で送り直しうる間、送り直しに前の答えを返すためだけに在る — 送り直しうる時間 = 止まりを待つ上限
 ;; (RequestPatience — 使い手の job の土台は 15 分)+ 要求の期限(30 秒)より長く置く。回収(SweepExpired)が覚えた刻からこの長さを
@@ -501,7 +501,7 @@
   (#^ int version)
   (#^ FrozenMap value)
   (setv #^ (| WatchCursor None) position None)
-  ;; 冪等キーつきの書きの送り直しで、今は書いておらず、置き場が覚えた前の答えを返した(真)か、今書いた(偽)か(card ki-78c6d663491f —
+  ;; 冪等キーつきの書きの送り直しで、今は書いておらず、置き場が覚えた前の答えを返した(真)か、今書いた(偽)か(
   ;; Appended.replayed と同じ名乗り。版・値・位置は前の答えのまま)。HTTP の口の綴りでは真の時だけ載せる欄。
   (setv #^ bool replayed False)
   (defn #^ None __post_init__ [self]
@@ -587,7 +587,7 @@
   (#^ bool replayed))
 
 (defclass [(dataclass :frozen True)] AppendedEvents []
-  "AppendEvents の束の答え(card ki-48c34994ed15): items = 束の順の、追記 1 つごとの答え(Appended | Refused — 束の i 番目の追記の答え =
+  "AppendEvents の束の答え: items = 束の順の、追記 1 つごとの答え(Appended | Refused — 束の i 番目の追記の答え =
    items の i 番目)。断られた追記が在っても他の追記は積まれている(全部か 0 ではない — AppendEvents の註)。"
   (#^ tuple items)
   (defn #^ None __post_init__ [self]
@@ -597,7 +597,7 @@
 (defclass [(dataclass :frozen True)] Event []
   "追記の列の出来事 1 つ。body = JSON の値(深く凍らせる)/ at = 積んだ時刻(epoch ミリ秒)/ writer = 積んだ書き手の名 /
    position = 出来事と同じ書き(PutRowsAppendEvents)で積んだ行の最後の変更の位置(WatchCursor — 出来事の読み手が、その位置まで追いついた
-   写しから行を読むため・card ki-e17ba3b32dea)。None = 行と一緒に積んでいない出来事(AppendEvent・AppendEvents で積んだ出来事 — HTTP の口の
+   写しから行を読むため)。None = 行と一緒に積んでいない出来事(AppendEvent・AppendEvents で積んだ出来事 — HTTP の口の
    綴りでは省く鍵)。位置は本文の外に持つので、冪等キーの本文の比べは位置に依らない。"
   (#^ str stream)
   (#^ int sequence)
@@ -613,7 +613,7 @@
 
 
 (defclass [(dataclass :frozen True)] WrittenAndAppended []
-  "PutRowsAppendEvents が確定した(card ki-e17ba3b32dea): rows = 行の束の答え(PutRows の WrittenRows と同じ — 各項の position は束の順に
+  "PutRowsAppendEvents が確定した: rows = 行の束の答え(PutRows の WrittenRows と同じ — 各項の position は束の順に
    続く)/ appends = 追記の束の答え(束の順の Appended — 束の i 番目の追記の答え = appends の i 番目。同じ冪等キー・同じ本文が既に在った
    追記は前の番号を replayed 真で)/ replayed = 冪等キーつきの送り直しで、置き場が覚えた前の答えを返したか(真なら rows.replayed も真・
    追記の各項も今は積んでいないと名乗る — WrittenRows.replayed と同じ名乗り)。今積んだ出来事は rows の最後の項の position を
@@ -642,7 +642,7 @@
 
 
 (defrecord RememberedWrite
-  "確定した行の書き(PutRow・PutRows)の冪等キーの覚え 1 つ(card ki-78c6d663491f): body-digest = 書きの本文の指紋(admission.write-digest)/
+  "確定した行の書き(PutRow・PutRows)の冪等キーの覚え 1 つ: body-digest = 書きの本文の指紋(admission.write-digest)/
    answer = 確定した時の答え(Written | WrittenRows | WrittenAndAppended — 版・値・位置・追記の番号)。置き場(memory・PG)は書きを確定するのと同じ錠・transaction で
    鍵ごとに覚え、同じ鍵の次の書きを admission.judge-write-replay で判じる(覚えた刻は置き場が隣に持ち、WRITE-KEY-MEMORY-SECONDS の後の
    回収が外す)。置き場の判断と 2 つの置き場の両方が読む値なので、この値の module に置く(RetiredKey と同じ)。"
@@ -784,7 +784,7 @@
   (#^ str reason))
 
 (defclass [(dataclass :frozen True)] AppendRefused []
-  "PutRowsAppendEvents の追記の束のある追記が断られた(行も出来事も何も書いていない — card ki-e17ba3b32dea)。index = 追記の束の中の位置
+  "PutRowsAppendEvents の追記の束のある追記が断られた(行も出来事も何も書いていない)。index = 追記の束の中の位置
    (0 から)/ stream・idempotency-key = その追記 / reason = AppendEvent の Refused と同じ理由の文(同じ冪等キーの別の本文・上限)。
    断られる追記が 2 つ以上あれば、束の順で最初の追記。"
   (#^ int index)
@@ -808,7 +808,7 @@
   (#^ int floor))
 
 (defclass [(dataclass :frozen True)] BatchRead []
-  "ReadBatch の束の答え(card ki-177a4f287c42): items = 束の順の、読み 1 つごとの答え(ReadRow の Row | Missing・ListRows の
+  "ReadBatch の束の答え: items = 束の順の、読み 1 つごとの答え(ReadRow の Row | Missing・ListRows の
    Page | Reset | NotIndexed — 束の i 番目の読みの答え = items の i 番目)。届かない読みは在らない(届かなければ束の答えが Unreachable)。"
   (#^ tuple items)
   (defn #^ None __post_init__ [self]

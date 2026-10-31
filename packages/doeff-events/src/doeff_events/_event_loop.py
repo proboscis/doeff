@@ -1,4 +1,4 @@
-"""The parts the ``event-loop`` macro calls in its expansion (agora-redesign #3080).
+"""The parts the ``event-loop`` macro calls in its expansion.
 
 The macro (``doeff_events/macros.hy``) writes the loop of a worker that waits for events: read the state,
 then wait for the next event of the types its clauses name or for the stop signal, whichever comes first,
@@ -6,10 +6,10 @@ and run the clause of what came. These parts own the waiting so every loop waits
 
 - ``begin_watch`` asks ``StopRequested`` once and, when no stop is requested yet, spawns one stop watcher for the
   loop's whole life: it waits for ``AwaitStop`` and publishes ``StopArrived`` on the loop's bus (the loop notices a
-  stop without waking up to ask — agora-redesign #2205).
+  stop without waking up to ask).
 - ``next_event`` waits for one ``WaitForEvent`` of the clause types and ``StopArrived`` together and records each
   event it hands to a clause (``slog``). Nothing is spawned, raced or withdrawn per wake — an earlier form raced a
-  spawned event wait against the stop wait on every wake (about 340 VM steps per wake — agora-redesign #3112).
+  spawned event wait against the stop wait on every wake (about 340 VM steps per wake).
 - ``end_watch`` withdraws the stop watcher when the loop ends.
 
 The bus handler must deliver ``StopArrived`` to the loop: ``subscribed_event_handler`` always subscribes it.

@@ -1,4 +1,4 @@
-"""module の大域 1 つを、file の全体ではなく、その名を束縛し書き換える source の文で覆うための読み(agora-redesign #3938)。
+"""module の大域 1 つを、file の全体ではなく、その名を束縛し書き換える source の文で覆うための読み。
 
 macro の閉包の digest(:mod:`doeff_hy_bytecode_guard._macro_use`)は、中身を値で入れられない大域(dict・list・辿れない
 object)に出会うと、前はその module の file の sha256 で覆っていた。ここでは module の source を読み、その名について:
@@ -11,7 +11,7 @@ object)に出会うと、前はその module の file の sha256 で覆ってい
   (か class)を辿る — import の時に呼ばれる登録の関数でも、閉包から辿られない関数でも、code が digest に入る。
 - その名を import で束縛する文(:attr:`Binding.imports`)は、歩みの側が import の先の module の同じ規則で辿る。Hy の
   ``(import …)`` も Python の import と同じ形に解く(``(import a.b)`` は a を・``(import a.b :as n)`` は a.b を・
-  ``(import a.b [x :as y])`` は a.b の x を束縛する — 設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A: 解かずに file で覆うと、
+  ``(import a.b [x :as y])`` は a.b の x を束縛する — 失敗例: 解かずに file で覆うと、
   import の先の module が環境変数から組んだ表の変化を見落とした)。
 
 読めない時(source の無い module・読みの誤り・Hy の星の import と読めない import の形)は ``None`` か :attr:`Binding.unresolved` を
@@ -23,7 +23,7 @@ form を文として入れる。
 
 読みは source の中身と名(と読み方 — この module の code・Python の版・拡張子・Hy の版と hy.repr の登録)だけで決まる純な計算
 なので、process の中の覚えに加え、置き場(:mod:`doeff_hy_bytecode_guard._code_store` の種類 ``.binding``)に中身で引いて覚える —
-新しい process の照らしが、同じ中身の source を毎回解き直していた(agora-redesign card ki-38508e6e56fd — 検の読み込みで照らしの
+新しい process の照らしが、同じ中身の source を毎回解き直していた(検の読み込みで照らしの
 歩みの約 2/3)。読めない file(OSError)は覚えない。解けない source の読み(None)は中身で決まるので覚える。
 """
 
@@ -354,7 +354,7 @@ def _hy_reading() -> str | None:
 
     表の持ち主の module(:data:`_HY_REPR_MODULE`)がまだ読み込まれていなければ、表は Hy の既定のまま(登録の口 hy.repr_register も
     同じ module を読み込む)— 鍵は既定の印にし、表を見るためだけに読み込まない(hy.repr を引くと Hy が読み込み、照らしだけが
-    0.055〜0.094 秒を払っていた — agora-redesign card ki-be596ac8276f)。置き場に無い時の読みは :func:`_hy_binding` の hy.repr が
+    0.055〜0.094 秒を払っていた)。置き場に無い時の読みは :func:`_hy_binding` の hy.repr が
     読み込む既定の表で文を作るので、既定の印の entry の中身は既定の表の読みになる。"""
     from types import FunctionType  # Hy の source に当たった時だけ
 

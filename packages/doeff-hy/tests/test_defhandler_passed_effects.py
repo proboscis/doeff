@@ -1,4 +1,4 @@
-"""柵の形の defhandler(総受けの節が「X でなければ」の番)を、VM が X の effect で飛ばす事の検(agora-redesign #2008)。
+"""柵の形の defhandler(総受けの節が「X でなければ」の番)を、VM が X の effect で飛ばす事の検。
 
 節が EffectBase の総受けで、番が `(not (isinstance effect X))` の handler は、それより前の節が名指さない X の effect を
 `(Pass effect k)` で外へ渡すだけ。型の註では「X 以外の全部」を言えないので、VM は全部の effect でこの handler に入っていた。

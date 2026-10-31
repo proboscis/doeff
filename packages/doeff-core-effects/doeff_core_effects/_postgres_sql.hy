@@ -1,4 +1,4 @@
-;;; 汎用の SQL の effect(sql_effects.hy)の本物の PostgreSQL の答え手 postgres-sql-handler(agora-redesign #802 便 3)。psycopg 3 を呼んで値を
+;;; 汎用の SQL の effect(sql_effects.hy)の本物の PostgreSQL の答え手 postgres-sql-handler。psycopg 3 を呼んで値を
 ;;; 詰め替えるだけで、判断を持たない。psycopg はこの module の I/O の関数の中でだけ読む(psycopg の無い環境でも、書き換えと写しの純関数は
 ;;; 読めて検を撃てる)。
 ;;;   - 接続の貸し出し PostgresConnections は組み立ての側(composition root)が database の宣言(PostgresDatabase — 名と DSN)から作って渡し、
@@ -6,9 +6,9 @@
 ;;;     混ぜない)。接続は自動 commit・json / jsonb の欄は text で読む(値の正規化の決まり)。切れた接続と transaction の途中で返った接続は
 ;;;     返す時に捨てる / rollback する。目安(LARGE-CARRY-BYTES)を越える値(送った引数の組か行 1 つ・受けた行 1 つ)を通した接続も返す時に
 ;;;     捨てる — libpq は接続ごとの送りと受けの buffer を通した一番大きな message まで伸ばして閉じるまで縮めないので、空きの列に戻すと大きな
-;;;     本文 1 つで数十 MB を抱え続ける(card ki-1368e0d6b801)。SqlQuery の binary は答えの行を binary の形で受け、bytea を 16 進の 2 倍に
-;;;     しない(大きな本文の読み)。貸し出しは開いた接続と、訳ごとに閉じた接続を数える(tallies — card ki-004d4af4d6d3)。
-;;;   - 接続の上限(PostgresTimeouts・agora-redesign #1479): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
+;;;     本文 1 つで数十 MB を抱え続ける。SqlQuery の binary は答えの行を binary の形で受け、bytea を 16 進の 2 倍に
+;;;     しない(大きな本文の読み)。貸し出しは開いた接続と、訳ごとに閉じた接続を数える(tallies)。
+;;;   - 接続の上限(PostgresTimeouts): 接続は開く時の上限・TCP の keepalive・送った bytes の返事を待つ上限
 ;;;     (tcp_user_timeout)・文の上限(statement_timeout)を持つ。DB の pod が入れ替わると空きの接続は相手の居ない TCP のまま残り、上限が
 ;;;     無いと次の文が kernel の再送の限り(数十分)固まって許可を持ち続ける — 上限があれば文は OperationalError で落ち、SqlUnreachable を
 ;;;     答え、返す時に切れた接続として捨てられ、次の借りが新しく張る。
@@ -19,24 +19,24 @@
 ;;;   - SqlTransaction = 接続 1 本で BEGIN → 錠(lock-key と locks の順 — 排他は pg_advisory_xact_lock・共有は pg_advisory_xact_lock_shared の
 ;;;     hashtext(鍵))→ program → COMMIT(sql_transaction.hy)。
 ;;;     既定(batched = False)は文 1 つを 1 回ずつ流す(run-in-transaction — BEGIN・錠・文・合図・COMMIT がそれぞれ往復 1 回)。
-;;;     batched = True を選んだ transaction だけ(agora-redesign #3605): 往復 1 回(TransactionFlush — BEGIN と錠・文・合図・COMMIT)を psycopg 3 の
+;;;     batched = True を選んだ transaction だけ: 往復 1 回(TransactionFlush — BEGIN と錠・文・合図・COMMIT)を psycopg 3 の
 ;;;     pipeline mode の 1 つの pipeline で送り、出口の sync 1 度で答えを順に受ける(postgres-flush・run-in-batched-transaction)。途中の文が
 ;;;     落ちると PostgreSQL は次の sync までの文を流さないので、答えは最初に落ちた文の失敗(TransactionAborted へ写る)で、ROLLBACK は
 ;;;     run-in-batched-transaction が流す。pipeline の出入りは with で必ず閉じ、返す接続が pipeline mode のまま残っていれば捨てる(release)。
 ;;;     束ねた transaction は、借りる・全部の往復と間の program・返すを driver の thread の仕事 1 つ(新しい VM)で回し、往復の間に scheduler の
-;;;     thread へ戻らない(offloaded-batched-transaction — 錠を持つ間に scheduler の待ちを挟まない・card ki-7f9808c3c3d8)。
+;;;     thread へ戻らない(offloaded-batched-transaction — 錠を持つ間に scheduler の待ちを挟まない)。
 ;;;     借りた接続への driver の呼び(文・往復・ROLLBACK・返却)は transaction ごとの錠で 1 本ずつ(offloaded-transaction — 取り消された往復の
 ;;;     thread が走り切る前に ROLLBACK が割り込まない)。pipeline mode を持たない psycopg / libpq(libpq 14 未満)では、接続の貸し出しを作る時
 ;;;     (起動の時)に名を挙げて落ちる — batched の transaction を文 1 つずつ流す道へ黙って倒さない。
-;;;   - scheduler を塞がない(agora-redesign #1215): postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
+;;;   - scheduler を塞がない: postgres-sql-handler は driver の I/O(接続の許可を待つ・接続を開く・文を流す・COMMIT・
 ;;;     ROLLBACK・接続を返す)を scheduler の thread で撃たず、空いた thread を使い回す Executor(offloaded_call.hy の ReusedThreads — 空きが
-;;;     無い時だけ thread を起こす・agora card ki-8fc4f9017572)で回し、撃った task
+;;;     無い時だけ thread を起こす)で回し、撃った task
 ;;;     だけが外から完了させる promise で待つ。遅い文の間も同じ run の他の task(待ち受けの /healthz・時計の刻み)は回る。同時に使う接続の
 ;;;     上限は PostgresConnections の許可(thread の間の錠)が持ち、許可を待つのも thread の中 — thread の数に上限を置かないので、許可を持つ
 ;;;     transaction の次の文が thread の空きを待って詰まることがない。手順(文・値の写し・transaction の段・取り消しの後始末)は
 ;;;     pooled-postgres-sql-handler と同じ offloaded-transaction と offloaded-statement を使い、違いは Executor と許可の待ち方だけ(pooled は呼び手の
 ;;;     pool と scheduler の semaphore)。外側に scheduled が要る(CreateExternalPromise と Wait)— session の値の置き場(state)は要らない。
-;;;   - 通知(agora-redesign #3073・名で絞る形は #3688): SqlNotify = pg_notify(channel, 本文)を流す(transaction の中なら同じ接続で —
+;;;   - 通知(名で絞る形は #3688): SqlNotify = pg_notify(channel, 本文)を流す(transaction の中なら同じ接続で —
 ;;;     commit した時だけ届く)。本文(notice-payload)は JSON の object で、合図が関わる名(topics — 呼び手の決めた語・記録の置き場なら表と
 ;;;     列の名)と、合図を出した貸し出しの印(origin — PostgresConnections ごとの乱数)を運ぶ。SqlHangNotice = channel ごとに LISTEN を
 ;;;     張った接続 1 本を daemon の thread で持つ待ち受け(PostgresListener)に、待つ名と一緒に呼び鈴(外の promise)を掛ける。合図は名の
@@ -52,7 +52,7 @@
 ;;;     受ける前に取り消されても、接続を返す finally の中で鳴らす。transaction の外の SqlNotify も接続を返した後に鳴らす。
 ;;;     待ち受けは切れたら繋ぎ直し、繋ぎ直した時に掛かっている呼び鈴を全部鳴らす(切れていた間の通知は届かないので、待ち手に読み直させる)。
 ;;;     張れていない間の SqlHangNotice は SqlUnreachable。繋ぎ直しの間の秒は境界の答え手の中だけの時間で、呼び手には出ない。
-;;;   - 取り消し(agora-redesign #2792): 文 1 つの effect も transaction と同じく「接続を借りる」と「流して返す」を別の仕事にする。許可を待って
+;;;   - 取り消し: 文 1 つの effect も transaction と同じく「接続を借りる」と「流して返す」を別の仕事にする。許可を待って
 ;;;     いる間に取り消された要求は、許可が取れても文を流さずにすぐ返す(DB が止まった間に取り消された読みが、DB が戻った時にまとめて流れ、
 ;;;     後から来た要求を待たせない)。走り出した文は止めない。
 (require doeff-hy.macros [defhandler defk deff <- val var])
@@ -85,7 +85,7 @@
 (val UNREACHABLE-CLASSES #("OperationalError" "InterfaceError"))
 ;; SQLSTATE を持っていても届かない(接続が切れた・engine が接続を受けない)と読む code: class 08 = 接続の例外の全部(前方 2 文字)と、
 ;; 57P01 管理者による切断・57P02 crash による切断・57P03 起動中 / 停止中で接続を受けない(class 57 の他 — 57014 取り消し等 — は engine の答え)。
-;; 業務の文の誤りではなく、時間を置いて撃ち直せば晴れる失敗なので SqlFailed にしない(agora-redesign #880 の裁定)。
+;; 業務の文の誤りではなく、時間を置いて撃ち直せば晴れる失敗なので SqlFailed にしない。
 (val UNREACHABLE-SQLSTATE-CLASS "08")
 (val UNREACHABLE-SQLSTATES #("57P01" "57P02" "57P03"))
 ;; 同時に貸す接続の既定の上限(database ごと)。
@@ -100,8 +100,8 @@
 
 ;; 大きな値を通した接続を返す時に閉じる目安(bytes — 文 1 つ・往復 1 回の、送った引数と行・受けた行の str / bytes の長さの和)。libpq の接続は
 ;; 送りと受けの buffer を通した一番大きな message の次の 2 の冪まで伸ばし、閉じるまで縮めない — 空きの列に戻すと、大きな本文 1 つで接続ごとに
-;; 数十 MB を抱え続ける(card ki-1368e0d6b801・調べは ki-f62011080c16)。目安の下の値だけを通した接続の buffer は送りと受けの各 1 MiB まで
-;; (1 本 2 MiB・貸し出しの上限 8 本で 16 MiB)に留まる。目安を 256 KiB から 512 KiB へ上げた(card ki-004d4af4d6d3): 記録の service の
+;; 数十 MB を抱え続ける。目安の下の値だけを通した接続の buffer は送りと受けの各 1 MiB まで
+;; (1 本 2 MiB・貸し出しの上限 8 本で 16 MiB)に留まる。目安を 256 KiB から 512 KiB へ上げた: 記録の service の
 ;; 本文を切った行(turn-memory-part・worktree-diff — 本文の切片 256 KiB に欄の名を足して 1 行 約 262,260 bytes)が 256 KiB をわずかに
 ;; 越え、それを読み書きする要求ごとに接続を閉じて開き直していた(agora-records-twin で 30 秒に 242 本・pg の thread の標本の 13% が接続の開き)。
 (val LARGE-CARRY-BYTES (* 512 1024))
@@ -110,7 +110,7 @@
 ;; 束ねた transaction の文を名つきの prepared statement にした覚え(接続 → PreparedBook — postgres-flush の註)。接続を捨てれば覚えも消える。
 ;; 覚える文の数は接続ごとに PREPARED-MAX まで(越えた文は名を付けずに流す — 文の綴りは宣言から決まる有限の組だが、上限で守る)。
 ;; 接続の上の名の置き場の持ち主はこの覚え 1 つ: psycopg の自動の prepare は止めてあり(PostgresConnections.acquire)、名を消す文
-;; (DEALLOCATE・DISCARD)を流す道は持たない — 足すと覚えの知らない消しになり、その接続の次の往復が 26000 で落ちる(card ki-2c5646a8a2c1)。
+;; (DEALLOCATE・DISCARD)を流す道は持たない — 足すと覚えの知らない消しになり、その接続の次の往復が 26000 で落ちる。
 ;; 速さのために名つきにしたい文は、psycopg の prepare を戻さず、この覚えの道(postgres-flush)へ寄せる。
 (val PREPARED (weakref.WeakKeyDictionary))
 (val PREPARED-LOCK (threading.Lock))
@@ -132,7 +132,7 @@
   "接続の上限(頭の註): 開く時(秒)・keepalive の最初の問いまでの無音(秒)・問いの間隔(秒)・答えの無い問いの数・送った bytes の返事を
    待つ上限(ミリ秒)・文の上限(ミリ秒 — None = 付けない)・transaction の途中で何もしない上限(ミリ秒 — None = 付けない)。
    transaction の途中の上限は、BEGIN の後に program が進まなくなった接続(返す finally に届かない — 2026-09-30 の着地の台帳で、
-   pg_advisory_xact_lock を持ったまま 6 分半 idle in transaction で残り、後続の書きが全部 statement timeout で落ちた・agora-redesign #1846)を
+   pg_advisory_xact_lock を持ったまま 6 分半 idle in transaction で残り、後続の書きが全部 statement timeout で落ちた)を
    engine が切り、transaction を戻して錠を外すため。"
   (#^ int connect-seconds)
   (#^ int keepalive-idle-seconds)
@@ -145,7 +145,7 @@
 
 ;; 既定の上限: 死んだ相手は keepalive で 10 + 5 × 3 = 25 秒・文を送った後は 15 秒で見つかる。文の上限 60 秒は記録の service の文(短い
 ;; 読み書きと、錠を待つ表の用意)より十分長い。transaction の途中で何もしない上限 30 秒は、記録の service の transaction(文の間は純粋な
-;; 計算だけ)より十分長く、錠を持ったまま止まった接続が後続の書きを塞ぐ時間を 30 秒で切る(agora-redesign #1846)。
+;; 計算だけ)より十分長く、錠を持ったまま止まった接続が後続の書きを塞ぐ時間を 30 秒で切る。
 (val DEFAULT-TIMEOUTS (PostgresTimeouts :connect-seconds 5 :keepalive-idle-seconds 10 :keepalive-interval-seconds 5 :keepalive-count 3
                                         :unacknowledged-milliseconds 15000 :statement-milliseconds 60000
                                         :idle-transaction-milliseconds 30000))
@@ -166,7 +166,7 @@
   (setv #^ bool sent False))
 
 (defrecord PostgresTallies
-  "接続の貸し出しが数えた出来事(PostgresConnections.tallies — card ki-004d4af4d6d3): opened = 開いた接続・返す時に閉じた接続の訳ごとの数
+  "接続の貸し出しが数えた出来事(PostgresConnections.tallies): opened = 開いた接続・返す時に閉じた接続の訳ごとの数
    (broken = 切れていた・pipeline = pipeline mode のまま・large = 目安を越える値を通した〔CARRIED-LARGE〕・rollback = transaction の途中で
    返り rollback に落ちた)。"
   (#^ int opened)
@@ -237,7 +237,7 @@
   (defn connection-options [self #^ str name]  ; defk にできない: 接続を開く thread の中で読む psycopg への引数(Program を返すと psycopg へ渡せない)
     "開く接続に付ける上限を libpq の接続の parameter の写像で読むため(connect の keyword に渡す — DSN に同じ名が在ればこちらが勝つ)。
      ただし options(-c を連ねた 1 本の値)は勝たせず、database name の DSN の options に engine の上限の -c を継ぎ足す — 勝たせると DSN の
-     -c search_path などが黙って消える(agora-redesign #1771)。"
+     -c search_path などが黙って消える。"
     (setv timeouts self.timeouts
           options {"connect_timeout" timeouts.connect-seconds
                    "keepalives" 1
@@ -245,7 +245,7 @@
                    "keepalives_interval" timeouts.keepalive-interval-seconds
                    "keepalives_count" timeouts.keepalive-count
                    "tcp_user_timeout" timeouts.unacknowledged-milliseconds})
-    ;; engine の上限(-c を連ねる): 文の上限と、transaction の途中で何もしない上限(agora-redesign #1846)。None の上限は付けない。
+    ;; engine の上限(-c を連ねる): 文の上限と、transaction の途中で何もしない上限。None の上限は付けない。
     (setv bounds (lfor [setting value] [#("statement_timeout" timeouts.statement-milliseconds)
                                         #("idle_in_transaction_session_timeout" timeouts.idle-transaction-milliseconds)]
                        :if (is-not value None)
@@ -273,7 +273,7 @@
           ;; 接続の上の prepared statement の名の持ち主は doeff 1 つ(PREPARED の註): psycopg の自動の prepare を止める
           ;; (prepare_threshold=None)。psycopg に名を持たせると、cursor の道で同じ文を 6 回目から _pg3_N として用意し、ROLLBACK(や DROP・
           ;; ALTER)を見ると自分の覚えを捨てて DEALLOCATE ALL を送り、doeff_pq_N も消す — PreparedBook は知らないので、その接続は閉じるまで
-          ;; 束ねた往復が 26000 で落ちる(agora card ki-2c5646a8a2c1)。
+          ;; 束ねた往復が 26000 で落ちる。
           (setv connection (psycopg.connect (. (get self.databases name) dsn) :autocommit True :prepare-threshold None
                                             #** (.connection-options self name)))
           (.register-loader connection.adapters "json" TextLoader)
@@ -375,7 +375,7 @@
           (.execute connection (.format (sql.SQL "LISTEN {}") (sql.Identifier self.channel)))
           ;; 張った時に鳴らすのは、張った瞬間に掛かっていた呼び鈴(繋ぎ直しの間の通知を取りこぼした待ち手)だけ — 写しを錠の中で
           ;; 取ってから settled を立てる。先に settled を立てて後から ring すると、最初の接続を待っていた hang が掛けたばかりの呼び鈴を
-          ;; 合図なしに鳴らしていた(rollback の後に鳴る・日次の test_pg_notice が時刻しだいで赤・agora-redesign #3210)。
+          ;; 合図なしに鳴らしていた(rollback の後に鳴る・日次の test_pg_notice が時刻しだいで赤)。
           (with [_ self.lock]
             (setv self.listening True
                   self.listened True
@@ -846,7 +846,7 @@
    tuple | 最初に落ちた文の失敗(BEGIN・錠・合図・COMMIT を含む — PostgreSQL は落ちた文から sync までを流さない)。driver の I/O なので
    driver の thread で回す。locks = 最初の往復で BEGIN の次に取る錠の並び・origin = 合図の本文に載せる貸し出しの印(flush-steps)。
    文は psycopg の cursor を通さず、libpq の口(接続の pgconn)で pipeline mode の送りの buffer に全部積み、sync を 1 度積んでから 1 度に
-   送り切り、sync までの答えを順に受ける(card ki-f7a1ef77251f — cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
+   送り切り、sync までの答えを順に受ける(cursor の pipeline は文 1 つごとに cursor・写しの組・socket の送りと
    待ちを作り、本番の free-threaded の Python の psycopg〔C の拡張の無い pure-python の libpq の口〕で文 1 つに約 0.25 ms の CPU を使い、
    DB は文が 1 つ届くごとに起きて次の文を待った〔pipeline の中の ClientRead〕。手元の 8 文の往復で client の CPU 2.09 → 0.62 ms)。
    文は接続ごとに名つきの prepared statement にして使い回す(PREPARED — 初めての文は同じ往復で用意してから流す。名を付けないと server が
@@ -952,7 +952,7 @@
   {:pre [(: connections PostgresConnections) (: database str)] :post [(: % "psycopg の接続 | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}
   "接続を 1 本借りるため(開けなければ SqlUnreachable)。psycopg は借りが誤りで終わった時の読み分けでだけ読む — driver を開くのは貸し出しの
-   acquire なので、借りが通る道は偽の貸し出しで撃てる(agora-redesign #2792 の検)。"
+   acquire なので、借りが通る道は偽の貸し出しで撃てる。"
   (try
     (.acquire connections database)
     (except [error Exception]
@@ -1134,7 +1134,7 @@
    だけが待つため。往復の間に scheduler の thread へ戻らない: 束ねた transaction の program が出せるのは SQL の effect と純粋な計算だけ
    (sql_transaction.hy の scope — 他の effect は TransactionMisused)なので、program を driver の thread の新しい VM で回しても答えは変わらない。
    往復ごとに scheduler へ戻ると、1 往復目の答えから 2 往復目を撃つまでの間(scheduler の列の待ち + 判定)も置き場の書きの錠を持ち続け、
-   scheduler が混むほど錠を持つ間が伸びて、同じ錠を待つ書きが積もった(agora-redesign の記録の service の PutRows・card ki-7f9808c3c3d8)。
+   scheduler が混むほど錠を持つ間が伸びて、同じ錠を待つ書きが積もった(agora-redesign の記録の service の PutRows)。
    取り消し: 待ち手が去ったら、次の往復の前に印(abandoned)を読んで流さずに ROLLBACK し、接続を返す — 走っている往復は止めない(文 1 つずつの
    手順と同じ)。印は取り消しの callback(Executor の止め方 abandoned-now)と、取り消しを受けた task がその場で立てる。finally は錠 guard の
    下の返し abandon-lease を待つので、合図(ring-local)は走っていた往復(COMMIT を含む)の後に鳴る。"
@@ -1222,7 +1222,7 @@
    :tags {:context "sql" :role "foundation"}}
   "文 1 つの effect を、接続の借りと文と返却を pool の仕事 1 つ(lease-run-return)で答えるため(待つのは撃った task だけ — agora-redesign
    #2792)。借りと文を別の仕事にすると、scheduler の thread が外から完了させる promise の往復を文ごとに 2 度払う(transaction が借りを最初の
-   driver の呼びと同じ仕事にするのと同じ訳 — agora card ki-5c3e73834e73)。
+   driver の呼びと同じ仕事にするのと同じ訳)。
      - 許可を待っている間(借りの途中)に取り消された要求は、許可が取れても文を流さず、すぐ返す(DB が止まった間に取り消された要求が、
        DB が戻った時にまとめて文を流して後から来た要求を待たせない)。取り消しで抜ける finally が claim(錠)を先に取り、借りた仕事は
        claim を取れずに文を流さず返す。

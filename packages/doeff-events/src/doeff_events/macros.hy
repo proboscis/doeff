@@ -1,4 +1,4 @@
-;;; event-loop — 出来事を待つ係のループの macro(agora-redesign #3080・設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
+;;; event-loop — 出来事を待つ係のループの macro(設計 = agora-controllers docs/design/event-waits/README.md 4 節)。
 ;;;
 ;;;   (require doeff-events.macros [event-loop])
 ;;;   (event-loop [board (! (ReadBoard))]
@@ -16,7 +16,7 @@
 ;;;   hy.R で直に参照する(使う側の require に頼らない)。節の本体と初期値は do! に包むので、defk の本体の ! がその場で
 ;;;   (yield …) に書き換わっても、出来事ごとに回る位置は変わらない。
 ;;; - この module は名に _ を付けずに公開の境界に置く(ADR-DOE-API-001 R31 — Hy の require が module の path で macro を
-;;;   読むので、R14・R15 と同じく R5 の外の境界。card ki-d80c9c978b35 が段 1 の _macros から戻した)。
+;;;   読むので、R14・R15 と同じく R5 の外の境界)。
 
 (import hy)
 
@@ -212,7 +212,7 @@
   ;; state の型を書いた形: 初期値は state の型・各節の値は state の型か (stop 値)・抜けた値は state の型で確かめる。
   ;; 節の値は型を注記せずに束ね、実行時は assert で確かめる(静的には、値を state の名へ書き戻す所で state の型として読まれる)。
   ;; 注記して束ねると、注記の型が Program の答えの型の推論へ逆に流れ込み、使い手の pyright strict に書き手に直せない
-  ;; Unknown の赤が出る(agora-redesign #3079 の手本で commit の hook が名指した)。
+  ;; Unknown の赤が出る(commit の hook が名指した)。
   (setv state-check (if state-type [state-type] [])
         out-check (if state-type [`(assert (isinstance ~out #(~state-type ~loop-stop))
                                             (+ "event-loop: 節の値の型が state の型でない: " (repr ~out)))] [])

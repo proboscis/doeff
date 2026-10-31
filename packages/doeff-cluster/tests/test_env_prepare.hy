@@ -596,7 +596,7 @@
 (defk copied-across-env-scenario []
   {:pre [] :post [(: % bool)]}
   "lock の sha256・import の根・platform だけが違う root も、同じ repo を持てば木の写し元にする(写すのは追跡する file だけで、木の中身は
-   repo と commit で決まる)。できた木は新しい commit の木そのもので、venv・焼いた .pyc は写し元から渡らない(card ki-61eb8170b3b9 —
+   repo と commit で決まる)。できた木は新しい commit の木そのもので、venv・焼いた .pyc は写し元から渡らない(
    直す前は元の鍵(lock を含む)が違う root から写さず、uv.lock が替わるたびに全部を展開した)。"
   (<- first EnvReady (prepare-app "app-1" "lib-1" #()))
   (<- known tuple (known-of first))
@@ -682,7 +682,7 @@
 (defk per-repo-source-scenario []
   {:pre [] :post [(: % bool)]}
   "写し元は repo ごとに選ぶ: 3 つの repo の宣言は、app と lib を後に完成した 2 つの repo の root から、tools を前に完成した 3 つの repo の
-   root から写す(repo の組が違う root も、共通の repo の木の写し元になる — card ki-61eb8170b3b9)。"
+   root から写す(repo の組が違う root も、共通の repo の木の写し元になる)。"
   (<- base RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- three-env RuntimeEnv (with-tools base "tools-1"))
   (<- older EnvReady (prepare three-env #()))

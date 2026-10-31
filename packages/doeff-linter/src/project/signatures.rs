@@ -1,7 +1,7 @@
-//! defk / deff の見出し(signature)と、束縛の型 — editor-json の `signatures` と `bindings`(契約 版 2・agora-redesign #849)。
+//! defk / deff の見出し(signature)と、束縛の型 — editor-json の `signatures` と `bindings`(契約 版 2)。
 //!
 //! エディタ(doeff-runner)は defk の型・effect・tags を見出しとして描き、束縛の名の前に型を描く。型の読み方はここ 1 か所に置き、
-//! エディタは写しを持たない(読むだけの表示 — source は人が手で書き換えないので、書く向きの変換は持たない — operator の決定 2026-09-28)。
+//! エディタは写しを持たない(読むだけの表示 — source は人が手で書き換えないので、書く向きの変換は持たない)。
 //!
 //! 読む物:
 //! - 引数の型 = 契約の辞書の `:pre` の `(: 名 型)`、答えの型 = `:post` の `(: % 型)`、宣言した effect = `:effects [E …]`(#800)、
@@ -367,7 +367,7 @@ fn source_facts(rel: &str, source: &str) -> Option<KeyedFacts> {
 /// 塊の表の 1 行 = (事実を作った時の根からの path・事実)。事実は path でも決まる(module の名・推論の鍵)ので、同じ blob が別の path に在る時は行を使わない。
 type BlobRow = (String, Option<KeyedFacts>);
 
-/// `files`(根からの path・場所)の事実を、変わっていない file は git の blob の id で引いて中身を読まずに返す(`ChunkedFacts` — card ki-9e7e85407b71)。
+/// `files`(根からの path・場所)の事実を、変わっていない file は git の blob の id で引いて中身を読まずに返す(`ChunkedFacts`)。
 /// 1 file の実行は届く module の file を 1 つずつ開いて hash を取っていた(sim の test で数百 file・冷えた作業木で CPU 9 秒)。
 /// 引けない file(表に無い・index と外れた・path が違う)は中身を読んで作る。`memory` が None の時は中身の hash で引く置き場を使う。
 fn named_facts(root: &Path, memory: Option<&ChunkedFacts<BlobRow>>, files: &[(String, std::path::PathBuf)]) -> Vec<KeyedFacts> {
@@ -466,9 +466,9 @@ impl World {
         let on_disk: Vec<(String, std::path::PathBuf)> =
             files.into_iter().filter(|(rel, _)| overlay.is_none_or(|(o, _)| o != rel)).collect();
         // file ごとの事実はその file の中身と根からの path だけで決まる(root は位置の path の綴りにしか使わない)ので、変わった file だけ
-        // 作り直す。5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く(agora-redesign #1621)。
+        // 作り直す。5MB 余りの事実を JSON で読むと 1 回に約 0.05 秒かかったので、欄の名前を持たない binary の形で置く。
         // 位置の path は作業木の絶対 path なので、置く値は path を空にし、読んだ後で今の根の path を付ける — 作業木をまたいで同じ中身の
-        // file の事実を分け合うため(card ki-9743c30d49bc)。
+        // file の事実を分け合うため。
         let mut facts: Vec<KeyedFacts> = crate::timing::timed("effect-world.facts", || {
             super::facts_cache::per_file_compact_bound(root, "signature-facts", &on_disk, disk_facts, |keyed, rel, _path| {
                 keyed.facts.set_path(&root.join(rel).to_string_lossy())
@@ -486,7 +486,7 @@ impl World {
             world.definitions.extend(file.definitions);
         }
         // 推論の不動点は材料(位置を除いた事実)だけで決まるので、材料の指紋が前の実行と同じなら前の答えを使う。書き込み直後の 1 回でも、
-        // 書いた file の本文が推論の材料を変えない(行がずれただけ・呼びの列が同じ)なら回さない(agora-redesign #1621・#1033 の案)。
+        // 書いた file の本文が推論の材料を変えない(行がずれただけ・呼びの列が同じ)なら回さない(#1033 の案)。
         world.summaries = crate::timing::timed("effect-world.infer", || {
             super::facts_cache::keyed_value(root, "signature-summaries", key, || {
                 world.infer();
@@ -1633,7 +1633,7 @@ fn installed_handlers(reader: &FileReader, form: &Form, out: &mut Vec<(String, (
 
 /// 1 file の見出しと束縛を読み、読みの道具(reader・form の列)と組で `then` に渡す(表は `World::build` で、この file の同じ中身を
 /// overlay にして作った物)。reader は file の中身と束縛を借りるので、続きの読み(置き換え・本体 — `file_view.rs`)は `then` の中で読む。
-/// 見出しの読みは置き換えと本体の読みを知らない(agora-redesign #2125)。
+/// 見出しの読みは置き換えと本体の読みを知らない。
 pub(super) fn read_file<T>(
     world: &World,
     root: &Path,
@@ -2363,7 +2363,7 @@ mod tests {
         );
     }
 
-    /// 推論の材料の鍵(agora-redesign #1621): 位置だけが変わる書き換え(行が足されてずれる)では変わらず、推論の材料
+    /// 推論の材料の鍵: 位置だけが変わる書き換え(行が足されてずれる)では変わらず、推論の材料
     /// (撃つ effect・定義の名・Absent の受け方)が変わると変わる。鍵が同じなら前の推論の答えを使うので、鍵が材料を漏らすと答えが古くなる。
     #[test]
     fn inference_key_ignores_positions_and_follows_what_inference_reads() {

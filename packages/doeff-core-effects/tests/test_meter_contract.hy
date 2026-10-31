@@ -1,12 +1,12 @@
 ;;; 計器の契約テスト — 同じ effect(CountMetric・ObserveSeconds・ObserveSecondsBatch・SetGauge・ReadMeter)に答える本物(process-meter-handler)と
-;;; fake(memory-meter-handler)が、同じ deftest を通る(agora-redesign #1440・#1107 の決め)。解釈器の組み立ては meter_contract_handlers.hy。
+;;; fake(memory-meter-handler)が、同じ deftest を通る(#1107 の決め)。解釈器の組み立ては meter_contract_handlers.hy。
 ;;;
 ;;; 見る性質:
 ;;;   * 何も積んでいない計器の断面は空
 ;;;   * 数えは足し上がり、0 を数えると名が 0 で現れる(無いことと 0 を読み手が区別しなくて済む)
 ;;;   * 秒の観測は合計と回数に積み、桁の表の当たる桁ごとの累積の counter と inf の counter も同じ 1 回で進む
 ;;;   * 秒の観測の列(ObserveSecondsBatch)は、ObserveSeconds を列の順に 1 つずつ撃ったのと同じ断面と同じ Prometheus の描画になる
-;;;     (秒の合計の浮動小数の丸めまで — agora-redesign #3688)
+;;;     (秒の合計の浮動小数の丸めまで)
 ;;;   * gauge は最後の値
 ;;;   * 1 つの名の中の書き(秒の合計・回数・桁の counter)は 1 度に見える(ADR-DOE-CORE-EFFECTS-004 の law meter-write-is-whole-within-one-name)
 ;;;   * 名をまたぐ書きは 1 度に見えるとは限らない — 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る(同じ ADR の law

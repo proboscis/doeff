@@ -1,5 +1,5 @@
 ;; headless の codex の adapter(handlers/headless_codex.hy)が、層 2 の利用枠切れの事実(UsageLimitHit)を公開型 AgentAccountLimit へ
-;; 写す検(card acp:kanban-issue:ki-a59d80e0afa9)。録った行の筋(stub)と fake の筋は test_headless_codex_adapter.hy が撃つ — ここは
+;; 写す検。録った行の筋(stub)と fake の筋は test_headless_codex_adapter.hy が撃つ — ここは
 ;; 録りに無い窓の長さを、写しの関数へ直に渡す。
 ;;
 ;; 守る事: agora は account_limit の在る失敗を口座の利用枠切れと読み、resets_at の刻までその口座を外す(claude と同じ道)。adapter は

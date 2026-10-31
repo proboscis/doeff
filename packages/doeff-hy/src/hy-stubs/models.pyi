@@ -1,4 +1,4 @@
-"""hy.models の型(型検査のための宣言 — 実行時は hy/models.py を読む・doeff-hy が配る部分の stub・agora-redesign #2313)。
+"""hy.models の型(型検査のための宣言 — 実行時は hy/models.py を読む・doeff-hy が配る部分の stub)。
 
 Hy の展開は keyword の literal と quote した form を `hy.models.Keyword("x")`・`hy.models.Expression([...])` に compile し、
 doeff-hy-check はそれを読む module に `import hy.models` を置く。hy は型の宣言を持たないので、その import に strict の

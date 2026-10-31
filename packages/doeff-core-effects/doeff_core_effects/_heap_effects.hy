@@ -1,4 +1,4 @@
-;;; heap の凍結の effect — 起動の読み込みを終えた拍に 1 度、いま生きている object を以後の GC の走査から外す(agora-redesign #1440・
+;;; heap の凍結の effect — 起動の読み込みを終えた拍に 1 度、いま生きている object を以後の GC の走査から外す(
 ;;; ADR-DOE-CORE-EFFECTS-004)。業務の語を持たない土台の語彙。
 ;;;
 ;;;   CollectAndFreeze  回収してから凍らせる。答え = 凍らせた object の数(int)。

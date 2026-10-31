@@ -1,6 +1,6 @@
-//! `doeff-linter --commit-hook` の検(agora-redesign #1989)— 一時の git の repo を作り、きれいな基点を commit してから変更を stage し、
+//! `doeff-linter --commit-hook` の検— 一時の git の repo を作り、きれいな基点を commit してから変更を stage し、
 //! hook の終了コードと stderr の行を見る。hook は stage した path に file 1 つで決まる規則(DOEFF016 など)だけを当て、repo 全体が
-//! 要る規則(DOEFF163 — 当たりは defservice の位置 architecture.hy に付く)は当てない(card ki-7da14032cf9c — repo 全体の検証が見る)。
+//! 要る規則(DOEFF163 — 当たりは defservice の位置 architecture.hy に付く)は当てない(repo 全体の検証が見る)。
 
 use serde_json::Value;
 use std::path::Path;
@@ -65,7 +65,7 @@ fn baseline_repo() -> tempfile::TempDir {
 }
 
 /// hook を root で走らせ、(終了コード・stderr)を返す。置き場(事実の cache と HEAD の木の結果)は repo の .git の下に分ける — 検どうし・
-/// 機体の置き場と混ぜない(agora-redesign #2723)。
+/// 機体の置き場と混ぜない。
 fn hook(root: &Path, extra: &[&str]) -> (i32, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
         .arg("--commit-hook")
@@ -95,7 +95,7 @@ fn commit_hook_section_is_a_known_key_and_the_baseline_is_clean() {
     assert!(rules.is_empty(), "{}", report["violations"]);
 }
 
-/// 失敗ケース(agora-redesign #2377): 目録(data/world_handlers.json)に無い :wraps を宣言した architecture.hy は設定の誤り — linter は
+/// 失敗ケース: 目録(data/world_handlers.json)に無い :wraps を宣言した architecture.hy は設定の誤り — linter は
 /// 0 件に見せず終了コード 2 で名指し、hook も 2 で止めて、誤った :wraps を名指す(1 行目の「設定の誤り:」の見出しだけにしない)。
 #[test]
 fn a_wraps_outside_the_catalog_is_named_and_stops() {
@@ -170,7 +170,7 @@ fn list_rules_names_which_rules_need_the_whole_repo() {
     }
 }
 
-/// agora-redesign #3834: `--list-rules` は Jev に問う規則かの名乗り(semantic)も出す — 門は ID の頭でなくこの欄で Jev の規則を分ける。
+/// `--list-rules` は Jev に問う規則かの名乗り(semantic)も出す — 門は ID の頭でなくこの欄で Jev の規則を分ける。
 /// 頭が DOEFF2 の決定的な規則(DOEFF206〜209)は Jev の規則でない。
 #[test]
 fn list_rules_names_which_rules_ask_jev() {
@@ -190,7 +190,7 @@ fn list_rules_names_which_rules_ask_jev() {
     }
 }
 
-/// 失敗ケース(agora-redesign #3834): 門の口 `--split-rules` は DOEFF206〜209 を quick か whole に入れる(直す前はどちらにも 0 本 — ID の頭
+/// 失敗ケース: 門の口 `--split-rules` は DOEFF206〜209 を quick か whole に入れる(直す前はどちらにも 0 本 — ID の頭
 /// DOEFF2 で Jev の規則として落ちていた)。Jev の規則(DOEFF201・205)はどちらにも入らない。
 #[test]
 fn split_rules_keeps_the_doeff2_rules_that_do_not_ask_jev() {
@@ -253,11 +253,11 @@ fn repo_with_a_new_hit(rule: &str, text: &str) -> tempfile::TempDir {
 
 const RECORD_WAIT: &str = "(import doeff_records.effects [WatchChanges])\n(defk wait-for [cursor left]\n  (WatchChanges #(\"message\") cursor :timeout left))\n";
 const POLLING_LOOP: &str = "(defk poll []\n  (while True\n    (<- (Delay 5.0))\n    (<- (ReadQueue))))\n";
-/// HEAD にも同じ鍵が在るのに止める当たりの行の頭と、直し方の案内の行(agora-redesign #3834・cisco-c8 の頼み 2026-10-07)。
+/// HEAD にも同じ鍵が在るのに止める当たりの行の頭と、直し方の案内の行(cisco-c8 の頼み 2026-10-07)。
 const ALREADY_ON_HEAD: &str = "変えた file の既存の当たり(main にも在る・この規則は既知の一覧で下げない): ";
 const FIX_IT_IN_THE_SAME_CHANGE: &str = "この file を変えるなら、その当たりも同じ変更で直す(hook を飛ばさない)";
 
-/// 失敗ケース(agora-redesign #3834・cisco-c8 の頼み 2026-10-07): HEAD にも同じ鍵が在る当たりで止めた時に「HEAD に無い」と書くと、
+/// 失敗ケース(cisco-c8 の頼み 2026-10-07): HEAD にも同じ鍵が在る当たりで止めた時に「HEAD に無い」と書くと、
 /// 作業役が hook の不具合と読んで hook を飛ばしかける。stage した path に当てる規則(DOEFF208)の既存の当たりは「変えた file の既存の
 /// 当たり」と書き、直し方の案内を 1 行足し、「HEAD に無い」と書かない。
 #[test]
@@ -282,7 +282,7 @@ fn a_new_hit_that_blocks_is_still_named_as_not_on_head() {
     assert!(!stderr.contains(FIX_IT_IN_THE_SAME_CHANGE), "{}", stderr);
 }
 
-/// card ki-7da14032cf9c の対: repo 全体が要る規則(DOEFF209 — 定期の見回りの loop)の当たりは、stage した file の中に在っても hook は
+/// 対になる検: repo 全体が要る規則(DOEFF209 — 定期の見回りの loop)の当たりは、stage した file の中に在っても hook は
 /// 測らない(file 1 つに当てても repo 全体の推論の世界を組む規則)— 新しく足した当たりも既存の当たりも止めず、repo 全体の検証が見る。
 #[test]
 fn a_whole_repo_rule_hit_in_a_staged_file_is_left_to_the_whole_verification() {
@@ -300,7 +300,7 @@ fn stage_only_an_untouched_file(root: &Path) {
     git(root, &["add", "app/queue/main.hy"]);
 }
 
-/// 失敗ケース(agora-redesign #3834・cisco-c8 の可): stage した file に HEAD の版から在る DOEFF208 の当たりも、commit を止める(既知の一覧を
+/// 失敗ケース(cisco-c8 の可): stage した file に HEAD の版から在る DOEFF208 の当たりも、commit を止める(既知の一覧を
 /// 持たない規則は基点の差で下げない — stage した path に当てる列の new_critical)。DOEFF208 の当たりを持つ file に触らない commit は
 /// 止まらない(file 単位)。
 #[test]
@@ -315,7 +315,7 @@ fn a_staged_file_with_an_old_record_wait_blocks_and_an_untouched_one_does_not() 
     assert_eq!(code, 0, "{}", stderr);
 }
 
-/// 規則を鳴らし始める commit(agora-redesign #2143): 層 core に json を禁じる宣言を足し、同じ commit で core の file(既存の import を
+/// 規則を鳴らし始める commit: 層 core に json を禁じる宣言を足し、同じ commit で core の file(既存の import を
 /// 持つ)にも触ると、その file の既存の import が HEAD の版に無い当たりになり、本文に指定の無い commit は止まる。本文に理由つきの
 /// `Lint-Baseline: declarations` の行が在れば、HEAD の木を今の宣言で測るので既存の当たりは基点に在る物になって通る。同じ commit で
 /// 新しい違反を足せば、指定が在っても止まる。
@@ -377,7 +377,7 @@ fn split_rules_names_the_baseline_overlay_only_for_a_reasoned_trailer() {
 }
 
 /// 門の口 `--split-rules <変えた path>` は hook と同じ判定の分けを出す — architecture.hy を名指せば file 1 つで判じる規則(DOEFF016)も
-/// whole、source だけなら quick のまま(agora-redesign #2127)。
+/// whole、source だけなら quick のまま。
 #[test]
 fn split_rules_tells_the_gate_the_same_split_as_the_hook() {
     let dir = baseline_repo();
@@ -421,7 +421,7 @@ fn recorded_runs(log: &Path) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// 失敗ケース(card ki-7da14032cf9c・2026-10-11 — zeus の load 102/24 core・cisco-c8 の決め): hook の子の linter は、stage した path だけに、
+/// 失敗ケース(2026-10-11 — zeus の load 102/24 core・cisco-c8 の決め): hook の子の linter は、stage した path だけに、
 /// file 1 つで決まる規則(DOEFF016)だけを当てる — repo 全体(path `.`)を測らず、repo 全体が要ると名乗る規則(DOEFF163)を当てない。
 /// 直す前は先端の木と HEAD の木を repo 全体で測り(agora-controllers で 1 回 45〜100 秒・1.5〜1.7 GB)、日次の赤を直す 23 会話が同時に
 /// commit して機体を埋めた。repo 全体の規則は file 1 つに当てても repo 全体の推論の世界を組む(DOEFF132 は 1 file で 28 秒)ので、
@@ -486,7 +486,7 @@ fn nothing_staged_passes() {
     assert!(stderr.is_empty(), "{}", stderr);
 }
 
-/// agora-redesign #3834: 上限 0 秒は上限なし — 打ち切らずに終わりまで測り、新しい当たりで止める(以前は 0 秒を「実行せずに越えた」
+/// 上限 0 秒は上限なし — 打ち切らずに終わりまで測り、新しい当たりで止める(以前は 0 秒を「実行せずに越えた」
 /// 扱いにして、測れなかったとして通していた)。上限で止まった commit を確かめ直す命令は、この形を使う。
 #[test]
 fn a_zero_timeout_measures_to_the_end() {
@@ -529,7 +529,7 @@ fn judged_rules(measurement: &Value) -> Vec<&str> {
     measurement["judged_rules"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect()
 }
 
-/// card ki-b9eeeea338b6(設計の記録 project-health-ide の指摘 2): `--report-out` は、hook の 2 回の測り(HEAD の版・stage した path)を
+/// 設計の記録 project-health-ide の指摘 2: `--report-out` は、hook の 2 回の測り(HEAD の版・stage した path)を
 /// 1 つの JSON に書く — 測りごとに測った対象(HEAD・stage)・測った path の列・editor-json の違反の形の違反・判じた規則。直す commit
 /// (HEAD の版の DOEFF016 を stage で消す)は、HEAD の測りに当たりが 1 件(path は HEAD の木でなく作業木の根の下へ付け替えた後)・stage の
 /// 測りに 0 件 — 会話の頁が「減らした」を読む材料。repo 全体が要る規則(DOEFF163)は hook が当てないので、判じた規則にも載らない。
@@ -568,7 +568,7 @@ fn the_report_out_writes_the_head_and_the_stage_measurements() {
     assert_eq!(measurements[1]["violations"], serde_json::json!([]), "{}", report);
 }
 
-/// card ki-b9eeeea338b6: `--report-out` の無い hook は報告をどこにも書かない(今の dir は空のまま・作業木に新しい file が無い)。同じ
+/// `--report-out` の無い hook は報告をどこにも書かない(今の dir は空のまま・作業木に新しい file が無い)。同じ
 /// commit に `--report-out` を足しても、止める判定・終了コード・stderr の文は 1 字も変わらず、相対の path は今の dir から書く。
 #[test]
 fn without_report_out_the_hook_writes_no_report_and_its_stderr_is_unchanged() {
@@ -635,7 +635,7 @@ fn report_out_outside_the_commit_hook_is_an_argument_error() {
     }
 }
 
-/// 打ち切って止めた時の行の後ろ 2 行の頭(agora-redesign #3834・cisco-c8 の可 2026-10-07)。
+/// 打ち切って止めた時の行の後ろ 2 行の頭(cisco-c8 の可 2026-10-07)。
 const RERUN_COMMAND: &str = "上限なしで同じ比べをやり直す命令: ";
 const RERUN_GUIDE: &str = "この命令の終了コードが 0(止める当たりが 0 件)である事を確かめてから commit し直す。--no-verify は使わない";
 
@@ -659,7 +659,7 @@ fn run_rerun(root: &Path, command: &str) -> (i32, String) {
     (output.status.code().unwrap_or(-1), String::from_utf8_lossy(&output.stderr).into_owned())
 }
 
-/// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く・agora-redesign #3858)で実行された
+/// 遅い代役の linter — HEAD の木(hook が cache の `commit-hook-tree/<repo を表す名>/tree` に置く)で実行された
 /// 時だけ secs 秒眠ってから本物を実行する(冷えた事実の cache で HEAD の版を測る 1 回が上限を越える形の代役)。
 fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -675,7 +675,7 @@ fn slow_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
 }
 
 /// CPU を使う遅い代役の linter — HEAD の木で実行された時だけ、secs 秒(wall)の間 CPU を回し続けてから(bash の組み込みだけの
-/// 空回り — 同じ process の CPU 秒が積もる)本物を実行する。上限は子の CPU 秒で測るので(card ki-79532edd43dd)、上限を越える形は眠る
+/// 空回り — 同じ process の CPU 秒が積もる)本物を実行する。上限は子の CPU 秒で測るので、上限を越える形は眠る
 /// 代役でなくこの代役で作る。
 fn burning_head_linter(dir: &Path, secs: u64) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -701,7 +701,7 @@ fn options_with(root: &Path, linter: &Path, cache: &Path, timeout_s: u64) -> doe
     options
 }
 
-/// 失敗ケース(agora-redesign #3834・元の issue #2723・cisco-c8 の可 2026-10-07): 子の linter が上限で打ち切られた commit は止める
+/// 失敗ケース(元の issue #2723・cisco-c8 の可 2026-10-07): 子の linter が上限で打ち切られた commit は止める
 /// (終了コード 1 — 以前は 0 で通し、作業役は通った commit を確かめ直さなかった)。止める時の行は、測れなかった比べの 1 行・上限なしで
 /// 同じ比べをやり直す命令・「0 件を確かめてから commit し直す・--no-verify は使わない」の 3 行。命令はそのまま shell で実行でき、
 /// 打ち切らずに終わりまで測って、stage した file の新しい当たり(DOEFF016)で止める。
@@ -742,7 +742,7 @@ fn a_comparison_within_the_limit_still_passes() {
     assert!(got.lines.is_empty(), "{:?}", got);
 }
 
-/// 失敗ケース(card ki-79532edd43dd・2026-10-10 — 負荷の時の形): 機体が混むと、子の linter の wall の秒は CPU 秒より長く伸びる(zeus の
+/// 失敗ケース(2026-10-10 — 負荷の時の形): 機体が混むと、子の linter の wall の秒は CPU 秒より長く伸びる(zeus の
 /// load 42〜73 で、上限なしなら rc 0 の commit が wall 40 秒の上限で毎回切れた)。wall では上限を越えて待つが CPU をほぼ使わない子
 /// (眠る代役 — 混んで順番を待つ子の代わり)は、CPU 秒が上限の内なので打ち切らずに測り、通す。CPU 秒を読めるのは /proc の在る Linux。
 #[cfg(target_os = "linux")]
@@ -759,7 +759,7 @@ fn a_linter_slow_on_the_wall_clock_but_within_the_cpu_limit_is_measured() {
     assert!(got.lines.is_empty(), "{:?}", got);
 }
 
-/// agora-redesign #2683 の設定 — DOEFF172(写像の置き場の臭い・major の warning — 終了コードを変えない)だけ。
+/// 設定 — DOEFF172(写像の置き場の臭い・major の warning — 終了コードを変えない)だけ。
 const WARNING_PYPROJECT: &str = r#"[tool.doeff-linter]
 enable = ["DOEFF172"]
 
@@ -781,7 +781,7 @@ fn warning_repo() -> tempfile::TempDir {
     dir
 }
 
-/// 失敗ケース(agora-redesign #2683): major の warning は終了コードを変えないので、hook は規則ごとの数を HEAD の版と比べる。同じ file に
+/// 失敗ケース: major の warning は終了コードを変えないので、hook は規則ごとの数を HEAD の版と比べる。同じ file に
 /// DOEFF172 を 1 つ足した commit と、warning の在る新しい file を足した commit は 1 で止まり、規則と数を名指す。
 #[test]
 fn a_new_major_warning_blocks_and_names_the_rule_and_counts() {
@@ -966,7 +966,7 @@ fn worktrees_of_one_repo_share_the_tree_and_vanished_repos_are_removed() {
     assert!(unrecorded.is_dir(), "記録の無い dir を消した");
 }
 
-// ------------------------------------------------------------------ HEAD の木は repo ごとに 1 つ(agora-redesign #3858 の直し)
+// ------------------------------------------------------------------ HEAD の木は repo ごとに 1 つ
 // 事実の cache(facts_cache)は根の path ごとの dir に、file ごとの大きさと更新時刻を鍵にして置かれる。木を sha ごとの dir に置くと、
 // commit のたびに HEAD が進むふだんの使い方では毎回が新しい根 = cache 無しの 1 回目になる。木は repo ごとに 1 つ置き、HEAD が進んだ時は
 // 変わった file だけを書き換える。
@@ -1086,7 +1086,7 @@ fn old_sha_named_trees_are_removed_on_the_first_run() {
     assert!(home.join("notes").is_dir(), "ほかの名の物を消した");
 }
 
-/// 設定と architecture.hy を git の根の下の dir `pkg/` に置いた repo の宣言(dotfiles の agentcli/ の形 — agora-redesign #3934)。
+/// 設定と architecture.hy を git の根の下の dir `pkg/` に置いた repo の宣言(dotfiles の agentcli/ の形)。
 const SUBDIR_ARCHITECTURE: &str = r#"
 (defarchitecture sub
   :root "src/app"
@@ -1122,7 +1122,7 @@ fn subdir_repo_with_a_new_hit() -> tempfile::TempDir {
     dir
 }
 
-/// 失敗ケース(agora-redesign #3934・cisco-c8 の可 2026-10-07): `--root` が git の根の下の dir の時、stage した path(git の根からの
+/// 失敗ケース(cisco-c8 の可 2026-10-07): `--root` が git の根の下の dir の時、stage した path(git の根からの
 /// 相対)をその dir からの相対に直し、HEAD の木もその dir を根に測る。直す前は 2 つとも外れた — stage した file の新しい DOEFF102 を
 /// 見ず、HEAD の当たりを 0 と読んで既存の DOEFF114 を「HEAD に無い」と止めた。git の根から設定と根を名指す形(dotfiles の hook の
 /// 呼び方)で、新しい DOEFF102 の 1 件だけで止まり、既存の当たりでは止まらない。

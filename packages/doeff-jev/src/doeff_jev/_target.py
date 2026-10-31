@@ -121,6 +121,6 @@ def target_from_process_environment(*, wire: str | None = None) -> JevTarget:
     """宛先を渡されない judge_stack(組み立て点の CLI・hook の入口が呼ぶ形)だけが呼ぶ: この process の環境と home の file から宛先を解く。
 
     環境は os.environ を直に読まず、foundation の handler(subprocess_handler)が答える ReadEnvironment の写像で受ける
-    (agora-redesign #3012・doeff-linter DOEFF004)。"""
+    (doeff-linter DOEFF004)。"""
     environ: dict[str, str] = run(with_handlers([subprocess_handler], environment_mapping()))
     return resolve_target(environ, read_text_from_disk, wire=wire)

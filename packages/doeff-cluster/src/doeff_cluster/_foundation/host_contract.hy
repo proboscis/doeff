@@ -66,7 +66,7 @@
 
 ;; sim の柵が外へ通す effect の型(頭の註)。scheduler の effect と doeff-time の時計の effect だけ。期限つきの待ち 3 つ(WaitWithin・
 ;; RaceWithin・WaitTicks)は同じ作り — 期限を時計の handler の待ち行列に置き、task を起こさない — なので 3 つとも通す(RaceWithin と
-;; WaitTicks が欠けていて、上に載る系の job が止めの拍に出す RaceWithin が模擬でだけ落ちた・card ki-fce105f02918)。
+;; WaitTicks が欠けていて、上に載る系の job が止めの拍に出す RaceWithin が模擬でだけ落ちた)。
 (val SIM-PASSABLE #(Spawn TaskCompleted Gather Wait Race Cancel CreatePromise CompletePromise FailPromise CreateExternalPromise
                     CreateSemaphore AcquireSemaphore ReleaseSemaphore
                     DelayEffect GetTimeEffect GetMonotonicEffect WaitUntilEffect WaitWithinEffect RaceWithinEffect WaitTicksEffect))

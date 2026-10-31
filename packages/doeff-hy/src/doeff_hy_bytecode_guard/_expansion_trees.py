@@ -1,4 +1,4 @@
-"""import の compile が展開した木の置き場 — 同じ source を doeff-effect-analyzer が展開し直さないため(card ki-e053a847c515・ki-5c1fc605c17d)。
+"""import の compile が展開した木の置き場 — 同じ source を doeff-effect-analyzer が展開し直さないため。
 
 変わった Hy の module は、日次の各 session が検を集める時の import で compile され(macro の展開が重い — 4,447 行の module で約 30 秒)、
 閉じの検の analyzer が同じ source をもう一度展開していた(同じ秒の 2 回目)。import の compile の口(``loader_hooks``)は Hy の口の下で

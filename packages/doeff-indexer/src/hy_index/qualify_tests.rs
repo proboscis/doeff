@@ -135,7 +135,7 @@ fn target_of_a_caller_matches_qualified_name_across_files() {
 }
 
 /// 値として名指した handler(呼び出しにならない — `(with-handlers [os-file-handler] …)`)の完全修飾名を、呼び出しと同じ解決で
-/// 参照の `target` に埋める(agora-redesign #1140 — 外の世界に触れる handler の名指しを数えるため)。
+/// 参照の `target` に埋める(外の世界に触れる handler の名指しを数えるため)。
 #[test]
 fn references_resolve_like_calls() {
     let source = r#"(import doeff-core-effects.os-file [os-file-handler :as files])
@@ -177,7 +177,7 @@ fn a_qualified_call_uses_the_first_import_in_order_that_fits() {
 }
 
 /// 名前の解決の仕事は file の大きさに比例する — 「呼びの数 × (定義 + import の数)」にならない(10,000 行・呼び 5 万の file で `index_source` が 4.3 秒かかっていた:
-/// 呼びごとに定義と import の全部を回し、import ごとに mangle の確保をしていた。card ki-58bfad2c13a1 の残り)。
+/// 呼びごとに定義と import の全部を回し、import ごとに mangle の確保をしていた)。
 #[test]
 fn linking_costs_the_size_of_the_file_not_calls_times_imports() {
     const IMPORTS: usize = 40;

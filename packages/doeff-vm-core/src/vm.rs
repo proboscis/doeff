@@ -29,8 +29,8 @@ pub struct VM {
     pub var_store: VarStore,
     pub current_segment: Option<SegmentId>,
     /// Steps this VM has taken since it was built — a structural cost measure:
-    /// tests pin how many steps a construct takes (a `Call` round trip —
-    /// agora-redesign #2801), which the wall clock under load cannot.
+    /// tests pin how many steps a construct takes (a `Call` round trip),
+    /// which the wall clock under load cannot.
     pub steps: u64,
 }
 

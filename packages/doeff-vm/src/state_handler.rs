@@ -1,6 +1,5 @@
 //! The state handler as a Rust handler: answers `Get(key)` and `Put(key, value)`
-//! from its store inside the VM, without calling a Python generator per effect
-//! (card ki-83236a21466e).
+//! from its store inside the VM, without calling a Python generator per effect.
 //!
 //! `doeff_core_effects.handlers.state()` makes one `StateHandler` per call and
 //! installs it like any handler. The store stays a Python dict, so the handler

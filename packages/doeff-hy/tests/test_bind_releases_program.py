@@ -1,4 +1,4 @@
-"""`<-` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)を frame から外す(agora card ki-d5fb19be03db)。
+"""`<-` が束ねた後、束ねの一時の名(`_hy_gensym_bound_N`)を frame から外す。
 
 一時の名は yield した Program(Call — 関数と引数)を持つ。残すと同じ行が次に走るまで引数を生かし、長い loop の
 generator(agora-controllers の dispatch-turns)が前の周の表を持ち続けた。ここは束ねた後の frame の locals に

@@ -1,6 +1,6 @@
 ;; 同じ名の worker の新しい世代を先に起こす入れ替え(本番の Deployment の RollingUpdate — AL-D2)で、退いた process の寿命の上限
 ;; (宣言の readiness の retiredSeconds)を宣言しない handoff の job の、前の世代の process が、新しい世代の process が Ready になった後に
-;; 止められて終わる(card ki-7c11722e3621)。retiredSeconds の無い handoff の job は、同じ世代の入れ替えで「新の Ready で旧を止める」—
+;; 止められて終わる。retiredSeconds の無い handoff の job は、同じ世代の入れ替えで「新の Ready で旧を止める」—
 ;; 世代をまたぐ入れ替えでも同じ決まりで止める。
 ;;
 ;; 出自: 10-12 の zeus の作り直しで、旧い Pod 5d6d78459d-zl8pw が 15:13:48 から 21:19:12 まで 6 時間 5 分 Terminating のまま残った。

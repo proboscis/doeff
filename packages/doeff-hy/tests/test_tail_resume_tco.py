@@ -95,7 +95,7 @@ class TestTailResumeTCO:
         assert not _body_contains(body, alias("Resume")), f"unexpected Resume in: {body}"
 
     def test_match_all_cases_tail_resume(self):
-        """(MyEffect [x] (match x (int) (resume a) _ (resume b))) → both Transfer (agora-redesign #3530)"""
+        """(MyEffect [x] (match x (int) (resume a) _ (resume b))) → both Transfer"""
         clause = _clause(
             _sym("MyEffect"), _list(_sym("x")),
             _expr(
@@ -198,7 +198,7 @@ _ANSWERS_PRELUDE = """
 (defclass Token [])
 
 ;; The answer is a local of the clause, as in the intake reader the leak was found in
-;; (agora-redesign #3530): a kept handler frame keeps its answer.
+;;: a kept handler frame keeps its answer.
 (defhandler tokens
   (Ask [value]
     (match value

@@ -2,7 +2,7 @@
 ;;; 本番と同じ入れ物 LinkState と宛先の入れ物を持ち、操作ごとに本番の Program(worker/protocol/coordinator_link)を 1 回の run で回す。
 ;;; 送りは検の HTTP の答え手 transport-http(transport を渡さなければ本物の網の transport)、file は本物の os-file-handler、時計は実時間。
 ;;; 名指しの待ちの背景の task は run をまたいで生きない — 待ちの性質は 1 回の run の筋書きで確かめる(test_heartbeat_link)。拍の外の
-;;; heartbeat の送りの背景の task(card ki-e38dbfca7671)も同じ理由で起こさない(beat-beside 偽 — その性質は仮想時計の下で調整ループごと
+;;; heartbeat の送りの背景の task も同じ理由で起こさない(beat-beside 偽 — その性質は仮想時計の下で調整ループごと
 ;;; 動かす検 test_beat_beside_a_stalled_tick で確かめる)。
 (require doeff-hy.macros [deff defk <- val])
 (import os)
@@ -45,7 +45,7 @@
                           #^ (| str None) [task-dir None] #^ (| dict None) [versions None] #^ (| httpx.BaseTransport None) [transport None]
                           #^ (| dict None) [tools None] #^ bool [handles-envs False] #^ tuple [exclusive #()] #^ str [node ""]
                           #^ bool [watch False]]
-    ;; 最後の連絡とみなす初めの刻は、本番の入口と同じく壁の時計と単調な時計の両方で読む(時計は実時間 — card ki-069f4a5c07f7)。
+    ;; 最後の連絡とみなす初めの刻は、本番の入口と同じく壁の時計と単調な時計の両方で読む(時計は実時間)。
     (setv now-ms (int (* 1000 (time.time))))
     (setv self.state (LinkState name provides task-reserve background-room fence-ms (or task-dir "tasks") (. (uuid.uuid4) hex) now-ms now-ms
                                 (round (* 1000 (time.monotonic)))

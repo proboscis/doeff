@@ -1,4 +1,4 @@
-"""Hy の module の型の宣言(.pyi)を型検査のための展開から作る道具(doeff_hy._static_stub)の失敗ケース(agora-redesign #2826)。
+"""Hy の module の型の宣言(.pyi)を型検査のための展開から作る道具(doeff_hy._static_stub)の失敗ケース。
 
 手で書いた .pyi は実装と食い違い、doeff の定義を defn → defk に変えるたびに使い手(agora)の型の門が Unknown の赤で止まった
 (2026-10-02 に 4 回)。道具は展開の木から宣言を作り、一致の検は「作り直した物 == commit された物」。

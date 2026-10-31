@@ -26,7 +26,7 @@
     True None))
 
 
-;; 置ける組の印(card ki-ced3c45980a5): worker は枠の file の自分の行の pools で「置ける組」の印を名乗り、heartbeat の provides に足す
+;; 置ける組の印: worker は枠の file の自分の行の pools で「置ける組」の印を名乗り、heartbeat の provides に足す
 ;; (Pod の template の能力を変えずに、job を 2 台以上の機体に置けるようにする)。印は頭 pool- で始め、機体の印(host-<機体>)と coordinator が
 ;; node の label から導く能力(ClusterNaming の node-capabilities)から名の空間を分ける — 枠の file から 1 台の縛りや機体の境界を名乗れない。
 ;; coordinator は pool- で始まる能力を node の label から導かない(coordinator/protocol/cluster_json の naming-from-json が断る)。

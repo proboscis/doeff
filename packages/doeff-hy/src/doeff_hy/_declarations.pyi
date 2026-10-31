@@ -1,4 +1,4 @@
-"""declarations.hy の公開面の型(型検査のための宣言 — 実行時は declarations.hy を読む・agora-redesign #2335・#2324 の子)。
+"""declarations.hy の公開面の型(型検査のための宣言 — 実行時は declarations.hy を読む・#2324 の子)。
 
 declarations.hy は Hy の module なので、pyright は中を読めず、defk / deff / defp / defhandler の :tags・:effects の展開が名指す
 `doeff_hy._declarations.DefinitionTags`・`doeff_hy._declarations.effect_types` が Unknown になる。module の直下の定義では

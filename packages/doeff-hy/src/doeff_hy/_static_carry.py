@@ -1,8 +1,7 @@
-"""doeff-hy-check の運び(`--carry <file>`)— 前の回から入力の変わらない .hy は pyright に当てず、前の回の pyright の診断を運ぶ
-(agora-redesign card ki-cbd1c93cfe7c)。
+"""doeff-hy-check の運び(`--carry <file>`)— 前の回から入力の変わらない .hy は pyright に当てず、前の回の pyright の診断を運ぶ。
 
 なぜ: agora-controllers の日次の型の測り(hy-type-trend)は範囲の .hy(約 3,000 本)を毎回全部 pyright に当て、秒が repo の大きさと
-機体の混みにつれて伸び、処理ステージの上限 7,200 秒で 2 回続けて切れた(card ki-c16990fab50b)。pyright が 1 つの file に出す診断は、
+機体の混みにつれて伸び、処理ステージの上限 7,200 秒で 2 回続けて切れた。pyright が 1 つの file に出す診断は、
 その file の展開と、その file が使う名の型を決める宣言(import で届く module の中)と、環境(pyright の版・設定・python の探し道)だけで
 決まる。それらが前の回と同じ file は、前の回の診断をそのまま使う。
 
@@ -37,14 +36,14 @@ star import は、その module の全部の名に依る(_Node の name = None)�
 
 見直し(refresh_runs): 入力の変わらない file のうち、当てた回が一番古い ceil(本数 / refresh_runs) 本を毎回当て直し、運んだ診断と
 違った file を数えて名乗る(summary の refresh_mismatches)— この入力の決めが見落とす依存があれば、ここに出る(pyright の答えが
-検める順で揺れる file — card ki-e56135ec1220 — もここに出る)。
+検める順で揺れる file — もここに出る)。
 
 運びの文書(JSON・版 CARRY_VERSION): {"version", "fingerprint", "run", "summary", "files": {相対 path: {"inputs", "checked",
 "rows": [[行, 列, severity, 規則, 文言], …]}}}。run = 回の番号(運びの無い回が 1)・checked = その file を pyright に当てた回の番号・
 rows = その回の pyright の診断(.hy の位置・pyright の答えの順 — 整える前の物。整え(static_check.settle)は毎回、運んだ物と当てた物を合わせてかける)。
 summary は使い手(agora-controllers の scripts/hy_type_trend.hy)が読む欄: run・checked・carried・reasons・refresh_mismatches・mismatched。
 
-組ごとの書き直し(--carry-group・agora-redesign card ki-5ea68e47b927): 当てる file を組に分けて pyright に当て、組を当て終えるたびに
+組ごとの書き直し(--carry-group): 当てる file を組に分けて pyright に当て、組を当て終えるたびに
 途中の文書(next_record の done = 当て終えた file)を書く。途中の文書は、当て終えた file の今回の診断・運んだ file・まだ当てていない
 見直しの file の前の回の記録だけを持ち、まだ当てていない新しい・変わった file を持たない(次の回は new として当てる)。使い手が時間で
 道具を切っても、当て終えた組の診断は次の回へ残る — 以前は切られた回が文書を書かず、全部を当てる回(環境の指紋が替わった回)が上限を

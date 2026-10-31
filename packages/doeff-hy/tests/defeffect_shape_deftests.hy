@@ -1,5 +1,5 @@
 ;;; defeffect の型の振る舞い(frozen・位置と名前の引数・既定値・等価・hash・repr・欄の表・:pre の断り)が、同じ欄の標準の frozen の
-;;; dataclass と同じ事の検(card acp:kanban-issue:ki-e77d44aa61e5 — defrecord と同じく展開の時に関数を書き、読み込みの時に dataclass に
+;;; dataclass と同じ事の検(defrecord と同じく展開の時に関数を書き、読み込みの時に dataclass に
 ;;; 関数の source を compile させない)。
 ;;;
 ;;; 確かめること: 欄の形を持つ effect(既定値なし・字面の既定値・式の既定値・:pre)と、同じ欄を手で書いた EffectBase の上の標準の

@@ -1,8 +1,8 @@
 """機体の検の枠 — doeff-hy-check の 1 回の実行が、同じ機体(Pod)で走る検(pytest・code-quality・doeff-linter・long-command の
-task)と共有する枠を、展開と pyright の前に 1 つ取る(agora-redesign card ki-26ebd3f636e0・親 ki-aabe38bf85ef)。
+task)と共有する枠を、展開と pyright の前に 1 つ取る。
 
 なぜ要るか: doeff-hy-check は 1 本で展開の子 4 本と pyright を起こし、RSS 約 10 GiB を使う。agora-controllers の手で測る入口
-(scripts/hy_type_check.hy の gate)は枠を取るようになったが(card ki-931f88d7815b)、会話が直に起動する doeff-hy-check
+(scripts/hy_type_check.hy の gate)は枠を取るようになったが、会話が直に起動する doeff-hy-check
 (`uv run doeff-hy-check …`・`python -m doeff_hy._static_check …`)は枠の外で走っていた。撃つ道ごとに包まず、入口の main の 1 点で取る
 (doeff-linter の packages/doeff-linter/src/check_slot.rs と同じ考え)。
 
@@ -12,7 +12,7 @@ machine_check_slots.json の 1 つが持つ)。この module は値を持たず�
   - 正本の無い宿(dotfiles を置かない機体 — doeff だけを clone した機体)は黙って素通し。
   - 正本・宣言を読めない時と、正本の口が揃わない時・正本の take が中で落ちた時(正本は dotfiles の先端を追い、doeff は使い手の
     pin で固定される)は 1 行名乗って素通し — 枠の壊れで検を走らせなくしない(正本の pytest の受付と同じ)。正本の中の失敗を
-    traceback のまま抜けさせると、main の終了 1(= 新しい赤)と区別できない(card ki-26ebd3f636e0 の盲検 A の副次の実測)。
+    traceback のまま抜けさせると、main の終了 1(= 新しい赤)と区別できない。
   - 方策(read_policy の答え)と持ち物(take の答え)は開かない — 正本の公開の口(take・process_width)へそのまま渡すだけで、
     欄の名を読まず、作り直さず、別の名へ写さない(待ちの上限を縮める・延ばす判断と、方策の欄の名をここに置かない)。持ち物は解く口
     (release)だけを SlotHeld に預ける。形は tests/test_check_slot_opacity.py の AST の検が守る(入る向きも出る向きも)。

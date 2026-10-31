@@ -6,7 +6,7 @@ defk・deftest・defhandler の節の本体を、macro の展開の時に 1 度�
   `(session val x 式)`・`(session var x 式)`。式は `!(f)` と書いてよい(Hy の reader は
   `!(f)` を `!` と `(f)` の 2 つに読むので、宣言の中の `! 式` の 2 つ組を `(! 式)` に畳む)。
   値の型が式から決まらない時(空の dict など)は、val と var だけが `(val #^ 型 x 式)` の型の注記を受ける
-  (`名前: 型 = 式` の代入に書き換える — agora-redesign #2939)。
+  (`名前: 型 = 式` の代入に書き換える)。
 - 書き換えの形 `(:= x 新しい値)` を、宣言の種類に合わせて展開する。
 - lazy val / lazy var の参照(裸の名前)を「初回なら評価して覚える」式に書き換える。
 - 束縛の誤り(新しい構文の名前の束縛し直し・lazy の名前の影・yield できない所での lazy の参照・
@@ -269,7 +269,7 @@ class _AnnotatedName(NamedTuple):
 
 def _annotated_name(target: Object) -> _AnnotatedName | None:
     """宣言の名前の位置の `#^ 型 名前`(= `(annotate 名前 型)`)の名前と型。注記つきの名前でなければ None
-    (module の値の型を式から決められない時 — 空の dict など — に、書き手が型を書く口・agora-redesign #2939)。"""
+    (module の値の型を式から決められない時 — 空の dict など — に、書き手が型を書く口)。"""
     if isinstance(target, Expression) and len(target) == 3 and _head(target) == "annotate" and isinstance(target[1], Symbol):
         return _AnnotatedName(name=target[1], annotation=target[2])
     return None
@@ -1157,7 +1157,7 @@ def legacy_session_message(form: Object, handler: str) -> str:
 # - module の直下の lazy val は効果を使わない式だけ(初めて使った時に 1 回だけ評価して覚える —
 #   import の時に重い計算をしない)。効果を使う式は誤り: module には handler が無く、最初に使った呼び出しの
 #   handler の下で作った値が、以後の別のセッション・別の handler の組でも使い回されるため。
-#   (一度「作らない」と決めて外し、operator の指示で戻した — 設計の記録 §6)
+#   (一度は作らないと決めて外し、後で戻した — 設計の記録 §6)
 # - module の直下の lazy var は作らない(誤り — var か defhandler の session var を案内する)。
 # - val / var の式も効果を使えない(実行する handler が無い)。
 # - Hy の reader は `(:= …)` を keyword の呼び出しとして読み、macro を通らないので、module の直下では
@@ -1311,7 +1311,7 @@ class ModuleScope:
 
     doeff-hy-check が 1 file の source の一番外の並びに当てる(module の直下は macro の外なので、setv は展開の時には
     見えない)。Hy の compile が form を 1 つ読むたびに同じ form を渡せるよう、1 つずつ受け取る形にしてある — 所見のために
-    source を読み直さず、読んだ form を最後まで抱えもしない(agora-redesign #3869)。"""
+    source を読み直さず、読んだ form を最後まで抱えもしない。"""
 
     def __init__(self) -> None:
         self._findings: list[Finding] = []

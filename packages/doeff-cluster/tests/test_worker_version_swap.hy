@@ -1,5 +1,5 @@
 ;;; 版の file を替えると、同じ container(手元では同じ keeper の process)の中で worker の process が新しい版へ入れ替わる事の検
-;;; (card ki-6e83e03d146d — deploy/boot.sh の頭の註の「版の file と keeper」)。
+;;; (deploy/boot.sh の頭の註の「版の file と keeper」)。
 ;;;
 ;;; 手元の 1 台の cluster(sim/machine.hy の local-machine-cluster — 本物の coordinator と、配備と同じ deploy/boot.sh で起こす worker)の
 ;;; worker を、配備の雛形と同じく版の file(WORKER_VERSION_FILE)と起動の版(WORKER_DOEFF_COMMIT)で起こす — boot.sh は keeper として回る。

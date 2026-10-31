@@ -1,4 +1,4 @@
-//! DOEFF161: 数を決めた綴り(agora-redesign #1373・#1437 — 元は agora-controllers の一時の判定
+//! DOEFF161: 数を決めた綴り(#1437 — 元は agora-controllers の一時の判定
 //! controllers/screen/tests/intake_only_rules.hy の 1・3 の数と座・4 の残り・5・7 の節・8 の後半・semgrep の規則の実在)。
 //!
 //! architecture.hy の `:counted-spellings [(counted-spelling "名" :pattern r"…" :files [..] :count N :why "…") …]` の宣言ごとに、

@@ -2,7 +2,7 @@
 //!
 //! 文の雛形は規則ごとにここの 1 か所だけに書き、層の名前・層の説明・role の説明・law の文は設定から差し込む(Rust に
 //! 層の意味を書かない)。層の説明が設定に無い層は、名前と置き場所と規則の決まりだけで文を作る。
-//! linter は違反が何で、なぜ違反かを言う(operator の決定 2026-09-27)。
+//! linter は違反が何で、なぜ違反かを言う。
 
 use serde::Serialize;
 
@@ -382,11 +382,11 @@ impl<'a> Narrator<'a> {
             ),
             Explain::DictSmell { placement, field, problem } => (
                 if *field { format!("欄の写像({}) — {}", problem, self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
-                "agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ(operator 2026-10-01 の原則)。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。".to_string(),
+                "agora の data は DB に在り効果で読む。memory の写像は cache のためだけで、cache は効果の層(handler)が持つ。handler の外で写像を組む定義や欄の写像は、データを型の無い形で持ち回る臭い。写像を組むのが目的の 1 点(JSON の境界で綴る定義 — :post が写像)は数えない。".to_string()
             ),
             Explain::WireFree { placement, wire, problem } => (
                 if *wire { format!("defwire の宣言 — {}", self.file_subject(placement)) } else { format!("{} — {}", problem, self.file_subject(placement)) },
-                "この層は値を型だけで受け渡す(operator 2026-10-01 の決め — defwire は core に置かない・データを引く写像は渡さずキー → 値の関数か効果にする)。wire の型と写像を組む綴りは翻訳の層の 1 点に置き、この層は欄の名前と型を持つ型(defrecord)だけを受け取り返す。写像や型の無い組が通ると、どの欄が在るかを読む形の確かめがこの層に入り込む。".to_string(),
+                "この層は値を型だけで受け渡す(defwire は core に置かない・データを引く写像は渡さずキー → 値の関数か効果にする)。wire の型と写像を組む綴りは翻訳の層の 1 点に置き、この層は欄の名前と型を持つ型(defrecord)だけを受け取り返す。写像や型の無い組が通ると、どの欄が在るかを読む形の確かめがこの層に入り込む。".to_string()
             ),
             Explain::EnvironmentBranch { placement, hit } => (
                 match hit {
@@ -454,7 +454,7 @@ impl<'a> Narrator<'a> {
             ),
             Explain::WorldHandlerMisplaced { definition, problem } => (
                 format!("許可名簿の定義 {} — {}", definition, problem),
-                "外の世界に触れてよい定義は層 foundation にだけ置く(operator の決定 2026-09-29 — 決まった dir に規則つきで置く)。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string(),
+                "外の世界に触れてよい定義は層 foundation にだけ置く(決まった dir に規則つきで置く)。名簿に在って実物が無い・foundation の外に在ると、名簿が外の世界に触れる所を言い当てなくなる。".to_string()
             ),
             Explain::TestKindMismatch { test, edge, mark, reached } => (
                 if *edge {
@@ -653,11 +653,11 @@ impl<'a> Narrator<'a> {
             ),
             Explain::ServiceInvariantsMissing { service, gap } => (
                 format!("service {} の :invariants", service),
-                format!("{}。業務ロジックを「テストした」には、記録を受けて破りの列を返す純粋な不変条件の関数が service ごとに要る(agora-redesign #1155 の定義 1)— 宣言が無い・名指しが外れている・判断でない関数では、何を確かめたかを linter が数えられない。", gap),
+                format!("{}。業務ロジックを「テストした」には、記録を受けて破りの列を返す純粋な不変条件の関数が service ごとに要る— 宣言が無い・名指しが外れている・判断でない関数では、何を確かめたかを linter が数えられない。", gap)
             ),
             Explain::ServiceSystemMissing { service, gap } => (
                 format!("service {} の :system", service),
-                format!("{}。defsystem が在れば、その系は汎用の模擬 cluster のテストに自動で載って実行される — 宣言が無い・defsystem でない・土台が型つきの 1 つでない系は、テストが土台を組めず載らない(agora-redesign #2186・#2187)。", gap),
+                format!("{}。defsystem が在れば、その系は汎用の模擬 cluster のテストに自動で載って実行される — 宣言が無い・defsystem でない・土台が型つきの 1 つでない系は、テストが土台を組めず載らない(#2187)。", gap)
             ),
             Explain::ServiceWithoutCounterexample { service, entry, counterexamples, candidates } => (
                 format!("service {} の組み立て {}", service, entry),
@@ -671,7 +671,7 @@ impl<'a> Narrator<'a> {
                     Some(clause) => format!("service {} の条 {}", service, clause),
                     None => format!("service {} の :clauses", service),
                 },
-                format!("{}。service に反例が 1 本あるだけでは、ほかの条を破る壊れた答えを見分けられるかが分からない — 条ごとに、その条を破る壊した handler の反例(反例の表の行の `breaks:`)か、反例を持たない理由(:clause-exemptions)が要る(agora-redesign #1713・ADR R2)。", gap),
+                format!("{}。service に反例が 1 本あるだけでは、ほかの条を破る壊れた答えを見分けられるかが分からない — 条ごとに、その条を破る壊した handler の反例(反例の表の行の `breaks:`)か、反例を持たない理由(:clause-exemptions)が要る(ADR R2)。", gap)
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
                 format!("handler {} の引数 {}({}{})", handler, param, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
@@ -686,16 +686,16 @@ impl<'a> Narrator<'a> {
             Explain::TestSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
             Explain::RegistryEntryStale { key, source, rules } => (
                 format!("登録簿 {} の鍵 {}", source, key),
-                format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま — agora-redesign #1706)。", rules.join("・")),
+                format!("この実行で規則 {} を repo 全体に当てたが、この鍵に当たる所見が無い。載った破れを直した後に行を消し忘れると、同じ所に破れが戻っても登録簿が黙って warning に下げる(縮める向きの登録簿が緩んだまま)。", rules.join("・"))
             ),
             Explain::IntentEffectCoverage { effect, service, columns, gaps } => (
                 format!("service {} の intent の効果 {}({})", service, effect, gaps),
-                format!("{}。intent の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持って初めて、手元でテストした業務の操作になる(agora-redesign #1155)。", columns),
+                format!("{}。intent の効果は、手元の検から届く定義が出し、模擬の根と本番の入口の両方から届く答え手を持って初めて、手元でテストした業務の操作になる。", columns)
             ),
             Explain::AssemblyShape { subject, reason } => (subject.clone(), reason.clone()),
             Explain::WorldOutsideLayers { subject } => (
                 subject.clone(),
-                "層の置き場の外の file も、外の世界に触れてよいのは architecture.hy の :world-handlers の定義だけ(agora-redesign #1147)。effect を出して名簿の定義の handler に答えさせるか、置き場を foundation に移して名簿に載せる。".to_string(),
+                "層の置き場の外の file も、外の世界に触れてよいのは architecture.hy の :world-handlers の定義だけ。effect を出して名簿の定義の handler に答えさせるか、置き場を foundation に移して名簿に載せる。".to_string()
             ),
             Explain::RawVia { placement, definition, through, evidence, category } => (
                 format!("定義 {} が {} を通して {}({} の生の副作用)に届く — {}", definition, through.join(" → "), evidence, category, self.file_subject(placement)),
@@ -819,7 +819,7 @@ impl<'a> Narrator<'a> {
                     (_, None) => format!("定義 {}(層 {})が下の層の効果 {} を出している", found.definition, layer, found.name()),
                 },
                 format!(
-                    "{} は architecture.hy の :lower-layer-modules に並ぶ module(記録の service の生の操作)の物。生のデータを読み書きするのは handler の仕事で、業務の層はドメインの効果を出し、翻訳の層の handler がそれを生の操作へ言い換える(利用者の決定 2026-10-07)。業務の層が生の効果を出すか、生の効果に答える handler を自分で被せると、業務の流れが記録の置き方を知り、外へドメインの API だけを出す境界が崩れる。import した defk を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。",
+                    "{} は architecture.hy の :lower-layer-modules に並ぶ module(記録の service の生の操作)の物。生のデータを読み書きするのは handler の仕事で、業務の層はドメインの効果を出し、翻訳の層の handler がそれを生の操作へ言い換える。業務の層が生の効果を出すか、生の効果に答える handler を自分で被せると、業務の流れが記録の置き方を知り、外へドメインの API だけを出す境界が崩れる。import した defk を経由しても同じ — 推論は本体で実行する呼び((<- …)・(! …))を defk の先まで辿る。",
                     found.qualified
                 ),
             ),

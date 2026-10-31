@@ -1,9 +1,9 @@
-;;; agora-redesign #1909 のテストの宣言 — Jev の規則 DOEFF201・202・205 の線引き 5 つと、線引きごとの鳴る例・鳴らない例 1 つずつ(計 10)。
-;;; 線引きの文 = agora-controllers の architecture.hy の註の節「Jev の規則 DOEFF201 / 202 / 205 の線引き」(main 8bad3b59f・agora-redesign #1908)の
+;;; テストの宣言 — Jev の規則 DOEFF201・202・205 の線引き 5 つと、線引きごとの鳴る例・鳴らない例 1 つずつ(計 10)。
+;;; 線引きの文 = agora-controllers の architecture.hy の註の節「Jev の規則 DOEFF201 / 202 / 205 の線引き」(main 8bad3b59f)の
 ;;; 原文のまま。決められなかった行で採った 2 点は、1 点目を線引き 5・2 点目を線引き 4 の文の後ろに足した。例 = 文書
 ;;; analysis-jev-judgments-47-by-lines-2026-10-01.html(sha256 4c93c656…)の「47 件の実物の例」の定義を同じ main から取った抜粋(:tags・docstring・
 ;;; 註を落とし、略した所は `;; …`)。層の説明は同じ main の core と protocol のコピー。
-;;; 線引き 4 の 2 例は `{:code … :why …}` の組(agora-redesign #1995 — why が問いに code と組で載ること・:code と :why の並びを問わないこと)、
+;;; 線引き 4 の 2 例は `{:code … :why …}` の組(why が問いに code と組で載ること・:code と :why の並びを問わないこと)、
 ;;; 残りの 8 例は code の文字列だけの形(前の形のまま読めること)。
 (defarchitecture lines-sample
   :root "app"

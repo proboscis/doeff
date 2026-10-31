@@ -53,7 +53,7 @@ pub fn lint_file(
 
 /// path の決まった file の source に Python の規則を当て、その file を持つ package の宣言の母集団(crate::population — 層の
 /// `:exempt` の除外と、外した層の業務の import の DOEFF032)を当てる。実行の入口(file の列・editor の 1 file)はここを通る —
-/// lint_source は母集団を知らない(規則の単体の検の口・agora-redesign #2811)。
+/// lint_source は母集団を知らない(規則の単体の検の口)。
 pub fn lint_source_at(
     file_path: &str,
     source: &str,
@@ -142,7 +142,7 @@ pub fn lint_source(
 }
 
 /// 本体の再帰がこの文を規則に渡すか — 規則が見る単位(RuleReach)に従う。自分で入れ子を歩く規則に入れ子の文を
-/// 渡すと、同じ当たりを入れ子の深さの分だけ数える(agora-redesign #2858)。
+/// 渡すと、同じ当たりを入れ子の深さの分だけ数える。
 fn passes_statement(reach: RuleReach, top_level: bool) -> bool {
     match reach {
         RuleReach::Statement => true,
@@ -254,7 +254,7 @@ pub fn collect_python_files_with_options(
 /// 名指す path: 対象に symlink でない path(本物)があればそれ、無ければ最初に見た path。並びは
 /// 各 file を最初に見た順。本物を解けない path(壊れた symlink など)は、それだけで 1 つと数える。
 /// 同じ当たりを path の数だけ数えないための 1 点で、file を集める経路(dir の走査・名指しの file・
-/// `--modified`)はどれもここを通る(agora-redesign #2905)。規則が当たるかは本物で決まる
+/// `--modified`)はどれもここを通る。規則が当たるかは本物で決まる
 /// (母集団の宣言も symlink を解いて引く)ので、まとめても見る範囲は減らない。
 pub fn one_path_per_file(files: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
     let mut seen: Vec<std::path::PathBuf> = Vec::new();
@@ -287,7 +287,7 @@ fn is_symlink(path: &Path) -> bool {
 ///
 /// 部分一致は見ない: 以前は file の名(dir の走査では dir の名も)に pattern を「含む」だけで外し、既定の
 /// `build`・`dist`・`.git` が `doeff_indexer_build_backend.py`・`verify_dist_metadata.py`・`.github/` のような名を黙って
-/// 判定の外にしていた(当たり 0 ではなく判定していない — agora-redesign #3012)。
+/// 判定の外にしていた(当たり 0 ではなく判定していない)。
 pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
     path.components().any(|component| {
         component
@@ -512,7 +512,7 @@ p: Program = process()"#,
             .find(|r| r.rule_id() == rule_id)
     }
 
-    /// import できる package(`__init__.py` の在る一時の dir)。置き場を見る DOEFF010 が鳴る場所を作る(agora-redesign #2880)。
+    /// import できる package(`__init__.py` の在る一時の dir)。置き場を見る DOEFF010 が鳴る場所を作る。
     fn importable_package() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("一時の dir");
         std::fs::write(dir.path().join("__init__.py"), "").expect("__init__.py を置く");
@@ -777,7 +777,7 @@ p: Program = process()"#,
         result.join("\n")
     }
 
-    /// 本体の文ごとの再帰を通した、規則 1 つの当たりの数(agora-redesign #2858 — 規則が見る単位どおりに渡す)。
+    /// 本体の文ごとの再帰を通した、規則 1 つの当たりの数(規則が見る単位どおりに渡す)。
     fn hits_of(rule: Box<dyn LintRule>, file_path: &str, code: &str) -> usize {
         let rule_id = rule.rule_id().to_string();
         let rules: Vec<Box<dyn LintRule>> = vec![rule];
@@ -817,7 +817,7 @@ p: Program = process()"#,
         assert_eq!(hits_of(rule, &noqa_case_path("DOEFF010", &package), code), 1);
     }
 
-    /// 本体の文ごとの再帰を通した DOEFF004 の当たりの数。規則 1 つ(自分では入れ子に降りない — agora-redesign #2832)を当てる。
+    /// 本体の文ごとの再帰を通した DOEFF004 の当たりの数。規則 1 つ(自分では入れ子に降りない)を当てる。
     fn environ_hits(code: &str) -> usize {
         hits_of(Box::new(crate::rules::doeff004_no_os_environ::NoOsEnvironRule::new()), "test.py", code)
     }
@@ -844,7 +844,7 @@ p: Program = process()"#,
         assert_eq!(environ_hits(code), 3);
     }
 
-    // 本体の再帰が降りる入れ子の本体(agora-redesign #2834)。各構文の本体の中の os.getenv() が当たる数を見る —
+    // 本体の再帰が降りる入れ子の本体。各構文の本体の中の os.getenv() が当たる数を見る —
     // 本体の再帰が降りない本体が在ると、そこの当たりは 0 件になる。
 
     #[test]

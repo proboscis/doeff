@@ -1,4 +1,4 @@
-"""Hy の test file を import せずに収集し、item の setup で初めて import する(agora-redesign #1223・親 #1211)。
+"""Hy の test file を import せずに収集し、item の setup で初めて import する(親 #1211)。
 
 収集で test module を import すると module の最上位の実行が走り、1 file で 10 秒かかる(#1211 の実測)。そこで:
 
@@ -456,8 +456,8 @@ def _check_marks(stub_marks: list[PytestMark], real_marks: list[PytestMark], whe
 def import_module_for(path: Path, module_name: str) -> types.ModuleType:
     """test file の module を読む。親の package は通常の import で先に読み、test module はこの file から読んで親に付ける。
 
-    親を読まずに ``sys.modules`` へ置くと、別の test が ``(import pkg.sub.mod :as …)`` で名を引いた時に落ちる
-    (agora-redesign #1212)。test module そのものを file から読むのは、workspace の package ごとの ``tests`` のように
+    親を読まずに ``sys.modules`` へ置くと、別の test が ``(import pkg.sub.mod :as …)`` で名を引いた時に落ちる。
+   test module そのものを file から読むのは、workspace の package ごとの ``tests`` のように
     同じ名の親が別の dir に在る時も、この file を読むため(その時は親に付けない)。
     """
     path = path.resolve()
@@ -524,7 +524,7 @@ def _replace_stub_marks(
     """node の印のうち仮の物(同じ object)だけを、並びの同じ位置の実物の印に替える。
 
     収集の後に hook(``pytest_collection_modifyitems`` など)が ``add_marker`` で足した印と、parametrize の値の印は、
-    位置ごとそのまま残す — 印の並びと ``keywords`` は import して収集した時と同じになる(agora-redesign #1553)。
+    位置ごとそのまま残す — 印の並びと ``keywords`` は import して収集した時と同じになる。
     """
     real_of = {id(stub): real for stub, real in zip(stub_marks, real_marks, strict=True)}
     node.own_markers = [real_of.get(id(mark), mark) for mark in node.own_markers]

@@ -50,7 +50,7 @@ def _utc_now() -> datetime:
 
 def _clock_wait(sleep: Callable[[float], Awaitable[Any]], seconds: float) -> Await:
     """An Await whose completion time is known: the scheduler does not count
-    it as stalled until ``seconds`` have passed (agora-redesign #765). The
+    it as stalled until ``seconds`` have passed. The
     deadline is on the scheduler's clock (``time.monotonic``), not on the
     injectable ``monotonic`` that answers GetMonotonic."""
     return Await(sleep(seconds), deadline=time.monotonic() + seconds)
@@ -80,7 +80,7 @@ class AsyncTimeRuntime:
     @do
     def handle(self, effect: AsyncTimeEffect, k: Any):
         # The annotation lets the VM skip this handler for every other effect, instead of
-        # calling it to Pass each one (agora card ki-1841b724d061 — every effect a records
+        # calling it to Pass each one (every effect a records
         # request sends past the clock cost a call here).
         # Every clause performs its final Transfer/Pass from THIS frame.
         # Delegating to a sub-@do that transfers (the pre-2026-07-14 shape)
@@ -101,7 +101,7 @@ class AsyncTimeRuntime:
         if isinstance(effect, (WaitWithinEffect, WaitTicksEffect, RaceWithinEffect)):
             # The deadline is a daemon task sleeping on the wall clock, raced against the future(s) and
             # cancelled afterwards (daemon: abandoning it at root return is its lifecycle — #501).
-            # WaitTicks' deadline is its last tick (agora-redesign #3066).
+            # WaitTicks' deadline is its last tick.
             started = float(self._monotonic())
             timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
             try:
@@ -116,7 +116,7 @@ class AsyncTimeRuntime:
             @do
             def deferred():
                 yield _clock_wait(sleep, wait_seconds)
-                # Wait(task) answers the scheduled program's value (agora-redesign #1159).
+                # Wait(task) answers the scheduled program's value.
                 return (yield effect.program)
 
             # Resume the caller with the spawned Task (same contract as

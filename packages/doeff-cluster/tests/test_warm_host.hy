@@ -94,7 +94,7 @@
   (assert (= gone.kind PathKind.MISSING) gone))
 
 
-;; --- root へ送る名は root の完成の印の置き場(card ki-7a7a1dcb1933)--------------------------------------------
+;; --- root へ送る名は root の完成の印の置き場--------------------------------------------
 ;; 待ちの子と task の子は root の版の doeff で起きる。区画 worker を _worker へ隠す前の doeff の root(本番の 64 本のうち 61 本・2026-10-31)
 ;; には _worker の名が無いので、worker は準備の確かめが印に書いた置き場の名を送る。反例: 置き場を読まずに _worker の名を送ると、
 ;; 古い root の待ちの子は起きず、task は台本の待ちの子に名の合う仕事が無くて落ちる。
@@ -221,7 +221,7 @@
 
 
 (deftest test-a-warm-key-task-asks-with-the-root-venv-that-uv-run-adds-on-the-cold-path [tmp-path]
-  ;; card ki-b884608b96e4: 冷えた道(shim の下の uv run)は uv が root の venv を PATH の頭と VIRTUAL_ENV に足す。待ちの子から分ける道は
+  ;; 冷えた道(shim の下の uv run)は uv が root の venv を PATH の頭と VIRTUAL_ENV に足す。待ちの子から分ける道は
   ;; uv を通らないので、頼みの env が同じ 2 つを持つ(前の形は許可表の PATH のまま・VIRTUAL_ENV 無しで、名で起こす hy・python が worker の
   ;; venv を引いた)。本物の uv と待ちの子で 2 つの道を突き合わせる検は tests/test_task_venv_on_both_paths.hy。
   (<- spec JobSpec (task-spec-on "env-a"))
@@ -257,7 +257,7 @@
 
 (deftest test-a-warm-key-task-whose-warm-child-is-missing-is-refused-by-name-as-the-answer [tmp-path]
   ;; 待ちの子の socket が無い root の task は、shim の道へ倒れずに名指しで断る(判断の層が待ちの子の準備済みを見てから起こすので、
-  ;; 本番の拍でここに来るのは待ちの子が間で落ちた時だけ)。断りは StartJob の答えの値で、子の表に載せない(card ki-e1612a12d0c3 —
+  ;; 本番の拍でここに来るのは待ちの子が間で落ちた時だけ)。断りは StartJob の答えの値で、子の表に載せない(
   ;; 例外だと worker の process ごと落ちた)。
   (<- spec JobSpec (task-spec-on "env-a"))
   (<- got tuple (refused-start spec (WarmScript) tmp-path))
@@ -270,7 +270,7 @@
 
 
 (deftest test-a-warm-child-that-does-not-answer-in-time-refuses-the-task-as-the-answer [tmp-path]
-  ;; 10-24 02:42 JST の本番の形(card ki-e1612a12d0c3): 混んだ機体で待ちの子が期限の内に答えない。前は OSError が worker の拍を抜けて
+  ;; 10-24 02:42 JST の本番の形: 混んだ機体で待ちの子が期限の内に答えない。前は OSError が worker の拍を抜けて
   ;; process ごと落ち、機体の上の job を全部道連れにした。今は JobNotStarted が答えで、宿は続けて観測に答える。
   (<- spec JobSpec (task-spec-on "env-a"))
   (<- settings (host-settings tmp-path))
@@ -294,7 +294,7 @@
 
 (deftest test-a-shim-job-whose-command-cannot-start-is-refused-as-the-answer [tmp-path]
   ;; shim の道で子を起こせない(ProcessNotStarted — 台本に命令が無い)時も、例外でなく StartJob の答え JobNotStarted(warm-key は None)で、
-  ;; 子の表に載せない(card ki-e1612a12d0c3 — 前は OSError で worker の process ごと落ちた)。
+  ;; 子の表に載せない(前は OSError で worker の process ごと落ちた)。
   (val spec (JobSpec "svc" "jobs.svc" #() "rev-a"))
   (<- settings (host-settings tmp-path))
   (val script (ProcessScript :commands #() :env SCRIPT-ENV))

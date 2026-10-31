@@ -9,7 +9,7 @@ import されていると、Hy の `ast.unparse` の差し替えがそこで止�
 この module から輸出して、entry point の 1 つ(`doeff_hy`)のまま載せる。
 
 公開の名は検ごとの宣言 2 個(`declare_step_budget`・`declare_process_tree_cpu`)と entry point だけ
-(card ki-ad38495b7c15・決まり「doeff の subpackage が利用者に見せる公開 API は effect と handler だけ」の
+(決まり「doeff の subpackage が利用者に見せる公開 API は effect と handler だけ」の
 doeff-hy-pytest の分)。hook は pytest が module の属性から拾うので `__all__` に載せない。測りの中(`_budget`・
 `_python_calls`・`_tree_cpu`)は内側で、使い手は plugin が出す要約の行を読む。
 

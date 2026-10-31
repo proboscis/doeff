@@ -1,5 +1,4 @@
-;;; WebSocket の client の契約テストの解釈器(composition root)— 同じ契約の Program を、client の handler だけ替えて走らせる
-;;; (agora-redesign #4007 U0)。
+;;; WebSocket の client の契約テストの解釈器(composition root)— 同じ契約の Program を、client の handler だけ替えて走らせる。
 ;;;
 ;;;   aiohttp-ws-client    本物: aiohttp-ws-client。相手は同じ process の別の thread の loop で聞く aiohttp の ws の待ち受け(127.0.0.1 の
 ;;;                        空いた port — 外の網へ出ない)

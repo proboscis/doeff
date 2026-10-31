@@ -79,5 +79,5 @@
 
 
 (deftest test-the-line-cap-starts-at-64-mib
-  ;; 上限の初めの値(card ki-83f24000d86c: thread/resume の答え 1 行が数百 MB になる — 上限までの行は丸ごと読む)。
+  ;; 上限の初めの値(thread/resume の答え 1 行が数百 MB になる — 上限までの行は丸ごと読む)。
   (assert (= LINE-CAP-BYTES (* 64 1024 1024))))

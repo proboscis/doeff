@@ -131,7 +131,7 @@
   (setv #^ (| UvFailure None) uv-failure None)
   (setv #^ int disk-free (** 2 40))
   (setv #^ int child-protocol CHILD-PROTOCOL)
-  ;; root の中で子の入口の解ける置き場(準備の確かめの答え entryPlace — None = どの置き場にも入口の無い root・card ki-7a7a1dcb1933)。
+  ;; root の中で子の入口の解ける置き場(準備の確かめの答え entryPlace — None = どの置き場にも入口の無い root)。
   (setv #^ (| str None) entry-place (get CHILD-ENTRY-PLACES 0))
   (setv #^ str mounts SIM-MOUNTS)
   (setv #^ float cold-seconds 60.0)

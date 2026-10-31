@@ -1,4 +1,4 @@
-"""記録から item を作る近道(``indexed_pytest`` — agora-redesign #1551)が、pytest の通常の経路と同じ item を作ることの反例。
+"""記録から item を作る近道(``indexed_pytest``)が、pytest の通常の経路と同じ item を作ることの反例。
 
 どの test も、1 回目(記録が無いので収集で import する = pytest の通常の Module の収集)と 2 回目以降(記録から収集する =
 近道)を別の process で走らせ、nodeid の並び・結果の数・検の中で確かめる値が同じことを見る。検の中で fixture の値や
@@ -405,7 +405,7 @@ def test_a_name_recorded_twice_becomes_one_item_at_its_first_position_with_its_l
     pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """同じ名の deftest が 2 つある file は、Python の module と同じく最初の位置に最後の定義の item が 1 本だけ並ぶ
-    (試作の 1 つ目は記録を 2 重に集めて 1 本多かった — agora-redesign #1460 の反例)。"""
+    (試作の 1 つ目は記録を 2 重に集めて 1 本多かった)。"""
     _write_project(pytester, tmp_path, monkeypatch, DUPLICATE_FILES)
     runs = _cold_then_warm(pytester)
     cold, warm, cold_ids, warm_ids = runs.cold, runs.warm, runs.cold_ids, runs.warm_ids

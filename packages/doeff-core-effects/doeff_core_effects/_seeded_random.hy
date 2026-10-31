@@ -1,4 +1,4 @@
-;;; 乱数の fake の答え手 seeded-random-handler(agora-redesign #1544)— RandomBytes に、種とこの run の中の呼びの順で決まった byte で
+;;; 乱数の fake の答え手 seeded-random-handler— RandomBytes に、種とこの run の中の呼びの順で決まった byte で
 ;;; 答える。模擬と検で、起動ごとの名乗りを毎回同じ値にし、os の乱数に触れないため。
 ;;;
 ;;; 値の作り方: n 回目(0 始まり)の呼びは sha256("<種>:<n>:<塊>") の digest を塊 0・1・… と並べた頭の count byte。同じ種と同じ呼びの順なら

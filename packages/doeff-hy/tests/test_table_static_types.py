@@ -1,4 +1,4 @@
-"""書き換えない表 Table の型の宣言(table.pyi)の失敗ケース(agora-redesign #2254)。
+"""書き換えない表 Table の型の宣言(table.pyi)の失敗ケース。
 
 table.hy は Hy の module で、型の宣言(table.pyi)が無いと pyright は使い手の Table・TableDraft・table_of・draft_of を Unknown
 として読み、表を欄や引数に持つ所の型が全部 Unknown に引きずられる(agora の画面の cache.hy で 300 → 434 件の赤 — 書き手に直せない)。

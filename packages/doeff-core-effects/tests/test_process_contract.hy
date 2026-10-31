@@ -12,11 +12,11 @@
 ;;;   * 時間切れは答え(exit-code 124・timed-out True)・時間内なら普通の答え
 ;;;   * output-path の末尾へ stdout・stderr の順に足す(答えも出力を持つ)。足せない output-path は OSError が上がる
 ;;;   * ExecutableAt は起こせる命令と起こせない命令を分ける・dir(命令と同じ名でも)と無い path は False・WorkingDirectory は在る dir の絶対 path
-;;;   * ReadMachineName は空でない機体の名を答える(agora-redesign #3050)
-;;;   * ProcessAlive は生きている pid(init = 1)と終わった子の pid を分ける・0 以下の pid は生きていない(agora-redesign #2184)
+;;;   * ReadMachineName は空でない機体の名を答える
+;;;   * ProcessAlive は生きている pid(init = 1)と終わった子の pid を分ける・0 以下の pid は生きていない
 ;;;   * process-group は、時間内に終わった後に背景へ回った孫を止め、時間切れでは孫ごと group を止める。stream-output の output-path は、
-;;;     時間切れで止めた子が出した分も持つ(agora-redesign #2184)
-;;;   * 立てたらすぐ返す子(agora-redesign #2223): StartProcess は待たずに pid を返し、PollProcess で終わるまで問える(終わりを答えた子は
+;;;     時間切れで止めた子が出した分も持つ
+;;;   * 立てたらすぐ返す子: StartProcess は待たずに pid を返し、PollProcess で終わるまで問える(終わりを答えた子は
 ;;;     忘れる)・StopProcess は走る子を SIGTERM で止める(-15)・group を止めると孫も止まる・立てられない形は ProcessNotStarted(出力の
 ;;;     file・cwd・命令)・立てていない pid には触らない・出力は file へ流れるので pipe の容量を超えても子は止まらない
 ;;;   * 本物を thread で回す offloaded-subprocess-handler も、本物と同じ答えを返す(同じ deftest を通る)
@@ -67,7 +67,7 @@
 (deftest test-bytes-that-are-not-utf-8-survive-the-round-trip
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
   ;; 子が出した utf-8 でない bytes は可逆の文字列で返る(壊れた bytes は surrogate の文字)— encode し直すと元の bytes(git の diff を
-  ;; patch-id へ渡す使い手が bytes を保てる — agora-redesign #2160)。
+  ;; patch-id へ渡す使い手が bytes を保てる)。
   (<- printed ProcessOutcome (shell NOT-UTF-8))
   (assert (= printed.exit-code 0) printed)
   (assert (= (.encode printed.stdout "utf-8" "surrogateescape") NOT-UTF-8-BYTES) (.format "子の出力の bytes {!r}" printed.stdout))
@@ -194,7 +194,7 @@
 
 (deftest test-the-own-interpreter-is-read
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
-  ;; interpreter の事実(agora-redesign #2347): prefix は在る dir の絶対 path・pid は生きている process。
+  ;; interpreter の事実: prefix は在る dir の絶対 path・pid は生きている process。
   (<- facts InterpreterFacts (ReadInterpreter))
   (<- seen PathStat (StatPath facts.prefix))
   (<- alive bool (ProcessAlive facts.pid))
@@ -205,7 +205,7 @@
 
 (deftest test-the-own-machine-name-is-read
   {:interpreters ["subprocess" "offloaded-subprocess" "scripted-process"]}
-  ;; 機体の名(agora-redesign #3050): 答えは空でない文字列。本物が socket.gethostname と同じ値・台本が ProcessScript の machine-name を
+  ;; 機体の名: 答えは空でない文字列。本物が socket.gethostname と同じ値・台本が ProcessScript の machine-name を
   ;; 答えることは片方だけの性質(test_process_file_effects.hy)。
   (<- name str (ReadMachineName))
   (assert (and (isinstance name str) (> (len name) 0)) (.format "機体の名の答え {!r}" name)))
@@ -287,7 +287,7 @@
   (assert (= logged "one\ntwo\nfirst\n") (.format "流しながら書いた output-path {!r}" logged)))
 
 
-;; ---- 立てたらすぐ返す子(StartProcess・PollProcess・StopProcess — agora-redesign #2223)---------------------------------------------
+;; ---- 立てたらすぐ返す子(StartProcess・PollProcess・StopProcess)---------------------------------------------
 
 (defk exited-soon [pid]
   {:pre [(: pid int)] :post [(: % (| ProcessExited ProcessRunning ProcessNotChild))] :tags {:context "process-test" :role "program"}}
@@ -494,7 +494,7 @@
   (assert (= (len big) (len BIG-OUTPUT-TEXT)) (.format "子の出力の長さ {}" (len big))))
 
 
-;; ---- 起こした process が終わったら、その子も終わる(StartProcess の lifetime — agora-redesign #3866)------------------------------------
+;; ---- 起こした process が終わったら、その子も終わる(StartProcess の lifetime)------------------------------------
 ;; 起こす側は別の process(lifeline_starter.py — 本物の答え手で子を StartProcess する)で、検はそれを外から止める・普通に終わらせる。
 ;; 片づけ(StopProcess)を走らせずに起こした側が終わっても、子と、子が別の session に起こした孫が残らない。lifetime を OUTLIVES-STARTER
 ;; と書いた子だけは残る。台本の世界に別の process は無いので本物の答え手だけ。検が赤の時も process を残さないよう、断言の前に残りを止める。

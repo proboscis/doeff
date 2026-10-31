@@ -57,7 +57,7 @@
 
 
 (deftest test-the-probe-reads-the-hidden-place
-  ;; ce175be53 以降の doeff の root(約束の版は _shared/intent の runtime_env_model — card ki-7a7a1dcb1933)。移し替えの module shared.py を
+  ;; ce175be53 以降の doeff の root(約束の版は _shared/intent の runtime_env_model)。移し替えの module shared.py を
   ;; 消した版の root では、ここしか読めない。
   (assert (= (get CHILD-PROTOCOL-PLACES 0) "doeff_cluster._shared.intent.runtime_env_model") CHILD-PROTOCOL-PLACES)
   (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 0) NEW-PLACE-PROTOCOL)) NEW-PLACE-PROTOCOL)))
@@ -75,7 +75,7 @@
   (assert (= (! (probed-protocol (get CHILD-PROTOCOL-PLACES 2) OLD-PLACE-PROTOCOL)) OLD-PLACE-PROTOCOL)))
 
 
-;; --- 子の入口の置き場(entryPlace — card ki-7a7a1dcb1933)-------------------------------------------------------------
+;; --- 子の入口の置き場(entryPlace)-------------------------------------------------------------
 ;; worker は完成の印のこの欄から root へ送る子の入口の名を選ぶ。区画 worker を _worker へ隠す前の doeff の root(2026-10-31 の本番の 64 本の
 ;; うち 61 本)は区画を隠す前の置き場だけを持ち、移し替えの module worker.py を消した版の root は _worker だけを持つ。
 

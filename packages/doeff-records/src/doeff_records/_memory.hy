@@ -27,14 +27,14 @@
 ;;; 去った時に、覚えを残さない列(RememberNoKeys)は覚えを外し、長さを限った列(RememberKeysFor)は外してよい刻を覚えの外しの索引
 ;;; (key-forgets — 刻の heap)に積む。回収(SweepExpired)が索引の刻の来た覚えを、出来事が置き場に無く覚えた刻から長さを過ぎた時だけ外す
 ;;; (forget-keys-locked — PostgreSQL の handler の forget-keys と同じ判じ)。
-;;; 行の書きの冪等キー(card ki-78c6d663491f — PostgreSQL の handler と同じ形): 鍵つきの PutRow・PutRows は、錠の内で期待と書きの判定の前に
+;;; 行の書きの冪等キー(PostgreSQL の handler と同じ形): 鍵つきの PutRow・PutRows は、錠の内で期待と書きの判定の前に
 ;;; 同じ鍵の覚え(write-keys)を引いて判じ(admission.judge-write-replay — 同じ本文は覚えた答えを送り直しと名乗って返し、行にも変更の列にも
 ;;; 触らない・別の本文は冪等キーの断り)、覚えが無ければ今までどおり判じて、確定した時だけ同じ錠の内で答えと本文の指紋を覚える
 ;;; (remember-write)。覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた覚えは回収(SweepExpired)が外す(forget-write-keys-locked)。
 ;;; 故障の口の当たる回数(faults.StoreFault.times)は当たるたびに 1 使い、尽きた故障は列から外れる(memory-spend-fault)。
 ;;; 書き手の身元は handler を組む時の引数 writer(effect の欄にしない)。同じ MemoryStore を別の writer の handler で包めば、
 ;;; 1 つの置き場を複数の書き手が使う形になる。
-;;; 書きの控え(card ki-3876dadb767c): 置き場は確定した書きごとに、書き手と書いた欄を控える — 行の書きの変更 1 つごとに WriteNote(書き手の名と、
+;;; 書きの控え: 置き場は確定した書きごとに、書き手と書いた欄を控える — 行の書きの変更 1 つごとに WriteNote(書き手の名と、
 ;;; 判定にかけた差分の欄の名 — admission.judged-diff)を変更の番号で(written-by)、積んだ出来事 1 つごとに積んだ時の変更の番号の頭を出来事の
 ;;; 番号で(appended-at-head — 変更と出来事は別の番号で数えるので、確定の順は対でしか決まらない)。置き場の外の読み手(検)は、変更の列と
 ;;; 出来事の列にこの 2 つを添えて、誰がどの欄をどの順に書いたかを置き場の持ち主の側から読む(変更の値 RowChanged.value は差分を重ねた後の
@@ -187,12 +187,12 @@
           self.expiry-order 0
           ;; 組で数える列の組(#(列 組) → StoredGroup)。
           self.groups {}
-          ;; 行の書きの冪等キーの覚え(鍵 → values.RememberedWrite — card ki-78c6d663491f)と、覚えた刻(鍵 → epoch ミリ秒)と、覚えの外しの
+          ;; 行の書きの冪等キーの覚え(鍵 → values.RememberedWrite)と、覚えた刻(鍵 → epoch ミリ秒)と、覚えの外しの
           ;; 索引(heap — 項は #(外してよい刻 積んだ順 鍵))。頭の註の「行の書きの冪等キー」。
           self.write-keys {}
           self.write-remembered-at {}
           self.write-forgets []
-          ;; 書きの控え(頭の註の「書きの控え」— card ki-3876dadb767c): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
+          ;; 書きの控え(頭の註の「書きの控え」): 変更の番号 → 行の書きの変更の WriteNote と、出来事の番号 → 積んだ時の
           ;; 変更の番号の頭。
           self.written-by {}
           self.appended-at-head {}))
@@ -584,7 +584,7 @@
 
 
 (defn #^ BatchRead memory-read-batch [#^ MemoryStore store #^ ReadBatch ask #^ int now-ms]  ; defk にできない: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み(memory-read-row と同じ作法)
-  "ReadBatch の束に答えるため(card ki-177a4f287c42): 錠の内で束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と同じ関数(memory-read-row・
+  "ReadBatch の束に答えるため: 錠の内で束の順に読み 1 つずつを、同じ読みを 1 つ撃った時と同じ関数(memory-read-row・
    memory-list-rows)で同じ刻 now-ms に読む(memory の束は 1 つの断面 — 間に書きは入らない)。"
   (BatchRead (tuple (gfor one ask.reads
                           (if (isinstance one ReadRow) (memory-read-row store one now-ms) (memory-list-rows store one now-ms))))))
@@ -906,13 +906,13 @@
 
 
 (defn #^ AppendedEvents memory-append-events [#^ MemoryStore store #^ str writer #^ AppendEvents ask #^ tuple faults #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-append と同じ作法)
-  "AppendEvents の束に答えるため(card ki-48c34994ed15): 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
+  "AppendEvents の束に答えるため: 錠の内で束の順に追記 1 つずつを memory-append-one で判じて積む(間に他の書きは
    入らない — 番号は束の順に増え、断られた追記は他の追記を止めない)。faults = 追記ごとに当たる故障(append-faults の答え — 無ければ None)。"
   (AppendedEvents (tuple (gfor #(one fault) (zip ask.appends faults :strict True) (memory-append-one store writer one fault now-ms)))))
 
 
 (defn #^ object memory-put-rows-append-events [#^ MemoryStore store #^ str writer #^ PutRowsAppendEvents ask #^ int now-ms]  ; defk にできない: 錠の内(at-now の operation)で同期に呼ぶ置き場の書き(memory-put-rows と同じ作法)
-  "PutRowsAppendEvents に錠の内の 1 回で全部か 0 で答えるため(card ki-e17ba3b32dea): 鍵つきの書きは同じ鍵の覚えで先に判じ(行の束と追記の束の
+  "PutRowsAppendEvents に錠の内の 1 回で全部か 0 で答えるため: 鍵つきの書きは同じ鍵の覚えで先に判じ(行の束と追記の束の
    両方の指紋 — memory-put-rows と同じ)、次に行の束を PutRows と同じく判じ(admission.judge-put-rows — 通らなければその答えで何も書かない)、
    次に追記を束の順に積まずに判じる(judged-append — 断りがあれば束の順で最初の断りの AppendRefused で何も書かない)。全部通れば行を束の順に
    書き、今積む出来事に行の最後の変更の位置を持たせて束の順に積み(同じ冪等キー・同じ本文が在る追記は前の番号を replayed で)、鍵つきなら
@@ -1204,7 +1204,7 @@
 (defk answered-appends [store writer ask]
   {:pre [(: store MemoryStore) (: writer str) (: ask AppendEvents)] :post [(: % (| AppendedEvents Unreachable))]
    :tags {:context "records" :role "foundation"}}
-  "AppendEvents の束の答え(answered の束の形 — card ki-48c34994ed15): 届かない状態(SetStoreOutage)が束の列のどれかに当たれば Unreachable・
+  "AppendEvents の束の答え(answered の束の形): 届かない状態(SetStoreOutage)が束の列のどれかに当たれば Unreachable・
    次に追記ごとの故障を探し、置き場に着けない Unreachable の故障が 1 つでも当たれば束のどれも積まずに Unreachable(束は 1 つの書き —
    AppendEvents の註)・そうでなければ錠の内で束を積み(memory-append-events — Refused の故障は追記ごとに差し替える)、置き場に着けてから
    答える Unreachable の故障が当たっていれば全部を積んだ後に Unreachable で答える。"
@@ -1236,7 +1236,7 @@
   {:pre [(: store MemoryStore) (: writer str) (: ask PutRowsAppendEvents)]
    :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Refused Unreachable))]
    :tags {:context "records" :role "foundation"}}
-  "PutRowsAppendEvents の答え(answered の、行の束と追記の束を組んだ形 — card ki-e17ba3b32dea): 届かない状態(SetStoreOutage)が束の表と列の
+  "PutRowsAppendEvents の答え(answered の、行の束と追記の束を組んだ形): 届かない状態(SetStoreOutage)が束の表と列の
    どれかに当たれば Unreachable・次に故障を PutRows と同じく書き全体に(束の表の名・matching は PutRowsAppendEvents を受ける)、AppendEvents と
    同じく追記ごとに(同じ追記の AppendEvent として — append-faults)探す。置き場に着けない故障が 1 つでも当たれば何も書かずに最初の故障の答え
    (追記に当たった Refused は AppendRefused — 全部か 0)・そうでなければ錠の内で書き(memory-put-rows-append-events)、置き場に着けてから
@@ -1261,7 +1261,7 @@
 (defk answered-reads [store ask]
   {:pre [(: store MemoryStore) (: ask ReadBatch)] :post [(: % (| BatchRead Unreachable))]
    :tags {:context "records" :role "foundation"}}
-  "ReadBatch の束の答え(answered の束の形 — card ki-177a4f287c42): 届かない状態(SetStoreOutage)が束の表のどれかに当たれば Unreachable・
+  "ReadBatch の束の答え(answered の束の形): 届かない状態(SetStoreOutage)が束の表のどれかに当たれば Unreachable・
    次に読みごとの故障を、同じ読みを 1 つ撃った時と同じ探し方(fault-for — matching は束の中の ReadRow | ListRows を受ける)で探し、1 つでも
    当たれば束の全部が届かない(当たった最初の故障の Unreachable — 読みの答えに Refused は無いので、Refused を置いた故障も Unreachable に
    読む)・当たらなければ錠の内で束を読む(memory-read-batch)。当たった故障は束 1 つにつき 1 回ずつ使う。"

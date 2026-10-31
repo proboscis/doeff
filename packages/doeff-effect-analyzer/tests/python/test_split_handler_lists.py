@@ -1,4 +1,4 @@
-"""Handler lists a builder splits and puts back together (agora-redesign #2674).
+"""Handler lists a builder splits and puts back together.
 
 agora's ``claude-runtime-handlers`` took doeff-agents' pair apart and put a handler of its
 own between the two halves (a75d84047)::

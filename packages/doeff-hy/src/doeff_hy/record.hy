@@ -36,24 +36,23 @@
 ;;; 実行では (defclass [(dataclass :init False :repr False :eq False :kw-only True)] Name [] 欄 … 関数 …) と仕上げ(record_runtime の
 ;;; seal-record)— dataclass には欄の表だけを作らせ、__init__(kw-only)・__repr__・__eq__・__hash__・凍結の __setattr__ / __delattr__ は
 ;;; 展開が書く(関数が module の code として .pyc に入り、読み込みの時に dataclass が関数の source を compile しない — 1 型 約 1 ms →
-;;; 約 0.1 ms・card ki-a0cca3bdb9a0)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
+;;; 約 0.1 ms)。型ごとに書く関数は __init__(注記なし)・__eq__・__hash__ と :check の __post_init__ だけで、
 ;;; __repr__ と凍結の __setattr__ / __delattr__ は record_runtime の共有の 1 組を指し、型は欄の名の並びを tuple で持つ。docstring は実行の展開に置かず、__doc__ は欄の名から組む
-;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った・card ki-ff2c33449b3f)。
+;;; 共有の記述子(型ごとの関数と文が job の memory を 10 MB 越えて持った)。
 ;;; 振る舞いは標準の dataclass(frozen・kw_only)と同じ(tests/defrecord_shape_deftests.hy が
 ;;; 突き合わせる)。欄の形を展開が読み切れない時(名を介した field・字面でない :init / :repr / :compare / :hash・欄の名 self / object・
 ;;; 本体が __init__ ほかを自分で書く)は投影と同じ展開(dataclass が関数を作る)にする。
 ;;; `dataclass` は使う側の scope の名前を指す(使う側が import する)。
 ;;; 関数の本体の中に書いた defrecord・defwire の実行の展開は、展開の import(doeff_hy ほか)と型と記帳をすぐ呼ぶ関数に入れて
 ;;; (setv Name ((fn [] … Name))) と型の名だけを束ねる(doeff_hy.macros の _scoped-definition — import した名が外の関数の局所の名に
-;;; ならないため・card ki-8a17293bc3e5・tests/test_nested_definition_scope.py)。型の __qualname__ には包んだ関数の名が入る
+;;; ならないため・tests/test_nested_definition_scope.py)。型の __qualname__ には包んだ関数の名が入る
 ;;; (defwire は中の defrecord がもう 1 度包むので 2 つ)。module と class の本体と型検査の投影は包まない。
 ;;;
 ;;; ---------------------------------------------------------------------------
 ;;; 頭の辞書 {:tags … :check […]} — 定義のタグと作る時の検め(どちらも省ける)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = agora-redesign #798 と operator の決定 2026-09-27
-;;; (道具が読む宣言は def*・データの型は defrecord・振る舞いを持つ class は作らない)。
+;;; 決まり: 道具が読む宣言は def*・データの型は defrecord・振る舞いを持つ class は作らない。
 ;;; dataclass の `__post_init__` に defn を書いて値を検めていた形を、defrecord の節へ移す。
 ;;;
 ;;;   (setv CHAT-ID-PATTERN (re.compile r"c-[0-9A-HJKMNP-TV-Z]{26}"))
@@ -107,13 +106,12 @@
 ;;; `defwire` — JSON の境目の型(JSON を解いて確かめる型を 1 つの宣言で建てる)
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = agora-redesign #840・operator の決定 2026-09-28(素の dict を直に使わせず pydantic のように解いて確かめる。
-;;; そのための def* の macro を置く案 A を採る)。
+;;; 決まり: 素の dict を直に使わせず pydantic のように解いて確かめる。そのための def* の macro を置く。
 ;;; 決まりの正本 = ADR-DOE-HY-007 R8。
 ;;;
 ;;; 何のための足場か: 外から来た JSON を JsonValue(名前を変えた素の dict)のまま運び、読む所ごとに手で分解すると、
 ;;; 欄の名の綴り違いも型の違いも使う所まで見えない。defwire は JSON の形を型として宣言し、解き手
-;;; (doeff_hy._wire の parse / dump — doeff_hy/_wire_codec.py の自前の型の木・card ki-b7701d5fc0dd)で境目の 1 か所で一度に解いて確かめる。
+;;; (doeff_hy._wire の parse / dump — doeff_hy/_wire_codec.py の自前の型の木)で境目の 1 か所で一度に解いて確かめる。
 ;;;
 ;;;   (require doeff-hy.record [defwire])
 ;;;   (import dataclasses [dataclass])
@@ -153,7 +151,7 @@
 ;;; `defenum` — 閉じた値の集合(文字列の Enum)を 1 行で建てる
 ;;; ---------------------------------------------------------------------------
 ;;;
-;;; 出自 = operator の決定 2026-09-26(enum も macro で建てる)。
+;;; 決まり: enum も macro で建てる。
 ;;; 設計の記録 = `docs/design/defenum/design.md`(値の綴り・StrEnum・網羅の確認)。
 ;;;
 ;;; 何のための足場か: 「決まった数の名前のどれか」を裸の文字列で持つと、綴り違いが
@@ -199,7 +197,7 @@
 ;; 展開の文の並び(import の doeff_hy — record_runtime・頭の辞書の宣言 — と型と記帳)は、doeff_hy.macros の _scoped-definition
 ;; (定義の macro が全部通る 1 か所)で書いた所に合わせて組む: 関数の本体の中では、すぐ呼ぶ関数に入れて型の名だけを束ねる —
 ;; 並べたままだと import した doeff_hy が外の関数全体の局所の名になり、外の関数で先に読む module の段の doeff_hy が
-;; UnboundLocalError で落ちた(card ki-8a17293bc3e5)。module と class の本体では今までどおり並べる。
+;; UnboundLocalError で落ちた。module と class の本体では今までどおり並べる。
 (defmacro defrecord [_hy-compiler name #* forms]
   (import doeff_hy.macros [_scoped-definition])
   (import hy.models [Dict Expression Keyword List Sequence String Symbol])
@@ -212,7 +210,7 @@
           rest (cut rest 1 None)))
   (import doeff_hy._static_view [static-view-enabled])
   (setv static-view (static-view-enabled))
-  ;; 実行の展開の class の form(頭注「関数は展開の時に書く」— card ki-a0cca3bdb9a0): dataclass には欄の表(__dataclass_fields__・
+  ;; 実行の展開の class の form(頭注「関数は展開の時に書く」): dataclass には欄の表(__dataclass_fields__・
   ;; 既定値・field の default-factory・可変の既定の断り)だけを作らせ、関数(__init__・__repr__・__eq__・__hash__・凍結の
   ;; __setattr__ / __delattr__)は展開がここで書く — 関数は module の code として .pyc に入り、読み込みの時に dataclass が関数の
   ;; source を exec(compile)しない(1 型 約 1 ms → 約 0.1 ms)。欄の形を展開で読み切れない時(下の断りの条件)は None を返し、
@@ -226,7 +224,7 @@
             field-call? (fn [form] (and (isinstance form Expression) form (isinstance (get form 0) Symbol)
                                         (in (str (get form 0)) #("field" "dataclasses.field"))))
             ;; 本体の form が、展開が書く関数を自分で書くか(defn・defn/a ほか — 名は飾りの list の後ろでも読む)。答えの型の注記つきの名
-            ;; (defn #^ None __post-init__ …)は Hy が (annotate __post-init__ None) と読むので、注記の中の名を読む(card ki-e77d44aa61e5 —
+            ;; (defn #^ None __post-init__ …)は Hy が (annotate __post-init__ None) と読むので、注記の中の名を読む(
             ;; 記号の名だけを見た形は本体の __post_init__ を見落とし、展開の __init__ が呼ばなかった)。
             own-method? (fn [form] (and (isinstance form Expression) (>= (len form) 2) (isinstance (get form 0) Symbol)
                                         (.startswith (str (get form 0)) "def")
@@ -284,7 +282,7 @@
             missing 'doeff_hy._record_runtime.FACTORY-DEFAULT
             factory (fn [py] `((. (get (. __class__ __dataclass_fields__) ~py) default-factory)))
             ;; 欄 1 つの __init__ の引数(None = 引数にしない — init を切った欄)と、self に値を置く式(None = 置かない)。
-            ;; 引数に型の注記は書かない(下の class の form の注 — card ki-ff2c33449b3f)。
+            ;; 引数に型の注記は書かない(下の class の form の注)。
             init-of (fn [s]
                       (setv sym (get s "sym") py (get s "py")
                             put (fn [value] `(object.__setattr__ ~self-sym ~py ~value)))
@@ -309,7 +307,7 @@
             names-of (fn [names] `#(~@(lfor n names (String n))))
             other (hy.gensym "other"))
       ;; 型ごとに書くのは __init__・__eq__・__hash__(と :check の __post_init__)。__repr__ と凍結の __setattr__ / __delattr__ は
-      ;; record_runtime の共有の 1 組を指し、型は欄の名の並びを字面の tuple で持つ(card ki-ff2c33449b3f — 型ごとの関数が型 約 1,760 の
+      ;; record_runtime の共有の 1 組を指し、型は欄の名の並びを字面の tuple で持つ(型ごとの関数が型 約 1,760 の
       ;; job で 10 MB を越えた)。__eq__ と __hash__ は値を辞書の鍵や集合に入れるたびに呼ばれるので型ごとのまま — 共有の 1 つにすると
       ;; 欄の名を回す分 1.3〜3 倍遅くなった(Python 3.14t の測り)。__init__ の引数に型の注記を書かない(実行時に読む所が無く、注記ごとに
       ;; __annotate__ の関数が残る — 欄の型は class の注記と型検査の投影が持つ)。docstring は実行の展開に置かず(実行時に読む所が無い・
@@ -396,11 +394,11 @@
     ;; 検めの多くは真偽の式(`(<= start end)`)で、答えは True そのもの — その時は Program でも偽でもないので、残りの 2 つの
     ;; 検め(Program の判定・require-check)を飛ばす。record を 1 つ作るたびに検めの数だけ走る所で、Program の判定
     ;; (DoExpr の isinstance は Python の metaclass を通る)と require-check の呼び(:pre の isinstance 5 つと値の辞書)を
-    ;; 毎回払っていた(agora-redesign #2421)。True でない答え(正規表現の Match など)は今までどおり Program を判定し、
+    ;; 毎回払っていた。True でない答え(正規表現の Match など)は今までどおり Program を判定し、
     ;; 偽の時だけ require-check を呼ぶ — require-check は偽の時にしか何もしない(真なら None を返すだけ)ので、断る物と文言は同じ。
     ;; 型検査の展開では答えを object に広げる — `Match | None` を返す検め式は `is not True` と比べると「常に真」
-    ;; (reportUnnecessaryComparison)の赤になり、書き手は直せない(agora-redesign #4196)。実行時の展開は答えをそのまま置く。
-    ;; Program の判定は実行時の展開だけに置く(card ki-601652993a18): 型検査の展開に置くと、pyright 1.1.414 は
+    ;; (reportUnnecessaryComparison)の赤になり、書き手は直せない。実行時の展開は答えをそのまま置く。
+    ;; Program の判定は実行時の展開だけに置く: 型検査の展開に置くと、pyright 1.1.414 は
     ;; `isinstance(v, (DoExpr, EffectBase))`(DoExpr は型検査では program の node の union)の型を、同じ process で前に検めた
     ;; file によって `tuple[UnionType, type[EffectBase[_Answer]]]` と読み、class_or_tuple の reportArgumentType の赤を出した
     ;; (agora-controllers の日次 — repo 全体を `--threads 2` で測った時だけ・同じ file の同じ形 2 つのうち 1 つだけ)。書き手は直せない。
@@ -425,7 +423,7 @@
   (setv written (when (not static-view) (class-form docstring class-vars fields post-init)))
   (_scoped-definition _hy-compiler name
     [`(do
-        ;; :check の require-check は内側の doeff_hy._record_check に在る(実行時と型検査の両方の展開が読む・card ki-a28c20b93638)。
+        ;; :check の require-check は内側の doeff_hy._record_check に在る(実行時と型検査の両方の展開が読む)。
         (import doeff_hy._declarations doeff_hy.record ~@(if (is written None) [] ['doeff_hy._record_runtime]) ~@(if statements ['doeff_hy._record_check] []))
         ~@(if (and static-view statements) [(import-form ["cast"])] [])
         ~@(if (is written None)
@@ -512,14 +510,14 @@
     (setv (get seen wire) field))
   ;; defrecord へ渡す頭の辞書(:tags と :check だけ — :names と :unknown は wire の形)。
   ;; :class-vars は型の本体に `__doeff_wire__: ClassVar[WireShape]` の注記を置く(下の setattr が置く値の型を型検査に見せる —
-  ;; dump の引数 WireValue を defwire の型が満たすと読める。setattr は記帳として型検査の展開から外れる・agora-redesign #2296)。
+  ;; dump の引数 WireValue を defwire の型が満たすと読める。setattr は記帳として型検査の展開から外れる)。
   (setv record-header (Dict (+ (sum (lfor key #(":tags" ":check")
                                           :if (is-not (declared-value header key) None)
                                           [(Keyword (cut key 1 None)) (declared-value header key)])
                                     [])
                                [(Keyword "class-vars")
                                 `[#^ (get _doeff-ClassVar doeff_hy._wire.WireShape) __doeff-wire__]])))
-  ;; 書いた所に合わせて組む(defrecord と同じ — card ki-8a17293bc3e5): 関数の本体の中では下の import(`_doeff-ClassVar`・
+  ;; 書いた所に合わせて組む(defrecord と同じ): 関数の本体の中では下の import(`_doeff-ClassVar`・
   ;; doeff_hy)と型と記帳をすぐ呼ぶ関数に入れ、型の名だけを束ねる。中の defrecord は、その関数の中でもう 1 度自分を包む
   ;; (型の __qualname__ に包んだ関数の名が 2 つ入る)— 包まない型の組み立てを別の macro に切り出すと、その macro の読み方の
   ;; 規則が共通の品質検査の固定表(quality.hy_projection の FIXED_MACROS)に無く、record.hy の検査が欠測になる。

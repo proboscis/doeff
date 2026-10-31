@@ -1,4 +1,4 @@
-"""doeff-records の import の閉包に pydantic が無い事の検(card ki-138189339298・親 card ki-2e0dce8d1ebb)。
+"""doeff-records の import の閉包に pydantic が無い事の検。
 
 表の行の型の読み書き(_typed.hy)は、pydantic の TypeAdapter から doeff_hy._wire_codec の行の解き手(row_codec_of)へ替わった。
 記録を読み書きする process は pydantic(import と組みで約 15 MB)を読まない。新しい import が doeff-records のどこかの module の閉包へ

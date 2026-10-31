@@ -14,7 +14,7 @@ impl NoTupleReturnsRule {
     }
 
     /// `tuple[X, ...]` の添字か — 同じ型の可変長の列(型のある列)で、複数の値を位置で返す組ではない
-    /// (agora-redesign #2031: packages/doeff-cluster の検の補助が `-> tuple[str, ...]` で名の列を返して誤って当たった。
+    /// (packages/doeff-cluster の検の補助が `-> tuple[str, ...]` で名の列を返して誤って当たった。
     /// DOEFF171 も同じ形を型のある列として受ける)。
     fn is_homogeneous_sequence(slice: &Expr) -> bool {
         match slice {
@@ -197,7 +197,7 @@ def get_coords() -> tuple[float, float]:
 
     #[test]
     fn test_a_homogeneous_sequence_is_not_a_tuple_return() {
-        // agora-redesign #2031: `tuple[X, ...]` は同じ型の可変長の列 — 位置で複数の値を返す組ではない。
+        // `tuple[X, ...]` は同じ型の可変長の列 — 位置で複数の値を返す組ではない。
         let code = r#"
 from typing import Tuple
 

@@ -122,7 +122,7 @@
 
 (defk limit-in-stream [#^ str stdout]
   {:pre [(: stdout str)] :post [(: % (| AccountLimitHit None))] :tags {:context "claude-code" :role "judgment"}}
-  "stream-json の stdout の行から、口座の利用枠が尽きた事実を読むため(純関数 — card ki-eb4f8e1db64d): 規則は会話の手番と同じ 1 点
+  "stream-json の stdout の行から、口座の利用枠が尽きた事実を読むため(純関数): 規則は会話の手番と同じ 1 点
    dialogue.hy の limit-hit-after(拒まれた rate_limit_event の行 = 枠の種類と戻る刻・本体の error rate_limit の答えの行 = 限度の文)。
    名乗る行が無ければ None。"
   (<- lines (jsonl-lines stdout))

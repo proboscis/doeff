@@ -12,7 +12,7 @@ pytest's temporary directory (outside the checkout). The land tool and the daily
 PYTHONDONTWRITEBYTECODE=1, and without a shared cache every subprocess compiled the whole
 Hy stack again — 39 s for one import on a Mac, over 90 s on the daily pod — until one
 crossed the per-test deadline, whose thread method then ended the whole suite at about 6%
-(2026-09-25 and 09-26, agora-redesign#639). pytest deletes its temporary directories, so no
+(2026-09-25 and 09-26). pytest deletes its temporary directories, so no
 run reuses another run's bytecode, and the root conftest fails the run if bytecode appears
 inside the checkout.
 
@@ -83,10 +83,10 @@ PUBLIC_STATEMENTS = [
 
 # The deadline of one import test, before the root conftest scales it with load. Measured
 # on the daily machine (zeus, 36 cores, 2026-09-26, load about 1.0, bytecode off as in the
-# daily run): importing the agentd runtime module (retired in agora-redesign#668) alone from cold took 157 s;
+# daily run): importing the agentd runtime module alone from cold took 157 s;
 # with one shared cache, host_slot_cli took 73 s and runtime after it 78 s. The same imports
 # take 19-35 s on a Mac, which is why the ini's 60 s held there and failed on the daily
-# machine (agora-redesign#639).
+# machine.
 _COLD_IMPORT_DEADLINE_SECONDS = 240
 
 # Room left inside the test's own deadline for starting the subprocess and reporting it.

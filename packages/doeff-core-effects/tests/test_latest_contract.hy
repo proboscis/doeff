@@ -1,5 +1,5 @@
 ;;; 最新の値の契約テスト — 同じ effect(PublishLatest・ReadLatest)に答える本物(process-latest-handler)と fake(memory-latest-handler)が、
-;;; 同じ deftest を通る(agora-redesign #1440・#1107 の決め)。解釈器の組み立ては latest_contract_handlers.hy。
+;;; 同じ deftest を通る(#1107 の決め)。解釈器の組み立ては latest_contract_handlers.hy。
 ;;;
 ;;; 見る性質:
 ;;;   * まだ置いていない型を読むと None
@@ -63,7 +63,7 @@
   (assert (= loud (LoudFaults :total 7)) (.format "LoudFaults の読みが {!r}" loud)))
 
 
-;; --- 変わるまでの待ち(AwaitLatest — agora-redesign #4296)------------------------------------------------------------------
+;; --- 変わるまでの待ち(AwaitLatest)------------------------------------------------------------------
 ;; 書き手の run が置いた断面を、別の run が一定の間隔では確かめ直さずに、置かれた時に読む。どちらの答え手も同じ契約:
 ;;   * 今の値が既に seen と別なら待たずに答える
 ;;   * 待っている間に別の task が置いた値で起きて、その値を答える

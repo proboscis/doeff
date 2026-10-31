@@ -1,4 +1,4 @@
-;;; run-apart(apart_call.hy — card ki-3b942d3af8da)の検: program の計算は撃った task の scheduler の thread の外で回り、program が出す effect は
+;;; run-apart(apart_call.hy)の検: program の計算は撃った task の scheduler の thread の外で回り、program が出す effect は
 ;;; 撃った所の handler が答える。
 ;;;   - 計算の間も撃った run の他の task が回る(時計の拍が COMPUTE-SECONDS の間に MIN-TICKS 回以上 進む)。計算は別の thread で回り、effect の
 ;;;     答えは撃った thread の handler が出す。反例: 同じ program を run-apart なしで撃つと、計算の間に拍が進まない(thread を占める)。

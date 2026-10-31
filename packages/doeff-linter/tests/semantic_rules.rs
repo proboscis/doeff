@@ -41,7 +41,7 @@ fn fake_jev(drifted: bool) -> FakeJev {
             let source = body["state"]["definition"]["source"].as_str().unwrap_or("");
             if body["questions"]["q"]["criteria"].get("mixed").is_some() {
                 // DOEFF205: 文字列の鍵の .get を持つ定義は mixed、それ以外は judgment-only。較正の例もこの規則で幅に入る。
-                // messageId を持つ定義は、本番の convert-project の答え(judgment-only 0.97・mixed 0.02 — agora-redesign #1944)と同じ確率。
+                // messageId を持つ定義は、本番の convert-project の答え(judgment-only 0.97・mixed 0.02)と同じ確率。
                 let (choice, probabilities) = if source.contains("messageId") {
                     ("judgment-only", serde_json::json!({"mixed": 0.02, "shape-only": 0.0, "judgment-only": 0.97, "neither": 0.01}))
                 } else if source.contains(".get") {
@@ -420,7 +420,7 @@ fn mixed_concerns_asks_jev_only_for_judgment_and_program_definitions() {
 
 #[test]
 fn labeled_probability_of_a_choice_answer_is_the_target_word_not_the_chosen_one() {
-    // 反例(agora-redesign #1944・#1994): 選ぶ形の問い(DOEFF205)の答え judgment-only 0.97・mixed 0.02 を、人の判定との突き合わせが
+    // 反例(#1994): 選ぶ形の問い(DOEFF205)の答え judgment-only 0.97・mixed 0.02 を、人の判定との突き合わせが
     // 選んだ語の確率 0.97 で載せていた(閾値の表では mixed 0.97 に見えた)。載せるのは的の語 mixed の確率 0.02。yes / no の問いの確率は
     // 変わらない(false_positives_are_not_reported_nor_counted_and_labels_meet_the_answers の read-body = 0.05)。
     let dir = tempfile::TempDir::new().unwrap();
@@ -464,7 +464,7 @@ fn labeled_probability_of_a_choice_answer_is_the_target_word_not_the_chosen_one(
 
 #[test]
 fn mixed_concerns_does_not_ask_definitions_under_excluded_paths() {
-    // agora-redesign #1952: DOEFF205 の母集団(definitions の file)から、層の宣言の exclude に当たる path(検の置き場)を外す。
+    // DOEFF205 の母集団(definitions の file)から、層の宣言の exclude に当たる path(検の置き場)を外す。
     // 反例: exclude が無ければ、検の置き場の judgment の定義も Jev に問われ、業務の判断の当たりに混ざる。
     let setup = |exclude: &str| {
         let dir = tempfile::TempDir::new().unwrap();
@@ -498,7 +498,7 @@ fn mixed_concerns_does_not_ask_definitions_under_excluded_paths() {
 
 #[test]
 fn semantic_with_several_files_asks_every_named_definition() {
-    // 鳴らない例: 1 回の --semantic に file を 2 つ名指すと、両方の定義を問う(plan.hy 2 + chat.hy 3 + 較正の 4 例 — agora-redesign #2075)。
+    // 鳴らない例: 1 回の --semantic に file を 2 つ名指すと、両方の定義を問う(plan.hy 2 + chat.hy 3 + 較正の 4 例)。
     let dir = repo(FILES, SEMANTIC);
     let jev = fake_jev(false);
     let (code, report, stderr) = run(dir.path(), &jev.url, &["--semantic", "app/core/plan.hy", "app/protocol/chat.hy"]);
@@ -511,7 +511,7 @@ fn semantic_with_several_files_asks_every_named_definition() {
 #[test]
 fn semantic_refuses_a_named_path_that_does_not_exist() {
     // 鳴る例: 2 つの path が空白で繋がった 1 つの引数(zsh の引用符の無い $FILES)は無い path — 何も問わずに 0 と緑を名乗らず、
-    // 理由を名乗って終了コード 2 で止める(以前は「今回撃った 0・較正 not-run」で終了コード 0 — agora-redesign #2075)。
+    // 理由を名乗って終了コード 2 で止める(以前は「今回撃った 0・較正 not-run」で終了コード 0)。
     let dir = repo(FILES, SEMANTIC);
     let jev = fake_jev(false);
     let home = tempfile::TempDir::new().unwrap();

@@ -80,7 +80,7 @@
                     (task-priority-refusal body.priority)
                     (task-limits-refusal body.limits)
                     (task-notify-refusal body.notify)
-                    ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ — card ki-b0e8028c8c8d)。
+                    ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
                     (run (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
   (setv needs (needs-named body.needs body.requires "切り離した task の needs")
@@ -156,7 +156,7 @@
                 (DetachedReleased :key key :released True))))
 
 
-;; --- 終わりの出口(outbox — 2026-10-21・card ki-e7945a2b2d00)-----------------------------------------------------------
+;; --- 終わりの出口(outbox — 2026-10-21)-----------------------------------------------------------
 ;; 知らせ先を名乗った切り離した task の結末を、終わりを決めた所から 1 度だけ読み手へ渡す出口(型と読み手の契約は detached_model の頭の註の出口)。
 ;; 積むのは coordinator の 1 歩が状態を保存する直前の 1 点(program.coordinator-step が outbox-noted を呼ぶ)— 終わりへの道は取り消し
 ;; (cancel-detached)・担い手の途絶(settle-detached・absorb-task-reports-into)・走らなかった(place-tasks・absorb-detached-report)・
@@ -203,7 +203,7 @@
       after))
 
 
-;; --- queued の期限超えの知らせ(2026-10-29・card ki-4b6613f39c80)------------------------------------------------------------
+;; --- queued の期限超えの知らせ(2026-10-29)------------------------------------------------------------
 ;; 知らせ先を名乗った切り離した task が queued のまま ClusterTiming.queued-notice-ms を越えたら、出口へ待ちの行(kind queued-overdue)を
 ;; task ごとに 1 度だけ積む(型の註は detached_model の行の種類)。積む歩で task の行に印 queued-noticed-ms を置くので、待ち続けても・読み手が
 ;; 受領して行を外しても積み直さない。終わりの行と同じく保存の直前の 1 点(program.coordinator-step)で、時刻だけを見て決める(待ちは

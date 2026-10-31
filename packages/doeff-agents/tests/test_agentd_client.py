@@ -1135,7 +1135,7 @@ def test_start_session_host_runs_the_entry_module_on_the_running_interpreter(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    # card ki-bb337cfd0336: the host is started by the StartSessionHost effect, whose
+    # the host is started by the StartSessionHost effect, whose
     # handler runs the host's entry module on the running interpreter — no console
     # script, no PATH lookup, no subcommand (a stale tool on PATH can not be the host).
     paths = agentd_client.agentd_paths_from_env(

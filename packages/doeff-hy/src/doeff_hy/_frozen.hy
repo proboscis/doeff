@@ -51,7 +51,7 @@
   (defn #^ (get ItemsView #(str V)) items [self]
     "鍵と値の対の眺め = 中の dict の眺め(中身と順は Mapping の既定と同じ・眺めは読むだけで中の dict を変えられない)。Mapping の既定の
      ItemsView は鍵ごとに __getitem__ を Python で撃つので、凍った値を JSON へ戻す(thaw-json)所が鍵の数に比例して遅くなる
-     (agora-redesign #2670 の根 E (b) の実測: 画面の stats の場面で +299,152 回の __getitem__)。"
+     (実測: 画面の stats の場面で +299,152 回の __getitem__)。"
     (.items self._entries))
 
   (defn #^ (get ValuesView V) values [self]
@@ -61,7 +61,7 @@
   (defn #^ "FrozenMap" updated [self #^ (get Mapping #(str V)) changes]
     "changes の鍵を置き換え・足した新しい写像(元は変えない)。中の dict を 1 度に写し、鍵の確かめは changes の鍵だけ — dict(写像) で写すと
      Mapping の __getitem__ を鍵ごとに Python で撃つので、写像を 1 項ずつ育てる所(計器の断面 — 観測のたびに全部を写していた・
-     agora-redesign #2593 の実測で 12,176 回の観測に 268 万回の __getitem__)が鍵の数に比例して遅くなる。"
+     12,176 回の観測に 268 万回の __getitem__)が鍵の数に比例して遅くなる。"
     (setv added (dict changes))
     (for [key added]
       (when (not (isinstance key str))
@@ -112,7 +112,7 @@
 ;; 無く、深く凍らせた JSON の写像の欄を型引数の無い FrozenMap としか書けなかった(#4257)。
 ;; 和に総称型(FrozenMap[object]・tuple[object, ...])を置かない: 契約 (: x FrozenJson)・束縛 (<- x FrozenJson e) は名をそのまま
 ;; isinstance に渡すので(type_forms.py が外側の型へ写すのは字面の総称型だけ)、どの値でも TypeError になった(agora の受付が
-;; 500 を返した — card acp:kanban-issue:ki-e540d658e378)。実行時に確かめるのは外側の型だけ(#1790 の決め)。
+;; 500 を返した)。実行時に確かめるのは外側の型だけ(#1790 の決め)。
 (setv FrozenJson (| FrozenMap tuple str int float bool None))
 
 
@@ -125,7 +125,7 @@
   "写像の中の値を深く凍らせた FrozenMap を作り、深く凍った印を付ける(freeze-json と frozen-json-object の 1 点)。
    中の値のうち葉(ちょうど JSON-LEAF-TYPES の型)と深く凍った FrozenMap はその場で返し、freeze-json を呼ぶのはそれ以外の時だけ —
    書きの道の層(行の型の dump → 判定の差分 → 確定する値 → 一覧の行)は、深く凍った値の要素から新しい写像を組み直して凍らせ直すので、
-   要素ごとに freeze-json を始めると行 1 つで同じ値を 5 回辿る(agora-redesign #2670 の根 E の残り: 画面の stats の場面で約 110 万回の
+   要素ごとに freeze-json を始めると行 1 つで同じ値を 5 回辿る(
    関数の始まり)。判定の順は freeze-json と同じ。"
   (setv frozen (FrozenMap (gfor #(key item) (.items value)
                                 #(key (if (or (in (type item) JSON-LEAF-TYPES)
@@ -158,8 +158,8 @@
 
 (defn #^ object freeze-json-text [#^ str text]
   "JSON の文字列を読み、深く凍らせた JSON の値(object → FrozenMap・array → tuple)。読めない文字列は json.JSONDecodeError。
-   json.loads の答えは型が Any なので、読む所でそのまま freeze-json に渡すと型の宣言の多重定義が選べず、答えが Unknown に広がる
-   (agora-redesign #2628)。読むと凍らせるを 1 つにして、答えの型を FrozenJson に決める。"
+   json.loads の答えは型が Any なので、読む所でそのまま freeze-json に渡すと型の宣言の多重定義が選べず、答えが Unknown に広がる。
+  読むと凍らせるを 1 つにして、答えの型を FrozenJson に決める。"
   (freeze-json (json.loads text)))
 
 
@@ -169,7 +169,7 @@
    葉(文字列・数・真偽・None)と FrozenMap を具体の型で先に分ける — 抽象の Mapping への isinstance は 1 回ごとに ABC の判定を
    通るので、記録の行を型へ写す読みのたびに深く歩くと遅い(2026-09-28 の実測: 自動処理の係の模擬の検 1 本で 420 万回)。
    入れ物の中の葉(ちょうど JSON-LEAF-TYPES の型)はその場で返し、自分を呼ぶのは入れ物の時だけ — 葉ごとに自分を呼ぶと、記録の行を
-   型へ読むたびに JSON の節の数だけ関数を始める(agora-redesign #2670 の根 E (b) の 3: 画面の stats の場面で行 1 つあたり約 36 回)。
+   型へ読むたびに JSON の節の数だけ関数を始める(実測: 画面の stats の場面で行 1 つあたり約 36 回)。
    写像の枝と列の枝を 1 つずつにまとめ、判定の順(FrozenMap → 素の list・tuple → 抽象の Mapping → list・tuple の子)は変えない。"
   (setv kind (type value))
   (when (in kind JSON-LEAF-TYPES)
