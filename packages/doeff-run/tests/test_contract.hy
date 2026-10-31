@@ -22,6 +22,13 @@
   (<- stopped (RunStop handle 5.0))
   stopped)
 
+(defk vanish-after [#^ RunHandle handle #^ float seconds]
+  {:pre [(: handle RunHandle) (: seconds float)] :post [(: % bool)]}
+  "seconds 秒の後に run を世界の外の力で消す(読みの待ちの外から消す別の task)。"
+  (<- (Delay seconds))
+  (<- vanished (RunVanish handle))
+  vanished)
+
 
 ;; --- 失敗の筋書き ------------------------------------------------------------------------------------
 
@@ -33,7 +40,7 @@
   (<- handle (begin (live-spec s.missing-image)))
   (<- seen (read-to-end handle LONG))
   (assert (= (kinds-of seen.events) [RunStopped]) (repr seen))
-  (assert (and (isinstance seen.state RunStopped) (= seen.state.cause StopCause.NEVER-BEGAN) (is seen.state.exit-code None)) (repr seen.state))
+  (assert (and (isinstance seen.state RunStopped) (= seen.state.cause StopCause.NEVER-BEGAN) (is seen.state.exit-code None)) (repr seen.state)))
 
 (deftest test-a-run-over-its-memory-limit-is-stopped-as-out-of-memory
   ;; 資源の上限(メモリ)を越えて殺された run は、OOM の止まりで終わる(自分で終わった物とも、頼まれた止めとも区別できる)。
@@ -59,7 +66,8 @@
   (assert (>= (- ended began) (- 1.0 s.slack)) (- ended began)))
 
 (deftest test-a-vanished-run-is-gone-and-its-name-is-free-again
-  ;; 取っ手の知らない所で run が消えた(node の死・手で消された): 出来事 RunGone で読め、状態は RunGone。止めは冪等に RunGone。
+  ;; 取っ手の知らない所で run が消えた(node の死・手で消された): 状態は RunGone で、消えた run は何も残さない(読むと出来事の無い頁と
+  ;; RunGone)。止めは冪等に RunGone。
   ;; 名は空き、同じ名で新しく走らせると別の run(取っ手の run-id が違い、古い取っ手は新しい run の状態を答えない)。
   {:interpreters ["fake"]}
   (<- s (settings))
@@ -69,7 +77,7 @@
   (<- vanished (RunVanish first.handle))
   (assert (is vanished True) (repr vanished))
   (<- seen (read-to-end first.handle LONG))
-  (assert (= (kinds-of seen.events) [RunLive RunGone]) (repr seen))
+  (assert (and (= seen.events #()) (isinstance seen.state RunGone)) (repr seen))
   (<- status (RunStatus first.handle))
   (assert (isinstance status RunGone) (repr status))
   (<- stopped (RunStop first.handle 1.0))
@@ -79,6 +87,22 @@
   (assert (!= again.handle.run-id first.handle.run-id) (repr again))
   (<- old (RunStatus first.handle))
   (assert (isinstance old RunGone) (repr old)))
+
+(deftest test-a-read-wakes-when-the-run-vanishes
+  ;; 読みが待つ間に run が消える: 読みは上限まで眠らず、消えた出来事 RunGone を返す。
+  {:interpreters ["fake"]}
+  (<- s (settings))
+  (<- handle (begin (live-spec s.image)))
+  (<- live (read-until-live handle))
+  (<- vanisher (Spawn (vanish-after handle 0.5)))
+  (<- began (GetMonotonic))
+  (<- page (RunReadEvents handle live.after 30.0))
+  (<- ended (GetMonotonic))
+  (<- vanished (Wait vanisher))
+  (assert (is vanished True) (repr vanished))
+  (assert (= (kinds-of page.events) [RunGone]) (repr page))
+  (assert (isinstance page.state RunGone) (repr page))
+  (assert (< (- ended began) 10.0) (- ended began)))
 
 (deftest test-a-handle-the-handler-does-not-know-is-gone
   ;; 名にも取っ手にも覚えが無い run は「消えた」として答える(呼び手が名を持つ — 誤りと消失は見分けない)。読みは待たずに返る。
