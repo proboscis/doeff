@@ -47,7 +47,7 @@
        "下流実害: agent-control-plane の deff→defk 一斉移行計画は silent-passthrough(bind 忘れ → Program が走らず raise もしない)を非自明 gotcha として列挙。逆方向の色エラー(Program-as-value の過剰 bind)は 2026-07-13 に deftest/CI green のまま本番 supervisor を crash-loop させた。"
        :evidence "agent-control-plane ADR 0056 移行計画(facts a–p); ACP hotfix commit 2026-07-13『K2 潜伏欠陥: Program-as-value の過剰 bind を復元 — dogfood 停止 incident』")
      (fact
-       "本リポジトリの開発様式: コードの書き手は常にエージェントであり、人間はレビュアーとしてのみ関与する(2026-07-14 maintainer 裁定)。エージェントは沈黙の意味論から学習せず、行番号と修正テンプレを含む決定的な赤に最も確実に反応する。"
+       "本リポジトリの開発様式: コードの書き手は常にエージェントであり、人間はレビュアーとしてのみ関与する。エージェントは沈黙の意味論から学習せず、行番号と修正テンプレを含む決定的な赤に最も確実に反応する。"
        :evidence "2026-07-14 doeff 投資計画議論(docs/doeff-2026-07-14-agent-first-investment-architecture-plan.md)")]
   :context
     [(interpretation

@@ -64,7 +64,7 @@
   #{"packages/doeff-hy/src/doeff_hy/macros.hy"
     "packages/doeff-hy/src/doeff_hy/handle.hy"
     "packages/doeff-hy/src/doeff_hy/record.hy"
-    ;; R5 の operator 裁定による移し(2026-10-27・利用者の答え lt-GXXY5TVWBHJW4ZCBDTCRN68XZS の by-group・card ki-f2107259b141):
+    ;; R5 の裁定による移し(by-group の案):
     ;; doeff-hy に残すのは effect・handler・test を書く macro と土台で、conductor の workflow の macro 13 個(旧 doeff_hy/conductor.hy)は
     ;; doeff-conductor へ、系を宣言する defsystem(旧 doeff_hy/macros.hy)は doeff-cluster へ、持ち主の package に置く。
     ;; 戻し方 = この 2 行を消し、macro を doeff-hy へ戻す(使い手の require を同じ pin で直す)。
@@ -72,8 +72,8 @@
     "packages/doeff-cluster/src/doeff_cluster/_shared/entry/macros.hy"
     "packages/doeff-adr/src/doeff_adr/macros.hy"
     "packages/doeff-domain/src/doeff_domain/macros.hy"
-    ;; R5 の operator 裁定による増額(2026-10-04・agora-redesign #1201): 出来事を待つ
-    ;; ループの macro event-loop(547314ac8・#3080)を、包む効果 WaitForEvent の package に置く。
+    ;; R5 の裁定による増額: 出来事を待つ
+    ;; ループの macro event-loop(547314ac8)を、包む効果 WaitForEvent の package に置く。
     ;; 戻し方 = この行を消し、event-loop を doeff-hy へ移す(agora の使い手の require を同じ pin で直す)。
     "packages/doeff-events/src/doeff_events/macros.hy"})
 
@@ -114,7 +114,7 @@
           ".agents/code-quality.json"]
   :problem
     [(fact
-       "operator の決め(agora-redesign 決定 1.4、2026-09-12): Hy の柵 7 本のうち残りは、TypeCheck の effect(静的は常時・実行時の検査は handler で切替)・記録の足場の macro・読み側の射影を operator に置かない事・新しい macro は doeff-hy に投影の規則と一緒に置く事、の 4 本。"
+       "agora-redesign の決定 1.4 では、Hy の柵 7 本のうち残りは、TypeCheck の effect(静的は常時・実行時の検査は handler で切替)・記録の足場の macro・読み側の射影を operator に置かない事・新しい macro は doeff-hy に投影の規則と一緒に置く事、の 4 本。"
        :evidence "agora-redesign docs/plans/decisions-merge-2026-09-12.md 1.4")
      (fact
        "defk / deff の :pre / :post は展開時に無条件の assert (isinstance …) になる。切替の口が無いので、静的に分かる型を hot path で毎回払う。"
@@ -142,7 +142,7 @@
      (rule R2 "静的の型検査に切替の口を作らない。Hy の面は共通の品質検査の module 契約に `typed: true` で登録し、投影と pyright が常時かかる状態を保つ。")
      (rule R3 "赤の文言(何がどの型を期待して何だったか)の定義点は `type-check-verdict` の 1 点。handler の中に文言を埋めない。")
      (rule R4 "記録の足場の macro は `doeff_hy.record` が所有し、共通の品質検査の投影の規則(`quality.hy_record`)と同じ便で出荷する。記録の欄(中身)はここに書かない。")
-     (rule R5 "新しい macro は doeff-hy にだけ置く。MACRO-OWNER-ROSTER の外の file が `defmacro` を持ったら赤。名簿の増額は operator 裁定のみ。")]
+     (rule R5 "新しい macro は doeff-hy にだけ置く。MACRO-OWNER-ROSTER の外の file が `defmacro` を持ったら赤。名簿を増やすのは管理者が裁定した時だけ。")]
   :laws
     [(law runtime-type-checks-are-off-by-default
        :statement "for_all program p with a broken TypeCheck: run(type_checks_off, p) returns the value unchanged and run(type_checks_on, p) raises TypeCheckError"

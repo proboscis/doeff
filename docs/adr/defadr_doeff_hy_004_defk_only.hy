@@ -3,12 +3,12 @@
 ;;; :tags つきの逃げ道としてだけ許す。理由の註の無い deff は凍結台帳(ratchet)で
 ;;; 単調減少させる。defk / deff の契約の辞書には :tags を必須にする。
 ;;;
-;;; 出自 = operator 指示 2026-08-21: defadr で deff を全部禁じ、defk だけを使う。
-;;; 改訂 = operator 指示 2026-09-27(agora-redesign #798): defn を禁じて defk だけを許し、避けられない所だけ deff を許す
+;;; 初版(2026-08-21): defadr で deff を全部禁じ、defk だけを使う。
+;;; 改訂(2026-09-27): defn を禁じて defk だけを許し、避けられない所だけ deff を許す
 ;;;   — 定義に tag を付ける事を強いるため。
 ;;;   (R4「台帳が空になったら deff の macro を消す」は取り下げ — deff は避けられない所の逃げ道として残る)
 ;;;
-;;; 追記 = operator 裁定 2026-09-27(agora-redesign #798・決めた事は :problem の fact): 設定を読むこと・検の補助・framework と
+;;; 追記(2026-09-27・決めた事は :problem の fact): 設定を読むこと・検の補助・framework と
 ;;;   process の入口は deff の理由にしない方向。deff の理由の受け入れは doeff-linter の DOEFF203(Jev)が判じる(R6〜R9)。
 ;;;
 ;;; 戻し方: この改訂の commit を revert する(ADR の条・針・台帳の数え方が 2026-08-21 版へ戻る)。
@@ -48,7 +48,7 @@
 ;; 2026-09-27 の改訂から、同じ行に「; defk にできない: <理由>」の註がある deff は
 ;; 数えない(R1 の逃げ道 — 理由を名乗った deff は台帳の外で許す)。台帳の数は
 ;; 改訂の時点で理由の註を持つ deff が 0 だったので変わらない。
-;; 2026-10-01(agora-redesign #1201): 「同じ行」は deff の定義の行 = `(deff` から引数の並びが閉じる行まで
+;; 2026-10-01: 「同じ行」は deff の定義の行 = `(deff` から引数の並びが閉じる行まで
 ;; (doeff-linter の DOEFF111 が註を探す範囲と同じ)。引数を複数の行に折った deff は註を並びの閉じる行に置くので、
 ;; `(deff` の 1 行目だけを見ると註のある deff を数えていた(doeff-cluster の 6 定義・日次の root の赤)。
 ;; 直前の註だけの行は今までどおり数える(linter はそこも受けるが、この台帳は定義の行に限る)。
@@ -58,7 +58,7 @@
   {"docs/adr/defadr_doeff_agents_007_koine_session_surface.hy" 4
    "docs/adr/defadr_doeff_hy_003_bang_evaluation_position.hy" 1
    "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy" 1
-   ;; 38 → 37(card ki-3c3d85253c2c): 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
+   ;; 38 → 37: 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
    "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy" 37
    "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 34
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/channel.hy" 1
@@ -66,7 +66,7 @@
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy" 5
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/markers.hy" 30
    "packages/doeff-agents/src/doeff_agents/_sessionhost/launch.hy" 5
-   ;; 29 → 25(agora-redesign #708): 境界の env の語彙の 4 本を agent_env.hy へ defn で出した(R1 の Python との境界 — deff の焼却ではない)。
+   ;; 29 → 25: 境界の env の語彙の 4 本を agent_env.hy へ defn で出した(R1 の Python との境界 — deff の焼却ではない)。
    "packages/doeff-agents/src/doeff_agents/_sessionhost/policy.hy" 25
    "packages/doeff-agents/src/doeff_agents/_sessionhost/schema.hy" 3
    "packages/doeff-agents/src/doeff_agents/_sessionhost/store.hy" 34
@@ -157,8 +157,7 @@
        "doeff-hy は契約つき関数の語彙を 2 つ持つ: deff(素関数・直接呼び)と defk(kleisli program・<- bind で合成)。同じ :pre/:post 契約面を持ちながら呼び出し規約だけが分裂している。"
        :evidence "packages/doeff-hy/src/doeff_hy/macros.hy:447(deff)/ :498(defk)")
      (fact
-       "operator 指示 2026-08-21: defadr で deff を全部禁じ、defk だけを使う。"
-       :evidence "operator 指示(2026-08-21)")
+       "初版の方針(2026-08-21): defadr で deff を全部禁じ、defk だけを使う。")
      (fact
        "実測 2026-08-21: doeff repo の deff は 23 file・227 定義(packages 219 / docs-adr 5 / tests 3)。下流 agent-control-plane の apps は deff 0・defk 3,065 — 収束の終端状態は下流で既に本番実証済み。"
        :evidence "本 ADR の DEFF-ROSTER(走査条件同一の凍結断面)")
@@ -169,17 +168,15 @@
        "deff→defk の変換は定義の書き換えだけでは完結しない: 呼び出しが直接呼びから <- bind に変わるため、呼び手自身が program である必要があり、変換は呼び出し木を遡って連鎖する。機械的な一括置換は壊れる。"
        :evidence "defk 展開 = @do generator(macros.hy:498-)— 直接呼びは Program 値が返るだけで実行されない")
      (fact
-       "operator 指示 2026-09-27: defn を禁じて defk だけを許し、避けられない所だけ deff を許す — 定義に tag を付ける事を強いるため。直前の文脈: dir は service → layer で分け、VS Code の navigator が tag で部品を並べられるようにする。"
-       :evidence "agora-redesign #798(2026-09-27 の指示)")
+       "改訂の方針(2026-09-27): defn を禁じて defk だけを許し、避けられない所だけ deff を許す — 定義に tag を付ける事を強いるため。背景: dir は service → layer で分け、VS Code の navigator が tag で部品を並べられるようにする。")
      (fact
-       "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す(agora-redesign #800)。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
+       "defk / deff / defp / defhandler の契約の辞書は :tags {:context … :role …} を受け、定義の属性 __doeff_tags__ に残す。defn は契約の辞書を持たないので :tags を書けず、タグから定義を並べる閲覧(VS Code のパネル)に現れない。"
        :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy(CONTRACT-KEYS・TAG-KEYS・ROLES)")
      (fact
        "実測 2026-09-27: doeff repo の packages・docs・tests の .hy に defn / defn/a が 269 file・2,135 定義ある(packages/doeff-hy の macro の実装を含む)。2026-08-21 版の R1 は Python との境界の defn を対象外にしていた。"
        :evidence "grep -rEc '\\(defn(/a)?\\s' --include='*.hy' packages docs tests")
      (fact
-       "operator 裁定 2026-09-27: 設定を読む事はまさに Ask のような effect の出番で、deff の言い訳にならない。deftest でない検は禁じる。doeff-cluster の process の入口が defk でない関数を要るべきではなく、doeff-cluster の job API は別に議論する。deff の理由の文が受け入れられるかは Jev が判じる。"
-       :evidence "agora-redesign #798(2026-09-27 の決定)")
+       "追記の方針(2026-09-27): 設定を読む事は Ask のような effect の出番で、deff の理由にならない。deftest でない検は禁じる。doeff-cluster の process の入口は defk でない関数を要しない形にし、doeff-cluster の job API は別に議論する。deff の理由の文が受け入れられるかは Jev が判じる。")
      (fact
        "agora-controllers の本線 d99194b4 で『defk にできない』の註は 682 件あり、推定の内訳は 検の補助 166・組み立て 127・その他 112・process の入口 82・同上 81・外の library の callback 71・framework の入口 43。本当に素の callable が要る場面と、呼び手を Program にすれば済む場面(組み立て = handlers-of・検 = deftest)が区別されていなかった。"
        :evidence "doeff 683dd0e8(wt/hy-reason-kinds・doeff-linter の DOEFF111 / DOEFF203)の commit message")]
@@ -198,12 +195,12 @@
      (rule R2 "理由の註の無い既存の deff(2026-08-21 時点で 227 定義)は DEFF-ROSTER に凍結する。針は file 単位で 現在数 <= 台帳数 を強制し、台帳外 file の理由の註の無い deff は 0 を強制する — いかなる新設・移設も赤。台帳は『defk にできる物を減らす』向きにだけ動く。")
      (rule R3 "変換(burn-down)は、定義の defk 化と全呼び出し site の <- bind 化と DEFF-ROSTER の該当行の削減を 1 便で一括出荷する。台帳の減少と実削除は常に同期する。")
      (rule R4 "【2026-09-27 取り下げ】旧文: DEFF-ROSTER が空になったら deff macro 本体とその意味論テストを packages/doeff-hy から削除する。改訂後: deff の macro は R1 の逃げ道として残す。DEFF-ROSTER が空になっても macro は消さない(台帳が空 = 理由を名乗らない deff が 0 になった状態)。")
-     (rule R5 "台帳の増額・除外の新設は operator 裁定のみ。針の走査条件(SCAN-SKIP-PARTS・doeff-hy 除外)の変更も同様。")
+     (rule R5 "台帳の増額・除外の新設は、管理者が明示に認めた時だけ行う。針の走査条件(SCAN-SKIP-PARTS・doeff-hy 除外)の変更も同様。")
      (rule R6 "設定・環境(env の値・設定の file)を読むことは deff の理由にならない。読みは Ask などの effect で書き、値は handler が答える(2026-09-27 追記)。")
      (rule R7 "検(テスト)は deftest だけで書く。pytest の素の test 関数・検の補助の素の関数(値を組む口・fixture の代わり)は禁止し、補助は defk にして deftest の本体から <- で受ける。R1 の『pytest の fixture のような framework の規約』は deff の理由の例から外す(2026-09-27 追記)。")
      (rule R8 "deff の理由(同じ行の『; defk にできない: <理由>』)は自由な文で書く。受け入れるかは doeff-linter の DOEFF203(Jev)が、その repo の architecture.hy に宣言した受け入れ可の理由と照らして決める。註の有無・形は DOEFF111 が検める(2026-09-27 追記)。")
-     (rule R9 "【2026-09-28 改訂】旧文: framework・process の入口(doeff-cluster の job_entry の env の関数など)は deff の理由にしない方向とする。doeff-cluster の job API の議論(agora-redesign #829)が決まるまで、既存の入口の素の関数は登録簿で持ち、新設はしない(2026-09-27 追記)。改訂後: doeff-cluster の job の入口は deff の理由にしない — job は Program だけを受ける(ADR-DOE-CLUSTER-001・agora-redesign #833)ので、入口の env の関数・handler の列を返す関数は defk にして job の Program の中で呼ぶ。pytest の hook のような framework が素の関数として呼ぶ入口は、受け入れる理由のまま(R10)。改訂の出自 = agora-controllers の architecture.hy の :plain-callable-reasons(L1443)と揃える(#797 の席 cisco-c7 の指摘・2026-09-28)。")
-     (rule R10 "deff の理由として受け入れるのは 3 種だけ(agora-controllers の architecture.hy の :plain-callable-reasons と同じ・DOEFF203 の Jev がこの一覧と理由の文を照らす): (1) 外の library が素の関数として呼ぶ callback(sorted の key・pydantic の validator・playwright の handler・with_handlers に渡す関数・thread や process の起動口)、(2) framework が素の関数として呼ぶ入口(pytest の hook・fixture の外枠・console script の main)— doeff-cluster の job の入口は含めない、(3) macro の展開の時に走る関数(Program の外でしか意味を持たない)。受け入れない型(:rejected-plain-callable-reasons と同じ 7 つ・直し方つき): 組み立て(handler の列や土台 — handlers-of・foundation・settings-of → defk にし job の Program の中で呼ぶ)/ 設定・環境変数・資格の file の読み(→ Ask などの effect で読む defk・R6)/ 検の補助・検の組み立て・筋書きの部品(→ defk にして deftest の中で <- で呼ぶ・R7)/ 純粋なので内包表記や式の途中から呼びたい(→ defk にし呼ぶ側を for と <- / ! に書き直す)/ 速さ(→ defk にし、遅ければ doeff 側で defk の呼び出しの費用を下げる)/ 呼び方を保つ・他の branch や呼び手が素で呼んでいる(→ defk にし呼び手を <- / ! で直す)/ doeff の実行の外で呼ばれる(Python の入口が handler の列を受ける・run の外で使う → 呼ぶ側を Program にする・job の入口は #833 の形)。一覧の正本は repo の architecture.hy で、この条はその doeff 側の写し — 片方だけ直さない(2026-09-28)。")]
+     (rule R9 "【2026-09-28 改訂】旧文: framework・process の入口(doeff-cluster の job_entry の env の関数など)は deff の理由にしない方向とする。doeff-cluster の job API の議論が決まるまで、既存の入口の素の関数は登録簿で持ち、新設はしない(2026-09-27 追記)。改訂後: doeff-cluster の job の入口は deff の理由にしない — job は Program だけを受ける(ADR-DOE-CLUSTER-001)ので、入口の env の関数・handler の列を返す関数は defk にして job の Program の中で呼ぶ。pytest の hook のような framework が素の関数として呼ぶ入口は、受け入れる理由のまま(R10)。改訂の出自 = agora-controllers の architecture.hy の :plain-callable-reasons(L1443)と揃える(2026-09-28)。")
+     (rule R10 "deff の理由として受け入れるのは 3 種だけ(agora-controllers の architecture.hy の :plain-callable-reasons と同じ・DOEFF203 の Jev がこの一覧と理由の文を照らす): (1) 外の library が素の関数として呼ぶ callback(sorted の key・pydantic の validator・playwright の handler・with_handlers に渡す関数・thread や process の起動口)、(2) framework が素の関数として呼ぶ入口(pytest の hook・fixture の外枠・console script の main)— doeff-cluster の job の入口は含めない、(3) macro の展開の時に走る関数(Program の外でしか意味を持たない)。受け入れない型(:rejected-plain-callable-reasons と同じ 7 つ・直し方つき): 組み立て(handler の列や土台 — handlers-of・foundation・settings-of → defk にし job の Program の中で呼ぶ)/ 設定・環境変数・資格の file の読み(→ Ask などの effect で読む defk・R6)/ 検の補助・検の組み立て・筋書きの部品(→ defk にして deftest の中で <- で呼ぶ・R7)/ 純粋なので内包表記や式の途中から呼びたい(→ defk にし呼ぶ側を for と <- / ! に書き直す)/ 速さ(→ defk にし、遅ければ doeff 側で defk の呼び出しの費用を下げる)/ 呼び方を保つ・他の branch や呼び手が素で呼んでいる(→ defk にし呼び手を <- / ! で直す)/ doeff の実行の外で呼ばれる(Python の入口が handler の列を受ける・run の外で使う → 呼ぶ側を Program にする・job の入口は R9 の形)。一覧の正本は repo の architecture.hy で、この条はその doeff 側の写し — 片方だけ直さない(2026-09-28)。")]
   :laws
     [(law defk-only-vocabulary
        :statement "for_all hy_file f in repo \\ {packages/doeff-hy}: count_deff(f) <= DEFF-ROSTER.get(f, 0) — 台帳は単調非増加であり、新しい deff は存在できない"
@@ -233,7 +230,7 @@
      (law deff-reason-is-accepted-by-jev
        :statement "for_all deff 定義 d: d の理由の註がある ∧ DOEFF203(Jev)が d の理由を architecture.hy の受け入れ可の理由のどれかと判じる。設定・環境の読み・検の補助・組み立ては受け入れ可の理由に入らない"
        :counterexamples
-         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(operator 裁定 2026-09-27 — 言い訳にならない)")
+         [(counterexample "env の値を読む関数を『; defk にできない: 設定を読むので』の deff で書く — 読みは Ask の effect で書ける(設定の読みは deff の理由にならない — R6)")
           (counterexample "deftest の値を組む補助を『; defk にできない: 検の補助』の deff で書く — 補助は defk にして deftest から <- で受ける")
           (counterexample "handler の組を並べる組み立てを deff で書く — 組み立ては defk(handlers-of)で書ける")]
        :enforced-by ["doeff-linter DOEFF111" "doeff-linter DOEFF203"]
@@ -278,7 +275,7 @@
        (assert (= (run (count-unexcused-deff reasoned)) 0))
        (assert (= (run (count-unexcused-deff bare)) 1))
        (assert (= (run (count-unexcused-deff detached)) 1))
-       ;; 引数の並びを折った deff: 並びの閉じる行の註は定義の行の註(#1201 — doeff-cluster の 6 定義の形)。
+       ;; 引数の並びを折った deff: 並びの閉じる行の註は定義の行の註(doeff-cluster の 6 定義の形)。
        (setv folded (+ "(" "deff on-sort-key [#^ str key\n"
                        "                  #^ int rank]  ; defk にできない: sorted の key は Program を実行しない\n"
                        "  {:pre [(: key str)] :post [(: % str)]}\n  key)\n"))

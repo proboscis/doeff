@@ -1,15 +1,14 @@
 ;;; Executable ADR: 名を持ち道具が読む宣言は def* で書く。外の世界に触る class(client・store)と状態の変わる class
 ;;; (模擬の store・キャッシュ)は作らず、土台の handler と session val / var に置く。値の class(Point2D)は許す。
 ;;;
-;;; 出自 = operator 裁定 2026-09-27(agora-redesign #798・決めた事は :problem の fact)。
-;;; coordinator の提案(class より def* を選ぶ)を operator が採り、同じ日に的を 2 度絞った(class 全般 → 処理を持つ class →
+;;; 決めた事は :problem の fact に在る。class より def* を選ぶ提案を採り、その後に的を 2 度絞った(class 全般 → 処理を持つ class →
 ;;; 外の世界に触る class と状態の変わる class。値の class は許す)。判定は名前でなく中身の証拠で、理由の註は要らない。
 ;;;
 ;;; 置き場の判断: ADR-DOE-HY-004(関数の語彙は defk のみ)の続きに足さず、新しい冊にした。HY-004 は関数の定義
 ;;; (defn / deff / defk)の語彙と、理由の註の無い deff の台帳を持つ冊で、型と class の定義は別の軸 — 同じ冊に混ぜると
 ;;; 台帳・針・law が 2 つの軸にまたがる。この冊は HY-004(関数)・HY-005 R5(macro は doeff-hy にだけ置く)と組になる。
 ;;;
-;;; 追記(2026-09-28・operator の決定): 臭いの規則(doeff-linter DOEFF121〜125・Jev の DOEFF205)と、失敗の型の印
+;;; 追記(2026-09-28): 臭いの規則(doeff-linter DOEFF121〜125・Jev の DOEFF205)と、失敗の型の印
 ;;; (defrecord の :failure True)を R9・R10(と Jev の R11)として足した。置き場の判断: ADR-DOE-CORE-EFFECTS-003(Absent / Raise)は同じ日に
 ;;; 別の便(wt/absent-raise-impl)が大きく書き換えている最中で、同じ file に条を足すと着地で衝突する。臭いの規則は「道具が読む
 ;;; 宣言(def*)で書く」この冊の R1 の続き — 失敗の型の印は defrecord の頭の辞書に置く宣言で、linter が実行せずに読む。
@@ -50,14 +49,11 @@
           "packages/doeff-linter/src/project/smells.rs"]
   :problem
     [(fact
-       "operator 裁定 2026-09-27: class を作るより def* の macro を選び続けるべきかを問い、coordinator の提案を受けて def* で進めると決めた。"
-       :evidence "agora-redesign #798(2026-09-27 の議論)")
+       "class を作るより def* の macro を選び続けるべきかを検め、def* で進めると決めた。")
      (fact
-       "operator 裁定 2026-09-27(的の絞り込み): defclass を使う事自体はあり得るが、doeff + Hy の code で client のような物に使う理由は無い。Point2D / Point3D のような物は class でよいが、client と store は handler / effect にこそ向く。"
-       :evidence "agora-redesign #798(2026-09-27 の議論)")
+       "的の絞り込み: defclass そのものは使ってよいが、doeff + Hy の code で client のような物を class にする理由は無い。Point2D / Point3D のような値は class でよく、client と store は handler / effect で書く。")
      (fact
-       "operator の問い 2026-09-27: AST や数値のような純粋なデータは data class でよく、全体の service はいつも handler / effect である。では、game の登場人物のような状態を持つ物はどうするか。"
-       :evidence "agora-redesign #798(2026-09-27 の議論)")
+       "残った問い: AST や数値のような純粋なデータは data class でよく、全体の service はいつも handler / effect で書く。では、game の登場人物のような状態を持つ物はどう書くか。")
      (fact
        "実測: agora-controllers に defclass 848・defrecord 338(coordinator の計測・2026-09-27)。同じ日のこの席の数え(git grep の出現数・origin/main 380ae943)は defclass 819・defrecord 414。doeff(origin/main 772a4405)は defclass 614・defrecord 98。"
        :evidence "git grep -c '(defclass' / '(defrecord' -- '*.hy'")
@@ -65,23 +61,20 @@
        "defrecord は doeff-hy が所有する template macro で、欄の名前と型を宣言した凍結の dataclass を 1 行で建てる。今は :tags と :check の節を持たない — 検めを要する型は素の defclass と __post_init__ で書かれている。"
        :evidence "packages/doeff-hy/src/doeff_hy/record.hy(defrecord)・ADR-DOE-HY-005 R4")
      (fact
-       "operator の決定 2026-09-28: 臭いを拾う規則を doeff-linter に足す。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag で、決定の時点の linter はこの file に何も出していなかった。"
-       :evidence "agora-redesign #798(2026-09-28 の議論)")
+       "2026-09-28 に、臭いを拾う規則を doeff-linter に足すと決めた。題材は agora-controllers の controllers/kanban/core/tag_judgment.hy の decide-tag で、決めた時点の linter はこの file に何も出していなかった。")
      (fact
        "decide-tag(agora-controllers 068dee21)の形: core の判断の中で (.get payload \"subject\") を (isinstance subject str) で検める / (match said (Refusal) (do (<- refused … (rejected (+ said.reason \": \" said.detail))) (return refused))) で受けた断りを包み直して返す / (<- bad-subject WritePlan …) の直後に (return bad-subject) / for の中で (:= writes (+ writes #(…)))。本線 0a528aa1 に当てると DOEFF121 78・122 9(Refusal に印を付けた後)・123 112・124 168・125 30。"
        :evidence "doeff-linter wt/hy-smells の editor-json(agora-controllers wt/hy-smells)")
      (fact
-       "defk / deff / defp / defhandler / defeffect の頭の辞書は :tags を受け、定義の属性に残す(agora-redesign #800)。素の defclass にはタグの置き場が無く、タグから定義を並べる閲覧に現れない。"
+       "defk / deff / defp / defhandler / defeffect の頭の辞書は :tags を受け、定義の属性に残す。素の defclass にはタグの置き場が無く、タグから定義を並べる閲覧に現れない。"
        :evidence "packages/doeff-hy/src/doeff_hy/_declarations.hy")
      (fact
-       "operator の指摘 2026-09-28(R8 の出自): wire.hy に在る JsonValue が使われている。誰にもそれを直に使わせず、pydantic のように実際に parse して検める形にすべきである。"
-       :evidence "agora-redesign #840(2026-09-28 の議論)")
+       "R8 の出自: wire.hy に在る JsonValue が直に使われていた。JsonValue を誰にも直に使わせず、pydantic のように実際に parse して検める形にする。")
      (fact
-       "operator の問い 2026-09-28: これにも def* の macro を持てないか — 案 A(別の macro defwire)と案 B(defrecord に :wire の節)を示し、operator は案 A を選んだ。"
-       :evidence "agora-redesign #840 のコメント(2026-09-27T16:22Z)")
+       "JSON の境目の型にも def* の macro を持てるかを検め、案 A(別の macro defwire)と案 B(defrecord に :wire の節)のうち案 A を選んだ。")
      (fact
        "実測: agora-controllers の本線に JsonValue(名前を変えた素の dict — dict | list | str | int | float | bool | None)を使う file が 36・179 行。core 7 file の判断の関数が JsonValue を受けて素の dict / list を返し、protocol は JsonValue を手で分解して読む。定義は doeff_records._wire の他に TypeAlias の写しが 4 つ・その場の定義が 3 つ。"
-       :evidence "git grep -nwE 'JsonValue|JSONValue' -- controllers services(agora-controllers・2026-09-28)・agora-redesign #840 の本文")]
+       :evidence "git grep -nwE 'JsonValue|JSONValue' -- controllers services(agora-controllers・2026-09-28)")]
   :context
     [(interpretation
        "def* の宣言は、名前・欄・契約・タグを macro の形で固定するので、linter・索引・エディタ・型検査が読み方の規則(HY-005 R5 の投影)1 つで読める。素の class は method の中に何でも書けるので、道具はそれが値の型なのか振る舞いなのかを読み分けられない。")
@@ -100,14 +93,14 @@
      (rule R4 "状態の変わる class(method が self を書き換える — 模擬の store・キャッシュ・ゲームのキャラクターのような entity。例 FakeRecordStore)は作らない(警告)。状態を持つ entity は、値を defrecord(不変)・振る舞いを新しい値を返す純粋な関数(defk)・状態を world の handler の (session var …) 1 か所に置き、変化は effect(例 GetCharacter・UpdateCharacter)で流す。理由: self を書き換えると変化が effect を通らず、模擬・記録と再生・並行が効かない。速さのために書き換えが要る時(大量の entity・numpy の配列・ECS)も、書き換えは handler の中だけで行う。")
      (rule R5 "許す class: 値の class(欄が変わらず、method は欄から計算するだけ — Point2D・Point3D)・例外・Enum・Protocol・外の library の基底を継ぐ物。理由の註は要らない。判定は名前でなく中身の証拠(method の中の生の副作用・資源の欄・self の書き換え)で、正本は doeff-linter の DOEFF119。DOEFF119 と defrecord の :tags / :check が着地するまで、この冊の law は未配線。")
      (rule R7 "区分の表: 純粋なデータ(AST・数値・Point2D)= defrecord(純粋な method は可)/ global な service(client・store)= 土台の handler と effect / 状態を持つ entity(ゲームのキャラクターなど)= 値(defrecord)+ 純粋な関数 + world の handler の session var。")
-     (rule R8 "JSON の境目の型は defwire で宣言する(doeff-hy の record.hy・operator の決定 2026-09-28 — 案 A)。書き方は defrecord と同じ欄の形に、頭の辞書 {:names :camel|:snake|:kebab|{欄 \"wire の名\" …} :unknown :reject|:ignore :tags … :check […]} を必ず置く(:names は必須 — wire の欄の名の写しを黙って決めない・明示の辞書は欄を全部名指す・:unknown の既定は :reject)。展開は defrecord をそのまま使い(凍結・キーワード引数だけ・:tags・:check)、型の __pydantic_config__ と __doeff_wire__(WireShape — 欄の名の写し・知らない欄の扱い・TypeAdapter)を置く。解き手は doeff_hy._wire の parse(JSON の値・凍らせた JSON)・parse-json(JSON の文字列)・dump・dump-json・json-schema の 1 か所で、型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄に・defenum の欄は値の綴り)。形の違う JSON の答えは Malformed(どの型の・どの欄が・なぜ — 5 つ目の失敗の種類・ADR-DOE-CORE-EFFECTS-003 R17)。Absent / Raise の段階 2 が本線に入るまで parse は Malformed を値で返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる。JSON の値(JsonValue — 唯一の定義は doeff_hy._json_value)に触ってよいのは、doeff_hy._wire と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120 — 既存の分は使う repo の登録簿)。入れ子の欄の型も defwire の型にする。dump / dump-json は既定値と同じ欄を書かない(入れ子の型の欄も — `(setv #^ (| str None) x None)` の None は null でなく欄が無い。読みは無い欄を既定値で埋めるので往復する。既定値の無い欄は None でも null で書く。追補 2026-09-28: 画面の設定の行の入れ子の agent の宣言 — 契約が任意の欄を null でなく欄の無いことで表す。戻し方 = wire.hy の :exclude-defaults を外す)。戻し方: defwire を defrecord と手書きの TypeAdapter に展開し直す(使う側の parse / dump の書き方はそのまま)。この条は 2026-09-28 に #840 の担当が足した。")
-     (rule R9 "臭いの規則(doeff-linter・決定的・重さの既定は warning): DOEFF121 = 判断の層(設定 smells.shape_check_layers)の定義が文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検める(直し方 = protocol の境目で defwire の型に parse)/ DOEFF122 = match の腕が失敗の型を受け、受けた値かそれを包み直した値を return するだけ(手書きの例外の再送出 — 直し方 = (<- (Raise …)) と呼ぶ側の on-raise。成功の早い抜けは拾わない)/ DOEFF123 = (<- x T (f …)) の直後の (return x) で x を他で使わない(直し方 = (return (! (f …))) か Raise)/ DOEFF124 = 同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につなぐ / DOEFF125 = for / while の中の (:= xs (+ xs #(…)))(直し方 = 内包表記)。JsonValue・dict の型の注記は DOEFF120(agora-redesign #840)の持ち分で重ねない。重さは初め info とし、Absent / Raise の段 1・2 が doeff の本線に入ったら warning に上げると決めていた — 2026-09-28 に入った(cf6ef9db)ので既定を warning にした。repo の設定 [tool.doeff-linter.rules.<ID>] severity で info に下げられる(error にはしない)。登録簿に載った既存の当たりは info。")
+     (rule R8 "JSON の境目の型は defwire で宣言する(doeff-hy の record.hy — 案 A)。書き方は defrecord と同じ欄の形に、頭の辞書 {:names :camel|:snake|:kebab|{欄 \"wire の名\" …} :unknown :reject|:ignore :tags … :check […]} を必ず置く(:names は必須 — wire の欄の名の写しを黙って決めない・明示の辞書は欄を全部名指す・:unknown の既定は :reject)。展開は defrecord をそのまま使い(凍結・キーワード引数だけ・:tags・:check)、型の __pydantic_config__ と __doeff_wire__(WireShape — 欄の名の写し・知らない欄の扱い・TypeAdapter)を置く。解き手は doeff_hy._wire の parse(JSON の値・凍らせた JSON)・parse-json(JSON の文字列)・dump・dump-json・json-schema の 1 か所で、型の検めは厳しい(文字列を数にしない・真偽を数にしない・配列は tuple の欄に・defenum の欄は値の綴り)。形の違う JSON の答えは Malformed(どの型の・どの欄が・なぜ — 5 つ目の失敗の種類・ADR-DOE-CORE-EFFECTS-003 R17)。Absent / Raise の段階 2 が本線に入るまで parse は Malformed を値で返し(答えの型 = (| T Malformed))、段階 3 の切り替えで Raise(Malformed) に寄せる。JSON の値(JsonValue — 唯一の定義は doeff_hy._json_value)に触ってよいのは、doeff_hy._wire と、送受信そのものを行う foundation の module だけ(doeff-linter DOEFF120 — 既存の分は使う repo の登録簿)。入れ子の欄の型も defwire の型にする。dump / dump-json は既定値と同じ欄を書かない(入れ子の型の欄も — `(setv #^ (| str None) x None)` の None は null でなく欄が無い。読みは無い欄を既定値で埋めるので往復する。既定値の無い欄は None でも null で書く。追補 2026-09-28: 画面の設定の行の入れ子の agent の宣言 — 契約が任意の欄を null でなく欄の無いことで表す。戻し方 = wire.hy の :exclude-defaults を外す)。戻し方: defwire を defrecord と手書きの TypeAdapter に展開し直す(使う側の parse / dump の書き方はそのまま)。この条は 2026-09-28 に足した。")
+     (rule R9 "臭いの規則(doeff-linter・決定的・重さの既定は warning): DOEFF121 = 判断の層(設定 smells.shape_check_layers)の定義が文字列の鍵の (.get x \"欄\") とその欄への isinstance で入力の形を検める(直し方 = protocol の境目で defwire の型に parse)/ DOEFF122 = match の腕が失敗の型を受け、受けた値かそれを包み直した値を return するだけ(手書きの例外の再送出 — 直し方 = (<- (Raise …)) と呼ぶ側の on-raise。成功の早い抜けは拾わない)/ DOEFF123 = (<- x T (f …)) の直後の (return x) で x を他で使わない(直し方 = (return (! (f …))) か Raise)/ DOEFF124 = 同じ値の 2 つ以上の欄を + か f 文字列で 1 本の文字列につなぐ / DOEFF125 = for / while の中の (:= xs (+ xs #(…)))(直し方 = 内包表記)。JsonValue・dict の型の注記は DOEFF120 の持ち分で重ねない。重さは初め info とし、Absent / Raise の段 1・2 が doeff の本線に入ったら warning に上げると決めていた — 2026-09-28 に入った(cf6ef9db)ので既定を warning にした。repo の設定 [tool.doeff-linter.rules.<ID>] severity で info に下げられる(error にはしない)。登録簿に載った既存の当たりは info。")
      (rule R10 "失敗の型は名前で決め打ちせず、宣言から取る: (a) defeffect の :failure / :absent に挙げた型(ADR-DOE-CORE-EFFECTS-003 R5)、(b) defrecord の頭の辞書の :failure True(effect の答えでない失敗の値 — 検めの関数が返す断りなど)。印は defrecord が class の属性 __doeff_failure__ に残し、doeff-linter は実行せずに読む。型は file の import と定義の場所で module まで解くので、同じ名の型が別の module にあっても宣言した方だけが失敗の型になる。印の形の選び方(2026-09-28・f143ee92 の席が決めた戻せる決定): defeffect の :failure は型の列だが、defrecord の :failure は字面の True / False — 型そのものの性質だから。Absent / Raise の作業(doeff-hy の macros.hy・handle.hy)と同じ file を触らないよう、印は record.hy の defrecord にだけ置いた。戻し方: 頭の辞書の受ける鍵から :failure を外し、DOEFF122 を defeffect の宣言だけで判じる形に戻す。")
      (rule R11 "Jev の規則 DOEFF205: 役が judgment / program の定義(定義の :tags か module の頭のタグ)に、入力の形の検めと業務の判断が混ざっているかを、混ざっている / 形の検めだけ / 判断だけ / どれでもない から Jev に選ばせる。物差しは repo の architecture.hy の層(設定 semantic.mixed_concerns.layer — agora は core)の説明。重さは warning まで(error にしない)。較正の正例 = decide-tag、反例 = 形の検めの無い純粋な判断(card-tags-of)。撃つのは --semantic / --semantic-all の時だけで、保存ごとの実行は cache を読むだけ(未判定は合格に数えない)。")
-     (rule R12 "service の依存(doeff-linter DOEFF116)で、依存先のどの層を読んでよいかは読む側の層ごとに architecture.hy の layer の :dependency-layers で宣言する(無ければ :open-layers — 既定は intent)。operator の決定 2026-09-28(案 A — 組み立ての entry に限り、依存先の service の protocol(翻訳の handler)も読んでよい。entry は全体を組む所だから)を、層の名を linter に書かずに宣言で表すため。agora は (layer entry … :dependency-layers [intent protocol])。:depends-on に無い service を読むのは今までどおり違反、:dependency-layers を持たない層は今までどおり :open-layers だけ(2026-09-28・f143ee92 の席が決めた戻せる決定。戻し方: layer の :dependency-layers を読む形を外し、DOEFF116 を :open-layers だけで判じる形に戻す)。")
-     (rule R13 "defk の定義を素で呼んで、その答えを値として使わない(doeff-linter DOEFF126・error)。defk を素で呼ぶと答えではなく Program が返り、型の誤りで落ちずに静かに間違った値として流れる — agora-redesign #798 の直しの便で、defk に改めた latest-by-ref を deff(text-at・expected-inputs)と検 4 file が素のまま呼んでいた(検で見つかった)。defn / deff を defk に改める便が何百と続くので、呼び手の取り残しを見張る。拾うのは答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)だけで、Program を受ける呼びへ渡す形・名への束ね・関数の答えとして返す形は拾わない(初版の『Program の位置の外は全部』は agora の本線で 239 件と外れが多かった)。追えない呼び(引数で受けた関数・method)も拾わない。coordinator の決定 2026-09-28(戻せる — 戻し方: DOEFF126 を enable から外す。拾う所を広げるなら bare_calls.rs の VALUE_HEADS と位置の表を足す)。")
+     (rule R12 "service の依存(doeff-linter DOEFF116)で、依存先のどの層を読んでよいかは読む側の層ごとに architecture.hy の layer の :dependency-layers で宣言する(無ければ :open-layers — 既定は intent)。組み立ての entry に限り依存先の service の protocol(翻訳の handler)も読んでよいとする決まり(entry は全体を組む所だから)を、層の名を linter に書かずに宣言で表すため。agora は (layer entry … :dependency-layers [intent protocol])。:depends-on に無い service を読むのは今までどおり違反、:dependency-layers を持たない層は今までどおり :open-layers だけ(2026-09-28・f143ee92 の席が決めた戻せる決定。戻し方: layer の :dependency-layers を読む形を外し、DOEFF116 を :open-layers だけで判じる形に戻す)。")
+     (rule R13 "defk の定義を素で呼んで、その答えを値として使わない(doeff-linter DOEFF126・error)。defk を素で呼ぶと答えではなく Program が返り、型の誤りで落ちずに静かに間違った値として流れる — ある直しの便で、defk に改めた latest-by-ref を deff(text-at・expected-inputs)と検 4 file が素のまま呼んでいた(検で見つかった)。defn / deff を defk に改める便が何百と続くので、呼び手の取り残しを見張る。拾うのは答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)だけで、Program を受ける呼びへ渡す形・名への束ね・関数の答えとして返す形は拾わない(初版の『Program の位置の外は全部』は agora の本線で 239 件と外れが多かった)。追えない呼び(引数で受けた関数・method)も拾わない。coordinator が 2026-09-28 に決めた(戻せる — 戻し方: DOEFF126 を enable から外す。拾う所を広げるなら bare_calls.rs の VALUE_HEADS と位置の表を足す)。")
      (rule R14 "DOEFF126 の見落とし 2 つを塞ぐ(coordinator の依頼 2026-09-28): (1) method の引数に渡す形 — (.append out (breach …)) のように defk の答えを method の引数に渡す所も、答えを値として使う所に数える。(2) 引数で受けた関数を素で呼ぶ形 — agora の L1550 で直した rows-by-text が引数 field-of を (setv value (field-of row)) と素で呼び、呼び手はそこに fnk(payload-of を呼ぶ)を渡していた。値は常に Program になり isinstance str が常に偽で索引が常に空だった。拾える範囲: repo の呼びで引数に repo の defk の名か (fnk …) を渡している物を集め、呼び先の最上位の定義の引数の並びでその引数を引き、本体の中でその引数を Program として渡す所の外で呼んでいれば、呼び先のその呼びを違反にする(名への束ねも違反)。拾えない範囲: 呼び手が defk を変数や欄に入れてから渡す形・partial などで包んで渡す形、呼び先がその引数をさらに別の関数へ渡して先で素で呼ぶ形(1 段だけ追う)、呼び先が method・入れ子の関数・名で引けない物、repo の外の呼び手。これらは型(:pre の Callable を Program を返す関数の型へ細かくする)か effect の推論(ADR-DOE-CORE-EFFECTS-003 R13)が持つ(2026-09-28・f143ee92 の席・戻せる — 戻し方: param_calls.rs を外し、method の引数を的だけに戻す)。(追記 2026-09-28・coordinator の依頼)さらに 2 つの形を拾う: (3) assert の引数 — (assert 条件 (describe …)) の文と条件も答えとして使う所(defk を条件に置くと Program は常に真で、検が常に通る)。(4) 素の呼びを名に束ねてから答えとして使う形 — agora の incident_placement.hy(直す前 9e2574a6^)の (setv … all (histories run)) の後の (get all job)。1 つの定義の中で setv・val・var・:=・let で defk の素の呼びを束ねた名が、答えとして使う所(比べ・組み込みの関数・method の的と引数・名の method の呼び all.get・属性・条件・繰り返しの元)に出れば、束ねた呼びを違反にする。その名を Program として渡す(run-on などへ)・返す形は拾わない。同じ名を (<- 名 …) でも束ねる定義はその名を追わない。拾えない範囲に足す: 束ねた名を別の定義へ渡してそこで答えとして使う形・欄や入れ物(dict・list)に入れてから取り出して使う形。直す前の形に当てて、(.items (histories run)) は前から拾え、(setv … all (histories run)) の後の使用はこの追記で拾えるようになったことを確かめた。")
-     (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、operator の的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
+     (rule R6 "改訂の記録(2026-09-27):初版の『振る舞いを持つ class を作らない・外の library が class を要求する所だけ理由の註つきの逃げ道』は、的の絞り込み 2 つで R3〜R5 に置き換えた。戻し方: 的を広げ直すなら、この改訂の commit を revert する(初版の R2〜R5 と law へ戻る)。")]
   :laws
     [(law world-touching-classes-become-foundation-handlers
        :statement "for_all class c(Hy・例外・Enum・Protocol・外の基底を継ぐ物を除く): c の method に生の副作用が無く、c の欄に資源(接続・file・socket)が無い — 外の世界に触る物は土台の handler で、資源は session val"
@@ -137,7 +130,7 @@
           (counterexample "core の判断の関数が (: value JsonValue) を受けて素の dict を返す — 型のある値に解かずに内側へ運ぶ")
           (counterexample "{\"landedAt\": \"3\"} を int の欄に黙って 3 として入れる — 型の違いを業務の失敗(Malformed)にせず飲み込む")]
        :enforced-by ["doeff-linter DOEFF120" "packages/doeff-hy/tests/defwire_deftests.hy"]
-       :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便(agora-redesign #840)")
+       :wiring "一部配線(2026-09-28)— parse と dump の往復・型違いの Malformed は defwire_deftests.hy が確かめる。DOEFF120 は doeff-linter の別の便")
      (law defk-answers-are-not-used-bare
        :statement "for_all repo の defk f と呼び (f …): 呼びの答えを値として使う所(比べ・演算・組み込みの関数・method・属性・条件・繰り返しの元・record の欄)に無い — 答えは (<- x (f …)) か (! (f …)) で受ける"
        :counterexamples
@@ -201,4 +194,4 @@
        (<- wrong (parse ProbeBudgetWire {"name" "lab" "usedUnits" "3"}))
        (assert (isinstance wrong Malformed))
        (assert (= (lfor f wrong.fields f.field) ["usedUnits"])))]
-  :plans ["agora-redesign #798" "agora-redesign #840"])
+  :plans [])

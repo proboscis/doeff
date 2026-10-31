@@ -3,11 +3,11 @@
 ;;; 記録の service の合図)で答え、Program の側は変わらない(違うのは接続先の値だけ)。出来事は「どこが変わったか」の合図
 ;;; (キー)だけを運び、受けた側が記録を読み直す。
 ;;;
-;;; 改訂 2026-10-03 12:0x(cisco-c8 の戻せる決め・agora-redesign #3072 comment 5964894117): 出来事の源を Redis Streams から
+;;; 改訂 2026-10-03 12:0x(cisco-c8 の戻せる決め): 出来事の源を Redis Streams から
 ;;; 記録の service(PostgreSQL の LISTEN / NOTIFY と HTTP の WatchChanges の long-poll)へ改めた。選ばなかった訳は :problem の fact。
 ;;;
-;;; 出自 = 利用者の決め 2026-10-03(Mac の調整役 → cisco-c8 → kn-w37 が記録・決めた事は :problem の fact)。
-;;; 同じ決めの席の側の記録 = dotfiles の ADR-DOTFILES-027 R-c9c11f05(書く時の助言は code-quality-policy-when-writing-code)。
+;;; 決めた事は :problem の fact。
+;;; この決めの席の側の記録 = dotfiles の ADR-DOTFILES-027 R-c9c11f05(書く時の助言は code-quality-policy-when-writing-code)。
 ;;; 待ちの期限と、来るはずの出来事が来ない時の線(業務の期限は出来事にする・基盤の異常は Program に出さない・sim は行き止まりを
 ;;; 即座に赤にする)の全文は c3-w49 の設計の覚え書き。
 ;;;
@@ -28,14 +28,13 @@
           "docs/adr/defadr_doeff_events_001_wait_for_events.hy"]
   :problem
     [(fact
-       "利用者の決め 2026-10-03: loop と待ちの作りは、時間でなく出来事を待てるよう doeff-events を使う。その handler は redis や rabbitmq のような cluster を知る backend を持つ。"
-       :evidence "Mac の調整役(w3J:p17)→ cisco-c8 → kn-w37(agora-redesign #2976 の「待ちの形」の行)")
+       "loop と待ちの作りは、時間でなく出来事を待てるよう doeff-events を使う。その handler は redis や rabbitmq のような cluster を知る backend を持つ。")
      (fact
        "出来事の源 = 記録の service(PostgreSQL の LISTEN / NOTIFY と、HTTP の WatchChanges の long-poll)。出来事は「どこが変わったか」の合図(キー)だけを運び、受けた側が記録を読み直す — 2 度届いても・順序が入れ替わっても・1 つ欠けても、次の合図か起動の時の読みで追いつくので状態が壊れず、落ちた後の再配達(consumer group・pending・ack)が要らない。選んだ訳 = 新しく置く物が無い・変更の記録が 1 本で済む・NOTIFY は書きと同じ transaction で commit されるので「書いたのに合図が出ない」隙間が無い・password を足さない。"
-       :evidence "cisco-c8 の戻せる決め 2026-10-03 12:0x(agora-redesign #3072 comment 5964894117・推奨と訳は comment 5964883057)")
+       :evidence "cisco-c8 の戻せる決め 2026-10-03 12:0x")
      (fact
        "11:4x の決め(Mac の調整役)= backend は Redis Streams(cursor が在り取りこぼさない・password 無しで動く・1 Pod・手元の 1 台の cluster でも同じ handler。RabbitMQ は製品が user / password を要求するので候補止まり)。12:0x にこれを改めた。選ばなかった訳 = 記録の service の列と Redis の stream の 2 本の変更の記録になり、書きと発するの 2 回の書きの隙間を outbox で塞ぐ必要がある。Redis Streams の利点(記録の service を通らない出来事も process をまたいで届く)は、今の agora では process をまたぐ出来事がどれも記録の service を通っている見込みなので要らない(全部は確かめていない)。"
-       :evidence "cisco-c8 の中継(2026-10-03 11:4x)と、12:0x の改め(#3072)")
+       :evidence "cisco-c8 の中継(2026-10-03 11:4x)と、12:0x の改め")
      (interpretation
        "時間で起きて確かめる loop は、起きるたびの費用(検の歩数の上限を越える根の類)と、間隔ぶんの遅れを持つ。出来事で待てば、起きるのは何かが変わった時だけで、模擬でも本番でも同じ形で試せる。")]
   :decision
@@ -49,7 +48,7 @@
           (counterexample "合図に記録の中身を載せ、受けた側が読み直さずにそれで状態を変える — 2 度届く・順序が入れ替わる・欠けると状態が壊れる")]
        :enforced-by ["test-adr-doe-events-001-public-surface"
                      "dotfiles の助言 code-quality-policy-when-writing-code(ADR-DOTFILES-027 R-c9c11f05)"]
-       :wiring "一部配線(2026-10-03)— 検は、決めが頼る doeff-events の公開の口(出来事を出す・待つ・memory の handler)が在る事まで。loop の中の時間の待ちを数える針と、記録の service の合図の handler(agora-redesign #3073〜#3077・milestone P)は未実装")]
+       :wiring "一部配線(2026-10-03)— 検は、決めが頼る doeff-events の公開の口(出来事を出す・待つ・memory の handler)が在る事まで。loop の中の時間の待ちを数える針と、記録の service の合図の handler(milestone P)は未実装")]
   :enforcement
     [(deftest test-adr-doe-events-001-public-surface
        ;; 針: 決めが頼る doeff-events の公開の口(Publish・WaitForEvent・memory の handler event_handler)が __all__ に在る。
@@ -59,4 +58,4 @@
        (for [name ["Publish" "WaitForEvent" "event_handler"]]
          (assert (in (+ "\"" name "\",") text)
                  (+ "doeff-events の公開の口に次が無い(ADR-DOE-EVENTS-001 R1): " name))))]
-  :plans ["agora-redesign #2976"])
+  :plans [])

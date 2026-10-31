@@ -1,8 +1,8 @@
 ;;; Executable ADR: doeff-effect-analyzer の閉じの解析の答えの置き場(result_cache)の鍵は、答えの依る module の組だけ — 解析が source を
 ;;; 読んだ module・解析そのものの module・そこから値を作った module を辿った組。process が読み込んだ全部の module ではない。
 ;;;
-;;; 出自 = card ki-30d28550680c(ki-d7f2e023c0d4 の子 — closure の検 10 本の本体の和 約 240 秒)。前の鍵(#1645・#1864・#3777)は
-;;; 「答えを作った process が読み込んでいた全部の module の名と中身」で、#1645 が「import の時に他の module の値を書き換える module」の
+;;; 動機 = 置き場の鍵が外れると、closure の検 10 本の本体の和で約 240 秒かかる。前の鍵(ebb060dec・733107dae・094738fb3)は
+;;; 「答えを作った process が読み込んでいた全部の module の名と中身」で、ebb060dec が「import の時に他の module の値を書き換える module」の
 ;;; 数え漏れを恐れて広く取った。この ADR はその決め直し。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(ADR の file 1 つと、result_cache の鍵が読み込んだ全部の module に戻る。置き場の
@@ -31,13 +31,12 @@
           "docs/adr/defadr_doeff_analyzer_001_result_key.hy"]
   :problem
     [(fact
-       "agora-controllers の日次の pytest の段は 951 file を 3 つの session に配る。どの session も closure の検と関係の無い検の file を数百読み込み、置き場の鍵は「答えを作った process が読み込んでいた全部の module の名と中身」だったので、4 時間の間にどれか 1 つが変わると外れた。名の重なる conftest と、起こし方で変わる __mp_main__ も鍵に入った。"
-       :evidence "card ki-30d28550680c の本文・ki-d7f2e023c0d4 の測り")
+       "agora-controllers の日次の pytest の段は 951 file を 3 つの session に配る。どの session も closure の検と関係の無い検の file を数百読み込み、置き場の鍵は「答えを作った process が読み込んでいた全部の module の名と中身」だったので、4 時間の間にどれか 1 つが変わると外れた。名の重なる conftest と、起こし方で変わる __mp_main__ も鍵に入った。")
      (fact
        "当たれば closure の検 1 本は 0.05〜1.2 秒、外れると 20〜60 秒。日次 08:00 の回の closure の検 10 本の本体の和は約 240 秒で、外れた時の大きさ。"
-       :evidence "ki-d7f2e023c0d4 の発言(手元の測り)")
+       :evidence "手元の測り")
      (fact
-       "前の鍵が数えた「import の時に他の module の値を書き換える module」は、答えを作った process が読み込んでいた時に中身だけを数え、読む側の process が読み込んでいるかは数えなかった(読み込んでいない module は import の路が見つける file の中身で照らす)。読む側にだけ在る書き換えの module は #1645 の時から鍵の外。"
+       "前の鍵が数えた「import の時に他の module の値を書き換える module」は、答えを作った process が読み込んでいた時に中身だけを数え、読む側の process が読み込んでいるかは数えなかった(読み込んでいない module は import の路が見つける file の中身で照らす)。読む側にだけ在る書き換えの module は ebb060dec の時から鍵の外。"
        :evidence "result_cache.py の module の説明(この変更の前の版)・_current_material")]
   :context
     [(interpretation

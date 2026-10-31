@@ -1,6 +1,6 @@
 ;;; Executable ADR: doeff-runner の読む面(ide-plugins/vscode/doeff-runner/src/read/)の不変 —
 ;;; 面は索引だけを読み、source を書き換えず、構文をなぞらず、面の文字は labels の表から出す。
-;;; 設計の記録 = docs/design/hy-reading-plane/(v1〜v7 の design と decision)・実装の追跡 = agora-redesign #910(U11)。
+;;; 設計の記録 = docs/design/hy-reading-plane/(v1〜v7 の design と decision)。
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -15,28 +15,28 @@
           "packages/doeff-linter/src/project/body_view.rs(本体の文字の読み方の 1 か所)"]
   :problem
     [(fact
-       "doeff-hy の code を file と木で読むと、系の構造(context・role などの tag の軸・effect・呼び出し・型)が file の置き場の 1 軸に潰れる。operator の指摘 2026-09-28: 変数などの scope を file と file の構造に縛るのは筋が通らない。木の構造は領域のすべての軸を覆えないので、系は 1 つの file の木でなく tag の複数の軸で整理されるべきである。"
+       "doeff-hy の code を file と木で読むと、系の構造(context・role などの tag の軸・effect・呼び出し・型)が file の置き場の 1 軸に潰れる。変数などの scope を file と file の構造に縛るのは筋が通らない。木の構造は領域のすべての軸を覆えないので、系は 1 つの file の木でなく tag の複数の軸で整理されるべきである。"
        :evidence "docs/design/hy-reading-plane/records/decision-05be5e9de565.json")
      (fact
        "読む面が自分で file を歩いて定義を集めると、hy-index(doeff-indexer)と別の 2 つ目の定義の一覧ができ、索引と面で定義の集合・位置・属性が食い違う。面の module は今は索引と linter の出力だけを受け取っている(2026-09-29 実測: src/read/ の 9 file に fs / child_process / findFiles / workspace.fs は 0 件)が、それを止める検査が無かった。"
-       :evidence "ide-plugins/vscode/doeff-runner/src/read/*.ts(2026-09-29 origin/main 8bae6543)・agora-redesign #910 受け入れ条件 3 の制約 5・V8")
+       :evidence "ide-plugins/vscode/doeff-runner/src/read/*.ts(2026-09-29 origin/main 8bae6543)")
      (fact
-       "operator は source を手で編集しない(#849)。読む面に編集の機能があると、Hy の source を書き換える 2 つ目の入口が面の中に生まれ、読むための面という性格が崩れる。"
-       :evidence "docs/design/hy-reading-plane/records/design-c718ca28a562.json(ADR-DOTFILES-027 R-28bb3a77・#849)・#910 V9")]
+       "source は手で編集しない。読む面に編集の機能があると、Hy の source を書き換える 2 つ目の入口が面の中に生まれ、読むための面という性格が崩れる。"
+       :evidence "docs/design/hy-reading-plane/records/design-c718ca28a562.json")]
   :context
     [(interpretation
-       "Hy の file は定義の置き場で、系の構造は定義 × 属性の面(= hy-index)にある。operator の見方(2026-09-28): 我々の用途では、Hy は任意のデータと code を自由な形で蓄える所が優れた言語で、データの置き場に過ぎない。doeff-hy の系の構造は別の面に置く。したがって面は構造の層(索引)だけを読み、置き場の層(file)を直に読まない。")
+       "Hy の file は定義の置き場で、系の構造は定義 × 属性の面(= hy-index)にある。この用途では、Hy は任意のデータと code を自由な形で蓄えられる所が優れた言語で、データの置き場に過ぎない。doeff-hy の系の構造は別の面に置く。したがって面は構造の層(索引)だけを読み、置き場の層(file)を直に読まない。")
      (interpretation
-       "Hy の form の読み方(本体の文字の組み立て)は doeff-linter の 1 か所(src/project/body_view.rs・editor-json の bodies)に置き、面は描くだけにする(#849 の決定「読み方の写しを持たない」)。面が file を読まないことは、この 1 か所を守ることでもある。")
+       "Hy の form の読み方(本体の文字の組み立て)は doeff-linter の 1 か所(src/project/body_view.rs・editor-json の bodies)に置き、面は描くだけにして、読み方の写しを持たない。面が file を読まないことは、この 1 か所を守ることでもある。")
      (interpretation
-       "読む面は Scala の構文(using・/** */・=)をなぞらず、実体を HTML の部品で見せる。operator の決定(2026-09-28): using のような構文はなぞらず、defk のような実体をより良い HTML で見せる。構文をなぞらないことは静的な検査で縛れない(描き方の判断)ので、law の文として残す。")]
+       "読む面は Scala の構文(using・/** */・=)をなぞらず、defk のような実体をより良い HTML の部品で見せる。構文をなぞらないことは静的な検査で縛れない(描き方の判断)ので、law の文として残す。")]
   :decision
-    [(rule R1 "読む面の単位は file ではなく定義で、入口は木ではなく tag の複数の軸(と effect・呼び出し・型・テスト・置き場)の切り替えと交差。1 つの定義 = 1 枚のカード。operator 裁定 2026-09-28(decision-05be5e9de565 — 案 D を採った。D は素の lisp よりずっと読みやすく、対象は defk だけでなく doeff-hy の code を読む面の全体)。")
-     (rule R2 "面(src/read/ の module)は file を自分で読まない。定義の一覧・軸の属性・位置は hy-index の置き場から、型・effect・本体の行は doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く(#910 受け入れ条件 3 の制約 5・V8)。")
-     (rule R3 "面は読み取り専用: document を書き換える API(WorkspaceEdit・applyEdit・TextEditor.edit・document の save・saveAll)を面に置かない。source を直す時は各カードの open in editor で editor を開く(v1 R2・#910 V9)。")
-     (rule R4 "面は Scala などの構文をなぞらず、実体を HTML の部品で見せる。文字で出すのは本体だけで、本体の文字の形は operator が承認済み(match の時の val / var の形 — 2026-09-28・decision-751eb42b8152)。形の正本は packages/doeff-linter/docs/SPECIFICATION.md 20 節(decision-ca54efb91260・v2 2.2・v3 2)。")
-     (rule R5 "面に出るラベルの文字は labels.ts の文字列の表 1 つから引く(operator の決定 2026-09-29 — ラベルは 引数 / 答え でなく args / return type とする・decision-ef207b6c19ad)。実体の種類のバッジ・tags の key・docstring・本体は source のまま。静的な検査は置かない: 日本語の文字列 literal を禁じると内部の例外文まで赤になり、英語の literal は CSS の class や id と区別できないため。レビューで見る。")
-     (rule R6 "戻し方: R2 / R3 を外す時は .semgrep.yaml の doeff-runner-reading-plane-reads-only-the-index / doeff-runner-reading-plane-is-read-only と、この ADR の enforcement を同じ commit で消し、docs/adr/enforcement-ledger.json を作り直す(ADR-DOE-ENFORCE-001 R5)。読む面そのものは設定 doeffRunner の読む面の切り替えで切れる(#910 受け入れ条件 6)。")]
+    [(rule R1 "読む面の単位は file ではなく定義で、入口は木ではなく tag の複数の軸(と effect・呼び出し・型・テスト・置き場)の切り替えと交差。1 つの定義 = 1 枚のカード(decision-05be5e9de565 — 案 D を採った。D は素の lisp よりずっと読みやすく、対象は defk だけでなく doeff-hy の code を読む面の全体)。")
+     (rule R2 "面(src/read/ の module)は file を自分で読まない。定義の一覧・軸の属性・位置は hy-index の置き場から、型・effect・本体の行は doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く。")
+     (rule R3 "面は読み取り専用: document を書き換える API(WorkspaceEdit・applyEdit・TextEditor.edit・document の save・saveAll)を面に置かない。source を直す時は各カードの open in editor で editor を開く(v1 R2)。")
+     (rule R4 "面は Scala などの構文をなぞらず、実体を HTML の部品で見せる。文字で出すのは本体だけで、本体の文字の形は承認済み(match の時の val / var の形 — 2026-09-28・decision-751eb42b8152)。形の正本は packages/doeff-linter/docs/SPECIFICATION.md 20 節(decision-ca54efb91260・v2 2.2・v3 2)。")
+     (rule R5 "面に出るラベルの文字は labels.ts の文字列の表 1 つから引く(ラベルは 引数 / 答え でなく args / return type とする・decision-ef207b6c19ad)。実体の種類のバッジ・tags の key・docstring・本体は source のまま。静的な検査は置かない: 日本語の文字列 literal を禁じると内部の例外文まで赤になり、英語の literal は CSS の class や id と区別できないため。レビューで見る。")
+     (rule R6 "戻し方: R2 / R3 を外す時は .semgrep.yaml の doeff-runner-reading-plane-reads-only-the-index / doeff-runner-reading-plane-is-read-only と、この ADR の enforcement を同じ commit で消し、docs/adr/enforcement-ledger.json を作り直す(ADR-DOE-ENFORCE-001 R5)。読む面そのものは設定 doeffRunner の読む面の切り替えで切れる。")]
   :laws
     [(law reading-plane-reads-only-the-index
        :statement "module ∈ src/read/ => not reads_files(module) and definitions(module) ⊆ hy_index"
@@ -84,5 +84,4 @@
          "source" "import * as vscode from 'vscode';\n\nexport function remember(memory: { save(key: string, value: string): void }, uri: vscode.Uri): void {\n  memory.save(uri.fsPath, 'folded');\n  void vscode.commands.executeCommand('vscode.open', uri);\n}\n"}
         {"relative-path" "ide-plugins/vscode/doeff-runner/src/defk/editor_outside_the_plane.ts"
          "source" "import * as vscode from 'vscode';\n\nexport async function put(document: vscode.TextDocument): Promise<boolean> {\n  return document.save();\n}\n"}])]
-  :plans ["docs/design/hy-reading-plane/"
-          "https://github.com/proboscis/agora-redesign/issues/910"])
+  :plans ["docs/design/hy-reading-plane/"])

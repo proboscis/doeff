@@ -2,7 +2,7 @@
 ;;; 大きさが置き場に在る行の数で決まる計算(束の読みの行の読み解きと、束の読みの答えの綴り)は、Compute で scheduler の thread の外で回す。
 ;;; 1 要求の計算の上限は、答えの型(束の読みの答えか否か)と読みの形(束の読みか 1 行の読みか)で決める。
 ;;;
-;;; 出自 = card ki-67a745ab6c1c(切り分けの card ki-974e5ae37eca の提案 1 — 混んだ時にも読みの p95 を保つ区切りの card)。
+;;; 狙い = 混んだ時にも読みの p95 を保つ(本番の切り分けの提案 1)。
 ;;; 仕組みの在りか = packages/doeff-records/src/doeff_records/_loop_work.hy(分けの 1 点)・_pg.hy の decoded-batch(行の読み解き)・
 ;;; service.hy の answer-reply(答えの綴り)・main.hy の records-connected と _http_server.hy の start-records-server(Compute の答え手)。
 ;;;
@@ -35,16 +35,16 @@
        :evidence "packages/doeff-records/src/doeff_records/_http_server.hy の頭の註(入口の形)")
      (fact
        "2026-10-22 の本番の 100 分の測り(process ごとに 200 ms ごとの probe の受けの列・1 秒ごとの計器・50 ms ごとの scheduler の thread の走りの秒): 受けの列が 60 ms 以上 跳ねた probe は、書きの詰まりの窓を除くと 97〜100% が、一覧の読みが 300 行以上を返した 1 秒と重なった。跳ねる前の 50 ms の scheduler の thread の走りは 88〜98%(全体の平均 35〜53%)で、run queue の待ちは 0.6〜2.0% — thread は CPU を貰えていて、自分の仕事で塞がっていた。"
-       :evidence "card ki-974e5ae37eca の発言 ob-844fea23612759cf(表)・ob-cd4ccf8d5e81153d(訳と削る手)")
+       :evidence "本番の切り分けの記録(測りの表・訳と削る手)")
      (fact
        "1 回に 300〜500 行を返す一覧の読みの、頁の行の読み解き(PostgreSQL の payload の json.loads と深く凍らせる frozen-json-object — _pg.hy の listed-rows-of)と答えの綴り(thaw-json と json.dumps — _wire.hy の encode-answer・service.hy の json-answer)が scheduler の thread で同期に走り、1 頁で 40〜125 ms その thread を塞いでいた。手元の測り(1 行 2.6 KB の 500 行の頁・3.14t): 読み解き 55 ms・綴り 37 ms・UTF-8 の byte 列 1.8 ms。"
-       :evidence "card ki-974e5ae37eca の発言 ob-cd4ccf8d5e81153d・card ki-67a745ab6c1c の作業の測り")
+       :evidence "本番の切り分けの記録(訳と削る手)・この変更の作業の測り")
      (fact
        "doeff は純粋な program を回して答えを値で受ける汎用の effect Compute と、その答え手 thread-pool-compute-handler(呼び手の pool で回し、待つのは撃った task だけ — scheduler の他の task は回り続ける)・inline-compute-handler(その場で回す — 仮想の時計の模擬で決定的)を持つ。本番の Python は free-threaded の 3.14t で、pool の thread は scheduler の thread と並んで走る。thread の受け渡し 1 回の上乗せは手元で 約 0.5 ms(その間 scheduler の thread は空く)。"
        :evidence "packages/doeff-core-effects/doeff_core_effects/_compute_effects.hy・thread_pool_compute.hy・inline_compute.hy")
      (fact
        "束の読みを Compute へ出した後も、1 要求の計算の量は「頁の行の数 × 行の大きさ」で決まり、行の大きさの側だけが型で縛られていた(表の size-budget)。wire の list-rows の limit は上限を持たず、本文の上限 16 MiB の中なら何行でも頼めた。使い手の 4 つの repo の main(2026-10-22)で一覧の読みの limit は、固定の値で最も大きいもので 5,000 行(全行の一覧の 1 頁 — 1 回の要求の固定費 約 0.2 秒との釣り合いで選ばれた頁)。外から渡る数をそのまま載せる読みが 2 つ在った(呼び手の CLI の --limit N の N + 1・cursor が古い時に窓を限り無く倍にする読み — どちらも同じ日に続きの位置で頁を送る形に直した)。手元の測りの比で、5,000 行の頁の読み解きと綴りは 1 頁 約 0.9 秒、計算の pool の thread を 1 本塞ぐ(500 行で 92 ms)。"
-       :evidence "card ki-42c40cb6014d の作業の測り・packages/doeff-records/src/doeff_records/_effects.hy の LIST-LIMIT-MAX")
+       :evidence "上限を足した作業の測り・packages/doeff-records/src/doeff_records/_effects.hy の LIST-LIMIT-MAX")
      (fact
        "計算の pool の詰まり(大きな束の読みが pool の全部の thread を塞ぎ、後の束の読みの計算が pool の列で待つ)は、要求ごとの区間の秒(handler と encode)に混ざって数えられ、別の計器を持たなかった — 遅れが pool の列の待ちか置き場の読みかを、/metrics の数で見分けられなかった。"
        :evidence "packages/doeff-records/src/doeff_records/_request_timing.hy の区間の名(queue・body・decode・handler・wait・encode・send)")]
@@ -76,7 +76,7 @@
      (law the-maintenance-never-holds-the-serving-thread
        :statement "for_all 手入れの回 m・m の計算の間に届いた要求 r: r の答えは m の計算の終わりを待たない(手入れの Program は run-apart で別の thread の VM で回り、要求の scheduler の thread を占めない)"
        :counterexamples
-         [(counterexample "手入れの係を要求と同じ scheduler の thread の task で回す — 起き直しの直後の手入れの 1 回目の送りが、送り先から読み戻した 19 万行を 1 行ずつ照らす計算(effect を出さない defk の歩)に 4 分ずつ 2 回 thread を占め、2 本の口の要求が全部 受けの列で待って、呼び手が切った後にまとめて答えた(2026-10-27 01:26〜01:44・02:08〜02:16 JST の本番 — card ki-3b942d3af8da)")
+         [(counterexample "手入れの係を要求と同じ scheduler の thread の task で回す — 起き直しの直後の手入れの 1 回目の送りが、送り先から読み戻した 19 万行を 1 行ずつ照らす計算(effect を出さない defk の歩)に 4 分ずつ 2 回 thread を占め、2 本の口の要求が全部 受けの列で待って、呼び手が切った後にまとめて答えた(2026-10-27 01:26〜01:44・02:08〜02:16 JST の本番)")
           (counterexample "手入れの送りの読み(R2)だけを Compute へ出す — 使い手の送りの関数が答えの行を照らす計算は入口から見えず、thread に残る")]
        :enforced-by ["packages/doeff-records/tests/test_maintenance_runs_apart.hy::test-reads-are-answered-while-the-maintenance-computes"
                      "packages/doeff-core-effects/tests/test_apart_call.hy::test-the-program-computes-apart-and-its-effects-are-answered-here"
@@ -129,4 +129,4 @@
      (deftest test-adr-doe-records-002-the-default-list-fits-the-wire-cap
        ;; limit を書かない一覧の読み(ListRows の既定 DEFAULT-LIST-LIMIT)は wire の上限の内(R6 (f) — 既定の読みが wire で断られない)。
        (assert (<= DEFAULT-LIST-LIMIT LIST-LIMIT-MAX) #(DEFAULT-LIST-LIMIT LIST-LIMIT-MAX)))]
-  :plans ["card ki-67a745ab6c1c" "card ki-3b942d3af8da"])
+  :plans [])

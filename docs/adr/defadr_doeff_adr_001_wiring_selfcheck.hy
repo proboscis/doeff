@@ -18,7 +18,7 @@
        :evidence "packages/doeff-adr/src/doeff_adr/_pytest_plugin.py")
      (fact
        "doeff 自身の既定ゲートへの組み込み(tests/test_adr_wiring_gate.py)は、テストの中から strict の `pytest --collect-only` を子 process で撃ち、全 suite をもう 1 回収集していた。日次の全体検証(pod)で 2026-09-15 から 3 日連続で、この 1 本が pytest-timeout の 60 秒に当たり、thread 方式なので process ごと落ちて summary 行の無い赤になった(進捗 約 28 % の地点・失敗名の抽出 0 件)。pod の実測(2026-09-17): 全 1,549 本の収集は bytecode cache が冷たいと 135 秒・温かいと 3.7 秒(Mac は冷 19 秒・温 4 秒)。着地の機構は子を PYTHONDONTWRITEBYTECODE=1 で走らせるので、日次の走行では cache が書かれず、入れ子の収集は毎回冷たい。冷たい収集の大半は Hy の ADR 1 ファイルの compile で(docs/adr/defadr_doeff_agents_012_agentd_acp_arms.hy — Mac で 19 秒中 13 秒)、このファイルが 09-14 の 165 KB(この検は通過)から 09-15 の 285 KB・09-17 の 400 KB へ育って締切を越えた。"
-       :evidence "agora-redesign #467 根 3/9; agora-1-0 の land-runs/doeff-verify-20260917-033009.log; dotfiles agentcli land.py の _hygiene_env")]
+       :evidence "agora-1-0 の land-runs/doeff-verify-20260917-033009.log; dotfiles agentcli land.py の _hygiene_env")]
   :context
     [(interpretation
        "設定ファイルを静的に推測するより、リポジトリ全体の候補と session.items の実測値を比較すれば testpaths・明示引数・ignore hook を同じ規則で扱える。")
@@ -33,7 +33,7 @@
      (rule R2 "既定モードは warn とし、strict では未収集 ADR を列挙して非ゼロ終了する。明示的な off は局所実行用に残す。")
      (rule R3 "doeff-adr verify-wiring は strict の collect-only pytest を起動する。外部リポジトリは CI 一行ゲートとして使える。doeff 自身は pytest 正典(ADR-DOE-ENFORCE-001 R1)に従い tests/test_adr_wiring_gate.py で既定ゲートに常時組み込む。")
      (rule R4 "defsemgrep は semgrep executable 不在を skip にせず fail-closed のまま維持する。wiring strict とは別の実行時依存検査として扱う。")
-     (rule R5 "session の中から配線を検めるテスト(doeff の tests/test_adr_wiring_gate.py)は、走っている session 自身の収集結果を plugin の口 doeff_adr._pytest_plugin.default_scope_wiring で読む。テストの中から 2 回目の収集(入れ子の pytest)を起こさない(2026-09-17 追加 — agora-redesign #467 根 3/9 の根治)。照合は session につき 1 回で、収集完了時の報告(R1 / R2)とこの口は同じ測定値を読む。path を名指しした session は既定の範囲について何も言えない(狭ければ偽の赤・広ければ偽の緑)ので、口は NotDefaultScope を返し、テストは合格ではなく skip として理由を名乗る。手元で確かめる口は `uv run pytest -k <テスト名>`(既定の範囲・収集 1 回)か R3 の `doeff-adr verify-wiring`。")]
+     (rule R5 "session の中から配線を検めるテスト(doeff の tests/test_adr_wiring_gate.py)は、走っている session 自身の収集結果を plugin の口 doeff_adr._pytest_plugin.default_scope_wiring で読む。テストの中から 2 回目の収集(入れ子の pytest)を起こさない(2026-09-17 追加)。照合は session につき 1 回で、収集完了時の報告(R1 / R2)とこの口は同じ測定値を読む。path を名指しした session は既定の範囲について何も言えない(狭ければ偽の赤・広ければ偽の緑)ので、口は NotDefaultScope を返し、テストは合格ではなく skip として理由を名乗る。手元で確かめる口は `uv run pytest -k <テスト名>`(既定の範囲・収集 1 回)か R3 の `doeff-adr verify-wiring`。")]
   :laws
     [(law every-executable-adr-is-collected
        :statement "exists(defadr_file) => collected_by_configured_pytest_scope(defadr_file)"

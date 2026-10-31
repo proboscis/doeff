@@ -122,7 +122,7 @@
           "packages/doeff-agents/tests"]
   :problem
     [(fact
-       "operator の決め(agora-redesign 段 7・決定 1.3、2026-09-12): Hy は原則限定(B)— 新規は Hy、既存の doeff の Python は当面残すが、直接 I/O の 8 file は handler へ。"
+       "agora-redesign 段 7 の決定 1.3: Hy は原則限定(B)— 新規は Hy、既存の doeff の Python は当面残すが、直接 I/O の 8 file は handler へ。"
        :evidence "agora-redesign docs/plans/decisions-merge-2026-09-12.md 1.3 / docs/design/known-shapes-2026-09-12.md:59")
      (fact
        "round 3 の棚卸し(2026-09-12): doeff-agents の sessionhost は Hy 9,351 行で既に適合。その外の driver 層は Python 8,600 行で、22 file が doeff の effect で書かれ、8 file が直接 I/O を持っていた。"

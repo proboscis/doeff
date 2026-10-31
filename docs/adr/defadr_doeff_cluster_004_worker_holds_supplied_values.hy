@@ -1,7 +1,7 @@
 ;;; Executable ADR: API server が止まっている間に置き直された job も、Secret・ConfigMap の参照の値を得て起動できるよう、worker が自分に
 ;;; 置かれうる job の参照の値の写しを持ち、job の読みは API server に届かない時だけその写しで答える。
 ;;;
-;;; 出自 = card ki-bda3364cb633(原因の実測は card ki-c1ea3acb8e09)。2026-10-29 23:30 JST に API server の在る機体 eos が止まり、eos で
+;;; 2026-10-29 23:30 JST に API server の在る機体 eos が止まり、eos で
 ;;; 動いていた job が pool の atlas へ置き直されたが、起動で参照の値を API server に問い、届かずに 16 分で 17 回落ちた。それまで
 ;;; supplied-values の、API server が止まった時の振る舞いを決めた ADR は無かった(docs/adr を「supplied」で読んで確かめた — 2026-10-30)。
 ;;;
@@ -34,7 +34,7 @@
        :evidence "shared/protocol/supplied_values.hy の held-entries と entries-of-answer(この ADR の前の形)")
      (fact
        "区画の API server は 1 台の機体の上に在る。その機体が止まると、どの機体の worker も値を得られない。job を 2 台に置けるようにしても、移る訳がその機体の停止の時は、移り先も起動に同じ API server が要り、必ず起動できない(移り先が、移る原因と同じ障害の範囲に入っている)。"
-       :evidence "card ki-c1ea3acb8e09 の実測(10-29 23:31〜23:47 JST・atlas の job が ConnectTimeout で 17 回落ちた)")]
+       :evidence "実測(10-29 23:31〜23:47 JST・atlas の job が ConnectTimeout で 17 回落ちた)")]
   :context
     [(interpretation
        "control plane を複数台にする事・起こし直しの間隔を変える事はこの ADR の外。値の得方そのものを、API server の停止に耐える形にする。")
@@ -56,7 +56,7 @@
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-a-job-placed-while-the-api-server-is-down-starts-from-the-worker-copy"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-a-directory-written-from-the-copy-has-every-held-key"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-the-coordinator-names-only-the-spellings-of-jobs-the-worker-could-take"]
-       :wiring "配線済み(2026-10-30・card ki-bda3364cb633)")
+       :wiring "配線済み(2026-10-30)")
      (law a-refused-value-is-not-answered-from-the-copy
        :statement "for_all 参照 r: API server が届いて r を断った(403・404)時、r の読みは写しで答えず断る ∧ 係はその写しを消す。写しの無い r・別の worker の写し・宣言が名指さないキーは、届かない時も写しで答えない"
        :counterexamples
@@ -64,19 +64,19 @@
           (counterexample "写しを worker の名で分けない — 同じ作業の根を分ける 2 つの worker が、互いの写しを「綴りから外れた」と消し合う")]
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-a-refused-or-unheld-reference-is-not-answered-from-a-copy"
                      "packages/doeff-cluster/tests/test_supplied_held.hy::test-the-copy-follows-the-declarations-and-the-api-server-answers"]
-       :wiring "配線済み(2026-10-30・card ki-bda3364cb633)")
+       :wiring "配線済み(2026-10-30)")
      (law the-copy-is-private-and-its-values-stay-out-of-the-log
        :statement "for_all 写しの file f と、その上の dir d(作業の根より下): mode(f) = 0600 ∧ mode(d) = 0700 ∧ 係と読みの log の行・coordinator の返事に値は字のままでも base64 でも載らない"
        :counterexamples
          [(counterexample "MakeDirectory の mode に頼って途中の段を umask の mode で作る — 途中の段が他人の読める dir に成る")]
        :enforced-by ["packages/doeff-cluster/tests/test_supplied_held.hy::test-the-copy-is-private-and-its-values-stay-out-of-the-log"]
-       :wiring "配線済み(2026-10-30・card ki-bda3364cb633)")
+       :wiring "配線済み(2026-10-30)")
      (law the-coordinator-and-the-reader-share-one-spelling
        :statement "coordinator が並べる綴りと、値を読む部品が受ける綴りは、shared/core/supplied_spelling の同じ正規表現"
        :counterexamples
          [(counterexample "2 か所に綴りを書き、片方だけを変える — coordinator が並べない参照を job が読み、写しが無い")]
        :enforced-by ["docs/adr/defadr_doeff_cluster_004_worker_holds_supplied_values.hy::test-adr-doe-cluster-004-one-spelling"]
-       :wiring "配線済み(2026-10-30・card ki-bda3364cb633)")]
+       :wiring "配線済み(2026-10-30)")]
   :enforcement
     [(deftest test-adr-doe-cluster-004-one-spelling
        ;; 読む部品の綴りは shared/core の綴りそのもの(R1・R3 — 写しを持つ物と読む物が同じ字で決まる)。
@@ -86,4 +86,4 @@
        (<- found tuple (supplied-spellings #(#("A" "secret:ns/name/key") #("B" "configmap:ns/obj") #("C" "https://example.invalid/x")
                                              #("D" "/etc/x") #("E" "secret:ns/name/key"))))
        (assert (= found #("configmap:ns/obj" "secret:ns/name/key")) found))]
-  :plans ["card ki-bda3364cb633"])
+  :plans [])

@@ -2,9 +2,9 @@
 ;;; with-handlers で与え、実行器(job_entry)は既定の handler を 1 つも足さない。service と task は同じ入口で、
 ;;; 設定は Program の中の Ask と、それに答える os.environ を読む handler で読む。
 ;;;
-;;; 出自 = operator 裁定 2026-09-27(agora-redesign #829・決めた事は :problem の fact)。
+;;; 決めた事は :problem の fact に書いた。
 ;;;
-;;; 改訂 2026-09-27(agora-redesign #829): R5 の記録係を「未決」から決定へ書き換えた — 記録と再生は Program の中の
+;;; 改訂 2026-09-27: R5 の記録係を「未決」から決定へ書き換えた — 記録と再生は Program の中の
 ;;; with-handlers に置く handler で、runner は差し込まない(決めた事は :problem の fact)。同じ日に R5b を足した — 記録係より
 ;;; 内側の handler は決定的でなければならない(記録係に届かない effect は再生で同じ計算が答え直す)。同じ日に R3b を足した —
 ;;; 宣言の中の Program の値は task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。同じ日に R4b を足した —
@@ -34,7 +34,7 @@
 (val RUNNER-HANDLER-ROSTER
   {"scheduled" 0
    "env-handlers" 0
-   "recording-layer" 0})  ; 2026-09-27 に全部 0(agora-redesign #833 段 3 — job_entry は (run program) だけ)
+   "recording-layer" 0})  ; 2026-09-27 に全部 0(job_entry は (run program) だけ)
 
 (val JOB-ENTRY "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy")
 
@@ -58,8 +58,7 @@
           "docs/adr/defadr_doeff_cluster_001_job_accepts_a_program.hy"]
   :problem
     [(fact
-       "operator 裁定 2026-09-27: handler や env を job として渡さない。job が受け取るのは Program であり、Program と handler の組ではない — doeff の handler は動的な scope の式だから。doeff の job の実行器は既定の handler を持たない。service だけ別の API を持つ理由は無く、設定が要れば Ask の effect と os.environ を読む handler で読める。"
-       :evidence "agora-redesign #829(2026-09-27 の決定)")
+       "handler や env を job として渡さない。job が受け取るのは Program であり、Program と handler の組ではない — doeff の handler は動的な scope の式だから。doeff の job の実行器は既定の handler を持たない。service だけ別の API を持つ理由は無く、設定が要れば Ask の effect と os.environ を読む handler で読める。")
      (fact
        "今の job_entry は service と task で入口が違う: service は --factory(関数の import path)と --config(本体の引数)と --env(handler の組を組む関数の import path)を受け、task は --blob(Program の値)と --env を受ける。どちらも runner が (scheduled (with-handlers <env の handler> program)) で包み、service はさらに記録係(recording-layer)を足す。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy(run-service・task-outcome・env-handlers・recording-layer)")
@@ -67,26 +66,22 @@
        "service の宣言は :env(env の関数の import path)・:config(本体の引数)・:env-config(env だけが読む設定)を持ち、coordinator へは 2 つを重ねた平たい run.config が渡る。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/service_model.hy(ServiceDef の env・config・env-config)")
      (fact
-       "operator 裁定 2026-09-27(記録係): 記録係は VM の計装でなく handler の事として扱えるか(algebraic effect の handler は一般にその用途を支えるか)を問い、支えるなら記録係は handler で作る、と決めた。"
-       :evidence "agora-redesign #829(2026-09-27 の決定)")
+       "記録係: 記録係は VM の計装でなく handler の事として扱えるか(algebraic effect の handler は一般にその用途を支えるか)が問われ、支えるなら記録係は handler で作る、と決めた。")
      (fact
        "今の記録係は job_entry の recording-layer が、run.config の record 欄を見て env の handler の一番内側に足す(recording-handler・record_handlers.hy)。記録係は effect を外へ撃ち直して答えを書き留め、継続を再開する『間に入る handler』の形をしている。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_worker/entry/job_entry.hy(recording-layer)・packages/doeff-cluster/src/doeff_cluster/_foundation/record_handlers.hy")
      (fact
-       "operator の問い 2026-09-27: 記録係に届く前に答えられた effect を記録係は知り得ない。handler の形ではこれをどう解くのが普通か(答えは R5b)。"
-       :evidence "agora-redesign #829(2026-09-27 の決定)")
+       "残った問い: 記録係に届く前に答えられた effect を記録係は知り得ない。handler の形ではこれをどう解くのが普通か(答えは R5b)。")
      (fact
        "task は Program の値を encode-program で詰めた文字列(--blob の file)で運び、実行先が decode-program で解く。service は関数の参照(module:attr)と本体の引数の JSON(:config)で運び、実行先が関数を呼んで Program を作る — 同じ job なのに運び方が 2 つある。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_shared/intent/remote_model.hy(encode-program・decode-program)・job_entry.hy(run-service・task-outcome)")
      (fact
-       "operator 裁定 2026-09-27(置き場所): kind=k3s のような置き場所の指定は宣言に書かない。Program が要る物を宣言するのはよいが、宣言するのは実行器の置き場所ではなく必要な能力である。"
-       :evidence "agora-redesign #829(2026-09-27 の決定)")
+       "置き場所: kind=k3s のような置き場所の指定は宣言に書かない。Program が要る物を宣言するのはよいが、宣言するのは実行器の置き場所ではなく必要な能力である。")
      (fact
        "今の置き場所の指定は :requires(鍵と値の組)で、coordinator が worker のラベルと 1 つずつ等しいかを照らす(labels-satisfy)。書かれている値は置き場所の名前で、doeff-cluster の例と検は {\"kind\" \"k3s\"}、agora は {\"role\" \"agent-exp\"}(実験用の namespace の印)。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_coordinator/core/cluster_policy.hy(labels-satisfy)・service_model.hy の頭の註(:requires {\"kind\" \"k3s\"})・packages/doeff-cluster/tests/test_detached.hy・agora-controllers controllers/runtime_env/declare.hy と controllers/agora_sim/tests/test_emulated_runtime_env_sender.hy(Requirement \"role\" \"agent-exp\")")
      (fact
-       "operator 裁定 2026-09-27(移行): 旧い宣言は一切受け付けない — 新旧が並ぶとすべてが紛らわしくなるから。"
-       :evidence "agora-redesign #833(2026-09-27 の決定)")
+       "移行: 旧い宣言は一切受け付けない。新旧が並ぶと、宣言の全体が紛らわしくなるため。")
      (fact
        "再生が記録と食い違った時、今の再生の handler は ReplayDiverged を上げて止まる(再生の分岐)。"
        :evidence "packages/doeff-cluster/src/doeff_cluster/_foundation/record_log.hy(ReplayDiverged)・record_handlers.hy・replay_main.hy")]
@@ -103,14 +98,14 @@
     [(rule R1 "doeff-cluster の job が受け取るのは Program の値 1 つ(defk の関数を呼んだ結果)だけ。Program と handler の組を別々に受け取らない。handler は Program の中の with-handlers で与える。")
      (rule R2 "実行器 job_entry は既定の handler を 1 つも足さない。今の scheduled の包みと env の関数(--env)の包みも外す。")
      (rule R3 "service と task は同じ API(Program の値 1 つ)で起こす。service だけの --factory・--config の入口はやめる。")
-     (rule R3b "宣言の中の Program の値は、task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。service と task で運び方を分けない(operator 裁定 2026-09-27)。読みやすさは declare の表示で補う — 詰めた Program を解いて、呼んだ関数の名と引数を印字する。handler の値は宣言に入れず、defk の本体の中(with-handlers)で作る。決めた経緯は agora-redesign #829 の決定のコメント。戻し方: 関数の参照(module:attr)+ 引数の JSON を宣言に持ち、runner がその場で呼んで Program を作る形へ戻す(2026-09-27 追加)。")
+     (rule R3b "宣言の中の Program の値は、task と同じく詰めた文字列(encode-program / decode-program)で運ぶ。service と task で運び方を分けない。読みやすさは declare の表示で補う — 詰めた Program を解いて、呼んだ関数の名と引数を印字する。handler の値は宣言に入れず、defk の本体の中(with-handlers)で作る。戻し方: 関数の参照(module:attr)+ 引数の JSON を宣言に持ち、runner がその場で呼んで Program を作る形へ戻す(2026-09-27 追加)。")
      (rule R4 "service の宣言の :env・:config・:env-config をやめる。設定は Program の中の Ask と、それに答える os.environ を読む handler(Program の側で並べる)で読む。宣言が process へ渡す環境変数は、宣言の値として持つ。")
      (rule R4b "Program の宣言が書くのは必要な能力の名前(:needs #{\"claude-cli\" \"pg-network\"} など)だけで、置き場所の名前(kind=k3s・role=agent-exp・機体の名前)は書かない。worker が提供する能力はクラスタの設定(コードの外)で名乗り、coordinator は 必要 ⊆ 提供 の worker に置く。土台の handler も自分の要る能力を :needs で名乗り、それが Program の宣言の :needs に含まれていなければ doeff-linter の違反とする。会社の資格を使う土台は \"company-machine\" を名乗り、会社の機体の worker だけがそれを提供する — 会社の資格の境界を置き場所の仕組みが保証する。今の :requires(worker のラベルとの等しさの照合)は :needs に置き換える。戻し方: :needs を :requires(鍵と値の組)へ戻し、labels-satisfy の照合へ戻す(2026-09-27 追加)。")
-     (rule R7 "旧い宣言(service の :env・:config・:env-config・:requires、env の関数、declare の --config)を受け付ける移行の期間は置かない。新しい API(Program の値 1 つ・:needs)だけにし、旧い形は宣言の時点で理由つきで断る(黙って読み替えない)。利用者(agora-controllers)の書き直しは同じ切り替えで行う(agora-redesign #833)。理由: 旧い形と新しい形が並んで通ると、どちらが正しい書き方か、どの宣言がどちらの意味で動いているかが、読み手にも linter にも分からなくなる(operator 裁定 2026-09-27)。戻し方: 旧い欄を受ける読みを足し戻し、新旧を併存させる(この条を足した commit の revert — 旧い宣言は再び断られなくなるが、新しい API の実装は別の便なので残る)(2026-09-27 追加)。")
+     (rule R7 "旧い宣言(service の :env・:config・:env-config・:requires、env の関数、declare の --config)を受け付ける移行の期間は置かない。新しい API(Program の値 1 つ・:needs)だけにし、旧い形は宣言の時点で理由つきで断る(黙って読み替えない)。使い手(agora-controllers)の書き直しは同じ切り替えで行う。理由: 旧い形と新しい形が並んで通ると、どちらが正しい書き方か、どの宣言がどちらの意味で動いているかが、読み手にも linter にも分からなくなる。戻し方: 旧い欄を受ける読みを足し戻し、新旧を併存させる(この条を足した commit の revert — 旧い宣言は再び断られなくなるが、新しい API の実装は別の便なので残る)(2026-09-27 追加)。")
      (rule R5 "記録と再生は handler で行う(2026-09-27 決定 — 旧文『未決・案 A = Program の側で包む / 案 B = 実行器の観測の口』を置き換える)。形は今の effect-recorder と同じ間に入る handler: 記録は effect を外へ撃ち直して答えを書き留め、継続を再開する。再生は同じ場所で記録から答える。置き場は Program の中の with-handlers で、翻訳の handler と土台の handler の間(外の世界との境目 — 汎用の effect だけを記録する)。記録か再生かは置く handler で選び、どちらを置くかは Ask と os.environ を読む handler で決める。runner は記録係を差し込まない(今の recording-layer と run.config の record 欄をやめる)。WithObserve(見るだけで答えを見ない)はこの用途に使わず、tracing・ログの用途に限る。")
      (rule R5b "記録係より内側(Program 側 — 業務の handler・翻訳の handler)の handler は決定的でなければならない。時計・乱数・I/O を自分で読まず、汎用の effect にして記録係の下の土台の handler で答えさせる。これで記録係に届かない effect は再生でも同じ計算で答え直され、境目の記録だけで再生が成り立つ。守りは doeff-linter の DOEFF106(生の副作用に直に触る定義は土台の層にだけ置く)で、破れは再生の分岐(ReplayDiverged)として出る。scheduler の並行の順番(どの task が先に進むか)は再生で決定的にならないので、live の扱い(順番の突き合わせ)で扱う(2026-09-27 追加)。")
      (rule R6 "移行の間、runner が足している handler の呼び出しは RUNNER-HANDLER-ROSTER の数を超えない(新設は赤)。減らした便は同じ便で台帳を削る。")
-     (rule R8 "sim-cluster・手元の 1 台の cluster・k3s の cluster は同じ API(同じ入口・同じ宣言・同じ Program)で試す。置き場所の違いは handler(土台の handler の組)が吸い、命令の引数・環境の名の分岐で切り替えない(利用者の決定 2026-10-02・agora-redesign #2671 — 手元と cluster で試し方が違う事を懸念し、違いは命令の引数でなく handler が吸う、と決めた)。dotfiles ADR-DOTFILES-027 R-ca36606c と同じ決め — 命令の側の助言はそちらのルールが運ぶ。R4b(置き場所の名前を宣言に書かない)と同じ向きの、試し方の側の決め。追補(2026-10-03 01:5x・決めた人 = Mac の調整役・戻せる決め・この決めの適用・出どころ = agora-redesign #3020 issuecomment-5957175074): (1) テストの「宣言する・準備ができるのを待つ・落とす」を、テスト専用の道具ではなく doeff-cluster の契約の effect として持つ。(2) 配備の土台は --foundation の引数でなく「型 → 土台」の表で選ぶ。(3) 壊すテスト(落とす・ネットワークを切る)は k3s の handler が答えず、sim-cluster と手元の 1 台の cluster で試す。実装は sim と手元の 1 台の分が milestone L(引数は足さず減らす・古い引数は使い手の付け替えが main に入ったら消す)、k3s の handler の分が milestone O(配らない)。戻し方 = 引数で分ける入口へ戻すなら実装の変更を revert する。場面で出る助言は dotfiles のルール cluster-kind-is-chosen-by-handler-table-not-cli-arg と breaking-tests-stay-off-k3s が運ぶ。")]
+     (rule R8 "sim-cluster・手元の 1 台の cluster・k3s の cluster は同じ API(同じ入口・同じ宣言・同じ Program)で試す。置き場所の違いは handler(土台の handler の組)が吸い、命令の引数・環境の名の分岐で切り替えない(2026-10-02 追加 — 手元と cluster で試し方が違わないよう、違いは命令の引数でなく handler が吸う)。dotfiles ADR-DOTFILES-027 R-ca36606c と同じ決め — 命令の側の助言はそちらのルールが運ぶ。R4b(置き場所の名前を宣言に書かない)と同じ向きの、試し方の側の決め。追補(2026-10-03・戻せる決め・この決めの適用): (1) テストの「宣言する・準備ができるのを待つ・落とす」を、テスト専用の道具ではなく doeff-cluster の契約の effect として持つ。(2) 配備の土台は --foundation の引数でなく「型 → 土台」の表で選ぶ。(3) 壊すテスト(落とす・ネットワークを切る)は k3s の handler が答えず、sim-cluster と手元の 1 台の cluster で試す。実装は sim と手元の 1 台の分が milestone L(引数は足さず減らす・古い引数は使い手の付け替えが main に入ったら消す)、k3s の handler の分が milestone O(配らない)。戻し方 = 引数で分ける入口へ戻すなら実装の変更を revert する。場面で出る助言は dotfiles のルール cluster-kind-is-chosen-by-handler-table-not-cli-arg と breaking-tests-stay-off-k3s が運ぶ。")]
   :laws
     [(law job-entry-adds-no-handler
        :statement "for_all job j (service / task): job_entry が j を走らせる時に足す handler の数 = 0 — j の Program の外で効く handler は無い"
@@ -118,14 +113,14 @@
          [(counterexample "job_entry が (scheduled (with-handlers (env-handlers …) program)) で包む — Program の外で scheduler と env の handler が効く(2026-09-27 の本線の形)")
           (counterexample "runner が『既定で』時計や記録係を足す — Program を読んでもどの handler が効くか分からない")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— 台帳の数は全部 0 で、job_entry が scheduled・env の関数・記録係の包みを 1 つでも書けば針が赤になる")
+       :wiring "配線済み(2026-09-27)— 台帳の数は全部 0 で、job_entry が scheduled・env の関数・記録係の包みを 1 つでも書けば針が赤になる")
      (law service-and-task-share-one-entry
        :statement "for_all job j: j の入口の引数は Program の値 1 つ — service と task で入口の形が同じ"
        :counterexamples
          [(counterexample "service は --factory と --config、task は --blob で起こす — 同じ job なのに入口が 2 つある(2026-09-27 の本線の形)")
           (counterexample "service の宣言に :env-config を書いて設定を渡す — 設定は Program の中の Ask と os.environ を読む handler で読める")]
        :enforced-by ["test-adr-doe-cluster-001-one-entry-takes-a-program"]
-       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— job_entry の service・task・probe の入口が --factory・--env・--config を受けないことを針が検める")
+       :wiring "配線済み(2026-09-27)— job_entry の service・task・probe の入口が --factory・--env・--config を受けないことを針が検める")
      (law runner-inserts-no-recorder
        :statement "for_all job j: j の effect の記録・再生の handler は j の Program の中の with-handlers(翻訳の handler と土台の handler の間)に在り、runner(job_entry)は記録係を差し込まない — RUNNER-HANDLER-ROSTER の recording-layer は 0"
        :counterexamples
@@ -133,7 +128,7 @@
           (counterexample "記録に WithObserve を使う — 見るだけで答えを見ないので、再生に要る答えが残らない(WithObserve は tracing・ログの用途に限る)")
           (counterexample "記録係を土台の handler の外側に置く — 翻訳の前の業務の effect まで記録し、外の世界との境目の汎用の effect だけを記録する形にならない")]
        :enforced-by ["test-adr-doe-cluster-001-runner-handler-ratchet"]
-       :wiring "配線済み(2026-09-27・agora-redesign #833 段 3)— 台帳の recording-layer は 0 で、job_entry が記録係を足せば針が赤になる。記録係を Program の中に置く形(boundary-recorder)は段 4")
+       :wiring "配線済み(2026-09-27)— 台帳の recording-layer は 0 で、job_entry が記録係を足せば針が赤になる。記録係を Program の中に置く形(boundary-recorder)は次の段")
      (law programs-declare-capabilities-not-places
        :statement "for_all job j: j の宣言の :needs は能力の名前の集合で、置き場所の名前(kind・role・機体の名前)を含まない ∧ j が置かれた worker w について needs(j) ⊆ provides(w) ∧ for_all j の Program が並べる土台の handler f: needs(f) ⊆ needs(j) ∧ (\"company-machine\" ∈ provides(w) ⇔ w は会社の機体)"
        :counterexamples
@@ -143,7 +138,7 @@
        :enforced-by ["coordinator の置き方 cluster_policy.placeable(packages/doeff-cluster/tests/test_cluster_policy.hy)"
                      "declare の土台の :needs の検め service_rules.foundation-needs-refusal(packages/doeff-cluster/tests/test_service_declaration.hy)"
                      "doeff-linter(土台が並べる handler の :needs の照らし — 規則の番号は未定)"]
-       :wiring "一部配線(2026-09-28・agora-redesign #833)— :needs の宣言(defk・defhandler・defsystem)・coordinator の needs ⊆ provides ∪ derived の置き方・company-machine を worker の自己申告でなく node の label から導く所・declare の土台の :needs ⊆ job の :needs は実装と検がある。土台が並べる handler の :needs の照らし(linter)は未配線")
+       :wiring "一部配線(2026-09-28)— :needs の宣言(defk・defhandler・defsystem)・coordinator の needs ⊆ provides ∪ derived の置き方・company-machine を worker の自己申告でなく node の label から導く所・declare の土台の :needs ⊆ job の :needs は実装と検がある。土台が並べる handler の :needs の照らし(linter)は未配線")
      (law old-declarations-are-refused
        :statement "for_all 宣言 d: d が旧い欄(:env・:config・:env-config・:requires)か env の関数か declare の --config を使う ⇒ 宣言の時点で理由の文つきで断られる(新しい API への読み替えも、警告だけで通すことも無い)"
        :counterexamples
@@ -151,7 +146,7 @@
           (counterexample "旧い :env を受けて警告を出すだけにする — 警告は読まれず、旧い形が残り続ける")
           (counterexample "doeff-cluster だけ先に切り替え、agora-controllers の書き直しを後の便に回す — 本線の利用者が壊れた宣言のまま残る(同じ切り替えで行う)")]
        :enforced-by ["packages/doeff-cluster/tests/test_old_declarations.hy ほか — 旧い形を断る入口ごとの反例(宣言の構成子・defsystem・declare の CLI・資源の口・PUT /jobs・保存の読み直し・heartbeat・worker の起動・task の本文・効果の構成子・job_entry・replay_main・probe)"]
-       :wiring "配線済み(2026-09-28・agora-redesign #833)— doeff-cluster の旧い形を断る入口の全部に反例の検がある。agora-controllers の宣言の CLI の入口は書き直し(#834)で同じく断る")
+       :wiring "配線済み(2026-09-28)— doeff-cluster の旧い形を断る入口の全部に反例の検がある。agora-controllers の宣言の CLI の入口は書き直しで同じく断る")
      (law handlers-inside-the-recorder-are-deterministic
        :statement "for_all 記録係より内側の handler h: h は時計・乱数・I/O を直に読まない(非決定の入力は汎用の effect として記録係の下の土台の handler が答える)— よって for_all 記録 r: r を再生した計算は、記録係に届かない effect についても記録の時と同じ答えを出し、ReplayDiverged を上げない(scheduler の並行の順番は live の扱いの突き合わせの外)"
        :counterexamples
@@ -165,7 +160,7 @@
        :counterexamples
          [(counterexample "k3s で試す時だけ --cluster k3s の引数で job_entry の道を切り替える — 置き場所の違いが handler でなく入口の分岐に入る")
           (counterexample "手元の 1 台の cluster のために別の命令の入口を作る — 同じ Program が置き場所ごとに別の API で試される")
-          (counterexample "sim-cluster だけ coordinator を抜いて Program を直に回す — 手元のテストが本番の入口を通らない(agora-redesign #2671 の 13 系の実例)")]
+          (counterexample "sim-cluster だけ coordinator を抜いて Program を直に回す — 手元のテストが本番の入口を通らない(実例の在る形)")]
        :enforced-by ["dotfiles の助言 develop-locally-never-wait-for-deployment(ADR-DOTFILES-027 R-ca36606c)"]
        :wiring "未配線(2026-10-02)— 機械の検は無い(試しの入口が置き場所ごとに分かれていないかを測る針は未設計)。今は書く拍の助言だけ")]
   :enforcement
@@ -201,4 +196,4 @@
                        "(recording-layers x)\n"))
        (assert (= (run (count-runner-handler-sites sample))
                   {"scheduled" 1 "env-handlers" 1 "recording-layer" 0})))]
-  :plans ["agora-redesign #829"])
+  :plans [])

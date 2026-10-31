@@ -1,8 +1,8 @@
 ;;; Executable ADR: doeff-cluster の coordinator は、要求の無い間、次に判断の答えが変わる刻か、要求か、停止か、外の出来事まで
 ;;; 1 本で待つ — 1 秒ごとに起きて見に行かない。判断は期限ちょうどの刻に出る(1 秒の格子に丸めない)。
 ;;;
-;;; 出自 = 利用者の決定 2026-10-06(決めた事は :problem の fact)を、Mac の調整役が 2026-10-07 に、本番も期限まで眠る形への答えと読んだ
-;;; (解釈である事を :problem に書く)。追跡 = agora-redesign #3865。
+;;; 出自 = 2026-10-06 の決まり(決めた事は :problem の fact)を、Mac の調整役が 2026-10-07 に、本番も期限まで眠る形への答えと読んだ
+;;; (解釈である事を :problem に書く)。
 ;;;
 ;;; 段: 単位 1(期限の答えの型・now + 1 の書き直し・次に起きる刻の純粋な判断と落ち着くまでの約束)は判断だけで、待ち方は変えない。
 ;;; 単位 2 で調停ループ(core/program.hy の run-coordinator)を繋ぎ、1 秒の周期の設定(TICK-MS)とそれで起きる code(模擬の格子の上の
@@ -11,8 +11,8 @@
 ;;; 戻し方: この ADR と単位 2 の commit を revert する(本番は 1 秒ごとの拍へ、模擬は格子の上の静かな区間へ戻る)。単位 1 の
 ;;; 判断(期限の答えの型)は、待ち方を変えないので残してよい。
 ;;;
-;;; 追補 R8(2026-10-16・card ki-d033e5f969cf): 予定の起きる刻(R1)と比べて coordinator 自身の止まりを見つけ、止まっていた長さを
-;;; 沈黙に数えない(2026-10-13 の atlas の 3 分の止まり — 親 card ki-b4d94c618094 の第 3 案)。戻し方は R8 の commit の revert。
+;;; 追補 R8(2026-10-16): 予定の起きる刻(R1)と比べて coordinator 自身の止まりを見つけ、止まっていた長さを
+;;; 沈黙に数えない(2026-10-13 の atlas の 3 分の止まり — 第 3 案)。戻し方は R8 の commit の revert。
 
 (require doeff-adr.macros [defadr rule law])
 (import doeff-adr.macros [fact interpretation counterexample])
@@ -33,7 +33,7 @@
 (val NOW-PLUS-ONE-ROSTER
   {"cluster_policy.hy" 0
    "api_policy.hy" 0
-   "wake_policy.hy" 0})   ; rollout-due の Rollout の歩の刻の下限は #3868 で消した(R5)
+   "wake_policy.hy" 0})   ; rollout-due の Rollout の歩の刻の下限は消した(R5)
 
 
 (defadr ADR-DOE-CLUSTER-002
@@ -53,34 +53,30 @@
           "docs/adr/defadr_doeff_cluster_002_coordinator_waits_until_the_next_due.hy"]
   :problem
     [(fact
-       "利用者の決定 2026-10-06: polling を要する所はすべて直す。polling は最後の手段とする。"
-       :evidence "agora-redesign #3865 の本文(cc3-w56 が見つけ、cisco-c8 が引いた)")
+       "2026-10-06 に、polling を要する所はすべて直し、polling は最後の手段とすると決めた。")
      (fact
-       "2026-09-30 の決定(agora-redesign #1383 comment 5896513586・議論の会話 w3J:pE・戻せる決定)は、次の期限まで眠る形を模擬の時計の下だけに入れ、本番の拍の間隔 1 秒と判断の刻を変えず、本番も期限まで眠る形(案 1)を operator の判断として残した。本番の 1 秒は tests/test_idle_skip.hy の test-the-production-inbox-keeps-the-one-second-tick(commit 86c8b2f94)が縛っていた。"
-       :evidence "agora-redesign #1383・#1522")
+       "2026-09-30 の決定(戻せる決定)は、次の期限まで眠る形を模擬の時計の下だけに入れ、本番の拍の間隔 1 秒と判断の刻を変えず、本番も期限まで眠る形(案 1)は決めずに残した。本番の 1 秒は tests/test_idle_skip.hy の test-the-production-inbox-keeps-the-one-second-tick(commit 86c8b2f94)が縛っていた。")
      (fact
-       "Mac の調整役は 2026-10-07 に、2026-10-06 の利用者の決定を、残された判断(案 1)への答えと読み、本番も次の期限まで眠る形で進めると決めた — これは Mac の調整役の解釈で、利用者が案 1 を名指して選んだ記録ではない。"
-       :evidence "agora-redesign #3865 と #1383 の 2026-10-07 の comment(cisco-c8 が書いた)")
+       "Mac の調整役は 2026-10-07 に、2026-10-06 の決まりを、残された判断(案 1)への答えと読み、本番も次の期限まで眠る形で進めると決めた — これは Mac の調整役の解釈で、案 1 を名指して選んだ記録ではない。")
      (fact
-       "2026-10-13 02:22〜02:24 JST(17:21:19Z〜17:24:28Z)に atlas が 3 分止まり(containerd が答えず kubelet の PLEG が止まる・host の PSI の記録に空白)、atlas に載る本番の coordinator は落ちずに止まった。起きた最初の歩で全 worker の最後の連絡が lease-ms を越えていて全員を沈黙と数え、配る担当(turn-dispatcher)へ消えと戻りが 33 回届いた。dispatcher は 2026-10-16 に、置き場(atlas)は変えず、coordinator が自分の止まりを見つけて止まりの直後は lease 切れを数えない形(第 3 案)に決めた。"
-       :evidence "agora-redesign の card ki-b4d94c618094(親 — 調べと決め)・ki-d033e5f969cf(この直し)")
+       "2026-10-13 02:22〜02:24 JST(17:21:19Z〜17:24:28Z)に atlas が 3 分止まり(containerd が答えず kubelet の PLEG が止まる・host の PSI の記録に空白)、atlas に載る本番の coordinator は落ちずに止まった。起きた最初の歩で全 worker の最後の連絡が lease-ms を越えていて全員を沈黙と数え、配る担当(turn-dispatcher)へ消えと戻りが 33 回届いた。dispatcher は 2026-10-16 に、置き場(atlas)は変えず、coordinator が自分の止まりを見つけて止まりの直後は lease 切れを数えない形(第 3 案)に決めた。")
      (fact
        "coordinator は要求が無くても 1 秒ごとに起きて 1 歩を回す(core/program.hy の coordinator-step が IdleNextRequests に TICK-MS 1000 を渡し、本番の受付 shared/protocol/inbox.hy の http-requests が箱を 1 秒で打ち切る)。期限の関数は「まだ落ち着いていない」と「行が在れば次の拍」を数の now + 1 で返していた(cluster_policy.hy の liveness-due・task-due・sweep-due・idle_policy.hy の rollout-due)。"
-       :evidence "doeff origin/main e604d71de3 の行(agora-redesign #3865 の見直しの comment)")]
+       :evidence "doeff origin/main e604d71de3 の行")]
   :context
     [(interpretation
-       "期限の関数が返す刻は、判断が比べに使う期限の値と同じ関数から求める(#1383 の条件 (1))。期限ちょうどで起きる形では、刻が 1 ms 早いと起きた時に判断が変わらず、関数が now より後の刻だけを見るので本当の変化の刻を飛ばす。遅いと判断が遅れる。1 秒の格子はこのずれを隠していた。")
+       "期限の関数が返す刻は、判断が比べに使う期限の値と同じ関数から求める。期限ちょうどで起きる形では、刻が 1 ms 早いと起きた時に判断が変わらず、関数が now より後の刻だけを見るので本当の変化の刻を飛ばす。遅いと判断が遅れる。1 秒の格子はこのずれを隠していた。")
      (interpretation
        "数の now + 1 は「1 ms 先の期限」と「すぐもう 1 歩」を見分けられない。答えを閉じた型に分ければ、待ち方を決める側(調停ループ)が今すぐの歩と期限までの待ちを名で分けられる。")]
   :decision
     [(rule R1 "coordinator は、何も変えない歩の後、次に起きる刻(core/wake_policy.hy の next-wake — 要求の無い歩の期限・Rollout の期限・返事を待たせている待ちの期限のいちばん早い答え)まで受付を 1 本で待つ。要求・停止の合図・外の出来事は待ちを起こす。1 秒の周期の設定(TICK-MS)と、それで起きる code は持たない(単位 2b で消した)。")
-     (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない — #3865 の見直しの追記)。")
+     (rule R2 "判断は期限ちょうどの刻に出る。1 秒の格子に丸めない(格子を残して次の格子まで待つ形は、周期の定数が残るので採らない)。")
      (rule R3 "期限の関数の答えは閉じた型 DueAt(刻)・DueNow(今すぐ — 今の刻で判断すれば状態が変わる)・DueNever(状態がこのままなら時刻では変わらない)。数の now + 1 を返さない。落ち着いた状態(要求の無い歩をもう 1 歩進めても変わらない)では DueNow を返さない。")
      (rule R4 "要求を受けずに状態を変えた歩の後は、待たずにもう 1 歩進める(after-step)。要求を受けた歩の後は、次に起きる刻まで待つ — 要求で変わった状態が落ち着いていなければ期限の関数が DueNow を返す(R3)ので、要求ごとに空の歩を回さない(2026-10-07 の直し A・cisco-c8 の可。前は要求を受けた歩の後も必ずもう 1 歩回していた)。DueNow が UNSETTLED-STEP-LIMIT 歩を越えて続いたら、前後の状態で違う欄を名指して CoordinatorUnsettled で落ちる(黙って回り続けない)。")
-     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(agora-redesign #3868 — 以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。worker の置かれた node の label も時間で読みに行かない(agora-redesign #4070 — 以前の 60 秒ごとの読み直し NODE-LABELS-TTL-MS と、その期限 node-reread-due は消した)。coordinator は heartbeat で申告された node を同じ形で見張り(FollowNodes・foundation/kube_client の follow-node)、label の変化を受け渡した時に受付の箱を起こす。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。失敗した action(印の annotation を含む)は最後の失敗から倍々の間を空けて出し直し、その刻は終わった Rollout でも期限にする。見張りの stream は TCP の keepalive を付けた接続で受け、繋がったまま黙った相手を約 30 秒で読めなかった観測にする。")
+     (rule R5 "Rollout の相手の Kubernetes の Deployment は時間で読みに行かない(以前の Rollout の歩の間隔の下限 ROLLOUT-TICK-MS の 1 秒ごとの読みと、台数を持つ相手の 10 秒ごとの読み直しは消した)。coordinator は Rollout が観測を要る Deployment を list の後の watch で見張り(FollowDeployments・foundation/kube_client の follow)、見張りが変化を受け渡した時に受付の箱を起こす(外の出来事 — R1)。worker の置かれた node の label も時間で読みに行かない(以前の 60 秒ごとの読み直し NODE-LABELS-TTL-MS と、その期限 node-reread-due は消した)。coordinator は heartbeat で申告された node を同じ形で見張り(FollowNodes・foundation/kube_client の follow-node)、label の変化を受け渡した時に受付の箱を起こす。Rollout の歩は毎歩回るので、rollout-due は now より後の期限だけを返す。成功した Deployment への書きは、その書きの後の観測が届くまで出し直さない(rollout_policy.action-due — 見張りが伝える前の古い観測で同じ書きを重ねない。1 秒の間隔がこれを隠していた)。失敗した action(印の annotation を含む)は最後の失敗から倍々の間を空けて出し直し、その刻は終わった Rollout でも期限にする。見張りの stream は TCP の keepalive を付けた接続で受け、繋がったまま黙った相手を約 30 秒で読めなかった観測にする。")
      (rule R6 "置いた切り離していない task の期限は、担い手が reassign-after-ms の窓の外に出る刻(place-tasks と同じ比べ)。置ける生きた worker の在る待っている task の期限は、その worker が lease-ms の窓の外に出る最初の刻(空き・drain の終わりは要求と掃除の期限が受ける)。")
      (rule R7 "模擬だけの物(worker の代役が静かな拍を眠る事と、眠る前に預ける heartbeat)は受け手の層(模擬の受付の列 coordinator/protocol/request_queue.hy)に置く。列は預けた heartbeat をその刻に普通の heartbeat の要求として調停ループへ渡し、調停ループは本番と同じ要求だけを受ける(調停ループに模擬の材料を渡す effect を持たない — 前の IdleNextRequests・IdleTaken は消した)。")
-     (rule R8 "coordinator は process の中の自分の止まりを、前の歩の予定の外の長さ(前の歩の判断の刻から受付を待ち始めるまで + R1 の次に起きる刻からの寝過ごし — api_policy.stall-of)が lease-ms を越えた事で見つけ、前の歩の判断の刻から今までを止まっていた長さとして、起き直し(resume-after-downtime)と同じく経過・沈黙に数えない(api_policy.clocks-shifted で worker の最後の連絡・task の lease・Rollout の段の起点・入れ替えの期限・盤の lease と TTL の行・drain と温める表の行の期限・退いた世代の最後の報告をずらす — 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず job を移さず、頼み手が頼み直す期限も切らない)。ClusterState の欄は、ずらす(api_policy.STALL-SHIFTED-FIELDS)かずらさない(STALL-UNSHIFTED-FIELDS)のちょうど一方に必ず分ける — 期限を持つ欄を足す人に、止まりの後にその期限が切れてよいかを決めさせる(2026-10-16 の設計検証の盲検 A)。止まりの判断は stall-of の 1 つだけで、調停ループは別の閾・別の意味の止まりを作らない(盲検 B)。予定どおりの眠り(期限の刻まで待つ)は止まりに数えない。期限なしの待ちは寝過ごしを測らず、前の歩の長さだけで見つける。見つけた止まりは内訳(前の歩の長さ・寝過ごし)つきで 1 行の log に出す。採った代償: 予定の外の長さが lease-ms 以下の止まりは見つけない(直す前と同じ。予定の起きる刻までの眠りは数えないので、見つけない止まりは最大でおよそ lease の 2 倍)・止まりが歩ごとに続く間は経過を数えないので、その間は死んだ worker の判定も延びる(続けば止まりの行が歩ごとに出る)。置き場(本番の atlas)は変えない(card ki-d033e5f969cf・2026-10-16)。")]
+     (rule R8 "coordinator は process の中の自分の止まりを、前の歩の予定の外の長さ(前の歩の判断の刻から受付を待ち始めるまで + R1 の次に起きる刻からの寝過ごし — api_policy.stall-of)が lease-ms を越えた事で見つけ、前の歩の判断の刻から今までを止まっていた長さとして、起き直し(resume-after-downtime)と同じく経過・沈黙に数えない(api_policy.clocks-shifted で worker の最後の連絡・task の lease・Rollout の段の起点・入れ替えの期限・盤の lease と TTL の行・drain と温める表の行の期限・退いた世代の最後の報告をずらす — 止まりの直後の歩で、止まる前に生きていた worker を lease 切れに数えず job を移さず、頼み手が頼み直す期限も切らない)。ClusterState の欄は、ずらす(api_policy.STALL-SHIFTED-FIELDS)かずらさない(STALL-UNSHIFTED-FIELDS)のちょうど一方に必ず分ける — 期限を持つ欄を足す人に、止まりの後にその期限が切れてよいかを決めさせる(2026-10-16 の設計検証の盲検 A)。止まりの判断は stall-of の 1 つだけで、調停ループは別の閾・別の意味の止まりを作らない(盲検 B)。予定どおりの眠り(期限の刻まで待つ)は止まりに数えない。期限なしの待ちは寝過ごしを測らず、前の歩の長さだけで見つける。見つけた止まりは内訳(前の歩の長さ・寝過ごし)つきで 1 行の log に出す。採った代償: 予定の外の長さが lease-ms 以下の止まりは見つけない(直す前と同じ。予定の起きる刻までの眠りは数えないので、見つけない止まりは最大でおよそ lease の 2 倍)・止まりが歩ごとに続く間は経過を数えないので、その間は死んだ worker の判定も延びる(続けば止まりの行が歩ごとに出る)。置き場(本番の atlas)は変えない(2026-10-16)。")]
   :laws
     [(law due-answers-are-closed
        :statement "for_all 期限の関数 f ∈ {liveness-due・task-due・sweep-due・tick-due・rollout-due・next-wake}・状態 s・刻 now: f(s, now) ∈ DueAt ∪ DueNow ∪ DueNever"
@@ -122,27 +118,27 @@
      (law a-rollout-follows-its-deployments-by-events
        :statement "for_all Rollout が Deployment の変化を待つ区間 I: I の中で coordinator が Kubernetes の Deployment を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ Deployment が変わった刻 t に Rollout の処理ステージが進むなら、その刻は t(1 秒の格子に丸めない)"
        :counterexamples
-         [(counterexample "Rollout の進行中は 1 秒ごとに Deployment を読みに行く(ROLLOUT-TICK-MS)— 静かな 20 秒に 19 回読み、Pod が揃った刻 …635370 ではなく次の格子 …636000 に StoppingOld へ進む(#3868 の失敗ケース 44bff9355)")
+         [(counterexample "Rollout の進行中は 1 秒ごとに Deployment を読みに行く(ROLLOUT-TICK-MS)— 静かな 20 秒に 19 回読み、Pod が揃った刻 …635370 ではなく次の格子 …636000 に StoppingOld へ進む(失敗ケース 44bff9355)")
           (counterexample "成功した台数の書きの直後、見張りが結果を伝える前の古い観測で同じ書きを毎歩出し直す — 1 秒の間隔を消すと調停ループが落ち着かない(101 歩で CoordinatorUnsettled)")
-          (counterexample "同じ action の失敗の繰り返しで lastAction の at を最初の失敗の刻のまま残す・印の annotation の失敗を間を空けずに出し直す — 間の上限(60 秒)の後と annotation の失敗は毎歩出し直しになる(#3868 のレビュー)")
-          (counterexample "繋がったまま黙った watch の stream(FIN も RST も来ない)を読みの打ち切り(5 分半)まで待ち、その間の古い観測で判断する — TCP の keepalive で約 30 秒で見つける(#3868 のレビュー)")]
+          (counterexample "同じ action の失敗の繰り返しで lastAction の at を最初の失敗の刻のまま残す・印の annotation の失敗を間を空けずに出し直す — 間の上限(60 秒)の後と annotation の失敗は毎歩出し直しになる")
+          (counterexample "繋がったまま黙った watch の stream(FIN も RST も来ない)を読みの打ち切り(5 分半)まで待ち、その間の古い観測で判断する — TCP の keepalive で約 30 秒で見つける")]
        :enforced-by ["packages/doeff-cluster/tests/test_rollout_kube_events.hy"
                      "packages/doeff-cluster/tests/test_kube_client_watch.hy"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-written-deployment-action-waits-for-an-observation-after-the-write"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-repeated-action-is-dated-at-its-last-attempt"
                      "packages/doeff-cluster/tests/test_rollout_holes.hy::test-a-failing-annotation-waits-for-the-retry-gap"
                      "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
-       :wiring "配線済み(2026-10-08・#3868 の単位 2)")
+       :wiring "配線済み(2026-10-08)")
      (law a-node-label-is-followed-by-events
        :statement "for_all worker の置かれた node の label が変わらない区間 I: I の中で coordinator が Kubernetes の Node を読みに行く数 = 0(見張りの始めの list と変化の出来事だけ)∧ label が変わった刻 t に受付の箱が起き、その歩で worker の導いた能力が新しい label から導き直される(次の周期の刻まで古い能力を持ち続けない)"
        :counterexamples
-         [(counterexample "node の label を 60 秒ごとに読み直す(NODE-LABELS-TTL-MS)— 静かな 150 秒に 2 回読み、会社の機体の label を外した刻の 1 秒後も worker が company-machine を持ち続ける(#4070 の失敗ケース b2f856817)")]
+         [(counterexample "node の label を 60 秒ごとに読み直す(NODE-LABELS-TTL-MS)— 静かな 150 秒に 2 回読み、会社の機体の label を外した刻の 1 秒後も worker が company-machine を持ち続ける(失敗ケース b2f856817)")]
        :enforced-by ["packages/doeff-cluster/tests/test_node_label_events.hy"
                      "packages/doeff-cluster/tests/test_kube_client_watch.hy::test-a-node-is-listed-by-name-and-a-label-change-reaches-on-body"
                      "packages/doeff-cluster/tests/test_kube_reads_off_loop.hy::test-the-emulated-k8s-wakes-the-loop-when-a-stalled-node-watch-answers"]
-       :wiring "配線済み(2026-10-08・#4070)")
+       :wiring "配線済み(2026-10-08)")
      (law a-sleeping-stand-in-changes-no-decision
-       :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ — agora-redesign #3871 の単位 5。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
+       :statement "for_all 筋書き: 期限だけで起きる走りと、余計に起こす走り(coordinator を 1 秒ごとに起こす)で、生存の印を外した耐久の状態の変わり目の列(判断とその刻)・置き場の最後の状態・筋書きの答えが等しい(worker の代役は本番と同じ待ちで周の間を待つ。前の形は代役が静かな拍を眠り、預けた heartbeat を列がその刻に渡した)"
        :counterexamples
          [(counterexample "預けた heartbeat を、起きた時にまとめて調停ループへ渡す — 判断の刻が heartbeat の刻からずれる(前の静かな区間の形はこれを本番の判断で試して隠していた)")]
        :enforced-by ["packages/doeff-cluster/tests/test_idle_skip.hy"]
@@ -157,7 +153,7 @@
        :enforced-by ["packages/doeff-cluster/tests/test_coordinator_stall.hy"
                      "packages/doeff-cluster/tests/test_coordinator_stall_loop.hy"
                      "packages/doeff-cluster/tests/test_coordinator_stall_on_sim.hy"]
-       :wiring "配線済み(2026-10-16・card ki-d033e5f969cf)— 調停ループ run-coordinator が歩ごとに刻み StepPace を渡し、coordinator-step が調停の前に stall-resumed を通る。sim の StallCoordinator で coordinator を 3 分止める筋書きは、直す前の形で赤を手元で確かめた(sim が止めるのは受付の待ちの中 = 寝過ごしの枝。前の歩の長さの枝 — 保存の詰まり — は test_coordinator_stall の判断の検が持つ)")]
+       :wiring "配線済み(2026-10-16)— 調停ループ run-coordinator が歩ごとに刻み StepPace を渡し、coordinator-step が調停の前に stall-resumed を通る。sim の StallCoordinator で coordinator を 3 分止める筋書きは、直す前の形で赤を手元で確かめた(sim が止めるのは受付の待ちの中 = 寝過ごしの枝。前の歩の長さの枝 — 保存の詰まり — は test_coordinator_stall の判断の検が持つ)")]
   :enforcement
     [(deftest test-adr-doe-cluster-002-due-answers-are-closed
        ;; 期限の関数は、期限の無い状態に DueNever・落ち着いていない状態に DueNow を返す(数の None・now + 1 ではない — R3)。
@@ -170,11 +166,11 @@
        (assert (= (run (sweep-due expired 200 timing)) (DueNow)) "期限の過ぎた行の掃除は今すぐ"))
      (deftest test-adr-doe-cluster-002-no-number-now-plus-one
        ;; 針: 期限の関数の file に、数の (+ now 1) を期限として書く所は台帳を超えない(新設は赤・削り忘れも赤 — R3)。
-       ;; wake_policy の Rollout の歩の刻の下限(max (+ now 1) …)は #3868 で消した(R5)。
+       ;; wake_policy の Rollout の歩の刻の下限(max (+ now 1) …)は消した(R5)。
        (val repo-root (. (Path __file__) parent parent parent))
        (val counts (dfor name NOW-PLUS-ONE-ROSTER
                          name (.count (.read-text (/ repo-root CORE name) :encoding "utf-8") "(+ now 1)")))
        (assert (= counts NOW-PLUS-ONE-ROSTER)
                (+ "期限の関数の file の (+ now 1) の数が台帳と違う(ADR-DOE-CLUSTER-002 R3 — 今すぐは DueNow で返す。減らした便は "
                   "NOW-PLUS-ONE-ROSTER を同じ便で削る): " (str counts))))]
-  :plans ["agora-redesign #3865"])
+  :plans [])

@@ -1,9 +1,6 @@
 ;;; Executable ADR: 設定の無い handler は factory にしない。引数を 1 つも取らない factory は、呼ぶたびに新しい状態を作る時だけ許す。
 ;;; await_handler は await_handler() でなく素の handler の値で、[await_handler (lazy-ask :strict True) try-handler (state) writer] と書く。
 ;;;
-;;; 出自 = 持ち主(利用者)の決定 2026-10-29(agora card ki-8d7e5eb863c7)。原文と出自の記録は持ち主の内部の追跡に置き、この公開の
-;;; repo には決定の日付と card の key だけを書く。
-;;;
 ;;; 強制は 1 か所: tools/handler_factory_census.py が出荷する code(doeff/・packages/・examples/ — tests を除く)から引数の無い
 ;;; factory を拾い、tests/data/zero_parameter_handler_factories.json の既知の表と突き合わせる(R4)。この file の deftest がその
 ;;; 突き合わせを呼び、旧い await_handler の形を道具が拾う事と、await_handler が素の handler として動く事を確かめる。
@@ -60,8 +57,7 @@
           "doeff/・packages/・examples/ の handler を返す関数(tests を除く)"]
   :problem
     [(fact
-       "持ち主は 2026-10-29 に、await_handler が引数を取らない関数の呼び出し await_handler() を経由する形を直し、設定の無い handler は factory にしないと決めた(agora card ki-8d7e5eb863c7)。"
-       :evidence "持ち主の内部の追跡に在る発言(2026-10-29)")
+       "2026-10-29 に、await_handler が引数を取らない関数の呼び出し await_handler() を経由する形を直し、設定の無い handler は factory にしないと決めた。")
      (fact
        "2026-10-29 の main の await_handler は def await_handler() -> ProgramHandler で、引数を 1 つも取らずに中で @do def handler(effect, k) を作って返した。factory にした訳は asyncio と scheduler の effect の遅延の import と、_get_await_bridge_loop() を中に閉じ込める事だけで、呼びごとの状態は持たなかった(bridge の loop は process 全体で 1 つ)。README の例は [await_handler(), lazy_ask(strict=True), try_handler, state(), writer] と、同じ列に呼ぶ物と呼ばない物が並んだ。"
        :evidence "packages/doeff-core-effects/doeff_core_effects/_handlers.py(doeff c83155f55de0)")
@@ -76,9 +72,9 @@
   :decision
     [(rule R1 "設定(引数)も呼びごとの状態も無い handler は factory にせず、handler の値(印の付いた ProgramHandler)として出す。program には h(p) で当て、列には h のまま置く。")
      (rule R2 "引数を 1 つも取らない factory は、呼ぶたびに新しい状態(記憶の置き場・待ちの表など)を作って handler に閉じ込める時だけ許す。既定値だけの引数を持つ factory(state(initial=None))は設定を受けるので R1 の外。")
-     (rule R3 "factory を値に直す時は、旧い呼び(引数の無い呼び)を 1 つの版の間、DeprecationWarning を出して同じ handler を返す形で残す(doeff.program の _former_factory_handler — 型は FormerFactoryHandler で、型の検査も旧い呼びを deprecated と言う)。doeff の中と、doeff の main を読む repo の呼び手を新しい形へ書き換えたら、旧い呼びを消す。PyPI の版で毎日走らせる examples/testing_without_mocks と publications/zenn-use-cases-v0 は、値の形を持つ版が PyPI に出た時に書き換える(ADR-DOE-CORE-003 R4 と同じ訳)。examples/testing_without_mocks の印字と pytest の確かめは、PyPI の版で走らせる tools/verify_core_install.py --pypi の項 8 だけが持ち、repo の版では走らせない(card ki-5ea7c639b693)。値の形の版が PyPI に出て書き換える時に、repo の版の確かめへ戻すかを決める。")
+     (rule R3 "factory を値に直す時は、旧い呼び(引数の無い呼び)を 1 つの版の間、DeprecationWarning を出して同じ handler を返す形で残す(doeff.program の _former_factory_handler — 型は FormerFactoryHandler で、型の検査も旧い呼びを deprecated と言う)。doeff の中と、doeff の main を読む repo の呼び手を新しい形へ書き換えたら、旧い呼びを消す。PyPI の版で毎日走らせる examples/testing_without_mocks と publications/zenn-use-cases-v0 は、値の形を持つ版が PyPI に出た時に書き換える(ADR-DOE-CORE-003 R4 と同じ訳)。examples/testing_without_mocks の印字と pytest の確かめは、PyPI の版で走らせる tools/verify_core_install.py --pypi の項 8 だけが持ち、repo の版では走らせない。値の形の版が PyPI に出て書き換える時に、repo の版の確かめへ戻すかを決める。")
      (rule R4 "強制は 1 か所: tools/handler_factory_census.py が出荷する code(doeff/・packages/・examples/ の git の追う Python と Hy — tests の dir と examples/testing_without_mocks を除く)から引数の無い factory を拾い、tests/data/zero_parameter_handler_factories.json の既知の表と突き合わせる。表の行は分け(呼びごとの状態・直す・factory でない)と訳を持つ。表に無い factory は赤、表に在るのに拾えない行も赤(表は code と一緒に減るだけ)。「直す」の行は直す card を訳に書く。")
-     (rule R5 "await_handler を R1 の形に直した(2026-10-29・agora card ki-8d7e5eb863c7)。中の asyncio と scheduler の effect の import は、Await に初めて答える時に読む(doeff の import で asyncio を読まない・scheduler の module はこの module の後に読まれる)。Await の意味と bridge の loop の振る舞いは変えない。")]
+     (rule R5 "await_handler を R1 の形に直した(2026-10-29)。中の asyncio と scheduler の effect の import は、Await に初めて答える時に読む(doeff の import で asyncio を読まない・scheduler の module はこの module の後に読まれる)。Await の意味と bridge の loop の振る舞いは変えない。")]
   :laws
     [(law a-handler-without-settings-is-a-value
        :statement "for_all f in shipped_code with params(f) = {} and returns_handler(f): row(f) in known_table and (verdict(row(f)) = 呼びごとの状態 => new_state_per_call(f)); for_all row in known_table: row.key in census(shipped_code)"
@@ -91,7 +87,7 @@
                      "docs/adr/defadr_doeff_api_002_handler_without_settings_is_a_value.hy::test-adr-doe-api-002-the-census-finds-the-former-await-handler"
                      "docs/adr/defadr_doeff_api_002_handler_without_settings_is_a_value.hy::test-adr-doe-api-002-await-handler-is-a-handler-value"
                      "tests/test_await_handler_is_a_handler_value.py"]
-       :wiring "配線済み(2026-10-29・agora card ki-8d7e5eb863c7)— 一覧の道具と既知の表・この file の deftest 3 つ・tests の 1 file")]
+       :wiring "配線済み(2026-10-29)— 一覧の道具と既知の表・この file の deftest 3 つ・tests の 1 file")]
   :enforcement
     [(deftest test-adr-doe-api-002-every-factory-without-parameters-is-in-the-known-table
        ;; R4: 出荷する code の引数の無い factory と既知の表が一致する(表に無い factory も、拾えない行も無い)。
@@ -116,4 +112,4 @@
           "tools/handler_factory_census.py・tests/data/zero_parameter_handler_factories.json"
           "tests/test_await_handler_is_a_handler_value.py"
           "doeff の中の await_handler() と (await-handler) の呼び手(歴史の記録と PyPI の版で走る dir を除く)"
-          "agora card ki-b10e81c19717(sequential)・ki-e9166ac1c3b1(production_handlers の 3 つと conductor の 2 つ)・ki-2d05bfc6ec94(maybe・result)— 一覧の「直す」を R1 の形に直した card"])
+          "一覧の「直す」の行を R1 の形に直した変更(sequential・production_handlers の 3 つと conductor の 2 つ・maybe・result)"])
