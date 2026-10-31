@@ -1,5 +1,5 @@
-# README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11・card
-# ki-235c38cce9ad)。中身は tools/check_links.py(標準ライブラリだけ — workspace を同期しない)。job は 2 つ:
+# README・docs・PyPI の頁に出る README の link が切れていない事を確かめる(取り組み doeff-publish の区切り 11)。
+# 中身は tools/check_links.py(標準ライブラリだけ — workspace を同期しない)。job は 2 つ:
 # - in-repo: 相対の link・main を指す GitHub の link・`#見出し` の anchor・PyPI の頁になる README の相対の path を、checkout の
 #   木で読む。網に出ないので push と pull request のたびに走らせる(file の改名や見出しの書き換えで切れた link を名指す)。
 #   同じ確かめは tests/test_check_links.py::test_repo_links_resolve_in_the_tree でも走る(Python Compatibility の root の tests)。

@@ -2,7 +2,7 @@
 #
 # The tree check stops a tracked file that quotes the maintainer's own words together with the time
 # they were said; the commit check does the same for the messages of the pushed commits. Design
-# records keep the decision and its reason; provenance is a short mark ("decision 2026-09-29") or a
+# records keep the decision and its reason; provenance is a short dated decision mark or a
 # pointer to the internal tracker. Past history is not rewritten, so the commit check only reads the
 # commits a push or pull request adds. The same check runs at commit time (the no-chat-quotes hook).
 name: No chat quotes

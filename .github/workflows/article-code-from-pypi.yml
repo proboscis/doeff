@@ -1,5 +1,5 @@
-# 連載10本と候補の下書きに載せたコードを、PyPIのdoeffだけを入れた新しい環境で毎日走らせる(取り組み articles の区切り 11・
-# card ki-69ab98a224f6)。読者は pip か uv で入れた PyPI の doeff で記事のコードを試すので、doeff の新しい版で記事のコードが壊れたら、
+# 連載10本と候補の下書きに載せたコードを、PyPIのdoeffだけを入れた新しい環境で毎日走らせる(取り組み articles の区切り 11)。
+# 読者は pip か uv で入れた PyPI の doeff で記事のコードを試すので、doeff の新しい版で記事のコードが壊れたら、
 # その日のうちにこの workflow が赤になる。中身は publications/zenn-use-cases-v0/verify_pypi.py(公開計画の公開順の表と候補の節が
 # リンクする原稿ごとに、reviews/<slug>-check.py を、PyPI の doeff と確かめの頭の PEP 723 の宣言の物だけを入れた環境で走らせる)。
 # 版を出す workflow(Publish doeff)が終わった後にも走り、tag(v<版>)から出した時は、その版を PyPI から入れて確かめる。

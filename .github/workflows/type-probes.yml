@@ -1,6 +1,6 @@
 # 核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを main から組んで新しい venv に入れ、型の probe(tests/type_probes/)
-# と README の Python の例を pyright と mypy にかけ、誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12・
-# card ki-d2c901bc9a2d)。中身は tools/verify_type_probes.py — 型の報告の抜けを直した所が使う人の入れ方で戻らない事と、開いている抜けが
+# と README の Python の例を pyright と mypy にかけ、誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12)。
+# 中身は tools/verify_type_probes.py — 型の報告の抜けを直した所が使う人の入れ方で戻らない事と、開いている抜けが
 # 埋まった時に印を替えさせる事。型の道具の版は uv.lock の版。Python は requires-python の両端の 3.11 と 3.14(macOS と Windows の job と
 # 同じく素の 3.14)。doeff-vm は PyPI の wheel でなく source から組む(build の口 tools/doeff_cargo_backend.py — Rust の道具が要る)。
 name: Type probes

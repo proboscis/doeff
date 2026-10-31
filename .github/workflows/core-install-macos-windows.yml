@@ -1,5 +1,5 @@
 # macOS と Windows の機体で、`pip install doeff` の核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)を main から組んで新しい
-# venv に入れ、README の Python の例が注記の通りに印字する事を確かめる(取り組み doeff-publish の区切り 9・依頼 lt-3NNCV2T91GJBXFBG4G593E56RV)。
+# venv に入れ、README の Python の例が注記の通りに印字する事を確かめる(取り組み doeff-publish の区切り 9)。
 # 中身は tools/verify_core_install.py(手元の Linux と同じ道具 — 入った物がちょうど核の 4 個である事・doeff と doeff-vm の README の
 # Python の例・Hy と HTTP の extra が要る使い方が足す extra の名を言う事)。Python は requires-python の両端の 3.11 と 3.14。3.14 は素の
 # 3.14 で頼む — 新しい機体の uv の管理する Python では GIL の在る作りが入り(道具が interpreter の作りを印字する)、uv 0.13.1 は 3.14+gil に

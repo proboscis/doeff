@@ -1,5 +1,5 @@
 # doeff の Rust の package の wheel を、機体の外の置き場(公開の release rust-wheels)へ上げる — 置き場の書き手は この workflow だけ
-# (ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution・card ki-5fab1f97d98b)。読み手は build の口
+# (ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution)。読み手は build の口
 # tools/doeff_cargo_backend.py(手元の保存先に無い鍵の wheel を、組む前に取る)。組むのは使う側の venv と同じ Python 3.14t・Linux x86_64・
 # ubuntu-24.04(glibc 2.39 — 鍵に libc の版が入るので、違う glibc の機体は取らずに手元で組む)。
 name: Rust wheels to the build store

@@ -53,8 +53,8 @@ jobs:
       # 核の 5 個に足す検の道具: pytest の plugin・Hy の検の file(test_*.hy)を集める doeff-adr の plugin・検が import する部品
       # (doeff-time・doeff-traverse・doeff-validation・cloudpickle・pyyaml — doeff-hy の macro の validate・check は doeff-validation を
       # 読む)・build の口と型の検が子の process で呼ぶ maturin と pyright(版は uv.lock の dev の物)。doeff-core-effects は答え手の検が
-      # httpx と aiohttp と psycopg を読むので extra の http・http-server・postgres ごと入れる(httpx は既定の依存でなく extra http に在る —
-      # card ki-006338b48f4b)。docs の 19 章(agent の手引き)の例は doeff-agents の effect を yield するので、doeff-agents と、PyPI に
+      # httpx と aiohttp と psycopg を読むので extra の http・http-server・postgres ごと入れる(httpx は既定の依存でなく extra http に在る)。
+      # docs の 19 章(agent の手引き)の例は doeff-agents の effect を yield するので、doeff-agents と、PyPI に
       # 無い依存の doeff-claude-code・doeff-codex も checkout から入れる(tests/test_docs_page_examples.py が例を走らせる)。
       # venv の bin を PATH に置き、検が呼ぶ python・hy・doeff をこの venv の物にする。
       - name: Install the core packages into a fresh venv
@@ -119,7 +119,7 @@ jobs:
 
   # 核だけの入れ方の検 — pip install doeff と同じく extra 無しで入れた新しい venv で、入った物がちょうど核の 4 個(doeff・doeff-vm・
   # doeff-core-effects・frozendict)で、README の Python の例が通り、Hy と HTTP の extra が要る使い方が足す extra の名を言う事を
-  # 確かめる(tools/verify_core_install.py・card ki-d6b421afac60)。上の job の venv は Hy と検の道具も入れ、3 個を editable で読むので、
+  # 確かめる(tools/verify_core_install.py)。上の job の venv は Hy と検の道具も入れ、3 個を editable で読むので、
   # 核だけの入れ方が壊れても気づけない。版の扱いは上の job と同じ(3.14t は実験・Python は uv の管理する物)。
   core-only-install:
     runs-on: ubuntu-latest

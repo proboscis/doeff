@@ -2,7 +2,7 @@
 # aarch64) users receive, with the same maturin-action settings as build-vm.yml, and installs each
 # into a fresh venv of a plain Python image of that platform with the checkout's doeff and
 # doeff-core-effects: `pip install doeff` there must need no Rust toolchain, and
-# `python -m doeff demo` must run (card ki-8080389a2f78). Checks of what is already on PyPI live in
+# `python -m doeff demo` must run. Checks of what is already on PyPI live in
 # core-install-from-pypi.yml; this one runs before a release puts the wheels there. Not a merge
 # gate: it runs daily, by hand, and on main pushes that change it, build-vm.yml or the doeff-vm
 # Cargo manifest.
