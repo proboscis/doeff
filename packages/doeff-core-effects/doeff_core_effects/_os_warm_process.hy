@@ -17,7 +17,7 @@
 ;;;
 ;;; 頼みと答えの形(待ちの子との約束 — 型は下の defwire・待ちの子の側も同じ関数で読み書きする):
 ;;;   頼み = WarmRequestWire {"entry", "args": [str], "cwd", "env": [{"name", "value"}], "logPath", "exitPath", "graceSeconds"
-;;;          [, "holdInput", "cgroupProcs", "noticeEnv"]}(後ろの 3 つは省ける欄 — 既定の値の時は書かない)
+;;;          [, "holdInput", "cgroupProcs", "noticeEnv", "orphanSeconds"]}(後ろの 4 つは省ける欄 — 既定の値の時は書かない)
 ;;;   答え = WarmForkedWire {"pid", "startTicks"} か WarmRefusedWire {"detail"}(知らない欄は断る — 2 つの形はこれで見分ける)
 ;;;   どれも JSON 1 行・utf-8・末尾に改行。warm-request-line(頼み手が送る)・warm-request-of(待ちの子が読む)・warm-answer-line
 ;;;   (待ちの子が答える)・warm-answer-of(頼み手が読む)。
@@ -70,7 +70,8 @@
   ;; 今までと同じ(この欄を知らない版の待ちの子も task を受ける)。hold-input の頼みは入力の pipe の読み口を fd の受け渡しで添える。
   (setv #^ bool hold-input False)
   (setv #^ (| str None) cgroup-procs None)
-  (setv #^ (| str None) notice-env None))
+  (setv #^ (| str None) notice-env None)
+  (setv #^ (| float None) orphan-seconds None))
 
 
 (defwire WarmForkedWire
@@ -100,7 +101,8 @@
                                              :env (tuple (gfor e request.env (WarmEnvWire :name e.name :value e.value)))
                                              :log-path request.log-path :exit-path request.exit-path
                                              :grace-seconds request.grace-seconds :hold-input request.hold-input
-                                             :cgroup-procs request.cgroup-procs :notice-env request.notice-env)))
+                                             :cgroup-procs request.cgroup-procs :notice-env request.notice-env
+                                             :orphan-seconds request.orphan-seconds)))
   line)
 
 
@@ -274,10 +276,11 @@
   ;; hold-input で頼んだ子の入力の pipe の書き口の表(pid → HeldInput)。子の終わりを読んだら閉じて外す。
   ;; 表は session に持つ(外側に state か session-store が要る — 本番の worker は session-store の内側に置く)。dict は置き換えずに書き換える。
   (session val inputs ((get dict #(int HeldInput))))
-  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env]
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env orphan-seconds]
     (val request (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env :log-path log-path
                                :exit-path exit-path :grace-seconds grace-seconds :hold-input hold-input
-                               :cgroup-procs cgroup-procs :notice-env notice-env))
+                               :cgroup-procs cgroup-procs :notice-env notice-env
+                               :orphan-seconds orphan-seconds))
     (if (not hold-input)
         (do (<- answer (os-fork-from-warm request None))
             (resume answer))

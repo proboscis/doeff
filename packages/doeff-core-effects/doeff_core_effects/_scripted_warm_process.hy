@@ -103,13 +103,14 @@
   ;; 受けた子の表(pid → WarmChildState)と、次に配る番。
   (session val children ((get dict #(int WarmChildState))))
   (session var forks 0)
-  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env]
+  (ForkFromWarm [socket-path entry args cwd env log-path exit-path grace-seconds hold-input cgroup-procs notice-env orphan-seconds]
     (val pid (+ SCRIPTED-WARM-FIRST-PID forks))
     (val ticks (+ SCRIPTED-WARM-FIRST-TICKS forks))
     (<- decided (| WarmChildState WarmRefused)
         (scripted-fork script (ForkFromWarm :socket-path socket-path :entry entry :args args :cwd cwd :env env
                                             :log-path log-path :exit-path exit-path :grace-seconds grace-seconds
-                                            :hold-input hold-input :cgroup-procs cgroup-procs :notice-env notice-env)
+                                            :hold-input hold-input :cgroup-procs cgroup-procs :notice-env notice-env
+                                            :orphan-seconds orphan-seconds)
                        pid ticks))
     (if (isinstance decided WarmRefused)
         (resume decided)
