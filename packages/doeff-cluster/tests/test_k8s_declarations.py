@@ -1108,3 +1108,16 @@ def test_zeus_worker_stops_at_init_without_the_usb_ssd_marker(zeus_worker: Manif
     assert f"test -f {ZEUS_WORK_MARKER}" in command, command
     assert command.index(f"test -f {ZEUS_WORK_MARKER}") < command.index("chown 1000:1000 /work"), command
     assert "exit 1" in command, command
+
+
+@pytest.mark.parametrize("name", NODES)
+def test_every_worker_mounts_the_optional_machine_ssh_secret_without_subpath(rendered: list[Manifest], name: str) -> None:
+    """機体へ ssh で入る key・known_hosts・ssh の設定は、名の固定した Secret worker-machine-ssh を /etc/worker-machine-ssh に読み取り専用で
+    置く(subPath でない — 中身の差し替えに Pod を作り直さない)。無くても起動する(optional)。"""
+    worker = _worker_on(rendered, name)
+    mount = _mount_at(worker, "/etc/worker-machine-ssh")
+    assert "subPath" not in mount and mount.get("readOnly") is True
+    secret = _mapping(_volume(worker, str(mount["name"]))["secret"], "secret")
+    assert secret["secretName"] == "worker-machine-ssh"
+    assert secret.get("optional") is True
+    assert secret.get("defaultMode") == 0o400
