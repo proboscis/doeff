@@ -1,23 +1,38 @@
 ;;; 検の解釈器(composition root)— 同じ筋書きの Program を、handler の組だけ替えて走らせる。
 ;;;
-;;;   fake  fake の handler(FakeRunWorld)+ 仮想の時計(sim-time-handler)。負荷の振る舞いは workloads.fake-behavior-of。
+;;;   fake    fake の handler(FakeRunWorld)+ 仮想の時計(sim-time-handler)。負荷の振る舞いは workloads.fake-behavior-of。
+;;;   docker  docker の handler(DockerRunHost)+ 壁の時計(sync-time-handler)+ 本物の子 process(offloaded-subprocess-handler)。
+;;;           docker の在る機体(zeus)の検で、環境変数 DOEFF_RUN_DOCKER=1 の時だけ走る(無ければ skip — 在るのに docker が
+;;;           答えなければ赤)。負荷の image は workload/ の Dockerfile をその場で build する(中身の hash の tag — 同じ中身は build
+;;;           しない)。検ごとに新しい DockerRunHost を作り、検の終わりにその host の label の container を全部消す。
 ;;;
-;;; docker・process・k3s の handler を足す card(Y-7・Y-8・Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
+;;; process・k3s の handler を足す card(Y-8・Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
 ;;; test_contract.hy の各 deftest の :interpreters に名を足す。筋書きと workloads.hy の約束は変えない — 同じ契約を通す事が目的。
 ;;;
 ;;; 筋書きは ScenarioSettings の effect で自分の宣言(負荷の image・時間の許容)を読む。
 (require doeff-hy.macros [defhandler])
 (import dataclasses [dataclass])
+(import hashlib)
+(import os)
 (import pathlib [Path])
+(import subprocess)
+(import pytest)
 (import doeff [EffectBase run with_handlers])
-(import doeff_core_effects [scheduled])
-(import doeff_time [SimClock sim-time-handler])
-(import doeff_run [FakeRunWorld fake-run-handler])
+(import doeff_core_effects [scheduled offloaded-subprocess-handler])
+(import doeff_time [SimClock sim-time-handler sync-time-handler])
+(import doeff_run [FakeRunWorld fake-run-handler DockerRunHost docker-run-handler])
 (import tests.workloads [fake-behavior-of])
 
 (setv FAKE "fake")
 (setv FAKE-IMAGE "registry.invalid/contract-workload@sha256:0000000000000000000000000000000000000000000000000000000000000000")
 (setv FAKE-MISSING-IMAGE "registry.invalid/missing@sha256:1111111111111111111111111111111111111111111111111111111111111111")
+
+(setv DOCKER "docker")
+;; docker の解釈器を走らせる印の環境変数(値 1)。
+(setv DOCKER-GATE "DOEFF_RUN_DOCKER")
+(setv WORKLOAD-DIR (/ (. (Path __file__) parent) "workload"))
+;; 取り寄せられない image: 誰も listen しない手元の port の registry(取り寄せは直ちに断られる)。
+(setv DOCKER-MISSING-IMAGE "127.0.0.1:9/doeff-run-contract-missing:absent")
 
 
 (defclass [(dataclass :frozen True)] Settings []
@@ -35,23 +50,57 @@
     (resume settings)))
 
 
+(defn #^ str docker-workload-image []
+  "負荷の image を build して tag を返す(tag は workload/ の中身の hash — 在れば build しない)。docker が答えなければ赤。"
+  (setv digest (hashlib.sha256))
+  (for [path (sorted (.iterdir WORKLOAD-DIR))]
+    (.update digest (.encode path.name))
+    (.update digest (.read-bytes path)))
+  (setv tag (+ "doeff-run-contract-workload:" (cut (.hexdigest digest) 0 12)))
+  (when (!= (. (subprocess.run ["docker" "image" "inspect" tag] :capture-output True) returncode) 0)
+    (subprocess.run ["docker" "build" "--tag" tag (str WORKLOAD-DIR)] :check True :capture-output True))
+  tag)
+
+(defn #^ None remove-docker-runs [#^ DockerRunHost host]
+  "host が作った container(label の印)を全部消す(検の後始末)。"
+  (setv listed (subprocess.run ["docker" "container" "ls" "--all" "--quiet" "--filter" (.format "label=doeff-run.host={}" host.host-id)]
+                               :check True :capture-output True :text True))
+  (setv ids (.split listed.stdout))
+  (when ids
+    (subprocess.run (+ ["docker" "container" "rm" "--force"] ids) :check True :capture-output True))
+  None)
+
+
 (defn settings-for [#^ str name #^ Path tmp-path]
   (cond
     (= name FAKE) (Settings :image FAKE-IMAGE :missing-image FAKE-MISSING-IMAGE :slack 0.01 :interpreter name)
+    (= name DOCKER)
+      (do
+        (when (!= (os.environ.get DOCKER-GATE) "1")
+          (pytest.skip (.format "docker の解釈器は {}=1 の時だけ走る(docker の在る機体 — zeus の検)" DOCKER-GATE)))
+        (Settings :image (docker-workload-image) :missing-image DOCKER-MISSING-IMAGE :slack 1.0 :interpreter name))
     True (raise (ValueError (.format "知らない解釈器: {!r}" name)))))
 
-(defn handlers-for [#^ str name #^ Settings settings]
+(defn handlers-for [#^ str name #^ Settings settings #^ (| DockerRunHost None) host]
   (cond
     (= name FAKE)
       [(sim-time-handler :clock (SimClock))
        (fake-run-handler (FakeRunWorld :behavior-of (fn [spec] (fake-behavior-of spec settings.missing-image))))]
+    (= name DOCKER)
+      [(sync-time-handler) offloaded-subprocess-handler (docker-run-handler host)]
     True []))
 
 (defn build-interpreter [#^ str name #^ Path tmp-path]
-  "名 → Program を走らせる関数。名が plain の時は scheduler だけ(handler を要しない純関数の検)。"
-  (if (= name "plain")
-      (fn [program] (run (scheduled program)))
-      (do
-        (setv settings (settings-for name tmp-path))
-        (setv stack (+ (handlers-for name settings) [(scenario-settings settings)]))
-        (fn [program] (run (scheduled (with_handlers stack program)))))))
+  "名 → Program を走らせる関数。名が plain の時は scheduler だけ(handler を要しない純関数の検)。docker は走らせた後に、その検の
+   container を全部消す。"
+  (when (= name "plain")
+    (return (fn [program] (run (scheduled program)))))
+  (setv settings (settings-for name tmp-path))
+  (setv host (if (= name DOCKER) (DockerRunHost) None))
+  (setv stack (+ (handlers-for name settings host) [(scenario-settings settings)]))
+  (fn [program]
+    (try
+      (run (scheduled (with_handlers stack program)))
+      (finally
+        (when (is-not host None)
+          (remove-docker-runs host))))))

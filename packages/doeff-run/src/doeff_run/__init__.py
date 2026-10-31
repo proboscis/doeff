@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from doeff_run._effects import RunStopOutcome as RunStopOutcome
     from doeff_run._effects import StopFailed as StopFailed
     from doeff_run._faults import RunVanish as RunVanish
+    from doeff_run._docker import DockerRunHost as DockerRunHost
+    from doeff_run._docker import docker_run_handler as docker_run_handler
     from doeff_run._fake import FakeBehavior as FakeBehavior
     from doeff_run._fake import FakeRunWorld as FakeRunWorld
     from doeff_run._fake import fake_run_handler as fake_run_handler
@@ -66,6 +68,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RunStopOutcome": "doeff_run._effects",
     "StopFailed": "doeff_run._effects",
     "RunVanish": "doeff_run._faults",
+    "DockerRunHost": "doeff_run._docker",
+    "docker_run_handler": "doeff_run._docker",
     "FakeBehavior": "doeff_run._fake",
     "FakeRunWorld": "doeff_run._fake",
     "fake_run_handler": "doeff_run._fake",
