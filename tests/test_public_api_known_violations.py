@@ -181,7 +181,9 @@ PRIVATE_MARK = re.compile(
 )
 #: 使い捨ての表の決め。
 FIXTURE_DECISION = "ADR-DOE-API-001 R18"
-#: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒・混みの倍率は根の conftest が掛ける)。
+#: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒)。根の conftest が混みの倍率を
+#: 掛けるのは pytest の上限(timeout の印)だけなので、本物の package を読む検は子へ渡す秒にも deadline_scale_factor を掛ける —
+#: 掛けないと、Hy の compile の cache が冷えた回(doeff-cluster が 38 秒・温まると 4 秒)に混みの倍率 5.4 の下で 100 秒を越えた。
 _PROBE_SECONDS = 100
 
 Key = tuple[str, str]
@@ -796,10 +798,12 @@ def first_submodule_version() -> KnownTable | None:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 @pytest.mark.parametrize("package_dir", [path.name for path in tool.package_dirs(ROOT)])
-def test_public_api_outside_effects_and_handlers_is_in_the_known_table(package_dir: str) -> None:
+def test_public_api_outside_effects_and_handlers_is_in_the_known_table(
+    package_dir: str, deadline_scale_factor: float
+) -> None:
     """package の公開名のうち effect と handler の外の物が、既知の表と許した物の表の名とちょうど同じ(足しても直しても
     表と合わせる)。"""
-    [package] = tool.inventory(ROOT, [package_dir], jobs=1, timeout=_PROBE_SECONDS)
+    [package] = tool.inventory(ROOT, [package_dir], jobs=1, timeout=_PROBE_SECONDS * deadline_scale_factor)
     check_package(package, _read_table(), _read_allowed())
 
 
