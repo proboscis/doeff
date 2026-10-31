@@ -6,15 +6,15 @@
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff_core_effects [Spawn Wait])
 (import doeff_time [GetMonotonic])
-(import doeff_run [RunSpec RunStart RunStop RunAccepted RunRefused RefusalWhy RunStopped VolumeMount StopCause])
+(import doeff_run [RunHandle RunSpec RunStart RunStop RunAccepted RunRefused RefusalWhy RunStopped RunGone VolumeMount StopCause])
 (import tests.workloads [stubborn-spec])
 (import tests.steps [settings begin read-until-live read-to-end kinds-of new-name])
 
 (setv LONG 60.0)
 
 
-(defk stop-with [handle grace]
-  {:pre [] :post [(: % RunStopped)]}
+(defk stop-with [#^ RunHandle handle #^ float grace]
+  {:pre [(: handle RunHandle) (: grace float)] :post [(: % (| RunStopped RunGone))]}
   "別の task から run を止める(止めを同時に 2 つ頼む筋書きの部品)。"
   (<- stopped (RunStop handle grace))
   stopped)
