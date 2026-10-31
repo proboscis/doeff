@@ -2,7 +2,7 @@
 ;;; @handler の下の @do は deprecated。handler() は def と @do 関数でない物を、with_handlers と stacked_handlers は handler でない物を、
 ;;; 組む所で TypeError にして断り、印の無い物を中で handler にする fallback を持たない。
 ;;;
-;;; [removed]
+;;; 決めた順: まず @do 関数でない物を handler として受けないと決め(0.7.0 は素の関数を
 ;;; handler にしていた)、続けて @handler だけで def を書けるようにし、@handler @do は deprecated にすると決めた(決めた事は :problem の fact)。
 ;;;
 ;;; 書くその場面の助言は doeff の外(defjevrule)が持つ(R6)。doeff の側には、作る所と組む所の断り(R1・R2)・入れ直しの口(R3)・
@@ -40,11 +40,9 @@
           "docs/adr/defadr_doeff_core_003_handler_is_a_do_function.hy"]
   :problem
     [(fact
-       [removed]
-       [removed]
+       "公開の記事の審査で決めた事: with-handlers が中で @handler を付けるような fallback は禁じる。型の一貫性のため、@handler で正しく作られていない物が handler として渡されたら直ちにエラーにし、linter でも禁じる。doeff は @do の付いていない関数を基本的に受け付けない — handler は @do 関数でなければならず、@handler かつ @do でない関数を with-handlers に渡したら例外を出す。これが徹底されていなければ API が意図と違うので、p0 で直してから記事を書く。")
      (fact
-       [removed]
-       :evidence "注釈 [id]・差し戻し [id]")
+       "続く審査で決めた事: return yield x と書く理由が無い事が問われ、どの handler にも @handler @do を書くのは冗長なので、@handler だけを許して @handler def … と書けるようにし、@handler @do は deprecated にする。")
      (fact
        "0.7.0 の handler() は、docstring で「a @do function, a plain function, a bound method, a functools.partial or a callable instance」を受けると書き、素の関数を、返した DoExpr を VM が走らせる受け手として handler にした。yield を含む素の def を handler にすると、走る時に「handler must return DoExpr: expected DoExpr or EffectBase, got: <class 'generator'>」の RuntimeError になる。with_handlers は印の無い物を中で handler() に通す fallback を持った。"
        :evidence "PyPI の doeff 0.7.0 の doeff/program.py の docstring と、0.7.0 で @handler だけを付けた yield の def を走らせた結果(2026-10-20)")

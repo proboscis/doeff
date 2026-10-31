@@ -1,7 +1,7 @@
 ;;; Executable ADR: doeff の GitHub の tracker(issue・PR・comment)は英語で書き、持ち主の内部の仕組みを前提にした設計や作業の記録は
 ;;; この tracker に書かず、持ち主の内部の追跡(作業ボード)に置く。
 ;;;
-;;; [removed]
+;;; 開いた issue の日本語の記録の扱いは、案 a に決まった(案の中身は :problem の fact)。
 ;;;
 ;;; 書くその場面の助言は doeff の外が持つ: agent-commons の defjevrule doeff-tracker-is-written-in-english(命令が proboscis/doeff の
 ;;; issue・PR・comment を書く時に出る・agent-commons 17d5d6b3)。doeff の側には、入口の file(AGENTS.md)の英語の段と、その段が残る事を
@@ -55,11 +55,10 @@
           "docs/adr/defadr_doeff_tracker_001_written_in_english.hy"]
   :problem
     [(fact
-       [removed]
-       [removed]
+       "日本語の issue の扱いは案 a に決まった。案 a は、内部の記録を作業ボードへ移して閉じ、外の人に役立つ物は英語を足して残し、これからは英語で書く決まりを足す。公開の issue と内部の記録の置き場を分け、日本語の記録が混ざる原因を取り除く。")
      (fact
        "2026-10-18 の分類で、proboscis/doeff の開いた issue 90 件のうち 39 件が日本語だった。うち 7 件と下書きの PR 1 件は、持ち主の内部の仕組みを前提にした記録だった。"
-       [removed]
+       :evidence "2026-10-18 の開いた issue と PR の分類(内部の追跡の報告)")
      (fact
        "2026-10-18 の main の AGENTS.md は、下流の agent に「issue を出す」とだけ書き、tracker に書く言葉と、内部の記録を置かない事を書いていなかった。"
        :evidence "AGENTS.md の節 Ownership & Write Authority の Downstream-task agents の項(373ae2638)")]
