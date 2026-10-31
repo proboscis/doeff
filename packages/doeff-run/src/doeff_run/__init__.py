@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from doeff_run._fake import FakeBehavior as FakeBehavior
     from doeff_run._fake import FakeRunWorld as FakeRunWorld
     from doeff_run._fake import fake_run_handler as fake_run_handler
+    from doeff_run._process import ProcessRunHost as ProcessRunHost
+    from doeff_run._process import process_run_handler as process_run_handler
 
 _LAZY_EXPORTS: dict[str, str] = {
     "ResourceLimits": "doeff_run._values",
@@ -73,6 +75,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FakeBehavior": "doeff_run._fake",
     "FakeRunWorld": "doeff_run._fake",
     "fake_run_handler": "doeff_run._fake",
+    "ProcessRunHost": "doeff_run._process",
+    "process_run_handler": "doeff_run._process",
 }
 
 
