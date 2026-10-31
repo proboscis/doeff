@@ -61,12 +61,12 @@ install:
 # Sync dependencies AND rebuild the Rust VM extension.
 # ALWAYS use this instead of bare `uv sync` when Rust sources changed.
 # ADR-DOE-ENFORCE-001 R4: VM conformance oracle は、どの build にも入っていて実行時に有効にする
-# (agora-redesign #980 — 以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
+# (以前は cargo feature で make sync の build だけが検査つきになり、同じ venv が
 # 最後に組んだ経路で 15 倍速さを変えた)。doeff の pytest は root の conftest.py が有効にし、
 # tests/test_vm_invariant_checks_enabled.py が hard-fail で検査する(skip 禁止)。
 # だから make sync と素の uv sync は同じ build を作る。uv は doeff-vm の tool.uv.cache-keys(.rs・Cargo.toml・Cargo.lock・
 # doeff-vm-core を含む)の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を先に引くので、Rust の source が
-# 変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001・agora-redesign #1493・#3860 — 失敗ケース =
+# 変わった時だけ作業木の外の一時の target で 1 回組む(ADR-DOE-BUILD-001 — 失敗ケース =
 # tests/test_land_install_follows_rust_keys.py)。
 sync:
 	uv sync --group dev
@@ -76,7 +76,7 @@ pre-commit-install:
 
 # ADR-DOE-ENFORCE-001 R7: enforcement 台帳の著述時突合 hook(tracked 原本 =
 # scripts/git-hooks/pre-commit)。stage した file に semgrep の規則(.pre-commit-config.yaml の
-# 別名 semgrep-rules の項を uv.lock の版の pre-commit で)も当てる(card ki-8c0bb496bfab)。pre-commit framework を使う機体は
+# 別名 semgrep-rules の項を uv.lock の版の pre-commit で)も当てる。pre-commit framework を使う機体は
 # make pre-commit-install 側でも同じ検査が入る(.pre-commit-config.yaml の
 # semgrep の項と enforcement-ledger)— こちらは venv 不要の素の git hook。worktree 共通の
 # hooks dir(git rev-parse --git-path hooks)へ入るので、一度の導入で全 worktree に効く。
@@ -167,10 +167,10 @@ test-unit:
 test-e2e:
 	uv run pytest $(PYTEST_MEMORY_OPTIONS) -m "e2e"
 
-# 登記(ai land request)の前に手元で走らせる変えた所の検(agora-redesign #2605)。分岐点(既定 git merge-base HEAD origin/main)から
+# 登記(ai land request)の前に手元で走らせる変えた所の検。分岐点(既定 git merge-base HEAD origin/main)から
 # 作業木までに変えた file が当たる契約の検の組(root の pyproject.toml の [[tool.doeff.contract-tests]])を先頭に、変えた検の file と
 # 逆依存の検を、下の test-packages と同じ session の境目(repo の根・package ごとの tests・PACKAGE_EXTRA_TEST_ROOTS)ごとに別の pytest で
-# 走らせ、合計 60 秒で打ち切る(agora-redesign #2682)。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
+# 走らせ、合計 60 秒で打ち切る。終わらなかった file は「未測」と名指し、赤だけ rc 1。commit の hook では走らせない
 # (#1122・#794)。分岐点を変える: make test-changed TEST_CHANGED_ARGS="--base <rev>"。
 TEST_CHANGED_ARGS ?=
 test-changed:
@@ -179,7 +179,7 @@ test-changed:
 # Run tests in all subpackages that have tests/ directories
 # - tests/ に Python の検が 1 本も無い package(doeff-indexer / doeff-linter — 検は Rust の cargo test、
 #   tests/fixtures の test_*.py は検体)は pytest に渡さない。検は test_*.py か test_*.hy(Hy の deftest か上から順に
-#   実行する script — root の ini の doeff_hy_test_files で doeff-adr の plugin が集める・agora-redesign #2591)。渡すと「収集 0 件」の rc 5 で loop が止まり、
+#   実行する script — root の ini の doeff_hy_test_files で doeff-adr の plugin が集める)。渡すと「収集 0 件」の rc 5 で loop が止まり、
 #   後ろの package が 1 本も走らない(2026-09-24 実測)。
 # - 実 API / 実 CLI を撃つ e2e は日次の門(.agents/land-queue.toml gate.full)と同じく除く(-m "not e2e")。
 # - PACKAGE_UV_RUN: 日次の門は make sync の直後に `uv run --no-sync` で呼ぶ(素の uv run の暗黙の再 sync で
@@ -190,26 +190,26 @@ test-changed:
 #   session は package ごとに独立のまま(1 session に畳むと同名の test file が衝突する)。
 # - 1 package の赤で止めず全 package を走らせ、最後に失敗の package を名指して 0 以外で終わる(test-rust と
 #   同じ形)。赤で止めると後ろの package が 1 本も走らないまま日次に見えない(ADR-DOE-ENFORCE-001 R8・
-#   tests/test_daily_test_population.py・card acp:kanban-issue:ki-08ec2d7c901f)。
+#   tests/test_daily_test_population.py)。
 # - PACKAGE_PYTEST_DURATIONS: package ごとの session の終わりに、10 秒以上かかった検を長い順に本数の上限なしで出す(日次の log に
 #   1 本ごとの秒を残す)。2026-10-09 20:00 の日次で doeff-cluster が 814 → 1,740 秒に伸び、処理ステージ packages が時間切れに
-#   なったが、log にも台帳にも 1 本ごとの秒が無く、どの検が伸びたかを割れなかった(card acp:kanban-issue:ki-107a03190129)。
+#   なったが、log にも台帳にも 1 本ごとの秒が無く、どの検が伸びたかを割れなかった。
 PACKAGE_UV_RUN ?= uv run
 #   2026-10-11: 上限 20 本を外した(--durations=0)— package に 30 秒を越える検が 20 本を越えると残りが log に出ないため。
-#   root の段の pytest の命令(.agents/land-queue.toml)も同じ 2 つを持つ(card acp:kanban-issue:ki-b8a436264866)。
+#   root の段の pytest の命令(.agents/land-queue.toml)も同じ 2 つを持つ。
 PACKAGE_PYTEST_DURATIONS ?= --durations=0 --durations-min=10
 # package の tests/ の外に在る検の根(package ごとの tests/ と同じく、根ごとに別の session で走らせる)。
 # - packages/doeff-cluster/src/doeff_cluster/_sim: 模擬の環境の下の deftest(各 service の入口の組み立てを模擬の handler の組で回す
 #   検 — doeff-linter の DOEFF136 は検がこの dir の下に在ることを求める・fixture は package の根の conftest.py(source は pytest を
-#   import しない — src の外で検の dir の祖先に当たる置き場・agora-redesign #2681)・agora-redesign #2542)。
+#   import しない — src の外で検の dir の祖先に当たる置き場))。
 PACKAGE_EXTRA_TEST_ROOTS = packages/doeff-cluster/src/doeff_cluster/_sim
 # 母集団の根の定義はこの変数の 1 点。置き場の検(tests/test_daily_test_population.py)と、登記の前の入口の session の境目
-# (scripts/run_changed_tests.py の read_session_roots・agora-redesign #2682)は下の target で読む
-# (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる・agora-redesign #2577)。
+# (scripts/run_changed_tests.py の read_session_roots)は下の target で読む
+# (検の側に 2 つ目の一覧を書かない — 書くと、根を足した時に片方だけが古くなる)。
 print-package-extra-test-roots:
 	@echo $(PACKAGE_EXTRA_TEST_ROOTS)
 # - PACKAGE_JOBS: 2 以上なら package の session を最大その本数だけ同時に走らせる(scripts/run_package_sessions.sh・出力は package ごとに
-#   溜めて元の順に出す)。既定 1 は下の直列の loop のまま。日次の門は .agents/land-queue.toml の packages の行で渡す(card acp:kanban-issue:ki-dde4fe85a5ed)。
+#   溜めて元の順に出す)。既定 1 は下の直列の loop のまま。日次の門は .agents/land-queue.toml の packages の行で渡す。
 #   package の session は package ごとに独立で、同じ repo の根の cache を共有するだけ。重い package(PACKAGE_HEAVY_FIRST)を先に撃ち、
 #   最後に残る長い 1 本で全体が決まる形を避ける。
 PACKAGE_JOBS ?= 1
@@ -253,7 +253,7 @@ test-packages:
 	done; \
 	if [ -n "$$failed" ]; then echo ""; echo "test-packages failed:$$failed"; exit 1; fi
 
-# doeff-hy の検を、doeff-hy の宣言の Hy の下限の版で走らせる(日次の処理ステージ hy-floor・ADR-DOE-ENFORCE-001 R8・card ki-d3d2a5450505)。
+# doeff-hy の検を、doeff-hy の宣言の Hy の下限の版で走らせる(日次の処理ステージ hy-floor・ADR-DOE-ENFORCE-001 R8)。
 # - 下限は packages/doeff-hy/pyproject.toml の `"hy>=<下限>,<=<上限>"` の行から読む(版の写しをここに置かない)。変異の確かめは
 #   `make test-hy-floor HY_FLOOR=1.2.0` で下限を 1 つ下げて走らせる(1.2.0 では require の 10 本が赤)。
 # - 環境の Hy は lock の版のまま、`uv run --with hy==<下限>` で下限の版を重ねる(lock・環境を書き換えない)。R6 の検は uv.lock を読むので、

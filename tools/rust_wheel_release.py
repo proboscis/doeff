@@ -1,5 +1,5 @@
 """doeff の Rust の package の wheel を、機体の外の置き場(公開の GitHub の release `rust-wheels`)へ上げる — 置き場の書き手の 1 つ
-(ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution・card ki-5fab1f97d98b)。走るのは doeff の GitHub Actions
+(ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution)。走るのは doeff の GitHub Actions
 (.github/workflows/rust-wheels.yml)の中だけで、資格は Actions の GITHUB_TOKEN(contents: write)だけ。
 
 package ごとに build の口(tools/doeff_cargo_backend.py)を `uv build --wheel` で通す — 口は置き場を引くので、同じ鍵の wheel が

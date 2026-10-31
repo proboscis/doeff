@@ -122,7 +122,7 @@ export class LintService implements vscode.Disposable {
 
   /**
    * text editor に出ていない document の見出しと束縛を聞く — 定義を読む面(webview)で開いた file は visible な text editor に
-   * 数えられないので、面が開いた時にここを呼んで型と effect の材料を取らせる(agora-redesign #910)。
+   * 数えられないので、面が開いた時にここを呼んで型と effect の材料を取らせる。
    */
   watch(document: vscode.TextDocument): void {
     this.lintUnseen([document]);
@@ -162,7 +162,7 @@ export class LintService implements vscode.Disposable {
     this.diagnostics.dispose();
   }
 
-  /** root の全体を linter に聞く。聞き終わるまで store には「実行中」を置く(agora-redesign #1650)。 */
+  /** root の全体を linter に聞く。聞き終わるまで store には「実行中」を置く。 */
   private async lintRoot(root: string): Promise<void> {
     this.store.beginRoot(root);
     this.apply({ tag: 'root', root }, await this.linter.lint({ tag: 'root', root }));

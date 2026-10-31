@@ -1,4 +1,4 @@
-"""doeff の Rust の package の PEP 517 の build の口 — Rust の部品を組む・引く入口の 1 つ(agora-redesign #1493・#2364・#3860)。
+"""doeff の Rust の package の PEP 517 の build の口 — Rust の部品を組む・引く入口の 1 つ。
 
 入口は 1 つ(ADR-DOE-BUILD-001): uv sync・uv build・別の repo の path の依存・uv の git の checkout からの build・worker の
 `uv build --wheel` のどれもこの口を通る。口は組む前に、必ず「source の中身の hash を鍵にした wheel の保存先」を引く。在れば cargo を
@@ -15,7 +15,7 @@ uv が入れ直し、uninstall でも消える)。source は作業木の maturin
 
 wheel(_source_wheel): maturin の python-source を持つ package の wheel の hook も、保存先の wheel から組み立ての成果物・data・dist-info
 だけを取り、python-source の package の file は作業木から入れて RECORD を書き直す(editable と同じ分け方 — ADR-DOE-BUILD-001 R2b)。
-理由(card ki-0b68af4154d6): 鍵は tool.uv.cache-keys の宣言の file だけを見るので、宣言に python-source を並べない package
+理由: 鍵は tool.uv.cache-keys の宣言の file だけを見るので、宣言に python-source を並べない package
 (doeff-effect-analyzer — 宣言が無く既定の glob)では、Rust の同じ前の版の wheel が前の Python のまま引かれ、git の依存で入れた
 解析器が新しい版を名乗りながら古い Python を持った。作業木の __pycache__ と .pyc、前の形が木に残した成果物は入れない。python-source を
 持たない package は保存先の wheel をそのまま渡す。
@@ -26,7 +26,7 @@ R4 の追補 2)・組む Python の版と ABI・組みを変える環境変数(R
 path には依らない — pin を上げて作業木を作り直しても、中身が同じなら同じ鍵。uv も tool.uv.cache-keys の file を見て口を呼ぶので、この
 宣言が「uv が組み直しを問う集合」と「保存先の鍵」の 1 つの定義になる。鍵は子 process を起こさずに作る(ADR-DOE-BUILD-001 R4 の追補 —
 rustc の版を鍵に入れない。鍵は保存先を引く前に要るので、`rustc -V` を起こす形では PATH に rustc の無い環境が、保存先に同じ source の
-wheel が在っても鍵を作る所で落ちた — agora-redesign #3850 の 2026-10-07 の zeus の slot の同期。wheel の中身を決めるのは source・Python の
+wheel が在っても鍵を作る所で落ちた — 2026-10-07 の zeus の slot の同期。wheel の中身を決めるのは source・Python の
 ABI・機体・組みを変える環境変数・build の設定で、Python へ見せる ABI は C-API なので rustc の版は wheel の外へ出ない)。
 
 保存先(_wheel_slot・_store_wheel): `<置き場>/<package>-<鍵>/<wheel>` と使った印 `.used`(使うたびに置き換えて dir の時刻を進める)。
@@ -35,7 +35,7 @@ wheel の置き場(state/wheels/<package>-<鍵>/ と .used — shared/core/nativ
 置き場に渡して共有する — worker の掃除(7 日使われない dir を消す)がそのまま効く。保存先の wheel は使う前に RECORD の hash で
 確かめ、壊れていれば名指しの 1 行を出してその wheel を除き、組み直す(黙って壊れた物を使わない)。
 
-機体の外の置き場(_remote_wheel・ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution・card ki-5fab1f97d98b): 手元の
+機体の外の置き場(_remote_wheel・ADR-DOE-BUILD-001 R5 の追補・設計 docs/design/rust-wheel-distribution): 手元の
 保存先に無い時、組む前に doeff の公開の GitHub の release `rust-wheels` の asset `<package>-<鍵>.whl` を鍵なしの HTTPS で取り
 (WHEEL_REMOTE_TIMEOUT_SECONDS 秒まで)、RECORD の hash で確かめ、本当の file 名を dist-info と WHEEL の Tag から作り直して手元の
 保存先へ置く。置き場に書くのは doeff の GitHub Actions(.github/workflows/rust-wheels.yml)だけで、口は置き場に書かない。取れない時
@@ -51,7 +51,7 @@ shared/core/native_wheel.py の reported_built・報告を書かない版の口�
 cargo の target: 組む時だけ、package の dir の外の 1 回の build ごとの一時の dir に置き、wheel を作ったら消す(#1493)。1 つの共有の
 target にしない理由: cargo は source の file の時刻で新旧を判定し、成果物を workspace の中の相対 path で名付ける。2 つの作業木が 1 つの
 target を共有すると、先に作った作業木の source は後の build の成果物より古く見え、別の作業木の build を黙って使う(cargo 1.96.1 で
-実測・agora-redesign #1472 の comment)— その wheel が鍵の下に置かれると、同じ鍵の build が全部それを引く。利用者が CARGO_TARGET_DIR を
+実測)— その wheel が鍵の下に置かれると、同じ鍵の build が全部それを引く。利用者が CARGO_TARGET_DIR を
 渡した時はそこに組み、消さない — Rust を直すセッションが差分の build を使うための口(`CARGO_TARGET_DIR=<dir> uv sync`)。cargo では
 env の CARGO_TARGET_DIR が config の build.target-dir(と CARGO_BUILD_TARGET_DIR)に勝つので、口の一時の dir はそれらの設定にも勝つ。
 一時の dir の名には build の process の pid を入れる(doeff-cargo-target-<pid>-<乱字>)。SIGTERM・SIGKILL で止められた build は後始末を
@@ -106,7 +106,7 @@ WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
 USED_MARK = ".used"
 # tool.uv.cache-keys の file を宣言しない package の、組みに効く file の既定(package の dir からの glob)。
 DEFAULT_SOURCE_GLOBS = ("pyproject.toml", "Cargo.toml", "Cargo.lock", "build.rs", "src/**/*")
-# wheel の中身を変える環境変数(置き場の鍵に名と値を入れる・agora-redesign #2969): rustc の旗・cargo の profile と build の設定・
+# wheel の中身を変える環境変数(置き場の鍵に名と値を入れる): rustc の旗・cargo の profile と build の設定・
 # maturin と PyO3 の設定・doeff-indexer の CLI の binary を同梱しない旗(同梱しない wheel を同梱する build が引かないため)。
 BUILD_ENV_NAMES = frozenset({"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "MACOSX_DEPLOYMENT_TARGET", "DOEFF_INDEXER_SKIP_CLI_BUILD"})
 BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
@@ -374,7 +374,7 @@ def _tool_versions() -> str:
 
 def _build_environment() -> str:
     """組みを変える環境変数(BUILD_ENV_NAMES と BUILD_ENV_PREFIXES に当たる名、置き場だけの名を除く)の名と値を並べるため
-    (agora-redesign #2969 — 同じ source でも RUSTFLAGS・CARGO_PROFILE_RELEASE_STRIP などを変えて組んだ wheel を、既定の build が
+    (同じ source でも RUSTFLAGS・CARGO_PROFILE_RELEASE_STRIP などを変えて組んだ wheel を、既定の build が
     引かないように)。値は鍵の hash に入るだけで、どこにも出さない。"""
     chosen = sorted(
         (name, value)
@@ -386,7 +386,7 @@ def _build_environment() -> str:
 
 def _python_abi() -> str:
     """組む Python の版・ABI・機体(拡張 module の名の末尾 — 例 `.cpython-314t-x86_64-linux-gnu.so`)— free-threading の cp314t と
-    cp313 のように ABI の違う環境で同じ source を組んでも、置き場の wheel を取り違えないため(agora-redesign #2969)。"""
+    cp313 のように ABI の違う環境で同じ source を組んでも、置き場の wheel を取り違えないため。"""
     return f"{sys.implementation.cache_tag} {sysconfig.get_config_var('EXT_SUFFIX')}"
 
 
@@ -525,7 +525,7 @@ def _built_member(member: str, package: Path, source_root: Path, includes: tuple
 # package の探し先を venv の成果物の dir → 作業木の source の dir の順にする(成果物の dir を先に探すので、前の形が source の木に残した
 # 成果物は使われない)。
 EDITABLE_FINDER = '''\
-"""editable の入れの finder — doeff の build の口(tools/doeff_cargo_backend.py)が書く(agora-redesign #3860)。"""
+"""editable の入れの finder — doeff の build の口(tools/doeff_cargo_backend.py)が書く。"""
 import importlib.util
 import os
 import sys

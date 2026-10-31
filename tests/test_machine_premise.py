@@ -1,4 +1,4 @@
-"""Machine premises — root conftest ``machine_tool`` (agora-redesign #639, 2026-09-26).
+"""Machine premises — root conftest ``machine_tool`` (2026-09-26).
 
 A test whose tool does not start on this machine is skipped and named as "not
 executed" in the check layer's own line format (dotfiles agentcli remote_check);
@@ -148,7 +148,7 @@ def _run_pytest(
     PATH (its memory guard thread starts ``ps``), and a real codex further down a
     prepended PATH can never be reached.  The child is started by doeff's process
     handler (subprocess_handler), which lays ``env`` and the stand-ins over this
-    process's environment (agora-redesign #3012).
+    process's environment.
     """
     started = time.monotonic()
     done = run(
@@ -224,7 +224,7 @@ def _git_checkout(directory: Path, git: str) -> str:
 
     def git_run(*args: str) -> str:
         """Run git in the checkout without this machine's own git config or hooks (doeff's
-        process handler lays ``quiet`` over this process's environment — agora-redesign #3012)."""
+        process handler lays ``quiet`` over this process's environment)."""
         outcome = run(
             with_handlers(
                 [subprocess_handler],
@@ -267,7 +267,7 @@ def test_tool_that_does_not_start_is_skipped_and_named_not_executed(
     assert _probes(tmp_path / "home") == (1 if codex is not None else 0)
     assert "looking for the binary" not in result.stdout.str()  # the last line, not the first
     if check_layer is None:
-        # The not-on-path detail goes on with the PATH it searched (agora-redesign #3870).
+        # The not-on-path detail goes on with the PATH it searched.
         result.stdout.fnmatch_lines(
             [
                 f"2 test(s) {SUMMARY_WITHOUT_CHECK_LAYER}: {FIRST_NODEID}: *{said}*; {SECOND_NODEID}: *"
@@ -291,7 +291,7 @@ def test_every_skipped_test_keeps_its_node_id_however_many_there_are(
     """The check layer folds a reason to 300 characters; one line per test keeps every node id.
 
     Counterexample: the old shape joined the tests of one word into one line, and the
-    node ids after the fold were lost (agora-redesign#645 item 5).
+    node ids after the fold were lost.
     """
     if check_layer is None:
         pytest.skip("no check layer on this machine: nothing folds the reason")
@@ -500,7 +500,7 @@ def test_checkout_premise_on_a_machine_without_git_names_the_tool(
 def test_a_tool_not_on_path_names_the_path_it_searched(
     tmp_path: Path, check_layer: ModuleType | None
 ) -> None:
-    """The reason names the PATH that was searched: the daily run reads which machine lacked the tool (agora-redesign #3870)."""
+    """The reason names the PATH that was searched: the daily run reads which machine lacked the tool."""
     result = _sample_machine(tmp_path, codex=None, with_check_layer=True)
 
     result.assert_outcomes(skipped=2)

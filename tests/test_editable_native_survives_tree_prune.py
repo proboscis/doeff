@@ -1,5 +1,5 @@
 """editable で入れた Rust の部品の組んだ物(native の拡張 module)が、作業木の git の名簿に無い file を消す写し(dotfiles の
-remote_check の段 3 — 日次の全体検証の道)の後の `make sync` でも import できる事の失敗ケース(agora-redesign #3860)。
+remote_check の段 3 — 日次の全体検証の道)の後の `make sync` でも import できる事の失敗ケース。
 
 2026-10-07 04:00 の日次: remote_check が手順ごとに pod の木を zeus へ写し、写すたびに名簿に無い file を消す(消さないのは .venv
 だけ)。build の口は editable の入れで .so を source の木の中に置いていたので、次の手順の写しで消え、uv の入れた記録(.venv の中)と
@@ -72,7 +72,7 @@ def _tool_path() -> str:
 def _uv_cache_dir() -> str:
     """呼び手の uv の cache の dir(`uv cache dir` — UV_CACHE_DIR・XDG_CACHE_HOME・HOME の順は uv 自身が解く)。子は UV_OFFLINE で
     組みの依存(maturin)をこの cache から引くので、HOME の下の既定でなく呼び手と同じ dir を渡す — 日次の task は HOME が回ごとの空の dir で、
-    cache は UV_CACHE_DIR(worker の共有の cache)に在る(atlas の Pod での初回 2026-10-10 20:05 に 2 本が赤・card ki-9338eec1d15e)。"""
+    cache は UV_CACHE_DIR(worker の共有の cache)に在る(atlas の Pod での初回 2026-10-10 20:05 に 2 本が赤)。"""
     uv = shutil.which("uv")
     assert uv is not None, "uv が探し道に無い"
     return subprocess.run([uv, "cache", "dir"], capture_output=True, text=True, check=True).stdout.strip()
@@ -158,7 +158,7 @@ def test_the_native_module_survives_a_prune_of_unlisted_files_and_the_next_make_
 
 
 def test_rewriting_the_pth_source_line_moves_the_package_and_keeps_the_native_module(tree: Tree) -> None:
-    # 失敗ケース(agora-redesign #3860 — agora-controllers の固定の版への向け直し scripts/pinned_doeff.hy は venv の .pth の行だけを書き換える):
+    # 失敗ケース(agora-controllers の固定の版への向け直し scripts/pinned_doeff.hy は venv の .pth の行だけを書き換える):
     # .pth の 1 行目を別の checkout へ書き換えると、package の Python はその checkout から読まれ、組んだ物は venv から読まれ続ける。直す前の
     # finder は作業木の path を自分の中に持ち、書き換えた後も元の checkout を読んだ。
     tree.run(_make_sync())

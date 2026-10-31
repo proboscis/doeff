@@ -159,7 +159,7 @@ from doeff import Effect, Pass, Resume, do, handler, run, with_handlers  # 依�
 
 @dataclass(frozen=True)  # 一度出した問いを、途中で書き換えない。
 class AskJudge(Effect):  # 「この文は、各条件に当たるか」を外側へ問う依頼。
-    text: str  # 問いの対象の文(利用者の依頼など)。
+    text: str  # 問いの対象の文(人が書いた依頼など)。
     questions: tuple  # 規則ごとに独立した、はい・いいえで答えられる1文の組。
 
 
@@ -174,7 +174,7 @@ JUDGED = [  # 綴りでは決まらず、判定器に問う規則。
 
 
 @do  # 判定器への問いをyieldする処理にする。
-def advise_prompt(prompt):  # 利用者の依頼1つから、見せる助言を決める。
+def advise_prompt(prompt):  # 依頼1つから、見せる助言を決める。
     questions = tuple(rule["question"] for rule in JUDGED)  # 規則ごとの問いを並べる。
     answers = yield AskJudge(prompt, questions)  # 問いを1つの依頼に束ね、確率の組を受け取る。
     return [f"{rule['advice']}(規則 {rule['id']})"  # 当たった規則の助言を1行ずつ。

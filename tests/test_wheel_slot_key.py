@@ -1,4 +1,4 @@
-"""Rust の package の wheel の置き場の鍵(tools/doeff_cargo_backend.py の _wheel_slot)を確かめる(agora-redesign #2969)。
+"""Rust の package の wheel の置き場の鍵(tools/doeff_cargo_backend.py の _wheel_slot)を確かめる。
 
 置き場は同じ鍵の build で cargo を撃たずに wheel を写して返す(#2364)。鍵に組みを変える物が欠けていると、設定を変えて組んだ wheel や
 ABI の違う Python の wheel を既定の build が黙って引く。ここでは cargo を撃たず、鍵を決める関数を直に呼ぶ。道具の版(maturin の版)は
@@ -85,7 +85,7 @@ def test_another_python_abi_points_at_another_slot(backend: ModuleType, package:
 
 
 def test_another_libc_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補 2・card ki-5fab1f97d98b): 機体の外の置き場の wheel は CI の glibc で組む。glibc の版が違う
+    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補 2): 機体の外の置き場の wheel は CI の glibc で組む。glibc の版が違う
     # 機体は別の置き場を指す — それより古い glibc の image が取ると import で落ちる。
     here = backend._wheel_slot(package, None)
     monkeypatch.setattr(backend.platform, "libc_ver", lambda: ("glibc", "2.17"))

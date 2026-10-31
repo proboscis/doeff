@@ -1,5 +1,5 @@
-"""doeff-no-sleep-in-tests の極性の検体 — 関数の宣言と sleep(0)(agora-redesign #2882)・await の無い asyncio.sleep(…)(card ki-94380dba532f)・
-誰も立てない合図を待つ sleep の言い換え threading.Event().wait(秒)(card ki-6aa7cb5ffb83)。
+"""doeff-no-sleep-in-tests の極性の検体 — 関数の宣言と sleep(0)・await の無い asyncio.sleep(…)・
+誰も立てない合図を待つ sleep の言い換え threading.Event().wait(秒)。
 
 `# 鳴る` を付けた行だけが当たる。名が test_ で始まらないので pytest は集めない。
 """

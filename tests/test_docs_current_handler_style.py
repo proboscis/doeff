@@ -3,7 +3,7 @@
 A handler is a def marked with ``@handler``, and it is applied to a program as it is:
 ``run(budget(10)(research([...])))``. The old style wraps an unmarked function at the call,
 ``handler(fn)(program)``; it was still in about 35 places of the docs after the README had moved
-on (card ki-6dcc457d8917). This check counts the old style in the pages a reader opens and keeps it
+on. This check counts the old style in the pages a reader opens and keeps it
 at 0. The records of their time are left out: ``docs/proposals`` and ``docs/specs`` (a proposal that
 still shows the old style says so in a note), and the design notes, design checks and history,
 whose evidence quotes code as it was.

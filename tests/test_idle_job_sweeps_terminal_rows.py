@@ -7,7 +7,7 @@ few ids per tick of its clock, so the rows of every tick — the awaited-value
 box (``_AwaitedValue``) and clock wake (``_ClockWake``) of each Delay, the
 cancelled deadline timer of each timed wait, the finished request task — piled
 up for hours: production jobs with no work grew 155 tracked objects every 10
-minutes (agora card ki-f9aa5fce26e3). The sweep now also runs when the
+minutes. The sweep now also runs when the
 scheduler is about to block on external completions (``IDLE_SWEEP_ROWS_PER_ID``).
 """
 

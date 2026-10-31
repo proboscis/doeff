@@ -1,6 +1,6 @@
 """The Python scheduler's waiters index and ready counts stay in step with the structures.
 
-card ki-1294af4fa525 made Cancel and the external-wait shield read an index and
+Cancel and the external-wait shield read an index and
 counts kept beside ``waiters`` and ``ready`` instead of walking them. Those are
 kept only by the entry functions; a change that moves ``waiters`` or ``ready``
 some other way (the design check's blind B: an effect re-prioritising queued

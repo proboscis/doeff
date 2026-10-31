@@ -326,7 +326,7 @@ def _install_raw(
     always a Program -> Program function passed without the marker; it is
     refused here, when the stack is built, instead of failing with a
     ``TypeError`` at the first effect — which a test could miss when the
-    failure lands outside the part it checks (agora-redesign #3724).
+    failure lands outside the part it checks.
 
     The installer called with no program — a handler taken for a factory,
     ``writer()(prog())`` — is refused with a TypeError that names the call
@@ -415,7 +415,7 @@ def handler(raw_handler: Callable[..., object]) -> ProgramHandler:
     # The installer marker is read as a plain attribute: ``isinstance`` against the
     # runtime-checkable Protocol walks every member with ``inspect.getattr_static``
     # and doeff-traverse re-wraps every inner handler per item, so the Protocol
-    # check dominated the wrap (agora-redesign #2593: 181k checks, ~9% of a
+    # check dominated the wrap (181k checks, ~9% of a
     # screen server test).
     if getattr(raw_handler, "_doeff_is_handler_fn", False) is True:
         return cast(_InstalledHandler, raw_handler)
@@ -580,7 +580,7 @@ def _declared_marks_of(value: object) -> _DeclaredMarks | None:
 def _stacked_declared_marks(handlers: tuple[Callable[..., object], ...]) -> _DeclaredMarks | None:
     """The ``__doeff_handles__`` / ``__doeff_effects__`` marks of a bundle, so the
     effect analyzer and the foundation closure check read it as declared instead of
-    unreadable (agora-redesign #3724 — the same idea as the HTTP handlers copying
+    unreadable (the same idea as the HTTP handlers copying
     their marks onto the scoped installer).
 
     Only when every bundled handler declares both marks; otherwise ``None`` and the

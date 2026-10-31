@@ -1,6 +1,6 @@
-"""with_handlers / stacked_handlers / handler() は、handler でない物を組む時に名指しで断る(agora-redesign #3724・ADR-DOE-CORE-003)。
+"""with_handlers / stacked_handlers / handler() は、handler でない物を組む時に名指しで断る(ADR-DOE-CORE-003)。
 
-handler は ``@handler`` を付けた def で、``@handler`` がそれを ``@do`` 関数にする(持ち主の決定 2026-10-20 13:07・16:26 JST)。
+handler は ``@handler`` を付けた def で、``@handler`` がそれを ``@do`` 関数にする。
 ``with_handlers`` と ``stacked_handlers`` は印 ``_doeff_is_handler_fn`` の無い物を「not a handler」で断り、中で ``handler()`` に通さない。
 ``handler()`` は def と ``@do`` 関数(とその partial・bound method)を受け、ほか(lambda・素の method・callable の instance)を
 「not a handler body」で断る。def でも引数を 1 つしか

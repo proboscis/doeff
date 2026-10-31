@@ -1,5 +1,5 @@
 """核の 4 個だけを入れた新しい venv で、README の Python の例と試しの命令 `python -m doeff demo` と LLM の agent の例が通り、Hy と
-HTTP の extra が要る使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8・card ki-d6b421afac60)。
+HTTP の extra が要る使い方が足す extra の名を言う事を確かめる(取り組み doeff-publish の区切り 8)。
 
 `pip install doeff` は核の 4 個(doeff・doeff-vm・doeff-core-effects・frozendict)だけを入れ、Hy の言語は extra hy・HTTP の client の
 handler は extra http で足す。tests/test_core_install_extras.py は pyproject.toml の宣言を読み、tests/test_missing_extra_hints.py は
@@ -24,20 +24,20 @@ Python の版ごとに:
 5. 3 の README の Python の例を、pyright(standard)と mypy --strict にかけ(venv の外で `uv tool run` が起こし、核の venv を指す)、
    import が「公開していない名」(reportPrivateImportUsage・attr-defined)と言われない事を確かめる。README の例そのものへの型の
    注記の文句は数えない。py.typed の package は `X as X` か `__all__` で再 export した名だけを公開とするので、README が
-   `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする(card ki-d1628b5046d1)。
+   `from doeff_core_effects import Ask` と書いても、再 export が欠けると利用者の editor が赤にする。
    あわせて、核だけの venv(Hy も httpx も無い)で package の頭の名が属性として在り、star import でも結ばれる事を確かめる。
 6. README の入れ方の直後に案内する試しの命令 `python -m doeff demo` を走らせ、0 で終わり、同じ digest を 4 つの handler で
    走らせた答え — canned の答え・trace が見た effect の行・budget(1) が k を捨てた答え・作業の dir の頁を live_world が読んだ
-   答え — をその順に印字する事を確かめる(card ki-34f672bff9f6・ki-2ccb68ed0ad7)。
+   答え — をその順に印字する事を確かめる。
 7. README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例(examples/llm_agent.py)を、例の 2 つの
    file だけを写した dir で走らせ、偽の model の答えを印字する事を確かめる。続けて venv に pytest を足し、その dir で検の例
    (examples/test_llm_agent.py)が通る事を確かめる。どちらも OPENAI_ の環境変数を外して走らせる(model の key を読まない)。
-   pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。
+   pytest を足すので、核の 4 個だけを見る 2〜6 の後の最後に置く。
 8. 紹介の記事「Testing Python code without mocks」が `pip install doeff` で走ると書く例の dir(examples/testing_without_mocks)を
    写した dir で、script が記事の見せる行をその順に印字し、標準エラーに何も出さない事と、その dir の pytest が通る事を確かめる。
    fanout.py は、3 つの取り寄せが並行に走った(1 つずつなら掛かる 0.6 秒より短い)事も見る。7 と同じく pytest を足すので最後に
-   置く(card ki-eeaca7016c66)。--pypi の時だけ走らせる: 例の dir は PyPI の版に留めて書き、値の形の版が PyPI に出るまで書き
-   換えない(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の API が変わるたびに落ちる(card ki-5ea7c639b693)。
+   置く。--pypi の時だけ走らせる: 例の dir は PyPI の版に留めて書き、値の形の版が PyPI に出るまで書き
+   換えない(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の API が変わるたびに落ちる。
 
 CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の job core-only-install と
 .github/workflows/core-install-macos-windows.yml)が、--pypi 無しで 1〜7 を走らせる。
@@ -45,12 +45,12 @@ CI の Python の版ごとの検(.github/workflows/python-compatibility.yml の 
 --pypi は 1 で checkout の代わりに PyPI の doeff を入れ(doeff-vm は wheel だけを受ける — 利用者の機体に Rust の道具は無い)、2 で
 doeff の 3 個が PyPI から入った事を、3 と 5 で入った版の README を確かめる。3 の後に、この checkout(CI では GitHub の main)の
 doeff と doeff-vm の README(初めて来た人が GitHub で読む物)の Python の例を、同じ約束で入った版の venv で走らせる — wheel の
-README は入った版と同じ時に書いた物なので、GitHub の README が出した版より先へ進んでも 3 は緑のまま食い違いを見ない
-(card ki-fd6aea147621)。wheel の README と GitHub の README は別々に「<組>の例 N 個のうち入った版で通るのは M 個」と数え、
+README は入った版と同じ時に書いた物なので、GitHub の README が出した版より先へ進んでも 3 は緑のまま食い違いを見ない。
+wheel の README と GitHub の README は別々に「<組>の例 N 個のうち入った版で通るのは M 個」と数え、
 落ちた例の節の題と訳の 1 行を印字する。4・6・7 は走らせない — 期待(extra の文・試しの命令の答え・例の file)が checkout の物で、
 出した版より新しい事が在る。8 は走らせる — 記事は例が今日の `pip install doeff` で走ると約束するので、例の file が出した版より
 先へ進んだら(まだ出していない API を使ったら)赤にする。毎日の CI(.github/workflows/core-install-from-pypi.yml)が Linux・
-macOS・Windows で走らせる(card ki-e7b4a1b9e9f4)。
+macOS・Windows で走らせる。
 
 終了コード: 全部通れば 0・確かめが落ちれば 1・道具が使えなければ(venv・install の失敗)2。標準ライブラリだけを使う。
 """
@@ -246,8 +246,8 @@ DEMO_CANNED_ANSWER = "'14 chars'"
 DEMO_TRACE_LINE = "trace: Summarize(text='<h1>Hello</h1>')"
 DEMO_BUDGET_ANSWER = "'over budget at Summarize'"
 
-# README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、それを確かめる pytest の検の例
-# (依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)。repo の根からの path。
+# README と docs/index.md が `pip install doeff` だけで走ると案内する LLM の agent の例と、それを確かめる pytest の検の例。
+# repo の根からの path。
 LLM_EXAMPLE_FILES = ("examples/llm_agent.py", "examples/test_llm_agent.py")
 # 2 つの file を写す、作業の dir の下の dir。
 LLM_EXAMPLE_DIRECTORY = "llm-agent"
@@ -256,7 +256,7 @@ LLM_EXAMPLE_TESTS = "test_llm_agent.py"
 # 例が偽の model(canned_reply)の答えで印字する行。
 LLM_EXAMPLE_ANSWER = "answer: No: an existing queue already does all of it, for little cost."
 
-# 紹介の記事「Testing Python code without mocks」の例の dir(card ki-eeaca7016c66)。記事は script の印字を囲みで見せ、残りの
+# 紹介の記事「Testing Python code without mocks」の例の dir。記事は script の印字を囲みで見せ、残りの
 # file(infra.py・試験の例)をこの dir への link で指す。repo の根からの path。
 ARTICLE_EXAMPLE_DIRECTORY = Path("examples/testing_without_mocks")
 
@@ -295,7 +295,7 @@ _FANOUT_TITLES = (
     "['a.example', 'b.example', 'c.example']",
     "['A.EXAMPLE', 'B.EXAMPLE', 'C.EXAMPLE']",
 )
-# 記事の囲みと同じ行(記事の例の印字を比べるのはこの表 1 か所 — card ki-5ea7c639b693)。記事は fanout.py の切り替えを
+# 記事の囲みと同じ行(記事の例の印字を比べるのはこの表 1 か所)。記事は fanout.py の切り替えを
 # DOEFF_SCHEDULER=rust と書くので、その選びでも走らせる。
 ARTICLE_SCRIPTS = (
     ArticleScript(
@@ -564,7 +564,7 @@ def checkout_readmes(repo: Path = REPO) -> ReadmeSet:
     """この checkout の README(CI では GitHub の main — 初めて来た人が GitHub で読む物)。
 
     PyPI から入れた版で走らせると、README が出した版より先へ進んだ(まだ出していない使い方を書いた)事を名指す — wheel の
-    README は入った版と同じ時に書いた物なので、それだけでは食い違いを見ない(card ki-fd6aea147621)。
+    README は入った版と同じ時に書いた物なので、それだけでは食い違いを見ない。
     """
     directories = {package.name: package.directory for package in FROM_CHECKOUT}
     paths = [(package, directories[package] / README_FILE) for package in CHECKED_READMES]
@@ -917,7 +917,7 @@ def check_head_names(installed: Installed, timeout: float) -> str | None:
 
 def check_public_names(installed: Installed, place: Path, timeout: float) -> list[str]:
     """CHECKED_READMES の例が package の頭から取る名を、型の check(pyright・mypy --strict)が公開の名と読む事と、その名が核だけの
-    venv で結ばれている事を確かめ、落ちた事を言う文の列を返す — README を写した利用者の editor に「公開していない名」が出ないため。"""
+    venv で結ばれている事を確かめ、落ちた事を言う文の列を返す — README を写した使い手の editor に、公開していない名が出ないため。"""
     print("  型の check が README の例の import を公開の名と読む", flush=True)
     typed = place / "typed"
     failures = [
@@ -1239,7 +1239,7 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         return [
             *problems,
             *check_readmes(wheel_readmes(installed), installed, place, timeout).failures,
-            # 初めて来た人が読む GitHub の README を入った版で — README が出した版より先へ進むと落ちる(card ki-fd6aea147621)。
+            # 初めて来た人が読む GitHub の README を入った版で — README が出した版より先へ進むと落ちる。
             *check_readmes(checkout_readmes(), installed, place, timeout).failures,
             *check_public_names(installed, place, timeout),
             # venv に pytest を足すので最後に置く。
@@ -1255,7 +1255,7 @@ def check_python(python_request: str, work: Path, timeout: float, source: Source
         # venv に pytest を足すので最後に置く。
         *check_llm_example(installed, place, timeout),
         # 8 は走らせない — 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版で走らせると checkout の
-        # API が変わるたびに落ちる。確かめは --pypi だけが持つ(card ki-5ea7c639b693)。
+        # API が変わるたびに落ちる。確かめは --pypi だけが持つ。
     ]
 
 

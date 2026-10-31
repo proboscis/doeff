@@ -1,10 +1,10 @@
 // doeff-linter のエディタ向け出力(`--output-format editor-json`・契約 版 2)の型と、読み込みの唯一の検査。
-// 版 2 = defk / deff の見出し(signatures)と束縛の型(bindings)を足した(agora-redesign #849)。
+// 版 2 = defk / deff の見出し(signatures)と束縛の型(bindings)を足した。
 // linter が規則の判定の唯一の正本で、拡張はこの JSON を表示するだけ(自分では判定しない)。
 // 版が違う・欄が欠けた・型が違う JSON は理由つきで捨て、既定値で埋めない。
 // ただし閉じた集合のうち linter が先に語を足しうる物(規則の家族・見出しの種類・束縛の形と出どころ・型の式の種類)は、知らない語でも
 // 出力を捨てない — その項目だけ既定の見た目(家族は null = 一般の印・見出しと束縛は描かない・型は読めない式)にして、`unknown` に
-// 「拡張が古い」の理由として控える(agora-redesign #848 — linter が先に進むと違反の欄が全部消えていた)。
+// 「拡張が古い」の理由として控える(linter が先に進むと違反の欄が全部消えていた)。
 
 export const LINT_CONTRACT_VERSION = 2;
 /** 読める版 — 版 1(見出しと束縛の無い古い linter)も読み、見出しと束縛を空とする(linter の置き場が本線に追いつくまでの間、違反の欄を消さないため)。 */
@@ -258,7 +258,7 @@ export interface LintRewritePart {
   readonly answer: LintTypeRef | null;
 }
 
-/** 呼びを `f(a, b)` の形で見せる置き換え 1 つ(括弧の組 1 つ — 版 2 への欄の追加・agora-redesign #849)。 */
+/** 呼びを `f(a, b)` の形で見せる置き換え 1 つ(括弧の組 1 つ — 版 2 への欄の追加)。 */
 export interface LintRewrite {
   /** 知らない種類は null(edit だけで描ける) */
   readonly kind: LintRewriteKind | null;
@@ -272,7 +272,7 @@ export interface LintRewrite {
   readonly parent: number | null;
 }
 
-/** 本体の文字の字の役(閉じた集合 — 読む面の本体の行・agora-redesign #910)。 */
+/** 本体の文字の字の役(閉じた集合 — 読む面の本体の行)。 */
 export const LINT_BODY_ROLES = [
   'keyword',
   'type',
@@ -349,7 +349,7 @@ export interface LintReport {
   /** `--stdin` の file の定義ごとの本体の文字の行(版 2 への欄の追加 — 古い linter の出力には無く []) */
   readonly bodies: readonly LintBody[];
   /**
-   * この実行で判じた規則の ID(更新 8・agora-redesign #2163)。1 file の実行(stdin)は repo 全体でだけ判じる規則(DOEFF166・141 など)を
+   * この実行で判じた規則の ID(更新 8)。1 file の実行(stdin)は repo 全体でだけ判じる規則(DOEFF166・141 など)を
    * 走らせないので、置き場はこの規則の違反だけを 1 file の結果で差し替え、ほかの規則の違反は全体の実行の結果のまま残す。古い linter の
    * 出力には無く null(その時は今までどおり file の違反を全部差し替える)。
    */

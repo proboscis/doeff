@@ -62,8 +62,8 @@ rules:
       only as the .credentials.json of a config dir of the process's own
       (doeff_claude_code/_credential_home.hy), never as a child env var, so a
       refreshed token can replace it while the CLI runs
-      (ClaudeReplaceSessionCredential / ReplaceSessionCredentialEffect — card
-      acp:kanban-issue:ki-4ffdafa021e5). Do not put the turn credential into
+      (ClaudeReplaceSessionCredential / ReplaceSessionCredentialEffect).
+      Do not put the turn credential into
       the child env (the CLAUDE_CODE_OAUTH_TOKEN name or doeff_agents._agent_env
       CLAUDE-TURN-CREDENTIAL-ENV) in the CLI launch layers.
     pattern-either:
@@ -86,7 +86,7 @@ rules:
       process: the argv, the config dir of its own that carries a lent
       credential, the wait limit and the kill. A subprocess / os.system /
       asyncio child process here would be a second place that spells the CLI
-      and hands it the credential (card ki-ca120a2c8eb3). Emit
+      and hands it the credential. Emit
       ClaudePrintOnce instead.
     pattern-either:
       - pattern: import subprocess
@@ -215,7 +215,7 @@ rules:
       and the conversation memory BOOKS (2026-09-21: 44 rows in ACP, 0 files in the
       seat's memory home, measured on a pool pod) — because adding one field made you
       touch four sheets and the fourth was always forgotten. Add the field to
-      CHARTER_CARRIED_KEYS instead (card acp:kanban-issue:ki-a40292ed30d9).
+      CHARTER_CARRIED_KEYS instead.
     patterns:
       - pattern-regex: '"(auto_compact_window|memory_dir|memory_files)"\s+\('
     paths:
@@ -321,8 +321,7 @@ rules:
       entry (replay_main) must all call it. A second copy drifted: the worker
       and the replay dropped record while the single-process main passed it to
       the program, so one declaration ran on one path and crashed on the other
-      (design check 2026-09-26, blind counterexample A — agora-redesign#639
-      request 2). Call program-arguments instead of mangling config keys here.
+      (design check 2026-09-26, blind counterexample A). Call program-arguments instead of mangling config keys here.
     patterns:
       - pattern-regex: 'hy\.mangle'
     paths:
@@ -333,7 +332,7 @@ rules:
         # code_prepare の import の静的な辿り(imported-names — #2027 で worker/core/code_plan.hy へ移した)は、import の記号(Hy の名)を
         # Python の module の名に直すのに hy.mangle を使う — 設定の鍵を引数の名に直す写しではない(日次 t69 の誤検出・#639)。
         - "**/doeff_cluster/_worker/core/code_plan.hy"
-        # defsystem の展開(2026-10-27 に doeff-hy から移した — card ki-f2107259b141)は、job の行の鍵(`:per-part` など)と Program の
+        # defsystem の展開(2026-10-27 に doeff-hy から移した)は、job の行の鍵(`:per-part` など)と Program の
         # 呼び出しの名の引数を、展開が書く関数の引数の名・CallShape の kwargs の鍵に直すのに hy.mangle を使う — 設定の鍵を引数の名に
         # 直す写しではない(run.config は通らない)。
         - "**/doeff_cluster/_shared/entry/_system_form.hy"
@@ -348,8 +347,7 @@ rules:
       report-matches・current-report・service-readiness)と coordinator/core/metrics_policy.hy(計器)。他の module は
       service-readiness などの持ち主の関数を呼ぶ。表から自分の規則で報告を選ぶと、置き先でない process(退いた世代の
       worker が起こし直した process・止めた試行)の報告が置き先の判断を決める — 設計検証 2026-10-11 の盲検 B: 入れ替えの
-      諦めを、worker・指紋・割り当ての世代だけで選んだ Ready で止める写しが、提示した検査をすべて通った(AL-D2o・card
-      ki-02ca1a2bfc6c)。表を読む判断が要るなら、持ち主の module に足す。
+      諦めを、worker・指紋・割り当ての世代だけで選んだ Ready で止める写しが、提示した検査をすべて通った(AL-D2o)。表を読む判断が要るなら、持ち主の module に足す。
     patterns:
       - pattern-regex: '\bobservations\s*\.\s*(readiness|metrics)\b'
     paths:
@@ -369,7 +367,7 @@ rules:
       4 番目 = 同じ持ち主の単調な時計の読み)としてだけ読む。起点を直に引く((- now state.last-ok-ms))・名に写して持ち出す・期限
       (worker_due の beat-due・fence-due)へ生のまま渡す・対の片方だけを書く・2 つの引数を入れ替える、のどれも、途絶の柵と heartbeat
       の送りを壁の時計の差だけ(か単調な時計の差だけ)で判じる道を作る — 途絶の最中に機体の壁の時計が戻ると、戻った分だけ自己停止が
-      遅れ、coordinator の移し替えの後まで job を動かす(条 C4・C2 の破り・card ki-069f4a5c07f7)。沈黙の長さが要るなら silent-ms の
+      遅れ、coordinator の移し替えの後まで job を動かす(条 C4・C2 の破り)。沈黙の長さが要るなら silent-ms の
       答えを使い、壁の時計の枠の刻が要るなら「今の壁の時計 − silent-ms の答え」で写す。起点を書くのは、壁の時計と単調な時計を同じ所で
       読んだ直後の 1 つの setv(か 1 つの record の作り)にする。
     patterns:
@@ -401,7 +399,7 @@ rules:
       機体の眠りの間も進む生の壁の時計で、GetMonotonic が壁の時計の step に動かされない戻らない時計である事に依る — 壁の差が suspend を
       拾い、単調な差が壁の戻りを守る。時計の effect に答える handler を足す・答え手に源(now・monotonic)を渡すと、計りも起点も検も
       1 文字も変えずに、この前提だけが崩れる(設計検証の盲検 B: 入口で壁の時計を「起動の刻 + 単調な時計の経過」に替える handler が
-      提示した検査を全部通り、30 秒の suspend の後も自己停止を決めなかった — card ki-069f4a5c07f7)。時計の源を替える必要が在るなら、
+      提示した検査を全部通り、30 秒の suspend の後も自己停止を決めなかった)。時計の源を替える必要が在るなら、
       替えた源の下で沈黙の契約の検(packages/doeff-cluster/tests/test_silence_wall_clock_step.hy の台本)が緑である事を示し、この規則の
       許す形を同じ変更で足す。
     patterns:
@@ -422,8 +420,8 @@ rules:
       汎用の package(doeff-cluster・doeff-records・doeff-claude-code・doeff-codex)は、上に載る業務の系の語を書かない — agora・kanban・
       conversation・budget・artifact・herdr・hypha・mediagen・sporocarp・acp・controllers/・controllers.・clients/hy(大文字小文字を
       区別しない・前が英字でない時)。汎用の部品が業務の系を名指すと、境界が file の文字から崩れる。註・docstring・README の
-      repo の名や issue の参照も同じ(「agora-redesign #2830」は「#2830」と書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
-      tests/test_no_application_vocabulary.hy の写し — agora-redesign #2875。写しの差は、.pyi を全部で見る・doeff-records の宣言の
+      repo の名や issue の参照も同じ(repo の名を付けた issue の参照は「#<番号>」と番号だけで書く)。語の一覧の定義元はこの規則 1 つ(元は 3 package の
+      tests/test_no_application_vocabulary.hy の写し。写しの差は、.pyi を全部で見る・doeff-records の宣言の
       欄の名 size-budget を全部で許す形に揃えた)。semgrep は file の中身しか見ないので、file の名は
       tests/test_package_file_names_have_no_application_vocabulary.py がこの規則の語の一覧を読んで確かめる。
     patterns:
@@ -446,8 +444,8 @@ rules:
     message: >
       doeff-agents は外の CLI の行(JSON)の形を解かない — 解くのは層 2 の package(doeff-codex の lines・doeff-claude-code の lines)
       だけで、doeff-agents(層 3 の adapter)はその型つきの記録だけを読む(層の決まり — headless の境は効果と handler で
-      はっきり分ける。operator の決定 2026-09-25)。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy._wire・OpaqueJson・
-      parse-json)を書かない。要る欄が層 2 の記録に無ければ、層 2 に wire の型と記録を足す。出自 = ki-77e76c7c07ce の設計検証の
+      はっきり分ける)。doeff-agents の src に wire の型と JSON の解き手(defwire・doeff_hy._wire・OpaqueJson・
+      parse-json)を書かない。要る欄が層 2 の記録に無ければ、層 2 に wire の型と記録を足す。出自 = 設計検証の
       盲検 B(層 2 が道具の item を中を読まずに運び、層 3 が自前の defwire で codex の JSON を解く実装が、名指しの検・pre-commit・
       型検査を全部通った)。検 = tests/semgrep/test_doeff_agents_wire_json_rule.py。
     patterns:
@@ -472,7 +470,7 @@ rules:
       the zombie judgement into one substrate, makes tmux and herdr answer the
       same effect differently, and lets a change to the policy vocabulary
       silently change what the substrate reports (design check 2026-09-26,
-      blind counterexample B — agora-redesign#639 request H). Keep the
+      blind counterexample B). Keep the
       judgement in policy.hy; if the reaper needs the job's composition, widen
       the effect for both substrates instead.
     patterns:
@@ -685,11 +683,11 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-9fc7d4bca4dc / law
+      law
       conversation-memory-lives-in-the-row: the fold-back BASELINE file
       (`MEMORY.base.json`) has exactly one home — the seat's copy in
       _sessionhost/impls/claude_code.hy (CLAUDE-MEMORY-BASE-FILE). The wire
-      spelling in acp/effects.py retired with agentd (agora-redesign #668).
+      spelling in acp/effects.py retired with agentd.
       A second site that spells the file builds a side car nobody
       reads: the fold-back then sees no baseline, writes NO book back (verdict
       rule 3b) and the memory silently stops moving. Import the constant
@@ -708,7 +706,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-a40292ed30d9 / law
+      law
       conversation-memory-lives-in-the-row (ACP 575b1e): the per-turn charter
       fields (`memory_dir`, `memory_files`) are TURN-CARRIED — the charter
       names them again every turn and the session row never keeps a copy.
@@ -866,7 +864,7 @@ rules:
       include:
         - /packages/doeff-agents/**
 
-  # 上の規則の Hy の分(card ki-3c3d85253c2c・ADR-DOE-TIME-001 R7): 上は Python の class / def / import の名だけを見るので、Hy の定義
+  # 上の規則の Hy の分(ADR-DOE-TIME-001 R7): 上は Python の class / def / import の名だけを見るので、Hy の定義
   # (io_effects.hy の Sleep と sleep・_sessionhost/effects.hy の ClockSleep と clock-sleep)に当たらず、doeff-agents の program は
   # 自前の待ちの効果で待っていた。Hy で待ちの効果(名に Sleep / Delay を含む EffectBase の defclass・defeffect)と、その構築子
   # (名が sleep か -sleep で終わる定義)を定め直す形を止める。program の中の素の time.sleep は doeff-linter の DOEFF210 が持つ。
@@ -2238,8 +2236,8 @@ rules:
       category: architecture
       rationale: "CESK store ownership — Segment-only scope store, no dual-store sync"
 
-  # 許可の並びの WithBoundaries(1 歩で境の組を付ける命令・d0bbf9ea1 / 43ab0cf3c / 90fbae568・agora-redesign #3149)は利用者の承認
-  # 2026-10-04(Mac の調整役が作った HTML の報告を利用者が見て承認 — #3149・#1201)。戻し方 = この 1 語を外す。
+  # 許可の並びの WithBoundaries(1 歩で境の組を付ける命令・d0bbf9ea1 / 43ab0cf3c / 90fbae568)は、HTML の報告を見た上での
+  # 承認を経て足した。戻し方 = この 1 語を外す。
   - id: doctrl-variants-require-approval
     pattern-regex: '(?ms)pub\s+enum\s+DoCtrl\s*\{(?:(?!^\}).)*^\s*(?!Pure\b|Eval\b|Expand\b|Apply\b|Perform\b|Resume\b|Transfer\b|ResumeThrow\b|TransferThrow\b|WithHandler\b|Pass\b|Delegate\b|WithObserve\b|WithBoundaries\b|GetTraceback\b|GetExecutionContext\b|GetHandlers\b|GetOuterHandlers\b|TailEval\b|AllocVar\b|ReadVar\b|WriteVar\b)[A-Za-z_][A-Za-z0-9_]*\s*(\{|,)'
     paths:
@@ -2580,7 +2578,7 @@ rules:
     severity: ERROR
     message: >
       conductor-cli-runs-effect-programs: the conductor CLI commands are programs of
-      conductor effects run under conductor_state_handler (card ki-1ef3718c89b3 — the
+      conductor effects run under conductor_state_handler (the
       subpackage shows its users effects and handlers only). Do not build ConductorAPI or
       an issue handler, or call the state store's functions, from the CLI; yield the run
       effect (doeff_conductor._effects.runs) and let the handler answer it.
@@ -2599,7 +2597,6 @@ rules:
       include:
         - /packages/doeff-conductor/src/doeff_conductor/_cli.py
     metadata:
-      issue: ki-1ef3718c89b3
       category: architecture
 
   - id: doeff-vm-counts-are-read-with-effects
@@ -2611,7 +2608,7 @@ rules:
       are doeff's effects ReadVmLiveCounts, ReadVmWorkCounts, ReadVmScanCounts,
       ReadInvariantChecks, SetInvariantChecks, SetSchedulerStepBudgetArmed and
       SetSchedulerTraceInstalled, answered by doeff_core_effects._handlers.vm_probe_handler
-      (card ki-27e8ea225b62 — a subpackage shows its users effects and handlers only). Yield the
+      (a subpackage shows its users effects and handlers only). Yield the
       effect under vm_probe_handler instead of calling the extension's function; only that
       handler and doeff_core_effects' scheduler and world phases call the functions.
     patterns:
@@ -2634,7 +2631,6 @@ rules:
         # the step budget plugin's tests stand a fake count in for the extension's function
         - /packages/doeff-hy-pytest/tests/
     metadata:
-      issue: ki-27e8ea225b62
       category: architecture
 
   - id: conductor-no-silent-issue-list-skip
@@ -2993,8 +2989,8 @@ rules:
   # program の中の素の time.sleep / asyncio.sleep(Await(asyncio.sleep(…)) を含む)は handler を迂回して
   # 壁の時計で待ち、検が仮想の時計で走れない。(effect, k) を受ける handler の実装の中は鳴らさない。
   # sleep(0) は時間を待たず 1 度譲るだけなので鳴らさない(tests の規則と同じ)。範囲は本体(src)と例(examples/ — 本体が
-  # 手本にする物なので素の sleep を置かない)。(card ki-94380dba532f・利用者の決定 2026-10-12)
-  # Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(card ki-3c3d85253c2c・
+  # 手本にする物なので素の sleep を置かない)。
+  # Hy の program(defk・defp)は semgrep が読めないので、doeff-linter の規則 DOEFF210 が同じ決まりを止める(
   # 定義 = packages/doeff-linter/src/project/program_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.program_sleep])。
   # 極性の検 = tests/semgrep/test_no_sleep_in_programs_rule.py(examples/ の範囲も同じ検が見る)。
   # 法 = ADR-DOE-TIME-001 の a-program-waits-by-a-time-effect(docs/adr/defadr_doeff_time_001_programs_wait_by_time_effects.hy —
@@ -3040,7 +3036,6 @@ rules:
     severity: ERROR
     metadata:
       category: effects
-      card: ki-94380dba532f
 
   # ---------------------------------------------------------------------------
   # TESTING PATTERNS
@@ -3050,19 +3045,19 @@ rules:
   # `realtime` を名乗る — 関数の @pytest.mark.realtime か、module の pytestmark = pytest.mark.realtime。
   # 規則はその中を鳴らさない。名乗った検は名簿 tests/realtime_tests.toml に理由と一緒に載せる(名簿と
   # marker の食い違いは tests/semgrep/test_realtime_tests_registry.py が赤にする)。sleep(0) は時間を待たず
-  # 1 度譲るだけなので鳴らさない(agora-redesign #2882)。await の無い asyncio.sleep(…)(yield
-  # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR(card ki-94380dba532f・ki-37e3efcc05e2)。
+  # 1 度譲るだけなので鳴らさない。await の無い asyncio.sleep(…)(yield
+  # Await(asyncio.sleep(1.5)) など)も鳴らし、severity は ERROR。
   # 極性の検 = tests/semgrep/test_no_sleep_in_tests_rule.py。
   # 法 = ADR-DOE-TIME-001 の a-test-sleeps-only-when-it-declares-realtime(冊はこの規則の id と severity ERROR を検める)。
   #
-  # 範囲と、外へ出る道(card ki-6aa7cb5ffb83):
+  # 範囲と、外へ出る道:
   # - 範囲 = 名が tests の dir の下の全部と、どこに在っても検の名の file(test_*.py・*_test.py・conftest.py)。
   # - 外へ出る道は名簿の 2 つの表だけ。[tests] = 上の marker(本物の process を待つ検の support の module — pytest が
   #   集めない file — も、同じ pytestmark の 1 行で名乗って載る)。[suites] = 下の paths.exclude の dir(どの検も本物の外の
   #   process を黒箱で動かす組)で、exclude の行と 1 対 1。
   # - 行の注釈(nosemgrep)で外す道は無い — 規則の範囲に 1 行でも在れば名簿の検が赤にする。
   # - threading.Event().wait(秒) は誰も立てない合図を待つ = sleep の言い換えなので、同じく鳴らす。
-  # - Hy の検は semgrep が読めないので、同じ決まりを doeff-linter の規則 DOEFF211 が持つ(card ki-bb3ee40d0af2・定義 =
+  # - Hy の検は semgrep が読めないので、同じ決まりを doeff-linter の規則 DOEFF211 が持つ(定義 =
   #   packages/doeff-linter/src/project/test_sleep.rs・母集団 = pyproject.toml の [tool.doeff-linter.test_sleep])。名簿は同じ 1 つで、
   #   [suites] の dir は 2 つの規則の両方が除く(下の paths.exclude と、その節の exclude の dir の行)。
   - id: doeff-no-sleep-in-tests
@@ -3470,8 +3465,7 @@ rules:
         - "packages/doeff-vm-core/**"
         - "tests/semgrep/fixtures/**"
     message: |
-      doeff is the one package that imports doeff_vm (agora-redesign ki-ff728b00369a — the user's
-      answer "via-root", lt-XM33P1YN6QBWX9VFMHT0T439FA). Import the VM's types from doeff
+      doeff is the one package that imports doeff_vm. Import the VM's types from doeff
       (`from doeff import EffectBase, Resume, WithBoundaries, WithHandlerType`); a subpackage of
       this repository that needs the VM's internals (the Rust handlers, the counters, the handler
       annotations) imports them from `doeff._vm`.
@@ -3481,8 +3475,8 @@ rules:
       category: layer-boundary
       rationale: "the VM is an implementation detail of doeff; users and subpackages see doeff's root only"
 
-  # job の道(入口・foundation・job の本体が読む doeff の module)は pydantic を読まない(card ki-5ddadb736f62・親 card ki-2e0dce8d1ebb・
-  # 利用者の決定 2026-10-27 lt-SJK77NQZ8NSESDVVZ0P41407XQ の問い scope の答え all)。defwire の解き手は自前の doeff_hy/_wire_codec.py で、
+  # job の道(入口・foundation・job の本体が読む doeff の module)は pydantic を読まない(job の道の全部が対象)。
+  # defwire の解き手は自前の doeff_hy/_wire_codec.py で、
   # pydantic は照らしの道具 doeff_hy/_wire_parity.py(test の依存 doeff-hy[parity])だけが読む。LLM の出力を受ける doeff-openai・
   # doeff-gemini・doeff-openrouter は範囲の外。Python は型検査の時だけの import(if TYPE_CHECKING)と、pydantic が自分で呼ぶ口
   # __get_pydantic_core_schema__ の中の import(pydantic が既に読まれた時だけ走る — doeff_hy/_json_value.py)を断らない。
@@ -3515,8 +3509,7 @@ rules:
         - "/packages/**/tests/**"
         - "/doeff/**/tests/**"
     message: |
-      A module on the job path imports pydantic (card ki-5ddadb736f62 — the user's decision of 2026-10-27,
-      lt-SJK77NQZ8NSESDVVZ0P41407XQ: no job reads pydantic). Parse and write JSON with doeff_hy._wire
+      A module on the job path imports pydantic (no job reads pydantic). Parse and write JSON with doeff_hy._wire
       (parse / parse-as / dump-json — the decoder of doeff_hy/_wire_codec.py) or the row codec
       (doeff_hy._wire_codec row-codec-of), and catch the failure as doeff_hy._wire_malformed Malformed, not
       pydantic's ValidationError. Only the parity tool doeff_hy/_wire_parity.py and tests read pydantic.
@@ -3536,8 +3529,7 @@ rules:
         - "/tests/semgrep/fixtures/python/packages/doeff-job-path-pydantic-sample/**"
       exclude: *job-path-pydantic-exclude
     message: |
-      A Hy module on the job path imports pydantic (card ki-5ddadb736f62 — the user's decision of 2026-10-27,
-      lt-SJK77NQZ8NSESDVVZ0P41407XQ: no job reads pydantic). Parse and write JSON with doeff_hy._wire
+      A Hy module on the job path imports pydantic (no job reads pydantic). Parse and write JSON with doeff_hy._wire
       (parse / parse-as / dump-json) or the row codec (doeff_hy._wire_codec row-codec-of), and catch the
       failure as doeff_hy._wire_malformed Malformed. Only the parity tool doeff_hy/_wire_parity.py and tests
       read pydantic.
@@ -4049,7 +4041,6 @@ rules:
     severity: ERROR
     metadata:
       category: cli-programs-over-effects
-      issue: ki-7e6ce5db22d4
 
   - id: doeff-no-handler-map-run-helpers
     pattern-regex: '\b(run_with_handler_map|async_run_with_handler_map|_wrap_with_handler_map|merge_handler_maps)\b'
@@ -4145,7 +4136,7 @@ rules:
 
   - id: doeff-public-api-no-subpackage-imports
     # `from doeff.<sub> import …` のうち、取り込む名が全部 `_` で始まる(top level に出ない内部の名 — sentinel など)形は
-    # message の「module 固有の内部の名が要る時は下の package から」が許す形なので鳴らさない(agora-redesign #2857)。
+    # message の「module 固有の内部の名が要る時は下の package から」が許す形なので鳴らさない。
     # 1 つ目 = 1 行の形(`as` の別名・末尾の comment 可)・2 つ目 = 括弧で囲んだ形(複数行・末尾の `,`・comment 可)。
     # 公開の名が 1 つでも混ざる形・`import doeff.<sub>` は今まで通り鳴る。極性の検 = tests/semgrep/test_public_api_subpackage_imports_rule.py
     # (検体 = tests/semgrep/fixtures/python/tests/public_api/)。
@@ -5555,7 +5546,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-62aa1f4e9c9c decision D6: the settings key that
+      The settings key that
       drops the seat-specific DOUBLE read of the common CLAUDE.md is spelled in
       exactly one place (CLAUDE-MD-EXCLUDES-SETTING in
       _sessionhost/impls/claude_code.hy, which is also the single merge point of
@@ -5579,7 +5570,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-62aa1f4e9c9c decision D11: the names the seat's
+      The names the seat's
       home carries (`CLAUDE.md`, `skills`) are spelled ONCE — in the roster
       policy.CARRIED-INSTRUCTION-SOURCES (home-name of each row). Every other
       site walks that roster. Spelling `<home>/CLAUDE.md` or `<home>/skills`
@@ -5608,8 +5599,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-62aa1f4e9c9c decision D10 (blind counterexample
-      B): doeff must not spell the HOST's checkout layout. Where the common
+      doeff must not spell the HOST's checkout layout. Where the common
       instructions (or any host-side asset) live differs per host — the pod's
       container has no `dotfiles` tree at all — so the path arrives through the
       join declaration and the env it sets, never through a literal in this
@@ -5622,13 +5612,12 @@ rules:
     patterns:
       # ⚠ 行内に閉じる([^"'] は改行を含むので、閉じないと隣の註の逐語まで 1 致に巻き込む)。
       # ⚠ 当たるのは **path の要素としての `dotfiles`**(左は語の境界・右は `/` か閉じ引用符)で、
-      #   引用符の直後だけではない — 違反は `"/home/kento/dotfiles/…"`・`f"{home}/dotfiles/…"`・
+      #   引用符の直後だけではない — 違反は `"/home/user/dotfiles/…"`・`f"{home}/dotfiles/…"`・
       #   `(os.path.join home "dotfiles" …)`・`Path(home) / "dotfiles" / …`・単引用符でも書ける
       #   (対照 = tests/semgrep/fixtures/.../host_checkout_layout_forbidden.{py,hy})。
       #   `my-dotfiles/` `dotfiles-base/` `acp.dotfiles/` は語の境界で外れる。
       - pattern-regex: '["''][^"''\n]*(?<![\w.-])dotfiles(?:/[^"''\n]*)?["'']'
-      # 射程外の既知の 1 件(依頼 lt-JH7GM60YZ02MSGKKNXTDQK79A1 の報告・別便の card
-      # acp:kanban-issue:ki-6f8425e88733): 定期便の verify の script の置き場 acp/effects.py
+      # 射程外の既知の 1 件(別便で扱う): 定期便の verify の script の置き場 acp/effects.py
       # VERIFY_SCRIPTS_RELDIR。直すには charter.kind = verify の契約に宣言の鍵を 1 本足す
       # 別便が要るので、この 1 つの綴りだけを名指しで通す
       # (paths.exclude ではない — 他のどの file に同じ綴りが現れても発火する)。
@@ -5643,7 +5632,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      card acp:kanban-issue:ki-62aa1f4e9c9c decision D8: installing a symlink is
+      Installing a symlink is
       ONE verb — _sessionhost/substrate.hy ensure-symlink-outcome — and that verb
       stages a uniquely named link and lands it with a single rename(2). A second
       site that calls os.symlink / Path.symlink_to hand-rolls the install without
@@ -5683,7 +5672,7 @@ rules:
       - generic
     severity: ERROR
     message: >
-      ADR-DOE-AGENTS-012 R61 (card acp:kanban-issue:ki-f250d67a7157): the
+      ADR-DOE-AGENTS-012 R61: the
       executable an agent kind launches (argv[0]) is named in ONE place —
       _sessionhost/drivers.py DRIVER_EXECUTABLE — and every argv builder reads
       it from there ((get DRIVER-EXECUTABLE "codex")). A literal "claude" /
@@ -5757,7 +5746,7 @@ rules:
       that takes the executable (or anything else) from another env variable
       answers drivers.list for a file the launch never runs: the node declares
       the kind while its turns die with `No such file or directory` (the
-      blind counterexample on card acp:kanban-issue:ki-f250d67a7157 —
+      blind counterexample —
       AGENT_CODEX_EXECUTABLE read by driver_listing alone). Changing where the
       executable comes from changes DRIVER_EXECUTABLE itself, so the launch and
       the lookup move together.
@@ -5788,7 +5777,7 @@ rules:
       軸の属性・位置は hy-index(doeff-indexer)の置き場から、型・effect・本体の行は
       doeff-linter の editor-json から受け取る。fs / node:fs / child_process の import と
       vscode.workspace.findFiles・vscode.workspace.fs は面の外(hy/・lint/ の読み手)に置く
-      (agora-redesign #910 V8・v1 制約 5)。
+      (v1 制約 5)。
     paths:
       include:
         - "**/doeff-runner/src/read/**"
@@ -5815,9 +5804,9 @@ rules:
     message: >
       ADR-DOE-RUNNER-001 R3(law reading-plane-is-read-only): 読む面
       (ide-plugins/vscode/doeff-runner/src/read/)は document を書き換えない — 編集の機能は
-      作らない(operator は source を手で編集しない — operator の決定 2026-09-28)。
+      作らない(読む面の使い手は source を手で編集しない前提)。
       WorkspaceEdit・applyEdit・TextEditor.edit・document の save を面に置かない。source を
-      直したい時は `open in editor` で editor を開く(agora-redesign #910 V9・v1 R2)。
+      直したい時は `open in editor` で editor を開く(v1 R2)。
     paths:
       include:
         - "**/doeff-runner/src/read/**"
@@ -5834,7 +5823,7 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      agora-redesign #1551: 記録からの収集は session 内で所有する。
+      記録からの収集は session 内で所有する。
       pytest の class や module を process 全体で書き換えると、通常の収集と未知 plugin の hook を壊す。
     pattern-either:
       - pattern: FixtureManager.$ATTR = $VALUE
@@ -5850,7 +5839,7 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >
-      agora-redesign #1551: pytest の非公開の収集部品は doeff_adr/_indexed_pytest.py だけが所有する。
+      pytest の非公開の収集部品は doeff_adr/_indexed_pytest.py だけが所有する。
       他の module は型付きの収集境界を呼び、pytest 更新時の修正先を一か所に保つ。
     pattern-regex: '\b(Metafunc|FuncFixtureInfo|_fixturemanager)\b|\b_pytest\.python\b'
     paths:
@@ -5863,10 +5852,10 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >
-      card ki-0b0ab40048b9(設計検証 lt-D8Y7NDS3A1XHEP1DQJ323D6CHB の盲検 B の副の所見): coordinator の core(調停ループ・行を出す側)は
+      coordinator の core(調停ループ・行を出す側)は
       行の送り先を知らない — 行は slog で出し、送りの配線は入口 coordinator/entry/main.hy だけが line_stamp の process_lines で持つ。
       code-quality の module doeff-cluster-coordinator は core の program.hy と入口の main.hy を 1 つに持ち、入口のための line_stamp の
-      許しが core にも効くので、core からの import をこの規則で断る。区画 worker を _worker へ隠した後(card ki-3ff93cd3499e)の
+      許しが core にも効くので、core からの import をこの規則で断る。区画 worker を _worker へ隠した後の
       綴り doeff_cluster._worker.entry.line_stamp も、移し替えの module を通る古い綴りも断る。
     pattern-regex: 'doeff_cluster\._?worker\.entry\.line_stamp'
     paths:

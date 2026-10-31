@@ -1,8 +1,8 @@
 """09 章の Gather で I/O を並べる例が、I/O を handler に置いた形で走り、書いてある通りに印字する事の検
-(取り組み doeff-publish・card ki-d4da7b8d4229)。
+(取り組み doeff-publish)。
 
 09 章の小節「Using Gather with Async Operations」の例は、program の中で `yield Await(http_get(url))` と HTTP を直に
-呼んでいた(card ki-b96575f15f18 の洗い出し)。doeff の書き方では、program は `HttpGet(url)` の effect を yield し、
+呼んでいた。doeff の書き方では、program は `HttpGet(url)` の effect を yield し、
 I/O は `@handler` を付けた handler が持つ。その例が今の doeff で走り、print の注記どおりに印字する事を読む。
 
 09 章は page 全体をまだ走らせられない(2026-10-26 の時点で 16 囲みのうち 14 が注記どおりに走らない)ので、page を

@@ -383,7 +383,7 @@ class _Order:
 def test_completer_goes_on_after_the_woken_task_unless_it_keeps_its_turn(
     implementation: SchedulerImplementation, yield_to_woken: bool, expected: tuple[str, ...]
 ) -> None:
-    # agora-redesign #4013: CompletePromise(..., yield_to_woken=False) wakes the waiter but the completer goes on
+    # CompletePromise(..., yield_to_woken=False) wakes the waiter but the completer goes on
     # first; the default keeps the #493 order (the woken task runs before the completer goes on).
     order = _Order()
 
@@ -409,7 +409,7 @@ def test_a_run_left_waiting_after_a_completion_that_keeps_its_turn_is_named_a_de
     implementation: SchedulerImplementation,
 ) -> None:
     # The woken task is queued as with the default, so deadlock detection still sees a run whose tasks all wait on
-    # promises nobody completes (agora-redesign #4013).
+    # promises nobody completes.
     @do
     def waiter(first: Future[None], second: Future[None]):
         yield Wait(first)

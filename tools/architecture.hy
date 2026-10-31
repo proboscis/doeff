@@ -1,4 +1,4 @@
-;;; tools の下の file の層の宣言(agora-redesign #2859)。
+;;; tools の下の file の層の宣言。
 ;;;
 ;;; 今は、規則の母集団から外す層 2 つ(build・release)だけを置く。doeff-linter は Python の文ごとの規則の母集団を、file から上へ最も近い
 ;;; architecture.hy から決める(#2811)。file の場所は symlink を解いた本物の場所で決まる — symlink を置いても、その file に当たる規則は

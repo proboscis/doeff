@@ -1,4 +1,4 @@
-"""for/do の実行時の形の検(agora-redesign #2871)。
+"""for/do の実行時の形の検。
 
 for/do の展開は、件ごとの関数を Traverse 1 つに 1 度だけ @do で包む(件ごとに包み直すと、件 1 つあたり約 7 µs の @do の
 組み立てがかかっていた)。件の Program は前と同じ(件を引数に受ける 1 つの呼び)なので、答え・When で落ちる件・label・件の失敗は
@@ -83,7 +83,7 @@ def test_the_step_is_one_do_function_per_traverse() -> None:
     assert hasattr(step, "__doeff_generator_function__"), "Traverse の関数が @do で包まれていない(件ごとに包み直す形)"
 
 
-# for/do に From を 2 つ以上重ねた形(card ki-7e6a11f56bd5)。重ねた From は list の内包・SQL の CROSS JOIN と同じく、外の件と
+# for/do に From を 2 つ以上重ねた形。重ねた From は list の内包・SQL の CROSS JOIN と同じく、外の件と
 # 内の件の組ごとに本体の値を 1 件として平らに並べる。前は 2 つ目の From の Traverse を外の件の関数が実行せずに値として返し、
 # valid_values に内側の Traverse の effect が入っていた。
 
@@ -127,7 +127,7 @@ def test_two_froms_under_the_parallel_handler_give_the_same_values() -> None:
     assert collection.valid_values == [11, 21, 12, 22]
 
 
-# Traverse の handler の契約(設計検証 lt-BD5XYC8Z64P5YMHZDEAPKXQXK5 の盲検 A): 重ねた From の外の件の program は、内側の Traverse を
+# Traverse の handler の契約(設計検証の盲検 A): 重ねた From の外の件の program は、内側の Traverse を
 # 同じ handler へもう一度出す。handler は件の program を自分の下で走らせ、Traverse をまたぐ資源(handler に 1 つの枠など)を件の
 # program の間に持ち続けない。持ち続ける handler は、外の件が枠を占めたまま内の件を待って止まる(枠 1 で必ず止まる)。
 # 出荷する handler の全部をここで回し、どれかがこの形に変わると赤になる。

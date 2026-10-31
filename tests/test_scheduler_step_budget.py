@@ -1,4 +1,4 @@
-"""The step budget is one contract of both schedulers (#3143, card ki-fee92eb0a840).
+"""The step budget is one contract of both schedulers (#3143).
 
 docs/25-rust-scheduler.md promises that the Python and Rust schedulers handle
 the same effects with the same meaning. The step budget (``arm_step_budget``)

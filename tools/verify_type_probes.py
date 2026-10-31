@@ -1,5 +1,5 @@
 """核の 4 個だけを入れた新しい venv で、型の probe(tests/type_probes/)と README の Python の例を pyright と mypy にかけ、
-誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12・card ki-d2c901bc9a2d)。
+誤りの出る行が probe の印の通りである事を確かめる(取り組み doeff-publish の区切り 12)。
 
 公開の前の型の報告(使う人の型の check で doeff の型がどこまで効くか)は、核だけの venv に 25 個の probe を当てて効く所と
 抜けを数え、抜けを card に切った。開発の環境の型の検(tests/test_static_typing.py ほか)は workspace の editable な入れ方と

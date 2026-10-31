@@ -1,5 +1,5 @@
 """Rust の部品を組む・引く入口(tools/doeff_cargo_backend.py の stored_wheel・wheel_from_store・editable_from_store)の失敗ケース
-(ADR-DOE-BUILD-001・agora-redesign #3860)。
+(ADR-DOE-BUILD-001)。
 
 入口は組む前に必ず「source の中身の hash を鍵にした保存先」を引く。ここでは cargo と maturin を撃たず、組み方(Compile)を
 呼ばれた度数を数える偽の組み方に差し替え、wheel の hook と editable の hook が同じ保存先から答えるか・Rust の source を 1 つ
@@ -144,7 +144,7 @@ def test_the_wheel_hook_and_the_editable_hook_read_one_store(backend: ModuleType
 def test_the_wheel_hook_takes_the_python_source_from_the_tree_and_only_the_build_products_from_the_store(
     backend: ModuleType, tmp_path: Path
 ) -> None:
-    # 失敗ケース(card ki-0b68af4154d6): 鍵は Rust の入力だけ(python-source の .py は鍵に無い — doeff-effect-analyzer は cache-keys を
+    # 失敗ケース: 鍵は Rust の入力だけ(python-source の .py は鍵に無い — doeff-effect-analyzer は cache-keys を
     # 宣言せず既定の glob)なので、Python だけを替えた版の wheel の hook は前の版の wheel を保存先から引く。直す前の hook はそれを
     # そのまま写し、git の依存で入れた doeff-effect-analyzer が 38bd248df を名乗りながら bba41285 の Python を持った(merge-queue の閉じの
     # 検 6 本が赤)。hook は保存先から組み立ての成果物と dist-info だけを取り、python-source の file は作業木から入れる(R2b)— 書き換えた
@@ -299,7 +299,7 @@ def test_the_entry_reports_the_stored_wheel_to_the_caller(backend: ModuleType, t
 
 
 def test_the_store_answers_without_rustc_on_the_path_and_without_a_child_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補・agora-redesign #3850 の 2026-10-07 — zeus の追随の腕の slot の同期が rc=1 で止まった): 入口は
+    # 失敗ケース(ADR-DOE-BUILD-001 R4 の追補・2026-10-07 — zeus の追随の腕の slot の同期が rc=1 で止まった): 入口は
     # 保存先を引く前に鍵を作る。鍵の材料に `rustc -V` の出力を入れていると、PATH に rustc の無い環境(zeus の常駐の PATH)では保存先に
     # 同じ source の wheel が在っても鍵を作る所で落ちる。鍵は子 process を起こさずに作り、保存先の wheel をそのまま返す。道具の版を
     # 固定の文字に差し替えない(鍵を作る本物の道筋を通す)。

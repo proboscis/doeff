@@ -1,6 +1,6 @@
 """公開 repo の作者の名義に operator の実名を書かないことを確かめる検。
 
-operator の指示(2026-09-29 — 実名は許しなしに使わず、どの PR にも書かない)で、package の metadata・作者の欄・使用許諾の文書に
+実名を許しなしに使わず、どの PR にも書かない決まりにより、package の metadata・作者の欄・使用許諾の文書に
 実名を書かず、名義は Proboscis <3684241+proboscis@users.noreply.github.com> だけにする。
 
 この検の中にも実名を書かないため、2 つの形で照らす:
@@ -40,7 +40,7 @@ def listed_files(root: Path) -> list[str]:
     """root の照らす file の path の一覧を返すため(作業樹の外の物・無視する物を照らさない)。
 
     git の作業樹なら git が追跡している file。.git の無い写し(日次の全体検証は remote_check.py --tree . で .git を運ばずに
-    同期して撃つ — agora-redesign #1201)では、空の git の dir を一時に作って写しを作業樹に指し、写しの .gitignore に従う
+    同期して撃つ)では、空の git の dir を一時に作って写しを作業樹に指し、写しの .gitignore に従う
     「無視しない file」を数える。写しは元の作業樹の追跡する file と無視しない未追跡の file だけを持つので、同じ集合になる
     (写しの .venv などの生成物は .gitignore が外す)。root の外の親の repo の index は読まない。
     """

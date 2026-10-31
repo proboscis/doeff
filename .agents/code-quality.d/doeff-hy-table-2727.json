@@ -20,7 +20,7 @@
       "public": [
         "packages/doeff-hy/src/doeff_hy/_table.hy"
       ],
-      "responsibility": "書き換えない表 Table(鍵 → 値)とその書き TableWrite・下書き TableDraft — 索引の dict を欄に持たず、型の付いた表で引く。I/O なし(agora-redesign #2727 — 記録の再生の task の問いの列を表で持つのに契約が無かった)。",
+      "responsibility": "書き換えない表 Table(鍵 → 値)とその書き TableWrite・下書き TableDraft — 索引の dict を欄に持たず、型の付いた表で引く。I/O なし(記録の再生の task の問いの列を表で持つのに契約が無かった)。",
       "typed": true
     }
   ]

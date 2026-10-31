@@ -1,6 +1,6 @@
 """CacheDeleteEffect handling: delete-then-get must recompute.
 
-Issue doeff-core-effects-delete-effects-drift (maintainer 裁定 A, 2026-07-18):
+Issue doeff-core-effects-delete-effects-drift:
 CacheDeleteEffect は語彙として定義済みだが cache_handler が処理していなかった。
 
 cache_handler は単層意味論: cache effect を必ず自分で処理し re-perform しない

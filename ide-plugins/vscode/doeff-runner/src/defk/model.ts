@@ -1,8 +1,8 @@
 // defk の見出しと束縛の型を、editor のどこに何を描くかに直す純粋な関数(VS Code に触らない)。
 // 型の読み方は linter の editor-json(契約 版 2 の signatures と bindings)が唯一の正本で、ここは位置と描く物を決めるだけ。
-// 読むだけの表示 — file の文字は変えない(agora-redesign #849・operator は source を手で編集しない — operator の決定 2026-09-28)。
+// 読むだけの表示 — file の文字は変えない(source は手で編集しない前提)。
 //
-// 見出し(B 案 — 型を (dict, str) -> JsonAnswer の形で見せる。operator の決定 2026-09-28):
+// 見出し(B 案 — 型を (dict, str) -> JsonAnswer の形で見せる):
 // - 頭の行 `(defk 名 [引数]` を見出しにし(名を太字・行に薄い帯と下の線)、tags は頭の行の末尾に小さな札で置く。
 // - 契約の辞書 `{:pre … :post … :effects … :tags …}` の文字は隠し、1 行目に型の行 `(dict, str) -> JsonAnswer`
 //   (Absent を起こしうる答えは `Maybe[B]`)、2 行目に effect の行(装置の絵と名の札・Raise を含む)を描く。辞書が 1 行なら、
@@ -299,7 +299,7 @@ export function headerPlan(signature: LintSignature, lines: LineSource): HeaderP
   }
   // 型の行は辞書の 1 行目、effect の行は 2 行目(無ければ型の行の後ろへ続ける)。残りの行は、見出しに出した鍵
   // (:tags・:pre・:post・:effects)だけの行なら行ごと隠し、見出しに出していない鍵が在る行だけ淡く見せる
-  // (coordinator の決定 2026-09-28 — :tags の行が名の行の tags の札と重複していた)
+  // (:tags の行が名の行の tags の札と重複していたため)
   const twoRows = effects.length > 0 && second !== undefined && anchorsIn(second, lines.lineText(second.line)).length > 0;
   const firstText = lines.lineText(first.line);
   const pieces = twoRows

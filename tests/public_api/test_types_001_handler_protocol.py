@@ -153,7 +153,7 @@ class TestHP03CReturnRawDoExpr:
 
 class TestHP04AbandonContinuation:
     # docs/02-core-concepts.md「Returning without Resume ends the program under the handler」と
-    # 「Pass the effects a handler does not answer」の動き(card ki-03bb9225a242)。誤りも警告も出ない —
+    # 「Pass the effects a handler does not answer」の動き。誤りも警告も出ない —
     # VM は再開しない return を正当な終わり方として受ける(ADR-DOE-CORE-EFFECTS-003 R15)。
     def test_return_without_resume_ends_only_the_handled_program(self) -> None:
         @do

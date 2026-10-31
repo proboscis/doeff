@@ -1,4 +1,4 @@
-"""型の probe の検の道具 tools/verify_type_probes.py が、印と違う行と埋まった抜けを名指す事の失敗ケース(card ki-d2c901bc9a2d)。
+"""型の probe の検の道具 tools/verify_type_probes.py が、印と違う行と埋まった抜けを名指す事の失敗ケース。
 
 道具は Python の版ごとに、核の 4 個だけの新しい venv を作って pyright と mypy を起こす(doeff-vm を組むので 1 版 約 1 分かかり、
 開発の環境の検には入れない — CI の workflow Type probes が走らせる)。道具の判じ方が黙って緑を返すと、直した型の抜けが戻っても

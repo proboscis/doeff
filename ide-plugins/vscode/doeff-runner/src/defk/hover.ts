@@ -8,7 +8,7 @@ export const OPEN_LOCATION_COMMAND = 'doeff-runner.defk.openLocation';
 
 /**
  * 名 1 つを、定義の位置へ飛ぶ link の Markdown にする(位置の無い名は文字のまま)— editor の hover の中の実体の名はどれもここを通す
- * (v12 — hover の中の名も押せる・agora-redesign #910 U19b)。
+ * (v12 — hover の中の名も押せる)。
  */
 export function locationLink(name: string, location: LintLocation | null): string {
   if (location === null) {

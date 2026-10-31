@@ -1,5 +1,5 @@
 """契約の検の表(root の pyproject.toml の `[[tool.doeff.contract-tests]]`)が package の増減とずれたら赤にする検
-(agora-redesign #2658 — #2605 の残る穴の 4「契約の表は手で保つ」)。
+(#2605 の残る穴の 4「契約の表は手で保つ」)。
 
 表は手で保つ。package(uv の workspace の member — `packages/<名>/`)を足しても表に組が無ければ、その package の stub の
 突き合わせなどは登記の前の入口(`make test-changed`)で選ばれないまま黙る。この file は:
@@ -12,14 +12,14 @@
 3. 木を歩く検が、歩く先の変更で選ばれる: doeff-traverse の例の検は examples/ を glob して子の process で走らせ、例も
    macro も import しないので、逆依存では選ばれない。例・期待の出力・例が require する doeff-hy の macro の module・
    macro の実行時の半分(`<-`・`!` の束ねの開き方を持つ doeff_core_effects._outcomes)を変えた差分は、本物の表から例の検を
-   選ぶ(lt-6NTWFZDM0EAGNFGW7TYZ4RM5ES — 表に無かった間、例を壊す変更は登記の前に測られず、翌日の日次で初めて赤になった。
-   実行時の半分は同じ依頼の設計検証の盲検 B が見つけた — doeff-hy の行だけでは選ばれなかった)。
+   選ぶ(表に無かった間、例を壊す変更は登記の前に測られず、翌日の日次で初めて赤になった。
+   実行時の半分は設計検証の盲検 B が見つけた — doeff-hy の行だけでは選ばれなかった)。
 4. uv.lock の Hy の版で測る検が、uv.lock の変更と、uv.lock の版の読み手(scripts/semgrep_locked.py の locked_version)の
-   変更で選ばれる: 版は data の file から読むので、逆依存では選ばれない。測る検は source から数える(card ki-33d2441b7e28 —
+   変更で選ばれる: 版は data の file から読むので、逆依存では選ばれない。測る検は source から数える(
    test_bytecode_guard.py は uv.lock から版を読むのに表に無く、Hy を上げる便で選ばれず日次でだけ走った)。
 5. handle・defhandler の節の形を作る doeff-hy の module(handle.hy・clause_ops.hy・expansion_names.py)の変更で、doeff-effect-analyzer の
    検が選ばれる: analyzer は Hy の source を本物の macro で展開して読むが doeff-hy を import しないので、逆依存では選ばれない
-   (card ki-f0192874690b — 4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に入った)。
+   (4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に入った)。
 
 日次の母集団(tests/)と、表の repo 全体の行(prefix = "")の両方から走る — 変えた所の検は、どの変更でもこの file を先頭の
 組で走らせる。入口の main は呼ばず、読み手の純粋な定義(read_contract_table・workspace_packages・table_gaps)を直に呼ぶ。
@@ -51,10 +51,10 @@ EXAMPLE_MACROS = "packages/doeff-hy/src/doeff_hy/macros.hy"
 #: 持ち、ここは形だけを作る」で、defk の本体の束ねは macros.hy が globals に置くこの module の open_bind を引く。
 EXAMPLE_MACRO_RUNTIME_MODULE = "doeff_core_effects._outcomes"
 EXAMPLE_MACRO_RUNTIME = "packages/doeff-core-effects/doeff_core_effects/_outcomes.py"
-#: uv.lock と、doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28)。
+#: uv.lock と、doeff で uv.lock の版を読む 1 か所。
 LOCK = "uv.lock"
 LOCK_READER = "scripts/semgrep_locked.py"
-#: handle・defhandler の節の形(節を回す関数の引数・節の操作が読む effect と続きの名)を作る doeff-hy の module(card ki-6af9862aed32 の
+#: handle・defhandler の節の形(節を回す関数の引数・節の操作が読む effect と続きの名)を作る doeff-hy の module(
 #: 4f284efa9 が変えた 3 file — macro の定義元・節の操作・名の綴りの定義元)と、それを本物の macro で展開して読む analyzer の検の file。
 HANDLER_EXPANSION_MODULES = (
     "packages/doeff-hy/src/doeff_hy/handle.hy",
@@ -250,7 +250,7 @@ def test_changing_the_handler_expansion_selects_the_analyzer_checks(runner: Modu
     """本物の表: handle・defhandler の節の形を作る doeff-hy の module(4f284efa9 が変えた 3 file)のどれを変えた差分も、
     変えた所の検の選び(入口と同じ select_targets)が doeff-effect-analyzer の検の file を選ぶ。analyzer の検は Hy の source に
     `(require doeff-hy.macros [defhandler …])` を書いて本物の macro で展開してから読み、doeff-hy を import しないので、逆依存では選ばれない
-    (card ki-f0192874690b — 4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に
+    (4f284efa9 が節の局所名を変えた時、analyzer の検 12 本と agora-controllers の閉じの検が赤のまま main に
     入り、日次で初めて出た)。行を外すと、この検が赤になる。"""
     for module in HANDLER_EXPANSION_MODULES:
         assert (REPO_ROOT / module).is_file(), f"{module} が無い — 移した先・改めた名を書く"

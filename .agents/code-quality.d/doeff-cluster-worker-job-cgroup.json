@@ -27,7 +27,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/job_cgroup.hy"
       ],
-      "responsibility": "子の job を兄弟の cgroup へ置く答え手(card ki-ed9dca403f58): worker の本体が出す StartProcess・RunProcess の argv を包んで外の答え手へ回す(job-cgroup-placer)。worker の入口が、配備が兄弟の名を渡した時だけ subprocess-handler のすぐ内側に並べる。",
+      "responsibility": "子の job を兄弟の cgroup へ置く答え手: worker の本体が出す StartProcess・RunProcess の argv を包んで外の答え手へ回す(job-cgroup-placer)。worker の入口が、配備が兄弟の名を渡した時だけ subprocess-handler のすぐ内側に並べる。",
       "typed": true
     }
   ]

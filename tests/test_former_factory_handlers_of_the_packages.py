@@ -1,5 +1,5 @@
 """The packages' handlers without settings are handler values, not factories called with no arguments
-(ADR-DOE-API-002, agora card ki-e9166ac1c3b1).
+(ADR-DOE-API-002).
 
 doeff-git, doeff-openai and doeff-openrouter's ``production_handlers`` and doeff-conductor's
 ``agent_handler`` and ``git_handler`` are put in a stack as they are; the former call answers the same

@@ -1,10 +1,10 @@
 # land-queue 宣言(dotfiles ADR-DOTFILES-017 の機構、repo-local 方策)。
-# 敷設 2026-08-09(land-queue-all-repos-rollout 便 — 全部の repo で使う operator の指示
-# + operator 決裁 sha d54350a8)。mixed repo(proboscis/doeff* は
+# 敷設 2026-08-09(land-queue-all-repos-rollout 便 — 全部の repo で使う)。
+# mixed repo(proboscis/doeff* は
 # company-mixed-repos.txt 登載)— 編集は任意席・著述は個人系。
 #
 # upstream repo 規約の機械化(発注 (4)): 「検証済みでしか main を進めない」は
-# 2026-08-17 の operator 裁定で**着地の門から事後検証へ移った**(下の focus の
+# 2026-08-17 に**着地の門から事後検証へ移った**(下の focus の
 # mode の頭注)。テストは減らさない — 走る場所が変わる(日次全量検査 + stable 昇格)。
 # battery 実測 2026-08-09: uv run pytest -m "not e2e" = 1294 passed / 78 skipped /
 # 8 deselected(11m45s)。e2e marker は実 API キー依存につき gate 外(席実測の
@@ -18,33 +18,33 @@ enabled = true
 base = "main"
 # 区画の名前(着地の台帳の repo 鍵・pod の窓が公開の鍵を引く区画)— checkout の path に依らない綴り。
 # 宣言が無い時は checkout の basename に畳まれるので値は同じ(dotfiles agentcli land.partition_name の
-# ② が読む・③ が既定)。agora / dotfiles と同じく明示する(段 9 lane 9m 便 2d・agora-redesign #71)。
+# ② が読む・③ が既定)。agora / dotfiles と同じく明示する(段 9 lane 9m 便 2d)。
 name = "doeff"
 
 [gate]
 # full = 日次検証便(ai land verify)と full_paths 便だけが使う(mode = "focus" の間、
 # 窓末では走らない)。
-# UV_CACHE_DIR lane 分離(operator 発注 route-c4ce3179b0 2026-08-17・方向宣言
+# UV_CACHE_DIR lane 分離(2026-08-17・方向宣言
 # uv-cache-lock-convoy-root-fix): doeff の窓は自 worktree の .venv を作るため
 # uv sync が構造的に要る(永続 venv 直呼びへは置換できない側)。素の global
 # cache(~/.cache/uv)は艦隊の uvx 並走と同じ lock に並び、飽和帯で make sync
 # だけが 23 分(L29〜L32 の 4 連敗の実測)。窓の系統専用 lane に分けると初回だけ
 # cache が冷えるが、以後は warm のまま艦隊の行列に並ばない。
-# 実行面 = 日次の task が走っている所(2026-10-10 から atlas の静的な doeff-worker の Pod — agora-controllers の daily-verify・
-# card ki-73fbd134a244)。各段の run は task の作業木で直に sh が実行する(下の 2026-10-10 の追補・ADR-DOE-ENFORCE-001 R10)。
-# 2026-08-17〜2026-10-10 の実行面は zeus(テストは k3s で走らせる operator の裁定 2026-08-17・方向宣言 land-verify-tests-on-k3s)で、
+# 実行面 = 日次の task が走っている所(2026-10-10 から atlas の静的な doeff-worker の Pod — agora-controllers の daily-verify)。
+# 各段の run は task の作業木で直に sh が実行する(下の 2026-10-10 の追補・ADR-DOE-ENFORCE-001 R10)。
+# 2026-08-17〜2026-10-10 の実行面は zeus(テストは k3s で走らせる決まり・方向宣言 land-verify-tests-on-k3s)で、
 # remote_check が tree を送り逐語実行した(実測 2026-08-17: zeus 全量 477 秒 緑 / Mac 実測 17 分 + 飽和帯 load 100 超)。
 # uv の cache は呼び手の UV_CACHE_DIR(日次の task が worker の共有の cache を渡す)を先に使い、無い時だけ上の convoy 根治の lane
 # ${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff へ倒す — task の HOME は走行ごとに空の dir なので、lane を上書きのまま
 # 置くと日次の段が毎回冷えた cache から依存を取り直す(worker の共有の cache は同じ worker の task と uv の lock を待ち合わせる —
-# 待つ上限は task の UV_LOCK_TIMEOUT)。lane の根 ${XDG_CACHE_HOME:-$HOME/.cache} は agora-redesign #3520(2026-10-05)の形のまま。
+# 待つ上限は task の UV_LOCK_TIMEOUT)。lane の根 ${XDG_CACHE_HOME:-$HOME/.cache} は 2026-10-05 の形のまま。
 # ⚠ pytest は --no-sync(2026-08-17 zeus 実測): 素の uv run は暗黙の再 sync で
 # make sync の maturin build(--features invariant-checks)を素の wheel(検査なし)で
 # 上書きし得る — 冷えた cache lane で顕在化し test_vm_built_with_invariant_checks が
 # 赤(1317 passed / 1 failed)。make sync 直後の env が権威なので再 sync を止める
 # (同 tree で make sync → uv run --no-sync が緑を実測)。Mac 側も同じ潜在欠陥 —
 # 従来の緑は cache 状態依存だった。
-# 2026-09-24(doeff の main のテストを緑に直す operator の指示の続き・two-way door の決定): 日次の全量検査に
+# 2026-09-24(doeff の main のテストを緑に直す作業の続き・two-way door の決定): 日次の全量検査に
 # package の検(make test-packages)を足す。それまで CI(python-compatibility.yml)も日次もこの範囲を走らせておらず、
 # 18 package・約 200 本の赤が誰にも見えないまま積もっていた(削除された default_handlers・handler の呼び規約・
 # 環境に入らない新しい package)。run-timeout 1800 → 3600 = zeus 実測 root 約 480 s + package 約 960 s の約 2.5 倍。
@@ -52,8 +52,7 @@ name = "doeff"
 # 2026-09-24 追補(同じ判断の続き): Rust crate 6 つの cargo test(make test-rust)も足す。それまで CI は cargo build だけで
 # cargo test を走らせる場所が無く、doeff-effect-analyzer の 6 本の赤と、doeff-vm / vm-core の検の binary が libpython を
 # 見つけられない形が見えていなかった。戻すには末尾の && make test-rust を外す。
-# 2026-09-25(card acp:kanban-issue:ki-08ec2d7c901f・計画と決定 = 会話 c-3S6FSS1P9KAKHCTCZZ6724P3ZX・依頼 lt-HQ3E81PXS63W6AEWT540VDEQQ5・
-# two-way door の決定・ADR-DOE-ENFORCE-001 R8): 上の 3 つの母集団(root の pytest・make test-packages・make test-rust)を
+# 2026-09-25(two-way door の決定・ADR-DOE-ENFORCE-001 R8): 上の 3 つの母集団(root の pytest・make test-packages・make test-rust)を
 # && でつないだ 1 本の命令から、build / root / packages / rust の 4 つの処理ステージの列へ分けた。
 # ⇒ なぜ段に分けるか: && の 1 本では 1 つの母集団の赤が後ろの母集団を未実行にする。実弾 = 2026-09-24 の日次(断面 f271ae39)は
 #   root の赤 3 本で止まり、make test-packages と make test-rust は 1 本も走らないまま、台帳は処理ステージ full の 1 つだけで
@@ -70,15 +69,15 @@ name = "doeff"
 #   テストの段は make sync から)と tests/test_daily_test_population.py(package の loop の網羅・失敗名の形・test file の置き場)。
 # ⇒ 戻し方: 4 段の列を、build の make sync の後ろへ root・packages・rust の命令を && でつないだ 1 本の文字列へ戻し、上の R8 の
 #   deftest を外す(設計 = docs/design/test-population-ki-08ec/design.md §3.2)。
-# 2026-09-29(agora-redesign #1236・manager w3J:p2 の決め・戻せる): VS Code 拡張 ide-plugins/vscode/doeff-runner の compile(tsc)と
+# 2026-09-29(manager w3J:p2 の決め・戻せる): VS Code 拡張 ide-plugins/vscode/doeff-runner の compile(tsc)と
 # eslint の段 vscode を足す。拡張を触る 2 つの変更(契約 LintBodyRole に comment を足した変更と、render.ts に role の網羅の switch を
 # 足した変更)が別々にマージされ、合わさると tsc が落ちて vsix の自動追随が 10:27 から組めなかった。マージ前の検査には足さない
-# (operator の裁定 land-gate-runs-no-tests — マージの列は衝突の印の走査だけ・型検査と lint は日次)。合流で壊れたのを早く知るのは
+# (決まり land-gate-runs-no-tests — マージの列は衝突の印の走査だけ・型検査と lint は日次)。合流で壊れたのを早く知るのは
 # vsix の自動追随が組めなかった時の知らせ(#1043)が持つ。段は make sync を要らず(Python の母集団を呼ばない)、当時は zeus の login
 # shell の node 22 / npm 10 で走った(実測 2026-09-29: 緑 12 秒・case 'comment' を抜いた木で TS2322 の赤 rc 2)。2026-10-10 からは
 # atlas の Pod の node v24.19.0 / npm 11.17.0(/usr/local/bin)で走る。後ろを止めない。
 # 戻すには vscode の段の 1 行を消す。
-# 2026-10-02(agora-redesign #2906 の 4 便目・cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
+# 2026-10-02(cisco-c8 の割り・戻せる): commit の hook と同じ「規則 × file の基点より増えた所見」の比べ
 # (scripts/hook_finding_baseline.py)を repo の全部の Python の file に当てる段 lint を足す — doeff-linter(基点の鍵の binary を
 # land-arm の開発版 → 断面の置き場から探す)と semgrep(uv.lock の版)。hook は binary が見つからない時「測れない」で通すので、
 # 通った commit を測るのはこの段だけ — ここでは --strict で「測れない」そのものを赤(rc 3)にする。make sync は要らない。
@@ -90,12 +89,12 @@ name = "doeff"
 # semgrep を `uv tool run` で呼び、道具の python は走っている python の版(scripts/semgrep_locked.py)。宣言が無いと uv は木の
 # .python-version(free-threaded の 3.14)を選び、`uv tool run` は pyproject.toml の exclude-dependencies を読まないので、組めない
 # C 加速器 ruamel-yaml-clib を組みに行って落ちる(「semgrep の JSON に results の列が無い」)。doeff-linter の比べは道具を呼ばない。
-# 2026-10-07(agora-redesign #3879・cisco-c8 の決め・戻せる): 全部の処理ステージに欄 pytest(pytest の session を走らせるか)を書く。
+# 2026-10-07(cisco-c8 の決め・戻せる): 全部の処理ステージに欄 pytest(pytest の session を走らせるか)を書く。
 # 日次の全体検証は true の処理ステージで session が 1 本も答えなければ、カバレッジの欠けに数える。起点 = この repo の 04:00 の日次:
 # root と packages が conftest.py の import で落ちて session の行が 0 本なのに、カバレッジを「完全」と記帳した(行を書く受付の部品は
 # conftest.py が繋ぐ)。true = root・packages(近い緑の日次で session の行が 1 本と 34 本)。build・rust・vscode・lint は pytest を
 # 呼ばない。戻すには各行の pytest の欄を消す(走らせ器が欄を必須にした後は、走らせ器の変更と組で戻す)。
-# 2026-10-08(agora-redesign #3870・持ち主 cry1-w61・cisco-c8 の決定・戻せる): packages の処理ステージは make test-packages の前に、
+# 2026-10-08(cisco-c8 の決定・戻せる): packages の処理ステージは make test-packages の前に、
 # 走る機体の道具の依存(宣言の 1 点 = scripts/gate_tools.sh — 今は redis-server 7.4.11 を agora の verify-worker の image と同じ
 # digest で)をそろえ、答えた dir を PATH の前に載せる。そろえられなければ処理ステージは赤(&& で make test-packages を実行しない)。
 # ⇒ なぜ: この回は remote_check で zeus の上で走り、Pod の image に入れた redis-server は効かない — 10-08 8:00 の回で
@@ -104,10 +103,10 @@ name = "doeff"
 # ⇒ 戻し方: packages の行の「gate_path=… && PATH=$gate_path$PATH 」を消し、scripts/gate_tools.sh と tests/test_gate_tools.py を消す。
 #   (2026-10-10 から: 段は atlas の Pod で走り、日次の task が宣言の版の redis-server を HOME の .local/bin — PATH の先頭 — に置くので、
 #   準備は何も足さずに通る。lint の段の linter の準備も同じ script の口 linter。)
-# 2026-10-10(card acp:kanban-issue:ki-9338eec1d15e・調整役 cisco-c8 の割り・依頼 lt-2BJSBE9W1MVDGPRC8JTW443KSJ・ADR-DOE-ENFORCE-001 R10・
+# 2026-10-10(調整役 cisco-c8 の割り・ADR-DOE-ENFORCE-001 R10・
 # 戻せる): 6 段の run から remote_check の運び(`python3 $HOME/dotfiles/agentcli/src/agentcli/remote_check.py --node zeus --tree . --label …
 # --fallback-local -- sh -c "…"`)を外し、中の命令を日次の task の中で直に走らせる。
-# ⇒ なぜ: zeus は会話の速さを最優先にする(利用者の決定 2026-10-05)。日次の task は 2026-10-10 16:00 から atlas の Pod で走るが、
+# ⇒ なぜ: zeus は会話の速さを最優先にする。日次の task は 2026-10-10 16:00 から atlas の Pod で走るが、
 #   運びが残っていたので 16:18 の回(log doeff-20261010-071839-31779)も 6 段とも `ran=remote node=zeus` で、root の pytest 1091 秒・
 #   18 package の検 2352 秒・cargo test 200 秒が zeus の CPU に載り、会話のターンと取り合った。代案の --node atlas(ssh で atlas の機体へ)
 #   は取らない — 機体への ssh の鍵と機体の環境の整えが要り、機体の操作になる。
@@ -120,18 +119,18 @@ name = "doeff"
 #   --run-timeout 1800・lint は --label doeff-gate-lint --run-timeout 900)で包み直して中の $ を \$ に戻し、UV_CACHE_DIR を lane の上書き
 #   〔UV_CACHE_DIR=\${XDG_CACHE_HOME:-\$HOME/.cache}/uv-lanes/land-doeff〕へ戻し、lint の段の「sh scripts/gate_tools.sh linter && 」を消し、
 #   R10 の law と deftest を外す。
-# 2026-10-11(card acp:kanban-issue:ki-b8a436264866・判定は足さない): root の pytest に --durations=0 --durations-min=10 を足し、
+# 2026-10-11(判定は足さない): root の pytest に --durations=0 --durations-min=10 を足し、
 # session の終わりに 10 秒以上の検を本数の上限なしで出す(packages の段は Makefile の PACKAGE_PYTEST_DURATIONS が同じ 2 つを持つ)。
 # 日次の道具は slowest durations の節を台帳の timing.slowest_tests に読む。形の検 = tests/test_daily_test_population.py の
 # test_root_stage_lists_every_slow_test。戻すには 2 つの引数を消す。
-# 2026-10-12(card acp:kanban-issue:ki-d3d2a5450505・依頼 lt-1K6HY4SCG82MYZ7CWXQAPG4TDW・ADR-DOE-ENFORCE-001 R8・戻せる): doeff-hy の検を
+# 2026-10-12(ADR-DOE-ENFORCE-001 R8・戻せる): doeff-hy の検を
 # doeff-hy の宣言の Hy の下限の版でも走らせる段 hy-floor を足す(make test-hy-floor — 下限は packages/doeff-hy/pyproject.toml から読む)。
-# ⇒ なぜ: 下限を 1.2.0 → 1.3.0 に上げた card ki-96ca6c49fffd で、Hy 1.2.0 の require の不具合(doeff-hy の検 10 本赤)は import の名の
+# ⇒ なぜ: 下限を 1.2.0 → 1.3.0 に上げた変更で、Hy 1.2.0 の require の不具合(doeff-hy の検 10 本赤)は import の名の
 #   照合(R4・R7)では見えず、検を走らせて初めて見えた。日次の門は lock の版(1.3.1)でしか走らず、下限が崩れても気づけなかった。
 # ⇒ 費用(実測): 最初の日次(2026-10-13 00:03 JST・commit 03236c441eff)で hy-floor は 579 秒・緑(748 通過・1 skip)。ただし全段の合計が 7200 秒に尽き、後ろの lint が 312 秒で切られて未実行(budget-exhausted)になった(この日の段 = build 6・root 1961・packages 3953・hy-floor 579・rust 364・vscode 24)。ので full_timeout_s を 7200 → 9000 に上げた(下の値)。
 # ⇒ 戻し方: hy-floor の行と Makefile の test-hy-floor を消し、full_timeout_s を 7200 へ戻し、R8 の母集団の一覧と deftest の hy-floor を外す。
 full = [
-# 2026-10-22(card acp:kanban-issue:ki-c6f0ffd50502): lint と vscode を build の直後へ移した。10-21 の日次で root 2323 秒・packages 5281 秒が
+# 2026-10-22: lint と vscode を build の直後へ移した。10-21 の日次で root 2323 秒・packages 5281 秒が
 # 全体の上限 full_timeout_s を使い切り、最後に置いた lint が 240 秒で切られて未実行(budget-exhausted)になり、直した lint が緑になるかを測れなかった。
 # lint(基点の確かめ)と vscode は短い(実測 5〜25 秒、linter の組み直しでも数分)ので、重い root・packages より前に置く。戻すには 2 行を末尾へ戻す。
   { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
@@ -142,7 +141,7 @@ full = [
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },
   { name = "rust", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make test-rust", pytest = false }
 ]
-# 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x・agora-redesign #3167・#3571): 名と未実行の種類の両方が一致した
+# 日次の外の物(Mac の調整役の決め (b)・cisco-c8 の中継 2026-10-05 18:3x): 名と未実行の種類の両方が一致した
 # 申告だけを、検証の本体(merge-queue の verify_main — L274)が結論の計算の直前に分け、残りの処理ステージの結果で結論を出す。分けた物は
 # 結末と台帳の欄 outside に載り、日次の回の終わりの表の 6 列目に「外の物 1(VS Code)」と毎回出る。宣言に無い未実行・種類の違う未実行は
 # 今までどおり行の全体を未実行にする。test_doc_lint_modes_in_vscode は実物の VS Code と組んだ拡張を通す確かめ(利用者がその会話で決めた形)で、
@@ -151,10 +150,10 @@ full = [
 outside = [
   { test = "docs/adr/defadr_doc_linter_modes.hy::test_doc_lint_modes_in_vscode", kind = "tool-absent", label = "VS Code", reason = "実物の VS Code と組んだ拡張が要る(利用者がその会話で決めた確かめ方・日次の verify-worker に VS Code は無い)" },
 ]
-# ⚠ 日次の全体検証に入れない印 e2e のテストと、その訳(Mac の調整役の決め 2026-10-05「集めていないテストは、日次に入れるか、
-#   入れない訳を 1 行」・agora-redesign #3167)。root と packages の処理ステージは -m 'not e2e' で外す:
+# ⚠ 日次の全体検証に入れない印 e2e のテストと、その訳(集めていないテストは、日次に入れるか、
+#   入れない訳を 1 行書く)。root と packages の処理ステージは -m 'not e2e' で外す:
 #   packages/doeff-agents/tests の test_agentd_byte_faithful_transport_e2e.py・test_agentd_result_retry_e2e.py = 替え玉の agent と tmux だけで
-#     実 API は使わない。日次の worker の Pod に tmux が在るかが未測定 — conformance の 33 file と同じ card ki-2832a04913cc が決める。
+#     実 API は使わない。日次の worker の Pod に tmux が在るかが未測定 — conformance の 33 file と一緒に後で決める。
 #   packages/doeff-agents/tests の test_agentd_real_agent_result_retry_e2e.py・test_mcp_live_e2e.py・test_headless_adapter.hy の 1 本、
 #   packages/doeff-claude-code/tests/test_scenarios.hy の real の 9 本、packages/doeff-conductor/tests/test_agent_effect_c1.py の 1 本、
 #   packages/doeff-claude-judge/tests/test_real_cli.py の 1 本(資格の file を env で渡した時だけ走る)=
@@ -163,18 +162,18 @@ outside = [
 #   packages/doeff-gemini/tests/e2e/test_gemini_live.py の 1 本、packages/doeff-openrouter/tests/e2e/test_openrouter_integration.py の 1 本、
 #   packages/doeff-google-secret-manager/tests/e2e/test_access_secret_e2e.py = 本物の外の API(費用・資格・GCP の secret)を呼ぶ。
 #   tests/cli/test_cli_runbox_e2e.py の 8 本 = runbox の CLI が要る(zeus に無い — 入れても常に skip)。手の入口は make test-e2e。
-# ⚠ テストを 1 本も持たない test_ の file 6 つ(集めると 0 件 — 日次に入れても何も走らない。消す・移す・改名は持ち主を利用者に伺って決める
-#   — agora-redesign #3167): tests/core/test_doeff_markers.py・tests/core/test_map_flatmap_callback_metadata.py・
+# ⚠ テストを 1 本も持たない test_ の file 6 つ(集めると 0 件 — 日次に入れても何も走らない。消す・移す・改名は持ち主を利用者に伺って決める):
+#   tests/core/test_doeff_markers.py・tests/core/test_map_flatmap_callback_metadata.py・
 #   tests/core/test_spec_trace_001_examples.py・tests/core/test_trace_coercion_strict.py・tests/effects/test_ask_lazy_evaluation.py・
 #   tests/test_pass_dispatch_context_regression.py。7 つ目だった packages/doeff-test-target/tests/test_target_run_support.py は、
-#   見本を packages の外へ移した時(答え lt-H74EV6FXSHXAWRP91037VW86QD・card ki-0e4728cb69c6)に検の helper の名
+#   見本を packages の外へ移した時に検の helper の名
 #   packages/doeff-effect-analyzer/tests/python/fixture_package_run_support.py へ改めた。
 # 門の走行の持ち時間 2700→7200(2026-08-17)。実測 = L32 が 2713.4s で時間切れ
 # (4 連敗・Mac 飽和帯)。ADR-DOE-ENFORCE-001 R6 の第 3 の締切の宣言先行便。
-# 2026-10-02(agora-redesign #2589): 日次の全体検証の予算を別の鍵 full_timeout_s へ移した(merge-queue L195 で予算と窓の門の上限を別の
+# 2026-10-02: 日次の全体検証の予算を別の鍵 full_timeout_s へ移した(merge-queue L195 で予算と窓の門の上限を別の
 # 鍵に分けた)。値はそのまま。窓の門の上限 timeout_s は宣言せず merge-queue の既定 600 秒(門は衝突の走査で数秒)に任せる。
 # 戻し方 = 鍵の名を timeout_s へ戻す。
-# 2026-10-30(card acp:kanban-issue:ki-e2c345b1e593・依頼 lt-7EZB3BHKT3GHTM18RNN15XY688・戻せる): full_timeout_s を 9000 → 13500 に上げた。
+# 2026-10-30(戻せる): full_timeout_s を 9000 → 13500 に上げた。
 # ⇒ なぜ: 10-28 19:06 UTC〜10-30 07:06 UTC の 9 回のうち 6 回が 9000 秒に尽き(5 回は packages・1 回は hy-floor を切られ、後ろの段を撃たない)、
 #   10-30 07:06 の回は後段([verify] after — 処理ステージと同じ予算の中で撃つ・merge-queue verify.hy の run-after-steps)も「全体の時間の
 #   上限に達したので撃っていない」になった。走り切った 3 回の合計は 8489〜8875 秒で、後段に残る秒は約 120〜510 秒しかなかった。段の所要
@@ -189,13 +188,13 @@ outside = [
 # ⇒ 取らなかった案: 後段に別の予算を持たせる(merge-queue の run-after-steps)は、上限が同じ 4 時間の枠の中なので、この値を上げるのと
 #   同じ秒を取り合う。段を短くする(packages は package ごとに 1 本ずつ直列で走る)は別の変更で測る。
 # ⇒ 戻し方: 9000 へ戻す。
-# 2026-10-30(card acp:kanban-issue:ki-dde4fe85a5ed・戻せる): packages の行に PACKAGE_JOBS=4 を渡し、package の session を 4 本まで同時に撃つ(scripts/run_package_sessions.sh)。
+# 2026-10-30(戻せる): packages の行に PACKAGE_JOBS=4 を渡し、package の session を 4 本まで同時に撃つ(scripts/run_package_sessions.sh)。
 #   直列 4451〜5318 秒のうち最長の doeff-cluster(約 2270 秒)が下限になる見立て。実測は変更後の日次の回の packages の秒で見る。戻すには PACKAGE_JOBS=4 を消す。
 full_timeout_s = 13500
 
-# R-7a95702d focus mode(operator の指示 2026-08-17 — merge queue は 10 分以内に収め、
+# R-7a95702d focus mode(2026-08-17 から — merge queue は 10 分以内に収め、
 # 2700 秒の門は認めない。先例 = agora D568 出荷 B / ACP 同日切替)。
-# merge にテストを必須としない(operator の裁定 2026-08-17): 着地の門は merge の
+# merge にテストを必須としない(2026-08-17 から): 着地の門は merge の
 # 力学(rebase 成立・patch-id 突合・受入検定)のみ。テストは全部事後 =
 # ① 日次全量検査(gate.full を ai land verify が使う — 運び手 = ns agora の
 #   CronJob `land-verify-doeff`・毎日 03:30 JST・宣言の正本 = agora
@@ -208,22 +207,22 @@ full_timeout_s = 13500
 # 前提 — route-doeff-semgrep-zeus-181256 起票済み)。
 mode = "focus"
 # focus の恒常部は宣言しない(doeff に横断走査 script なし — 門は力学のみ)。
-# 着地の門 = git の衝突の印の走査ちょうど(agora-redesign #726・2026-09-28 c2-w25)。merge-queue の窓は
+# 着地の門 = git の衝突の印の走査ちょうど(2026-09-28 c2-w25)。merge-queue の窓は
 #   focus_paths_runner の宣言が無い区画を開かないので、agora-controllers / agora と同じ 1 行を置く。
 #   行頭の `<<<<<<< ` / `>>>>>>> ` の一致なし(git grep の rc 1)だけを通し、一致(rc 0)と git の失敗(rc 128)は止める。
 #   「門は力学のみ」は変わらない(テストは足さない)。戻すには この行と下の runner を旧値へ戻す。
 focus_paths_runner = '''git grep -n -E '^(<<<<<<< |>>>>>>> )' -- . && exit 1 || test $? -eq 1'''
 # 方策宣言そのものへの変更だけは常時 full battery(自己参照の fail-closed)
-# ⚠ 着地の窓の全量検査を無効にする(operator の裁定 2026-08-17): full_paths を空に —
+# ⚠ 着地の窓の全量検査を無効にする(2026-08-17 から): full_paths を空に —
 # 着地の窓はいかなる path でも全量検査(gate.full)を走らせない。gate.full の
 # 唯一の消費者 = 日次検証便(ai land verify・ns agora の CronJob land-verify-doeff・
 # 毎日 03:30 JST。2026-09-13 の退役までは Mac の launchd com.masui.land-verify-doeff が
 # 受けていた)。方策 toml の変更も
-# 窓では力学のみで着地する(検分は事後 + fix-forward)。復活は operator 裁定で。
+# 窓では力学のみで着地する(検分は事後 + fix-forward)。復活させるかは持ち主が決める。
 full_paths = []
 
-# R-94ede4bc 投機列車(merge queue の投機テストを全 repo で使う operator の指示 2026-08-17
-# — 連邦の機構 = dotfiles land.py・先例 = dotfiles 裁定 2026-08-16
+# R-94ede4bc 投機列車(merge queue の投機テストを全 repo で使う・2026-08-17 から
+# — 連邦の機構 = dotfiles land.py・先例 = dotfiles の決め
 # decision-land-speculation-enable / agora D568)。窓は確定 train(消費済み
 # 緑の先端・公開対象)と投機 tip を分け、gate の実行だけを backend へ並列に
 # 発注する(判定の消費は直列同値・赤 1 便で窓ごと abort する形の根治)。厳密 bool。
@@ -248,24 +247,24 @@ join_s = 60
 
 [policy]
 # 着地する commit の本文へ、依頼が属する追跡先の issue への参照 `Refs: proboscis/agora-redesign#N` を着地の窓が足す
-#   (merge-queue の窓・agora-redesign #2428)。issue の画面から、その issue で入った差分を開けるようにするため。
+#   (merge-queue の窓)。issue の画面から、その issue で入った差分を開けるようにするため。
 #   番号 = 依頼の題が最初に指す番号(`agora-redesign #N` の明記が先)。
 #   裸の `#N` は読まない(この repo は自分の issue / PR の番号を題に書くので、取り違えない)。
-#   戻し方 = この 2 行と註を消す(two-way door・決めた記録 = agora-redesign #2428 の comment)。
+#   戻し方 = この 2 行と註を消す(two-way door)。
 issue_tracker = "proboscis/agora-redesign"
 issue_tracker_bare = false
 # ⚠ 名簿は意味名で書く(dotfiles ADR-DOTFILES-017 R-6f25e8f4)。"machine" は種別の併記(互換)。
 # "land-runner@agora-1" = pod の窓の走行体(下の runner = "pod" と対の二重宣言 — 名簿に無いと pod の窓は開かない)。
 run_executors = ["landrun-doeff", "landrun-rollout", "machine", "land-runner@agora-1"]
 # 着地の窓を回す機体(dotfiles ADR-DOTFILES-017 law land-runner-by-repo-owner・段 9 lane 9m 便 2d・
-# agora-redesign #71・operator 裁定 2026-09-14 案 A)。この repo は個人の repo(会社 repo ではない)
+# 2026-09-14 の案 A)。この repo は個人の repo(会社 repo ではない)
 # なので、pod の service(agora deploy の container land-api・実行者 land-runner@agora-1)が
 # 窓を回す。Mac 側の起こし口はこの宣言を**本線の先端から**読んで「この repo の窓は pod が回す」
 # と名乗って見送る。戻すには runner の行を消す(Mac の窓が再び回る・1 行の便)。押す鍵 =
 # Secret land-key-doeff(GitHub の deploy key `agora-1-pod (write) land-runner doeff`・agora
-# deploy の env AGORA_LAND_SSH_KEYS の doeff の項 — 鍵は repo ごとに 1 つ・#71 便 2b)。
+# deploy の env AGORA_LAND_SSH_KEYS の doeff の項 — 鍵は repo ごとに 1 つ)。
 # ⚠ `auto_run = true` は残す(pod の窓と `--machine` の資格の宣言 = 種別の照合)。
-# 2026-09-28 改訂(agora-redesign #726・c2-w25): 窓は merge-queue の Deployment `merge-queue-land`(ns agora)が回す。
+# 2026-09-28 改訂(c2-w25): 窓は merge-queue の Deployment `merge-queue-land`(ns agora)が回す。
 #   agora-1 の land-api の窓は agora-controllers の本線の宣言(gate.full の鍵 parallel)を読めず、依存先の checkout を
 #   揃えられないまま L515 を保留し続けていた。押す鍵は同じ Secret land-key-doeff(merge-queue の deploy/land が載せる)。
 #   戻し方 = この値を "pod" に戻す(1 行の便)。
@@ -279,9 +278,9 @@ stable_branch = "stable"
 
 # ───────────────────────────────────────────────────────────────────────────
 # 全体・広範囲テストの走行の受付(dotfiles ADR-DOTFILES-027 law
-# broad-test-runs-need-an-explicit-grant・全体テストは明示の許可と警告なしに走らせない
-# operator の指示 2026-09-10)の**値の宣言**。
-# 2026-09-15・段 11 lane 11k(agora-redesign #64 の c)で、この repo も受付に参加した。
+# broad-test-runs-need-an-explicit-grant・全体テストは明示の許可と警告なしに走らせない)の
+# **値の宣言**。
+# 2026-09-15・段 11 lane 11k で、この repo も受付に参加した。
 #
 # ⚠ 判定(広範囲か)・30 分の窓の合算・許可の消費は**正本 1 点**(agora の道具立て
 #   ~/dotfiles/agent/tests/broad_run_admission.py)が持つ。この repo は値の宣言と
@@ -306,32 +305,32 @@ window_s = 1800
 full_sessions = 1
 
 
-# 追随と揃えの後の作り直し(dotfiles ADR-DOTFILES-017 の [follow]・agora-redesign #650 B15)。
+# 追随と揃えの後の作り直し(dotfiles ADR-DOTFILES-017 の [follow])。
 # この機体の主 checkout(~/repos/doeff)を本線へ fast-forward した**直後**に、その checkout で撃つ sh の 1 文。
 # 撃つ場面は 2 つで、同じ宣言を読む: (1) この repo の着地の窓の追随(2026-09-28 から merge-queue-land の Pod — その Pod の
 # 入口が $HOME/repos/doeff と $HOME/dotfiles を Pod の区画の clone へ結ぶ〔merge-queue deploy/land/entry.sh の link_checkout〕ので、
 # 追随した checkout が門の読む doeff そのもの。python3 は Pod の起動の script が PATH に置く)(2) 他の区画の runner が
 # 便を取る前に、門が読む doeff の checkout を揃える時(zeus・Mac・pod — 依存する区画の [land-queue] reads と --depends-on)。
 # ⚠ この命令が前提にする機体の置き場($HOME/dotfiles/agent/venv-run.sh)は、窓を回す機体の側が用意する(2026-09-28 の実弾:
-#   merge-queue-land の Pod に置き場が無く、L515・L518〜L520 の追随が follow-failed — 直しは Pod の入口の側・agora-redesign #838)。
+#   merge-queue-land の Pod に置き場が無く、L515・L518〜L520 の追随が follow-failed — 直しは Pod の入口の側)。
 # ⇒ なぜこの命令か:
 #   - `uv sync --frozen` = uv.lock を書き換えない(揃えた checkout を dirty にしない)。agent/venv-run.sh が uv.lock の
 #     変化で撃つ同期と同じ形(`--all-packages` を足すと、その同期が次に余りの package を外し、2 つが打ち消し合う)。
 #   - Rust の VM の拡張(doeff-vm)の作り直しの旗は付けない: uv は doeff-vm の tool.uv.cache-keys(.rs・Cargo.toml・Cargo.lock・
 #     doeff-vm-core を含む)の変化で build の口を呼び、口は同じ file の中身の鍵で wheel の保存先を引くので、Rust が変わった時だけ
-#     1 度組み、変わっていなければ口を呼ばない(ADR-DOE-BUILD-001・agora-redesign #3860 の 2 — 旗が在った間は 1 度 45.8〜59.9 秒・
+#     1 度組み、変わっていなければ口を呼ばない(ADR-DOE-BUILD-001 — 旗が在った間は 1 度 45.8〜59.9 秒・
 #     2026-10-06 に 67 度)。失敗ケース = tests/test_land_install_follows_rust_keys.py。
 #     `make sync` にしないのは、uv.lock を書き換え得る `uv sync --group dev`(--frozen なし)だから。
 #   - venv-run の `--exclusive` = 同じ venv の読み手(門・常駐の controller)と排他して作り直す。
 # 上限 1800 秒 = 2026-10-10 まで日次の段の運び(remote_check)が持った同期の上限 900 秒の 2 倍(Rust の release build と飽和帯の機体)。
-# 2026-10-30(card ki-7bd396248ba2・triage の決定 案 B): 後段 public-api-blame = 表を直さずに公開名を足した commit の引き。
+# 2026-10-30(triage の決定 案 B): 後段 public-api-blame = 表を直さずに公開名を足した commit の引き。
 #   tests/test_public_api_known_violations.py は merge の列も commit の時の hook も回さないので、表を直さない commit は main に入り、
 #   日次の全体検証で初めて failing になる。この後段が、表に書かれていない外れを tools/public_api_blame.py(照合は test と同じ関数)で
 #   読み、名を最初に足した commit を git log -S で引いて `public_api_blame: 足した <package> <module>.<名> <sha> <card の id> <題>` の
 #   行にする。日次の task が agora-controllers の AfterReport(controllers/daily_verify/protocol/schedule.hy)として集めて赤の card に載せ、
 #   担い手の会話が行の card か会話へ返す(日次の worker は書き込みの資格を持たない)。後段は結末を変えない。commit の時には回さない。
 #   戻し方 = 下の [verify] を外す。
-# 2026-10-30(card ki-93ba968bbafe・道の決定 = card ki-2c94e109b3f1): 後段 consumer-follow = doeff を読む repo(消費者)の追従の測り。
+# 2026-10-30: 後段 consumer-follow = doeff を読む repo(消費者)の追従の測り。
 #   消費者の検証は消費者が固定した doeff の版で回るので、公開名を消す・移す doeff の変更が消費者を壊した事は、消費者が版を上げるまで
 #   見えない。この後段が、消費者の針 docs/adr/test_doeff_adr_api_follows.py(今は dotfiles — 日次の task が $HOME/dotfiles に隣の
 #   checkout として置く)を、測った断面の環境で tools/consumer_follow.py が回し、赤の検を

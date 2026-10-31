@@ -2,7 +2,7 @@ repos:
   - repo: local
     hooks:
       # Python の semgrep と doeff-linter は、hook を据え付ける前からの所見(2026-10-02 に semgrep 74 件・linter の error 約 1,170 件)を
-      # 規則 × file の基点(scripts/hook_finding_baseline/)と比べ、増えた所見と基点の下げ忘れだけを止める(agora-redesign #2848)。
+      # 規則 × file の基点(scripts/hook_finding_baseline/)と比べ、増えた所見と基点の下げ忘れだけを止める。
       # doeff-linter は、基点が名乗る組み立ての入力の鍵と同じ鍵の binary を land-arm の開発版 → 断面の置き場から探して呼ぶ
       # (scripts/doeff_linter_locked.py・#2906 — 探し道の linter は見ない・hook の中では組まない)。置き場に無ければ「測れない」と
       # 名指して通す — verbose で、通った時もその 1 行を見せる。
@@ -11,9 +11,9 @@ repos:
       # uv で走る項は hook の python を `--python 3.12` で宣言する(標準の library だけの script — doeff を読む
       # scripts/lint-doeff-cluster.sh の段は木の環境の python のまま)。semgrep_locked.py は走っている
       # python の版を uv tool run へ渡す。宣言が無いと uv は木の .python-version(3.14t)を選び、semgrep の依存の ruamel-yaml-clib が
-      # 組めずに落ちる(Pod 2026-10-10・card acp:kanban-issue:ki-a28a482132ab)。
+      # 組めずに落ちる(Pod 2026-10-10)。
       # semgrep の 4 項はどれも別名 semgrep-rules を持つ — 素の commit の hook(scripts/git-hooks/pre-commit・make hooks-install と
-      # agora の担当の Pod が入れる物)が `pre-commit run semgrep-rules` で同じ 4 項を撃つ(card ki-8c0bb496bfab)。semgrep の項を足す時も
+      # agora の担当の Pod が入れる物)が `pre-commit run semgrep-rules` で同じ 4 項を撃つ。semgrep の項を足す時も
       # 別名を書く(書き忘れは tests/test_lint_entrypoint_wiring.py の test_plain_hook_runs_every_semgrep_hook_of_the_config が赤にする)。
       - id: semgrep
         alias: semgrep-rules
@@ -50,11 +50,11 @@ repos:
         files: '^ide-plugins/vscode/doeff-runner/src/read/.*\.ts$'
         pass_filenames: true
 
-      # 汎用の package の業務の語の規則(doeff-packages-have-no-application-vocabulary — agora-redesign #2875)のように、文書・設定・
+      # 汎用の package の業務の語の規則(doeff-packages-have-no-application-vocabulary)のように、文書・設定・
       # 型の宣言にも当たる規則がある。Python と Hy は上の 2 項が渡すので、ここは日次の走査(tests/test_semgrep_gate.py — doeff/ と
       # packages/)と同じ根の残り(.pyi・.md・.toml・.json・.sh・Dockerfile など)を全部渡す。どの package に当てるかは規則の paths の
       # 1 か所が決め、この項は package の名を持たない — 持っていた時は、規則に package を足した便が項を直し忘れると素の hook が
-      # その package の文書を黙って通した(card ki-2ff6e513ee7f・tests/test_lint_entrypoint_wiring.py の
+      # その package の文書を黙って通した(tests/test_lint_entrypoint_wiring.py の
       # test_plain_hook_follows_the_rule_paths_for_documents)。広げた時点(2026-10-11)でこの範囲の 707 file の規則の所見は 0 件。
       - id: semgrep-other-files
         alias: semgrep-rules
@@ -67,7 +67,7 @@ repos:
 
       # 素の commit の hook(scripts/git-hooks/pre-commit — agora の担当の Pod が入れる物)もこの項を id doeff-linter で撃つ。項の id を
       # 替える便は素の hook の呼びも直す(tests/test_lint_entrypoint_wiring.py の
-      # test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config が赤にする・card ki-c6f026ac047e)。
+      # test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config が赤にする)。
       - id: doeff-linter
         name: doeff-linter(Python・基点に無い error だけ止める)
         entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py check doeff-linter
@@ -78,8 +78,8 @@ repos:
 
       # packages/doeff-cluster は自分の設定(pyproject.toml の [tool.doeff-linter])と service・不変条件の宣言(architecture.hy)を
       # 持つ。根で走る上の doeff-linter はそれを読まないので、package の dir に入って当てる(Hy の file も渡す)。script が
-      # architecture.hy を必ず足すので、:invariants を消す commit は DOEFF163 で止まる(agora-redesign #2031)。検の dir(tests/)も渡す —
-      # package の設定の include で linter の歩く範囲に入り、定義の書き方の規則(今は critical と当たり 0 の規則)が判じる(agora-redesign #2821)。
+      # architecture.hy を必ず足すので、:invariants を消す commit は DOEFF163 で止まる。検の dir(tests/)も渡す —
+      # package の設定の include で linter の歩く範囲に入り、定義の書き方の規則(今は critical と当たり 0 の規則)が判じる。
       - id: doeff-linter-doeff-cluster
         name: doeff-linter (packages/doeff-cluster の設定と宣言で)
         entry: sh scripts/lint-doeff-cluster.sh
@@ -89,7 +89,7 @@ repos:
 
       # .hy を変える commit は、その隣の .pyi(doeff_hy._static_stub が .hy から作る生成物)を同じ commit で作り直す。各 package の
       # test_generated_stubs が日次に同じ照らしを撃つが、commit の時に止めないと、作り直し忘れが main に入ってから failing になる
-      # (afaf956cd が kube.hy に import を足して kube.pyi を直し忘れた — card ki-5755818ef0d8)。素の commit の hook も別名 hy-stubs で撃つ。
+      # (afaf956cd が kube.hy に import を足して kube.pyi を直し忘れた)。素の commit の hook も別名 hy-stubs で撃つ。
       - id: hy-stub-fresh
         alias: hy-stubs
         name: .hy の隣の .pyi が作り直した物と同じか
@@ -98,8 +98,8 @@ repos:
         files: '^packages/[^/]+/src/.*\.hy$'
         pass_filenames: true
 
-      # 公開の repo に、持ち主の chat の言葉を日付つきで写した引用を入れない(card ki-2711b47b8d34)。決定と理由は記録の
-      # 言葉で書き、出自は「決定 2026-09-29」の短い印か内部の tracker への参照にする。CI(.github/workflows/no-chat-quotes.yml)は
+      # 公開の repo に、持ち主の chat の言葉を日付つきで写した引用を入れない。決定と理由は記録の
+      # 言葉で書き、出自は日付つきの短い決定の印か内部の tracker への参照にする。CI(.github/workflows/no-chat-quotes.yml)は
       # 木の全体と push した commit の文を同じ script で見る。
       - id: no-chat-quotes
         name: 持ち主の chat の言葉の日付つきの引用が無いか

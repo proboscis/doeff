@@ -27,7 +27,7 @@
         "packages/doeff-adr/src/doeff_adr/_semgrep_hy.py",
         "packages/doeff-adr/src/doeff_adr/_hy_expand.py"
       ],
-      "responsibility": "実行できる ADR(defadr)の登録簿と Semgrep の検査の実行 — law・例・検査資産の記録、Hy の source を Python に展開して semgrep に渡す(agora-redesign #1741)",
+      "responsibility": "実行できる ADR(defadr)の登録簿と Semgrep の検査の実行 — law・例・検査資産の記録、Hy の source を Python に展開して semgrep に渡す",
       "typed": true
     },
     {
@@ -64,7 +64,7 @@
       "public": [
         "packages/doeff-adr/src/doeff_adr/macros.hy"
       ],
-      "responsibility": "defadr の macro — ADR の宣言を登録簿への記録と pytest の検に展開する。4 つの macro は検査器の固定表(使う所の投影の規則を検査器が持つ ADR の言語)なので fixed と宣言し、定義の本体は投影から落とす。展開の時の補助の関数(quasiquote で形を組む)は型に写して測る(agora-redesign #1743)",
+      "responsibility": "defadr の macro — ADR の宣言を登録簿への記録と pytest の検に展開する。4 つの macro は検査器の固定表(使う所の投影の規則を検査器が持つ ADR の言語)なので fixed と宣言し、定義の本体は投影から落とす。展開の時の補助の関数(quasiquote で形を組む)は型に写して測る",
       "typed": true
     },
     {

@@ -1,7 +1,7 @@
 """表に書かずに足された公開名を、足した commit と card に引いて報告の行にする(日次の全体検証の後段)。
 
 決まり: tests/test_public_api_known_violations.py は、merge の列も commit の時の hook も回さない。だから表を直さずに公開名を足した
-commit は main に入り、日次の全体検証で初めて failing になる(card ki-7bd396248ba2)。この道具は、その failing の名を 1 行ずつ
+commit は main に入り、日次の全体検証で初めて failing になる。この道具は、その failing の名を 1 行ずつ
 
     public_api_blame: <package> <module>.<名> <足した commit の頭 12 字> <card か依頼の id> <題>
 

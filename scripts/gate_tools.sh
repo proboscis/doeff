@@ -1,6 +1,5 @@
 #!/bin/sh
-# 日次の全体検証(.agents/land-queue.toml の gate.full)が走る所の道具の依存の宣言の 1 点と、その準備(agora-redesign #3870・
-# card ki-9338eec1d15e)。
+# 日次の全体検証(.agents/land-queue.toml の gate.full)が走る所の道具の依存の宣言の 1 点と、その準備。
 #
 # 日次の全体検証は 2026-10-10 から、日次の task が走っている所(atlas の doeff-worker の Pod)で直に走る(ADR-DOE-ENFORCE-001 R10 —
 # それまでは remote_check で木を zeus の上へ送って走っていた)。テストと検査が探す道具は、走る所の側に宣言して用意する(2026-10-08 8:00

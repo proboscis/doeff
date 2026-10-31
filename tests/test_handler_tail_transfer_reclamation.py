@@ -68,7 +68,7 @@ async def _bridge_round_trip() -> None:
     """The coroutine of one Await bridge round trip: it runs on the bridge loop and completes
     after handing the loop over once, so a task parks on the bridge without waiting any
     wall-clock time. What this file pins is where a handler performs its final instruction,
-    not how long a wait lasts (agora-redesign #2967)."""
+    not how long a wait lasts."""
     await asyncio.sleep(0)
 
 

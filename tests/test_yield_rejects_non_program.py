@@ -4,8 +4,7 @@ at the yield that says how to fix it.
 Before: ``yield 42`` failed with ``RuntimeError: VM error (non-exception value in Raise):
 "expected DoExpr or EffectBase, got: <class 'int'>"`` — the VM raised its message string,
 not an exception — and ``x = yield sub`` (the @do function, not called) with the same
-words for ``<class 'function'>``. Neither named the fix (card ki-2bd31de7631f's remainder,
-first-look report 2026-10-16).
+words for ``<class 'function'>``. Neither named the fix (first-look report 2026-10-16).
 """
 
 from __future__ import annotations

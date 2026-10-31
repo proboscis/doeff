@@ -1,4 +1,4 @@
-"""doeff の commit の hook が呼ぶ semgrep を、repo の uv.lock が決める版に固定する入口(agora-redesign #2906)。
+"""doeff の commit の hook が呼ぶ semgrep を、repo の uv.lock が決める版に固定する入口。
 
 hook が探し道の semgrep や作業木の環境の semgrep を呼ぶと、機体の入れ方と作業木の状態で版がずれる(2026-10-02 zeus: 共有の
 uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --no-sync --project <根>` が空の `.venv` をその場に作り、
@@ -8,9 +8,9 @@ uv tool = 1.161.0・lock = 1.169.0。`.venv` の無い作業木では `uv run --
 
 使い方: uv run --no-project --python <版> python scripts/semgrep_locked.py <semgrep の引数…>(repo の根で。semgrep の答えと終了の値をそのまま返す)。
 uv.lock に semgrep が無ければ、理由を名指して 1 で止まる(探し道の物へ黙って戻らない)。素の commit の hook が呼ぶ pre-commit も同じ
-読みで版を決める(scripts/precommit_locked.py・card ki-8c0bb496bfab)。
+読みで版を決める(scripts/precommit_locked.py)。
 
-locked_version は doeff で uv.lock の版を読む 1 か所(card ki-33d2441b7e28): Hy の版で測る検(ADR-DOE-HY-008 の
+locked_version は doeff で uv.lock の版を読む 1 か所: Hy の版で測る検(ADR-DOE-HY-008 の
 locked-hy-version・packages/doeff-hy/tests/test_bytecode_guard.py)も、この file を path で読んで呼ぶ。hook は doeff の環境の外
 (`uv run --no-project`)で走るので、読み手は標準の library だけで書く。読みを変えたら、uv.lock の Hy の版で測る検が root の
 pyproject.toml の [[tool.doeff.contract-tests]] で選ばれる(tests/test_contract_table_follows_packages.py)。
@@ -53,7 +53,7 @@ def locked_version(top: Path, package: str = PACKAGE) -> str:
 def locked_command(top: Path, package: str = PACKAGE) -> list[str]:
     """uv.lock の版の package(既定は semgrep)を、uv の道具の置き場から呼ぶ命令(作業木の `.venv` にも探し道にも依らない)。道具の python は、この
     script を走らせている python の版(hook の設定が `uv run --python` で宣言した版)— 渡さないと uv は木の .python-version(3.14t)を
-    選び、semgrep の依存の ruamel-yaml-clib が組めない(card acp:kanban-issue:ki-a28a482132ab)。"""
+    選び、semgrep の依存の ruamel-yaml-clib が組めない。"""
     running: str = f"{sys.version_info.major}.{sys.version_info.minor}"
     return ["uv", "tool", "run", "--python", running, "--from", f"{package}=={locked_version(top, package)}", package]
 

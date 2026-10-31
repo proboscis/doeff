@@ -6,7 +6,7 @@ frames hold the waiter's ``Try``/``Wait`` effects and the ``Task`` handle they
 name, in their locals and in the closures of their functions, so the row kept
 its own handle alive and the #502 sweep never deleted it: after N failed and
 waited tasks the run held N rows, N errors and their tracebacks and frames
-(agora card ki-6ebcb9c44749). The sweep now gives such an error back the
+. The sweep now gives such an error back the
 traceback it had when it failed once its waiter frames are finished
 (``_drop_waiter_frames``); the Rust version does so after its lock is released,
 so its rows go at the next sweep.

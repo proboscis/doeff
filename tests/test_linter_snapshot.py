@@ -1,4 +1,4 @@
-"""doeff-linter の置き場(packages/doeff-linter/scripts/linter_snapshot.py・agora-redesign #1582・#2001)の検。
+"""doeff-linter の置き場(packages/doeff-linter/scripts/linter_snapshot.py)の検。
 
 偽の cargo(PATH の先頭)で組み立てを模し、本物の git の repo から断面を取り出す。script は各 repo の hook が呼ぶ入口の形
 (`uv run --script <path> <checkout> <commit>`)で撃つ。cargo の target の置き場(#3520)は、script を module として読み、env の
@@ -131,7 +131,7 @@ def test_two_shas_build_into_one_kept_cargo_target(tmp_path: Path) -> None:
 
 
 def test_the_cargo_target_follows_the_cache_root_not_the_snapshot_store(tmp_path: Path) -> None:
-    # 失敗ケース(agora-redesign #3520): 置き場を読む側に合わせて DOEFF_LINTER_SNAPSHOT_DIR を <HOME>/.cache に留め、cache の根
+    # 失敗ケース: 置き場を読む側に合わせて DOEFF_LINTER_SNAPSHOT_DIR を <HOME>/.cache に留め、cache の根
     # (XDG_CACHE_HOME)を別の disk へ向けた機体でも、cargo の target は cache の根の下へ行く。反例: target を置き場の隣
     # (<store の親>/cargo-target)から導く前の形では <HOME>/.cache/cargo-target/doeff-linter になり赤。
     home = tmp_path / "home"
@@ -182,7 +182,7 @@ def stage_with_key(tmp_path: Path) -> Path:
 
 
 def test_a_sha_whose_linter_inputs_did_not_change_is_copied_without_building(tmp_path: Path) -> None:
-    # 失敗ケース(agora-redesign #2383): linter の入力(crate の src・data・Cargo.toml・Cargo.lock・build.rs)に触れない commit の sha は、
+    # 失敗ケース: linter の入力(crate の src・data・Cargo.toml・Cargo.lock・build.rs)に触れない commit の sha は、
     # 置き場に同じ入力の鍵の linter が在れば組まずに写す — pin のたびに同じ linter を組み直さない。反例: sha だけを鍵にする前の形では
     # 2 度組んで赤。写した linter は最初に組んだ commit を名乗り、2 つの断面の dir に同じ鍵が書かれる。
     repo = stage_with_key(tmp_path)

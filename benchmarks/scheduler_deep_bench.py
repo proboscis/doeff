@@ -1,4 +1,4 @@
-"""深い handler の下で、待つ task が多い時の scheduler の 1 操作の thread の CPU を測る(agora card ki-9de8d0a54408)。
+"""深い handler の下で、待つ task が多い時の scheduler の 1 操作の thread の CPU を測る。
 
     uv run python benchmarks/scheduler_deep_bench.py
     uv run python benchmarks/scheduler_deep_bench.py --layers 0 80 --parked 0 2000 --ops 400 --impl rust

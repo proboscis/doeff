@@ -1,14 +1,13 @@
-"""docs の章の動画の検(取り組み doeff-publish の区切り 23・card ki-c64c8e1525f7)。
+"""docs の章の動画の検(取り組み doeff-publish の区切り 23)。
 
 章の page は動画を `[![<説明>](assets/videos/<名>.jpg)](assets/videos/<名>.mp4)` と書く。GitHub の repo の画面では 1 こまの画像が
 mp4 への link になり、docs の site では hook(tools/docs_site/hooks.py)が video の要素に替える。動画は tools/docs-video で作る。
 
 1. page が指す mp4 と 1 こまの画像が在り、mp4 が上限の大きさの内である — repo に入れる動画が clone を重くしすぎないため。
    画像を動画の頭の GIF(`assets/videos/<名>.gif`)にした page では、同じ名の 1 こまの画像(site の poster)も在り、GIF が
-   上限の大きさの内である。GitHub は repo の mp4 を再生しないが GIF は画像として動かす(card ki-65f560fe404e)。
+   上限の大きさの内である。GitHub は repo の mp4 を再生しないが GIF は画像として動かす。
 2. hook が link を、その画像を poster にした video の要素に替える。
-3. ナレーションの声は OpenAI の text-to-speech の API で作り、ローカルの音声合成の model を使わない(利用者 2026-10-25 02:53 JST
-   「ttsは絶対にローカルモデルを使わないで」・02:53 「openai ttsをopenai api keyでやって」)。戻す時はこの検と tools/docs-video/tts.py を
+3. ナレーションの声は OpenAI の text-to-speech の API で作り、ローカルの音声合成の model を使わない。戻す時はこの検と tools/docs-video/tts.py を
    同じ変更で直す。
 """
 

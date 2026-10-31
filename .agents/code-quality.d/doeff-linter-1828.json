@@ -196,7 +196,7 @@
         "packages/doeff-linter/src/stats.rs",
         "packages/doeff-linter/src/timing.rs"
       ],
-      "responsibility": "doeff-linter の crate の根(lib.rs・main.rs)と共有の部品: 設定の読み・診断の型(models・position)・報告の書き出し・基底・noqa・commit の hook(と HEAD の木の結果の置き場 — #2723)・計時・統計。(agora-redesign #1828)",
+      "responsibility": "doeff-linter の crate の根(lib.rs・main.rs)と共有の部品: 設定の読み・診断の型(models・position)・報告の書き出し・基底・noqa・commit の hook(と HEAD の木の結果の置き場 — #2723)・計時・統計。",
       "typed": false
     },
     {
@@ -350,7 +350,7 @@
         "packages/doeff-linter/src/project/unreadable.rs",
         "packages/doeff-linter/src/project/world_catalog.rs"
       ],
-      "responsibility": "repo を横断する規則(architecture.hy の宣言の読み・層と置き場・不変条件・Jev の意味の判定と proxy・登録簿)の判定と、そのための file の走査と索引。(agora-redesign #1828)",
+      "responsibility": "repo を横断する規則(architecture.hy の宣言の読み・層と置き場・不変条件・Jev の意味の判定と proxy・登録簿)の判定と、そのための file の走査と索引。",
       "typed": false
     },
     {
@@ -425,7 +425,7 @@
         "packages/doeff-linter/src/rules/doeff032_rule_population_declaration.rs",
         "packages/doeff-linter/src/rules/mod.rs"
       ],
-      "responsibility": "1 file の中で判じる規則(DOEFF0xx〜1xx)の判定。DOEFF002 が読む class の継承元の見分け(class_inheritance — agora-redesign #2951)を含む。(agora-redesign #1828)",
+      "responsibility": "1 file の中で判じる規則(DOEFF0xx〜1xx)の判定。DOEFF002 が読む class の継承元の見分け(class_inheritance)を含む。",
       "typed": false
     },
     {
@@ -438,7 +438,7 @@
       "public": [
         "packages/doeff-linter/src/utils/mod.rs"
       ],
-      "responsibility": "規則が共有する小さな道具。(agora-redesign #1828)",
+      "responsibility": "規則が共有する小さな道具。",
       "typed": false
     },
     {
@@ -483,7 +483,7 @@
         "packages/doeff-linter/tests/semantic_proxy.rs",
         "packages/doeff-linter/tests/semantic_rules.rs"
       ],
-      "responsibility": "doeff-linter の結合の検(層の規則・Jev の線引きと proxy・commit の hook・索引の cache)。各 file が別の crate の根。(agora-redesign #1828)",
+      "responsibility": "doeff-linter の結合の検(層の規則・Jev の線引きと proxy・commit の hook・索引の cache)。各 file が別の crate の根。",
       "typed": false
     },
     {
@@ -496,7 +496,7 @@
       "public": [
         "packages/doeff-linter/build.rs"
       ],
-      "responsibility": "build の時に git の commit を埋める build script。(agora-redesign #1828)",
+      "responsibility": "build の時に git の commit を埋める build script。",
       "typed": false
     }
   ]

@@ -1,6 +1,4 @@
-"""席の家へ symlink を据える物理が 1 点から漏れないことの陽性対照と弁別。
-
-card acp:kanban-issue:ki-62aa1f4e9c9c 決定 D8 / 計画段の指摘 lt-AM6TW7CAG9Y994J8RYAZAQQJQ4。
+"""席の家へ symlink を据える物理が 1 点から漏れないこと(決定 D8)の陽性対照と弁別。
 
 規則が守るのは「据え付けは 1 つの動詞(substrate.hy ensure-symlink-outcome)」で、その動詞だけが
 一意な名の仮の symlink を rename(2) 1 手で被せる。外で hand-roll すると、家を同じ拍で共有する

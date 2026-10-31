@@ -1,22 +1,20 @@
 """関数の本体の中に入れ子で書いた定義の macro(defk・defp・deftest・defmcp-tool・defeffect・deff ほか
 doeff_hy.macros が出す def の付く macro の全部と、doeff_hy.record の defrecord・defwire・defenum、持ち主の package が出す
 doeff_conductor.macros の defworkflow と doeff_cluster.macros の defsystem)が、
-外の関数に局所の名を作らない事の検(card ki-964823cd7feb・defmcp-tool は card ki-9de0a906e39b・defeffect と deff と defsystem、macro の全部を
-検体で数える事は card ki-93395c51de1e・defrecord と defwire は card ki-8a17293bc3e5・class の本体と型検査の投影と defworkflow は
-ki-8a17293bc3e5 の残り)。
+外の関数に局所の名を作らない事の検(macro の全部を検体で数え、class の本体と型検査の投影も検める)。
 
 defk・defp・deftest の実行時の展開は、頭で `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助
 (と `doeff_hy`・`pytest`・`_doeff_QuotedForms`)を import する。関数の本体の中でそれを import すると、名が関数全体の
 局所の名になり、同じ関数で先に読む traverse / for/do の `_doeff_do`、本体の文の guard の `_guard_statement_value`、
-最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は card ki-c67428538aec・
+最後の値の guard の `_doeff_effect_base` が UnboundLocalError で落ちていた(fnk・do! の同じ不具合は
 tests/test_fnk_do_bang_scope.py)。defmcp-tool も展開の頭で `_doeff_do`・`McpToolDef`・`McpParamSchema` を import する。
 defeffect は `_doeff_effect_base`・`_doeff_dataclass`・`_doeff_ClassVar` などを、deff は宣言の `doeff_hy` を、defsystem は
 `doeff_hy`・`_doeff_cluster_service_model`・`_doeff_cluster_service_build` を、defrecord は `doeff_hy`(record_runtime・頭の辞書の宣言)を、defwire は加えて
 `_doeff_ClassVar` を import する。
 module と class の本体の展開は包まない(`__qualname__` と引数なしの `super()` を保つ)。defhandler は tests/test_handle_scope.py
-(card ki-907f779b3290)が検め、ここでは card ki-93395c51de1e の再現の手順の形だけを置く。
+が検め、ここでは不具合の再現の手順の形だけを置く。
 
-包む `_scoped-definition` の呼び手が負う事も検める(設計検証 lt-ZE5XJCF7YRE6ES4S8QDQASD1FF の失敗例): 関数の中の定義は
+包む `_scoped-definition` の呼び手が負う事も検める(設計検証の失敗例): 関数の中の定義は
 外の関数を呼ぶたびに評価されるので module の globals に記録を積まない事、class の本体の定義の関数が読む補助は
 module の段に他の定義が無くても届く事(型を建てる定義は入れ子の型の本体と method も読む)。型検査の投影では、関数・class の本体の
 中の展開の import が局所の名にならず、module の段で解ける事。
@@ -206,7 +204,7 @@ _CASES = {
         _collection_values,
         [2, 4, 6],
     ),
-    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defmcp-tool の import が来る(card ki-9de0a906e39b の再現の手順)
+    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defmcp-tool の import が来る(不具合の再現の手順)
     "defmcp-tool-in-defn-after-for-do": (
         """
         (defn subject [items]
@@ -230,8 +228,7 @@ _CASES = {
         _run_defk([1, 2, 3]),
         4,
     ),
-    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defhandler の import が来る(card ki-93395c51de1e の再現の手順 —
-    # 直しは card ki-907f779b3290)
+    # 素の defn の for/do の `_doeff_do` の読みの後に、入れ子の defhandler の import が来る(不具合の再現の手順)
     "defhandler-in-defn-after-for-do": (
         """
         (defn subject [items]
@@ -242,7 +239,7 @@ _CASES = {
         _collection_values,
         [2, 4, 6],
     ),
-    # 走らない枝の入れ子の defeffect の後に、外の最後の値の guard(_doeff_effect_base)を読む(card ki-93395c51de1e の再現の手順)
+    # 走らない枝の入れ子の defeffect の後に、外の最後の値の guard(_doeff_effect_base)を読む(不具合の再現の手順)
     "defeffect-in-untaken-branch": (
         """
         (defk subject [x]
@@ -301,7 +298,7 @@ _CASES = {
         ("doeff_hy", "lab", 5),
     ),
     # 外の関数が module の段の doeff_hy を読んだ後に、入れ子の defrecord の record_runtime の import(doeff_hy)が来る
-    # (card ki-8a17293bc3e5 の再現の手順)
+    # (不具合の再現の手順)
     "defrecord-after-module-doeff-hy-read": (
         """
         (defn subject [] (setv owner (. doeff_hy __name__)) (defrecord Span #^ int start) owner)
@@ -309,7 +306,7 @@ _CASES = {
         lambda mod: mod.subject(),
         "doeff_hy",
     ),
-    # 同じ形の defwire(card ki-8a17293bc3e5 の再現の手順 — `_doeff_ClassVar` と doeff_hy._wire の import が来る)
+    # 同じ形の defwire(不具合の再現の手順 — `_doeff_ClassVar` と doeff_hy._wire の import が来る)
     "defwire-after-module-doeff-hy-read": (
         """
         (defn subject [] (setv owner (. doeff_hy __name__)) (defwire Span {:names :camel} #^ int start) owner)
@@ -397,7 +394,7 @@ def test_outer_function_binds_no_helper_name(
 # doeff_hy.macros が出す定義の macro(名が def で始まる macro)ごとの、関数の本体の中に置く検体と、その検体が外の関数に
 # 束ねてよい名(定義した名)。macro を足したら検体も足す — 足さないと test_every_definition_macro_has_a_nested_sample が赤に
 # なり、足した検体は test_function_with_only_a_definition_binds_only_its_names が補助の名の漏れを名に依らず検める
-# (card ki-93395c51de1e — 定義の macro ごとに後から同じ漏れが見つかっていた: ki-964823cd7feb・ki-9de0a906e39b・ki-907f779b3290)。
+# (定義の macro ごとに後から同じ漏れが見つかっていた)。
 _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
     "defk": ("(defk inner [y] {:pre [(: y int)] :post [(: % int)]} y)", frozenset({"inner"})),
     "deff": ("(deff inner [y] {:pre [(: y int)] :post [(: % int)]} y)", frozenset({"inner"})),
@@ -443,7 +440,7 @@ _DEFINITION_SAMPLES: dict[str, tuple[str, frozenset[str]]] = {
 _NOT_DEFINITION_MACROS = frozenset({"defphase"})
 
 
-#: 定義の macro を持ち主の package に置く Hy の module(doeff-hy の外 — 利用者の答え lt-GXXY5TVWBHJW4ZCBDTCRN68XZS・card ki-f2107259b141)。
+#: 定義の macro を持ち主の package に置く Hy の module(doeff-hy の外)。
 _OWNER_MACRO_MODULES = ("doeff-conductor.macros", "doeff-cluster.macros")
 
 
@@ -501,7 +498,7 @@ def test_nested_definition_leaves_module_globals_unchanged(
 ) -> None:
     """関数の中の定義は、外の関数を何度呼んでも module の globals に名も記録も足さない — 包んだ文の並びは呼ぶたびに
     評価されるので、記録を積む文を置くと呼んだ回数だけ積み増す(`_scoped-definition` の呼び手の負う事)。関数の中の
-    deftest は pytest の item の記録(`__doeff_pytest_items__`)を積まない(card ki-93395c51de1e)。"""
+    deftest は pytest の item の記録(`__doeff_pytest_items__`)を積まない。"""
     mod = _eval_module(source)
     before = _module_globals_view(mod)
     call(mod)
@@ -525,7 +522,7 @@ def _module_state_view(
 ) -> dict[tuple[str, str], tuple[int, tuple[int, ...] | None]]:
     """定義を書いた module と、読み込み済みの doeff の module(名の頭が doeff)の globals の (module, 名) ごとの
     (値の id, 入れ物の要素の id) — 外の関数を呼ぶたびに、どこかの module に名・記録・登録が増えたかを比べるため
-    (定義を書いた module だけを見ると、doeff の module の索引への登録を見逃す — 設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 B)。"""
+    (定義を書いた module だけを見ると、doeff の module の索引への登録を見逃す — 設計検証の盲検 B)。"""
     modules = [mod] + [
         module
         for name, module in sorted(sys.modules.items())
@@ -563,7 +560,7 @@ def test_definition_sample_leaves_module_state_unchanged(
 def test_static_projection_of_nested_deftest_has_no_item_record(tmp_path: Path) -> None:
     """型検査のための投影(doeff-hy-check が pyright に読ませる Python)で、関数の中の deftest は pytest の item の記録の文と、
     その import が作る `doeff_hy` の局所の名を外の関数に出さない — 実行時の展開は出さないので、投影も同じにする
-    (設計検証 lt-0YB1XJPKH406GNDWRZ4KND2Q9N の盲検 A。module の段の記録は投影が記帳として外す)。"""
+    (設計検証の盲検 A。module の段の記録は投影が記帳として外す)。"""
     source = tmp_path / "nested_static.hy"
     source.write_text(
         "(require doeff-hy.macros [deftest])\n(defn subject [] (deftest test-inner (assert True)) None)\n",
@@ -684,7 +681,7 @@ def test_class_body_type_definition_runs_without_module_doeff_hy(
     source: str, call: Callable[[types.ModuleType], object], expected: object
 ) -> None:
     """class の本体に直に書いた型を建てる定義(defrecord・defwire・defeffect)は、書き手の module が `doeff_hy` を持たなくても
-    建ち、使える(card ki-8a17293bc3e5 の残り)。class の本体で import した名は外の class の属性になり、入れ子の型の本体と
+    建ち、使える。class の本体で import した名は外の class の属性になり、入れ子の型の本体と
     method は名を引く時に外の class の段を飛ばす — 展開の import を書いた所にだけ置くと、module の段に `doeff_hy` が在る
     module(他の定義が import する書き手の普通の形)でだけ動く。型の `__qualname__` は包まないので `Outer.<名>` のまま。"""
     assert "doeff_hy" not in vars(_eval_module("", header=_TYPE_ONLY_HEADER))
@@ -849,7 +846,7 @@ def test_static_projection_of_nested_definition_leaves_only_known_imports_in_its
     """型検査の投影(doeff-hy-check が pyright に読ませる Python)で、関数の本体と class の本体に書いた定義の展開が scope に残す
     import は、上の表の名だけ — 名に依らず(macro が新しい補助を別の綴りで import しても、表に無ければ赤)。関数の中の import は
     外の関数全体の局所の名で、外の関数が先に module の段の `doeff_hy` を読むと pyright は未束縛と読み、class の本体の import は
-    入れ子の型の本体と method から引けない(card ki-8a17293bc3e5 の残り・設計検証 lt-JGXTY7ES6816GHSNAABAQYJE15 の盲検 A・B の
+    入れ子の型の本体と method から引けない(設計検証の盲検 A・B の
     失敗例)。macro 合成の import は、投影の後処理 `static_check.with_module_level_imports` が module の段へ移す。"""
     source, _ = _DEFINITION_SAMPLES[macro]
     tree = _projection_of(tmp_path, _STATIC_SCOPES_SOURCE.format(source=source))
@@ -936,7 +933,7 @@ def test_static_projection_of_class_body_type_reads_module_level_typing_aliases(
     """型検査の投影で、class の本体に直に書いた defeffect・defwire・defrecord(:check)の型の本体が読む `_doeff_ClassVar`・
     `_doeff_cast` は module の段の import が束ねる — class の本体に残すと、入れ子の型の本体と method は名を module の段から
     引くので、doeff-hy-check が `"_doeff_ClassVar" is not defined`・`"_doeff_cast" is not defined` を出した
-    (設計検証 lt-MPT2W9D40AMFNSEXSY5JPV780N の盲検 A・B が見つけた、8a759a421 の直しの残り)。"""
+    (設計検証の盲検 A・B が見つけた、8a759a421 の直しの残り)。"""
     tree = _projection_of(tmp_path, f"(defclass Outer [] {definition})")
     outer = next(
         node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Outer"

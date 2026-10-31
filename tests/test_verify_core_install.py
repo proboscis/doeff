@@ -1,4 +1,4 @@
-"""核だけの入れ方の検の道具 tools/verify_core_install.py が、壊れた入れ方を名指す事の失敗ケース(card ki-d6b421afac60)。
+"""核だけの入れ方の検の道具 tools/verify_core_install.py が、壊れた入れ方を名指す事の失敗ケース。
 
 道具は Python の版ごとに、本物の install(核の 4 個だけの新しい venv)で確かめる。道具の判じ方が黙って緑を返すと、核だけの
 入れ方が壊れても道具は落ちない。ここでは判じ方を、入れた物と子の process の結末の写しで確かめる(本物の install は doeff-vm
@@ -190,7 +190,7 @@ def test_the_extra_uses_cover_every_extra_of_the_hint_table() -> None:
     assert {use.extra for use in tool.EXTRA_USES} == set(get_args(extra_hints.Extra))
 
 
-# --- 試しの命令 python -m doeff demo が核だけの venv で動く(card ki-34f672bff9f6・ki-2ccb68ed0ad7) --------------------------
+# --- 試しの命令 python -m doeff demo が核だけの venv で動く --------------------------
 DEMO_LIVE = repr(f"{len(tool.DEMO_PAGE)} chars")
 DEMO_OUTPUT = (
     f">>> run(handler(canned)(digest(url)))\n{tool.DEMO_CANNED_ANSWER}\n\n"
@@ -250,7 +250,7 @@ def test_the_demo_check_runs_the_command_the_readme_points_to() -> None:
     assert f"`{command}`" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
-# --- LLM の agent の例と、その pytest の検の例が核の 4 個(と pytest)だけで通る(依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S) -------------
+# --- LLM の agent の例と、その pytest の検の例が核の 4 個(と pytest)だけで通る -------------
 @pytest.mark.parametrize(
     ("returncode", "stdout", "passes"),
     [
@@ -302,7 +302,7 @@ def test_the_llm_example_check_copies_the_example_and_its_tests() -> None:
     assert all((ROOT / name).is_file() for name in tool.LLM_EXAMPLE_FILES)
 
 
-# --- 紹介の記事の例が核の 4 個(と pytest)だけで、記事の見せる行を印字して通る(card ki-eeaca7016c66) ---------------------------
+# --- 紹介の記事の例が核の 4 個(と pytest)だけで、記事の見せる行を印字して通る ---------------------------
 PRODUCTION = tool.ArticleScript("production.py", ("SMTP -> x", "Welcome, Grace!"))
 FANOUT = tool.ArticleScript("fanout.py", ("['a']", "['A']"), timed=True)
 
@@ -371,7 +371,7 @@ ARTICLE_MODULES = ("infra.py", "plain_app.py", "welcome.py")
 
 
 def test_the_article_check_runs_every_script_of_the_article() -> None:
-    # 記事の例の印字を比べるのは道具の ARTICLE_SCRIPTS だけ(card ki-5ea7c639b693)— 表が dir の script の全部を名指し、記事の
+    # 記事の例の印字を比べるのは道具の ARTICLE_SCRIPTS だけ— 表が dir の script の全部を名指し、記事の
     # 書く切り替え DOEFF_SCHEDULER=rust でも fanout.py を走らせる事。例の dir に script を足して表に書き忘れると赤になる。
     directory = ROOT / tool.ARTICLE_EXAMPLE_DIRECTORY
     scripts = sorted(
@@ -394,7 +394,7 @@ def test_the_pages_that_say_the_llm_example_needs_only_doeff_link_to_it(page: st
     assert "examples/llm_agent.py" in (ROOT / page).read_text(encoding="utf-8")
 
 
-# 根の README の「Hy の module を Python から読む」節の形(card ki-909e814cc835 が足し、核の 4 個だけの venv で落ちた)。
+# 根の README の「Hy の module を Python から読む」節の形(足した時に、核の 4 個だけの venv で落ちた)。
 HY_MODULE_README = """\
 ## Quick Start
 
@@ -506,7 +506,7 @@ def test_every_python_example_that_imports_hy_in_a_checked_readme_is_set_aside(
     assert remaining_importing_hy == []
 
 
-# --- GitHub の README を入った版で走らせる(card ki-fd6aea147621) ----------------------------------------------------------
+# --- GitHub の README を入った版で走らせる ----------------------------------------------------------
 # --pypi は、入った wheel の README(入った版と同じ時に書いた物)の他に、checkout(CI では GitHub の main)の README を入った版の
 # venv で走らせる。wheel の README だけでは、GitHub の README が出した版より先へ進んでも緑のまま食い違いを見ない。
 
@@ -674,7 +674,7 @@ def _stages_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: object)
 def test_only_the_pypi_check_runs_the_article_examples(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版では走らせない(card ki-5ea7c639b693)。
+    # 記事の例は PyPI の版に留めて書く(ADR-DOE-API-002 R3)ので、checkout の版では走らせない。
     # --pypi は venv に pytest を足すので最後に走らせる。
     checkout_stages = _stages_run(monkeypatch, tmp_path / "checkout", tool.Checkout())
     pypi_stages = _stages_run(monkeypatch, tmp_path / "pypi", tool.PyPI(None))
@@ -701,7 +701,7 @@ def test_a_push_that_changes_a_github_readme_runs_the_daily_pypi_check() -> None
     assert {readme.source for readme in tool.checkout_readmes(ROOT).readmes} <= set(paths)
 
 
-# --- 型の check が「公開していない名」を名指す(card ki-d1628b5046d1) ---------------------------------------------------
+# --- 型の check が「公開していない名」を名指す ---------------------------------------------------
 # 核だけの venv で README の例を pyright と mypy --strict にかける段の、判じ方。本物の pyright・mypy の出力の写しで確かめる。
 
 

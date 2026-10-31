@@ -1,5 +1,4 @@
-"""README と入門の章の、型を書いた例が一番厳しい型の check で error 0 のままである事の検(取り組み doeff-publish・
-card ki-92c3133da46d)。
+"""README と入門の章の、型を書いた例が一番厳しい型の check で error 0 のままである事の検(取り組み doeff-publish)。
 
 型の報告(2026-10-17-doeff-user-typecheck.html)の抜け 10・11: README と入門の例は `yield` と注記なしで書いてあり、pyright の
 strict では入門の 76 例のうち 75 例が error、mypy は注記の無い @do の関数を `def (*Any, **Any) -> Any` と読んで中身を見ない。

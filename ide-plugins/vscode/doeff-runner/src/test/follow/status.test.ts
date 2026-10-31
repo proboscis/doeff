@@ -50,7 +50,7 @@ function show(notice: FollowNotice): string {
   }
 }
 
-suite('vsix の追随の報せ — 状態 file の契約と、Reload の通知・失敗の警告の判定(agora-redesign #1043)', () => {
+suite('vsix の追随の報せ — 状態 file の契約と、Reload の通知・失敗の警告の判定', () => {
   test('状態 file の path は書き手と同じ解き方 — XDG_STATE_HOME、無ければ(空でも)<home>/.local/state の下の ai/vsix-follow/status.json', () => {
     assert.strictEqual(followStatusPath({ XDG_STATE_HOME: '/s' }, '/h'), path.join('/s', 'ai', 'vsix-follow', 'status.json'));
     assert.strictEqual(followStatusPath({}, '/h'), path.join('/h', '.local', 'state', 'ai', 'vsix-follow', 'status.json'));

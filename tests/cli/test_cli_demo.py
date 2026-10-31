@@ -1,5 +1,5 @@
 """`python -m doeff demo` は `pip install doeff` の直後(核の 4 個だけ)に動き、同じ program を 4 つの handler で走らせ、handler が
-k(continuation)をどう扱うかで effect の意味と答えが変わる様子を見せる(取り組み doeff-publish・card ki-34f672bff9f6・ki-2ccb68ed0ad7)。
+k(continuation)をどう扱うかで effect の意味と答えが変わる様子を見せる(取り組み doeff-publish)。
 IO の本物と偽物の差し替えは 4 つのうちの 1 つ(live_world)で、ほかは effect を見て渡す trace と、途中で k を捨てる budget(1)。
 
 試しの命令は README の入れ方の直後に案内する、初めての利用者が最初に打つ命令。核の 4 個(doeff・doeff-vm・doeff-core-effects・

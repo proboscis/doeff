@@ -1,5 +1,5 @@
-"""state の答え手は VM の中の Rust の handler(doeff_vm.StateHandler)で、Get / Put に Python の handler なしで答える
-(card ki-83236a21466e)。答え・外へ渡す effect・例外の出る所・handler の一覧の見え方が、Python の `@do` の handler だった時と同じ事を確かめる。
+"""state の答え手は VM の中の Rust の handler(doeff_vm.StateHandler)で、Get / Put に Python の handler なしで答える。
+答え・外へ渡す effect・例外の出る所・handler の一覧の見え方が、Python の `@do` の handler だった時と同じ事を確かめる。
 """
 
 from __future__ import annotations

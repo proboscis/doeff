@@ -31,7 +31,7 @@ def test_task_priority_is_exported_with_its_values() -> None:
 
 
 def test_the_old_priority_constants_are_gone() -> None:
-    # TaskPriority replaced them (agora card ki-9f2990a98000); the old names must not come back.
+    # TaskPriority replaced them; the old names must not come back.
     import doeff_core_effects
 
     for name in ("PRIORITY_IDLE", "PRIORITY_NORMAL", "PRIORITY_HIGH"):

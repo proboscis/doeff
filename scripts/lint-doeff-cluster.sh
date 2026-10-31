@@ -16,7 +16,7 @@ TOP="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE="packages/doeff-cluster"
 
 # warning(major)は linter が 0 で終わるので、規則 × file の基点と比べて増えたら赤・減ったのに基点を下げていなければ赤
-# (scripts/doeff_cluster_warning_baseline.py・agora-redesign #2683)。error は linter の終了コードで止める。
+# (scripts/doeff_cluster_warning_baseline.py)。error は linter の終了コードで止める。
 BASELINE_CHECK="$TOP/scripts/doeff_cluster_warning_baseline.py"
 
 if [ "$#" -eq 0 ]; then
@@ -34,7 +34,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 # commit の hook: 探し道の linter でなく、HEAD の組み立ての入力の鍵の binary(land-arm の開発版 → 断面の置き場)で測る
-# (scripts/doeff_linter_locked.py・agora-redesign #2906)— warning の基点は版を持たないので、木の linter で数えないと版の差で
+# (scripts/doeff_linter_locked.py)— warning の基点は版を持たないので、木の linter で数えないと版の差で
 # 赤・緑が黙って変わる。置き場に無ければ「測れない」と名指して通す(hook の中では組まない — 根の Python の項と同じ)。
 if ! LINTER="$(cd "$TOP" && uv run --no-project python scripts/doeff_linter_locked.py which)"; then
   echo "doeff-linter($PACKAGE): 測れない — HEAD の linter の binary が置き場に無い(上の 1 行)。hook の中では組まない" \

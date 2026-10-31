@@ -1,5 +1,5 @@
 """核の 5 個(doeff・doeff-vm・doeff-core-effects・doeff-hy・doeff-hy-pytest)の版の番号が 1 つに揃い、互いの依存がその番号の
-系に限られる事の失敗ケース(取り組み doeff-publish の区切り 3・card ki-4f3135e2be74)。
+系に限られる事の失敗ケース(取り組み doeff-publish の区切り 3)。
 
 5 個は 1 つの番号で出す — 番号 1 つで、合う組み合わせが分かる(範囲と手順の報告の節「版の付け方」)。版を持つ所は 8 か所:
 5 個の pyproject の project.version・doeff の __version__・doeff-vm の Cargo.toml の package.version と Cargo.lock の doeff-vm の行。

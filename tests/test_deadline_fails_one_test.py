@@ -3,7 +3,7 @@
 pyproject.toml runs pytest-timeout with the signal method, so a test over its deadline fails
 alone and the tests after it still run.  The thread method ended the whole process instead:
 on 2026-09-25 and 09-26 the daily run of the doeff-agents suite stopped at about 6% on one
-slow test, and the other 94% was never measured (agora-redesign#639).
+slow test, and the other 94% was never measured.
 
 A signal cannot reach code stuck inside a C extension, so the root conftest's watchdog is
 the last resort.  When it fires it writes pytest's own short-summary line naming the test it
@@ -86,7 +86,7 @@ def test_the_per_test_deadline_uses_the_signal_method() -> None:
     method = settings["tool"]["pytest"]["ini_options"]["timeout_method"]
     assert method == "signal", (
         f"timeout_method = {method!r}: the thread method ends the whole process on the first "
-        f"slow test, so every test after it goes unmeasured (agora-redesign#639)"
+        f"slow test, so every test after it goes unmeasured"
     )
 
 
@@ -117,7 +117,7 @@ def test_the_watchdog_names_the_hung_test_and_ends_with_status_1(tmp_path: Path)
     assert (tmp_path / "ran-before").exists()
     assert not (tmp_path / "ran-after").exists()
     # On a daily run the hung test is named through the session writer too — the land tool
-    # reads a named session's failures only from its token lines (agora-redesign#645).
+    # reads a named session's failures only from its token lines.
     answered = tmp_path / "answered"
     assert answered.exists(), "the watchdog did not answer through the session writer"
     assert answered.read_text() == "test_probe.py::test_blocks_signals_and_hangs"

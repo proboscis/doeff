@@ -1,4 +1,4 @@
-"""fnk・do! の展開が、書いた場所の scope に名を作らず、その scope の名を前と同じに読む事の検(card ki-c67428538aec)。
+"""fnk・do! の展開が、書いた場所の scope に名を作らず、その scope の名を前と同じに読む事の検。
 
 fnk・do! の実行時の展開は、前は `_doeff_do`・`_guard_statement_value`・`_doeff_effect_base` などの補助を書いた場所で
 import していた。defk の本体(関数)の中でそれを import すると、名が関数全体の局所の名になり、同じ関数で先に読む

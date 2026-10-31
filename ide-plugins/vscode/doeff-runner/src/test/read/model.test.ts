@@ -43,7 +43,7 @@ import { effectHover, nameHover, nameScope, ruleTitles, violationTipHtml } from 
 import { lintChildren, violationRoots, violationTrail } from '../../lint/view';
 
 // 材料は test-fixtures/read/plane.hy に hy-index と doeff-linter(editor-json・--stdin --path)を当てた実出力
-// (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10(agora-redesign #910)。
+// (path だけ /repo に置き換えた)。定義を読む面の受け入れの検査 V1・V2・V3・V10。
 
 const FIXTURES = path.join(__dirname, '..', '..', '..', 'test-fixtures', 'read');
 const FILE = '/repo/pkg/plane.hy';
@@ -667,7 +667,7 @@ suite('定義を読む面 — 違反を本体の行へ(V7・U5)', () => {
   });
 });
 
-suite('定義を読む面 — 違反の置き場と吹き出し(v13・agora-redesign #1685)', () => {
+suite('定義を読む面 — 違反の置き場と吹き出し(v13)', () => {
   /** 見本の fetch-row の定義(名 = 13 行目の 6〜15 列・本体の行 = 17・18 行目)。 */
   const fetchRow = (): HyDefinition => {
     const found = planeCards().find((c) => c.definition.name === 'fetch-row');

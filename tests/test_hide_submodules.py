@@ -315,7 +315,7 @@ def _catalog_missing_old_spellings(repo: Path) -> list[str]:
     """doeff-linter の検 catalog_keeps_the_old_spelling_of_every_moved_handler と同じ条件の抜け。
 
     1 行目に移し替えの印を持つ module が残る間、移した先の _ の綴り(子が package ならその下の module も)の行には、
-    古い綴りの行も目録に要る(linter は :wraps の綴りを目録の鍵と完全一致で照らす — card ki-1bea6cc16446)。
+    古い綴りの行も目録に要る(linter は :wraps の綴りを目録の鍵と完全一致で照らす)。
     """
     marks = (
         path.read_text(encoding="utf-8").split("\n", 1)[0] for path in (repo / "packages").rglob("*.py")
@@ -465,7 +465,7 @@ def test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row(
     """許した物の表の名(R18 の program の helper)は、既知の表の境界の名と同じく入口へ出す(外れの名は _ に残す)。stage 3
     で目録から消えた許した物の行は、許した物の表から組ごとに数えて消す。
 
-    失敗ケース: 許した物を既知の表から許した物の表へ分けた時(card ki-5b3b2320de40)、道具が既知の表だけを読むと helper を
+    失敗ケース: 許した物を既知の表から許した物の表へ分けた時、道具が既知の表だけを読むと helper を
     「表に無い名」と読んで _ に残し、外の repo が入口から読めなくなる。
     """
     helper_group = "許した物 — program の helper"
@@ -486,7 +486,7 @@ def test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row(
                 "module": f"{ROOT_NAME}.effects",
                 "name": "pinging",
                 "組": helper_group,
-                "決め": "ki-5b3b2320de40",
+                "決め": "ki-" + "0123456789ab",
             }
         ]
     }
@@ -517,7 +517,7 @@ def test_a_name_a_child_imports_from_outside_the_children_is_read_from_its_defin
     """子が隠さない区画の名を出し直す時、入口はその名を定義の在る module から読む。
 
     失敗ケース: doeff-cluster の sim を隠すと、sim の local が shared の effect 75 個を import して出し直していて、
-    入口が ``_sim.local`` から読んだ — effect を 1 つ読むだけで模擬の cluster の全部を読み込む(card ki-9b8308f2c7c3)。
+    入口が ``_sim.local`` から読んだ — effect を 1 つ読むだけで模擬の cluster の全部を読み込む。
     """
     children = [tool.Child(ROOT_NAME, "sim", tmp_path)]
     rows = [
@@ -539,7 +539,7 @@ def test_used_by_shows_the_outliers_an_outside_tree_reads_and_keeps_unread_added
 
     失敗ケース: doeff-cluster は外の repo が使う名だけを入口から見せる(ADR-DOE-API-001 R15)。表の組だけで分けると、
     使い手の書く ``(import doeff_cluster [sim-cluster])`` の sim-cluster が「外れ — 内側の module へ移す」で入口に出ず、
-    表の「足した名」の MODULE_TAGS が入口に出た(card ki-9b8308f2c7c3)。
+    表の「足した名」の MODULE_TAGS が入口に出た。
     """
     children = [tool.Child(ROOT_NAME, "sim", tmp_path)]
     inside = "外れ — 内側の module へ移す"
@@ -602,7 +602,7 @@ def test_a_name_added_to_an_entry_with_all_is_listed_in_all_too(tmp_path: Path) 
     ``__all__`` には足さず、子を移す前に止める。
 
     失敗ケース: 目録と ``import *`` は、``__all__`` の在る module では ``__all__`` の名だけを読む。doeff-events の入口は
-    ``__all__`` を持ち、遅延の表だけに足した 11 名は入口の名と数えられなかった(card ki-a883efd67a46・``__all__`` の在る
+    ``__all__`` を持ち、遅延の表だけに足した 11 名は入口の名と数えられなかった(``__all__`` の在る
     入口は 16 個)。
     """
     root_dir = tmp_path / ROOT_NAME
@@ -756,7 +756,7 @@ def test_hide_points_callers_at_the_entry_for_wrapped_names_in_the_entry_all(
     """入口の ``__all__`` に在る名は、``@handler`` で包んで定義の module が包みの側になった物でも入口から読ませる。
 
     前は入口が出す名を、遅延の表・``X as X``・package の中で定義した物だけと読み、``__all__`` で出す包んだ handler の
-    呼び手を _ の path へ向けていた(card ki-32a05dc657b8 — doeff-gemini の ``default_gemini_cost_handler`` の定義の
+    呼び手を _ の path へ向けていた(doeff-gemini の ``default_gemini_cost_handler`` の定義の
     module は ``doeff.program``)。
     """
     repo = _write_repo(tmp_path / "repo", WRAPPED_FILES)
@@ -793,11 +793,11 @@ def test_hide_rewrite_and_finish_keep_the_python_and_hy_callers_green(tmp_path: 
     _assert_moved_and_entry(repo, report)
     _assert_rewritten(repo, report, record_before)
     _check_table(repo)  # 移し替えの module が古い名で出す間は、表を書き換えずに緑
-    # 移し替えの module は印の下に、古い path が出す名の固定の列を持つ(card ki-4fbed45b5863)。
+    # 移し替えの module は印の下に、古い path が出す名の固定の列を持つ。
     assert f"{tool.SHIM_NAMES_MARK} {ROOT_NAME}.effects:" in _text(
         repo, f"packages/{PACKAGE}/src/{ROOT_NAME}/effects.py"
     )
-    # 目録の古い綴りの行は書き換えずに残り、前に _ の綴りの行(入口が出す名は入口の綴りの行も)が足る(card ki-1bea6cc16446)。
+    # 目録の古い綴りの行は書き換えずに残り、前に _ の綴りの行(入口が出す名は入口の綴りの行も)が足る。
     assert _catalog_spellings(repo) == [
         f"{ROOT_NAME}._effects:ping-handler",
         f"{ROOT_NAME}:ping_handler",
@@ -927,7 +927,7 @@ def test_hide_points_a_caller_at_the_entry_when_the_child_reads_itself_by_the_ol
     """子の package の中が子を古い path で読んでも、入口と同じ名を読む呼び手は入口から読む形へ書き換わる。
 
     入口と比べる子の process が根を読む前に根の中の import を書き換えないと、``_clock/__init__`` の古い path の
-    import が package でない移し替えの module に当たって落ち、呼び手が ``_`` の path へ向いた(card ki-99e6a0ab379b)。
+    import が package でない移し替えの module に当たって落ち、呼び手が ``_`` の path へ向いた。
     """
     repo = _write_repo(tmp_path / "repo", CHAIN_FILES)
     report = tool.hide(repo / "packages" / CHAIN_PACKAGE, ["clock"], None, None, None, [])
@@ -943,7 +943,7 @@ def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_pat
 
     子 ``structured_llm`` と ``handlers`` を隠した後、入口は ``from ._structured_llm import structured_llm``(関数)と
     ``from . import _handlers as handlers``(子の module)を持つ。呼び手の ``structured_llm`` は関数のまま残し、
-    ``handlers`` だけを ``_handlers as handlers`` へ書き換える(card ki-67445807c406 で README を誤って書き換えた)。
+    ``handlers`` だけを ``_handlers as handlers`` へ書き換える(前に README を誤って書き換えた)。
     """
     root_dir = tmp_path / "pkg"
     root_dir.mkdir()
@@ -968,7 +968,7 @@ def test_from_root_import_keeps_a_name_the_entry_binds_to_another_object(tmp_pat
 def test_a_relative_hy_import_is_left_as_it_is(tmp_path: Path) -> None:
     """Hy の相対の import(doeff_cluster の ``(import .runtime_env_model [EnvVar])``)を読んでも落ちず、書き換えない。
 
-    頭の点の空の名を ``hy.mangle`` へ渡して hide が AssertionError で止まった(card ki-511a7a8431de)。
+    頭の点の空の名を ``hy.mangle`` へ渡して hide が AssertionError で止まった。
     """
     root_dir = tmp_path / "pkg"
     root_dir.mkdir()
@@ -1034,7 +1034,7 @@ def test_hide_refuses_a_child_named_like_a_name_the_entry_shows(
 ) -> None:
     """子の名が入口の出す名と同じなら、hide は移し替えの module を置かずに断り、木に何も書かない(ADR-DOE-API-001 R34)。
 
-    古い path の import が親の属性を module に束ね、入口の名を隠す(card ki-db44e4d3efe4 — doeff_core_effects の
+    古い path の import が親の属性を module に束ね、入口の名を隠す(doeff_core_effects の
     aiohttp_http_server の殻で記録の service が起動の度に落ちた)。前の道具は入口へ足す名を見ずに殻を置き、入口が既に
     束ねる名では package の class を差し替える手当てを殻に書いた。同じ名でない子(plain)は今までどおり隠せる。
     """
@@ -1055,7 +1055,7 @@ def test_hide_refuses_a_child_named_like_a_name_the_entry_shows(
 
 @pytest.mark.timeout(600)
 def test_hide_holds_a_name_like_its_child_inside_until_the_shim_is_gone(tmp_path: Path) -> None:
-    """``--hold`` の名は入口へ出さず ``_`` に残し、移し替えの module を置いて隠す — R34 の順の 1 段目(card ki-dc1f58c59bcc)。
+    """``--hold`` の名は入口へ出さず ``_`` に残し、移し替えの module を置いて隠す — R34 の順の 1 段目。
 
     子 ping_handler の handler ping_handler は入口へ出す種類なので、hold が無ければ R34 で断る。hold すると入口は同じ名を
     出さず(古い path の import が入口の名を module で隠す事が起きない)、同じ子の他の名(effect Ping)は入口へ出す。
@@ -1100,7 +1100,7 @@ def test_pin_writes_the_names_into_the_shim_of_a_namespace_dir(tmp_path: Path) -
     """namespace の dir(__init__ の無い _area)を指す移し替えの module にも、pin が下の古い path の名の固定の列を書く。
 
     その移し替えの module は module でないので、目録の module の列だけから移し替えの module を探すと拾わず、何も書かな
-    かった(doeff-cluster の sim.py — card ki-fcf6342de575)。列には effect・handler と既知の表の名だけを書き、書き手が
+    かった(doeff-cluster の sim.py)。列には effect・handler と既知の表の名だけを書き、書き手が
     下に足した helper は書かない。
     """
     src = f"packages/{PACKAGE}/src/{ROOT_NAME}"

@@ -1,11 +1,11 @@
-"""README.md の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish・card ki-68cd4c8effcd)。
+"""README.md の例が今の doeff でそのまま走り、書いてある通りに印字する事の検(取り組み doeff-publish)。
 
 README の例は、初めての利用者が写して走らせる code で、どの検も走らせていなかったので、handler の使い方が変わっても
 誰も気づかなかった: 並行の例は writer が state の handler を要るようになった後も state を入れず UnhandledEffect(Get) で
 落ち、Hy の例は defhandler と do! の require が無く NameError で落ちていた(下の STALE_EXAMPLES が当時の写し)。
 
 README の囲みの読み方・走らせ方・注記との比べ方は tools/readme_examples.py の 1 点に在り、出す前と出した後の確かめの道具
-tools/verify_release_install.py(核の 5 個を入れた新しい venv で 5 個の README を走らせる — card ki-7746480f388d)と共に使う。
+tools/verify_release_install.py(核の 5 個を入れた新しい venv で 5 個の README を走らせる)と共に使う。
 この検は根の README.md の例を開発の環境で走らせ(囲みは全部入る — 新しい例も書いただけで入る)、核の 5 個の README の
 囲みが約束(言葉・`file=`・`excerpt`・`run`・注記)に合う事を、走らせずに読む。核の 4 個の README の例を走らせるのは
 道具の方 — 例は利用者が新しく入れた環境の様子を言い、この開発の環境には他の部品と pytest の plugin(doeff-adr の Hy の検の
@@ -27,7 +27,7 @@ from tests.cli.cli_child import with_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
-# 核の 5 個の README(区切り ms-680daa3cc6a7 の範囲 — tools/verify_release_install.py の CORE と同じ並び)。
+# 核の 5 個の README(tools/verify_release_install.py の CORE と同じ並び)。
 CORE_READMES = {
     "doeff": README,
     "doeff-vm": ROOT / "packages" / "doeff-vm" / "README.md",
@@ -35,9 +35,8 @@ CORE_READMES = {
     "doeff-hy": ROOT / "packages" / "doeff-hy" / "README.md",
     "doeff-hy-pytest": ROOT / "packages" / "doeff-hy-pytest" / "README.md",
 }
-# README が保つ入口の例の節(頭の 2 つ = card ki-889cc73b231a・他の書き方との比べの Before / After = card ki-94411a991047・
-# 並行 = card ki-68cd4c8effcd・最初の例を IO でない effect にし、IO の差し替えを使い方の 1 つの節へ移した =
-# 依頼 lt-NSPA2D1VRJ9826Q7AY2X1ZTJMM)。節を消す・名を変える時は、ここも直す。
+# README が保つ入口の例の節(頭の 2 つ・他の書き方との比べの Before / After・並行・最初の例を IO でない effect にし、
+# IO の差し替えを使い方の 1 つの節へ移した節)。節を消す・名を変える時は、ここも直す。
 KEPT_SECTIONS = (
     "A 30-second example",
     "Swap a handler: fakes in tests, real I/O in production",
@@ -135,7 +134,7 @@ def test_readme_keeps_the_entry_examples() -> None:
     )
 
 
-# card ki-68cd4c8effcd の前の README の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)。
+# 並行の節を足す前の README の 2 つの例の写し(この検が名指す事を確かめる失敗ケース)。
 STALE_EXAMPLES = {
     "UnhandledEffect": Example(
         "README.md",

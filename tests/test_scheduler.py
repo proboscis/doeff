@@ -1126,7 +1126,6 @@ class TestCancel:
 
 # ---------------------------------------------------------------------------
 # One timed wait does not grow with the tasks parked elsewhere
-# (agora-redesign card ki-1294af4fa525)
 # ---------------------------------------------------------------------------
 
 class _TimedWaitWork(NamedTuple):
@@ -1230,7 +1229,7 @@ def _scheduler_lines_per_timed_wait(parked: int, waits: int, *, traced: bool) ->
 
 
 class TestTimedWaitWorkDoesNotGrowWithParkedTasks:
-    """card ki-1294af4fa525: every running agent turn keeps tasks parked in the
+    """Every running agent turn keeps tasks parked in the
     turn-host scheduler (its doorbell and deadline waits), and each line the
     CLI writes ends a WaitWithin — its Cancel of the deadline timer walked
     every parked waiter (keys_parked_by, detach_from_waiters) and the block
@@ -1772,7 +1771,7 @@ class TestDeadlockDiagnostics:
     def test_stall_diagnostic_counts_many_waiters_instead_of_naming_each(
         self, implementation, monkeypatch, caplog
     ):
-        """agora card ki-1706e931a46c: a stalled service with 57,003 parked
+        """A stalled service with 57,003 parked
         waiters wrote every one of them into each stall line (~2.7 MB, twice
         per interval). The line names the first STALL_LOG_WAITERS_SHOWN
         waiters and only counts the rest, by waiter type."""
@@ -1828,8 +1827,7 @@ class TestDeadlockDiagnostics:
         """S1 (packages/doeff-core-effects/architecture.hy): an external wait
         whose completion source is registered and still live — a watched
         child's exit, ``source_alive`` — wakes the scheduler when the source
-        ends, so blocking on it is not a stall (agora-redesign card
-        ki-6222e22d4179: a courier job waiting on its tool child logged the
+        ends, so blocking on it is not a stall (a courier job waiting on its tool child logged the
         stall warning every 30 s)."""
         import logging
         import time
@@ -1908,7 +1906,7 @@ class TestDeadlockDiagnostics:
 
 @pytest.fixture(params=["python", "rust"])
 def scheduler_implementation(request, monkeypatch):
-    """Run a test under each scheduler implementation (agora-redesign #2690):
+    """Run a test under each scheduler implementation:
     the root close-out must mean the same in both."""
     monkeypatch.setenv("DOEFF_SCHEDULER", request.param)
     return request.param
@@ -2340,7 +2338,7 @@ class TestGatherRaceExternalWaitShield:
 
 
 # ---------------------------------------------------------------------------
-# Race park mode: priority=TaskPriority.IDLE (agora-redesign #3054)
+# Race park mode: priority=TaskPriority.IDLE
 # ---------------------------------------------------------------------------
 
 @pytest.mark.usefixtures("scheduler_implementation")
@@ -2353,7 +2351,7 @@ class TestRaceParkedWithoutShield:
     Every test runs under both scheduler implementations: the Rust version
     ignored the priority and always held the shield, so doeff-time's
     ``WaitWithin(..., park=True)`` never reached its deadline under the
-    default scheduler (card ki-8f4f99f14664)."""
+    default scheduler."""
 
     def test_parked_race_on_external_promise_lets_a_daemon_run(self):
         """The external promise is never completed; only the IDLE daemon can
@@ -2439,7 +2437,7 @@ class TestTerminalEntrySweep:
     def test_cancelling_started_tasks_does_not_grow_scheduler_state(self):
         """Cancelling a task that already started must not leave its row (and
         its TaskCancelledError, whose traceback pins the task's frames) for
-        the life of the run (agora-redesign #3504): once the task has unwound
+        the life of the run: once the task has unwound
         to its TaskCompleted nothing re-reads tasks[tid], so it is swept like
         a completed task. doeff-time's WaitWithin cancels its deadline timer
         every time the awaited future wins — a records service's long-poll
@@ -2482,7 +2480,7 @@ class TestTerminalEntrySweep:
     @pytest.mark.parametrize("kill", [Cancel, Discard], ids=["cancel", "discard"])
     def test_killing_never_started_tasks_does_not_grow_scheduler_state(self, kill):
         """A task killed before it started is settled when pick_next skips its
-        start — that skip is the last read of its row (agora-redesign #3504)."""
+        start — that skip is the last read of its row."""
         from doeff_core_effects import TaskCancelledError
         from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
@@ -2519,7 +2517,7 @@ class TestTerminalEntrySweep:
 
     def test_discarding_started_tasks_does_not_grow_scheduler_state(self):
         """Discard drops the continuation the scheduler held, so the task never
-        runs again and its row is settled (agora-redesign #3504)."""
+        runs again and its row is settled."""
         from doeff_core_effects import TaskCancelledError
         from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 
@@ -2554,7 +2552,7 @@ class TestTerminalEntrySweep:
 
     def test_self_discarding_tasks_do_not_grow_scheduler_state(self):
         """A task that Discards itself ends at that Discard; its row is settled
-        (agora-redesign #3504)."""
+       ."""
         from doeff_core_effects import TaskCancelledError
         from doeff_core_effects._scheduler import HANDLE_SWEEP_INTERVAL, _SchedulerIntrospection
 

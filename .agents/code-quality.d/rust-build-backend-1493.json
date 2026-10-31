@@ -18,7 +18,7 @@
         "tools/doeff_cargo_backend.py",
         "packages/doeff-indexer/doeff_indexer_build_backend.py"
       ],
-      "responsibility": "Rust の package の PEP 517 の build の口 — Rust の部品を組む・引く入口の 1 つ(ADR-DOE-BUILD-001)。source の中身の hash を鍵にした wheel の保存先を先に引き、無い時だけ cargo の target を作業木の外の、1 回の build ごとの一時の dir に置いて組む(agora-redesign #1493・#3860)。",
+      "responsibility": "Rust の package の PEP 517 の build の口 — Rust の部品を組む・引く入口の 1 つ(ADR-DOE-BUILD-001)。source の中身の hash を鍵にした wheel の保存先を先に引き、無い時だけ cargo の target を作業木の外の、1 回の build ごとの一時の dir に置いて組む。",
       "typed": true
     },
     {

@@ -1,4 +1,4 @@
-"""commit の hook の doeff-linter(error)と semgrep(Python)の所見を、規則ごと × file ごとの基点と比べる(agora-redesign #2848)。
+"""commit の hook の doeff-linter(error)と semgrep(Python)の所見を、規則ごと × file ごとの基点と比べる。
 
 本線には hook を据え付ける前からの所見が在る(2026-10-02 の測り: doeff-linter の error 721 件・296 file、semgrep の Python 74 件・
 24 file)。hook がそれを丸ごと止めると、その file に触れる commit が全部止まる。だから hook は「基点より増えた所見」だけを止める
@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # 隣の module(doeff_linter_locked・semgrep_locked)は、この script の dir を置き場として明示で読む。script の dir が sys.path に入るのは
-# 暗黙の既定で、PYTHONSAFEPATH=1(作業役の shell に在る)の下では入らず、commit の hook が import で落ちた(agora-redesign #3866 の続き)。
+# 暗黙の既定で、PYTHONSAFEPATH=1(作業役の shell に在る)の下では入らず、commit の hook が import で落ちた。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from doeff_linter_locked import binary_key, dev_key, input_key, locate, searched
@@ -239,7 +239,7 @@ def measure(top: Path, tool: str, instrument: Instrument, paths: list[str]) -> C
     if tool == "doeff-linter":
         completed: subprocess.CompletedProcess[str] = subprocess.run(
             # --force-exclude: 名指した file にも根の設定の exclude(規則の対象の外 — pyproject.toml の [tool.doeff-linter] の註)を
-            # 当てる。無いと、file を名指して測るこの入口では exclude が効かない(agora-redesign #3012)。
+            # 当てる。無いと、file を名指して測るこの入口では exclude が効かない。
             [*instrument.command, "--no-log", "--force-exclude", "--output-format", "json", *paths],
             cwd=top, capture_output=True, text=True, check=False,
         )
@@ -378,7 +378,7 @@ def _check(top: Path, tool: str, baseline: Baseline, paths: list[str], unmeasure
     if tool == "doeff-linter" and unmeasured_rc and (head := input_key(top, "HEAD")) not in (None, baseline.version):
         # 日次(--strict)だけ: 基点の鍵の binary で測れても、木の linter の規則は別物(linter を変えて基点を数え直していない)。
         # 黙って古い規則で測ると、数え直しの代価が次に鍵を替える便へ溜まる(10-03〜10-11 に linter の入力を変えた commit 28 本・
-        # 基点を書いた commit 0 本 — 設計検証 lt-JAMKZ0NP8ZTQ52AHNGW67SGKPP の盲検 A)。hook は止めない(他人の linter の変更で、
+        # 基点を書いた commit 0 本 — 設計検証の盲検 A)。hook は止めない(他人の linter の変更で、
         # その後の全部の commit を止めない)。git の無い木は HEAD の鍵が無いので照らさない。
         print(f"doeff-linter: 木の linter の組み立ての入力({head})が基点の版({baseline.version})と違う — linter を変えた便が "
               "自分の build を `uv run --no-project python scripts/hook_finding_baseline.py --linter <binary> lower doeff-linter` "

@@ -1,4 +1,4 @@
-"""VM の不変条件の検査は、どの build でも実行時の切り替えで有効・無効が決まる(agora-redesign #980)。
+"""VM の不変条件の検査は、どの build でも実行時の切り替えで有効・無効が決まる。
 
 以前は cargo feature で build を分け、同じ venv が最後に組んだ経路(make sync / uv sync)で 15 倍速さを変えた。
 いまは検査がどの build にも入り、DOEFF_VM_INVARIANT_CHECKS(拡張が最初に 1 回読む)か

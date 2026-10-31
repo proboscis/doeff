@@ -1,7 +1,7 @@
 検体。doeff-packages-have-no-application-vocabulary が 3・4・5・6・7 行目で発火し、9〜12 行目では発火しない。
 
 The Agora board reads these rows.
-See agora-redesign #2830 for the history.
+See agora-redesign for the history.
 A _acp prefix still names the system.
 Do not import CONTROLLERS/records here.
 Rows carry a budget field.

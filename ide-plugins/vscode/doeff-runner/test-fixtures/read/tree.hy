@@ -1,4 +1,4 @@
-;;; 呼び出しの木(agora-redesign #910 U15)のテストの見本 — plane.hy の定義を file を跨いで呼び、重複(row-text を 2 度)・
+;;; 呼び出しの木のテストの見本 — plane.hy の定義を file を跨いで呼び、重複(row-text を 2 度)・
 ;;; 循環(ping ↔ pong)・deftest を含む。
 (require doeff-hy.macros [defk deftest <-])
 (import pkg.plane [shout describe-row Row])

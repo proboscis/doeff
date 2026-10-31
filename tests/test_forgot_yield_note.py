@@ -5,7 +5,7 @@ Before: ``count = Get("counter")`` then ``count + 1`` ended with ``TypeError: un
 operand type(s) for +: 'Get' and 'int'``, ``x = child()`` then ``x + 1`` with ``'doeff_vm.
 doeff_vm.Call' and 'int'``, and ``r = yield Try(child())`` then ``r + 1`` with ``'doeff_vm.
 doeff_vm.Ok' and 'int'`` — none said that the value was not yielded, and two named an internal
-module (first-errors report 2026-10-17, rows 10-12; card ki-1c49d3ce4554).
+module (first-errors report 2026-10-17, rows 10-12).
 """
 
 from __future__ import annotations

@@ -18,7 +18,7 @@ from typing import NoReturn
 import pytest
 
 # ---------------------------------------------------------------------------
-# VM conformance oracle on (ADR-DOE-ENFORCE-001 R4・agora-redesign #980)
+# VM conformance oracle on (ADR-DOE-ENFORCE-001 R4)
 #
 # Every doeff-vm build carries the per-step invariant checks; they run only
 # when turned on. doeff's own test sessions turn them on here, so the oracle
@@ -27,8 +27,8 @@ import pytest
 # faster). The switch is pytest's own ini value ``vm_invariant_checks``
 # (default true — ``-o vm_invariant_checks=false`` turns it off, and then
 # tests/test_vm_invariant_checks_enabled.py goes red, as it should), not an
-# environment variable, which only a foundation handler reads (DOEFF004・
-# agora-redesign #3012). Child processes do not inherit it: the one place
+# environment variable, which only a foundation handler reads (DOEFF004).
+# Child processes do not inherit it: the one place
 # tests start a child CLI (tests/cli/cli_child.with_settings) hands the child
 # this session's state as DOEFF_VM_INVARIANT_CHECKS explicitly.
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ _turn_vm_oracle_on(True)
 # and dividing by 16 halved what it lived through.  Measured 2026-10-11 20:00
 # JST (the daily run on atlas): the worker Pod sat at 7.3-8.0 of its 8 CPUs from
 # 20:10 to 20:40, and a 30 s child of packages/doeff-adr/tests/
-# test_indexed_collection.py was killed (card ki-bb91f171d222).  The load
+# test_indexed_collection.py was killed.  The load
 # average still counts the whole machine, so load from outside the cgroup reads
 # high — the safe side: a deadline held longer, bounded by the cap.
 #
@@ -90,8 +90,7 @@ _turn_vm_oracle_on(True)
 #
 # The settings are pytest's own ini values (registered in pytest_addoption,
 # overridden by whoever starts the run with ``-o <name>=<value>``) — not
-# environment variables, which only a foundation handler reads (DOEFF004・
-# agora-redesign #3012):
+# environment variables, which only a foundation handler reads (DOEFF004):
 #
 #   deadline_scale = off        disable scaling (CI, where load is controlled)
 #   deadline_scale_cap = 8      max factor
@@ -236,7 +235,7 @@ _watchdog_timer: threading.Timer | None = None
 # agent/tests/session_answer.py) is registered.  It names each session with a
 # token, and on a daily run the land tool reads a session's failed-test names
 # only from its token lines — the bare FAILED line below looks the same as an
-# inner pytest's line copied into a failed test's output (agora-redesign#645).
+# inner pytest's line copied into a failed test's output.
 _SESSION_ANSWER_PLUGIN = "ai-session-answer"
 
 
@@ -392,7 +391,7 @@ def pytest_collection_modifyitems(config, items):
     pytest-timeout reads only the closest marker — the first one found — so the
     scaled marker goes in front of the declared one.  Appended behind it (as
     from 2026-08-17 to 2026-09-26) it was never read: a test's declared
-    deadline stayed unscaled at every load (agora-redesign#639).
+    deadline stayed unscaled at every load.
     """
     if _DEADLINE_SCALE <= 1.0:
         return
@@ -455,7 +454,7 @@ def deadline_scale_factor() -> float:
     The deadlines pytest-timeout enforces are scaled above; a number a test hands a
     subprocess is not, and stays fixed while the machine is oversubscribed (2026-10-11
     20:00: a 30 s child of packages/doeff-adr/tests/test_indexed_collection.py, 1.5 s
-    alone, was killed — card ki-bb91f171d222).
+    alone, was killed).
     """
     return _DEADLINE_SCALE
 
@@ -482,7 +481,7 @@ def _watchdog_timeout_for_item(item) -> int:
 
 # ---------------------------------------------------------------------------
 # Machine premises: a test that needs something this machine may not have
-# (agora-redesign #639, 2026-09-26).
+# (2026-09-26).
 #
 # Two premises are asked through here, and each is named with its own word of
 # the check layer:
@@ -550,7 +549,7 @@ def _probe_tool(name: str, probe: Sequence[str]) -> _PremiseHolds | _PremiseUnme
     """Start ``name`` once with ``probe`` and read whether it answered with exit 0."""
     path = shutil.which(name)
     if path is None:
-        # The searched PATH tells which machine's environment lacked the tool (agora-redesign #3870: the daily run
+        # The searched PATH tells which machine's environment lacked the tool (the daily run
         # went to zeus, not to the pod whose image held the tool).
         searched = os.pathsep.join(os.get_exec_path())
         return _PremiseUnmet(f"{name} is not on PATH (searched: {searched})")
@@ -691,7 +690,7 @@ def pytest_terminal_summary(terminalreporter):
 
     One line per test, not one per check-layer word: the check layer folds a
     reason to 300 characters, so a line that joined several tests lost the
-    node ids at its end (agora-redesign#645 item 5).
+    node ids at its end.
     """
     unmet = _unmet_premises(
         terminalreporter.stats.get("skipped", []),
@@ -760,7 +759,7 @@ def _broad_run_admission():
 
 
 def _hold_check_slot(config):
-    """収集の前に、機体の検の枠を 1 つ取る(埋まっていれば待つ)— 受付の正本の hold_check_slot へ委譲する(card ki-aabe38bf85ef)。
+    """収集の前に、機体の検の枠を 1 つ取る(埋まっていれば待つ)— 受付の正本の hold_check_slot へ委譲する。
 
     枠の値(本数・置き場・待ちの上限)と取り方は正本 1 点(~/dotfiles/agent/tests/machine_check_slots.py と隣の .json)が持ち、
     ここは呼ぶだけ。受付は本体の前(pytest_collection_finish)にも同じ枠を取るが、Hy の検の収集は CPU を数分使うので収集の前に取る
@@ -825,7 +824,7 @@ def pytest_collection_finish(session):
 # test: the environment of the interpreter running the tests (the .venv).  The
 # walk of its 13,000 files in 2,000 directories took 9-34 s at the end of a run on a
 # loaded machine when the directories were not in the operating system's cache
-# (card ki-16954373dfe0, 2026-10-12: the last test's teardown of a whole test file,
+# (2026-10-12: the last test's teardown of a whole test file,
 # load 65, out of the 60 s of `make test-changed`; measured again at load 66-75: 12.7 s
 # for one test, 34 s for the function alone).
 # Inside it only the bytecode of the modules a start of the interpreter imports
@@ -891,7 +890,7 @@ def bytecode_written_since(root: Path, since: float, skip: Collection[Path] = ()
 
     Many directories are listed at once.  One that is not in the operating system's cache is read
     from the disk, and listing the 900 directories of a tree one at a time took 2.7-12.8 s on a
-    loaded machine (load 65, 2026-10-12, card ki-16954373dfe0), against 0.6-1.3 s by 32 threads.
+    loaded machine (load 65, 2026-10-12), against 0.6-1.3 s by 32 threads.
     """
     with ThreadPoolExecutor(_WALK_THREADS) as pool:
         return sorted(
@@ -926,7 +925,7 @@ def bytecode_left_by_the_run(root: Path, since: float, startup: Sequence[Path]) 
     The environment of the interpreter running the tests (its ``sys.prefix``, the .venv) is the
     one directory of the checkout this does not search: the installed packages are 13,000 files in
     2,000 directories, and listing them took 9-34 s at the end of a run on a loaded machine
-    (card ki-16954373dfe0).  What a run can write there that matters is the bytecode of the modules
+   .  What a run can write there that matters is the bytecode of the modules
     a start of the interpreter imports (the .pth files' ``import`` lines), which ``startup`` lists
     (see ``startup_bytecode``) and which is looked at file by file instead.
     """
@@ -952,7 +951,7 @@ def _import_bytecode_guard_modules() -> None:
     imported such a module for the first time: its bytecode was written beside its source in the
     checkout, and a test that counts the compiles of an import counted it as well (daily run
     2026-10-17: expansion_trees from 93e96c2e7 and macro_hints from bda0bc470, under the names of
-    doeff-hy-pytest's and doeff-hy's last tests — card ki-6dde100393cd).  Imported here, they are
+    doeff-hy-pytest's and doeff-hy's last tests).  Imported here, they are
     already loaded, so no test is the first to import them.  The 13 modules take about 0.2 s and
     import neither hy nor doeff.
     """
@@ -1003,7 +1002,7 @@ def _bytecode_settings_pinned(request: pytest.FixtureRequest):
 # checkout and .venv under the pin): a developer's tree already held that bytecode, written by an
 # earlier run without the pin, so the subprocess rewrote nothing there.  Six writers were found one
 # at a time this way, each a day later and under an unrelated test's name (2026-10-10 to 10-12,
-# cf46518d5 to 48d59512d — card ki-23c3280da1a5).
+# cf46518d5 to 48d59512d).
 #
 # So the run removes the startup bytecode under the checkout before its tests start, and looks for
 # it again after each phase (setup, call, teardown) of each test.  A file that is back was written
@@ -1128,7 +1127,7 @@ def _startup_bytecode_message(written: Sequence[tuple[str, tuple[Path, ...]]]) -
 # #2818, measured 2026-10-02).  On a deployed worker those subprocesses find
 # bytecode (the runtime-env preparation compiles the code inside an env root, and
 # a job's process may write the rest), so the time existed only under test
-# (agora-redesign #2833).
+#.
 #
 # A test whose subprocesses need bytecode asks for ``subprocess_bytecode``: its
 # subprocesses then write and read bytecode in one directory of this run under

@@ -35,7 +35,7 @@ STATE_ROW = re.compile(
 _ZENN_SLUG = re.compile(r"[0-9a-z_-]{12,50}")
 # 公開状態の欄の、状態とURLの後ろに書く公開の刻と公開の許可。「公開予定 2026-10-21 08:00 JST 許可 lt-…」の形で書き、
 # どちらも省ける。刻はZennのpublished_atと同じく日本時間。許可は、その1本の本文と図を見せて公開の可否を問うた依頼書のid
-# (2026-10-21 03:51 JSTの利用者の決定 — 許可の答えの無い回は予約も公開もしない)。
+# (許可の答えの無い回は予約も公開もしない)。
 JST = timezone(timedelta(hours=9))
 _CELL_TAIL = re.compile(
     r"(?:(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) JST)?\s*(?:許可 (lt-[0-9A-HJKMNP-TV-Z]{26}))?"

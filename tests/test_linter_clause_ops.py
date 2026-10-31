@@ -1,7 +1,7 @@
 """doeff-linter が読む節の操作の一覧(data/clause_ops.json)が、表 1 つ(doeff_hy/_clause_ops.hy の CLAUSE-OPS)から書き出した物と
-食い違わない事の検(card ki-d3ef2a50cc04)。
+食い違わない事の検。
 
-節の操作の名(finish など)と終わり方の定義元は doeff-hy の表 CLAUSE-OPS 1 か所(card ki-b4c015d8ba1f)。ところが doeff-linter(Rust)の
+節の操作の名(finish など)と終わり方の定義元は doeff-hy の表 CLAUSE-OPS 1 か所。ところが doeff-linter(Rust)の
 business_fakes.rs には、操作の名を直に match する所が残っていて、表に行を足しても linter が追いつかず、定義が 2 か所に戻った。
 
 - Rust は Hy を評価できないので、linter は表から書き出した file を読む(file は生成物 — scripts/export_clause_ops.py --write)。

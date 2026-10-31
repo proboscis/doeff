@@ -1,6 +1,6 @@
 // editor の `.hy` と同じ色で source を描くための、行ごとの色つきの区切り(純粋・VS Code に触らない)。
 //
-// editor の色は 2 層で決まる(agora-redesign #910 U16):
+// editor の色は 2 層で決まる:
 // - 下の層 = Hy の TextMate 文法の token に、有効な theme の tokenColors を当てた色(keyword・文字列・数・註など)
 // - 上の層 = python-semantic-highlighter が記号ごとに計算した色(装飾として下の層の色を上書きする。字の形は下の層のまま)
 // 上の層は file 全体の記号の順で色が決まる(round-robin)ので、file 全体で重ねてから定義の範囲を切り出す。

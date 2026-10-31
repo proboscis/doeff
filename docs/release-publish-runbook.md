@@ -22,9 +22,9 @@
 | skip-existing | upload の設定。PyPI に既に在る file を飛ばして成功と出す。途中で止まった upload を続きから出すために残している |
 | 単独で出す部品 | root の tag では出さず、部品ごとの tag と release note で出す部品 |
 
-範囲の決定: 利用者が依頼書 lt-8D749ZHBM6VF2HQEDE2SDMNASF(2026-10-16)で、出す範囲を核の 5 個だけ・名は今のまま・支える Python を
+範囲の決定: 2026-10-16 に、出す範囲を核の 5 個だけ・名は今のまま・支える Python を
 3.11〜3.14 と決めた。それまで root の tag で出していた `doeff-agents`・`doeff-time`・`doeff-indexer` は、この決定で root の tag から外した。
-2026-10-26 に利用者の頼み(card ki-72048868aedb)で、支える Python に 3.15 を足した(doeff-vm は 3.15 を組める PyO3 0.29 へ上げた)。
+2026-10-26 に、支える Python に 3.15 を足した(doeff-vm は 3.15 を組める PyO3 0.29 へ上げた)。
 
 ## 出す部品の分類
 
@@ -230,7 +230,7 @@ uv run --no-project python tools/verify_release_install.py --pypi 0.5.0
 出した後の毎日は、workflow `Core install from PyPI`(`.github/workflows/core-install-from-pypi.yml`)が Linux・macOS・Windows と
 Python 3.11〜3.15 で `uv run --no-project python tools/verify_core_install.py --pypi latest` を走らせ、利用者と同じく PyPI の
 `doeff` を extra 無しで入れた新しい venv で、入った版の README の Python の例を確かめる。Rust の道具を入れず、doeff-vm は wheel
-だけを受けるので、機体と Python に合う wheel が PyPI に無ければ install の段で落ちる(card ki-e7b4a1b9e9f4)。
+だけを受けるので、機体と Python に合う wheel が PyPI に無ければ install の段で落ちる。
 
 ## 落ちた時
 
@@ -349,12 +349,11 @@ build だけに呼び(job `build-doeff-vm`)、組んだ wheel を自分の job `
 | 事柄 | 確かめる所 |
 | --- | --- |
 | 分類の表・公開の workflow が核の 5 個だけを出す事・出す順・同じ版の check を全ての upload が待つ事・upload の job が Trusted Publishing でも出せる形である事 | `tests/test_release_publish_contract.py` |
-| `doeff-agents` 0.1.1 が doeff 0.5 で動かない事・0.1.2 が `doeff<0.5` を宣言した事 | README の注記・card ki-f913ac101994・card ki-f9af0dd30c37(0.1.2 は branch `wt/doeff-agents-0.1.2` の一回きりの publish.yml から出した) |
+| `doeff-agents` 0.1.1 が doeff 0.5 で動かない事・0.1.2 が `doeff<0.5` を宣言した事 | README の注記(0.1.2 は branch `wt/doeff-agents-0.1.2` の一回きりの publish.yml から出した) |
 | `doeff-vm` の版と根の `doeff` の依存の下限 | `tests/test_doeff_vm_release_contract.py` |
 | 同じ版の check の振る舞い | `tools/check_pypi_unpublished.py`・`tests/test_check_pypi_unpublished.py` |
-| 核の 5 個を新しい環境に入れて README の例を走らせる道具と、その README の約束 | `tools/verify_release_install.py`・`tools/readme_examples.py`・`tests/test_readme_examples.py`(card ki-7746480f388d) |
-| `pip install doeff` が核の 4 個だけを入れ、その環境で README の Python の例が通り、Hy と HTTP の使い方が足す extra の名を言う事 | `tools/verify_core_install.py`(Python の版ごとに新しい venv で確かめる。main の CI の job `core-only-install` が Python の版ごとに走らせる)・`tests/test_verify_core_install.py`・`tests/test_core_install_extras.py`(card ki-d6b421afac60) |
-| PyPI の `doeff` を Linux・macOS・Windows の新しい venv に extra 無しで入れ、入った版の README の Python の例が通る事(毎日) | `tools/verify_core_install.py --pypi latest`(doeff-vm は wheel だけを受ける)を workflow `Core install from PyPI`(`.github/workflows/core-install-from-pypi.yml`)が 3 つの OS と Python 3.11〜3.15 で走らせる・`tests/test_verify_core_install.py`(card ki-e7b4a1b9e9f4) |
-| 核の 4 個だけの環境で、使う人の型の check(pyright・mypy)が型の報告の probe の通りに効き(直した抜けが戻らない)、README の Python の例が既定の強さで誤りを出さない事 | `tools/verify_type_probes.py`(型の probe `tests/type_probes/` と README の例を、uv.lock の版の pyright と mypy にかける。main の CI の workflow `Type probes` が 3.11 と 3.14 で走らせる)・`tests/test_verify_type_probes.py`(card ki-d2c901bc9a2d) |
-| 範囲を核の 5 個にした決定 | 依頼書 lt-8D749ZHBM6VF2HQEDE2SDMNASF(2026-10-16)・取り組み doeff-publish の区切り ms-680daa3cc6a7 |
+| 核の 5 個を新しい環境に入れて README の例を走らせる道具と、その README の約束 | `tools/verify_release_install.py`・`tools/readme_examples.py`・`tests/test_readme_examples.py` |
+| `pip install doeff` が核の 4 個だけを入れ、その環境で README の Python の例が通り、Hy と HTTP の使い方が足す extra の名を言う事 | `tools/verify_core_install.py`(Python の版ごとに新しい venv で確かめる。main の CI の job `core-only-install` が Python の版ごとに走らせる)・`tests/test_verify_core_install.py`・`tests/test_core_install_extras.py` |
+| PyPI の `doeff` を Linux・macOS・Windows の新しい venv に extra 無しで入れ、入った版の README の Python の例が通る事(毎日) | `tools/verify_core_install.py --pypi latest`(doeff-vm は wheel だけを受ける)を workflow `Core install from PyPI`(`.github/workflows/core-install-from-pypi.yml`)が 3 つの OS と Python 3.11〜3.15 で走らせる・`tests/test_verify_core_install.py` |
+| 核の 4 個だけの環境で、使う人の型の check(pyright・mypy)が型の報告の probe の通りに効き(直した抜けが戻らない)、README の Python の例が既定の強さで誤りを出さない事 | `tools/verify_type_probes.py`(型の probe `tests/type_probes/` と README の例を、uv.lock の版の pyright と mypy にかける。main の CI の workflow `Type probes` が 3.11 と 3.14 で走らせる)・`tests/test_verify_type_probes.py` |
 | PyPI に在る版(2026-10-16 に PyPI の JSON の API で読んだ) | `doeff` 0.4.1・`doeff-vm` 0.2.0・`doeff-core-effects` 0.1.0・`doeff-agents` 0.1.1・`doeff-indexer` 0.1.3。`doeff-hy`・`doeff-hy-pytest`・`doeff-time` は無い |

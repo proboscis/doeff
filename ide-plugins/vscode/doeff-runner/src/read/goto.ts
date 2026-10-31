@@ -1,4 +1,4 @@
-// 読む面で実体の名を押した時の VS Code の側(v12・agora-redesign #910 U19)— 候補が複数なら quick pick で選ばせ、行き先
+// 読む面で実体の名を押した時の VS Code の側(v12)— 候補が複数なら quick pick で選ばせ、行き先
 // (resolve.ts の destinationOf)へ動く。file の面と repo 全体の面が同じ関数を使う(面ごとに別の動きを書かないため)。
 
 import * as vscode from 'vscode';

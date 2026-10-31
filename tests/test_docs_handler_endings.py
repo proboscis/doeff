@@ -1,5 +1,5 @@
 """Resume しない handler と Pass しない handler が program をどう終えるかを、docs が走る例で言う事の検
-(取り組み doeff-publish・card ki-03bb9225a242)。
+(取り組み doeff-publish)。
 
 自作の handler が Resume せずに値を return すると、handler を置いた program の残りは走らず、その program の答えは
 handler の値になる。注記も Pass も無い handler は、扱わない effect(Ask など)で終わりまで落ちて None を返し、program を

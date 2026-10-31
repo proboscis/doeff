@@ -154,7 +154,7 @@ suite('linter の呼び方', () => {
     assert.deepStrictEqual(splitCommand('   '), []);
   });
 
-  test('素の名の頭は開発版の置き場を PATH より先に試す(書き込み直後の hook と同じ順・agora-redesign #848)・path を名指した頭はそのまま', () => {
+  test('素の名の頭は開発版の置き場を PATH より先に試す(書き込み直後の hook と同じ順)・path を名指した頭はそのまま', () => {
     assert.deepStrictEqual(binaryCandidates('doeff-linter', '/h'), [
       path.join('/h', '.local', 'share', 'doeff-linter-dev', 'doeff-linter'),
       'doeff-linter',
@@ -266,7 +266,7 @@ suite('linter の結果の見せ方', () => {
     assert.deepStrictEqual(violationRoots(r.violations, []).slice(4).map(show), ['group major DOEFF201 (1)', 'group minor DOEFF201 (1)', 'group info DOEFF101 (1)']);
   });
 
-  test('全体の実行の失敗は表に出し、違反 0 件の「違反はありません」と取り違えない(agora-redesign #1631)', () => {
+  test('全体の実行の失敗は表に出し、違反 0 件の「違反はありません」と取り違えない', () => {
     const r = report('report.json');
     const reason = '終了コード 2: architecture.hy の誤り: :in は lines か names';
     const store = new LintStore();
@@ -290,7 +290,7 @@ suite('linter の結果の見せ方', () => {
     assert.deepStrictEqual(panelViolationRoots(store.rootRuns(), store.violations(), store.rules()).map(show), ['(linter の違反はありません)']);
   });
 
-  test('起動直後の「実行中」は結果が無いだけで「違反はありません」と取り違えない(agora-redesign #1650)', () => {
+  test('起動直後の「実行中」は結果が無いだけで「違反はありません」と取り違えない', () => {
     const store = new LintStore();
     // 最初の全体の実行を始めた直後 — まだ結果が無い。表は「実行中」の札だけで「違反はありません」を出さない
     store.beginRoot('/w');
@@ -306,7 +306,7 @@ suite('linter の結果の見せ方', () => {
     );
   });
 
-  test('再実行の間は前の違反を消さない — 先頭が実行中の札、続いて前の summary 行(agora-redesign #1650)', () => {
+  test('再実行の間は前の違反を消さない — 先頭が実行中の札、続いて前の summary 行', () => {
     const r = report('report.json');
     const reason = '終了コード 2: architecture.hy の誤り: :in は lines か names';
     const store = new LintStore();
@@ -464,7 +464,7 @@ function groupsOf(roots: readonly LintNode[]): LintNode[] {
   return roots.filter((n) => n.tag === 'group');
 }
 
-suite('木の節の固定の id(agora-redesign #2162)', () => {
+suite('木の節の固定の id', () => {
   test('同じ置き場から 2 度作った節の id は等しく、1 つの木の中で重ならない(違反の木・規則の一覧・層の地図)', () => {
     const store = new LintStore();
     store.replaceRoot('/repo', report('report.json'));
@@ -535,7 +535,7 @@ suite('木の節の固定の id(agora-redesign #2162)', () => {
   });
 });
 
-suite('置き場の知らせ — 違反の側と見出しの側を分ける(agora-redesign #2162)', () => {
+suite('置き場の知らせ — 違反の側と見出しの側を分ける', () => {
   /** 置き場の 2 つの知らせの回数を数える。 */
   function counted(store: LintStore): { violations: number; signatures: number } {
     const calls = { violations: 0, signatures: 0 };
@@ -647,7 +647,7 @@ suite('置き場の知らせ — 違反の側と見出しの側を分ける(agor
   });
 });
 
-suite('見出しは閉じても捨てず、印(版と中身の hash)が同じなら聞き直さない(agora-redesign #2162)', () => {
+suite('見出しは閉じても捨てず、印(版と中身の hash)が同じなら聞き直さない', () => {
   test('置いた見出しは残り、印が同じ document には聞き直さない・開き直して版が 1 に戻っても中身が違えば聞き直す', () => {
     const store = new LintStore();
     const text = '(defk a [] 1)';

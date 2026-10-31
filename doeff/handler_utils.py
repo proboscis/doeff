@@ -42,7 +42,7 @@ def inner_of(handlers: list[_Handler]) -> list[_Handler]:
     The one place of this rule. A handler that reads the stack only when it needs
     it (``doeff_traverse._handlers.sequential`` — once per Traverse, when the first
     item runs) yields ``GetHandlers(k)`` itself and passes the answer here, without
-    the ``@do`` call of ``get_inner_handlers`` (agora-redesign #2958).
+    the ``@do`` call of ``get_inner_handlers``.
     """
     return handlers[:-1] if handlers else []
 

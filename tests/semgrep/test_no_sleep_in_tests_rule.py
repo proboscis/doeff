@@ -1,4 +1,4 @@
-"""doeff-no-sleep-in-tests の極性の検(agora-redesign #2882)。
+"""doeff-no-sleep-in-tests の極性の検。
 
 検体(tests/semgrep/fixtures/python/tests/)で `# 鳴る` を付けた行だけが当たることを、規則の当たりの行で突き合わせる。
 鳴るべき形 = 宣言の無い検・宣言の無い検の入れ子の helper・別の marker だけの検・module の段の helper の sleep・
@@ -7,7 +7,7 @@
 module の pytestmark = pytest.mark.realtime より後・sleep(0)・誰かが立てる合図の wait。どちらの検体にも鳴る行を置き、
 規則が file に届いていることも見る。
 
-範囲の検(card ki-6aa7cb5ffb83)= 名が tests の dir の外でも検の名の file(test_*.py・*_test.py・conftest.py)には届き、
+範囲の検= 名が tests の dir の外でも検の名の file(test_*.py・*_test.py・conftest.py)には届き、
 検の名でない file と、規則の paths.exclude の dir(名簿の [suites])には届かない。
 """
 

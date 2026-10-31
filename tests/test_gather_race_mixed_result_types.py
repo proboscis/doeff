@@ -42,7 +42,7 @@ def test_gather_and_race_run_tasks_of_different_result_types() -> None:
     assert first in (1, "a")
 
 
-# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べ card ki-02e317783af0 の抜け 4):
+# 失敗ケース(pyright 1.1.414・mypy 2.4.0 の実測・取り組み doeff-publish の調べの抜け 4):
 # Task と Future の型の引数が不変だった時、`Gather(Task[int], Task[str])` は pyright で Task[str] を
 # Task[int] | Future[int] に渡せない error、mypy で「_T を推せない」error になった(実行は通る)。
 _SAMPLE = """\

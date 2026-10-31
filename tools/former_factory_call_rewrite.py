@@ -1,9 +1,8 @@
 """引数の無い factory から素の handler になった名の、旧い呼び ``name()``・``(name)`` を名そのものへ書き換える道具。
 
-決まり: ADR-DOE-API-002(decision 2026-10-29)— 設定も呼びごとの状態も無い
+決まり: ADR-DOE-API-002 — 設定も呼びごとの状態も無い
 handler は値で、``sequential(prog)``・``[sequential, …]`` と書く。旧い ``sequential()`` は 1 つの版の間 DeprecationWarning
-つきで同じ handler を返す(``doeff.program._former_factory_handler``)。その版の間に呼び手をこの道具で書き換える
-(agora card ki-b10e81c19717)。
+つきで同じ handler を返す(``doeff.program._former_factory_handler``)。その版の間に呼び手をこの道具で書き換える。
 
 使い方(doeff の作業木で)::
 

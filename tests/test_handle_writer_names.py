@@ -1,5 +1,4 @@
-"""handle・defhandler の展開が読む名は、書き手の同じ名の effect を隠さない事の検(card ki-16180480129e・設計検証
-lt-CZC8SGS3C6DFDGSGG64YF49DH9 の盲検 A)。
+"""handle・defhandler の展開が読む名は、書き手の同じ名の effect を隠さない事の検(設計検証の盲検 A)。
 
 展開は節の操作と handler のために `Resume`・`Transfer`・`Pass`・`WithHandler`(session があれば `Get`・`Put`・`Some`)を
 読む。素の名で import すると、書き手が自分の effect を同じ名にした時(振込の `Transfer`・KV の `Put`)、節の頭の
@@ -252,7 +251,7 @@ _PADDING = "\n" * 24
 def test_static_expansion_imports_keep_the_handlers_line() -> None:
     """型検査のための展開が handler ごとに出す `_doeff_` の別名の import は、利用者の handler の行に置かれる。reader が作る model を
     import に混ぜると、位置を付ける macro が囲む式の範囲を 1 行目へ引き、診断(未使用の import・未定義の名)が 1:1 になる
-    (基準版 dc3385b9a は handler の行 — 設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A の実測)。"""
+    (基準版 dc3385b9a は handler の行 — 設計検証の盲検 A の実測)。"""
     mod = types.ModuleType("handle_writer_names_position")
     sys.modules[mod.__name__] = mod
     source = _PADDING + _EXPANSION_HEADER + _EXPANSION_SOURCES["module-defhandler"]
@@ -367,7 +366,7 @@ def test_expansion_reads_and_binds_only_written_or_expansion_owned_names(
     source: str, static: bool
 ) -> None:
     """名の一覧に依らない形: 展開が読む名は書き手の物か展開の物(`_doeff_` の頭)、束ねる名は展開の物だけ。展開が新しい名(表の行が足す
-    node など)を素の綴りで読めば、監視する名の一覧に載っていなくても赤になる(設計検証 lt-2SJXY98Q643WGJK2ASWJ3N8PWH の盲検 A・B が
+    node など)を素の綴りで読めば、監視する名の一覧に載っていなくても赤になる(設計検証の盲検 A・B が
     指した、手で写した名の一覧の穴)。"""
     tree = _expand(source, static=static)
     header_tree = _expand("", static=static)
@@ -385,7 +384,7 @@ def test_general_check_catches_a_new_node_read_bare_where_the_name_list_does_not
     def bare_rewrite(
         args: list[hy.models.Object], recur: Callable[[hy.models.Object], hy.models.Object]
     ) -> hy.models.Object:
-        # 続きは節の続き `_doeff_k`(card ki-6af9862aed32 — 素の `k` を読むと、この変異でない読みも拾われる)
+        # 続きは節の続き `_doeff_k`(素の `k` を読むと、この変異でない読みも拾われる)
         return hy.models.Expression(
             [
                 hy.models.Symbol("yield"),

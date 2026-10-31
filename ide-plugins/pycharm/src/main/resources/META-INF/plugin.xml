@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.proboscis.doeff.pycharm</id>
     <name>doeff Program Runner</name>
-    <vendor email="support@proboscis.com" url="https://github.com/proboscis/doeff">Proboscis</vendor>
+    <vendor url="https://github.com/proboscis/doeff">Proboscis</vendor>
     <description>Gutter actions for running doeff Programs via interpreters, Kleisli programs, and transformers.</description>
 
     <depends>com.intellij.modules.platform</depends>

@@ -47,7 +47,7 @@ well), that each mp4 is at most 6 MB and that each GIF is at most 3 MB.
 | An OpenAI API key | `OPENAI_API_KEY` for `tts.py`. The narration always comes from OpenAI's text-to-speech API. |
 | uv | Runs `tts.py` (standard library only). |
 
-The narration never uses a local text-to-speech model: the maintainer decided so on 2026-10-25, and
+The narration never uses a local text-to-speech model, and
 `tests/test_docs_site_videos.py` fails if `tts.py` depends on or imports one.
 
 ## Layout

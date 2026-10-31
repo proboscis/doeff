@@ -10,7 +10,7 @@ Before (first-look report 2026-10-17, table rows 4, 5 and 8 — the same in 0.5.
 - ``fetch_handler(prog())`` — an ``(effect, k)`` handler body under ``@do`` instead of ``@handler`` — with
   ``TypeError: fetch_handler() missing 1 required positional argument: 'k'``.
 
-None of them said how to attach the handler (card ki-8152466e96ad's list).
+None of them said how to attach the handler.
 """
 
 from __future__ import annotations

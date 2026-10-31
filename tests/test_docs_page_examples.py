@@ -1,5 +1,5 @@
 """入門の道の外の docs の page のうち、例を走る形に直した page の例が今の doeff でそのまま走り、書いてある通りに印字する事の検
-(取り組み doeff-publish・card ki-8e45f740dc61)。
+(取り組み doeff-publish)。
 
 入門の道(目次と 01〜05 章)の page は tests/test_docs_entry_path_examples.py が走らせる。その外の page の例は、どの検も
 走らせていなかった: 0.5.0 の時点で、定義だけで通った囲み 137 個を run まで走らせると 25 個が落ちた(137 個の報告
@@ -8,7 +8,7 @@
 囲みは入門の道と同じ約束で読み・走らせ・注記と比べる(約束の 1 点は tools/readme_examples.py)。走らせない断片は、言葉の
 後に語 `excerpt` を置く。page の例を走る形に直したら、pyproject.toml の契約の表に、その page でこの検を選ぶ行を 1 つ足す。
 走らせる page の一覧(CHECKED_PAGES)はその表から読む — この file に一覧を書いていた間は、並んで page を足す 2 つの commit が
-同じ 1 行で衝突した(着地の列 L2431・L2432・card ki-7277427f6d8e)。
+同じ 1 行で衝突した(着地の列 L2431・L2432)。
 """
 
 from __future__ import annotations

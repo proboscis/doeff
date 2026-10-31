@@ -1,5 +1,5 @@
 """handler の節の操作(resume・transfer・finish・reperform・pass・raise)の名と性質が、表 1 つ(doeff_hy/_clause_ops.hy の
-CLAUSE-OPS)だけに在る事の検(card ki-b4c015d8ba1f・設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A)。
+CLAUSE-OPS)だけに在る事の検(設計検証の盲検 A)。
 
 前は名の一覧が handle.hy の `_terminates` と clause_endings.hy の `ENDING-OPS`・`RESUMING-OPS` に写しで在った。新しい操作
 (例 `(throw 例外)` → TransferThrow)を `_terminates` と書き換えにだけ足すと、`(Raise [reason] (throw …))` を展開・handle の
@@ -11,7 +11,7 @@ CLAUSE-OPS)だけに在る事の検(card ki-b4c015d8ba1f・設計検証 lt-D4D7Y
   別の操作に替える)も、表の行(returns・tail)だけで足せる。表から行を消すと、どの読み手からも操作でなくなる。
 - 表のどの行も、行の終わり方(Ending)どおりに Raise / Absent / 普通の effect の節で照らされる。
 - handle.hy と clause_endings.hy に書いた名のうち表に無い名は、どの読み手も節の操作として扱わない。doeff_hy のどの module も
-  表の外に操作の名を書かない — 表を介さずに読み手へ名を足すと赤(設計検証 lt-BV79NHMNKA6E42N4TQ1M638MDR の盲検 A・B)。
+  表の外に操作の名を書かない — 表を介さずに読み手へ名を足すと赤(設計検証の盲検 A・B)。
 """
 
 import ast
@@ -179,7 +179,7 @@ def test_added_resuming_operation_is_refused_for_an_aliased_raise_when_handle_is
 
 def test_added_operation_node_is_imported_in_both_expansions(throw_op: ClauseOp) -> None:
     """型検査のための展開も、表の static-nodes の node を import してから読む(前は TransferThrow を import せずに読んだ)。
-    読む名は `_doeff_` の別名で、書き手の同じ名を隠さない(card ki-16180480129e)。"""
+    読む名は `_doeff_` の別名で、書き手の同じ名を隠さない。"""
     source = """
     (defk subject [] {:pre [] :post [(: % int)]}
       (<- r (handle (guarded 1) (Bump [n] (throw (ValueError "boom")))))

@@ -913,7 +913,7 @@ yield CompletePromise(promise, result_value)
   a waiter that must register a fresh promise before the next completion cannot miss it.
 - `yield_to_woken=False`: the completer goes on at once; the woken tasks run when it next waits (like asyncio's
   `Future.set_result` or a Redis `PUBLISH`). Use it only when the waiters cannot miss what the completer does next —
-  the in-memory notice broker of doeff-events queues a notice for a subscriber not waiting (agora-redesign #4013).
+  the in-memory notice broker of doeff-events queues a notice for a subscriber not waiting.
   Deadlock detection is the same for both.
 
 ---

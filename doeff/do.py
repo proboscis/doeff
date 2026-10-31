@@ -253,7 +253,7 @@ def _analyze_resume_yields(fn: Callable[..., Any], *, non_tail: bool) -> tuple[i
 
 # 生成器の関数は上の overload に先に当たり(overload は上から順に選ばれる)、下の overload は yield の無い関数だけに
 # 当たる。Python の型には「生成器でない関数」を書く口が無いので、pyright は 2 つが重なると見る — 重なりは順で解ける
-# (検 = tests/test_static_typing.py・packages/doeff-hy/tests/test_static_check_for_do.py・agora-redesign #2321)。
+# (検 = tests/test_static_typing.py・packages/doeff-hy/tests/test_static_check_for_do.py)。
 @overload
 def do(fn: Callable[P, Generator[_E, Any, _T]], /) -> Callable[P, Expand[_T, _E]]: ...  # pyright: ignore[reportOverlappingOverload]  # 順で解ける重なり(上の註)
 
@@ -290,7 +290,7 @@ def do(
     one type of ``do``: doeff-hy's type-check expansion (doeff_hy/_static_types.pyi) re-exports
     it instead of declaring a second ``do``, so a module that imports ``do`` as ``_doeff_do``
     itself (the for/do contract) does not give the name a second, different type
-    (agora-redesign #2321).
+   .
 
     An ``async def`` function (a coroutine function or an async generator function) is a
     ``TypeError`` where ``@do`` is applied: calling it gives a coroutine or an async generator,
@@ -312,7 +312,7 @@ def do(
 def _is_generator_function(fn: Callable[..., Any]) -> bool:
     """``inspect.isgeneratorfunction(fn)`` の答え — 素の関数は code の旗を直に読む。
 
-    ``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — agora-redesign #2421 の測りで 1 検 1811 回)。
+    ``@do`` は handler の閉包にも呼びごとに当たる(例ごとに作る handler — 測りで 1 検 1811 回)。
     ``inspect.isgeneratorfunction`` は partialmethod・method・partial を剥がしてから同じ旗を読むので、剥がす物の無い素の
     関数(型が ``FunctionType`` ちょうどで、partialmethod の印 ``__partialmethod__`` を持たない)では答えが同じ。それ以外は
     ``inspect`` に任せる。
@@ -326,7 +326,7 @@ def _refuse_async_function(fn: Callable[..., Any]) -> None:
     """``async def`` の関数(coroutine の関数・async generator の関数)を、``@do`` を付けた所で TypeError にする。
 
     呼ぶと coroutine か async generator が返り、program でないので VM はそれを値として返す — 誰も await せず、
-    出るのは Python の「coroutine '…' was never awaited」の警告だけだった(誤りの表の 13・card ki-8152466e96ad)。
+    出るのは Python の「coroutine '…' was never awaited」の警告だけだった(誤りの表の 13)。
     素の関数は ``_is_generator_function`` と同じく code の旗を直に読み、飾りの費用を増やさない。それ以外は ``inspect``
     に任せる(partial・method を剥がす)。文は断った時にだけ作る。
     """
@@ -386,7 +386,7 @@ def program_factory(
     the arguments; the VM calls ``fn`` and runs the generator it returns (a non-generator
     result becomes the program's value). The definition (``DoFunction``) is built once
     here, so a call allocates a single node — not the ``Expand(Apply(Pure(Callable(thunk))))``
-    chain and its closure (agora-redesign #844). The node is built by the definition's
+    chain and its closure. The node is built by the definition's
     ``make_call`` (a method called with vectorcall), not the ``Call`` constructor: no
     argument tuple for the constructor and no ``tp_new`` dispatch per call (#2817).
     """

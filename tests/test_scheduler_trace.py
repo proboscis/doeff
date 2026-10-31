@@ -1,4 +1,4 @@
-"""The scheduler's measurement hook ``set_scheduler_trace`` (agora-redesign #3855 / #3861).
+"""The scheduler's measurement hook ``set_scheduler_trace``.
 
 - The CPU a task used is the sum, over its steps, of the thread CPU time from
   the event that put the task on the thread (``task-enter``, or its own
@@ -165,7 +165,7 @@ def test_task_cpu_bills_only_the_task_that_computed(events: list[dict[str, Any]]
 def test_spawn_names_parent_and_child_and_a_step_carries_its_vm_steps(
     events: list[dict[str, Any]], implementation: str
 ) -> None:
-    """agora-redesign #4188: a task tree can be rebuilt from the events (``spawned`` names the parent and the
+    """A task tree can be rebuilt from the events (``spawned`` names the parent and the
     child), and each ``task-leave`` carries the doeff-vm steps and handler calls of the step it closes."""
     busy_tid, idle_tid = run(scheduled(_busy_and_idle_ping_pong(), implementation=implementation))
     spawned = {e["tid"]: e["parent"] for e in events if e["event"] == "spawned"}

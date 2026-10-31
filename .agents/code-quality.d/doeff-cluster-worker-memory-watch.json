@@ -15,7 +15,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_worker/protocol/memory_watch.hy"
       ],
-      "responsibility": "機体の memory の見張りの背景の task(5 秒ごとの読み・job ごとの最大と様子の log・尽きかけた時の止め — card ki-7b934e2538f9)。",
+      "responsibility": "機体の memory の見張りの背景の task(5 秒ごとの読み・job ごとの最大と様子の log・尽きかけた時の止め)。",
       "typed": true
     }
   ]

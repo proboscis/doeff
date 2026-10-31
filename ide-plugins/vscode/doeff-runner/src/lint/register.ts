@@ -47,7 +47,7 @@ function lintCommandFor(root: string): string {
 /** registerLint が返す口 — 結果の置き場と、text editor に出ていない document を linter に聞かせる口。 */
 export interface LintRegistration {
   readonly store: LintStore;
-  /** 定義を読む面で開いた document の見出しと束縛を聞かせる(agora-redesign #910) */
+  /** 定義を読む面で開いた document の見出しと束縛を聞かせる */
   readonly watch: (document: vscode.TextDocument) => void;
 }
 

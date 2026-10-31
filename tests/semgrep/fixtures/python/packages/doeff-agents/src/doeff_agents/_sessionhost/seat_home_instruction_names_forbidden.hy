@@ -5,7 +5,7 @@
 (setv label "seat-memory")
 (setv HOME-NAME "CLAUDE.md")
 (setv DIR-NAME "skills")
-(setv SEAT-MEMORY "/home/kento/.claude/CLAUDE.md")
+(setv SEAT-MEMORY "/home/user/.claude/CLAUDE.md")
 ;; ⚠ 陰性対照(改行またぎ): この行に開き引用符が 1 つだけ在る "
 ;; 次の行に家の中の名が在ると、[^"] は改行を越えるので 1 致になる。
 ;; <家>/skills"

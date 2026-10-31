@@ -1,4 +1,4 @@
-"""examples/ の例の file が今の doeff で script として最後まで走り、書いた通りの結果を印字する事の検(取り組み doeff-publish・card ki-524874f8945a)。
+"""examples/ の例の file が今の doeff で script として最後まで走り、書いた通りの結果を印字する事の検(取り組み doeff-publish)。
 
 examples/ の例は利用者が写して走らせる読み物で、どの検も走らせていなかったので、API が変わっても誰も気づかなかった:
 `Program.of`・`ask`・`default_handlers`・`async_run` が消えた後も、5 file 全部が import か実行の初めで落ちていた
@@ -14,22 +14,19 @@ Python Compatibility の venv — .github/workflows/python-compatibility.yml)で
 (skip しないと、例の import が ModuleNotFoundError で落ちて main の CI 全体が赤になった — 2026-10-17)。
 1 本が長い例は SLOW に訳つきで置き、印 slow を付ける(`make test` の `-m "not e2e and not slow"` が外す — 名指せば走る)。
 
-名が test_ で始まる `.py` は、例を確かめる pytest の検の例(llm_agent.py の test_llm_agent.py — 取り組み doeff-publish・card の
-依頼 lt-XNZW7KVT5ZHV9MKYY8NCWGN69S)で、script としては走らせない。利用者は例の file を写して `pytest test_<名>.py` と打つので、
+名が test_ で始まる `.py` は、例を確かめる pytest の検の例(llm_agent.py の test_llm_agent.py — 取り組み doeff-publish)で、script としては走らせない。利用者は例の file を写して `pytest test_<名>.py` と打つので、
 examples/ の `.py` だけを repo の外の dir に写して pytest で走らせ、全部が通る事を見る(repo の conftest.py と pyproject.toml の
 pytest の設定を読ませない)。例の検は LLM の model の key も network も使わない約束なので、OPENAI_ の環境変数を外して走らせる。
 
-dir に分けた例 examples/github_repo/(doeff[http] の handler で GitHub の API を呼ぶ program と、偽の handler の pytest の検の例 —
-card ki-1356963e2d0b)は、script を走らせると本物の network へ出るので、直下の例の検に入れない。下の 2 本が受け持つ:
+dir に分けた例 examples/github_repo/(doeff[http] の handler で GitHub の API を呼ぶ program と、偽の handler の pytest の検の例)は、script を走らせると本物の network へ出るので、直下の例の検に入れない。下の 2 本が受け持つ:
 script が本番で入れる handler の組(live — http_production_handler)を手元に立てた偽の GitHub API へ向けて子で走らせる検
 (例の検は live を走らせないので、これが無いと http の handler の使い方が変わっても例の本番の道が落ちる事に誰も気づかない)と、
 README の命令 `pytest examples/github_repo` を pytest の外の plugin 無しの子で走らせる検(例の dir の pytest.ini が rootdir を
 例の dir に留め、repo の根の conftest を読ませない — clone して `pip install "doeff[http]" pytest` だけを入れた人の形)。
 
-dir に分けた例 examples/testing_without_mocks/(紹介の記事「Testing Python code without mocks」の file の全部 — card
-ki-eeaca7016c66)は、ここでは走らせない。記事の読み手は `pip install doeff` で入る PyPI の版で走らせ、ADR-DOE-API-002 R3 は
+dir に分けた例 examples/testing_without_mocks/(紹介の記事「Testing Python code without mocks」の file の全部)は、ここでは走らせない。記事の読み手は `pip install doeff` で入る PyPI の版で走らせ、ADR-DOE-API-002 R3 は
 この dir を値の形の版が PyPI に出るまで書き換えないので、repo の版で走らせると repo の API が変わるたびに落ちる。印字と dir の
-`pytest` の確かめは、PyPI の版で毎日走らせる tools/verify_core_install.py --pypi の項 8 だけが持つ(card ki-5ea7c639b693)。
+`pytest` の確かめは、PyPI の版で毎日走らせる tools/verify_core_install.py --pypi の項 8 だけが持つ。
 """
 
 from __future__ import annotations

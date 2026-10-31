@@ -11,7 +11,7 @@ Before (doeff 0.5.0 and main 4685dc801d62, the default Python scheduler):
 - Waiting on a promise nobody completes printed the same empty heading above the
   ``SchedulerDeadlockError``, and the tasks the run left behind were never unwound.
 
-(first-look error table 2026-10-17, row 14 and the appendix; card ki-8152466e96ad)
+(first-look error table 2026-10-17, row 14 and the appendix)
 
 Before (main c564cc230), ``Cancel(worker())`` and ``Discard(worker())`` read ``task.task_id`` of
 whatever they were given: ``AttributeError: 'Call' object has no attribute 'task_id'`` — raised

@@ -1,4 +1,4 @@
-"""doeff-public-api-no-subpackage-imports の極性の検(agora-redesign #2857)。
+"""doeff-public-api-no-subpackage-imports の極性の検。
 
 規則の message は「下の package からの import も許す — top level に在る名は top level から、module 固有の内部の名が要る時は下の
 package から」と言う。型を言葉に合わせた形 = 取り込む名が全部 `_` で始まる内部の名の `from doeff.<下の package> import …` は鳴らさず、

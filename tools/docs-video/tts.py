@@ -7,7 +7,7 @@
 Reads src/pages/<page>/narration.json (a list of {"id", "text"}), has OpenAI's speech endpoint say each line,
 writes public/<page>/<id>.wav, and writes src/pages/<page>/durations.json (seconds per line), which narrate()
 in src/kit/narrated.tsx reads to stretch each headline's slot to its line. The voice is always a hosted model:
-no local TTS model is used, by the maintainer's decision (2026-10-25).
+no local TTS model is used.
 
 Usage (from tools/docs-video): OPENAI_API_KEY=... uv run tts.py <page> [<line id>...]
   Line ids given: say only those lines again and keep the other durations.

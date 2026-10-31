@@ -1,5 +1,4 @@
-"""EffectBase(別名 doeff.Effect)が、どこにも残らない引数を TypeError で断る事の検(取り組み doeff-publish・
-区切り ms-4aca097efa40 の card 7)。
+"""EffectBase(別名 doeff.Effect)が、どこにも残らない引数を TypeError で断る事の検(取り組み doeff-publish)。
 
 失敗ケース(docs の例を 0.5.0 で run まで走らせた報告 2026-10-17-doeff-docs-137-run.html の MARKERS L37・L245):
 docs/MARKERS.md の例 `yield Effect("fetch", url="...")` は、0.5.0 で何も言わずに走る。EffectBase の `__new__` は

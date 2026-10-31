@@ -2,7 +2,7 @@
 
 file の中身は semgrep の規則 doeff-packages-have-no-application-vocabulary が commit の hook で止める。
 semgrep は中身しか見ないので、名だけをこの検が見る。語の一覧・許す綴り・対象の package は規則から読み、
-ここに写さない(定義元は .semgrep.yaml の規則 1 つ — agora-redesign #2875)。
+ここに写さない(定義元は .semgrep.yaml の規則 1 つ)。
 """
 
 from __future__ import annotations

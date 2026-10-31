@@ -320,7 +320,7 @@ def _zipped_steps(make_handler, program):
 
 
 class TestZipHistory:
-    """A Zip item's history holds each step that ran for it once (card ki-7be8e95f45eb).
+    """A Zip item's history holds each step that ran for it once.
 
     A collection built by a Traverse over another carries the other's history, so a Zip
     of the two (ex07's Zip(signals, prices)) used to repeat the shared steps.

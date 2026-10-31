@@ -1,5 +1,5 @@
 """doeff-indexer の CLI の入口(packages/doeff-indexer/python/doeff_indexer/_cli.py)が、同梱の binary を package の探し先の順に
-探す事の検(agora-redesign #3860)。build の口の editable の入れは、組み立ての成果物(この binary)を venv の
+探す事の検。build の口の editable の入れは、組み立ての成果物(この binary)を venv の
 `__editable__.doeff_indexer.native/` に入れ、package の探し先を 成果物の dir → 作業木の dir にする。前は `Path(__file__).parent` だけを見た
 ので、editable の入れでは作業木の dir しか見ず、binary を見つけられない。
 """

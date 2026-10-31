@@ -11,8 +11,8 @@ import { mentionLink } from '../../read/locate';
 import { absoluteModule, destinationOf, entityLink, linkPieces, messageEntities, resolveEntity, sourceLinks } from '../../read/resolve';
 import { buildCallGraph, relationOf, type CallGraph } from '../../read/tree';
 
-// v12(operator の決定 2026-09-29 — 読む面と source の面の拡張の全ての場所で実体を押して定義へ飛ぶ)— 実体の名 → 定義の解決を 1 つの関数に集め、カードの頭のチップと本体の文字の名を押せる
-// ようにした(agora-redesign #910 U19a・#1203)。材料は model.test.ts と同じ test-fixtures/read の実出力。
+// v12(読む面と source の面の拡張の全ての場所で実体を押して定義へ飛ぶ)— 実体の名 → 定義の解決を 1 つの関数に集め、カードの頭のチップと本体の文字の名を押せる
+// ようにした。材料は model.test.ts と同じ test-fixtures/read の実出力。
 
 const FIXTURES = path.join(__dirname, '..', '..', '..', 'test-fixtures', 'read');
 

@@ -4,7 +4,7 @@ Before: ``--program myapp.main.program`` where ``myapp/main.py`` imports a depen
 installed ended at ``Error: module 'myapp' has no attribute 'main'``. ``import_symbol`` tries the
 longest module path first and used to treat every ImportError / AttributeError raised while
 importing as "this is not a module path, try a shorter one", so the error of the user's own
-module was swallowed and the walk ended at the package (card ki-90c36aee939d: the same hid why
+module was swallowed and the walk ended at the package (the same hid why
 tests/cli/cli_assets.py cannot be imported).
 
 Now only "the module (or a package above it) does not exist" falls back to a shorter path; an

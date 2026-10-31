@@ -4,7 +4,7 @@ GIF(images/readme-demo.gif)は tools/readme_demo/record.py が、隣の digest.p
 本物の bash と Python で走らせて録る。GIF は録り直すまで変わらないので、doeff の API が変わって 2 つの file が走らなくなっても
 GIF は古いまま「動く」ように見える。この検は 2 つの file を今の doeff で走らせ、GIF に映る 4 つの答え — canned の
 '14 chars'・trace が見る 2 つの effect・budget(1) が k を捨てた 'over budget at Summarize'・本物の取り寄せの道(live_world)— が
-今も通る事と、GIF の 4 行が `python -m doeff demo` の 4 行と同じ答えを返す事を確かめる(card ki-2ccb68ed0ad7)。落ちたら file を
+今も通る事と、GIF の 4 行が `python -m doeff demo` の 4 行と同じ答えを返す事を確かめる。落ちたら file を
 直して GIF を録り直す(record.py の docstring の命令)。
 
 live_world は file:// の URL で走らせる — urlopen は HTTP と同じ道で file を読むので、検は network に出ない。

@@ -12,7 +12,7 @@
       "public": [
         "packages/doeff-cluster/src/doeff_cluster/_worker/core/memory_rules.hy"
       ],
-      "responsibility": "機体の memory の見張りの判断(機体と container の memory の読みの綴り・job ごとの memory・機体の様子・止める単位と順 — card ki-7b934e2538f9)。",
+      "responsibility": "機体の memory の見張りの判断(機体と container の memory の読みの綴り・job ごとの memory・機体の様子・止める単位と順)。",
       "typed": true
     }
   ]

@@ -1,4 +1,4 @@
-"""doeff-no-sleep-in-programs の極性の検(card ki-94380dba532f)。
+"""doeff-no-sleep-in-programs の極性の検。
 
 検体(tests/semgrep/fixtures/python/packages/doeff-sleep-sample/src/)で `# 鳴る` を付けた行だけが当たることを、規則の当たりの
 行で突き合わせる。鳴るべき形 = @do の program の中の time.sleep・Await(asyncio.sleep(x))・`from time import sleep` の sleep・

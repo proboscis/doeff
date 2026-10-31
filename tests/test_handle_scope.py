@@ -1,16 +1,16 @@
-"""関数の本体の中に書いた handle・defhandler が、外の関数に局所の名を作らない事の検(card ki-907f779b3290)。
+"""関数の本体の中に書いた handle・defhandler が、外の関数に局所の名を作らない事の検。
 
 handle と defhandler の実行時の展開は、`_doeff_do`・`_doeff_Resume`・`_doeff_Transfer`・`_doeff_Pass`・`_doeff_WithHandlerType` と
-節の終わり方の検めを書いた場所で import する(node の名は書き手の同じ名の effect を隠さない別名 — card ki-16180480129e・
+節の終わり方の検めを書いた場所で import する(node の名は書き手の同じ名の effect を隠さない別名 —
 tests/test_handle_writer_names.py)。defk の本体(関数)の中でそれを import すると、名が関数全体の局所の名になり、同じ関数で先に
-読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちていた(fnk・do! の ki-c67428538aec、入れ子の defk の
-ki-964823cd7feb と同じ形)。
+読む traverse / for/do の `_doeff_do` が UnboundLocalError で落ちていた(fnk・do! と入れ子の defk の
+不具合と同じ形)。
 
 handle は、import・検め・handler の組み立てをすぐ呼ぶ関数に入れ、本文(第 1 引数)だけを書いた場所で評価する — 本文は
 外の do の文脈に属する(`!` の yield は外の生成器の物)。defhandler は defk と同じく `_scoped-definition` で名だけを
 外へ束ねる。module の段は今までどおり並べる。
 
-class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)は、import が class の属性になり、節の関数から
+class の本体に直に書いた handle・defhandlerは、import が class の属性になり、節の関数から
 見えなかった。handle は関数の中と同じくすぐ呼ぶ関数に入れ、defhandler は import を handler を組む関数の中へ移す
 (名の定義は class の段に残す)。
 """
@@ -245,7 +245,7 @@ _BODIES = {
 @pytest.mark.parametrize("body", _BODIES.values(), ids=_BODIES.keys())
 def test_handle_checks_clause_endings_before_the_body(body: str) -> None:
     """関数の中の handle も、節の終わり方の検めを本文より前に済ませる — 検めが落ちたら本文は評価されない。本文を先に
-    評価すると `body-evaluated` の AssertionError になる(設計検証 lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 A — 被せる関数を
+    評価すると `body-evaluated` の AssertionError になる(設計検証の盲検 A — 被せる関数を
     本文と同じ式の中で作ると、Hy が前へ出した本文の文の部分が検めより先に走った)。"""
     mod = _eval_module(_HALT + f"(defn subject [] (abs 1) (handle {body} (Halt [] (resume 0))))")
     with pytest.raises(TypeError, match=_HALT_RESUMED):
@@ -269,8 +269,8 @@ def test_handle_checks_clause_endings_before_the_body_performs_an_effect() -> No
 
 def test_handle_checks_clause_endings_at_every_evaluation() -> None:
     """節の effect の型は評価のたびに閉包から読むので、同じ handle を評価するたびに検める — 前の評価で通った型の記憶で
-    後の評価の検めを飛ばすと、再開しない effect を resume する handler が黙って作られる(設計検証
-    lt-D4D7YPF2BHEVKEHH2JJ7GT0W8W の盲検 B — 検めを書いた場所ごとに 1 回にする変更)。"""
+    後の評価の検めを飛ばすと、再開しない effect を resume する handler が黙って作られる(設計検証の
+    盲検 B — 検めを書いた場所ごとに 1 回にする変更)。"""
     mod = _eval_module(
         _HALT
         + """
@@ -286,7 +286,7 @@ def test_handle_checks_clause_endings_at_every_evaluation() -> None:
 
 def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     """module の段の handle・defhandler と、class の本体の defhandler の定義は包まない — 包むと `__qualname__`(pickle の
-    名の引き)が変わる。class の本体の defhandler は import だけを handler を組む関数の中へ移す(card ki-edab7c8fbb55)。"""
+    名の引き)が変わる。class の本体の defhandler は import だけを handler を組む関数の中へ移す。"""
     mod = _eval_module(
         """
         (defhandler top-h [base] (Bump [n] (resume (+ n base))))
@@ -300,14 +300,14 @@ def test_module_and_class_level_definitions_are_not_wrapped() -> None:
     assert run(mod.Holder.inner_h(5)(mod.bump_n(1))) == 6
     assert run(mod.program) == 101
     # module の段の handle の import は今までどおり module の globals に置く。handle だけの module で確かめる — 同じ module の
-    # defhandler の import も WithHandler を置くので、上の module では handle を包んでも通っていた(設計検証
-    # lt-CZC8SGS3C6DFDGSGG64YF49DH9 の S3 の失敗例)
+    # defhandler の import も WithHandler を置くので、上の module では handle を包んでも通っていた(設計検証の
+    # S3 の失敗例)
     handle_only = _eval_module("(setv program (handle (bump-n 1) (Bump [n] (resume (+ n 100)))))")
     assert run(handle_only.program) == 101
     assert "_doeff_WithHandlerType" in vars(handle_only)
 
 
-# class の本体に直に書いた handle・defhandler(card ki-edab7c8fbb55)。class の本体の import は class の属性になり、展開の
+# class の本体に直に書いた handle・defhandler。class の本体の import は class の属性になり、展開の
 # 中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は名を引く時に class の段を飛ばすので見えない — 直す前は
 # handle の節の Transfer・Resume・Pass、defhandler の _doeff_do・_doeff_check_clause_endings_once が NameError だった。
 # module の段に defk・handle・defhandler が在ると、その import が module の globals に名を置いて穴を隠すので、class 1 つ
@@ -484,7 +484,7 @@ def test_class_body_handle_functions_load_only_written_globals(source: str) -> N
     """class の本体の handle・defhandler の展開の中で作る関数(節の関数・handler を組む関数・本文に被せる関数)は、builtins・
     `__name__`・書き手が書いた名の外を global で引かない。展開が名で読む物は組む関数の中で import して閉包から読む —
     class の本体で並べた import や定義の名は class の属性になり、関数からは class の段を飛ばして module の globals を
-    引く。import の名の一覧に依らない検で、走らせる検が通らない節の形も捉える(設計検証
-    lt-CZC8SGS3C6DFDGSGG64YF49DH9 の盲検 B: 節が定義の名 `h` を名で読む変更が、走らせる検を通った)。"""
+    引く。import の名の一覧に依らない検で、走らせる検が通らない節の形も捉える(設計検証の
+    盲検 B: 節が定義の名 `h` を名で読む変更が、走らせる検を通った)。"""
     loaded = _nested_global_loads(_class_body_code(source))
     assert loaded - _GLOBALS_ALWAYS_ALLOWED - _written_names(source) == set()

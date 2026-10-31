@@ -302,7 +302,7 @@ def _pyright_python(tmp_path: Path) -> Path:
 
 
 def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
-    # 失敗ケース(日次の全体検証 2026-10-11 00:05 JST の doeff の root の段・card ki-9338eec1d15e の R4): pyright は --pythonpath の
+    # 失敗ケース(日次の全体検証 2026-10-11 00:05 JST の doeff の root の段): pyright は --pythonpath の
     # python を `-I`(= -E — PYTHON* の環境変数を読まない)で起こすので、呼び手の PYTHONDONTWRITEBYTECODE=1 が効かず、site の起動で
     # .pth が読む module の .pyc 6 個(.venv の _virtualenv・__editable___doeff_vm_finder と packages/doeff-hy/src/doeff_hy_bytecode_guard の
     # 4 つ)を checkout へ書いた — 根の conftest の session の終わりの検(_bytecode_settings_pinned)が ERROR。
@@ -313,7 +313,7 @@ def test_the_python_pyright_starts_writes_no_bytecode(tmp_path: Path) -> None:
 
 
 def test_no_root_test_hands_pyright_the_bare_python() -> None:
-    # 失敗ケース(日次の全体検証の doeff の root の段・card ki-04d762c59dac): 上の包みを使わず、pyright に --pythonpath で素の
+    # 失敗ケース(日次の全体検証の doeff の root の段): 上の包みを使わず、pyright に --pythonpath で素の
     # sys.executable を渡す検が 2 本残り(test_expand_program_static_types・test_handler_installer_typing)、同じ .pyc 6 個を checkout へ
     # 書いた。根の conftest の見張りは .venv が新しい時(日次)にしか赤くならないので、書き手の形をここで名指す。
     # 日次 2026-10-11 16:00 で packages の下の検(doeff-traverse の test_traverse_answer_types)にも同じ形が残っていたので、packages の

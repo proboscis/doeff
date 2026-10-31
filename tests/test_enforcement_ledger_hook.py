@@ -3,7 +3,7 @@
 実弾 = f47f0a4b(ADR-DOE-HY-004 新設・defadr +1 / deftest +2 / law +1)が台帳
 未更新のまま land queue を通らず直接 main へ届き、初検出が翌朝の日次 verify
 (doeff-verify-20260821-065005)まで遅れて無実の 2 便(L43/L44)が容疑に挙がった。
-着地の窓は力学のみ(2026-08-17 operator 裁定)なので、記帳漏れを構造的に
+着地の窓は力学だけを見る決まりなので、記帳漏れを構造的に
 止められる検出点は著述時 = git commit 時だけ。その機構をここで固定する:
 
 - 勘定の単一の家 scripts/check_enforcement_ledger.py(stdlib 単独・venv 不要)
@@ -11,7 +11,7 @@
 - tracked hook 原本 scripts/git-hooks/pre-commit(対象 path が staged の時だけ
   検査し、作り直し(rebase / cherry-pick / sequencer)中は判定しない)
 
-R9(2026-09-28・agora-redesign #802)で台帳は数から名の一覧(生成物)になった:
+R9(2026-09-28)で台帳は数から名の一覧(生成物)になった:
 
 - --write が木から台帳を作り、外れた項目を名前で申告する
 - ADR は Hy の形として読む(註・文字列・#_ の中の綴りを数えない)

@@ -1,5 +1,5 @@
-"""doeff-indexer の wheel を組む CI(build-indexer.yml)が、配置の間違った wheel を upload しない事の検(取り組み doeff-publish・
-card ki-d20475e94d87 の見つけた不具合)。
+"""doeff-indexer の wheel を組む CI(build-indexer.yml)が、配置の間違った wheel を upload しない事の検(取り組み doeff-publish で
+見つかった不具合)。
 
 PyPI の 0.1.3 の wheel は、命令の binary を命令の入口が探す `doeff_indexer/bin/` でなく `python/doeff_indexer/bin/` に持った。
 maturin 1.12 は pyproject.toml の `include` の file を project の根からの path のまま入れ、1.13 から python-source の下の path にする。

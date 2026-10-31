@@ -1,4 +1,4 @@
-// 読む面の source の色付け(agora-redesign #910 U16・V18)— editor と同じ文法・theme・記号ごとの色で塗り、
+// 読む面の source の色付け(V18)— editor と同じ文法・theme・記号ごとの色で塗り、
 // file 全体で塗ってから定義の範囲を切り出すことを確かめる。文法の fixture は python-semantic-highlighter 1.7.0 / 1.8.0 の
 // syntaxes/hy.tmLanguage.json の写し(editor が `.hy` に使う file と同じ中身)。
 
