@@ -2,7 +2,7 @@
 ;;; 閉語彙で分類する。未配達 attempt は独立の分類(prompt_undelivered)。
 ;;;
 ;;; ACP issue sessionhost-launch-ready-gate-vs-timeout-f0ac0f の根治
-;;; (operator 裁定 2026-08-04 = 採択 fix-launch-ready-gate / 2026-08-12 =
+;;; (採択 fix-launch-ready-gate。のちに
 ;;; sessionhost 生死判定便〔issue 55b1bd〕の第二根治「unsubmitted-prompt 救済」を
 ;;; 本件へ合流。決裁書 decision-acp-sessionhost-liveness-55b1bd-2026-08-12.html
 ;;; 項目 second-rootcause 案 A)。
@@ -10,7 +10,7 @@
 ;;; 結合核: ACP core-04(liveness closure)の入口側閉包 +
 ;;; core-13(invocation execution model)の attempt 境界 —
 ;;; 法・反例・テスト・実装の一括出荷が必須の車線(frontier + human review)。
-;;; 方向宣言 launch-ready-paste-consumption-f0ac0f(確定・operator 裁定)。
+;;; 方向宣言 launch-ready-paste-consumption-f0ac0f(確定)。
 
 (require doeff-adr.macros [defadr defsemgrep rule law])
 (require doeff-hy.macros [deftest])

@@ -1,11 +1,11 @@
 ;;; Executable ADR(決定): 動き続ける process の計器(数え上げ・秒の観測・今の値)・run をまたぐ最新の値の受け渡し・heap の凍結を、業務を
 ;;; 知らない汎用の effect にし、本物の答え手と memory の答え手が同じ契約のテストを通す。
 ;;;
-;;; 出自 = agora-redesign #1440(#1264 の子・milestone I)。agora-controllers の画面は、計器(Meter)・破れの台帳・起動の同期の進みを
+;;; agora-controllers の画面は、計器(Meter)・破れの台帳・起動の同期の進みを
 ;;; 同じ object として処理ループの run と probe の別の run に渡していた。層を分けると、翻訳の層(protocol)は土台の object を import
 ;;; できないので、効果で渡すしかない。agora の ADR「環境は handler の組で選ぶ」R8 は「翻訳の先は doeff の汎用の effect だけ。無ければ doeff に
 ;;; 足す」と決めており、doeff の origin/main に汎用の計器の effect は無かった(manager が packages の全体を名前で検索して確かめた・
-;;; 2026-09-29 19:33 JST)。effect の表は #1440 の comment 5888619033、manager の決めは同じ issue の 2026-09-29 19:46 JST の comment。
+;;; 2026-09-29 19:33 JST)。
 ;;;
 ;;; 戻し方: この ADR を足した commit を revert する(新しい module 9 つと検が消える。既存の公開の形は変えていないので、使い手が無ければ
 ;;; 何も壊れない)。agora-controllers の doeff-min-commit を前の sha へ戻す。
@@ -29,11 +29,10 @@
           "packages/doeff-core-effects/doeff_core_effects/_scripted_freeze.hy"]
   :problem
     [(fact
-       "agora-controllers の画面の計器 Meter(controllers/screen/entry/meter.py・592 行)は、画面の型で答えの起点を決める判断と、counter・gauge・秒の合計を積む汎用の部分と、time.monotonic・uuid・gc.callbacks・threading の生の副作用を 1 つの class に持っていた。処理ループの run が書き、probe の別の run(/metrics・/latency/samples)が lock を待たずに読む。"
-       :evidence "agora-redesign #1264 comment 5888426802 の表 2")
+       "agora-controllers の画面の計器 Meter(controllers/screen/entry/meter.py・592 行)は、画面の型で答えの起点を決める判断と、counter・gauge・秒の合計を積む汎用の部分と、time.monotonic・uuid・gc.callbacks・threading の生の副作用を 1 つの class に持っていた。処理ループの run が書き、probe の別の run(/metrics・/latency/samples)が lock を待たずに読む。")
      (fact
        "層を分けると、翻訳の層は土台の object を import できず、土台は業務の型を読めない。run をまたいで渡すには effect が要る。doeff の origin/main には汎用の計器の effect が無く、在るのは doeff-cluster の ReportMetrics(coordinator への報告)と doeff-jev-proxy の ReadCounters(用途が決まっている)だけだった。"
-       :evidence "#1440 の manager の決め(2026-09-29 19:46 JST)")
+       :evidence "manager の決め(2026-09-29 19:46 JST)")
      (fact
        "handler の中の状態(session の値)は 1 つの run の中にしか無い。probe は処理ループが計算している間も答えるために別の run(別の thread)で走るので、session の値では同じ計器を読めない。"
        :evidence "agora-controllers controllers/foundation/side_run.hy の頭の註")]
@@ -41,21 +40,21 @@
     [(interpretation
        "置き場は doeff-core-effects。業務も cluster も知らない、動き続ける process の汎用の effect だから(隣の stop_signal・thread_pool_compute・scheduler_channel と同じ種類)。doeff-cluster の ReportMetrics は coordinator へ断面を送る effect で役が違うので、断面の形(counters・gauges・秒の合計と回数)だけを揃えて、後で ReadMeter の答えを ReportMetrics へ渡せるようにした。")
      (interpretation
-       "本物の置き場を class にしない(ADR-DOE-HY-007 R3・R4 — lock と gc の callback を持ち、状態が変わる)。答え手の module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。process に 1 つの物を module が持つ先例 = doeff_core_effects/_handlers.py の Await の橋。答え手の引数は変わらない値(名前と設定)だけ。戻せる決定(#1440 comment 5888677819)。")
+       "本物の置き場を class にしない(ADR-DOE-HY-007 R3・R4 — lock と gc の callback を持ち、状態が変わる)。答え手の module が「名前 → 置き場」を process に 1 つ持ち、同じ名前で入れた答え手どうし(別の run・別の thread)が同じ置き場を読み書きする。process に 1 つの物を module が持つ先例 = doeff_core_effects/_handlers.py の Await の橋。答え手の引数は変わらない値(名前と設定)だけ。戻せる決定。")
      (interpretation
        "heap の凍結を計器と別の module にした。計器は観測を積んで読むだけで process の振る舞いを変えない。凍結は process の GC の状態を変える操作で、計器を持たない program も使う。一緒に置くと、計器を差し替える模擬が GC の操作まで一緒に差し替える形になる(manager の決めの条件 2)。")
      (interpretation
        "最新の値の鍵は文字列ではなく値の型ちょうど。読み手は答えの型を鍵から知れる(agora の設定の読み — Ask の鍵 = 型 — と同じ作法)。同じ型を 2 つの持ち主が置くと食い違うので、持ち主ごとに別の型を置く。戻し方 = key の欄を足す。")
      (interpretation
-       "計器の書きは 1 回の effect で 1 つの名だけを変える。agora の画面の Meter は 1 回の出来事の書き(全数と内訳など、名をまたぐ)を 1 度に見せていたが、この形では名をまたぐと守れない。Prometheus の client の普通の約束と同じなのでこの形を採り、名をまたいで 1 度に見せたい読み手は 1 つの名に畳むか、食い違いを許す。まとめて書く effect(例 RecordMetrics)は、要ると分かった時に足す(足すだけで済む)。agora の側で今の性質に頼る検と不変条件の一覧は #1445 に書く(manager の決めの条件 2)。")]
+       "計器の書きは 1 回の effect で 1 つの名だけを変える。agora の画面の Meter は 1 回の出来事の書き(全数と内訳など、名をまたぐ)を 1 度に見せていたが、この形では名をまたぐと守れない。Prometheus の client の普通の約束と同じなのでこの形を採り、名をまたいで 1 度に見せたい読み手は 1 つの名に畳むか、食い違いを許す。まとめて書く effect(例 RecordMetrics)は、要ると分かった時に足す(足すだけで済む)。agora の側で今の性質に頼る検と不変条件の一覧は agora の側に書く(manager の決めの条件 2)。")]
   :decision
-    [(rule R1 "計器の effect は 5 つ(meter_effects.hy): CountMetric(name・amount = 1.0 — counter に足す。amount = 0 は 0 を置く)・ObserveSeconds(name・seconds — 秒の合計と回数に積み、設定の桁の表の当たる桁ごとの累積の counter <name>_<label> と <name>_<inf-label> も進める)・ObserveSecondsBatch(observations = SecondsObservation(name・seconds)の列 — ObserveSeconds を列の順に 1 つずつ撃ったのと同じ断面へ 1 回で積む。1 つの出来事で何度も秒を観測する呼び手が効果を撃つ回数を 1 回にするため・agora-redesign #3688 で足した。列の名をまたぐ書きは R6 のとおり約束しない)・SetGauge(name・value — 置き換える)・ReadMeter(答え = MeterSnapshot)。答えは ReadMeter の外はどれも None。設定は MeterSettings(buckets・inf-label・gc-pause-name)。")
-     (rule R2 "最新の値の effect は 3 つ(latest_effects.hy): PublishLatest(value — 型 type(value) をキーに置き換える)・ReadLatest(kind — その型ちょうどの最新の値か None)・AwaitLatest(kind・seen — その型の最新の値が seen と別の物〔is で比べる〕になるまで待ち、その値を答える。既に別なら待たない。待つのは呼び鈴〔CreateExternalPromise〕で、置いた側の PublishLatest が鳴らす。上限は持たず、上限まで待つ呼び手は時計の task と Race にかけて負けた方を Cancel する — 取り消された待ちは呼び鈴を外す。待ちは仮想の時計を止めない park の形・scheduled の下で使う。agora-redesign #4296 で足した — 書き手の run が置いた断面を、別の run が一定の間隔では確かめ直さずに置かれた時に読むため)。置く値は変わらない値にする。")
+    [(rule R1 "計器の effect は 5 つ(meter_effects.hy): CountMetric(name・amount = 1.0 — counter に足す。amount = 0 は 0 を置く)・ObserveSeconds(name・seconds — 秒の合計と回数に積み、設定の桁の表の当たる桁ごとの累積の counter <name>_<label> と <name>_<inf-label> も進める)・ObserveSecondsBatch(observations = SecondsObservation(name・seconds)の列 — ObserveSeconds を列の順に 1 つずつ撃ったのと同じ断面へ 1 回で積む。1 つの出来事で何度も秒を観測する呼び手が効果を撃つ回数を 1 回にするため。列の名をまたぐ書きは R6 のとおり約束しない)・SetGauge(name・value — 置き換える)・ReadMeter(答え = MeterSnapshot)。答えは ReadMeter の外はどれも None。設定は MeterSettings(buckets・inf-label・gc-pause-name)。")
+     (rule R2 "最新の値の effect は 3 つ(latest_effects.hy): PublishLatest(value — 型 type(value) をキーに置き換える)・ReadLatest(kind — その型ちょうどの最新の値か None)・AwaitLatest(kind・seen — その型の最新の値が seen と別の物〔is で比べる〕になるまで待ち、その値を答える。既に別なら待たない。待つのは呼び鈴〔CreateExternalPromise〕で、置いた側の PublishLatest が鳴らす。上限は持たず、上限まで待つ呼び手は時計の task と Race にかけて負けた方を Cancel する — 取り消された待ちは呼び鈴を外す。待ちは仮想の時計を止めない park の形・scheduled の下で使う。書き手の run が置いた断面を、別の run が一定の間隔では確かめ直さずに置かれた時に読むために足した)。置く値は変わらない値にする。")
      (rule R3 "heap の凍結の effect は 1 つ(heap_effects.hy): CollectAndFreeze(答え = 凍らせた object の数)。計器と module を分ける。")
      (rule R4 "答え手は本物と I/O の無い物を module で分ける: process-meter-handler(process_meter.hy)と memory-meter-handler(memory_meter.hy)・process-latest-handler(process_latest.hy)と memory-latest-handler(memory_latest.hy)・gc-freeze-handler(gc_freeze.hy)と scripted-freeze-handler(scripted_freeze.hy)。時計・gc・thread に触るのは本物の module だけで、effect の module と I/O の無い答え手の module は触らない。本物の 3 つは doeff-linter の実 I/O の handler の目録(packages/doeff-linter/data/world_handlers.json)に載せる — 使い手の repo が architecture.hy の :world-handlers の :wraps で名指せるように(載せない I/O の無い答え手は目録の決まりどおり外す)。")
      (rule R5 "本物の計器と最新の値は、同じ名前で入れた答え手どうしが別の run・別の thread でも 1 つの置き場を読み書きする。読みは書き手の lock を待たない(今の断面の参照を 1 つ取る)。GC の停止の callback は lock を取らない(lock を持つ thread の中で回収が始まると、取り直しで自分を待って止まる)。同じ名前で違う設定を入れると ValueError で断る。置き場は process の終わりまで残る。")
      (rule R6 "計器の 1 回の書きは 1 つの名の中(秒の合計・回数・その名の桁の counter)で 1 度に見える。名をまたぐ書きは 1 度に見えるとは限らない — 2 つの名への書きの間の読みは、片方だけ進んだ断面を見る。")
-     (rule R7 "本物と I/O の無い答え手は同じ契約のテストを通す(agora-redesign #1107 の決め): packages/doeff-core-effects/tests の test_meter_contract.hy・test_latest_contract.hy・test_heap_freeze.hy の :interpreters。本物だけの性質(run・thread をまたぐ共有・違う設定を断る・GC の停止)は test_process_meter.hy・test_process_latest.hy。")
+     (rule R7 "本物と I/O の無い答え手は同じ契約のテストを通す: packages/doeff-core-effects/tests の test_meter_contract.hy・test_latest_contract.hy・test_heap_freeze.hy の :interpreters。本物だけの性質(run・thread をまたぐ共有・違う設定を断る・GC の停止)は test_process_meter.hy・test_process_latest.hy。")
      (rule R8 "この変更は足すだけ。既にある doeff の型・関数・import の名を変えない。")]
   :laws
     [(law meter-write-is-whole-within-one-name
@@ -126,4 +125,4 @@
           "packages/doeff-core-effects/tests/test_latest_contract.hy"
           "packages/doeff-core-effects/tests/test_process_latest.hy"
           "packages/doeff-core-effects/tests/test_heap_freeze.hy"
-          "agora-controllers: #1444・#1445 が画面の計器をこの effect へ移す"])
+          "agora-controllers: 画面の計器をこの effect へ移す"])

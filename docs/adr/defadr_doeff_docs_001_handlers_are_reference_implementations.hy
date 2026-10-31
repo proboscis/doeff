@@ -3,7 +3,7 @@
 ;;; 文書(README・docs の site の page・package の README・code の docstring と注釈)は、handler・effect・scheduler・interpreter を
 ;;; 組み込みの物・標準の物・特別な物として書かず、参考実装と書く。
 ;;;
-;;; 出自 = 持ち主(利用者)の言葉 2026-10-20 13:10 JST(原文は :problem の fact)。公開の記事の下書きを読んで付けた注釈。
+;;; 公開の記事の下書きの審査で決めた(決めた事は :problem の fact)。
 ;;;
 ;;; 書くその場面の助言は doeff の外が持つ: agent-commons の defjevrule doeff-handlers-are-reference-implementations(doeff を
 ;;; 説明する文を書く時に、handler を組み込み・特別な物と書いたら思い出させる)。doeff の側には、読みの範囲の言い方を検める
@@ -89,8 +89,7 @@
           "docs/adr/defadr_doeff_docs_001_handlers_are_reference_implementations.hy"]
   :problem
     [(fact
-       "持ち主の言葉 2026-10-20 13:10 JST(公開の記事の下書きを読んで付けた注釈・一字も変えない): 「すべてのハンドラは組み込みではない。ただ参考実装が存在するだけ、特別なハンドラが存在するかのような記述は禁止」"
-       :evidence "持ち主の内部の追跡に在る注釈(2026-10-20 13:10 JST)")
+       "公開の記事の下書きの審査で決めた事: どの handler も組み込みの物ではなく、在るのは参考実装だけ。特別な handler が在るかのように書く事は禁じる。")
      (fact
        "実装の側に特別扱いの handler は無い。`doeff.run` は handler を 1 つも積まず、program に呼んで積んだ handler だけで走る(`default_handlers` は doeff から削除済みで、呼ぶと handler を program に呼んで積めと答える)。SPEC-009 R5-C も scheduler を user-space の参考実装と定める。"
        :evidence "doeff/run.py の run・doeff/__init__.py の default_handlers(_Removed)・docs/history/specs/vm/SPEC-009-rust-vm-migration.md R5-C")

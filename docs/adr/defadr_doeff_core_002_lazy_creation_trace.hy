@@ -46,7 +46,7 @@
      (interpretation
        "C1 spike の帰結による再スコープ: R1 は現行 main で既に成立している(意図的な遅延化ではなく、捕捉が opt-in VM 内省命令 + エラー経路限定として設計されていたため)。よって本 ADR の enforcement は『直す』テストではなく『この性質が侵食されたら fail する』回帰ガードである。旧 R2(observability handler への opt-in 移行)は前提を失い縮小 — 残る C3 論点は『GetTraceback / GetExecutionContext を VM 組み込み命令のままにするか observability handler 経由に載せ替えるか』という独立の設計判断のみ。")
      (interpretation
-       "C3 裁定(maintainer + frontier、2026-07-17): GetTraceback / GetExecutionContext は effect ではなく DoCtrl の VM 制御命令(packages/doeff-vm-core/src/do_ctrl.rs:82,86)であり、yield 分類時に VM が直接処理する(packages/doeff-vm/src/python_generator_stream.rs:659-664。GetTraceback はその場で Pure 値に解決)。effect dispatch を通らず handler スタックからは見えないため、GetHandlers / GetBoundaries と同族の VM 内省命令である。C1 spike で perf 根拠が消滅し、sandbox で内省を拒否する実需要も現存しない以上、Evidence Rule(docs/22-capability-classes.md)に従って Rust 改修・破壊的変更・handler 用特権 API のコストは払わない。")]
+       "C3 裁定: GetTraceback / GetExecutionContext は effect ではなく DoCtrl の VM 制御命令(packages/doeff-vm-core/src/do_ctrl.rs:82,86)であり、yield 分類時に VM が直接処理する(packages/doeff-vm/src/python_generator_stream.rs:659-664。GetTraceback はその場で Pure 値に解決)。effect dispatch を通らず handler スタックからは見えないため、GetHandlers / GetBoundaries と同族の VM 内省命令である。C1 spike で perf 根拠が消滅し、sandbox で内省を拒否する実需要も現存しない以上、Evidence Rule(docs/22-capability-classes.md)に従って Rust 改修・破壊的変更・handler 用特権 API のコストは払わない。")]
   :decision
     [(rule R1 "effect 生成・dispatch のホットパスでは linecache 読み・文字列整形・行テキスト解決・スタック walk を行わない。捕捉の発火点は opt-in VM 内省命令(GetTraceback / GetExecutionContext)とエラー経路のみに限る(現行 main の性質を不変量として固定する)。")
      (rule R2 "run() の例外経路 _merge_python_frames は traceback.extract_tb を lookup_line=False で呼び、行テキスト解決を描画時(format 時)まで遅延する(字義ギャップの解消、hot path 外の小修正)。")

@@ -5,10 +5,9 @@
   :title "文章・用語パネルの右上から検査範囲を3択で選択する"
   :status "accepted"
   :scope ["ide-plugins/vscode/doeff-runner/src/lint" "ide-plugins/vscode/doeff-runner/package.json"]
-  :problem [(fact "operator 2026-10-05 Asia/Tokyo: I said add a selectable option so i can either 1. only run on opened file 2. run on the whole project files. 3. turn off")
-            (fact "同日の補足: by 'tab' imean a button like this.[Image #1] see the 3 icons on top right?")]
-  :context [(fact "会話 Codex 01a109cb-0dd6-7f83-aab7-76ac64a40830。追跡 proboscis/agora-redesign#3571、親 #3264。")
-            (interpretation "検出精度を少数の実例で評価する間も、必要に応じて全体検査や完全停止を自分で選べる必要がある。")]
+  :problem [(fact "The lint scope is selectable among three options: 1. only the opened files, 2. the whole project's files, 3. off.")
+            (fact "The selector is a button in the row of icons at the top right of the panel.")]
+  :context [(interpretation "検出精度を少数の実例で評価する間も、必要に応じて全体検査や完全停止を自分で選べる必要がある。")]
   :decision [(rule single-setting "docLint.mode の openFiles / workspace / off を設定の正本とし、右上の filter ボタンから選ぶ。選択は workspace ごとに保存する。")
              (rule default-open-files "既定は開いているファイルのみ。タブにない文書を内部 API が読み込んでも検査対象にしない。用語の定義と参照も選択した範囲に限る。")
              (rule changes-and-stop "全体モードの初回以後は変更ファイルを差分検査する。範囲変更では古い検査を中断し、オフでは予約を消す。永続キャッシュは削除しない。")
@@ -25,8 +24,8 @@
   :enforcement [(deftest test-doc-lint-modes-in-vscode [machine-tool]
                   (import os pathlib subprocess)
                   ;; 実物の VS Code が要る検。起動できる VS Code の無い機体(日次の worker)では、根の conftest の
-                  ;; machine_tool が「tool-absent」として未実行に名指す — 緑とは数えず、黙って skip にもしない
-                  ;; (agora-redesign #3582)。VS Code の在る機体では、ここから先は今までどおり走る。
+                  ;; machine_tool が「tool-absent」として未実行に名指す — 緑とは数えず、黙って skip にもしない。
+                  ;; VS Code の在る機体では、ここから先は今までどおり走る。
                   (machine-tool (os.environ.get "DOC_MODES_VSCODE" "code") "--version")
                   (setv root (/ (. (pathlib.Path __file__) parent parent parent) "ide-plugins/vscode/doeff-runner"))
                   (setv result (subprocess.run ["node" "scripts/run-doc-modes-test.mjs"] :cwd root :check False))

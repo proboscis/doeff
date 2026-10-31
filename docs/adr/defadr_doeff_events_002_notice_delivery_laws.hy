@@ -3,10 +3,9 @@
 ;;; 在り、memory の handler と本物の redis-server の両方が同じ筋書きを通る。上の層を 1 つ壊すと、対応する法が赤になる
 ;;; (packages/doeff-events/tests/test_notice_laws_memory.py)。
 ;;;
-;;; 出自 = agora-redesign #3850。利用者の 2026-10-06 の決め(redis や rabbitmq を使ってでも出来事に即応する・記録と起動を
-;;; 分ける)と、その後の確定(正しさは記録が持つ・backend は保存しない知らせ = Pub/Sub だけ・確かめる列
-;;; 〔Streams・consumer group〕は書かない)。ADR-DOE-EVENTS-001 の出来事の源(記録の service の合図)に、書き手が出す知らせを
-;;; 運ぶ源を足す。
+;;; 出来事には redis や rabbitmq を使ってでも即応し、記録と起動を分ける。正しさは記録が持ち、backend は保存しない知らせ
+;;; (Pub/Sub)だけを運び、確かめる列〔Streams・consumer group〕は書かない。ADR-DOE-EVENTS-001 の出来事の源(記録の service の
+;;; 合図)に、書き手が出す知らせを運ぶ源を足す。
 ;;;
 ;;; 戻し方: この ADR と doeff-events の 5 file(effects/notices.py・handlers/memory_notices.py・handlers/redis_notices.py・
 ;;; handlers/notice_events.py・notice_laws.py)とその検を足した commit を revert する。既に在った口(Publish・WaitForEvent・
@@ -29,8 +28,7 @@
           "docs/adr/defadr_doeff_events_002_notice_delivery_laws.hy"]
   :problem
     [(fact
-       "利用者の決め 2026-10-06: 記録に書いて記録を polling する設計をやめる。redis でも rabbitmq でも使ってよいので、出来事に即応する。記録は記録で、起動は起動で、2 つを分ける。"
-       :evidence "agora-redesign #3850 の頭の引用")
+       "記録に書いて記録を polling する設計をやめる(2026-10-06 に決めた)。redis でも rabbitmq でも使ってよいので、出来事に即応する。記録と起動は分ける。")
      (fact
        "本物の redis-server 7.2.7 で測った(2026-10-06): 読まない購読者へ 256 KB の知らせを続けて出し、client-output-buffer-limit pubsub を 1 MB にすると、Redis はその購読者の接続を切る(server の log「scheduled to be closed ASAP for overcoming of output buffer limits」)。PUBLISH が「受け手 1」と答えた 18 通のうち、購読者が読めたのは 13 通で、残りは接続の切れと共に失われた。途中の知らせだけが抜けて接続が残る事は無かった(読めた分は頭から連続)。"
        :evidence "packages/doeff-events/tests/test_notice_laws_redis.py::test_subscriber_that_does_not_read_is_disconnected_on_redis")
@@ -41,10 +39,10 @@
      (rule R2 "業務の Program には channel の名を出さない。出すのは Publish・WaitForEvent と、出来事の値だけ。")
      (rule R3 "待ちは blocking の取り(期限なし — 止めるのは task の Cancel)と、broker の戻りを待つ期限つきの待ち 1 つ(WaitWithin)だけ。間隔で起きて確かめる形を足さない(例外は R6 と R8 の 2 か所だけ)。")
      (rule R4 "backend は受けた知らせを黙って捨てない: 受けた知らせは全部 process の中の購読者の列へ Publish し、道の表で読めない知らせは源を名指しで落とす。出した知らせの受け手の数(PUBLISH の答え)は Publish の答え NoticeSent に載せて出し手へ返す。")
-     (rule R5 "出し損ねの扱いは notice_events_handler の 1 か所だけ(2026-10-07・agora-redesign #3864 — cisco-c8 の見直しの答え #3850 issuecomment-6021750691): Publish は届かなくても例外を上げず、閉じた型の 3 つ(NoticeSent・NoticeGapMarked・NoticeDropped)で答える。道は必須の欄 when_unsent で MarkGap(channel に欠けの印)か Drop(持たない)を選ぶ。持つのは channel の印だけで出来事は持たない。欠けは定まった知らせ 1 通(Announce.gap が作り、Announce.is_gap・Announcement.is_gap が見分ける — 名の文字列は内側)で、broker が戻った時・次に通る Publish の前・出し手の起動の時(MarkGap.start_channels)に出し、受ける包みは SourceMissed にする(受け手は記録から 1 度追いつく)。本体の送り(本体が Spawn した task の送りを含む)と欠けの知らせは 1 本の出口を先着順に通り、例外や取り消しの時も出口を返す(見直し 2026-10-07 の直す点 A・C・D)。次の Publish が欠けを全部出したら戻りを待つ task は止まる。出し手は Publish の答えを見て自分で出し直さない。")
-     (rule R6 "Redis の戻りの知り方(2026-10-07 の Mac の調整役の決定・agora-redesign #3850 の comment): 欠けの印か止まった購読が戻りを待つ間だけ、broker_back_by_retry(redis_notices.py の 1 か所)が組み立ての名指す間隔(既定なし)で ProbeBroker(繋がるかだけ — Redis では PING・data を読み書きしない)を試し、繋がった所で AwaitBrokerBack に答える。前に答えてから間隔が経つ前にまた問われたら、先に残りの間隔を待つ(PING は通るが送りが断られ続ける時に間隔なしで繰り返さない — 直す点 B)。待つ者が居ない間の試しは 0。Redis の送る client は、繋ぐ・送るの答えを組み立ての名指す時間切れ(既定なし)まで待つ(答えない server や黙った網が出し手を止めない — 直す点 A)。採らなかった案 = Kubernetes の EndpointSlice の watch(本番の権限を変える)。利用者の決定 2026-10-06(polling を要する所は直し、polling は最後の手段とする)を、落ちた相手からは知らせが来ない場合は最後の手段に当たる、と読んだのは Mac の調整役の解釈で、利用者の決定そのものではない。戻し方 = broker_back_by_retry を消し、AwaitBrokerBack に答える別の物を組み立てに置く。")
-     (rule R7 "結末の分からない書きの欠け(2026-10-20・agora の card ki-a93fc14956e3): 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった出来事を PublishGap に渡す。包みは出来事を送らず、その道の channel に欠けの印を付け、R5 と同じ 1 本の出口ですぐ出す。答えは閉じた型の 3 つ(NoticeGapTold・NoticeGapMarked・NoticeDropped)で、broker が受けられない時の扱いは R5 と同じ。表に無い型の PublishGap は外の handler へ出す(包みは channel を知らない)。出自 = 2026-10-19 12:24 UTC、記録の service が遅く、画像つきの送りの書きの答えが来なかった。行は記録に着いていたのに出来事も欠けの印も出ず、配る担当は 57 分その入力を知らなかった(R5 の欠けは broker が受けられなかった時と出し手の起動の時だけで、書きの結末不明を覆っていなかった)。")
-     (rule R8 "半開きの購読の知り方(2026-10-22・agora の card ki-227ad148680d): Redis の購読の接続は、redis_notice_handler の引数 silence_seconds(既定 SUBSCRIPTION_SILENCE_SECONDS = 7 秒)の間 何も答えなければ失ったと数え、NextAnnouncement は BrokerUnreachable で答える(源は SourceStalled を出す)。NextAnnouncement の待ちの中で、知らせの無いまま silence の半分が経ったら購読の接続で PING を 1 度 打ち、残りの半分のうちに知らせも PING の答えも無ければ失う。SubscribeChannels の確かめの待ちも同じ silence に収める。PING は繋がっているかだけを見る(data を読み書きしない)・待つ者(NextAnnouncement)の居る間だけ・redis_notices.py の 1 か所(_next_message)。訳: 購読中の Redis は知らせが無い間 何も送らないので、静かな接続と相手が答えなくなった接続(網の途切れ・相手の機体の消え・相手の process の停止)を読み手は見分けられない。TCP keep-alive の OS の既定(Linux = 7200 秒静かな後に 75 秒おきに 9 回)では半開きを知るまで約 2 時間 11 分かかり、相手の kernel が接続を持ったままの停止(SIGSTOP)は keep-alive では知れない。目標の 7 秒は agora の読みの replica の係の設計の記録 R10(購読の切れを 7 秒で知る)。採らなかった案 = socket_keepalive_options(TCP_KEEPIDLE・TCP_KEEPINTVL・TCP_KEEPCNT)だけ — 相手の process の停止を知れず、Linux の外では選べる値が違う。DOEFF209(doeff-linter の時間で取り直す loop)は architecture.hy の :business-fakes の本番の Hy の code を見る規則で、この Python の handler は母集団の外。規則の趣旨(変更の知らせを持つ相手を時間で取り直さない)にも当たらない — 購読の接続の相手(Redis)は静かな間に生きている印を出さない。戻し方 = _next_message の PING を外し、待ちを期限なしの get_message に戻す。")]
+     (rule R5 "出し損ねの扱いは notice_events_handler の 1 か所だけ(2026-10-07 の見直しの後の形): Publish は届かなくても例外を上げず、閉じた型の 3 つ(NoticeSent・NoticeGapMarked・NoticeDropped)で答える。道は必須の欄 when_unsent で MarkGap(channel に欠けの印)か Drop(持たない)を選ぶ。持つのは channel の印だけで出来事は持たない。欠けは定まった知らせ 1 通(Announce.gap が作り、Announce.is_gap・Announcement.is_gap が見分ける — 名の文字列は内側)で、broker が戻った時・次に通る Publish の前・出し手の起動の時(MarkGap.start_channels)に出し、受ける包みは SourceMissed にする(受け手は記録から 1 度追いつく)。本体の送り(本体が Spawn した task の送りを含む)と欠けの知らせは 1 本の出口を先着順に通り、例外や取り消しの時も出口を返す(見直し 2026-10-07 の直す点 A・C・D)。次の Publish が欠けを全部出したら戻りを待つ task は止まる。出し手は Publish の答えを見て自分で出し直さない。")
+     (rule R6 "Redis の戻りの知り方(2026-10-07): 欠けの印か止まった購読が戻りを待つ間だけ、broker_back_by_retry(redis_notices.py の 1 か所)が組み立ての名指す間隔(既定なし)で ProbeBroker(繋がるかだけ — Redis では PING・data を読み書きしない)を試し、繋がった所で AwaitBrokerBack に答える。前に答えてから間隔が経つ前にまた問われたら、先に残りの間隔を待つ(PING は通るが送りが断られ続ける時に間隔なしで繰り返さない — 直す点 B)。待つ者が居ない間の試しは 0。Redis の送る client は、繋ぐ・送るの答えを組み立ての名指す時間切れ(既定なし)まで待つ(答えない server や黙った網が出し手を止めない — 直す点 A)。採らなかった案 = Kubernetes の EndpointSlice の watch(本番の権限を変える)。polling を要する所は直し、polling は最後の手段とする決まり(2026-10-06)について、落ちた相手からは知らせが来ない場合は最後の手段に当たる、と読んだのは解釈で、決まりそのものには書かれていない。戻し方 = broker_back_by_retry を消し、AwaitBrokerBack に答える別の物を組み立てに置く。")
+     (rule R7 "結末の分からない書きの欠け(2026-10-20): 書きの答えが期限内に来ず、書きが着いたか分からない出し手は、出すはずだった出来事を PublishGap に渡す。包みは出来事を送らず、その道の channel に欠けの印を付け、R5 と同じ 1 本の出口ですぐ出す。答えは閉じた型の 3 つ(NoticeGapTold・NoticeGapMarked・NoticeDropped)で、broker が受けられない時の扱いは R5 と同じ。表に無い型の PublishGap は外の handler へ出す(包みは channel を知らない)。出自 = 2026-10-19 12:24 UTC、記録の service が遅く、画像つきの送りの書きの答えが来なかった。行は記録に着いていたのに出来事も欠けの印も出ず、配る担当は 57 分その入力を知らなかった(R5 の欠けは broker が受けられなかった時と出し手の起動の時だけで、書きの結末不明を覆っていなかった)。")
+     (rule R8 "半開きの購読の知り方(2026-10-22): Redis の購読の接続は、redis_notice_handler の引数 silence_seconds(既定 SUBSCRIPTION_SILENCE_SECONDS = 7 秒)の間 何も答えなければ失ったと数え、NextAnnouncement は BrokerUnreachable で答える(源は SourceStalled を出す)。NextAnnouncement の待ちの中で、知らせの無いまま silence の半分が経ったら購読の接続で PING を 1 度 打ち、残りの半分のうちに知らせも PING の答えも無ければ失う。SubscribeChannels の確かめの待ちも同じ silence に収める。PING は繋がっているかだけを見る(data を読み書きしない)・待つ者(NextAnnouncement)の居る間だけ・redis_notices.py の 1 か所(_next_message)。訳: 購読中の Redis は知らせが無い間 何も送らないので、静かな接続と相手が答えなくなった接続(網の途切れ・相手の機体の消え・相手の process の停止)を読み手は見分けられない。TCP keep-alive の OS の既定(Linux = 7200 秒静かな後に 75 秒おきに 9 回)では半開きを知るまで約 2 時間 11 分かかり、相手の kernel が接続を持ったままの停止(SIGSTOP)は keep-alive では知れない。目標の 7 秒は agora の読みの replica の係の設計の記録 R10(購読の切れを 7 秒で知る)。採らなかった案 = socket_keepalive_options(TCP_KEEPIDLE・TCP_KEEPINTVL・TCP_KEEPCNT)だけ — 相手の process の停止を知れず、Linux の外では選べる値が違う。DOEFF209(doeff-linter の時間で取り直す loop)は architecture.hy の :business-fakes の本番の Hy の code を見る規則で、この Python の handler は母集団の外。規則の趣旨(変更の知らせを持つ相手を時間で取り直さない)にも当たらない — 購読の接続の相手(Redis)は静かな間に生きている印を出さない。戻し方 = _next_message の PING を外し、待ちを期限なしの get_message に戻す。")]
   :laws
     [(law subscription-precedes-the-body
        :statement "for_all 読み手 r: r の購読は、包んだ Program の最初の effect より前に、broker の側で成っている — Program が最初に出した知らせを、Program 自身が受ける。"
@@ -151,4 +149,4 @@
                  (+ "配達の法の筋書きが notice_laws.py に無い(ADR-DOE-EVENTS-002 R1): " name))
          (assert (in (+ name ",") text)
                  (+ "配達の法の筋書きが法の組(EVENT_LAWS / GAP_LAWS / BROKER_LAWS)に載っていない(ADR-DOE-EVENTS-002 R1): " name))))]
-  :plans ["agora-redesign #3850" "agora-redesign #3864"])
+  :plans [])

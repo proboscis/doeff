@@ -24,7 +24,7 @@
        :evidence "proboscis/doeff issue #568 本文(agentd DB agent_session_events session_id agent_inv_wi_dbaf5df9a812dba_a1・pane capture /tmp/wedged-attend-pane-full.txt)")
      (fact
        "2026-08-06、同型の未送信 prompt 席が ACP runner 7 席を全飽和させ(14.7〜44.7h 占有・再送 32 回 / 13 回で沈黙・7 席とも会話記録ゼロ)、後続 66 件が最長 7 日停止した。3 つの終端機構(起動時間切れ・turn 終了検出・静止時間切れ)は『入力欄が表示されている』という健全な席と同じ見た目で同時に無効化される — 時間では構造的に解けない。"
-       :evidence "agora artifact analysis-acp-responsibility-sessionhost-steward-2026-08-06.html(7 席全数実測 + 母集団 6,771 行)・ACP 決裁行 sandbox:responsibility:sessionhost-steward gen14 の operator 裁定 2026-08-06")
+       :evidence "agora artifact analysis-acp-responsibility-sessionhost-steward-2026-08-06.html(7 席全数実測 + 母集団 6,771 行)・ACP 決裁行 sandbox:responsibility:sessionhost-steward gen14")
      (fact
        "awaiting_response=1 は stall watchdog と turn-end 検出を丸ごと無効化する(#582 穴 c)。latch の解除条件は正の作業証拠の観測のみで期限が無く、『促したのに永久に無応答』の経路では『無限待ちは禁止』の宣言(policy.hy R5/R7)が失効する。"
        :evidence "proboscis/doeff issue #582/#583(2026-08-01 ep9: status=blocked・awaiting_response=1・budget 使い切りのまま恒久静止)— #568 へ統合(統合コメント 2026-08-06)")
@@ -83,7 +83,7 @@
        :statement "substrate_cleanup(tmux_kill + cleaned_at) is owned by one sweep over all terminal ∧ uncleaned ∧ run_to_completion ∧ ¬adopted rows; per-arm cleanup commands are banned; sweep_must_not_kill(name claimed by active row)"
        :counterexamples
          [(counterexample "片付けを done/failed 観測経路にだけ内蔵する(旧 finalize)— 5 終端経路中 4 経路が漏れ、残骸 26 台・6.155 GiB が堆積した(刻印率が経路ごとに 100% と 0% に割れる実測)")
-          (counterexample "漏れた経路(起動時間切れ)に片付け命令を 1 本足す — 次の経路(素シェル復帰・新設 arm)でまた漏れる。operator 裁定(2026-08-06)が明示的に却下した形")
+          (counterexample "漏れた経路(起動時間切れ)に片付け命令を 1 本足す — 次の経路(素シェル復帰・新設 arm)でまた漏れる。明示的に却下された形")
           (counterexample "呼び手採番の session 名が再利用されたとき、古い残骸行の名で kill を撃つ — 同名で生きている新席を殺す(active 行が同名を主張する間は cleaned_at のみ刻む)")])]
   :enforcement
     [(deftest test-adr-doe-agents-010-knobs-and-fields-frozen
