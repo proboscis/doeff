@@ -10,7 +10,8 @@
 
 (val ROOT (. (Path __file__) (resolve) parent parent))
 (val BASE-DOCKERFILE (/ ROOT "deploy" "base" "Dockerfile"))
-(val APT-LINE "      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev libpq5 \\")
+(val APT-LINE "      ca-certificates git openssh-client tini tzdata build-essential pkg-config libssl-dev libpq5 \\")
+(val TZDATA-ROW "#   tzdata            (1) 地域の時刻帯の表 — 無いと Pod の中で TZ=Asia/Tokyo を渡しても date が黙って UTC を出す\n")
 (val LIBPQ-ROW "#   libpq5            (2) PostgreSQL の driver psycopg(binary の wheel なし)が実行時に読む libpq(PostgreSQL に繋ぐ job・#3692)\n")
 
 
@@ -56,6 +57,19 @@
   (assert (in LIBPQ-ROW text) "表に libpq5 の行が理由 (2) で在る")
   (assert (in APT-LINE text) "apt の行が libpq5 を入れる")
   (val without-row (.replace text LIBPQ-ROW ""))
+  (assert (!= without-row text))
+  (<- rules tuple (rules-of without-row))
+  (assert (= rules #("os-package-undeclared")) rules))
+
+
+(deftest test-the-base-image-carries-the-time-zone-table
+  ;; 理由 (1): 土台の道具の tzdata は、無いと Pod の中で TZ=Asia/Tokyo を渡しても date が黙って UTC を出す(地域の名が付くだけでエラーにならない)ため入れる。
+  ;; 表の行と apt の行の両方が在り、組んだ後の確かめの行が JST を読む。反例 = 表の行だけ消すと、apt の行の tzdata が表に無い package で赤。
+  (val text (.read-text BASE-DOCKERFILE :encoding "utf-8"))
+  (assert (in TZDATA-ROW text) "表に tzdata の行が理由 (1) で在る")
+  (assert (in APT-LINE text) "apt の行が tzdata を入れる")
+  (assert (in "TZ=Asia/Tokyo date +%Z | grep -qx JST" text) "組んだ後の確かめが JST を読む")
+  (val without-row (.replace text TZDATA-ROW ""))
   (assert (!= without-row text))
   (<- rules tuple (rules-of without-row))
   (assert (= rules #("os-package-undeclared")) rules))

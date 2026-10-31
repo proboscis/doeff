@@ -6,7 +6,7 @@
 # 準備する(E10)。資格(deploy key・借り手札)は Pod の Secret から読む。
 #
 # 作り直す理由(この 2 種類だけ — それ以外の変更は tests/test_base_image_contract.hy が赤にする):
-#   (1) 土台の道具(uv・git・ssh・Rust の toolchain・tini・起動の script)の版を変える時
+#   (1) 土台の道具(uv・git・ssh・Rust の toolchain・tini・tzdata・起動の script)の版を変える時
 #   (2) 業務の Python の package が新しい OS の library を要する時
 # doeff や業務の code を変えた時・Python の package を足した時・Python の版を変えた時は作り直さない(宣言と root が持つ)。
 #
@@ -15,6 +15,7 @@
 #   git               (1) mirror の clone と fetch・uv の git の依存
 #   openssh-client    (1) 非公開の repo を読み取り専用の deploy key で読む
 #   tini              (1) pid 1 — job の子が残した孫 process を刈る(#697)
+#   tzdata            (1) 地域の時刻帯の表 — 無いと Pod の中で TZ=Asia/Tokyo を渡しても date が黙って UTC を出す
 #   build-essential   (1) doeff-vm の native の build(cc・ld)
 #   pkg-config        (1) native の build が OS の library を探す
 #   libssl-dev        (1) native の build が openssl を結ぶ
@@ -27,8 +28,10 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 FROM rust:${RUST_VERSION}-slim-bookworm AS rust
 
 FROM ubuntu:24.04
+# tzdata は入れる時に地域を尋ねるので、この段の RUN だけ質問を出さない(image の env には残らない)。
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git openssh-client tini build-essential pkg-config libssl-dev libpq5 \
+      ca-certificates git openssh-client tini tzdata build-essential pkg-config libssl-dev libpq5 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /usr/local/bin/
 # Rust の toolchain は読むだけ(RUSTUP_HOME)。crate の取得先(CARGO_HOME)は起動の script が node の dir へ向ける。
@@ -44,6 +47,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 USER 1000:1000
 # 土台の確かめ: 道具が在り、Python と doeff は無い(uv が入れる前の姿)。
 RUN uv --version && git --version && ssh -V && cargo --version && rustc --version \
+    && TZ=Asia/Tokyo date +%Z | grep -qx JST \
     && ! command -v python3 && ! command -v python && ! command -v hy
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/opt/worker-boot.sh"]
