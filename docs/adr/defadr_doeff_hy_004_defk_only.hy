@@ -60,7 +60,8 @@
    "packages/doeff-agents/src/doeff_agents/_sessionhost/adopt.hy" 1
    ;; 38 → 37: 自前の待ちの effect ClockSleep の構築子 clock-sleep を消した(待ちは doeff-time の Delay)。
    "packages/doeff-agents/src/doeff_agents/_sessionhost/effects.hy" 37
-   "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 34
+   ;; 34 → 33: session host を effect で起こす形にした時に host-binary-path を消した(台帳の削りが遅れていた)。
+   "packages/doeff-agents/src/doeff_agents/_sessionhost/host.hy" 33
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/channel.hy" 1
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/claude_code.hy" 2
    "packages/doeff-agents/src/doeff_agents/_sessionhost/impls/codex.hy" 5
