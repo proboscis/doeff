@@ -1,5 +1,6 @@
 ;;; 筋書きの手順の部品(公開 effect だけを使う kleisli)。fake・本物のどの handler の下でも同じに動く。
 (require doeff-hy.macros [defk <- val var])
+(import collections.abc [Callable])
 (import dataclasses [dataclass])
 (import uuid)
 (import doeff_time [GetMonotonic])
@@ -41,8 +42,8 @@
   (assert (isinstance outcome RunAccepted) (repr outcome))
   outcome.handle)
 
-(defk read-until [#^ RunHandle handle stop #^ float timeout]
-  {:pre [(: handle RunHandle) (: timeout float)] :post [(: % Seen)]}
+(defk read-until [#^ RunHandle handle #^ Callable stop #^ float timeout]
+  {:pre [(: handle RunHandle) (: stop Callable) (: timeout float)] :post [(: % Seen)]}
   "stop(それまでに読んだ出来事の列 状態)が真になるまで読む(上限 timeout 秒)。出来事の seq は 1 から欠けずに増える。"
   (<- began (GetMonotonic))
   (var events #())

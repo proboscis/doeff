@@ -36,10 +36,10 @@
   "fake の世界が、RunSpec(命令の約束)から負荷の振る舞いを決める関数の本体。image が missing-image なら起動できない。"
   (when (= spec.image missing-image)
     (return (FakeBehavior :refuses-to-begin "image を取り寄せられない(fake)")))
-  (val args spec.command)
+  (setv args spec.command)
   (when (or (< (len args) 2) (!= (get args 0) WORKLOAD))
     (raise (ValueError (.format "fake の世界は契約の負荷の命令だけを知る: {!r}" args))))
-  (val kind (get args 1))
+  (setv kind (get args 1))
   (cond
     (= kind "live") (FakeBehavior)
     (= kind "exits") (FakeBehavior :runs-for (float (get args 3)) :exit-code (int (get args 2)))
