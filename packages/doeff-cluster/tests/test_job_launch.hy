@@ -4,6 +4,7 @@
 ;;   Program の job … 詰めた Program の file を引数(--program)と宿の契約の環境変数で渡す。
 (require doeff-hy.macros [deftest <- val])
 (import json)
+(import dataclasses [replace])
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeLayout WorkerPolicy])
@@ -91,3 +92,25 @@
   (<- probe (get tuple #(str ...)) (shim-argv "/py" 500 :stamp-lines False :notice-env None))
   (assert (= job #("/py" "-B" "-m" "doeff_cluster._worker.entry.shim" "0.5" "--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) job)
   (assert (= probe #("/py" "-B" "-m" "doeff_cluster._worker.entry.shim" "0.5" "--")) probe))
+
+
+(deftest test-only-a-handoff-service-with-a-retired-lifetime-outlives-the-worker
+  ;; worker の消失を退きとして寿命の上限まで待つ旗 --orphan-seconds(card ki-f69f2a6869aa)は、退きの寿命 retired-ms を宣言した handoff の
+  ;; service だけに付く(値は寿命の秒)。寿命を宣言しない handoff・recreate の service・task は付かない(消失ですぐ止める)。
+  (<- shim ShimSpans (shim-spans (WorkerPolicy)))
+  (val service (JobSpec "svc" "app.main" #("service") "rev1"))
+  (val rows
+    #(#("寿命つきの handoff の service" (replace service :handoff True :retired-ms 18000000) #("--orphan-seconds" "18000.0"))
+      #("寿命の無い handoff の service" (replace service :handoff True) #())
+      #("recreate の service" service #())
+      #("寿命つきの handoff の task" (replace service :handoff True :retired-ms 18000000 :once True) #())))
+  (for [#(label spec expected) rows]
+    (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :python "/py" :hy-command "/bin/hy" :extra-env {}
+                                   :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None
+                                   :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms
+                                   :notice-env "DOEFF_NOTICE_FD"))
+    (val head (cut plan.argv 0 (.index plan.argv "--")))
+    (val flag (if (in "--orphan-seconds" head)
+                  (cut head (.index head "--orphan-seconds") (+ (.index head "--orphan-seconds") 2))
+                  #()))
+    (assert (= flag expected) (.format "{}: {}" label plan.argv))))

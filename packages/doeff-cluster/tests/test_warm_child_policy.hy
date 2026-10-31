@@ -379,6 +379,28 @@
   (assert (= (tuple (gfor s cold s.phase)) #(JobPhase.STARTING JobPhase.STARTING)) cold))
 
 
+(deftest test-a-service-outliving-the-worker-forks-only-from-a-warm-child-that-names-orphan-forks
+  ;; worker より長く生きる service(退きの寿命を宣言した handoff — launch の outlives-worker・card ki-f69f2a6869aa)は、頼みの
+  ;; orphan-seconds を受けると印 orphanForks で名乗る待ちの子にだけ分ける。名乗らない版の待ちの子は頼みの知らない欄を断るので、入れ物 shim
+  ;; (--orphan-seconds)で起こす。寿命を宣言しない service は今まで通り分ける。
+  (val on (replace POLICY :warm-services True :warm-services-min 2))
+  (val serving (WarmChildMark :threads 1 :vm-live #(0 0 0) :services True))
+  (val orphaning (WarmChildMark :threads 1 :vm-live #(0 0 0) :services True :orphans True))
+  (<- s1 JobSpec (task-on "s1" KEY-A :once False))
+  (<- s2 JobSpec (task-on "s2" KEY-A :once False))
+  (val lasting (replace s1 :handoff True :retired-ms 18000000))
+  (<- old WorldView (world :children #((! (child KEY-A :mark serving)))))
+  (<- new WorldView (world :children #((! (child KEY-A :mark orphaning)))))
+  (val rows
+    #(#("印が orphanForks を名乗らない待ちの子 → 長く生きる service は入れ物 shim・他は分ける" old
+        #((StartJob lasting 1 ROOT-A) (StartJob s2 1 ROOT-A :warm-key KEY-A)))
+      #("印が orphanForks を名乗る待ちの子 → どちらも分ける" new
+        #((StartJob lasting 1 ROOT-A :warm-key KEY-A) (StartJob s2 1 ROOT-A :warm-key KEY-A)))))
+  (for [#(label observed expected) rows]
+    (<- got tuple (plan NOW #(lasting s2) observed {} on))
+    (assert (= got expected) (.format "{}: {}" label got))))
+
+
 ;; --- 判断の表 2c: 分ける root の recreate の service の入れ替え(card ki-d8cc8191472e)------------------------------------------
 ;; 失敗ケース: 新しい版の木が揃い入口の検めも通った所で旧を止めると、止め終えた後の新は新しい root の待ちの子の準備(本番 zeus の 10-28〜29 の
 ;; 30 回のうち 23 回・回収から起動まで 5.8〜23.3 秒)を待ち、その間 job の仕事が止まった。待ちの子が準備済みになるまで旧を動かしたままにし、

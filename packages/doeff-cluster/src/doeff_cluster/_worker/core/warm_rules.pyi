@@ -16,6 +16,7 @@ from doeff_cluster._worker.intent.worker_model import WarmChildView as WarmChild
 from doeff_cluster._worker.intent.worker_model import WarmLaunch as WarmLaunch
 from doeff_cluster._worker.intent.worker_model import WorkerPolicy as WorkerPolicy
 from doeff_cluster._worker.core.worker_rules import code_key as code_key
+from doeff_cluster._worker.core.launch import outlives_worker as outlives_worker
 from doeff_cluster._shared.core.runtime_env import project_dir as project_dir
 
 def forks_from_warm_child(spec: JobSpec) -> bool:

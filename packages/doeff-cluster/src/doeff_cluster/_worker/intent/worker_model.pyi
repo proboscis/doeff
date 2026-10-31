@@ -194,6 +194,7 @@ class WarmChildMark:
     threads: int
     vm_live: tuple[int, ...]
     services: bool = False
+    orphans: bool = False
 
 @dataclass(frozen=True, kw_only=True)
 class WarmMarkUnreadable:

@@ -20,7 +20,10 @@ socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ 
   cgroupProcs = A が setsid の後、入口を起こす前に自分の pid を書いて移る cgroup.procs(入れ物 shim の placed-argv と同じ置き分け —
                 worker/core/job_cgroup の service の類)。書けなければ A は入口を起こさずに終わり、待ちの子は断りを答える。
   noticeEnv   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(入れ物 shim の --notice-env と同じ)。
+  orphanSeconds = A が入力の EOF(worker の消失)を退きとして扱い、入口が自分で終わるのを待つ秒(入れ物 shim の --orphan-seconds と
+                同じ — card ki-f69f2a6869aa)。
 待ちの子は service の頼みを受けられる事を準備完了の印の serviceForks で名乗る(worker はこの印の無い版の待ちの子へ service を頼まない)。
+orphanSeconds を受けられる事は印の orphanForks で名乗る(worker はこの印の無い版の待ちの子へ worker より長く生きる service を頼まない)。
 頼みと答えの 1 行は doeff_core_effects._os_warm_process の約束(WarmRequestWire・WarmForkedWire・WarmRefusedWire)で、読み書きは
 同じ module の warm-request-of・warm-answer-line を使う(綴りを 2 つ持たない)。
 
@@ -253,7 +256,9 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, giv
         (*lines.writer_descriptors, *(() if relay is None else (relay.write_fd,))),
         () if relay is None else (relay.read_fd,),
     )
-    code = shim_code(request.grace_seconds, spawner, lines, become_subreaper, relay=relay)
+    code = shim_code(
+        request.grace_seconds, spawner, lines, become_subreaper, relay=relay, orphan_seconds=request.orphan_seconds
+    )
     write_replacing(request.exit_path, str(code))
     sys.stderr.flush()
     os._exit(exit_status(code))
@@ -432,6 +437,8 @@ def main() -> None:
         "gcFrozen": gc.get_freeze_count(),
         # service の頼み(入力の pipe・cgroup・知らせの中継 — 頭注)を受けられる版である印。worker はこの印の在る待ちの子へだけ service を頼む。
         "serviceForks": True,
+        # 頼みの orphanSeconds(worker の消失を退きとして待つ — 頭注)を受けられる版である印。
+        "orphanForks": True,
     }
     write_replacing(options.ready, json.dumps(facts, ensure_ascii=False))
     print(f"warm_child: 準備完了 root={root} module={len(sys.modules)}", file=sys.stderr, flush=True)

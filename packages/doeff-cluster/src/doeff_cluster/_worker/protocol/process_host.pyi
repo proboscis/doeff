@@ -69,6 +69,7 @@ from doeff_core_effects import AwaitProcessExit as AwaitProcessExit
 from doeff_core_effects import AwaitWarmChildExit as AwaitWarmChildExit
 from doeff_cluster._worker.core.launch import JobLaunch as JobLaunch
 from doeff_cluster._worker.core.launch import job_launch as job_launch
+from doeff_cluster._worker.core.launch import orphan_seconds_of as orphan_seconds_of
 from doeff_cluster._worker.core.launch import spec_program_file as spec_program_file
 from doeff_cluster._worker.core.launch import CHILD_ENV_ALLOWED as CHILD_ENV_ALLOWED
 from doeff_cluster._worker.core.launch import CHILD_ENV_PREFIXES as CHILD_ENV_PREFIXES

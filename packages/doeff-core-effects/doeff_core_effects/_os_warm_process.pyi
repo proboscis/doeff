@@ -56,6 +56,7 @@ class WarmRequestWire:
     hold_input: bool = False
     cgroup_procs: str | None = None
     notice_env: str | None = None
+    orphan_seconds: float | None = None
 
 @dataclass(frozen=True, kw_only=True)
 class WarmForkedWire:
