@@ -129,6 +129,16 @@ name = "doeff"
 #   照合(R4・R7)では見えず、検を走らせて初めて見えた。日次の門は lock の版(1.3.1)でしか走らず、下限が崩れても気づけなかった。
 # ⇒ 費用(実測): 最初の日次(2026-10-13 00:03 JST・commit 03236c441eff)で hy-floor は 579 秒・緑(748 通過・1 skip)。ただし全段の合計が 7200 秒に尽き、後ろの lint が 312 秒で切られて未実行(budget-exhausted)になった(この日の段 = build 6・root 1961・packages 3953・hy-floor 579・rust 364・vscode 24)。ので full_timeout_s を 7200 → 9000 に上げた(下の値)。
 # ⇒ 戻し方: hy-floor の行と Makefile の test-hy-floor を消し、full_timeout_s を 7200 へ戻し、R8 の母集団の一覧と deftest の hy-floor を外す。
+# 2026-11-01(戻せる): 段 leftovers を足す。scripts/find_internal_leftovers.py --fail-on 1,2,4 が、追跡する file に話者と日時を付けた
+# 引用・出所の行(種類 1)、内部の tracker の id と private の repo の issue の番号(種類 2)、個人の機体の home の path・宛先・鍵の形(種類 4)を
+# KEEP の外に 1 つでも見つけると、当たりを file:行 で stderr に出して rc 1(赤)で終わる。
+# ⇒ なぜ: 公開の repo から内輪の記録を書き直した後も、別の変更が id を入れ直す(この段を足した時の main に種類 2 が 2 行在った)。
+#   マージの列は衝突の印の走査だけで検査を回さないので、入った物を知る所は日次のこの段。マージの前の検査(GitHub の workflow)には足さない。
+# ⇒ no-chat-quotes(scripts/check_no_operator_quotes.py — commit の hook と .github/workflows/no-chat-quotes.yml)との重なり: 話者と日時を
+#   付けた引用は両方が捕まえる。どちらも残す — no-chat-quotes は入る前に止め、commit の文も読む(この段は木しか読まない)。この段は hook を
+#   通らずに入った物と、日時の無い出所の行・種類 2・種類 4 を main の木の全体で捕まえる。
+# ⇒ 費用: 標準の library だけで追跡する file を読む(実測 約 3 秒)。make sync は要らない。後ろを止めない。
+# ⇒ 形の検: tests/misc/test_find_internal_leftovers.py。戻すには leftovers の行を消す。
 full = [
 # 2026-10-22: lint と vscode を build の直後へ移した。10-21 の日次で root 2323 秒・packages 5281 秒が
 # 全体の上限 full_timeout_s を使い切り、最後に置いた lint が 240 秒で切られて未実行(budget-exhausted)になり、直した lint が緑になるかを測れなかった。
@@ -136,6 +146,7 @@ full = [
   { name = "build", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync", blocks_rest = true, pytest = false },
   { name = "lint", run = "sh scripts/gate_tools.sh linter && uv run --no-project python scripts/hook_finding_baseline.py --strict check doeff-linter && uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py --strict check semgrep", pytest = false },
   { name = "vscode", run = "cd ide-plugins/vscode/doeff-runner && npm ci --no-audit --no-fund && npm run compile && npm run lint", pytest = false },
+  { name = "leftovers", run = "uv run --no-project python scripts/find_internal_leftovers.py --fail-on 1,2,4", pytest = false },
   { name = "root", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 uv run --no-sync pytest -q -m 'not e2e' --durations=0 --durations-min=10", pytest = true },
   { name = "packages", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && gate_path=$(sh scripts/gate_tools.sh path) && PATH=$gate_path$PATH UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-packages PACKAGE_UV_RUN='uv run --no-sync' PACKAGE_JOBS=4", pytest = true },
   { name = "hy-floor", run = "UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} make sync && UV_CACHE_DIR=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv-lanes/land-doeff} PYTHONUNBUFFERED=1 make test-hy-floor PACKAGE_UV_RUN='uv run --no-sync'", pytest = true },

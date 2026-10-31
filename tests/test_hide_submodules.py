@@ -1144,8 +1144,8 @@ def test_hy_m_on_an_old_path_runs_the_moved_hy_module_while_the_bytecode_guard_c
 
     殻の -m の道が runpy.run_module を入れ子に呼んでいた時、外の run が file の無い __main__ を sys.modules に置いたまま中の
     run が移した Hy の module を compile し、inspect.getmodule が TypeError を出した(本番の moneta-ledger と moneta-view が、
-    古い worker の送る子の入口 ``hy -m doeff_cluster.worker.entry.job_entry`` で起動のたびに落ちた — 2026-10-31・agora card
-    ki-eb15f6bdadfa)。__main__ が走る間に compile する late は、__main__ の __file__ が None の時に同じ形で落ちる。
+    古い worker の送る子の入口 ``hy -m doeff_cluster.worker.entry.job_entry`` で起動のたびに落ちた — 2026-10-31)。
+    __main__ が走る間に compile する late は、__main__ の __file__ が None の時に同じ形で落ちる。
     """
     src = tmp_path / "src" / "fixmoved"
     _write_repo(

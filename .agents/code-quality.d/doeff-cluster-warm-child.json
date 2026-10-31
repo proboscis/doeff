@@ -30,7 +30,7 @@
         "packages/doeff-cluster/src/doeff_cluster/_worker/entry/warm_child.py",
         "packages/doeff-cluster/src/doeff_cluster/_worker/entry/warm_watch.py"
       ],
-      "responsibility": "待ちの子(#3646): 実行環境の root ごとに 1 つ、入口と前もって読む module の読み込みだけを済ませて unix socket で待ち、頼みが来たら fork した子で shim と同じ見張りをして、読み込み済みの入口を同じ process の中で走らせる常駐の process の入口。分かれた子は入口を fork した後、読み込んだ module を持たない見張り(warm_watch — shim と同じ見張り)へ exec し、heap の写しを手放す(card ki-97e47900b302)。",
+      "responsibility": "待ちの子(#3646): 実行環境の root ごとに 1 つ、入口と前もって読む module の読み込みだけを済ませて unix socket で待ち、頼みが来たら fork した子で shim と同じ見張りをして、読み込み済みの入口を同じ process の中で走らせる常駐の process の入口。分かれた子は入口を fork した後、読み込んだ module を持たない見張り(warm_watch — shim と同じ見張り)へ exec し、heap の写しを手放す。",
       "typed": true
     }
   ]
