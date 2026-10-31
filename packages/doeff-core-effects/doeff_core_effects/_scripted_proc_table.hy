@@ -8,10 +8,10 @@
 ;;; 表は session の値(この run の中だけ — 外側に state の handler が要る)。本物との契約は tests/test_proc_table_contract.hy。
 (require doeff-hy.macros [defhandler <- val var])
 (val MODULE-TAGS {:context "process" :role "foundation"})
-(import doeff_core_effects._proc_table_effects [ReadProcTable SignalPid])
+(import doeff_core_effects._proc_table_effects [ProcRow ReadProcTable SignalPid])
 
 
-(defhandler scripted-proc-table-handler [#^ tuple rows]
+(defhandler scripted-proc-table-handler [#^ (get tuple #(ProcRow ...)) rows]
   "ReadProcTable と SignalPid に、台本の表 rows(ProcRow の列)で答える(頭の註)。"
   ;; 引数に残す理由: 表は検と模擬ごとに決める台本の値で、Ask で読む設定ではない。
   (session var table (tuple (sorted rows :key (fn [row] row.pid))))

@@ -59,6 +59,7 @@ from doeff_core_effects._http_server_effects import closing_of as closing_of
 from doeff_core_effects._http_server_effects import HttpProbe as HttpProbe
 from doeff_core_effects._http_server_effects import probe_for as probe_for
 from doeff_core_effects._http_server_effects import probe_answer as probe_answer
+from doeff_core_effects._http_server_effects import WsShortcut as WsShortcut
 from doeff_core_effects._http_server_effects import WsShortcutAnswered as WsShortcutAnswered
 from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortcutFailed
 from doeff_core_effects._http_server_effects import ws_shortcut_for as ws_shortcut_for
@@ -181,7 +182,7 @@ class WebEdge:
     def across(self, coroutine: Coroutine[object, object, Carried]) -> Carried:
         ...
 
-    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple, share_port: bool, ws_shortcuts: tuple) -> HttpAddress:
+    def start(self, address: HttpAddress, ws_max_bytes: int, ws_send_max_bytes: int, probes: tuple[HttpProbe, ...], share_port: bool, ws_shortcuts: tuple[WsShortcut, ...]) -> HttpAddress:
         ...
 
     def take_arrival(self) -> HttpEvent | None:
@@ -265,7 +266,7 @@ class WebEdge:
     def drain_body(self, ticket: str, request: web.Request, max_bytes: int) -> HttpBodyOutcome:
         ...
 
-    def respond(self, request: web.Request, status: int, headers: tuple, body: HttpBodyBytes | HttpBodyFileRange | HttpNoBody, cut_off: bool) -> web.StreamResponse:
+    def respond(self, request: web.Request, status: int, headers: tuple[HttpHeader, ...], body: HttpBodyBytes | HttpBodyFileRange | HttpNoBody, cut_off: bool) -> web.StreamResponse:
         ...
 
     def relay_http(self, request: web.Request, url: str, unclaimed: HttpBodyOutcome | None) -> web.StreamResponse:

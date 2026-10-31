@@ -19,6 +19,8 @@ from doeff_core_effects._sql_effects import SqlFailed as SqlFailed
 from doeff_core_effects._sql_effects import SqlUnreachable as SqlUnreachable
 from doeff_core_effects._sql_effects import SqlSchemaApplied as SqlSchemaApplied
 from doeff_core_effects._sql_effects import SqlColumnType as SqlColumnType
+from doeff_core_effects._sql_effects import SqlParam as SqlParam
+from doeff_core_effects._sql_effects import SqlTable as SqlTable
 from doeff_core_effects._sql_effects import SqlText as SqlText
 from doeff_core_effects._sql_effects import SqlPlaceholder as SqlPlaceholder
 from doeff_core_effects._sql_effects import split_statement as split_statement
@@ -149,7 +151,7 @@ def clickhouse_deadline_pairs(waits: ClickHouseWaits, query_id: str) -> _Program
 def new_query_id() -> _Program[str, object]:
     ...
 
-def clickhouse_query_request(database: ClickHouseDatabase, statement: str, params: tuple) -> _Program[ClickHouseRequest, object]:
+def clickhouse_query_request(database: ClickHouseDatabase, statement: str, params: tuple[SqlParam, ...]) -> _Program[ClickHouseRequest, object]:
     ...
 
 def clickhouse_insert_request(database: ClickHouseDatabase, table: str, columns: tuple, rows: tuple) -> _Program[ClickHouseRequest, object]:
@@ -167,7 +169,7 @@ def clickhouse_written_rows(summary: str | None) -> _Program[int | None, object]
 def clickhouse_failure(response: ClickHouseResponse) -> _Program[SqlFailed | SqlUnreachable, object]:
     ...
 
-def clickhouse_schema_statements(tables: tuple) -> _Program[tuple | SqlFailed, object]:
+def clickhouse_schema_statements(tables: tuple[SqlTable, ...]) -> _Program[tuple[str, ...] | SqlFailed, object]:
     ...
 
 def _clickhouse_transaction_refusal(database: str) -> _Program[SqlFailed, object]:
@@ -230,5 +232,5 @@ def clickhouse_ensure_tables(database: ClickHouseDatabase, tables: tuple) -> _Pr
 def off_scheduler(program: Program) -> _Program[SqlRows | SqlFailed | SqlUnreachable | SqlSchemaApplied, object]:
     ...
 
-def clickhouse_http_sql_handler(databases: tuple) -> _Handler:
+def clickhouse_http_sql_handler(databases: tuple[ClickHouseDatabase, ...]) -> _Handler:
     ...

@@ -39,7 +39,7 @@
 (import functools [partial])
 (import concurrent.futures [Future])
 (import doeff [Program Transfer TransferThrow with-handlers])
-(import doeff.program [handler :as raw-handler])
+(import doeff.program [ProgramHandler handler :as raw-handler])
 (import doeff [PyVM])
 (import collections.abc [Callable])
 (import doeff_core_effects._scheduler [CreateExternalPromise ExternalPromise Wait TaskCancelledError])
@@ -196,8 +196,8 @@
 ;; program を撃った task の scheduler の thread の外で回す handler(頭の註): (run-apart program) は、program を別の thread の新しい VM で
 ;; 回し、program が出す effect を当てた所の handler で答えて、program の答えを返す program。program の例外はそのまま上げる。外側に
 ;; scheduled が要る(CreateExternalPromise と Wait)。設定も呼びごとの状態も持たないので、工場でなく印の付いた handler の値
-;; (ADR-DOE-API-001 R3・R16・ADR-DOE-API-002 R1 — maybe・result と同じ)。
-(setv run-apart (_ApartHandler _apart))
+;; (ADR-DOE-API-001 R3・R16・ADR-DOE-API-002 R1 — maybe・result と同じ)。型は writer・try-handler と同じ ProgramHandler(答えの型を保つ)。
+(setv #^ ProgramHandler run-apart (_ApartHandler _apart))
 
 ;; 何にも答えず(__doeff_handles__ = ())、program の effect を当てた所で出し直し、その周りで通い路の待ち(CreateExternalPromise・Wait)を
 ;; 出す、という宣言(doeff-effect-analyzer の body wrapper の読み — doeff_records の records-signal-handler と同じ)。

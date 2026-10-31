@@ -162,7 +162,7 @@
    (頭の註)。書き換えるのは答え手の手順だけなので値の型ではない。topics = channel → 合図が関わる名(同じ channel の合図を重ねた和・
    None = 名の分からない合図 = 全部 — dict は channel を鍵に引く覚えの索引で、外へ出さない)/ sent = 合図が届く所まで流した(transaction
    なら COMMIT を流した・流そうとした — 鳴らすかの印)。"
-  (setv #^ dict topics (field :default-factory dict))
+  (setv #^ (get dict #(str (| (get frozenset str) None))) topics (field :default-factory dict))
   (setv #^ bool sent False))
 
 (defrecord PostgresTallies
@@ -181,7 +181,7 @@
    (pooled-postgres-sql-handler が scheduler の許可の数として読む)・timeouts = 開く接続に付ける上限・origin = この貸し出しが出す合図の
    印(合図を流した後に同じ process の呼び鈴を鳴らすのはこの貸し出しなので、待ち受けはこの印の通知を鳴らさない — 頭の註)。"
 
-  (defn __init__ [self #^ tuple databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: 資源の class の初期化
+  (defn __init__ [self #^ (get tuple #(PostgresDatabase ...)) databases * [size DEFAULT-POOL-SIZE] [timeouts DEFAULT-TIMEOUTS]]  ; defk にできない: 資源の class の初期化
     "database の宣言の列と、database ごとに同時に貸す接続の上限と、接続の上限を受けるため。transaction の往復は pipeline mode で送る
      (頭の註)ので、psycopg と libpq が pipeline mode を持たなければ、ここ(組み立ての側が起動の時に作る所)で名を挙げて落ちる。"
     (import psycopg)
@@ -332,7 +332,7 @@
           self.settled (threading.Event))
     (.start (threading.Thread :target self.listen :name "doeff-postgres-listen" :daemon True)))
 
-  (defn #^ None ring [self #^ (| frozenset None) topics]  ; defk にできない: 待ち受けの thread と接続を返した後の答え手が呼ぶ(VM の外)
+  (defn #^ None ring [self #^ (| (get frozenset str) None) topics]  ; defk にできない: 待ち受けの thread と接続を返した後の答え手が呼ぶ(VM の外)
     "名 topics の合図に関わる呼び鈴を鳴らして外すため(頭の註 — topics が None = 名の分からない合図なら全部・待つ名が None の呼び鈴は
      どの合図でも・他は名が重なる呼び鈴だけ。鳴った呼び鈴は True で完了する — WaitWithin の時間切れの None と見分ける)。"
     (with [_ self.lock]
@@ -344,7 +344,7 @@
     (for [bell bells]
       (.complete bell True)))
 
-  (defn #^ (| str None) hang [self #^ ExternalPromise bell #^ (| frozenset None) topics]  ; defk にできない: driver の thread で回す(最初の接続を待つ)
+  (defn #^ (| str None) hang [self #^ (get ExternalPromise (| bool None)) bell #^ (| (get frozenset str) None) topics]  ; defk にできない: driver の thread で回す(最初の接続を待つ)
     "1 度でも LISTEN が張れていれば、名 topics(None = 全部の合図)を待つ呼び鈴を掛けて None を、1 度も張れていなければ理由の文を返すため
      (最初の接続を試し終えるまで待つ)。繋ぎ直しの最中に掛けた呼び鈴は、繋ぎ直した時に鳴る(その間の通知は届かないので、待ち手は鳴った後に
      読み直す)。"
@@ -354,7 +354,7 @@
           (do (setv (get self.bells bell) topics) None)
           (or self.failure "LISTEN が張れていない"))))
 
-  (defn #^ None drop [self #^ ExternalPromise bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
+  (defn #^ None drop [self #^ (get ExternalPromise (| bool None)) bell]  ; defk にできない: 答え手の節と取り消しの後始末が呼ぶ(VM の外の錠)
     "鳴らなかった呼び鈴を外し、その外の promise を終わらせるため(もう外れていれば外す所は何もしない)。待ち手はもう居ない(待ちを終えた
      後か、掛けるのを取り消した時に呼ぶ)ので、None で完了しても誰も起きない — 終わらせないと scheduler の promise の行が pending の
      まま残り、終わった物だけを消す掃除の外になる(#3508・#3494)。鳴って完了済みの呼び鈴への 2 度目の完了は scheduler が

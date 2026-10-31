@@ -94,12 +94,12 @@ def scripted_body_outcome(declared: int | None, body: ScriptedBody | None, max_b
 @dataclass(frozen=True, kw_only=True)
 class ScriptSend:
     served: tuple[object, ...]
-    opened: frozenset
-    backlog: dict
+    opened: frozenset[str]
+    backlog: dict[str, int]
     tally: WsSendReport
     pending: tuple[object, ...]
 
-def script_sent(ticket: str, text: str, limit: int, stalled: frozenset, served: tuple, opened: frozenset, backlog: dict, tally: WsSendReport, pending: tuple) -> _Program[ScriptSend, object]:
+def script_sent(ticket: str, text: str, limit: int, stalled: frozenset[str], served: tuple[object, ...], opened: frozenset[str], backlog: dict[str, int], tally: WsSendReport, pending: tuple[object, ...]) -> _Program[ScriptSend, object]:
     ...
 
 def bodies_by_ticket(bodies: tuple[ScriptedBody, ...]) -> _Program[dict[str, ScriptedBody], object]:
