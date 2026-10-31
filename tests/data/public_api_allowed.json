@@ -13409,6 +13409,13 @@
   {
    "package": "doeff-run",
    "module": "doeff_run",
+   "name": "DockerRunHost",
+   "組": "許した物 — handler の設定の型",
+   "決め": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-run",
+   "module": "doeff_run",
    "name": "FakeBehavior",
    "組": "許した物 — handler の設定の型",
    "決め": "ADR-DOE-API-001 R2"
