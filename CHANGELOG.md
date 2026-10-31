@@ -18,6 +18,13 @@
   of polling. A process has no file system of its own and no way to cap a child, so volumes and resource limits are
   refused as `UNSUPPORTED` rather than ignored. The contract test runs under it with no switch; the memory-limit scenario
   splits in two: handlers that keep a limit end the run as `OUT_OF_MEMORY`, handlers that cannot keep it refuse it.
+- **doeff-run:** two volume effects. `VolumeEnsure(name)` creates a named volume if it is absent and leaves it as it is
+  if present, answering `VolumeCreated`, `VolumeExisted` or `VolumeRefused` (with a reason); only one of several
+  concurrent creators of the same name is told `VolumeCreated`. `VolumeStatus(name)` asks whether a volume exists
+  (`VolumePresent`, `VolumeAbsent`) and never creates one. A name that is not a docker named-volume name is refused as
+  `UNSUPPORTED` before the backend is called, and a handler without volumes (the process handler) refuses both effects
+  as `UNSUPPORTED`. There is no effect that deletes a volume. The fake handler now keeps the set of volumes, so a
+  `RunStart` that points at a volume that was never made stops as `NEVER_BEGAN`, as it does under docker.
 - doeff-vm builds musllinux wheels (x86_64 and aarch64, CPython 3.11–3.15 and 3.14t/3.15t), so the next release
   installs on Alpine Linux without a Rust toolchain. A daily workflow builds the musllinux and the manylinux aarch64
   wheels and runs `python -m doeff demo` from each in a fresh venv of an Alpine or arm64 container.

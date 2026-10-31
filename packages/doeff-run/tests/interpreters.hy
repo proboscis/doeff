@@ -11,10 +11,10 @@
 ;;;           筋書きは OOM の筋書きでなく「断る」筋書きを通す(test_contract.hy)。検の終わりに host の走っている子を全部止める。
 ;;;
 ;;; volume の筋書き(test_volume_contract.hy)が使う横の口は Settings.volumes-now(backend の volume の名を直に読む)と
-;; Settings.vanish-volume(backend から直に消す — DoeffRun に volume を消す効果は無い)。fake は世界の volumes、docker は docker の CLI
-;; (host の label で絞る・検の終わりに消す)、process は volume を持たない。
-;;
-;; k3s の handler を足す card(Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
+;;; Settings.vanish-volume(backend から直に消す — DoeffRun に volume を消す効果は無い)。fake は世界の volumes、docker は docker の CLI
+;;; (host の label で絞る・検の終わりに消す)、process は volume を持たない。
+;;;
+;;; k3s の handler を足す card(Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
 ;;; test_contract.hy の各 deftest の :interpreters に名を足す。筋書きと workloads.hy の約束は変えない — 同じ契約を通す事が目的。
 ;;;
 ;;; 筋書きは ScenarioSettings の effect で自分の宣言(負荷の image・時間の許容)を読む。
