@@ -311,6 +311,38 @@ def test_a_running_job_outlives_the_warm_child(place: Path, start_warm_child: St
         stopped(warm)
 
 
+def anonymous_kib(pid: int) -> int:
+    """pid の process の無名の memory(/proc/<pid>/smaps_rollup の Anonymous — fork で分け合う heap の頁を含む)の KiB。"""
+    with open(f"/proc/{pid}/smaps_rollup", encoding="ascii") as handle:
+        rows = dict(line.split(":", 1) for line in handle if line.startswith("Anonymous:"))
+    return int(rows["Anonymous"].split()[0])
+
+
+@pytest.mark.skipif(not LINUX, reason="/proc の命令行と smaps_rollup で見る — Linux の worker")
+def test_the_forked_watcher_lets_go_of_the_loaded_heap_while_the_job_runs(place: Path, start_warm_child: StartWarmChild) -> None:
+    """分かれた子 A は入口 B を起こした後、読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec し、job が走る間、待ちの子の
+    heap の写しを持たない(card ki-97e47900b302 — fork のままの A は job の終わりまで写しを持ち、daily-verify の A で PSS 270 MB・
+    Private_Dirty 80 MB)。前の形では A の命令行が待ちの子のままで、無名の memory が待ちの子と同じ大きさで赤。"""
+    warm = started(place, start_warm_child)
+    try:
+        readied(warm)
+        gate = gate_opened(place, "g")
+        held = forked_job(warm, "held", ["inspect", str(place / "facts.json"), str(place / "g")])
+        connection = reached(gate)
+        with open(f"/proc/{held.pid}/cmdline", "rb") as handle:
+            cmdline = handle.read()
+        watcher, loaded = anonymous_kib(held.pid), anonymous_kib(warm.process.pid)
+        connection.close()
+        gate.close()
+        ended(held)
+        assert b"doeff_cluster._worker.entry.warm_watch" in cmdline, cmdline
+        assert watcher * 2 < loaded, (watcher, loaded)
+        assert (place / "held.exit").read_text() == "0"
+        assert STAMP.match((place / "held.log").read_bytes()), (place / "held.log").read_bytes()
+    finally:
+        stopped(warm)
+
+
 def test_a_request_out_of_the_contract_is_refused_by_the_field_names(place: Path, start_warm_child: StartWarmChild) -> None:
     """約束の形でない頼み(知らない欄・欄の欠け)は、合わない欄の場所だけを名乗って断り、子を分けない。"""
     warm = started(place, start_warm_child)

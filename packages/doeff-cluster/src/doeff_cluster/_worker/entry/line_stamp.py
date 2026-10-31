@@ -796,6 +796,14 @@ def stamped_lines(plan: JobLogPlan) -> StampedLines:
     """この process の stdout と stderr(同じ log の file)を 1 本の pipe の書き口へ差し替え、その pipe を読んで刻を付ける書き手を作るため
     (thread は begin で起こす)。plan = 行を OTLP でも送るかの決め(job_log_plan の答え — 頭の註の「送り」)。stdout と stderr が別の
     file なら断る。"""
+    ends = stamp_ends()
+    return StampedLines(ends, shipping_of(plan))
+
+
+def stamp_ends() -> WriterEnds:
+    """この process の stdout と stderr(同じ log の file)を 1 本の pipe の書き口へ差し替え、書き手の fd を返すため(送り手はまだ作らない —
+    待ちの子から分かれた子 A は、入口を起こした後に exec した見張り worker/entry/warm_watch の中で、同じ fd から書き手を作る)。stdout と
+    stderr が別の file なら断る。"""
     if not same_file(1, 2):
         raise ValueError("刻を付ける log は stdout と stderr が同じ file の時だけ(job の log の形)")
     sys.stdout.flush()
@@ -806,8 +814,7 @@ def stamped_lines(plan: JobLogPlan) -> StampedLines:
     os.dup2(sink, 1)
     os.dup2(sink, 2)
     os.close(sink)
-    shipping = shipping_of(plan)
-    return StampedLines(WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write), shipping)
+    return WriterEnds(source=source, target=target, stop_read=stop_read, stop_write=stop_write)
 
 
 @dataclass(frozen=True)

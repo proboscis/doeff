@@ -4,8 +4,11 @@
 worker は root が READY になったら、この入口を root の venv で起こす(今の task の子と同じ `uv run --no-sync --frozen --project <root> …`)。
 待ちの子は、入口(job_entry)と --preload に名指された module(実行環境の宣言の bytecodeEntries — 速さの手がかり)を読み込み、
 socket を開いて準備完了の印を書き、頼みを待つ。頼み 1 つ = task の子 1 本:
-  待ちの子 ── fork ──▶ A(setsid で group の先頭・子孫の引き取り手・log へ dup2・env と cwd を整え、shim と同じ見張り shim_code)
-                          └ fork ──▶ B(読み込み済みの入口の main を同じ process の中で走らせる)
+  待ちの子 ── fork ──▶ A(setsid で group の先頭・子孫の引き取り手・log へ dup2・env と cwd を整える)
+                          ├ fork ──▶ B(読み込み済みの入口の main を同じ process の中で走らせる)
+                          └ exec ──▶ 見張り(worker/entry/warm_watch — shim と同じ見張り shim_code。読み込んだ module と heap の写しを
+                                     手放す — card ki-97e47900b302: fork のままの A は写しを job の終わりまで持ち、待ちの子が消えた後や
+                                     B が heap を書き替えた後の頁を A だけが持った)
   A の log は task の log なので、shim の --stamp-lines と同じ部品(worker/entry/line_stamp)で 1 行ごとに壁の時計の刻を付ける(#3714)。
   B は書き手の fd を閉じてから入口を走らせる。待ちの子自身の log(warm-<root のキー>.<世代の印>.log — warm_host の warm-log-path)には付けない — 待ちの子は fork のために
   thread を 1 本に保つので、書き手の thread を置けない。
@@ -72,8 +75,9 @@ from doeff_core_effects import WarmForked, WarmRefused
 from doeff_hy._wire import Malformed
 
 from doeff_cluster._foundation.child_environ import replace_environ
-from doeff_cluster._worker.entry.line_stamp import job_log_plan, stamped_lines
-from doeff_cluster._worker.entry.shim import NoticeRelay, become_subreaper, exit_status, notice_variable, open_relay, shim_code
+from doeff_cluster._worker.entry.line_stamp import stamp_ends
+from doeff_cluster._worker.entry.shim import NoticeRelay, become_subreaper, notice_variable, open_relay
+from doeff_cluster._worker.entry.warm_watch import WatchPlan, descriptors_of, watch_argv, watched, write_replacing
 
 # 層 entry の文脈と役の名乗り(DOEFF104)— 隣の shim.py と同じ。
 MODULE_TAGS = {"context": "worker", "role": "main"}
@@ -146,14 +150,6 @@ def start_ticks(pid: int) -> int:
     return seen.start_ticks
 
 
-def write_replacing(path: str, text: str) -> None:
-    """別名に書いてから置き換える(書きかけを読ませない)。"""
-    temporary = f"{path}.tmp-{os.getpid()}"
-    with open(temporary, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    os.replace(temporary, path)
-
-
 def run_entry(entry: str, args: tuple[str, ...]) -> NoReturn:
     """B の本体: A(shim の見張り)が据えた signal の設定を既定へ戻してから TERM の block を解き、stdin を閉じ、読み込み済みの入口の
     main を同じ process の中で走らせて、その終了コードで終わる(入口の main は argv を読む — 命令の頭は入口の名)。"""
@@ -179,7 +175,7 @@ def run_entry(entry: str, args: tuple[str, ...]) -> NoReturn:
 
 
 class EntrySpawner:
-    """読み込み済みの入口を fork で起こす部品(shim_code の spawn)。呼ぶと B の pid を返す。"""
+    """読み込み済みの入口を fork で起こす部品(A が見張りへ exec する前に呼ぶ)。呼ぶと B の pid を返す。"""
 
     def __init__(
         self, entry: str, args: tuple[str, ...], closing: tuple[int, ...], handed: tuple[int, ...] = ()
@@ -192,9 +188,9 @@ class EntrySpawner:
         self.handed = handed
 
     def __call__(self) -> int:
-        """TERM を block してから B を fork して pid を返すため(B は戻らない)。A は fork の後に元の mask へ戻し、block の間に届いた
-        TERM は、その時に A の止めの期限として受ける。B は書き手の fd を閉じてから入口を走らせる(B が pipe の読み口を持つと、A が
-        先に落ちた時に B の書きが EPIPE にならず詰まる)。"""
+        """TERM を block してから B を fork して pid を返すため(B は戻らない)。A は fork の後に元の mask へ戻す(A は呼ぶ前から TERM を
+        block している — 解くのは exec した見張りが TERM の扱いを据えた後: worker/entry/warm_watch の Adopted)。B は書き手の fd を閉じてから
+        入口を走らせる(B が pipe の読み口を持つと、A が先に落ちた時に B の書きが EPIPE にならず詰まる)。"""
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
         pid = os.fork()
         if pid == 0:
@@ -221,8 +217,9 @@ def placed_in(procs: str) -> bool:
 def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, given: int | None) -> NoReturn:
     """A の本体: 待ちの子の socket と起こしの fd を閉じ、別の session の先頭になり、頼みの cgroup が在ればそこへ移ってから待ちの子へ
     知らせ(led へ 1 byte — 移れなければ断りの byte を送り、入口を起こさずに終わる)、入力の pipe(given — service の頼み)を標準入力にし、
-    log(1 行ごとに刻を付ける書き手を通す)・知らせの中継・env・cwd を整えてから、shim と同じ見張りで B を起こして待つ。job の終了コードを
-    exit の file に書いてから、shim と同じ値で終わる(exit の file を書く時には、書き手が log を書き終えている)。"""
+    log(1 行ごとに刻を付ける書き手の pipe)・知らせの pipe・env・cwd・子孫の引き取りを整えてから、TERM を block して B を fork し、
+    読み込んだ module を持たない見張り(worker/entry/warm_watch)へ exec する(card ki-97e47900b302 — 見張りは job の終了コードを exit の
+    file に書いてから、shim と同じ値で終わる)。exec に失敗したら、同じ見張りをこの process で走らせる。"""
     for descriptor in closing:
         with contextlib.suppress(OSError):
             os.close(descriptor)
@@ -241,27 +238,42 @@ def run_forked(request: WarmRequestWire, closing: tuple[int, ...], led: int, giv
     os.dup2(log, 1)
     os.dup2(log, 2)
     os.close(log)
-    # job の log の行を OTLP でも送るかは、頼みの env(worker が置いた送り先と job の文脈)で決める — この process の環境はまだ待ちの子の物。
-    lines = stamped_lines(job_log_plan({item.name: item.value for item in request.env}))
+    ends = stamp_ends()
     # 退きの知らせ(#3672): service の頼みは入力の行を job の知らせの pipe へ中継する(入れ物 shim の --notice-env と同じ部品と印)。
     # 分かれた task は入れ替えの対象でないので中継しない。
     relay: NoticeRelay | None = None if request.notice_env is None else open_relay(request.notice_env)
     notice = () if relay is None else (notice_variable(relay),)
     # 環境の置き換えは foundation の 1 か所(生の環境変数に触ってよい層)— B は fork で A の環境を継ぎ、入口が自分の文脈を環境から読む。
+    # 見張りは exec の環境として継ぎ、job の log の行を OTLP でも送るかを頼みの env(worker が置いた送り先と job の文脈)で決める。
     run(replace_environ((*((item.name, item.value) for item in request.env), *((n.name, n.value) for n in notice))))
     os.chdir(request.cwd)
+    # 子孫の引き取りは B を起こす前に据える(exec の窓に B が残した孫も A が引き取る — 設定は exec を越えて残り、見張りが据え直す)。
+    become_subreaper()
     spawner = EntrySpawner(
         request.entry,
         tuple(request.args),
-        (*lines.writer_descriptors, *(() if relay is None else (relay.write_fd,))),
+        (ends.source, ends.target, ends.stop_read, ends.stop_write, *(() if relay is None else (relay.write_fd,))),
         () if relay is None else (relay.read_fd,),
     )
-    code = shim_code(
-        request.grace_seconds, spawner, lines, become_subreaper, relay=relay, orphan_seconds=request.orphan_seconds
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    plan = WatchPlan(
+        job=spawner(),
+        grace_seconds=request.grace_seconds,
+        exit_path=request.exit_path,
+        ends=ends,
+        relay=relay,
+        orphan_seconds=request.orphan_seconds,
     )
-    write_replacing(request.exit_path, str(code))
+    for descriptor in descriptors_of(plan):
+        os.set_inheritable(descriptor, True)
+    argv = watch_argv(plan)
+    sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(exit_status(code))
+    try:
+        os.execv(argv[0], argv)
+    except OSError as error:
+        print(f"warm_child: 見張りへ exec できない — 読み込んだ module を持ったまま見張る: {error}", file=sys.stderr, flush=True)
+    watched(plan)
 
 
 def forked(request: WarmRequestWire, closing: tuple[int, ...], given: int | None) -> WarmForked | WarmRefused:
