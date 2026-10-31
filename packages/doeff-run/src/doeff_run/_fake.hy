@@ -73,7 +73,7 @@
   "fake の世界。behavior-of = RunSpec → FakeBehavior の同期の関数(走らせ始める時に 1 度引く)・capacity = 同時に受け付けて止まっていない
    (起きていない・走っている)run の数の上限(None = 上限なし — 越える頼みは RunRefused(NO-CAPACITY))・unsupported = RunSpec → この
    世界が守れない訳の文か None の関数(None = 全部守れる — 文を返すと RunRefused(UNSUPPORTED))。"
-  (defn __init__ [self * #^ Callable behavior-of #^ (| int None) [capacity None] #^ (| Callable None) [unsupported None]]
+  (defn __init__ [self * #^ (get Callable #([RunSpec] FakeBehavior)) behavior-of #^ (| int None) [capacity None] #^ (| (get Callable #([RunSpec] (| str None))) None) [unsupported None]]
     (when (not (callable behavior-of))
       (raise (ValueError (.format "FakeRunWorld.behavior_of は RunSpec → FakeBehavior の関数: {!r}" behavior-of))))
     ;; 数の型は注記が持つ。bool は int の子なので名指しで断り、値の範囲を断る。

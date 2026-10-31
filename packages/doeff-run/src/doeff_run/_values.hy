@@ -71,7 +71,7 @@
 (defclass [(dataclass :frozen True :kw-only True)] RunSpec []
   "image を走らせる設定: image = 走らせる image の参照 / command = 命令の引数の並び(空 = image の既定の命令)/ env = 環境変数
    (凍らせた写像 — 作る時に写し取る。資格を運びうるので repr に出さず、断りの文にも値を写さない)/ volumes = 置く volume の並び
-   (target は重ならない)/ limits = 資源の上限。agora などの上の層の語は持たない。"
+   (target は重ならない)/ limits = 資源の上限。呼び手の業務の語は持たない。"
   (#^ str image)
   (setv #^ (get tuple #(str ...)) command #())
   ;; env は資格を運びうるので repr に出さない(例外・log に値が写らない)。
