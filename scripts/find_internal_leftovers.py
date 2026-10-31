@@ -8,7 +8,8 @@
 doeff is public, but its tree still carries records written for private tooling: tracker ids,
 names of private services and machines, provenance lines, raw verification logs. This script finds
 them file by file and line by line so that the work that deletes or rewrites them starts from one
-list. It only reads: it changes no file, and its exit status is 0 whatever it finds.
+list. It only reads: it changes no file, and its exit status is 0 whatever it finds unless
+``--fail-on`` names kinds to check (below).
 
 The six kinds:
 
@@ -33,12 +34,18 @@ addresses, measurement logs a README relies on) are marked as kept and left out 
 Usage::
 
     uv run --script scripts/find_internal_leftovers.py [ROOT] [--table FILE] [--format tsv|md]
-        [--top N] [--jobs N]
+        [--top N] [--jobs N] [--fail-on KINDS]
 
 The summary (counts per kind, per sub-kind, per area and per directory) is written to stdout as
 markdown. ``--table FILE`` writes every hit (kind, sub-kind, file, line, matched part, kept) to
 FILE, or to stdout with ``-``. Files are the tracked files of ROOT when ROOT is a git work tree,
 and every file under ROOT otherwise; they are read in ``--jobs`` processes. Standard library only.
+
+``--fail-on KINDS`` (comma-separated kind keys, for example ``1,2,4``) turns the run into a check:
+every hit of those kinds that ``KEEP`` does not keep is written to stderr, and the exit status is 1
+when there is one. The daily verification of main runs ``--fail-on 1,2,4`` as its ``leftovers``
+stage (``.agents/land-queue.toml``), so that a quote, a tracker id or a personal path that comes
+back into the tree turns that run red.
 """
 
 from __future__ import annotations
@@ -67,6 +74,7 @@ SHAPE_DEFINITIONS = frozenset(
         SELF,
         "scripts/check_no_operator_quotes.py",
         "tests/misc/test_check_no_operator_quotes.py",
+        "tests/misc/test_find_internal_leftovers.py",
     }
 )
 # Directories never walked (only matters when ROOT is not a git work tree, or one is tracked).
@@ -899,6 +907,32 @@ def table(hits: list[Hit], fmt: str) -> str:
     )
 
 
+def kind_keys(value: str) -> tuple[str, ...]:
+    """Parse the ``--fail-on`` value: comma-separated keys of ``KINDS``."""
+    keys = tuple(k.strip() for k in value.split(",") if k.strip())
+    unknown = sorted(set(keys) - {k.key for k in KINDS})
+    if not keys or unknown:
+        raise argparse.ArgumentTypeError(
+            f"kinds to fail on are keys among {', '.join(k.key for k in KINDS)}, not {value!r}"
+        )
+    return keys
+
+
+def failures(hits: list[Hit], keys: tuple[str, ...]) -> str:
+    """Render the hits that fail a ``--fail-on`` check, one per line."""
+    return "\n".join(
+        [
+            f"find_internal_leftovers: {len(hits)} hit(s) of kind {', '.join(keys)} not kept:",
+            *(
+                f"  {h.file}:{h.line or '-'}  kind {h.kind} ({h.sub})  {h.match}"
+                for h in sorted(hits, key=lambda h: (h.file, h.line, h.kind, h.sub))
+            ),
+            "Rewrite these lines, or add a KEEP row with the reason the hit stays.",
+            "",
+        ]
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("root", nargs="?", default=".", type=Path, help="repository root")
@@ -908,15 +942,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--jobs", type=int, default=os.cpu_count() or 1, help="processes reading files"
     )
+    parser.add_argument(
+        "--fail-on",
+        metavar="KINDS",
+        type=kind_keys,
+        default=(),
+        help="exit 1 when a hit of these kinds (comma-separated, e.g. 1,2,4) is not kept",
+    )
     args = parser.parse_args(argv)
     files, hits = scan(args.root, args.jobs)
     if args.table == "-":
         sys.stdout.write(table(hits, args.format))
-        return 0
-    if args.table:
-        Path(args.table).write_text(table(hits, args.format), encoding="utf-8")
-    sys.stdout.write(summary(args.root, files, hits, args.top))
-    return 0
+    else:
+        if args.table:
+            Path(args.table).write_text(table(hits, args.format), encoding="utf-8")
+        sys.stdout.write(summary(args.root, files, hits, args.top))
+    failing = [h for h in hits if h.kind in args.fail_on and not h.kept]
+    if failing:
+        sys.stdout.flush()
+        sys.stderr.write(failures(failing, args.fail_on))
+    return 1 if failing else 0
 
 
 if __name__ == "__main__":
