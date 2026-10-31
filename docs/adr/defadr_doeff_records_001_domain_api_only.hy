@@ -18,9 +18,13 @@
 ;; 減らす変更は、同じ変更でこの一覧から削る。
 ;; 2026-10-22: append-events(追記の束を 1 往復で積む — append-event の束ね。冪等キー・上限・断りは append-event と同じ答え)を足した。
 ;; 日次の root の failing を直す変更で、AppendEvents の追加(README の記述あり)が一覧を更新しないまま本線に入っていたのを揃える。
+;; 2026-10-31: read-batch(行の読みの束を 1 往復で読む — 束に載せてよいのは read-row と list-rows だけ)・count-rows(一覧の読みと
+;; 同じ絞りの行の数)・put-rows-append-events(行の書きの束と追記の束を全部か 0 で積む)を足した。3 つの effect(2026-10-27〜30)が
+;; 一覧を更新しないまま本線に入っていたのを、日次の root の failing を直す変更で揃える。
 (val RAW-OPERATIONS
   (frozenset #("read-row" "list-rows" "put-row" "put-rows" "watch-changes"
-               "append-event" "append-events" "read-events" "read-event-by-key" "read-stream-end" "watch-events")))
+               "append-event" "append-events" "read-events" "read-event-by-key" "read-stream-end" "watch-events"
+               "read-batch" "count-rows" "put-rows-append-events")))
 
 
 (defadr ADR-DOE-RECORDS-001

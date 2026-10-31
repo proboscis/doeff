@@ -504,8 +504,7 @@
   then `x + 1` adds "x is the program child() builds, …: x = yield child()", and `r = yield Try(child())` then
   `r + 1` says to take the value out with `match r: case Ok(value) / case Err(error)` or to yield the program
   without `Try`. The note is found from the expression that failed and the values its variables hold, and only for
-  an error that reaches `run()`; the doeff traceback prints notes after the message, as Python does
- .
+  an error that reaches `run()`; the doeff traceback prints notes after the message, as Python does.
 - `doeff-vm`: messages name its classes without the module — `'Call'`, `'Ok'`, `'Err'` instead of
   `'doeff_vm.doeff_vm.Call'` (and `'K'` instead of `'builtins.K'`). `__module__` and `__qualname__` are unchanged,
   so pickles and stored type names (cache keys, memo) read the same.
@@ -578,8 +577,8 @@
 - `doeff-traverse`: added `ItemOutcome(traverse, label, total, outcome, item)` — `sequential`, `parallel` and
   `parallel_fail_fast` report each item's outcome (`ok` / `failed` / `skipped` / `carried`) under the handlers between
   the Traverse and themselves, while one of those handlers names `ItemOutcome`; and `progress_bars(make_bar)`, which
-  counts them into one bar per Traverse (`tqdm.tqdm` fits) — the bar now reaches its total and closes when items fail
- . Consumers pass each report on (only the Traverse handler answers it), so several compose in
+  counts them into one bar per Traverse (`tqdm.tqdm` fits) — the bar now reaches its total and closes when items fail.
+  Consumers pass each report on (only the Traverse handler answers it), so several compose in
   any order; one that answers a report or throws into it fails the Traverse with `ItemOutcomeNotPassedError`.
 
 - `doeff-linter`: added the critical rule `DOEFF210` (Program Sleeps On The Wall Clock) — a Hy program (`defk` / `defp`)
@@ -619,8 +618,7 @@
 - Added docs page `docs/llm_unified_effects.md` for model-routed handler composition.
 - `doeff-claude-code`: added `ClaudeReplaceSessionCredential(session_id, credential)` — replaces the lent credential of a
   session's live Claude CLI process (answers `CredentialReplaced` | `NoSuchSession` | `SessionProcessDown` |
-  `HomeCredentialSession`). The CLI uses the new access token from its next API call, also in the middle of a turn
- .
+  `HomeCredentialSession`). The CLI uses the new access token from its next API call, also in the middle of a turn.
 - `doeff-agents`: added `ReplaceSessionCredentialEffect(handle, credential_ref)` (and `ReplaceSessionCredential`). The
   headless Claude handler redeems the reference with `RedeemTurnCredentialEffect` and replaces the live process's
   credential (answers `SessionCredentialReplaced` | `SessionProcessNotLive` | `SessionOnHomeCredential` |
@@ -665,8 +663,8 @@
   `yield Await(asyncio.sleep(1.5))`; tests that declare `realtime` are listed with a reason in
   `tests/realtime_tests.toml`.
 - `.semgrep.yaml`: `doeff-no-sleep-in-tests` now also reaches test-named files outside a `tests/` directory
-  (`test_*.py`, `*_test.py`, `conftest.py`) and catches the `threading.Event().wait(seconds)` spelling of a sleep
- . The only ways out are the two tables of `tests/realtime_tests.toml`: `[tests]` (the `realtime`
+  (`test_*.py`, `*_test.py`, `conftest.py`) and catches the `threading.Event().wait(seconds)` spelling of a sleep.
+  The only ways out are the two tables of `tests/realtime_tests.toml`: `[tests]` (the `realtime`
   marks) and `[suites]` (the directories in the rule's `paths.exclude` — today the black-box `doeff-agents`
   conformance suite). A `nosemgrep` comment on the rule now fails `tests/semgrep/test_realtime_tests_registry.py`.
 - `doeff-traverse`: a Traverse handler now stops the items it started when it stops. When `Gather`

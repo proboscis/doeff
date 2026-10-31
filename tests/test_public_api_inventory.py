@@ -203,6 +203,20 @@ def __getattr__(name):
     raise AttributeError(name)
 """
 
+#: 名を表 _LAZY_EXPORTS だけで遅れて出す入口(型の道具の読めない module — stub の無い Hy の module — の名には
+#: `if TYPE_CHECKING:` の import が無い)。
+LAZY_TABLE = """
+from importlib import import_module
+
+_LAZY_EXPORTS: dict[str, str] = {"LIMIT": "inventory_sample"}
+
+
+def __getattr__(name):
+    if name in _LAZY_EXPORTS:
+        return getattr(import_module(_LAZY_EXPORTS[name]), name)
+    raise AttributeError(name)
+"""
+
 #: 別の package の、handler を被せる関数(helper の読みは別の top-level package の関数を辿らない)。
 OTHER = """
 def install(program):
@@ -217,6 +231,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
     """SAMPLE を tmp_path の module として import する(inspect.getsource が読めるように file に置く)。"""
     (tmp_path / "inventory_sample.py").write_text(textwrap.dedent(SAMPLE), encoding="utf-8")
     (tmp_path / "inventory_lazy.py").write_text(textwrap.dedent(LAZY), encoding="utf-8")
+    (tmp_path / "inventory_lazy_table.py").write_text(textwrap.dedent(LAZY_TABLE), encoding="utf-8")
     (tmp_path / "inventory_other.py").write_text(textwrap.dedent(OTHER), encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -225,6 +240,7 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("inventory_sample", None)
         sys.modules.pop("inventory_lazy", None)
+        sys.modules.pop("inventory_lazy_table", None)
         sys.modules.pop("inventory_other", None)
 
 
@@ -420,6 +436,17 @@ def test_names_made_on_demand_are_exported(sample: ModuleType) -> None:
     lazy = importlib.import_module("inventory_lazy")
     names, read = tool._exported_names(lazy, tool._Sources(("inventory_lazy", "inventory_sample")))
     assert (names, read) == (["LazyPing"], "own")
+
+
+def test_a_value_named_only_by_the_lazy_table_is_defined_where_the_table_points(sample: ModuleType) -> None:
+    """入口が表 _LAZY_EXPORTS だけで出す値(型の import の無い名)の定義の場所は、入口の file でなく表が指す module の
+    定義の行 — 入口へ移した名を既知の表の submodule の行と同じ行と読める(tests/test_public_api_known_violations.py の
+    moved_to_root)。"""
+    lazy = importlib.import_module("inventory_lazy_table")
+    sources = tool._Sources(("inventory_lazy_table", "inventory_sample"))
+    assert lazy.LIMIT == sample.LIMIT
+    assert sources.origin("inventory_lazy_table", "LIMIT") == sources.origin("inventory_sample", "LIMIT")
+    assert sources.origin("inventory_sample", "LIMIT").module == "inventory_sample"
 
 
 def test_every_package_dir_is_listed() -> None:

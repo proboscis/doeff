@@ -924,8 +924,8 @@ def bytecode_left_by_the_run(root: Path, since: float, startup: Sequence[Path]) 
 
     The environment of the interpreter running the tests (its ``sys.prefix``, the .venv) is the
     one directory of the checkout this does not search: the installed packages are 13,000 files in
-    2,000 directories, and listing them took 9-34 s at the end of a run on a loaded machine
-   .  What a run can write there that matters is the bytecode of the modules
+    2,000 directories, and listing them took 9-34 s at the end of a run on a loaded machine.
+    What a run can write there that matters is the bytecode of the modules
     a start of the interpreter imports (the .pth files' ``import`` lines), which ``startup`` lists
     (see ``startup_bytecode``) and which is looked at file by file instead.
     """
@@ -1126,8 +1126,7 @@ def _startup_bytecode_message(written: Sequence[tuple[str, tuple[Path, ...]]]) -
 # 4-9 s per process on zeus, most of test_env_careful.hy's time (agora-redesign
 # #2818, measured 2026-10-02).  On a deployed worker those subprocesses find
 # bytecode (the runtime-env preparation compiles the code inside an env root, and
-# a job's process may write the rest), so the time existed only under test
-#.
+# a job's process may write the rest), so the time existed only under test.
 #
 # A test whose subprocesses need bytecode asks for ``subprocess_bytecode``: its
 # subprocesses then write and read bytecode in one directory of this run under

@@ -115,7 +115,7 @@
        (import pathlib [Path])
        (import re)
        (val root (/ (. (Path __file__) parent parent parent) "packages" "doeff-core-effects" "doeff_core_effects"))
-       (val io-free ["meter_effects.hy" "memory_meter.hy" "latest_effects.hy" "memory_latest.hy" "heap_effects.hy" "scripted_freeze.hy"])
+       (val io-free ["_meter_effects.hy" "_memory_meter.hy" "_latest_effects.hy" "_memory_latest.hy" "_heap_effects.hy" "_scripted_freeze.hy"])
        (val raw (re.compile r"\(import\s+(gc|threading|time)\b"))
        (val found (lfor file io-free :if (.search raw (.read-text (/ root file) :encoding "utf-8")) file))
        (assert (= found []) (.format "時計・gc・thread を import している I/O の無い module: {!r}" found)))]

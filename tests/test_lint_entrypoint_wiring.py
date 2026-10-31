@@ -181,7 +181,8 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     shutil.copyfile(ROOT / ".python-version", repository / ".python-version")
     # Python の semgrep と doeff-linter の項は、基点と比べる script を通る(#2848)— script と、偽の道具の版に合わせた空の基点を置く。
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
-    for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py"):
+    # 持ち主の chat の言葉の引用の項(no-chat-quotes)は、どの text の file にも当たる — その script も置く。
+    for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py", "check_no_operator_quotes.py"):
         shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
     # semgrep の版は uv.lock が決める(#2906)— 偽の道具の版に合わせる(行は index から入れる版 — 読み手は index の外の行で止まる)。
     (repository / "uv.lock").write_text(

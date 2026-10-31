@@ -293,8 +293,8 @@ def interpreter() -> Interpreter:
 @pytest.fixture
 def scheduler_index_self_check(monkeypatch: pytest.MonkeyPatch) -> None:
     """Turn the Python scheduler's index self-check on: a step whose waiters index
-    or ready counts drifted from the structures raises SchedulerIndexDriftError
-   . Scheduler test files use it through pytestmark."""
+    or ready counts drifted from the structures raises SchedulerIndexDriftError.
+    Scheduler test files use it through pytestmark."""
     from doeff_core_effects import _scheduler as scheduler_module
 
     monkeypatch.setattr(scheduler_module, "_INDEX_SELF_CHECK", True)

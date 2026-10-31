@@ -103,7 +103,7 @@ repos:
       # 木の全体と push した commit の文を同じ script で見る。
       - id: no-chat-quotes
         name: 持ち主の chat の言葉の日付つきの引用が無いか
-        entry: uv run --script scripts/check_no_operator_quotes.py
+        entry: uv run --no-project --python 3.12 python scripts/check_no_operator_quotes.py
         language: system
         types: [text]
         pass_filenames: true
