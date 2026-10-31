@@ -15,18 +15,19 @@ effect でも handler でもない物(それ以外・未分類)を外れとし�
 3. 表の形: 目録の package(packages/ の下の dir のうち、doeff の中の部品の外)の全部が 1 つずつ載り、範囲が決まった値で、名が
    組の中で並んで重ならない。違反の表は許した物の組を持たない(許した物は許した物の表だけに置くので、違反の表は空になれる)。
 4. 違反の表は減るだけ: 表の「名」の組の名は、この表を足した commit の版(git の履歴の最初の版)に在る名に限る。submodule
-   の行は、submodule の行を表に足した commit の版に在る物に限る。新しく足すしか無い外れは「足した名」に、訳と決め
-   (card・依頼・利用者の発言の id)を 1 行ずつ書く。
+   の行は、submodule の行を表に足した commit の版に在る物に限る。新しく足すしか無い外れは「足した名」に、訳を
+   1 行ずつ書く。
 5. 失敗ケース: 使い捨ての package を作り、effect と handler だけなら緑・外れを 1 つ足すと赤・外すと緑・直したのに表に
-   残すと赤・訳と決めつきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
+   残すと赤・訳つきで「足した名」に書くと緑・_ の無い submodule を足すと赤・名を submodule から入口へ移しても緑
    (移し替えの module を残す間も消した後も)・同じ名の違う定義を入口に足すと赤・1 行目に印 moved-submodule-shim の在る
    移し替えの module は、移した先の package の下の module も古い名で数えて緑になる事を、同じ照合で確かめる。
    印の下に名の固定の列を持つ移し替えの module は、移した先の _ の module に helper を足しても目録の行が増えず緑・列が
    無ければ赤・入口に名を足すと列が在っても赤。移し替えの module の全部が列を持つ事も確かめる。
    戻りの型で handler を返す関数(工場)と読める名が、呼ぶと印 _doeff_is_handler_fn の無い値を返すと赤・handler を返すように
    直すと緑(目録は引数なしで呼べる工場を呼んで印を確かめる — ADR-DOE-API-001 R3)。
-6. 許した物の表は決めの id つきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めが card・依頼・
-   発言の id でない行・違反の表と同じ鍵の行は赤。組は目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。組「許した物 —
+6. 許した物の表は決めつきで足せる(減るだけでない): 1 行 = (package, module, 名) と組と決め。決めは、その行を許す
+   ADR の条(ADR-DOE-API-001 R<番号>)か、条の無い行は許す訳の英語の 1 文。決めの無い行・記録の id か issue の番号を
+   含む決めの行・違反の表と同じ鍵の行は赤。組は目録で形を確かめる組(ALLOWED_GROUPS)だけを置ける。組「許した物 —
    program の helper」(ADR-DOE-API-001 R18 — 決まりが名ごとに許した、effect を出すだけの program を返す関数)に置けるのは、
    目録の形が program の helper の名だけ: handler を被せる・effect に答える・program を返さない関数を置くと赤。組「許した物 —
    Hy の macro」(R14・R15・R31 — macro を出す module は公開の境界に置く)に置けるのは、目録の形が Hy の macro の名と、Hy の
@@ -93,7 +94,7 @@ TABLE = ROOT / "tests" / "data" / "public_api_known_violations.json"
 ALLOWED = ROOT / "tests" / "data" / "public_api_allowed.json"
 #: 目録の種類のうち、決まりの外の物(effect と handler の外)。
 OUTSIDE_KINDS = frozenset({"other", "unclassified"})
-#: package の範囲。範囲の外の package は名を突き合わせない(決めの id が要る)。
+#: package の範囲。範囲の外の package は名を突き合わせない(決めが要る)。
 SCOPES = ("決まりの範囲", "範囲の答え待ち", "範囲の外")
 #: 違反の表の名の組の名の頭(分け — 直しの向きか境界の種類)。許した物は許した物の表に置く。
 GROUP_HEADS = ("外れ — ", "境界 — ", "未分け — ")
@@ -172,11 +173,14 @@ ADR_COMMANDS: dict[str, dict[str, str]] = {
 ADR_FILE = ROOT / "docs" / "adr" / "defadr_doeff_api_001_subpackages_show_effects_and_handlers.hy"
 #: 許した物の組の全部(組ごとに、目録で形を確かめる — fits_allowed_group)。
 ALLOWED_GROUPS = tuple(ALLOWED_SHAPES)
-#: 決めの id: card(ki-)・依頼(lt-)・利用者の発言(ci-)。
-DECISION = re.compile(r"(ki-[0-9a-f]{12}|lt-[0-9A-Z]{26}|ci-[0-9A-Z]{26})")
-#: 使い捨ての表の決めに置く、形だけの id(どの記録も指さない)。
-FAKE_CARD_ID = "ki-" + "0123456789ab"
-FAKE_REQUEST_ID = "lt-" + "0123456789ABCDEFGHJKMNPQRS"
+#: 決めの 1 つ目の形: その行を許す ADR の条。
+DECISION_RULE = re.compile(r"ADR-DOE-API-001 R[0-9]+")
+#: 決めに書かない印: 記録の id(card・依頼・発言・会話・連絡の名)と issue の番号。
+PRIVATE_MARK = re.compile(
+    r"(?<![A-Za-z0-9-])(?:(?:ki|ms)-[0-9a-f]{12}|(?:lt|ci|c|m|idea)-[0-9A-HJKMNP-TV-Z]{26})(?![A-Za-z0-9])|#[0-9]+"
+)
+#: 使い捨ての表の決め。
+FIXTURE_DECISION = "ADR-DOE-API-001 R18"
 #: 1 package を子の process で読む秒の上限(load 約 55 の下で最も重い doeff-cluster が 9 秒・混みの倍率は根の conftest が掛ける)。
 _PROBE_SECONDS = 100
 
@@ -184,24 +188,23 @@ Key = tuple[str, str]
 
 
 class AddedName(TypedDict):
-    """「足した名」の 1 行: 表を足した後に足すしか無かった外れ(訳と決めの id つき)。
+    """「足した名」の 1 行: 表を足した後に足すしか無かった外れ(訳つき)。
 
-    許した物(新しく見せる program の helper など)はここに書かず、許した物の表に決めの id つきで足す。
+    許した物(新しく見せる program の helper など)はここに書かず、許した物の表に決めつきで足す。
     """
 
     package: str
     module: str
     name: str
     訳: str
-    決め: str
 
 
 #: 「足した名」の 1 行の欄。
-ADDED_FIELDS = frozenset({"package", "module", "name", "訳", "決め"})
+ADDED_FIELDS = frozenset({"package", "module", "name", "訳"})
 
 
 class PackageEntry(TypedDict):
-    """1 package の項: 範囲と、組の名(分け — 直しの向きか境界の種類)から module から名の列へ。範囲の外は決めの id を持つ。"""
+    """1 package の項: 範囲と、組の名(分け — 直しの向きか境界の種類)から module から名の列へ。範囲の外は決めを持つ。"""
 
     範囲: str
     名: dict[str, dict[str, list[str]]]
@@ -217,7 +220,7 @@ class KnownTable(TypedDict):
 
 
 class AllowedName(TypedDict):
-    """許した物の表の 1 行: 決まりが名ごとに許した名(組 = 目録で形を確かめる許す組・決め = 許した決めの id)。"""
+    """許した物の表の 1 行: 決まりが名ごとに許した名(組 = 目録で形を確かめる許す組・決め = その行を許す ADR の条か許す訳の 1 文)。"""
 
     package: str
     module: str
@@ -461,7 +464,7 @@ def _new_text(directory: str, new: list[Key], found: Mapping[Key, Mapping[str, A
         f"{directory}: 既知の表と許した物の表に無い、effect と handler の外の公開名が {len(new)} 個 — effect か handler にするか、"
         "名を _ で始めるか _ で始まる module へ移す(公開の submodule は名に _ を付けて隠し、見せる名は入口から出す)。"
         f"決まりが許した名なら許した物の表 {ALLOWED.relative_to(ROOT)} に組と決めつきで、どうしても見せる外れなら"
-        "既知の表の「足した名」に訳と決めつきで書く:\n"
+        "既知の表の「足した名」に訳つきで書く:\n"
         + "\n".join(
             f"  {_key_text(row['module'], row['name'])}({row['form']}・{row['kind']}・{row['defined_at']})"
             for row in rows
@@ -603,29 +606,36 @@ def check_package(
     assert not problems, "\n".join(problems)
 
 
+def decision_problem(decision: str) -> str | None:
+    """決めの欄の誤り(無ければ None)。決めは、その行を許す ADR の条(ADR-DOE-API-001 R<番号>)か、条の無い行は許す訳の
+    英語の 1 文(. で終わる 1 行)— 外の読み手が引けない記録の id と issue の番号は書かない。"""
+    text = decision.strip()
+    if PRIVATE_MARK.search(text):
+        return f"決め {decision!r} が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
+    if DECISION_RULE.fullmatch(text) or (text.endswith(".") and "\n" not in text and len(text) > 1):
+        return None
+    return f"決め {decision!r} が ADR の条(ADR-DOE-API-001 R<番号>)でも、. で終わる許す訳の 1 文でもない"
+
+
 def _added_row_problems(
     row: AddedName, table: KnownTable, listed: set[tuple[str, str, str]]
 ) -> list[str]:
-    """「足した名」の 1 行の誤り: 欄・package・訳・決め・「名」の組との重なり。"""
+    """「足した名」の 1 行の誤り: 欄・package・訳・「名」の組との重なり。"""
     where = f"足した名 {row.get('package')} {row.get('module')}.{row.get('name')}"
     if set(row) != ADDED_FIELDS:
         return [
-            f"{where}: 欄は package・module・name・訳・決め(許した物は許した物の表 {ALLOWED.relative_to(ROOT)} に置く)"
+            f"{where}: 欄は package・module・name・訳(許した物は許した物の表 {ALLOWED.relative_to(ROOT)} に置く)"
         ]
     checks = (
         (row["package"] not in table["packages"], "package が表に無い"),
         (not row["訳"].strip(), "訳が空"),
-        (
-            DECISION.fullmatch(row["決め"]) is None,
-            f"決め {row['決め']!r} が card(ki-)・依頼(lt-)・発言(ci-)の id でない",
-        ),
         ((row["package"], row["module"], row["name"]) in listed, "名の組にも在る"),
     )
     return [f"{where}: {text}" for failed, text in checks if failed]
 
 
 def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
-    """表の形の誤り: dir の過不足・範囲・組の名・名の並びと重なり・「足した名」の訳と決め。"""
+    """表の形の誤り: dir の過不足・範囲・組の名・名の並びと重なり・「足した名」の訳。"""
     dirs = set(package_dirs)
     listed_dirs = set(table["packages"])
     entries = sorted(table["packages"].items())
@@ -648,10 +658,10 @@ def shape_problems(table: KnownTable, package_dirs: Iterable[str]) -> list[str]:
             if entry.get("範囲") not in SCOPES
         ),
         *(
-            f"{package_dir}: 範囲の外の package は決めの id を持ち、名の組を持たない"
+            f"{package_dir}: 範囲の外の package は決め(ADR の条か許す訳の 1 文)を持ち、名の組を持たない"
             for package_dir, entry in entries
             if entry.get("範囲") == "範囲の外"
-            and (DECISION.search(entry.get("決め", "")) is None or entry["名"])
+            and ("決め" not in entry or decision_problem(entry["決め"]) is not None or bool(entry["名"]))
         ),
         *(
             f"{package_dir}: 許した物の組 {group!r} は既知の表に置かない — 許した物の表 {ALLOWED.relative_to(ROOT)} に"
@@ -688,7 +698,7 @@ def _allowed_row_problems(
     """許した物の表の 1 行の誤り: 欄・組・決め・package・既知の表との重なり。"""
     where = f"許した物 {row.get('package')} {row.get('module')}.{row.get('name')}"
     if set(row) != ALLOWED_FIELDS:
-        return [f"{where}: 欄は package・module・name・組・決め(決めの id の無い行は置けない)"]
+        return [f"{where}: 欄は package・module・name・組・決め(決めの無い行は置けない)"]
     entry = table["packages"].get(row["package"])
     checks = (
         (
@@ -696,8 +706,8 @@ def _allowed_row_problems(
             f"組 {row['組']!r} は {ALLOWED_GROUPS} のどれでもない(許す組は目録で形を確かめる)",
         ),
         (
-            DECISION.fullmatch(row["決め"]) is None,
-            f"決め {row['決め']!r} が card(ki-)・依頼(lt-)・発言(ci-)の id でない",
+            (problem := decision_problem(row["決め"])) is not None,
+            problem or "",
         ),
         (entry is None, "package が既知の表に無い"),
         (
@@ -794,26 +804,26 @@ def test_public_api_outside_effects_and_handlers_is_in_the_known_table(package_d
 
 
 def test_the_known_table_has_one_well_formed_entry_per_package_dir() -> None:
-    """表は packages/ の下の dir を 1 つずつ持ち、範囲・組の名・名の並び・「足した名」の訳と決めが形どおり。許した物の組を
+    """表は packages/ の下の dir を 1 つずつ持ち、範囲・組の名・名の並び・「足した名」の訳が形どおり。許した物の組を
     持たない。"""
     problems = shape_problems(_read_table(), (path.name for path in tool.package_dirs(ROOT)))
     assert not problems, "\n".join(problems)
 
 
 def test_the_allowed_table_is_well_formed() -> None:
-    """許した物の表の行は、組が形を確かめる組・決めが id・package が既知の表の範囲の内で、鍵の順に並び、既知の表と重ならない。"""
+    """許した物の表の行は、組が形を確かめる組・決めが ADR の条か許す訳の 1 文・package が既知の表の範囲の内で、鍵の順に並び、既知の表と重ならない。"""
     problems = allowed_problems(_read_allowed(), _read_table())
     assert not problems, "\n".join(problems)
 
 
 def test_the_known_table_only_shrinks_from_its_first_version() -> None:
-    """表の「名」の組は、表を足した commit の版から減るだけ(新しく足す名は「足した名」に訳と決めつきで書く)。"""
+    """表の「名」の組は、表を足した commit の版から減るだけ(新しく足す名は「足した名」に訳つきで書く)。"""
     first = first_version()
     if first is None:
         return
     grown = grown_names(first, _read_table(), first_submodule_version())
     assert not grown, (
-        "既知の表の「名」の組に、最初の版に無い名が在る — 表は減るだけ。足すしか無い名は「足した名」に訳と決めつきで書く:\n"
+        "既知の表の「名」の組に、最初の版に無い名が在る — 表は減るだけ。足すしか無い名は「足した名」に訳つきで書く:\n"
         + "\n".join(f"  {package_dir} {module}.{name}" for package_dir, module, name in grown)
     )
 
@@ -1129,12 +1139,12 @@ def _fixture_table(
     }
 
 
-def _fixture_allowed(helpers: Iterable[str], decision: str = FAKE_CARD_ID) -> AllowedTable:
+def _fixture_allowed(helpers: Iterable[str], decision: str = FIXTURE_DECISION) -> AllowedTable:
     """使い捨ての package の入口の名を、組「許した物 — program の helper」で許した物の表。"""
     return _fixture_grouped({(FIXTURE_ROOT, name): HELPER_GROUP for name in helpers}, decision)
 
 
-def _fixture_grouped(groups: Mapping[Key, str], decision: str = FAKE_CARD_ID) -> AllowedTable:
+def _fixture_grouped(groups: Mapping[Key, str], decision: str = FIXTURE_DECISION) -> AllowedTable:
     """使い捨ての package の (module, 名) を、それぞれの組で許した物の表。"""
     return {
         "許した物": [
@@ -1181,23 +1191,21 @@ def test_a_fixed_name_left_in_the_table_turns_red(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(_PROBE_SECONDS + 20)
 def test_an_outlier_added_with_a_reason_line_is_green(tmp_path: Path) -> None:
-    """足すしか無い外れは「足した名」に訳と決めつきで書けば緑。訳か決めが欠けると表の形の検が赤。"""
+    """足すしか無い外れは「足した名」に訳つきで書けば緑。訳が欠けると表の形の検が赤。"""
     repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + OUTLIER)
     row: AddedName = {
         "package": FIXTURE_DIR,
         "module": FIXTURE_ROOT,
         "name": "helper",
         "訳": "使い手が値を直に組む所(例)",
-        "決め": FAKE_CARD_ID,
     }
     table = _fixture_table({}, [row])
     check_package(_read_fixture(repo), table)
     assert shape_problems(table, [FIXTURE_DIR]) == []
 
-    lacking = _fixture_table({}, [{**row, "訳": " ", "決め": "決めた"}])
+    lacking = _fixture_table({}, [{**row, "訳": " "}])
     assert shape_problems(lacking, [FIXTURE_DIR]) == [
         f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 訳が空",
-        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.helper: 決め '決めた' が card(ki-)・依頼(lt-)・発言(ci-)の id でない",
     ]
 
 
@@ -1432,7 +1440,7 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
         listed = sorted(set(rest) - set(conversions))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): CONVERSION_GROUP for name in conversions},
-            FAKE_REQUEST_ID,
+            FIXTURE_DECISION,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1498,7 +1506,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
             for module, names in outliers.items()
         }
         allowed = _fixture_grouped(
-            {key: EXCEPTION_GROUP for key in exceptions}, FAKE_REQUEST_ID
+            {key: EXCEPTION_GROUP for key in exceptions}, FIXTURE_DECISION
         )
         return _fixture_table({m: n for m, n in listed.items() if n}), allowed
 
@@ -1628,7 +1636,7 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         listed = sorted((set(rest) | set(known)) - set(names))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): BUILDER_GROUP for name in names},
-            FAKE_REQUEST_ID,
+            FIXTURE_DECISION,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1733,7 +1741,7 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
     def tables(placed: list[str], listed: list[str]) -> tuple[KnownTable, AllowedTable]:
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in placed},
-            FAKE_REQUEST_ID,
+            FIXTURE_DECISION,
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1855,7 +1863,7 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
         listed = sorted(set(rest) - set(placed))
         allowed = _fixture_grouped(
-            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FAKE_CARD_ID
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FIXTURE_DECISION
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -1923,7 +1931,7 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
         listed = sorted({"Undeclared"} - set(placed))
         allowed = _fixture_grouped(
-            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FAKE_CARD_ID
+            {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FIXTURE_DECISION
         )
         return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
 
@@ -2056,7 +2064,7 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
             module: sorted(name for each, name in set(rest) - set(placed) if each == module)
             for module in (FIXTURE_ROOT, rooted)
         }
-        allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), FAKE_REQUEST_ID)
+        allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), FIXTURE_DECISION)
         known = {module: names for module, names in listed.items() if names} | {SUBMODULE: [rooted]}
         return _fixture_table(known), allowed
 
@@ -2290,7 +2298,7 @@ def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_grou
             for module, names in outliers.items()
         }
         return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
-            {**placed, **moved}, FAKE_CARD_ID
+            {**placed, **moved}, FIXTURE_DECISION
         )
 
     check_package(package, *tables({}), repo=repo)
@@ -2332,20 +2340,26 @@ def test_an_allowed_group_without_a_check_is_not_well_formed() -> None:
     ]
 
 
-def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
-    """許した物の表は決めの id つきで足せる: 決めが card・依頼・発言の id の行は緑、決めの欄の無い行・id でない決めの行は赤。
+def test_an_allowed_row_without_a_reason_is_not_well_formed() -> None:
+    """許した物の表は決めつきで足せる: 決めが ADR の条か許す訳の英語の 1 文の行は緑、決めの欄の無い行・空の決め・記録の
+    id か issue の番号を含む決めの行は赤。
 
     既知の表と同じ名を置く行・鍵の順に並ばない行・範囲の外の package の行も赤。許した物を「足した名」の欄「組」で足す前の道は
     閉じた(欄「組」の在る「足した名」は既知の表の形の検が赤)。
     """
     table = _fixture_table({})
     where = f"許した物 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging"
-    assert (
-        allowed_problems(_fixture_allowed(["pinging"], FAKE_REQUEST_ID), table)
-        == []
-    )
-    assert allowed_problems(_fixture_allowed(["pinging"], "決めた"), table) == [
-        f"{where}: 決め '決めた' が card(ki-)・依頼(lt-)・発言(ci-)の id でない"
+    assert allowed_problems(_fixture_allowed(["pinging"], "ADR-DOE-API-001 R25"), table) == []
+    assert allowed_problems(_fixture_allowed(["pinging"], "Only emits effects for its callers."), table) == []
+    assert allowed_problems(_fixture_allowed(["pinging"], " "), table) == [
+        f"{where}: 決め ' ' が ADR の条(ADR-DOE-API-001 R<番号>)でも、. で終わる許す訳の 1 文でもない"
+    ]
+    tracked = "ki-" + "0123456789ab"
+    assert allowed_problems(_fixture_allowed(["pinging"], tracked), table) == [
+        f"{where}: 決め {tracked!r} が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
+    ]
+    assert allowed_problems(_fixture_allowed(["pinging"], "Allowed in #123."), table) == [
+        f"{where}: 決め 'Allowed in #123.' が記録の id か issue の番号を含む(ADR の条か許す訳の 1 文を書く)"
     ]
     lacking = cast(
         AllowedTable,
@@ -2361,7 +2375,7 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
         },
     )
     assert allowed_problems(lacking, table) == [
-        f"{where}: 欄は package・module・name・組・決め(決めの id の無い行は置けない)"
+        f"{where}: 欄は package・module・name・組・決め(決めの無い行は置けない)"
     ]
 
     assert allowed_problems(
@@ -2373,7 +2387,7 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
         "許した物の表の行は (package, module, name) の順に並べ、重ねない"
     ]
     outside = _fixture_table({})
-    outside["packages"][FIXTURE_DIR] = {"範囲": "範囲の外", "名": {}, "決め": FAKE_CARD_ID}
+    outside["packages"][FIXTURE_DIR] = {"範囲": "範囲の外", "名": {}, "決め": FIXTURE_DECISION}
     assert allowed_problems(_fixture_allowed(["pinging"]), outside) == [
         f"{where}: 範囲の外の package の名は許さない(名を突き合わせない)"
     ]
@@ -2385,12 +2399,11 @@ def test_an_allowed_row_without_a_decision_id_is_not_well_formed() -> None:
             "module": FIXTURE_ROOT,
             "name": "pinging",
             "訳": "表を足した後に見せる helper(例)",
-            "決め": FAKE_CARD_ID,
             "組": HELPER_GROUP,
         },
     )
     assert shape_problems(_fixture_table({}, [old_path]), [FIXTURE_DIR]) == [
-        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: 欄は package・module・name・訳・決め"
+        f"足した名 {FIXTURE_DIR} {FIXTURE_ROOT}.pinging: 欄は package・module・name・訳"
         f"(許した物は許した物の表 {ALLOWED.relative_to(ROOT)} に置く)"
     ]
 

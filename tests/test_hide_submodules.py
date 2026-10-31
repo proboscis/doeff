@@ -486,7 +486,7 @@ def test_a_name_in_the_allowed_table_goes_to_the_entry_and_finish_drops_its_row(
                 "module": f"{ROOT_NAME}.effects",
                 "name": "pinging",
                 "組": helper_group,
-                "決め": "ki-" + "0123456789ab",
+                "決め": "ADR-DOE-API-001 R18",
             }
         ]
     }
