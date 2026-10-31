@@ -9,6 +9,7 @@ from doeff import Program as Program
 from doeff import Transfer as Transfer
 from doeff import TransferThrow as TransferThrow
 from doeff import with_handlers as with_handlers
+from doeff.program import ProgramHandler as ProgramHandler
 from doeff.program import handler as raw_handler
 from doeff import PyVM as PyVM
 from collections.abc import Callable as Callable
@@ -69,4 +70,4 @@ def _apart[T](program: Program[T, object]) -> _Program[T, object]:
 
 class _ApartHandler(partial):
     ...
-run_apart: _ApartHandler
+run_apart: ProgramHandler

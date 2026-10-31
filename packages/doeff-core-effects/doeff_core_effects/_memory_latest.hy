@@ -26,8 +26,8 @@
 (defrecord MemoryLatestStore
   "1 つの run の中の保存先: values = 型 → 最新の値・bells = 型 → 掛かっている呼び鈴の組。どちらも節が中身を書き換える dict(頭の註)。"
   {:tags {:context "latest" :role "type"}}
-  (#^ dict values)
-  (#^ dict bells))
+  (#^ (get dict #(type object)) values)
+  (#^ (get dict #(type (get tuple #((get ExternalPromise object) ...)))) bells))
 
 
 (deff drop-bell [bells kind bell]  ; defk にできない: 呼び鈴の約束の取り消しの callback(ExternalPromise.on-cancel)が scheduler の中で素の関数として呼ぶ
