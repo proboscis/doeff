@@ -4,7 +4,7 @@ from dataclasses import replace  # 仕様の一部だけを替えた写しを作
 from pathlib import Path  # 実行場所をAgentSpecへ渡す。テストではディレクトリを使わない。
 
 from doeff_agents import AgentType  # 起動するCLIの種類を公開の列挙型で指定する。
-from doeff_agents.effects import (  # セッションの依頼と、ハンドラが返す値の型を使う。
+from doeff_agents import (  # セッションの依頼と、ハンドラが返す値の型を使う。
     AgentSpec,  # 作業場所、依頼、結果スキーマをまとめる仕様。
     AwaitOutcome,  # 結果待ちの答え。終わり方と結果を一緒に持つ。
     AwaitResult,  # 結果と状態をAwaitOutcomeとして受け取る操作。
@@ -18,17 +18,16 @@ from doeff_agents.effects import (  # セッションの依頼と、ハンドラ
     SessionHandle,  # セッションを指すハンドル。中身はセッションIDだけ。
     StopSession,  # 完了できないセッションを停止する操作。
 )
-from doeff_agents.handlers import agent_effectful_handler  # 本物のセッションを扱う公開のハンドラ。
+from doeff_agents import daemon_agent_handler  # 本物のセッションを扱う公開のハンドラ。
 from doeff_agents import (  # 実CLIの代わりに指定した応答列を返す境界。
     ScenarioStep,  # 結果・入力待ち・失敗をテストデータとして記述する。
     ScenarioWorld,  # 応答列と、ハンドラが受けた操作(追加の指示・停止・解放)を持つ値。
     scenario_agent_handler,  # アプリケーションの関数を変更せずエージェント操作を置き換える。
 )
-from doeff_agents.session_backend import SessionBackend, default_session_backend  # 端末への接続先。
 from doeff_core_effects import Ask, reader  # 値を頼む依頼と、それに答えるreader。
 from doeff_core_effects.handlers import await_handler, slog_discard_handler  # 非同期の待ちとログ。
 from doeff_core_effects.scheduler import Spawn, Wait, scheduled  # 子タスクの開始と結果待ち。
-from doeff_time.handlers.async_time import async_time_handler  # 時間の依頼を実時間で答える。
+from doeff_time import async_time_handler  # 時間の依頼を実時間で答える。
 from jsonschema import validate  # テストデータだけを検査する。本番の検証処理の代用ではない。
 
 from doeff import (  # 処理・ハンドラ・道具の定義と実行。
@@ -135,9 +134,8 @@ read_tool = McpToolDef(  # 名前・説明・引数・中身をまとめる。�
 def live_review(work_dir: Path, document_text: str):  # 実在する作業場所と文書を受け取る。
     spec = yield review_spec("document", "read_documentで文書を読み、確認してください")  # 仕様を作る。
     spec = replace(spec, work_dir=work_dir, mcp_tools=(*spec.mcp_tools, read_tool))  # 場所と道具を足す。
-    program = agent_effectful_handler()(checked_review(spec))  # エージェントの依頼を本物へ繋ぐ。
+    program = daemon_agent_handler()(checked_review(spec))  # エージェントの依頼を本物へ繋ぐ。
     program = reader(env={  # 内側から来るAskに答える。
-        SessionBackend: default_session_backend(),  # 端末への接続先を渡す。
         "document_text": document_text,  # read_documentへ返す文書。
     })(program)  # 内側のProgramへ環境を付ける。
     program = async_time_handler()(program)  # 待ちの間の時間の依頼を実時間で答える。

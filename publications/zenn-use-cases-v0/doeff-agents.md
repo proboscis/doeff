@@ -17,7 +17,7 @@ doeffは、処理の読み書きや待ちを、外側の部品で差し替える
 
 ```python
 from doeff import do  # 依頼を出す処理を定義する。
-from doeff_agents.effects import AgentSpec, AwaitResult, LaunchSession, ReleaseSession  # セッションへの依頼。
+from doeff_agents import AgentSpec, AwaitResult, LaunchSession, ReleaseSession  # セッションへの依頼。
 
 @do  # 呼んだ時点では起動せず、実行時にハンドラへ依頼を渡す。
 def delegate_task(spec: AgentSpec):  # 依頼文と結果の形を持つ仕様を受け取る。
@@ -51,7 +51,7 @@ from pathlib import Path  # 作業場所の型。
 
 from doeff import Pass, Resume, handler, run, with_handlers  # ハンドラの定義と実行に使う。
 from doeff_agents import AgentType  # 起動するCLIの種類。
-from doeff_agents.effects import (  # 依頼の型と、答えに使う値の型。
+from doeff_agents import (  # 依頼の型と、答えに使う値の型。
     AwaitOutcome, AwaitResultEffect, AwaitStatus,  # 結果待ちの依頼と、その答え。
     LaunchSessionEffect, ReleaseSessionEffect, SessionHandle,  # 起動と解放の依頼、ハンドル。
 )
@@ -121,7 +121,7 @@ assert outcome.result == {"summary": "読みやすい", "ok": True}  # 決めた
 文章とコード例を、別々のエージェントに確かめてもらいます。`checked_review`が1件分の判断で、`review_document`が2件を並べます。
 
 ```python
-from doeff_agents.effects import FollowUp, StopSession  # 追加の指示と、止める依頼。
+from doeff_agents import FollowUp, StopSession  # 追加の指示と、止める依頼。
 from doeff_core_effects.scheduler import Spawn, Wait  # 子の処理を始める依頼と、終わりを待つ依頼。
 
 @do  # 起動から結果判断までを1つのProgramとして呼び出せるようにする。
@@ -208,17 +208,16 @@ assert len(testing.released_sessions) == 2  # 2つのセッションとも解放
 
 ## 本番への接続は外側に置く
 
-本物のセッションには、公開のハンドラ`agent_effectful_handler()`を付けます。処理の本体は、テストの時と同じ`checked_review`です。
+本物のセッションには、公開のハンドラ`daemon_agent_handler()`を付けます。処理の本体は、テストの時と同じ`checked_review`です。
 
 ```python
 from dataclasses import replace  # 仕様の一部だけを替えた写しを作る。
 
 from doeff import McpToolDef  # @doの関数をMCPの道具として公開する定義。
-from doeff_agents.handlers import agent_effectful_handler  # 本物のセッションを扱う公開のハンドラ。
-from doeff_agents.session_backend import SessionBackend, default_session_backend  # 端末への接続先。
+from doeff_agents import daemon_agent_handler  # 本物のセッションを扱う公開のハンドラ。
 from doeff_core_effects import Ask, reader  # 値を頼む依頼と、それに答えるreader。
 from doeff_core_effects.handlers import await_handler, slog_discard_handler  # 非同期の待ちとログ。
-from doeff_time.handlers.async_time import async_time_handler  # 時間の依頼を実時間で答える。
+from doeff_time import async_time_handler  # 時間の依頼を実時間で答える。
 
 @do  # 道具の中身も、yieldで依頼を出せる処理にする。
 def read_document():  # エージェントが引数なしで呼ぶ道具。
@@ -232,9 +231,8 @@ read_tool = McpToolDef(  # 名前・説明・引数・中身をまとめる。�
 def live_review(work_dir: Path, document_text: str):  # 実在する作業場所と文書を受け取る。
     spec = yield review_spec("document", "read_documentで文書を読み、確認してください")  # 仕様を作る。
     spec = replace(spec, work_dir=work_dir, mcp_tools=(*spec.mcp_tools, read_tool))  # 場所と道具を足す。
-    program = agent_effectful_handler()(checked_review(spec))  # エージェントの依頼を本物へ繋ぐ。
+    program = daemon_agent_handler()(checked_review(spec))  # エージェントの依頼を本物へ繋ぐ。
     program = reader(env={  # 内側から来るAskに答える。
-        SessionBackend: default_session_backend(),  # 端末への接続先を渡す。
         "document_text": document_text,  # read_documentへ返す文書。
     })(program)  # 内側のProgramへ環境を付ける。
     program = async_time_handler()(program)  # 待ちの間の時間の依頼を実時間で答える。
@@ -244,7 +242,7 @@ def live_review(work_dir: Path, document_text: str):  # 実在する作業場所
 
 - `read_document`はMCPの道具です。MCPは、エージェントが外の道具を呼ぶための約束です。
 - 道具の中身も`@do`の処理なので、文書の出どころは外側で選べます。ここでは`Ask`に答える`reader`が渡します。
-- 本番のハンドラは端末の中でCLIを起こすので、tmuxが要ります。tmuxは、端末を分けて動かす道具です。
+- 本番のハンドラは、セッションを管理するdoeff-agentdのデーモンへ依頼を渡します。デーモンは、最初の依頼の時に起動します。
 - 認証にはClaude CodeやCodex自身のログインを使います。LLMのAPIキーを仕様へ渡しません。
 
 テストと本番で違うのは、外側に並べたハンドラだけです。`checked_review`と`review_document`は、どちらでも同じコードです。
@@ -278,7 +276,7 @@ uv run --no-sources --with "doeff==0.6.0" --with "doeff-time @ $G/doeff-time" --
 
 - 掲載したPythonのコード5つと完全な例を、上のコマンドの版で走らせました。
 - 動かしたのは、自作のハンドラとテスト用のハンドラだけです。本物のエージェントは起こしていません。
-- 本番の組み立ては、tmuxの無い環境で、端末への接続を作る所で止まることだけを確かめました。
+- 本番の組み立ては、実行しないで、importと組み立てだけを確かめました。
 - PyPIのdoeff-agentsの0.1.1と0.1.2はdoeff 0.4向けで、この記事のAPIがありません。
 - 完全な例は、失敗の分岐を確かめる途中で、doeffのtracebackを3つ表示します。最後にOKが出れば成功です。
 
