@@ -5,8 +5,12 @@
 ;;;           docker の在る機体(zeus)の検で、環境変数 DOEFF_RUN_DOCKER=1 の時だけ走る(無ければ skip — 在るのに docker が
 ;;;           答えなければ赤)。負荷の image は workload/ の Dockerfile をその場で build する(中身の hash の tag — 同じ中身は build
 ;;;           しない)。検ごとに新しい DockerRunHost を作り、検の終わりにその host の label の container を全部消す。
+;;;   process process の handler(ProcessRunHost)+ 壁の時計 + 子 process の答え手と終わりの待ち(await-handler・process-exit-handler)。
+;;;           docker の無い手元の開発の handler なので、いつでも走る(sh の在る機体)。image の名 → 負荷の dir の表を host に渡し、
+;;;           負荷の実行 file は dir ごと PATH の先頭に載る。資源の上限と volume は守れない設定として断る handler なので、メモリの上限の
+;;;           筋書きは OOM の筋書きでなく「断る」筋書きを通す(test_contract.hy)。検の終わりに host の走っている子を全部止める。
 ;;;
-;;; process・k3s の handler を足す card(Y-8・Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
+;;; k3s の handler を足す card(Y-9)は、ここに解釈器の名と組(handlers-for・settings-for)を足し、
 ;;; test_contract.hy の各 deftest の :interpreters に名を足す。筋書きと workloads.hy の約束は変えない — 同じ契約を通す事が目的。
 ;;;
 ;;; 筋書きは ScenarioSettings の effect で自分の宣言(負荷の image・時間の許容)を読む。
@@ -18,9 +22,9 @@
 (import subprocess)
 (import pytest)
 (import doeff [EffectBase run with_handlers])
-(import doeff_core_effects [scheduled offloaded-subprocess-handler])
+(import doeff_core_effects [scheduled offloaded-subprocess-handler await-handler process-exit-handler StopProcess])
 (import doeff_time [SimClock sim-time-handler sync-time-handler])
-(import doeff_run [FakeRunWorld fake-run-handler DockerRunHost docker-run-handler])
+(import doeff_run [FakeRunWorld fake-run-handler DockerRunHost docker-run-handler ProcessRunHost process-run-handler])
 (import tests.workloads [fake-behavior-of])
 
 (setv FAKE "fake")
@@ -33,6 +37,11 @@
 (setv WORKLOAD-DIR (/ (. (Path __file__) parent) "workload"))
 ;; 取り寄せられない image: 誰も listen しない手元の port の registry(取り寄せは直ちに断られる)。
 (setv DOCKER-MISSING-IMAGE "127.0.0.1:9/doeff-run-contract-missing:absent")
+
+(setv PROCESS "process")
+;; process の解釈器の image の名: 負荷の dir(workload/)に引ける名と、host の表に無い名(起動できない image)。
+(setv PROCESS-IMAGE "local/contract-workload")
+(setv PROCESS-MISSING-IMAGE "local/missing")
 
 
 (defclass [(dataclass :frozen True)] Settings []
@@ -61,6 +70,16 @@
     (subprocess.run ["docker" "build" "--tag" tag (str WORKLOAD-DIR)] :check True :capture-output True))
   tag)
 
+(defn process-host []
+  "process の解釈器の host: 負荷の image の名 → workload/ の dir の表を持つ。"
+  (ProcessRunHost :images {PROCESS-IMAGE (str WORKLOAD-DIR)}))
+
+(defn #^ None stop-process-runs [#^ ProcessRunHost host]
+  "host の走っている子を全部、猶予なしで止める(検の後始末 — 検の run はもう終わっているので、後始末のためだけの小さい run で止める)。"
+  (for [pid host.live-pids]
+    (run (scheduled (with_handlers [offloaded-subprocess-handler] (StopProcess :pid pid :stop-grace 0.0)))))
+  None)
+
 (defn #^ None remove-docker-runs [#^ DockerRunHost host]
   "host が作った container(label の印)を全部消す(検の後始末)。"
   (setv listed (subprocess.run ["docker" "container" "ls" "--all" "--quiet" "--filter" (.format "label=doeff-run.host={}" host.host-id)]
@@ -79,28 +98,32 @@
         (when (!= (os.environ.get DOCKER-GATE) "1")
           (pytest.skip (.format "docker の解釈器は {}=1 の時だけ走る(docker の在る機体 — zeus の検)" DOCKER-GATE)))
         (Settings :image (docker-workload-image) :missing-image DOCKER-MISSING-IMAGE :slack 1.0 :interpreter name))
+    (= name PROCESS) (Settings :image PROCESS-IMAGE :missing-image PROCESS-MISSING-IMAGE :slack 1.0 :interpreter name)
     True (raise (ValueError (.format "知らない解釈器: {!r}" name)))))
 
-(defn handlers-for [#^ str name #^ Settings settings #^ (| DockerRunHost None) host]
+(defn handlers-for [#^ str name #^ Settings settings host]
   (cond
     (= name FAKE)
       [(sim-time-handler :clock (SimClock))
        (fake-run-handler (FakeRunWorld :behavior-of (fn [spec] (fake-behavior-of spec settings.missing-image))))]
     (= name DOCKER)
       [(sync-time-handler) offloaded-subprocess-handler (docker-run-handler host)]
+    (= name PROCESS)
+      [(sync-time-handler) await-handler offloaded-subprocess-handler process-exit-handler (process-run-handler host)]
     True []))
 
 (defn build-interpreter [#^ str name #^ Path tmp-path]
   "名 → Program を走らせる関数。名が plain の時は scheduler だけ(handler を要しない純関数の検)。docker は走らせた後に、その検の
-   container を全部消す。"
+   container を全部消し、process は走っている子を全部止める。"
   (when (= name "plain")
     (return (fn [program] (run (scheduled program)))))
   (setv settings (settings-for name tmp-path))
-  (setv host (if (= name DOCKER) (DockerRunHost) None))
+  (setv host (cond (= name DOCKER) (DockerRunHost) (= name PROCESS) (process-host) True None))
   (setv stack (+ (handlers-for name settings host) [(scenario-settings settings)]))
   (fn [program]
     (try
       (run (scheduled (with_handlers stack program)))
       (finally
-        (when (is-not host None)
-          (remove-docker-runs host))))))
+        (cond
+          (= name DOCKER) (remove-docker-runs host)
+          (= name PROCESS) (stop-process-runs host))))))
