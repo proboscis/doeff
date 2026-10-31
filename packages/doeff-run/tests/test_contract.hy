@@ -35,7 +35,7 @@
 (deftest test-an-image-that-cannot-begin-never-becomes-live
   ;; 起動できない image(取り寄せられない・無い): 受け付けた後で RunLive を経ずに、起動しなかった止まり(NEVER_BEGAN)で終わる。
   ;; 終了 code は無い(走っていない)。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.missing-image)))
   (<- seen (read-to-end handle LONG))
@@ -44,7 +44,7 @@
 
 (deftest test-a-run-over-its-memory-limit-is-stopped-as-out-of-memory
   ;; 資源の上限(メモリ)を越えて殺された run は、OOM の止まりで終わる(自分で終わった物とも、頼まれた止めとも区別できる)。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (hog-spec s.image)))
   (<- seen (read-to-end handle LONG))
@@ -54,7 +54,7 @@
 
 (deftest test-a-run-that-ignores-the-stop-signal-is-killed-when-the-grace-runs-out
   ;; 止めの合図を無視する run: 猶予(grace-seconds)が尽きるまで待ち、強制で止める。止めの答えは猶予より早くは返らない。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (stubborn-spec s.image)))
   (<- _ (read-until-live handle))
@@ -69,7 +69,7 @@
   ;; 取っ手の知らない所で run が消えた(node の死・手で消された): 状態は RunGone で、消えた run は何も残さない(読むと出来事の無い頁と
   ;; RunGone)。止めは冪等に RunGone。
   ;; 名は空き、同じ名で新しく走らせると別の run(取っ手の run-id が違い、古い取っ手は新しい run の状態を答えない)。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (val name (new-name))
   (<- first (RunStart name (live-spec s.image)))
@@ -90,7 +90,7 @@
 
 (deftest test-a-read-wakes-when-the-run-vanishes
   ;; 読みが待つ間に run が消える: 読みは上限まで眠らず、消えた出来事 RunGone を返す。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- live (read-until-live handle))
@@ -106,7 +106,7 @@
 
 (deftest test-a-handle-the-handler-does-not-know-is-gone
   ;; 名にも取っ手にも覚えが無い run は「消えた」として答える(呼び手が名を持つ — 誤りと消失は見分けない)。読みは待たずに返る。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (val unknown (RunHandle :name "never-started" :run-id "no-such-run"))
   (<- status (RunStatus unknown))
@@ -124,7 +124,7 @@
 (deftest test-a-name-in-use-answers-with-the-holders-handle
   ;; 使っている名で走らせ直すと、受け付けずに今の持ち主の取っ手を答える(取っ手を失った呼び手が引き取れる)。止まった run も、
   ;; 片付けるまで名を持ち続ける。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (val name (new-name))
   (<- first (RunStart name (live-spec s.image)))
@@ -140,7 +140,7 @@
 (deftest test-removing-a-live-run-is-refused-and-removing-a-stopped-run-frees-the-name
   ;; 片付け(RunRemove)は止まった run だけ: 走っている run には RunStillAlive(止めてから)。片付けた run は RunGone を最後の出来事に
   ;; 残して消え、名が空く。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (val name (new-name))
   (<- first (RunStart name (live-spec s.image)))
@@ -161,7 +161,7 @@
 
 (deftest test-a-run-that-exits-by-itself-is-live-then-stopped-with-its-exit-code
   ;; 自分で終わる run: 起きた(RunLive)→ 止まった(RunStopped・自分で終わった EXITED と、その終了 code)。状態の答えも同じ値。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (exits-spec s.image 3 0.5)))
   (<- seen (read-to-end handle LONG))
@@ -175,7 +175,7 @@
 
 (deftest test-a-new-run-is-pending-or-live
   ;; 受け付けた直後の状態は、まだ起きていない(RunPending)か、もう起きた(RunLive)— 止まってはいない。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- status (RunStatus handle))
@@ -183,7 +183,7 @@
 
 (deftest test-events-are-paged-by-seq-without-gaps-or-repeats
   ;; 出来事は 1 から欠けずに番号を持ち、after-seq より後だけを 1 度ずつ返す。終わった run は何度読んでも同じ列と同じ状態を、待たずに返す。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (exits-spec s.image 0 0.2)))
   (<- seen (read-to-end handle LONG))
@@ -200,7 +200,7 @@
 
 (deftest test-a-read-comes-back-empty-at-the-deadline
   ;; 新しい出来事が無い間の読みは、待ちの上限(wait-up-to)まで待ってから、空の頁と今の状態を返す。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- live (read-until-live handle))
@@ -212,7 +212,7 @@
 
 (deftest test-a-read-wakes-at-the-next-event
   ;; 待っている読みは、次の出来事(自分で終わる run の終わり)が起きた時に、上限を待たずに返る。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (exits-spec s.image 0 1.0)))
   (<- live (read-until-live handle))
@@ -224,7 +224,7 @@
 
 (deftest test-a-read-wakes-when-another-task-stops-the-run
   ;; 読みが待つ間に、別の task が止めを頼む: 読みは上限まで眠らず、止まった刻に止まりの出来事を返す。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- live (read-until-live handle))
@@ -242,7 +242,7 @@
 
 (deftest test-stop-ends-a-live-run-as-requested
   ;; 走っている run を止める: 止めの答えは止まった状態(頼まれた止め REQUESTED・終了 code つき)で、状態と出来事の列の終わりも同じ値。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- _ (read-until-live handle))
@@ -256,7 +256,7 @@
 
 (deftest test-stop-before-the-run-begins-ends-it-as-requested
   ;; 起きる前に止める: 受け付けた run は頼まれた止め REQUESTED で終わる(走っていなければ終了 code は無い)。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- stopped (RunStop handle 5.0))
@@ -266,7 +266,7 @@
 
 (deftest test-stop-is-idempotent-and-keeps-how-the-run-ended
   ;; 止めの 2 度目は、1 度目と同じ状態を答える。自分で終わった run を止めても、終わり方(EXITED)と終了 code は変わらない。
-  {:interpreters ["fake" "docker"]}
+  {:interpreters ["fake" "docker" "k3s"]}
   (<- s (settings))
   (<- handle (begin (live-spec s.image)))
   (<- _ (read-until-live handle))
