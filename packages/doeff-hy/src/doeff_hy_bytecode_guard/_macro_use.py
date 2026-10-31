@@ -16,10 +16,10 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   (``getattr(module, "名")`` の読み — 読む関数と module の参照が別の関数にあっても覆う)。ただし module の説明の文
   (``__doc__``)は入れない(展開の code の "__doc__" は展開の結果に説明を書く印で、module の説明の文は展開の結果に効かない)。
   module の置き場を名指すだけの属性(``__file__``・``__cached__`` — :data:`_LOCATION_NAMES`)は、名で出会っても値(作業木の
-  置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない — card ki-1475765a3f18)。
+  置き場の path)を入れず印だけを入れる(同じ中身の木を別の dir に置いても digest は変わらない)。
   置き場を値として読む code か束縛の文(``Path(__file__).with_name(…)`` で隣の file を読む形)の digest は、その file の中身を
   覆えないので照らせない印にする(環境変数の読みと同じ :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ`)。
-- 関数の code の中身は、その module の展開で実行された関数だけを覆う(agora-redesign #3769 の子 — defk の閉包の歩みが、defk から
+- 関数の code の中身は、その module の展開で実行された関数だけを覆う(defk の閉包の歩みが、defk から
   届く class(binding_forms._Walker)を method ごと全部辿り、展開で呼ばれない _assign の code の変更で、defk の使い手 1,197 本が
   作り直された)。歩みは今までどおり全部を辿り(関数の名・class の member の名・値・束縛の文・関数の大域と import の先)、関数に
   初めて出会った所の code の中身(:attr:`CodeFacts.shape`)だけを、記録が覆うと名指した関数の物にし、他は印 :data:`_UNCOVERED`
@@ -45,18 +45,18 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   file 単位で覆うと、defhandler が本体で import する doeff_hy.macros まで覆い、macros.hy のどの行の変更でも冷えた)。照らしは
   .pyc を読む途中(import の途中)に走るので、関数の中の import の先は、展開の時には通らない枝で、循環する import の途中の
   module を require して落ちうる — 落ちた時は名だけを入れる。
-- import の途中の状態の digest(agora-redesign card ki-464fa307a62b): 歩みが import の途中の module(名前空間がまだ揃って
+- import の途中の状態の digest: 歩みが import の途中の module(名前空間がまだ揃って
   いない)か import できない module に当たった digest は、import の進み具合 — どの process がどの順で何を読んだか — に依る
   (deff の閉包の doeff_hy._outcome_forms は、doeff_hy.record を .pyc から読む途中では import できず、読み込みの済んだ process
   では中身ごと辿られる)。その digest は process の覚えに入れず、記録にも入れない(None)。記録は代わりに、閉包が依った
   module の file の sha256(:attr:`MacroRecord.files`)を持ち、記録か今の歩みのどちらかが import の途中に当たった行は、
   digest でなくその file で比べる。両方が読み込みの済んだ状態なら digest で比べる(file の行は見ない)。
-- process をまたぐ覚え(agora-redesign card ki-38508e6e56fd・条は packages/doeff-hy/architecture.hy の B1): digest は process の中で
+- process をまたぐ覚え(条は packages/doeff-hy/architecture.hy の B1): digest は process の中で
   だけ覚える(:data:`_REMEMBERED`)。digest は生きた値(別の module から来た素の値・環境変数で決まる値)に依り、辿った file の
   状態だけでは信じられないので、新しい process は閉包を辿り直す。辿り直しの費用の大半だった source の文の読みは、中身で決まる
   純な読みとして置き場に覚える(:mod:`doeff_hy_bytecode_guard._bound_source`)。
-- 環境変数の読み(設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A の付録 3 — 基準版 cf7ea9cc0 から在った・依頼
-  lt-D9C8NM324RSPKZZVKC9MHA9464): 標準 library は名だけ入れる(版で覆う)が、``os.environ`` は process の状態で、版も file も
+- 環境変数の読み(基準版 cf7ea9cc0 から在った):
+  標準 library は名だけ入れる(版で覆う)が、``os.environ`` は process の状態で、版も file も
   覆わない。環境変数から組んだ表は名を束縛する source の文で覆われ、文は環境変数の値を持たないので、環境変数だけを替えた
   process が古い展開を今に合うと判じた。歩みが環境変数の読み — code か束縛の文が os(posix・nt)の module を大域の名で引いて
   ``environ`` ・ ``environb`` ・ ``getenv`` ・ ``getenvb`` を読む・関数の中の import の os で読む・それらの object に値として当たる
@@ -64,12 +64,12 @@ macro の digest = macro の関数の code の閉包の digest(:class:`_Walker`)
   :data:`doeff_hy_bytecode_guard._records.ENVIRONMENT_READ`(照らしはいつも古いと判じ、使い手は process ごとに展開し直す)。
   環境変数から組んだ素の値の大域(文字列・数)は値で入るので、この規則に当たらない。辿れない値を持ち主の module の file で覆う
   時(既定値・閉包の cell・束縛を辿れない大域・名で辿れない読みの先 — :meth:`_Walker._fold_opaque`)は、持ち主の source に
-  環境変数を持つ module の名と環境変数を読む属性の名の両方が現れれば印にする — file は読み込みの時に読んだ環境変数を写さない
-  (設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A)。見ない読み: 標準 library の関数が中で読む環境変数(``os.path.expanduser`` ・
+  環境変数を持つ module の名と環境変数を読む属性の名の両方が現れれば印にする — file は読み込みの時に読んだ環境変数を写さない。
+ 見ない読み: 標準 library の関数が中で読む環境変数(``os.path.expanduser`` ・
   ``tempfile`` など)・文字列で引く読み(``getattr(os, "environ")``)・module の表を通す読み(``sys.modules["os"]`` ・
   ``hy.I.os``)・星の import で束縛した表(持ち主の file で覆い、import の先の source は読まない)。
 - enum と namedtuple が class の定義から作る表(``_member_map_`` など)は入れない(member と ``__new__`` の既定値として辿る)。
-- 辿れない値を狭く覆う(agora-redesign #3938):
+- 辿れない値を狭く覆う:
   - module の大域の名で引いた辿れない値(list・dict・上のどれでもない object)は、その名を束縛し書き換える source の文で覆う
     (:mod:`doeff_hy_bytecode_guard._bound_source` — 文が読む名と、本体で書き換えうる top-level の関数も辿る)。
   - frozen の dataclass の値は class と欄の値で、ContextVar は名と既定値で入れる(今の値は実行の状態なので入れない)。
@@ -166,8 +166,8 @@ _LOCAL_WATCH_LOCK = threading.Lock()
 def _watch_local_tables() -> None:
     """Hy の compiler が局所の状態(関数の本体など)を開くたびに、その macro の表を、展開している module の記録の表
     (:class:`RecordingTable`)に覚えさせる(process で 1 度だけ包む)。関数の中の require で入れた macro は局所の表から引かれ、
-    module の表を通らないので、覚えないと記録から漏れ、macro を変えても使う側が古い展開のまま動いた(設計検証
-    lt-JYZ9N64ZE70GCBXPP33QDG3WF7 の範囲の外の所見 1)。局所の表は dict のまま覚える — Hy の require は局所の表を
+    module の表を通らないので、覚えないと記録から漏れ、macro を変えても使う側が古い展開のまま動いた。
+    局所の表は dict のまま覚える — Hy の require は局所の表を
     ``type(target) is dict`` で見分けるので、引いた名を覚える表に替えられない。"""
     with _LOCAL_WATCH_LOCK:
         if _LOCAL_WATCH["installed"]:
@@ -616,7 +616,7 @@ def _remembered(
         return ClosureDigest(ENVIRONMENT_READ, modules)
     if any(each._mut_partial for each in walkers):
         # import の途中の状態の digest は覚えない — 覚えると、その process の照らしと記録が全部その値になり、import の順の
-        # 違う process と置き場の entry を書き直し合う(card ki-464fa307a62b)。
+        # 違う process と置き場の entry を書き直し合う。
         return ClosureDigest(None, modules)
     closure = ClosureDigest(walked.digest(walked.everything), modules, walked, walked.everything)
     states = tuple(
@@ -630,8 +630,7 @@ def _remembered(
 
 def _confirmed(key: UsedMacroKey | ValueReference, remembered: RememberedDigest) -> bool:
     """覚えた digest を使ってよいか — 依った file が覚えた時の状態のままか。一番外の読み込み 1 つの中では file の状態は変わらない
-    物として扱うので、確かめた覚えを 2 度確かめない(照らしは Hy の module 1 つごとに走り、同じ覚えを数百回確かめていた —
-    agora-redesign card ki-be596ac8276f)。"""
+    物として扱うので、確かめた覚えを 2 度確かめない(照らしは Hy の module 1 つごとに走り、同じ覚えを数百回確かめていた)。"""
     scope = current_scope()
     if scope is not None and scope.confirmed.get(key) is remembered:
         return True
@@ -657,7 +656,7 @@ _UNREAD = object()
 
 def _state_now(path: str) -> FileState | None:
     """覚えの確かめと覚える時に使う file の今の状態 — 一番外の読み込み 1 つ(:mod:`doeff_hy_bytecode_guard._import_scope`)の中では
-    file ごとに 1 度だけ stat する(検の読み込みで照らし 797 回・stat 9,700 回だった — card ki-be596ac8276f)。読み込みの外で
+    file ごとに 1 度だけ stat する(検の読み込みで照らし 797 回・stat 9,700 回だった)。読み込みの外で
     覚える時(記録を作る道具)は毎回 stat する。"""
     scope = current_scope()
     if scope is None:
@@ -1006,7 +1005,7 @@ _STRICT_FACTS: dict[int, tuple[CodeType, CodeFacts]] = {}
 def _code_facts(code: CodeType, strict: bool = False) -> CodeFacts:
     """code object から digest に要る物を読む(行番号と位置を除く — process の中で code ごとに 1 度だけ読む)。
 
-    ``strict`` が偽の読みは、展開の結果に効かない 2 つを除く(card ki-968309595391 — 型注釈を足しただけの変更や、前に関数が増えて
+    ``strict`` が偽の読みは、展開の結果に効かない 2 つを除く(型注釈を足しただけの変更や、前に関数が増えて
     Hy の一時変数の番号がずれただけの変更で、macro の閉包の digest が変わり、使い手の module が全部展開し直されていた):
 
     - 関数の型注釈(3.14 の ``__annotate__`` の入れ子の code と、それを関数に付ける命令 — :func:`_function_annotations`。3.13 までの、
@@ -1436,7 +1435,7 @@ def _numbered_anon_names(document: str) -> str:
     return ANON_VAR_NAME.sub(renumber, document)
 
 
-# ---- code の読みを process をまたいで覚える(agora-redesign card ki-be596ac8276f)-------------------------------------
+# ---- code の読みを process をまたいで覚える-------------------------------------
 #
 # code の読み(:class:`CodeFacts`)は code object の中身と、読み方(この module の code・Python の版・hy.R の module の名を作る Hy の
 # mangle の版)だけで決まる純な計算なので、
@@ -1450,8 +1449,8 @@ def _numbered_anon_names(document: str) -> str:
 #: code の読みの entry の鍵の印(entry の形を変えたら末尾の番号を上げる)。読み方そのもの(この module の code)の変更は、鍵に
 #: 入れるこの module の file の sha256(:func:`_own_digest`)が覆い、読みが呼ぶ Hy の関数(``hy.mangle``・``slashes2dots``)の変更は
 #: 鍵に入れる Hy の版が覆う。
-#: 2 = 置き場を値として読むかの欄を足した形(設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。
-#: 3 = 関数の型注釈と Hy の一時変数の番号を除いた読みと、注釈ごとの読み(行の鍵の末尾に ``!``)を並べる形(card ki-968309595391)。
+#: 2 = 置き場を値として読むかの欄を足した形。
+#: 3 = 関数の型注釈と Hy の一時変数の番号を除いた読みと、注釈ごとの読み(行の鍵の末尾に ``!``)を並べる形。
 FACTS_TAG = "doeff-hy/code-facts/3"
 
 #: 名で辿れない読みの広さの値(置き場から読んだ行の確かめ)。
@@ -1510,7 +1509,7 @@ def _code_sha256(code: CodeType) -> str:
 
 def _facts_entry(key: "UsedMacroKey | ValueReference") -> str | None:
     """歩み 1 つの code の読みの entry の path(置き場を使わない設定・この module の code を読めない時は None)。鍵 = 印・この module
-    の code・Python の版の全部(命令の番号)・Hy の版(hy.R の module の名の mangle — 設計検証 lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A
+    の code・Python の版の全部(命令の番号)・Hy の版(hy.R の module の名の mangle
     の付録)・在処・在処の module の file(作業木ごとに分ける — code の sha256 は file の名を含む)。"""
     import hy  # 歩みは Hy の module の照らしの中 — 読み込み済み
 
@@ -1698,8 +1697,7 @@ def _units(code: CodeType) -> Iterator[_Unit]:
 def _imports(code: CodeType) -> Iterator[ImportReference]:
     """関数の中の import の命令(macro が展開の時にだけ import する補助を、閉包に入れるため)。相対の段数は import の命令の
     2 つ前の命令(段数の数・fromlist・import の順に積まれる)。import の命令を持たない code(閉包の関数のほとんど)は、命令の番号の
-    並び(偶数の位置の byte)を C で探すだけで命令を読まない(macro の閉包の歩みの約 1/4 が、ここで全部の命令を読む所だった —
-    agora-redesign card ki-38508e6e56fd)。"""
+    並び(偶数の位置の byte)を C で探すだけで命令を読まない(macro の閉包の歩みの約 1/4 が、ここで全部の命令を読む所だった)。"""
     if _IMPORT_NAME not in code.co_code[::2]:
         return
     previous: tuple[_Unit | None, _Unit | None] = (None, None)
@@ -1912,7 +1910,7 @@ class _Walker:
 
     def walked(self) -> "ClosureWalk":
         """辿った物の材料 — 参照した module の、文字列の定数の名の属性を入れ終えてから。積んだ文字列は、それぞれの bytes の長さ
-        (8 byte の little endian)を前に置いて綴り(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回 — card ki-be596ac8276f)、
+        (8 byte の little endian)を前に置いて綴り(文字列ごとに hash を呼ぶと、検の読み込みで 2.8 万回)、
         関数の code の中身の所で切る(中身を覆うかは記録と照らしが決める — :meth:`ClosureWalk.digest`)。"""
         self._attributes_named_by_texts()
         encoded = list(map(_ENCODE, self._parts))
@@ -1951,7 +1949,7 @@ class _Walker:
         別の関数にあっても(module を引数で渡す)覆う。"""
         while True:
             # 名前空間に在る文字列だけを集合の積で先に選ぶ(_text_attribute は名前空間に無い名を偽とする — module × 文字列を
-            # 1 つずつ判じると、検の読み込みで 3 万回を越えた・card ki-be596ac8276f)。並びは前と同じ(module の名・文字列の順)。
+            # 1 つずつ判じると、検の読み込みで 3 万回を越えた)。並びは前と同じ(module の名・文字列の順)。
             pending = tuple(
                 (name, text)
                 for name in sorted(self._modules)
@@ -1998,8 +1996,7 @@ class _Walker:
     def _against_executed(self, file: str) -> None:
         """今の disk から読む部分(file の sha256・値を覆う文)が、process の中の module の値と同じ時点の物かを確かめる — module を
         実行した後に file が書き換わっていれば(常駐の process)、この digest は展開が使った値を写さないので、import の途中の状態と
-        同じく覚えず記録にも入れない(記録の行は None — 新しい process は古いと判じて展開し直す)。設計検証
-        lt-9TQ4W7B2R3TJ8W808QFDDZ83VP の盲検 A(基準版 cf7ea9cc0 から在った・card ki-be596ac8276f)。"""
+        同じく覚えず記録にも入れない(記録の行は None — 新しい process は古いと判じて展開し直す)。"""
         if not loader_hooks.executed_source_is_current(file):
             self._mut_partial = True
 
@@ -2010,8 +2007,7 @@ class _Walker:
 
     def _note_location(self, reads: bool) -> None:
         """module の置き場を値として読む code か束縛の文に当たった事を覚える — 置き場から辿る file(隣の data・stub)の中身を歩みは
-        覆わないので、環境変数の読みと同じく照らせない印にする(:data:`_LOCATION_NAMES`・設計検証
-        lt-TBEF3PAMAVQ8B3Z07MDSCA994C の盲検 B)。"""
+        覆わないので、環境変数の読みと同じく照らせない印にする(:data:`_LOCATION_NAMES`)。"""
         self._note_environment(reads)
 
     def _fold(self, module: ModuleType | None) -> None:
@@ -2028,7 +2024,7 @@ class _Walker:
     def _fold_opaque(self, module: ModuleType | None) -> None:
         """辿れない値(大域の名で引けない値・束縛を辿れない大域・名で辿れない読みの先)を、持ち主の module の file で覆う
         (:meth:`_fold`)。file は持ち主の source が読み込みの時に読んだ環境変数を写さないので、source が環境変数を読みうるなら
-        照らせない印にする(設計検証 lt-D9C8NM324RSPKZZVKC9MHA9464 の盲検 A — 環境変数から組んだ表を既定値・閉包の cell に持つ形)。"""
+        照らせない印にする(環境変数から組んだ表を既定値・閉包の cell に持つ形)。"""
         self._fold(module)
         file = None if module is None else vars(module).get("__file__")
         names = bound_source.source_names(file) if isinstance(file, str) else None
@@ -2635,17 +2631,17 @@ def _submodule(module: ModuleType, name: str) -> str | None:
 
 #: 文字列の定数の名の候補から外す module の属性 — module の説明の文。展開の code の "__doc__" は展開の結果の関数や class に
 #: 説明を書く印で、module の説明の文は展開の結果に効かない(入れると、doeff_hy の record_runtime の docstring の 1 行の変更で
-#: defhandler の使い手が全部古いと判じられた — card ki-70d92767a917 の子)。
+#: defhandler の使い手が全部古いと判じられた)。
 _TEXT_SKIP = frozenset({"__doc__"})
 
 #: module の置き場を名指すだけの属性(import の仕組みが入れる source と bytecode の file の path)— 大域の名・module の属性・
 #: 文字列の定数の名のどれで出会っても、値でなく印だけを入れる。値は作業木の置き場で変わり、同じ中身の code の振る舞いは
 #: 変えない(記録は別の木へ引き継いで照らす — #2598)。入れると、日次の全体検証が回ごとに別の dir に置いた doeff で、
 #: 型検査の展開の後処理(static_check の project — `module.__file__ = …` が名の表に __file__ を出す)の digest が回ごとに
-#: 変わり、保存した展開が毎回全部外れた(agora-redesign card ki-1475765a3f18)。path の綴りは path の先の file の中身を
+#: 変わり、保存した展開が毎回全部外れた。path の綴りは path の先の file の中身を
 #: 覆わないので、外しても覆う物は減らない(module の code と値は、それを辿る規則が中身で覆う)。
 #: 置き場を値として読む code(大域の読み・属性の読み・文字列の定数の名)か束縛の文は、その先の file(隣の data・stub)を読みうるが、
-#: 歩みはその中身を覆わない — 環境変数の読みと同じく照らせない印にする(_note_location・設計検証 lt-TBEF3PAMAVQ8B3Z07MDSCA994C の
+#: 歩みはその中身を覆わない — 環境変数の読みと同じく照らせない印にする(_note_location
 #: 盲検 B)。作った module に書くだけ(STORE_ATTR)は読みではない。
 _LOCATION_NAMES = frozenset({"__file__", "__cached__"})
 
@@ -2687,7 +2683,7 @@ def _python_source(module: ModuleType | None) -> bool:
     """module の class を中身(基底・method の本体)で辿れるか — 偽は、拡張の module(file の末尾が標準の
     importlib.machinery.EXTENSION_SUFFIXES のどれか)と file の無い module だけ。source の拡張子の写しで判じない: Hy の拡張子を
     定義点(code_store.HY_SOURCE_SUFFIXES)に足した時、写しの直し忘れでその module の class を公開の形だけで覆い、method の本体の
-    変更を見逃した(card ki-38508e6e56fd の設計検証の盲検 A)。知らない末尾は中身で辿る側(安全側)に倒す。"""
+    変更を見逃した。知らない末尾は中身で辿る側(安全側)に倒す。"""
     file = None if module is None else vars(module).get("__file__")
     return isinstance(file, str) and not file.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES))
 
