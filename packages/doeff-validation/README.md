@@ -7,8 +7,6 @@ doeff-traverse の上の薄い層で、検査の 1 件が traverse の 1 要素�
 Hy の `validate` / `check` マクロは doeff-hy が持つ(`(require doeff-hy.macros [defk validate check])`)。
 この package は実行時の部分(`validate`・検査の指定の型 `Check`・実行の印の型 `Perform`・失敗の型)を持つ。
 
-設計の記録: [`docs/design/doeff-validation/design.md`](../../docs/design/doeff-validation/design.md)
-
 ## 書き直しの例
 
 書き直す前(最初の `raise` で抜けるので、2 つ目以降の食い違いは見えない。理由は 1 つの文):

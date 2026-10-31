@@ -300,7 +300,7 @@ test-all: test test-packages test-rust
 
 test-spec-audit-sa002:
 	uv run pytest tests/core/test_sa002_spec_gaps.py
-	uv run semgrep --metrics=off --disable-version-check --config docs/history/specs/audits/SA-002/semgrep/rules.yml doeff/ packages/
+	uv run semgrep --metrics=off --disable-version-check --config tests/core/sa002_semgrep_rules.yml doeff/ packages/
 
 bench-smoke:
 	uv run python benchmarks/benchmark_runner.py --smoke --no-output

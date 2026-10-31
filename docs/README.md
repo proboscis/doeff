@@ -17,10 +17,9 @@ and they are not kept in step with the current release.
 | Path | For | What is inside |
 | --- | --- | --- |
 | [`adr/`](adr/) | contributors | design decisions written as executable tests (`defadr_*.hy`); the test suite runs them |
-| [`design/`](design/) | maintainers | design notes and their diagrams, one directory per topic |
-| [`design-checks/`](design-checks/) | maintainers | checks of a design against the code, one directory per check, with the evidence |
-| [`history/`](history/) | maintainers | older planning notes, kept as they were written |
-| [`crystallization/`](crystallization/), [`proposals/`](proposals/), [`specs/`](specs/), [`impl-requests/`](impl-requests/), [`positioning/`](positioning/) | maintainers | design drafts, proposals, and notes on how doeff compares with other tools |
+| [`crystallization/`](crystallization/) | maintainers | the catalogue of the VM's runtime invariants |
+| [`specs/`](specs/) | maintainers | the specification of how a handler's effect annotations route effects |
+| [`positioning/`](positioning/) | maintainers | notes on how doeff compares with other tools |
 
 Most pages at the top of `docs/` that [index.md](index.md) does not link to are also notes for
 people who work on doeff.

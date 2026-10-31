@@ -1,4 +1,4 @@
-"""開発の記録の図「月ごとのcommitの数と、Claudeとの共著の行があるcommit」を、数えた表(reviews/commits-months.csv)からSVGに描く。
+"""開発の記録の図「月ごとのcommitの数と、Claudeとの共著の行があるcommit」を、数えた表(checks/commits-months.csv)からSVGに描く。
 
 使い方: `uv run --no-sync python publications/zenn-use-cases-v0/visuals/commits_months_svg.py`。
 visuals/commits-months.svg を書き、PNGへはrender_svg.mjsで撮る(幅1200・高さ820)。
@@ -8,7 +8,7 @@ import csv  # 月ごとの数の表を読む。
 from pathlib import Path  # 表とSVGの置き場を指す。
 
 SOURCE = Path(__file__).resolve().parents[1]  # 記事の正本のディレクトリ。
-TABLE = SOURCE / "reviews/commits-months.csv"  # 2026-10-18に数えた表。
+TABLE = SOURCE / "checks/commits-months.csv"  # 2026-10-18に数えた表。
 OUTPUT = SOURCE / "visuals/commits-months.svg"  # 書き出すSVG。
 CLAUDE_COLOR = "#2a78d6"  # 共著の行があるcommit(datavizの既定の1番の青)。
 OTHER_COLOR = "#eb6834"  # 共著の行が無いcommit(2番の橙)。

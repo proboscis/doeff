@@ -1,7 +1,7 @@
 開発の記録（doeff-commits.md）の3枚は、imagegenではなく手で書いたSVGから作る（2026-10-18）。
 
 - 正本：../visuals/commits-concept.svg・../visuals/commits-flow.svg・../visuals/commits-months.svg。
-- commits-months.svgは、数えた表../reviews/commits-months.csvから../visuals/commits_months_svg.pyで描く。
+- commits-months.svgは、数えた表../checks/commits-months.csvから../visuals/commits_months_svg.pyで描く。
   - 配色はdatavizの既定の1〜2番（#2a78d6・#eb6834）。白背景で色の確かめの道具を通した（全項目PASS）。
   - 凡例に系列ごとの合計を添え、本文に数の表を置いた。
 - 図の仕様：../reviews/commits-visuals.json。

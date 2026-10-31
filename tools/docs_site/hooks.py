@@ -1,7 +1,7 @@
 """mkdocs の hook — GitHub の上で読む形に書いた docs の page を、site の上でも同じに読めるように 3 つを直す。
 
 1. site の外の repo の file へ張る相対の link を、GitHub の main の file への link に書き換える。docs の page は repo の file
-   (packages/*/README.md・examples/・docs/history/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
+   (packages/*/README.md・examples/・docs/specs/ の仕様)へ相対の link を張るが、site に入るのは docs/index.md から辿る page
    だけ(mkdocs.yml の exclude_docs)なので、そのままでは site の上で切れる。在る file への link だけを書き換え、無い file への link は
    書き換えない — mkdocs が warning を出し、--strict の build が落ちる。囲みのコードと `` ` `` の中は書き換えない。
 2. 囲みの頭の言語の後の語を落とす。docs の例の検は ```python excerpt・```hy file=greet.hy の印を読むが、pymdownx.superfences は

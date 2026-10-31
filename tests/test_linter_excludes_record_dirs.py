@@ -1,6 +1,6 @@
 """設計の記録の dir は doeff-linter の対象の外 — 定義の 2 か所(record-dirs と linter の exclude)が食い違わないこと。
 
-設計の記録(docs/design/・docs/design-checks/)は、その時点の証拠: 測りの script・盲検の A・B が書いた物の写しを置く。書き直すと記録が
+設計の記録は、その時点の証拠: 測りの script・盲検の A・B が書いた物の写しを置く。書き直すと記録が
 変わるので、業務の code と検に当てる規則(DOEFF002・004・006・007 ほか)の対象にしない。記録の dir の定義は root の pyproject.toml の
 `[tool.doeff] record-dirs` の 1 点で、linter の `[tool.doeff-linter] exclude` は path の部品 1 つ(dir の名)と一致する時だけ外すので、
 record-dirs の末尾の名を exclude に写してある。

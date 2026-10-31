@@ -1,4 +1,4 @@
-"""配る判断の記事の図「配った枚数と、急ぎのcardの最長の待ち」を、比べた表(reviews/dispatch-compare.csv)からSVGに描く。
+"""配る判断の記事の図「配った枚数と、急ぎのcardの最長の待ち」を、比べた表(checks/dispatch-compare.csv)からSVGに描く。
 
 使い方: `uv run --no-sync python publications/zenn-use-cases-v0/visuals/dispatch_compare_svg.py`。
 visuals/dispatch-compare.svg を書き、PNGへはrender_svg.mjsで撮る(幅1200・高さ1000)。
@@ -9,7 +9,7 @@ import csv  # 比べた表を読む。
 from pathlib import Path  # 表とSVGの置き場を指す。
 
 SOURCE = Path(__file__).resolve().parents[1]  # 記事の正本のディレクトリ。
-TABLE = SOURCE / "reviews/dispatch-compare.csv"  # 2026-10-11の報告から写した表。
+TABLE = SOURCE / "checks/dispatch-compare.csv"  # 2026-10-11の報告から写した表。
 OUTPUT = SOURCE / "visuals/dispatch-compare.svg"  # 書き出すSVG。
 FONT = "IPAPGothic, IPAGothic, sans-serif"  # 図の他の記事と同じ字形。
 BLUE = "#2a78d6"  # datavizの既定の1番。模擬の値。

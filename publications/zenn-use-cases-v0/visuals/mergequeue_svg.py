@@ -2,7 +2,7 @@
 
 使い方: リポジトリの根で `uv run --no-sync python publications/zenn-use-cases-v0/visuals/mergequeue_svg.py`。
 - flow: 本文の2つ目の枠と同じ8件の山(75秒おき)を、517秒の門と5秒の門で並べた時刻表。
-- verify: ../reviews/mergequeue-verify-runs.csv の42回の結末を、日(行)× 刻(列)のマス目にする。
+- verify: ../checks/mergequeue-verify-runs.csv の42回の結末を、日(行)× 刻(列)のマス目にする。
 色は dataviz の既定の 1 番(門の間)と状態の色(赤・判じられない・緑)。状態の色には必ず記号と文字を添える。
 """
 
@@ -10,7 +10,7 @@ import csv  # 検証の結末の表を読む。
 from pathlib import Path  # 表と出力の場所を決める。
 
 HERE = Path(__file__).resolve().parent  # visuals/。
-TABLE = HERE.parent / "reviews" / "mergequeue-verify-runs.csv"  # 4時間ごとの検証の結末。
+TABLE = HERE.parent / "checks" / "mergequeue-verify-runs.csv"  # 4時間ごとの検証の結末。
 FONT = 'font-family="IPAPGothic, IPAGothic, sans-serif"'  # 他の図と同じ日本語の字形。
 INK, MUTED, FAINT = "#111827", "#4b5563", "#d1d5db"  # 文字・弱い文字・待ちの帯と罫線。
 GATE = "#2a78d6"  # 門で確かめている間(dataviz の既定の 1 番)。

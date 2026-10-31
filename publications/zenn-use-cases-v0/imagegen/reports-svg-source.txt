@@ -1,7 +1,7 @@
 報告のページの記事（doeff-reports.md）の4枚は、imagegenではなく、手で書いたSVGと完全な例のページの写しから作る（2026-10-18）。
 
 - 正本：../visuals/reports-concept.svg・../visuals/reports-flow.svg・../visuals/reports-minutes.svg。
-- reports-minutes.svgは、所要の表../reviews/reports-pages.csvから../visuals/reports_minutes_svg.pyで描く。
+- reports-minutes.svgは、所要の表../checks/reports-pages.csvから../visuals/reports_minutes_svg.pyで描く。
   - 棒は毎日の中央値の1つの系列で、橙の菱形は2026年10月1日の試し（図4つ・5分36秒）。どの棒にも値とページの数を字で添えた。
   - 配色はdatavizの既定の1・2番（#2a78d6・#eb6834）。白背景で色の確かめの道具を通した（全項目PASS）。
 - reports-page.pngは、完全な例../examples/report_page.pyが組んだページの写し。作り方：

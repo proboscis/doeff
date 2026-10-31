@@ -4,7 +4,7 @@
 分かるよう、.github/workflows/article-code-from-pypi.yml が毎日1回と、doeffの版を出すworkflowの後にこれを走らせる。
 
 - 回: 公開計画(publication-plan.md)の「公開順」の表と「候補」の節がリンクする原稿doeff-<slug>.mdの全部。
-- 確かめ: 各回のreviews/<slug>-check.py(掲載したコードの枠を実行し、期待の表示と照らす)。
+- 確かめ: 各回のchecks/<slug>-check.py(掲載したコードの枠を実行し、期待の表示と照らす)。
 - 環境: 回ごとにuv run --isolated --no-project --no-sourcesで、PyPIのdoeff(既定は最新の版)と、確かめの頭の
   PEP 723の宣言(# /// script)のdependenciesだけを入れる。宣言のdoeffは版を書かず、ここで確かめる版に替える。
   GitHubから入れる部品は、記事が名指す版(github.com/<所有者>/<repo>@<commit>)が記事の本文に在る事も照らす。
@@ -162,7 +162,7 @@ def execute(command: list[str], python: str) -> bool:
 
 def run_check(slug: str, version: str, python: str) -> Outcome:
     """1つの回の確かめを、PyPIの版だけを入れた新しい環境で走らせる。CIの画面では、回ごとの出力を畳む。"""
-    check = SOURCE / "reviews" / f"{slug}-check.py"
+    check = SOURCE / "checks" / f"{slug}-check.py"
     name = f"doeff-{slug}.md"
     grouped = os.environ.get("GITHUB_ACTIONS") == "true"  # noqa: DOEFF004 — CIの画面で回ごとの出力を畳むか
     print(f"::group::{name}" if grouped else f"--- {name}", flush=True)

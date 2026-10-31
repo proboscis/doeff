@@ -5894,8 +5894,6 @@ rules:
       exclude:
         - "/tests/**"
         - "**/tests/**"
-        - "/docs/design/**"
-        - "/docs/design-checks/**"
 
   - id: doeff-handler-yields-its-control
     languages: [python]
@@ -5919,8 +5917,6 @@ rules:
       exclude:
         - "/tests/**"
         - "**/tests/**"
-        - "/docs/design/**"
-        - "/docs/design-checks/**"
 
   - id: doeff-handler-is-not-a-lambda
     languages: [python]
@@ -5936,8 +5932,6 @@ rules:
       exclude:
         - "/tests/**"
         - "**/tests/**"
-        - "/docs/design/**"
-        - "/docs/design-checks/**"
 
   - id: doeff-handler-stack-takes-only-handlers
     languages: [python]
@@ -5963,5 +5957,3 @@ rules:
       exclude:
         - "/tests/**"
         - "**/tests/**"
-        - "/docs/design/**"
-        - "/docs/design-checks/**"
