@@ -592,6 +592,16 @@ class Discard(EffectBase[None], Generic[_T]):
 class TaskCancelledError(Exception):
     """Thrown into a cancelled task, and raised to whoever waits on it."""
 
+    #: The task this instance was delivered into by ``Cancel`` (None: a waiter's copy).
+    delivered_to: "int | None" = None
+
+
+def _delivered_cancel(tid: int) -> TaskCancelledError:
+    """The TaskCancelledError ``Cancel`` throws into task ``tid`` (marked as that task's own)."""
+    error = TaskCancelledError()
+    error.delivered_to = tid
+    return error
+
 
 class ExternalPromiseCancelCallbackError(RuntimeError):
     """Raised to the ``Cancel`` caller when an ``on_cancel`` callback failed.
@@ -3342,7 +3352,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                 task["status"] = "cancelling"
                 if tid == current_tid:
                     # Self-cancel: this Cancel is the task's suspension point.
-                    return (yield ResumeThrow(k, TaskCancelledError()))
+                    return (yield ResumeThrow(k, _delivered_cancel(tid)))
                 parked_keys = keys_parked_by(tid)
                 cont = detach_parked_continuation(tid)
                 if cont is None:
@@ -3357,7 +3367,7 @@ def _scheduled_python(body_program: "Program[_T, Any]") -> "Program[_T, Any]":  
                     )
                     finish_cancelled(tid, TaskCancelledError())
                 else:
-                    enqueue_raise(tid, cont, TaskCancelledError())
+                    enqueue_raise(tid, cont, _delivered_cancel(tid))
                 # Stop the external work the task was parked on (#498).
                 cancel_errors = cancel_abandoned_external_promises(parked_keys)
             if cancel_errors:

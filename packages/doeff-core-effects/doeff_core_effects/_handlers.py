@@ -193,6 +193,9 @@ def _try_handler(effect: Try, k):
                 value = yield prog
                 return Ok(value)
             except Exception as e:
+                from doeff_core_effects._scheduler import TaskCancelledError
+                if isinstance(e, TaskCancelledError) and e.delivered_to is not None:
+                    raise
                 return Err(e)
         return (yield Transfer(k, (yield attempt())))
     yield Pass(effect, k)
