@@ -22,14 +22,19 @@
 (import doeff [DoExpr])
 (import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_records._values [Row Missing Page Written Conflict Refused NotIndexed Reset Changes Appended Events WrittenRows RowsConflict
-                              RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents])
+                              RowsRefused StreamEnd StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents
+                              Count WrittenAndAppended AppendRefused BatchRead])
 (import doeff_records._wire [WireAnswer])
 
 ;; 束の読みの答え(頭の註の「持たない」)と、ほかの wire の答え(頭の註の「持つ」)。2 つで wire の答えの型(_wire.hy の WireAnswer)を
 ;; ちょうど 1 度ずつ覆う — 答えの型を足す変更は、どちらかに入れないと ADR-DOE-RECORDS-002 の検が赤になる。
+;; Count(行の数 1 つ)・WrittenAndAppended と AppendRefused(書きの束の答え — 大きさは要求の本文で決まる)はその場で綴る。
+;; BatchRead(読みの束 read-batch の答え)も今はその場で綴る: 大きさは束の中の一覧の limit の和(LIST-LIMIT-MAX まで)で縛られるが、
+;; 頭の註の「持つ」の上限(要求の本文か 1 行)には入らない。scheduler の thread の外へ出すかは、この表の外の変更で決める。
 (val BATCH-READ-ANSWERS #(Page Changes Events))
 (val ON-LOOP-ANSWERS #(Row Missing Written Conflict Refused NotIndexed Reset Appended WrittenRows RowsConflict RowsRefused StreamEnd
-                       StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents))
+                       StreamEmpty EventsMoved EventsQuiet Event EventAbsent EventRetired AppendedEvents
+                       Count WrittenAndAppended AppendRefused BatchRead))
 
 
 (defk off-loop [program]

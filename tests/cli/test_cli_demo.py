@@ -2,7 +2,8 @@
 k(continuation)をどう扱うかで effect の意味と答えが変わる様子を見せる(取り組み doeff-publish)。
 IO の本物と偽物の差し替えは 4 つのうちの 1 つ(live_world)で、ほかは effect を見て渡す trace と、途中で k を捨てる budget(1)。
 
-試しの命令は README の入れ方の直後に案内する、初めての利用者が最初に打つ命令。核の 4 個(doeff・doeff-vm・doeff-core-effects・
+試しの命令は README が `pip install doeff` の後に打つ命令として案内する(最初の 1 画面は入れ方・文書の入口・30 秒の例で、
+案内はその後の節に在る)。核の 4 個(doeff・doeff-vm・doeff-core-effects・
 frozendict)の外の物を 1 つでも import すると、`pip install doeff` の直後には落ちる。開発の環境には Hy も httpx も他の部品も
 入っているので、子の process で標準ライブラリと核の module の外の import を全部塞いでから、`python -m doeff` と同じ道(runpy)で
 走らせる。本物の新しい venv で走らせる検は tools/verify_core_install.py の check_demo(CI の job core-only-install)。
@@ -144,9 +145,11 @@ def test_demo_refuses_a_url_without_a_scheme_before_running(
     assert "https://example.com" in captured.err
 
 
-def test_readme_points_to_the_demo_right_after_the_install_commands() -> None:
+def test_readme_points_to_the_demo_as_the_command_after_pip_install() -> None:
     readme = README.read_text(encoding="utf-8")
     install = re.search(r"^```bash\n(?:pip install .*\n)+```\n", readme, re.MULTILINE)
     assert install is not None, "README に pip install の囲みが無い"
-    following = readme[install.end() :].lstrip("\n").splitlines()[0]
-    assert "`python -m doeff demo`" in following, following
+    paragraphs = readme[install.end() :].split("\n\n")
+    demo = next((paragraph for paragraph in paragraphs if "`python -m doeff demo`" in paragraph), None)
+    assert demo is not None, "README の最初の pip install の囲みの後に `python -m doeff demo` の案内が無い"
+    assert "`pip install doeff`" in demo, demo

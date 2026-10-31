@@ -1675,6 +1675,7 @@ class _Sources:
         A name the module neither binds nor imports by name is followed through its
         ``from x import *`` statements (a module that only re-shows another's names, as the old path
         of a submodule renamed to ``_<name>`` does), so both paths read the same definition place.
+        A root that reads the name on first use is followed through its ``_LAZY_EXPORTS`` table.
         """
         file = _module_file(module_name)
         if file is None or depth > _FOLLOW_DEPTH:
@@ -1686,7 +1687,22 @@ class _Sources:
         here = Place(module_name, file)
         found = (self._statement_origin(statement, here, name, depth) for statement in statements)
         starred = (self._star_origin(statement, here, name, depth) for statement in statements)
-        return next((place for place in itertools.chain(found, starred) if place is not None), here)
+        place = next((place for place in itertools.chain(found, starred) if place is not None), None)
+        return place or self._lazy_origin(module_name, name, depth) or here
+
+    def _lazy_origin(self, module_name: str, name: str, depth: int) -> Place | None:
+        """``origin`` through the root's table of names read on first use (``_LAZY_EXPORTS``: name -> module).
+
+        The ``if TYPE_CHECKING:`` imports name only the modules type checkers can read (a ``.py`` or a
+        ``.pyi`` — tools/hide_submodules.py), so a value of a Hy module without a stub is named by the
+        table alone. ``None`` when the module has no table or the table does not have ``name``.
+        """
+        module = sys.modules.get(module_name)
+        table = module.__dict__.get("_LAZY_EXPORTS") if module is not None else None
+        source = table.get(name) if isinstance(table, dict) else None
+        if not isinstance(source, str):
+            return None
+        return self.origin(source, name, depth + 1) if source in sys.modules else Place(source)
 
     def _statement_origin(
         self, statement: ast.stmt, module: Place, name: str, depth: int
