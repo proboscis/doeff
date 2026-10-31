@@ -40,7 +40,13 @@ def spec_program_name(spec: JobSpec) -> _Program[str, object]:
 def spec_program_file(program_dir: Path, spec: JobSpec) -> _Program[Path, object]:
     ...
 
-def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool, notice_env: str | None) -> _Program[tuple[str, ...], object]:
+def outlives_worker(spec: JobSpec) -> bool:
+    ...
+
+def orphan_seconds_of(spec: JobSpec) -> _Program[float | None, object]:
+    ...
+
+def shim_argv(python: str, grace_ms: int, *, stamp_lines: bool, notice_env: str | None, orphan_seconds: float | None=None) -> _Program[tuple[str, ...], object]:
     ...
 
 @dataclass(frozen=True, kw_only=True)

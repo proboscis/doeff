@@ -17,6 +17,8 @@
 ;;;                                     頼み手は WriteWarmChildInput で A へ行を書く。
 ;;;                      cgroup-procs = A が入口を起こす前に自分を置く cgroup の cgroup.procs(None = 待ちの子の cgroup のまま)。
 ;;;                      notice-env   = A が入力の行を中継する知らせの pipe の読み口の fd の番号を、入口へ渡す環境変数の名(None = 中継しない)。
+;;;                      orphan-seconds = A が入力の EOF(頼み手の消失)を退きとして扱い、入口が自分で終わるのを待つ秒(None = EOF ですぐ止める —
+;;;                                     入れ物 shim の --orphan-seconds と同じ働き)。
 ;;;   WriteWarmChildInput hold-input で頼んだ子の入力の pipe へ text を書き、待たずに返す。答え = WarmInputWritten(delivered = 書いたか —
 ;;;                    終わった子・使い回された pid・pipe を握っていない子・読み手の居ない pipe・満ちた pipe は書かない)。
 ;;;   PollWarmChild    頼んだ子の様子を 1 度だけ問う。答え = WarmRunning(同じ start-ticks の process が居て、終わっていない)・
@@ -106,7 +108,9 @@
   #^ (| str None) cgroup-procs
   (setv cgroup-procs None)
   #^ (| str None) notice-env
-  (setv notice-env None))
+  (setv notice-env None)
+  #^ (| float None) orphan-seconds
+  (setv orphan-seconds None))
 
 
 (defclass [(dataclass :frozen True :kw-only True)] WriteWarmChildInput [(get EffectBase WarmInputWritten)]

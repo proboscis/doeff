@@ -224,10 +224,14 @@
   "待ちの子の準備完了の印(<S>/ready.json — 入口が読み込みの後に書く): threads = 書いた時の thread の数・vm-live = 生きた VM の数の 3 つ組。
    分かれる前に thread も VM も無い形(threads = 1・vm-live が全部 0)の時だけ準備済みに数える(条 WC3 — 判じるのは判断の層 1 か所)。
    services = 常駐の job(service)の頼み(入力の pipe・cgroup・知らせの中継)を受けられる版の待ちの子か(印の serviceForks — card
-   ki-de44efdb9aa4。待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。"
+   ki-de44efdb9aa4。待ちの子は root の venv の版で走るので、印の無い古い版の待ちの子へ service を頼まない)。
+   orphans = 頼みの orphan-seconds(worker の消失を退きとして扱い、寿命の上限まで待つ — card ki-f69f2a6869aa)を受けられる版の待ちの子か
+   (印の orphanForks。頼みの形は知らない欄を断るので、印の無い版の待ちの子へ worker より長く生きる service を頼まない — 入れ物 shim で
+   起こす)。"
   (#^ int threads)
   (#^ tuple vm-live)
-  (setv #^ bool services False))
+  (setv #^ bool services False)
+  (setv #^ bool orphans False))
 
 
 (defrecord WarmMarkUnreadable

@@ -43,7 +43,7 @@
 (import doeff_cluster._shared.intent.due_model [DueNever])
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_core_effects [AwaitWarmChildExit])
-(import doeff_cluster._worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster._worker.core.launch [JobLaunch job-launch orphan-seconds-of spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
@@ -369,9 +369,12 @@
           ;; 消失の検知と退きの知らせ — shim の hold-stdin)・知らせの中継(shim の --notice-env)・service の兄弟の cgroup(shim-argv の
           ;; placed-argv と同じ cgroup.procs)。log の刻と孫の回収と終了コードは task と同じ A の見張りが持つ。
           (val service (not spec.once))
+          ;; worker より長く生きる service(launch の outlives-worker — card ki-f69f2a6869aa)は、A に入力の EOF を退きとして待たせる
+          ;; (入れ物 shim の --orphan-seconds と同じ値。印 orphanForks の無い版の待ちの子へは頼まない — warm_rules の warm-start)。
+          (<- orphan (| float None) (orphan-seconds-of spec))
           (<- forked (ForkFromWarm :socket-path place.socket :entry spec.entry :args plan.entry-args :cwd plan.cwd :env plan.entry-env
                                    :log-path log :exit-path exit-path :grace-seconds (/ settings.shim.shim-grace-ms 1000)
-                                   :hold-input service :notice-env (if service settings.notice-env None)
+                                   :hold-input service :notice-env (if service settings.notice-env None) :orphan-seconds orphan
                                    :cgroup-procs (if service settings.service-procs None)))
           (:= started (if (isinstance forked WarmRefused)
                           (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)

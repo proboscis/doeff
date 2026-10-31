@@ -22,6 +22,7 @@
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json])
 (import doeff_cluster._worker.intent.worker_model [WorldView WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch WorkerPolicy])
 (import doeff_cluster._worker.core.worker_rules [code-key])
+(import doeff_cluster._worker.core.launch [outlives-worker])
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 
 
@@ -63,7 +64,10 @@
         (cond
           (forks-from-warm-child spec) (if (warm-child-ready view) WarmStart.FORK WarmStart.WAIT)
           (warm-child-refused view policy) WarmStart.SHIM
-          (warm-child-ready view) (if view.mark.services WarmStart.FORK WarmStart.SHIM)
+          ;; worker より長く生きる service(outlives-worker)は、頼みの orphan-seconds を受けると名乗る版の待ちの子にだけ頼む。
+          (warm-child-ready view) (if (and view.mark.services (or view.mark.orphans (not (outlives-worker spec))))
+                                      WarmStart.FORK
+                                      WarmStart.SHIM)
           True WarmStart.WAIT))))
 
 

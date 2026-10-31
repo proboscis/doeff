@@ -10,6 +10,10 @@ group で起こした孫も、親が死ぬと PID 1 ではなく shim の子に�
       shim-spans が導く)を記し、job の終わりか期限の早い方まで待つ。
   (b) worker の消失(stdin の EOF — worker の kill -9 を含む): group へ TERM を送り(shim 自身にも届いて (a) と同じ期限が付く)、(a) と
       同じに待つ。worker の KILL は来ないので、shim が最後までやり切る。EOF を見る thread は合図を送るだけで回収しない。
+      --orphan-seconds <秒> の時(退きの寿命 retired-ms を宣言した handoff の service — card ki-f69f2a6869aa)は、消失を「後継の分からない
+      退き」として扱う: 止めの合図を送らず、job へ退く知らせの行 RETIRED-LINE を中継し、job が自分で終わるのを <秒> まで待つ(越えたら
+      group へ TERM — (a) と同じ期限と片づけ)。worker の世代の入れ替え(drain で旧い世代の process を退かせ、寿命の上限まで回す)と、
+      worker の落ちとで、job の寿命を変えない。待つ間も shim が job の親で、(c) の片づけを通ってから終わる(条 C4b は変わらない)。
   (c) job が自分で終わった: すぐ片づける(job が残した子孫 — 別の session の daemon を含む — も止める)。
 片づけ: /proc を走査して PPid が shim の process を KILL → waitpid(-1, WNOHANG) で回収、を子が 0 になり waitpid が ECHILD を返すまで
 繰り返す(KILL した子の子は shim に引き取られ、次の周で見つかる。期限までに終わらなかった job もここで KILL する)。走査・KILL・回収は
@@ -31,7 +35,8 @@ HOST-CONTRACT の notice-env)、worker が標準入力へ書いた行(入れ替�
 retirement-line)をそのまま pipe へ中継する。行の中身は読まない(語を読むのは job の中の答え手)。job が pipe を閉じた・終わった後の
 行は捨てる。旗が無ければ(入口の検め・待ちの子から分かれた子)標準入力の行は読み捨てる。標準入力の EOF は今までどおり (b) の道。
 
-使い方: python -m doeff_cluster._worker.entry.shim <猶予秒> [--stamp-lines] [--notice-env <名>] -- <job の命令…>(#2028 でここへ移した —
+使い方: python -m doeff_cluster._worker.entry.shim <猶予秒> [--stamp-lines] [--notice-env <名>] [--orphan-seconds <秒>] -- <job の命令…>
+(#2028 でここへ移した —
 旧い path の doeff_cluster.shim は #2113 で消し、worker が送る名もこの名にした)
 """
 
@@ -56,7 +61,7 @@ from doeff_cluster._worker.entry.line_stamp import (
     job_log_plan,
     stamped_lines,
 )
-from doeff_lifeline._watch import Group, Single, Target, watched_until_eof
+from doeff_lifeline._watch import Group, Single, Target, signalled, watched_until_eof
 
 # 層 entry の文脈と役の名乗り(DOEFF104・#2031)— 隣の入口 job_entry.hy と同じ。module は移さない(本番の worker が
 # 版をまたいで名前で読む)。
@@ -68,6 +73,9 @@ PR_SET_CHILD_SUBREAPER = 36
 # setuid の子など)は、走査を詰めて CPU を使い切らないよう長く待つ(その子が自分で終わるのを待つ)。
 SWEEP_PAUSE_SECONDS = 0.001
 SWEEP_IDLE_SECONDS = 0.05
+# worker の消失を退きとして扱う時に job の知らせの pipe へ書く 1 行(worker/protocol/process_host の retirement-line が Retired に書く行と同じ
+# 綴り — 語は stop-reason-word の 1 か所。この入口は Hy の層を読み込まないので写しを置き、tests/test_shim_orphan.py が突き合わせる)。
+RETIRED_LINE = b"retired\n"
 
 
 @dataclass(frozen=True)
@@ -106,10 +114,11 @@ class NoticeVariable:
 @dataclass(frozen=True)
 class ShimFlags:
     """猶予と「--」の間の旗の読み: stamp_lines = job の出力の 1 行ごとに刻を付けるか・notice_env = 知らせの pipe の fd を渡す環境変数の名
-    (None = 中継しない)。"""
+    (None = 中継しない)・orphan_seconds = worker の消失の後に job が自分で終わるのを待つ秒(None = 消失ですぐ止める — 頭の註の (b))。"""
 
     stamp_lines: bool
     notice_env: str | None
+    orphan_seconds: float | None = None
 
 
 def open_relay(env_name: str) -> NoticeRelay:
@@ -302,18 +311,45 @@ def relayed(relay: NoticeRelay | None, line: bytes) -> None:
         os.write(relay.write_fd, line)
 
 
-def worker_gone(leads_group: bool) -> tuple[Target, ...]:
-    """worker の消失(stdin の EOF)で止めの合図を送る相手: group の先頭なら自分の group(job にも届く)、そうでなければ自分だけ。"""
-    print("shim: worker が消えたので job を止めます", file=sys.stderr, flush=True)
+def stop_targets(leads_group: bool) -> tuple[Target, ...]:
+    """止めの合図を送る相手: group の先頭なら自分の group(job にも届く)、そうでなければ自分だけ。"""
     return (Group(os.getpid()),) if leads_group else (Single(os.getpid()),)
 
 
-def watch_parent(leads_group: bool, relay: NoticeRelay | None) -> None:
+def worker_gone(leads_group: bool, relay: NoticeRelay | None, orphan_seconds: float | None) -> tuple[Target, ...]:
+    """worker の消失(stdin の EOF)で止めの合図を送る相手を答えるため。orphan_seconds が在れば(頭の註の (b) の退き)、job へ退く知らせを
+    中継し、orphan_seconds の後に止めの合図を送る timer を据えて、今は誰にも送らない(job が先に終われば main thread が片づけて抜ける)。"""
+    if orphan_seconds is None:
+        print("shim: worker が消えたので job を止めます", file=sys.stderr, flush=True)
+        return stop_targets(leads_group)
+    print(
+        f"shim: worker が消えた — 退いた job として、自分で終わるのを最長 {orphan_seconds:g} 秒待ちます",
+        file=sys.stderr,
+        flush=True,
+    )
+    relayed(relay, RETIRED_LINE)
+    timer = threading.Timer(orphan_seconds, orphan_expired, args=(leads_group, orphan_seconds))
+    timer.daemon = True
+    timer.start()
+    return ()
+
+
+def orphan_expired(leads_group: bool, orphan_seconds: float) -> None:
+    """worker の消失の後 orphan_seconds を越えても job が終わらない時に、止めの合図を送るため(以後は (a) と同じ期限と片づけ)。"""
+    print(f"shim: worker が消えてから {orphan_seconds:g} 秒を越えた — job を止めます", file=sys.stderr, flush=True)
+    for target in stop_targets(leads_group):
+        signalled(target, signal.SIGTERM)
+
+
+def watch_parent(leads_group: bool, relay: NoticeRelay | None, orphan_seconds: float | None) -> None:
     """worker の標準入力を行ごとに読み、退きの知らせの行を job の知らせの pipe へ中継し(#3672)、worker の消失(stdin の EOF — kill -9 を
-    含む)で止めの合図を自分へ送る。読みと EOF の合図は、StartProcess の見張りと同じ本体(doeff-core-effects の doeff_lifeline._watch の
-    watched_until_eof — #3866)。期限と片づけは main thread が受け持つ(この thread は回収しない)。"""
+    含む)で止めの合図を自分へ送る(orphan_seconds が在れば退きとして待ってから — worker_gone)。読みと EOF の合図は、StartProcess の
+    見張りと同じ本体(doeff-core-effects の doeff_lifeline._watch の watched_until_eof — #3866)。期限と片づけは main thread が受け持つ
+    (この thread は回収しない)。"""
     watched_until_eof(
-        sys.stdin.buffer, lambda line: relayed(relay, line), lambda: worker_gone(leads_group)
+        sys.stdin.buffer,
+        lambda line: relayed(relay, line),
+        lambda: worker_gone(leads_group, relay, orphan_seconds),
     )
 
 
@@ -356,13 +392,15 @@ def shim_code(
     adopt: Callable[[], Adoption],
     *,
     relay: NoticeRelay | None,
+    orphan_seconds: float | None = None,
 ) -> int:
     """job を起こし、3 つの道のどれかで片づけるまで見張って、job の終了コード(signal で終わったなら負)を返すため。grace = 止めの合図から
     job を待つ猶予(秒)・spawn = job を起こして pid を返す部品(本物の shim は PopenSpawner — 待ちの子から分かれた子は、読み込み済みの
     入口を fork で起こす部品を渡す)・lines = job の出力の書き手(刻を付ける StampedLines か、そのまま運ぶ RawLines — 書き手の thread は
     job を起こした後に始め、片づけの後に残りを読み切ってから止める。job の終わりの判定と止めの合図には触れない)・adopt = 子孫の引き取りを
     有効にする部品(検は「使えない」と答える物を渡す — tests/fixtures/shim_without_adoption)・relay = 退きの知らせの中継の口(#3672 —
-    標準入力の行をそこへ流す。None = 読み捨てる — 入口の検めと待ちの子から分かれた子)。signal の据え付け(TERM・SIGCHLD・起こしの
+    標準入力の行をそこへ流す。None = 読み捨てる — 入口の検めと待ちの子から分かれた子)・orphan_seconds = worker の消失の後に job が
+    自分で終わるのを待つ秒(頭の註の (b) の退き — None = 消失ですぐ止める)。signal の据え付け(TERM・SIGCHLD・起こしの
     fd)は process 全体の設定なので、1 つの process で 1 回だけ、main thread から呼ぶ。返った後も stdin を読む補助の thread が残るので、
     呼び手は終了処理を経ずに os._exit で抜ける(exit-status)。"""
     try:
@@ -385,7 +423,7 @@ def shim_code(
         # job は同じ process group に入る。書き手の thread は job を起こした後(fork の時の thread を 1 本に保つ)。
         job = spawn()
         lines.begin()
-        threading.Thread(target=watch_parent, args=(leads_group, relay), daemon=True).start()
+        threading.Thread(target=watch_parent, args=(leads_group, relay, orphan_seconds), daemon=True).start()
         return settled(job, awaited(job, clock, wake, leads_group), adoption, leads_group)
     finally:
         lines.end()
@@ -398,25 +436,41 @@ def exit_status(code: int) -> int:
 
 def shim_flags(flags: list[str]) -> ShimFlags:
     """猶予と「--」の間の旗を読むため(--stamp-lines = job の出力の 1 行ごとに刻を付ける・--notice-env <名> = 退きの知らせの pipe の fd を
-    その名の環境変数で job へ渡して中継する — #3672。順は問わない)。知らない旗・名の無い --notice-env・同じ旗の 2 度目は名を挙げて断る
-    (黙ってそのままの形に倒れない)。"""
+    その名の環境変数で job へ渡して中継する — #3672・--orphan-seconds <秒> = worker の消失を退きとして扱い、job が自分で終わるのをその秒
+    まで待つ — 頭の註の (b)。順は問わない)。知らない旗・名の無い --notice-env・正の数でない --orphan-seconds・同じ旗の 2 度目は名を
+    挙げて断る(黙ってそのままの形に倒れない)。"""
     match flags:
         case []:
-            return ShimFlags(stamp_lines=False, notice_env=None)
+            return ShimFlags(stamp_lines=False, notice_env=None, orphan_seconds=None)
         case ["--stamp-lines", *rest]:
             tail = shim_flags(rest)
             if tail.stamp_lines:
                 raise SystemExit(f"shim: 旗 --stamp-lines が 2 度ある {flags}")
-            return ShimFlags(stamp_lines=True, notice_env=tail.notice_env)
+            return ShimFlags(stamp_lines=True, notice_env=tail.notice_env, orphan_seconds=tail.orphan_seconds)
         case ["--notice-env", name, *rest] if not name.startswith("--"):
             tail = shim_flags(rest)
             if tail.notice_env is not None:
                 raise SystemExit(f"shim: 旗 --notice-env が 2 度ある {flags}")
-            return ShimFlags(stamp_lines=tail.stamp_lines, notice_env=name)
+            return ShimFlags(stamp_lines=tail.stamp_lines, notice_env=name, orphan_seconds=tail.orphan_seconds)
+        case ["--orphan-seconds", seconds, *rest] if positive_seconds(seconds) is not None:
+            tail = shim_flags(rest)
+            if tail.orphan_seconds is not None:
+                raise SystemExit(f"shim: 旗 --orphan-seconds が 2 度ある {flags}")
+            return ShimFlags(stamp_lines=tail.stamp_lines, notice_env=tail.notice_env, orphan_seconds=positive_seconds(seconds))
         case _:
             raise SystemExit(
-                f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines と --notice-env <名> だけ)"
+                f"shim: 知らない旗 {flags}(猶予と「--」の間に置けるのは --stamp-lines と --notice-env <名> と"
+                " --orphan-seconds <正の秒> だけ)"
             )
+
+
+def positive_seconds(word: str) -> float | None:
+    """旗の値の語を正の有限の秒に読むため(読めない・0 以下・有限でない = None)。"""
+    try:
+        seconds = float(word)
+    except ValueError:
+        return None
+    return seconds if 0 < seconds < float("inf") else None
 
 
 def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
@@ -428,7 +482,9 @@ def main(adopt: Callable[[], Adoption] = become_subreaper) -> None:
     # job の log の行を OTLP でも送るかは、この process の環境(worker が置いた送り先と job の文脈)で決める — 読みは foundation の層。
     lines = stamped_lines(job_log_plan(named_environ(JOB_LOG_ENV_NAMES))) if flags.stamp_lines else RawLines()
     relay = None if flags.notice_env is None else open_relay(flags.notice_env)
-    code = shim_code(grace, PopenSpawner(sys.argv[split + 1 :], relay), lines, adopt, relay=relay)
+    code = shim_code(
+        grace, PopenSpawner(sys.argv[split + 1 :], relay), lines, adopt, relay=relay, orphan_seconds=flags.orphan_seconds
+    )
     # 終了処理を経ずに抜ける: stdin を読んでいる補助の thread が残ったまま終了処理に入ると、Python が
     # abort して終了コードが -6 に化ける(job 自身の終了コードを worker へ正しく返せない — 実測 2026-09-23)。
     sys.stderr.flush()
